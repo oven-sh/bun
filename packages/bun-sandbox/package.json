@@ -1,0 +1,26 @@
+{
+  "name": "bun-sandbox",
+  "version": "0.1.0",
+  "description": "Sandboxfile: A declarative spec for agent sandboxes",
+  "type": "module",
+  "main": "src/index.ts",
+  "bin": {
+    "bun-sandbox": "src/cli.ts"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./parser": "./src/parser.ts",
+    "./runner": "./src/runner.ts"
+  },
+  "scripts": {
+    "test": "bun test"
+  },
+  "keywords": [
+    "bun",
+    "sandbox",
+    "agent",
+    "declarative"
+  ],
+  "author": "Oven",
+  "license": "MIT"
+}

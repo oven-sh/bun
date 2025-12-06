@@ -1,226 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 
-// Since the Sandboxfile parser is written in Zig, we need to test it through
-// a JavaScript API. For now, let's create a pure TypeScript implementation
-// that mirrors the Zig parser for testing purposes and can be used directly.
-
-/**
- * Represents a process (DEV, SERVICE, or TEST)
- */
-export interface SandboxProcess {
-  /** Process name (required for SERVICE, optional for DEV/TEST) */
-  name?: string;
-  /** Port number if specified */
-  port?: number;
-  /** File watch patterns */
-  watch?: string;
-  /** Command to execute */
-  command: string;
-}
-
-/**
- * Represents a parsed Sandboxfile
- */
-export interface Sandboxfile {
-  /** Base environment (e.g., "host" or a container image) */
-  from?: string;
-  /** Project root directory */
-  workdir?: string;
-  /** Setup commands to run once per agent */
-  runCommands: string[];
-  /** Primary dev server configuration */
-  dev?: SandboxProcess;
-  /** Background services */
-  services: SandboxProcess[];
-  /** Test commands */
-  tests: SandboxProcess[];
-  /** Files/directories to extract from agent */
-  outputs: string[];
-  /** Log file patterns agent can tail */
-  logs: string[];
-  /** Allowed external network hosts */
-  netHosts: string[];
-  /** Environment variables agent can use but not inspect */
-  secrets: string[];
-  /** INFER directive patterns (for auto-generation) */
-  inferPatterns: string[];
-}
-
-type Directive =
-  | "FROM"
-  | "WORKDIR"
-  | "RUN"
-  | "DEV"
-  | "SERVICE"
-  | "TEST"
-  | "OUTPUT"
-  | "LOGS"
-  | "NET"
-  | "SECRET"
-  | "INFER";
-
-const DIRECTIVES = new Set<string>([
-  "FROM",
-  "WORKDIR",
-  "RUN",
-  "DEV",
-  "SERVICE",
-  "TEST",
-  "OUTPUT",
-  "LOGS",
-  "NET",
-  "SECRET",
-  "INFER",
-]);
-
-function isIdentifier(s: string): boolean {
-  if (s.length === 0) return false;
-  return /^[a-zA-Z0-9_-]+$/.test(s);
-}
-
-function parseProcess(line: string, requireName: boolean): SandboxProcess {
-  const result: SandboxProcess = { command: "" };
-  const tokens = line.split(/\s+/);
-  let i = 0;
-  let sawKeyValue = false;
-
-  // For optional names (DEV/TEST): name must come BEFORE any KEY=VALUE pairs
-  // For required names (SERVICE): name is always the first token
-
-  // First, check if the first token is a name (for SERVICE) or optional name (for DEV/TEST)
-  if (tokens.length > 0 && requireName) {
-    // For SERVICE, the first token is always the name
-    result.name = tokens[0];
-    i = 1;
-  } else if (tokens.length > 0 && !requireName) {
-    // For DEV/TEST, check if first token could be a name
-    // It's a name only if:
-    // 1. It's an identifier (no special chars)
-    // 2. It's NOT a KEY=VALUE pair
-    // 3. The second token IS a KEY=VALUE pair (to distinguish from commands like "bun run dev")
-    const firstToken = tokens[0];
-    const hasEq = firstToken.indexOf("=") !== -1;
-
-    if (!hasEq && isIdentifier(firstToken) && tokens.length > 1) {
-      const secondToken = tokens[1];
-      const secondHasEq = secondToken.indexOf("=") !== -1;
-      if (secondHasEq) {
-        // First token is a name, second is KEY=VALUE
-        result.name = firstToken;
-        i = 1;
-      }
-    }
-  }
-
-  // Parse KEY=VALUE pairs
-  while (i < tokens.length) {
-    const token = tokens[i];
-
-    // Check if this is a KEY=VALUE pair
-    const eqIdx = token.indexOf("=");
-    if (eqIdx !== -1) {
-      const key = token.substring(0, eqIdx);
-      const value = token.substring(eqIdx + 1);
-
-      if (key === "PORT") {
-        const port = parseInt(value, 10);
-        if (!isNaN(port)) {
-          result.port = port;
-        }
-      } else if (key === "WATCH") {
-        result.watch = value;
-      }
-      sawKeyValue = true;
-      i++;
-      continue;
-    }
-
-    // Everything remaining is the command
-    result.command = tokens.slice(i).join(" ");
-    break;
-  }
-
-  return result;
-}
-
-/**
- * Parse a Sandboxfile from a string
- */
-export function parseSandboxfile(content: string): Sandboxfile {
-  const result: Sandboxfile = {
-    runCommands: [],
-    services: [],
-    tests: [],
-    outputs: [],
-    logs: [],
-    netHosts: [],
-    secrets: [],
-    inferPatterns: [],
-  };
-
-  const lines = content.split("\n");
-
-  for (const rawLine of lines) {
-    // Handle Windows line endings and trim
-    const line = rawLine.replace(/\r$/, "").trim();
-
-    // Skip empty lines and comments
-    if (line.length === 0 || line.startsWith("#")) {
-      continue;
-    }
-
-    // Find the directive (first word)
-    const firstSpace = line.search(/\s/);
-    const directiveStr = firstSpace === -1 ? line : line.substring(0, firstSpace);
-    const rest = firstSpace === -1 ? "" : line.substring(firstSpace).trim();
-
-    if (!DIRECTIVES.has(directiveStr)) {
-      // Unknown directive - skip with warning
-      console.warn(`Unknown directive: ${directiveStr}`);
-      continue;
-    }
-
-    const directive = directiveStr as Directive;
-
-    switch (directive) {
-      case "FROM":
-        result.from = rest;
-        break;
-      case "WORKDIR":
-        result.workdir = rest;
-        break;
-      case "RUN":
-        result.runCommands.push(rest);
-        break;
-      case "DEV":
-        result.dev = parseProcess(rest, false);
-        break;
-      case "SERVICE":
-        result.services.push(parseProcess(rest, true));
-        break;
-      case "TEST":
-        result.tests.push(parseProcess(rest, false));
-        break;
-      case "OUTPUT":
-        result.outputs.push(rest);
-        break;
-      case "LOGS":
-        result.logs.push(rest);
-        break;
-      case "NET":
-        result.netHosts.push(rest);
-        break;
-      case "SECRET":
-        result.secrets.push(rest);
-        break;
-      case "INFER":
-        result.inferPatterns.push(rest);
-        break;
-    }
-  }
-
-  return result;
-}
+// Import from bun-sandbox package
+import { parseSandboxfile, SandboxRunner } from "../../../../packages/bun-sandbox/src/index";
 
 describe("Sandboxfile parser", () => {
   test("parse simple sandboxfile", () => {
@@ -432,5 +214,294 @@ RUN npm install`;
 
     expect(result.from).toBe("node:20-alpine");
     expect(result.workdir).toBe("/app");
+  });
+});
+
+describe("SandboxRunner", () => {
+  test("create runner from string", () => {
+    const content = `FROM host
+WORKDIR .
+RUN echo hello
+TEST echo test`;
+
+    const runner = SandboxRunner.fromString(content);
+    const config = runner.getConfig();
+
+    expect(config.from).toBe("host");
+    expect(config.runCommands).toEqual(["echo hello"]);
+    expect(config.tests).toHaveLength(1);
+  });
+
+  test("network rules - allow specific hosts", () => {
+    const content = `FROM host
+NET registry.npmjs.org
+NET *.github.com`;
+
+    const runner = SandboxRunner.fromString(content);
+
+    expect(runner.isNetworkAllowed("registry.npmjs.org")).toBe(true);
+    expect(runner.isNetworkAllowed("api.github.com")).toBe(true);
+    expect(runner.isNetworkAllowed("raw.github.com")).toBe(true);
+    expect(runner.isNetworkAllowed("evil.com")).toBe(false);
+    expect(runner.isNetworkAllowed("npmjs.org")).toBe(false);
+  });
+
+  test("network rules - deny all when no NET rules", () => {
+    const content = `FROM host`;
+
+    const runner = SandboxRunner.fromString(content);
+
+    expect(runner.isNetworkAllowed("registry.npmjs.org")).toBe(false);
+    expect(runner.isNetworkAllowed("google.com")).toBe(false);
+  });
+
+  test("network rules - allow all with wildcard", () => {
+    const content = `FROM host
+NET *`;
+
+    const runner = SandboxRunner.fromString(content);
+
+    expect(runner.isNetworkAllowed("anything.com")).toBe(true);
+    expect(runner.isNetworkAllowed("evil.example.org")).toBe(true);
+  });
+
+  test("run setup commands", async () => {
+    using dir = tempDir("sandbox-test", {
+      Sandboxfile: `FROM host
+RUN echo "setup complete" > setup.txt`,
+    });
+
+    const runner = await SandboxRunner.fromFile(`${dir}/Sandboxfile`, {
+      cwd: String(dir),
+      verbose: false,
+    });
+
+    const success = await runner.runSetup();
+    expect(success).toBe(true);
+
+    const setupFile = Bun.file(`${dir}/setup.txt`);
+    expect(await setupFile.exists()).toBe(true);
+    expect((await setupFile.text()).trim()).toBe("setup complete");
+  });
+
+  test("run tests and report results", async () => {
+    using dir = tempDir("sandbox-test", {
+      Sandboxfile: `FROM host
+TEST echo "test passed"`,
+    });
+
+    const runner = await SandboxRunner.fromFile(`${dir}/Sandboxfile`, {
+      cwd: String(dir),
+      verbose: false,
+    });
+
+    const passed = await runner.runTests();
+    expect(passed).toBe(true);
+  });
+
+  test("detect failing tests", async () => {
+    using dir = tempDir("sandbox-test", {
+      Sandboxfile: `FROM host
+TEST exit 1`,
+    });
+
+    const runner = await SandboxRunner.fromFile(`${dir}/Sandboxfile`, {
+      cwd: String(dir),
+      verbose: false,
+    });
+
+    const passed = await runner.runTests();
+    expect(passed).toBe(false);
+  });
+
+  test("dry run does not execute commands", async () => {
+    using dir = tempDir("sandbox-test", {
+      Sandboxfile: `FROM host
+RUN touch should-not-exist.txt`,
+    });
+
+    const runner = await SandboxRunner.fromFile(`${dir}/Sandboxfile`, {
+      cwd: String(dir),
+      dryRun: true,
+    });
+
+    const success = await runner.runSetup();
+    expect(success).toBe(true);
+
+    const file = Bun.file(`${dir}/should-not-exist.txt`);
+    expect(await file.exists()).toBe(false);
+  });
+
+  test("collect output files", async () => {
+    using dir = tempDir("sandbox-test", {
+      Sandboxfile: `FROM host
+OUTPUT *.txt`,
+      "file1.txt": "content1",
+      "file2.txt": "content2",
+      "file3.js": "ignored",
+    });
+
+    const outputDir = `${dir}/collected`;
+    await Bun.$`mkdir -p ${outputDir}`.quiet();
+
+    const runner = await SandboxRunner.fromFile(`${dir}/Sandboxfile`, {
+      cwd: String(dir),
+    });
+
+    const collected = await runner.collectOutputs(outputDir);
+
+    expect(collected).toContain("file1.txt");
+    expect(collected).toContain("file2.txt");
+    expect(collected).not.toContain("file3.js");
+
+    expect(await Bun.file(`${outputDir}/file1.txt`).text()).toBe("content1");
+    expect(await Bun.file(`${outputDir}/file2.txt`).text()).toBe("content2");
+  });
+
+  test("full sandbox run with setup and tests", async () => {
+    using dir = tempDir("sandbox-test", {
+      Sandboxfile: `FROM host
+WORKDIR .
+RUN echo "setup" > setup.log
+TEST echo "test1"
+TEST echo "test2"`,
+    });
+
+    const runner = await SandboxRunner.fromFile(`${dir}/Sandboxfile`, {
+      cwd: String(dir),
+      verbose: false,
+    });
+
+    const result = await runner.run();
+
+    expect(result.success).toBe(true);
+    expect(result.testsPassed).toBe(true);
+
+    const setupLog = Bun.file(`${dir}/setup.log`);
+    expect(await setupLog.exists()).toBe(true);
+  });
+});
+
+describe("Sandboxfile CLI", () => {
+  const cliPath = `${import.meta.dir}/../../../../packages/bun-sandbox/src/cli.ts`;
+
+  test("validate command succeeds for valid file", async () => {
+    using dir = tempDir("sandbox-cli-test", {
+      Sandboxfile: `FROM host
+WORKDIR .
+RUN echo hello`,
+    });
+
+    const proc = Bun.spawn({
+      cmd: [bunExe(), cliPath, "validate", "-f", "Sandboxfile"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    expect(stdout).toContain("Sandboxfile is valid");
+    expect(exitCode).toBe(0);
+  });
+
+  test("init command creates Sandboxfile", async () => {
+    using dir = tempDir("sandbox-cli-test", {});
+
+    const proc = Bun.spawn({
+      cmd: [bunExe(), cliPath, "init"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    expect(stdout).toContain("Created Sandboxfile");
+    expect(exitCode).toBe(0);
+
+    const sandboxfile = Bun.file(`${dir}/Sandboxfile`);
+    expect(await sandboxfile.exists()).toBe(true);
+    const content = await sandboxfile.text();
+    expect(content).toContain("FROM host");
+    expect(content).toContain("DEV PORT=3000");
+  });
+
+  test("help command shows usage", async () => {
+    const proc = Bun.spawn({
+      cmd: [bunExe(), cliPath, "--help"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    expect(stdout).toContain("Usage:");
+    expect(stdout).toContain("bun sandbox");
+    expect(exitCode).toBe(0);
+  });
+
+  test("test command runs and passes", async () => {
+    using dir = tempDir("sandbox-cli-test", {
+      Sandboxfile: `FROM host
+TEST echo "hello world"`,
+    });
+
+    const proc = Bun.spawn({
+      cmd: [bunExe(), cliPath, "test", "-f", "Sandboxfile"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    expect(stdout).toContain("All tests passed");
+    expect(exitCode).toBe(0);
+  });
+
+  test("test command fails on failing test", async () => {
+    using dir = tempDir("sandbox-cli-test", {
+      Sandboxfile: `FROM host
+TEST exit 1`,
+    });
+
+    const proc = Bun.spawn({
+      cmd: [bunExe(), cliPath, "test", "-f", "Sandboxfile"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    // "Tests failed" appears in stderr
+    expect(stderr).toContain("Tests failed");
+    expect(exitCode).toBe(1);
   });
 });

@@ -1844,10 +1844,10 @@ pub const ESModule = struct {
 
                         if (strings.eqlComptime(key, "import")) {
                             r.module_type.* = .esm;
-                        }
-
-                        if (strings.eqlComptime(key, "require")) {
+                        } else if (strings.eqlComptime(key, "require")) {
                             r.module_type.* = .cjs;
+                        } else if (strings.eqlComptime(key, "module-sync")) {
+                            r.module_type.* = .esm;
                         }
 
                         return result;
@@ -2084,6 +2084,8 @@ pub const ESModule = struct {
                                 r.module_type.* = .esm;
                             } else if (strings.eqlComptime(map_key, "require")) {
                                 r.module_type.* = .cjs;
+                            } else if (strings.eqlComptime(map_key, "module-sync")) {
+                                r.module_type.* = .esm;
                             }
 
                             return result;

@@ -424,13 +424,10 @@ pub const prompt = struct {
         const has_default = arguments.len >= 2;
         const default_value = if (has_default) arguments[1] else .null;
 
-        var message_slice: []const u8 = undefined;
+        const message = if (has_message) (try arguments[0].toSlice(globalObject, allocator)) else undefined;
+        defer if (has_message) message.deinit();
         if (has_message) {
-            const message = try arguments[0].toSlice(globalObject, allocator);
-            defer message.deinit();
-            message_slice = message.slice();
-
-            output.writeAll(message_slice) catch {
+            output.writeAll(message.slice()) catch {
                 return .null; // Failed to show message
             };
         }
@@ -439,13 +436,10 @@ pub const prompt = struct {
             return .null; // Failed to show prompt
         };
 
-        var default_string_slice: []const u8 = undefined;
+        const default_string = if (has_default) (try arguments[1].toSlice(globalObject, allocator)) else undefined;
+        defer if (has_default) default_string.deinit();
         if (has_default) {
-            const default_string = try arguments[1].toSlice(globalObject, allocator);
-            defer default_string.deinit();
-            default_string_slice = default_string.slice();
-
-            output.print("[{s}] ", .{default_string_slice}) catch {
+            output.print("[{s}] ", .{default_string.slice()}) catch {
                 return .null; // Failed to show default value
             };
         }
@@ -484,12 +478,12 @@ pub const prompt = struct {
 
             // Calculate initial prompt width.
             if (has_message) {
-                prompt_width += columnWidth(message_slice);
+                prompt_width += columnWidth(message.slice());
             }
             prompt_width += columnWidth(if (has_message) " " else "Prompt ");
 
             if (has_default) {
-                prompt_width += columnWidth("[") + columnWidth(default_string_slice) + columnWidth("] ");
+                prompt_width += columnWidth("[") + columnWidth(default_string.slice()) + columnWidth("] ");
             }
 
             // Deferred cleanup: restore terminal settings and print a newline.
@@ -593,6 +587,7 @@ pub const prompt = struct {
                 } else {
                     // Handle batch paste by temporarily setting stdin to non-blocking mode.
                     var batch = std.ArrayList(u8).init(allocator);
+                    defer batch.deinit();
                     try batch.append(first_byte);
 
                     batch_read_block: {
@@ -638,7 +633,6 @@ pub const prompt = struct {
                             },
                         }
                     }
-                    batch.deinit();
 
                     if (loop_result == .InputLine) {
                         break; // Exit main loop if a line-end was found in the batch

@@ -1,7 +1,7 @@
 import { expect, test, describe } from "bun:test";
 
 describe("AbortSignal.timeout stack trace", () => {
-  test("should include stack trace pointing to where AbortSignal.timeout() was called", async () => {
+  test.concurrent("should include stack trace pointing to where AbortSignal.timeout() was called", async () => {
     // This test verifies fix for issue #25182
     // The stack trace should point to where AbortSignal.timeout() was called,
     // not just where the timeout was triggered internally
@@ -36,7 +36,7 @@ describe("AbortSignal.timeout stack trace", () => {
     }
   });
 
-  test("stack trace should include the test file name", async () => {
+  test.concurrent("stack trace should include the test file name", async () => {
     const signal = AbortSignal.timeout(10);
 
     // Wait for the abort event directly - no fallback timeout

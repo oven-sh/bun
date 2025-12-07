@@ -6,7 +6,7 @@
 /// Options:
 ///   --test      Run tests only (no dev server)
 ///   --dry-run   Parse and validate without executing
-///   --stop      Stop a running sandbox
+///   --no-isolate  Disable namespace isolation (run directly on host)
 ///
 /// Examples:
 ///   bun sandbox                    # Run Sandboxfile in current directory
@@ -20,6 +20,7 @@ pub const SandboxCommand = struct {
         var sandboxfile_path: []const u8 = "Sandboxfile";
         var test_only = false;
         var dry_run = false;
+        var no_isolate = false;
 
         // Check all command line arguments for flags
         for (bun.argv) |arg| {
@@ -27,6 +28,8 @@ pub const SandboxCommand = struct {
                 test_only = true;
             } else if (std.mem.eql(u8, arg, "--dry-run")) {
                 dry_run = true;
+            } else if (std.mem.eql(u8, arg, "--no-isolate")) {
+                no_isolate = true;
             }
         }
 
@@ -62,6 +65,11 @@ pub const SandboxCommand = struct {
                 Output.prettyErrorln("  <green>RUN<r> bun install", .{});
                 Output.prettyErrorln("  <green>DEV<r> PORT=3000 bun run dev", .{});
                 Output.prettyErrorln("  <green>TEST<r> bun test", .{});
+                Output.prettyErrorln("", .{});
+                Output.prettyErrorln("  <cyan># Isolation (Linux only)<r>", .{});
+                Output.prettyErrorln("  <green>OUTPUT<r> src/          <d># Only these paths are preserved<r>", .{});
+                Output.prettyErrorln("  <green>NET<r> registry.npmjs.org  <d># Allowed network hosts<r>", .{});
+                Output.prettyErrorln("  <green>SECRET<r> API_KEY         <d># Masked environment variables<r>", .{});
                 Output.prettyErrorln("", .{});
                 Global.exit(1);
             }
@@ -124,42 +132,65 @@ pub const SandboxCommand = struct {
             Global.exit(0);
         }
 
-        // Create and run the sandbox
-        var runner = sandboxfile.Runner.init(allocator, config);
-        defer runner.deinit();
+        // Check for sandbox support
+        if (comptime bun.Environment.isLinux) {
+            const ns_support = sandbox.linux.checkNamespaceSupport();
+            const overlay_support = sandbox.linux.checkOverlaySupport();
 
-        // Handle interrupt signal to clean up
-        // Note: In a real implementation, we'd set up proper signal handling
+            if (ns_support and overlay_support and !no_isolate) {
+                Output.prettyErrorln("<cyan>sandbox<r>: <green>Linux namespace isolation available<r>", .{});
+            } else {
+                if (no_isolate) {
+                    Output.prettyErrorln("<cyan>sandbox<r>: <yellow>Isolation disabled by --no-isolate<r>", .{});
+                } else {
+                    Output.prettyErrorln("<cyan>sandbox<r>: <yellow>Isolation unavailable<r> (namespaces: {s}, overlayfs: {s})", .{
+                        if (ns_support) "yes" else "no",
+                        if (overlay_support) "yes" else "no",
+                    });
+                }
+            }
+        } else {
+            Output.prettyErrorln("<cyan>sandbox<r>: <yellow>Isolation only available on Linux<r>", .{});
+        }
+        Output.flush();
+
+        // Create and run the sandbox
+        var sb = sandbox.Sandbox.init(allocator, config) catch |err| {
+            Output.prettyErrorln("<r><red>error<r>: Failed to initialize sandbox: {s}", .{@errorName(err)});
+            Global.exit(1);
+        };
+        defer sb.deinit();
 
         if (test_only) {
             // Only run tests
             Output.prettyErrorln("<cyan>sandbox<r>: Running tests only...", .{});
             Output.flush();
 
-            runner.runTests() catch |err| {
-                Output.prettyErrorln("<r><red>error<r>: Test execution failed: {s}", .{@errorName(err)});
-                runner.stop();
-                Global.exit(1);
-            };
+            for (config.tests.items) |test_cmd| {
+                Output.prettyErrorln("<cyan>sandbox<r>: TEST <b>{s}<r>", .{test_cmd.command});
+                Output.flush();
 
-            if (runner.result.tests_success) {
-                Output.prettyErrorln("<green>All tests passed<r>", .{});
-                Global.exit(0);
-            } else {
-                Output.prettyErrorln("<red>Some tests failed<r>", .{});
-                for (runner.result.errors.items) |err_msg| {
-                    Output.prettyErrorln("  {s}", .{err_msg});
+                const exit_code = sb.run(test_cmd.command) catch |err| {
+                    Output.prettyErrorln("<r><red>error<r>: Test execution failed: {s}", .{@errorName(err)});
+                    Global.exit(1);
+                };
+
+                if (exit_code != 0) {
+                    Output.prettyErrorln("<red>Test failed with exit code {d}<r>", .{exit_code});
+                    Global.exit(1);
                 }
-                Global.exit(1);
             }
+
+            Output.prettyErrorln("<green>All tests passed<r>", .{});
+            Global.exit(0);
         }
 
         // Run the full sandbox
-        const result = runner.run() catch |err| {
+        var result = sb.execute() catch |err| {
             Output.prettyErrorln("<r><red>error<r>: Sandbox execution failed: {s}", .{@errorName(err)});
-            runner.stop();
             Global.exit(1);
         };
+        defer result.deinit();
 
         // Print results
         if (!result.setup_success) {
@@ -167,7 +198,6 @@ pub const SandboxCommand = struct {
             for (result.errors.items) |err_msg| {
                 Output.prettyErrorln("  {s}", .{err_msg});
             }
-            runner.stop();
             Global.exit(1);
         }
 
@@ -178,22 +208,22 @@ pub const SandboxCommand = struct {
             }
         }
 
-        // Show status
-        runner.getStatus();
-
-        // If we have a dev server, wait for it
-        if (runner.dev_process != null) {
-            Output.prettyErrorln("", .{});
-            Output.prettyErrorln("<cyan>sandbox<r>: Dev server is running. Press Ctrl+C to stop.", .{});
-            Output.flush();
-
-            // Wait for the dev server to exit
-            if (runner.dev_process.?.pid) |pid| {
-                _ = std.posix.waitpid(pid, 0);
-            }
+        // Extract outputs if sandboxed
+        if (result.sandboxed and config.outputs.items.len > 0) {
+            Output.prettyErrorln("<cyan>sandbox<r>: Extracting outputs...", .{});
+            sb.extractOutputs(".") catch |err| {
+                Output.prettyErrorln("<r><yellow>warning<r>: Failed to extract outputs: {s}", .{@errorName(err)});
+            };
         }
 
-        runner.stop();
+        Output.prettyErrorln("", .{});
+        if (result.sandboxed) {
+            Output.prettyErrorln("<green>Sandbox completed successfully<r> (isolated)", .{});
+        } else {
+            Output.prettyErrorln("<green>Sandbox completed successfully<r> (not isolated)", .{});
+        }
+        Output.flush();
+
         Global.exit(if (result.setup_success and result.tests_success) 0 else 1);
     }
 
@@ -203,11 +233,12 @@ pub const SandboxCommand = struct {
             \\  Run a sandbox environment defined by a Sandboxfile.
             \\
             \\<b>Options:<r>
-            \\  <cyan>--test<r>      Run tests only (no dev server)
-            \\  <cyan>--dry-run<r>   Parse and validate without executing
+            \\  <cyan>--test<r>        Run tests only (no dev server)
+            \\  <cyan>--dry-run<r>     Parse and validate without executing
+            \\  <cyan>--no-isolate<r>  Disable namespace isolation (run directly on host)
             \\
             \\<b>Arguments:<r>
-            \\  <blue>[path]<r>      Path to directory containing Sandboxfile (default: current directory)
+            \\  <blue>[path]<r>        Path to directory containing Sandboxfile (default: current directory)
             \\
             \\<b>Examples:<r>
             \\  <d>Run sandbox in current directory<r>
@@ -222,6 +253,13 @@ pub const SandboxCommand = struct {
             \\  <d>Validate Sandboxfile<r>
             \\  <b><green>bun sandbox<r> <cyan>--dry-run<r>
             \\
+            \\<b>Isolation (Linux only):<r>
+            \\  When running on Linux with user namespace support, the sandbox provides:
+            \\  - <b>Ephemeral filesystem<r>: Changes outside OUTPUT paths are discarded
+            \\  - <b>Network filtering<r>: Only NET-allowed hosts are accessible
+            \\  - <b>Process isolation<r>: Separate PID namespace
+            \\  - <b>Secret masking<r>: SECRET vars passed but hidden from inspection
+            \\
             \\<b>Sandboxfile Directives:<r>
             \\  <green>FROM<r>       Base environment (host or container image)
             \\  <green>WORKDIR<r>    Working directory
@@ -229,7 +267,7 @@ pub const SandboxCommand = struct {
             \\  <green>DEV<r>        Dev server command (PORT=, WATCH= options)
             \\  <green>SERVICE<r>    Background service (name, PORT=, command)
             \\  <green>TEST<r>       Test command
-            \\  <green>OUTPUT<r>     Output path (extracted from sandbox)
+            \\  <green>OUTPUT<r>     Output path (preserved from sandbox)
             \\  <green>LOGS<r>       Log path pattern
             \\  <green>NET<r>        Allowed network host
             \\  <green>SECRET<r>     Secret environment variable
@@ -246,6 +284,7 @@ pub const SandboxCommand = struct {
 
 const std = @import("std");
 const bun = @import("bun");
+const sandbox = @import("../sandbox.zig");
 const sandboxfile = @import("../sandboxfile.zig");
 const Output = bun.Output;
 const Global = bun.Global;

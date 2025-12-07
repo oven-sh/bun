@@ -136,7 +136,7 @@ async function doBuildkiteAgent(action) {
     let shell;
     if (isWindows) {
       // Command Prompt has a faster startup time than PowerShell.
-      // Also, it propogates the exit code of the command, which PowerShell does not.
+      // Also, it propagates the exit code of the command, which PowerShell does not.
       const cmd = which("cmd", { required: true });
       shell = `"${cmd}" /S /C`;
     } else {

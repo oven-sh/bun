@@ -1193,7 +1193,7 @@ async function main() {
     "robobun": "true",
     "robobun2": "true",
     // This tag controls the IAM role required to be able to write to the shared S3 build cache.
-    // Don't want accidental polution from non-CI runs.
+    // Don't want accidental pollution from non-CI runs.
     "Service": args["ci"] ? "buildkite-agent" : undefined,
     "buildkite:token": args["buildkite-token"],
     "tailscale:authkey": args["tailscale-authkey"],

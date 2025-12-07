@@ -277,7 +277,7 @@ pub const SideEffects = enum(u1) {
                                 }
                             }
 
-                            properties_slice[end] = prop_;
+                            properties_slice[end] = prop;
                             end += 1;
                         }
 

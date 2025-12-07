@@ -447,3 +447,34 @@ describe("useFakeTimers with options", () => {
     expect(Date.now()).toBe(targetTime + 500);
   });
 });
+
+describe("vi.setSystemTime", () => {
+  test("can set system time with Date object", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("1995-12-19T00:00:00.000Z"));
+
+    expect(new Date().toISOString()).toBe("1995-12-19T00:00:00.000Z");
+    expect(Date.now()).toBe(819331200000);
+  });
+
+  test("can set system time with timestamp", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2020-01-01T00:00:00.000Z").getTime());
+
+    expect(new Date().toISOString()).toBe("2020-01-01T00:00:00.000Z");
+    expect(Date.now()).toBe(1577836800000);
+  });
+
+  test("can update system time multiple times", () => {
+    vi.useFakeTimers();
+
+    vi.setSystemTime(new Date("1995-12-19T00:00:00.000Z"));
+    expect(Date.now()).toBe(819331200000);
+
+    vi.setSystemTime(new Date("2020-01-01T00:00:00.000Z"));
+    expect(Date.now()).toBe(1577836800000);
+
+    vi.setSystemTime(new Date("2025-06-15T12:00:00.000Z"));
+    expect(Date.now()).toBe(1749988800000);
+  });
+});

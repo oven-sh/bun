@@ -71,19 +71,21 @@ pub const SandboxCommand = struct {
             Global.exit(1);
         }
 
-        // Parse options and find the command
-        // Format: bun sandbox exec [options] -- command args...
+        // Arguments come from ctx.positionals: ["sandbox", "exec", "--", "cmd", "args..."]
+        // Or without --: ["sandbox", "exec", "cmd", "args..."]
         var share_network = false;
         var no_mount = false;
         var enable_seccomp = true;
         var enable_overlayfs = false;
         var workdir: []const u8 = "/tmp";
-        var cmd_start: usize = 2; // Skip "sandbox" and "exec"
+        var cmd_start: usize = 2; // Start after "sandbox" and "exec"
 
+        // Parse positionals for sandbox options and command
         var i: usize = 2;
         while (i < ctx.positionals.len) : (i += 1) {
             const arg = ctx.positionals[i];
             if (strings.eqlComptime(arg, "--")) {
+                // Everything after -- is the command
                 cmd_start = i + 1;
                 break;
             } else if (strings.eqlComptime(arg, "--share-net")) {
@@ -94,7 +96,7 @@ pub const SandboxCommand = struct {
                 enable_seccomp = false;
             } else if (strings.eqlComptime(arg, "--overlayfs")) {
                 enable_overlayfs = true;
-            } else if (strings.eqlComptime(arg, "--workdir") or strings.eqlComptime(arg, "-C")) {
+            } else if (strings.eqlComptime(arg, "--workdir")) {
                 i += 1;
                 if (i < ctx.positionals.len) {
                     workdir = ctx.positionals[i];
@@ -107,13 +109,16 @@ pub const SandboxCommand = struct {
         }
 
         if (cmd_start >= ctx.positionals.len) {
-            Output.print("error: No command specified. Usage: bun sandbox exec [options] -- <command> [args...]\n", .{});
-            Output.print("\nOptions:\n", .{});
-            Output.print("  --share-net     Share network with host (default: isolated)\n", .{});
-            Output.print("  --no-mount      Disable mount namespace\n", .{});
-            Output.print("  --no-seccomp    Disable seccomp syscall filtering\n", .{});
-            Output.print("  --overlayfs     Enable overlayfs copy-on-write filesystem\n", .{});
-            Output.print("  -C, --workdir   Set working directory inside sandbox\n", .{});
+            Output.print("error: No command specified.\n", .{});
+            Output.print("Usage: bun sandbox exec -- <command> [args...]\n", .{});
+            Output.print("\nExamples:\n", .{});
+            Output.print("  bun sandbox exec -- /bin/echo hello\n", .{});
+            Output.print("  bun sandbox exec -- /bin/sh -c 'id && pwd'\n", .{});
+            Output.print("\nFeatures (enabled by default):\n", .{});
+            Output.print("  - User namespace (UID 0 inside sandbox)\n", .{});
+            Output.print("  - Network namespace (isolated from host)\n", .{});
+            Output.print("  - Mount namespace (isolated filesystem)\n", .{});
+            Output.print("  - Seccomp-BPF (syscall filtering)\n", .{});
             Global.exit(1);
         }
 
@@ -147,14 +152,7 @@ pub const SandboxCommand = struct {
             .seccomp_mode = .strict,
         };
 
-        Output.prettyln("<b>Running in sandbox:<r> ", .{});
-        for (cmd_args) |arg| {
-            Output.print("{s} ", .{arg});
-        }
-        Output.print("\n", .{});
-        Output.flush();
-
-        // Run the sandbox
+        // Run the sandbox (output goes directly to stdout/stderr)
         var sandbox = Sandbox.Sandbox.init(ctx.allocator, config);
         defer sandbox.deinit();
 
@@ -162,9 +160,6 @@ pub const SandboxCommand = struct {
             Output.print("error: Sandbox error: {s}\n", .{@errorName(err)});
             Global.exit(1);
         };
-
-        Output.prettyln("\n<b>Sandbox exited with code:<r> {d}", .{result.exit_code});
-        Output.flush();
 
         Global.exit(result.exit_code);
     }

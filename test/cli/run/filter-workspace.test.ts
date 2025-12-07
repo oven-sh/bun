@@ -506,4 +506,56 @@ describe("bun", () => {
       win32ExpectedError: /--elide-lines is only supported in terminal environments/,
     });
   });
+
+  test("single package filter runs in foreground mode without eliding", () => {
+    // When only one package matches the filter, it should run in foreground mode
+    // without the eliding UI (no "│" prefix), which allows interactive scripts to work
+    const dir = tempDirWithFiles("testworkspace", {
+      packages: {
+        singleapp: {
+          "index.js": "console.log('single_package_output');",
+          "package.json": JSON.stringify({
+            name: "single-app",
+            scripts: {
+              start: `${bunExe()} run index.js`,
+            },
+          }),
+        },
+      },
+      "package.json": JSON.stringify({
+        name: "ws",
+        workspaces: ["packages/*"],
+      }),
+    });
+
+    const { exitCode, stdout, stderr } = spawnSync({
+      cwd: dir,
+      cmd: [bunExe(), "run", "--filter", "single-app", "start"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const stdoutval = stdout.toString();
+    expect(stdoutval).toContain("single_package_output");
+    expect(stdoutval).not.toMatch(/│/);
+    expect(stdoutval).not.toMatch(/└─/);
+    expect(exitCode).toBe(0);
+  });
+
+  test("multi-package filter uses parallel mode with formatted output", () => {
+    const { exitCode, stdout } = spawnSync({
+      cwd: cwd_root,
+      cmd: [bunExe(), "run", "--filter", "pkg*", "present"],
+      env: { ...bunEnv, FORCE_COLOR: "1", NO_COLOR: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const stdoutval = stdout.toString();
+    // multi-package mode should have output from both packages
+    expect(stdoutval).toMatch(/scripta/);
+    expect(stdoutval).toMatch(/scriptb/);
+    expect(exitCode).toBe(0);
+  });
 });

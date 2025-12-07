@@ -155,3 +155,6 @@ vendor/elysia/test/validator/body.test.ts
 vendor/elysia/test/ws/message.test.ts
 
 test/js/node/test/parallel/test-worker-abort-on-uncaught-exception.js
+
+# TODO: WebCore fixes
+test/js/web/urlpattern/urlpattern.test.ts

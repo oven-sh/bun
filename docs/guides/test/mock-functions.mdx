@@ -60,7 +60,7 @@ test("random", async () => {
 
   expect(random).toHaveBeenCalled();
   expect(random).toHaveBeenCalledTimes(3);
-  expect(random.mock.args).toEqual([[1], [2], [3]]);
+  expect(random.mock.calls).toEqual([[1], [2], [3]]);
   expect(random.mock.results[0]).toEqual({ type: "return", value: a });
 });
 ```

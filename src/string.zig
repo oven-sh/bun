@@ -131,6 +131,9 @@ pub const String = extern struct {
     fn createUninitializedLatin1(len: usize) struct { String, []u8 } {
         bun.assert(len > 0);
         const string = bun.cpp.BunString__fromLatin1Unitialized(len);
+        if (string.tag == .Dead) {
+            return .{ string, &.{} };
+        }
         _ = validateRefCount(string);
         const wtf = string.value.WTFStringImpl;
         return .{
@@ -142,6 +145,9 @@ pub const String = extern struct {
     fn createUninitializedUTF16(len: usize) struct { String, []u16 } {
         bun.assert(len > 0);
         const string = bun.cpp.BunString__fromUTF16Unitialized(len);
+        if (string.tag == .Dead) {
+            return .{ string, &.{} };
+        }
         _ = validateRefCount(string);
         const wtf = string.value.WTFStringImpl;
         return .{

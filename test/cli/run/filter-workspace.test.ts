@@ -531,7 +531,7 @@ describe("bun", () => {
     const { exitCode, stdout, stderr } = spawnSync({
       cwd: dir,
       cmd: [bunExe(), "run", "--filter", "single-app", "start"],
-      env: bunEnv,
+      env: { ...bunEnv, FORCE_COLOR: "1", NO_COLOR: "0" },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -576,10 +576,9 @@ describe("bun", () => {
     });
 
     const stdoutval = stdout.toString();
-    // prestart writes 'pre_success' to out.txt, start reads it and prints it
-    expect(stdoutval).toContain("pre_success");
-    // poststart runs after start
-    expect(stdoutval).toContain("post_script_executed");
+    // prestart writes 'pre_success', start prints it, poststart runs after start
+    // Assert ordering: pre_success must appear before post_script_executed
+    expect(stdoutval).toMatch(/pre_success[\s\S]*post_script_executed/);
     // Should not have eliding UI markers in foreground mode
     expect(stdoutval).not.toMatch(/│/);
     expect(stdoutval).not.toMatch(/└─/);
@@ -599,6 +598,8 @@ describe("bun", () => {
     // multi-package mode should have output from both packages
     expect(stdoutval).toMatch(/scripta/);
     expect(stdoutval).toMatch(/scriptb/);
+    // and should include formatted workspace UI markers
+    expect(stdoutval).toMatch(/[│└─]/);
     expect(exitCode).toBe(0);
   });
 });

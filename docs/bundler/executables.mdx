@@ -183,9 +183,35 @@ console.log(process.execArgv); // ["--smol", "--user-agent=MyBot"]
 
 ---
 
-## Disabling automatic config loading
+## Automatic config loading
 
-By default, standalone executables look for `.env` and `bunfig.toml` files in the directory where the executable is run. You can disable this behavior at build time for deterministic execution regardless of the user's working directory.
+Standalone executables can automatically load configuration files from the directory where they are run. By default:
+
+- **`tsconfig.json`** and **`package.json`** loading is **disabled** — these are typically only needed at development time, and the bundler already uses them when compiling
+- **`.env`** and **`bunfig.toml`** loading is **enabled** — these often contain runtime configuration that may vary per deployment
+
+<Note>
+  In a future version of Bun, `.env` and `bunfig.toml` may also be disabled by default for more deterministic behavior.
+</Note>
+
+### Enabling config loading at runtime
+
+If your executable needs to read `tsconfig.json` or `package.json` at runtime, you can opt in with the new CLI flags:
+
+```bash icon="terminal" terminal
+# Enable runtime loading of tsconfig.json
+bun build --compile --compile-autoload-tsconfig ./app.ts --outfile myapp
+
+# Enable runtime loading of package.json
+bun build --compile --compile-autoload-package-json ./app.ts --outfile myapp
+
+# Enable both
+bun build --compile --compile-autoload-tsconfig --compile-autoload-package-json ./app.ts --outfile myapp
+```
+
+### Disabling config loading at runtime
+
+To disable `.env` or `bunfig.toml` loading for deterministic execution:
 
 ```bash icon="terminal" terminal
 # Disable .env loading
@@ -194,18 +220,25 @@ bun build --compile --no-compile-autoload-dotenv ./app.ts --outfile myapp
 # Disable bunfig.toml loading
 bun build --compile --no-compile-autoload-bunfig ./app.ts --outfile myapp
 
-# Disable both
+# Disable all config loading
 bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig ./app.ts --outfile myapp
 ```
 
-You can also configure this via the JavaScript API:
+### JavaScript API
+
+You can also configure autoloading via the JavaScript API:
 
 ```ts
 await Bun.build({
   entrypoints: ["./app.ts"],
   compile: {
-    autoloadDotenv: false, // Disable .env loading
-    autoloadBunfig: false, // Disable bunfig.toml loading
+    // tsconfig.json and package.json are disabled by default
+    autoloadTsconfig: true,     // Enable tsconfig.json loading
+    autoloadPackageJson: true,  // Enable package.json loading
+
+    // .env and bunfig.toml are enabled by default
+    autoloadDotenv: false,      // Disable .env loading
+    autoloadBunfig: false,      // Disable bunfig.toml loading
   },
 });
 ```

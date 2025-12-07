@@ -233,12 +233,12 @@ await Bun.build({
   entrypoints: ["./app.ts"],
   compile: {
     // tsconfig.json and package.json are disabled by default
-    autoloadTsconfig: true,     // Enable tsconfig.json loading
-    autoloadPackageJson: true,  // Enable package.json loading
+    autoloadTsconfig: true, // Enable tsconfig.json loading
+    autoloadPackageJson: true, // Enable package.json loading
 
     // .env and bunfig.toml are enabled by default
-    autoloadDotenv: false,      // Disable .env loading
-    autoloadBunfig: false,      // Disable bunfig.toml loading
+    autoloadDotenv: false, // Disable .env loading
+    autoloadBunfig: false, // Disable bunfig.toml loading
   },
 });
 ```

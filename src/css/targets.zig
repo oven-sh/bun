@@ -28,7 +28,7 @@ pub const Targets = struct {
     fn parseDebugTarget(val_: []const u8) ?u32 {
         const val = bun.strings.trim(val_, " \n\r\t");
         if (val.len == 0) return null;
-        if (bun.strings.eqlCaseInsensitiveASCII(val, "null", true)) return null;
+        if (bun.strings.eqlCaseInsensitiveASCII(val, "null")) return null;
 
         var lhs: u32 = 0;
         var rhs: u32 = 0;

@@ -42,7 +42,7 @@ pub fn get(this: *const Headers, name: []const u8) ?[]const u8 {
     const names = entries.items(.name);
     const values = entries.items(.value);
     for (names, 0..) |name_ptr, i| {
-        if (bun.strings.eqlCaseInsensitiveASCII(this.asStr(name_ptr), name, true)) {
+        if (bun.strings.eqlCaseInsensitiveASCII(this.asStr(name_ptr), name)) {
             return this.asStr(values[i]);
         }
     }
@@ -84,7 +84,7 @@ pub fn getContentType(this: *const Headers) ?[]const u8 {
     const header_values = header_entries.items(.value);
 
     for (header_names, 0..header_names.len) |name, i| {
-        if (bun.strings.eqlCaseInsensitiveASCII(this.asStr(name), "content-type", true)) {
+        if (bun.strings.eqlCaseInsensitiveASCII(this.asStr(name), "content-type")) {
             return this.asStr(header_values[i]);
         }
     }

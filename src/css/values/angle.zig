@@ -51,13 +51,13 @@ pub const Angle = union(Tag) {
                 const value = dim.num.value;
                 const unit = dim.unit;
                 // todo_stuff.match_ignore_ascii_case
-                if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("deg", unit)) {
+                if (bun.strings.eqlCaseInsensitiveASCII("deg", unit)) {
                     return .{ .result = Angle{ .deg = value } };
-                } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("grad", unit)) {
+                } else if (bun.strings.eqlCaseInsensitiveASCII("grad", unit)) {
                     return .{ .result = Angle{ .grad = value } };
-                } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("turn", unit)) {
+                } else if (bun.strings.eqlCaseInsensitiveASCII("turn", unit)) {
                     return .{ .result = Angle{ .turn = value } };
-                } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("rad", unit)) {
+                } else if (bun.strings.eqlCaseInsensitiveASCII("rad", unit)) {
                     return .{ .result = Angle{ .rad = value } };
                 } else {
                     return .{ .err = location.newUnexpectedTokenError(token.*) };
@@ -112,13 +112,13 @@ pub const Angle = union(Tag) {
         if (token.* == .dimension) {
             const value = token.dimension.num.value;
             const unit = token.dimension.unit;
-            if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(unit, "deg")) {
+            if (bun.strings.eqlCaseInsensitiveASCII(unit, "deg")) {
                 return .{ .result = .{ .deg = value } };
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(unit, "grad")) {
+            } else if (bun.strings.eqlCaseInsensitiveASCII(unit, "grad")) {
                 return .{ .result = .{ .grad = value } };
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(unit, "turn")) {
+            } else if (bun.strings.eqlCaseInsensitiveASCII(unit, "turn")) {
                 return .{ .result = .{ .turn = value } };
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(unit, "rad")) {
+            } else if (bun.strings.eqlCaseInsensitiveASCII(unit, "rad")) {
                 return .{ .result = .{ .rad = value } };
             }
         }

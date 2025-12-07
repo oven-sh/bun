@@ -119,7 +119,7 @@ function generatePropertyImpl(property_defs: Record<string, PropertyDef>): strin
   // - eql()
   // - parse()
   // - toCss()
-  // 
+  //
   // We do this string concatenation thing so we get all the errors at once,
   // instead of relying on Zig semantic analysis which usually stops at the first error.
   comptime {
@@ -491,7 +491,7 @@ function generatePropertyIdImplFromNameAndPrefix(property_defs: Record<string, P
   return Object.entries(property_defs)
     .map(([name, meta]) => {
       if (name === "unparsed") return "";
-      return `if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name1, "${name}")) {
+      return `if (bun.strings.eqlCaseInsensitiveASCII(name1, "${name}")) {
   const allowed_prefixes = ${constructVendorPrefix(meta.valid_prefixes)};
   if (allowed_prefixes.contains(pre)) return ${meta.valid_prefixes === undefined ? `.${escapeIdent(name)}` : `.{ .${escapeIdent(name)} = pre }`};
 } else `;

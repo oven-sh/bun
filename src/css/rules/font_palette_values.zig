@@ -180,9 +180,9 @@ pub const BasePalette = union(enum) {
             .result => |vv| vv,
             .err => |e| return .{ .err = e },
         };
-        if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("light", ident)) {
+        if (bun.strings.eqlCaseInsensitiveASCII("light", ident)) {
             return .{ .result = .light };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("dark", ident)) {
+        } else if (bun.strings.eqlCaseInsensitiveASCII("dark", ident)) {
             return .{ .result = .dark };
         } else return .{ .err = location.newUnexpectedTokenError(.{ .ident = ident }) };
     }
@@ -210,7 +210,7 @@ pub const FontPaletteValuesDeclarationParser = struct {
             _ = this; // autofix
             const state = input.state();
             // todo_stuff.match_ignore_ascii_case
-            if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("font-family", name)) {
+            if (bun.strings.eqlCaseInsensitiveASCII("font-family", name)) {
                 // https://drafts.csswg.org/css-fonts-4/#font-family-2-desc
                 if (FontFamily.parse(input).asValue()) |font_family| {
                     if (font_family == .generic) {
@@ -218,12 +218,12 @@ pub const FontPaletteValuesDeclarationParser = struct {
                     }
                     return .{ .result = .{ .font_family = font_family } };
                 }
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("base-palette", name)) {
+            } else if (bun.strings.eqlCaseInsensitiveASCII("base-palette", name)) {
                 // https://drafts.csswg.org/css-fonts-4/#base-palette-desc
                 if (BasePalette.parse(input).asValue()) |base_palette| {
                     return .{ .result = .{ .base_palette = base_palette } };
                 }
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("override-colors", name)) {
+            } else if (bun.strings.eqlCaseInsensitiveASCII("override-colors", name)) {
                 // https://drafts.csswg.org/css-fonts-4/#override-color
                 if (input.parseCommaSeparated(OverrideColors, OverrideColors.parse).asValue()) |override_colors| {
                     return .{ .result = .{ .override_colors = override_colors } };

@@ -626,10 +626,10 @@ pub const PublishCommand = struct {
                         var iter = strings.split(@"www-authenticate", ",");
                         while (iter.next()) |part| {
                             const trimmed = strings.trim(part, &strings.whitespace_chars);
-                            if (strings.eqlCaseInsensitiveASCII(trimmed, "ipaddress", true)) {
+                            if (strings.eqlCaseInsensitiveASCII(trimmed, "ipaddress")) {
                                 Output.errGeneric("login is not allowed from your IP address", .{});
                                 Global.crash();
-                            } else if (strings.eqlCaseInsensitiveASCII(trimmed, "otp", true)) {
+                            } else if (strings.eqlCaseInsensitiveASCII(trimmed, "otp")) {
                                 break :prompt_for_otp true;
                             }
                         }

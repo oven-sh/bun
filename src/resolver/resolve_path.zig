@@ -211,7 +211,7 @@ pub fn longestCommonPathGeneric(input: []const []const u8, comptime platform: Pl
                 comptime var i = 1;
                 inline while (i < n) : (i += 1) {
                     const root = windowsFilesystemRoot(input[i]);
-                    if (!strings.eqlCaseInsensitiveASCIIICheckLength(first_root, root)) {
+                    if (!strings.eqlCaseInsensitiveASCII(first_root, root)) {
                         return "";
                     }
                 }
@@ -233,7 +233,7 @@ pub fn longestCommonPathGeneric(input: []const []const u8, comptime platform: Pl
                 var i: usize = 1;
                 while (i < input.len) : (i += 1) {
                     const root = windowsFilesystemRoot(input[i]);
-                    if (!strings.eqlCaseInsensitiveASCIIICheckLength(first_root, root)) {
+                    if (!strings.eqlCaseInsensitiveASCII(first_root, root)) {
                         return "";
                     }
                 }
@@ -328,7 +328,7 @@ pub fn relativeToCommonPath(
 
         if (common_path_.len == 0) {
             // the only case path.relative can return not a relative string
-            if (!strings.eqlCaseInsensitiveASCIIICheckLength(from_root, to_root)) {
+            if (!strings.eqlCaseInsensitiveASCII(from_root, to_root)) {
                 if (normalized_to_.len > to_root.len and normalized_to_[normalized_to_.len - 1] == '\\') {
                     if (always_copy) {
                         bun.copy(u8, buf, normalized_to_[0 .. normalized_to_.len - 1]);
@@ -464,7 +464,7 @@ pub fn relativeToCommonPath(
 
 pub fn relativeNormalizedBuf(buf: []u8, from: []const u8, to: []const u8, comptime platform: Platform, comptime always_copy: bool) []const u8 {
     if ((if (platform == .windows)
-        strings.eqlCaseInsensitiveASCII(from, to, true)
+        strings.eqlCaseInsensitiveASCII(from, to)
     else
         from.len == to.len and strings.eqlLong(from, to, true)))
     {

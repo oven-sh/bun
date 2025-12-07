@@ -873,7 +873,7 @@ pub const enum_property_util = struct {
         const Map = comptime bun.ComptimeEnumMap(T);
         if (Map.getASCIIICaseInsensitive(ident)) |x| return .{ .result = x };
         // inline for (std.meta.fields(T)) |field| {
-        //     if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, field.name)) return .{ .result = @enumFromInt(field.value) };
+        //     if (bun.strings.eqlCaseInsensitiveASCII(ident, field.name)) return .{ .result = @enumFromInt(field.value) };
         // }
 
         return .{ .err = location.newUnexpectedTokenError(.{ .ident = ident }) };
@@ -901,7 +901,7 @@ pub fn DefineEnumProperty(comptime T: type) type {
 
             // todo_stuff.match_ignore_ascii_case
             inline for (fields) |field| {
-                if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, field.name)) return .{ .result = @enumFromInt(field.value) };
+                if (bun.strings.eqlCaseInsensitiveASCII(ident, field.name)) return .{ .result = @enumFromInt(field.value) };
             }
 
             return .{ .err = location.newUnexpectedTokenError(.{ .ident = ident }) };
@@ -2848,7 +2848,7 @@ pub fn StyleSheetParser(comptime P: type) type {
                     const first_stylesheet_rule = !this.any_rule_so_far;
                     this.any_rule_so_far = true;
 
-                    if (first_stylesheet_rule and bun.strings.eqlCaseInsensitiveASCII(name, "charset", true)) {
+                    if (first_stylesheet_rule and bun.strings.eqlCaseInsensitiveASCII(name, "charset")) {
                         const delimiters = Delimiters{
                             .semicolon = true,
                             .close_curly_bracket = true,
@@ -4194,7 +4194,7 @@ pub const Parser = struct {
             .result => |v| v,
         };
         switch (tok.*) {
-            .ident => |i| if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, i)) return .success,
+            .ident => |i| if (bun.strings.eqlCaseInsensitiveASCII(name, i)) return .success,
             else => {},
         }
         return .{ .err = start_location.newUnexpectedTokenError(tok.*) };
@@ -4220,7 +4220,7 @@ pub const Parser = struct {
             .result => |v| v,
         };
         switch (tok.*) {
-            .function => |fn_name| if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, fn_name)) return .success,
+            .function => |fn_name| if (bun.strings.eqlCaseInsensitiveASCII(name, fn_name)) return .success,
             else => {},
         }
         return .{ .err = start_location.newUnexpectedTokenError(tok.*) };
@@ -4260,7 +4260,7 @@ pub const Parser = struct {
         switch (tok.*) {
             .unquoted_url => |value| return .{ .result = value },
             .function => |name| {
-                if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("url", name)) {
+                if (bun.strings.eqlCaseInsensitiveASCII("url", name)) {
                     const result = this.parseNestedBlock([]const u8, {}, struct {
                         fn parse(_: void, parser: *Parser) Result([]const u8) {
                             return switch (parser.expectString()) {
@@ -4291,7 +4291,7 @@ pub const Parser = struct {
             .unquoted_url => |value| return .{ .result = value },
             .quoted_string => |value| return .{ .result = value },
             .function => |name| {
-                if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("url", name)) {
+                if (bun.strings.eqlCaseInsensitiveASCII("url", name)) {
                     const result = this.parseNestedBlock([]const u8, {}, struct {
                         fn parse(_: void, parser: *Parser) Result([]const u8) {
                             return switch (parser.expectString()) {
@@ -4616,9 +4616,9 @@ pub const nth = struct {
                 if (tok.dimension.num.int_value) |a| {
                     // @compileError(todo_stuff.match_ignore_ascii_case);
                     const unit = tok.dimension.unit;
-                    if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(unit, "n")) {
+                    if (bun.strings.eqlCaseInsensitiveASCII(unit, "n")) {
                         return parse_b(input, a);
-                    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(unit, "n-")) {
+                    } else if (bun.strings.eqlCaseInsensitiveASCII(unit, "n-")) {
                         return parse_signless_b(input, a, -1);
                     } else {
                         if (parse_n_dash_digits(input.allocator(), unit).asValue()) |b| {
@@ -4632,17 +4632,17 @@ pub const nth = struct {
             .ident => {
                 const value = tok.ident;
                 // @compileError(todo_stuff.match_ignore_ascii_case);
-                if (bun.strings.eqlCaseInsensitiveASCIIIgnoreLength(value, "even")) {
+                if (bun.strings.eqlCaseInsensitiveASCII(value, "even")) {
                     return .{ .result = .{ 2, 0 } };
-                } else if (bun.strings.eqlCaseInsensitiveASCIIIgnoreLength(value, "odd")) {
+                } else if (bun.strings.eqlCaseInsensitiveASCII(value, "odd")) {
                     return .{ .result = .{ 2, 1 } };
-                } else if (bun.strings.eqlCaseInsensitiveASCIIIgnoreLength(value, "n")) {
+                } else if (bun.strings.eqlCaseInsensitiveASCII(value, "n")) {
                     return parse_b(input, 1);
-                } else if (bun.strings.eqlCaseInsensitiveASCIIIgnoreLength(value, "-n")) {
+                } else if (bun.strings.eqlCaseInsensitiveASCII(value, "-n")) {
                     return parse_b(input, -1);
-                } else if (bun.strings.eqlCaseInsensitiveASCIIIgnoreLength(value, "n-")) {
+                } else if (bun.strings.eqlCaseInsensitiveASCII(value, "n-")) {
                     return parse_signless_b(input, 1, -1);
-                } else if (bun.strings.eqlCaseInsensitiveASCIIIgnoreLength(value, "-n-")) {
+                } else if (bun.strings.eqlCaseInsensitiveASCII(value, "-n-")) {
                     return parse_signless_b(input, -1, -1);
                 } else {
                     const slice, const a: i32 = if (bun.strings.startsWithChar(value, '-')) .{ value[1..], -1 } else .{ value, 1 };
@@ -4657,9 +4657,9 @@ pub const nth = struct {
                 };
                 if (next_tok.* == .ident) {
                     const value = next_tok.ident;
-                    if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(value, "n")) {
+                    if (bun.strings.eqlCaseInsensitiveASCII(value, "n")) {
                         return parse_b(input, 1);
-                    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(value, "-n")) {
+                    } else if (bun.strings.eqlCaseInsensitiveASCII(value, "-n")) {
                         return parse_signless_b(input, 1, -1);
                     } else {
                         if (parse_n_dash_digits(input.allocator(), value).asValue()) |b| {
@@ -4709,7 +4709,7 @@ pub const nth = struct {
     fn parse_n_dash_digits(allocator: Allocator, str: []const u8) Maybe(i32, void) {
         const bytes = str;
         if (bytes.len >= 3 and
-            bun.strings.eqlCaseInsensitiveASCIIICheckLength(bytes[0..2], "n-") and
+            bun.strings.eqlCaseInsensitiveASCII(bytes[0..2], "n-") and
             brk: {
                 for (bytes[2..]) |b| {
                     if (b < '0' or b > '9') break :brk false;
@@ -4842,7 +4842,7 @@ const Tokenizer = struct {
 
     pub fn seeFunction(this: *Tokenizer, name: []const u8) void {
         if (this.var_or_env_functions == .looking_for_them) {
-            if (std.ascii.eqlIgnoreCase(name, "var") and std.ascii.eqlIgnoreCase(name, "env")) {
+            if (bun.strings.eqlCaseInsensitiveASCII(name, "var") and bun.strings.eqlCaseInsensitiveASCII(name, "env")) {
                 this.var_or_env_functions = .seen_at_least_one;
             }
         }
@@ -5188,7 +5188,7 @@ const Tokenizer = struct {
         const value = this.consumeName();
         if (!this.isEof() and this.nextByteUnchecked() == '(') {
             this.advance(1);
-            if (std.ascii.eqlIgnoreCase(value, "url")) return if (this.consumeUnquotedUrl()) |tok| return tok else .{ .function = value };
+            if (bun.strings.eqlCaseInsensitiveASCII(value, "url")) return if (this.consumeUnquotedUrl()) |tok| return tok else .{ .function = value };
             this.seeFunction(value);
             return .{ .function = value };
         }

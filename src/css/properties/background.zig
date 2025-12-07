@@ -273,9 +273,9 @@ pub const BackgroundSize = union(enum) {
             .err => |e| return .{ .err = e },
         };
 
-        if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "cover")) {
+        if (bun.strings.eqlCaseInsensitiveASCII(ident, "cover")) {
             return .{ .result = .cover };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "contain")) {
+        } else if (bun.strings.eqlCaseInsensitiveASCII(ident, "contain")) {
             return .{ .result = .contain };
         } else {
             return .{ .err = location.newBasicUnexpectedTokenError(.{ .ident = ident }) };
@@ -380,9 +380,9 @@ pub const BackgroundRepeat = struct {
             .err => |e| return .{ .err = e },
         };
 
-        if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "repeat-x")) {
+        if (bun.strings.eqlCaseInsensitiveASCII(ident, "repeat-x")) {
             return .{ .result = .{ .x = .repeat, .y = .@"no-repeat" } };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "repeat-y")) {
+        } else if (bun.strings.eqlCaseInsensitiveASCII(ident, "repeat-y")) {
             return .{ .result = .{ .x = .@"no-repeat", .y = .repeat } };
         }
 

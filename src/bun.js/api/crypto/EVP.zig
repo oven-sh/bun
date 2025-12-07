@@ -179,7 +179,7 @@ pub fn copy(this: *const EVP, engine: *BoringSSL.ENGINE) error{OutOfMemory}!EVP 
 }
 
 pub fn byNameAndEngine(engine: *BoringSSL.ENGINE, name: []const u8) ?EVP {
-    if (Algorithm.map.getWithEql(name, strings.eqlCaseInsensitiveASCIIIgnoreLength)) |algorithm| {
+    if (Algorithm.map.getWithEql(name, strings.eqlCaseInsensitiveASCII)) |algorithm| {
         if (algorithm.md()) |md| {
             return EVP.init(algorithm, md, engine);
         }

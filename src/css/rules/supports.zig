@@ -147,8 +147,8 @@ pub const SupportsCondition = union(enum) {
                     };
                     const found_type: i32 = found_type: {
                         // todo_stuff.match_ignore_ascii_case
-                        if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("and", s)) break :found_type 1;
-                        if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("or", s)) break :found_type 2;
+                        if (bun.strings.eqlCaseInsensitiveASCII("and", s)) break :found_type 1;
+                        if (bun.strings.eqlCaseInsensitiveASCII("or", s)) break :found_type 2;
                         return .{ .err = location.newUnexpectedTokenError(.{ .ident = s }) };
                     };
 
@@ -250,7 +250,7 @@ pub const SupportsCondition = union(enum) {
         };
         switch (tok.*) {
             .function => |f| {
-                if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("selector", f)) {
+                if (bun.strings.eqlCaseInsensitiveASCII("selector", f)) {
                     const Fn = struct {
                         pub fn tryParseFn(i: *css.Parser) Result(SupportsCondition) {
                             return i.parseNestedBlock(SupportsCondition, {}, @This().parseNestedBlockFn);

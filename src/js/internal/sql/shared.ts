@@ -481,6 +481,10 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
 
   // Step 5: Return early if adapter is explicitly specified
   if (options.adapter) {
+    if (typeof options.adapter === "object") {
+      return [urlToProcess, sslMode, options as Bun.SQL.__internal.OptionsWithDefinedAdapter];
+    }
+
     // Validate that the adapter is supported
     const supportedAdapters = ["postgres", "sqlite", "mysql", "mariadb"];
     if (!supportedAdapters.includes(options.adapter)) {
@@ -536,6 +540,10 @@ function parseOptions(
   );
 
   const adapter = options.adapter;
+
+  if (typeof adapter === "object") {
+    return options as Bun.SQL.__internal.DefinedOptions;
+  }
 
   if (adapter === "sqlite") {
     return parseSQLiteOptions(_url, options);

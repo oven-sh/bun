@@ -28,6 +28,9 @@ interface TransactionState {
 }
 
 function adapterFromOptions(options: Bun.SQL.__internal.DefinedOptions) {
+  if (typeof options.adapter === "object") {
+    return options.adapter;
+  }
   switch (options.adapter) {
     case "postgres":
       return new PostgresAdapter(options);

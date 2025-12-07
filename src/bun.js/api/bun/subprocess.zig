@@ -40,10 +40,7 @@ abort_signal: ?*webcore.AbortSignal = null,
 event_loop_timer_refd: bool = false,
 event_loop_timer: bun.api.Timer.EventLoopTimer = .{
     .tag = .SubprocessTimeout,
-    .next = .{
-        .sec = 0,
-        .nsec = 0,
-    },
+    .next = .epoch,
 },
 killSignal: SignalCode,
 

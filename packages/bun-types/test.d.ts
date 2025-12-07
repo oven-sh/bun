@@ -95,8 +95,15 @@ declare module "bun:test" {
     function fn<T extends (...args: any[]) => any>(func?: T): Mock<T>;
     function setSystemTime(now?: number | Date): void;
     function setTimeout(milliseconds: number): void;
-    function useFakeTimers(): void;
-    function useRealTimers(): void;
+    function useFakeTimers(options?: { now?: number | Date }): typeof vi;
+    function useRealTimers(): typeof vi;
+    function advanceTimersByTime(milliseconds: number): typeof vi;
+    function advanceTimersToNextTimer(): typeof vi;
+    function runAllTimers(): typeof vi;
+    function runOnlyPendingTimers(): typeof vi;
+    function getTimerCount(): number;
+    function clearAllTimers(): void;
+    function isFakeTimers(): boolean;
     function spyOn<T extends object, K extends keyof T>(
       obj: T,
       methodOrPropertyValue: K,
@@ -184,6 +191,13 @@ declare module "bun:test" {
     resetAllMocks: typeof jest.resetAllMocks;
     useFakeTimers: typeof jest.useFakeTimers;
     useRealTimers: typeof jest.useRealTimers;
+    advanceTimersByTime: typeof jest.advanceTimersByTime;
+    advanceTimersToNextTimer: typeof jest.advanceTimersToNextTimer;
+    runAllTimers: typeof jest.runAllTimers;
+    runOnlyPendingTimers: typeof jest.runOnlyPendingTimers;
+    getTimerCount: typeof jest.getTimerCount;
+    clearAllTimers: typeof jest.clearAllTimers;
+    isFakeTimers: typeof jest.isFakeTimers;
   };
 
   interface FunctionLike {

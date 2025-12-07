@@ -1303,7 +1303,7 @@ pub const internal = struct {
         // However, we're almost out of time to use 32 bit timestamps for anything
         // So we set the epoch to January 1st, 2024 instead.
         pub fn getCacheTimestamp() u32 {
-            return @truncate(bun.getRoughTickCountMs() / 1000);
+            return @truncate(bun.getRoughTickCountMs(.allow_mocked_time) / 1000);
         }
 
         fn isNearlyFull(this: *This) bool {
@@ -2018,7 +2018,7 @@ pub const Resolver = struct {
         }
 
         this.ref();
-        this.event_loop_timer.next = (now orelse &timespec.now()).addMs(1000);
+        this.event_loop_timer.next = (now orelse &timespec.now(.allow_mocked_time)).addMs(1000);
         this.vm.timer.incrementTimerRef(1);
         this.vm.timer.insert(&this.event_loop_timer);
         return true;

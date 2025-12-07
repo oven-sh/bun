@@ -18,6 +18,10 @@ pub export fn Bun__drainMicrotasks() void {
 }
 
 export fn Bun__readOriginTimer(vm: *jsc.VirtualMachine) u64 {
+    // Check if performance.now() is overridden (for fake timers)
+    if (vm.overridden_performance_now) |overridden| {
+        return overridden;
+    }
     return vm.origin_timer.read();
 }
 

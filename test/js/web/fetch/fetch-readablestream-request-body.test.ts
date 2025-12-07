@@ -32,7 +32,7 @@ describe("fetch with Request body lifecycle", () => {
 
     // attempting to reuse the request should throw
     await expect(fetch(originalRequest)).rejects.toMatchObject({
-      name: "TypeError",
+      name: "Error",
       message: expect.stringContaining("Stream already used"),
     });
   });

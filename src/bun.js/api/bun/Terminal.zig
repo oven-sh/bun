@@ -183,10 +183,11 @@ pub fn constructor(
     switch (terminal.writer.start(pty_result.write_fd, true)) {
         .result => {},
         .err => {
-            // Writer never started, release all 3 refs
-            terminal.deref();
-            terminal.deref();
-            terminal.deref();
+            // Writer never started - manually release all 3 refs (JS, reader, writer)
+            // since no callbacks will fire
+            terminal.deref(); // JS ref
+            terminal.deref(); // reader ref
+            terminal.deref(); // writer ref
             return globalObject.throw("Failed to start terminal writer", .{});
         },
     }
@@ -194,12 +195,12 @@ pub fn constructor(
     // Start reader with the read fd
     switch (terminal.reader.start(pty_result.read_fd, true)) {
         .err => {
-            // Reader never started - shut down writer and release refs
-            // Writer.close() will deregister from event loop and close fd
+            // Reader never started but writer was started
+            // Close writer (will trigger onWriterDone -> deref for writer's ref)
             terminal.writer.close();
-            // Release reader + JS refs (writer will release its own via onWriterDone)
-            terminal.deref();
-            terminal.deref();
+            // Manually release JS and reader refs
+            terminal.deref(); // JS ref
+            terminal.deref(); // reader ref
             return globalObject.throw("Failed to start terminal reader", .{});
         },
         .result => {
@@ -306,10 +307,11 @@ pub fn createFromSpawn(
     switch (terminal.writer.start(pty_result.write_fd, true)) {
         .result => {},
         .err => {
-            // Writer never started, release all 3 refs
-            terminal.deref();
-            terminal.deref();
-            terminal.deref();
+            // Writer never started - manually release all 3 refs (JS, reader, writer)
+            // since no callbacks will fire
+            terminal.deref(); // JS ref
+            terminal.deref(); // reader ref
+            terminal.deref(); // writer ref
             return error.WriterStartFailed;
         },
     }
@@ -317,12 +319,12 @@ pub fn createFromSpawn(
     // Start reader with the read fd
     switch (terminal.reader.start(pty_result.read_fd, true)) {
         .err => {
-            // Reader never started - shut down writer and release refs
-            // Writer.close() will deregister from event loop and close fd
+            // Reader never started but writer was started
+            // Close writer (will trigger onWriterDone -> deref for writer's ref)
             terminal.writer.close();
-            // Release reader + JS refs (writer will release its own via onWriterDone)
-            terminal.deref();
-            terminal.deref();
+            // Manually release JS and reader refs
+            terminal.deref(); // JS ref
+            terminal.deref(); // reader ref
             return error.ReaderStartFailed;
         },
         .result => {

@@ -533,9 +533,9 @@ namespace SpawnOptions {
 
 interface Subprocess extends AsyncDisposable {
   readonly stdin: FileSink | number | undefined | null;
-  readonly stdout: ReadableStream<Uint8Array> | number | undefined | null;
-  readonly stderr: ReadableStream<Uint8Array> | number | undefined | null;
-  readonly readable: ReadableStream<Uint8Array> | number | undefined | null;
+  readonly stdout: ReadableStream<Uint8Array<ArrayBuffer>> | number | undefined | null;
+  readonly stderr: ReadableStream<Uint8Array<ArrayBuffer>> | number | undefined | null;
+  readonly readable: ReadableStream<Uint8Array<ArrayBuffer>> | number | undefined | null;
   readonly terminal: Terminal | undefined;
   readonly pid: number;
   readonly exited: Promise<number>;
@@ -567,7 +567,7 @@ interface TerminalOptions {
   cols?: number;
   rows?: number;
   name?: string;
-  data?: (terminal: Terminal, data: Uint8Array) => void;
+  data?: (terminal: Terminal, data: Uint8Array<ArrayBuffer>) => void;
   exit?: (terminal: Terminal, exitCode: number, signal: string | null) => void;
   drain?: (terminal: Terminal) => void;
 }
@@ -576,7 +576,7 @@ interface Terminal extends AsyncDisposable {
   readonly stdin: number;
   readonly stdout: number;
   readonly closed: boolean;
-  write(data: string | ArrayBufferView | ArrayBuffer): number;
+  write(data: string | BufferSource): number;
   resize(cols: number, rows: number): void;
   setRawMode(enabled: boolean): void;
   ref(): void;

@@ -365,9 +365,15 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
     });
 
     test("supports asyncDispose", async () => {
-      await using terminal = new Bun.Terminal({});
-      expect(terminal.closed).toBe(false);
-      // terminal is auto-closed after this block
+      let terminalRef: Bun.Terminal | undefined;
+      {
+        await using terminal = new Bun.Terminal({});
+        terminalRef = terminal;
+        expect(terminal.closed).toBe(false);
+        // terminal is auto-closed after this block
+      }
+      // Verify terminal was closed after the using block
+      expect(terminalRef!.closed).toBe(true);
     });
 
     test("asyncDispose returns a promise", async () => {

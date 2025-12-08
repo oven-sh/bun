@@ -6151,7 +6151,7 @@ declare module "bun" {
      * @param terminal The terminal instance
      * @param data The data received as a Uint8Array
      */
-    data?: (terminal: Terminal, data: Uint8Array) => void;
+    data?: (terminal: Terminal, data: Uint8Array<ArrayBuffer>) => void;
     /**
      * Callback invoked when the terminal exits.
      * @param terminal The terminal instance
@@ -6217,10 +6217,10 @@ declare module "bun" {
 
     /**
      * Write data to the terminal.
-     * @param data The data to write (string or ArrayBuffer)
+     * @param data The data to write (string or BufferSource)
      * @returns The number of bytes written
      */
-    write(data: string | ArrayBufferView | ArrayBuffer): number;
+    write(data: string | BufferSource): number;
 
     /**
      * Resize the terminal.

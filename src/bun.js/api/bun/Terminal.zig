@@ -155,6 +155,7 @@ pub fn constructor(
         return switch (err) {
             error.OpenPtyFailed => globalObject.throw("Failed to open PTY", .{}),
             error.DupFailed => globalObject.throw("Failed to duplicate PTY file descriptor", .{}),
+            error.NotSupported => globalObject.throw("PTY not supported on this platform", .{}),
         };
     };
 
@@ -385,7 +386,9 @@ const PtyResult = struct {
     slave: bun.FileDescriptor,
 };
 
-fn createPty(cols: u16, rows: u16) !PtyResult {
+const CreatePtyError = error{ OpenPtyFailed, DupFailed, NotSupported };
+
+fn createPty(cols: u16, rows: u16) CreatePtyError!PtyResult {
     if (comptime Environment.isPosix) {
         return createPtyPosix(cols, rows);
     } else {
@@ -833,6 +836,13 @@ pub fn loop(this: *Terminal) *bun.Async.Loop {
 
 fn deinit(this: *Terminal) void {
     log("deinit", .{});
+    // Set reader/writer done flags to prevent extra deref calls in closeInternal
+    this.flags.reader_done = true;
+    this.flags.writer_done = true;
+    // Close all FDs if not already closed (handles constructor error paths)
+    // closeInternal() checks flags.closed and returns early on subsequent calls,
+    // so this is safe even if finalize() already called it
+    this.closeInternal();
     bun.default_allocator.free(this.term_name);
     this.reader.deinit();
     this.writer.deinit();
@@ -842,6 +852,7 @@ fn deinit(this: *Terminal) void {
 /// Finalize - called by GC when object is collected
 pub fn finalize(this: *Terminal) callconv(.c) void {
     log("finalize", .{});
+    jsc.markBinding(@src());
     this.this_value.finalize();
     this.flags.finalized = true;
     this.closeInternal();

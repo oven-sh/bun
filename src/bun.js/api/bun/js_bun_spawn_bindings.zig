@@ -425,6 +425,7 @@ pub fn spawnMaybeSync(
                             return switch (err) {
                                 error.OpenPtyFailed => globalThis.throw("Failed to open PTY", .{}),
                                 error.DupFailed => globalThis.throw("Failed to duplicate PTY file descriptor", .{}),
+                                error.NotSupported => globalThis.throw("PTY not supported on this platform", .{}),
                                 error.WriterStartFailed => globalThis.throw("Failed to start terminal writer", .{}),
                                 error.ReaderStartFailed => globalThis.throw("Failed to start terminal reader", .{}),
                                 error.OutOfMemory => globalThis.throwOutOfMemory(),

@@ -584,11 +584,15 @@ fn termiosFlagToU32(comptime T: type, flag: T) u32 {
     return @truncate(int_value);
 }
 
-/// Helper to convert u32 to termios flag type
-fn u32ToTermiosFlag(comptime T: type, value: u32) T {
+/// Helper to convert u32 to termios flag type, preserving upper bits from current value
+/// On macOS, termios flags are 64-bit so we need to preserve upper bits when setting
+fn u32ToTermiosFlag(comptime T: type, value: u32, current: T) T {
     const Int = @typeInfo(T).@"struct".backing_integer orelse @compileError("expected packed struct");
-    const extended: Int = value;
-    return @bitCast(extended);
+    const current_int: Int = @bitCast(current);
+    // Mask off lower 32 bits and replace with new value, preserving upper bits
+    const upper_bits = current_int & ~@as(Int, 0xFFFFFFFF);
+    const new_value: Int = upper_bits | @as(Int, value);
+    return @bitCast(new_value);
 }
 
 /// Get input flags (c_iflag) - returns 0 if closed or error
@@ -608,7 +612,7 @@ pub fn setInputFlags(this: *Terminal, _: *jsc.JSGlobalObject, value: JSValue) vo
         return;
     }
     var termios_data = getTermios(this.master_fd) orelse return;
-    termios_data.iflag = u32ToTermiosFlag(@TypeOf(termios_data.iflag), value.toU32());
+    termios_data.iflag = u32ToTermiosFlag(@TypeOf(termios_data.iflag), value.toU32(), termios_data.iflag);
     _ = setTermios(this.master_fd, &termios_data);
 }
 
@@ -629,7 +633,7 @@ pub fn setOutputFlags(this: *Terminal, _: *jsc.JSGlobalObject, value: JSValue) v
         return;
     }
     var termios_data = getTermios(this.master_fd) orelse return;
-    termios_data.oflag = u32ToTermiosFlag(@TypeOf(termios_data.oflag), value.toU32());
+    termios_data.oflag = u32ToTermiosFlag(@TypeOf(termios_data.oflag), value.toU32(), termios_data.oflag);
     _ = setTermios(this.master_fd, &termios_data);
 }
 
@@ -650,7 +654,7 @@ pub fn setLocalFlags(this: *Terminal, _: *jsc.JSGlobalObject, value: JSValue) vo
         return;
     }
     var termios_data = getTermios(this.master_fd) orelse return;
-    termios_data.lflag = u32ToTermiosFlag(@TypeOf(termios_data.lflag), value.toU32());
+    termios_data.lflag = u32ToTermiosFlag(@TypeOf(termios_data.lflag), value.toU32(), termios_data.lflag);
     _ = setTermios(this.master_fd, &termios_data);
 }
 
@@ -671,7 +675,7 @@ pub fn setControlFlags(this: *Terminal, _: *jsc.JSGlobalObject, value: JSValue) 
         return;
     }
     var termios_data = getTermios(this.master_fd) orelse return;
-    termios_data.cflag = u32ToTermiosFlag(@TypeOf(termios_data.cflag), value.toU32());
+    termios_data.cflag = u32ToTermiosFlag(@TypeOf(termios_data.cflag), value.toU32(), termios_data.cflag);
     _ = setTermios(this.master_fd, &termios_data);
 }
 

@@ -933,24 +933,18 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
   describe("stress tests", () => {
     // Helper to count open file descriptors (Linux/macOS)
     function countOpenFds(): number {
+      const { readdirSync } = require("fs");
       try {
-        const { readdirSync } = require("fs");
+        // Linux: /proc/self/fd
         return readdirSync("/proc/self/fd").length;
       } catch {
-        // macOS or /proc not available - use a different approach
-        // Count by trying to dup fds
-        let count = 0;
-        for (let fd = 0; fd < 1024; fd++) {
-          try {
-            const { fcntlSync } = require("fs");
-            // This will throw if fd is not open
-            Bun.file(`/dev/fd/${fd}`).size;
-            count++;
-          } catch {
-            // fd not open, ignore
-          }
+        try {
+          // macOS: /dev/fd
+          return readdirSync("/dev/fd").length;
+        } catch {
+          // Fallback: return -1 to skip FD-based assertions
+          return -1;
         }
-        return count;
       }
     }
 
@@ -968,7 +962,9 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
 
       // FD count should have increased (each terminal uses ~4 fds: master, read, write, slave)
       const openFds = countOpenFds();
-      expect(openFds).toBeGreaterThan(baselineFds);
+      if (baselineFds >= 0 && openFds >= 0) {
+        expect(openFds).toBeGreaterThan(baselineFds);
+      }
 
       // Close all terminals
       for (const terminal of terminals) {
@@ -982,9 +978,11 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
 
       // FD count should return to near baseline (within acceptable delta for GC timing)
       const finalFds = countOpenFds();
-      const fdDelta = finalFds - baselineFds;
-      // Allow some delta for async cleanup, but should be much less than the opened count
-      expect(fdDelta).toBeLessThan(TERMINAL_COUNT * 2);
+      if (baselineFds >= 0 && finalFds >= 0) {
+        const fdDelta = finalFds - baselineFds;
+        // Allow some delta for async cleanup, but should be much less than the opened count
+        expect(fdDelta).toBeLessThan(TERMINAL_COUNT * 2);
+      }
     });
 
     test("can write many times rapidly", () => {

@@ -312,7 +312,10 @@ pub fn createFromSpawn(
     // Start reader with the read fd
     switch (terminal.reader.start(pty_result.read_fd, true)) {
         .err => {
-            // Reader never started, release reader + JS refs (writer will release its own)
+            // Reader never started - shut down writer and release refs
+            // Writer.close() will deregister from event loop and close fd
+            terminal.writer.close();
+            // Release reader + JS refs (writer will release its own via onWriterDone)
             terminal.deref();
             terminal.deref();
             return error.ReaderStartFailed;
@@ -800,8 +803,12 @@ pub fn onReadChunk(this: *Terminal, chunk: []const u8, has_more: bun.io.ReadStat
     const callback = js.gc.get(.data, this_jsvalue) orelse return true;
 
     const globalThis = this.globalThis;
+    const duped = bun.default_allocator.dupe(u8, chunk) catch |err| {
+        log("Terminal data allocation OOM: chunk_size={d}, error={any}", .{ chunk.len, err });
+        return true;
+    };
     const data = jsc.MarkedArrayBuffer.fromBytes(
-        bun.default_allocator.dupe(u8, chunk) catch return true,
+        duped,
         bun.default_allocator,
         .Uint8Array,
     ).toNodeBuffer(globalThis);

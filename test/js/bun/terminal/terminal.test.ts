@@ -930,3 +930,178 @@ describe("Bun.Terminal", () => {
     });
   });
 });
+
+describe("Bun.spawn with terminal option", () => {
+  test("creates subprocess with terminal attached", async () => {
+    const dataChunks: Uint8Array[] = [];
+
+    const proc = Bun.spawn(["echo", "hello from terminal"], {
+      terminal: {
+        cols: 80,
+        rows: 24,
+        data: (terminal: Bun.Terminal, data: Uint8Array) => {
+          dataChunks.push(data);
+        },
+      },
+    });
+
+    expect(proc.terminal).toBeDefined();
+    expect(proc.terminal).toBeInstanceOf(Object);
+    // stdin returns -1 for spawn-integrated terminals (parent's copy of slave is closed)
+    expect(proc.terminal!.stdin).toBe(-1);
+    // stdout (master fd) is still valid
+    expect(proc.terminal!.stdout).toBeGreaterThanOrEqual(0);
+
+    await proc.exited;
+
+    // Should have received data through the terminal
+    const combinedOutput = Buffer.concat(dataChunks).toString();
+    expect(combinedOutput).toContain("hello from terminal");
+
+    // Terminal should still be accessible after process exit
+    expect(proc.terminal!.closed).toBe(false);
+    proc.terminal!.close();
+    expect(proc.terminal!.closed).toBe(true);
+  });
+
+  test("terminal option creates proper PTY for interactive programs", async () => {
+    const dataChunks: Uint8Array[] = [];
+    let terminalFromCallback: Bun.Terminal | undefined;
+
+    // Note: TERM env var needs to be set manually - it's not set automatically from terminal.name
+    const proc = Bun.spawn([bunExe(), "-e", "console.log('TERM=' + process.env.TERM, 'TTY=' + process.stdout.isTTY)"], {
+      env: { ...bunEnv, TERM: "xterm-256color" },
+      terminal: {
+        cols: 120,
+        rows: 40,
+        name: "xterm-256color",
+        data: (terminal: Bun.Terminal, data: Uint8Array) => {
+          terminalFromCallback = terminal;
+          dataChunks.push(data);
+        },
+      },
+    });
+
+    await proc.exited;
+
+    // The terminal from callback should be the same as proc.terminal
+    expect(terminalFromCallback).toBe(proc.terminal);
+
+    // Check the output shows it's a TTY
+    const combinedOutput = Buffer.concat(dataChunks).toString();
+    expect(combinedOutput).toContain("TTY=true");
+    expect(combinedOutput).toContain("TERM=xterm-256color");
+
+    proc.terminal!.close();
+  });
+
+  test("terminal.write sends data to subprocess stdin", async () => {
+    const dataChunks: Uint8Array[] = [];
+
+    const proc = Bun.spawn([bunExe(), "-e", "process.stdin.on('data', d => console.log('GOT:' + d))"], {
+      env: bunEnv,
+      terminal: {
+        data: (_terminal: Bun.Terminal, data: Uint8Array) => {
+          dataChunks.push(data);
+        },
+      },
+    });
+
+    // Wait a bit for the subprocess to be ready
+    await Bun.sleep(100);
+
+    // Write to the terminal - in a PTY, input is echoed back
+    proc.terminal!.write("hello from parent\n");
+
+    // Wait for response
+    await Bun.sleep(200);
+
+    // Close stdin to let the subprocess exit
+    proc.terminal!.close();
+
+    await proc.exited;
+
+    // In a PTY, input is echoed back, so we should see our message in the output
+    const combinedOutput = Buffer.concat(dataChunks).toString();
+    expect(combinedOutput).toContain("hello from parent");
+  });
+
+  test("terminal getter returns same object each time", () => {
+    const proc = Bun.spawn(["echo", "test"], {
+      terminal: {},
+    });
+
+    const terminal1 = proc.terminal;
+    const terminal2 = proc.terminal;
+
+    expect(terminal1).toBe(terminal2);
+
+    proc.terminal!.close();
+  });
+
+  test("terminal is undefined when not using terminal option", () => {
+    const proc = Bun.spawn(["echo", "test"], {});
+
+    expect(proc.terminal).toBeUndefined();
+  });
+
+  test("stdin/stdout/stderr return null when terminal is used", async () => {
+    const proc = Bun.spawn(["echo", "test"], {
+      terminal: {},
+    });
+
+    // When terminal is used, stdin/stdout/stderr all go through the terminal
+    expect(proc.stdin).toBeNull();
+    expect(proc.stdout).toBeNull();
+    expect(proc.stderr).toBeNull();
+
+    await proc.exited;
+    proc.terminal!.close();
+  });
+
+  test("terminal resize works on spawned process", async () => {
+    const proc = Bun.spawn(
+      [bunExe(), "-e", "process.stdout.write(process.stdout.columns + 'x' + process.stdout.rows)"],
+      {
+        env: bunEnv,
+        terminal: {
+          cols: 80,
+          rows: 24,
+        },
+      },
+    );
+
+    // Resize while running
+    proc.terminal!.resize(120, 40);
+
+    await proc.exited;
+    proc.terminal!.close();
+  });
+
+  test("terminal exit callback is called when process exits", async () => {
+    let exitCalled = false;
+    let exitTerminal: Bun.Terminal | undefined;
+    const { promise, resolve } = Promise.withResolvers<void>();
+
+    const proc = Bun.spawn(["echo", "test"], {
+      terminal: {
+        exit: (terminal: Bun.Terminal) => {
+          exitCalled = true;
+          exitTerminal = terminal;
+          resolve();
+        },
+      },
+    });
+
+    await proc.exited;
+
+    // Wait for the exit callback with timeout
+    await Promise.race([promise, Bun.sleep(500)]);
+
+    // The exit callback should be called when EOF is received on the PTY
+    expect(exitCalled).toBe(true);
+    expect(exitTerminal).toBe(proc.terminal);
+
+    proc.terminal!.close();
+  });
+});

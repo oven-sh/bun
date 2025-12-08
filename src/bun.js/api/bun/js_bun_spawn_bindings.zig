@@ -142,10 +142,18 @@ pub fn spawnMaybeSync(
     var windows_hide: bool = false;
     var windows_verbatim_arguments: bool = false;
     var abort_signal: ?*jsc.WebCore.AbortSignal = null;
+    var terminal_info: ?Terminal.SpawnTerminalResult = null;
+    var terminal_js_value: jsc.JSValue = .zero; // Saved separately for caching after terminal_info is cleared
     defer {
         // Ensure we clean it up on error.
         if (abort_signal) |signal| {
             signal.unref();
+        }
+        // If terminal was created but spawn failed, clean it up
+        if (terminal_info) |info| {
+            info.terminal.closeInternal();
+            // Release the JS ref since finalize won't be called (wrapper not rooted)
+            info.terminal.deref();
         }
     }
 
@@ -350,6 +358,77 @@ pub fn spawnMaybeSync(
                     const value = try val.coerce(i64, globalThis);
                     if (value > 0 and (stdio[0].isPiped() or stdio[1].isPiped() or stdio[2].isPiped())) {
                         maxBuffer = value;
+                    }
+                }
+            }
+
+            // Parse terminal option (only for async spawn, not spawnSync)
+            if (comptime !is_sync) {
+                if (Environment.isPosix) {
+                    if (try args.getTruthy(globalThis, "terminal")) |terminal_opts| {
+                        if (!terminal_opts.isObject()) {
+                            return globalThis.throwInvalidArguments("terminal must be an object", .{});
+                        }
+
+                        // Parse terminal options
+                        var term_options = Terminal.SpawnTerminalOptions{};
+
+                        if (try terminal_opts.getOptional(globalThis, "cols", JSValue)) |v| {
+                            if (v.isNumber()) {
+                                const n = v.toInt32();
+                                if (n > 0 and n <= 65535) term_options.cols = @intCast(n);
+                            }
+                        }
+
+                        if (try terminal_opts.getOptional(globalThis, "rows", JSValue)) |v| {
+                            if (v.isNumber()) {
+                                const n = v.toInt32();
+                                if (n > 0 and n <= 65535) term_options.rows = @intCast(n);
+                            }
+                        }
+
+                        if (try terminal_opts.getOptional(globalThis, "name", JSValue)) |v| {
+                            if (v.isString()) {
+                                const str = try v.getZigString(globalThis);
+                                if (str.len > 0) {
+                                    term_options.term_name = str.slice();
+                                }
+                            }
+                        }
+
+                        // Get callbacks
+                        if (try terminal_opts.getOptional(globalThis, "data", JSValue)) |v| {
+                            if (v.isCell() and v.isCallable()) {
+                                term_options.data_callback = v.withAsyncContextIfNeeded(globalThis);
+                            }
+                        }
+                        if (try terminal_opts.getOptional(globalThis, "exit", JSValue)) |v| {
+                            if (v.isCell() and v.isCallable()) {
+                                term_options.exit_callback = v.withAsyncContextIfNeeded(globalThis);
+                            }
+                        }
+                        if (try terminal_opts.getOptional(globalThis, "drain", JSValue)) |v| {
+                            if (v.isCell() and v.isCallable()) {
+                                term_options.drain_callback = v.withAsyncContextIfNeeded(globalThis);
+                            }
+                        }
+
+                        // Create the terminal
+                        terminal_info = Terminal.createFromSpawn(globalThis, term_options) catch |err| {
+                            return switch (err) {
+                                error.OpenPtyFailed => globalThis.throw("Failed to open PTY", .{}),
+                                error.DupFailed => globalThis.throw("Failed to duplicate PTY file descriptor", .{}),
+                                error.WriterStartFailed => globalThis.throw("Failed to start terminal writer", .{}),
+                                error.ReaderStartFailed => globalThis.throw("Failed to start terminal reader", .{}),
+                                error.OutOfMemory => globalThis.throwOutOfMemory(),
+                            };
+                        };
+
+                        // Override stdin, stdout, stderr to use the terminal's slave fd
+                        const slave_fd = terminal_info.?.terminal.getSlaveFd();
+                        stdio[0] = .{ .fd = slave_fd };
+                        stdio[1] = .{ .fd = slave_fd };
+                        stdio[2] = .{ .fd = slave_fd };
                     }
                 }
             }
@@ -633,7 +712,20 @@ pub fn spawnMaybeSync(
         .killSignal = killSignal,
         .stderr_maxbuf = subprocess.stderr_maxbuf,
         .stdout_maxbuf = subprocess.stdout_maxbuf,
+        .terminal = if (terminal_info) |info| info.terminal else null,
     };
+
+    // Clear terminal_info to prevent cleanup in defer (subprocess now owns it)
+    // Save the JS value first for caching later
+    // Also close the parent's copy of slave_fd - the child has its own copy after fork
+    // This ensures EOF is received on the master when the child exits
+    if (terminal_info) |info| {
+        terminal_js_value = info.js_value;
+        // Close parent's slave fd - child has its own copy after fork
+        // This is critical: when child exits, EOF will be received on master side
+        info.terminal.closeSlaveFd();
+        terminal_info = null;
+    }
 
     subprocess.process.setExitHandler(subprocess);
 
@@ -730,6 +822,11 @@ pub fn spawnMaybeSync(
 
         if (stdio[0] == .readable_stream) {
             jsc.Codegen.JSSubprocess.stdinSetCached(out, globalThis, stdio[0].readable_stream.value);
+        }
+
+        // Cache the terminal JS value if a terminal was created
+        if (terminal_js_value != .zero) {
+            jsc.Codegen.JSSubprocess.terminalSetCached(out, globalThis, terminal_js_value);
         }
 
         switch (subprocess.process.watch()) {
@@ -1026,3 +1123,4 @@ const Writable = Subprocess.Writable;
 const Process = bun.spawn.Process;
 const Rusage = bun.spawn.Rusage;
 const Stdio = bun.spawn.Stdio;
+const Terminal = @import("./Terminal.zig");

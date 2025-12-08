@@ -20,6 +20,9 @@ stderr: Readable,
 stdio_pipes: if (Environment.isWindows) std.ArrayListUnmanaged(StdioResult) else std.ArrayListUnmanaged(bun.FileDescriptor) = .{},
 pid_rusage: ?Rusage = null,
 
+/// Terminal attached to this subprocess (if spawned with terminal option)
+terminal: ?*Terminal = null,
+
 globalThis: *jsc.JSGlobalObject,
 observable_getters: std.enums.EnumSet(enum {
     stdin,
@@ -272,21 +275,40 @@ pub const PipeReader = @import("./subprocess/SubprocessPipeReader.zig");
 pub const Readable = @import("./subprocess/Readable.zig").Readable;
 
 pub fn getStderr(this: *Subprocess, globalThis: *JSGlobalObject) bun.JSError!JSValue {
+    // When terminal is used, stderr goes through the terminal
+    if (this.terminal != null) {
+        return .null;
+    }
     this.observable_getters.insert(.stderr);
     return this.stderr.toJS(globalThis, this.hasExited());
 }
 
 pub fn getStdin(this: *Subprocess, globalThis: *JSGlobalObject) bun.JSError!JSValue {
+    // When terminal is used, stdin goes through the terminal
+    if (this.terminal != null) {
+        return .null;
+    }
     this.observable_getters.insert(.stdin);
     return this.stdin.toJS(globalThis, this);
 }
 
 pub fn getStdout(this: *Subprocess, globalThis: *JSGlobalObject) bun.JSError!JSValue {
+    // When terminal is used, stdout goes through the terminal
+    if (this.terminal != null) {
+        return .null;
+    }
     this.observable_getters.insert(.stdout);
     // NOTE: ownership of internal buffers is transferred to the JSValue, which
     // gets cached on JSSubprocess (created via bindgen). This makes it
     // re-accessable to JS code but not via `this.stdout`, which is now `.closed`.
     return this.stdout.toJS(globalThis, this.hasExited());
+}
+
+pub fn getTerminal(this: *Subprocess, globalThis: *JSGlobalObject) JSValue {
+    if (this.terminal) |terminal| {
+        return terminal.toJS(globalThis);
+    }
+    return .js_undefined;
 }
 
 pub fn asyncDispose(this: *Subprocess, global: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
@@ -901,6 +923,7 @@ pub const spawn = js_bun_spawn_bindings.spawn;
 const IPC = @import("../../ipc.zig");
 const js_bun_spawn_bindings = @import("./js_bun_spawn_bindings.zig");
 const node_cluster_binding = @import("../../node/node_cluster_binding.zig");
+const Terminal = @import("./Terminal.zig");
 const std = @import("std");
 
 const bun = @import("bun");

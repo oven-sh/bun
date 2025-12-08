@@ -246,6 +246,139 @@ pub fn constructor(
     return terminal;
 }
 
+/// Options for creating a Terminal from Bun.spawn
+pub const SpawnTerminalOptions = struct {
+    cols: u16 = 80,
+    rows: u16 = 24,
+    term_name: []const u8 = "xterm-256color",
+    data_callback: ?JSValue = null,
+    exit_callback: ?JSValue = null,
+    drain_callback: ?JSValue = null,
+};
+
+/// Result from creating a Terminal from spawn
+pub const SpawnTerminalResult = struct {
+    terminal: *Terminal,
+    js_value: jsc.JSValue,
+};
+
+/// Create a Terminal from Bun.spawn options (not from JS constructor)
+/// Returns the Terminal and its JS wrapper value
+/// The slave_fd should be used for the subprocess's stdin/stdout/stderr
+pub fn createFromSpawn(
+    globalObject: *jsc.JSGlobalObject,
+    options: SpawnTerminalOptions,
+) !SpawnTerminalResult {
+    // Duplicate term_name since we need to own it
+    const term_name = bun.default_allocator.dupe(u8, options.term_name) catch {
+        return error.OutOfMemory;
+    };
+    errdefer bun.default_allocator.free(term_name);
+
+    // Create PTY
+    const pty_result = createPty(options.cols, options.rows) catch |err| {
+        return err;
+    };
+
+    const terminal = bun.new(Terminal, .{
+        // 3 refs: JS side, reader, writer
+        .ref_count = .initExactRefs(3),
+        .master_fd = pty_result.master,
+        .read_fd = pty_result.read_fd,
+        .write_fd = pty_result.write_fd,
+        .slave_fd = pty_result.slave,
+        .cols = options.cols,
+        .rows = options.rows,
+        .term_name = term_name,
+        .event_loop_handle = jsc.EventLoopHandle.init(globalObject.bunVM().eventLoop()),
+        .globalThis = globalObject,
+    });
+
+    // Initialize reader with the read fd
+    terminal.reader = IOReader.init(@This());
+    terminal.reader.setParent(terminal);
+
+    // Set writer parent
+    terminal.writer.parent = terminal;
+
+    // Start writer with the write fd
+    switch (terminal.writer.start(pty_result.write_fd, true)) {
+        .result => {},
+        .err => {
+            // Writer never started, release all 3 refs
+            terminal.deref();
+            terminal.deref();
+            terminal.deref();
+            return error.WriterStartFailed;
+        },
+    }
+
+    // Start reader with the read fd
+    switch (terminal.reader.start(pty_result.read_fd, true)) {
+        .err => {
+            // Reader never started, release reader + JS refs (writer will release its own)
+            terminal.deref();
+            terminal.deref();
+            return error.ReaderStartFailed;
+        },
+        .result => {
+            if (comptime Environment.isPosix) {
+                if (terminal.reader.handle == .poll) {
+                    const poll = terminal.reader.handle.poll;
+                    // PTY behaves like a pipe, not a socket
+                    terminal.reader.flags.nonblocking = true;
+                    terminal.reader.flags.pollable = true;
+                    poll.flags.insert(.nonblocking);
+                }
+            }
+            terminal.flags.reader_started = true;
+        },
+    }
+
+    // Start reading data
+    terminal.reader.read();
+
+    // Create the JS wrapper using toJS (this creates the JSTerminal)
+    const this_value = terminal.toJS(globalObject);
+
+    // Store the this_value (JSValue wrapper) - start with weak ref
+    terminal.this_value = jsc.JSRef.initWeak(this_value);
+
+    // Store callbacks via generated gc setters (prevents GC of callbacks while terminal is alive)
+    if (options.data_callback) |cb| {
+        if (cb.isCell() and cb.isCallable()) {
+            js.gc.set(.data, this_value, globalObject, cb);
+        }
+    }
+    if (options.exit_callback) |cb| {
+        if (cb.isCell() and cb.isCallable()) {
+            js.gc.set(.exit, this_value, globalObject, cb);
+        }
+    }
+    if (options.drain_callback) |cb| {
+        if (cb.isCell() and cb.isCallable()) {
+            js.gc.set(.drain, this_value, globalObject, cb);
+        }
+    }
+
+    return .{ .terminal = terminal, .js_value = this_value };
+}
+
+/// Get the slave fd for subprocess to use
+pub fn getSlaveFd(this: *Terminal) bun.FileDescriptor {
+    return this.slave_fd;
+}
+
+/// Close the parent's copy of slave_fd after fork
+/// The child process has its own copy - closing the parent's ensures
+/// EOF is received on the master side when the child exits
+pub fn closeSlaveFd(this: *Terminal) void {
+    if (this.slave_fd != bun.invalid_fd) {
+        this.slave_fd.close();
+        this.slave_fd = bun.invalid_fd;
+    }
+}
+
 const PtyResult = struct {
     master: bun.FileDescriptor,
     read_fd: bun.FileDescriptor,
@@ -358,8 +491,9 @@ pub fn getStdout(this: *Terminal, _: *jsc.JSGlobalObject) JSValue {
 }
 
 /// Get the stdin file descriptor (slave PTY fd - used by child processes)
+/// Returns -1 if closed or if slave_fd was closed (e.g., after spawn integration)
 pub fn getStdin(this: *Terminal, _: *jsc.JSGlobalObject) JSValue {
-    if (this.flags.closed) {
+    if (this.flags.closed or this.slave_fd == bun.invalid_fd) {
         return JSValue.jsNumber(-1);
     }
     return JSValue.jsNumber(this.slave_fd.cast());
@@ -535,7 +669,7 @@ pub fn asyncDispose(
     return jsc.JSPromise.resolvedPromiseValue(globalObject, .js_undefined);
 }
 
-fn closeInternal(this: *Terminal) void {
+pub fn closeInternal(this: *Terminal) void {
     if (this.flags.closed) return;
     this.flags.closed = true;
 

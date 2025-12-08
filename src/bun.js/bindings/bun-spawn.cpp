@@ -120,12 +120,10 @@ extern "C" ssize_t posix_spawn_bun(
     sigprocmask(SIG_SETMASK, &blockall, &oldmask);
     pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &cs);
 
-    // Use vfork on Linux (faster, shares memory until exec), fork on macOS (vfork is deprecated)
-#if OS(LINUX)
-    pid_t child = vfork();
-#else
+    // Use fork() for POSIX compliance. While vfork() would be faster,
+    // POSIX restricts vfork children to only calling _exit() or exec*(),
+    // but we need to do complex setup (setsid, ioctl, dup2, etc.) before exec.
     pid_t child = fork();
-#endif
 
     const auto childFailed = [&]() -> ssize_t {
         res = errno;

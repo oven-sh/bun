@@ -399,6 +399,8 @@ fn createPtyPosix(cols: u16, rows: u16) !PtyResult {
             winp: ?*const Winsize,
         ) c_int;
 
+        // Termios is required for the openpty() extern signature even though we pass null.
+        // Kept for type correctness of the C function declaration.
         const Termios = extern struct {
             c_iflag: u32,
             c_oflag: u32,
@@ -716,7 +718,11 @@ fn onWriterReady(this: *Terminal) void {
 
 fn onWriterError(this: *Terminal, err: bun.sys.Error) void {
     log("onWriterError: {any}", .{err});
-    _ = this;
+    // On write error, close the terminal to prevent further operations
+    // This handles cases like broken pipe when the child process exits
+    if (!this.flags.closed) {
+        this.closeInternal();
+    }
 }
 
 fn onWrite(this: *Terminal, amount: usize, status: bun.io.WriteStatus) void {
@@ -819,6 +825,7 @@ fn deinit(this: *Terminal) void {
     log("deinit", .{});
     bun.default_allocator.free(this.term_name);
     this.reader.deinit();
+    this.writer.deinit();
     bun.destroy(this);
 }
 

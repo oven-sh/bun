@@ -167,7 +167,7 @@ describe("Bun.Terminal", () => {
     test("can write large data", () => {
       const terminal = new Bun.Terminal({});
 
-      const largeData = "x".repeat(10000);
+      const largeData = Buffer.alloc(10000, "x").toString();
       const written = terminal.write(largeData);
       expect(written).toBeGreaterThan(0);
 
@@ -508,7 +508,7 @@ describe("Bun.Terminal", () => {
       });
 
       // Write a large amount of data
-      const largeData = "x".repeat(10000) + "\n";
+      const largeData = Buffer.alloc(10000, "x").toString() + "\n";
       terminal.write(largeData);
 
       await Bun.sleep(200);
@@ -880,7 +880,7 @@ describe("Bun.Terminal", () => {
       });
 
       // Write a line much longer than terminal width
-      const longLine = "x".repeat(1000);
+      const longLine = Buffer.alloc(1000, "x").toString();
       terminal.write(longLine + "\n");
 
       terminal.close();
@@ -1026,7 +1026,7 @@ describe("Bun.spawn with terminal option", () => {
     expect(combinedOutput).toContain("hello from parent");
   });
 
-  test("terminal getter returns same object each time", () => {
+  test("terminal getter returns same object each time", async () => {
     const proc = Bun.spawn(["echo", "test"], {
       terminal: {},
     });
@@ -1036,13 +1036,15 @@ describe("Bun.spawn with terminal option", () => {
 
     expect(terminal1).toBe(terminal2);
 
+    await proc.exited;
     proc.terminal!.close();
   });
 
-  test("terminal is undefined when not using terminal option", () => {
+  test("terminal is undefined when not using terminal option", async () => {
     const proc = Bun.spawn(["echo", "test"], {});
 
     expect(proc.terminal).toBeUndefined();
+    await proc.exited;
   });
 
   test("stdin/stdout/stderr return null when terminal is used", async () => {

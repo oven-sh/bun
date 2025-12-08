@@ -192,6 +192,13 @@ pub fn spawnMaybeSync(
         }
 
         if (args != .zero and args.isObject()) {
+            // Reject terminal option on spawnSync
+            if (comptime is_sync) {
+                if (try args.getTruthy(globalThis, "terminal")) |_| {
+                    return globalThis.throwInvalidArguments("terminal option is only supported for Bun.spawn, not Bun.spawnSync", .{});
+                }
+            }
+
             // This must run before the stdio parsing happens
             if (!is_sync) {
                 if (try args.getTruthy(globalThis, "ipc")) |val| {

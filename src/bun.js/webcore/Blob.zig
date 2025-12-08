@@ -2636,6 +2636,14 @@ pub fn getWriter(
                         }
                     }
                 }
+                var content_disposition_str: ?ZigString.Slice = null;
+                defer if (content_disposition_str) |cd| cd.deinit();
+                if (try options.getTruthy(globalThis, "contentDisposition")) |content_disposition| {
+                    if (!content_disposition.isString()) {
+                        return globalThis.throwInvalidArgumentType("write", "options.contentDisposition", "string");
+                    }
+                    content_disposition_str = try content_disposition.toSlice(globalThis, bun.default_allocator);
+                }
                 const credentialsWithOptions = try s3.getCredentialsWithOptions(options, globalThis);
                 return try S3.writableStream(
                     credentialsWithOptions.credentials.dupe(),
@@ -2643,6 +2651,7 @@ pub fn getWriter(
                     globalThis,
                     credentialsWithOptions.options,
                     this.contentTypeOrMimeType(),
+                    if (content_disposition_str) |cd| cd.slice() else null,
                     proxy_url,
                     credentialsWithOptions.storage_class,
                 );
@@ -2654,6 +2663,7 @@ pub fn getWriter(
             globalThis,
             .{},
             this.contentTypeOrMimeType(),
+            null,
             proxy_url,
             null,
         );

@@ -431,6 +431,19 @@ for (let credentials of allCredentials) {
                 expect(response.headers.get("content-disposition")).toBe('attachment; filename="report.pdf"');
               }
             });
+            it("should be able to set content-disposition in writer", async () => {
+              await using tmpfile = await tmp();
+              {
+                const s3file = bucket.file(tmpfile.name, options!);
+                const writer = s3file.writer({
+                  contentDisposition: 'attachment; filename="test.txt"',
+                });
+                writer.write("Hello Bun!!");
+                await writer.end();
+                const response = await fetch(s3file.presign());
+                expect(response.headers.get("content-disposition")).toBe('attachment; filename="test.txt"');
+              }
+            });
 
             it("should be able to upload large files using bucket.write + readable Request", async () => {
               await using tmpfile = await tmp();

@@ -254,6 +254,7 @@ pub fn writableStream(
     globalThis: *jsc.JSGlobalObject,
     options: MultiPartUploadOptions,
     content_type: ?[]const u8,
+    content_disposition: ?[]const u8,
     proxy: ?[]const u8,
     storage_class: ?StorageClass,
 ) bun.JSError!jsc.JSValue {
@@ -297,6 +298,7 @@ pub fn writableStream(
         .path = bun.handleOom(bun.default_allocator.dupe(u8, path)),
         .proxy = if (proxy_url.len > 0) bun.handleOom(bun.default_allocator.dupe(u8, proxy_url)) else "",
         .content_type = if (content_type) |ct| bun.handleOom(bun.default_allocator.dupe(u8, ct)) else null,
+        .content_disposition = if (content_disposition) |cd| bun.handleOom(bun.default_allocator.dupe(u8, cd)) else null,
         .storage_class = storage_class,
 
         .callback = @ptrCast(&Wrapper.callback),

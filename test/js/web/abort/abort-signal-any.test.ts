@@ -129,7 +129,7 @@ describe("AbortSignal.any()", () => {
             expect(result).toBe(true);
         });
 
-        test("should only fire abort event once even with multiple source aborts", async () => {
+        test("should only fire abort event once even with multiple source aborts", () => {
             let abortCount = 0;
 
             const controller1 = new AbortController();
@@ -140,11 +140,9 @@ describe("AbortSignal.any()", () => {
 
             composite.addEventListener("abort", () => abortCount++);
 
+            // Abort events fire synchronously, so no need to wait
             controller1.abort();
             controller2.abort();
-
-            // Wait a tick to ensure all events have fired
-            await Bun.sleep(10);
 
             expect(abortCount).toBe(1);
         });
@@ -181,14 +179,18 @@ describe("AbortSignal.any()", () => {
 
             expect(composite.aborted).toBe(false);
 
-            await Bun.sleep(100);
+            // Wait for abort event instead of arbitrary sleep
+            const { promise, resolve } = Promise.withResolvers<void>();
+            composite.addEventListener("abort", () => resolve());
+
+            await promise;
 
             expect(composite.aborted).toBe(true);
             expect(composite.reason).toBeInstanceOf(DOMException);
             expect(composite.reason.name).toBe("TimeoutError");
         });
 
-        test("should prefer manual abort over timeout if it comes first", async () => {
+        test("should prefer manual abort over timeout if it comes first", () => {
             const controller = new AbortController();
             const timeoutSignal = AbortSignal.timeout(1000);
 

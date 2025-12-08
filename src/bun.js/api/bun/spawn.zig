@@ -405,16 +405,32 @@ pub const PosixSpawn = struct {
             if (actions) |act| {
                 for (act.actions.items) |action| {
                     switch (action.kind) {
-                        .close => posix_actions.close(bun.FD.fromNative(action.fds[0])) catch {},
-                        .dup2 => posix_actions.dup2(bun.FD.fromNative(action.fds[0]), bun.FD.fromNative(action.fds[1])) catch {},
-                        .open => posix_actions.openZ(bun.FD.fromNative(action.fds[0]), action.path.?, @intCast(action.flags), @intCast(action.mode)) catch {},
+                        .close => posix_actions.close(bun.FD.fromNative(action.fds[0])) catch |err| {
+                            if (comptime bun.Environment.allow_assert) {
+                                bun.sys.syslog("posix_spawn_file_actions_addclose({d}) failed: {s}", .{ action.fds[0], @errorName(err) });
+                            }
+                        },
+                        .dup2 => posix_actions.dup2(bun.FD.fromNative(action.fds[0]), bun.FD.fromNative(action.fds[1])) catch |err| {
+                            if (comptime bun.Environment.allow_assert) {
+                                bun.sys.syslog("posix_spawn_file_actions_adddup2({d}, {d}) failed: {s}", .{ action.fds[0], action.fds[1], @errorName(err) });
+                            }
+                        },
+                        .open => posix_actions.openZ(bun.FD.fromNative(action.fds[0]), action.path.?, @intCast(action.flags), @intCast(action.mode)) catch |err| {
+                            if (comptime bun.Environment.allow_assert) {
+                                bun.sys.syslog("posix_spawn_file_actions_addopen({d}, {s}, {d}, {d}) failed: {s}", .{ action.fds[0], action.path.?, action.flags, action.mode, @errorName(err) });
+                            }
+                        },
                         .none => {},
                     }
                 }
 
                 // Handle chdir
                 if (act.chdir_buf) |chdir_path| {
-                    posix_actions.chdir(bun.span(chdir_path)) catch {};
+                    posix_actions.chdir(bun.span(chdir_path)) catch |err| {
+                        if (comptime bun.Environment.allow_assert) {
+                            bun.sys.syslog("posix_spawn_file_actions_addchdir({s}) failed: {s}", .{ chdir_path, @errorName(err) });
+                        }
+                    };
                 }
             }
 

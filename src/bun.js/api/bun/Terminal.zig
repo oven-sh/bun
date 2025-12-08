@@ -509,8 +509,11 @@ fn createPtyPosix(cols: u16, rows: u16) CreatePtyError!PtyResult {
         new_termios.lflag.ECHO = false;
         // Keep ICANON enabled for line-buffered input (programs can disable if needed)
         std.posix.tcsetattr(slave_fd, .NOW, new_termios) catch {};
-    } else |_| {
-        // tcgetattr failed, continue without modifying termios
+    } else |err| {
+        // tcgetattr failed, log in debug builds but continue without modifying termios
+        if (comptime bun.Environment.allow_assert) {
+            bun.sys.syslog("tcgetattr(slave_fd={d}) failed: {s}", .{ slave_fd, @errorName(err) });
+        }
     }
 
     // Duplicate the master fd for reading and writing separately

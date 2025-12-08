@@ -297,7 +297,7 @@ declare module "bun" {
      *       contentDisposition: "inline"
      *     });
      */
-    contentDisposition?: string;
+    contentDisposition?: string | undefined;
 
     /**
      * By default, Amazon S3 uses the STANDARD Storage Class to store newly created objects.

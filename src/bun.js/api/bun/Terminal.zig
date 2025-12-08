@@ -1,0 +1,705 @@
+//! Bun.Terminal - Creates a pseudo-terminal (PTY) for interactive terminal sessions.
+//!
+//! This module provides a Terminal class that creates a PTY master/slave pair,
+//! allowing JavaScript code to interact with terminal-based programs.
+//!
+//! Lifecycle:
+//! - Starts with weak JSRef (allows GC if user doesn't hold reference)
+//! - Upgrades to strong when actively reading/writing
+//! - Downgrades to weak on EOF from master_fd
+//! - Callbacks are stored via `values` in classes.ts, accessed via js.gc
+
+const Terminal = @This();
+
+const std = @import("std");
+const bun = @import("bun");
+const Environment = bun.Environment;
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;
+const JSGlobalObject = jsc.JSGlobalObject;
+
+const log = bun.Output.scoped(.Terminal, .hidden);
+
+// Generated bindings
+pub const js = jsc.Codegen.JSTerminal;
+pub const toJS = js.toJS;
+pub const fromJS = js.fromJS;
+pub const fromJSDirect = js.fromJSDirect;
+
+// Reference counting for Terminal
+// Refs are held by:
+// 1. JS side (released in finalize)
+// 2. Reader (released in onReaderDone/onReaderError)
+// 3. Writer (released in onWriterClose)
+const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
+pub const ref = RefCount.ref;
+pub const deref = RefCount.deref;
+
+ref_count: RefCount,
+
+/// The master side of the PTY (original fd, used for ioctl operations)
+master_fd: bun.FileDescriptor,
+
+/// Duplicated master fd for reading
+read_fd: bun.FileDescriptor,
+
+/// Duplicated master fd for writing
+write_fd: bun.FileDescriptor,
+
+/// The slave side of the PTY (used by child processes)
+slave_fd: bun.FileDescriptor,
+
+/// Current terminal size
+cols: u16,
+rows: u16,
+
+/// Terminal name (e.g., "xterm-256color")
+term_name: []const u8,
+
+/// Event loop handle for callbacks
+event_loop_handle: jsc.EventLoopHandle,
+
+/// Global object reference
+globalThis: *jsc.JSGlobalObject,
+
+/// Writer for sending data to the terminal
+writer: IOWriter = .{},
+
+/// Reader for receiving data from the terminal
+reader: IOReader = undefined,
+
+/// This value reference for GC tracking
+/// - weak: allows GC when idle
+/// - strong: prevents GC when actively connected
+this_value: jsc.JSRef = jsc.JSRef.empty(),
+
+/// State flags
+flags: Flags = .{},
+
+pub const Flags = packed struct(u8) {
+    closed: bool = false,
+    finalized: bool = false,
+    raw_mode: bool = false,
+    reader_started: bool = false,
+    connected: bool = false, // True when actively connected (strong ref)
+    reader_done: bool = false, // True when reader has released its ref
+    writer_done: bool = false, // True when writer has released its ref
+    _: u1 = 0,
+};
+
+pub const IOWriter = bun.io.StreamingWriter(@This(), struct {
+    pub const onClose = Terminal.onWriterClose;
+    pub const onWritable = Terminal.onWriterReady;
+    pub const onError = Terminal.onWriterError;
+    pub const onWrite = Terminal.onWrite;
+});
+
+/// Poll type alias for FilePoll Owner registration
+pub const Poll = IOWriter;
+
+pub const IOReader = bun.io.BufferedReader;
+
+/// Constructor for Terminal - called from JavaScript
+/// With constructNeedsThis: true, we receive the JSValue wrapper directly
+pub fn constructor(
+    globalObject: *jsc.JSGlobalObject,
+    callframe: *jsc.CallFrame,
+    this_value: jsc.JSValue,
+) bun.JSError!*Terminal {
+    const args = callframe.argumentsAsArray(1);
+    const options = args[0];
+
+    if (options.isUndefinedOrNull()) {
+        return globalObject.throw("Terminal constructor requires an options object", .{});
+    }
+
+    // Parse options
+    const cols: u16 = blk: {
+        if (try options.getOptional(globalObject, "cols", JSValue)) |v| {
+            if (v.isNumber()) {
+                const n = v.toInt32();
+                if (n > 0 and n <= 65535) break :blk @intCast(n);
+            }
+        }
+        break :blk 80;
+    };
+
+    const rows: u16 = blk: {
+        if (try options.getOptional(globalObject, "rows", JSValue)) |v| {
+            if (v.isNumber()) {
+                const n = v.toInt32();
+                if (n > 0 and n <= 65535) break :blk @intCast(n);
+            }
+        }
+        break :blk 24;
+    };
+
+    // Get terminal name
+    const term_name: []const u8 = blk: {
+        if (try options.getOptional(globalObject, "name", JSValue)) |v| {
+            if (v.isString()) {
+                const str = try v.getZigString(globalObject);
+                if (str.len > 0) {
+                    break :blk bun.default_allocator.dupe(u8, str.slice()) catch {
+                        return globalObject.throw("Failed to allocate terminal name", .{});
+                    };
+                }
+            }
+        }
+        break :blk bun.default_allocator.dupe(u8, "xterm-256color") catch {
+            return globalObject.throw("Failed to allocate terminal name", .{});
+        };
+    };
+
+    // Get callbacks from options (will be stored via js.gc after toJS)
+    const data_callback = try options.getOptional(globalObject, "data", JSValue);
+    const exit_callback = try options.getOptional(globalObject, "exit", JSValue);
+    const drain_callback = try options.getOptional(globalObject, "drain", JSValue);
+
+    // Create PTY
+    const pty_result = createPty(cols, rows) catch |err| {
+        bun.default_allocator.free(term_name);
+        return switch (err) {
+            error.OpenPtyFailed => globalObject.throw("Failed to open PTY", .{}),
+            error.DupFailed => globalObject.throw("Failed to duplicate PTY file descriptor", .{}),
+        };
+    };
+
+    const terminal = bun.new(Terminal, .{
+        // 3 refs: JS side, reader, writer
+        .ref_count = .initExactRefs(3),
+        .master_fd = pty_result.master,
+        .read_fd = pty_result.read_fd,
+        .write_fd = pty_result.write_fd,
+        .slave_fd = pty_result.slave,
+        .cols = cols,
+        .rows = rows,
+        .term_name = term_name,
+        .event_loop_handle = jsc.EventLoopHandle.init(globalObject.bunVM().eventLoop()),
+        .globalThis = globalObject,
+    });
+
+    // Initialize reader with the read fd
+    terminal.reader = IOReader.init(@This());
+    terminal.reader.setParent(terminal);
+
+    // Set writer parent
+    terminal.writer.parent = terminal;
+
+    // Start writer with the write fd
+    switch (terminal.writer.start(pty_result.write_fd, true)) {
+        .result => {},
+        .err => {
+            // Writer never started, release all 3 refs
+            terminal.deref();
+            terminal.deref();
+            terminal.deref();
+            return globalObject.throw("Failed to start terminal writer", .{});
+        },
+    }
+
+    // Start reader with the read fd
+    switch (terminal.reader.start(pty_result.read_fd, true)) {
+        .err => {
+            // Reader never started, release reader + JS refs (writer will release its own)
+            terminal.deref();
+            terminal.deref();
+            return globalObject.throw("Failed to start terminal reader", .{});
+        },
+        .result => {
+            if (comptime Environment.isPosix) {
+                if (terminal.reader.handle == .poll) {
+                    const poll = terminal.reader.handle.poll;
+                    // PTY behaves like a pipe, not a socket
+                    terminal.reader.flags.nonblocking = true;
+                    terminal.reader.flags.pollable = true;
+                    poll.flags.insert(.nonblocking);
+                }
+            }
+            terminal.flags.reader_started = true;
+        },
+    }
+
+    // Start reading data
+    terminal.reader.read();
+
+    // Store the this_value (JSValue wrapper) - start with weak ref
+    terminal.this_value = jsc.JSRef.initWeak(this_value);
+
+    // Store callbacks via generated gc setters (prevents GC of callbacks while terminal is alive)
+    if (data_callback) |cb| {
+        if (cb.isCell() and cb.isCallable()) {
+            js.gc.set(.data, this_value, globalObject, cb);
+        }
+    }
+    if (exit_callback) |cb| {
+        if (cb.isCell() and cb.isCallable()) {
+            js.gc.set(.exit, this_value, globalObject, cb);
+        }
+    }
+    if (drain_callback) |cb| {
+        if (cb.isCell() and cb.isCallable()) {
+            js.gc.set(.drain, this_value, globalObject, cb);
+        }
+    }
+
+    return terminal;
+}
+
+const PtyResult = struct {
+    master: bun.FileDescriptor,
+    read_fd: bun.FileDescriptor,
+    write_fd: bun.FileDescriptor,
+    slave: bun.FileDescriptor,
+};
+
+fn createPty(cols: u16, rows: u16) !PtyResult {
+    if (comptime Environment.isPosix) {
+        return createPtyPosix(cols, rows);
+    } else {
+        // Windows PTY support would go here
+        return error.NotSupported;
+    }
+}
+
+fn createPtyPosix(cols: u16, rows: u16) !PtyResult {
+    // Use openpty from libc
+    const c = struct {
+        extern "c" fn openpty(
+            amaster: *c_int,
+            aslave: *c_int,
+            name: ?[*]u8,
+            termp: ?*const Termios,
+            winp: ?*const Winsize,
+        ) c_int;
+
+        const Termios = extern struct {
+            c_iflag: u32,
+            c_oflag: u32,
+            c_cflag: u32,
+            c_lflag: u32,
+            c_cc: [20]u8,
+            c_ispeed: u32,
+            c_ospeed: u32,
+        };
+
+        const Winsize = extern struct {
+            ws_row: u16,
+            ws_col: u16,
+            ws_xpixel: u16,
+            ws_ypixel: u16,
+        };
+    };
+
+    var master_fd: c_int = -1;
+    var slave_fd: c_int = -1;
+
+    const winsize = c.Winsize{
+        .ws_row = rows,
+        .ws_col = cols,
+        .ws_xpixel = 0,
+        .ws_ypixel = 0,
+    };
+
+    const result = c.openpty(&master_fd, &slave_fd, null, null, &winsize);
+    if (result != 0) {
+        return error.OpenPtyFailed;
+    }
+
+    const master_fd_desc = bun.FD.fromNative(master_fd);
+    const slave_fd_desc = bun.FD.fromNative(slave_fd);
+
+    // Duplicate the master fd for reading and writing separately
+    // This allows independent epoll registration and closing
+    const read_fd = switch (bun.sys.dup(master_fd_desc)) {
+        .result => |fd| fd,
+        .err => {
+            master_fd_desc.close();
+            slave_fd_desc.close();
+            return error.DupFailed;
+        },
+    };
+
+    const write_fd = switch (bun.sys.dup(master_fd_desc)) {
+        .result => |fd| fd,
+        .err => {
+            master_fd_desc.close();
+            slave_fd_desc.close();
+            read_fd.close();
+            return error.DupFailed;
+        },
+    };
+
+    // Set non-blocking on all fds
+    _ = bun.sys.updateNonblocking(master_fd_desc, true);
+    _ = bun.sys.updateNonblocking(read_fd, true);
+    _ = bun.sys.updateNonblocking(write_fd, true);
+
+    // Set close-on-exec on all fds
+    _ = bun.sys.setCloseOnExec(master_fd_desc);
+    _ = bun.sys.setCloseOnExec(read_fd);
+    _ = bun.sys.setCloseOnExec(write_fd);
+    _ = bun.sys.setCloseOnExec(slave_fd_desc);
+
+    return PtyResult{
+        .master = master_fd_desc,
+        .read_fd = read_fd,
+        .write_fd = write_fd,
+        .slave = slave_fd_desc,
+    };
+}
+
+/// Get the stdout file descriptor (master PTY fd)
+pub fn getStdout(this: *Terminal, _: *jsc.JSGlobalObject) JSValue {
+    if (this.flags.closed) {
+        return JSValue.jsNumber(-1);
+    }
+    return JSValue.jsNumber(this.master_fd.cast());
+}
+
+/// Get the stdin file descriptor (slave PTY fd - used by child processes)
+pub fn getStdin(this: *Terminal, _: *jsc.JSGlobalObject) JSValue {
+    if (this.flags.closed) {
+        return JSValue.jsNumber(-1);
+    }
+    return JSValue.jsNumber(this.slave_fd.cast());
+}
+
+/// Check if terminal is closed
+pub fn getClosed(this: *Terminal, _: *jsc.JSGlobalObject) JSValue {
+    return JSValue.jsBoolean(this.flags.closed);
+}
+
+/// Write data to the terminal
+pub fn write(
+    this: *Terminal,
+    globalObject: *jsc.JSGlobalObject,
+    callframe: *jsc.CallFrame,
+) bun.JSError!JSValue {
+    if (this.flags.closed) {
+        return globalObject.throw("Terminal is closed", .{});
+    }
+
+    const args = callframe.argumentsAsArray(1);
+    const data = args[0];
+
+    if (data.isUndefinedOrNull()) {
+        return globalObject.throw("write() requires data argument", .{});
+    }
+
+    // Get bytes to write using StringOrBuffer
+    const string_or_buffer = try jsc.Node.StringOrBuffer.fromJS(globalObject, bun.default_allocator, data) orelse {
+        return globalObject.throw("write() argument must be a string or ArrayBuffer", .{});
+    };
+    defer string_or_buffer.deinit();
+
+    const bytes = string_or_buffer.slice();
+
+    if (bytes.len == 0) {
+        return JSValue.jsNumber(0);
+    }
+
+    // Write using the streaming writer
+    const write_result = this.writer.write(bytes);
+    return switch (write_result) {
+        .done => |amt| JSValue.jsNumber(@as(i32, @intCast(amt))),
+        .wrote => |amt| JSValue.jsNumber(@as(i32, @intCast(amt))),
+        .pending => |amt| JSValue.jsNumber(@as(i32, @intCast(amt))),
+        .err => |err| globalObject.throwValue(err.toJS(globalObject)),
+    };
+}
+
+/// Resize the terminal
+pub fn resize(
+    this: *Terminal,
+    globalObject: *jsc.JSGlobalObject,
+    callframe: *jsc.CallFrame,
+) bun.JSError!JSValue {
+    if (this.flags.closed) {
+        return globalObject.throw("Terminal is closed", .{});
+    }
+
+    const args = callframe.argumentsAsArray(2);
+
+    const new_cols: u16 = blk: {
+        if (args[0].isNumber()) {
+            const n = args[0].toInt32();
+            if (n > 0 and n <= 65535) break :blk @intCast(n);
+        }
+        return globalObject.throw("resize() requires valid cols argument", .{});
+    };
+
+    const new_rows: u16 = blk: {
+        if (args[1].isNumber()) {
+            const n = args[1].toInt32();
+            if (n > 0 and n <= 65535) break :blk @intCast(n);
+        }
+        return globalObject.throw("resize() requires valid rows argument", .{});
+    };
+
+    if (comptime Environment.isPosix) {
+        const ioctl_c = struct {
+            const TIOCSWINSZ: c_ulong = if (Environment.isMac) 0x80087467 else 0x5414;
+
+            const Winsize = extern struct {
+                ws_row: u16,
+                ws_col: u16,
+                ws_xpixel: u16,
+                ws_ypixel: u16,
+            };
+
+            extern "c" fn ioctl(fd: c_int, request: c_ulong, ...) c_int;
+        };
+
+        var winsize = ioctl_c.Winsize{
+            .ws_row = new_rows,
+            .ws_col = new_cols,
+            .ws_xpixel = 0,
+            .ws_ypixel = 0,
+        };
+
+        const ioctl_result = ioctl_c.ioctl(this.master_fd.cast(), ioctl_c.TIOCSWINSZ, &winsize);
+        if (ioctl_result != 0) {
+            return globalObject.throw("Failed to resize terminal", .{});
+        }
+    }
+
+    this.cols = new_cols;
+    this.rows = new_rows;
+
+    return .js_undefined;
+}
+
+/// Set raw mode on the terminal
+pub fn setRawMode(
+    this: *Terminal,
+    globalObject: *jsc.JSGlobalObject,
+    callframe: *jsc.CallFrame,
+) bun.JSError!JSValue {
+    if (this.flags.closed) {
+        return globalObject.throw("Terminal is closed", .{});
+    }
+
+    const args = callframe.argumentsAsArray(1);
+    const enabled = args[0].toBoolean();
+
+    if (comptime Environment.isPosix) {
+        // Use the existing TTY mode function
+        const mode: c_int = if (enabled) 1 else 0;
+        const tty_result = Bun__ttySetMode(this.master_fd.cast(), mode);
+        if (tty_result != 0) {
+            return globalObject.throw("Failed to set raw mode", .{});
+        }
+    }
+
+    this.flags.raw_mode = enabled;
+    return .js_undefined;
+}
+
+extern fn Bun__ttySetMode(fd: c_int, mode: c_int) c_int;
+
+/// Reference the terminal to keep the event loop alive
+pub fn doRef(this: *Terminal, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
+    this.updateRef(true);
+    return .js_undefined;
+}
+
+/// Unreference the terminal
+pub fn doUnref(this: *Terminal, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
+    this.updateRef(false);
+    return .js_undefined;
+}
+
+fn updateRef(this: *Terminal, add: bool) void {
+    this.reader.updateRef(add);
+    this.writer.updateRef(this.event_loop_handle, add);
+}
+
+/// Close the terminal
+pub fn close(
+    this: *Terminal,
+    _: *jsc.JSGlobalObject,
+    _: *jsc.CallFrame,
+) bun.JSError!JSValue {
+    this.closeInternal();
+    return .js_undefined;
+}
+
+/// Async dispose for "using" syntax
+pub fn asyncDispose(
+    this: *Terminal,
+    globalObject: *jsc.JSGlobalObject,
+    _: *jsc.CallFrame,
+) bun.JSError!JSValue {
+    this.closeInternal();
+    return jsc.JSPromise.resolvedPromiseValue(globalObject, .js_undefined);
+}
+
+fn closeInternal(this: *Terminal) void {
+    if (this.flags.closed) return;
+    this.flags.closed = true;
+
+    // Close reader (closes read_fd)
+    if (this.flags.reader_started) {
+        this.reader.close();
+    }
+    this.read_fd = bun.invalid_fd;
+
+    // Close writer (closes write_fd)
+    this.writer.close();
+    this.write_fd = bun.invalid_fd;
+
+    // Close master fd
+    if (this.master_fd != bun.invalid_fd) {
+        this.master_fd.close();
+        this.master_fd = bun.invalid_fd;
+    }
+
+    // Close slave fd
+    if (this.slave_fd != bun.invalid_fd) {
+        this.slave_fd.close();
+        this.slave_fd = bun.invalid_fd;
+    }
+}
+
+// IOWriter callbacks
+fn onWriterClose(this: *Terminal) void {
+    log("onWriterClose", .{});
+    if (!this.flags.writer_done) {
+        this.flags.writer_done = true;
+        // Release writer's ref
+        this.deref();
+    }
+}
+
+fn onWriterReady(this: *Terminal) void {
+    log("onWriterReady", .{});
+    // Call drain callback
+    const this_jsvalue = this.this_value.tryGet() orelse return;
+    if (js.gc.get(.drain, this_jsvalue)) |callback| {
+        const globalThis = this.globalThis;
+        globalThis.bunVM().eventLoop().runCallback(
+            callback,
+            globalThis,
+            this_jsvalue,
+            &.{this_jsvalue},
+        );
+    }
+}
+
+fn onWriterError(this: *Terminal, err: bun.sys.Error) void {
+    log("onWriterError: {any}", .{err});
+    _ = this;
+}
+
+fn onWrite(this: *Terminal, amount: usize, status: bun.io.WriteStatus) void {
+    log("onWrite: {} bytes, status: {any}", .{ amount, status });
+    _ = this;
+}
+
+// IOReader callbacks
+pub fn onReaderDone(this: *Terminal) void {
+    log("onReaderDone", .{});
+    // EOF from master - downgrade to weak ref to allow GC
+    // Skip JS interactions if already finalized (happens when close() is called during finalize)
+    if (!this.flags.finalized) {
+        this.flags.connected = false;
+        this.this_value.downgrade();
+        this.callExitCallback(0, null);
+    }
+    // Release reader's ref (only once)
+    if (!this.flags.reader_done) {
+        this.flags.reader_done = true;
+        this.deref();
+    }
+}
+
+pub fn onReaderError(this: *Terminal, err: bun.sys.Error) void {
+    log("onReaderError: {any}", .{err});
+    // Error - downgrade to weak ref to allow GC
+    // Skip JS interactions if already finalized
+    if (!this.flags.finalized) {
+        this.flags.connected = false;
+        this.this_value.downgrade();
+        this.callExitCallback(1, null);
+    }
+    // Release reader's ref (only once)
+    if (!this.flags.reader_done) {
+        this.flags.reader_done = true;
+        this.deref();
+    }
+}
+
+fn callExitCallback(this: *Terminal, exit_code: i32, signal: ?bun.SignalCode) void {
+    const this_jsvalue = this.this_value.tryGet() orelse return;
+    const callback = js.gc.get(.exit, this_jsvalue) orelse return;
+
+    const globalThis = this.globalThis;
+    const signal_value: JSValue = if (signal) |s|
+        jsc.ZigString.init(s.name() orelse "unknown").toJS(globalThis)
+    else
+        JSValue.jsNull();
+
+    globalThis.bunVM().eventLoop().runCallback(
+        callback,
+        globalThis,
+        this_jsvalue,
+        &.{ this_jsvalue, JSValue.jsNumber(exit_code), signal_value },
+    );
+}
+
+// Called when data is available from the reader
+// Returns true to continue reading, false to pause
+pub fn onReadChunk(this: *Terminal, chunk: []const u8, has_more: bun.io.ReadState) bool {
+    _ = has_more;
+    log("onReadChunk: {} bytes", .{chunk.len});
+
+    // First data received - upgrade to strong ref (connected)
+    if (!this.flags.connected) {
+        this.flags.connected = true;
+        this.this_value.upgrade(this.globalThis);
+    }
+
+    const this_jsvalue = this.this_value.tryGet() orelse return true;
+    const callback = js.gc.get(.data, this_jsvalue) orelse return true;
+
+    const globalThis = this.globalThis;
+    const data = jsc.MarkedArrayBuffer.fromBytes(
+        bun.default_allocator.dupe(u8, chunk) catch return true,
+        bun.default_allocator,
+        .Uint8Array,
+    ).toNodeBuffer(globalThis);
+
+    globalThis.bunVM().eventLoop().runCallback(
+        callback,
+        globalThis,
+        this_jsvalue,
+        &.{ this_jsvalue, data },
+    );
+
+    return true; // Continue reading
+}
+
+pub fn eventLoop(this: *Terminal) jsc.EventLoopHandle {
+    return this.event_loop_handle;
+}
+
+pub fn loop(this: *Terminal) *bun.Async.Loop {
+    return this.event_loop_handle.loop();
+}
+
+fn deinit(this: *Terminal) void {
+    log("deinit", .{});
+    bun.default_allocator.free(this.term_name);
+    this.reader.deinit();
+    bun.destroy(this);
+}
+
+/// Finalize - called by GC when object is collected
+pub fn finalize(this: *Terminal) callconv(.c) void {
+    log("finalize", .{});
+    this.this_value.finalize();
+    this.flags.finalized = true;
+    this.closeInternal();
+    this.deref();
+}

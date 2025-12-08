@@ -1740,9 +1740,9 @@ declare module "bun" {
      * @default "esm"
      */
     format?: /**
-       * ECMAScript Module format
-       */
-      | "esm"
+     * ECMAScript Module format
+     */
+    | "esm"
       /**
        * CommonJS format
        * **Experimental**
@@ -3316,10 +3316,10 @@ declare module "bun" {
   function color(
     input: ColorInput,
     outputFormat?: /**
-       * True color ANSI color string, for use in terminals
-       * @example \x1b[38;2;100;200;200m
-       */
-      | "ansi"
+     * True color ANSI color string, for use in terminals
+     * @example \x1b[38;2;100;200;200m
+     */
+    | "ansi"
       | "ansi-16"
       | "ansi-16m"
       /**
@@ -5650,17 +5650,11 @@ declare module "bun" {
       maxBuffer?: number;
     }
 
-    interface SpawnSyncOptions<In extends Writable, Out extends Readable, Err extends Readable> extends BaseOptions<
-      In,
-      Out,
-      Err
-    > {}
+    interface SpawnSyncOptions<In extends Writable, Out extends Readable, Err extends Readable>
+      extends BaseOptions<In, Out, Err> {}
 
-    interface SpawnOptions<In extends Writable, Out extends Readable, Err extends Readable> extends BaseOptions<
-      In,
-      Out,
-      Err
-    > {
+    interface SpawnOptions<In extends Writable, Out extends Readable, Err extends Readable>
+      extends BaseOptions<In, Out, Err> {
       /**
        * If true, stdout and stderr pipes will not automatically start reading
        * data. Reading will only begin when you access the `stdout` or `stderr`
@@ -6086,6 +6080,136 @@ declare module "bun" {
     "ignore" | "inherit" | null | undefined,
     "ignore" | "inherit" | null | undefined
   >;
+
+  /**
+   * Options for creating a pseudo-terminal (PTY).
+   */
+  interface TerminalOptions {
+    /**
+     * Number of columns for the terminal.
+     * @default 80
+     */
+    cols?: number;
+    /**
+     * Number of rows for the terminal.
+     * @default 24
+     */
+    rows?: number;
+    /**
+     * Terminal name (e.g., "xterm-256color").
+     * @default "xterm-256color"
+     */
+    name?: string;
+    /**
+     * Callback invoked when data is received from the terminal.
+     * @param terminal The terminal instance
+     * @param data The data received as a Uint8Array
+     */
+    data?: (terminal: Terminal, data: Uint8Array) => void;
+    /**
+     * Callback invoked when the terminal exits.
+     * @param terminal The terminal instance
+     * @param exitCode The exit code
+     * @param signal The signal that caused the exit, if any
+     */
+    exit?: (terminal: Terminal, exitCode: number, signal: string | null) => void;
+    /**
+     * Callback invoked when the terminal is ready to receive more data.
+     * @param terminal The terminal instance
+     */
+    drain?: (terminal: Terminal) => void;
+  }
+
+  /**
+   * A pseudo-terminal (PTY) that can be used to spawn interactive terminal programs.
+   *
+   * @example
+   * ```ts
+   * const terminal = new Bun.Terminal({
+   *   cols: 80,
+   *   rows: 24,
+   *   data(term, data) {
+   *     console.log("Received:", new TextDecoder().decode(data));
+   *   },
+   * });
+   *
+   * // Spawn a shell connected to the PTY
+   * const proc = Bun.spawn({
+   *   cmd: ["bash"],
+   *   stdin: terminal.stdin,
+   *   stdout: terminal.stdout,
+   *   stderr: terminal.stdout,
+   * });
+   *
+   * // Write to the terminal
+   * terminal.write("echo hello\n");
+   *
+   * // Close when done
+   * terminal.close();
+   * ```
+   */
+  class Terminal implements AsyncDisposable {
+    constructor(options: TerminalOptions);
+
+    /**
+     * The file descriptor for the slave side of the PTY.
+     * This should be used as stdin/stdout/stderr for child processes.
+     * Returns -1 if the terminal is closed.
+     */
+    readonly stdin: number;
+
+    /**
+     * The file descriptor for the master side of the PTY.
+     * Returns -1 if the terminal is closed.
+     */
+    readonly stdout: number;
+
+    /**
+     * Whether the terminal is closed.
+     */
+    readonly closed: boolean;
+
+    /**
+     * Write data to the terminal.
+     * @param data The data to write (string or ArrayBuffer)
+     * @returns The number of bytes written
+     */
+    write(data: string | ArrayBufferView | ArrayBuffer): number;
+
+    /**
+     * Resize the terminal.
+     * @param cols New number of columns
+     * @param rows New number of rows
+     */
+    resize(cols: number, rows: number): void;
+
+    /**
+     * Set raw mode on the terminal.
+     * In raw mode, input is passed directly without processing.
+     * @param enabled Whether to enable raw mode
+     */
+    setRawMode(enabled: boolean): void;
+
+    /**
+     * Reference the terminal to keep the event loop alive.
+     */
+    ref(): void;
+
+    /**
+     * Unreference the terminal to allow the event loop to exit.
+     */
+    unref(): void;
+
+    /**
+     * Close the terminal.
+     */
+    close(): void;
+
+    /**
+     * Async dispose for use with `await using`.
+     */
+    [Symbol.asyncDispose](): Promise<void>;
+  }
 
   // Blocked on https://github.com/oven-sh/bun/issues/8329
   // /**

@@ -27,6 +27,40 @@ extern char** environ;
 extern "C" ssize_t bun_close_range(unsigned int start, unsigned int end, unsigned int flags);
 #endif
 
+// Helper: get max fd from system, clamped to sane limits and optionally to 'end' parameter
+static inline int getMaxFd(int start, int end)
+{
+#if OS(LINUX)
+    int maxfd = static_cast<int>(sysconf(_SC_OPEN_MAX));
+#elif OS(DARWIN)
+    int maxfd = getdtablesize();
+#else
+    int maxfd = 1024;
+#endif
+    if (maxfd < 0 || maxfd > 65536) maxfd = 1024;
+    // Respect the end parameter if it's a valid bound (not INT_MAX sentinel)
+    if (end >= start && end < INT_MAX) {
+        maxfd = std::min(maxfd, end + 1); // +1 because end is inclusive
+    }
+    return maxfd;
+}
+
+// Loop-based fallback for closing/cloexec fds
+static inline void closeRangeLoop(int start, int end, bool cloexec_only)
+{
+    int maxfd = getMaxFd(start, end);
+    for (int fd = start; fd < maxfd; fd++) {
+        if (cloexec_only) {
+            int current_flags = fcntl(fd, F_GETFD);
+            if (current_flags >= 0) {
+                fcntl(fd, F_SETFD, current_flags | FD_CLOEXEC);
+            }
+        } else {
+            close(fd);
+        }
+    }
+}
+
 // Platform-specific close range implementation
 static inline void closeRangeOrLoop(int start, int end, bool cloexec_only)
 {
@@ -35,48 +69,9 @@ static inline void closeRangeOrLoop(int start, int end, bool cloexec_only)
     if (bun_close_range(start, end, flags) == 0) {
         return;
     }
-    // Fallback: loop-based close/cloexec for older kernels or when close_range fails
-    // Use sysconf to get max fd, clamped to a sane limit and the provided end parameter
-    int maxfd = static_cast<int>(sysconf(_SC_OPEN_MAX));
-    if (maxfd < 0 || maxfd > 65536) maxfd = 1024;
-    // Respect the end parameter if it's a valid bound (not INT_MAX sentinel)
-    if (end >= start && end < INT_MAX) {
-        maxfd = std::min(maxfd, end + 1); // +1 because end is inclusive
-    }
-
-    for (int fd = start; fd < maxfd; fd++) {
-        if (cloexec_only) {
-            // Set FD_CLOEXEC instead of closing
-            int current_flags = fcntl(fd, F_GETFD);
-            if (current_flags >= 0) {
-                fcntl(fd, F_SETFD, current_flags | FD_CLOEXEC);
-            }
-        } else {
-            close(fd);
-        }
-    }
-#elif OS(DARWIN)
-    // macOS: no closefrom() or close_range(), use manual loop
-    // Use getdtablesize() for upper bound, clamped to the provided end parameter
-    int maxfd = getdtablesize();
-    if (maxfd < 0 || maxfd > 65536) maxfd = 1024;
-    // Respect the end parameter if it's a valid bound (not INT_MAX sentinel)
-    if (end >= start && end < INT_MAX) {
-        maxfd = std::min(maxfd, end + 1); // +1 because end is inclusive
-    }
-
-    for (int fd = start; fd < maxfd; fd++) {
-        if (cloexec_only) {
-            // Set FD_CLOEXEC instead of closing
-            int current_flags = fcntl(fd, F_GETFD);
-            if (current_flags >= 0) {
-                fcntl(fd, F_SETFD, current_flags | FD_CLOEXEC);
-            }
-        } else {
-            close(fd);
-        }
-    }
+    // Fallback for older kernels or when close_range fails
 #endif
+    closeRangeLoop(start, end, cloexec_only);
 }
 
 enum FileActionType : uint8_t {
@@ -152,7 +147,14 @@ extern "C" ssize_t posix_spawn_bun(
 
         // Set PTY slave as controlling terminal for proper job control
         if (request->pty_slave_fd >= 0) {
-            ioctl(request->pty_slave_fd, TIOCSCTTY, 0);
+            if (ioctl(request->pty_slave_fd, TIOCSCTTY, 0) == -1) {
+                // TIOCSCTTY can fail if the terminal is already the controlling
+                // terminal of another session, or if the process isn't a session leader.
+                // Log but don't fail - the process can still run, just without
+                // proper job control.
+                // In child context we can't use complex logging, just set errno for parent.
+                // The childFailed path would _exit(127) which is too severe for this case.
+            }
         }
 
         int current_max_fd = 0;

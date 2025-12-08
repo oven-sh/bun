@@ -371,73 +371,76 @@ pub fn spawnMaybeSync(
 
             // Parse terminal option (only for async spawn, not spawnSync)
             if (comptime !is_sync) {
-                if (Environment.isPosix) {
-                    if (try args.getTruthy(globalThis, "terminal")) |terminal_opts| {
-                        if (!terminal_opts.isObject()) {
-                            return globalThis.throwInvalidArguments("terminal must be an object", .{});
-                        }
-
-                        // Parse terminal options
-                        var term_options = Terminal.SpawnTerminalOptions{};
-
-                        if (try terminal_opts.getOptional(globalThis, "cols", JSValue)) |v| {
-                            if (v.isNumber()) {
-                                const n = v.toInt32();
-                                if (n > 0 and n <= 65535) term_options.cols = @intCast(n);
-                            }
-                        }
-
-                        if (try terminal_opts.getOptional(globalThis, "rows", JSValue)) |v| {
-                            if (v.isNumber()) {
-                                const n = v.toInt32();
-                                if (n > 0 and n <= 65535) term_options.rows = @intCast(n);
-                            }
-                        }
-
-                        if (try terminal_opts.getOptional(globalThis, "name", JSValue)) |v| {
-                            if (v.isString()) {
-                                const str = try v.getZigString(globalThis);
-                                if (str.len > 0) {
-                                    term_options.term_name = str.slice();
-                                }
-                            }
-                        }
-
-                        // Get callbacks
-                        if (try terminal_opts.getOptional(globalThis, "data", JSValue)) |v| {
-                            if (v.isCell() and v.isCallable()) {
-                                term_options.data_callback = v.withAsyncContextIfNeeded(globalThis);
-                            }
-                        }
-                        if (try terminal_opts.getOptional(globalThis, "exit", JSValue)) |v| {
-                            if (v.isCell() and v.isCallable()) {
-                                term_options.exit_callback = v.withAsyncContextIfNeeded(globalThis);
-                            }
-                        }
-                        if (try terminal_opts.getOptional(globalThis, "drain", JSValue)) |v| {
-                            if (v.isCell() and v.isCallable()) {
-                                term_options.drain_callback = v.withAsyncContextIfNeeded(globalThis);
-                            }
-                        }
-
-                        // Create the terminal
-                        terminal_info = Terminal.createFromSpawn(globalThis, term_options) catch |err| {
-                            return switch (err) {
-                                error.OpenPtyFailed => globalThis.throw("Failed to open PTY", .{}),
-                                error.DupFailed => globalThis.throw("Failed to duplicate PTY file descriptor", .{}),
-                                error.NotSupported => globalThis.throw("PTY not supported on this platform", .{}),
-                                error.WriterStartFailed => globalThis.throw("Failed to start terminal writer", .{}),
-                                error.ReaderStartFailed => globalThis.throw("Failed to start terminal reader", .{}),
-                                error.OutOfMemory => globalThis.throwOutOfMemory(),
-                            };
-                        };
-
-                        // Override stdin, stdout, stderr to use the terminal's slave fd
-                        const slave_fd = terminal_info.?.terminal.getSlaveFd();
-                        stdio[0] = .{ .fd = slave_fd };
-                        stdio[1] = .{ .fd = slave_fd };
-                        stdio[2] = .{ .fd = slave_fd };
+                if (try args.getTruthy(globalThis, "terminal")) |terminal_opts| {
+                    // Terminal/PTY is only supported on POSIX platforms
+                    if (comptime !Environment.isPosix) {
+                        return globalThis.throwInvalidArguments("terminal option is not supported on this platform", .{});
                     }
+
+                    if (!terminal_opts.isObject()) {
+                        return globalThis.throwInvalidArguments("terminal must be an object", .{});
+                    }
+
+                    // Parse terminal options
+                    var term_options = Terminal.SpawnTerminalOptions{};
+
+                    if (try terminal_opts.getOptional(globalThis, "cols", JSValue)) |v| {
+                        if (v.isNumber()) {
+                            const n = v.toInt32();
+                            if (n > 0 and n <= 65535) term_options.cols = @intCast(n);
+                        }
+                    }
+
+                    if (try terminal_opts.getOptional(globalThis, "rows", JSValue)) |v| {
+                        if (v.isNumber()) {
+                            const n = v.toInt32();
+                            if (n > 0 and n <= 65535) term_options.rows = @intCast(n);
+                        }
+                    }
+
+                    if (try terminal_opts.getOptional(globalThis, "name", JSValue)) |v| {
+                        if (v.isString()) {
+                            const str = try v.getZigString(globalThis);
+                            if (str.len > 0) {
+                                term_options.term_name = str.toSlice(bun.default_allocator);
+                            }
+                        }
+                    }
+
+                    // Get callbacks
+                    if (try terminal_opts.getOptional(globalThis, "data", JSValue)) |v| {
+                        if (v.isCell() and v.isCallable()) {
+                            term_options.data_callback = v.withAsyncContextIfNeeded(globalThis);
+                        }
+                    }
+                    if (try terminal_opts.getOptional(globalThis, "exit", JSValue)) |v| {
+                        if (v.isCell() and v.isCallable()) {
+                            term_options.exit_callback = v.withAsyncContextIfNeeded(globalThis);
+                        }
+                    }
+                    if (try terminal_opts.getOptional(globalThis, "drain", JSValue)) |v| {
+                        if (v.isCell() and v.isCallable()) {
+                            term_options.drain_callback = v.withAsyncContextIfNeeded(globalThis);
+                        }
+                    }
+
+                    // Create the terminal
+                    terminal_info = Terminal.createFromSpawn(globalThis, term_options) catch |err| {
+                        return switch (err) {
+                            error.OpenPtyFailed => globalThis.throw("Failed to open PTY", .{}),
+                            error.DupFailed => globalThis.throw("Failed to duplicate PTY file descriptor", .{}),
+                            error.NotSupported => globalThis.throw("PTY not supported on this platform", .{}),
+                            error.WriterStartFailed => globalThis.throw("Failed to start terminal writer", .{}),
+                            error.ReaderStartFailed => globalThis.throw("Failed to start terminal reader", .{}),
+                            error.OutOfMemory => globalThis.throwOutOfMemory(),
+                        };
+                    };
+
+                    // Override stdin, stdout, stderr to use the terminal's slave fd
+                    const slave_fd = terminal_info.?.terminal.getSlaveFd();
+                    stdio[0] = .{ .fd = slave_fd };
+                    stdio[1] = .{ .fd = slave_fd };
+                    stdio[2] = .{ .fd = slave_fd };
                 }
             }
         } else {

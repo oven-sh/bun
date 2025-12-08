@@ -247,7 +247,7 @@ pub fn constructor(
 pub const SpawnTerminalOptions = struct {
     cols: u16 = 80,
     rows: u16 = 24,
-    term_name: []const u8 = "xterm-256color",
+    term_name: ?jsc.ZigString.Slice = null,
     data_callback: ?JSValue = null,
     exit_callback: ?JSValue = null,
     drain_callback: ?JSValue = null,
@@ -266,17 +266,23 @@ pub fn createFromSpawn(
     globalObject: *jsc.JSGlobalObject,
     options: SpawnTerminalOptions,
 ) !SpawnTerminalResult {
+    // Get term_name from slice or use default
+    const term_name_slice = if (options.term_name) |slice| slice.slice() else "xterm-256color";
     // Duplicate term_name since we need to own it
-    const term_name = bun.default_allocator.dupe(u8, options.term_name) catch {
+    const term_name = bun.default_allocator.dupe(u8, term_name_slice) catch {
+        if (options.term_name) |slice| slice.deinit();
         return error.OutOfMemory;
     };
-    errdefer bun.default_allocator.free(term_name);
+    // Free the slice now that we've duped it
+    if (options.term_name) |slice| slice.deinit();
 
-    // Create PTY
+    // Create PTY - free term_name on failure since Terminal won't own it
     const pty_result = createPty(options.cols, options.rows) catch |err| {
+        bun.default_allocator.free(term_name);
         return err;
     };
 
+    // After this point, Terminal owns term_name and will free it in deinit()
     const terminal = bun.new(Terminal, .{
         // 3 refs: JS side, reader, writer
         .ref_count = .initExactRefs(3),
@@ -397,7 +403,7 @@ fn createPty(cols: u16, rows: u16) CreatePtyError!PtyResult {
     }
 }
 
-fn createPtyPosix(cols: u16, rows: u16) !PtyResult {
+fn createPtyPosix(cols: u16, rows: u16) CreatePtyError!PtyResult {
     // Use openpty from libc
     const c = struct {
         extern "c" fn openpty(

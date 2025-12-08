@@ -85,7 +85,7 @@ describe("AbortSignal.any()", () => {
     });
 
     describe("reason propagation", () => {
-        // Table-driven tests for different reason types per coderabbitai suggestion
+        // Table-driven tests for different reason types
         const reasonCases = [
             { name: "Error", reason: new Error("custom abort reason") },
             { name: "string", reason: "string reason" },

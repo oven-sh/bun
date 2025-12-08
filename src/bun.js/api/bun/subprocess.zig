@@ -921,9 +921,9 @@ pub const spawnSync = js_bun_spawn_bindings.spawnSync;
 pub const spawn = js_bun_spawn_bindings.spawn;
 
 const IPC = @import("../../ipc.zig");
+const Terminal = @import("./Terminal.zig");
 const js_bun_spawn_bindings = @import("./js_bun_spawn_bindings.zig");
 const node_cluster_binding = @import("../../node/node_cluster_binding.zig");
-const Terminal = @import("./Terminal.zig");
 const std = @import("std");
 
 const bun = @import("bun");

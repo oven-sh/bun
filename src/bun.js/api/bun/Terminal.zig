@@ -11,13 +11,6 @@
 
 const Terminal = @This();
 
-const std = @import("std");
-const bun = @import("bun");
-const Environment = bun.Environment;
-const jsc = bun.jsc;
-const JSValue = jsc.JSValue;
-const JSGlobalObject = jsc.JSGlobalObject;
-
 const log = bun.Output.scoped(.Terminal, .hidden);
 
 // Generated bindings
@@ -837,3 +830,10 @@ pub fn finalize(this: *Terminal) callconv(.c) void {
     this.closeInternal();
     this.deref();
 }
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;

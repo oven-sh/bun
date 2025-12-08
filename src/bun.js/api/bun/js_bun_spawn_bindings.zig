@@ -1098,6 +1098,7 @@ const log = Output.scoped(.Subprocess, .hidden);
 extern "C" const BUN_DEFAULT_PATH_FOR_SPAWN: [*:0]const u8;
 
 const IPC = @import("../../ipc.zig");
+const Terminal = @import("./Terminal.zig");
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
@@ -1123,4 +1124,3 @@ const Writable = Subprocess.Writable;
 const Process = bun.spawn.Process;
 const Rusage = bun.spawn.Rusage;
 const Stdio = bun.spawn.Stdio;
-const Terminal = @import("./Terminal.zig");

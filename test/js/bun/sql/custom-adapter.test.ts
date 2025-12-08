@@ -73,11 +73,9 @@ test("custom adapter", async () => {
     },
   };
 
-  const sql = new SQL({ adapter: customAdapter });
+  await using sql = new SQL({ adapter: customAdapter });
   const result = await sql`SELECT ${1}`;
   expect(result).toHaveLength(1);
   expect(result[0].sql).toBe("SELECT ?");
   expect(result[0].values).toEqual([1]);
-
-  await sql.close();
 });

@@ -315,6 +315,103 @@ if (typeof Bun !== "undefined") {
 
 ---
 
+## Terminal (PTY) support
+
+For interactive terminal applications, you can spawn a subprocess with a pseudo-terminal (PTY) attached using the `terminal` option. This makes the subprocess think it's running in a real terminal, enabling features like colored output, cursor movement, and interactive prompts.
+
+```ts
+const proc = Bun.spawn(["bash"], {
+  terminal: {
+    cols: 80,
+    rows: 24,
+    data(terminal, data) {
+      // Called when data is received from the terminal
+      process.stdout.write(data);
+    },
+  },
+});
+
+// Write to the terminal
+proc.terminal.write("echo hello\n");
+
+// Wait for the process to exit
+await proc.exited;
+
+// Close the terminal
+proc.terminal.close();
+```
+
+When the `terminal` option is provided:
+
+- The subprocess sees `process.stdout.isTTY` as `true`
+- `stdin`, `stdout`, and `stderr` are all connected to the terminal
+- `proc.stdin`, `proc.stdout`, and `proc.stderr` return `null` — use the terminal instead
+- Access the terminal via `proc.terminal`
+
+### Terminal options
+
+| Option  | Description                                          | Default           |
+| ------- | ---------------------------------------------------- | ----------------- |
+| `cols`  | Number of columns                                    | `80`              |
+| `rows`  | Number of rows                                       | `24`              |
+| `name`  | Terminal type (sets `TERM` environment variable)     | `"xterm-256color"`|
+| `data`  | Callback when data is received `(terminal, data) => void` | —            |
+| `exit`  | Callback when EOF is received `(terminal, exitCode, signal) => void` | — |
+| `drain` | Callback when ready for more data `(terminal) => void` | —              |
+
+### Terminal methods
+
+The `Terminal` object returned by `proc.terminal` has the following methods:
+
+```ts
+// Write data to the terminal
+proc.terminal.write("echo hello\n");
+
+// Resize the terminal
+proc.terminal.resize(120, 40);
+
+// Set raw mode (disable line buffering and echo)
+proc.terminal.setRawMode(true);
+
+// Keep event loop alive while terminal is open
+proc.terminal.ref();
+proc.terminal.unref();
+
+// Close the terminal
+proc.terminal.close();
+```
+
+### Standalone Terminal
+
+You can also create a terminal independently and pass its file descriptors to `Bun.spawn`:
+
+```ts
+const terminal = new Bun.Terminal({
+  cols: 80,
+  rows: 24,
+  data(term, data) {
+    process.stdout.write(data);
+  },
+});
+
+// Spawn a process using the terminal's file descriptors
+const proc = Bun.spawn(["bash"], {
+  stdin: terminal.stdin,   // slave fd for child's stdin
+  stdout: terminal.stdin,  // slave fd for child's stdout
+  stderr: terminal.stdin,  // slave fd for child's stderr
+});
+
+terminal.write("echo hello\n");
+```
+
+This approach gives you more control over the terminal lifecycle, but the `terminal` option in `Bun.spawn` is simpler for most use cases.
+
+<Note>
+  Terminal support is only available on POSIX systems (Linux, macOS). It is not available on Windows.
+</Note>
+
+---
+
 ## Blocking API (`Bun.spawnSync()`)
 
 Bun provides a synchronous equivalent of `Bun.spawn` called `Bun.spawnSync`. This is a blocking API that supports the same inputs and parameters as `Bun.spawn`. It returns a `SyncSubprocess` object, which differs from `Subprocess` in a few ways.
@@ -407,6 +504,7 @@ namespace SpawnOptions {
     timeout?: number;
     killSignal?: string | number;
     maxBuffer?: number;
+    terminal?: TerminalOptions; // PTY support (POSIX only)
   }
 
   type Readable =
@@ -435,10 +533,11 @@ namespace SpawnOptions {
 }
 
 interface Subprocess extends AsyncDisposable {
-  readonly stdin: FileSink | number | undefined;
-  readonly stdout: ReadableStream<Uint8Array> | number | undefined;
-  readonly stderr: ReadableStream<Uint8Array> | number | undefined;
-  readonly readable: ReadableStream<Uint8Array> | number | undefined;
+  readonly stdin: FileSink | number | undefined | null;
+  readonly stdout: ReadableStream<Uint8Array> | number | undefined | null;
+  readonly stderr: ReadableStream<Uint8Array> | number | undefined | null;
+  readonly readable: ReadableStream<Uint8Array> | number | undefined | null;
+  readonly terminal: Terminal | undefined;
   readonly pid: number;
   readonly exited: Promise<number>;
   readonly exitCode: number | null;
@@ -463,6 +562,27 @@ interface SyncSubprocess {
   signalCode?: string;
   exitedDueToTimeout?: true;
   pid: number;
+}
+
+interface TerminalOptions {
+  cols?: number;
+  rows?: number;
+  name?: string;
+  data?: (terminal: Terminal, data: Uint8Array) => void;
+  exit?: (terminal: Terminal, exitCode: number, signal: string | null) => void;
+  drain?: (terminal: Terminal) => void;
+}
+
+interface Terminal extends AsyncDisposable {
+  readonly stdin: number;
+  readonly stdout: number;
+  readonly closed: boolean;
+  write(data: string | ArrayBufferView | ArrayBuffer): number;
+  resize(cols: number, rows: number): void;
+  setRawMode(enabled: boolean): void;
+  ref(): void;
+  unref(): void;
+  close(): void;
 }
 
 interface ResourceUsage {

@@ -411,9 +411,9 @@ import icon from "./icon.png" with { type: "file" };
 import { file } from "bun";
 
 // Get file contents as different types
-const bytes = await file(icon).arrayBuffer();  // ArrayBuffer
-const text = await file(icon).text();          // string (for text files)
-const blob = file(icon);                       // Blob
+const bytes = await file(icon).arrayBuffer(); // ArrayBuffer
+const text = await file(icon).text(); // string (for text files)
+const blob = file(icon); // Blob
 
 // Stream the file in a response
 export default {
@@ -458,7 +458,9 @@ import { file } from "bun";
 const defaultConfig = await file(configPath).json();
 
 // Merge with user config if it exists
-const userConfig = await file("./user-config.json").json().catch(() => ({}));
+const userConfig = await file("./user-config.json")
+  .json()
+  .catch(() => ({}));
 const config = { ...defaultConfig, ...userConfig };
 ```
 
@@ -494,9 +496,7 @@ import { file } from "bun";
 
 async function sendWelcomeEmail(user: { name: string; email: string }) {
   const template = await file(templatePath).text();
-  const html = template
-    .replace("{{name}}", user.name)
-    .replace("{{email}}", user.email);
+  const html = template.replace("{{name}}", user.name).replace("{{email}}", user.email);
 
   // Send email with the rendered template...
 }
@@ -588,7 +588,7 @@ for (const blob of embeddedFiles) {
 Each item in `Bun.embeddedFiles` is a `Blob` with a `name` property:
 
 ```ts
-embeddedFiles: ReadonlyArray<Blob>
+embeddedFiles: ReadonlyArray<Blob>;
 ```
 
 This is useful for dynamically serving all embedded assets using `static` routes:

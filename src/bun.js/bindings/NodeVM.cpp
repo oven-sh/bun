@@ -772,6 +772,13 @@ void NodeVMGlobalObject::finishCreation(JSC::VM& vm)
     Base::finishCreation(vm);
     setEvalEnabled(m_contextOptions.allowStrings, "Code generation from strings disallowed for this context"_s);
     setWebAssemblyEnabled(m_contextOptions.allowWasm, "Wasm code generation disallowed by embedder"_s);
+
+    // Delete the internal Loader property from the VM global object.
+    // This is exposed by JSC when exposeInternalModuleLoader() is true,
+    // but it should not be visible in node:vm contexts.
+    JSC::DeletePropertySlot slot;
+    JSC::JSObject::deleteProperty(this, this, vm.propertyNames->Loader, slot);
+
     vm.ensureTerminationException();
 }
 

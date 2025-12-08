@@ -111,7 +111,7 @@ describe("given a source file with syntax errors", () => {
   // FIXME: fails asan poisoning check
   // TinyCC uses `setjmp` on an internal error handler, then jumps there when it
   // encounters a syntax error. Newer versions of tcc added a public API to
-  // set a runtime error handler, but but we need to upgrade in order to get it.
+  // set a runtime error handler, but we need to upgrade in order to get it.
   // https://github.com/TinyCC/tinycc/blob/f8bd136d198bdafe71342517fa325da2e243dc68/libtcc.h#L106C9-L106C24
   it.skip("when compiled, throws an error", () => {
     expect(() => {

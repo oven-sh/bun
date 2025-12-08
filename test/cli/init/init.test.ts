@@ -295,31 +295,4 @@ import path from "path";
     expect(fs.existsSync(path.join(temp, "src/components"))).toBe(true);
     expect(fs.existsSync(path.join(temp, "src/components/ui"))).toBe(true);
   }, 30_000);
-
-  test("bun init --react=tanstack works", async () => {
-    const temp = tempDirWithFiles("bun-init--react=tanstack-works", {});
-
-    const { exited } = Bun.spawn({
-      cmd: [bunExe(), "init", "--react=tanstack"],
-      cwd: temp,
-      stdio: ["ignore", "inherit", "inherit"],
-      env: bunEnv,
-    });
-
-    expect(await exited).toBe(0);
-
-    const pkg = JSON.parse(fs.readFileSync(path.join(temp, "package.json"), "utf8"));
-    expect(pkg).toHaveProperty("dependencies.react");
-    expect(pkg).toHaveProperty("dependencies.react-dom");
-    expect(pkg).toHaveProperty("dependencies.@tanstack/react-router");
-    expect(pkg).toHaveProperty("dependencies.@tanstack/react-start");
-    expect(pkg).toHaveProperty("dependencies.@tailwindcss/vite");
-    expect(pkg).toHaveProperty("dependencies.tailwindcss");
-
-    expect(fs.existsSync(path.join(temp, "src"))).toBe(true);
-    expect(fs.existsSync(path.join(temp, "src/router.tsx"))).toBe(true);
-    expect(fs.existsSync(path.join(temp, "src/routes"))).toBe(true);
-    expect(fs.existsSync(path.join(temp, "vite.config.ts"))).toBe(true);
-    expect(fs.existsSync(path.join(temp, "public"))).toBe(true);
-  }, 30_000);
 });

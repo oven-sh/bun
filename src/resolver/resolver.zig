@@ -4122,30 +4122,32 @@ pub const Resolver = struct {
         }
 
         // Record if this directory has a package.json file
-        if (entries.getComptimeQuery("package.json")) |lookup| {
-            const entry = lookup.entry;
-            if (entry.kind(rfs, r.store_fd) == .file) {
-                info.package_json = if (r.usePackageManager() and !info.hasNodeModules() and !info.isNodeModules())
-                    r.parsePackageJSON(path, if (FeatureFlags.store_file_descriptors) fd else .invalid, package_id, true) catch null
-                else
-                    r.parsePackageJSON(path, if (FeatureFlags.store_file_descriptors) fd else .invalid, null, false) catch null;
+        if (r.opts.load_package_json) {
+            if (entries.getComptimeQuery("package.json")) |lookup| {
+                const entry = lookup.entry;
+                if (entry.kind(rfs, r.store_fd) == .file) {
+                    info.package_json = if (r.usePackageManager() and !info.hasNodeModules() and !info.isNodeModules())
+                        r.parsePackageJSON(path, if (FeatureFlags.store_file_descriptors) fd else .invalid, package_id, true) catch null
+                    else
+                        r.parsePackageJSON(path, if (FeatureFlags.store_file_descriptors) fd else .invalid, null, false) catch null;
 
-                if (info.package_json) |pkg| {
-                    if (pkg.browser_map.count() > 0) {
-                        info.enclosing_browser_scope = result.index;
-                        info.package_json_for_browser_field = pkg;
-                    }
+                    if (info.package_json) |pkg| {
+                        if (pkg.browser_map.count() > 0) {
+                            info.enclosing_browser_scope = result.index;
+                            info.package_json_for_browser_field = pkg;
+                        }
 
-                    if (pkg.name.len > 0 or r.care_about_bin_folder)
-                        info.enclosing_package_json = pkg;
+                        if (pkg.name.len > 0 or r.care_about_bin_folder)
+                            info.enclosing_package_json = pkg;
 
-                    if (pkg.dependencies.map.count() > 0 or pkg.package_manager_package_id != Install.invalid_package_id)
-                        info.package_json_for_dependencies = pkg;
+                        if (pkg.dependencies.map.count() > 0 or pkg.package_manager_package_id != Install.invalid_package_id)
+                            info.package_json_for_dependencies = pkg;
 
-                    if (r.debug_logs) |*logs| {
-                        logs.addNoteFmt("Resolved package.json in \"{s}\"", .{
-                            path,
-                        });
+                        if (r.debug_logs) |*logs| {
+                            logs.addNoteFmt("Resolved package.json in \"{s}\"", .{
+                                path,
+                            });
+                        }
                     }
                 }
             }

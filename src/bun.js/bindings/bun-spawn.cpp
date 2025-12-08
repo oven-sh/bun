@@ -36,9 +36,13 @@ static inline void closeRangeOrLoop(int start, int end, bool cloexec_only)
         return;
     }
     // Fallback: loop-based close/cloexec for older kernels or when close_range fails
-    // Use sysconf to get max fd, clamped to a sane limit
+    // Use sysconf to get max fd, clamped to a sane limit and the provided end parameter
     int maxfd = static_cast<int>(sysconf(_SC_OPEN_MAX));
     if (maxfd < 0 || maxfd > 65536) maxfd = 1024;
+    // Respect the end parameter if it's a valid bound (not INT_MAX sentinel)
+    if (end >= start && end < INT_MAX) {
+        maxfd = std::min(maxfd, end + 1); // +1 because end is inclusive
+    }
 
     for (int fd = start; fd < maxfd; fd++) {
         if (cloexec_only) {
@@ -53,9 +57,13 @@ static inline void closeRangeOrLoop(int start, int end, bool cloexec_only)
     }
 #elif OS(DARWIN)
     // macOS: no closefrom() or close_range(), use manual loop
-    // Use getdtablesize() for upper bound
+    // Use getdtablesize() for upper bound, clamped to the provided end parameter
     int maxfd = getdtablesize();
     if (maxfd < 0 || maxfd > 65536) maxfd = 1024;
+    // Respect the end parameter if it's a valid bound (not INT_MAX sentinel)
+    if (end >= start && end < INT_MAX) {
+        maxfd = std::min(maxfd, end + 1); // +1 because end is inclusive
+    }
 
     for (int fd = start; fd < maxfd; fd++) {
         if (cloexec_only) {

@@ -395,10 +395,11 @@ const terminal = new Bun.Terminal({
 });
 
 // Spawn a process using the terminal's file descriptors
+// All three stdio streams use the same slave fd because PTY multiplexes I/O
 const proc = Bun.spawn(["bash"], {
-  stdin: terminal.stdin, // slave fd for child's stdin
-  stdout: terminal.stdin, // slave fd for child's stdout
-  stderr: terminal.stdin, // slave fd for child's stderr
+  stdin: terminal.stdin,
+  stdout: terminal.stdin,
+  stderr: terminal.stdin,
 });
 
 terminal.write("echo hello\n");

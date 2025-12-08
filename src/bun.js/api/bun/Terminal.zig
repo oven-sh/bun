@@ -194,7 +194,10 @@ pub fn constructor(
     // Start reader with the read fd
     switch (terminal.reader.start(pty_result.read_fd, true)) {
         .err => {
-            // Reader never started, release reader + JS refs (writer will release its own)
+            // Reader never started - shut down writer and release refs
+            // Writer.close() will deregister from event loop and close fd
+            terminal.writer.close();
+            // Release reader + JS refs (writer will release its own via onWriterDone)
             terminal.deref();
             terminal.deref();
             return globalObject.throw("Failed to start terminal reader", .{});

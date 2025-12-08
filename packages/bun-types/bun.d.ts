@@ -6153,10 +6153,12 @@ declare module "bun" {
      */
     data?: (terminal: Terminal, data: Uint8Array<ArrayBuffer>) => void;
     /**
-     * Callback invoked when the terminal exits.
+     * Callback invoked when the PTY stream closes (EOF or read error).
+     * Note: exitCode is a PTY lifecycle status (0=clean EOF, 1=error), NOT the subprocess exit code.
+     * Use Subprocess.exited or onExit callback for actual process exit information.
      * @param terminal The terminal instance
-     * @param exitCode The exit code
-     * @param signal The signal that caused the exit, if any
+     * @param exitCode PTY lifecycle status (0 for EOF, 1 for error)
+     * @param signal Reserved for future signal reporting, currently null
      */
     exit?: (terminal: Terminal, exitCode: number, signal: string | null) => void;
     /**
@@ -6200,13 +6202,17 @@ declare module "bun" {
     /**
      * The file descriptor for the slave side of the PTY.
      * This should be used as stdin/stdout/stderr for child processes.
-     * Returns -1 if the terminal is closed.
+     *
+     * For standalone terminals: Returns a valid fd until close() is called, then -1.
+     * For spawn-integrated terminals (via `Bun.spawn({ terminal })`): Returns -1 because
+     * the parent's copy of the slave fd is closed immediately after fork.
      */
     readonly stdin: number;
 
     /**
      * The file descriptor for the master side of the PTY.
-     * Returns -1 if the terminal is closed.
+     * Used internally for reading subprocess output.
+     * Returns -1 only after the terminal is fully closed via close().
      */
     readonly stdout: number;
 

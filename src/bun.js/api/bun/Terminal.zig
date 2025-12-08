@@ -801,6 +801,7 @@ pub fn onReaderDone(this: *Terminal) void {
     if (!this.flags.finalized) {
         this.flags.connected = false;
         this.this_value.downgrade();
+        // exit_code 0 = clean EOF on PTY stream (not subprocess exit code)
         this.callExitCallback(0, null);
     }
     // Release reader's ref (only once)
@@ -817,6 +818,7 @@ pub fn onReaderError(this: *Terminal, err: bun.sys.Error) void {
     if (!this.flags.finalized) {
         this.flags.connected = false;
         this.this_value.downgrade();
+        // exit_code 1 = I/O error on PTY stream (not subprocess exit code)
         this.callExitCallback(1, null);
     }
     // Release reader's ref (only once)
@@ -826,6 +828,9 @@ pub fn onReaderError(this: *Terminal, err: bun.sys.Error) void {
     }
 }
 
+/// Invoke the exit callback with PTY lifecycle status.
+/// Note: exit_code is PTY-level (0=EOF, 1=error), NOT the subprocess exit code.
+/// The signal parameter is only populated if a signal caused the PTY close.
 fn callExitCallback(this: *Terminal, exit_code: i32, signal: ?bun.SignalCode) void {
     const this_jsvalue = this.this_value.tryGet() orelse return;
     const callback = js.gc.get(.exit, this_jsvalue) orelse return;

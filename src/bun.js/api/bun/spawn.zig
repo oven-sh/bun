@@ -92,6 +92,7 @@ pub const BunSpawn = struct {
 
     pub const Attr = struct {
         detached: bool = false,
+        pty_slave_fd: i32 = -1, // -1 if not using PTY, otherwise the slave fd to set as controlling terminal
 
         pub fn init() !Attr {
             return Attr{};
@@ -128,6 +129,8 @@ pub const PosixSpawn = struct {
 
     pub const PosixSpawnAttr = struct {
         attr: system.posix_spawnattr_t,
+        detached: bool = false,
+        pty_slave_fd: i32 = -1, // -1 if not using PTY, otherwise the slave fd to set as controlling terminal
 
         pub fn init() !PosixSpawnAttr {
             var attr: system.posix_spawnattr_t = undefined;
@@ -259,13 +262,18 @@ pub const PosixSpawn = struct {
         }
     };
 
-    pub const Actions = if (Environment.isLinux) BunSpawn.Actions else PosixSpawnActions;
-    pub const Attr = if (Environment.isLinux) BunSpawn.Attr else PosixSpawnAttr;
+    // Use BunSpawn types on POSIX (both Linux and macOS) for PTY support via posix_spawn_bun.
+    // Windows uses different spawn mechanisms.
+    pub const Actions = if (Environment.isPosix) BunSpawn.Actions else PosixSpawnActions;
+    pub const Attr = if (Environment.isPosix) BunSpawn.Attr else PosixSpawnAttr;
 
+    /// BunSpawnRequest is used for Linux spawns and macOS PTY spawns (when pty_slave_fd >= 0).
+    /// It calls our custom posix_spawn_bun which supports setsid() + ioctl(TIOCSCTTY).
     const BunSpawnRequest = extern struct {
         chdir_buf: ?[*:0]u8 = null,
         detached: bool = false,
         actions: ActionsList = .{},
+        pty_slave_fd: i32 = -1, // -1 if not using PTY, otherwise the slave fd to set as controlling terminal
 
         const ActionsList = extern struct {
             ptr: ?[*]const BunSpawn.Action = null,
@@ -318,7 +326,9 @@ pub const PosixSpawn = struct {
         argv: [*:null]?[*:0]const u8,
         envp: [*:null]?[*:0]const u8,
     ) Maybe(pid_t) {
-        if (comptime Environment.isLinux) {
+        // Use our custom posix_spawn_bun on both Linux and macOS for PTY support
+        // (setsid + ioctl TIOCSCTTY for proper job control).
+        if (comptime Environment.isPosix) {
             return BunSpawnRequest.spawn(
                 path,
                 .{
@@ -331,12 +341,14 @@ pub const PosixSpawn = struct {
                     },
                     .chdir_buf = if (actions) |a| a.chdir_buf else null,
                     .detached = if (attr) |a| a.detached else false,
+                    .pty_slave_fd = if (attr) |a| a.pty_slave_fd else -1,
                 },
                 argv,
                 envp,
             );
         }
 
+        // Windows path (uses different mechanism)
         var pid: pid_t = undefined;
         const rc = system.posix_spawn(
             &pid,

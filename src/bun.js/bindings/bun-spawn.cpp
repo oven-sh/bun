@@ -1,6 +1,6 @@
 #include "root.h"
 
-#if OS(LINUX)
+#if OS(LINUX) || OS(DARWIN)
 
 #include <fcntl.h>
 #include <cstring>
@@ -8,10 +8,14 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <sys/ioctl.h>
 #include <fcntl.h>
 #include <signal.h>
-#include <sys/syscall.h>
 #include <sys/resource.h>
+
+#if OS(LINUX)
+#include <sys/syscall.h>
+#endif
 
 extern char** environ;
 
@@ -19,7 +23,40 @@ extern char** environ;
 #define CLOSE_RANGE_CLOEXEC (1U << 2)
 #endif
 
+#if OS(LINUX)
 extern "C" ssize_t bun_close_range(unsigned int start, unsigned int end, unsigned int flags);
+#endif
+
+// Platform-specific close range implementation
+static inline void closeRangeOrLoop(int start, int end, bool cloexec_only) {
+#if OS(LINUX)
+    unsigned int flags = cloexec_only ? CLOSE_RANGE_CLOEXEC : 0;
+    if (bun_close_range(start, end, flags) == 0) {
+        return;
+    }
+    // Fallback: close individually
+    if (!cloexec_only) {
+        bun_close_range(start, end, 0);
+    }
+#elif OS(DARWIN)
+    // macOS: no closefrom() or close_range(), use manual loop
+    // Use getdtablesize() for upper bound
+    int maxfd = getdtablesize();
+    if (maxfd < 0 || maxfd > 65536) maxfd = 1024;
+
+    for (int fd = start; fd < maxfd; fd++) {
+        if (cloexec_only) {
+            // Set FD_CLOEXEC instead of closing
+            int flags = fcntl(fd, F_GETFD);
+            if (flags >= 0) {
+                fcntl(fd, F_SETFD, flags | FD_CLOEXEC);
+            }
+        } else {
+            close(fd);
+        }
+    }
+#endif
+}
 
 enum FileActionType : uint8_t {
     None,
@@ -45,6 +82,7 @@ typedef struct bun_spawn_request_t {
     const char* chdir;
     bool detached;
     bun_spawn_file_action_list_t actions;
+    int pty_slave_fd;  // -1 if not using PTY, otherwise the slave fd to set as controlling terminal
 } bun_spawn_request_t;
 
 extern "C" ssize_t posix_spawn_bun(
@@ -60,12 +98,18 @@ extern "C" ssize_t posix_spawn_bun(
     sigfillset(&blockall);
     sigprocmask(SIG_SETMASK, &blockall, &oldmask);
     pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &cs);
+
+    // Use vfork on Linux (faster, shares memory until exec), fork on macOS (vfork is deprecated)
+#if OS(LINUX)
     pid_t child = vfork();
+#else
+    pid_t child = fork();
+#endif
 
     const auto childFailed = [&]() -> ssize_t {
         res = errno;
         status = res;
-        bun_close_range(0, ~0U, 0);
+        closeRangeOrLoop(0, INT_MAX, false);
         _exit(127);
 
         // should never be reached
@@ -82,9 +126,14 @@ extern "C" ssize_t posix_spawn_bun(
             sigaction(i, &sa, 0);
         }
 
-        // Make "detached" work
-        if (request->detached) {
+        // Make "detached" work, or set up PTY as controlling terminal
+        if (request->detached || request->pty_slave_fd >= 0) {
             setsid();
+        }
+
+        // Set PTY slave as controlling terminal for proper job control
+        if (request->pty_slave_fd >= 0) {
+            ioctl(request->pty_slave_fd, TIOCSCTTY, 0);
         }
 
         int current_max_fd = 0;
@@ -165,9 +214,9 @@ extern "C" ssize_t posix_spawn_bun(
         if (!envp)
             envp = environ;
 
-        if (bun_close_range(current_max_fd + 1, ~0U, CLOSE_RANGE_CLOEXEC) != 0) {
-            bun_close_range(current_max_fd + 1, ~0U, 0);
-        }
+        // Close all fds > current_max_fd, preferring cloexec if available
+        closeRangeOrLoop(current_max_fd + 1, INT_MAX, true);
+
         if (execve(path, argv, envp) == -1) {
             return childFailed();
         }

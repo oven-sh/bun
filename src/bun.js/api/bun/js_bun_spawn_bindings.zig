@@ -594,6 +594,8 @@ pub fn spawnMaybeSync(
         .extra_fds = extra_fds.items,
         .argv0 = argv0,
         .can_block_entire_thread_to_reduce_cpu_usage_in_fast_path = can_block_entire_thread_to_reduce_cpu_usage_in_fast_path,
+        // Pass PTY slave fd for controlling terminal setup (job control) - POSIX only
+        .pty_slave_fd = if (Environment.isPosix) (if (terminal_info) |ti| ti.terminal.getSlaveFd().native() else -1) else {},
 
         .windows = if (Environment.isWindows) .{
             .hide_window = windows_hide,

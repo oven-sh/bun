@@ -28,7 +28,8 @@ extern "C" ssize_t bun_close_range(unsigned int start, unsigned int end, unsigne
 #endif
 
 // Platform-specific close range implementation
-static inline void closeRangeOrLoop(int start, int end, bool cloexec_only) {
+static inline void closeRangeOrLoop(int start, int end, bool cloexec_only)
+{
 #if OS(LINUX)
     unsigned int flags = cloexec_only ? CLOSE_RANGE_CLOEXEC : 0;
     if (bun_close_range(start, end, flags) == 0) {
@@ -82,7 +83,7 @@ typedef struct bun_spawn_request_t {
     const char* chdir;
     bool detached;
     bun_spawn_file_action_list_t actions;
-    int pty_slave_fd;  // -1 if not using PTY, otherwise the slave fd to set as controlling terminal
+    int pty_slave_fd; // -1 if not using PTY, otherwise the slave fd to set as controlling terminal
 } bun_spawn_request_t;
 
 extern "C" ssize_t posix_spawn_bun(

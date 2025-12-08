@@ -5676,6 +5676,34 @@ declare module "bun" {
        * ```
        */
       lazy?: boolean;
+
+      /**
+       * Spawn the subprocess with a pseudo-terminal (PTY) attached.
+       *
+       * When this option is provided:
+       * - `stdin`, `stdout`, and `stderr` are all connected to the terminal
+       * - The subprocess sees itself running in a real terminal (`isTTY = true`)
+       * - Access the terminal via `subprocess.terminal`
+       * - `subprocess.stdin`, `subprocess.stdout`, `subprocess.stderr` return `null`
+       *
+       * Only available on POSIX systems (Linux, macOS).
+       *
+       * @example
+       * ```ts
+       * const proc = Bun.spawn(["bash"], {
+       *   terminal: {
+       *     cols: 80,
+       *     rows: 24,
+       *     data: (term, data) => console.log(data.toString()),
+       *   },
+       * });
+       *
+       * proc.terminal.write("echo hello\n");
+       * await proc.exited;
+       * proc.terminal.close();
+       * ```
+       */
+      terminal?: TerminalOptions;
     }
 
     type ReadableToIO<X extends Readable> = X extends "pipe" | undefined
@@ -5789,6 +5817,24 @@ declare module "bun" {
     readonly stdin: SpawnOptions.WritableToIO<In>;
     readonly stdout: SpawnOptions.ReadableToIO<Out>;
     readonly stderr: SpawnOptions.ReadableToIO<Err>;
+
+    /**
+     * The terminal attached to this subprocess, if spawned with the `terminal` option.
+     * Returns `undefined` if no terminal was attached.
+     *
+     * When a terminal is attached, `stdin`, `stdout`, and `stderr` return `null`.
+     * Use `terminal.write()` and the `data` callback instead.
+     *
+     * @example
+     * ```ts
+     * const proc = Bun.spawn(["bash"], {
+     *   terminal: { data: (term, data) => console.log(data.toString()) },
+     * });
+     *
+     * proc.terminal?.write("echo hello\n");
+     * ```
+     */
+    readonly terminal: Terminal | undefined;
 
     /**
      * Access extra file descriptors passed to the `stdio` option in the options object.

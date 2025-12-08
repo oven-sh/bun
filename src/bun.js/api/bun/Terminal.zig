@@ -59,7 +59,7 @@ globalThis: *jsc.JSGlobalObject,
 writer: IOWriter = .{},
 
 /// Reader for receiving data from the terminal
-reader: IOReader = undefined,
+reader: IOReader = IOReader.init(@This()),
 
 /// This value reference for GC tracking
 /// - weak: allows GC when idle
@@ -173,8 +173,7 @@ pub fn constructor(
         .globalThis = globalObject,
     });
 
-    // Initialize reader with the read fd
-    terminal.reader = IOReader.init(@This());
+    // Set reader parent
     terminal.reader.setParent(terminal);
 
     // Set writer parent
@@ -297,8 +296,7 @@ pub fn createFromSpawn(
         .globalThis = globalObject,
     });
 
-    // Initialize reader with the read fd
-    terminal.reader = IOReader.init(@This());
+    // Set reader parent
     terminal.reader.setParent(terminal);
 
     // Set writer parent
@@ -403,48 +401,96 @@ fn createPty(cols: u16, rows: u16) CreatePtyError!PtyResult {
     }
 }
 
+// Termios is required for the openpty() extern signature even though we pass null.
+// Kept for type correctness of the C function declaration.
+const Termios = extern struct {
+    c_iflag: u32,
+    c_oflag: u32,
+    c_cflag: u32,
+    c_lflag: u32,
+    c_cc: [20]u8,
+    c_ispeed: u32,
+    c_ospeed: u32,
+};
+
+const Winsize = extern struct {
+    ws_row: u16,
+    ws_col: u16,
+    ws_xpixel: u16,
+    ws_ypixel: u16,
+};
+
+const OpenPtyFn = *const fn (
+    amaster: *c_int,
+    aslave: *c_int,
+    name: ?[*]u8,
+    termp: ?*const Termios,
+    winp: ?*const Winsize,
+) callconv(.c) c_int;
+
+/// Dynamic loading of openpty on Linux (it's in libutil which may not be linked)
+const LibUtil = struct {
+    var handle: ?*anyopaque = null;
+    var loaded: bool = false;
+
+    pub fn getHandle() ?*anyopaque {
+        if (loaded) return handle;
+        loaded = true;
+
+        // Try libutil.so first (most common), then libutil.so.1
+        const lib_names = [_][:0]const u8{ "libutil.so", "libutil.so.1", "libc.so.6" };
+        for (lib_names) |lib_name| {
+            handle = bun.sys.dlopen(lib_name, .{ .LAZY = true });
+            if (handle != null) return handle;
+        }
+        return null;
+    }
+
+    pub fn getOpenPty() ?OpenPtyFn {
+        return bun.sys.dlsymWithHandle(OpenPtyFn, "openpty", getHandle);
+    }
+};
+
+fn getOpenPtyFn() ?OpenPtyFn {
+    // On macOS, openpty is in libc, so we can use it directly
+    if (comptime Environment.isMac) {
+        const c = struct {
+            extern "c" fn openpty(
+                amaster: *c_int,
+                aslave: *c_int,
+                name: ?[*]u8,
+                termp: ?*const Termios,
+                winp: ?*const Winsize,
+            ) c_int;
+        };
+        return &c.openpty;
+    }
+
+    // On Linux, openpty is in libutil, which may not be linked
+    // Load it dynamically via dlopen
+    if (comptime Environment.isLinux) {
+        return LibUtil.getOpenPty();
+    }
+
+    return null;
+}
+
 fn createPtyPosix(cols: u16, rows: u16) CreatePtyError!PtyResult {
-    // Use openpty from libc
-    const c = struct {
-        extern "c" fn openpty(
-            amaster: *c_int,
-            aslave: *c_int,
-            name: ?[*]u8,
-            termp: ?*const Termios,
-            winp: ?*const Winsize,
-        ) c_int;
-
-        // Termios is required for the openpty() extern signature even though we pass null.
-        // Kept for type correctness of the C function declaration.
-        const Termios = extern struct {
-            c_iflag: u32,
-            c_oflag: u32,
-            c_cflag: u32,
-            c_lflag: u32,
-            c_cc: [20]u8,
-            c_ispeed: u32,
-            c_ospeed: u32,
-        };
-
-        const Winsize = extern struct {
-            ws_row: u16,
-            ws_col: u16,
-            ws_xpixel: u16,
-            ws_ypixel: u16,
-        };
+    const openpty_fn = getOpenPtyFn() orelse {
+        return error.NotSupported;
     };
 
     var master_fd: c_int = -1;
     var slave_fd: c_int = -1;
 
-    const winsize = c.Winsize{
+    const winsize = Winsize{
         .ws_row = rows,
         .ws_col = cols,
         .ws_xpixel = 0,
         .ws_ypixel = 0,
     };
 
-    const result = c.openpty(&master_fd, &slave_fd, null, null, &winsize);
+    const result = openpty_fn(&master_fd, &slave_fd, null, null, &winsize);
     if (result != 0) {
         return error.OpenPtyFailed;
     }

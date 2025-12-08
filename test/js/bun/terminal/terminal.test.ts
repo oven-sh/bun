@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 
-describe("Bun.Terminal", () => {
+// Terminal (PTY) is only supported on POSIX platforms
+describe.todoIf(isWindows)("Bun.Terminal", () => {
   describe("constructor", () => {
     test("creates a PTY with default options", () => {
       const terminal = new Bun.Terminal({});
@@ -931,7 +932,8 @@ describe("Bun.Terminal", () => {
   });
 });
 
-describe("Bun.spawn with terminal option", () => {
+// Terminal (PTY) is only supported on POSIX platforms
+describe.todoIf(isWindows)("Bun.spawn with terminal option", () => {
   test("creates subprocess with terminal attached", async () => {
     const dataChunks: Uint8Array[] = [];
 

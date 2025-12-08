@@ -22,6 +22,7 @@ pub const Options = struct {
     framework: bake.Framework,
     bundler_options: bake.SplitBundlerOptions,
     broadcast_console_log_from_browser_to_server: bool,
+    enable_uncaught_exception_reporting_from_browser_to_terminal: bool,
 
     // Debugging features
     dump_sources: ?[]const u8 = if (Environment.isDebug) ".bake-debug" else null,
@@ -244,6 +245,7 @@ assume_perfect_incremental_bundling: bool = false,
 /// - Echoing browser console logs to the server for debugging
 /// - WebKit Inspector remote debugging integration
 broadcast_console_log_from_browser_to_server: bool,
+enable_uncaught_exception_reporting_from_browser_to_terminal: bool,
 
 pub const internal_prefix = "/_bun";
 /// Assets which are routed to the `Assets` storage.
@@ -346,6 +348,7 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         .assume_perfect_incremental_bundling = bun.feature_flag.BUN_ASSUME_PERFECT_INCREMENTAL.get() orelse bun.Environment.isDebug,
         .testing_batch_events = .disabled,
         .broadcast_console_log_from_browser_to_server = options.broadcast_console_log_from_browser_to_server,
+        .enable_uncaught_exception_reporting_from_browser_to_terminal = options.enable_uncaught_exception_reporting_from_browser_to_terminal,
         .server_transpiler = undefined,
         .client_transpiler = undefined,
         .ssr_transpiler = undefined,
@@ -696,6 +699,7 @@ pub fn deinit(dev: *DevServer) void {
             .enable_after_bundle => {},
         },
         .broadcast_console_log_from_browser_to_server = {},
+        .enable_uncaught_exception_reporting_from_browser_to_terminal = {},
 
         .magic = {
             bun.debugAssert(dev.magic == .valid);

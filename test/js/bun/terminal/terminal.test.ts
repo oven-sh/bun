@@ -904,18 +904,60 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
   });
 
   describe("stress tests", () => {
-    test("can create many terminals", () => {
-      const terminals: Bun.Terminal[] = [];
+    // Helper to count open file descriptors (Linux/macOS)
+    function countOpenFds(): number {
+      try {
+        const { readdirSync } = require("fs");
+        return readdirSync("/proc/self/fd").length;
+      } catch {
+        // macOS or /proc not available - use a different approach
+        // Count by trying to dup fds
+        let count = 0;
+        for (let fd = 0; fd < 1024; fd++) {
+          try {
+            const { fcntlSync } = require("fs");
+            // This will throw if fd is not open
+            Bun.file(`/dev/fd/${fd}`).size;
+            count++;
+          } catch {
+            // fd not open, ignore
+          }
+        }
+        return count;
+      }
+    }
 
-      for (let i = 0; i < 10; i++) {
+    test("can create many terminals with FD cleanup", () => {
+      const terminals: Bun.Terminal[] = [];
+      const TERMINAL_COUNT = 50;
+
+      // Get baseline FD count
+      const baselineFds = countOpenFds();
+
+      // Create many terminals
+      for (let i = 0; i < TERMINAL_COUNT; i++) {
         terminals.push(new Bun.Terminal({}));
       }
 
+      // FD count should have increased (each terminal uses ~4 fds: master, read, write, slave)
+      const openFds = countOpenFds();
+      expect(openFds).toBeGreaterThan(baselineFds);
+
+      // Close all terminals
       for (const terminal of terminals) {
         expect(terminal.closed).toBe(false);
         terminal.close();
         expect(terminal.closed).toBe(true);
       }
+
+      // Give time for cleanup
+      Bun.gc(true);
+
+      // FD count should return to near baseline (within acceptable delta for GC timing)
+      const finalFds = countOpenFds();
+      const fdDelta = finalFds - baselineFds;
+      // Allow some delta for async cleanup, but should be much less than the opened count
+      expect(fdDelta).toBeLessThan(TERMINAL_COUNT * 2);
     });
 
     test("can write many times rapidly", () => {

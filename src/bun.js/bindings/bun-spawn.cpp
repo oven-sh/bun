@@ -35,9 +35,21 @@ static inline void closeRangeOrLoop(int start, int end, bool cloexec_only)
     if (bun_close_range(start, end, flags) == 0) {
         return;
     }
-    // Fallback: close individually
-    if (!cloexec_only) {
-        bun_close_range(start, end, 0);
+    // Fallback: loop-based close/cloexec for older kernels or when close_range fails
+    // Use sysconf to get max fd, clamped to a sane limit
+    int maxfd = static_cast<int>(sysconf(_SC_OPEN_MAX));
+    if (maxfd < 0 || maxfd > 65536) maxfd = 1024;
+
+    for (int fd = start; fd < maxfd; fd++) {
+        if (cloexec_only) {
+            // Set FD_CLOEXEC instead of closing
+            int current_flags = fcntl(fd, F_GETFD);
+            if (current_flags >= 0) {
+                fcntl(fd, F_SETFD, current_flags | FD_CLOEXEC);
+            }
+        } else {
+            close(fd);
+        }
     }
 #elif OS(DARWIN)
     // macOS: no closefrom() or close_range(), use manual loop
@@ -48,9 +60,9 @@ static inline void closeRangeOrLoop(int start, int end, bool cloexec_only)
     for (int fd = start; fd < maxfd; fd++) {
         if (cloexec_only) {
             // Set FD_CLOEXEC instead of closing
-            int flags = fcntl(fd, F_GETFD);
-            if (flags >= 0) {
-                fcntl(fd, F_SETFD, flags | FD_CLOEXEC);
+            int current_flags = fcntl(fd, F_GETFD);
+            if (current_flags >= 0) {
+                fcntl(fd, F_SETFD, current_flags | FD_CLOEXEC);
             }
         } else {
             close(fd);

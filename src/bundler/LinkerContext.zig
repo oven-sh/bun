@@ -2685,6 +2685,22 @@ pub const ParseTask = bun.bundle_v2.ParseTask;
 
 const string = []const u8;
 
+/// Hash context for ImportTracker used in cycle detection
+const ImportTrackerHashCtx = struct {
+    pub fn hash(_: @This(), tracker: ImportTracker) u64 {
+        // Combine source_index (u32) and import_ref hash (u64)
+        // name_loc is not included in the hash as it doesn't affect semantic equality
+        const source_hash = @as(u64, tracker.source_index.get());
+        const ref_hash = tracker.import_ref.hash64();
+        return source_hash ^ ref_hash;
+    }
+
+    pub fn eql(_: @This(), a: ImportTracker, b: ImportTracker) bool {
+        return a.source_index.get() == b.source_index.get() and
+            a.import_ref.eql(b.import_ref);
+    }
+};
+
 const NodeFallbackModules = @import("../node_fallbacks.zig");
 const js_printer = @import("../js_printer.zig");
 const lex = @import("../js_lexer.zig");
@@ -2755,19 +2771,3 @@ const logPartDependencyTree = bundler.logPartDependencyTree;
 
 const jsc = bun.jsc;
 const EventLoop = bun.jsc.AnyEventLoop;
-
-/// Hash context for ImportTracker used in cycle detection
-const ImportTrackerHashCtx = struct {
-    pub fn hash(_: @This(), tracker: ImportTracker) u64 {
-        // Combine source_index (u32) and import_ref hash (u64)
-        // name_loc is not included in the hash as it doesn't affect semantic equality
-        const source_hash = @as(u64, tracker.source_index.get());
-        const ref_hash = tracker.import_ref.hash64();
-        return source_hash ^ ref_hash;
-    }
-
-    pub fn eql(_: @This(), a: ImportTracker, b: ImportTracker) bool {
-        return a.source_index.get() == b.source_index.get() and
-            a.import_ref.eql(b.import_ref);
-    }
-};

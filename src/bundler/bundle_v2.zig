@@ -2045,6 +2045,8 @@ pub const BundleV2 = struct {
                 .{
                     .disable_default_env_files = !compile_options.autoload_dotenv,
                     .disable_autoload_bunfig = !compile_options.autoload_bunfig,
+                    .disable_autoload_tsconfig = !compile_options.autoload_tsconfig,
+                    .disable_autoload_package_json = !compile_options.autoload_package_json,
                 },
             ) catch |err| {
                 return bun.StandaloneModuleGraph.CompileResult.failFmt("{s}", .{@errorName(err)});

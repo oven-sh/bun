@@ -6261,6 +6261,38 @@ declare module "bun" {
      * Async dispose for use with `await using`.
      */
     [Symbol.asyncDispose](): Promise<void>;
+
+    /**
+     * Terminal input flags (c_iflag from termios).
+     * Controls input processing behavior like ICRNL, IXON, etc.
+     * Returns 0 if terminal is closed.
+     * Setting returns true on success, false on failure.
+     */
+    inputFlags: number;
+
+    /**
+     * Terminal output flags (c_oflag from termios).
+     * Controls output processing behavior like OPOST, ONLCR, etc.
+     * Returns 0 if terminal is closed.
+     * Setting returns true on success, false on failure.
+     */
+    outputFlags: number;
+
+    /**
+     * Terminal local flags (c_lflag from termios).
+     * Controls local processing like ICANON, ECHO, ISIG, etc.
+     * Returns 0 if terminal is closed.
+     * Setting returns true on success, false on failure.
+     */
+    localFlags: number;
+
+    /**
+     * Terminal control flags (c_cflag from termios).
+     * Controls hardware characteristics like CSIZE, PARENB, etc.
+     * Returns 0 if terminal is closed.
+     * Setting returns true on success, false on failure.
+     */
+    controlFlags: number;
   }
 
   // Blocked on https://github.com/oven-sh/bun/issues/8329

@@ -49,6 +49,22 @@ export default [
       closed: {
         getter: "getClosed",
       },
+      inputFlags: {
+        getter: "getInputFlags",
+        setter: "setInputFlags",
+      },
+      outputFlags: {
+        getter: "getOutputFlags",
+        setter: "setOutputFlags",
+      },
+      localFlags: {
+        getter: "getLocalFlags",
+        setter: "setLocalFlags",
+      },
+      controlFlags: {
+        getter: "getControlFlags",
+        setter: "setControlFlags",
+      },
     },
   }),
 ];

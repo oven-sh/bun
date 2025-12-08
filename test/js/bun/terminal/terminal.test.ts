@@ -335,6 +335,99 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
     });
   });
 
+  describe("termios flags", () => {
+    test("can read termios flags", () => {
+      const terminal = new Bun.Terminal({});
+
+      // All flags should be non-negative numbers
+      expect(terminal.inputFlags).toBeGreaterThanOrEqual(0);
+      expect(terminal.outputFlags).toBeGreaterThanOrEqual(0);
+      expect(terminal.localFlags).toBeGreaterThanOrEqual(0);
+      expect(terminal.controlFlags).toBeGreaterThanOrEqual(0);
+
+      terminal.close();
+    });
+
+    test("can set and restore inputFlags", () => {
+      const terminal = new Bun.Terminal({});
+
+      const original = terminal.inputFlags;
+      terminal.inputFlags = 0;
+      expect(terminal.inputFlags).toBe(0);
+
+      terminal.inputFlags = original;
+      expect(terminal.inputFlags).toBe(original);
+
+      terminal.close();
+    });
+
+    test("can set and restore outputFlags", () => {
+      const terminal = new Bun.Terminal({});
+
+      const original = terminal.outputFlags;
+      terminal.outputFlags = 0;
+      expect(terminal.outputFlags).toBe(0);
+
+      terminal.outputFlags = original;
+      expect(terminal.outputFlags).toBe(original);
+
+      terminal.close();
+    });
+
+    test("can set and restore localFlags", () => {
+      const terminal = new Bun.Terminal({});
+
+      const original = terminal.localFlags;
+      terminal.localFlags = 0;
+      expect(terminal.localFlags).toBe(0);
+
+      terminal.localFlags = original;
+      expect(terminal.localFlags).toBe(original);
+
+      terminal.close();
+    });
+
+    test("can set and restore controlFlags", () => {
+      const terminal = new Bun.Terminal({});
+
+      const original = terminal.controlFlags;
+      // Note: Some control flag bits are enforced by the kernel (like CS8, baud rate)
+      // and can't be changed to 0. Test that we can at least read and set values.
+      terminal.controlFlags = 0;
+      // Some bits may be preserved by kernel, so just check we can read back a value
+      expect(terminal.controlFlags).toBeGreaterThanOrEqual(0);
+
+      terminal.controlFlags = original;
+      expect(terminal.controlFlags).toBe(original);
+
+      terminal.close();
+    });
+
+    test("flags return 0 on closed terminal", () => {
+      const terminal = new Bun.Terminal({});
+      terminal.close();
+
+      expect(terminal.inputFlags).toBe(0);
+      expect(terminal.outputFlags).toBe(0);
+      expect(terminal.localFlags).toBe(0);
+      expect(terminal.controlFlags).toBe(0);
+    });
+
+    test("setting flags on closed terminal is no-op", () => {
+      const terminal = new Bun.Terminal({});
+      terminal.close();
+
+      // Should not throw
+      terminal.inputFlags = 123;
+      terminal.outputFlags = 456;
+      terminal.localFlags = 789;
+      terminal.controlFlags = 1011;
+
+      // Still 0
+      expect(terminal.inputFlags).toBe(0);
+    });
+  });
+
   describe("close", () => {
     test("close sets closed to true", () => {
       const terminal = new Bun.Terminal({});

@@ -403,9 +403,9 @@ fn createPty(cols: u16, rows: u16) CreatePtyError!PtyResult {
     }
 }
 
-// Termios is required for the openpty() extern signature even though we pass null.
+// OpenPtyTermios is required for the openpty() extern signature even though we pass null.
 // Kept for type correctness of the C function declaration.
-const Termios = extern struct {
+const OpenPtyTermios = extern struct {
     c_iflag: u32,
     c_oflag: u32,
     c_cflag: u32,
@@ -426,7 +426,7 @@ const OpenPtyFn = *const fn (
     amaster: *c_int,
     aslave: *c_int,
     name: ?[*]u8,
-    termp: ?*const Termios,
+    termp: ?*const OpenPtyTermios,
     winp: ?*const Winsize,
 ) callconv(.c) c_int;
 
@@ -461,7 +461,7 @@ fn getOpenPtyFn() ?OpenPtyFn {
                 amaster: *c_int,
                 aslave: *c_int,
                 name: ?[*]u8,
-                termp: ?*const Termios,
+                termp: ?*const OpenPtyTermios,
                 winp: ?*const Winsize,
             ) c_int;
         };
@@ -560,6 +560,105 @@ pub fn getStdin(this: *Terminal, _: *jsc.JSGlobalObject) JSValue {
 /// Check if terminal is closed
 pub fn getClosed(this: *Terminal, _: *jsc.JSGlobalObject) JSValue {
     return JSValue.jsBoolean(this.flags.closed);
+}
+
+/// Helper to convert termios flag to u32 (handles both 32-bit Linux and 64-bit macOS)
+fn termiosFlagToU32(comptime T: type, flag: T) u32 {
+    // On macOS, termios flags are c_ulong (64-bit), on Linux they are packed structs
+    const Int = @typeInfo(T).@"struct".backing_integer orelse @compileError("expected packed struct");
+    const int_value: Int = @bitCast(flag);
+    return @truncate(int_value);
+}
+
+/// Helper to convert u32 to termios flag type
+fn u32ToTermiosFlag(comptime T: type, value: u32) T {
+    const Int = @typeInfo(T).@"struct".backing_integer orelse @compileError("expected packed struct");
+    const extended: Int = value;
+    return @bitCast(extended);
+}
+
+/// Get input flags (c_iflag) - returns 0 if closed or error
+pub fn getInputFlags(this: *Terminal, _: *jsc.JSGlobalObject) JSValue {
+    if (comptime !Environment.isPosix) return JSValue.jsNumber(0);
+    if (this.flags.closed or this.master_fd == bun.invalid_fd) {
+        return JSValue.jsNumber(0);
+    }
+    const termios_data = getTermios(this.master_fd) orelse return JSValue.jsNumber(0);
+    return JSValue.jsNumber(termiosFlagToU32(@TypeOf(termios_data.iflag), termios_data.iflag));
+}
+
+/// Set input flags (c_iflag)
+pub fn setInputFlags(this: *Terminal, _: *jsc.JSGlobalObject, value: JSValue) void {
+    if (comptime !Environment.isPosix) return;
+    if (this.flags.closed or this.master_fd == bun.invalid_fd) {
+        return;
+    }
+    var termios_data = getTermios(this.master_fd) orelse return;
+    termios_data.iflag = u32ToTermiosFlag(@TypeOf(termios_data.iflag), value.toU32());
+    _ = setTermios(this.master_fd, &termios_data);
+}
+
+/// Get output flags (c_oflag) - returns 0 if closed or error
+pub fn getOutputFlags(this: *Terminal, _: *jsc.JSGlobalObject) JSValue {
+    if (comptime !Environment.isPosix) return JSValue.jsNumber(0);
+    if (this.flags.closed or this.master_fd == bun.invalid_fd) {
+        return JSValue.jsNumber(0);
+    }
+    const termios_data = getTermios(this.master_fd) orelse return JSValue.jsNumber(0);
+    return JSValue.jsNumber(termiosFlagToU32(@TypeOf(termios_data.oflag), termios_data.oflag));
+}
+
+/// Set output flags (c_oflag)
+pub fn setOutputFlags(this: *Terminal, _: *jsc.JSGlobalObject, value: JSValue) void {
+    if (comptime !Environment.isPosix) return;
+    if (this.flags.closed or this.master_fd == bun.invalid_fd) {
+        return;
+    }
+    var termios_data = getTermios(this.master_fd) orelse return;
+    termios_data.oflag = u32ToTermiosFlag(@TypeOf(termios_data.oflag), value.toU32());
+    _ = setTermios(this.master_fd, &termios_data);
+}
+
+/// Get local flags (c_lflag) - returns 0 if closed or error
+pub fn getLocalFlags(this: *Terminal, _: *jsc.JSGlobalObject) JSValue {
+    if (comptime !Environment.isPosix) return JSValue.jsNumber(0);
+    if (this.flags.closed or this.master_fd == bun.invalid_fd) {
+        return JSValue.jsNumber(0);
+    }
+    const termios_data = getTermios(this.master_fd) orelse return JSValue.jsNumber(0);
+    return JSValue.jsNumber(termiosFlagToU32(@TypeOf(termios_data.lflag), termios_data.lflag));
+}
+
+/// Set local flags (c_lflag)
+pub fn setLocalFlags(this: *Terminal, _: *jsc.JSGlobalObject, value: JSValue) void {
+    if (comptime !Environment.isPosix) return;
+    if (this.flags.closed or this.master_fd == bun.invalid_fd) {
+        return;
+    }
+    var termios_data = getTermios(this.master_fd) orelse return;
+    termios_data.lflag = u32ToTermiosFlag(@TypeOf(termios_data.lflag), value.toU32());
+    _ = setTermios(this.master_fd, &termios_data);
+}
+
+/// Get control flags (c_cflag) - returns 0 if closed or error
+pub fn getControlFlags(this: *Terminal, _: *jsc.JSGlobalObject) JSValue {
+    if (comptime !Environment.isPosix) return JSValue.jsNumber(0);
+    if (this.flags.closed or this.master_fd == bun.invalid_fd) {
+        return JSValue.jsNumber(0);
+    }
+    const termios_data = getTermios(this.master_fd) orelse return JSValue.jsNumber(0);
+    return JSValue.jsNumber(termiosFlagToU32(@TypeOf(termios_data.cflag), termios_data.cflag));
+}
+
+/// Set control flags (c_cflag)
+pub fn setControlFlags(this: *Terminal, _: *jsc.JSGlobalObject, value: JSValue) void {
+    if (comptime !Environment.isPosix) return;
+    if (this.flags.closed or this.master_fd == bun.invalid_fd) {
+        return;
+    }
+    var termios_data = getTermios(this.master_fd) orelse return;
+    termios_data.cflag = u32ToTermiosFlag(@TypeOf(termios_data.cflag), value.toU32());
+    _ = setTermios(this.master_fd, &termios_data);
 }
 
 /// Write data to the terminal
@@ -689,6 +788,22 @@ pub fn setRawMode(
 }
 
 extern fn Bun__ttySetMode(fd: c_int, mode: c_int) c_int;
+
+/// POSIX termios struct for terminal flags manipulation
+const Termios = if (Environment.isPosix) std.posix.termios else void;
+
+/// Get terminal attributes using tcgetattr
+fn getTermios(fd: bun.FileDescriptor) ?Termios {
+    if (comptime !Environment.isPosix) return null;
+    return std.posix.tcgetattr(fd.cast()) catch null;
+}
+
+/// Set terminal attributes using tcsetattr (TCSANOW = immediate)
+fn setTermios(fd: bun.FileDescriptor, termios_p: *const Termios) bool {
+    if (comptime !Environment.isPosix) return false;
+    std.posix.tcsetattr(fd.cast(), .NOW, termios_p.*) catch return false;
+    return true;
+}
 
 /// Reference the terminal to keep the event loop alive
 pub fn doRef(this: *Terminal, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
@@ -922,6 +1037,7 @@ pub fn finalize(this: *Terminal) callconv(.c) void {
     this.deref();
 }
 
+const std = @import("std");
 const bun = @import("bun");
 const Environment = bun.Environment;
 

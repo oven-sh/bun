@@ -497,7 +497,7 @@ pub fn getStdout(this: *Terminal, _: *jsc.JSGlobalObject) JSValue {
     if (this.flags.closed) {
         return JSValue.jsNumber(-1);
     }
-    return JSValue.jsNumber(this.master_fd.cast());
+    return JSValue.jsNumber(this.master_fd.uv());
 }
 
 /// Get the stdin file descriptor (slave PTY fd - used by child processes)
@@ -506,7 +506,7 @@ pub fn getStdin(this: *Terminal, _: *jsc.JSGlobalObject) JSValue {
     if (this.flags.closed or this.slave_fd == bun.invalid_fd) {
         return JSValue.jsNumber(-1);
     }
-    return JSValue.jsNumber(this.slave_fd.cast());
+    return JSValue.jsNumber(this.slave_fd.uv());
 }
 
 /// Check if terminal is closed
@@ -837,7 +837,11 @@ pub fn eventLoop(this: *Terminal) jsc.EventLoopHandle {
 }
 
 pub fn loop(this: *Terminal) *bun.Async.Loop {
-    return this.event_loop_handle.loop();
+    if (comptime Environment.isWindows) {
+        return this.event_loop_handle.loop().uv_loop;
+    } else {
+        return this.event_loop_handle.loop();
+    }
 }
 
 fn deinit(this: *Terminal) void {

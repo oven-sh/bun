@@ -112,4 +112,93 @@ describe("AbortSignal.any()", () => {
         });
     });
 
+    describe("event handling", () => {
+        test("should fire abort event when composite aborts", async () => {
+            const { promise, resolve } = Promise.withResolvers<boolean>();
+
+            const controller = new AbortController();
+            // @ts-ignore
+            const composite = AbortSignal.any([controller.signal]);
+
+            composite.addEventListener("abort", () => resolve(true));
+
+            // Abort fires synchronously, so the event listener is called before abort() returns
+            controller.abort();
+
+            const result = await promise;
+            expect(result).toBe(true);
+        });
+
+        test("should only fire abort event once even with multiple source aborts", async () => {
+            let abortCount = 0;
+
+            const controller1 = new AbortController();
+            const controller2 = new AbortController();
+
+            // @ts-ignore
+            const composite = AbortSignal.any([controller1.signal, controller2.signal]);
+
+            composite.addEventListener("abort", () => abortCount++);
+
+            controller1.abort();
+            controller2.abort();
+
+            // Wait a tick to ensure all events have fired
+            await Bun.sleep(10);
+
+            expect(abortCount).toBe(1);
+        });
+    });
+
+    describe("nested AbortSignal.any()", () => {
+        test("should work with nested any() calls", () => {
+            const controller1 = new AbortController();
+            const controller2 = new AbortController();
+            const controller3 = new AbortController();
+
+            // @ts-ignore
+            const nested = AbortSignal.any([controller1.signal, controller2.signal]);
+            // @ts-ignore
+            const composite = AbortSignal.any([nested, controller3.signal]);
+
+            expect(composite.aborted).toBe(false);
+
+            controller2.abort("from nested");
+
+            expect(nested.aborted).toBe(true);
+            expect(composite.aborted).toBe(true);
+            expect(composite.reason).toBe("from nested");
+        });
+    });
+
+    describe("with AbortSignal.timeout()", () => {
+        test("should work with timeout signals", async () => {
+            const controller = new AbortController();
+            const timeoutSignal = AbortSignal.timeout(50);
+
+            // @ts-ignore
+            const composite = AbortSignal.any([controller.signal, timeoutSignal]);
+
+            expect(composite.aborted).toBe(false);
+
+            await Bun.sleep(100);
+
+            expect(composite.aborted).toBe(true);
+            expect(composite.reason).toBeInstanceOf(DOMException);
+            expect(composite.reason.name).toBe("TimeoutError");
+        });
+
+        test("should prefer manual abort over timeout if it comes first", async () => {
+            const controller = new AbortController();
+            const timeoutSignal = AbortSignal.timeout(1000);
+
+            // @ts-ignore
+            const composite = AbortSignal.any([controller.signal, timeoutSignal]);
+
+            controller.abort("manual abort");
+
+            expect(composite.aborted).toBe(true);
+            expect(composite.reason).toBe("manual abort");
+        });
+    });
 });

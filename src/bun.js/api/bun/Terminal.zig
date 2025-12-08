@@ -1038,6 +1038,7 @@ pub fn finalize(this: *Terminal) callconv(.c) void {
 }
 
 const std = @import("std");
+
 const bun = @import("bun");
 const Environment = bun.Environment;
 

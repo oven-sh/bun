@@ -28,7 +28,7 @@ interface TransactionState {
 }
 
 function adapterFromOptions(options: Bun.SQL.__internal.DefinedOptions) {
-  if (typeof options.adapter === "object") {
+  if (options.adapter && $isObject(options.adapter) && !$isArray(options.adapter)) {
     return options.adapter;
   }
   switch (options.adapter) {

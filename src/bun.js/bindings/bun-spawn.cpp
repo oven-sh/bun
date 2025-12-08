@@ -145,16 +145,12 @@ extern "C" ssize_t posix_spawn_bun(
             setsid();
         }
 
-        // Set PTY slave as controlling terminal for proper job control
+        // Set PTY slave as controlling terminal for proper job control.
+        // TIOCSCTTY may fail if the terminal is already the controlling terminal
+        // of another session. This is non-fatal - the process can still run,
+        // just without proper job control.
         if (request->pty_slave_fd >= 0) {
-            if (ioctl(request->pty_slave_fd, TIOCSCTTY, 0) == -1) {
-                // TIOCSCTTY can fail if the terminal is already the controlling
-                // terminal of another session, or if the process isn't a session leader.
-                // Log but don't fail - the process can still run, just without
-                // proper job control.
-                // In child context we can't use complex logging, just set errno for parent.
-                // The childFailed path would _exit(127) which is too severe for this case.
-            }
+            (void)ioctl(request->pty_slave_fd, TIOCSCTTY, 0);
         }
 
         int current_max_fd = 0;

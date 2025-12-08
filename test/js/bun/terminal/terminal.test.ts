@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
 
+// Helper to enable echo on a terminal (echo is disabled by default to avoid duplication)
+function enableEcho(terminal: Bun.Terminal) {
+  const ECHO = 0x8; // ECHO bit in c_lflag
+  terminal.localFlags = terminal.localFlags | ECHO;
+}
+
 // Terminal (PTY) is only supported on POSIX platforms
 describe.todoIf(isWindows)("Bun.Terminal", () => {
   describe("constructor", () => {
@@ -523,6 +529,9 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
         },
       });
 
+      // Enable echo for this test (disabled by default)
+      enableEcho(terminal);
+
       // Write to terminal - data should echo back
       terminal.write("hello\n");
 
@@ -545,6 +554,9 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
           received.push(new Uint8Array(data));
         },
       });
+
+      // Enable echo for this test
+      enableEcho(terminal);
 
       terminal.write("first\n");
       await Bun.sleep(50);
@@ -570,6 +582,9 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
         },
       });
 
+      // Enable echo for this test
+      enableEcho(terminal);
+
       terminal.write("test\n");
       await Bun.sleep(100);
 
@@ -590,6 +605,9 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
         },
       });
 
+      // Enable echo for this test
+      enableEcho(terminal);
+
       terminal.write("test\n");
       await Bun.sleep(100);
 
@@ -606,6 +624,9 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
           totalReceived += data.length;
         },
       });
+
+      // Enable echo for this test
+      enableEcho(terminal);
 
       // Write a large amount of data
       const largeData = Buffer.alloc(10000, "x").toString() + "\n";
@@ -834,6 +855,9 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
         },
       });
 
+      // Enable echo for this test
+      enableEcho(terminal);
+
       terminal.write("\x1b[31mred\x1b[0m \x1b[32mgreen\x1b[0m\n");
       await Bun.sleep(100);
 
@@ -891,6 +915,9 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
           received.push(new Uint8Array(data));
         },
       });
+
+      // Enable echo for this test
+      enableEcho(terminal);
 
       // Write some data that will be echoed
       terminal.write(new Uint8Array([0x41, 0x42, 0x43, 0x0a])); // ABC\n
@@ -1014,6 +1041,9 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
           received.push(new Uint8Array(data));
         },
       });
+
+      // Enable echo for this test
+      enableEcho(terminal);
 
       terminal.write("Hello 世界 🌍 émojis\n");
       await Bun.sleep(100);
@@ -1150,8 +1180,8 @@ describe.todoIf(isWindows)("Bun.spawn with terminal option", () => {
   test("terminal.write sends data to subprocess stdin", async () => {
     const dataChunks: Uint8Array[] = [];
 
-    const proc = Bun.spawn([bunExe(), "-e", "process.stdin.on('data', d => console.log('GOT:' + d))"], {
-      env: bunEnv,
+    // Use cat which reads from stdin and writes to stdout
+    const proc = Bun.spawn(["cat"], {
       terminal: {
         data: (_terminal: Bun.Terminal, data: Uint8Array) => {
           dataChunks.push(data);
@@ -1162,18 +1192,18 @@ describe.todoIf(isWindows)("Bun.spawn with terminal option", () => {
     // Wait a bit for the subprocess to be ready
     await Bun.sleep(100);
 
-    // Write to the terminal - in a PTY, input is echoed back
+    // Write to the terminal - cat will echo it back via stdout
     proc.terminal!.write("hello from parent\n");
 
     // Wait for response
     await Bun.sleep(200);
 
-    // Close stdin to let the subprocess exit
+    // Close terminal to send EOF and let cat exit
     proc.terminal!.close();
 
     await proc.exited;
 
-    // In a PTY, input is echoed back, so we should see our message in the output
+    // cat reads stdin and writes to stdout, so we should see our message
     const combinedOutput = Buffer.concat(dataChunks).toString();
     expect(combinedOutput).toContain("hello from parent");
   });

@@ -500,6 +500,19 @@ fn createPtyPosix(cols: u16, rows: u16) CreatePtyError!PtyResult {
     const master_fd_desc = bun.FD.fromNative(master_fd);
     const slave_fd_desc = bun.FD.fromNative(slave_fd);
 
+    // Disable ECHO on the slave fd by default.
+    // This prevents input written to the master from being echoed back.
+    // Programs that need echo (like interactive shells for user input) will enable it.
+    if (std.posix.tcgetattr(slave_fd)) |termios| {
+        var new_termios = termios;
+        // Disable ECHO - prevents written input from being echoed back
+        new_termios.lflag.ECHO = false;
+        // Keep ICANON enabled for line-buffered input (programs can disable if needed)
+        std.posix.tcsetattr(slave_fd, .NOW, new_termios) catch {};
+    } else |_| {
+        // tcgetattr failed, continue without modifying termios
+    }
+
     // Duplicate the master fd for reading and writing separately
     // This allows independent epoll registration and closing
     const read_fd = switch (bun.sys.dup(master_fd_desc)) {
@@ -521,16 +534,17 @@ fn createPtyPosix(cols: u16, rows: u16) CreatePtyError!PtyResult {
         },
     };
 
-    // Set non-blocking on all fds
+    // Set non-blocking on master side fds (for async I/O in the event loop)
     _ = bun.sys.updateNonblocking(master_fd_desc, true);
     _ = bun.sys.updateNonblocking(read_fd, true);
     _ = bun.sys.updateNonblocking(write_fd, true);
+    // Note: slave_fd stays blocking - child processes expect blocking I/O
 
-    // Set close-on-exec on all fds
+    // Set close-on-exec on master side fds only
+    // slave_fd should NOT have close-on-exec since child needs to inherit it
     _ = bun.sys.setCloseOnExec(master_fd_desc);
     _ = bun.sys.setCloseOnExec(read_fd);
     _ = bun.sys.setCloseOnExec(write_fd);
-    _ = bun.sys.setCloseOnExec(slave_fd_desc);
 
     return PtyResult{
         .master = master_fd_desc,

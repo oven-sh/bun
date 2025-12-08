@@ -350,14 +350,14 @@ When the `terminal` option is provided:
 
 ### Terminal options
 
-| Option  | Description                                                          | Default            |
-| ------- | -------------------------------------------------------------------- | ------------------ |
-| `cols`  | Number of columns                                                    | `80`               |
-| `rows`  | Number of rows                                                       | `24`               |
+| Option  | Description                                                                          | Default            |
+| ------- | ------------------------------------------------------------------------------------ | ------------------ |
+| `cols`  | Number of columns                                                                    | `80`               |
+| `rows`  | Number of rows                                                                       | `24`               |
 | `name`  | Terminal type for PTY configuration (set `TERM` env var separately via `env` option) | `"xterm-256color"` |
-| `data`  | Callback when data is received `(terminal, data) => void`            | —                  |
-| `exit`  | Callback when EOF is received `(terminal, exitCode, signal) => void` | —                  |
-| `drain` | Callback when ready for more data `(terminal) => void`               | —                  |
+| `data`  | Callback when data is received `(terminal, data) => void`                            | —                  |
+| `exit`  | Callback when EOF is received `(terminal, exitCode, signal) => void`                 | —                  |
+| `drain` | Callback when ready for more data `(terminal) => void`                               | —                  |
 
 ### Terminal methods
 

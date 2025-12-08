@@ -541,7 +541,7 @@ function parseOptions(
 
   const adapter = options.adapter;
 
-  if (typeof adapter === "object") {
+  if (options.adapter && $isObject(options.adapter) && !$isArray(options.adapter)) {
     return options as Bun.SQL.__internal.DefinedOptions;
   }
 

@@ -1,5 +1,5 @@
 import { S3Client } from "bun";
-import { expect, test, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
 // GitHub Issue #24422: S3 presign does not percent-encode X-Amz-Credential (colon :)
 // https://github.com/oven-sh/bun/issues/24422
@@ -33,7 +33,7 @@ describe("S3 presign X-Amz-Credential encoding", () => {
 
     // The raw URL should contain %3A (encoded colon) instead of raw colon
     // AWS CLI produces: X-Amz-Credential=8439f167%3Af5cf173e/20251105/eu-central-1/s3/aws4_request
-    // Bun currently produces: X-Amz-Credential=8439f167:f5cf173e/20251105/eu-central-1/s3/aws4_request
+    // Previously, Bun produced: X-Amz-Credential=8439f167:f5cf173e/20251105/eu-central-1/s3/aws4_request
     expect(url).toContain("X-Amz-Credential=8439f167%3Af5cf173e");
     expect(url).not.toContain("X-Amz-Credential=8439f167:f5cf173e");
 
@@ -92,8 +92,8 @@ describe("S3 presign X-Amz-Credential encoding", () => {
     expect(url).toContain(`X-Amz-Credential=${standardAccessKey}`);
   });
 
-  test("should percent-encode accessKeyId in X-Amz-Credential for S3File.presign()", () => {
-    const { s3 } = require("bun");
+  test("should percent-encode accessKeyId in X-Amz-Credential for S3File.presign()", async () => {
+    const { s3 } = await import("bun");
 
     const accessKeyWithColon = "tenant_id:access_key_id";
 

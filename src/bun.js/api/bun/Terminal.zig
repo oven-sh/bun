@@ -47,7 +47,7 @@ cols: u16,
 rows: u16,
 
 /// Terminal name (e.g., "xterm-256color")
-term_name: []const u8,
+term_name: jsc.ZigString.Slice,
 
 /// Event loop handle for callbacks
 event_loop_handle: jsc.EventLoopHandle,
@@ -92,200 +92,92 @@ pub const Poll = IOWriter;
 
 pub const IOReader = bun.io.BufferedReader;
 
-/// Constructor for Terminal - called from JavaScript
-/// With constructNeedsThis: true, we receive the JSValue wrapper directly
-pub fn constructor(
-    globalObject: *jsc.JSGlobalObject,
-    callframe: *jsc.CallFrame,
-    this_value: jsc.JSValue,
-) bun.JSError!*Terminal {
-    const args = callframe.argumentsAsArray(1);
-    const options = args[0];
-
-    if (options.isUndefinedOrNull()) {
-        return globalObject.throw("Terminal constructor requires an options object", .{});
-    }
-
-    // Parse options
-    const cols: u16 = blk: {
-        if (try options.getOptional(globalObject, "cols", JSValue)) |v| {
-            if (v.isNumber()) {
-                const n = v.toInt32();
-                if (n > 0 and n <= 65535) break :blk @intCast(n);
-            }
-        }
-        break :blk 80;
-    };
-
-    const rows: u16 = blk: {
-        if (try options.getOptional(globalObject, "rows", JSValue)) |v| {
-            if (v.isNumber()) {
-                const n = v.toInt32();
-                if (n > 0 and n <= 65535) break :blk @intCast(n);
-            }
-        }
-        break :blk 24;
-    };
-
-    // Get terminal name
-    const term_name: []const u8 = blk: {
-        if (try options.getOptional(globalObject, "name", JSValue)) |v| {
-            if (v.isString()) {
-                const str = try v.getZigString(globalObject);
-                if (str.len > 0) {
-                    break :blk bun.default_allocator.dupe(u8, str.slice()) catch {
-                        return globalObject.throw("Failed to allocate terminal name", .{});
-                    };
-                }
-            }
-        }
-        break :blk bun.default_allocator.dupe(u8, "xterm-256color") catch {
-            return globalObject.throw("Failed to allocate terminal name", .{});
-        };
-    };
-
-    // Get callbacks from options (will be stored via js.gc after toJS)
-    const data_callback = try options.getOptional(globalObject, "data", JSValue);
-    const exit_callback = try options.getOptional(globalObject, "exit", JSValue);
-    const drain_callback = try options.getOptional(globalObject, "drain", JSValue);
-
-    // Create PTY
-    const pty_result = createPty(cols, rows) catch |err| {
-        bun.default_allocator.free(term_name);
-        return switch (err) {
-            error.OpenPtyFailed => globalObject.throw("Failed to open PTY", .{}),
-            error.DupFailed => globalObject.throw("Failed to duplicate PTY file descriptor", .{}),
-            error.NotSupported => globalObject.throw("PTY not supported on this platform", .{}),
-        };
-    };
-
-    const terminal = bun.new(Terminal, .{
-        // 3 refs: JS side, reader, writer
-        .ref_count = .initExactRefs(3),
-        .master_fd = pty_result.master,
-        .read_fd = pty_result.read_fd,
-        .write_fd = pty_result.write_fd,
-        .slave_fd = pty_result.slave,
-        .cols = cols,
-        .rows = rows,
-        .term_name = term_name,
-        .event_loop_handle = jsc.EventLoopHandle.init(globalObject.bunVM().eventLoop()),
-        .globalThis = globalObject,
-    });
-
-    // Set reader parent
-    terminal.reader.setParent(terminal);
-
-    // Set writer parent
-    terminal.writer.parent = terminal;
-
-    // Start writer with the write fd
-    switch (terminal.writer.start(pty_result.write_fd, true)) {
-        .result => {},
-        .err => {
-            // Writer never started - manually release all 3 refs (JS, reader, writer)
-            // since no callbacks will fire
-            terminal.deref(); // JS ref
-            terminal.deref(); // reader ref
-            terminal.deref(); // writer ref
-            return globalObject.throw("Failed to start terminal writer", .{});
-        },
-    }
-
-    // Start reader with the read fd
-    switch (terminal.reader.start(pty_result.read_fd, true)) {
-        .err => {
-            // Reader never started but writer was started
-            // Close writer (will trigger onWriterDone -> deref for writer's ref)
-            terminal.writer.close();
-            // Manually release JS and reader refs
-            terminal.deref(); // JS ref
-            terminal.deref(); // reader ref
-            return globalObject.throw("Failed to start terminal reader", .{});
-        },
-        .result => {
-            if (comptime Environment.isPosix) {
-                if (terminal.reader.handle == .poll) {
-                    const poll = terminal.reader.handle.poll;
-                    // PTY behaves like a pipe, not a socket
-                    terminal.reader.flags.nonblocking = true;
-                    terminal.reader.flags.pollable = true;
-                    poll.flags.insert(.nonblocking);
-                }
-            }
-            terminal.flags.reader_started = true;
-        },
-    }
-
-    // Start reading data
-    terminal.reader.read();
-
-    // Store the this_value (JSValue wrapper) - start with weak ref
-    terminal.this_value = jsc.JSRef.initWeak(this_value);
-
-    // Store callbacks via generated gc setters (prevents GC of callbacks while terminal is alive)
-    if (data_callback) |cb| {
-        if (cb.isCell() and cb.isCallable()) {
-            js.gc.set(.data, this_value, globalObject, cb);
-        }
-    }
-    if (exit_callback) |cb| {
-        if (cb.isCell() and cb.isCallable()) {
-            js.gc.set(.exit, this_value, globalObject, cb);
-        }
-    }
-    if (drain_callback) |cb| {
-        if (cb.isCell() and cb.isCallable()) {
-            js.gc.set(.drain, this_value, globalObject, cb);
-        }
-    }
-
-    return terminal;
-}
-
-/// Options for creating a Terminal from Bun.spawn
-pub const SpawnTerminalOptions = struct {
+/// Options for creating a Terminal
+pub const Options = struct {
     cols: u16 = 80,
     rows: u16 = 24,
-    term_name: ?jsc.ZigString.Slice = null,
+    term_name: jsc.ZigString.Slice = .{},
     data_callback: ?JSValue = null,
     exit_callback: ?JSValue = null,
     drain_callback: ?JSValue = null,
+
+    /// Maximum length for terminal name (e.g., "xterm-256color")
+    /// Longest known terminfo names are ~23 chars; 128 allows for custom terminals
+    pub const max_term_name_len = 128;
+
+    /// Parse terminal options from a JS object
+    pub fn parseFromJS(globalObject: *jsc.JSGlobalObject, js_options: JSValue) bun.JSError!Options {
+        var options = Options{};
+
+        if (try js_options.getOptional(globalObject, "cols", i32)) |n| {
+            if (n > 0 and n <= 65535) options.cols = @intCast(n);
+        }
+
+        if (try js_options.getOptional(globalObject, "rows", i32)) |n| {
+            if (n > 0 and n <= 65535) options.rows = @intCast(n);
+        }
+
+        if (try js_options.getOptional(globalObject, "name", jsc.ZigString.Slice)) |slice| {
+            if (slice.len > max_term_name_len) {
+                slice.deinit();
+                return globalObject.throw("Terminal name too long (max {d} characters)", .{max_term_name_len});
+            }
+            options.term_name = slice;
+        }
+
+        if (try js_options.getOptional(globalObject, "data", JSValue)) |v| {
+            if (v.isCell() and v.isCallable()) {
+                options.data_callback = v.withAsyncContextIfNeeded(globalObject);
+            }
+        }
+
+        if (try js_options.getOptional(globalObject, "exit", JSValue)) |v| {
+            if (v.isCell() and v.isCallable()) {
+                options.exit_callback = v.withAsyncContextIfNeeded(globalObject);
+            }
+        }
+
+        if (try js_options.getOptional(globalObject, "drain", JSValue)) |v| {
+            if (v.isCell() and v.isCallable()) {
+                options.drain_callback = v.withAsyncContextIfNeeded(globalObject);
+            }
+        }
+
+        return options;
+    }
+
+    pub fn deinit(this: *Options) void {
+        this.term_name.deinit();
+        this.* = .{};
+    }
 };
 
-/// Result from creating a Terminal from spawn
-pub const SpawnTerminalResult = struct {
+/// Result from creating a Terminal
+pub const CreateResult = struct {
     terminal: *Terminal,
     js_value: jsc.JSValue,
 };
 
-/// Create a Terminal from Bun.spawn options (not from JS constructor)
-/// Returns the Terminal and its JS wrapper value
-/// The slave_fd should be used for the subprocess's stdin/stdout/stderr
-pub fn createFromSpawn(
+const InitError = CreatePtyError || error{ WriterStartFailed, ReaderStartFailed };
+
+/// Internal initialization - shared by constructor and createFromSpawn
+fn initTerminal(
     globalObject: *jsc.JSGlobalObject,
-    options: SpawnTerminalOptions,
-) !SpawnTerminalResult {
-    // Get term_name from slice or use default
-    const term_name_slice = if (options.term_name) |slice| slice.slice() else "xterm-256color";
-    // Duplicate term_name since we need to own it
-    const term_name = bun.default_allocator.dupe(u8, term_name_slice) catch {
-        if (options.term_name) |slice| slice.deinit();
-        return error.OutOfMemory;
-    };
-    // Free the slice now that we've duped it
-    if (options.term_name) |slice| slice.deinit();
+    options: Options,
+    /// If provided, use this JSValue; otherwise create one via toJS
+    existing_js_value: ?jsc.JSValue,
+) InitError!CreateResult {
+    // Create PTY
+    const pty_result = try createPty(options.cols, options.rows);
 
-    // Create PTY - free term_name on failure since Terminal won't own it
-    const pty_result = createPty(options.cols, options.rows) catch |err| {
-        bun.default_allocator.free(term_name);
-        return err;
-    };
+    // Use default term name if empty
+    const term_name = if (options.term_name.len > 0)
+        options.term_name
+    else
+        jsc.ZigString.Slice.fromUTF8NeverFree("xterm-256color");
 
-    // After this point, Terminal owns term_name and will free it in deinit()
     const terminal = bun.new(Terminal, .{
-        // 3 refs: JS side, reader, writer
-        .ref_count = .initExactRefs(3),
+        .ref_count = .init(),
         .master_fd = pty_result.master,
         .read_fd = pty_result.read_fd,
         .write_fd = pty_result.write_fd,
@@ -303,31 +195,22 @@ pub fn createFromSpawn(
     // Set writer parent
     terminal.writer.parent = terminal;
 
-    // Start writer with the write fd
+    // Start writer with the write fd - adds a ref
     switch (terminal.writer.start(pty_result.write_fd, true)) {
-        .result => {},
-        .err => {
-            // Writer never started - manually release all 3 refs (JS, reader, writer)
-            // since no callbacks will fire
-            terminal.deref(); // JS ref
-            terminal.deref(); // reader ref
-            terminal.deref(); // writer ref
-            return error.WriterStartFailed;
-        },
+        .result => terminal.ref(),
+        .err => return error.WriterStartFailed,
     }
 
-    // Start reader with the read fd
+    // Start reader with the read fd - adds a ref
     switch (terminal.reader.start(pty_result.read_fd, true)) {
         .err => {
             // Reader never started but writer was started
             // Close writer (will trigger onWriterDone -> deref for writer's ref)
             terminal.writer.close();
-            // Manually release JS and reader refs
-            terminal.deref(); // JS ref
-            terminal.deref(); // reader ref
             return error.ReaderStartFailed;
         },
         .result => {
+            terminal.ref();
             if (comptime Environment.isPosix) {
                 if (terminal.reader.handle == .poll) {
                     const poll = terminal.reader.handle.poll;
@@ -344,11 +227,13 @@ pub fn createFromSpawn(
     // Start reading data
     terminal.reader.read();
 
-    // Create the JS wrapper using toJS (this creates the JSTerminal)
-    const this_value = terminal.toJS(globalObject);
+    // Get or create the JS wrapper
+    const this_value = existing_js_value orelse terminal.toJS(globalObject);
 
-    // Store the this_value (JSValue wrapper) - start with weak ref
-    terminal.this_value = jsc.JSRef.initWeak(this_value);
+    // Store the this_value (JSValue wrapper) - start with strong ref since we're actively reading
+    // This is the JS side ref (released in finalize)
+    terminal.this_value = jsc.JSRef.initStrong(this_value, globalObject);
+    terminal.ref();
 
     // Store callbacks via generated gc setters (prevents GC of callbacks while terminal is alive)
     if (options.data_callback) |cb| {
@@ -368,6 +253,46 @@ pub fn createFromSpawn(
     }
 
     return .{ .terminal = terminal, .js_value = this_value };
+}
+
+/// Constructor for Terminal - called from JavaScript
+/// With constructNeedsThis: true, we receive the JSValue wrapper directly
+pub fn constructor(
+    globalObject: *jsc.JSGlobalObject,
+    callframe: *jsc.CallFrame,
+    this_value: jsc.JSValue,
+) bun.JSError!*Terminal {
+    const args = callframe.argumentsAsArray(1);
+    const js_options = args[0];
+
+    if (js_options.isUndefinedOrNull()) {
+        return globalObject.throw("Terminal constructor requires an options object", .{});
+    }
+
+    var options = try Options.parseFromJS(globalObject, js_options);
+
+    const result = initTerminal(globalObject, options, this_value) catch |err| {
+        options.deinit();
+        return switch (err) {
+            error.OpenPtyFailed => globalObject.throw("Failed to open PTY", .{}),
+            error.DupFailed => globalObject.throw("Failed to duplicate PTY file descriptor", .{}),
+            error.NotSupported => globalObject.throw("PTY not supported on this platform", .{}),
+            error.WriterStartFailed => globalObject.throw("Failed to start terminal writer", .{}),
+            error.ReaderStartFailed => globalObject.throw("Failed to start terminal reader", .{}),
+        };
+    };
+
+    return result.terminal;
+}
+
+/// Create a Terminal from Bun.spawn options (not from JS constructor)
+/// Returns the Terminal and its JS wrapper value
+/// The slave_fd should be used for the subprocess's stdin/stdout/stderr
+pub fn createFromSpawn(
+    globalObject: *jsc.JSGlobalObject,
+    options: Options,
+) InitError!CreateResult {
+    return initTerminal(globalObject, options, null);
 }
 
 /// Get the slave fd for subprocess to use
@@ -632,23 +557,24 @@ pub fn getClosed(this: *Terminal, _: *jsc.JSGlobalObject) JSValue {
     return JSValue.jsBoolean(this.flags.closed);
 }
 
-/// Helper to convert termios flag to u32 (handles both 32-bit Linux and 64-bit macOS)
-fn termiosFlagToU32(comptime T: type, flag: T) u32 {
+/// Helper to convert termios flag to f64 for JS (handles both 32-bit Linux and 64-bit macOS)
+/// Returns the full value without truncation - JS Number can safely represent up to 2^53
+fn termiosFlagToF64(comptime T: type, flag: T) f64 {
     // On macOS, termios flags are c_ulong (64-bit), on Linux they are packed structs
     const Int = @typeInfo(T).@"struct".backing_integer orelse @compileError("expected packed struct");
     const int_value: Int = @bitCast(flag);
-    return @truncate(int_value);
+    return @floatFromInt(int_value);
 }
 
-/// Helper to convert u32 to termios flag type, preserving upper bits from current value
-/// On macOS, termios flags are 64-bit so we need to preserve upper bits when setting
-fn u32ToTermiosFlag(comptime T: type, value: u32, current: T) T {
+/// Helper to convert JS number (f64) to termios flag type
+/// JS Number can represent up to 2^53 safely, which covers all termios flag values
+fn f64ToTermiosFlag(comptime T: type, value: f64) T {
     const Int = @typeInfo(T).@"struct".backing_integer orelse @compileError("expected packed struct");
-    const current_int: Int = @bitCast(current);
-    // Mask off lower 32 bits and replace with new value, preserving upper bits
-    const upper_bits = current_int & ~@as(Int, 0xFFFFFFFF);
-    const new_value: Int = upper_bits | @as(Int, value);
-    return @bitCast(new_value);
+    // Clamp to valid range for the integer type
+    const max_val: f64 = @floatFromInt(std.math.maxInt(Int));
+    const clamped = @max(0, @min(value, max_val));
+    const int_value: Int = @intFromFloat(clamped);
+    return @bitCast(int_value);
 }
 
 /// Get input flags (c_iflag) - returns 0 if closed or error
@@ -658,7 +584,7 @@ pub fn getInputFlags(this: *Terminal, _: *jsc.JSGlobalObject) JSValue {
         return JSValue.jsNumber(0);
     }
     const termios_data = getTermios(this.master_fd) orelse return JSValue.jsNumber(0);
-    return JSValue.jsNumber(termiosFlagToU32(@TypeOf(termios_data.iflag), termios_data.iflag));
+    return JSValue.jsNumber(termiosFlagToF64(@TypeOf(termios_data.iflag), termios_data.iflag));
 }
 
 /// Set input flags (c_iflag)
@@ -668,7 +594,7 @@ pub fn setInputFlags(this: *Terminal, _: *jsc.JSGlobalObject, value: JSValue) vo
         return;
     }
     var termios_data = getTermios(this.master_fd) orelse return;
-    termios_data.iflag = u32ToTermiosFlag(@TypeOf(termios_data.iflag), value.toU32(), termios_data.iflag);
+    termios_data.iflag = f64ToTermiosFlag(@TypeOf(termios_data.iflag), value.asNumber());
     _ = setTermios(this.master_fd, &termios_data);
 }
 
@@ -679,7 +605,7 @@ pub fn getOutputFlags(this: *Terminal, _: *jsc.JSGlobalObject) JSValue {
         return JSValue.jsNumber(0);
     }
     const termios_data = getTermios(this.master_fd) orelse return JSValue.jsNumber(0);
-    return JSValue.jsNumber(termiosFlagToU32(@TypeOf(termios_data.oflag), termios_data.oflag));
+    return JSValue.jsNumber(termiosFlagToF64(@TypeOf(termios_data.oflag), termios_data.oflag));
 }
 
 /// Set output flags (c_oflag)
@@ -689,7 +615,7 @@ pub fn setOutputFlags(this: *Terminal, _: *jsc.JSGlobalObject, value: JSValue) v
         return;
     }
     var termios_data = getTermios(this.master_fd) orelse return;
-    termios_data.oflag = u32ToTermiosFlag(@TypeOf(termios_data.oflag), value.toU32(), termios_data.oflag);
+    termios_data.oflag = f64ToTermiosFlag(@TypeOf(termios_data.oflag), value.asNumber());
     _ = setTermios(this.master_fd, &termios_data);
 }
 
@@ -700,7 +626,7 @@ pub fn getLocalFlags(this: *Terminal, _: *jsc.JSGlobalObject) JSValue {
         return JSValue.jsNumber(0);
     }
     const termios_data = getTermios(this.master_fd) orelse return JSValue.jsNumber(0);
-    return JSValue.jsNumber(termiosFlagToU32(@TypeOf(termios_data.lflag), termios_data.lflag));
+    return JSValue.jsNumber(termiosFlagToF64(@TypeOf(termios_data.lflag), termios_data.lflag));
 }
 
 /// Set local flags (c_lflag)
@@ -710,7 +636,7 @@ pub fn setLocalFlags(this: *Terminal, _: *jsc.JSGlobalObject, value: JSValue) vo
         return;
     }
     var termios_data = getTermios(this.master_fd) orelse return;
-    termios_data.lflag = u32ToTermiosFlag(@TypeOf(termios_data.lflag), value.toU32(), termios_data.lflag);
+    termios_data.lflag = f64ToTermiosFlag(@TypeOf(termios_data.lflag), value.asNumber());
     _ = setTermios(this.master_fd, &termios_data);
 }
 
@@ -721,7 +647,7 @@ pub fn getControlFlags(this: *Terminal, _: *jsc.JSGlobalObject) JSValue {
         return JSValue.jsNumber(0);
     }
     const termios_data = getTermios(this.master_fd) orelse return JSValue.jsNumber(0);
-    return JSValue.jsNumber(termiosFlagToU32(@TypeOf(termios_data.cflag), termios_data.cflag));
+    return JSValue.jsNumber(termiosFlagToF64(@TypeOf(termios_data.cflag), termios_data.cflag));
 }
 
 /// Set control flags (c_cflag)
@@ -731,7 +657,7 @@ pub fn setControlFlags(this: *Terminal, _: *jsc.JSGlobalObject, value: JSValue) 
         return;
     }
     var termios_data = getTermios(this.master_fd) orelse return;
-    termios_data.cflag = u32ToTermiosFlag(@TypeOf(termios_data.cflag), value.toU32(), termios_data.cflag);
+    termios_data.cflag = f64ToTermiosFlag(@TypeOf(termios_data.cflag), value.asNumber());
     _ = setTermios(this.master_fd, &termios_data);
 }
 
@@ -1095,7 +1021,7 @@ fn deinit(this: *Terminal) void {
     // closeInternal() checks flags.closed and returns early on subsequent calls,
     // so this is safe even if finalize() already called it
     this.closeInternal();
-    bun.default_allocator.free(this.term_name);
+    this.term_name.deinit();
     this.reader.deinit();
     this.writer.deinit();
     bun.destroy(this);

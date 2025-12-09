@@ -319,12 +319,18 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
     test("can set and restore localFlags", async () => {
       await using terminal = new Bun.Terminal({});
 
+      // PENDIN (0x20000000 on macOS) is a kernel state flag that indicates
+      // "retype pending input" and may be set/cleared by the kernel during
+      // tcsetattr operations. Mask it out for comparison.
+      const PENDIN = 0x20000000;
+      const maskKernelFlags = (flags: number) => flags & ~PENDIN;
+
       const original = terminal.localFlags;
       terminal.localFlags = 0;
-      expect(terminal.localFlags).toBe(0);
+      expect(maskKernelFlags(terminal.localFlags)).toBe(0);
 
       terminal.localFlags = original;
-      expect(terminal.localFlags).toBe(original);
+      expect(maskKernelFlags(terminal.localFlags)).toBe(maskKernelFlags(original));
     });
 
     test("can set and restore controlFlags", async () => {

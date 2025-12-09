@@ -142,7 +142,7 @@ pub fn spawnMaybeSync(
     var windows_hide: bool = false;
     var windows_verbatim_arguments: bool = false;
     var abort_signal: ?*jsc.WebCore.AbortSignal = null;
-    var terminal_info: ?Terminal.SpawnTerminalResult = null;
+    var terminal_info: ?Terminal.CreateResult = null;
     var terminal_js_value: jsc.JSValue = .zero; // Saved separately for caching after terminal_info is cleared
     defer {
         // Ensure we clean it up on error.
@@ -381,58 +381,18 @@ pub fn spawnMaybeSync(
                         return globalThis.throwInvalidArguments("terminal must be an object", .{});
                     }
 
-                    // Parse terminal options
-                    var term_options = Terminal.SpawnTerminalOptions{};
-
-                    if (try terminal_opts.getOptional(globalThis, "cols", JSValue)) |v| {
-                        if (v.isNumber()) {
-                            const n = v.toInt32();
-                            if (n > 0 and n <= 65535) term_options.cols = @intCast(n);
-                        }
-                    }
-
-                    if (try terminal_opts.getOptional(globalThis, "rows", JSValue)) |v| {
-                        if (v.isNumber()) {
-                            const n = v.toInt32();
-                            if (n > 0 and n <= 65535) term_options.rows = @intCast(n);
-                        }
-                    }
-
-                    if (try terminal_opts.getOptional(globalThis, "name", JSValue)) |v| {
-                        if (v.isString()) {
-                            const str = try v.getZigString(globalThis);
-                            if (str.len > 0) {
-                                term_options.term_name = str.toSlice(bun.default_allocator);
-                            }
-                        }
-                    }
-
-                    // Get callbacks
-                    if (try terminal_opts.getOptional(globalThis, "data", JSValue)) |v| {
-                        if (v.isCell() and v.isCallable()) {
-                            term_options.data_callback = v.withAsyncContextIfNeeded(globalThis);
-                        }
-                    }
-                    if (try terminal_opts.getOptional(globalThis, "exit", JSValue)) |v| {
-                        if (v.isCell() and v.isCallable()) {
-                            term_options.exit_callback = v.withAsyncContextIfNeeded(globalThis);
-                        }
-                    }
-                    if (try terminal_opts.getOptional(globalThis, "drain", JSValue)) |v| {
-                        if (v.isCell() and v.isCallable()) {
-                            term_options.drain_callback = v.withAsyncContextIfNeeded(globalThis);
-                        }
-                    }
+                    // Parse terminal options using shared parser
+                    var term_options = try Terminal.Options.parseFromJS(globalThis, terminal_opts);
 
                     // Create the terminal
                     terminal_info = Terminal.createFromSpawn(globalThis, term_options) catch |err| {
+                        term_options.deinit();
                         return switch (err) {
                             error.OpenPtyFailed => globalThis.throw("Failed to open PTY", .{}),
                             error.DupFailed => globalThis.throw("Failed to duplicate PTY file descriptor", .{}),
                             error.NotSupported => globalThis.throw("PTY not supported on this platform", .{}),
                             error.WriterStartFailed => globalThis.throw("Failed to start terminal writer", .{}),
                             error.ReaderStartFailed => globalThis.throw("Failed to start terminal reader", .{}),
-                            error.OutOfMemory => globalThis.throwOutOfMemory(),
                         };
                     };
 

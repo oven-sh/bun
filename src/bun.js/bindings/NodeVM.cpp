@@ -738,6 +738,19 @@ Structure* NodeVMGlobalObject::createStructure(JSC::VM& vm, JSC::JSValue prototy
 
 void unsafeEvalNoop(JSGlobalObject*, const WTF::String&) {}
 
+static void promiseRejectionTrackerForNodeVM(JSGlobalObject* globalObject, JSC::JSPromise* promise, JSC::JSPromiseRejectionOperation operation)
+{
+    // JSInternalPromise should not be tracked through the normal promise rejection mechanism
+    // as they are internal to the engine and should not be exposed to user space.
+    if (jsDynamicCast<JSC::JSInternalPromise*>(promise))
+        return;
+
+    // Delegate to the parent Zig::GlobalObject so that unhandled rejections
+    // in VM contexts are reported to the main process (matching Node.js behavior)
+    auto* zigGlobalObject = defaultGlobalObject(globalObject);
+    Zig::GlobalObject::promiseRejectionTracker(zigGlobalObject, promise, operation);
+}
+
 const JSC::GlobalObjectMethodTable& NodeVMGlobalObject::globalObjectMethodTable()
 {
     static const JSC::GlobalObjectMethodTable table {
@@ -751,7 +764,7 @@ const JSC::GlobalObjectMethodTable& NodeVMGlobalObject::globalObjectMethodTable(
         nullptr, // moduleLoaderFetch
         nullptr, // moduleLoaderCreateImportMetaProperties
         nullptr, // moduleLoaderEvaluate
-        nullptr, // promiseRejectionTracker
+        &promiseRejectionTrackerForNodeVM,
         &reportUncaughtExceptionAtEventLoop,
         &currentScriptExecutionOwner,
         &scriptExecutionStatus,
@@ -773,6 +786,18 @@ void NodeVMGlobalObject::finishCreation(JSC::VM& vm)
     setEvalEnabled(m_contextOptions.allowStrings, "Code generation from strings disallowed for this context"_s);
     setWebAssemblyEnabled(m_contextOptions.allowWasm, "Wasm code generation disallowed by embedder"_s);
     vm.ensureTerminationException();
+
+    // Share the async context data with the parent Zig::GlobalObject.
+    // This is necessary because AsyncLocalStorage methods (run, getStore, etc.) are defined
+    // in the parent realm and reference the parent's $asyncContext. However, microtask
+    // processing (JSMicrotask.cpp) operates on this NodeVMGlobalObject's m_asyncContextData.
+    // By sharing the same InternalFieldTuple, both the JS code and C++ microtask handling
+    // will operate on the same async context, ensuring proper AsyncLocalStorage behavior
+    // across await boundaries in VM contexts.
+    auto* parentGlobalObject = defaultGlobalObject(this);
+    if (parentGlobalObject && parentGlobalObject->m_asyncContextData) {
+        m_asyncContextData.set(vm, this, parentGlobalObject->m_asyncContextData.get());
+    }
 }
 
 void NodeVMGlobalObject::destroy(JSCell* cell)

@@ -528,19 +528,16 @@ fn createPtyPosix(cols: u16, rows: u16) CreatePtyError!PtyResult {
             .HUPCL = true, // Hang up on last close
         };
 
-        // Local flags: canonical mode with signals but NO echo
-        // When programmatically writing to a PTY, we don't want the kernel to echo
-        // input back - the child process (e.g., bash/readline) handles display.
-        // This matches how terminal emulators work: they don't double-display input.
+        // Local flags: canonical mode with echo and signals
         t.lflag = .{
             .ICANON = true, // Canonical input (line editing)
             .ISIG = true, // Enable signals (INTR, QUIT, SUSP)
             .IEXTEN = true, // Enable extended input processing
-            .ECHO = false, // Don't echo - child process handles display
-            .ECHOE = false, // No echo erase
-            .ECHOK = false, // No echo NL after KILL
-            .ECHOKE = false, // No visual erase for KILL
-            .ECHOCTL = false, // No echo control chars
+            .ECHO = true, // Echo input characters
+            .ECHOE = true, // Echo erase as backspace-space-backspace
+            .ECHOK = true, // Echo NL after KILL
+            .ECHOKE = true, // Visual erase for KILL
+            .ECHOCTL = true, // Echo control chars as ^X
         };
 
         // Control characters - standard defaults

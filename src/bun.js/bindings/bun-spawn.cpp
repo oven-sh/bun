@@ -293,7 +293,11 @@ extern "C" ssize_t posix_spawn_bun(
         if (n == sizeof(child_err)) {
             // Child failed to exec - it wrote errno and exited
             // Reap the zombie child process
+#if OS(LINUX)
+            wait4(child, NULL, 0, NULL);
+#else
             waitpid(child, NULL, 0);
+#endif
             res = child_err;
         } else if (n == 0) {
             // Exec succeeded (pipe closed with no data written)
@@ -305,7 +309,11 @@ extern "C" ssize_t posix_spawn_bun(
         } else {
             // read() failed or partial read - something went wrong
             // Reap child and report error
+#if OS(LINUX)
+            wait4(child, NULL, 0, NULL);
+#else
             waitpid(child, NULL, 0);
+#endif
             res = (n == -1) ? errno : EIO;
         }
     } else {

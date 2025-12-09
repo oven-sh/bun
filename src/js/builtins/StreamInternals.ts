@@ -36,13 +36,11 @@ export function markPromiseAsHandled(promise: Promise<unknown>) {
 }
 
 export function shieldingPromiseResolve(result) {
-  const promise = Promise.resolve(result);
-  if (promise.$then === undefined) promise.$then = $Promise.prototype.$then;
-  return promise;
+  return $promiseResolveWithThen(Promise, result);
 }
 
 export function promiseInvokeOrNoopMethodNoCatch(object, method, args) {
-  if (method === undefined) return Promise.resolve();
+  if (method === undefined) return $promiseResolve(Promise, undefined);
   return $shieldingPromiseResolve(method.$apply(object, args));
 }
 
@@ -54,7 +52,7 @@ export function promiseInvokeOrNoopMethod(object, method, args) {
   try {
     return $promiseInvokeOrNoopMethodNoCatch(object, method, args);
   } catch (error) {
-    return Promise.reject(error);
+    return $promiseReject(Promise, error);
   }
 }
 
@@ -62,7 +60,7 @@ export function promiseInvokeOrNoop(object, key, args) {
   try {
     return $promiseInvokeOrNoopNoCatch(object, key, args);
   } catch (error) {
-    return Promise.reject(error);
+    return $promiseReject(Promise, error);
   }
 }
 
@@ -72,7 +70,7 @@ export function promiseInvokeOrFallbackOrNoop(object, key1, args1, key2, args2) 
     if (method === undefined) return $promiseInvokeOrNoopNoCatch(object, key2, args2);
     return $shieldingPromiseResolve(method.$apply(object, args1));
   } catch (error) {
-    return Promise.reject(error);
+    return $promiseReject(Promise, error);
   }
 }
 

@@ -199,7 +199,7 @@ export function readableByteStreamControllerPull(controller) {
     try {
       view = new Uint8Array(entry.buffer, entry.byteOffset, entry.byteLength);
     } catch (error) {
-      return Promise.reject(error);
+      return $promiseReject(Promise, error);
     }
     return $createFulfilledPromise({ value: view, done: false });
   }
@@ -209,7 +209,7 @@ export function readableByteStreamControllerPull(controller) {
     try {
       buffer = $createUninitializedArrayBuffer($getByIdDirectPrivate(controller, "autoAllocateChunkSize"));
     } catch (error) {
-      return Promise.reject(error);
+      return $promiseReject(Promise, error);
     }
     const pullIntoDescriptor: PullIntoDescriptor = {
       buffer,
@@ -582,7 +582,7 @@ export function readableStreamBYOBReaderRead(reader, view) {
 
   $putByIdDirectPrivate(stream, "disturbed", true);
   if ($getByIdDirectPrivate(stream, "state") === $streamErrored)
-    return Promise.reject($getByIdDirectPrivate(stream, "storedError"));
+    return $promiseReject(Promise, $getByIdDirectPrivate(stream, "storedError"));
 
   return $readableByteStreamControllerPullInto($getByIdDirectPrivate(stream, "readableStreamController"), view);
 }
@@ -641,7 +641,7 @@ export function readableByteStreamControllerPullInto(controller, view) {
     if ($getByIdDirectPrivate(controller, "closeRequested")) {
       const e = $makeTypeError("Closing stream has been requested");
       $readableByteStreamControllerError(controller, e);
-      return Promise.reject(e);
+      return $promiseReject(Promise, e);
     }
   }
 

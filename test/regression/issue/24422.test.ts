@@ -4,22 +4,21 @@ import { expect, test, describe } from "bun:test";
 // GitHub Issue #24422: S3 presign does not percent-encode X-Amz-Credential (colon :)
 // https://github.com/oven-sh/bun/issues/24422
 //
-// When accessKeyId contains special characters like colons (e.g., "TENANT_ID:KEY_ID"
-// used by Cloud.ru Object Storage and other S3-compatible providers), the colon
+// When accessKeyId contains special characters like colons (e.g., "TENANT_ID:KEY_ID"), the colon
 // should be percent-encoded as %3A in the X-Amz-Credential query parameter.
 // Without proper encoding, SigV4 validation fails with "Request signature does not match".
 
 describe("S3 presign X-Amz-Credential encoding", () => {
   test("should percent-encode colon in accessKeyId within X-Amz-Credential", () => {
-    // Access key in the format TENANT_ID:KEY_ID (used by Cloud.ru Object Storage)
+    // Access key in the format TENANT_ID:KEY_ID
     const accessKeyWithColon = "8439f167:f5cf173e";
 
     const s3 = new S3Client({
       accessKeyId: accessKeyWithColon,
       secretAccessKey: "test-secret-key",
-      endpoint: "https://s3.cloud.ru",
+      endpoint: "https://s3-provider.example.com",
       bucket: "test-bucket",
-      region: "ru-central-1",
+      region: "eu-central-1",
     });
 
     const url = s3.presign("test-file.txt", {
@@ -33,8 +32,8 @@ describe("S3 presign X-Amz-Credential encoding", () => {
     expect(credential).not.toBeNull();
 
     // The raw URL should contain %3A (encoded colon) instead of raw colon
-    // AWS CLI produces: X-Amz-Credential=8439f167%3Af5cf173e/20251105/ru-central-1/s3/aws4_request
-    // Bun currently produces: X-Amz-Credential=8439f167:f5cf173e/20251105/ru-central-1/s3/aws4_request
+    // AWS CLI produces: X-Amz-Credential=8439f167%3Af5cf173e/20251105/eu-central-1/s3/aws4_request
+    // Bun currently produces: X-Amz-Credential=8439f167:f5cf173e/20251105/eu-central-1/s3/aws4_request
     expect(url).toContain("X-Amz-Credential=8439f167%3Af5cf173e");
     expect(url).not.toContain("X-Amz-Credential=8439f167:f5cf173e");
 

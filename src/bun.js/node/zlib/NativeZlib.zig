@@ -23,6 +23,10 @@ stream: Context = .{},
 write_result: ?[*]u32 = null,
 poll_ref: CountedKeepAlive = .{},
 this_value: jsc.Strong.Optional = .empty,
+/// Strong reference to input buffer to prevent GC during async work
+in_buf_value: jsc.Strong.Optional = .empty,
+/// Strong reference to output buffer to prevent GC during async work
+out_buf_value: jsc.Strong.Optional = .empty,
 write_in_progress: bool = false,
 pending_close: bool = false,
 closed: bool = false,
@@ -107,6 +111,8 @@ pub fn params(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.C
 
 fn deinit(this: *@This()) void {
     this.this_value.deinit();
+    this.in_buf_value.deinit();
+    this.out_buf_value.deinit();
     this.poll_ref.deinit();
     this.stream.close();
     bun.destroy(this);

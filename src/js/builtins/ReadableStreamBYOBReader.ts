@@ -49,7 +49,8 @@ export function read(this, view: DataView) {
   if (!$getByIdDirectPrivate(this, "ownerReadableStream"))
     return $promiseReject(Promise, $ERR_INVALID_STATE_TypeError("The reader is not attached to a stream"));
 
-  if (!$isObject(view)) return $promiseReject(Promise, $ERR_INVALID_ARG_TYPE("view", "Buffer, TypedArray, or DataView", view));
+  if (!$isObject(view))
+    return $promiseReject(Promise, $ERR_INVALID_ARG_TYPE("view", "Buffer, TypedArray, or DataView", view));
 
   if (!ArrayBuffer.$isView(view))
     return $promiseReject(Promise, $ERR_INVALID_ARG_TYPE("view", "Buffer, TypedArray, or DataView", view));

@@ -796,6 +796,10 @@ pub const S3Credentials = struct {
                     encoded_content_md5 = encodeURIComponent(content_md5_value, &content_md5_encoded_buffer, true) catch return error.FailedToGenerateSignature;
                 }
 
+                // Encode accessKeyId for X-Amz-Credential (handles special chars like : in TENANT_ID:KEY_ID format)
+                var access_key_encoded_buffer: [256]u8 = undefined;
+                const encoded_access_key_id = encodeURIComponent(this.accessKeyId, &access_key_encoded_buffer, true) catch return error.FailedToGenerateSignature;
+
                 // Build query parameters in alphabetical order for AWS Signature V4 canonical request
                 const canonical = brk_canonical: {
                     var stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
@@ -814,7 +818,7 @@ pub const S3Credentials = struct {
 
                     try query_parts.append(try std.fmt.allocPrint(allocator, "X-Amz-Algorithm=AWS4-HMAC-SHA256", .{}));
 
-                    try query_parts.append(try std.fmt.allocPrint(allocator, "X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request", .{ this.accessKeyId, amz_day, region, service_name }));
+                    try query_parts.append(try std.fmt.allocPrint(allocator, "X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request", .{ encoded_access_key_id, amz_day, region, service_name }));
 
                     try query_parts.append(try std.fmt.allocPrint(allocator, "X-Amz-Date={s}", .{amz_date}));
 
@@ -865,7 +869,7 @@ pub const S3Credentials = struct {
 
                 try url_query_parts.append(try std.fmt.allocPrint(url_allocator, "X-Amz-Algorithm=AWS4-HMAC-SHA256", .{}));
 
-                try url_query_parts.append(try std.fmt.allocPrint(url_allocator, "X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request", .{ this.accessKeyId, amz_day, region, service_name }));
+                try url_query_parts.append(try std.fmt.allocPrint(url_allocator, "X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request", .{ encoded_access_key_id, amz_day, region, service_name }));
 
                 try url_query_parts.append(try std.fmt.allocPrint(url_allocator, "X-Amz-Date={s}", .{amz_date}));
 

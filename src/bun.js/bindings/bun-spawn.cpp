@@ -101,6 +101,18 @@ typedef struct bun_spawn_request_t {
     int pty_slave_fd; // -1 if not using PTY, otherwise the slave fd to set as controlling terminal
 } bun_spawn_request_t;
 
+// Raw exit syscall that doesn't go through libc.
+// This avoids potential deadlocks when forking from a multi-threaded process,
+// as _exit() may try to acquire locks held by threads that don't exist in the child.
+static inline void rawExit(int status)
+{
+#if OS(LINUX)
+    syscall(__NR_exit_group, status);
+#else
+    _exit(status);
+#endif
+}
+
 extern "C" ssize_t posix_spawn_bun(
     int* pid,
     const char* path,
@@ -108,9 +120,19 @@ extern "C" ssize_t posix_spawn_bun(
     char* const argv[],
     char* const envp[])
 {
-    volatile int status = 0;
     sigset_t blockall, oldmask;
     int res = 0, cs = 0;
+
+    // Create a pipe for child-to-parent error communication.
+    // The write end has O_CLOEXEC so it's automatically closed on successful exec.
+    // If exec fails, child writes errno to the pipe.
+    int errpipe[2];
+    if (pipe(errpipe) == -1) {
+        return errno;
+    }
+    // Set cloexec on write end so it closes on successful exec
+    fcntl(errpipe[1], F_SETFD, FD_CLOEXEC);
+
     sigfillset(&blockall);
     sigprocmask(SIG_SETMASK, &blockall, &oldmask);
     pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &cs);
@@ -121,10 +143,12 @@ extern "C" ssize_t posix_spawn_bun(
     pid_t child = fork();
 
     const auto childFailed = [&]() -> ssize_t {
-        res = errno;
-        status = res;
+        int err = errno;
+        // Write errno to pipe so parent can read it
+        (void)write(errpipe[1], &err, sizeof(err));
+        close(errpipe[1]);
         closeRangeOrLoop(0, INT_MAX, false);
-        _exit(127);
+        rawExit(127);
 
         // should never be reached
         return -1;
@@ -237,27 +261,56 @@ extern "C" ssize_t posix_spawn_bun(
         if (execve(path, argv, envp) == -1) {
             return childFailed();
         }
-        _exit(127);
+        rawExit(127);
 
         // should never be reached.
         return -1;
     };
 
     if (child == 0) {
+        // Close read end in child
+        close(errpipe[0]);
         return startChild();
     }
 
-    if (child != -1) {
-        res = status;
+    // Parent: close write end
+    close(errpipe[1]);
 
-        if (!res) {
+    if (child != -1) {
+        // Try to read error from child. The pipe read end is blocking.
+        // - If exec succeeds: write end closes due to O_CLOEXEC, read() returns 0
+        // - If exec fails: child writes errno, then exits, read() returns sizeof(int)
+        int child_err = 0;
+        ssize_t n;
+
+        // Retry read on EINTR - signals are blocked but some may still interrupt
+        do {
+            n = read(errpipe[0], &child_err, sizeof(child_err));
+        } while (n == -1 && errno == EINTR);
+
+        close(errpipe[0]);
+
+        if (n == sizeof(child_err)) {
+            // Child failed to exec - it wrote errno and exited
+            // Reap the zombie child process
+            waitpid(child, NULL, 0);
+            res = child_err;
+        } else if (n == 0) {
+            // Exec succeeded (pipe closed with no data written)
+            // Don't wait - the child is now running as a new process
+            res = 0;
             if (pid) {
                 *pid = child;
             }
         } else {
-            wait4(child, 0, 0, 0);
+            // read() failed or partial read - something went wrong
+            // Reap child and report error
+            waitpid(child, NULL, 0);
+            res = (n == -1) ? errno : EIO;
         }
     } else {
+        // fork() failed
+        close(errpipe[0]);
         res = errno;
     }
 

@@ -83,18 +83,12 @@ declare var WritableStream: Bun.__internal.UseLibDomIfAvailable<
   }
 >;
 
-/**
- * Compression formats supported by Bun's CompressionStream and DecompressionStream.
- * Bun extends the standard web formats with brotli and zstd support.
- */
-type CompressionFormat = "gzip" | "deflate" | "deflate-raw" | "brotli" | "zstd";
-
 interface CompressionStream extends Bun.__internal.LibEmptyOrNodeStreamWebCompressionStream {}
 declare var CompressionStream: Bun.__internal.UseLibDomIfAvailable<
   "CompressionStream",
   {
     prototype: CompressionStream;
-    new (format: CompressionFormat): CompressionStream;
+    new (format: Bun.CompressionFormat): CompressionStream;
   }
 >;
 
@@ -103,7 +97,7 @@ declare var DecompressionStream: Bun.__internal.UseLibDomIfAvailable<
   "DecompressionStream",
   {
     prototype: DecompressionStream;
-    new (format: CompressionFormat): DecompressionStream;
+    new (format: Bun.CompressionFormat): DecompressionStream;
   }
 >;
 

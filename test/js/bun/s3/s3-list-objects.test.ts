@@ -766,6 +766,53 @@ describe("S3 - List Objects", () => {
     });
   });
 
+  it("Should return parsed response with checksumAlgorithm", async () => {
+    using server = createBunServer(async () => {
+      return new Response(
+        `<?xml version="1.0" encoding="UTF-8"?><ListBucketResult>
+    <Contents>
+        <Key>file-with-checksum.txt</Key>
+        <ChecksumAlgorithm>SHA256</ChecksumAlgorithm>
+        <ChecksumType>FULL_OBJECT</ChecksumType>
+        <Size>1024</Size>
+    </Contents>
+    <Contents>
+        <Key>file-without-checksum.txt</Key>
+        <Size>2048</Size>
+    </Contents>
+        </ListBucketResult>`,
+        {
+          headers: {
+            "Content-Type": "application/xml",
+          },
+          status: 200,
+        },
+      );
+    });
+
+    const client = new S3Client({
+      ...options,
+      endpoint: server.url.href,
+    });
+
+    const res = await client.list();
+
+    expect(res).toEqual({
+      contents: [
+        {
+          key: "file-with-checksum.txt",
+          checksumAlgorithm: "SHA256",
+          checksumType: "FULL_OBJECT",
+          size: 1024,
+        },
+        {
+          key: "file-without-checksum.txt",
+          size: 2048,
+        },
+      ],
+    });
+  });
+
   it("Should return parsed response with all fields", async () => {
     using server = createBunServer(async => {
       return new Response(

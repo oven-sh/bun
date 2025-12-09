@@ -1,4 +1,4 @@
-import { itBundled } from "../expectBundled";
+import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
   // Test basic cycle detection (uses array scan path, < 8 depth)

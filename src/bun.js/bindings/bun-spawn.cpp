@@ -123,6 +123,8 @@ extern "C" ssize_t posix_spawn_bun(
     sigset_t blockall, oldmask;
     int res = 0, cs = 0;
 
+#if OS(DARWIN)
+    // On macOS, we use fork() which requires a self-pipe trick to detect exec failures.
     // Create a pipe for child-to-parent error communication.
     // The write end has O_CLOEXEC so it's automatically closed on successful exec.
     // If exec fails, child writes errno to the pipe.
@@ -132,16 +134,28 @@ extern "C" ssize_t posix_spawn_bun(
     }
     // Set cloexec on write end so it closes on successful exec
     fcntl(errpipe[1], F_SETFD, FD_CLOEXEC);
+#endif
 
     sigfillset(&blockall);
     sigprocmask(SIG_SETMASK, &blockall, &oldmask);
     pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &cs);
 
-    // Use fork() for POSIX compliance. While vfork() would be faster,
-    // POSIX restricts vfork children to only calling _exit() or exec*(),
-    // but we need to do complex setup (setsid, ioctl, dup2, etc.) before exec.
+#if OS(LINUX)
+    // On Linux, use vfork() for performance. The parent is suspended until
+    // the child calls exec or _exit, so we can detect exec failure via the
+    // child's exit status without needing the self-pipe trick.
+    // While POSIX restricts vfork children to only calling _exit() or exec*(),
+    // Linux's vfork() is more permissive and allows the setup we need
+    // (setsid, ioctl, dup2, etc.) before exec.
+    volatile int child_errno = 0;
+    pid_t child = vfork();
+#else
+    // On macOS, we must use fork() because vfork() is more strictly enforced.
+    // This code path should only be used for PTY spawns on macOS.
     pid_t child = fork();
+#endif
 
+#if OS(DARWIN)
     const auto childFailed = [&]() -> ssize_t {
         int err = errno;
         // Write errno to pipe so parent can read it
@@ -153,6 +167,18 @@ extern "C" ssize_t posix_spawn_bun(
         // should never be reached
         return -1;
     };
+#else
+    const auto childFailed = [&]() -> ssize_t {
+        // With vfork(), we share memory with the parent, so we can communicate
+        // the error directly via a volatile variable. The parent will see this
+        // value after we call _exit().
+        child_errno = errno;
+        rawExit(127);
+
+        // should never be reached
+        return -1;
+    };
+#endif
 
     const auto startChild = [&]() -> ssize_t {
         sigset_t childmask = oldmask;
@@ -268,11 +294,15 @@ extern "C" ssize_t posix_spawn_bun(
     };
 
     if (child == 0) {
+#if OS(DARWIN)
         // Close read end in child
         close(errpipe[0]);
+#endif
         return startChild();
     }
 
+#if OS(DARWIN)
+    // macOS fork() path: use self-pipe trick to detect exec failure
     // Parent: close write end
     close(errpipe[1]);
 
@@ -293,11 +323,7 @@ extern "C" ssize_t posix_spawn_bun(
         if (n == sizeof(child_err)) {
             // Child failed to exec - it wrote errno and exited
             // Reap the zombie child process
-#if OS(LINUX)
-            wait4(child, NULL, 0, NULL);
-#else
             waitpid(child, NULL, 0);
-#endif
             res = child_err;
         } else if (n == 0) {
             // Exec succeeded (pipe closed with no data written)
@@ -309,11 +335,7 @@ extern "C" ssize_t posix_spawn_bun(
         } else {
             // read() failed or partial read - something went wrong
             // Reap child and report error
-#if OS(LINUX)
-            wait4(child, NULL, 0, NULL);
-#else
             waitpid(child, NULL, 0);
-#endif
             res = (n == -1) ? errno : EIO;
         }
     } else {
@@ -321,6 +343,27 @@ extern "C" ssize_t posix_spawn_bun(
         close(errpipe[0]);
         res = errno;
     }
+#else
+    // Linux vfork() path: parent resumes after child calls exec or _exit
+    // We can detect exec failure via the volatile child_errno variable
+    if (child != -1) {
+        if (child_errno != 0) {
+            // Child failed to exec - it set child_errno and called _exit()
+            // Reap the zombie child process
+            wait4(child, NULL, 0, NULL);
+            res = child_errno;
+        } else {
+            // Exec succeeded
+            res = 0;
+            if (pid) {
+                *pid = child;
+            }
+        }
+    } else {
+        // vfork() failed
+        res = errno;
+    }
+#endif
 
     sigprocmask(SIG_SETMASK, &oldmask, 0);
     pthread_setcancelstate(cs, 0);

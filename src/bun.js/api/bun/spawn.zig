@@ -93,6 +93,8 @@ pub const BunSpawn = struct {
     pub const Attr = struct {
         detached: bool = false,
         pty_slave_fd: i32 = -1, // -1 if not using PTY, otherwise the slave fd to set as controlling terminal
+        flags: u16 = 0, // Store all posix_spawn flags for passthrough to system posix_spawn on macOS
+        reset_signals: bool = false,
 
         pub fn init() !Attr {
             return Attr{};
@@ -101,21 +103,16 @@ pub const BunSpawn = struct {
         pub fn deinit(_: *Attr) void {}
 
         pub fn get(self: Attr) !u16 {
-            var flags: c_int = 0;
-
-            if (self.detached) {
-                flags |= bun.C.POSIX_SPAWN_SETSID;
-            }
-
-            return @intCast(flags);
+            return self.flags;
         }
 
         pub fn set(self: *Attr, flags: u16) !void {
+            self.flags = flags;
             self.detached = (flags & bun.c.POSIX_SPAWN_SETSID) != 0;
         }
 
-        pub fn resetSignals(this: *Attr) !void {
-            _ = this;
+        pub fn resetSignals(self: *Attr) !void {
+            self.reset_signals = true;
         }
     };
 };
@@ -393,13 +390,15 @@ pub const PosixSpawn = struct {
             };
             defer posix_attr.deinit();
 
-            // Set SETSID flag if detached
-            if (detached) {
-                posix_attr.set(bun.c.POSIX_SPAWN_SETSID) catch {};
+            // Pass through all flags from the BunSpawn.Attr
+            if (attr) |a| {
+                if (a.flags != 0) {
+                    posix_attr.set(a.flags) catch {};
+                }
+                if (a.reset_signals) {
+                    posix_attr.resetSignals() catch {};
+                }
             }
-
-            // Reset signals
-            posix_attr.resetSignals() catch {};
 
             // Convert actions
             if (actions) |act| {

@@ -522,7 +522,7 @@ function asyncWrap(fn: any, name: string) {
     async close() {
       const fd = this[kFd];
       if (fd === -1) {
-        return Promise.$resolve();
+        return Promise.resolve();
       }
 
       if (this[kClosePromise]) {

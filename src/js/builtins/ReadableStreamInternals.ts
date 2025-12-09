@@ -33,7 +33,7 @@ export function readableStreamReaderGenericInitialize(reader: ReadableStreamDefa
     $putByIdDirectPrivate(reader, "closedPromiseCapability", $newPromiseCapability(Promise));
   else if ($getByIdDirectPrivate(stream, "state") === $streamClosed)
     $putByIdDirectPrivate(reader, "closedPromiseCapability", {
-      promise: Promise.$resolve(),
+      promise: Promise.resolve(),
     });
   else {
     $assert($getByIdDirectPrivate(stream, "state") === $streamErrored);
@@ -234,7 +234,7 @@ export function readableStreamPipeToWritableStream(
   $assert(signal === undefined || $isAbortSignal(signal));
 
   if ($getByIdDirectPrivate(source, "underlyingByteSource") !== undefined)
-    return Promise.$reject("Piping to a readable bytestream is not supported");
+    return Promise.reject("Piping to a readable bytestream is not supported");
 
   let pipeState: any = {
     source: source,
@@ -254,7 +254,7 @@ export function readableStreamPipeToWritableStream(
   pipeState.promiseCapability = $newPromiseCapability(Promise);
   pipeState.pendingReadPromiseCapability = $newPromiseCapability(Promise);
   pipeState.pendingReadPromiseCapability.resolve.$call();
-  pipeState.pendingWritePromise = Promise.$resolve();
+  pipeState.pendingWritePromise = Promise.resolve();
 
   if (signal !== undefined) {
     const algorithm = reason => {
@@ -265,13 +265,13 @@ export function readableStreamPipeToWritableStream(
             !pipeState.preventAbort && $getByIdDirectPrivate(pipeState.destination, "state") === "writable";
           const promiseDestination = shouldAbortDestination
             ? $writableStreamAbort(pipeState.destination, reason)
-            : Promise.$resolve();
+            : Promise.resolve();
 
           const shouldAbortSource =
             !pipeState.preventCancel && $getByIdDirectPrivate(pipeState.source, "state") === $streamReadable;
           const promiseSource = shouldAbortSource
             ? $readableStreamCancel(pipeState.source, reason)
-            : Promise.$resolve();
+            : Promise.resolve();
 
           let promiseCapability = $newPromiseCapability(Promise);
           let shouldWait = true;
@@ -569,7 +569,7 @@ export function readableStreamTeePullFunction(teeState, reader, shouldClone) {
   const pullAlgorithm = function () {
     if (teeState.flags & TeeStateFlags.reading) {
       teeState.flags |= TeeStateFlags.readAgain;
-      return Promise.$resolve();
+      return Promise.resolve();
     }
     teeState.flags |= TeeStateFlags.reading;
     $Promise.prototype.$then.$call(
@@ -612,7 +612,7 @@ export function readableStreamTeePullFunction(teeState, reader, shouldClone) {
           $readableStreamDefaultControllerEnqueue(teeState.branch2.$readableStreamController, chunk2);
         teeState.flags &= ~TeeStateFlags.reading;
 
-        Promise.$resolve().$then(() => {
+        Promise.resolve().$then(() => {
           if (teeState.flags & TeeStateFlags.readAgain) pullAlgorithm();
         });
       },
@@ -621,7 +621,7 @@ export function readableStreamTeePullFunction(teeState, reader, shouldClone) {
         teeState.flags &= ~TeeStateFlags.reading;
       },
     );
-    return Promise.$resolve();
+    return Promise.resolve();
   };
   return pullAlgorithm;
 }
@@ -1014,7 +1014,7 @@ export function handleDirectStreamError(e) {
 
 export function handleDirectStreamErrorReject(e) {
   $handleDirectStreamError.$call(this, e);
-  return Promise.$reject(e);
+  return Promise.reject(e);
 }
 
 export function onPullDirectStream(controller: ReadableStreamDirectController) {
@@ -1093,7 +1093,7 @@ export function onPullDirectStream(controller: ReadableStreamDirectController) {
 }
 
 export function noopDoneFunction() {
-  return Promise.$resolve({ value: undefined, done: true });
+  return Promise.resolve({ value: undefined, done: true });
 }
 
 export function onReadableStreamDirectControllerClosed(_reason) {
@@ -1129,7 +1129,7 @@ export function tryUseReadableStreamBufferedFastPath(stream, method) {
       .catch(e => {
         stream.$reader = undefined;
         $readableStreamCancel(stream, e);
-        return Promise.$reject(e);
+        return Promise.reject(e);
       })
       .finally(() => {
         stream.$reader = undefined;
@@ -1592,18 +1592,18 @@ export function readableStreamReaderGenericCancel(reader, reason) {
 export function readableStreamCancel(stream: ReadableStream, reason: any) {
   stream.$disturbed = true;
   const state = $getByIdDirectPrivate(stream, "state");
-  if (state === $streamClosed) return Promise.$resolve();
-  if (state === $streamErrored) return Promise.$reject($getByIdDirectPrivate(stream, "storedError"));
+  if (state === $streamClosed) return Promise.resolve();
+  if (state === $streamErrored) return Promise.reject($getByIdDirectPrivate(stream, "storedError"));
   $readableStreamClose(stream);
 
   const controller = $getByIdDirectPrivate(stream, "readableStreamController");
-  if (controller === null) return Promise.$resolve();
+  if (controller === null) return Promise.resolve();
 
   const cancel = controller.$cancel;
   if (cancel) return cancel(controller, reason).$then(function () {});
 
   const close = controller.close;
-  if (close) return Promise.$resolve(controller.close(reason));
+  if (close) return Promise.resolve(controller.close(reason));
 
   $throwTypeError("ReadableStreamController has no cancel or close method");
 }
@@ -1707,7 +1707,7 @@ export function readableStreamDefaultReaderRead(reader) {
 
   stream.$disturbed = true;
   if (state === $streamClosed) return $createFulfilledPromise({ value: undefined, done: true });
-  if (state === $streamErrored) return Promise.$reject($getByIdDirectPrivate(stream, "storedError"));
+  if (state === $streamErrored) return Promise.reject($getByIdDirectPrivate(stream, "storedError"));
   $assert(state === $streamReadable);
 
   return $getByIdDirectPrivate(stream, "readableStreamController").$pull(
@@ -2245,7 +2245,7 @@ export function readableStreamIntoText(stream: ReadableStream) {
   const prom = $readStreamIntoSink(stream, textStream, false);
 
   if (prom && $isPromise(prom)) {
-    return Promise.$resolve(prom).$then(closer.promise).$then($withoutUTF8BOM);
+    return Promise.resolve(prom).$then(closer.promise).$then($withoutUTF8BOM);
   }
 
   return closer.promise.$then($withoutUTF8BOM);
@@ -2298,7 +2298,7 @@ export function readableStreamToArrayBufferDirect(
   } catch (e) {
     didError = true;
     $readableStreamError(stream, e);
-    return Promise.$reject(e);
+    return Promise.reject(e);
   } finally {
     if (!$isPromise(firstPull)) {
       if (!didError && stream) $readableStreamCloseIfPossible(stream);
@@ -2317,7 +2317,7 @@ export function readableStreamToArrayBufferDirect(
     e => {
       didError = true;
       if ($getByIdDirectPrivate(stream, "state") === $streamReadable) $readableStreamError(stream, e);
-      return Promise.$reject(e);
+      return Promise.reject(e);
     },
   );
 }
@@ -2359,7 +2359,7 @@ export async function readableStreamToArrayDirect(stream, underlyingSource) {
     } catch {}
     reader = undefined;
 
-    return Promise.$resolve(capability.promise);
+    return Promise.resolve(capability.promise);
   } finally {
     stream = undefined;
     reader = undefined;

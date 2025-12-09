@@ -114,7 +114,7 @@ export function readableStreamToArray(stream: ReadableStream): Promise<unknown[]
   if (underlyingSource !== undefined) {
     return $readableStreamToArrayDirect(stream, underlyingSource);
   }
-  if ($isReadableStreamLocked(stream)) return Promise.$reject($ERR_INVALID_STATE_TypeError("ReadableStream is locked"));
+  if ($isReadableStreamLocked(stream)) return Promise.reject($ERR_INVALID_STATE_TypeError("ReadableStream is locked"));
   return $readableStreamIntoArray(stream);
 }
 
@@ -126,7 +126,7 @@ export function readableStreamToText(stream: ReadableStream): Promise<string> {
   if (underlyingSource !== undefined) {
     return $readableStreamToTextDirect(stream, underlyingSource);
   }
-  if ($isReadableStreamLocked(stream)) return Promise.$reject($ERR_INVALID_STATE_TypeError("ReadableStream is locked"));
+  if ($isReadableStreamLocked(stream)) return Promise.reject($ERR_INVALID_STATE_TypeError("ReadableStream is locked"));
 
   const result = $tryUseReadableStreamBufferedFastPath(stream, "text");
 
@@ -145,7 +145,7 @@ export function readableStreamToArrayBuffer(stream: ReadableStream<ArrayBuffer>)
   if (underlyingSource !== undefined) {
     return $readableStreamToArrayBufferDirect(stream, underlyingSource, false);
   }
-  if ($isReadableStreamLocked(stream)) return Promise.$reject($ERR_INVALID_STATE_TypeError("ReadableStream is locked"));
+  if ($isReadableStreamLocked(stream)) return Promise.reject($ERR_INVALID_STATE_TypeError("ReadableStream is locked"));
 
   let result = $tryUseReadableStreamBufferedFastPath(stream, "arrayBuffer");
 
@@ -226,7 +226,7 @@ export function readableStreamToBytes(stream: ReadableStream<ArrayBuffer>): Prom
   if (underlyingSource !== undefined) {
     return $readableStreamToArrayBufferDirect(stream, underlyingSource, true);
   }
-  if ($isReadableStreamLocked(stream)) return Promise.$reject($ERR_INVALID_STATE_TypeError("ReadableStream is locked"));
+  if ($isReadableStreamLocked(stream)) return Promise.reject($ERR_INVALID_STATE_TypeError("ReadableStream is locked"));
 
   let result = $tryUseReadableStreamBufferedFastPath(stream, "bytes");
 
@@ -302,7 +302,7 @@ export function readableStreamToFormData(
   contentType: string | ArrayBuffer | ArrayBufferView,
 ): Promise<FormData> {
   if (!$isReadableStream(stream)) throw $ERR_INVALID_ARG_TYPE("stream", "ReadableStream", typeof stream);
-  if ($isReadableStreamLocked(stream)) return Promise.$reject($ERR_INVALID_STATE_TypeError("ReadableStream is locked"));
+  if ($isReadableStreamLocked(stream)) return Promise.reject($ERR_INVALID_STATE_TypeError("ReadableStream is locked"));
   return Bun.readableStreamToBlob(stream).then(blob => {
     return FormData.from(blob, contentType);
   });
@@ -311,7 +311,7 @@ export function readableStreamToFormData(
 $linkTimeConstant;
 export function readableStreamToJSON(stream: ReadableStream): unknown {
   if (!$isReadableStream(stream)) throw $ERR_INVALID_ARG_TYPE("stream", "ReadableStream", typeof stream);
-  if ($isReadableStreamLocked(stream)) return Promise.$reject($ERR_INVALID_STATE_TypeError("ReadableStream is locked"));
+  if ($isReadableStreamLocked(stream)) return Promise.reject($ERR_INVALID_STATE_TypeError("ReadableStream is locked"));
   let result = $tryUseReadableStreamBufferedFastPath(stream, "json");
   if (result) {
     return result;
@@ -323,7 +323,7 @@ export function readableStreamToJSON(stream: ReadableStream): unknown {
     try {
       return $createFulfilledPromise(globalThis.JSON.parse(peeked));
     } catch (e) {
-      return Promise.$reject(e);
+      return Promise.reject(e);
     }
   }
 
@@ -333,11 +333,11 @@ export function readableStreamToJSON(stream: ReadableStream): unknown {
 $linkTimeConstant;
 export function readableStreamToBlob(stream: ReadableStream): Promise<Blob> {
   if (!$isReadableStream(stream)) throw $ERR_INVALID_ARG_TYPE("stream", "ReadableStream", typeof stream);
-  if ($isReadableStreamLocked(stream)) return Promise.$reject($ERR_INVALID_STATE_TypeError("ReadableStream is locked"));
+  if ($isReadableStreamLocked(stream)) return Promise.reject($ERR_INVALID_STATE_TypeError("ReadableStream is locked"));
 
   return (
     $tryUseReadableStreamBufferedFastPath(stream, "blob") ||
-    Promise.$resolve(Bun.readableStreamToArray(stream)).then(array => new Blob(array))
+    Promise.resolve(Bun.readableStreamToArray(stream)).then(array => new Blob(array))
   );
 }
 
@@ -370,9 +370,9 @@ export function createNativeReadableStream(nativePtr, autoAllocateChunkSize) {
 }
 
 export function cancel(this, reason) {
-  if (!$isReadableStream(this)) return Promise.$reject($ERR_INVALID_THIS("ReadableStream"));
+  if (!$isReadableStream(this)) return Promise.reject($ERR_INVALID_THIS("ReadableStream"));
 
-  if ($isReadableStreamLocked(this)) return Promise.$reject($ERR_INVALID_STATE_TypeError("ReadableStream is locked"));
+  if ($isReadableStreamLocked(this)) return Promise.reject($ERR_INVALID_STATE_TypeError("ReadableStream is locked"));
 
   return $readableStreamCancel(this, reason);
 }
@@ -443,9 +443,9 @@ export function pipeThrough(this, streams, options) {
 }
 
 export function pipeTo(this, destination) {
-  if (!$isReadableStream(this)) return Promise.$reject($ERR_INVALID_THIS("ReadableStream"));
+  if (!$isReadableStream(this)) return Promise.reject($ERR_INVALID_THIS("ReadableStream"));
 
-  if ($isReadableStreamLocked(this)) return Promise.$reject($ERR_INVALID_STATE_TypeError("ReadableStream is locked"));
+  if ($isReadableStreamLocked(this)) return Promise.reject($ERR_INVALID_STATE_TypeError("ReadableStream is locked"));
 
   // FIXME: https://bugs.webkit.org/show_bug.cgi?id=159869.
   // Built-in generator should be able to parse function signature to compute the function length correctly.
@@ -456,7 +456,7 @@ export function pipeTo(this, destination) {
   let preventCancel = false;
   let signal;
   if (!$isUndefinedOrNull(options)) {
-    if (!$isObject(options)) return Promise.$reject($makeTypeError("options must be an object"));
+    if (!$isObject(options)) return Promise.reject($makeTypeError("options must be an object"));
 
     try {
       preventAbort = !!options["preventAbort"];
@@ -465,18 +465,18 @@ export function pipeTo(this, destination) {
 
       signal = options["signal"];
     } catch (e) {
-      return Promise.$reject(e);
+      return Promise.reject(e);
     }
 
     if (signal !== undefined && !$isAbortSignal(signal))
-      return Promise.$reject(new TypeError("options.signal must be AbortSignal"));
+      return Promise.reject(new TypeError("options.signal must be AbortSignal"));
   }
 
   const internalDestination = $getInternalWritableStream(destination);
   if (!$isWritableStream(internalDestination))
-    return Promise.$reject(new TypeError("ReadableStream pipeTo requires a WritableStream"));
+    return Promise.reject(new TypeError("ReadableStream pipeTo requires a WritableStream"));
 
-  if ($isWritableStreamLocked(internalDestination)) return Promise.$reject(new TypeError("WritableStream is locked"));
+  if ($isWritableStreamLocked(internalDestination)) return Promise.reject(new TypeError("WritableStream is locked"));
 
   return $readableStreamPipeToWritableStream(
     this,

@@ -43,7 +43,8 @@ const {
 
 const internalGetStringWidth = $newZigFunction("string.zig", "String.jsGetStringWidth", 1);
 
-const PromiseReject = Promise.$reject;
+// Use JSC's promiseReject link-time constant function
+const PromiseReject = (value: unknown) => $promiseReject(Promise, value);
 
 var isWritable;
 

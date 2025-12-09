@@ -113,7 +113,7 @@ export function initializeTransformStream(
   };
   const cancelAlgorithm = reason => {
     $transformStreamErrorWritableAndUnblockWrite(stream, reason);
-    return Promise.$resolve();
+    return Promise.resolve();
   };
   const underlyingSource = {};
   $putByIdDirectPrivate(underlyingSource, "start", startAlgorithm);
@@ -180,12 +180,12 @@ export function setUpTransformStreamDefaultControllerFromTransformer(stream, tra
     try {
       $transformStreamDefaultControllerEnqueue(controller, chunk);
     } catch (e) {
-      return Promise.$reject(e);
+      return Promise.reject(e);
     }
-    return Promise.$resolve();
+    return Promise.resolve();
   };
   let flushAlgorithm = () => {
-    return Promise.$resolve();
+    return Promise.resolve();
   };
 
   if ("transform" in transformerDict)
@@ -305,7 +305,7 @@ export function transformStreamDefaultSinkWriteAlgorithm(stream, chunk) {
 
 export function transformStreamDefaultSinkAbortAlgorithm(stream, reason) {
   $transformStreamError(stream, reason);
-  return Promise.$resolve();
+  return Promise.resolve();
 }
 
 export function transformStreamDefaultSinkCloseAlgorithm(stream) {

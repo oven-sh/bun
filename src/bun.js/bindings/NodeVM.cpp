@@ -316,7 +316,7 @@ static JSInternalPromise* importModuleInner(JSGlobalObject* globalObject, JSStri
 
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    promise->fulfill(globalObject, result);
+    promise->fulfill(vm, globalObject, result);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     promise = promise->then(globalObject, transformer, globalObject->promiseEmptyOnRejectedFunction());
@@ -1382,7 +1382,7 @@ static JSInternalPromise* moduleLoaderImportModuleInner(NodeVMGlobalObject* glob
             return NodeVM::importModuleInner(globalObject, moduleName, parameters, sourceOrigin, globalObject->dynamicImportCallback(), JSValue {});
         }
 
-        promise->reject(globalObject, createError(globalObject, ErrorCode::ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING, "A dynamic import callback was not specified."_s));
+        promise->reject(vm, globalObject, createError(globalObject, ErrorCode::ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING, "A dynamic import callback was not specified."_s));
         return promise;
     }
 
@@ -1391,7 +1391,7 @@ static JSInternalPromise* moduleLoaderImportModuleInner(NodeVMGlobalObject* glob
     RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
 
     scope.release();
-    promise->reject(globalObject, createError(globalObject, makeString("Could not import the module '"_s, moduleNameString.data, "'."_s)));
+    promise->reject(vm, globalObject, createError(globalObject, makeString("Could not import the module '"_s, moduleNameString.data, "'."_s)));
     return promise;
 }
 
@@ -1406,7 +1406,7 @@ JSInternalPromise* NodeVMGlobalObject::moduleLoaderImportModule(JSGlobalObject* 
     return moduleLoaderImportModuleInner(nodeVmGlobalObject, moduleLoader, moduleName, parameters, sourceOrigin);
 }
 
-void NodeVMGlobalObject::getOwnPropertyNames(JSObject* cell, JSGlobalObject* globalObject, JSC::PropertyNameArray& propertyNames, JSC::DontEnumPropertiesMode mode)
+void NodeVMGlobalObject::getOwnPropertyNames(JSObject* cell, JSGlobalObject* globalObject, JSC::PropertyNameArrayBuilder& propertyNames, JSC::DontEnumPropertiesMode mode)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);

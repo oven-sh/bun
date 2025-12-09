@@ -34,10 +34,10 @@ export function initializeReadableStreamDefaultReader(this, stream) {
 }
 
 export function cancel(this, reason) {
-  if (!$isReadableStreamDefaultReader(this)) return Promise.$reject($ERR_INVALID_THIS("ReadableStreamDefaultReader"));
+  if (!$isReadableStreamDefaultReader(this)) return Promise.reject($ERR_INVALID_THIS("ReadableStreamDefaultReader"));
 
   if (!$getByIdDirectPrivate(this, "ownerReadableStream"))
-    return Promise.$reject($ERR_INVALID_STATE_TypeError("The reader is not attached to a stream"));
+    return Promise.reject($ERR_INVALID_STATE_TypeError("The reader is not attached to a stream"));
 
   return $readableStreamReaderGenericCancel(this, reason);
 }
@@ -170,9 +170,9 @@ export function readMany(this: ReadableStreamDefaultReader): ReadableStreamDefau
 }
 
 export function read(this) {
-  if (!$isReadableStreamDefaultReader(this)) return Promise.$reject($ERR_INVALID_THIS("ReadableStreamDefaultReader"));
+  if (!$isReadableStreamDefaultReader(this)) return Promise.reject($ERR_INVALID_THIS("ReadableStreamDefaultReader"));
   if (!$getByIdDirectPrivate(this, "ownerReadableStream"))
-    return Promise.$reject($ERR_INVALID_STATE_TypeError("The reader is not attached to a stream"));
+    return Promise.reject($ERR_INVALID_STATE_TypeError("The reader is not attached to a stream"));
 
   return $readableStreamDefaultReaderRead(this);
 }
@@ -188,7 +188,7 @@ export function releaseLock(this) {
 $getter;
 export function closed(this) {
   if (!$isReadableStreamDefaultReader(this))
-    return Promise.$reject($makeGetterTypeError("ReadableStreamDefaultReader", "closed"));
+    return Promise.reject($makeGetterTypeError("ReadableStreamDefaultReader", "closed"));
 
   return $getByIdDirectPrivate(this, "closedPromiseCapability").promise;
 }

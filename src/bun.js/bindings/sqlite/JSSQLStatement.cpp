@@ -376,7 +376,7 @@ public:
             if (name == nullptr) {
                 indexedCount++;
                 if (hasLoadedBindingNames) {
-                    bindingNames[i] = Identifier(Identifier::EmptyIdentifier);
+                    bindingNames[i] = Identifier(Identifier::EmptyIdentifierFlag::EmptyIdentifier);
                 }
                 continue;
             }
@@ -467,7 +467,7 @@ public:
     // Tracks which columns are valid in the current result set. Used to handle duplicate column names.
     // The bit at index i is set if the column at index i is valid.
     WTF::BitVector validColumns;
-    std::unique_ptr<PropertyNameArray> columnNames;
+    std::unique_ptr<PropertyNameArrayBuilder> columnNames;
     mutable JSC::WriteBarrier<JSC::JSObject> _prototype;
     mutable JSC::WriteBarrier<JSC::Structure> _structure;
     mutable JSC::WriteBarrier<JSC::JSObject> userPrototype;
@@ -481,7 +481,7 @@ protected:
         : Base(globalObject.vm(), structure)
         , stmt(stmt)
         , version_db(version_db)
-        , columnNames(new PropertyNameArray(globalObject.vm(), PropertyNameMode::Strings, PrivateSymbolMode::Exclude))
+        , columnNames(new PropertyNameArrayBuilder(globalObject.vm(), PropertyNameMode::Strings, PrivateSymbolMode::Exclude))
         , extraMemorySize(memorySizeChange > 0 ? memorySizeChange : 0)
     {
     }
@@ -673,7 +673,7 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
         castedThis->hasExecuted = true;
     } else {
         // reinitialize column
-        castedThis->columnNames.reset(new PropertyNameArray(
+        castedThis->columnNames.reset(new PropertyNameArrayBuilder(
             castedThis->columnNames->vm(),
             castedThis->columnNames->propertyNameMode(),
             castedThis->columnNames->privateSymbolMode()));
@@ -749,7 +749,7 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
         } else {
             // If for any reason we do not have column names, disable the fast path.
             columnNames->releaseData();
-            castedThis->columnNames.reset(new PropertyNameArray(
+            castedThis->columnNames.reset(new PropertyNameArrayBuilder(
                 castedThis->columnNames->vm(),
                 castedThis->columnNames->propertyNameMode(),
                 castedThis->columnNames->privateSymbolMode()));
@@ -955,7 +955,7 @@ static JSC::JSValue rebindObject(JSC::JSGlobalObject* globalObject, SQLiteBindin
             JSValue value = getValue(name, i);
             if (!value && !scope.exception()) {
                 if (throwOnMissing) {
-                    throwException(globalObject, scope, createError(globalObject, makeString("Missing parameter \""_s, reinterpret_cast<const unsigned char*>(name), "\""_s)));
+                    throwException(globalObject, scope, createError(globalObject, makeString("Missing parameter \""_s, String::fromLatin1(name), "\""_s)));
                 } else {
                     continue;
                 }

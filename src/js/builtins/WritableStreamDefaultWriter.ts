@@ -39,7 +39,7 @@ export function initializeWritableStreamDefaultWriter(stream) {
 $getter;
 export function closed() {
   if (!$isWritableStreamDefaultWriter(this))
-    return Promise.$reject($makeGetterTypeError("WritableStreamDefaultWriter", "closed"));
+    return Promise.reject($makeGetterTypeError("WritableStreamDefaultWriter", "closed"));
 
   return $getByIdDirectPrivate(this, "closedPromise").promise;
 }
@@ -55,28 +55,28 @@ export function desiredSize() {
 
 $getter;
 export function ready() {
-  if (!$isWritableStreamDefaultWriter(this)) return Promise.$reject($ERR_INVALID_THIS("WritableStreamDefaultWriter"));
+  if (!$isWritableStreamDefaultWriter(this)) return Promise.reject($ERR_INVALID_THIS("WritableStreamDefaultWriter"));
 
   return $getByIdDirectPrivate(this, "readyPromise").promise;
 }
 
 export function abort(reason) {
-  if (!$isWritableStreamDefaultWriter(this)) return Promise.$reject($ERR_INVALID_THIS("WritableStreamDefaultWriter"));
+  if (!$isWritableStreamDefaultWriter(this)) return Promise.reject($ERR_INVALID_THIS("WritableStreamDefaultWriter"));
 
   if ($getByIdDirectPrivate(this, "stream") === undefined)
-    return Promise.$reject($makeTypeError("WritableStreamDefaultWriter has no stream"));
+    return Promise.reject($makeTypeError("WritableStreamDefaultWriter has no stream"));
 
   return $writableStreamDefaultWriterAbort(this, reason);
 }
 
 export function close() {
-  if (!$isWritableStreamDefaultWriter(this)) return Promise.$reject($ERR_INVALID_THIS("WritableStreamDefaultWriter"));
+  if (!$isWritableStreamDefaultWriter(this)) return Promise.reject($ERR_INVALID_THIS("WritableStreamDefaultWriter"));
 
   const stream = $getByIdDirectPrivate(this, "stream");
-  if (stream === undefined) return Promise.$reject($makeTypeError("WritableStreamDefaultWriter has no stream"));
+  if (stream === undefined) return Promise.reject($makeTypeError("WritableStreamDefaultWriter has no stream"));
 
   if ($writableStreamCloseQueuedOrInFlight(stream))
-    return Promise.$reject($makeTypeError("WritableStreamDefaultWriter is being closed"));
+    return Promise.reject($makeTypeError("WritableStreamDefaultWriter is being closed"));
 
   return $writableStreamDefaultWriterClose(this);
 }
@@ -92,10 +92,10 @@ export function releaseLock() {
 }
 
 export function write(chunk) {
-  if (!$isWritableStreamDefaultWriter(this)) return Promise.$reject($ERR_INVALID_THIS("WritableStreamDefaultWriter"));
+  if (!$isWritableStreamDefaultWriter(this)) return Promise.reject($ERR_INVALID_THIS("WritableStreamDefaultWriter"));
 
   if ($getByIdDirectPrivate(this, "stream") === undefined)
-    return Promise.$reject($makeTypeError("WritableStreamDefaultWriter has no stream"));
+    return Promise.reject($makeTypeError("WritableStreamDefaultWriter has no stream"));
 
   return $writableStreamDefaultWriterWrite(this, chunk);
 }

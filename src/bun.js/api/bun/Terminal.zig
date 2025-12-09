@@ -500,15 +500,68 @@ fn createPtyPosix(cols: u16, rows: u16) CreatePtyError!PtyResult {
     const master_fd_desc = bun.FD.fromNative(master_fd);
     const slave_fd_desc = bun.FD.fromNative(slave_fd);
 
-    // Disable ECHO on the slave fd by default.
-    // This prevents input written to the master from being echoed back.
-    // Programs that need echo (like interactive shells for user input) will enable it.
+    // Configure sensible terminal defaults matching node-pty behavior.
+    // These are "cooked mode" defaults that most terminal applications expect.
     if (std.posix.tcgetattr(slave_fd)) |termios| {
-        var new_termios = termios;
-        // Disable ECHO - prevents written input from being echoed back
-        new_termios.lflag.ECHO = false;
-        // Keep ICANON enabled for line-buffered input (programs can disable if needed)
-        std.posix.tcsetattr(slave_fd, .NOW, new_termios) catch {};
+        var t = termios;
+
+        // Input flags: standard terminal input processing
+        t.iflag = .{
+            .ICRNL = true, // Map CR to NL on input
+            .IXON = true, // Enable XON/XOFF flow control on output
+            .IXANY = true, // Any character restarts output
+            .IMAXBEL = true, // Ring bell on input queue full
+            .BRKINT = true, // Signal interrupt on break
+            .IUTF8 = true, // Input is UTF-8
+        };
+
+        // Output flags: standard terminal output processing
+        t.oflag = .{
+            .OPOST = true, // Enable output processing
+            .ONLCR = true, // Map NL to CR-NL on output
+        };
+
+        // Control flags: 8-bit chars, enable receiver
+        t.cflag = .{
+            .CREAD = true, // Enable receiver
+            .CSIZE = .CS8, // 8-bit characters
+            .HUPCL = true, // Hang up on last close
+        };
+
+        // Local flags: canonical mode with echo and signals
+        t.lflag = .{
+            .ICANON = true, // Canonical input (line editing)
+            .ISIG = true, // Enable signals (INTR, QUIT, SUSP)
+            .IEXTEN = true, // Enable extended input processing
+            .ECHO = true, // Echo input characters
+            .ECHOE = true, // Echo erase as backspace-space-backspace
+            .ECHOK = true, // Echo NL after KILL
+            .ECHOKE = true, // Visual erase for KILL
+            .ECHOCTL = true, // Echo control chars as ^X
+        };
+
+        // Control characters - standard defaults
+        t.cc[@intFromEnum(std.posix.V.EOF)] = 4; // Ctrl-D
+        t.cc[@intFromEnum(std.posix.V.EOL)] = 0; // Disabled
+        t.cc[@intFromEnum(std.posix.V.ERASE)] = 0x7f; // DEL (backspace)
+        t.cc[@intFromEnum(std.posix.V.WERASE)] = 23; // Ctrl-W
+        t.cc[@intFromEnum(std.posix.V.KILL)] = 21; // Ctrl-U
+        t.cc[@intFromEnum(std.posix.V.REPRINT)] = 18; // Ctrl-R
+        t.cc[@intFromEnum(std.posix.V.INTR)] = 3; // Ctrl-C
+        t.cc[@intFromEnum(std.posix.V.QUIT)] = 0x1c; // Ctrl-backslash
+        t.cc[@intFromEnum(std.posix.V.SUSP)] = 26; // Ctrl-Z
+        t.cc[@intFromEnum(std.posix.V.START)] = 17; // Ctrl-Q (XON)
+        t.cc[@intFromEnum(std.posix.V.STOP)] = 19; // Ctrl-S (XOFF)
+        t.cc[@intFromEnum(std.posix.V.LNEXT)] = 22; // Ctrl-V
+        t.cc[@intFromEnum(std.posix.V.DISCARD)] = 15; // Ctrl-O
+        t.cc[@intFromEnum(std.posix.V.MIN)] = 1; // Min chars for non-canonical read
+        t.cc[@intFromEnum(std.posix.V.TIME)] = 0; // Timeout for non-canonical read
+
+        // Set baud rate to 38400 (standard for PTYs)
+        t.ispeed = .B38400;
+        t.ospeed = .B38400;
+
+        std.posix.tcsetattr(slave_fd, .NOW, t) catch {};
     } else |err| {
         // tcgetattr failed, log in debug builds but continue without modifying termios
         if (comptime bun.Environment.allow_assert) {

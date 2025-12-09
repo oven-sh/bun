@@ -461,6 +461,8 @@ pub const Command = struct {
             compile_exec_argv: ?[]const u8 = null,
             compile_autoload_dotenv: bool = true,
             compile_autoload_bunfig: bool = true,
+            compile_autoload_tsconfig: bool = false,
+            compile_autoload_package_json: bool = false,
             windows: options.WindowsOptions = .{},
         };
 

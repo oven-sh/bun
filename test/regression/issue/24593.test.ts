@@ -254,51 +254,51 @@ describe("WebSocket server.publish with perMessageDeflate", () => {
     }
   });
 
-  test("should handle message at exact CORK_BUFFER_SIZE boundary", async () => {
-    // CORK_BUFFER_SIZE is 16KB - test messages right at this boundary
-    // since messages >= CORK_BUFFER_SIZE use publishBig path
-    const exactBoundary = 16 * 1024;
-    const justOver = exactBoundary + 100;
-    const justUnder = exactBoundary - 100;
+  // CORK_BUFFER_SIZE is 16KB - test messages right at this boundary
+  // since messages >= CORK_BUFFER_SIZE use publishBig path
+  const CORK_BUFFER_SIZE = 16 * 1024;
 
-    for (const size of [justUnder, exactBoundary, justOver]) {
-      const message = Buffer.alloc(size, "D").toString();
+  test.each([
+    { name: "just under 16KB", size: CORK_BUFFER_SIZE - 100 },
+    { name: "exactly 16KB", size: CORK_BUFFER_SIZE },
+    { name: "just over 16KB", size: CORK_BUFFER_SIZE + 100 },
+  ])("should handle message at CORK_BUFFER_SIZE boundary: $name", async ({ size }) => {
+    const message = Buffer.alloc(size, "D").toString();
 
-      using server = serve({
-        port: 0,
-        fetch(req, server) {
-          if (server.upgrade(req)) {
-            return;
-          }
-          return new Response("WebSocket server");
+    using server = serve({
+      port: 0,
+      fetch(req, server) {
+        if (server.upgrade(req)) {
+          return;
+        }
+        return new Response("WebSocket server");
+      },
+      websocket: {
+        perMessageDeflate: true,
+        open(ws) {
+          ws.subscribe("boundary-test");
         },
-        websocket: {
-          perMessageDeflate: true,
-          open(ws) {
-            ws.subscribe("boundary-test");
-          },
-          message() {},
-          close() {},
-        },
-      });
+        message() {},
+        close() {},
+      },
+    });
 
-      const client = new WebSocket(`ws://localhost:${server.port}`);
+    const client = new WebSocket(`ws://localhost:${server.port}`);
 
-      const { promise: openPromise, resolve: resolveOpen, reject: rejectOpen } = Promise.withResolvers<void>();
-      const { promise: messagePromise, resolve: resolveMessage } = Promise.withResolvers<string>();
+    const { promise: openPromise, resolve: resolveOpen, reject: rejectOpen } = Promise.withResolvers<void>();
+    const { promise: messagePromise, resolve: resolveMessage } = Promise.withResolvers<string>();
 
-      client.onopen = () => resolveOpen();
-      client.onerror = e => rejectOpen(e);
-      client.onmessage = event => resolveMessage(event.data);
+    client.onopen = () => resolveOpen();
+    client.onerror = e => rejectOpen(e);
+    client.onmessage = event => resolveMessage(event.data);
 
-      await openPromise;
+    await openPromise;
 
-      server.publish("boundary-test", message);
+    server.publish("boundary-test", message);
 
-      const received = await messagePromise;
-      expect(received.length).toBe(size);
+    const received = await messagePromise;
+    expect(received.length).toBe(size);
 
-      client.close();
-    }
+    client.close();
   });
 });

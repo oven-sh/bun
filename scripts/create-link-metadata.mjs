@@ -24,6 +24,7 @@ const linkCommand = linkCommandResult.stdout.toString().trim();
 const metadata = {
   webkit_url: process.env.WEBKIT_DOWNLOAD_URL || "",
   webkit_version: process.env.WEBKIT_VERSION || "",
+  zig_commit: process.env.ZIG_COMMIT || "",
   target: bunTarget,
   timestamp: new Date().toISOString(),
   link_command: linkCommand,

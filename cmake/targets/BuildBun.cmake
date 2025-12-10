@@ -817,6 +817,7 @@ if(BUN_LINK_ONLY)
       ${CMAKE_COMMAND} -E env
         WEBKIT_DOWNLOAD_URL=${WEBKIT_DOWNLOAD_URL}
         WEBKIT_VERSION=${WEBKIT_VERSION}
+        ZIG_COMMIT=${ZIG_COMMIT}
         ${BUN_EXECUTABLE} ${CWD}/scripts/create-link-metadata.mjs ${BUILD_PATH} ${bun}
     SOURCES
       ${BUN_ZIG_OUTPUT}

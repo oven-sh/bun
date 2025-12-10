@@ -406,6 +406,7 @@ await proc2.exited;
 ```
 
 When passing an existing `Terminal` object:
+
 - The terminal can be reused across multiple spawns
 - You control when to close the terminal
 - The `exit` callback fires when you call `terminal.close()`, not when each subprocess exits

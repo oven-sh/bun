@@ -319,7 +319,7 @@ static JSInternalPromise* importModuleInner(JSGlobalObject* globalObject, JSStri
     promise->fulfill(globalObject, result);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    promise = promise->then(globalObject, transformer, nullptr);
+    promise = promise->then(globalObject, transformer, globalObject->promiseEmptyOnRejectedFunction());
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     RELEASE_AND_RETURN(scope, promise);

@@ -801,6 +801,26 @@ if(BUN_LINK_ONLY)
   add_executable(${bun} ${BUN_CPP_OUTPUT} ${BUN_ZIG_OUTPUT} ${WINDOWS_RESOURCES})
   set_target_properties(${bun} PROPERTIES LINKER_LANGUAGE CXX)
   target_link_libraries(${bun} PRIVATE ${BUN_CPP_OUTPUT})
+
+  # Extract link command and create artifact tarball (only for main branch builds in CI)
+  if(ENABLE_LINK_ARTIFACTS_UPLOAD)
+    message(STATUS "Link artifacts command: ${BUN_EXECUTABLE} ${CWD}/scripts/create-link-artifacts.mjs ${BUILD_PATH} ${bun}")
+    register_command(
+      TARGET
+        ${bun}
+      TARGET_PHASE
+        POST_BUILD
+      COMMENT
+        "Creating link artifacts"
+      COMMAND
+        ${BUN_EXECUTABLE} ${CWD}/scripts/create-link-artifacts.mjs ${BUILD_PATH} ${bun}
+      SOURCES
+        ${BUN_ZIG_OUTPUT}
+        ${BUN_CPP_OUTPUT}
+      ARTIFACTS
+        ${BUILD_PATH}/bun-link-artifacts.tar.zst
+    )
+  endif()
 elseif(BUN_CPP_ONLY)
   add_library(${bun} STATIC ${BUN_CPP_SOURCES})
   register_command(

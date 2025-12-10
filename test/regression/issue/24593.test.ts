@@ -120,9 +120,6 @@ describe("WebSocket server.publish with perMessageDeflate", () => {
 
     await openPromise;
 
-    // Give the server time to register the subscription (matching original repro's 200ms)
-    await Bun.sleep(200);
-
     // This is the critical test - server.publish() with a large compressed message
     // On Windows, this was causing a segfault in memcpy during the compression path
     const published = server.publish("test", largeMessage);
@@ -178,7 +175,6 @@ describe("WebSocket server.publish with perMessageDeflate", () => {
     });
 
     await openPromise;
-    await Bun.sleep(50);
 
     // Publish multiple times in quick succession
     for (let i = 0; i < expectedMessages; i++) {
@@ -230,7 +226,6 @@ describe("WebSocket server.publish with perMessageDeflate", () => {
     );
 
     await allClientsOpen;
-    await Bun.sleep(100); // Allow subscriptions to register
 
     const allMessagesReceived = Promise.all(
       clients.map(
@@ -293,7 +288,6 @@ describe("WebSocket server.publish with perMessageDeflate", () => {
       client.onmessage = event => resolveMessage(event.data);
 
       await openPromise;
-      await Bun.sleep(50);
 
       server.publish("boundary-test", message);
 

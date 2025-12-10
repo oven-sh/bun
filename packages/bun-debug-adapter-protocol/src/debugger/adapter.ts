@@ -23,6 +23,47 @@ export async function getAvailablePort(): Promise<number> {
   });
 }
 
+/**
+ * Validates that a WebSocket URL is safe to connect to.
+ * Only allows connections to localhost (127.0.0.1, ::1, localhost) or Unix sockets.
+ * This prevents SSRF attacks where an attacker could connect to internal network resources.
+ *
+ * @throws Error if the URL is not safe
+ */
+function validateWebSocketUrl(url: string | URL | undefined): void {
+  if (!url) return; // undefined URLs will use the default which is validated elsewhere
+
+  const urlStr = typeof url === "string" ? url : url.toString();
+
+  // Allow Unix socket URLs (ws+unix://)
+  if (urlStr.startsWith("ws+unix://")) {
+    return;
+  }
+
+  // Parse the URL to validate the host
+  let parsed: URL;
+  try {
+    parsed = new URL(urlStr);
+  } catch {
+    throw new Error(`Invalid WebSocket URL: ${urlStr}`);
+  }
+
+  // Only allow ws:// and wss:// protocols
+  if (parsed.protocol !== "ws:" && parsed.protocol !== "wss:") {
+    throw new Error(`Invalid WebSocket protocol: ${parsed.protocol}. Only ws:// and wss:// are allowed.`);
+  }
+
+  // Only allow localhost connections
+  const hostname = parsed.hostname.toLowerCase();
+  const allowedHosts = ["localhost", "127.0.0.1", "::1", "[::1]"];
+  if (!allowedHosts.includes(hostname)) {
+    throw new Error(
+      `WebSocket connections are only allowed to localhost (127.0.0.1, ::1, localhost). ` +
+        `Attempted to connect to: ${hostname}`,
+    );
+  }
+}
+
 const capabilities: DAP.Capabilities = {
   supportsConfigurationDoneRequest: true,
   supportsFunctionBreakpoints: true,
@@ -78,7 +119,7 @@ const capabilities: DAP.Capabilities = {
   supportsModulesRequest: false,
   additionalModuleColumns: [],
   supportedChecksumAlgorithms: [],
-  supportsRestartRequest: false, // TODO
+  supportsRestartRequest: true,
   supportsExceptionOptions: false, // TODO
   supportsValueFormattingOptions: false,
   supportsExceptionInfoRequest: true,
@@ -139,6 +180,15 @@ type AttachRequest = DAP.AttachRequest & {
   url?: string;
   noDebug?: boolean;
   stopOnEntry?: boolean;
+  /**
+   * Controls automatic reconnection when the debug connection is lost.
+   * - `false` or `undefined`: No automatic reconnection (default)
+   * - `true`: Reconnect with default 10 second timeout
+   * - `number`: Reconnect with specified timeout in milliseconds (max 300000ms / 5 minutes)
+   *
+   * Note: This option only applies to "attach" mode. In "launch" mode, use `watchMode` instead.
+   */
+  restart?: boolean | number;
 };
 
 type DebuggerOptions = (LaunchRequest & { type: "launch" }) | (AttachRequest & { type: "attach" });
@@ -260,6 +310,7 @@ export abstract class BaseDebugAdapter<T extends Inspector = Inspector>
   #exception?: Variable;
   #breakpoints: Map<string, Breakpoint[]>;
   #futureBreakpoints: Map<string, FutureBreakpoint[]>;
+  #removingBreakpoints: Set<string>; // Track breakpointIds being removed to ignore stale events
   #functionBreakpoints: Map<string, FunctionBreakpoint>;
   #targets: Map<number, Target>;
   #variableId: number;
@@ -288,6 +339,7 @@ export abstract class BaseDebugAdapter<T extends Inspector = Inspector>
     this.#stopped = undefined;
     this.#breakpoints = new Map();
     this.#futureBreakpoints = new Map();
+    this.#removingBreakpoints = new Set();
     this.#functionBreakpoints = new Map();
     this.#targets = new Map();
     this.#variableId = 1;
@@ -697,40 +749,92 @@ export abstract class BaseDebugAdapter<T extends Inspector = Inspector>
     // If the breakpoint is resolved in the future, a `Debugger.breakpointResolved` event
     // will be emitted and each of these breakpoint requests can be retried.
     if (!source) {
+      // Remove ALL existing breakpoints for this URL to avoid duplicates.
+      // This handles race conditions and stale breakpoints (in parallel for performance).
+      await this.#clearBreakpointsForUrl(url, true);
+
+      // The debugger caches breakpoints across sessions. If a breakpoint already exists
+      // at this URL:0:0 from a previous session, Debugger.setBreakpointByUrl will fail.
+      // Proactively remove any stale breakpoint before setting a new one.
+      const potentialStaleId = `${url}:0:0`;
+      try {
+        await this.send("Debugger.removeBreakpoint", { breakpointId: potentialStaleId });
+      } catch {
+        // Expected if no stale breakpoint exists - ignore
+      }
+
       let result;
+      let breakpointId: string;
+      let locations: JSC.Debugger.Location[];
       try {
         result = await this.send("Debugger.setBreakpointByUrl", {
           url,
           lineNumber: 0,
         });
+        breakpointId = result.breakpointId;
+        locations = result.locations;
       } catch (error) {
-        return requests.map(() => invalidBreakpoint(error));
+        // Handle race condition: if another request already created this breakpoint,
+        // reuse it instead of failing. This happens when VS Code sends multiple
+        // setBreakpointsRequest during reconnection.
+        if (isBreakpointExistsError(error)) {
+          breakpointId = potentialStaleId;
+          locations = []; // Will wait for breakpointResolved or use existing pending
+        } else {
+          return requests.map(() => invalidBreakpoint(error));
+        }
       }
 
-      const { breakpointId, locations } = result;
-      if (locations.length) {
-        // TODO: Source was loaded while the breakpoint was being set?
-      }
-
-      return requests.map(request =>
+      // Create future breakpoints first (so they're registered before any resolution)
+      const placeholders = requests.map(request =>
         this.#addFutureBreakpoint({
           breakpointId,
           url,
           breakpoint: request,
         }),
       );
+
+      // If the breakpoint was already resolved (script was parsed during our request),
+      // Debugger.breakpointResolved might not fire again. Manually trigger resolution
+      // after the current event loop iteration to allow any pending scriptParsed events to be processed.
+      if (locations.length) {
+        process.nextTick(() => {
+          // Only trigger if future breakpoints still exist (not already resolved)
+          const pending = this.#futureBreakpoints.get(breakpointId);
+          if (pending?.length) {
+            this["Debugger.breakpointResolved"]({ breakpointId, location: locations[0] });
+          }
+        });
+      }
+
+      return placeholders;
     }
 
+    // When source is found, we also need to remove stale breakpoints before setting new ones.
+    // This handles the case where Debugger.breakpointResolved fires for cached breakpoints
+    // during reconnection, adding them to #breakpoints before reapplyBreakpoints runs.
     const oldBreakpoints = this.#getBreakpoints(sourceToId(source));
+
+    // Remove ALL existing breakpoints for this URL (in parallel for performance).
+    // Skip future breakpoints since source is already loaded.
+    await this.#clearBreakpointsForUrl(url, false);
+
+    // Track breakpoints by generated line number to handle duplicates.
+    // When VS Code sends duplicate requests for the same line (due to race conditions),
+    // we can reuse the first successful breakpoint instead of failing.
+    const breakpointsByGenLine = new Map<number, Breakpoint>();
+
     const breakpoints = await Promise.all(
       requests.map(async request => {
-        const oldBreakpoint = this.#getBreakpointByLocation(source, request);
-        if (oldBreakpoint) {
-          return oldBreakpoint;
-        }
-
         const { line, column, ...options } = request;
         const location = this.#generatedLocation(source, line, column);
+        const genLine = location.lineNumber ?? 0;
+
+        // Check if we already set a breakpoint at this generated line
+        const existingBp = breakpointsByGenLine.get(genLine);
+        if (existingBp) {
+          return existingBp;
+        }
 
         let result;
         try {
@@ -740,12 +844,21 @@ export abstract class BaseDebugAdapter<T extends Inspector = Inspector>
             options: breakpointOptions(options),
           });
         } catch (error) {
+          // Handle race condition: if breakpoint already exists, try to find the breakpoint
+          // that was created by a parallel request
+          if (isBreakpointExistsError(error)) {
+            // Check again - another parallel request might have added it
+            const racedBp = breakpointsByGenLine.get(genLine);
+            if (racedBp) {
+              return racedBp;
+            }
+          }
           return invalidBreakpoint(error);
         }
 
         const { breakpointId, locations } = result;
 
-        const breakpoints = locations.map((location, i) =>
+        const bps = locations.map((location, i) =>
           this.#addBreakpoint({
             breakpointId,
             location,
@@ -757,8 +870,14 @@ export abstract class BaseDebugAdapter<T extends Inspector = Inspector>
           }),
         );
 
+        // Store this breakpoint so duplicate requests can reuse it
+        const bp = bps[0];
+        if (bp) {
+          breakpointsByGenLine.set(genLine, bp);
+        }
+
         // Each breakpoint request can only be mapped to one breakpoint.
-        return breakpoints[0];
+        return bp;
       }),
     );
 
@@ -830,14 +949,71 @@ export abstract class BaseDebugAdapter<T extends Inspector = Inspector>
   }
 
   async #unsetBreakpoint(breakpointId: string): Promise<void> {
+    // Mark as removing BEFORE the async operation to handle race conditions
+    // where breakpointResolved fires before removal completes
+    this.#removingBreakpoints.add(breakpointId);
+
     try {
       await this.send("Debugger.removeBreakpoint", { breakpointId });
-    } catch {
-      // Ignore any errors.
+    } catch (error) {
+      // Expected if breakpoint was already removed or session ended
+      if (isDebug) {
+        console.log(`Failed to unset breakpoint ${breakpointId}:`, error);
+      }
+    } finally {
+      // Always clean up tracking state, even if removal failed
+      this.#removeBreakpoint(breakpointId);
+      this.#removeFutureBreakpoint(breakpointId);
+      this.#removingBreakpoints.delete(breakpointId);
+    }
+  }
+
+  /**
+   * Removes multiple breakpoints for a URL in parallel for better performance.
+   * This method collects breakpoint IDs and removes them concurrently using Promise.all().
+   */
+  async #clearBreakpointsForUrl(url: string, includeFuture: boolean = true): Promise<void> {
+    const breakpointsToRemove: string[] = [];
+
+    // Find existing placeholder breakpoints from #futureBreakpoints
+    if (includeFuture) {
+      for (const [existingBpId, futures] of this.#futureBreakpoints.entries()) {
+        if (futures.length > 0 && futures[0].url === url) {
+          breakpointsToRemove.push(existingBpId);
+        }
+      }
     }
 
-    this.#removeBreakpoint(breakpointId);
-    this.#removeFutureBreakpoint(breakpointId);
+    // Find existing RESOLVED breakpoints for this URL
+    for (const [existingBpId, bps] of this.#breakpoints.entries()) {
+      const hasMatchingUrl = bps.some(bp => bp.source?.path === url);
+      if (hasMatchingUrl && !breakpointsToRemove.includes(existingBpId)) {
+        breakpointsToRemove.push(existingBpId);
+      }
+    }
+
+    // Remove all breakpoints in parallel for better performance
+    await Promise.all(
+      breakpointsToRemove.map(async existingBpId => {
+        // Mark as removing to prevent race condition where breakpointResolved
+        // fires before removal and re-adds the breakpoint
+        this.#removingBreakpoints.add(existingBpId);
+
+        try {
+          await this.send("Debugger.removeBreakpoint", { breakpointId: existingBpId });
+        } catch (error) {
+          // Expected if breakpoint was already removed; log in debug mode for diagnostics
+          if (isDebug) {
+            console.log(`Failed to remove stale breakpoint ${existingBpId}:`, error);
+          }
+        } finally {
+          // Always clean up tracking state, even if removal failed
+          this.#futureBreakpoints.delete(existingBpId);
+          this.#breakpoints.delete(existingBpId);
+          this.#removingBreakpoints.delete(existingBpId);
+        }
+      }),
+    );
   }
 
   #addBreakpoint(options: {
@@ -1295,6 +1471,15 @@ export abstract class BaseDebugAdapter<T extends Inspector = Inspector>
   async ["Debugger.breakpointResolved"](event: JSC.Debugger.BreakpointResolvedEvent): Promise<void> {
     const { breakpointId, location } = event;
 
+    // Ignore events for breakpoints we're actively removing to prevent race conditions
+    // where the event arrives before removal completes
+    if (this.#removingBreakpoints.has(breakpointId)) {
+      if (isDebug) {
+        console.log(`Ignoring breakpointResolved for ${breakpointId} (being removed)`);
+      }
+      return;
+    }
+
     const futureBreakpoints = this.#getFutureBreakpoints(breakpointId);
 
     // If the breakpoint resolves to a placeholder breakpoint, go through
@@ -1309,6 +1494,11 @@ export abstract class BaseDebugAdapter<T extends Inspector = Inspector>
       for (let i = 0; i < breakpoints.length; i++) {
         const breakpoint = breakpoints[i];
         const oldBreakpoint = oldBreakpoints[i];
+
+        // Skip if no matching old breakpoint (shouldn't happen, but be defensive)
+        if (!oldBreakpoint) {
+          continue;
+        }
 
         this.emitAdapterEvent("breakpoint", {
           reason: "changed",
@@ -2032,6 +2222,120 @@ export abstract class BaseDebugAdapter<T extends Inspector = Inspector>
     this.resetInternal();
   }
 
+  /**
+   * Clears the paused state and emits a "continued" event if the debugger was paused.
+   * This should be called when the connection is lost to update VS Code's UI.
+   */
+  protected clearPausedState(): void {
+    if (this.#stopped) {
+      this.#stackFrames.length = 0;
+      this.#stopped = undefined;
+      this.#exception = undefined;
+      this.emitAdapterEvent("continued", {
+        threadId: this.#threadId,
+        allThreadsContinued: true,
+      });
+    }
+  }
+
+  /**
+   * Collects breakpoint data for reapplication after reconnection.
+   * This should be called BEFORE clearing state.
+   *
+   * TODO: Consider moving this and related reconnection methods (clearPausedState, clearStaleState,
+   * reapplyBreakpoints) to WebSocketDebugAdapter as private methods, since they're only used
+   * by that subclass. Currently kept here for potential future use by other adapters.
+   */
+  protected collectBreakpointData(): Map<string, DAP.SourceBreakpoint[]> {
+    const breakpointsByPath = new Map<string, DAP.SourceBreakpoint[]>();
+
+    // Collect from resolved breakpoints
+    // IMPORTANT: Use the URL from breakpointId, NOT bp.source.path
+    // The breakpointId contains the remote URL that the debugger knows about,
+    // while bp.source.path may be mapped to a local path by the extension.
+    for (const [bpId, breakpoints] of this.#breakpoints.entries()) {
+      for (const bp of breakpoints) {
+        if (!bp.request) continue;
+
+        // Extract URL from breakpointId (format: "url:line:column")
+        // The URL can contain colons (Windows paths or URLs), so find the last two colons
+        const parts = bpId.split(":");
+        // The last two parts are line and column numbers
+        const url = parts.length >= 3 ? parts.slice(0, -2).join(":") : bpId;
+
+        let arr = breakpointsByPath.get(url);
+        if (!arr) {
+          arr = [];
+          breakpointsByPath.set(url, arr);
+        }
+        arr.push(bp.request);
+      }
+    }
+
+    // Also collect from future breakpoints (placeholders)
+    for (const [, futureList] of this.#futureBreakpoints.entries()) {
+      for (const { url, breakpoint } of futureList) {
+        let arr = breakpointsByPath.get(url);
+        if (!arr) {
+          arr = [];
+          breakpointsByPath.set(url, arr);
+        }
+        arr.push(breakpoint);
+      }
+    }
+
+    return breakpointsByPath;
+  }
+
+  /**
+   * Clears stale state from the previous session.
+   * This should be called immediately when the debugger disconnects,
+   * BEFORE reconnection starts, to ensure any setBreakpointsRequest
+   * from VS Code during reconnection doesn't use stale sources.
+   */
+  protected clearStaleState(): void {
+    // CRITICAL: Clear stale sources from the previous session.
+    // These contain old scriptIds and source maps that are no longer valid.
+    this.#pendingSources.clear();
+    this.#sources.clear();
+
+    // Clear other connection-specific state
+    this.#stackFrames.length = 0;
+    this.#stopped = undefined;
+    this.#exception = undefined;
+    this.#targets.clear();
+    this.#variables.clear();
+
+    // Clear old breakpoint IDs since they're from the previous debugger session
+    // (but we'll keep the request data to reapply them)
+    this.#breakpoints.clear();
+    this.#futureBreakpoints.clear();
+    this.#removingBreakpoints.clear();
+  }
+
+  /**
+   * Re-applies all stored breakpoints to the debugger.
+   * This should be called after reconnecting to restore breakpoints.
+   */
+  protected async reapplyBreakpoints(
+    breakpointsByPath: Map<string, DAP.SourceBreakpoint[]>,
+  ): Promise<void> {
+    // Re-apply breakpoints. Since sources are cleared, placeholder breakpoints
+    // will be created at line 0. When Debugger.scriptParsed fires, the source
+    // is added to #sources, and when Debugger.breakpointResolved fires,
+    // breakpoints are set at correct lines with proper source map translation.
+    for (const [path, breakpoints] of breakpointsByPath) {
+      try {
+        await this.setBreakpoints({
+          source: { path },
+          breakpoints,
+        });
+      } catch {
+        // Breakpoint will be set when script loads
+      }
+    }
+  }
+
   protected resetInternal(): void {
     this.#pendingSources.clear();
     this.#sources.clear();
@@ -2040,6 +2344,7 @@ export abstract class BaseDebugAdapter<T extends Inspector = Inspector>
     this.#exception = undefined;
     this.#breakpoints.clear();
     this.#futureBreakpoints.clear();
+    this.#removingBreakpoints.clear();
     this.#functionBreakpoints.clear();
     this.#targets.clear();
     this.#variables.clear();
@@ -2079,17 +2384,241 @@ export class NodeSocketDebugAdapter extends BaseDebugAdapter<NodeSocketInspector
  */
 export class WebSocketDebugAdapter extends BaseDebugAdapter<WebSocketInspector> {
   #process?: ChildProcess;
+  #signal?: UnixSignal | TCPSocketSignal;
+  #reconnecting = false;
+  #reconnectionAttempts = 0;
+  /** Tracks paths that VS Code has sent setBreakpointsRequest for during reconnection */
+  #pathsHandledByVSCode: Set<string> = new Set();
+
+  /**
+   * Maximum number of consecutive reconnection events per session.
+   * This counter resets to 0 after each successful reconnection.
+   * If this limit is reached, the session terminates to prevent infinite reconnection loops.
+   */
+  static readonly MAX_RECONNECTION_ATTEMPTS = 10;
+  /** Default reconnection timeout in milliseconds */
+  static readonly DEFAULT_RECONNECT_TIMEOUT_MS = 10_000;
+  /** Maximum reconnection timeout in milliseconds (5 minutes) */
+  static readonly MAX_RECONNECT_TIMEOUT_MS = 300_000;
+  /**
+   * Delay in ms to wait for VS Code to send its own setBreakpointsRequest after reconnection.
+   * This coordination delay allows VS Code's breakpoint state to take precedence over our cached state.
+   */
+  static readonly VSCODE_COORDINATION_DELAY_MS = 200;
+  /** Initial retry interval for reconnection attempts (milliseconds) */
+  static readonly RECONNECT_INITIAL_INTERVAL_MS = 1_000;
+  /** Maximum retry interval for reconnection backoff (milliseconds) */
+  static readonly RECONNECT_MAX_INTERVAL_MS = 10_000;
+  /** Backoff multiplier for reconnection retry intervals */
+  static readonly RECONNECT_BACKOFF_MULTIPLIER = 1.5;
 
   public constructor(url?: string | URL, untitledDocPath?: string, bunEvalPath?: string) {
     super(new WebSocketInspector(url), untitledDocPath, bunEvalPath);
   }
 
+  /**
+   * Cleans up the signal handler and releases resources.
+   */
+  #cleanupSignal(): void {
+    this.#signal?.close();
+    this.#signal = undefined;
+  }
+
+  /**
+   * Override setBreakpoints to track which paths VS Code handles during reconnection.
+   */
+  async setBreakpoints(request: DAP.SetBreakpointsRequest): Promise<DAP.SetBreakpointsResponse> {
+    const { source, breakpoints: bps } = request;
+    const path = source?.path;
+
+    // Track paths that VS Code sends requests for during reconnection
+    // Only track as "handled" if VS Code actually sent breakpoints
+    if (this.#reconnecting && path && bps && bps.length > 0) {
+      this.#pathsHandledByVSCode.add(path);
+    }
+
+    return super.setBreakpoints(request);
+  }
+
   async ["Inspector.disconnected"](error?: Error): Promise<void> {
+    // Save options BEFORE any handler that might clear them
+    const options = this.options;
+    const restart = (options as AttachRequest | undefined)?.restart;
+
+    // For attach mode with restart, try to reconnect
+    if (options?.type === "attach" && restart) {
+      // Guard against overlapping reconnection attempts
+      if (this.#reconnecting) {
+        return;
+      }
+
+      // Limit total reconnection attempts to prevent infinite loops
+      if (this.#reconnectionAttempts >= WebSocketDebugAdapter.MAX_RECONNECTION_ATTEMPTS) {
+        this.emitAdapterEvent("output", {
+          category: "stderr",
+          output: `Maximum reconnection attempts (${WebSocketDebugAdapter.MAX_RECONNECTION_ATTEMPTS}) reached. Debug session terminated.\n`,
+        });
+        await super["Inspector.disconnected"](error);
+        this.emitAdapterEvent("terminated");
+        return;
+      }
+
+      this.#reconnecting = true;
+      this.#reconnectionAttempts++;
+      // Clear the set of paths VS Code has handled - we'll track new requests during reconnection
+      this.#pathsHandledByVSCode.clear();
+
+      // Collect breakpoint data BEFORE clearing state.
+      // We'll reapply these after reconnection if VS Code doesn't resend them.
+      const breakpointsByPath = this.collectBreakpointData();
+
+      // CRITICAL: Clear stale sources IMMEDIATELY when disconnecting.
+      // VS Code may send setBreakpointsRequest during reconnection, and we must
+      // not use stale source data (with old scriptIds and source maps).
+      this.clearStaleState();
+
+      // Clear any paused state to update VS Code's UI
+      this.clearPausedState();
+
+      this.emitAdapterEvent("output", {
+        category: "debug console",
+        output: "Debugger detached.\n",
+      });
+
+      if (error) {
+        this.emitAdapterEvent("output", {
+          category: "stderr",
+          output: `${error.message}\n`,
+        });
+      }
+
+      const timeout =
+        typeof restart === "number" && Number.isFinite(restart) && restart >= 0
+          ? restart
+          : WebSocketDebugAdapter.DEFAULT_RECONNECT_TIMEOUT_MS;
+      const cappedTimeout = Math.min(timeout, WebSocketDebugAdapter.MAX_RECONNECT_TIMEOUT_MS);
+      this.emitAdapterEvent("output", {
+        category: "debug console",
+        output: `Connection lost. Attempting to reconnect (${cappedTimeout / 1000}s timeout, attempt ${this.#reconnectionAttempts}/${WebSocketDebugAdapter.MAX_RECONNECTION_ATTEMPTS})...\n`,
+      });
+
+      // Try to reconnect in the background
+      this.#attemptReconnect(options, cappedTimeout)
+        .then(async () => {
+          this.#reconnectionAttempts = 0;
+          this.emitAdapterEvent("output", {
+            category: "debug console",
+            output: "Reconnected.\n",
+          });
+
+          // Wait for VS Code's potential requests to complete before deciding whether to reapply
+          await new Promise(resolve => setTimeout(resolve, WebSocketDebugAdapter.VSCODE_COORDINATION_DELAY_MS));
+
+          // If VS Code sent setBreakpointsRequest during reconnection, skip reapply
+          // VS Code handles all breakpoints when it sends requests
+          if (this.#pathsHandledByVSCode.size === 0 && breakpointsByPath.size > 0) {
+            await this.reapplyBreakpoints(breakpointsByPath);
+          }
+
+          // Clear the tracked paths after reapply is done
+          this.#pathsHandledByVSCode.clear();
+        })
+        .catch(async reconnectError => {
+          // Reconnection failed - clean up and terminate
+          if (isDebug) {
+            console.warn("Reconnection failed:", reconnectError);
+          }
+          try {
+            await super["Inspector.disconnected"](error);
+          } catch (cleanupError) {
+            if (isDebug) {
+              console.warn("Cleanup after reconnection failure failed:", cleanupError);
+            }
+          }
+          this.emitAdapterEvent("output", {
+            category: "debug console",
+            output: "Failed to reconnect. Debug session terminated.\n",
+          });
+          this.emitAdapterEvent("terminated");
+        })
+        .finally(() => {
+          // Always clear the reconnecting flag
+          this.#reconnecting = false;
+        });
+      return;
+    }
+
+    // Normal disconnect - call parent handler which cleans up state
     await super["Inspector.disconnected"](error);
 
-    if (this.#process?.exitCode !== null) {
+    if (!options) {
+      this.emitAdapterEvent("terminated");
+      return;
+    }
+
+    // Process has exited or no process exists
+    if (!this.#process || this.#process.exitCode !== null) {
       this.emitAdapterEvent("terminated");
     }
+  }
+
+  /**
+   * Attempts to reconnect to the debug target with exponential backoff.
+   *
+   * DoS protection mechanisms:
+   * 1. MAX_RECONNECTION_ATTEMPTS limits total reconnection events per session
+   * 2. #reconnecting flag prevents overlapping reconnection attempts
+   * 3. Exponential backoff (1s → 1.5s → ... → 10s max) rate-limits within each cycle
+   * 4. Per-cycle timeout caps the duration of each reconnection attempt
+   */
+  async #attemptReconnect(options: AttachRequest, timeout: number): Promise<void> {
+    const startTime = Date.now();
+    let retryInterval = WebSocketDebugAdapter.RECONNECT_INITIAL_INTERVAL_MS;
+
+    while (Date.now() - startTime < timeout) {
+      // Wait before trying (give the server time to restart)
+      await new Promise(resolve => setTimeout(resolve, retryInterval));
+
+      try {
+        const connected = await this.#attach(options);
+        if (connected) {
+          return;
+        }
+      } catch (error) {
+        // Log connection errors in debug mode
+        if (isDebug) {
+          console.log("Reconnection attempt failed:", error);
+        }
+      }
+
+      // Exponential backoff with capped maximum
+      retryInterval = Math.min(
+        retryInterval * WebSocketDebugAdapter.RECONNECT_BACKOFF_MULTIPLIER,
+        WebSocketDebugAdapter.RECONNECT_MAX_INTERVAL_MS,
+      );
+    }
+
+    throw new Error("Reconnection timeout");
+  }
+
+  /**
+   * Restarts the debug session.
+   *
+   * For "attach" mode: Closes the current connection and attempts to reconnect.
+   * For "launch" mode: This is a no-op since `watchMode` handles automatic restarts.
+   */
+  async restart(request?: DAP.RestartRequest): Promise<void> {
+    const options = this.options;
+    if (!options) {
+      throw new Error("Cannot restart: no launch configuration available");
+    }
+
+    if (options.type === "attach") {
+      // Close current connection and reconnect
+      this.inspector.close();
+      await this.#attach(options as AttachRequest);
+    }
+    // For launch mode, do nothing - watchMode handles restarts automatically
   }
 
   protected exitJSProcess() {
@@ -2111,6 +2640,7 @@ export class WebSocketDebugAdapter extends BaseDebugAdapter<WebSocketInspector> 
 
   close() {
     this.#process?.kill();
+    this.#cleanupSignal();
     super.close();
   }
 
@@ -2182,14 +2712,18 @@ export class WebSocketDebugAdapter extends BaseDebugAdapter<WebSocketInspector> 
     if (process.platform !== "win32") {
       // we're on unix
       const url = `ws+unix://${randomUnixPath()}`;
+
+      // Close any existing signal before creating a new one
+      this.#cleanupSignal();
       const signal = new UnixSignal();
+      this.#signal = signal;
 
       signal.on("Signal.received", () => {
         this.#attach({ url });
       });
 
       this.once("Adapter.terminated", () => {
-        signal.close();
+        this.#cleanupSignal();
       });
 
       const query = stopOnEntry ? "break=1" : "wait=1";
@@ -2216,14 +2750,18 @@ export class WebSocketDebugAdapter extends BaseDebugAdapter<WebSocketInspector> 
       // we're on windows
       // Create TCPSocketSignal
       const url = `ws://127.0.0.1:${await getAvailablePort()}/${getRandomId()}`; // 127.0.0.1 so it resolves correctly on windows
+
+      // Close any existing signal before creating a new one
+      this.#cleanupSignal();
       const signal = new TCPSocketSignal(await getAvailablePort());
+      this.#signal = signal;
 
       signal.on("Signal.received", async () => {
         this.#attach({ url });
       });
 
       this.once("Adapter.terminated", () => {
-        signal.close();
+        this.#cleanupSignal();
       });
 
       const query = stopOnEntry ? "break=1" : "wait=1";
@@ -2331,6 +2869,9 @@ export class WebSocketDebugAdapter extends BaseDebugAdapter<WebSocketInspector> 
 
   async #attach(request: AttachRequest): Promise<boolean> {
     const { url } = request;
+
+    // Validate URL to prevent SSRF attacks
+    validateWebSocketUrl(url);
 
     for (let i = 0; i < 3; i++) {
       const ok = await this.inspector.start(url);
@@ -2661,6 +3202,20 @@ function unknownToError(input: unknown): Error {
     return input;
   }
   return new Error(String(input));
+}
+
+/**
+ * Checks if an error indicates a breakpoint already exists.
+ * This is more robust than string matching, as it handles various error formats.
+ */
+function isBreakpointExistsError(error: unknown): boolean {
+  const errorStr = String(error).toLowerCase();
+  // Check for common patterns in the error message
+  return (
+    errorStr.includes("already exists") ||
+    errorStr.includes("duplicate breakpoint") ||
+    errorStr.includes("breakpoint already set")
+  );
 }
 
 function isJavaScript(path: string): boolean {

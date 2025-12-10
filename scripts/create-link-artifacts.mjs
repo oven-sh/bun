@@ -34,7 +34,7 @@ const artifactsDir = join(buildPath, "artifacts");
 const tarballPath = join(buildPath, "bun-link-artifacts.tar.zst");
 
 // Step 3: Create artifacts directory
-rmSync(artifactsDir, { recursive: true });
+rmSync(artifactsDir, { recursive: true, force: true });
 mkdirSync(artifactsDir, { recursive: true });
 
 // Step 4: Copy files

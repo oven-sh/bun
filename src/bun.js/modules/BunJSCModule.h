@@ -357,6 +357,80 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
     return JSValue::encode(object);
 }
 
+JSC_DECLARE_HOST_FUNCTION(functionHeapSpaceStatistics);
+JSC_DEFINE_HOST_FUNCTION(functionHeapSpaceStatistics,
+    (JSGlobalObject * globalObject, CallFrame*))
+{
+    VM& vm = globalObject->vm();
+    JSLockHolder lock(vm);
+    
+    // In JSC, we don't have the same heap space segmentation as V8
+    // V8 has: new_space, old_space, code_space, map_space, large_object_space, etc.
+    // JSC has a simpler structure, so we'll create a compatible representation
+    
+    // Force a collection to get accurate statistics
+    if (vm.heap.size() == 0) {
+        vm.heap.collectNow(Sync, CollectionScope::Full);
+    }
+    
+    JSArray* result = constructEmptyArray(globalObject, nullptr);
+    
+    // Create a single "heap" space that represents JSC's heap
+    // This provides basic compatibility with V8's getHeapSpaceStatistics API
+    JSObject* heapSpace = constructEmptyObject(globalObject, globalObject->objectPrototype());
+    
+    size_t heapCapacity = vm.heap.capacity();
+    size_t heapUsed = vm.heap.size();
+    size_t heapAvailable = heapCapacity > heapUsed ? heapCapacity - heapUsed : 0;
+    
+    heapSpace->putDirect(vm, Identifier::fromString(vm, "spaceName"_s),
+                        jsString(vm, String("heap"_s)));
+    heapSpace->putDirect(vm, Identifier::fromString(vm, "spaceSize"_s), 
+                        jsNumber(heapCapacity));
+    heapSpace->putDirect(vm, Identifier::fromString(vm, "spaceUsedSize"_s), 
+                        jsNumber(heapUsed));
+    heapSpace->putDirect(vm, Identifier::fromString(vm, "spaceAvailableSize"_s), 
+                        jsNumber(heapAvailable));
+    heapSpace->putDirect(vm, Identifier::fromString(vm, "physicalSpaceSize"_s), 
+                        jsNumber(heapCapacity));
+    
+    result->putDirectIndex(globalObject, 0, heapSpace);
+
+    // V8 compatibility: Add placeholder spaces that V8 has but JSC doesn't
+    const char* v8SpaceNames[] = {
+        "read_only_space",
+        "new_space",
+        "old_space",
+        "code_space",
+        "shared_space",
+        "trusted_space",
+        "new_large_object_space",
+        "large_object_space",
+        "code_large_object_space",
+        "shared_large_object_space",
+        "trusted_large_object_space"
+    };
+    
+    for (size_t i = 0; i < sizeof(v8SpaceNames) / sizeof(v8SpaceNames[0]); i++) {
+        JSObject* space = constructEmptyObject(globalObject);
+        space->putDirect(vm, Identifier::fromString(vm, "spaceName"_s), 
+                        jsString(vm, String::fromUTF8(v8SpaceNames[i])));
+        space->putDirect(vm, Identifier::fromString(vm, "spaceSize"_s), 
+                        jsNumber(0));
+        space->putDirect(vm, Identifier::fromString(vm, "spaceUsedSize"_s), 
+                        jsNumber(0));
+        space->putDirect(vm, Identifier::fromString(vm, "spaceAvailableSize"_s), 
+                        jsNumber(0));
+        space->putDirect(vm, Identifier::fromString(vm, "physicalSpaceSize"_s), 
+                        jsNumber(0));
+        
+        result->putDirectIndex(globalObject, i + 1, space);
+    }
+    
+    return JSValue::encode(result);
+}
+
+
 JSC_DECLARE_HOST_FUNCTION(functionCreateMemoryFootprint);
 JSC_DEFINE_HOST_FUNCTION(functionCreateMemoryFootprint,
     (JSGlobalObject * globalObject, CallFrame*))
@@ -924,6 +998,7 @@ JSC_DEFINE_HOST_FUNCTION(functionPercentAvailableMemoryInUse, (JSGlobalObject * 
     getRandomSeed                       functionGetRandomSeed                       Function    0
     heapSize                            functionHeapSize                            Function    0
     heapStats                           functionMemoryUsageStatistics               Function    0
+    heapSpaceStats                      functionHeapSpaceStatistic  
     startSamplingProfiler               functionStartSamplingProfiler               Function    0
     samplingProfilerStackTraces         functionSamplingProfilerStackTraces         Function    0
     noInline                            functionNeverInlineFunction                 Function    0
@@ -952,7 +1027,7 @@ JSC_DEFINE_HOST_FUNCTION(functionPercentAvailableMemoryInUse, (JSGlobalObject * 
 namespace Zig {
 DEFINE_NATIVE_MODULE(BunJSC)
 {
-    INIT_NATIVE_MODULE(36);
+    INIT_NATIVE_MODULE(37);
 
     putNativeFn(Identifier::fromString(vm, "callerSourceOrigin"_s), functionCallerSourceOrigin);
     putNativeFn(Identifier::fromString(vm, "jscDescribe"_s), functionDescribe);
@@ -964,6 +1039,7 @@ DEFINE_NATIVE_MODULE(BunJSC)
     putNativeFn(Identifier::fromString(vm, "getRandomSeed"_s), functionGetRandomSeed);
     putNativeFn(Identifier::fromString(vm, "heapSize"_s), functionHeapSize);
     putNativeFn(Identifier::fromString(vm, "heapStats"_s), functionMemoryUsageStatistics);
+    putNativeFn(Identifier::fromString(vm, "heapSpaceStats"_s), functionHeapSpaceStatistics);
     putNativeFn(Identifier::fromString(vm, "startSamplingProfiler"_s), functionStartSamplingProfiler);
     putNativeFn(Identifier::fromString(vm, "samplingProfilerStackTraces"_s), functionSamplingProfilerStackTraces);
     putNativeFn(Identifier::fromString(vm, "noInline"_s), functionNeverInlineFunction);

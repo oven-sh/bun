@@ -86,7 +86,14 @@ function getHeapStatistics() {
   };
 }
 function getHeapSpaceStatistics() {
-  notimpl("getHeapSpaceStatistics");
+  const spaces = jsc.heapSpaceStats();
+  return spaces.map(space => ({
+    space_name: space.spaceName,
+    space_size: space.spaceSize,
+    space_used_size: space.spaceUsedSize,
+    space_available_size: space.spaceAvailableSize,
+    physical_space_size: space.physicalSpaceSize,
+  }));
 }
 function getHeapCodeStatistics() {
   notimpl("getHeapCodeStatistics");

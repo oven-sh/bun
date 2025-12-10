@@ -1045,7 +1045,12 @@ pub const visible = struct {
                     saw_1b = true;
                     continue;
                 }
-                len += stretch_len;
+                // Only add stretch_len if we completed the escape sequence
+                // (unterminated sequences should not contribute to width)
+                if (!saw_csi and !saw_osc) {
+                    len += stretch_len;
+                }
+                stretch_len = 0;
                 input = input[idx..];
             }
             if (input.len == 0) break;

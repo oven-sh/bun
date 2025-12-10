@@ -355,6 +355,14 @@ describe("stringWidth extended", () => {
       expect(Bun.stringWidth("\x1b]2;window title\x07text")).toBe(4); // Set window title
     });
 
+    test("unterminated OSC in UTF-16 string", () => {
+      // Force UTF-16 by including non-Latin1 char, then unterminated OSC
+      // The OSC content should NOT contribute to width
+      expect(Bun.stringWidth("中\x1b]8;;" + "x".repeat(100))).toBe(2); // Just 中
+      expect(Bun.stringWidth("hello中\x1b]8;;url" + "y".repeat(50))).toBe(7); // hello + 中
+      expect(Bun.stringWidth("🎉\x1b]0;title")).toBe(2); // Just 🎉
+    });
+
     test("mixed OSC and CSI", () => {
       expect(Bun.stringWidth("\x1b[31m\x1b]8;;url\x07red link\x1b]8;;\x07\x1b[0m")).toBe(8);
     });

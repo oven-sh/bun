@@ -793,10 +793,6 @@ if(WIN32)
   set(WINDOWS_RESOURCES ${CODEGEN_PATH}/windows-app-info.rc ${CWD}/src/bun.exe.manifest)
 endif()
 
-# --- WebKit (early include for WEBKIT_VERSION/WEBKIT_DOWNLOAD_URL, used in create-link-metadata.mjs) ---
-
-include(SetupWebKit)
-
 # --- Executable ---
 
 set(BUN_CPP_OUTPUT ${BUILD_PATH}/${CMAKE_STATIC_LIBRARY_PREFIX}${bun}${CMAKE_STATIC_LIBRARY_SUFFIX})
@@ -805,26 +801,7 @@ if(BUN_LINK_ONLY)
   add_executable(${bun} ${BUN_CPP_OUTPUT} ${BUN_ZIG_OUTPUT} ${WINDOWS_RESOURCES})
   set_target_properties(${bun} PROPERTIES LINKER_LANGUAGE CXX)
   target_link_libraries(${bun} PRIVATE ${BUN_CPP_OUTPUT})
-
-  register_command(
-    TARGET
-      ${bun}
-    TARGET_PHASE
-      POST_BUILD
-    COMMENT
-      "Uploading link metadata"
-    COMMAND
-      ${CMAKE_COMMAND} -E env
-        WEBKIT_DOWNLOAD_URL=${WEBKIT_DOWNLOAD_URL}
-        WEBKIT_VERSION=${WEBKIT_VERSION}
-        ZIG_COMMIT=${ZIG_COMMIT}
-        ${BUN_EXECUTABLE} ${CWD}/scripts/create-link-metadata.mjs ${BUILD_PATH} ${bun}
-    SOURCES
-      ${BUN_ZIG_OUTPUT}
-      ${BUN_CPP_OUTPUT}
-    ARTIFACTS
-      ${BUILD_PATH}/link-metadata.json
-  )
+  # Link metadata command is registered after SetupWebKit is included (see below)
 elseif(BUN_CPP_ONLY)
   add_library(${bun} STATIC ${BUN_CPP_SOURCES})
   register_command(
@@ -1219,7 +1196,31 @@ endif()
 
 set_target_properties(${bun} PROPERTIES LINK_DEPENDS ${BUN_SYMBOLS_PATH})
 
-# --- WebKit Linking ---
+# --- WebKit ---
+
+include(SetupWebKit)
+
+if(BUN_LINK_ONLY)
+  register_command(
+    TARGET
+      ${bun}
+    TARGET_PHASE
+      POST_BUILD
+    COMMENT
+      "Uploading link metadata"
+    COMMAND
+      ${CMAKE_COMMAND} -E env
+        WEBKIT_DOWNLOAD_URL=${WEBKIT_DOWNLOAD_URL}
+        WEBKIT_VERSION=${WEBKIT_VERSION}
+        ZIG_COMMIT=${ZIG_COMMIT}
+        ${BUN_EXECUTABLE} ${CWD}/scripts/create-link-metadata.mjs ${BUILD_PATH} ${bun}
+    SOURCES
+      ${BUN_ZIG_OUTPUT}
+      ${BUN_CPP_OUTPUT}
+    ARTIFACTS
+      ${BUILD_PATH}/link-metadata.json
+  )
+endif()
 
 if(WIN32)
   if(DEBUG)

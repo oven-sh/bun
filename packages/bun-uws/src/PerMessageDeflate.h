@@ -147,7 +147,15 @@ struct DeflationStream {
         /* Memory usage is given by 2 ^ (windowBits + 2) + 2 ^ (memLevel + 9) */
         int windowBits = -(int) ((compressOptions & _COMPRESSOR_MASK) >> 4), memLevel = compressOptions & 0xF;
 
-        //printf("windowBits: %d, memLevel: %d\n", windowBits, memLevel);
+        /* SHARED_COMPRESSOR = 1 is a special marker, not valid windowBits/memLevel.
+         * windowBits=0 is invalid for zlib (valid range: -15 to -8 for raw deflate).
+         * Use sensible defaults when the computed values are invalid. */
+        if (windowBits == 0 || windowBits > -8) {
+            windowBits = -15;  /* Maximum compression window (32KB) */
+        }
+        if (memLevel == 0) {
+            memLevel = 8;  /* Default memory level */
+        }
 
         deflateInit2(&deflationStream, Z_DEFAULT_COMPRESSION, Z_DEFLATED, windowBits, memLevel, Z_DEFAULT_STRATEGY);
     }
@@ -156,17 +164,39 @@ struct DeflationStream {
     std::string_view deflate(ZlibContext *zlibContext, std::string_view raw, bool reset) {
 
 #ifdef UWS_USE_LIBDEFLATE
-        /* Run a fast path in case of shared_compressor */
-        if (reset) {
-            size_t written = 0;
-            written = libdeflate_deflate_compress(zlibContext->compressor, raw.data(), raw.length(), reset_buffer, 4096);
+        /* Use libdeflate for all compression - avoids zlib version mismatch issues on Windows.
+         * libdeflate is stateless, so 'reset' is effectively always true.
+         * Per-message deflate compresses entire messages anyway, so this is fine. */
+        (void)reset; /* Unused with libdeflate - always compresses fresh */
 
-            if (written) {
-                memcpy(&reset_buffer[written], "\x00", 1);
-                return std::string_view((char *) reset_buffer, written + 1);
-            }
+        /* Try fast path with small fixed buffer first */
+        size_t written = libdeflate_deflate_compress(zlibContext->compressor, raw.data(), raw.length(), reset_buffer, 4096);
+
+        if (written) {
+            /* Output fit in the small buffer - append the required 0x00 byte and return */
+            memcpy(&reset_buffer[written], "\x00", 1);
+            return std::string_view((char *) reset_buffer, written + 1);
         }
-#endif
+
+        /* Output didn't fit - use dynamic buffer with proper size bound */
+        size_t maxCompressedSize = libdeflate_deflate_compress_bound(zlibContext->compressor, raw.length());
+
+        /* Reserve space for compressed data plus the trailing 0x00 byte */
+        zlibContext->dynamicDeflationBuffer.resize(maxCompressedSize + 1);
+
+        written = libdeflate_deflate_compress(zlibContext->compressor, raw.data(), raw.length(),
+                                               zlibContext->dynamicDeflationBuffer.data(), maxCompressedSize);
+
+        if (written) {
+            /* Append the required 0x00 byte for WebSocket framing */
+            zlibContext->dynamicDeflationBuffer[written] = '\x00';
+            return std::string_view(zlibContext->dynamicDeflationBuffer.data(), written + 1);
+        }
+
+        /* Compression failed (shouldn't happen with valid input and properly sized buffer) */
+        return std::string_view();
+#else
+        /* Fallback to zlib when libdeflate is not available */
 
         /* Odd place to clear this one, fix */
         zlibContext->dynamicDeflationBuffer.clear();
@@ -183,10 +213,16 @@ struct DeflationStream {
             deflationStream.avail_out = DEFLATE_OUTPUT_CHUNK;
 
             err = ::deflate(&deflationStream, Z_SYNC_FLUSH);
-            if (Z_OK == err && deflationStream.avail_out == 0) {
-                zlibContext->dynamicDeflationBuffer.append(zlibContext->deflationBuffer, DEFLATE_OUTPUT_CHUNK - deflationStream.avail_out);
+            if (err != Z_OK && err != Z_BUF_ERROR) {
+                /* Deflate failed - this shouldn't happen with valid input */
+                break;
+            }
+            if (deflationStream.avail_out == 0) {
+                /* Buffer completely filled, append and continue */
+                zlibContext->dynamicDeflationBuffer.append(zlibContext->deflationBuffer, DEFLATE_OUTPUT_CHUNK);
                 continue;
             } else {
+                /* Buffer not completely filled, we're done */
                 break;
             }
         } while (true);
@@ -196,18 +232,25 @@ struct DeflationStream {
             deflateReset(&deflationStream);
         }
 
-        if (zlibContext->dynamicDeflationBuffer.length()) {
-            zlibContext->dynamicDeflationBuffer.append(zlibContext->deflationBuffer, DEFLATE_OUTPUT_CHUNK - deflationStream.avail_out);
+        /* Calculate how many bytes were written to the output buffer */
+        size_t bytesWritten = DEFLATE_OUTPUT_CHUNK - deflationStream.avail_out;
 
-            return std::string_view((char *) zlibContext->dynamicDeflationBuffer.data(), zlibContext->dynamicDeflationBuffer.length() - 4);
+        if (zlibContext->dynamicDeflationBuffer.length()) {
+            zlibContext->dynamicDeflationBuffer.append(zlibContext->deflationBuffer, bytesWritten);
+
+            /* Use saturating subtraction to prevent underflow when stripping the 4-byte trailer */
+            size_t totalLen = zlibContext->dynamicDeflationBuffer.length();
+            size_t resultLen = (totalLen > 4) ? (totalLen - 4) : 0;
+            return std::string_view((char *) zlibContext->dynamicDeflationBuffer.data(), resultLen);
         }
 
-        /* Note: We will get an interger overflow resulting in heap buffer overflow if Z_BUF_ERROR is returned
-         * from passing 0 as avail_in. Therefore we must not deflate an empty string */
+        /* Use saturating subtraction to prevent underflow when stripping the 4-byte Z_SYNC_FLUSH trailer */
+        size_t resultLen = (bytesWritten > 4) ? (bytesWritten - 4) : 0;
         return {
             zlibContext->deflationBuffer,
-            DEFLATE_OUTPUT_CHUNK - deflationStream.avail_out - 4
+            resultLen
         };
+#endif
     }
 
     ~DeflationStream() {

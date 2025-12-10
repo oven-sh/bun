@@ -415,7 +415,7 @@ JSC_DEFINE_HOST_FUNCTION(functionHeapSpaceStatistics,
     };
     
     for (size_t i = 0; i < sizeof(v8SpaceNames) / sizeof(v8SpaceNames[0]); i++) {
-        JSObject* space = constructEmptyObject(globalObject);
+        JSObject* space = constructEmptyObject(globalObject, globalObject->objectPrototype());
         RETURN_IF_EXCEPTION(scope, encodedJSValue());
         space->putDirect(vm, Identifier::fromString(vm, "spaceName"_s), 
                         jsString(vm, String::fromUTF8(v8SpaceNames[i])));

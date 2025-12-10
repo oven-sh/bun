@@ -373,7 +373,22 @@ JSC_DEFINE_HOST_FUNCTION(functionHeapSpaceStatistics,
         vm.heap.collectNow(Sync, CollectionScope::Full);
     }
     
-    JSArray* result = constructEmptyArray(globalObject, nullptr);
+    // V8 compatibility: Add placeholder spaces that V8 has but JSC doesn't
+    const char* v8SpaceNames[] = {
+        "read_only_space",
+        "new_space",
+        "old_space",
+        "code_space",
+        "shared_space",
+        "trusted_space",
+        "new_large_object_space",
+        "large_object_space",
+        "code_large_object_space",
+        "shared_large_object_space",
+        "trusted_large_object_space"
+    };
+    
+    JSArray* result = constructEmptyArray(globalObject, nullptr, 1 + std::size(v8SpaceNames));
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
     
     // Create a single "heap" space that represents JSC's heap
@@ -399,22 +414,7 @@ JSC_DEFINE_HOST_FUNCTION(functionHeapSpaceStatistics,
     result->putDirectIndex(globalObject, 0, heapSpace);
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
-    // V8 compatibility: Add placeholder spaces that V8 has but JSC doesn't
-    const char* v8SpaceNames[] = {
-        "read_only_space",
-        "new_space",
-        "old_space",
-        "code_space",
-        "shared_space",
-        "trusted_space",
-        "new_large_object_space",
-        "large_object_space",
-        "code_large_object_space",
-        "shared_large_object_space",
-        "trusted_large_object_space"
-    };
-    
-    for (size_t i = 0; i < sizeof(v8SpaceNames) / sizeof(v8SpaceNames[0]); i++) {
+    for (size_t i = 0; i < std::size(v8SpaceNames); i++) {
         JSObject* space = constructEmptyObject(globalObject, globalObject->objectPrototype());
         RETURN_IF_EXCEPTION(scope, encodedJSValue());
         space->putDirect(vm, Identifier::fromString(vm, "spaceName"_s), 

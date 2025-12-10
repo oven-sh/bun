@@ -793,7 +793,7 @@ if(WIN32)
   set(WINDOWS_RESOURCES ${CODEGEN_PATH}/windows-app-info.rc ${CWD}/src/bun.exe.manifest)
 endif()
 
-# --- WebKit (early include for WEBKIT_VERSION/WEBKIT_DOWNLOAD_URL, used in create-link-metadata.js) ---
+# --- WebKit (early include for WEBKIT_VERSION/WEBKIT_DOWNLOAD_URL, used in create-link-metadata.mjs) ---
 
 include(SetupWebKit)
 

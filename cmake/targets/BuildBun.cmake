@@ -802,25 +802,24 @@ if(BUN_LINK_ONLY)
   set_target_properties(${bun} PROPERTIES LINKER_LANGUAGE CXX)
   target_link_libraries(${bun} PRIVATE ${BUN_CPP_OUTPUT})
 
-  # register_command(
-  #   TARGET
-  #     ${bun}
-  #   TARGET_PHASE
-  #     POST_BUILD
-  #   COMMENT
-  #     "Uploading link metadata"
-  #   COMMAND
-  #     ${CMAKE_COMMAND} -E env
-  #       WEBKIT_DOWNLOAD_URL=${WEBKIT_DOWNLOAD_URL}
-  #       WEBKIT_VERSION=${WEBKIT_VERSION}
-  #       ${BUN_EXECUTABLE} ${CWD}/scripts/create-link-metadata.mjs ${BUILD_PATH} ${bun}
-  #   SOURCES
-  #     ${BUN_ZIG_OUTPUT}
-  #     ${BUN_CPP_OUTPUT}
-  #   ARTIFACTS
-  #     ${BUILD_PATH}/link-command.txt
-  #     ${BUILD_PATH}/link-metadata.json
-  # )
+  register_command(
+    TARGET
+      ${bun}
+    TARGET_PHASE
+      POST_BUILD
+    COMMENT
+      "Uploading link metadata"
+    COMMAND
+      ${CMAKE_COMMAND} -E env
+        WEBKIT_DOWNLOAD_URL=${WEBKIT_DOWNLOAD_URL}
+        WEBKIT_VERSION=${WEBKIT_VERSION}
+        ${BUN_EXECUTABLE} ${CWD}/scripts/create-link-metadata.mjs ${BUILD_PATH} ${bun}
+    SOURCES
+      ${BUN_ZIG_OUTPUT}
+      ${BUN_CPP_OUTPUT}
+    ARTIFACTS
+      ${BUILD_PATH}/link-metadata.json
+  )
 elseif(BUN_CPP_ONLY)
   add_library(${bun} STATIC ${BUN_CPP_SOURCES})
   register_command(
@@ -1427,27 +1426,27 @@ if(NOT BUN_CPP_ONLY)
   )
 
   if(CI)
-    # set(BUN_FEATURES_SCRIPT ${CWD}/scripts/features.mjs)
-    # register_command(
-    #   TARGET
-    #     ${bun}
-    #   TARGET_PHASE
-    #     POST_BUILD
-    #   COMMENT
-    #     "Generating features.json"
-    #   COMMAND
-    #     ${CMAKE_COMMAND}
-    #       -E env
-    #         BUN_GARBAGE_COLLECTOR_LEVEL=1
-    #         BUN_DEBUG_QUIET_LOGS=1
-    #         BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING=1
-    #       ${BUILD_PATH}/${bunExe}
-    #       ${BUN_FEATURES_SCRIPT}
-    #   CWD
-    #     ${BUILD_PATH}
-    #   ARTIFACTS
-    #     ${BUILD_PATH}/features.json
-    # )
+    set(BUN_FEATURES_SCRIPT ${CWD}/scripts/features.mjs)
+    register_command(
+      TARGET
+        ${bun}
+      TARGET_PHASE
+        POST_BUILD
+      COMMENT
+        "Generating features.json"
+      COMMAND
+        ${CMAKE_COMMAND}
+          -E env
+            BUN_GARBAGE_COLLECTOR_LEVEL=1
+            BUN_DEBUG_QUIET_LOGS=1
+            BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING=1
+          ${BUILD_PATH}/${bunExe}
+          ${BUN_FEATURES_SCRIPT}
+      CWD
+        ${BUILD_PATH}
+      ARTIFACTS
+        ${BUILD_PATH}/features.json
+    )
   endif()
 
   if(CMAKE_HOST_APPLE AND bunStrip)
@@ -1495,7 +1494,7 @@ if(NOT BUN_CPP_ONLY)
       string(REPLACE bun ${bunTriplet} bunPath ${bun})
     endif()
 
-    set(bunFiles ${bunExe})
+    set(bunFiles ${bunExe} features.json)
     if(WIN32)
       list(APPEND bunFiles ${bun}.pdb)
     elseif(APPLE)

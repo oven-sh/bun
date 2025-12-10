@@ -74,9 +74,9 @@ pub const Flags = packed struct(u8) {
     finalized: bool = false,
     raw_mode: bool = false,
     reader_started: bool = false,
-    connected: bool = false, // True when actively connected (strong ref)
-    reader_done: bool = false, // True when reader has released its ref
-    writer_done: bool = false, // True when writer has released its ref
+    connected: bool = false,
+    reader_done: bool = false,
+    writer_done: bool = false,
     _: u1 = 0,
 };
 
@@ -535,23 +535,6 @@ fn createPtyPosix(cols: u16, rows: u16) CreatePtyError!PtyResult {
     };
 }
 
-/// Get the stdout file descriptor (master PTY fd)
-pub fn getStdout(this: *Terminal, _: *jsc.JSGlobalObject) JSValue {
-    if (this.flags.closed) {
-        return JSValue.jsNumber(-1);
-    }
-    return JSValue.jsNumber(this.master_fd.uv());
-}
-
-/// Get the stdin file descriptor (slave PTY fd - used by child processes)
-/// Returns -1 if closed or if slave_fd was closed (e.g., after spawn integration)
-pub fn getStdin(this: *Terminal, _: *jsc.JSGlobalObject) JSValue {
-    if (this.flags.closed or this.slave_fd == bun.invalid_fd) {
-        return JSValue.jsNumber(-1);
-    }
-    return JSValue.jsNumber(this.slave_fd.uv());
-}
-
 /// Check if terminal is closed
 pub fn getClosed(this: *Terminal, _: *jsc.JSGlobalObject) JSValue {
     return JSValue.jsBoolean(this.flags.closed);
@@ -566,14 +549,15 @@ fn getTermiosFlag(this: *Terminal, comptime field: enum { iflag, oflag, lflag, c
     return JSValue.jsNumber(@as(f64, @floatFromInt(@as(Int, @bitCast(flag)))));
 }
 
-fn setTermiosFlag(this: *Terminal, comptime field: enum { iflag, oflag, lflag, cflag }, value: JSValue) void {
+fn setTermiosFlag(this: *Terminal, globalObject: *jsc.JSGlobalObject, comptime field: enum { iflag, oflag, lflag, cflag }, value: JSValue) bun.JSError!void {
     if (comptime !Environment.isPosix) return;
     if (this.flags.closed or this.master_fd == bun.invalid_fd) return;
+    const num = try value.coerce(f64, globalObject);
     var termios_data = getTermios(this.master_fd) orelse return;
     const FlagType = @TypeOf(@field(termios_data, @tagName(field)));
     const Int = @typeInfo(FlagType).@"struct".backing_integer.?;
     const max_val: f64 = @floatFromInt(std.math.maxInt(Int));
-    const clamped = @max(0, @min(value.asNumber(), max_val));
+    const clamped = @max(0, @min(num, max_val));
     @field(termios_data, @tagName(field)) = @bitCast(@as(Int, @intFromFloat(clamped)));
     _ = setTermios(this.master_fd, &termios_data);
 }
@@ -581,26 +565,26 @@ fn setTermiosFlag(this: *Terminal, comptime field: enum { iflag, oflag, lflag, c
 pub fn getInputFlags(this: *Terminal, _: *jsc.JSGlobalObject) JSValue {
     return this.getTermiosFlag(.iflag);
 }
-pub fn setInputFlags(this: *Terminal, _: *jsc.JSGlobalObject, value: JSValue) void {
-    this.setTermiosFlag(.iflag, value);
+pub fn setInputFlags(this: *Terminal, globalObject: *jsc.JSGlobalObject, value: JSValue) bun.JSError!void {
+    try this.setTermiosFlag(globalObject, .iflag, value);
 }
 pub fn getOutputFlags(this: *Terminal, _: *jsc.JSGlobalObject) JSValue {
     return this.getTermiosFlag(.oflag);
 }
-pub fn setOutputFlags(this: *Terminal, _: *jsc.JSGlobalObject, value: JSValue) void {
-    this.setTermiosFlag(.oflag, value);
+pub fn setOutputFlags(this: *Terminal, globalObject: *jsc.JSGlobalObject, value: JSValue) bun.JSError!void {
+    try this.setTermiosFlag(globalObject, .oflag, value);
 }
 pub fn getLocalFlags(this: *Terminal, _: *jsc.JSGlobalObject) JSValue {
     return this.getTermiosFlag(.lflag);
 }
-pub fn setLocalFlags(this: *Terminal, _: *jsc.JSGlobalObject, value: JSValue) void {
-    this.setTermiosFlag(.lflag, value);
+pub fn setLocalFlags(this: *Terminal, globalObject: *jsc.JSGlobalObject, value: JSValue) bun.JSError!void {
+    try this.setTermiosFlag(globalObject, .lflag, value);
 }
 pub fn getControlFlags(this: *Terminal, _: *jsc.JSGlobalObject) JSValue {
     return this.getTermiosFlag(.cflag);
 }
-pub fn setControlFlags(this: *Terminal, _: *jsc.JSGlobalObject, value: JSValue) void {
-    this.setTermiosFlag(.cflag, value);
+pub fn setControlFlags(this: *Terminal, globalObject: *jsc.JSGlobalObject, value: JSValue) bun.JSError!void {
+    try this.setTermiosFlag(globalObject, .cflag, value);
 }
 
 /// Write data to the terminal

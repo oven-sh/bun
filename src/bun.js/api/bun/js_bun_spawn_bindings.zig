@@ -143,16 +143,15 @@ pub fn spawnMaybeSync(
     var windows_verbatim_arguments: bool = false;
     var abort_signal: ?*jsc.WebCore.AbortSignal = null;
     var terminal_info: ?Terminal.CreateResult = null;
-    var terminal_js_value: jsc.JSValue = .zero; // Saved separately for caching after terminal_info is cleared
+    var existing_terminal: ?*Terminal = null; // Existing terminal passed by user
+    var terminal_js_value: jsc.JSValue = .zero;
     defer {
-        // Ensure we clean it up on error.
         if (abort_signal) |signal| {
             signal.unref();
         }
-        // If terminal was created but spawn failed, clean it up
+        // If we created a new terminal but spawn failed, clean it up
         if (terminal_info) |info| {
             info.terminal.closeInternal();
-            // Release the JS ref since finalize won't be called (wrapper not rooted)
             info.terminal.deref();
         }
     }
@@ -370,27 +369,40 @@ pub fn spawnMaybeSync(
             }
 
             if (comptime !is_sync) {
-                if (try args.getTruthy(globalThis, "terminal")) |terminal_opts| {
+                if (try args.getTruthy(globalThis, "terminal")) |terminal_val| {
                     if (comptime !Environment.isPosix) {
                         return globalThis.throwInvalidArguments("terminal option is not supported on this platform", .{});
                     }
-                    if (!terminal_opts.isObject()) {
-                        return globalThis.throwInvalidArguments("terminal must be an object", .{});
+
+                    // Check if it's an existing Terminal object
+                    if (Terminal.fromJS(terminal_val)) |terminal| {
+                        if (terminal.flags.closed) {
+                            return globalThis.throwInvalidArguments("terminal is closed", .{});
+                        }
+                        if (terminal.slave_fd == bun.invalid_fd) {
+                            return globalThis.throwInvalidArguments("terminal slave fd is no longer valid", .{});
+                        }
+                        existing_terminal = terminal;
+                        terminal_js_value = terminal_val;
+                    } else if (terminal_val.isObject()) {
+                        // Create a new terminal from options
+                        var term_options = try Terminal.Options.parseFromJS(globalThis, terminal_val);
+                        terminal_info = Terminal.createFromSpawn(globalThis, term_options) catch |err| {
+                            term_options.deinit();
+                            return switch (err) {
+                                error.OpenPtyFailed => globalThis.throw("Failed to open PTY", .{}),
+                                error.DupFailed => globalThis.throw("Failed to duplicate PTY file descriptor", .{}),
+                                error.NotSupported => globalThis.throw("PTY not supported on this platform", .{}),
+                                error.WriterStartFailed => globalThis.throw("Failed to start terminal writer", .{}),
+                                error.ReaderStartFailed => globalThis.throw("Failed to start terminal reader", .{}),
+                            };
+                        };
+                    } else {
+                        return globalThis.throwInvalidArguments("terminal must be a Terminal object or options object", .{});
                     }
 
-                    var term_options = try Terminal.Options.parseFromJS(globalThis, terminal_opts);
-                    terminal_info = Terminal.createFromSpawn(globalThis, term_options) catch |err| {
-                        term_options.deinit();
-                        return switch (err) {
-                            error.OpenPtyFailed => globalThis.throw("Failed to open PTY", .{}),
-                            error.DupFailed => globalThis.throw("Failed to duplicate PTY file descriptor", .{}),
-                            error.NotSupported => globalThis.throw("PTY not supported on this platform", .{}),
-                            error.WriterStartFailed => globalThis.throw("Failed to start terminal writer", .{}),
-                            error.ReaderStartFailed => globalThis.throw("Failed to start terminal reader", .{}),
-                        };
-                    };
-
-                    const slave_fd = terminal_info.?.terminal.getSlaveFd();
+                    const terminal = existing_terminal orelse terminal_info.?.terminal;
+                    const slave_fd = terminal.getSlaveFd();
                     stdio[0] = .{ .fd = slave_fd };
                     stdio[1] = .{ .fd = slave_fd };
                     stdio[2] = .{ .fd = slave_fd };
@@ -547,7 +559,12 @@ pub fn spawnMaybeSync(
         .extra_fds = extra_fds.items,
         .argv0 = argv0,
         .can_block_entire_thread_to_reduce_cpu_usage_in_fast_path = can_block_entire_thread_to_reduce_cpu_usage_in_fast_path,
-        .pty_slave_fd = if (Environment.isPosix) (if (terminal_info) |ti| ti.terminal.getSlaveFd().native() else -1) else {},
+        // Only pass pty_slave_fd for newly created terminals (for setsid+TIOCSCTTY setup).
+        // For existing terminals, the session is already set up - child just uses the fd as stdio.
+        .pty_slave_fd = if (Environment.isPosix) blk: {
+            if (terminal_info) |ti| break :blk ti.terminal.getSlaveFd().native();
+            break :blk -1;
+        } else {},
 
         .windows = if (Environment.isWindows) .{
             .hide_window = windows_hide,
@@ -677,20 +694,17 @@ pub fn spawnMaybeSync(
         .killSignal = killSignal,
         .stderr_maxbuf = subprocess.stderr_maxbuf,
         .stdout_maxbuf = subprocess.stdout_maxbuf,
-        .terminal = if (terminal_info) |info| info.terminal else null,
+        .terminal = existing_terminal orelse if (terminal_info) |info| info.terminal else null,
     };
 
-    // Clear terminal_info to prevent cleanup in defer (subprocess now owns it)
-    // Save the JS value first for caching later
-    // Also close the parent's copy of slave_fd - the child has its own copy after fork
-    // This ensures EOF is received on the master when the child exits
+    // For inline terminal options: close parent's slave_fd so EOF is received when child exits
+    // For existing terminal: keep slave_fd open so terminal can be reused for more spawns
     if (terminal_info) |info| {
         terminal_js_value = info.js_value;
-        // Close parent's slave fd - child has its own copy after fork
-        // This is critical: when child exits, EOF will be received on master side
         info.terminal.closeSlaveFd();
         terminal_info = null;
     }
+    // existing_terminal: don't close slave_fd - user manages lifecycle and can reuse
 
     subprocess.process.setExitHandler(subprocess);
 

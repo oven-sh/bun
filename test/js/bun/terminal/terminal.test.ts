@@ -14,8 +14,6 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
       await using terminal = new Bun.Terminal({});
 
       expect(terminal).toBeDefined();
-      expect(terminal.stdin).toBeGreaterThanOrEqual(0);
-      expect(terminal.stdout).toBeGreaterThanOrEqual(0);
       expect(terminal.closed).toBe(false);
     });
 
@@ -25,8 +23,7 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
         rows: 40,
       });
 
-      expect(terminal.stdin).toBeGreaterThanOrEqual(0);
-      expect(terminal.stdout).toBeGreaterThanOrEqual(0);
+      expect(terminal.closed).toBe(false);
     });
 
     test("creates a PTY with minimum size", async () => {
@@ -35,7 +32,7 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
         rows: 1,
       });
 
-      expect(terminal.stdin).toBeGreaterThanOrEqual(0);
+      expect(terminal.closed).toBe(false);
     });
 
     test("creates a PTY with large size", async () => {
@@ -44,7 +41,7 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
         rows: 200,
       });
 
-      expect(terminal.stdin).toBeGreaterThanOrEqual(0);
+      expect(terminal.closed).toBe(false);
     });
 
     test("creates a PTY with custom name", async () => {
@@ -52,7 +49,7 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
         name: "xterm",
       });
 
-      expect(terminal.stdin).toBeGreaterThanOrEqual(0);
+      expect(terminal.closed).toBe(false);
     });
 
     test("creates a PTY with empty name (uses default)", async () => {
@@ -60,7 +57,7 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
         name: "",
       });
 
-      expect(terminal.stdin).toBeGreaterThanOrEqual(0);
+      expect(terminal.closed).toBe(false);
     });
 
     test("ignores invalid cols value", async () => {
@@ -69,7 +66,7 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
       });
 
       // Should use default of 80
-      expect(terminal.stdin).toBeGreaterThanOrEqual(0);
+      expect(terminal.closed).toBe(false);
     });
 
     test("ignores invalid rows value", async () => {
@@ -78,7 +75,7 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
       });
 
       // Should use default of 24
-      expect(terminal.stdin).toBeGreaterThanOrEqual(0);
+      expect(terminal.closed).toBe(false);
     });
 
     test("ignores non-numeric cols value", async () => {
@@ -86,7 +83,7 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
         cols: "invalid" as any,
       });
 
-      expect(terminal.stdin).toBeGreaterThanOrEqual(0);
+      expect(terminal.closed).toBe(false);
     });
 
     test("throws when options is null", () => {
@@ -95,13 +92,6 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
 
     test("throws when options is undefined", () => {
       expect(() => new Bun.Terminal(undefined as any)).toThrow();
-    });
-
-    test("stdin and stdout are different file descriptors", async () => {
-      await using terminal = new Bun.Terminal({});
-
-      // stdin is slave fd, stdout is master fd - they should be different
-      expect(terminal.stdin).not.toBe(terminal.stdout);
     });
   });
 
@@ -381,16 +371,6 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
       expect(terminal.closed).toBe(true);
     });
 
-    test("close sets fds to -1", () => {
-      const terminal = new Bun.Terminal({});
-      expect(terminal.stdin).toBeGreaterThanOrEqual(0);
-      expect(terminal.stdout).toBeGreaterThanOrEqual(0);
-
-      terminal.close();
-      expect(terminal.stdin).toBe(-1);
-      expect(terminal.stdout).toBe(-1);
-    });
-
     test("close is idempotent", () => {
       const terminal = new Bun.Terminal({});
 
@@ -646,9 +626,7 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
       // Spawn a simple command that outputs to the PTY
       const proc = Bun.spawn({
         cmd: ["echo", "hello from pty"],
-        stdin: terminal.stdin,
-        stdout: terminal.stdout,
-        stderr: terminal.stdout,
+        terminal,
       });
 
       await proc.exited;
@@ -657,7 +635,6 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
 
     test("subprocess sees TTY for stdin/stdout", async () => {
       await using terminal = new Bun.Terminal({});
-      const slaveFd = terminal.stdin;
 
       const proc = Bun.spawn({
         cmd: [
@@ -671,9 +648,7 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
           }));
         `,
         ],
-        stdin: slaveFd,
-        stdout: slaveFd,
-        stderr: slaveFd,
+        terminal,
         env: bunEnv,
       });
 
@@ -693,9 +668,7 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
       // Spawn cat which will echo input back
       const proc = Bun.spawn({
         cmd: ["cat"],
-        stdin: terminal.stdin,
-        stdout: terminal.stdin,
-        stderr: terminal.stdin,
+        terminal,
       });
 
       // Write to the terminal
@@ -709,26 +682,24 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
       await proc.exited;
     });
 
-    test("multiple subprocesses can use same terminal", async () => {
+    test("multiple subprocesses can use same terminal sequentially", async () => {
       await using terminal = new Bun.Terminal({});
 
       const proc1 = Bun.spawn({
         cmd: ["echo", "first"],
-        stdin: terminal.stdin,
-        stdout: terminal.stdin,
-        stderr: terminal.stdin,
+        terminal,
       });
       await proc1.exited;
+      expect(proc1.exitCode).toBe(0);
+
+      // Terminal should still be usable after first process exits
+      expect(terminal.closed).toBe(false);
 
       const proc2 = Bun.spawn({
         cmd: ["echo", "second"],
-        stdin: terminal.stdin,
-        stdout: terminal.stdin,
-        stderr: terminal.stdin,
+        terminal,
       });
       await proc2.exited;
-
-      expect(proc1.exitCode).toBe(0);
       expect(proc2.exitCode).toBe(0);
     });
 
@@ -741,9 +712,7 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
       // Spawn a process that will receive SIGWINCH
       const proc = Bun.spawn({
         cmd: ["sleep", "1"],
-        stdin: terminal.stdin,
-        stdout: terminal.stdin,
-        stderr: terminal.stdin,
+        terminal,
       });
 
       // Resize should send SIGWINCH to the process group
@@ -965,15 +934,6 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
       terminal.write("test\n");
     });
 
-    test("file descriptors are valid integers", async () => {
-      await using terminal = new Bun.Terminal({});
-
-      expect(Number.isInteger(terminal.stdin)).toBe(true);
-      expect(Number.isInteger(terminal.stdout)).toBe(true);
-      expect(terminal.stdin).toBeGreaterThanOrEqual(0);
-      expect(terminal.stdout).toBeGreaterThanOrEqual(0);
-    });
-
     test("closed property is readonly", () => {
       const terminal = new Bun.Terminal({});
 
@@ -1011,10 +971,6 @@ describe.todoIf(isWindows)("Bun.spawn with terminal option", () => {
 
     expect(proc.terminal).toBeDefined();
     expect(proc.terminal).toBeInstanceOf(Object);
-    // stdin returns -1 for spawn-integrated terminals (parent's copy of slave is closed)
-    expect(proc.terminal!.stdin).toBe(-1);
-    // stdout (master fd) is still valid
-    expect(proc.terminal!.stdout).toBeGreaterThanOrEqual(0);
 
     await proc.exited;
 
@@ -1169,5 +1125,48 @@ describe.todoIf(isWindows)("Bun.spawn with terminal option", () => {
     expect(exitTerminal).toBe(proc.terminal);
 
     proc.terminal!.close();
+  });
+
+  test("throws when passing closed terminal to spawn", () => {
+    const terminal = new Bun.Terminal({});
+    terminal.close();
+
+    expect(() => {
+      Bun.spawn(["echo", "test"], { terminal });
+    }).toThrow("terminal is closed");
+  });
+
+  test("subprocess stdin/stdout/stderr are null when using terminal", async () => {
+    const proc = Bun.spawn(["echo", "test"], {
+      terminal: {},
+    });
+
+    // When terminal is used, stdin/stdout/stderr go through the terminal
+    expect(proc.stdin).toBeNull();
+    expect(proc.stdout).toBeNull();
+    expect(proc.stderr).toBeNull();
+
+    await proc.exited;
+    proc.terminal!.close();
+  });
+
+  test("existing terminal works with subprocess", async () => {
+    const dataChunks: Uint8Array[] = [];
+
+    await using terminal = new Bun.Terminal({
+      data: (_t, data) => dataChunks.push(data),
+    });
+
+    const proc = Bun.spawn(["echo", "hello"], { terminal });
+
+    // subprocess.terminal should reference the same terminal
+    expect(proc.terminal).toBe(terminal);
+
+    await proc.exited;
+    expect(proc.exitCode).toBe(0);
+
+    // Data should have been received
+    const output = Buffer.concat(dataChunks).toString();
+    expect(output).toContain("hello");
   });
 });

@@ -12,12 +12,6 @@ export default [
     // Store callback references - prevents them from being GC'd while terminal is alive
     values: ["data", "drain", "exit"],
     proto: {
-      stdout: {
-        getter: "getStdout",
-      },
-      stdin: {
-        getter: "getStdin",
-      },
       write: {
         fn: "write",
         length: 1,

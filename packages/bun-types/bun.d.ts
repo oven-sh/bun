@@ -5702,8 +5702,18 @@ declare module "bun" {
        * await proc.exited;
        * proc.terminal.close();
        * ```
+       *
+       * You can also pass an existing `Terminal` object for reuse across multiple spawns:
+       * ```ts
+       * const terminal = new Bun.Terminal({ ... });
+       * const proc1 = Bun.spawn(["echo", "first"], { terminal });
+       * await proc1.exited;
+       * const proc2 = Bun.spawn(["echo", "second"], { terminal });
+       * await proc2.exited;
+       * terminal.close();
+       * ```
        */
-      terminal?: TerminalOptions;
+      terminal?: TerminalOptions | Terminal;
     }
 
     type ReadableToIO<X extends Readable> = X extends "pipe" | undefined
@@ -6173,7 +6183,7 @@ declare module "bun" {
    *
    * @example
    * ```ts
-   * const terminal = new Bun.Terminal({
+   * await using terminal = new Bun.Terminal({
    *   cols: 80,
    *   rows: 24,
    *   data(term, data) {
@@ -6182,39 +6192,19 @@ declare module "bun" {
    * });
    *
    * // Spawn a shell connected to the PTY
-   * const proc = Bun.spawn({
-   *   cmd: ["bash"],
-   *   stdin: terminal.stdin,
-   *   stdout: terminal.stdout,
-   *   stderr: terminal.stdout,
-   * });
+   * const proc = Bun.spawn(["bash"], { terminal });
    *
    * // Write to the terminal
    * terminal.write("echo hello\n");
    *
-   * // Close when done
-   * terminal.close();
+   * // Wait for process to exit
+   * await proc.exited;
+   *
+   * // Terminal is closed automatically by `await using`
    * ```
    */
   class Terminal implements AsyncDisposable {
     constructor(options: TerminalOptions);
-
-    /**
-     * The file descriptor for the slave side of the PTY.
-     * This should be used as stdin/stdout/stderr for child processes.
-     *
-     * For standalone terminals: Returns a valid fd until close() is called, then -1.
-     * For spawn-integrated terminals (via `Bun.spawn({ terminal })`): Returns -1 because
-     * the parent's copy of the slave fd is closed immediately after fork.
-     */
-    readonly stdin: number;
-
-    /**
-     * The file descriptor for the master side of the PTY.
-     * Used internally for reading subprocess output.
-     * Returns -1 only after the terminal is fully closed via close().
-     */
-    readonly stdout: number;
 
     /**
      * Whether the terminal is closed.

@@ -381,12 +381,12 @@ proc.terminal.unref();
 proc.terminal.close();
 ```
 
-### Standalone Terminal
+### Reusable Terminal
 
-You can also create a terminal independently and pass its file descriptors to `Bun.spawn`:
+You can create a terminal independently and reuse it across multiple subprocesses:
 
 ```ts
-const terminal = new Bun.Terminal({
+await using terminal = new Bun.Terminal({
   cols: 80,
   rows: 24,
   data(term, data) {
@@ -394,18 +394,24 @@ const terminal = new Bun.Terminal({
   },
 });
 
-// Spawn a process using the terminal's file descriptors
-// All three stdio streams use the same slave fd because PTY multiplexes I/O
-const proc = Bun.spawn(["bash"], {
-  stdin: terminal.stdin,
-  stdout: terminal.stdin,
-  stderr: terminal.stdin,
-});
+// Spawn first process
+const proc1 = Bun.spawn(["echo", "first"], { terminal });
+await proc1.exited;
 
-terminal.write("echo hello\n");
+// Reuse terminal for another process
+const proc2 = Bun.spawn(["echo", "second"], { terminal });
+await proc2.exited;
+
+// Terminal is closed automatically by `await using`
 ```
 
-This approach gives you more control over the terminal lifecycle, but the `terminal` option in `Bun.spawn` is simpler for most use cases.
+When passing an existing `Terminal` object:
+- The terminal can be reused across multiple spawns
+- You control when to close the terminal
+- The `exit` callback fires when you call `terminal.close()`, not when each subprocess exits
+- Use `proc.exited` to detect individual subprocess exits
+
+This is useful for running multiple commands in sequence through the same terminal session.
 
 <Note>Terminal support is only available on POSIX systems (Linux, macOS). It is not available on Windows.</Note>
 

@@ -40,6 +40,31 @@ pub fn VisitStmt(
 
         const visitors = struct {
             pub fn s_import(noalias p: *P, noalias stmts: *ListManaged(Stmt), noalias stmt: *Stmt, noalias data: *S.Import) !void {
+                // Handle `import { feature } from "bun:bundler"` - this is a special import
+                // that provides static feature flag checking at bundle time.
+                const import_record = &p.import_records.items[data.import_record_index];
+                if (strings.eqlComptime(import_record.path.text, "bun:bundler")) {
+                    // Look for the "feature" import
+                    for (data.items) |*item| {
+                        // Check alias (the local binding name) - for `import { feature }`,
+                        // alias is "feature"; for `import { feature as f }`, alias is "f".
+                        // But the original_name would be "feature" if there's an alias.
+                        const original = if (item.original_name.len > 0) item.original_name else item.alias;
+                        if (strings.eqlComptime(original, "feature")) {
+                            // Record the symbol so it's properly tracked
+                            try p.recordDeclaredSymbol(item.name.ref.?);
+                            // Assign the ref to bundler_feature_flag_ref so we can detect
+                            // feature() calls in e_call visitor
+                            p.bundler_feature_flag_ref = item.name.ref.?;
+                            break;
+                        }
+                    }
+                    // Mark this import as unused so it gets removed from the output
+                    import_record.is_unused = true;
+                    // Return early without appending the statement (effectively deleting it)
+                    return;
+                }
+
                 try p.recordDeclaredSymbol(data.namespace_ref);
 
                 if (data.default_name) |default_name| {

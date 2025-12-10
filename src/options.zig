@@ -1717,6 +1717,7 @@ pub const BundleOptions = struct {
     banner: string = "",
     define: *defines.Define,
     drop: []const []const u8 = &.{},
+    feature_flags: []const []const u8 = &.{},
     loaders: Loader.HashTable,
     resolve_dir: string = "/",
     jsx: JSX.Pragma = JSX.Pragma{},
@@ -2008,6 +2009,7 @@ pub const BundleOptions = struct {
             .transform_options = transform,
             .css_chunking = false,
             .drop = transform.drop,
+            .feature_flags = transform.feature_flags,
         };
 
         analytics.Features.define += @as(usize, @intFromBool(transform.define != null));

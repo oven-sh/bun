@@ -1277,6 +1277,11 @@ pub fn VisitExpr(
                     }
                 }
 
+                // Handle `feature("FLAG_NAME")` calls from `import { feature } from "bun:bundler"`
+                if (maybeReplaceBundlerFeatureCall(p, e_, expr.loc)) |result| {
+                    return result;
+                }
+
                 if (e_.target.data == .e_require_call_target) {
                     e_.can_be_unwrapped_if_unused = .never;
 
@@ -1630,6 +1635,57 @@ pub fn VisitExpr(
                 }
 
                 return expr;
+            }
+
+            /// Handles `feature("FLAG_NAME")` calls from `import { feature } from "bun:bundler"`.
+            /// This enables statically analyzable dead-code elimination through feature gating.
+            ///
+            /// When a feature flag is enabled via `--feature=FLAG_NAME`, `feature("FLAG_NAME")`
+            /// is replaced with `true`, otherwise it's replaced with `false`. This allows
+            /// bundlers to eliminate dead code branches at build time.
+            ///
+            /// Returns the replacement expression if this is a feature() call, or null otherwise.
+            fn maybeReplaceBundlerFeatureCall(p: *P, e_: *E.Call, loc: logger.Loc) ?Expr {
+                // Quick check: is the bundler_feature_flag_ref even set?
+                if (!p.bundler_feature_flag_ref.isValid()) {
+                    return null;
+                }
+
+                // Check if the target is the `feature` function from "bun:bundler"
+                // It could be e_identifier (for unbound) or e_import_identifier (for imports)
+                const target_ref: ?Ref = switch (e_.target.data) {
+                    .e_identifier => |ident| ident.ref,
+                    .e_import_identifier => |ident| ident.ref,
+                    else => null,
+                };
+
+                if (target_ref == null or !target_ref.?.eql(p.bundler_feature_flag_ref)) {
+                    return null;
+                }
+
+                // If control flow is dead, just return false without validation errors
+                if (p.is_control_flow_dead) {
+                    return p.newExpr(E.Boolean{ .value = false }, loc);
+                }
+
+                // Validate: exactly one argument required
+                if (e_.args.len != 1) {
+                    p.log.addError(p.source, loc, "feature() requires exactly one string argument") catch unreachable;
+                    return p.newExpr(E.Boolean{ .value = false }, loc);
+                }
+
+                const arg = e_.args.slice()[0];
+
+                // Validate: argument must be a string literal
+                if (arg.data != .e_string) {
+                    p.log.addError(p.source, arg.loc, "feature() argument must be a string literal") catch unreachable;
+                    return p.newExpr(E.Boolean{ .value = false }, loc);
+                }
+
+                // Check if the feature flag is enabled
+                const flag_name = arg.data.e_string.slice(p.allocator);
+                const is_enabled = p.options.features.bundler_feature_flags.contains(flag_name);
+                return p.newExpr(E.Boolean{ .value = is_enabled }, loc);
             }
         };
     };

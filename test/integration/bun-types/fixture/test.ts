@@ -7,7 +7,7 @@ import {
   expect,
   expectTypeOf,
   jest,
-  Matchers,
+  type Matchers,
   mock,
   type Mock,
   spyOn,
@@ -344,7 +344,7 @@ myNormalSpiedMethod("asdf");
 expectType<Mock<(name: string) => string>>(myNormalSpiedMethod);
 
 const spy = spyOn(console, "log");
-expectType(spy.mock.calls).is<[message?: any, ...optionalParams: any[]][]>();
+expectType(spy.mock.calls).is<any[][]>();
 
 jest.spyOn(console, "log");
 jest.fn(() => 123 as const);

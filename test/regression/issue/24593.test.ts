@@ -88,8 +88,6 @@ describe("WebSocket server.publish with perMessageDeflate", () => {
     const largeMessage = generateLargeMessage();
     expect(largeMessage.length).toBeGreaterThan(100000);
 
-    let messageReceived = false;
-
     using server = serve({
       port: 0,
       fetch(req, server) {
@@ -103,14 +101,8 @@ describe("WebSocket server.publish with perMessageDeflate", () => {
         open(ws) {
           ws.subscribe("test");
         },
-        message(ws, message) {
-          // Echo back via publish to test the publish path
-          const size = typeof message === "string" ? message.length : message.byteLength;
-          if (size > 0) {
-            messageReceived = true;
-          }
-        },
-        close(ws) {},
+        message() {},
+        close() {},
       },
     });
 
@@ -141,7 +133,6 @@ describe("WebSocket server.publish with perMessageDeflate", () => {
     expect(received).toBe(largeMessage);
 
     client.close();
-    server.stop();
   });
 
   test("should handle multiple large message publishes", async () => {
@@ -164,8 +155,8 @@ describe("WebSocket server.publish with perMessageDeflate", () => {
         open(ws) {
           ws.subscribe("multi-test");
         },
-        message(ws, message) {},
-        close(ws) {},
+        message() {},
+        close() {},
       },
     });
 
@@ -199,7 +190,6 @@ describe("WebSocket server.publish with perMessageDeflate", () => {
     expect(messagesReceived).toBe(expectedMessages);
 
     client.close();
-    server.stop();
   });
 
   test("should handle publish to multiple subscribers", async () => {
@@ -222,8 +212,8 @@ describe("WebSocket server.publish with perMessageDeflate", () => {
         open(ws) {
           ws.subscribe("broadcast");
         },
-        message(ws, message) {},
-        close(ws) {},
+        message() {},
+        close() {},
       },
     });
 
@@ -263,7 +253,6 @@ describe("WebSocket server.publish with perMessageDeflate", () => {
     expect(clientsReceived.every(r => r)).toBe(true);
 
     clients.forEach(c => c.close());
-    server.stop();
   });
 
   test("should handle message at exact CORK_BUFFER_SIZE boundary", async () => {
@@ -289,8 +278,8 @@ describe("WebSocket server.publish with perMessageDeflate", () => {
           open(ws) {
             ws.subscribe("boundary-test");
           },
-          message(ws, msg) {},
-          close(ws) {},
+          message() {},
+          close() {},
         },
       });
 
@@ -312,7 +301,6 @@ describe("WebSocket server.publish with perMessageDeflate", () => {
       expect(received.length).toBe(size);
 
       client.close();
-      server.stop();
     }
   });
 });

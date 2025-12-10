@@ -185,6 +185,11 @@ pub fn NewParser_(
         /// it to the symbol so the code generated `e_import_identifier`'s
         bun_app_namespace_ref: Ref = Ref.None,
 
+        /// Used to track the `feature` function from `import { feature } from "bun:bundler"`.
+        /// When visiting e_call, if the target ref matches this, we replace the call with
+        /// a boolean based on whether the feature flag is enabled.
+        bundler_feature_flag_ref: Ref = Ref.None,
+
         scopes_in_order_visitor_index: usize = 0,
         has_classic_runtime_warned: bool = false,
         macro_call_count: MacroCallCountType = 0,

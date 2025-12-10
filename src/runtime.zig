@@ -211,6 +211,10 @@ pub const Runtime = struct {
         // TODO: make this a bitset of all unsupported features
         lower_using: bool = true,
 
+        /// Feature flags for dead-code elimination via `import { feature } from "bun:bundler"`
+        /// When `feature("FLAG_NAME")` is called, it returns true if FLAG_NAME is in this set.
+        bundler_feature_flags: bun.StringHashMapUnmanaged(void) = .{},
+
         const hash_fields_for_runtime_transpiler = .{
             .top_level_await,
             .auto_import_jsx,

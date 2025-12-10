@@ -13,7 +13,8 @@
       "foo/bar": ["js/bun/resolve/baz.js"],
       "@faasjs/*": ["js/bun/resolve/*.js", "js/bun/resolve/*/src/index.js"],
       "@faasjs/larger/*": ["js/bun/resolve/*/larger-index.js"],
-      "bake/*": ["../src/bake/client/*"]
+      "bake/*": ["../src/bake/client/*"],
+      "strip-ansi": ["./_util/strip-ansi.ts"]
     },
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,

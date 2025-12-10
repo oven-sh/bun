@@ -793,6 +793,10 @@ if(WIN32)
   set(WINDOWS_RESOURCES ${CODEGEN_PATH}/windows-app-info.rc ${CWD}/src/bun.exe.manifest)
 endif()
 
+# --- WebKit (early include for WEBKIT_VERSION/WEBKIT_DOWNLOAD_URL, used in create-link-metadata.js) ---
+
+include(SetupWebKit)
+
 # --- Executable ---
 
 set(BUN_CPP_OUTPUT ${BUILD_PATH}/${CMAKE_STATIC_LIBRARY_PREFIX}${bun}${CMAKE_STATIC_LIBRARY_SUFFIX})
@@ -1214,9 +1218,7 @@ endif()
 
 set_target_properties(${bun} PROPERTIES LINK_DEPENDS ${BUN_SYMBOLS_PATH})
 
-# --- WebKit ---
-
-include(SetupWebKit)
+# --- WebKit Linking ---
 
 if(WIN32)
   if(DEBUG)

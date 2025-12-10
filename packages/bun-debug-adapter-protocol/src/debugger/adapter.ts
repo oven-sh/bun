@@ -55,7 +55,7 @@ function validateWebSocketUrl(url: string | URL | undefined): void {
 
   // Only allow localhost connections
   const hostname = parsed.hostname.toLowerCase();
-  const allowedHosts = ["localhost", "127.0.0.1", "::1", "[::1]"];
+  const allowedHosts = ["localhost", "127.0.0.1", "::1"];
   if (!allowedHosts.includes(hostname)) {
     throw new Error(
       `WebSocket connections are only allowed to localhost (127.0.0.1, ::1, localhost). ` +
@@ -798,7 +798,7 @@ export abstract class BaseDebugAdapter<T extends Inspector = Inspector>
       // Debugger.breakpointResolved might not fire again. Manually trigger resolution
       // after the current event loop iteration to allow any pending scriptParsed events to be processed.
       if (locations.length) {
-        process.nextTick(() => {
+        setImmediate(() => {
           // Only trigger if future breakpoints still exist (not already resolved)
           const pending = this.#futureBreakpoints.get(breakpointId);
           if (pending?.length) {
@@ -2514,10 +2514,17 @@ export class WebSocketDebugAdapter extends BaseDebugAdapter<WebSocketInspector> 
           // Wait for VS Code's potential requests to complete before deciding whether to reapply
           await new Promise(resolve => setTimeout(resolve, WebSocketDebugAdapter.VSCODE_COORDINATION_DELAY_MS));
 
-          // If VS Code sent setBreakpointsRequest during reconnection, skip reapply
-          // VS Code handles all breakpoints when it sends requests
-          if (this.#pathsHandledByVSCode.size === 0 && breakpointsByPath.size > 0) {
-            await this.reapplyBreakpoints(breakpointsByPath);
+          // Compute the subset of breakpoints for paths NOT handled by VS Code
+          const breakpointsToReapply = new Map<string, DAP.SourceBreakpoint[]>();
+          for (const [path, breakpoints] of breakpointsByPath) {
+            if (!this.#pathsHandledByVSCode.has(path)) {
+              breakpointsToReapply.set(path, breakpoints);
+            }
+          }
+
+          // Reapply breakpoints only for paths VS Code did not handle
+          if (breakpointsToReapply.size > 0) {
+            await this.reapplyBreakpoints(breakpointsToReapply);
           }
 
           // Clear the tracked paths after reapply is done
@@ -3213,12 +3220,33 @@ function unknownToError(input: unknown): Error {
  */
 function isBreakpointExistsError(error: unknown): boolean {
   const errorStr = String(error).toLowerCase();
+  const originalErrorStr = String(error);
+
   // Check for common patterns in the error message
-  return (
-    errorStr.includes("already exists") ||
-    errorStr.includes("duplicate breakpoint") ||
-    errorStr.includes("breakpoint already set")
-  );
+  let matchedPattern: string | null = null;
+  let isMatch = false;
+
+  if (errorStr.includes("already exists")) {
+    matchedPattern = "already exists";
+    isMatch = true;
+  } else if (errorStr.includes("duplicate breakpoint")) {
+    matchedPattern = "duplicate breakpoint";
+    isMatch = true;
+  } else if (errorStr.includes("breakpoint already set")) {
+    matchedPattern = "breakpoint already set";
+    isMatch = true;
+  }
+
+  // Debug logging to track error pattern matching
+  if (isDebug) {
+    if (isMatch) {
+      console.log(`[isBreakpointExistsError] Matched pattern "${matchedPattern}" in error: ${originalErrorStr}`);
+    } else {
+      console.log(`[isBreakpointExistsError] No pattern matched for error: ${originalErrorStr}`);
+    }
+  }
+
+  return isMatch;
 }
 
 function isJavaScript(path: string): boolean {

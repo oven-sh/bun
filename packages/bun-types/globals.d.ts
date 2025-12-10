@@ -83,6 +83,24 @@ declare var WritableStream: Bun.__internal.UseLibDomIfAvailable<
   }
 >;
 
+interface CompressionStream extends Bun.__internal.LibEmptyOrNodeStreamWebCompressionStream {}
+declare var CompressionStream: Bun.__internal.UseLibDomIfAvailable<
+  "CompressionStream",
+  {
+    prototype: CompressionStream;
+    new (format: Bun.CompressionFormat): CompressionStream;
+  }
+>;
+
+interface DecompressionStream extends Bun.__internal.LibEmptyOrNodeStreamWebDecompressionStream {}
+declare var DecompressionStream: Bun.__internal.UseLibDomIfAvailable<
+  "DecompressionStream",
+  {
+    prototype: DecompressionStream;
+    new (format: Bun.CompressionFormat): DecompressionStream;
+  }
+>;
+
 interface Worker extends Bun.__internal.LibWorkerOrBunWorker {}
 declare var Worker: Bun.__internal.UseLibDomIfAvailable<
   "Worker",
@@ -277,30 +295,6 @@ declare var Event: {
   readonly BUBBLING_PHASE: 3;
   new (type: string, eventInitDict?: Bun.EventInit): Event;
 };
-
-/**
- * Unimplemented in Bun
- */
-interface CompressionStream extends Bun.__internal.LibEmptyOrNodeStreamWebCompressionStream {}
-/**
- * Unimplemented in Bun
- */
-declare var CompressionStream: Bun.__internal.UseLibDomIfAvailable<
-  "CompressionStream",
-  typeof import("node:stream/web").CompressionStream
->;
-
-/**
- * Unimplemented in Bun
- */
-interface DecompressionStream extends Bun.__internal.LibEmptyOrNodeStreamWebCompressionStream {}
-/**
- * Unimplemented in Bun
- */
-declare var DecompressionStream: Bun.__internal.UseLibDomIfAvailable<
-  "DecompressionStream",
-  typeof import("node:stream/web").DecompressionStream
->;
 
 interface EventTarget {
   /**

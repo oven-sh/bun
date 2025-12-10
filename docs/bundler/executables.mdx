@@ -183,9 +183,35 @@ console.log(process.execArgv); // ["--smol", "--user-agent=MyBot"]
 
 ---
 
-## Disabling automatic config loading
+## Automatic config loading
 
-By default, standalone executables look for `.env` and `bunfig.toml` files in the directory where the executable is run. You can disable this behavior at build time for deterministic execution regardless of the user's working directory.
+Standalone executables can automatically load configuration files from the directory where they are run. By default:
+
+- **`tsconfig.json`** and **`package.json`** loading is **disabled** — these are typically only needed at development time, and the bundler already uses them when compiling
+- **`.env`** and **`bunfig.toml`** loading is **enabled** — these often contain runtime configuration that may vary per deployment
+
+<Note>
+  In a future version of Bun, `.env` and `bunfig.toml` may also be disabled by default for more deterministic behavior.
+</Note>
+
+### Enabling config loading at runtime
+
+If your executable needs to read `tsconfig.json` or `package.json` at runtime, you can opt in with the new CLI flags:
+
+```bash icon="terminal" terminal
+# Enable runtime loading of tsconfig.json
+bun build --compile --compile-autoload-tsconfig ./app.ts --outfile myapp
+
+# Enable runtime loading of package.json
+bun build --compile --compile-autoload-package-json ./app.ts --outfile myapp
+
+# Enable both
+bun build --compile --compile-autoload-tsconfig --compile-autoload-package-json ./app.ts --outfile myapp
+```
+
+### Disabling config loading at runtime
+
+To disable `.env` or `bunfig.toml` loading for deterministic execution:
 
 ```bash icon="terminal" terminal
 # Disable .env loading
@@ -194,16 +220,23 @@ bun build --compile --no-compile-autoload-dotenv ./app.ts --outfile myapp
 # Disable bunfig.toml loading
 bun build --compile --no-compile-autoload-bunfig ./app.ts --outfile myapp
 
-# Disable both
+# Disable all config loading
 bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig ./app.ts --outfile myapp
 ```
 
-You can also configure this via the JavaScript API:
+### JavaScript API
+
+You can also configure autoloading via the JavaScript API:
 
 ```ts
 await Bun.build({
   entrypoints: ["./app.ts"],
   compile: {
+    // tsconfig.json and package.json are disabled by default
+    autoloadTsconfig: true, // Enable tsconfig.json loading
+    autoloadPackageJson: true, // Enable package.json loading
+
+    // .env and bunfig.toml are enabled by default
     autoloadDotenv: false, // Disable .env loading
     autoloadBunfig: false, // Disable bunfig.toml loading
   },
@@ -380,34 +413,141 @@ cd /home/me/Desktop
 
 ## Embed assets & files
 
-Standalone executables support embedding files.
+Standalone executables support embedding files directly into the binary. This lets you ship a single executable that contains images, JSON configs, templates, or any other assets your application needs.
 
-To embed files into an executable with `bun build --compile`, import the file in your code.
+### How it works
+
+Use the `with { type: "file" }` [import attribute](https://github.com/tc39/proposal-import-attributes) to embed a file:
 
 ```ts index.ts icon="/icons/typescript.svg"
-// this becomes an internal file path
+import icon from "./icon.png" with { type: "file" };
+
+console.log(icon);
+// During development: "./icon.png"
+// After compilation: "$bunfs/icon-a1b2c3d4.png" (internal path)
+```
+
+The import returns a **path string** that points to the embedded file. At build time, Bun:
+
+1. Reads the file contents
+2. Embeds the data into the executable
+3. Replaces the import with an internal path (prefixed with `$bunfs/`)
+
+You can then read this embedded file using `Bun.file()` or Node.js `fs` APIs.
+
+### Reading embedded files with Bun.file()
+
+`Bun.file()` is the recommended way to read embedded files:
+
+```ts index.ts icon="/icons/typescript.svg"
 import icon from "./icon.png" with { type: "file" };
 import { file } from "bun";
 
+// Get file contents as different types
+const bytes = await file(icon).arrayBuffer(); // ArrayBuffer
+const text = await file(icon).text(); // string (for text files)
+const blob = file(icon); // Blob
+
+// Stream the file in a response
 export default {
   fetch(req) {
-    // Embedded files can be streamed from Response objects
-    return new Response(file(icon));
+    return new Response(file(icon), {
+      headers: { "Content-Type": "image/png" },
+    });
   },
 };
 ```
 
-Embedded files can be read using `Bun.file`'s functions or the Node.js `fs.readFile` function (in `"node:fs"`).
+### Reading embedded files with Node.js fs
 
-For example, to read the contents of the embedded file:
+Embedded files work seamlessly with Node.js file system APIs:
 
 ```ts index.ts icon="/icons/typescript.svg"
 import icon from "./icon.png" with { type: "file" };
+import config from "./config.json" with { type: "file" };
+import { readFileSync, promises as fs } from "node:fs";
+
+// Synchronous read
+const iconBuffer = readFileSync(icon);
+
+// Async read
+const configData = await fs.readFile(config, "utf-8");
+const parsed = JSON.parse(configData);
+
+// Check file stats
+const stats = await fs.stat(icon);
+console.log(`Icon size: ${stats.size} bytes`);
+```
+
+### Practical examples
+
+#### Embedding a JSON config file
+
+```ts index.ts icon="/icons/typescript.svg"
+import configPath from "./default-config.json" with { type: "file" };
 import { file } from "bun";
 
-const bytes = await file(icon).arrayBuffer();
-// await fs.promises.readFile(icon)
-// fs.readFileSync(icon)
+// Load the embedded default configuration
+const defaultConfig = await file(configPath).json();
+
+// Merge with user config if it exists
+const userConfig = await file("./user-config.json")
+  .json()
+  .catch(() => ({}));
+const config = { ...defaultConfig, ...userConfig };
+```
+
+#### Serving static assets in an HTTP server
+
+Use `static` routes in `Bun.serve()` for efficient static file serving:
+
+```ts server.ts icon="/icons/typescript.svg"
+import favicon from "./favicon.ico" with { type: "file" };
+import logo from "./logo.png" with { type: "file" };
+import styles from "./styles.css" with { type: "file" };
+import { file, serve } from "bun";
+
+serve({
+  static: {
+    "/favicon.ico": file(favicon),
+    "/logo.png": file(logo),
+    "/styles.css": file(styles),
+  },
+  fetch(req) {
+    return new Response("Not found", { status: 404 });
+  },
+});
+```
+
+Bun automatically handles Content-Type headers and caching for static routes.
+
+#### Embedding templates
+
+```ts index.ts icon="/icons/typescript.svg"
+import templatePath from "./email-template.html" with { type: "file" };
+import { file } from "bun";
+
+async function sendWelcomeEmail(user: { name: string; email: string }) {
+  const template = await file(templatePath).text();
+  const html = template.replace("{{name}}", user.name).replace("{{email}}", user.email);
+
+  // Send email with the rendered template...
+}
+```
+
+#### Embedding binary files
+
+```ts index.ts icon="/icons/typescript.svg"
+import wasmPath from "./processor.wasm" with { type: "file" };
+import fontPath from "./font.ttf" with { type: "file" };
+import { file } from "bun";
+
+// Load a WebAssembly module
+const wasmBytes = await file(wasmPath).arrayBuffer();
+const wasmModule = await WebAssembly.instantiate(wasmBytes);
+
+// Read binary font data
+const fontData = await file(fontPath).bytes();
 ```
 
 ### Embed SQLite databases
@@ -474,22 +614,57 @@ This is honestly a workaround, and we expect to improve this in the future with 
 
 ### Listing embedded files
 
-To get a list of all embedded files, use `Bun.embeddedFiles`:
+`Bun.embeddedFiles` gives you access to all embedded files as `Blob` objects:
 
 ```ts index.ts icon="/icons/typescript.svg"
 import "./icon.png" with { type: "file" };
+import "./data.json" with { type: "file" };
+import "./template.html" with { type: "file" };
 import { embeddedFiles } from "bun";
 
-console.log(embeddedFiles[0].name); // `icon-${hash}.png`
+// List all embedded files
+for (const blob of embeddedFiles) {
+  console.log(`${blob.name} - ${blob.size} bytes`);
+}
+// Output:
+//   icon-a1b2c3d4.png - 4096 bytes
+//   data-e5f6g7h8.json - 256 bytes
+//   template-i9j0k1l2.html - 1024 bytes
 ```
 
-`Bun.embeddedFiles` returns an array of `Blob` objects which you can use to get the size, contents, and other properties of the files.
+Each item in `Bun.embeddedFiles` is a `Blob` with a `name` property:
 
 ```ts
-embeddedFiles: Blob[]
+embeddedFiles: ReadonlyArray<Blob>;
 ```
 
-The list of embedded files excludes bundled source code like `.ts` and `.js` files.
+This is useful for dynamically serving all embedded assets using `static` routes:
+
+```ts server.ts icon="/icons/typescript.svg"
+import "./public/favicon.ico" with { type: "file" };
+import "./public/logo.png" with { type: "file" };
+import "./public/styles.css" with { type: "file" };
+import { embeddedFiles, serve } from "bun";
+
+// Build static routes from all embedded files
+const staticRoutes: Record<string, Blob> = {};
+for (const blob of embeddedFiles) {
+  // Remove hash from filename: "icon-a1b2c3d4.png" -> "icon.png"
+  const name = blob.name.replace(/-[a-f0-9]+\./, ".");
+  staticRoutes[`/${name}`] = blob;
+}
+
+serve({
+  static: staticRoutes,
+  fetch(req) {
+    return new Response("Not found", { status: 404 });
+  },
+});
+```
+
+<Note>
+  `Bun.embeddedFiles` excludes bundled source code (`.ts`, `.js`, etc.) to help protect your application's source.
+</Note>
 
 #### Content hash
 

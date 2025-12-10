@@ -557,108 +557,50 @@ pub fn getClosed(this: *Terminal, _: *jsc.JSGlobalObject) JSValue {
     return JSValue.jsBoolean(this.flags.closed);
 }
 
-/// Helper to convert termios flag to f64 for JS (handles both 32-bit Linux and 64-bit macOS)
-/// Returns the full value without truncation - JS Number can safely represent up to 2^53
-fn termiosFlagToF64(comptime T: type, flag: T) f64 {
-    // On macOS, termios flags are c_ulong (64-bit), on Linux they are packed structs
-    const Int = @typeInfo(T).@"struct".backing_integer orelse @compileError("expected packed struct");
-    const int_value: Int = @bitCast(flag);
-    return @floatFromInt(int_value);
+fn getTermiosFlag(this: *Terminal, comptime field: enum { iflag, oflag, lflag, cflag }) JSValue {
+    if (comptime !Environment.isPosix) return JSValue.jsNumber(0);
+    if (this.flags.closed or this.master_fd == bun.invalid_fd) return JSValue.jsNumber(0);
+    const termios_data = getTermios(this.master_fd) orelse return JSValue.jsNumber(0);
+    const flag = @field(termios_data, @tagName(field));
+    const Int = @typeInfo(@TypeOf(flag)).@"struct".backing_integer.?;
+    return JSValue.jsNumber(@as(f64, @floatFromInt(@as(Int, @bitCast(flag)))));
 }
 
-/// Helper to convert JS number (f64) to termios flag type
-/// JS Number can represent up to 2^53 safely, which covers all termios flag values
-fn f64ToTermiosFlag(comptime T: type, value: f64) T {
-    const Int = @typeInfo(T).@"struct".backing_integer orelse @compileError("expected packed struct");
-    // Clamp to valid range for the integer type
+fn setTermiosFlag(this: *Terminal, comptime field: enum { iflag, oflag, lflag, cflag }, value: JSValue) void {
+    if (comptime !Environment.isPosix) return;
+    if (this.flags.closed or this.master_fd == bun.invalid_fd) return;
+    var termios_data = getTermios(this.master_fd) orelse return;
+    const FlagType = @TypeOf(@field(termios_data, @tagName(field)));
+    const Int = @typeInfo(FlagType).@"struct".backing_integer.?;
     const max_val: f64 = @floatFromInt(std.math.maxInt(Int));
-    const clamped = @max(0, @min(value, max_val));
-    const int_value: Int = @intFromFloat(clamped);
-    return @bitCast(int_value);
+    const clamped = @max(0, @min(value.asNumber(), max_val));
+    @field(termios_data, @tagName(field)) = @bitCast(@as(Int, @intFromFloat(clamped)));
+    _ = setTermios(this.master_fd, &termios_data);
 }
 
-/// Get input flags (c_iflag) - returns 0 if closed or error
 pub fn getInputFlags(this: *Terminal, _: *jsc.JSGlobalObject) JSValue {
-    if (comptime !Environment.isPosix) return JSValue.jsNumber(0);
-    if (this.flags.closed or this.master_fd == bun.invalid_fd) {
-        return JSValue.jsNumber(0);
-    }
-    const termios_data = getTermios(this.master_fd) orelse return JSValue.jsNumber(0);
-    return JSValue.jsNumber(termiosFlagToF64(@TypeOf(termios_data.iflag), termios_data.iflag));
+    return this.getTermiosFlag(.iflag);
 }
-
-/// Set input flags (c_iflag)
 pub fn setInputFlags(this: *Terminal, _: *jsc.JSGlobalObject, value: JSValue) void {
-    if (comptime !Environment.isPosix) return;
-    if (this.flags.closed or this.master_fd == bun.invalid_fd) {
-        return;
-    }
-    var termios_data = getTermios(this.master_fd) orelse return;
-    termios_data.iflag = f64ToTermiosFlag(@TypeOf(termios_data.iflag), value.asNumber());
-    _ = setTermios(this.master_fd, &termios_data);
+    this.setTermiosFlag(.iflag, value);
 }
-
-/// Get output flags (c_oflag) - returns 0 if closed or error
 pub fn getOutputFlags(this: *Terminal, _: *jsc.JSGlobalObject) JSValue {
-    if (comptime !Environment.isPosix) return JSValue.jsNumber(0);
-    if (this.flags.closed or this.master_fd == bun.invalid_fd) {
-        return JSValue.jsNumber(0);
-    }
-    const termios_data = getTermios(this.master_fd) orelse return JSValue.jsNumber(0);
-    return JSValue.jsNumber(termiosFlagToF64(@TypeOf(termios_data.oflag), termios_data.oflag));
+    return this.getTermiosFlag(.oflag);
 }
-
-/// Set output flags (c_oflag)
 pub fn setOutputFlags(this: *Terminal, _: *jsc.JSGlobalObject, value: JSValue) void {
-    if (comptime !Environment.isPosix) return;
-    if (this.flags.closed or this.master_fd == bun.invalid_fd) {
-        return;
-    }
-    var termios_data = getTermios(this.master_fd) orelse return;
-    termios_data.oflag = f64ToTermiosFlag(@TypeOf(termios_data.oflag), value.asNumber());
-    _ = setTermios(this.master_fd, &termios_data);
+    this.setTermiosFlag(.oflag, value);
 }
-
-/// Get local flags (c_lflag) - returns 0 if closed or error
 pub fn getLocalFlags(this: *Terminal, _: *jsc.JSGlobalObject) JSValue {
-    if (comptime !Environment.isPosix) return JSValue.jsNumber(0);
-    if (this.flags.closed or this.master_fd == bun.invalid_fd) {
-        return JSValue.jsNumber(0);
-    }
-    const termios_data = getTermios(this.master_fd) orelse return JSValue.jsNumber(0);
-    return JSValue.jsNumber(termiosFlagToF64(@TypeOf(termios_data.lflag), termios_data.lflag));
+    return this.getTermiosFlag(.lflag);
 }
-
-/// Set local flags (c_lflag)
 pub fn setLocalFlags(this: *Terminal, _: *jsc.JSGlobalObject, value: JSValue) void {
-    if (comptime !Environment.isPosix) return;
-    if (this.flags.closed or this.master_fd == bun.invalid_fd) {
-        return;
-    }
-    var termios_data = getTermios(this.master_fd) orelse return;
-    termios_data.lflag = f64ToTermiosFlag(@TypeOf(termios_data.lflag), value.asNumber());
-    _ = setTermios(this.master_fd, &termios_data);
+    this.setTermiosFlag(.lflag, value);
 }
-
-/// Get control flags (c_cflag) - returns 0 if closed or error
 pub fn getControlFlags(this: *Terminal, _: *jsc.JSGlobalObject) JSValue {
-    if (comptime !Environment.isPosix) return JSValue.jsNumber(0);
-    if (this.flags.closed or this.master_fd == bun.invalid_fd) {
-        return JSValue.jsNumber(0);
-    }
-    const termios_data = getTermios(this.master_fd) orelse return JSValue.jsNumber(0);
-    return JSValue.jsNumber(termiosFlagToF64(@TypeOf(termios_data.cflag), termios_data.cflag));
+    return this.getTermiosFlag(.cflag);
 }
-
-/// Set control flags (c_cflag)
 pub fn setControlFlags(this: *Terminal, _: *jsc.JSGlobalObject, value: JSValue) void {
-    if (comptime !Environment.isPosix) return;
-    if (this.flags.closed or this.master_fd == bun.invalid_fd) {
-        return;
-    }
-    var termios_data = getTermios(this.master_fd) orelse return;
-    termios_data.cflag = f64ToTermiosFlag(@TypeOf(termios_data.cflag), value.asNumber());
-    _ = setTermios(this.master_fd, &termios_data);
+    this.setTermiosFlag(.cflag, value);
 }
 
 /// Write data to the terminal

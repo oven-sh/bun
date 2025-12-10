@@ -369,22 +369,16 @@ pub fn spawnMaybeSync(
                 }
             }
 
-            // Parse terminal option (only for async spawn, not spawnSync)
             if (comptime !is_sync) {
                 if (try args.getTruthy(globalThis, "terminal")) |terminal_opts| {
-                    // Terminal/PTY is only supported on POSIX platforms
                     if (comptime !Environment.isPosix) {
                         return globalThis.throwInvalidArguments("terminal option is not supported on this platform", .{});
                     }
-
                     if (!terminal_opts.isObject()) {
                         return globalThis.throwInvalidArguments("terminal must be an object", .{});
                     }
 
-                    // Parse terminal options using shared parser
                     var term_options = try Terminal.Options.parseFromJS(globalThis, terminal_opts);
-
-                    // Create the terminal
                     terminal_info = Terminal.createFromSpawn(globalThis, term_options) catch |err| {
                         term_options.deinit();
                         return switch (err) {
@@ -396,7 +390,6 @@ pub fn spawnMaybeSync(
                         };
                     };
 
-                    // Override stdin, stdout, stderr to use the terminal's slave fd
                     const slave_fd = terminal_info.?.terminal.getSlaveFd();
                     stdio[0] = .{ .fd = slave_fd };
                     stdio[1] = .{ .fd = slave_fd };
@@ -554,7 +547,6 @@ pub fn spawnMaybeSync(
         .extra_fds = extra_fds.items,
         .argv0 = argv0,
         .can_block_entire_thread_to_reduce_cpu_usage_in_fast_path = can_block_entire_thread_to_reduce_cpu_usage_in_fast_path,
-        // Pass PTY slave fd for controlling terminal setup (job control) - POSIX only
         .pty_slave_fd = if (Environment.isPosix) (if (terminal_info) |ti| ti.terminal.getSlaveFd().native() else -1) else {},
 
         .windows = if (Environment.isWindows) .{

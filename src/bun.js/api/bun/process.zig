@@ -995,7 +995,6 @@ pub const PosixSpawnOptions = struct {
     /// consistent shell semantics.
     no_sigpipe: bool = true,
     /// PTY slave fd for controlling terminal setup (-1 if not using PTY).
-    /// When set, the child will call setsid() and ioctl(TIOCSCTTY) for proper job control.
     pty_slave_fd: i32 = -1,
 
     pub const Stdio = union(enum) {

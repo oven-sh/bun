@@ -92,8 +92,8 @@ pub const BunSpawn = struct {
 
     pub const Attr = struct {
         detached: bool = false,
-        pty_slave_fd: i32 = -1, // -1 if not using PTY, otherwise the slave fd to set as controlling terminal
-        flags: u16 = 0, // Store all posix_spawn flags for passthrough to system posix_spawn on macOS
+        pty_slave_fd: i32 = -1,
+        flags: u16 = 0,
         reset_signals: bool = false,
 
         pub fn init() !Attr {
@@ -127,7 +127,7 @@ pub const PosixSpawn = struct {
     pub const PosixSpawnAttr = struct {
         attr: system.posix_spawnattr_t,
         detached: bool = false,
-        pty_slave_fd: i32 = -1, // -1 if not using PTY, otherwise the slave fd to set as controlling terminal
+        pty_slave_fd: i32 = -1,
 
         pub fn init() !PosixSpawnAttr {
             var attr: system.posix_spawnattr_t = undefined;
@@ -264,13 +264,12 @@ pub const PosixSpawn = struct {
     pub const Actions = if (Environment.isPosix) BunSpawn.Actions else PosixSpawnActions;
     pub const Attr = if (Environment.isPosix) BunSpawn.Attr else PosixSpawnAttr;
 
-    /// BunSpawnRequest is used for Linux spawns and macOS PTY spawns (when pty_slave_fd >= 0).
-    /// It calls our custom posix_spawn_bun which supports setsid() + ioctl(TIOCSCTTY).
+    /// Used for Linux spawns and macOS PTY spawns via posix_spawn_bun.
     const BunSpawnRequest = extern struct {
         chdir_buf: ?[*:0]u8 = null,
         detached: bool = false,
         actions: ActionsList = .{},
-        pty_slave_fd: i32 = -1, // -1 if not using PTY, otherwise the slave fd to set as controlling terminal
+        pty_slave_fd: i32 = -1,
 
         const ActionsList = extern struct {
             ptr: ?[*]const BunSpawn.Action = null,
@@ -326,10 +325,15 @@ pub const PosixSpawn = struct {
         const pty_slave_fd = if (attr) |a| a.pty_slave_fd else -1;
         const detached = if (attr) |a| a.detached else false;
 
-        // On Linux: always use posix_spawn_bun (uses vfork, which is fast and safe).
-        // On macOS: only use posix_spawn_bun when we need PTY setup (pty_slave_fd >= 0),
-        // because fork() on macOS has restrictions. For regular spawns, use system posix_spawn.
-        if (comptime Environment.isLinux) {
+        // Use posix_spawn_bun when:
+        // - Linux: always (uses vfork which is fast and safe)
+        // - macOS: only for PTY spawns (pty_slave_fd >= 0) because PTY setup requires
+        //   setsid() + ioctl(TIOCSCTTY) before exec, which system posix_spawn can't do.
+        //   For non-PTY spawns on macOS, we use system posix_spawn which is safer
+        //   (Apple's posix_spawn uses a kernel fast-path that avoids fork() entirely).
+        const use_bun_spawn = Environment.isLinux or (Environment.isMac and pty_slave_fd >= 0);
+
+        if (use_bun_spawn) {
             return BunSpawnRequest.spawn(
                 path,
                 .{
@@ -349,31 +353,9 @@ pub const PosixSpawn = struct {
             );
         }
 
-        // macOS: use posix_spawn_bun only when PTY setup is needed, otherwise use system posix_spawn
+        // macOS without PTY: use system posix_spawn
+        // Need to convert BunSpawn.Actions to PosixSpawnActions for system posix_spawn
         if (comptime Environment.isMac) {
-            // Runtime check: need PTY setup?
-            if (pty_slave_fd >= 0) {
-                return BunSpawnRequest.spawn(
-                    path,
-                    .{
-                        .actions = if (actions) |act| .{
-                            .ptr = act.actions.items.ptr,
-                            .len = act.actions.items.len,
-                        } else .{
-                            .ptr = null,
-                            .len = 0,
-                        },
-                        .chdir_buf = if (actions) |a| a.chdir_buf else null,
-                        .detached = detached,
-                        .pty_slave_fd = pty_slave_fd,
-                    },
-                    argv,
-                    envp,
-                );
-            }
-
-            // macOS without PTY: use system posix_spawn
-            // Need to convert BunSpawn.Actions to PosixSpawnActions for system posix_spawn
             var posix_actions = PosixSpawnActions.init() catch return Maybe(pid_t){
                 .err = .{
                     .errno = @intFromEnum(std.c.E.NOMEM),

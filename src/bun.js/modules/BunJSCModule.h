@@ -363,7 +363,7 @@ JSC_DEFINE_HOST_FUNCTION(functionHeapSpaceStatistics,
 {
     VM& vm = globalObject->vm();
     JSLockHolder lock(vm);
-    
+    auto scope = DECLARE_THROW_SCOPE(vm);
     // In JSC, we don't have the same heap space segmentation as V8
     // V8 has: new_space, old_space, code_space, map_space, large_object_space, etc.
     // JSC has a simpler structure, so we'll create a compatible representation
@@ -374,10 +374,12 @@ JSC_DEFINE_HOST_FUNCTION(functionHeapSpaceStatistics,
     }
     
     JSArray* result = constructEmptyArray(globalObject, nullptr);
+    RETURN_IF_EXCEPTION(scope, encodedJSValue());
     
     // Create a single "heap" space that represents JSC's heap
     // This provides basic compatibility with V8's getHeapSpaceStatistics API
     JSObject* heapSpace = constructEmptyObject(globalObject, globalObject->objectPrototype());
+    RETURN_IF_EXCEPTION(scope, encodedJSValue());
     
     size_t heapCapacity = vm.heap.capacity();
     size_t heapUsed = vm.heap.size();
@@ -395,6 +397,7 @@ JSC_DEFINE_HOST_FUNCTION(functionHeapSpaceStatistics,
                         jsNumber(heapCapacity));
     
     result->putDirectIndex(globalObject, 0, heapSpace);
+    RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
     // V8 compatibility: Add placeholder spaces that V8 has but JSC doesn't
     const char* v8SpaceNames[] = {
@@ -413,6 +416,7 @@ JSC_DEFINE_HOST_FUNCTION(functionHeapSpaceStatistics,
     
     for (size_t i = 0; i < sizeof(v8SpaceNames) / sizeof(v8SpaceNames[0]); i++) {
         JSObject* space = constructEmptyObject(globalObject);
+        RETURN_IF_EXCEPTION(scope, encodedJSValue());
         space->putDirect(vm, Identifier::fromString(vm, "spaceName"_s), 
                         jsString(vm, String::fromUTF8(v8SpaceNames[i])));
         space->putDirect(vm, Identifier::fromString(vm, "spaceSize"_s), 
@@ -425,9 +429,10 @@ JSC_DEFINE_HOST_FUNCTION(functionHeapSpaceStatistics,
                         jsNumber(0));
         
         result->putDirectIndex(globalObject, i + 1, space);
+        RETURN_IF_EXCEPTION(scope, encodedJSValue());
     }
     
-    return JSValue::encode(result);
+    RELEASE_AND_RETURN(scope, JSValue::encode(result));
 }
 
 
@@ -998,7 +1003,7 @@ JSC_DEFINE_HOST_FUNCTION(functionPercentAvailableMemoryInUse, (JSGlobalObject * 
     getRandomSeed                       functionGetRandomSeed                       Function    0
     heapSize                            functionHeapSize                            Function    0
     heapStats                           functionMemoryUsageStatistics               Function    0
-    heapSpaceStats                      functionHeapSpaceStatistic  
+    heapSpaceStats                      functionHeapSpaceStatistics                 Function    0
     startSamplingProfiler               functionStartSamplingProfiler               Function    0
     samplingProfilerStackTraces         functionSamplingProfilerStackTraces         Function    0
     noInline                            functionNeverInlineFunction                 Function    0

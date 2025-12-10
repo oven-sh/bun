@@ -1473,6 +1473,30 @@ config:
         expect(YAML.stringify("item:\r")).toBe('"item:\\r"');
       });
 
+      // https://github.com/oven-sh/bun/issues/25439
+      test("quotes strings ending with colons", () => {
+        // Trailing colons can be misinterpreted as mapping indicators
+        expect(YAML.stringify("tin:")).toBe('"tin:"');
+        expect(YAML.stringify("hello:")).toBe('"hello:"');
+        expect(YAML.stringify("a:")).toBe('"a:"');
+        expect(YAML.stringify("http://example.com:")).toBe('"http://example.com:"');
+        expect(YAML.stringify("key:value:")).toBe('"key:value:"');
+        expect(YAML.stringify(":::")).toBe('":::"');
+
+        // Round-trip should work
+        const testCases = ["tin:", "hello:", "a:", "http://example.com:", "key:value:", ":::"];
+        for (const str of testCases) {
+          const doc = { value: str };
+          expect(YAML.parse(YAML.stringify(doc))).toEqual(doc);
+        }
+
+        // Exact reproduction case from issue #25439
+        const doc = { txt: { en: "tin:" } };
+        const yml = YAML.stringify(doc, null, 2);
+        expect(yml).toContain('"tin:"');
+        expect(YAML.parse(yml)).toEqual(doc);
+      });
+
       test("quotes strings containing flow indicators", () => {
         expect(YAML.stringify("{json}")).toBe('"{json}"');
         expect(YAML.stringify("[array]")).toBe('"[array]"');

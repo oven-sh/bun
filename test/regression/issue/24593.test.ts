@@ -160,19 +160,24 @@ describe("WebSocket server.publish with perMessageDeflate", () => {
     const client = new WebSocket(`ws://localhost:${server.port}`);
 
     const { promise: openPromise, resolve: resolveOpen, reject: rejectOpen } = Promise.withResolvers<void>();
+    const {
+      promise: allMessagesReceived,
+      resolve: resolveMessages,
+      reject: rejectMessages,
+    } = Promise.withResolvers<void>();
 
     client.onopen = () => resolveOpen();
-    client.onerror = e => rejectOpen(e);
-
-    const allMessagesReceived = new Promise<void>(resolve => {
-      client.onmessage = event => {
-        messagesReceived++;
-        expect(event.data.length).toBe(largeMessage.length);
-        if (messagesReceived === expectedMessages) {
-          resolve();
-        }
-      };
-    });
+    client.onerror = e => {
+      rejectOpen(e);
+      rejectMessages(e instanceof Error ? e : new Error("WebSocket error"));
+    };
+    client.onmessage = event => {
+      messagesReceived++;
+      expect(event.data.length).toBe(largeMessage.length);
+      if (messagesReceived === expectedMessages) {
+        resolveMessages();
+      }
+    };
 
     await openPromise;
 

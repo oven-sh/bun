@@ -1,6 +1,6 @@
 {
   "name": "testcontainers-test",
   "dependencies": {
-    "testcontainers": "10.16.0"
+    "testcontainers": "11.10.0"
   }
 }

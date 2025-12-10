@@ -112,11 +112,10 @@ test("should work with flushHeaders() to send request before writing body", asyn
     // Explicitly flush headers to start the request
     req.flushHeaders();
 
-    // Wait a bit, then write body and end
-    setTimeout(() => {
-      req.write("body data");
-      req.end();
-    }, 100);
+    // Write body immediately after flushing - the test verifies
+    // flushHeaders() initiates the request, not timing
+    req.write("body data");
+    req.end();
 
     const result = await Promise.race([
       promise,

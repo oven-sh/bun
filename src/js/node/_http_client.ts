@@ -327,7 +327,7 @@ function ClientRequest(input, options, cb) {
       // and should send it all at once rather than streaming indefinitely.
       // This is required for compatibility with servers that respond before req.end()
       // is called (like Docker's exec API) when Content-Length is specified.
-      const contentLengthHeader = this.getHeader("Content-Length") ?? this.getHeader("content-length");
+      const contentLengthHeader = this.getHeader("content-length");
       const hasContentLength = contentLengthHeader !== undefined;
       const isDuplex = customBody === undefined && !this.finished && !hasContentLength;
 

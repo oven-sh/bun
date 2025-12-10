@@ -66,7 +66,6 @@ async function generate(symbol_name: string): Promise<[stub: string, symbol_name
 
     // ending in one line
     if (rest.indexOf(";") == rest.length - 1) {
-      // console.log("Found single liner!");
       matches.push({ filename, lineNumber, rest });
     } else {
       const absoluteFilepath = join(HEADER_PATH, filename);
@@ -90,7 +89,6 @@ async function generate(symbol_name: string): Promise<[stub: string, symbol_name
       const multiLine = fileLines.slice(lineNumber, j + 1).join("\n");
       console.log(`MULTILINE (${lineNumber} -> ${j + 1})`);
       matches.push({ filename, lineNumber, rest: multiLine });
-      // console.log(matches[matches.length - 1]);
       i = j;
     }
   }
@@ -167,7 +165,6 @@ async function generate(symbol_name: string): Promise<[stub: string, symbol_name
       if (last.type === "function_declarator") {
         console.log("FUNCTION DECLARATOR", last.children);
         const return_ty = parameterDeclarationNode.children[0].text;
-        // console.log("LMAO", );
         const arg = `arg${i++}`;
         const param_list = last.children[1];
         if (param_list.type !== "parameter_list") {
@@ -394,5 +391,3 @@ if (Bun.which("clang-format")) {
 // for (const symbol of symbols) {
 // await generate("uv_if_indextoiid");
 // }
-
-// console.log("DONE");

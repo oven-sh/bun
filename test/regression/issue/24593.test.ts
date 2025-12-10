@@ -247,7 +247,11 @@ describe("WebSocket server.publish with perMessageDeflate", () => {
     await allMessagesReceived;
     expect(clientsReceived.every(r => r)).toBe(true);
 
-    clients.forEach(c => c.close());
+    for (const c of clients) {
+      try {
+        c.close();
+      } catch {}
+    }
   });
 
   test("should handle message at exact CORK_BUFFER_SIZE boundary", async () => {

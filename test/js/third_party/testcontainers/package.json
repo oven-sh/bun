@@ -1,0 +1,6 @@
+{
+  "name": "testcontainers-test",
+  "dependencies": {
+    "testcontainers": "10.16.0"
+  }
+}

@@ -101,7 +101,7 @@ function ClientRequest(input, options, cb) {
 
   const pushChunk = chunk => {
     this[kBodyChunks].push(chunk);
-    if (writeCount > 1) {
+    if (writeCount >= 1) {
       startFetch();
     }
     resolveNextChunk?.(false);
@@ -323,7 +323,13 @@ function ClientRequest(input, options, cb) {
       };
       let keepOpen = false;
       // no body and not finished
-      const isDuplex = customBody === undefined && !this.finished;
+      // Don't use duplex mode if Content-Length is set - we know the exact body size
+      // and should send it all at once rather than streaming indefinitely.
+      // This is required for compatibility with servers that respond before req.end()
+      // is called (like Docker's exec API) when Content-Length is specified.
+      const contentLengthHeader = this.getHeader("Content-Length") ?? this.getHeader("content-length");
+      const hasContentLength = contentLengthHeader !== undefined;
+      const isDuplex = customBody === undefined && !this.finished && !hasContentLength;
 
       if (isDuplex) {
         fetchOptions.duplex = "half";
@@ -370,6 +376,18 @@ function ClientRequest(input, options, cb) {
 
           handleResponse?.();
         };
+      } else if (this[kBodyChunks]?.length > 0) {
+        // When Content-Length is set, concatenate all body chunks into a single buffer.
+        // This allows the request to complete without calling end() - the server will
+        // process the request once it receives Content-Length bytes.
+        const chunks = this[kBodyChunks];
+        if (chunks.length === 1) {
+          fetchOptions.body = chunks[0];
+        } else {
+          fetchOptions.body = Buffer.concat(chunks);
+        }
+        this[kBodyChunks] = [];
+        this.emit("drain");
       }
 
       if (tls) {
@@ -454,9 +472,10 @@ function ClientRequest(input, options, cb) {
           );
         };
 
-        if (!keepOpen) {
-          handleResponse();
-        }
+        // Always call handleResponse when the response is available.
+        // In duplex mode, the response can be received before the request body is finished.
+        // This allows servers to respond while the client is still streaming data.
+        handleResponse();
 
         onEnd();
       });

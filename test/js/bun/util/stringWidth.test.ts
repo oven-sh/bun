@@ -487,6 +487,44 @@ describe("stringWidth extended", () => {
     });
   });
 
+  describe("non-ASCII in escape sequences and Indic script handling", () => {
+    test("OSC with non-ASCII (emoji) in URL should be invisible", () => {
+      // Non-ASCII characters inside OSC sequence should NOT be counted
+      // The emoji is part of the invisible hyperlink URL
+      const result = Bun.stringWidth("a\x1b]8;;https://🎉\x07b");
+      expect(result).toBe(2); // just "ab"
+    });
+
+    test("OSC with CJK in URL should be invisible", () => {
+      // CJK character inside OSC sequence should NOT be counted
+      const result = Bun.stringWidth("a\x1b]8;;https://中.com\x07b");
+      expect(result).toBe(2); // just "ab"
+    });
+
+    test("Indic Avagraha (U+093D) should have width 1", () => {
+      // U+093D (ऽ) is Devanagari Avagraha - a visible letter (category Lo)
+      // The Indic heuristic incorrectly marks it as zero-width
+      expect(Bun.stringWidth("\u093D")).toBe(1);
+      expect(Bun.stringWidth("a\u093Db")).toBe(3);
+    });
+
+    test("Malayalam Sign Para (U+0D4F) should have width 1", () => {
+      // U+0D4F (൏) is Malayalam Sign Para - a visible symbol (category So)
+      // The Indic heuristic incorrectly marks it as zero-width
+      expect(Bun.stringWidth("\u0D4F")).toBe(1);
+    });
+
+    test("Bengali Avagraha (U+09BD) should have width 1", () => {
+      // U+09BD (ঽ) is Bengali Avagraha - a visible letter (category Lo)
+      expect(Bun.stringWidth("\u09BD")).toBe(1);
+    });
+
+    test("Tamil Visarga (U+0B83) should have width 1", () => {
+      // U+0B83 (ஃ) is Tamil Sign Visarga - a visible letter (category Lo)
+      expect(Bun.stringWidth("\u0B83")).toBe(1);
+    });
+  });
+
   describe("edge cases", () => {
     test("empty string", () => {
       expect(Bun.stringWidth("")).toBe(0);

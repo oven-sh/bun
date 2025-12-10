@@ -57,10 +57,16 @@ pub fn isZeroWidthCodepointType(comptime T: type, cp: T) bool {
     // Indic script combining marks (Devanagari through Malayalam)
     if (cp >= 0x900 and cp <= 0xd4f) {
         const offset = cp & 0x7f;
-        if (offset <= 0x03) return true; // Signs at block start
-        if (offset >= 0x3a and offset <= 0x4f) return true; // Vowel signs, virama
-        if (offset >= 0x51 and offset <= 0x57) return true; // Stress signs
-        if (offset >= 0x62 and offset <= 0x63) return true; // Vowel signs
+        // Signs at block start (except position 0x03 which is often a visible Visarga)
+        if (offset <= 0x02) return true;
+        // Vowel signs, virama (0x3a-0x4d), but exclude:
+        // - 0x3D (Avagraha - visible letter in most blocks)
+        if (offset >= 0x3a and offset <= 0x4d and offset != 0x3d) return true;
+        // Position 0x4E-0x4F are visible symbols in some blocks (e.g., Malayalam Sign Para)
+        // Stress signs (0x51-0x57)
+        if (offset >= 0x51 and offset <= 0x57) return true;
+        // Vowel signs (0x62-0x63)
+        if (offset >= 0x62 and offset <= 0x63) return true;
     }
 
     // Thai combining marks
@@ -1060,6 +1066,32 @@ pub const visible = struct {
             if (replacement.fail or replacement.is_lead) continue;
             const cp: u32 = @intCast(replacement.code_point);
             defer prev = cp;
+
+            // Handle non-ASCII characters inside escape sequences
+            if (saw_osc) {
+                // In OSC sequence, look for BEL (0x07) or ST (ESC \)
+                // Non-ASCII chars inside OSC should not contribute to width
+                if (cp == 0x07) {
+                    saw_1b = false;
+                    saw_osc = false;
+                    stretch_len = 0;
+                }
+                // Note: ST (ESC \) only uses ASCII chars, so we don't need to check here
+                continue;
+            }
+            if (saw_csi) {
+                // CSI sequences should only contain ASCII parameters and final bytes
+                // Non-ASCII char ends the CSI sequence abnormally - don't count it
+                saw_1b = false;
+                saw_csi = false;
+                stretch_len = 0;
+                continue;
+            }
+            if (saw_1b) {
+                // ESC followed by non-ASCII - not a valid sequence start
+                saw_1b = false;
+                // Don't count this char as part of escape, treat normally below
+            }
 
             if (prev) |prev_| {
                 const should_break = grapheme.graphemeBreak(@truncate(prev_), @truncate(cp), &break_state);

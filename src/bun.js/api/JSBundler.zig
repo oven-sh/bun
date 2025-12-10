@@ -41,6 +41,7 @@ pub const JSBundler = struct {
         has_any_on_before_parse: bool = false,
         throw_on_error: bool = true,
         env_behavior: api.DotEnvBehavior = .disable,
+        env_explicitly_disabled: bool = false,
         env_prefix: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         tsconfig_override: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         compile: ?CompileOptions = null,
@@ -378,6 +379,7 @@ pub const JSBundler = struct {
                 if (!env.isUndefined()) {
                     if (env == .null or env == .false or (env.isNumber() and env.asNumber() == 0)) {
                         this.env_behavior = .disable;
+                        this.env_explicitly_disabled = true;
                     } else if (env == .true or (env.isNumber() and env.asNumber() == 1)) {
                         this.env_behavior = .load_all;
                     } else if (env.isString()) {
@@ -387,6 +389,7 @@ pub const JSBundler = struct {
                             this.env_behavior = .load_all;
                         } else if (strings.eqlComptime(slice.slice(), "disable")) {
                             this.env_behavior = .disable;
+                            this.env_explicitly_disabled = true;
                         } else if (strings.indexOfChar(slice.slice(), '*')) |asterisk| {
                             if (asterisk > 0) {
                                 this.env_behavior = .prefix;

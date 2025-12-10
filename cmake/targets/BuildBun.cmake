@@ -801,7 +801,6 @@ if(BUN_LINK_ONLY)
   add_executable(${bun} ${BUN_CPP_OUTPUT} ${BUN_ZIG_OUTPUT} ${WINDOWS_RESOURCES})
   set_target_properties(${bun} PROPERTIES LINKER_LANGUAGE CXX)
   target_link_libraries(${bun} PRIVATE ${BUN_CPP_OUTPUT})
-  # Link metadata command is registered after SetupWebKit is included (see below)
 elseif(BUN_CPP_ONLY)
   add_library(${bun} STATIC ${BUN_CPP_SOURCES})
   register_command(

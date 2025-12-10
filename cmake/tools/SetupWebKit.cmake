@@ -82,11 +82,6 @@ setx(WEBKIT_NAME bun-webkit-${WEBKIT_OS}-${WEBKIT_ARCH}${WEBKIT_SUFFIX})
 set(WEBKIT_FILENAME ${WEBKIT_NAME}.tar.gz)
 setx(WEBKIT_DOWNLOAD_URL https://github.com/oven-sh/WebKit/releases/download/autobuild-${WEBKIT_VERSION}/${WEBKIT_FILENAME})
 
-# For link-only builds, we only need the version/URL metadata, not the actual WebKit download
-if(BUN_LINK_ONLY)
-  return()
-endif()
-
 if(EXISTS ${WEBKIT_PATH}/package.json)
   file(READ ${WEBKIT_PATH}/package.json WEBKIT_PACKAGE_JSON)
 

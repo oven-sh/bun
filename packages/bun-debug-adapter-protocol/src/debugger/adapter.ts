@@ -2616,7 +2616,10 @@ export class WebSocketDebugAdapter extends BaseDebugAdapter<WebSocketInspector> 
     if (options.type === "attach") {
       // Close current connection and reconnect
       this.inspector.close();
-      await this.#attach(options as AttachRequest);
+      const connected = await this.#attach(options as AttachRequest);
+      if (!connected) {
+        throw new Error("Failed to reconnect to debug target");
+      }
     }
     // For launch mode, do nothing - watchMode handles restarts automatically
   }

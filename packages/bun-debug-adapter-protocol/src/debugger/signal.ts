@@ -90,12 +90,9 @@ function validateUnixSocketPath(socketPath: string): void {
   const normalizedPath = normalize(socketPath);
   const tempDir = tmpdir();
 
-  // Check for path traversal attempts
-  if (normalizedPath.includes("..")) {
-    throw new Error(`Unix socket path contains path traversal: ${socketPath}`);
-  }
-
   // Only allow sockets in the temp directory
+  // Note: normalize() resolves '..' segments, so the startsWith check
+  // is sufficient to prevent path traversal attacks
   if (!normalizedPath.startsWith(tempDir)) {
     throw new Error(
       `Unix socket path must be within the temp directory (${tempDir}). ` +

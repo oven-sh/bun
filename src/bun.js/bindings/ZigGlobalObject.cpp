@@ -124,6 +124,7 @@
 #include "JSSink.h"
 #include "JSSocketAddressDTO.h"
 #include "JSSQLStatement.h"
+#include "SnapshotSerializers.h"
 #include "JSStringDecoder.h"
 #include "JSTextEncoder.h"
 #include "JSTextEncoderStream.h"
@@ -2288,6 +2289,10 @@ void GlobalObject::finishCreation(VM& vm)
         init.set(JSC::JSFunction::create(init.vm, init.owner, WebCore::ipcSerializeCodeGenerator(init.vm), init.owner));
     });
 
+    m_snapshotSerializersSerializeFunction.initLater([](const LazyProperty<JSC::JSGlobalObject, JSC::JSFunction>::Initializer& init) {
+        init.set(JSC::JSFunction::create(init.vm, init.owner, WebCore::snapshotSerializersSerializeCodeGenerator(init.vm), init.owner));
+    });
+
     m_JSFileSinkClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
             auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::FileSink);
@@ -2364,6 +2369,12 @@ void GlobalObject::finishCreation(VM& vm)
             init.setPrototype(prototype);
             init.setStructure(structure);
             init.setConstructor(constructor);
+        });
+
+    m_SnapshotSerializersStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            auto* structure = Bun::SnapshotSerializers::createStructure(init.vm, init.global, jsNull());
+            init.setStructure(structure);
         });
 
     m_JSBufferListClassStructure.initLater(

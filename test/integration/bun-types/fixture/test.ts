@@ -400,3 +400,64 @@ declare const setOfStrings: Set<string>;
 /** 1. **/ expect(setOfStrings).toBe(new Set()); // this is inferrable to Set<string> so this should pass
 /** 2. **/ expect(setOfStrings).toBe(new Set<string>()); // exact, so we are happy!
 /** 3. **/ expect(setOfStrings).toBe<Set<string>>(new Set()); // happy! We opted out of type safety for this expectation
+
+class Point {
+  constructor(
+    public x: number,
+    public y: number,
+  ) {}
+}
+expect.addSnapshotSerializer({
+  test: val => val instanceof Point,
+  serialize: val => {
+    expectType<Point>(val);
+    return `Point(${val.x}, ${val.y})`;
+  },
+});
+
+expect.addSnapshotSerializer({
+  test: val => typeof val === "object" && val !== null && "qwerty" in val,
+  serialize: val => {
+    expectType<object & Record<"qwerty", unknown>>(val);
+    return `{qwerty}`;
+  },
+});
+
+function returnsBoolean(): boolean {
+  return false;
+}
+expect.addSnapshotSerializer({
+  test: () => returnsBoolean(),
+  serialize: val => {
+    expectType<unknown>(val);
+    return `boolean`;
+  },
+});
+
+expect.addSnapshotSerializer({
+  test: () => false,
+  print: val => {
+    expectType<unknown>(val);
+    return `false`;
+  },
+});
+
+try {
+  expect.addSnapshotSerializer({
+    test: () => true,
+    // @ts-expect-error
+    serialize: val => {
+      return;
+    },
+  });
+
+  expect.addSnapshotSerializer({
+    // @ts-expect-error
+    test: () => 25,
+  });
+
+  // @ts-expect-error
+  expect.addSnapshotSerializer({
+    test: () => false,
+  });
+} catch (error) {}

@@ -711,7 +711,55 @@ declare module "bun:test" {
      * Ensures that a specific number of assertions are made
      */
     assertions(neededAssertions: number): void;
+
+    /**
+     * Add a custom snapshot serializer to customize how values are formatted in snapshots.
+     *
+     * @example
+     * class Point {
+     *   constructor(public x: number, public y: number) {}
+     * }
+     *
+     * expect.addSnapshotSerializer({
+     *   test: (val) => val instanceof Point,
+     *   serialize: (val) => `Point(${val.x}, ${val.y})`,
+     * });
+     *
+     * expect(new Point(1, 2)).toMatchInlineSnapshot(`Point(1, 2)`);
+     *
+     * @param serializer The snapshot serializer configuration
+     */
+    addSnapshotSerializer<T>(serializer: SnapshotSerializer<T>): void;
   }
+
+  export type SnapshotSerializer<T> =
+    | {
+        /**
+         * Test function to determine if this serializer should be used for a value
+         */
+        test(val: unknown): val is T;
+        /**
+         * Serialize function to convert the value to a string.
+         */
+        serialize: (val: T) => string;
+      }
+    | {
+        /**
+         * Test function to determine if this serializer should be used for a value
+         */
+        test: (val: unknown) => boolean;
+        /**
+         * Serialize function to convert the value to a string.
+         */
+        serialize: (val: T) => string;
+      }
+    | {
+        test: (val: unknown) => boolean;
+        /**
+         * @deprecated Pass `serialize` instead of `print`.
+         */
+        print: (val: T) => string;
+      };
 
   /**
    * You can extend this interface with declaration merging, in order to add type support for custom matchers.

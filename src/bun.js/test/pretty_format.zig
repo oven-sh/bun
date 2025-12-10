@@ -869,12 +869,32 @@ pub const JestPrettyFormat = struct {
         ) bun.JSError!void {
             if (this.failed)
                 return;
+
             var writer = WrappedWriter(Writer){ .ctx = writer_, .estimated_line_length = &this.estimated_line_length };
             defer {
                 if (writer.failed) {
                     this.failed = true;
                 }
             }
+
+            // Try user-defined snapshot serializers first
+            if (expect.Jest.runner) |runner| {
+                if (runner.snapshots.serializers.get()) |serializers| {
+                    const result = try bun.cpp.SnapshotSerializers__serialize(this.globalThis, serializers, value);
+                    if (!result.isUndefinedOrNull()) {
+                        if (bun.Environment.ci_assert) bun.assert(result.isString()); // should have thrown in SnapshotSerializers__serialize()
+
+                        var str = ZigString.Empty;
+                        try result.toZigString(&str, this.globalThis);
+
+                        this.addForNewLine(str.len);
+                        writer.writeString(str);
+
+                        return;
+                    }
+                }
+            }
+
             if (comptime Format.canHaveCircularReferences()) {
                 if (this.map_node == null) {
                     this.map_node = Visited.Pool.get(default_allocator);

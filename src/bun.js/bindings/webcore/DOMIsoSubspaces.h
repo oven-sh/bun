@@ -47,6 +47,7 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForJSMockFunction;
     std::unique_ptr<IsoSubspace> m_subspaceForAsyncContextFrame;
     std::unique_ptr<IsoSubspace> m_subspaceForMockWithImplementationCleanupData;
+    std::unique_ptr<IsoSubspace> m_subspaceForSnapshotSerializers;
     std::unique_ptr<IsoSubspace> m_subspaceForProcessObject;
     std::unique_ptr<IsoSubspace> m_subspaceForInternalModuleRegistry;
     std::unique_ptr<IsoSubspace> m_subspaceForErrorCodeCache;

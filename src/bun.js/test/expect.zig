@@ -710,7 +710,10 @@ pub const Expect = struct {
 
         var pretty_value = std.Io.Writer.Allocating.init(default_allocator);
         defer pretty_value.deinit();
-        try this.matchAndFmtSnapshot(globalThis, value, property_matchers, &pretty_value.writer, fn_name);
+        this.matchAndFmtSnapshot(globalThis, value, property_matchers, &pretty_value.writer, fn_name) catch |err| return switch (err) {
+            error.WriteFailed => error.OutOfMemory,
+            else => |e| e,
+        };
 
         var start_indent: ?[]const u8 = null;
         var end_indent: ?[]const u8 = null;
@@ -795,7 +798,7 @@ pub const Expect = struct {
 
         return .js_undefined;
     }
-    pub fn matchAndFmtSnapshot(this: *Expect, globalThis: *JSGlobalObject, value: JSValue, property_matchers: ?JSValue, pretty_value: *std.Io.Writer, comptime fn_name: []const u8) bun.JSError!void {
+    pub fn matchAndFmtSnapshot(this: *Expect, globalThis: *JSGlobalObject, value: JSValue, property_matchers: ?JSValue, pretty_value: *std.Io.Writer, comptime fn_name: []const u8) (bun.JSError || std.Io.Writer.Error)!void {
         if (property_matchers) |_prop_matchers| {
             if (!value.isObject()) {
                 const signature = comptime getSignature(fn_name, "<green>properties<r><d>, <r>hint", false);
@@ -816,16 +819,15 @@ pub const Expect = struct {
             }
         }
 
-        value.jestSnapshotPrettyFormat(pretty_value, globalThis) catch {
-            var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis };
-            defer formatter.deinit();
-            return globalThis.throw("Failed to pretty format value: {f}", .{value.toFmt(&formatter)});
-        };
+        try value.jestSnapshotPrettyFormat(pretty_value, globalThis);
     }
     pub fn snapshot(this: *Expect, globalThis: *JSGlobalObject, value: JSValue, property_matchers: ?JSValue, hint: []const u8, comptime fn_name: []const u8) bun.JSError!JSValue {
         var pretty_value = std.Io.Writer.Allocating.init(default_allocator);
         defer pretty_value.deinit();
-        try this.matchAndFmtSnapshot(globalThis, value, property_matchers, &pretty_value.writer, fn_name);
+        this.matchAndFmtSnapshot(globalThis, value, property_matchers, &pretty_value.writer, fn_name) catch |err| return switch (err) {
+            error.WriteFailed => error.OutOfMemory,
+            else => |e| e,
+        };
 
         const existing_value = Jest.runner.?.snapshots.getOrPut(this, pretty_value.written(), hint) catch |err| {
             var buntest_strong = this.bunTest() orelse return globalThis.throw("Snapshot matchers cannot be used outside of a test", .{});
@@ -964,6 +966,50 @@ pub const Expect = struct {
         }
 
         globalThis.bunVM().autoGarbageCollect();
+
+        return .js_undefined;
+    }
+
+    /// Implements `expect.addSnapshotSerializer({ test, serialize })`
+    pub fn addSnapshotSerializer(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
+        const arg = callFrame.argumentsAsArray(1)[0];
+
+        const runner = Jest.runner orelse {
+            return globalThis.throwPretty("<d>expect.<r>addSnapshotSerializer<d>(<r>serializer<d>)<r>\n\nSnapshot serializers can only be added during test execution\n", .{});
+        };
+
+        // Parse options using bindv2
+        const options = try SnapshotSerializerOptions.fromJS(globalThis, arg);
+
+        // Validate test function
+        if (!options.test_fn.jsType().isFunction()) {
+            return globalThis.throwPretty("<d>expect.<r>addSnapshotSerializer<d>(<r>serializer<d>)<r>\n\nExpected 'test' to be a function\n", .{});
+        }
+
+        // Get serialize or print function
+        var serialize_fn_value = options.serialize_fn;
+        if (serialize_fn_value.isUndefinedOrNull()) {
+            serialize_fn_value = options.print_fn;
+        }
+
+        if (serialize_fn_value.isUndefinedOrNull()) {
+            return globalThis.throwPretty("<d>expect.<r>addSnapshotSerializer<d>(<r>serializer<d>)<r>\n\nExpected serializer object to have a 'serialize' or 'print' function\n", .{});
+        }
+
+        if (!serialize_fn_value.jsType().isFunction()) {
+            return globalThis.throwPretty("<d>expect.<r>addSnapshotSerializer<d>(<r>serializer<d>)<r>\n\nExpected 'serialize' or 'print' to be a function\n", .{});
+        }
+
+        // Get or create the SnapshotSerializers object
+        const serializers = runner.snapshots.serializers.get() orelse blk: {
+            // Create a new SnapshotSerializers object
+            const new_serializers = try bun.cpp.SnapshotSerializers__create(globalThis);
+            runner.snapshots.serializers.set(globalThis, new_serializers);
+            break :blk new_serializers;
+        };
+
+        // Add the serializer
+        _ = try bun.cpp.SnapshotSerializers__add(globalThis, serializers, options.test_fn, serialize_fn_value);
 
         return .js_undefined;
     }
@@ -1171,8 +1217,6 @@ pub const Expect = struct {
 
         return thisValue;
     }
-
-    pub const addSnapshotSerializer = notImplementedStaticFn;
 
     pub fn hasAssertions(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
         _ = callFrame;
@@ -2249,8 +2293,12 @@ test "fuzz Expect.trimLeadingWhitespaceForInlineSnapshot" {
 
 const string = []const u8;
 
+pub const Jest = jest.Jest;
+
+const bindgen_generated = @import("bindgen_generated");
 const std = @import("std");
 const DiffFormatter = @import("./diff_format.zig").DiffFormatter;
+const SnapshotSerializerOptions = bindgen_generated.snapshot_serializer_options.SnapshotSerializerOptions;
 
 const bun = @import("bun");
 const Environment = bun.Environment;
@@ -2269,5 +2317,4 @@ const ZigString = jsc.ZigString;
 
 const jest = bun.jsc.Jest;
 const DescribeScope = jest.DescribeScope;
-const Jest = jest.Jest;
 const TestRunner = jest.TestRunner;

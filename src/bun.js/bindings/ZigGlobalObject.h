@@ -201,6 +201,7 @@ public:
     WebCore::JSBuiltinInternalFunctions& builtinInternalFunctions() { return m_builtinInternalFunctions; }
     JSC::Structure* FFIFunctionStructure() const { return m_JSFFIFunctionStructure.getInitializedOnMainThread(this); }
     JSC::Structure* NapiClassStructure() const { return m_NapiClassStructure.getInitializedOnMainThread(this); }
+    JSC::Structure* SnapshotSerializersStructure() const { return m_SnapshotSerializersStructure.getInitializedOnMainThread(this); }
 
     JSC::Structure* FileSinkStructure() const { return m_JSFileSinkClassStructure.getInitializedOnMainThread(this); }
     JSC::JSObject* FileSink() const { return m_JSFileSinkClassStructure.constructorInitializedOnMainThread(this); }
@@ -276,6 +277,8 @@ public:
     JSC::JSFunction* utilInspectStylizeNoColorFunction() const { return m_utilInspectStylizeNoColorFunction.getInitializedOnMainThread(this); }
 
     JSC::JSFunction* wasmStreamingConsumeStreamFunction() const { return m_wasmStreamingConsumeStreamFunction.getInitializedOnMainThread(this); }
+
+    JSC::JSFunction* snapshotSerializersSerializeFunction() const { return m_snapshotSerializersSerializeFunction.getInitializedOnMainThread(this); }
 
     JSObject* requireFunctionUnbound() const { return m_requireFunctionUnbound.getInitializedOnMainThread(this); }
     JSObject* requireResolveFunctionUnbound() const { return m_requireResolveFunctionUnbound.getInitializedOnMainThread(this); }
@@ -528,6 +531,7 @@ public:
     V(private, LazyClassStructure, m_JSBufferListClassStructure)                                             \
     V(private, LazyClassStructure, m_JSFFIFunctionStructure)                                                 \
     V(private, LazyClassStructure, m_JSFileSinkClassStructure)                                               \
+    V(private, LazyClassStructure, m_SnapshotSerializersStructure)                                           \
     V(private, LazyClassStructure, m_JSHTTPResponseSinkClassStructure)                                       \
     V(private, LazyClassStructure, m_JSHTTPSResponseSinkClassStructure)                                      \
     V(private, LazyClassStructure, m_JSNetworkSinkClassStructure)                                            \
@@ -631,7 +635,8 @@ public:
     V(public, LazyPropertyOfGlobalObject<Symbol>, m_nodeVMDontContextify)                                    \
     V(public, LazyPropertyOfGlobalObject<Symbol>, m_nodeVMUseMainContextDefaultLoader)                       \
     V(public, LazyPropertyOfGlobalObject<JSFunction>, m_ipcSerializeFunction)                                \
-    V(public, LazyPropertyOfGlobalObject<JSFunction>, m_ipcParseHandleFunction)
+    V(public, LazyPropertyOfGlobalObject<JSFunction>, m_ipcParseHandleFunction)                              \
+    V(private, LazyPropertyOfGlobalObject<JSFunction>, m_snapshotSerializersSerializeFunction)
 
 #define DECLARE_GLOBALOBJECT_GC_MEMBER(visibility, T, name) \
     visibility:                                             \

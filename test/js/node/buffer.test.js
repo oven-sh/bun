@@ -223,7 +223,7 @@ for (let withOverridenBufferWrite of [false, true]) {
       it("length overflow", () => {
         // Verify the maximum Uint8Array size. There is no concrete limit by spec. The
         // internal limits should be updated if this fails.
-        expect(() => new Uint8Array(2 ** 32 + 1)).toThrow(/length/);
+        expect(() => new Uint8Array(2 ** 32 + 1)).toThrow(/Out of memory/);
       });
 
       it("truncate input values", () => {

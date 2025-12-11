@@ -350,113 +350,71 @@ const obj = { flag: feature("FLAG") };
     },
   });
 
-  // Edge cases: logical operators in conditions
-  // These ARE valid - feature() can be combined with logical operators in if/ternary conditions
-  for (const backend of ["cli", "api"] as const) {
-    itBundled(`feature_flag/${backend}/LogicalAndValid`, {
-      backend,
-      files: {
-        "/a.js": `
+  // Edge cases: logical operators in conditions - NOT valid
+  // feature() must be the SOLE expression in the condition
+  itBundled("feature_flag/LogicalAndError", {
+    backend: "cli",
+    files: {
+      "/a.js": `
 import { feature } from "bun:bundle";
 if (feature("FLAG") && true) {
-  console.log("enabled and true");
-} else {
-  console.log("disabled or false");
+  console.log("should error");
 }
 `,
-      },
-      features: ["FLAG"],
-      minifySyntax: true,
-      onAfterBundle(api) {
-        // feature("FLAG") becomes true, true && true = true
-        api.expectFile("out.js").toInclude("enabled and true");
-        api.expectFile("out.js").not.toInclude("disabled or false");
-      },
-    });
+    },
+    target: "bun",
+    bundleErrors: {
+      "/a.js": ['feature() from "bun:bundle" can only be used directly in an if statement or ternary condition'],
+    },
+  });
 
-    itBundled(`feature_flag/${backend}/LogicalOrValid`, {
-      backend,
-      files: {
-        "/a.js": `
+  itBundled("feature_flag/LogicalOrError", {
+    backend: "cli",
+    files: {
+      "/a.js": `
 import { feature } from "bun:bundle";
 if (feature("A") || feature("B")) {
-  console.log("at least one enabled");
-} else {
-  console.log("both disabled");
+  console.log("should error");
 }
 `,
-      },
-      features: ["B"],
-      minifySyntax: true,
-      onAfterBundle(api) {
-        // feature("A") = false, feature("B") = true, false || true = true
-        api.expectFile("out.js").toInclude("at least one enabled");
-        api.expectFile("out.js").not.toInclude("both disabled");
-      },
-    });
+    },
+    target: "bun",
+    bundleErrors: {
+      "/a.js": ['feature() from "bun:bundle" can only be used directly in an if statement or ternary condition'],
+    },
+  });
 
-    itBundled(`feature_flag/${backend}/LogicalNotValid`, {
-      backend,
-      files: {
-        "/a.js": `
+  itBundled("feature_flag/LogicalNotError", {
+    backend: "cli",
+    files: {
+      "/a.js": `
 import { feature } from "bun:bundle";
 if (!feature("FLAG")) {
-  console.log("not enabled");
-} else {
-  console.log("enabled");
+  console.log("should error");
 }
 `,
-      },
-      // FLAG not enabled, so !false = true
-      minifySyntax: true,
-      onAfterBundle(api) {
-        api.expectFile("out.js").toInclude("not enabled");
-        api.expectFile("out.js").not.toInclude('"enabled"');
-      },
-    });
+    },
+    target: "bun",
+    bundleErrors: {
+      "/a.js": ['feature() from "bun:bundle" can only be used directly in an if statement or ternary condition'],
+    },
+  });
 
-    itBundled(`feature_flag/${backend}/LogicalNotValidEnabled`, {
-      backend,
-      files: {
-        "/a.js": `
-import { feature } from "bun:bundle";
-if (!feature("FLAG")) {
-  console.log("not enabled");
-} else {
-  console.log("enabled");
-}
-`,
-      },
-      features: ["FLAG"],
-      minifySyntax: true,
-      onAfterBundle(api) {
-        // FLAG enabled, so !true = false
-        api.expectFile("out.js").toInclude("enabled");
-        api.expectFile("out.js").not.toInclude("not enabled");
-      },
-    });
-
-    itBundled(`feature_flag/${backend}/ComparisonValid`, {
-      backend,
-      files: {
-        "/a.js": `
+  itBundled("feature_flag/ComparisonError", {
+    backend: "cli",
+    files: {
+      "/a.js": `
 import { feature } from "bun:bundle";
 if (feature("FLAG") === true) {
-  console.log("strictly true");
-} else {
-  console.log("not strictly true");
+  console.log("should error");
 }
 `,
-      },
-      features: ["FLAG"],
-      minifySyntax: true,
-      onAfterBundle(api) {
-        // feature("FLAG") = true, true === true = true
-        api.expectFile("out.js").toInclude("strictly true");
-        api.expectFile("out.js").not.toInclude("not strictly true");
-      },
-    });
-  }
+    },
+    target: "bun",
+    bundleErrors: {
+      "/a.js": ['feature() from "bun:bundle" can only be used directly in an if statement or ternary condition'],
+    },
+  });
 
   // Edge cases: indirect access should error at build time
   itBundled("feature_flag/IndirectCallViaVariableError", {
@@ -750,27 +708,23 @@ switch (feature("FLAG")) {
     },
   });
 
-  // Edge case: short-circuit evaluation in ternary condition - this is valid
-  // The ternary condition is (feature("A") && someVar), and feature() is in a branch condition
-  for (const backend of ["cli", "api"] as const) {
-    itBundled(`feature_flag/${backend}/ShortCircuitTernaryValid`, {
-      backend,
-      files: {
-        "/a.js": `
+  // Edge case: short-circuit evaluation in ternary condition - NOT valid
+  // feature() must be the SOLE expression in the condition
+  itBundled("feature_flag/ShortCircuitTernaryError", {
+    backend: "cli",
+    files: {
+      "/a.js": `
 import { feature } from "bun:bundle";
 const someVar = true;
 const x = feature("A") && someVar ? "yes" : "no";
 console.log(x);
 `,
-      },
-      features: ["A"],
-      minifySyntax: true,
-      onAfterBundle(api) {
-        // feature("A") = true, true && true = true, so "yes"
-        api.expectFile("out.js").toInclude("yes");
-      },
-    });
-  }
+    },
+    target: "bun",
+    bundleErrors: {
+      "/a.js": ['feature() from "bun:bundle" can only be used directly in an if statement or ternary condition'],
+    },
+  });
 
   // Valid usage patterns - these should work without errors
   for (const backend of ["cli", "api"] as const) {

@@ -1642,11 +1642,25 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionMakeAbortError, (JSC::JSGlobalObject * lexica
     return JSC::JSValue::encode(error);
 }
 
-JSC::JSValue WebCore::toJS(JSC::JSGlobalObject* globalObject, CommonAbortReason abortReason)
+JSC::JSValue WebCore::toJS(JSC::JSGlobalObject* globalObject, CommonAbortReason abortReason, JSC::JSObject* capturedStack)
 {
+    auto& vm = globalObject->vm();
     switch (abortReason) {
     case CommonAbortReason::Timeout: {
-        return createDOMException(globalObject, ExceptionCode::TimeoutError, "The operation timed out."_s);
+        auto error = createDOMException(globalObject, ExceptionCode::TimeoutError, "The operation timed out."_s);
+
+        // If we have a captured stack (from AbortSignal.timeout() call site), copy it to this error
+        if (capturedStack) {
+            auto scope = DECLARE_CATCH_SCOPE(vm);
+            JSValue stackValue = capturedStack->get(globalObject, vm.propertyNames->stack);
+            if (!scope.exception() && stackValue && !stackValue.isUndefined()) {
+                if (auto* errorObject = error.getObject()) {
+                    errorObject->putDirect(vm, vm.propertyNames->stack, stackValue, 0);
+                }
+            }
+            scope.clearException();
+        }
+        return error;
     }
     case CommonAbortReason::UserAbort: {
         return createDOMException(globalObject, ExceptionCode::AbortError, "The operation was aborted."_s);
@@ -1664,7 +1678,7 @@ JSC::JSValue WebCore::toJS(JSC::JSGlobalObject* globalObject, CommonAbortReason 
 
 extern "C" JSC::EncodedJSValue WebCore__CommonAbortReason__toJS(JSC::JSGlobalObject* globalObject, WebCore::CommonAbortReason abortReason)
 {
-    return JSC::JSValue::encode(WebCore::toJS(globalObject, abortReason));
+    return JSC::JSValue::encode(WebCore::toJS(globalObject, abortReason, nullptr));
 }
 
 JSC::JSObject* Bun::createInvalidThisError(JSC::JSGlobalObject* globalObject, const String& message)

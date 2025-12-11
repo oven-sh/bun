@@ -2679,8 +2679,7 @@ pub fn NewParser_(
                         const ref = try p.declareSymbol(.other, item.name.loc, name);
                         p.bundler_feature_flag_ref = ref;
                     } else {
-                        // Warn about unknown specifiers
-                        try p.log.addWarningFmt(p.source, item.alias_loc, p.allocator, "\"bun:bundle\" only exports \"feature\"; \"{s}\" will be undefined", .{item.alias});
+                        try p.log.addErrorFmt(p.source, item.alias_loc, p.allocator, "\"bun:bundle\" has no export named \"{s}\"", .{item.alias});
                     }
                 }
                 // Return empty statement - the import is completely removed

@@ -40,9 +40,6 @@ pub fn VisitStmt(
 
         const visitors = struct {
             pub fn s_import(noalias p: *P, noalias stmts: *ListManaged(Stmt), noalias stmt: *Stmt, noalias data: *S.Import) !void {
-                // Note: `import { feature } from "bun:bundle"` is handled at parse time
-                // in processImportStatement(), not here at visit time.
-
                 try p.recordDeclaredSymbol(data.namespace_ref);
 
                 if (data.default_name) |default_name| {

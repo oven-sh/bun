@@ -7,15 +7,6 @@
 /// Usage: `kill -USR1 <pid>` to start debugger on port 6499
 const Sigusr1Handler = @This();
 
-const std = @import("std");
-const bun = @import("bun");
-const Environment = bun.Environment;
-const Output = bun.Output;
-
-const jsc = bun.jsc;
-const VirtualMachine = jsc.VirtualMachine;
-const Debugger = jsc.Debugger;
-
 const log = Output.scoped(.Sigusr1Handler, .hidden);
 
 var semaphore: std.Thread.Semaphore = .{};
@@ -207,3 +198,13 @@ comptime {
         _ = Bun__Sigusr1Handler__uninstall;
     }
 }
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Output = bun.Output;
+
+const jsc = bun.jsc;
+const Debugger = jsc.Debugger;
+const VirtualMachine = jsc.VirtualMachine;

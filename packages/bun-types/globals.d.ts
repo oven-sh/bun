@@ -14,7 +14,12 @@ declare module "bun" {
       ? {}
       : import("node:stream/web").DecompressionStream;
 
-    type LibPerformanceOrNodePerfHooksPerformance = LibDomIsLoaded extends true ? {} : import("perf_hooks").Performance;
+    type LibPerformanceOrNodePerfHooksPerformance = LibDomIsLoaded extends true
+      ? {}
+      : import("node:perf_hooks").Performance;
+    type NodePerfHooksPerformanceConstructor = LibDomIsLoaded extends true
+      ? {}
+      : typeof import("node:perf_hooks").Performance;
     type LibEmptyOrPerformanceEntry = LibDomIsLoaded extends true ? {} : import("node:perf_hooks").PerformanceEntry;
     type LibEmptyOrPerformanceMark = LibDomIsLoaded extends true ? {} : import("node:perf_hooks").PerformanceMark;
     type LibEmptyOrPerformanceMeasure = LibDomIsLoaded extends true ? {} : import("node:perf_hooks").PerformanceMeasure;
@@ -1688,6 +1693,7 @@ declare var EventSource: Bun.__internal.UseLibDomIfAvailable<
 
 interface Performance extends Bun.__internal.LibPerformanceOrNodePerfHooksPerformance {}
 declare var performance: Bun.__internal.UseLibDomIfAvailable<"performance", Performance>;
+declare var Performance: Bun.__internal.NodePerfHooksPerformanceConstructor;
 
 interface PerformanceEntry extends Bun.__internal.LibEmptyOrPerformanceEntry {}
 declare var PerformanceEntry: Bun.__internal.UseLibDomIfAvailable<

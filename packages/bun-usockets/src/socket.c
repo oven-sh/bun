@@ -125,7 +125,7 @@ int us_socket_is_closed(int ssl, struct us_socket_t *s) {
     if(ssl) {
         return us_internal_ssl_socket_is_closed((struct us_internal_ssl_socket_t *) s);
     }
-    return s->prev == (struct us_socket_t *) s->context;
+    return s->flags.is_closed == 1;
 }
 
 int us_connecting_socket_is_closed(int ssl, struct us_connecting_socket_t *c) {
@@ -158,9 +158,7 @@ void us_connecting_socket_close(int ssl, struct us_connecting_socket_t *c) {
         /* Link this socket to the close-list and let it be deleted after this iteration */
         s->next = s->context->loop->data.closed_head;
         s->context->loop->data.closed_head = s;
-
-        /* Any socket with prev = context is marked as closed */
-        s->prev = (struct us_socket_t *) s->context;
+        s->flags.is_closed = 1;
     }
     if(!c->error) {
         // if we have no error, we have to set that we were aborted aka we called close
@@ -219,8 +217,7 @@ struct us_socket_t *us_socket_close(int ssl, struct us_socket_t *s, int code, vo
         bsd_close_socket(us_poll_fd((struct us_poll_t *) s));
 
 
-        /* Any socket with prev = context is marked as closed */
-        s->prev = (struct us_socket_t *) s->context;
+        s->flags.is_closed = 1;
 
         /* mark it as closed and call the callback */
         struct us_socket_t *res = s;
@@ -268,8 +265,7 @@ struct us_socket_t *us_socket_detach(int ssl, struct us_socket_t *s) {
         s->next = s->context->loop->data.closed_head;
         s->context->loop->data.closed_head = s;
 
-        /* Any socket with prev = context is marked as closed */
-        s->prev = (struct us_socket_t *) s->context;
+        s->flags.is_closed = 1;
 
         return s;
     }
@@ -321,6 +317,7 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_context_t *ctx, int socke
     s->flags.low_prio_state = 0;
     s->flags.allow_half_open = 0;
     s->flags.is_paused = 0;
+    s->flags.is_closed = 0;
     s->flags.is_ipc = 0;
     s->flags.is_ipc = ipc;
     s->connect_state = NULL;
@@ -476,13 +473,13 @@ int us_connecting_socket_get_error(int ssl, struct us_connecting_socket_t *c) {
     Note: this assumes that the socket is non-TLS and will be adopted and wrapped with a new TLS context
           context ext will not be copied to the new context, new context will contain us_wrapped_socket_context_t on ext
 */
-struct us_socket_t *us_socket_wrap_with_tls(int ssl, struct us_socket_t *s, struct us_bun_socket_context_options_t options, struct us_socket_events_t events, int socket_ext_size) {
+struct us_socket_t *us_socket_wrap_with_tls(int ssl, struct us_socket_t *s, struct us_bun_socket_context_options_t options, struct us_socket_events_t events, int socket_ext_size, unsigned int old_socket_ext_size) {
     // only accepts non-TLS sockets
     if (ssl) {
         return NULL;
     }
 
-    return(struct us_socket_t *) us_internal_ssl_socket_wrap_with_tls(s, options, events, socket_ext_size);
+    return(struct us_socket_t *) us_internal_ssl_socket_wrap_with_tls(s, options, events, socket_ext_size, old_socket_ext_size);
 }
 
 // if a TLS socket calls this, it will start SSL call open event and TLS handshake if required

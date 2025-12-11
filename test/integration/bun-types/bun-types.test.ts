@@ -253,7 +253,10 @@ afterAll(async () => {
   if (TEMP_DIR) {
     if (Bun.env.TYPES_INTEGRATION_TEST_KEEP_TEMP_DIR === "true") {
       console.log(`Keeping temp dir ${TEMP_DIR}/fixture for debugging`);
-      await cp(TSCONFIG_SOURCE_PATH, join(TEMP_DIR, "fixture", "tsconfig.json"));
+      // Write tsconfig with skipLibCheck disabled for proper type checking
+      const tsconfig = structuredClone(sourceTsconfig);
+      tsconfig.compilerOptions.skipLibCheck = false;
+      await Bun.write(join(TEMP_DIR, "fixture", "tsconfig.json"), JSON.stringify(tsconfig, null, 2));
     } else {
       await rm(TEMP_DIR, { recursive: true, force: true });
     }
@@ -529,7 +532,7 @@ describe("@types/bun integration test", () => {
         code: 2322,
         line: "24154.ts:11:3",
         message:
-          "Type 'Blob' is not assignable to type 'import(\"buffer\").Blob'.\nThe types returned by 'stream()' are incompatible between these types.\nType 'ReadableStream<Uint8Array<ArrayBuffer>>' is missing the following properties from type 'ReadableStream<any>': blob, text, bytes, json",
+          "Type 'Blob' is not assignable to type 'import(\"node:buffer\").Blob'.\nThe types returned by 'stream()' are incompatible between these types.\nType 'ReadableStream<Uint8Array<ArrayBuffer>>' is missing the following properties from type 'ReadableStream<NonSharedUint8Array>': blob, text, bytes, json",
       },
       {
         code: 2769,
@@ -618,6 +621,26 @@ describe("@types/bun integration test", () => {
         "code": 2339,
         "line": "streams.ts:49:19",
         "message": "Property 'blob' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
+      },
+      {
+        code: 2345,
+        line: "streams.ts:63:66",
+        message: "Argument of type '\"brotli\"' is not assignable to parameter of type 'CompressionFormat'.",
+      },
+      {
+        code: 2345,
+        line: "streams.ts:63:113",
+        message: "Argument of type '\"brotli\"' is not assignable to parameter of type 'CompressionFormat'.",
+      },
+      {
+        code: 2345,
+        line: "streams.ts:64:66",
+        message: "Argument of type '\"zstd\"' is not assignable to parameter of type 'CompressionFormat'.",
+      },
+      {
+        code: 2345,
+        line: "streams.ts:64:111",
+        message: "Argument of type '\"zstd\"' is not assignable to parameter of type 'CompressionFormat'.",
       },
       {
         code: 2353,

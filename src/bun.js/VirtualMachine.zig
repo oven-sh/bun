@@ -1092,7 +1092,7 @@ pub fn initWithModuleGraph(
     // Install SIGUSR1 handler for runtime inspector activation (main thread only)
     if (comptime Environment.isPosix) {
         if (opts.is_main_thread) {
-            jsc.EventLoop.Sigusr1Handler.install();
+            jsc.EventLoop.Sigusr1Handler.installIfNotAlready();
         }
     }
 
@@ -1226,7 +1226,7 @@ pub fn init(opts: Options) !*VirtualMachine {
     // Install SIGUSR1 handler for runtime inspector activation (main thread only)
     if (comptime Environment.isPosix) {
         if (opts.is_main_thread) {
-            jsc.EventLoop.Sigusr1Handler.install();
+            jsc.EventLoop.Sigusr1Handler.installIfNotAlready();
         }
     }
 
@@ -1483,7 +1483,7 @@ pub fn initBake(opts: Options) anyerror!*VirtualMachine {
     // Install SIGUSR1 handler for runtime inspector activation (main thread only)
     if (comptime Environment.isPosix) {
         if (opts.is_main_thread) {
-            jsc.EventLoop.Sigusr1Handler.install();
+            jsc.EventLoop.Sigusr1Handler.installIfNotAlready();
         }
     }
 

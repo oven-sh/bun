@@ -1691,7 +1691,7 @@ pub fn VisitExpr(
                     return p.newExpr(E.Boolean{ .value = false }, loc);
                 }
                 const is_enabled = p.options.features.bundler_feature_flags.map.contains(flag_string.data);
-                return p.newExpr(E.Boolean{ .value = is_enabled }, loc);
+                return .{ .data = .{ .e_branch_boolean = .{ .value = is_enabled } }, .loc = loc };
             }
         };
     };

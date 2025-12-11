@@ -632,6 +632,7 @@ fn NewPrinter(
         binary_expression_stack: std.array_list.Managed(BinaryExpressionVisitor) = undefined,
 
         was_lazy_export: bool = false,
+        in_branch_condition: bool = false,
 
         const Printer = @This();
 
@@ -735,7 +736,7 @@ fn NewPrinter(
                             .e_await, .e_undefined, .e_number => {
                                 left_level.* = .call;
                             },
-                            .e_boolean => {
+                            .e_boolean, .e_branch_boolean => {
                                 // When minifying, booleans are printed as "!0 and "!1"
                                 if (p.options.minify_syntax) {
                                     left_level.* = .call;
@@ -2477,7 +2478,9 @@ fn NewPrinter(
                         p.print("(");
                         flags.remove(.forbid_in);
                     }
+                    p.in_branch_condition = true;
                     p.printExpr(e.test_, .conditional, flags);
+                    p.in_branch_condition = false;
                     p.printSpace();
                     p.print("?");
                     p.printSpace();
@@ -2678,6 +2681,24 @@ fn NewPrinter(
                     }
                 },
                 .e_boolean => |e| {
+                    p.addSourceMapping(expr.loc);
+                    if (p.options.minify_syntax) {
+                        if (level.gte(Level.prefix)) {
+                            p.print(if (e.value) "(!0)" else "(!1)");
+                        } else {
+                            p.print(if (e.value) "!0" else "!1");
+                        }
+                    } else {
+                        p.printSpaceBeforeIdentifier();
+                        p.print(if (e.value) "true" else "false");
+                    }
+                },
+                .e_branch_boolean => |e| {
+                    // e_branch_boolean is produced by feature() from bun:bundle.
+                    // It can only be used directly in an if statement or ternary condition.
+                    if (!p.in_branch_condition) {
+                        Output.panic("feature() from \"bun:bundle\" can only be used directly in an if statement or ternary condition", .{});
+                    }
                     p.addSourceMapping(expr.loc);
                     if (p.options.minify_syntax) {
                         if (level.gte(Level.prefix)) {
@@ -4790,7 +4811,9 @@ fn NewPrinter(
             p.print("if");
             p.printSpace();
             p.print("(");
+            p.in_branch_condition = true;
             p.printExpr(s.test_, .lowest, ExprFlag.None());
+            p.in_branch_condition = false;
             p.print(")");
 
             switch (s.yes.data) {

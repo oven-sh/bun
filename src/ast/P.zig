@@ -3965,6 +3965,7 @@ pub fn NewParser_(
                 .e_undefined,
                 .e_missing,
                 .e_boolean,
+                .e_branch_boolean,
                 .e_number,
                 .e_big_int,
                 .e_string,

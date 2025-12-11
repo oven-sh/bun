@@ -1075,14 +1075,8 @@ pub fn initWithModuleGraph(
     vm.body_value_hive_allocator = Body.Value.HiveAllocator.init(bun.typedAllocator(jsc.WebCore.Body.Value));
 
     // Install debug handler for runtime inspector activation (main thread only)
-    if (comptime Environment.isPosix) {
-        if (opts.is_main_thread) {
-            jsc.EventLoop.Sigusr1Handler.installIfNotAlready();
-        }
-    } else if (comptime Environment.isWindows) {
-        if (opts.is_main_thread) {
-            jsc.EventLoop.WindowsDebugHandler.installIfNotAlready();
-        }
+    if (opts.is_main_thread) {
+        jsc.EventLoop.RuntimeInspector.installIfNotAlready();
     }
 
     return vm;
@@ -1213,14 +1207,8 @@ pub fn init(opts: Options) !*VirtualMachine {
     vm.body_value_hive_allocator = Body.Value.HiveAllocator.init(bun.typedAllocator(jsc.WebCore.Body.Value));
 
     // Install debug handler for runtime inspector activation (main thread only)
-    if (comptime Environment.isPosix) {
-        if (opts.is_main_thread) {
-            jsc.EventLoop.Sigusr1Handler.installIfNotAlready();
-        }
-    } else if (comptime Environment.isWindows) {
-        if (opts.is_main_thread) {
-            jsc.EventLoop.WindowsDebugHandler.installIfNotAlready();
-        }
+    if (opts.is_main_thread) {
+        jsc.EventLoop.RuntimeInspector.installIfNotAlready();
     }
 
     return vm;
@@ -1474,14 +1462,8 @@ pub fn initBake(opts: Options) anyerror!*VirtualMachine {
     vm.body_value_hive_allocator = Body.Value.HiveAllocator.init(bun.typedAllocator(jsc.WebCore.Body.Value));
 
     // Install debug handler for runtime inspector activation (main thread only)
-    if (comptime Environment.isPosix) {
-        if (opts.is_main_thread) {
-            jsc.EventLoop.Sigusr1Handler.installIfNotAlready();
-        }
-    } else if (comptime Environment.isWindows) {
-        if (opts.is_main_thread) {
-            jsc.EventLoop.WindowsDebugHandler.installIfNotAlready();
-        }
+    if (opts.is_main_thread) {
+        jsc.EventLoop.RuntimeInspector.installIfNotAlready();
     }
 
     return vm;

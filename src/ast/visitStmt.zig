@@ -40,10 +40,10 @@ pub fn VisitStmt(
 
         const visitors = struct {
             pub fn s_import(noalias p: *P, noalias stmts: *ListManaged(Stmt), noalias stmt: *Stmt, noalias data: *S.Import) !void {
-                // Handle `import { feature } from "bun:bundler"` - this is a special import
+                // Handle `import { feature } from "bun:bundle"` - this is a special import
                 // that provides static feature flag checking at bundle time.
                 const import_record = &p.import_records.items[data.import_record_index];
-                if (strings.eqlComptime(import_record.path.text, "bun:bundler")) {
+                if (strings.eqlComptime(import_record.path.text, "bun:bundle")) {
                     // Look for the "feature" import
                     for (data.items) |*item| {
                         // In ClauseItem from parseImportClause:

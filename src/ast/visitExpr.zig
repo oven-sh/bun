@@ -1277,7 +1277,7 @@ pub fn VisitExpr(
                     }
                 }
 
-                // Handle `feature("FLAG_NAME")` calls from `import { feature } from "bun:bundler"`
+                // Handle `feature("FLAG_NAME")` calls from `import { feature } from "bun:bundle"`
                 if (maybeReplaceBundlerFeatureCall(p, e_, expr.loc)) |result| {
                     return result;
                 }
@@ -1637,7 +1637,7 @@ pub fn VisitExpr(
                 return expr;
             }
 
-            /// Handles `feature("FLAG_NAME")` calls from `import { feature } from "bun:bundler"`.
+            /// Handles `feature("FLAG_NAME")` calls from `import { feature } from "bun:bundle"`.
             /// This enables statically analyzable dead-code elimination through feature gating.
             ///
             /// When a feature flag is enabled via `--feature=FLAG_NAME`, `feature("FLAG_NAME")`
@@ -1651,7 +1651,7 @@ pub fn VisitExpr(
                     return null;
                 }
 
-                // Check if the target is the `feature` function from "bun:bundler"
+                // Check if the target is the `feature` function from "bun:bundle"
                 // It could be e_identifier (for unbound) or e_import_identifier (for imports)
                 const target_ref: ?Ref = switch (e_.target.data) {
                     .e_identifier => |ident| ident.ref,

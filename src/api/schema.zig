@@ -1655,7 +1655,7 @@ pub const api = struct {
 
         drop: []const []const u8 = &.{},
 
-        /// feature_flags for dead-code elimination via `import { feature } from "bun:bundler"`
+        /// feature_flags for dead-code elimination via `import { feature } from "bun:bundle"`
         feature_flags: []const []const u8 = &.{},
 
         /// preserve_symlinks

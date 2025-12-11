@@ -1569,7 +1569,7 @@ pub const ResolveQueue = bun.LinearFifo(
     .Dynamic,
 );
 
-/// Initialize bundler feature flags for dead-code elimination via `import { feature } from "bun:bundler"`.
+/// Initialize bundler feature flags for dead-code elimination via `import { feature } from "bun:bundle"`.
 /// This is used to populate the `bundler_feature_flags` field in RuntimeFeatures.
 fn initBundlerFeatureFlags(allocator: std.mem.Allocator, feature_flags: []const []const u8) *const bun.StringHashMapUnmanaged(void) {
     if (feature_flags.len == 0) {

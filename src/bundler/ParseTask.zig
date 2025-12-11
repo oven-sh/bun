@@ -1379,13 +1379,17 @@ pub fn onComplete(result: *Result) void {
 
 /// Converts a slice of feature flag strings into a StringHashMapUnmanaged for efficient lookup.
 /// This is used to populate the `bundler_feature_flags` field in RuntimeFeatures.
-fn initBundlerFeatureFlags(allocator: std.mem.Allocator, feature_flags: []const []const u8) bun.StringHashMapUnmanaged(void) {
+/// Returns a pointer to a heap-allocated map, or the global empty map if no flags are provided.
+fn initBundlerFeatureFlags(allocator: std.mem.Allocator, feature_flags: []const []const u8) *const bun.StringHashMapUnmanaged(void) {
     if (feature_flags.len == 0) {
-        return .{};
+        return &runtime.Runtime.Features.empty_bundler_feature_flags;
     }
 
-    var map = bun.StringHashMapUnmanaged(void){};
-    map.ensureTotalCapacity(allocator, @intCast(feature_flags.len)) catch return .{};
+    const map = allocator.create(bun.StringHashMapUnmanaged(void)) catch
+        return &runtime.Runtime.Features.empty_bundler_feature_flags;
+    map.* = .{};
+    map.ensureTotalCapacity(allocator, @intCast(feature_flags.len)) catch
+        return &runtime.Runtime.Features.empty_bundler_feature_flags;
     for (feature_flags) |flag| {
         map.putAssumeCapacity(flag, {});
     }

@@ -1113,6 +1113,7 @@ pub const Transpiler = struct {
                 opts.features.minify_identifiers = transpiler.options.minify_identifiers;
                 opts.features.dead_code_elimination = transpiler.options.dead_code_elimination;
                 opts.features.remove_cjs_module_wrapper = this_parse.remove_cjs_module_wrapper;
+                opts.features.bundler_feature_flags = initBundlerFeatureFlags(allocator, transpiler.options.feature_flags);
 
                 if (transpiler.macro_context == null) {
                     transpiler.macro_context = js_ast.Macro.MacroContext.init(transpiler);
@@ -1567,6 +1568,24 @@ pub const ResolveQueue = bun.LinearFifo(
     _resolver.Result,
     .Dynamic,
 );
+
+/// Initialize bundler feature flags for dead-code elimination via `import { feature } from "bun:bundler"`.
+/// This is used to populate the `bundler_feature_flags` field in RuntimeFeatures.
+fn initBundlerFeatureFlags(allocator: std.mem.Allocator, feature_flags: []const []const u8) *const bun.StringHashMapUnmanaged(void) {
+    if (feature_flags.len == 0) {
+        return &runtime.Runtime.Features.empty_bundler_feature_flags;
+    }
+
+    const map = allocator.create(bun.StringHashMapUnmanaged(void)) catch
+        return &runtime.Runtime.Features.empty_bundler_feature_flags;
+    map.* = .{};
+    map.ensureTotalCapacity(allocator, @intCast(feature_flags.len)) catch
+        return &runtime.Runtime.Features.empty_bundler_feature_flags;
+    for (feature_flags) |flag| {
+        map.putAssumeCapacity(flag, {});
+    }
+    return map;
+}
 
 const string = []const u8;
 

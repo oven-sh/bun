@@ -346,12 +346,13 @@ pub const BuildCommand = struct {
             if (output_dir.len == 0 and outfile.len > 0 and will_be_one_file) {
                 output_dir = std.fs.path.dirname(outfile) orelse ".";
                 if (ctx.bundler_options.compile) {
-                    // If the first output file happens to be a client-side chunk imported server-side
-                    // then don't rename it to something else, since an HTML
-                    // import manifest might depend on the file path being the
-                    // one we think it should be.
+                    // Find the main entry point (entry_point_index == 0) to rename it to the outfile name.
+                    // We must check entry_point_index because when multiple entry points are provided
+                    // (e.g., `bun build --compile app.js assets/*`), the output files may be sorted
+                    // in a different order and the first server-side entry-point might not be the
+                    // main entry point that should become the executable.
                     for (output_files) |*f| {
-                        if (f.output_kind == .@"entry-point" and (f.side orelse .server) == .server) {
+                        if (f.output_kind == .@"entry-point" and (f.side orelse .server) == .server and f.entry_point_index == 0) {
                             f.dest_path = std.fs.path.basename(outfile);
                             break;
                         }

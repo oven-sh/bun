@@ -358,9 +358,6 @@ describe("@types/bun integration test", () => {
   });
 
   describe("bun:bundle feature() type safety with Registry", () => {
-    // This demonstrates how users can add strict type-safe feature flags using the Registry interface.
-    // By augmenting Registry with a `features` property, the feature() function becomes strict.
-
     test("Registry augmentation restricts feature() to known flags", async () => {
       const testCode = `
         // Augment the Registry to define known flags
@@ -419,10 +416,16 @@ describe("@types/bun integration test", () => {
       });
 
       expect(emptyInterfaces).toEqual(expectedEmptyInterfacesWhenNoDOM);
-      // Should have a type error for the invalid flag
       const relevantDiagnostics = diagnostics.filter(d => d.line?.startsWith("registry-invalid-test.ts"));
-      expect(relevantDiagnostics.length).toBeGreaterThan(0);
-      expect(relevantDiagnostics[0].message).toContain("INVALID_FLAG");
+      expect(relevantDiagnostics).toMatchInlineSnapshot(`
+        [
+          {
+            "code": 2345,
+            "line": "registry-invalid-test.ts:10:40",
+            "message": "Argument of type '\"INVALID_FLAG\"' is not assignable to parameter of type '\"ALLOWED_FLAG\"'.",
+          },
+        ]
+      `);
     });
 
     test("without Registry augmentation, feature() accepts any string", async () => {

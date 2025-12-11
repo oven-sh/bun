@@ -84,6 +84,11 @@ pub fn start(this: *@This()) Yield {
 /// We write 4 8kb chunks and then suspend execution to the task.
 /// This is to avoid blocking the main thread forever.
 fn writeNoIO(this: *@This()) Yield {
+    // Check for abort before continuing the infinite loop
+    if (this.bltn().parentCmd().base.interpreter.isAborted()) {
+        return this.bltn().done(128 + @intFromEnum(bun.SignalCode.SIGTERM));
+    }
+
     if (this.writeOnceNoIO(this.buffer[0..this.buffer_used])) |yield| return yield;
     if (this.writeOnceNoIO(this.buffer[0..this.buffer_used])) |yield| return yield;
     if (this.writeOnceNoIO(this.buffer[0..this.buffer_used])) |yield| return yield;

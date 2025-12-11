@@ -37,6 +37,23 @@ pub fn init(
     parent: ParentPtr,
     io: IO,
 ) *Async {
+    // Check if interpreter is already aborted before creating async command
+    // This prevents spawning new background processes after abort signal fires
+    if (interpreter.isAborted()) {
+        // Don't increment async_commands_executing, just return a "done" state
+        const async_cmd = parent.create(Async);
+        async_cmd.* = .{
+            .base = State.initWithNewAllocScope(.async, interpreter, shell_state),
+            .node = node,
+            .parent = parent,
+            .io = io,
+            .state = .{ .done = 128 + @intFromEnum(bun.SignalCode.SIGTERM) },
+            .event_loop = interpreter.event_loop,
+            .concurrent_task = jsc.EventLoopTask.fromEventLoop(interpreter.event_loop),
+        };
+        return async_cmd;
+    }
+
     interpreter.async_commands_executing += 1;
     const async_cmd = parent.create(Async);
     async_cmd.* = .{
@@ -65,6 +82,15 @@ pub fn next(this: *Async) Yield {
             return .suspended;
         },
         .exec => {
+            // Check for abort before spawning child
+            if (this.base.interpreter.isAborted()) {
+                this.state = .{ .done = 128 + @intFromEnum(bun.SignalCode.SIGTERM) };
+                // Enqueue self to process the .done state on next tick
+                // This matches the pattern used in childDone()
+                this.enqueueSelf();
+                return .suspended;
+            }
+
             if (this.state.exec.child) |child| {
                 return child.start();
             }

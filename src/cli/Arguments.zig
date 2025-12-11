@@ -153,6 +153,10 @@ pub const build_only_params = [_]ParamType{
     clap.parseParam("--no-compile-autoload-dotenv     Disable autoloading of .env files in standalone executable") catch unreachable,
     clap.parseParam("--compile-autoload-bunfig        Enable autoloading of bunfig.toml in standalone executable (default: true)") catch unreachable,
     clap.parseParam("--no-compile-autoload-bunfig     Disable autoloading of bunfig.toml in standalone executable") catch unreachable,
+    clap.parseParam("--compile-autoload-tsconfig      Enable autoloading of tsconfig.json at runtime in standalone executable (default: false)") catch unreachable,
+    clap.parseParam("--no-compile-autoload-tsconfig   Disable autoloading of tsconfig.json at runtime in standalone executable") catch unreachable,
+    clap.parseParam("--compile-autoload-package-json  Enable autoloading of package.json at runtime in standalone executable (default: false)") catch unreachable,
+    clap.parseParam("--no-compile-autoload-package-json Disable autoloading of package.json at runtime in standalone executable") catch unreachable,
     clap.parseParam("--bytecode                       Use a bytecode cache") catch unreachable,
     clap.parseParam("--watch                          Automatically restart the process on file change") catch unreachable,
     clap.parseParam("--no-clear-screen                Disable clearing the terminal screen on reload when --watch is enabled") catch unreachable,
@@ -1060,6 +1064,42 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                     Global.crash();
                 }
                 ctx.bundler_options.compile_autoload_bunfig = has_positive;
+            }
+        }
+
+        // Handle --compile-autoload-tsconfig flags (default: false, tsconfig not loaded at runtime)
+        {
+            const has_positive = args.flag("--compile-autoload-tsconfig");
+            const has_negative = args.flag("--no-compile-autoload-tsconfig");
+
+            if (has_positive or has_negative) {
+                if (!ctx.bundler_options.compile) {
+                    Output.errGeneric("--compile-autoload-tsconfig requires --compile", .{});
+                    Global.crash();
+                }
+                if (has_positive and has_negative) {
+                    Output.errGeneric("Cannot use both --compile-autoload-tsconfig and --no-compile-autoload-tsconfig", .{});
+                    Global.crash();
+                }
+                ctx.bundler_options.compile_autoload_tsconfig = has_positive;
+            }
+        }
+
+        // Handle --compile-autoload-package-json flags (default: false, package.json not loaded at runtime)
+        {
+            const has_positive = args.flag("--compile-autoload-package-json");
+            const has_negative = args.flag("--no-compile-autoload-package-json");
+
+            if (has_positive or has_negative) {
+                if (!ctx.bundler_options.compile) {
+                    Output.errGeneric("--compile-autoload-package-json requires --compile", .{});
+                    Global.crash();
+                }
+                if (has_positive and has_negative) {
+                    Output.errGeneric("Cannot use both --compile-autoload-package-json and --no-compile-autoload-package-json", .{});
+                    Global.crash();
+                }
+                ctx.bundler_options.compile_autoload_package_json = has_positive;
             }
         }
 

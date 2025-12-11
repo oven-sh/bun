@@ -656,11 +656,11 @@ const resolve_path = @import("../resolver/resolve_path.zig");
 const std = @import("std");
 const BundleV2 = @import("../bundler/bundle_v2.zig").BundleV2;
 const Command = @import("../cli.zig").Command;
+const Runtime = @import("../runtime.zig").Runtime;
 
 const bun = @import("bun");
 const Global = bun.Global;
 const Output = bun.Output;
 const default_allocator = bun.default_allocator;
-const Runtime = @import("../runtime.zig").Runtime;
 const strings = bun.strings;
 const transpiler = bun.transpiler;

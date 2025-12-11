@@ -735,7 +735,7 @@ fn NewPrinter(
                             .e_await, .e_undefined, .e_number => {
                                 left_level.* = .call;
                             },
-                            .e_boolean => {
+                            .e_boolean, .e_branch_boolean => {
                                 // When minifying, booleans are printed as "!0 and "!1"
                                 if (p.options.minify_syntax) {
                                     left_level.* = .call;
@@ -2678,6 +2678,21 @@ fn NewPrinter(
                     }
                 },
                 .e_boolean => |e| {
+                    p.addSourceMapping(expr.loc);
+                    if (p.options.minify_syntax) {
+                        if (level.gte(Level.prefix)) {
+                            p.print(if (e.value) "(!0)" else "(!1)");
+                        } else {
+                            p.print(if (e.value) "!0" else "!1");
+                        }
+                    } else {
+                        p.printSpaceBeforeIdentifier();
+                        p.print(if (e.value) "true" else "false");
+                    }
+                },
+                .e_branch_boolean => |e| {
+                    // e_branch_boolean is produced by feature() from bun:bundle.
+                    // It prints the same as e_boolean. Invalid usage is caught during the visit phase.
                     p.addSourceMapping(expr.loc);
                     if (p.options.minify_syntax) {
                         if (level.gte(Level.prefix)) {

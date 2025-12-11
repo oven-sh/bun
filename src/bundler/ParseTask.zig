@@ -1176,7 +1176,7 @@ fn runWithSourceCode(
     opts.features.minify_whitespace = transpiler.options.minify_whitespace;
     opts.features.emit_decorator_metadata = transpiler.options.emit_decorator_metadata;
     opts.features.unwrap_commonjs_packages = transpiler.options.unwrap_commonjs_packages;
-    opts.features.bundler_feature_flags = initBundlerFeatureFlags(allocator, transpiler.options.feature_flags);
+    opts.features.bundler_feature_flags = runtime.Runtime.Features.initBundlerFeatureFlags(allocator, transpiler.options.feature_flags);
     opts.features.hot_module_reloading = output_format == .internal_bake_dev and !source.index.isRuntime();
     opts.features.auto_polyfill_require = output_format == .esm and !opts.features.hot_module_reloading;
     opts.features.react_fast_refresh = target == .browser and
@@ -1375,25 +1375,6 @@ pub fn runFromThreadPool(this: *ParseTask) void {
 
 pub fn onComplete(result: *Result) void {
     BundleV2.onParseTaskComplete(result, result.ctx);
-}
-
-/// Converts a slice of feature flag strings into a StringHashMapUnmanaged for efficient lookup.
-/// This is used to populate the `bundler_feature_flags` field in RuntimeFeatures.
-/// Returns a pointer to a heap-allocated map, or the global empty map if no flags are provided.
-fn initBundlerFeatureFlags(allocator: std.mem.Allocator, feature_flags: []const []const u8) *const bun.StringHashMapUnmanaged(void) {
-    if (feature_flags.len == 0) {
-        return &runtime.Runtime.Features.empty_bundler_feature_flags;
-    }
-
-    const map = allocator.create(bun.StringHashMapUnmanaged(void)) catch
-        return &runtime.Runtime.Features.empty_bundler_feature_flags;
-    map.* = .{};
-    map.ensureTotalCapacity(allocator, @intCast(feature_flags.len)) catch
-        return &runtime.Runtime.Features.empty_bundler_feature_flags;
-    for (feature_flags) |flag| {
-        map.putAssumeCapacity(flag, {});
-    }
-    return map;
 }
 
 pub const Ref = bun.ast.Ref;

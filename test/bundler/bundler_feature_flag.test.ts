@@ -29,11 +29,11 @@ if (feature("SUPER_SECRET")) {
       proc.exited,
     ]);
 
-    expect(exitCode).toBe(0);
     // The output should contain `if (true)` since the feature is enabled
     expect(stdout).toContain("true");
     expect(stdout).not.toContain("feature(");
     expect(stdout).not.toContain("bun:bundle");
+    expect(exitCode).toBe(0);
   });
 
   test("feature() returns false when flag is not enabled", async () => {
@@ -63,11 +63,11 @@ if (feature("SUPER_SECRET")) {
       proc.exited,
     ]);
 
-    expect(exitCode).toBe(0);
     // The output should contain `if (false)` since the feature is not enabled
     expect(stdout).toContain("false");
     expect(stdout).not.toContain("feature(");
     expect(stdout).not.toContain("bun:bundle");
+    expect(exitCode).toBe(0);
   });
 
   test("multiple feature flags can be enabled", async () => {
@@ -97,12 +97,12 @@ console.log(a, b, c);
       proc.exited,
     ]);
 
-    expect(exitCode).toBe(0);
     // FLAG_A and FLAG_C are enabled, FLAG_B is not
     // The output should show the assignments
     expect(stdout).toContain("a = true");
     expect(stdout).toContain("b = false");
     expect(stdout).toContain("c = true");
+    expect(exitCode).toBe(0);
   });
 
   test("dead code elimination works with feature flags", async () => {
@@ -134,10 +134,10 @@ if (feature("DISABLED_FEATURE")) {
       proc.exited,
     ]);
 
-    expect(exitCode).toBe(0);
     // With minification, dead code should be eliminated
     expect(stdout).toContain("this should be kept");
     expect(stdout).not.toContain("this should be removed");
+    expect(exitCode).toBe(0);
   });
 
   test("feature() with non-string argument produces error", async () => {
@@ -168,6 +168,7 @@ if (feature(flag)) {
 
     // Should produce an error about string literal requirement
     expect(stderr).toContain("string literal");
+    expect(exitCode).not.toBe(0);
   });
 
   test("feature() with no arguments produces error", async () => {
@@ -197,6 +198,7 @@ if (feature()) {
 
     // Should produce an error about argument requirement
     expect(stderr).toContain("one string argument");
+    expect(exitCode).not.toBe(0);
   });
 
   test("bun:bundle import is removed from output", async () => {
@@ -223,10 +225,10 @@ console.log(x);
       proc.exited,
     ]);
 
-    expect(exitCode).toBe(0);
     // The import should be completely removed
     expect(stdout).not.toContain("bun:bundle");
     expect(stdout).not.toContain("import");
+    expect(exitCode).toBe(0);
   });
 
   test("dead code elimination removes entire if block when condition is false", async () => {
@@ -261,12 +263,12 @@ console.log("This should remain");
       proc.exited,
     ]);
 
-    expect(exitCode).toBe(0);
     // The expensive computation and related code should be completely eliminated
     expect(stdout).not.toContain("expensiveComputation");
     expect(stdout).not.toContain("expensive result");
     expect(stdout).not.toContain("This entire block should be removed");
     expect(stdout).toContain("This should remain");
+    expect(exitCode).toBe(0);
   });
 
   test("dead code elimination keeps else branch when condition is false", async () => {
@@ -296,9 +298,9 @@ if (feature("DISABLED")) {
       proc.exited,
     ]);
 
-    expect(exitCode).toBe(0);
     expect(stdout).not.toContain("if branch - should be removed");
     expect(stdout).toContain("else branch - should be kept");
+    expect(exitCode).toBe(0);
   });
 
   test("dead code elimination removes else branch when condition is true", async () => {
@@ -328,9 +330,9 @@ if (feature("ENABLED")) {
       proc.exited,
     ]);
 
-    expect(exitCode).toBe(0);
     expect(stdout).toContain("if branch - should be kept");
     expect(stdout).not.toContain("else branch - should be removed");
+    expect(exitCode).toBe(0);
   });
 
   test("works correctly at runtime with bun run", async () => {
@@ -361,8 +363,8 @@ if (feature("RUNTIME_FLAG")) {
       proc1.exited,
     ]);
 
-    expect(exitCode1).toBe(0);
     expect(stdout1.trim()).toBe("runtime flag disabled");
+    expect(exitCode1).toBe(0);
 
     // Now test with the flag enabled
     await using proc2 = Bun.spawn({
@@ -379,8 +381,8 @@ if (feature("RUNTIME_FLAG")) {
       proc2.exited,
     ]);
 
-    expect(exitCode2).toBe(0);
     expect(stdout2.trim()).toBe("runtime flag enabled");
+    expect(exitCode2).toBe(0);
   });
 
   test("works correctly in bun test", async () => {
@@ -415,9 +417,9 @@ test("feature flag in test", () => {
       proc1.exited,
     ]);
 
-    expect(exitCode1).toBe(0);
     expect(stdout1).toContain("TEST_FLAG_DISABLED");
     expect(stdout1).not.toContain("TEST_FLAG_ENABLED");
+    expect(exitCode1).toBe(0);
 
     // Now test with the flag enabled
     await using proc2 = Bun.spawn({
@@ -434,9 +436,9 @@ test("feature flag in test", () => {
       proc2.exited,
     ]);
 
-    expect(exitCode2).toBe(0);
     expect(stdout2).toContain("TEST_FLAG_ENABLED");
     expect(stdout2).not.toContain("TEST_FLAG_DISABLED");
+    expect(exitCode2).toBe(0);
   });
 
   test("feature flag with aliased import works", async () => {
@@ -466,9 +468,9 @@ if (checkFeature("ALIASED")) {
       proc.exited,
     ]);
 
-    expect(exitCode).toBe(0);
     expect(stdout).toContain("true");
     expect(stdout).not.toContain("checkFeature");
+    expect(exitCode).toBe(0);
   });
 
   test("ternary operator dead code elimination", async () => {
@@ -496,9 +498,9 @@ console.log(result);
       proc1.exited,
     ]);
 
-    expect(exitCode1).toBe(0);
     expect(stdout1).toContain("ternary_disabled");
     expect(stdout1).not.toContain("ternary_enabled");
+    expect(exitCode1).toBe(0);
 
     // With the flag
     await using proc2 = Bun.spawn({
@@ -515,8 +517,8 @@ console.log(result);
       proc2.exited,
     ]);
 
-    expect(exitCode2).toBe(0);
     expect(stdout2).toContain("ternary_enabled");
     expect(stdout2).not.toContain("ternary_disabled");
+    expect(exitCode2).toBe(0);
   });
 });

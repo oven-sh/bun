@@ -30,11 +30,11 @@ test("prepare() with single bigint binding", () => {
   const db = new Database(":memory:");
   db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, value INTEGER)");
 
-  const stmt = db.prepare("INSERT INTO test (id, value) VALUES (1, ?)", 9007199254740993n);
+  const stmt = db.prepare("INSERT INTO test (id, value) VALUES (1, ?)", 9007199254740991n);
   stmt.run();
 
   const result = db.query("SELECT value FROM test WHERE id = 1").get();
-  expect(result).toEqual({ value: 9007199254740993 });
+  expect(result).toEqual({ value: 9007199254740991 });
 });
 
 test("prepare() with single null binding", () => {

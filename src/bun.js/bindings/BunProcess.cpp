@@ -3845,6 +3845,70 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyKill, (JSC::JSGlobalObject * glob
     RELEASE_AND_RETURN(scope, JSValue::encode(jsNumber(result)));
 }
 
+JSC_DEFINE_HOST_FUNCTION(Process_functionDebugProcess, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+
+    if (callFrame->argumentCount() < 1) {
+        throwVMError(globalObject, scope, "process._debugProcess requires a pid argument"_s);
+        return {};
+    }
+
+    int pid = callFrame->argument(0).toInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    // posix we can just send SIGUSR1, on windows we map a file to `bun-debug-handler-<pid>` and send to that
+#if !OS(WINDOWS)
+    int result = kill(pid, SIGUSR1);
+    if (result < 0) {
+        throwVMError(globalObject, scope, makeString("Failed to send SIGUSR1 to process "_s, pid, ": process may not exist or permission denied"_s));
+        return {};
+    }
+#else
+    wchar_t mappingName[64];
+    swprintf(mappingName, 64, L"bun-debug-handler-%d", pid);
+
+    HANDLE hMapping = OpenFileMappingW(FILE_MAP_READ, FALSE, mappingName);
+    if (!hMapping) {
+        throwVMError(globalObject, scope, makeString("Failed to open debug handler for process "_s, pid, ": process may not have inspector support enabled"_s));
+        return {};
+    }
+
+    void* pFunc = MapViewOfFile(hMapping, FILE_MAP_READ, 0, 0, sizeof(void*));
+    if (!pFunc) {
+        CloseHandle(hMapping);
+        throwVMError(globalObject, scope, makeString("Failed to map debug handler for process "_s, pid));
+        return {};
+    }
+
+    LPTHREAD_START_ROUTINE threadProc = *reinterpret_cast<LPTHREAD_START_ROUTINE*>(pFunc);
+    UnmapViewOfFile(pFunc);
+    CloseHandle(hMapping);
+
+    HANDLE hProcess = OpenProcess(PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ, FALSE, pid);
+    if (!hProcess) {
+        throwVMError(globalObject, scope, makeString("Failed to open process "_s, pid, ": access denied or process not found"_s));
+        return {};
+    }
+
+    HANDLE hThread = CreateRemoteThread(hProcess, NULL, 0, threadProc, NULL, 0, NULL);
+    if (!hThread) {
+        CloseHandle(hProcess);
+        throwVMError(globalObject, scope, makeString("Failed to create remote thread in process "_s, pid));
+        return {};
+    }
+
+    // Wait briefly for the thread to complete because closing the handles
+    // immediately could terminate the remote thread before it finishes
+    // triggering the inspector in the target process.
+    WaitForSingleObject(hThread, 1000);
+    CloseHandle(hThread);
+    CloseHandle(hProcess);
+#endif
+
+    return JSValue::encode(jsUndefined());
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionKill, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
@@ -3984,7 +4048,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
 /* Source for Process.lut.h
 @begin processObjectTable
   _debugEnd                        Process_stubEmptyFunction                           Function 0
-  _debugProcess                    Process_stubEmptyFunction                           Function 0
+  _debugProcess                    Process_functionDebugProcess                        Function 1
   _eval                            processGetEval                                      CustomAccessor
   _fatalException                  Process_stubEmptyFunction                           Function 1
   _getActiveHandles                Process_stubFunctionReturningArray                  Function 0

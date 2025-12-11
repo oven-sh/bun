@@ -780,7 +780,7 @@ if (feature("A")) {
       minifySyntax: true,
       onAfterBundle(api) {
         api.expectFile("out.js").toInclude("B");
-        api.expectFile("out.js").not.toInclude('"A"');
+        api.expectFile("out.js").not.toInclude("A");
         api.expectFile("out.js").not.toInclude("neither");
       },
     });

@@ -760,6 +760,7 @@ pub const InitCommand = struct {
             var package_json_writer = JSPrinter.BufferPrinter.init(buffer_writer);
 
             var log = logger.Log.init(alloc);
+            defer log.deinit();
             _ = JSPrinter.printJSON(
                 @TypeOf(&package_json_writer),
                 &package_json_writer,

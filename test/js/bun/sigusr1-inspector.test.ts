@@ -1,9 +1,9 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 
-describe("SIGUSR1 inspector activation", () => {
+describe.skipIf(isWindows)("SIGUSR1 inspector activation", () => {
   test("user SIGUSR1 listener takes precedence over inspector activation", async () => {
     using dir = tempDir("sigusr1-test", {
       "test.js": `
@@ -31,12 +31,13 @@ describe("SIGUSR1 inspector activation", () => {
     });
 
     const reader = proc.stdout.getReader();
+    const decoder = new TextDecoder();
 
     let output = "";
     while (!output.includes("READY")) {
       const { value, done } = await reader.read();
       if (done) break;
-      output += new TextDecoder().decode(value);
+      output += decoder.decode(value, { stream: true });
     }
 
     const pid = parseInt(await Bun.file(join(String(dir), "pid")).text(), 10);
@@ -46,8 +47,9 @@ describe("SIGUSR1 inspector activation", () => {
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;
-      output += new TextDecoder().decode(value);
+      output += decoder.decode(value, { stream: true });
     }
+    output += decoder.decode();
 
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 

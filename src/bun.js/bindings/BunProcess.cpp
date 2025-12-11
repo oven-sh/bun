@@ -1061,7 +1061,7 @@ static void loadSignalNumberMap()
         signalNameToNumberMap->add(signalNames[8], SIGFPE);
         signalNameToNumberMap->add(signalNames[9], SIGKILL);
 #ifdef SIGUSR1
-        signalNameToNumberMap->add(signalNames[10], SIGUSR1); // todo(@alii)
+        signalNameToNumberMap->add(signalNames[10], SIGUSR1);
 #endif
         signalNameToNumberMap->add(signalNames[11], SIGSEGV);
 #ifdef SIGUSR2

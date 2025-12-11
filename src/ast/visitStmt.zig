@@ -46,11 +46,12 @@ pub fn VisitStmt(
                 if (strings.eqlComptime(import_record.path.text, "bun:bundler")) {
                     // Look for the "feature" import
                     for (data.items) |*item| {
-                        // Check alias (the local binding name) - for `import { feature }`,
-                        // alias is "feature"; for `import { feature as f }`, alias is "f".
-                        // But the original_name would be "feature" if there's an alias.
-                        const original = if (item.original_name.len > 0) item.original_name else item.alias;
-                        if (strings.eqlComptime(original, "feature")) {
+                        // In ClauseItem from parseImportClause:
+                        // - alias is the name from the source module ("feature" in both cases)
+                        // - original_name is the local binding name (empty for `import { feature }`,
+                        //   "checkFeature" for `import { feature as checkFeature }`)
+                        // - name.ref is the ref for the local binding
+                        if (strings.eqlComptime(item.alias, "feature")) {
                             // Record the symbol so it's properly tracked
                             try p.recordDeclaredSymbol(item.name.ref.?);
                             // Assign the ref to bundler_feature_flag_ref so we can detect

@@ -1061,7 +1061,7 @@ static void loadSignalNumberMap()
         signalNameToNumberMap->add(signalNames[8], SIGFPE);
         signalNameToNumberMap->add(signalNames[9], SIGKILL);
 #ifdef SIGUSR1
-        signalNameToNumberMap->add(signalNames[10], SIGUSR1);
+        signalNameToNumberMap->add(signalNames[10], SIGUSR1); // todo(@alii)
 #endif
         signalNameToNumberMap->add(signalNames[11], SIGSEGV);
 #ifdef SIGUSR2
@@ -1346,6 +1346,9 @@ extern "C" bool Bun__shouldIgnoreOneDisconnectEventListener(JSC::JSGlobalObject*
 extern "C" void Bun__ensureSignalHandler();
 extern "C" bool Bun__isMainThreadVM();
 extern "C" void Bun__onPosixSignal(int signalNumber);
+#ifdef SIGUSR1
+extern "C" void Bun__Sigusr1Handler__uninstall();
+#endif
 
 __attribute__((noinline)) static void forwardSignal(int signalNumber)
 {
@@ -1504,6 +1507,14 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                         action.sa_flags = SA_RESTART;
 
                         sigaction(signalNumber, &action, nullptr);
+
+#ifdef SIGUSR1
+                        // When user adds a SIGUSR1 listener, uninstall the automatic
+                        // inspector activation handler. User handlers take precedence.
+                        if (signalNumber == SIGUSR1) {
+                            Bun__Sigusr1Handler__uninstall();
+                        }
+#endif
 #else
                         signal_handle.handle = Bun__UVSignalHandle__init(
                             eventEmitter.scriptExecutionContext()->jsGlobalObject(),

@@ -291,6 +291,8 @@ pub fn tickConcurrentWithCount(this: *EventLoop) usize {
     this.updateCounts();
 
     if (comptime Environment.isPosix) {
+        Sigusr1Handler.checkAndActivateInspector(this.virtual_machine);
+
         if (this.signal_handler) |signal_handler| {
             signal_handler.drain(this);
         }
@@ -687,6 +689,7 @@ pub const DeferredTaskQueue = @import("./event_loop/DeferredTaskQueue.zig");
 pub const DeferredRepeatingTask = DeferredTaskQueue.DeferredRepeatingTask;
 pub const PosixSignalHandle = @import("./event_loop/PosixSignalHandle.zig");
 pub const PosixSignalTask = PosixSignalHandle.PosixSignalTask;
+pub const Sigusr1Handler = @import("./event_loop/Sigusr1Handler.zig");
 pub const MiniEventLoop = @import("./event_loop/MiniEventLoop.zig");
 pub const MiniVM = MiniEventLoop.MiniVM;
 pub const JsVM = MiniEventLoop.JsVM;

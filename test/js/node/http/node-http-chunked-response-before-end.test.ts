@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import http from "http";
 
 // This test verifies that the HTTP client can receive a response before req.end() is called

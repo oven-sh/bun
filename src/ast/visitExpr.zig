@@ -1278,8 +1278,12 @@ pub fn VisitExpr(
                 }
 
                 // Handle `feature("FLAG_NAME")` calls from `import { feature } from "bun:bundle"`
-                if (maybeReplaceBundlerFeatureCall(p, e_, expr.loc)) |result| {
-                    return result;
+                // Check if the bundler_feature_flag_ref is set before calling the function
+                // to avoid stack memory usage from copying values back and forth.
+                if (p.bundler_feature_flag_ref.isValid()) {
+                    if (maybeReplaceBundlerFeatureCall(p, e_, expr.loc)) |result| {
+                        return result;
+                    }
                 }
 
                 if (e_.target.data == .e_require_call_target) {
@@ -1645,12 +1649,8 @@ pub fn VisitExpr(
             /// bundlers to eliminate dead code branches at build time.
             ///
             /// Returns the replacement expression if this is a feature() call, or null otherwise.
+            /// Note: Caller must check `p.bundler_feature_flag_ref.isValid()` before calling.
             fn maybeReplaceBundlerFeatureCall(p: *P, e_: *E.Call, loc: logger.Loc) ?Expr {
-                // Quick check: is the bundler_feature_flag_ref even set?
-                if (!p.bundler_feature_flag_ref.isValid()) {
-                    return null;
-                }
-
                 // Check if the target is the `feature` function from "bun:bundle"
                 // It could be e_identifier (for unbound) or e_import_identifier (for imports)
                 const target_ref: ?Ref = switch (e_.target.data) {

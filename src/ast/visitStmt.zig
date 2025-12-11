@@ -40,38 +40,8 @@ pub fn VisitStmt(
 
         const visitors = struct {
             pub fn s_import(noalias p: *P, noalias stmts: *ListManaged(Stmt), noalias stmt: *Stmt, noalias data: *S.Import) !void {
-                // Handle `import { feature } from "bun:bundle"` - this is a special import
-                // that provides static feature flag checking at bundle time.
-                const import_record = &p.import_records.items[data.import_record_index];
-                if (strings.eqlComptime(import_record.path.text, "bun:bundle")) {
-                    // Look for the "feature" import and validate specifiers
-                    for (data.items) |*item| {
-                        // In ClauseItem from parseImportClause:
-                        // - alias is the name from the source module ("feature" in both cases)
-                        // - original_name is the local binding name (empty for `import { feature }`,
-                        //   "checkFeature" for `import { feature as checkFeature }`)
-                        // - name.ref is the ref for the local binding
-                        if (strings.eqlComptime(item.alias, "feature")) {
-                            // Check for duplicate imports of feature
-                            if (p.bundler_feature_flag_ref.isValid()) {
-                                p.log.addError(p.source, item.alias_loc, "`feature` from \"bun:bundle\" may only be imported once") catch unreachable;
-                                continue;
-                            }
-                            // Record the symbol so it's properly tracked
-                            try p.recordDeclaredSymbol(item.name.ref.?);
-                            // Assign the ref to bundler_feature_flag_ref so we can detect
-                            // feature() calls in e_call visitor
-                            p.bundler_feature_flag_ref = item.name.ref.?;
-                        } else {
-                            // Warn about unknown specifiers
-                            p.log.addWarningFmt(p.source, item.alias_loc, p.allocator, "\"bun:bundle\" only exports \"feature\"; \"{s}\" will be undefined", .{item.alias}) catch unreachable;
-                        }
-                    }
-                    // Mark this import as unused so it gets removed from the output
-                    import_record.is_unused = true;
-                    // Return early without appending the statement (effectively deleting it)
-                    return;
-                }
+                // Note: `import { feature } from "bun:bundle"` is handled at parse time
+                // in processImportStatement(), not here at visit time.
 
                 try p.recordDeclaredSymbol(data.namespace_ref);
 

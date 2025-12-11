@@ -101,7 +101,7 @@ const posix = if (Environment.isPosix) struct {
     const Semaphore = if (Environment.isMac) MachSemaphore else PosixSemaphore;
 
     const MachSemaphore = struct {
-        sem: mach.semaphore_t = undefined,
+        sem: mach.semaphore_t = 0,
 
         const mach = struct {
             const mach_port_t = std.c.mach_port_t;
@@ -139,7 +139,7 @@ const posix = if (Environment.isPosix) struct {
     };
 
     const PosixSemaphore = struct {
-        sem: std.c.sem_t = undefined,
+        sem: std.c.sem_t = .{},
 
         fn init(self: *PosixSemaphore) bool {
             return std.c.sem_init(&self.sem, 0, 0) == 0;
@@ -316,12 +316,8 @@ const windows = if (Environment.isWindows) struct {
         };
 
         // Convert to wide string (null-terminated)
-        var wide_name: [64:0]u16 = undefined;
-        const wide_len = std.unicode.utf8ToUtf16Le(&wide_name, name_slice) catch {
-            log("Failed to convert mapping name to wide string", .{});
-            return false;
-        };
-        wide_name[wide_len] = 0;
+        var wide_name: [64]u16 = undefined;
+        const wide_name_z = bun.strings.toWPath(&wide_name, name_slice);
 
         // Create file mapping
         mapping_handle = CreateFileMappingW(
@@ -330,7 +326,7 @@ const windows = if (Environment.isWindows) struct {
             PAGE_READWRITE,
             0,
             @sizeOf(LPTHREAD_START_ROUTINE),
-            &wide_name,
+            wide_name_z.ptr,
         );
 
         if (mapping_handle) |handle| {

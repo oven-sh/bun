@@ -2658,6 +2658,35 @@ pub fn NewParser_(
                 return p.s(S.Empty{}, loc);
             }
 
+            // Handle `import { feature } from "bun:bundle"` - this is a special import
+            // that provides static feature flag checking at bundle time.
+            // We handle it here at parse time (similar to macros) rather than at visit time.
+            if (strings.eqlComptime(path.text, "bun:bundle")) {
+                // Look for the "feature" import and validate specifiers
+                for (stmt.items) |item| {
+                    // In ClauseItem from parseImportClause:
+                    // - alias is the name from the source module ("feature")
+                    // - original_name is the local binding name
+                    // - name.ref is the ref for the local binding
+                    if (strings.eqlComptime(item.alias, "feature")) {
+                        // Check for duplicate imports of feature
+                        if (p.bundler_feature_flag_ref.isValid()) {
+                            try p.log.addError(p.source, item.alias_loc, "`feature` from \"bun:bundle\" may only be imported once");
+                            continue;
+                        }
+                        // Declare the symbol and store the ref
+                        const name = p.loadNameFromRef(item.name.ref.?);
+                        const ref = try p.declareSymbol(.other, item.name.loc, name);
+                        p.bundler_feature_flag_ref = ref;
+                    } else {
+                        // Warn about unknown specifiers
+                        try p.log.addWarningFmt(p.source, item.alias_loc, p.allocator, "\"bun:bundle\" only exports \"feature\"; \"{s}\" will be undefined", .{item.alias});
+                    }
+                }
+                // Return empty statement - the import is completely removed
+                return p.s(S.Empty{}, loc);
+            }
+
             const macro_remap = if (comptime allow_macros)
                 p.options.macro_context.getRemap(path.text)
             else

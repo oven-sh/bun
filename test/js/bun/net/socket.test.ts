@@ -293,10 +293,6 @@ describe.concurrent("socket", () => {
     });
   });
 
-  it("should not leak memory when connect() fails again", async () => {
-    await expectMaxObjectTypeCount(expect, "TCPSocket", 5, 50);
-  });
-
   it("socket.timeout works", async () => {
     try {
       const { promise, resolve } = Promise.withResolvers<any>();
@@ -777,4 +773,8 @@ it("should not leak memory", async () => {
   await expectMaxObjectTypeCount(expect, "Listener", 2);
   await expectMaxObjectTypeCount(expect, "TCPSocket", isWindows ? 3 : 2);
   await expectMaxObjectTypeCount(expect, "TLSSocket", isWindows ? 3 : 2);
+});
+
+it("should not leak memory when connect() fails again", async () => {
+  await expectMaxObjectTypeCount(expect, "TCPSocket", 5, 50);
 });

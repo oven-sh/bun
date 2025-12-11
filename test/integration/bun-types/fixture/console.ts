@@ -14,6 +14,7 @@ async () => {
   for await (const line of c2) {
     console.log("Received:", line);
   }
+
   // tslint:disable-next-line:await-promise
   for await (const line of console) {
     console.log("Received:", line);

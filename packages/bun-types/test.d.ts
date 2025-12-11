@@ -428,6 +428,8 @@ declare module "bun:test" {
   }
 
   namespace __internal {
+    type IfNeverThenElse<T, Else> = [T] extends [never] ? Else : T;
+
     type IsTuple<T> = T extends readonly unknown[]
       ? number extends T["length"]
         ? false // It's an array with unknown length, not a tuple
@@ -1097,8 +1099,8 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toContainKey(expected: keyof T): void;
-    toContainKey<X = T>(expected: NoInfer<keyof X>): void;
+    toContainKey(expected: __internal.IfNeverThenElse<keyof T, PropertyKey>): void;
+    toContainKey<X = T>(expected: __internal.IfNeverThenElse<NoInfer<keyof X>, PropertyKey>): void;
 
     /**
      * Asserts that an `object` contains all the provided keys.
@@ -1114,8 +1116,8 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toContainAllKeys(expected: Array<keyof T>): void;
-    toContainAllKeys<X = T>(expected: NoInfer<Array<keyof X>>): void;
+    toContainAllKeys(expected: Array<__internal.IfNeverThenElse<keyof T, PropertyKey>>): void;
+    toContainAllKeys<X = T>(expected: Array<__internal.IfNeverThenElse<NoInfer<keyof X>, PropertyKey>>): void;
 
     /**
      * Asserts that an `object` contains at least one of the provided keys.
@@ -1131,8 +1133,8 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toContainAnyKeys(expected: Array<keyof T>): void;
-    toContainAnyKeys<X = T>(expected: NoInfer<Array<keyof X>>): void;
+    toContainAnyKeys(expected: Array<__internal.IfNeverThenElse<keyof T, PropertyKey>>): void;
+    toContainAnyKeys<X = T>(expected: Array<__internal.IfNeverThenElse<NoInfer<keyof X>, PropertyKey>>): void;
 
     /**
      * Asserts that an `object` contain the provided value.
@@ -1224,8 +1226,8 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toContainKeys(expected: Array<keyof T>): void;
-    toContainKeys<X = T>(expected: NoInfer<Array<keyof X>>): void;
+    toContainKeys(expected: Array<__internal.IfNeverThenElse<keyof T, PropertyKey>>): void;
+    toContainKeys<X = T>(expected: Array<__internal.IfNeverThenElse<NoInfer<keyof X>, PropertyKey>>): void;
 
     /**
      * Asserts that a value contains and equals what is expected.

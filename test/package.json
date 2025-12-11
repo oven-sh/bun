@@ -120,6 +120,7 @@
     "bd": "BUN_DEBUG_QUIET_LOGS=1 bun --silent bd:v"
   },
   "resolutions": {
-    "react": "../node_modules/react"
+    "react": "../node_modules/react",
+    "@types/node": "25.0.0"
   }
 }

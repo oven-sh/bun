@@ -1,8 +1,11 @@
 declare module "bun" {
   namespace __internal {
-    type NodeCryptoWebcryptoSubtleCrypto = import("crypto").webcrypto.SubtleCrypto;
     type NodeCryptoWebcryptoCryptoKey = import("crypto").webcrypto.CryptoKey;
     type NodeCryptoWebcryptoCryptoKeyPair = import("crypto").webcrypto.CryptoKeyPair;
+
+    type LibEmptyOrNodeCryptoWebcryptoSubtleCrypto = LibDomIsLoaded extends true
+      ? {}
+      : import("crypto").webcrypto.SubtleCrypto;
 
     type LibWorkerOrBunWorker = LibDomIsLoaded extends true ? {} : Bun.Worker;
     type LibEmptyOrBunWebSocket = LibDomIsLoaded extends true ? {} : Bun.WebSocket;
@@ -14,7 +17,9 @@ declare module "bun" {
       ? {}
       : import("node:stream/web").DecompressionStream;
 
-    type LibPerformanceOrNodePerfHooksPerformance = LibDomIsLoaded extends true ? {} : import("perf_hooks").Performance;
+    type LibPerformanceOrNodePerfHooksPerformance = LibDomIsLoaded extends true
+      ? {}
+      : import("node:perf_hooks").Performance;
     type LibEmptyOrPerformanceEntry = LibDomIsLoaded extends true ? {} : import("node:perf_hooks").PerformanceEntry;
     type LibEmptyOrPerformanceMark = LibDomIsLoaded extends true ? {} : import("node:perf_hooks").PerformanceMark;
     type LibEmptyOrPerformanceMeasure = LibDomIsLoaded extends true ? {} : import("node:perf_hooks").PerformanceMeasure;
@@ -224,7 +229,7 @@ interface TextEncoder extends Bun.__internal.LibEmptyOrNodeUtilTextEncoder {
    * @param src The text to encode.
    * @param dest The array to hold the encode result.
    */
-  encodeInto(src?: string, dest?: Bun.BufferSource): import("util").EncodeIntoResult;
+  encodeInto(src?: string, dest?: Bun.BufferSource): import("node:util").TextEncoderEncodeIntoResult;
 }
 declare var TextEncoder: Bun.__internal.UseLibDomIfAvailable<
   "TextEncoder",
@@ -952,7 +957,7 @@ declare function alert(message?: string): void;
 declare function confirm(message?: string): boolean;
 declare function prompt(message?: string, _default?: string): string | null;
 
-interface SubtleCrypto extends Bun.__internal.NodeCryptoWebcryptoSubtleCrypto {}
+interface SubtleCrypto extends Bun.__internal.LibEmptyOrNodeCryptoWebcryptoSubtleCrypto {}
 declare var SubtleCrypto: {
   prototype: SubtleCrypto;
   new (): SubtleCrypto;
@@ -1688,6 +1693,10 @@ declare var EventSource: Bun.__internal.UseLibDomIfAvailable<
 
 interface Performance extends Bun.__internal.LibPerformanceOrNodePerfHooksPerformance {}
 declare var performance: Bun.__internal.UseLibDomIfAvailable<"performance", Performance>;
+declare var Performance: Bun.__internal.UseLibDomIfAvailable<
+  "Performance",
+  { new (): Performance; prototype: Performance }
+>;
 
 interface PerformanceEntry extends Bun.__internal.LibEmptyOrPerformanceEntry {}
 declare var PerformanceEntry: Bun.__internal.UseLibDomIfAvailable<

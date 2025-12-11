@@ -1740,7 +1740,6 @@ declare module "bun" {
      * @default "esm"
      */
     format?: /**
-
      * ECMAScript Module format
      */
     | "esm"
@@ -3887,6 +3886,9 @@ declare module "bun" {
      */
     static readonly byteLength: 32;
   }
+
+  /** Extends the standard web formats with `brotli` and `zstd` support. */
+  type CompressionFormat = "gzip" | "deflate" | "deflate-raw" | "brotli" | "zstd";
 
   /** Compression options for `Bun.deflateSync` and `Bun.gzipSync` */
   interface ZlibCompressionOptions {

@@ -1194,10 +1194,31 @@ var mode = "free";
 **Key behaviors:**
 
 - `feature()` requires a string literal argument — dynamic values are not supported
+- `feature()` can only be used as the **sole condition** of an `if` statement or ternary expression — this guarantees dead-code elimination
 - The `bun:bundle` import is completely removed from the output
 - Works with `bun build`, `bun run`, and `bun test`
 - Multiple flags can be enabled: `--feature FLAG_A --feature FLAG_B`
 - For type safety, augment the `Registry` interface to restrict `feature()` to known flags (see below)
+
+**Important restrictions:**
+
+For security, `feature()` must be used directly as a condition to ensure reliable dead-code elimination. The following patterns are **not allowed** and will produce an error:
+
+```ts
+// Variable assignment - NOT ALLOWED
+const FLAG = feature("SECRET");
+
+// Complex expressions - NOT ALLOWED
+if (feature("FLAG") || isAdmin) { ... }
+
+// Function arguments - NOT ALLOWED
+if (check(feature("FLAG"))) { ... }
+
+// Re-exporting - NOT ALLOWED
+export const FLAG = feature("SECRET");
+```
+
+These restrictions ensure that when a feature flag is disabled, the gated code is guaranteed to be completely removed from the bundle.
 
 **Use cases:**
 

@@ -190,6 +190,13 @@ pub fn NewParser_(
         /// a boolean based on whether the feature flag is enabled.
         bundler_feature_flag_ref: Ref = Ref.None,
 
+        /// Tracks the specific E.Call that is allowed to be a feature() call. This is set to
+        /// the condition's call expression when visiting an if/ternary whose condition IS directly
+        /// a call expression. When maybeReplaceBundlerFeatureCall runs, it verifies the call
+        /// matches this pointer. This ensures feature() can only be used as the direct condition,
+        /// not nested inside other expressions or as an argument to another function.
+        feature_flag_allowed_call: ?*E.Call = null,
+
         scopes_in_order_visitor_index: usize = 0,
         has_classic_runtime_warned: bool = false,
         macro_call_count: MacroCallCountType = 0,

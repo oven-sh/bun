@@ -923,7 +923,13 @@ pub fn VisitExpr(
                 const e_ = expr.data.e_if;
                 const is_call_target = @as(Expr.Data, p.call_target) == .e_if and expr.data.e_if == p.call_target.e_if;
 
+                // Allow feature() calls only as the direct condition of the ternary.
+                // This ensures guaranteed dead-code elimination for security-sensitive feature flags.
+                // Only set the allowed call if the condition IS a call expression (not nested in binary/etc).
+                const old_feature_flag_allowed_call = p.feature_flag_allowed_call;
+                p.feature_flag_allowed_call = if (e_.test_.data == .e_call) e_.test_.data.e_call else null;
                 e_.test_ = p.visitExpr(e_.test_);
+                p.feature_flag_allowed_call = old_feature_flag_allowed_call;
 
                 e_.test_ = SideEffects.simplifyBoolean(p, e_.test_);
 
@@ -1648,6 +1654,10 @@ pub fn VisitExpr(
             /// is replaced with `true`, otherwise it's replaced with `false`. This allows
             /// bundlers to eliminate dead code branches at build time.
             ///
+            /// IMPORTANT: For security, feature() can only be used as the sole condition of an
+            /// `if` statement or ternary expression. This restriction ensures guaranteed DCE
+            /// when the feature is disabled, preventing accidental exposure of feature-gated code.
+            ///
             /// Returns the replacement expression if this is a feature() call, or null otherwise.
             /// Note: Caller must check `p.bundler_feature_flag_ref.isValid()` before calling.
             fn maybeReplaceBundlerFeatureCall(p: *P, e_: *E.Call, loc: logger.Loc) ?Expr {
@@ -1665,6 +1675,23 @@ pub fn VisitExpr(
 
                 // If control flow is dead, just return false without validation errors
                 if (p.is_control_flow_dead) {
+                    return p.newExpr(E.Boolean{ .value = false }, loc);
+                }
+
+                // Validate: feature() must be used as the sole condition of an if/ternary.
+                // This ensures guaranteed dead-code elimination for security-sensitive feature flags.
+                // Disallowed patterns include:
+                //   - Variable assignment: `const flag = feature("X")`
+                //   - Complex expressions: `feature("X") || isAdmin`
+                //   - Function arguments: `someFunc(feature("X"))`
+                //   - Re-exporting through variables in other modules
+                // Check that this specific call expression is the one allowed as the condition.
+                if (p.feature_flag_allowed_call != e_) {
+                    p.log.addError(
+                        p.source,
+                        loc,
+                        "feature() can only be used as the sole condition of an if statement or ternary expression",
+                    ) catch unreachable;
                     return p.newExpr(E.Boolean{ .value = false }, loc);
                 }
 

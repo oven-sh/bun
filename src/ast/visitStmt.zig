@@ -1000,7 +1000,13 @@ pub fn VisitStmt(
                 try stmts.append(stmt.*);
             }
             pub fn s_if(noalias p: *P, noalias stmts: *ListManaged(Stmt), noalias stmt: *Stmt, noalias data: *S.If) !void {
+                // Allow feature() calls only as the direct condition of the if statement.
+                // This ensures guaranteed dead-code elimination for security-sensitive feature flags.
+                // Only set the allowed call if the condition IS a call expression (not nested in binary/etc).
+                const old_feature_flag_allowed_call = p.feature_flag_allowed_call;
+                p.feature_flag_allowed_call = if (data.test_.data == .e_call) data.test_.data.e_call else null;
                 data.test_ = p.visitExpr(data.test_);
+                p.feature_flag_allowed_call = old_feature_flag_allowed_call;
 
                 if (p.options.features.minify_syntax) {
                     data.test_ = SideEffects.simplifyBoolean(p, data.test_);

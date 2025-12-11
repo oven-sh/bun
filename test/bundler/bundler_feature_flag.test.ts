@@ -48,23 +48,30 @@ if (feature("SUPER_SECRET")) {
         },
       });
 
-      itBundled(`feature_flag/${backend}/MultipleFlags`, {
+      itBundled(`feature_flag/${backend}/MultipleIfStatements`, {
         backend,
         files: {
           "/a.js": `
 import { feature } from "bun:bundle";
-const a = feature("FLAG_A");
-const b = feature("FLAG_B");
-const c = feature("FLAG_C");
-console.log(a, b, c);
+// Multiple flags in separate if statements (allowed)
+if (feature("FLAG_A")) {
+  console.log("A enabled");
+}
+if (feature("FLAG_B")) {
+  console.log("B enabled");
+}
+if (feature("FLAG_C")) {
+  console.log("C enabled");
+}
 `,
         },
         features: ["FLAG_A", "FLAG_C"],
+        minifySyntax: true,
         onAfterBundle(api) {
           // FLAG_A and FLAG_C are enabled, FLAG_B is not
-          api.expectFile("out.js").toInclude("a = true");
-          api.expectFile("out.js").toInclude("b = false");
-          api.expectFile("out.js").toInclude("c = true");
+          api.expectFile("out.js").toInclude("A enabled");
+          api.expectFile("out.js").not.toInclude("B enabled");
+          api.expectFile("out.js").toInclude("C enabled");
         },
       });
 
@@ -95,13 +102,15 @@ if (feature("DISABLED_FEATURE")) {
         files: {
           "/a.js": `
 import { feature } from "bun:bundle";
-const x = feature("TEST");
-console.log(x);
+if (feature("TEST")) {
+  console.log("test enabled");
+}
 `,
         },
         onAfterBundle(api) {
           // The import should be completely removed
           api.expectFile("out.js").not.toInclude("bun:bundle");
+          api.expectFile("out.js").not.toInclude("feature");
         },
       });
 
@@ -252,6 +261,163 @@ if (feature()) {
     },
     bundleErrors: {
       "/a.js": ["feature() requires exactly one string argument"],
+    },
+  });
+
+  // Tests for disallowed patterns - feature() must only be used as sole condition
+  itBundled("feature_flag/VariableAssignmentError", {
+    backend: "cli",
+    files: {
+      "/a.js": `
+import { feature } from "bun:bundle";
+const FLAG = feature("TEST");
+console.log(FLAG);
+`,
+    },
+    bundleErrors: {
+      "/a.js": ["feature() can only be used as the sole condition of an if statement or ternary expression"],
+    },
+  });
+
+  itBundled("feature_flag/ComplexExpressionOrError", {
+    backend: "cli",
+    files: {
+      "/a.js": `
+import { feature } from "bun:bundle";
+const isAdmin = true;
+if (feature("ADMIN_FEATURE") || isAdmin) {
+  console.log("admin access");
+}
+`,
+    },
+    bundleErrors: {
+      "/a.js": ["feature() can only be used as the sole condition of an if statement or ternary expression"],
+    },
+  });
+
+  itBundled("feature_flag/ComplexExpressionAndError", {
+    backend: "cli",
+    files: {
+      "/a.js": `
+import { feature } from "bun:bundle";
+const isEnabled = true;
+if (feature("FLAG") && isEnabled) {
+  console.log("both conditions met");
+}
+`,
+    },
+    bundleErrors: {
+      "/a.js": ["feature() can only be used as the sole condition of an if statement or ternary expression"],
+    },
+  });
+
+  itBundled("feature_flag/FunctionArgumentError", {
+    backend: "cli",
+    files: {
+      "/a.js": `
+import { feature } from "bun:bundle";
+function check(flag) { return flag; }
+if (check(feature("FLAG"))) {
+  console.log("checked");
+}
+`,
+    },
+    bundleErrors: {
+      "/a.js": ["feature() can only be used as the sole condition of an if statement or ternary expression"],
+    },
+  });
+
+  itBundled("feature_flag/ArrayElementError", {
+    backend: "cli",
+    files: {
+      "/a.js": `
+import { feature } from "bun:bundle";
+const flags = [feature("FLAG_A"), feature("FLAG_B")];
+console.log(flags);
+`,
+    },
+    bundleErrors: {
+      "/a.js": [
+        "feature() can only be used as the sole condition of an if statement or ternary expression",
+        "feature() can only be used as the sole condition of an if statement or ternary expression",
+      ],
+    },
+  });
+
+  itBundled("feature_flag/ObjectPropertyError", {
+    backend: "cli",
+    files: {
+      "/a.js": `
+import { feature } from "bun:bundle";
+const config = { enabled: feature("FLAG") };
+console.log(config);
+`,
+    },
+    bundleErrors: {
+      "/a.js": ["feature() can only be used as the sole condition of an if statement or ternary expression"],
+    },
+  });
+
+  itBundled("feature_flag/ReturnStatementError", {
+    backend: "cli",
+    files: {
+      "/a.js": `
+import { feature } from "bun:bundle";
+function getFlag() {
+  return feature("FLAG");
+}
+console.log(getFlag());
+`,
+    },
+    bundleErrors: {
+      "/a.js": ["feature() can only be used as the sole condition of an if statement or ternary expression"],
+    },
+  });
+
+  itBundled("feature_flag/ExportedVariableError", {
+    backend: "cli",
+    files: {
+      "/a.js": `
+import { feature } from "bun:bundle";
+export const FLAG = feature("TEST");
+`,
+    },
+    bundleErrors: {
+      "/a.js": ["feature() can only be used as the sole condition of an if statement or ternary expression"],
+    },
+  });
+
+  itBundled("feature_flag/ReExportFromModuleError", {
+    backend: "cli",
+    files: {
+      "/a.js": `
+import { FLAG } from "./b.js";
+if (FLAG) {
+  console.log("enabled");
+}
+`,
+      "/b.js": `
+import { feature } from "bun:bundle";
+export const FLAG = feature("TEST");
+`,
+    },
+    bundleErrors: {
+      "/b.js": ["feature() can only be used as the sole condition of an if statement or ternary expression"],
+    },
+  });
+
+  itBundled("feature_flag/TernaryConditionNotSoleError", {
+    backend: "cli",
+    files: {
+      "/a.js": `
+import { feature } from "bun:bundle";
+const isAdmin = true;
+const result = (feature("FLAG") && isAdmin) ? "yes" : "no";
+console.log(result);
+`,
+    },
+    bundleErrors: {
+      "/a.js": ["feature() can only be used as the sole condition of an if statement or ternary expression"],
     },
   });
 

@@ -125,7 +125,7 @@ int us_socket_is_closed(int ssl, struct us_socket_t *s) {
     if(ssl) {
         return us_internal_ssl_socket_is_closed((struct us_internal_ssl_socket_t *) s);
     }
-    return s->prev == (struct us_socket_t *) s->context;
+    return s->flags.is_closed;
 }
 
 int us_connecting_socket_is_closed(int ssl, struct us_connecting_socket_t *c) {
@@ -159,8 +159,7 @@ void us_connecting_socket_close(int ssl, struct us_connecting_socket_t *c) {
         s->next = s->context->loop->data.closed_head;
         s->context->loop->data.closed_head = s;
 
-        /* Any socket with prev = context is marked as closed */
-        s->prev = (struct us_socket_t *) s->context;
+        s->flags.is_closed = 1;
     }
     if(!c->error) {
         // if we have no error, we have to set that we were aborted aka we called close
@@ -219,8 +218,7 @@ struct us_socket_t *us_socket_close(int ssl, struct us_socket_t *s, int code, vo
         bsd_close_socket(us_poll_fd((struct us_poll_t *) s));
 
 
-        /* Any socket with prev = context is marked as closed */
-        s->prev = (struct us_socket_t *) s->context;
+        s->flags.is_closed = 1;
 
         /* mark it as closed and call the callback */
         struct us_socket_t *res = s;
@@ -268,8 +266,7 @@ struct us_socket_t *us_socket_detach(int ssl, struct us_socket_t *s) {
         s->next = s->context->loop->data.closed_head;
         s->context->loop->data.closed_head = s;
 
-        /* Any socket with prev = context is marked as closed */
-        s->prev = (struct us_socket_t *) s->context;
+        s->flags.is_closed = 1;
 
         return s;
     }
@@ -321,8 +318,9 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_context_t *ctx, int socke
     s->flags.low_prio_state = 0;
     s->flags.allow_half_open = 0;
     s->flags.is_paused = 0;
-    s->flags.is_ipc = 0;
     s->flags.is_ipc = ipc;
+    s->flags.is_closed = 0;
+    s->flags.is_ssl = 0;
     s->connect_state = NULL;
 
     /* We always use nodelay */

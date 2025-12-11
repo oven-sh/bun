@@ -1,8 +1,11 @@
 declare module "bun" {
   namespace __internal {
-    type NodeCryptoWebcryptoSubtleCrypto = import("crypto").webcrypto.SubtleCrypto;
     type NodeCryptoWebcryptoCryptoKey = import("crypto").webcrypto.CryptoKey;
     type NodeCryptoWebcryptoCryptoKeyPair = import("crypto").webcrypto.CryptoKeyPair;
+
+    type LibEmptyOrNodeCryptoWebcryptoSubtleCrypto = LibDomIsLoaded extends true
+      ? {}
+      : import("crypto").webcrypto.SubtleCrypto;
 
     type LibWorkerOrBunWorker = LibDomIsLoaded extends true ? {} : Bun.Worker;
     type LibEmptyOrBunWebSocket = LibDomIsLoaded extends true ? {} : Bun.WebSocket;
@@ -954,7 +957,7 @@ declare function alert(message?: string): void;
 declare function confirm(message?: string): boolean;
 declare function prompt(message?: string, _default?: string): string | null;
 
-interface SubtleCrypto extends Bun.__internal.NodeCryptoWebcryptoSubtleCrypto {}
+interface SubtleCrypto extends Bun.__internal.LibEmptyOrNodeCryptoWebcryptoSubtleCrypto {}
 declare var SubtleCrypto: {
   prototype: SubtleCrypto;
   new (): SubtleCrypto;

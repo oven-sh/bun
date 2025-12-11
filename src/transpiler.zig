@@ -438,7 +438,7 @@ pub const Transpiler = struct {
     }
 
     pub fn deinit(this: *Transpiler) void {
-        this.options.deinit();
+        this.options.deinit(this.allocator);
         this.log.deinit();
         this.resolver.deinit();
         this.fs.deinit();

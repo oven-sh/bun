@@ -1492,6 +1492,10 @@ pub const Tag = enum {
     e_private_identifier,
     e_commonjs_export_identifier,
     e_boolean,
+    /// Like e_boolean, but produced by `feature()` from `bun:bundle`.
+    /// This tag ensures feature() can only be used directly in conditional
+    /// contexts (if statements, ternaries). Invalid usage is caught during
+    /// the visit phase when this expression appears outside a branch condition.
     e_branch_boolean,
     e_number,
     e_big_int,

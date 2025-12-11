@@ -69,6 +69,11 @@ pub fn start(this: *Cat) Yield {
 }
 
 pub fn next(this: *Cat) Yield {
+    // Check for abort before processing next file
+    if (this.bltn().parentCmd().base.interpreter.isAborted()) {
+        return this.bltn().done(128 + @intFromEnum(bun.SignalCode.SIGTERM));
+    }
+
     switch (this.state) {
         .idle => @panic("Invalid state"),
         .exec_stdin => {

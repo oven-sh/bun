@@ -25,6 +25,10 @@ export default [
         fn: "setQuiet",
         length: 1,
       },
+      setSignal: {
+        fn: "setSignal",
+        length: 1,
+      },
     },
   }),
 ];

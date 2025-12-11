@@ -125,6 +125,11 @@ pub fn ignoreEbusyErrorIfPossible(this: *Cp) Yield {
 
 pub fn next(this: *Cp) Yield {
     while (this.state != .done) {
+        // Check for abort before continuing
+        if (this.bltn().parentCmd().base.interpreter.isAborted()) {
+            return this.bltn().done(128 + @intFromEnum(bun.SignalCode.SIGTERM));
+        }
+
         switch (this.state) {
             .idle => @panic("Invalid state for \"Cp\": idle, this indicates a bug in Bun. Please file a GitHub issue"),
             .exec => {

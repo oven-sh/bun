@@ -107,6 +107,8 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
     #args: $ZigGeneratedClasses.ParsedShellScript | undefined = undefined;
     #hasRun: boolean = false;
     #throws: boolean = true;
+    #signal?: AbortSignal; // Store the abort signal
+    #abortedByUs: boolean = false; // Tracks if OUR abort listener fired
     #resolve: (code: number, stdout: Buffer, stderr: Buffer) => void;
     #reject: (code: number, stdout: Buffer, stderr: Buffer) => void;
 
@@ -121,6 +123,34 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
       super((res, rej) => {
         resolve = (code, stdout, stderr) => {
           const out = new ShellOutput(stdout, stderr, code);
+
+          // Check if operation was aborted by our signal.
+          // We check BOTH conditions:
+          // 1. #abortedByUs - our abort listener fired (definitively know our signal caused it)
+          // 2. code >= 128 - process was killed by a signal (sanity check)
+          //
+          // This avoids false positives where:
+          // - The signal fires after normal completion (code would be 0 or small)
+          // - The process was killed by something else (Ctrl+C) but signal wasn't ours
+          //
+          // Exit code 128+N indicates the process was killed by signal N.
+          // SIGTERM (15) -> 143, SIGKILL (9) -> 137
+          const wasAborted = this.#abortedByUs && code >= 128;
+
+          if (wasAborted) {
+            if (this.#throws) {
+              // Reject with the signal's reason, or a default AbortError
+              const reason = this.#signal!.reason ?? new DOMException("The operation was aborted.", "AbortError");
+              rej(reason);
+            } else {
+              // nothrow mode: resolve normally with the exit code
+              potentialError = undefined;
+              res(out);
+            }
+            return;
+          }
+
+          // Normal (non-abort) exit handling (existing code)
           if (this.#throws && code !== 0) {
             potentialError!.initialize(out, code);
             rej(potentialError);
@@ -169,6 +199,16 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
       if (!this.#hasRun) {
         this.#hasRun = true;
 
+        // Handle already-aborted signals entirely in JS
+        // This avoids spawning anything and immediately settles the promise
+        if (this.#signal?.aborted) {
+          // Simulate a process killed by SIGTERM (exit code 128 + 15 = 143)
+          // The resolve callback will see #abortedByUs=true and code>=128,
+          // then reject with AbortError (or resolve if .nothrow() was used)
+          this.#resolve(128 + 15, Buffer.alloc(0), Buffer.alloc(0));
+          return;
+        }
+
         let interp = createShellInterpreter(this.#resolve, this.#reject, this.#args!);
         this.#args = undefined;
         interp.run();
@@ -192,6 +232,33 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
 
     throws(doThrow: boolean | undefined): this {
       this.#throws = !!doThrow;
+      return this;
+    }
+
+    signal(sig: AbortSignal): this {
+      this.#throwIfRunning();
+      this.#signal = sig;
+
+      // Track when our signal fires - this definitively tells us the abort
+      // was triggered by our signal, not some other termination cause
+      if (sig.aborted) {
+        // Signal is already aborted - handle entirely in JS
+        // We'll short-circuit in #run() and never spawn anything
+        this.#abortedByUs = true;
+        // Don't pass to Zig - we'll handle it in #run()
+      } else {
+        // Listen for future abort
+        sig.addEventListener(
+          "abort",
+          () => {
+            this.#abortedByUs = true;
+          },
+          { once: true },
+        );
+        // Pass signal to ParsedShellScript so Zig can access it
+        this.#args!.setSignal(sig);
+      }
+
       return this;
     }
 

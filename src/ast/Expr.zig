@@ -1975,7 +1975,7 @@ pub fn maybeSimplifyNot(expr: *const Expr, allocator: std.mem.Allocator) ?Expr {
             return expr.at(E.Boolean, E.Boolean{ .value = true }, allocator);
         },
         .e_boolean, .e_branch_boolean => |b| {
-            return expr.at(E.Boolean, E.Boolean{ .value = b.value }, allocator);
+            return expr.at(E.Boolean, E.Boolean{ .value = !b.value }, allocator);
         },
         .e_number => |n| {
             return expr.at(E.Boolean, E.Boolean{ .value = (n.value == 0 or std.math.isNan(n.value)) }, allocator);

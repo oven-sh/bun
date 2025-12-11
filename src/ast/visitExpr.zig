@@ -923,9 +923,10 @@ pub fn VisitExpr(
                 const e_ = expr.data.e_if;
                 const is_call_target = @as(Expr.Data, p.call_target) == .e_if and expr.data.e_if == p.call_target.e_if;
 
+                const prev_in_branch = p.in_branch_condition;
                 p.in_branch_condition = true;
                 e_.test_ = p.visitExpr(e_.test_);
-                p.in_branch_condition = false;
+                p.in_branch_condition = prev_in_branch;
 
                 e_.test_ = SideEffects.simplifyBoolean(p, e_.test_);
 

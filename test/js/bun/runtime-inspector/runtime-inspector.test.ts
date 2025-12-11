@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 
 // Cross-platform tests - run on ALL platforms (Windows, macOS, Linux)
@@ -243,58 +243,64 @@ describe("Runtime inspector activation", () => {
       expect(stderr).toContain("requires a pid argument");
     });
   });
+});
 
-  describe("--disable-sigusr1", () => {
-    test("prevents inspector activation and uses default signal behavior", async () => {
-      using dir = tempDir("disable-sigusr1-test", {
-        "target.js": `
-          const fs = require("fs");
-          const path = require("path");
+// POSIX-only: --disable-sigusr1 test
+// On POSIX, when --disable-sigusr1 is set, no SIGUSR1 handler is installed,
+// so SIGUSR1 uses the default action (terminate process with exit code 128+30=158)
+// This test is skipped on Windows since there's no SIGUSR1 signal there.
 
-          fs.writeFileSync(path.join(process.cwd(), "pid"), String(process.pid));
-          console.log("READY");
+describe.skipIf(isWindows)("--disable-sigusr1", () => {
+  test("prevents inspector activation and uses default signal behavior", async () => {
+    using dir = tempDir("disable-sigusr1-test", {
+      "target.js": `
+        const fs = require("fs");
+        const path = require("path");
 
-          setTimeout(() => process.exit(0), 500);
-          setInterval(() => {}, 1000);
-        `,
-      });
+        fs.writeFileSync(path.join(process.cwd(), "pid"), String(process.pid));
+        console.log("READY");
 
-      // Start with --disable-sigusr1
-      await using targetProc = spawn({
-        cmd: [bunExe(), "--disable-sigusr1", "target.js"],
-        cwd: String(dir),
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-
-      const reader = targetProc.stdout.getReader();
-      const decoder = new TextDecoder();
-      let output = "";
-      while (!output.includes("READY")) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        output += decoder.decode(value, { stream: true });
-      }
-      reader.releaseLock();
-
-      const pid = parseInt(await Bun.file(join(String(dir), "pid")).text(), 10);
-
-      // Send SIGUSR1 - without handler, this will terminate the process
-      await using debugProc = spawn({
-        cmd: [bunExe(), "-e", `process._debugProcess(${pid})`],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      await debugProc.exited;
-
-      const [stderr, exitCode] = await Promise.all([targetProc.stderr.text(), targetProc.exited]);
-
-      // Should NOT see debugger listening message
-      expect(stderr).not.toContain("Debugger listening");
-      // Process should be terminated by SIGUSR1 (exit code = 128 + 30 = 158)
-      expect(exitCode).toBe(158);
+        setTimeout(() => process.exit(0), 500);
+        setInterval(() => {}, 1000);
+      `,
     });
+
+    // Start with --disable-sigusr1
+    await using targetProc = spawn({
+      cmd: [bunExe(), "--disable-sigusr1", "target.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const reader = targetProc.stdout.getReader();
+    const decoder = new TextDecoder();
+    let output = "";
+    while (!output.includes("READY")) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      output += decoder.decode(value, { stream: true });
+    }
+    reader.releaseLock();
+
+    const pid = parseInt(await Bun.file(join(String(dir), "pid")).text(), 10);
+
+    // Send SIGUSR1 - without handler, this will terminate the process
+    await using debugProc = spawn({
+      cmd: [bunExe(), "-e", `process._debugProcess(${pid})`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    await debugProc.exited;
+
+    const [stderr, exitCode] = await Promise.all([targetProc.stderr.text(), targetProc.exited]);
+
+    // Should NOT see debugger listening message
+    expect(stderr).not.toContain("Debugger listening");
+    // Process should be terminated by SIGUSR1
+    // Exit code = 128 + signal number (macOS: 30, Linux: 10)
+    expect(exitCode === 158 || exitCode === 138).toBe(true);
   });
 });

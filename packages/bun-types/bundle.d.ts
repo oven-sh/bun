@@ -28,6 +28,29 @@
  */
 declare module "bun:bundle" {
   /**
+   * Registry for type-safe feature flags.
+   *
+   * Augment this interface to get autocomplete and type checking for your feature flags:
+   *
+   * @example
+   * ```ts
+   * // env.d.ts
+   * declare module "bun:bundle" {
+   *   interface Registry {
+   *     features: "DEBUG" | "PREMIUM" | "BETA";
+   *   }
+   * }
+   * ```
+   *
+   * Now `feature()` only accepts `"DEBUG"`, `"PREMIUM"`, or `"BETA"`:
+   * ```ts
+   * feature("DEBUG");    // OK
+   * feature("TYPO");     // Type error
+   * ```
+   */
+  interface Registry {}
+
+  /**
    * Check if a feature flag is enabled at compile time.
    *
    * This function is replaced with a boolean literal (`true` or `false`) at bundle time,
@@ -47,5 +70,5 @@ declare module "bun:bundle" {
    * }
    * ```
    */
-  function feature(flag: string): boolean;
+  function feature(flag: Registry extends { features: infer Features extends string } ? Features : string): boolean;
 }

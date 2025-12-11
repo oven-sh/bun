@@ -22,15 +22,14 @@ error() {
 	if ! [ "$$" = "$pid" ]; then
 		kill -s TERM "$pid"
 	fi
-	exit 1
+	# Kill the shell. This used to be 'exit 1' but if the command is running inside a
+	# subshell, then only the subshell dies and the script keeps running uninterrupted.
+	kill $$
 }
 
 execute() {
-	local opts=$-
-	set -x
-	"$@"
-	{ local status=$?; set +x "$opts"; } 2> /dev/null
-	if [ "$status" -ne 0 ]; then
+	print "$ $@" >&2
+	if ! "$@"; then
 		error "Command failed: $@"
 	fi
 }
@@ -380,37 +379,6 @@ check_operating_system() {
 	esac
 }
 
-check_inside_docker() {
-	if ! [ "$os" = "linux" ]; then
-		return
-	fi
-	print "Checking if inside Docker..."
-
-	if [ -f "/.dockerenv" ]; then
-		docker=1
-	else
-		if [ -f "/proc/1/cgroup" ]; then
-			case "$(cat /proc/1/cgroup)" in
-			*/docker/*)
-				docker=1
-				;;
-			esac
-		fi
-
-		if [ -f "/proc/self/mountinfo" ]; then
-			case "$(cat /proc/self/mountinfo)" in
-			*/docker/*)
-				docker=1
-				;;
-			esac
-		fi
-	fi
-
-	if [ "$docker" = "1" ]; then
-		print "Docker: enabled"
-	fi
-}
-
 check_package_manager() {
 	print "Checking package manager..."
 
@@ -739,7 +707,7 @@ install_common_software() {
 			git \
 			unzip \
 			wget \
-			dnf-plugins-core
+			dnf-plugins-core \
 		;;
 	apk)
 		# https://pkgs.alpinelinux.org/packages
@@ -1079,7 +1047,9 @@ install_build_essentials() {
 		;;
 	dnf | yum)
 		install_packages \
-			gcc-c++ \
+			gcc14-c++ \
+			gcc14-libstdc++-static \
+			gcc14-libatomic-static \
 			xz \
 			pkg-config \
 			golang
@@ -1175,10 +1145,17 @@ install_llvm() {
 		;;
 	esac
 
-	case "$os" in
-		freebsd)
+	case "$distro" in
+	freebsd)
 			# TODO: use llvm_version_exact
 			install_packages "devel/llvm$(llvm_version)"
+		;;
+	amzn)
+		install_packages \
+			"llvm$(llvm_version)" \
+			"clang$(llvm_version)" \
+			"lld$(llvm_version)" \
+			"compiler-rt$(llvm_version)" \
 		;;
 	esac
 }
@@ -1304,8 +1281,15 @@ install_rust() {
 		;;
 	freebsd)
 		install_packages lang/rust
-		create_directory "$HOME/.cargo/bin"
-		append_to_path "$HOME/.cargo/bin"
+		create_directory "$home/.cargo/bin"
+		append_to_path "$home/.cargo/bin"
+		;;
+	amzn)
+		sh="$(require sh)"
+		rustup_script=$(download_file "https://sh.rustup.rs")
+		execute_as_user "$rustup_script -y --no-modify-path"
+		create_directory "$home/.cargo/bin"
+		append_to_path "$home/.cargo/bin"
 		;;
 	*)
 		rust_home="/opt/rust"
@@ -1342,12 +1326,16 @@ install_docker() {
 			sysutils/docker-compose \
 		;;
 	*)
-		case "$distro-$release" in
-		amzn-2 | amzn-1)
-			execute_sudo amazon-linux-extras install docker
-			;;
-		amzn-* | alpine-*)
+		case "$distro" in
+		alpine)
 			install_packages docker docker-cli-compose
+			;;
+		amzn)
+			install_packages docker
+			local compose_bin=$(download_file https://github.com/docker/compose/releases/latest/download/docker-compose-linux-$(uname -m))
+			execute_sudo chmod +x "$compose_bin"
+			execute_sudo mv "$compose_bin" "$(dirname $compose_bin)/docker-compose"
+			move_to_bin "$(dirname $compose_bin)/docker-compose"
 			;;
 		*)
 			sh="$(require sh)"
@@ -1420,10 +1408,6 @@ install_osxcross() {
 }
 
 install_tailscale() {
-	if [ "$docker" = "1" ]; then
-		return
-	fi
-
 	case "$os" in
 	linux)
 		sh="$(require sh)"
@@ -1443,6 +1427,9 @@ install_tailscale() {
 
 install_fuse_python() {
 	if ! [ "$os" = "linux" ]; then
+		return
+	fi
+	if [ "$distro" = "amzn" ]; then
 		return
 	fi
 
@@ -1776,7 +1763,6 @@ ensure_no_tmpfs() {
 main() {
 	check_features "$@"
 	check_operating_system
-	check_inside_docker
 	check_user
 	check_ulimit
 	check_package_manager

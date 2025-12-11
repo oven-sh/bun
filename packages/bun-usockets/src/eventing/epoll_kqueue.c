@@ -228,8 +228,8 @@ void us_loop_run(struct us_loop_t *loop) {
                 // > Instead, the filter will aggregate the events into a single kevent struct
                 // Note: EV_ERROR only sets the error in data as part of changelist. Not in this call!
                 int events = 0
-                    | ((filter & EVFILT_READ) ? LIBUS_SOCKET_READABLE : 0)
-                    | ((filter & EVFILT_WRITE) ? LIBUS_SOCKET_WRITABLE : 0);
+                    | ((filter == EVFILT_READ) ? LIBUS_SOCKET_READABLE : 0)
+                    | ((filter == EVFILT_WRITE) ? LIBUS_SOCKET_WRITABLE : 0);
                 const int error = (flags & (EV_ERROR)) ? ((int)fflags || 1) : 0;
                 const int eof = (flags & (EV_EOF));
 #endif

@@ -5,7 +5,7 @@ describe("bundler feature flags", () => {
   test("feature() returns true when flag is enabled", async () => {
     using dir = tempDir("bundler-feature-flag", {
       "index.ts": `
-import { feature } from "bun:bundler";
+import { feature } from "bun:bundle";
 
 if (feature("SUPER_SECRET")) {
   console.log("feature enabled");
@@ -33,13 +33,13 @@ if (feature("SUPER_SECRET")) {
     // The output should contain `if (true)` since the feature is enabled
     expect(stdout).toContain("true");
     expect(stdout).not.toContain("feature(");
-    expect(stdout).not.toContain("bun:bundler");
+    expect(stdout).not.toContain("bun:bundle");
   });
 
   test("feature() returns false when flag is not enabled", async () => {
     using dir = tempDir("bundler-feature-flag", {
       "index.ts": `
-import { feature } from "bun:bundler";
+import { feature } from "bun:bundle";
 
 if (feature("SUPER_SECRET")) {
   console.log("feature enabled");
@@ -67,13 +67,13 @@ if (feature("SUPER_SECRET")) {
     // The output should contain `if (false)` since the feature is not enabled
     expect(stdout).toContain("false");
     expect(stdout).not.toContain("feature(");
-    expect(stdout).not.toContain("bun:bundler");
+    expect(stdout).not.toContain("bun:bundle");
   });
 
   test("multiple feature flags can be enabled", async () => {
     using dir = tempDir("bundler-feature-flag", {
       "index.ts": `
-import { feature } from "bun:bundler";
+import { feature } from "bun:bundle";
 
 const a = feature("FLAG_A");
 const b = feature("FLAG_B");
@@ -108,7 +108,7 @@ console.log(a, b, c);
   test("dead code elimination works with feature flags", async () => {
     using dir = tempDir("bundler-feature-flag", {
       "index.ts": `
-import { feature } from "bun:bundler";
+import { feature } from "bun:bundle";
 
 if (feature("ENABLED_FEATURE")) {
   console.log("this should be kept");
@@ -143,7 +143,7 @@ if (feature("DISABLED_FEATURE")) {
   test("feature() with non-string argument produces error", async () => {
     using dir = tempDir("bundler-feature-flag", {
       "index.ts": `
-import { feature } from "bun:bundler";
+import { feature } from "bun:bundle";
 
 const flag = "DYNAMIC";
 if (feature(flag)) {
@@ -173,7 +173,7 @@ if (feature(flag)) {
   test("feature() with no arguments produces error", async () => {
     using dir = tempDir("bundler-feature-flag", {
       "index.ts": `
-import { feature } from "bun:bundler";
+import { feature } from "bun:bundle";
 
 if (feature()) {
   console.log("no args");
@@ -199,10 +199,10 @@ if (feature()) {
     expect(stderr).toContain("one string argument");
   });
 
-  test("bun:bundler import is removed from output", async () => {
+  test("bun:bundle import is removed from output", async () => {
     using dir = tempDir("bundler-feature-flag", {
       "index.ts": `
-import { feature } from "bun:bundler";
+import { feature } from "bun:bundle";
 
 const x = feature("TEST");
 console.log(x);
@@ -225,14 +225,14 @@ console.log(x);
 
     expect(exitCode).toBe(0);
     // The import should be completely removed
-    expect(stdout).not.toContain("bun:bundler");
+    expect(stdout).not.toContain("bun:bundle");
     expect(stdout).not.toContain("import");
   });
 
   test("dead code elimination removes entire if block when condition is false", async () => {
     using dir = tempDir("bundler-feature-flag", {
       "index.ts": `
-import { feature } from "bun:bundler";
+import { feature } from "bun:bundle";
 
 function expensiveComputation() {
   return "expensive result";
@@ -272,7 +272,7 @@ console.log("This should remain");
   test("dead code elimination keeps else branch when condition is false", async () => {
     using dir = tempDir("bundler-feature-flag", {
       "index.ts": `
-import { feature } from "bun:bundler";
+import { feature } from "bun:bundle";
 
 if (feature("DISABLED")) {
   console.log("if branch - should be removed");
@@ -304,7 +304,7 @@ if (feature("DISABLED")) {
   test("dead code elimination removes else branch when condition is true", async () => {
     using dir = tempDir("bundler-feature-flag", {
       "index.ts": `
-import { feature } from "bun:bundler";
+import { feature } from "bun:bundle";
 
 if (feature("ENABLED")) {
   console.log("if branch - should be kept");
@@ -336,7 +336,7 @@ if (feature("ENABLED")) {
   test("works correctly at runtime with bun run", async () => {
     using dir = tempDir("bundler-feature-flag", {
       "index.ts": `
-import { feature } from "bun:bundler";
+import { feature } from "bun:bundle";
 
 if (feature("RUNTIME_FLAG")) {
   console.log("runtime flag enabled");
@@ -387,7 +387,7 @@ if (feature("RUNTIME_FLAG")) {
     using dir = tempDir("bundler-feature-flag", {
       "test.test.ts": `
 import { test, expect } from "bun:test";
-import { feature } from "bun:bundler";
+import { feature } from "bun:bundle";
 
 test("feature flag in test", () => {
   if (feature("TEST_FLAG")) {
@@ -442,7 +442,7 @@ test("feature flag in test", () => {
   test("feature flag with aliased import works", async () => {
     using dir = tempDir("bundler-feature-flag", {
       "index.ts": `
-import { feature as checkFeature } from "bun:bundler";
+import { feature as checkFeature } from "bun:bundle";
 
 if (checkFeature("ALIASED")) {
   console.log("aliased feature enabled");
@@ -474,7 +474,7 @@ if (checkFeature("ALIASED")) {
   test("ternary operator dead code elimination", async () => {
     using dir = tempDir("bundler-feature-flag", {
       "index.ts": `
-import { feature } from "bun:bundler";
+import { feature } from "bun:bundle";
 
 const result = feature("TERNARY_FLAG") ? "ternary_enabled" : "ternary_disabled";
 console.log(result);

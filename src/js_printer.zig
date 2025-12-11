@@ -2677,22 +2677,7 @@ fn NewPrinter(
                         p.print(")");
                     }
                 },
-                .e_boolean => |e| {
-                    p.addSourceMapping(expr.loc);
-                    if (p.options.minify_syntax) {
-                        if (level.gte(Level.prefix)) {
-                            p.print(if (e.value) "(!0)" else "(!1)");
-                        } else {
-                            p.print(if (e.value) "!0" else "!1");
-                        }
-                    } else {
-                        p.printSpaceBeforeIdentifier();
-                        p.print(if (e.value) "true" else "false");
-                    }
-                },
-                .e_branch_boolean => |e| {
-                    // e_branch_boolean is produced by feature() from bun:bundle.
-                    // It prints the same as e_boolean. Invalid usage is caught during the visit phase.
+                .e_boolean, .e_branch_boolean => |e| {
                     p.addSourceMapping(expr.loc);
                     if (p.options.minify_syntax) {
                         if (level.gte(Level.prefix)) {

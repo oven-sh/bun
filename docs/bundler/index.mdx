@@ -1192,12 +1192,14 @@ var mode = "free";
 ```
 
 **Key behaviors:**
+
 - `feature()` requires a string literal argument — dynamic values are not supported
 - The `bun:bundle` import is completely removed from the output
 - Works with `bun build`, `bun run`, and `bun test`
 - Multiple flags can be enabled: `--feature FLAG_A --feature FLAG_B`
 
 **Use cases:**
+
 - Platform-specific code (`feature("SERVER")` vs `feature("CLIENT")`)
 - Environment-based features (`feature("DEVELOPMENT")`)
 - Gradual feature rollouts

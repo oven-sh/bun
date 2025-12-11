@@ -93,14 +93,14 @@ bun upgrade --canary
   - [TypeScript](https://bun.com/docs/typescript)
 
 - Templating
-  - [`bun init`](https://bun.com/docs/cli/init)
-  - [`bun create`](https://bun.com/docs/cli/bun-create)
+  - [`bun init`](https://bun.com/docs/runtime/templating/init)
+  - [`bun create`](https://bun.com/docs/runtime/templating/create#bun-create)
 
 - CLI
-  - [`bun upgrade`](https://bun.com/docs/cli/bun-upgrade)
+  - [`bun upgrade`](https://bun.com/docs/installation#upgrading)
 
 - Runtime
-  - [`bun run`](https://bun.com/docs/cli/run)
+  - [`bun run`](https://bun.com/docs/runtime#run-a-file)
   - [File types (Loaders)](https://bun.com/docs/runtime/loaders)
   - [TypeScript](https://bun.com/docs/runtime/typescript)
   - [JSX](https://bun.com/docs/runtime/jsx)

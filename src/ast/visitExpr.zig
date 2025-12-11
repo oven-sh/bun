@@ -208,15 +208,17 @@ pub fn VisitExpr(
                         const all_props: []G.Property = e_.properties.slice();
                         for (all_props) |*property| {
                             if (property.kind != .spread) {
-                                property.key = p.visitExpr(property.key.?);
+                                if (property.key) |key| {
+                                    property.key = p.visitExpr(key);
+                                }
                             }
 
-                            if (property.value != null) {
-                                property.value = p.visitExpr(property.value.?);
+                            if (property.value) |val| {
+                                property.value = p.visitExpr(val);
                             }
 
-                            if (property.initializer != null) {
-                                property.initializer = p.visitExpr(property.initializer.?);
+                            if (property.initializer) |init| {
+                                property.initializer = p.visitExpr(init);
                             }
                         }
 
@@ -1085,13 +1087,13 @@ pub fn VisitExpr(
                         }
                     }
 
-                    if (property.value != null) {
-                        property.value = p.visitExprInOut(property.value.?, ExprIn{ .assign_target = in.assign_target });
+                    if (property.value) |val| {
+                        property.value = p.visitExprInOut(val, ExprIn{ .assign_target = in.assign_target });
                     }
 
-                    if (property.initializer != null) {
-                        const was_anonymous_named_expr = property.initializer.?.isAnonymousNamed();
-                        property.initializer = p.visitExpr(property.initializer.?);
+                    if (property.initializer) |init| {
+                        const was_anonymous_named_expr = init.isAnonymousNamed();
+                        property.initializer = p.visitExpr(init);
 
                         if (property.value) |val| {
                             if (@as(Expr.Tag, val.data) == .e_identifier) {

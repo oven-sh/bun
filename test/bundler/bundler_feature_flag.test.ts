@@ -254,6 +254,178 @@ if (feature()) {
     },
   });
 
+  // Error cases for invalid usage of feature() - must be in if/ternary condition
+  itBundled("feature_flag/ConstAssignmentError", {
+    backend: "cli",
+    files: {
+      "/a.js": `
+import { feature } from "bun:bundle";
+const x = feature("FLAG");
+console.log(x);
+`,
+    },
+    bundleErrors: {
+      "/a.js": ['feature() from "bun:bundle" can only be used directly in an if statement or ternary condition'],
+    },
+  });
+
+  itBundled("feature_flag/LetAssignmentError", {
+    backend: "cli",
+    files: {
+      "/a.js": `
+import { feature } from "bun:bundle";
+let x = feature("FLAG");
+console.log(x);
+`,
+    },
+    bundleErrors: {
+      "/a.js": ['feature() from "bun:bundle" can only be used directly in an if statement or ternary condition'],
+    },
+  });
+
+  itBundled("feature_flag/ExportDefaultError", {
+    backend: "cli",
+    files: {
+      "/a.js": `
+import { feature } from "bun:bundle";
+export default feature("FLAG");
+`,
+    },
+    bundleErrors: {
+      "/a.js": ['feature() from "bun:bundle" can only be used directly in an if statement or ternary condition'],
+    },
+  });
+
+  itBundled("feature_flag/FunctionArgumentError", {
+    backend: "cli",
+    files: {
+      "/a.js": `
+import { feature } from "bun:bundle";
+console.log(feature("FLAG"));
+`,
+    },
+    bundleErrors: {
+      "/a.js": ['feature() from "bun:bundle" can only be used directly in an if statement or ternary condition'],
+    },
+  });
+
+  itBundled("feature_flag/ReturnStatementError", {
+    backend: "cli",
+    files: {
+      "/a.js": `
+import { feature } from "bun:bundle";
+function foo() {
+  return feature("FLAG");
+}
+`,
+    },
+    bundleErrors: {
+      "/a.js": ['feature() from "bun:bundle" can only be used directly in an if statement or ternary condition'],
+    },
+  });
+
+  itBundled("feature_flag/ArrayLiteralError", {
+    backend: "cli",
+    files: {
+      "/a.js": `
+import { feature } from "bun:bundle";
+const arr = [feature("FLAG")];
+`,
+    },
+    bundleErrors: {
+      "/a.js": ['feature() from "bun:bundle" can only be used directly in an if statement or ternary condition'],
+    },
+  });
+
+  itBundled("feature_flag/ObjectPropertyError", {
+    backend: "cli",
+    files: {
+      "/a.js": `
+import { feature } from "bun:bundle";
+const obj = { flag: feature("FLAG") };
+`,
+    },
+    bundleErrors: {
+      "/a.js": ['feature() from "bun:bundle" can only be used directly in an if statement or ternary condition'],
+    },
+  });
+
+  // Valid usage patterns - these should work without errors
+  for (const backend of ["cli", "api"] as const) {
+    itBundled(`feature_flag/${backend}/ValidIfStatement`, {
+      backend,
+      files: {
+        "/a.js": `
+import { feature } from "bun:bundle";
+if (feature("FLAG")) {
+  console.log("enabled");
+}
+`,
+      },
+      features: ["FLAG"],
+      onAfterBundle(api) {
+        api.expectFile("out.js").toInclude("true");
+        api.expectFile("out.js").not.toInclude("feature(");
+      },
+    });
+
+    itBundled(`feature_flag/${backend}/ValidTernary`, {
+      backend,
+      files: {
+        "/a.js": `
+import { feature } from "bun:bundle";
+const x = feature("FLAG") ? "yes" : "no";
+console.log(x);
+`,
+      },
+      features: ["FLAG"],
+      minifySyntax: true,
+      onAfterBundle(api) {
+        api.expectFile("out.js").toInclude("yes");
+        api.expectFile("out.js").not.toInclude("no");
+      },
+    });
+
+    itBundled(`feature_flag/${backend}/ValidElseIf`, {
+      backend,
+      files: {
+        "/a.js": `
+import { feature } from "bun:bundle";
+if (feature("A")) {
+  console.log("A");
+} else if (feature("B")) {
+  console.log("B");
+} else {
+  console.log("neither");
+}
+`,
+      },
+      features: ["B"],
+      minifySyntax: true,
+      onAfterBundle(api) {
+        api.expectFile("out.js").toInclude("B");
+        api.expectFile("out.js").not.toInclude("neither");
+      },
+    });
+
+    itBundled(`feature_flag/${backend}/ValidNestedTernary`, {
+      backend,
+      files: {
+        "/a.js": `
+import { feature } from "bun:bundle";
+const x = feature("A") ? "A" : feature("B") ? "B" : "C";
+console.log(x);
+`,
+      },
+      features: ["B"],
+      minifySyntax: true,
+      onAfterBundle(api) {
+        api.expectFile("out.js").toInclude("B");
+        api.expectFile("out.js").not.toInclude("A");
+      },
+    });
+  }
+
   // Runtime tests - these must remain as manual tests since they test bun run and bun test
   test("works correctly at runtime with bun run", async () => {
     using dir = tempDir("bundler-feature-flag", {

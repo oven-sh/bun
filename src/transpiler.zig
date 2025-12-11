@@ -794,6 +794,7 @@ pub const Transpiler = struct {
                 source,
                 false,
                 .{
+                    .log = transpiler.log,
                     .bundling = false,
                     .runtime_imports = ast.runtime_imports,
                     .require_ref = ast.require_ref,
@@ -806,6 +807,7 @@ pub const Transpiler = struct {
                     .runtime_transpiler_cache = runtime_transpiler_cache,
                     .print_dce_annotations = transpiler.options.emit_dce_annotations,
                     .hmr_ref = ast.wrapper_ref,
+                    .mangled_props = null,
                 },
                 enable_source_map,
             ),
@@ -818,6 +820,7 @@ pub const Transpiler = struct {
                 source,
                 false,
                 .{
+                    .log = transpiler.log,
                     .bundling = false,
                     .runtime_imports = ast.runtime_imports,
                     .require_ref = ast.require_ref,
@@ -844,6 +847,7 @@ pub const Transpiler = struct {
                     source,
                     is_bun,
                     .{
+                        .log = transpiler.log,
                         .bundling = false,
                         .runtime_imports = ast.runtime_imports,
                         .require_ref = ast.require_ref,

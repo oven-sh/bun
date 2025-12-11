@@ -87,6 +87,7 @@ pub const UpdateInteractiveCommand = struct {
             package_json.*.root,
             &package_json.*.source,
             .{
+                .log = manager.log,
                 .indent = package_json.*.indentation,
                 .mangled_props = null,
             },

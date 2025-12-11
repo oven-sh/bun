@@ -27,6 +27,7 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
 
     {
         const print_options = js_printer.Options{
+            .log = c.log,
             .bundling = true,
             .indent = .{},
             .has_run_symbol_renamer = true,
@@ -837,6 +838,7 @@ pub fn generateEntryPointTailJS(
     }
 
     const print_options = js_printer.Options{
+        .log = c.log,
         // TODO: IIFE indent
         .indent = .{},
         .has_run_symbol_renamer = true,

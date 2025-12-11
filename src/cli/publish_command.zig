@@ -1019,12 +1019,14 @@ pub const PublishCommand = struct {
         const buffer_writer = bun.js_printer.BufferWriter.init(allocator);
         var writer = bun.js_printer.BufferPrinter.init(buffer_writer);
 
+        var log = logger.Log.init(allocator);
         const written = bun.js_printer.printJSON(
             @TypeOf(&writer),
             &writer,
             json.*,
             json_source,
             .{
+                .log = &log,
                 .minify_whitespace = true,
                 .mangled_props = null,
             },

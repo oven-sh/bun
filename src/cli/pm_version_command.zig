@@ -123,6 +123,7 @@ pub const PmVersionCommand = struct {
                 json,
                 &package_json_source,
                 .{
+                    .log = ctx.log,
                     .indent = json_result.indentation,
                     .mangled_props = null,
                 },

@@ -44,6 +44,7 @@ pub fn parse(
         parse_result,
         source,
         .{
+            .log = &log,
             .mangled_props = null,
         },
     ) catch {

@@ -247,6 +247,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
         current_package_json.root,
         &current_package_json.source,
         .{
+            .log = manager.log,
             .indent = current_package_json_indent,
             .mangled_props = null,
         },
@@ -324,6 +325,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                 root_package_json.root,
                 &root_package_json.source,
                 .{
+                    .log = manager.log,
                     .indent = root_package_json.indentation,
                     .mangled_props = null,
                 },
@@ -388,6 +390,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
             new_package_json,
             source,
             .{
+                .log = manager.log,
                 .indent = current_package_json_indent,
                 .mangled_props = null,
             },

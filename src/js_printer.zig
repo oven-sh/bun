@@ -376,6 +376,8 @@ pub const SourceMapHandler = struct {
 };
 
 pub const Options = struct {
+    log: *logger.Log,
+    source: ?*const logger.Source = null,
     bundling: bool = false,
     transform_imports: bool = true,
     to_commonjs_ref: Ref = Ref.None,
@@ -632,7 +634,6 @@ fn NewPrinter(
         binary_expression_stack: std.array_list.Managed(BinaryExpressionVisitor) = undefined,
 
         was_lazy_export: bool = false,
-        in_branch_condition: bool = false,
 
         const Printer = @This();
 
@@ -2478,9 +2479,7 @@ fn NewPrinter(
                         p.print("(");
                         flags.remove(.forbid_in);
                     }
-                    p.in_branch_condition = true;
                     p.printExpr(e.test_, .conditional, flags);
-                    p.in_branch_condition = false;
                     p.printSpace();
                     p.print("?");
                     p.printSpace();
@@ -2695,10 +2694,7 @@ fn NewPrinter(
                 },
                 .e_branch_boolean => |e| {
                     // e_branch_boolean is produced by feature() from bun:bundle.
-                    // It can only be used directly in an if statement or ternary condition.
-                    if (!p.in_branch_condition) {
-                        Output.panic("feature() from \"bun:bundle\" can only be used directly in an if statement or ternary condition", .{});
-                    }
+                    // It prints the same as e_boolean. Invalid usage is caught during the visit phase.
                     p.addSourceMapping(expr.loc);
                     if (p.options.minify_syntax) {
                         if (level.gte(Level.prefix)) {
@@ -4811,9 +4807,7 @@ fn NewPrinter(
             p.print("if");
             p.printSpace();
             p.print("(");
-            p.in_branch_condition = true;
             p.printExpr(s.test_, .lowest, ExprFlag.None());
-            p.in_branch_condition = false;
             p.print(")");
 
             switch (s.yes.data) {

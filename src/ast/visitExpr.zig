@@ -923,7 +923,9 @@ pub fn VisitExpr(
                 const e_ = expr.data.e_if;
                 const is_call_target = @as(Expr.Data, p.call_target) == .e_if and expr.data.e_if == p.call_target.e_if;
 
+                p.in_branch_condition = true;
                 e_.test_ = p.visitExpr(e_.test_);
+                p.in_branch_condition = false;
 
                 e_.test_ = SideEffects.simplifyBoolean(p, e_.test_);
 
@@ -1690,6 +1692,13 @@ pub fn VisitExpr(
                     p.log.addError(p.source, arg.loc, "feature() flag name must be an ASCII string") catch unreachable;
                     return p.newExpr(E.Boolean{ .value = false }, loc);
                 }
+
+                // feature() can only be used directly in an if statement or ternary condition
+                if (!p.in_branch_condition) {
+                    p.log.addError(p.source, loc, "feature() from \"bun:bundle\" can only be used directly in an if statement or ternary condition") catch unreachable;
+                    return p.newExpr(E.Boolean{ .value = false }, loc);
+                }
+
                 const is_enabled = p.options.features.bundler_feature_flags.map.contains(flag_string.data);
                 return .{ .data = .{ .e_branch_boolean = .{ .value = is_enabled } }, .loc = loc };
             }

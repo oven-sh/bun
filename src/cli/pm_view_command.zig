@@ -229,6 +229,7 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec_: strin
                 value,
                 source,
                 .{
+                    .log = &log,
                     .mangled_props = null,
                 },
             );
@@ -265,6 +266,7 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec_: strin
             manifest,
             source,
             .{
+                .log = &log,
                 .mangled_props = null,
                 .indent = .{
                     .count = 2,

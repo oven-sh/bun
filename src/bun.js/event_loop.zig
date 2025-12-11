@@ -296,6 +296,8 @@ pub fn tickConcurrentWithCount(this: *EventLoop) usize {
         if (this.signal_handler) |signal_handler| {
             signal_handler.drain(this);
         }
+    } else if (comptime Environment.isWindows) {
+        WindowsDebugHandler.checkAndActivateInspector(this.virtual_machine);
     }
 
     this.runImminentGCTimer();
@@ -690,6 +692,7 @@ pub const DeferredRepeatingTask = DeferredTaskQueue.DeferredRepeatingTask;
 pub const PosixSignalHandle = @import("./event_loop/PosixSignalHandle.zig");
 pub const PosixSignalTask = PosixSignalHandle.PosixSignalTask;
 pub const Sigusr1Handler = @import("./event_loop/Sigusr1Handler.zig");
+pub const WindowsDebugHandler = @import("./event_loop/WindowsDebugHandler.zig");
 pub const MiniEventLoop = @import("./event_loop/MiniEventLoop.zig");
 pub const MiniVM = MiniEventLoop.MiniVM;
 pub const JsVM = MiniEventLoop.JsVM;

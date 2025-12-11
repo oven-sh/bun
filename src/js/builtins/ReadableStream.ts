@@ -112,11 +112,13 @@ export function readableStreamToArray(stream: ReadableStream): Promise<unknown[]
   // this is a direct stream
   var underlyingSource = $getByIdDirectPrivate(stream, "underlyingSource");
   if (underlyingSource !== undefined) {
-    return $readableStreamToArrayDirect(stream, underlyingSource);
+    // Shield InternalPromise from user code
+    return $shieldingPromiseResolve($readableStreamToArrayDirect(stream, underlyingSource));
   }
   if ($isReadableStreamLocked(stream))
     return $promiseReject(Promise, $ERR_INVALID_STATE_TypeError("ReadableStream is locked"));
-  return $readableStreamIntoArray(stream);
+  // Shield InternalPromise from user code
+  return $shieldingPromiseResolve($readableStreamIntoArray(stream));
 }
 
 $linkTimeConstant;
@@ -344,7 +346,8 @@ export function readableStreamToBlob(stream: ReadableStream): Promise<Blob> {
 
   return (
     $tryUseReadableStreamBufferedFastPath(stream, "blob") ||
-    $promiseResolve(Promise, Bun.readableStreamToArray(stream)).then(array => new Blob(array))
+    // Shield InternalPromise from user code
+    $shieldingPromiseResolve(Bun.readableStreamToArray(stream)).$then(array => new Blob(array))
   );
 }
 

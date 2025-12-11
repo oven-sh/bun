@@ -1206,6 +1206,61 @@ var mode = "free";
 - A/B testing variants
 - Paid tier features
 
+#### Type-safe feature flags
+
+By default, `feature()` accepts any string. For better type safety, you can use TypeScript declaration merging to restrict it to known flag names. This gives you:
+
+- Autocomplete for valid flag names
+- Compile-time errors for typos
+- Documentation of available flags in your codebase
+
+Create an `env.d.ts` file in your project:
+
+```ts title="env.d.ts" icon="/icons/typescript.svg"
+declare module "bun:bundle" {
+  // Define your valid feature flag names
+  type FeatureFlag = "DEBUG" | "PREMIUM" | "BETA_FEATURES" | "ANALYTICS";
+
+  // Overload that restricts to known flags
+  export function feature(flag: FeatureFlag): boolean;
+}
+```
+
+Now TypeScript will only allow known flags:
+
+```ts title="app.ts" icon="/icons/typescript.svg"
+import { feature } from "bun:bundle";
+
+// These work - they're in FeatureFlag
+if (feature("DEBUG")) { /* ... */ }
+if (feature("PREMIUM")) { /* ... */ }
+
+// Type error: Argument of type '"TYPO"' is not assignable...
+if (feature("TYPO")) { /* ... */ }
+```
+
+For gradual adoption, you can add a fallback overload that still accepts any string:
+
+```ts title="env.d.ts" icon="/icons/typescript.svg"
+declare module "bun:bundle" {
+  type FeatureFlag = "DEBUG" | "PREMIUM";
+
+  // Known flags get autocomplete
+  export function feature(flag: FeatureFlag): boolean;
+  // Unknown flags still work (no autocomplete)
+  export function feature(flag: string): boolean;
+}
+```
+
+Make sure to include your `env.d.ts` in your `tsconfig.json`:
+
+```json title="tsconfig.json" icon="/icons/json.svg"
+{
+  "compilerOptions": { /* ... */ },
+  "include": ["src", "env.d.ts"]
+}
+```
+
 ## Outputs
 
 The `Bun.build` function returns a `Promise<BuildOutput>`, defined as:

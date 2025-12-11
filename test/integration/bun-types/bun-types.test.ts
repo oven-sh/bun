@@ -360,6 +360,148 @@ describe("@types/bun integration test", () => {
     });
   });
 
+  describe("bun:bundle feature() type safety with overloads", () => {
+    // This demonstrates how users can add type-safe feature flags using declaration merging.
+    // By adding overloads in an env.d.ts file, users can:
+    // 1. Restrict feature() to only accept known flag names
+    // 2. Get autocomplete for valid flag names
+    // 3. Get compile-time errors for typos or unknown flags
+
+    const envDts = `
+      // env.d.ts - User's custom type declarations for feature flags
+      //
+      // This file demonstrates how to add type safety to bun:bundle's feature() function.
+      // By using declaration merging and function overloads, you can restrict feature()
+      // to only accept known flag names, getting autocomplete and compile-time checking.
+      //
+      // Add this to your project's type declarations (e.g., env.d.ts or global.d.ts)
+      // and include it in your tsconfig.json's "include" array.
+
+      declare module "bun:bundle" {
+        // Define your valid feature flag names as a union type
+        type ValidFeatureFlag = "DEBUG" | "PREMIUM" | "BETA_FEATURES" | "ANALYTICS";
+
+        // Overload 1: Type-safe version that accepts only valid flags
+        // This overload is checked first due to TypeScript's overload resolution
+        export function feature(flag: ValidFeatureFlag): boolean;
+
+        // Overload 2: Fallback that accepts any string (original behavior)
+        // This allows gradual adoption - unknown flags still work but without autocomplete
+        export function feature(flag: string): boolean;
+      }
+    `;
+
+    const testCode = `
+      import { feature } from "bun:bundle";
+
+      // These should work - they're in ValidFeatureFlag
+      const isDebug: boolean = feature("DEBUG");
+      const isPremium: boolean = feature("PREMIUM");
+      const isBeta: boolean = feature("BETA_FEATURES");
+      const hasAnalytics: boolean = feature("ANALYTICS");
+
+      // Conditional logic with type-safe flags
+      if (feature("DEBUG")) {
+        console.log("Debug mode");
+      }
+
+      const config = {
+        premium: feature("PREMIUM"),
+        beta: feature("BETA_FEATURES"),
+      };
+
+      // This also works due to the string fallback overload
+      // (allows gradual adoption of new flags)
+      const unknownFlag: boolean = feature("SOME_OTHER_FLAG");
+    `;
+
+    test("type-safe feature flags work with env.d.ts overloads", async () => {
+      const { diagnostics, emptyInterfaces } = await diagnose(TEMP_FIXTURE_DIR, {
+        files: {
+          "feature-env.d.ts": envDts,
+          "feature-test.ts": testCode,
+        },
+      });
+
+      expect(emptyInterfaces).toEqual(expectedEmptyInterfacesWhenNoDOM);
+      expect(diagnostics).toEqual([]);
+    });
+
+    test("demonstrates strict-only mode (no string fallback)", async () => {
+      // This shows how to make feature() ONLY accept known flags (no fallback)
+      const strictEnvDts = `
+        declare module "bun:bundle" {
+          type StrictFeatureFlag = "FEATURE_A" | "FEATURE_B";
+
+          // Only one overload - no string fallback means unknown flags are errors
+          export function feature(flag: StrictFeatureFlag): boolean;
+        }
+      `;
+
+      const strictTestCode = `
+        import { feature } from "bun:bundle";
+
+        // Valid flags work
+        const a: boolean = feature("FEATURE_A");
+        const b: boolean = feature("FEATURE_B");
+      `;
+
+      const { diagnostics, emptyInterfaces } = await diagnose(TEMP_FIXTURE_DIR, {
+        files: {
+          "strict-env.d.ts": strictEnvDts,
+          "strict-test.ts": strictTestCode,
+        },
+      });
+
+      expect(emptyInterfaces).toEqual(expectedEmptyInterfacesWhenNoDOM);
+      expect(diagnostics).toEqual([]);
+    });
+
+    test("overloads work with conditional types for advanced use cases", async () => {
+      // This demonstrates that overloads can be combined with conditional types
+      // for more advanced type inference scenarios
+      const advancedEnvDts = `
+        declare module "bun:bundle" {
+          type KnownFlag = "DEBUG" | "PRODUCTION";
+
+          // Overload with known flags for better autocomplete
+          export function feature(flag: KnownFlag): boolean;
+          // Original overload preserved for unknown flags
+          export function feature(flag: string): boolean;
+        }
+      `;
+
+      const advancedTestCode = `
+        import { feature } from "bun:bundle";
+
+        // Known flags work
+        const debug: boolean = feature("DEBUG");
+        const prod: boolean = feature("PRODUCTION");
+
+        // Unknown flags still work (string overload)
+        const custom: boolean = feature("CUSTOM_FLAG");
+
+        // Can use in conditionals
+        if (feature("DEBUG")) {
+          console.log("debug mode");
+        }
+
+        // Type checking ensures return type is boolean
+        const result: boolean = feature("DEBUG") && feature("PRODUCTION");
+      `;
+
+      const { diagnostics, emptyInterfaces } = await diagnose(TEMP_FIXTURE_DIR, {
+        files: {
+          "advanced-env.d.ts": advancedEnvDts,
+          "advanced-test.ts": advancedTestCode,
+        },
+      });
+
+      expect(emptyInterfaces).toEqual(expectedEmptyInterfacesWhenNoDOM);
+      expect(diagnostics).toEqual([]);
+    });
+  });
+
   test("checks with no lib at all", async () => {
     const { diagnostics, emptyInterfaces } = await diagnose(TEMP_FIXTURE_DIR, {
       options: {

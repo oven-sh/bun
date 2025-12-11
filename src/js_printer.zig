@@ -376,8 +376,6 @@ pub const SourceMapHandler = struct {
 };
 
 pub const Options = struct {
-    log: *logger.Log,
-    source: ?*const logger.Source = null,
     bundling: bool = false,
     transform_imports: bool = true,
     to_commonjs_ref: Ref = Ref.None,

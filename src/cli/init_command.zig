@@ -759,14 +759,12 @@ pub const InitCommand = struct {
             buffer_writer.append_newline = true;
             var package_json_writer = JSPrinter.BufferPrinter.init(buffer_writer);
 
-            var log = logger.Log.init(alloc);
-            defer log.deinit();
             _ = JSPrinter.printJSON(
                 @TypeOf(&package_json_writer),
                 &package_json_writer,
                 js_ast.Expr{ .data = .{ .e_object = fields.object }, .loc = logger.Loc.Empty },
                 &logger.Source.initEmptyFile("package.json"),
-                .{ .log = &log, .mangled_props = null },
+                .{ .mangled_props = null },
             ) catch |err| {
                 Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
                 package_json_file = null;

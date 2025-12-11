@@ -343,14 +343,12 @@ pub const PmPkgCommand = struct {
                 const buffer_writer = JSPrinter.BufferWriter.init(allocator);
                 var printer = JSPrinter.BufferPrinter.init(buffer_writer);
 
-                var log = logger.Log.init(allocator);
                 _ = JSPrinter.printJSON(
                     @TypeOf(&printer),
                     &printer,
                     expr,
                     &logger.Source.initEmptyFile("expression.json"),
                     .{
-                        .log = &log,
                         .mangled_props = null,
                         .indent = if (initial_indent) |indent| .{
                             .scalar = indent,
@@ -743,14 +741,12 @@ pub const PmPkgCommand = struct {
 
         var writer = JSPrinter.BufferPrinter.init(buffer_writer);
 
-        var log = logger.Log.init(allocator);
         _ = JSPrinter.printJSON(
             @TypeOf(&writer),
             &writer,
             root,
             &pkg.source,
             .{
-                .log = &log,
                 .indent = pkg.indentation,
                 .mangled_props = null,
             },

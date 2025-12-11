@@ -1531,7 +1531,6 @@ fn updatePackageJsonAfterMigration(allocator: Allocator, manager: *PackageManage
             .{
                 .indent = root_pkg_json.indentation,
                 .mangled_props = null,
-                .log = log,
             },
         ) catch return;
 

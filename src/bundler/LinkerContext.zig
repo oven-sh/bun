@@ -1308,7 +1308,6 @@ pub const LinkerContext = struct {
         };
 
         const print_options = js_printer.Options{
-            .log = c.log,
             .bundling = true,
             // TODO: IIFE
             .indent = .{},

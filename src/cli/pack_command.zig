@@ -2217,7 +2217,6 @@ pub const PackCommand = struct {
         buffer_writer.append_newline = has_trailing_newline;
         var package_json_writer = js_printer.BufferPrinter.init(buffer_writer);
 
-        var log = bun.logger.Log.init(allocator);
         const written = js_printer.printJSON(
             @TypeOf(&package_json_writer),
             &package_json_writer,
@@ -2226,7 +2225,6 @@ pub const PackCommand = struct {
             // shouldn't be used
             &json.source,
             .{
-                .log = &log,
                 .indent = json.indentation,
                 .mangled_props = null,
             },

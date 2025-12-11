@@ -916,8 +916,7 @@ pub const Installer = struct {
                         if (installer.trusted_dependencies_from_update_requests.contains(truncated_dep_name_hash)) {
                             break :brk .{ true, true };
                         }
-                        // Only allow default trusted dependencies for npm packages
-                        if (installer.lockfile.hasTrustedDependency(dep.name.slice(string_buf), pkg_res.tag == .npm)) {
+                        if (installer.lockfile.hasTrustedDependency(dep.name.slice(string_buf), &pkg_res)) {
                             break :brk .{ true, false };
                         }
                         break :brk .{ false, false };

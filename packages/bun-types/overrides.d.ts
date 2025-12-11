@@ -308,11 +308,11 @@ declare global {
   }
 }
 
-declare module "fs/promises" {
+declare module "node:fs/promises" {
   function exists(path: Bun.PathLike): Promise<boolean>;
 }
 
-declare module "tls" {
+declare module "node:tls" {
   interface BunConnectionOptions extends Omit<ConnectionOptions, "key" | "ca" | "tls" | "cert"> {
     /**
      * Optionally override the trusted CA certificates. Default is to trust
@@ -358,4 +358,19 @@ declare module "tls" {
   }
 
   function connect(options: BunConnectionOptions, secureConnectListener?: () => void): TLSSocket;
+}
+
+declare module "console" {
+  interface Console {
+    /**
+     * Asynchronously read lines from standard input (fd 0)
+     *
+     * ```ts
+     * for await (const line of console) {
+     *   console.log(line);
+     * }
+     * ```
+     */
+    [Symbol.asyncIterator](): AsyncIterableIterator<string>;
+  }
 }

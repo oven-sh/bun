@@ -1157,7 +1157,18 @@ install_llvm() {
 	apt)
 		bash="$(require bash)"
 		llvm_script="$(download_file "https://apt.llvm.org/llvm.sh")"
-		execute_sudo "$bash" "$llvm_script" "$(llvm_version)" all
+
+		# Debian trixie and newer don't have their own LLVM apt repo, use unstable
+		llvm_codename_arg=""
+		if [ "$distro" = "debian" ]; then
+			case "$VERSION_CODENAME" in
+			trixie|forky)
+				llvm_codename_arg="-n=unstable"
+				;;
+			esac
+		fi
+
+		execute_sudo "$bash" "$llvm_script" "$(llvm_version)" all $llvm_codename_arg
 
 		# Install llvm-symbolizer explicitly to ensure it's available for ASAN
 		install_packages "llvm-$(llvm_version)-tools"

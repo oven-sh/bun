@@ -384,6 +384,10 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
     case POLL_TYPE_SOCKET: {
             /* We should only use s, no p after this point */
             struct us_socket_t *s = (struct us_socket_t *) p;
+            /* After socket adoption, track the new socket; the old one becomes invalid */
+            if(s && s->flags.adopted && s->prev) {
+                s = s->prev;
+            }
             /* The context can change after calling a callback but the loop is always the same */
             struct us_loop_t* loop = s->context->loop;
             if (events & LIBUS_SOCKET_WRITABLE && !error) {

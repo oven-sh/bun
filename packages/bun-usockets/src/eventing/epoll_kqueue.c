@@ -228,8 +228,8 @@ void us_loop_run(struct us_loop_t *loop) {
                 // > Instead, the filter will aggregate the events into a single kevent struct
                 // Note: EV_ERROR only sets the error in data as part of changelist. Not in this call!
                 int events = 0
-                    | ((filter & EVFILT_READ) ? LIBUS_SOCKET_READABLE : 0)
-                    | ((filter & EVFILT_WRITE) ? LIBUS_SOCKET_WRITABLE : 0);
+                    | ((filter == EVFILT_READ) ? LIBUS_SOCKET_READABLE : 0)
+                    | ((filter == EVFILT_WRITE) ? LIBUS_SOCKET_WRITABLE : 0);
                 const int error = (flags & (EV_ERROR)) ? ((int)fflags || 1) : 0;
                 const int eof = (flags & (EV_EOF));
 #endif
@@ -383,10 +383,8 @@ struct us_poll_t *us_poll_resize(struct us_poll_t *p, struct us_loop_t *loop, un
     unsigned int new_size = sizeof(struct us_poll_t) + ext_size;
     if(new_size <= old_size) return p;
     
-
-
     struct us_poll_t *new_p = us_calloc(1, new_size);
-    memcpy(new_p, p, old_size < new_size ? old_size : new_size);
+    memcpy(new_p, p, old_size);
     
     int events = us_poll_events(p);
 #ifdef LIBUS_USE_EPOLL

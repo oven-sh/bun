@@ -396,7 +396,7 @@ void us_internal_update_handshake(struct us_internal_ssl_socket_t *s) {
   }
 
   int result = SSL_do_handshake(s->ssl);
-
+  
   if (SSL_get_shutdown(s->ssl) & SSL_RECEIVED_SHUTDOWN) {
     us_internal_ssl_socket_close(s, 0, NULL);
     return;
@@ -417,6 +417,7 @@ void us_internal_update_handshake(struct us_internal_ssl_socket_t *s) {
     }
     s->handshake_state = HANDSHAKE_PENDING;
     s->ssl_write_wants_read = 1;
+    s->s.context->loop->data.last_write_failed = 1;
 
     return;
   }
@@ -434,6 +435,7 @@ ssl_on_close(struct us_internal_ssl_socket_t *s, int code, void *reason) {
   struct us_internal_ssl_socket_t * ret = context->on_close(s, code, reason);
   SSL_free(s->ssl); // free SSL after on_close
   s->ssl = NULL; // set to NULL
+
   return ret;
 }
 
@@ -1921,10 +1923,11 @@ ssl_wrapped_context_on_data(struct us_internal_ssl_socket_t *s, char *data,
   struct us_wrapped_socket_context_t *wrapped_context =
       (struct us_wrapped_socket_context_t *)us_internal_ssl_socket_context_ext(
           context);
-  // raw data if needed
+          // raw data if needed
   if (wrapped_context->old_events.on_data) {
     wrapped_context->old_events.on_data((struct us_socket_t *)s, data, length);
   }
+  
   // ssl wrapped data
   return ssl_on_data(s, data, length);
 }
@@ -2029,7 +2032,7 @@ us_internal_ssl_socket_open(struct us_internal_ssl_socket_t *s, int is_client,
   // already opened
   if (s->ssl)
     return s;
-
+  
   // start SSL open
   return ssl_on_open(s, is_client, ip, ip_length, NULL);
 }

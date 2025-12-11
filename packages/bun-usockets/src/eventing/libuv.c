@@ -224,7 +224,7 @@ struct us_poll_t *us_poll_resize(struct us_poll_t *p, struct us_loop_t *loop,
   if(new_size <= old_size) return p;
 
   struct us_poll_t *new_p = calloc(1, new_size);
-  memcpy(new_p, p, old_size < new_size ? old_size : new_size);
+  memcpy(new_p, p, old_size);
 
   new_p->uv_p->data = new_p;
 

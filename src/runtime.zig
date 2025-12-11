@@ -227,7 +227,7 @@ pub const Runtime = struct {
             const set = bun.handleOom(allocator.create(bun.StringSet));
             set.* = bun.StringSet.init(allocator);
             for (feature_flags) |flag| {
-                set.insert(flag) catch bun.outOfMemory();
+                bun.handleOom(set.insert(flag));
             }
             return set;
         }

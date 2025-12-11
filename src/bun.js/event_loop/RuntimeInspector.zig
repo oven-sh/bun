@@ -101,11 +101,11 @@ const posix = if (Environment.isPosix) struct {
         const mach = struct {
             const mach_port_t = std.c.mach_port_t;
             const semaphore_t = mach_port_t;
-            const kern_return_t = std.c.c_int;
+            const kern_return_t = c_int;
             const KERN_SUCCESS: kern_return_t = 0;
             const KERN_ABORTED: kern_return_t = 14;
 
-            extern "c" fn semaphore_create(task: mach_port_t, semaphore: *semaphore_t, policy: std.c.c_int, value: std.c.c_int) kern_return_t;
+            extern "c" fn semaphore_create(task: mach_port_t, semaphore: *semaphore_t, policy: c_int, value: c_int) kern_return_t;
             extern "c" fn semaphore_destroy(task: mach_port_t, semaphore: semaphore_t) kern_return_t;
             extern "c" fn semaphore_signal(semaphore: semaphore_t) kern_return_t;
             extern "c" fn semaphore_wait(semaphore: semaphore_t) kern_return_t;
@@ -161,7 +161,7 @@ const posix = if (Environment.isPosix) struct {
     var watcher_thread: ?std.Thread = null;
 
     /// Signal handler - async-signal-safe. Only does semaphore post.
-    fn onSigusr1Signal(_: std.c.c_int) callconv(.c) void {
+    fn handleSigusr1(_: c_int) callconv(.c) void {
         semaphore.post();
     }
 
@@ -201,7 +201,7 @@ const posix = if (Environment.isPosix) struct {
         };
 
         const act = std.posix.Sigaction{
-            .handler = .{ .handler = onSigusr1Signal },
+            .handler = .{ .handler = handleSigusr1 },
             .mask = std.posix.sigemptyset(),
             .flags = 0,
         };
@@ -431,14 +431,10 @@ pub fn triggerForTesting() void {
 // C++ Exports
 // =============================================================================
 
-fn onSigusr1Signal(sig: std.c.c_int) callconv(.c) void {
+export fn Bun__onSigusr1Signal(sig: c_int) void {
     if (comptime Environment.isPosix) {
-        posix.onSigusr1Signal(sig);
+        posix.handleSigusr1(sig);
     }
-}
-
-export fn Bun__onSigusr1Signal(sig: std.c.c_int) void {
-    onSigusr1Signal(sig);
 }
 
 /// Called from C++ when user adds a SIGUSR1 listener

@@ -243,4 +243,58 @@ describe("Runtime inspector activation", () => {
       expect(stderr).toContain("requires a pid argument");
     });
   });
+
+  describe("--disable-sigusr1", () => {
+    test("prevents inspector activation and uses default signal behavior", async () => {
+      using dir = tempDir("disable-sigusr1-test", {
+        "target.js": `
+          const fs = require("fs");
+          const path = require("path");
+
+          fs.writeFileSync(path.join(process.cwd(), "pid"), String(process.pid));
+          console.log("READY");
+
+          setTimeout(() => process.exit(0), 500);
+          setInterval(() => {}, 1000);
+        `,
+      });
+
+      // Start with --disable-sigusr1
+      await using targetProc = spawn({
+        cmd: [bunExe(), "--disable-sigusr1", "target.js"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const reader = targetProc.stdout.getReader();
+      const decoder = new TextDecoder();
+      let output = "";
+      while (!output.includes("READY")) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        output += decoder.decode(value, { stream: true });
+      }
+      reader.releaseLock();
+
+      const pid = parseInt(await Bun.file(join(String(dir), "pid")).text(), 10);
+
+      // Send SIGUSR1 - without handler, this will terminate the process
+      await using debugProc = spawn({
+        cmd: [bunExe(), "-e", `process._debugProcess(${pid})`],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      await debugProc.exited;
+
+      const [stderr, exitCode] = await Promise.all([targetProc.stderr.text(), targetProc.exited]);
+
+      // Should NOT see debugger listening message
+      expect(stderr).not.toContain("Debugger listening");
+      // Process should be terminated by SIGUSR1 (exit code = 128 + 30 = 158)
+      expect(exitCode).toBe(158);
+    });
+  });
 });

@@ -45,6 +45,11 @@ pub fn checkAndActivateInspector(vm: *VirtualMachine) void {
 
     log("Processing inspector activation request on main thread", .{});
 
+    if (vm.is_shutting_down) {
+        log("VM is shutting down, ignoring inspector activation request", .{});
+        return;
+    }
+
     if (vm.debugger != null) {
         log("Debugger already active", .{});
         return;

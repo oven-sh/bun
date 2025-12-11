@@ -1909,8 +1909,13 @@ pub const BundleOptions = struct {
         this.defines_loaded = true;
     }
 
-    pub fn deinit(this: *const BundleOptions) void {
+    pub fn deinit(this: *BundleOptions, allocator: std.mem.Allocator) void {
         this.define.deinit();
+        // Free bundler_feature_flags if it was allocated (not the static empty set)
+        if (this.bundler_feature_flags != &Runtime.Features.empty_bundler_feature_flags) {
+            @constCast(this.bundler_feature_flags).deinit();
+            allocator.destroy(@constCast(this.bundler_feature_flags));
+        }
     }
 
     pub fn loader(this: *const BundleOptions, ext: string) Loader {

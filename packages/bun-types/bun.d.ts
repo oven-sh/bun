@@ -1897,6 +1897,8 @@ declare module "bun" {
      * When `feature("FLAG_NAME")` is called, it returns `true` if FLAG_NAME is in this array,
      * or `false` otherwise. This enables static dead-code elimination at bundle time.
      *
+     * Equivalent to the CLI `--feature` flag.
+     *
      * @example
      * ```ts
      * await Bun.build({

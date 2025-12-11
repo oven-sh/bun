@@ -1623,8 +1623,8 @@ pub const StringSet = struct {
     }
 
     /// Initialize an empty StringSet at comptime (for use as a static constant).
-    /// WARNING: The resulting set has an undefined allocator and must not be mutated.
-    /// Do not call insert(), clone(), or any method that allocates on a comptime-initialized set.
+    /// WARNING: The resulting set must not be mutated. Any attempt to call insert(),
+    /// clone(), or other allocating methods will result in undefined behavior.
     pub fn initComptime() StringSet {
         return StringSet{
             .map = Map.initContext(undefined, .{}),

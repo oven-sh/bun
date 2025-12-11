@@ -1622,6 +1622,15 @@ pub const StringSet = struct {
         };
     }
 
+    /// Initialize an empty StringSet at comptime (for use as a static constant).
+    /// WARNING: The resulting set has an undefined allocator and must not be mutated.
+    /// Do not call insert(), clone(), or any method that allocates on a comptime-initialized set.
+    pub fn initComptime() StringSet {
+        return StringSet{
+            .map = Map.initContext(undefined, .{}),
+        };
+    }
+
     pub fn isEmpty(self: *const StringSet) bool {
         return self.count() == 0;
     }

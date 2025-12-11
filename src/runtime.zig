@@ -213,24 +213,23 @@ pub const Runtime = struct {
 
         /// Feature flags for dead-code elimination via `import { feature } from "bun:bundle"`
         /// When `feature("FLAG_NAME")` is called, it returns true if FLAG_NAME is in this set.
-        bundler_feature_flags: *const bun.StringHashMapUnmanaged(void) = &empty_bundler_feature_flags,
+        bundler_feature_flags: *const bun.StringSet = &empty_bundler_feature_flags,
 
-        pub const empty_bundler_feature_flags: bun.StringHashMapUnmanaged(void) = .{};
+        pub const empty_bundler_feature_flags: bun.StringSet = bun.StringSet.initComptime();
 
         /// Initialize bundler feature flags for dead-code elimination via `import { feature } from "bun:bundle"`.
-        /// Returns a pointer to a hash map containing the enabled flags, or the empty map if no flags are provided.
-        pub fn initBundlerFeatureFlags(allocator: std.mem.Allocator, feature_flags: []const []const u8) *const bun.StringHashMapUnmanaged(void) {
+        /// Returns a pointer to a StringSet containing the enabled flags, or the empty set if no flags are provided.
+        pub fn initBundlerFeatureFlags(allocator: std.mem.Allocator, feature_flags: []const []const u8) *const bun.StringSet {
             if (feature_flags.len == 0) {
                 return &empty_bundler_feature_flags;
             }
 
-            const map = bun.handleOom(allocator.create(bun.StringHashMapUnmanaged(void)));
-            map.* = .{};
-            bun.handleOom(map.ensureTotalCapacity(allocator, @intCast(feature_flags.len)));
+            const set = bun.handleOom(allocator.create(bun.StringSet));
+            set.* = bun.StringSet.init(allocator);
             for (feature_flags) |flag| {
-                map.putAssumeCapacity(flag, {});
+                set.insert(flag) catch bun.outOfMemory();
             }
-            return map;
+            return set;
         }
 
         const hash_fields_for_runtime_transpiler = .{

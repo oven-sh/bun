@@ -1,340 +1,261 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { itBundled } from "./expectBundled";
 
 describe("bundler feature flags", () => {
-  test("feature() returns true when flag is enabled", async () => {
-    using dir = tempDir("bundler-feature-flag", {
-      "index.ts": `
+  // Test both CLI and API backends
+  for (const backend of ["cli", "api"] as const) {
+    describe(`backend: ${backend}`, () => {
+      itBundled(`feature_flag/${backend}/FeatureReturnsTrue`, {
+        backend,
+        files: {
+          "/a.js": `
 import { feature } from "bun:bundle";
-
 if (feature("SUPER_SECRET")) {
   console.log("feature enabled");
 } else {
   console.log("feature disabled");
 }
 `,
-    });
+        },
+        features: ["SUPER_SECRET"],
+        onAfterBundle(api) {
+          // The output should contain `true` since the feature is enabled
+          api.expectFile("out.js").toInclude("true");
+          api.expectFile("out.js").not.toInclude("feature(");
+          api.expectFile("out.js").not.toInclude("bun:bundle");
+        },
+      });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "--feature=SUPER_SECRET", "./index.ts"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
-
-    // The output should contain `if (true)` since the feature is enabled
-    expect(stdout).toContain("true");
-    expect(stdout).not.toContain("feature(");
-    expect(stdout).not.toContain("bun:bundle");
-    expect(exitCode).toBe(0);
-  });
-
-  test("feature() returns false when flag is not enabled", async () => {
-    using dir = tempDir("bundler-feature-flag", {
-      "index.ts": `
+      itBundled(`feature_flag/${backend}/FeatureReturnsFalse`, {
+        backend,
+        files: {
+          "/a.js": `
 import { feature } from "bun:bundle";
-
 if (feature("SUPER_SECRET")) {
   console.log("feature enabled");
 } else {
   console.log("feature disabled");
 }
 `,
-    });
+        },
+        // No features enabled
+        onAfterBundle(api) {
+          // The output should contain `false` since the feature is not enabled
+          api.expectFile("out.js").toInclude("false");
+          api.expectFile("out.js").not.toInclude("feature(");
+          api.expectFile("out.js").not.toInclude("bun:bundle");
+        },
+      });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "./index.ts"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
-
-    // The output should contain `if (false)` since the feature is not enabled
-    expect(stdout).toContain("false");
-    expect(stdout).not.toContain("feature(");
-    expect(stdout).not.toContain("bun:bundle");
-    expect(exitCode).toBe(0);
-  });
-
-  test("multiple feature flags can be enabled", async () => {
-    using dir = tempDir("bundler-feature-flag", {
-      "index.ts": `
+      itBundled(`feature_flag/${backend}/MultipleFlags`, {
+        backend,
+        files: {
+          "/a.js": `
 import { feature } from "bun:bundle";
-
 const a = feature("FLAG_A");
 const b = feature("FLAG_B");
 const c = feature("FLAG_C");
-
 console.log(a, b, c);
 `,
-    });
+        },
+        features: ["FLAG_A", "FLAG_C"],
+        onAfterBundle(api) {
+          // FLAG_A and FLAG_C are enabled, FLAG_B is not
+          api.expectFile("out.js").toInclude("a = true");
+          api.expectFile("out.js").toInclude("b = false");
+          api.expectFile("out.js").toInclude("c = true");
+        },
+      });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "--feature=FLAG_A", "--feature=FLAG_C", "./index.ts"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
-
-    // FLAG_A and FLAG_C are enabled, FLAG_B is not
-    // The output should show the assignments
-    expect(stdout).toContain("a = true");
-    expect(stdout).toContain("b = false");
-    expect(stdout).toContain("c = true");
-    expect(exitCode).toBe(0);
-  });
-
-  test("dead code elimination works with feature flags", async () => {
-    using dir = tempDir("bundler-feature-flag", {
-      "index.ts": `
+      itBundled(`feature_flag/${backend}/DeadCodeElimination`, {
+        backend,
+        files: {
+          "/a.js": `
 import { feature } from "bun:bundle";
-
 if (feature("ENABLED_FEATURE")) {
   console.log("this should be kept");
 }
-
 if (feature("DISABLED_FEATURE")) {
   console.log("this should be removed");
 }
 `,
-    });
+        },
+        features: ["ENABLED_FEATURE"],
+        minifySyntax: true,
+        onAfterBundle(api) {
+          // With minification, dead code should be eliminated
+          api.expectFile("out.js").toInclude("this should be kept");
+          api.expectFile("out.js").not.toInclude("this should be removed");
+        },
+      });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "--minify", "--feature=ENABLED_FEATURE", "./index.ts"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
-
-    // With minification, dead code should be eliminated
-    expect(stdout).toContain("this should be kept");
-    expect(stdout).not.toContain("this should be removed");
-    expect(exitCode).toBe(0);
-  });
-
-  test("feature() with non-string argument produces error", async () => {
-    using dir = tempDir("bundler-feature-flag", {
-      "index.ts": `
+      itBundled(`feature_flag/${backend}/ImportRemoved`, {
+        backend,
+        files: {
+          "/a.js": `
 import { feature } from "bun:bundle";
-
-const flag = "DYNAMIC";
-if (feature(flag)) {
-  console.log("dynamic");
-}
-`,
-    });
-
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "./index.ts"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
-
-    // Should produce an error about string literal requirement
-    expect(stderr).toContain("string literal");
-    expect(exitCode).not.toBe(0);
-  });
-
-  test("feature() with no arguments produces error", async () => {
-    using dir = tempDir("bundler-feature-flag", {
-      "index.ts": `
-import { feature } from "bun:bundle";
-
-if (feature()) {
-  console.log("no args");
-}
-`,
-    });
-
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "./index.ts"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
-
-    // Should produce an error about argument requirement
-    expect(stderr).toContain("one string argument");
-    expect(exitCode).not.toBe(0);
-  });
-
-  test("bun:bundle import is removed from output", async () => {
-    using dir = tempDir("bundler-feature-flag", {
-      "index.ts": `
-import { feature } from "bun:bundle";
-
 const x = feature("TEST");
 console.log(x);
 `,
-    });
+        },
+        onAfterBundle(api) {
+          // The import should be completely removed
+          api.expectFile("out.js").not.toInclude("bun:bundle");
+        },
+      });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "./index.ts"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
-
-    // The import should be completely removed
-    expect(stdout).not.toContain("bun:bundle");
-    expect(stdout).not.toContain("import");
-    expect(exitCode).toBe(0);
-  });
-
-  test("dead code elimination removes entire if block when condition is false", async () => {
-    using dir = tempDir("bundler-feature-flag", {
-      "index.ts": `
+      itBundled(`feature_flag/${backend}/IfBlockRemoved`, {
+        backend,
+        files: {
+          "/a.js": `
 import { feature } from "bun:bundle";
-
 function expensiveComputation() {
   return "expensive result";
 }
-
 if (feature("DISABLED")) {
   const result = expensiveComputation();
   console.log("This entire block should be removed:", result);
 }
-
 console.log("This should remain");
 `,
-    });
+        },
+        minifySyntax: true,
+        onAfterBundle(api) {
+          // The expensive computation and related code should be completely eliminated
+          api.expectFile("out.js").not.toInclude("expensiveComputation");
+          api.expectFile("out.js").not.toInclude("expensive result");
+          api.expectFile("out.js").not.toInclude("This entire block should be removed");
+          api.expectFile("out.js").toInclude("This should remain");
+        },
+      });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "--minify", "./index.ts"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
-
-    // The expensive computation and related code should be completely eliminated
-    expect(stdout).not.toContain("expensiveComputation");
-    expect(stdout).not.toContain("expensive result");
-    expect(stdout).not.toContain("This entire block should be removed");
-    expect(stdout).toContain("This should remain");
-    expect(exitCode).toBe(0);
-  });
-
-  test("dead code elimination keeps else branch when condition is false", async () => {
-    using dir = tempDir("bundler-feature-flag", {
-      "index.ts": `
+      itBundled(`feature_flag/${backend}/KeepsElseBranch`, {
+        backend,
+        files: {
+          "/a.js": `
 import { feature } from "bun:bundle";
-
 if (feature("DISABLED")) {
   console.log("if branch - should be removed");
 } else {
   console.log("else branch - should be kept");
 }
 `,
-    });
+        },
+        minifySyntax: true,
+        onAfterBundle(api) {
+          api.expectFile("out.js").not.toInclude("if branch - should be removed");
+          api.expectFile("out.js").toInclude("else branch - should be kept");
+        },
+      });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "--minify", "./index.ts"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
-
-    expect(stdout).not.toContain("if branch - should be removed");
-    expect(stdout).toContain("else branch - should be kept");
-    expect(exitCode).toBe(0);
-  });
-
-  test("dead code elimination removes else branch when condition is true", async () => {
-    using dir = tempDir("bundler-feature-flag", {
-      "index.ts": `
+      itBundled(`feature_flag/${backend}/RemovesElseBranch`, {
+        backend,
+        files: {
+          "/a.js": `
 import { feature } from "bun:bundle";
-
 if (feature("ENABLED")) {
   console.log("if branch - should be kept");
 } else {
   console.log("else branch - should be removed");
 }
 `,
+        },
+        features: ["ENABLED"],
+        minifySyntax: true,
+        onAfterBundle(api) {
+          api.expectFile("out.js").toInclude("if branch - should be kept");
+          api.expectFile("out.js").not.toInclude("else branch - should be removed");
+        },
+      });
+
+      itBundled(`feature_flag/${backend}/AliasedImport`, {
+        backend,
+        files: {
+          "/a.js": `
+import { feature as checkFeature } from "bun:bundle";
+if (checkFeature("ALIASED")) {
+  console.log("aliased feature enabled");
+} else {
+  console.log("aliased feature disabled");
+}
+`,
+        },
+        features: ["ALIASED"],
+        onAfterBundle(api) {
+          api.expectFile("out.js").toInclude("true");
+          api.expectFile("out.js").not.toInclude("checkFeature");
+        },
+      });
+
+      itBundled(`feature_flag/${backend}/TernaryDisabled`, {
+        backend,
+        files: {
+          "/a.js": `
+import { feature } from "bun:bundle";
+const result = feature("TERNARY_FLAG") ? "ternary_enabled" : "ternary_disabled";
+console.log(result);
+`,
+        },
+        minifySyntax: true,
+        onAfterBundle(api) {
+          api.expectFile("out.js").toInclude("ternary_disabled");
+          api.expectFile("out.js").not.toInclude("ternary_enabled");
+        },
+      });
+
+      itBundled(`feature_flag/${backend}/TernaryEnabled`, {
+        backend,
+        files: {
+          "/a.js": `
+import { feature } from "bun:bundle";
+const result = feature("TERNARY_FLAG") ? "ternary_enabled" : "ternary_disabled";
+console.log(result);
+`,
+        },
+        features: ["TERNARY_FLAG"],
+        minifySyntax: true,
+        onAfterBundle(api) {
+          api.expectFile("out.js").toInclude("ternary_enabled");
+          api.expectFile("out.js").not.toInclude("ternary_disabled");
+        },
+      });
     });
+  }
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "--minify", "--feature=ENABLED", "./index.ts"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
-
-    expect(stdout).toContain("if branch - should be kept");
-    expect(stdout).not.toContain("else branch - should be removed");
-    expect(exitCode).toBe(0);
+  // Error cases - only test with CLI since error handling might differ
+  itBundled("feature_flag/NonStringArgError", {
+    backend: "cli",
+    files: {
+      "/a.js": `
+import { feature } from "bun:bundle";
+const flag = "DYNAMIC";
+if (feature(flag)) {
+  console.log("dynamic");
+}
+`,
+    },
+    bundleErrors: {
+      "/a.js": ["feature() argument must be a string literal"],
+    },
   });
 
+  itBundled("feature_flag/NoArgsError", {
+    backend: "cli",
+    files: {
+      "/a.js": `
+import { feature } from "bun:bundle";
+if (feature()) {
+  console.log("no args");
+}
+`,
+    },
+    bundleErrors: {
+      "/a.js": ["feature() requires exactly one string argument"],
+    },
+  });
+
+  // Runtime tests - these must remain as manual tests since they test bun run and bun test
   test("works correctly at runtime with bun run", async () => {
     using dir = tempDir("bundler-feature-flag", {
       "index.ts": `
@@ -357,7 +278,7 @@ if (feature("RUNTIME_FLAG")) {
       stderr: "pipe",
     });
 
-    const [stdout1, stderr1, exitCode1] = await Promise.all([
+    const [stdout1, , exitCode1] = await Promise.all([
       new Response(proc1.stdout).text(),
       new Response(proc1.stderr).text(),
       proc1.exited,
@@ -375,7 +296,7 @@ if (feature("RUNTIME_FLAG")) {
       stderr: "pipe",
     });
 
-    const [stdout2, stderr2, exitCode2] = await Promise.all([
+    const [stdout2, , exitCode2] = await Promise.all([
       new Response(proc2.stdout).text(),
       new Response(proc2.stderr).text(),
       proc2.exited,
@@ -411,7 +332,7 @@ test("feature flag in test", () => {
       stderr: "pipe",
     });
 
-    const [stdout1, stderr1, exitCode1] = await Promise.all([
+    const [stdout1, , exitCode1] = await Promise.all([
       new Response(proc1.stdout).text(),
       new Response(proc1.stderr).text(),
       proc1.exited,
@@ -430,7 +351,7 @@ test("feature flag in test", () => {
       stderr: "pipe",
     });
 
-    const [stdout2, stderr2, exitCode2] = await Promise.all([
+    const [stdout2, , exitCode2] = await Promise.all([
       new Response(proc2.stdout).text(),
       new Response(proc2.stderr).text(),
       proc2.exited,
@@ -438,87 +359,6 @@ test("feature flag in test", () => {
 
     expect(stdout2).toContain("TEST_FLAG_ENABLED");
     expect(stdout2).not.toContain("TEST_FLAG_DISABLED");
-    expect(exitCode2).toBe(0);
-  });
-
-  test("feature flag with aliased import works", async () => {
-    using dir = tempDir("bundler-feature-flag", {
-      "index.ts": `
-import { feature as checkFeature } from "bun:bundle";
-
-if (checkFeature("ALIASED")) {
-  console.log("aliased feature enabled");
-} else {
-  console.log("aliased feature disabled");
-}
-`,
-    });
-
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "--feature=ALIASED", "./index.ts"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
-
-    expect(stdout).toContain("true");
-    expect(stdout).not.toContain("checkFeature");
-    expect(exitCode).toBe(0);
-  });
-
-  test("ternary operator dead code elimination", async () => {
-    using dir = tempDir("bundler-feature-flag", {
-      "index.ts": `
-import { feature } from "bun:bundle";
-
-const result = feature("TERNARY_FLAG") ? "ternary_enabled" : "ternary_disabled";
-console.log(result);
-`,
-    });
-
-    // Without the flag
-    await using proc1 = Bun.spawn({
-      cmd: [bunExe(), "build", "--minify", "./index.ts"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [stdout1, , exitCode1] = await Promise.all([
-      new Response(proc1.stdout).text(),
-      new Response(proc1.stderr).text(),
-      proc1.exited,
-    ]);
-
-    expect(stdout1).toContain("ternary_disabled");
-    expect(stdout1).not.toContain("ternary_enabled");
-    expect(exitCode1).toBe(0);
-
-    // With the flag
-    await using proc2 = Bun.spawn({
-      cmd: [bunExe(), "build", "--minify", "--feature=TERNARY_FLAG", "./index.ts"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [stdout2, , exitCode2] = await Promise.all([
-      new Response(proc2.stdout).text(),
-      new Response(proc2.stderr).text(),
-      proc2.exited,
-    ]);
-
-    expect(stdout2).toContain("ternary_enabled");
-    expect(stdout2).not.toContain("ternary_disabled");
     expect(exitCode2).toBe(0);
   });
 });

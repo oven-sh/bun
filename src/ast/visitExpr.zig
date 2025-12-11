@@ -1690,7 +1690,7 @@ pub fn VisitExpr(
                     p.log.addError(p.source, arg.loc, "feature() flag name must be an ASCII string") catch unreachable;
                     return p.newExpr(E.Boolean{ .value = false }, loc);
                 }
-                const is_enabled = p.options.features.bundler_feature_flags.contains(flag_string.data);
+                const is_enabled = p.options.features.bundler_feature_flags.map.contains(flag_string.data);
                 return p.newExpr(E.Boolean{ .value = is_enabled }, loc);
             }
         };

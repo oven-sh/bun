@@ -82,7 +82,7 @@ pub const BuildCommand = struct {
         this_transpiler.options.banner = ctx.bundler_options.banner;
         this_transpiler.options.footer = ctx.bundler_options.footer;
         this_transpiler.options.drop = ctx.args.drop;
-        this_transpiler.options.feature_flags = ctx.args.feature_flags;
+        this_transpiler.options.bundler_feature_flags = Runtime.Features.initBundlerFeatureFlags(allocator, ctx.args.feature_flags);
 
         this_transpiler.options.css_chunking = ctx.bundler_options.css_chunking;
 
@@ -659,5 +659,6 @@ const bun = @import("bun");
 const Global = bun.Global;
 const Output = bun.Output;
 const default_allocator = bun.default_allocator;
+const Runtime = @import("../runtime.zig").Runtime;
 const strings = bun.strings;
 const transpiler = bun.transpiler;

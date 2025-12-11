@@ -1717,7 +1717,9 @@ pub const BundleOptions = struct {
     banner: string = "",
     define: *defines.Define,
     drop: []const []const u8 = &.{},
-    feature_flags: []const []const u8 = &.{},
+    /// Set of enabled feature flags for dead-code elimination via `import { feature } from "bun:bundle"`.
+    /// Initialized once from the CLI --feature flags.
+    bundler_feature_flags: *const bun.StringSet = &Runtime.Features.empty_bundler_feature_flags,
     loaders: Loader.HashTable,
     resolve_dir: string = "/",
     jsx: JSX.Pragma = JSX.Pragma{},
@@ -2009,7 +2011,7 @@ pub const BundleOptions = struct {
             .transform_options = transform,
             .css_chunking = false,
             .drop = transform.drop,
-            .feature_flags = transform.feature_flags,
+            .bundler_feature_flags = Runtime.Features.initBundlerFeatureFlags(allocator, transform.feature_flags),
         };
 
         analytics.Features.define += @as(usize, @intFromBool(transform.define != null));

@@ -1113,7 +1113,7 @@ pub const Transpiler = struct {
                 opts.features.minify_identifiers = transpiler.options.minify_identifiers;
                 opts.features.dead_code_elimination = transpiler.options.dead_code_elimination;
                 opts.features.remove_cjs_module_wrapper = this_parse.remove_cjs_module_wrapper;
-                opts.features.bundler_feature_flags = runtime.Runtime.Features.initBundlerFeatureFlags(allocator, transpiler.options.feature_flags);
+                opts.features.bundler_feature_flags = transpiler.options.bundler_feature_flags;
 
                 if (transpiler.macro_context == null) {
                     transpiler.macro_context = js_ast.Macro.MacroContext.init(transpiler);

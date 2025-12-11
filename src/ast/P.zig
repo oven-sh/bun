@@ -2663,7 +2663,7 @@ pub fn NewParser_(
             // We handle it here at parse time (similar to macros) rather than at visit time.
             if (strings.eqlComptime(path.text, "bun:bundle")) {
                 // Look for the "feature" import and validate specifiers
-                for (stmt.items) |item| {
+                for (stmt.items) |*item| {
                     // In ClauseItem from parseImportClause:
                     // - alias is the name from the source module ("feature")
                     // - original_name is the local binding name

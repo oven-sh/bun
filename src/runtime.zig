@@ -217,6 +217,22 @@ pub const Runtime = struct {
 
         pub const empty_bundler_feature_flags: bun.StringHashMapUnmanaged(void) = .{};
 
+        /// Initialize bundler feature flags for dead-code elimination via `import { feature } from "bun:bundle"`.
+        /// Returns a pointer to a hash map containing the enabled flags, or the empty map if no flags are provided.
+        pub fn initBundlerFeatureFlags(allocator: std.mem.Allocator, feature_flags: []const []const u8) *const bun.StringHashMapUnmanaged(void) {
+            if (feature_flags.len == 0) {
+                return &empty_bundler_feature_flags;
+            }
+
+            const map = bun.handleOom(allocator.create(bun.StringHashMapUnmanaged(void)));
+            map.* = .{};
+            bun.handleOom(map.ensureTotalCapacity(allocator, @intCast(feature_flags.len)));
+            for (feature_flags) |flag| {
+                map.putAssumeCapacity(flag, {});
+            }
+            return map;
+        }
+
         const hash_fields_for_runtime_transpiler = .{
             .top_level_await,
             .auto_import_jsx,

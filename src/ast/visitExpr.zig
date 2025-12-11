@@ -1683,8 +1683,14 @@ pub fn VisitExpr(
                 }
 
                 // Check if the feature flag is enabled
-                const flag_name = arg.data.e_string.slice(p.allocator);
-                const is_enabled = p.options.features.bundler_feature_flags.contains(flag_name);
+                // Use the underlying string data directly without allocation.
+                // Feature flag names should be ASCII identifiers, so UTF-16 is unexpected.
+                const flag_string = arg.data.e_string;
+                if (flag_string.is_utf16) {
+                    p.log.addError(p.source, arg.loc, "feature() flag name must be an ASCII string") catch unreachable;
+                    return p.newExpr(E.Boolean{ .value = false }, loc);
+                }
+                const is_enabled = p.options.features.bundler_feature_flags.contains(flag_string.data);
                 return p.newExpr(E.Boolean{ .value = is_enabled }, loc);
             }
         };

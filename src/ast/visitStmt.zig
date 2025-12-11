@@ -44,7 +44,7 @@ pub fn VisitStmt(
                 // that provides static feature flag checking at bundle time.
                 const import_record = &p.import_records.items[data.import_record_index];
                 if (strings.eqlComptime(import_record.path.text, "bun:bundle")) {
-                    // Look for the "feature" import
+                    // Look for the "feature" import and validate specifiers
                     for (data.items) |*item| {
                         // In ClauseItem from parseImportClause:
                         // - alias is the name from the source module ("feature" in both cases)
@@ -52,12 +52,19 @@ pub fn VisitStmt(
                         //   "checkFeature" for `import { feature as checkFeature }`)
                         // - name.ref is the ref for the local binding
                         if (strings.eqlComptime(item.alias, "feature")) {
+                            // Check for duplicate imports of feature
+                            if (p.bundler_feature_flag_ref.isValid()) {
+                                p.log.addError(p.source, item.alias_loc, "`feature` from \"bun:bundle\" may only be imported once") catch unreachable;
+                                continue;
+                            }
                             // Record the symbol so it's properly tracked
                             try p.recordDeclaredSymbol(item.name.ref.?);
                             // Assign the ref to bundler_feature_flag_ref so we can detect
                             // feature() calls in e_call visitor
                             p.bundler_feature_flag_ref = item.name.ref.?;
-                            break;
+                        } else {
+                            // Warn about unknown specifiers
+                            p.log.addWarningFmt(p.source, item.alias_loc, p.allocator, "\"bun:bundle\" only exports \"feature\"; \"{s}\" will be undefined", .{item.alias}) catch unreachable;
                         }
                     }
                     // Mark this import as unused so it gets removed from the output

@@ -23,7 +23,8 @@
   },
   "resolutions": {
     "bun-types": "workspace:packages/bun-types",
-    "@types/bun": "workspace:packages/@types/bun"
+    "@types/bun": "workspace:packages/@types/bun",
+    "@types/node": "25.0.0"
   },
   "scripts": {
     "build": "bun --silent run build:debug",

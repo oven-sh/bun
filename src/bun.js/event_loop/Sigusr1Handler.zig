@@ -166,7 +166,8 @@ fn activateInspector(vm: *VirtualMachine) !void {
 }
 
 /// Install the SIGUSR1 signal handler and start the watcher thread.
-pub fn install() void {
+/// Safe to call multiple times - subsequent calls are no-ops.
+pub fn installIfNotAlready() void {
     if (comptime !Environment.isPosix) {
         return;
     }

@@ -286,7 +286,7 @@ const labels = [
   },
   {
     name: "wintercg",
-    description: "Web-interoperable Runtimes Community Group compatiblity",
+    description: "Web-interoperable Runtimes Community Group compatibility",
   },
 ];
 

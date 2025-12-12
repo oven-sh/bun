@@ -46,8 +46,9 @@ pub fn checkAndActivateInspector(vm: *VirtualMachine) void {
         return;
     }
 
+    // Check if debugger is already active (prevents double activation via SIGUSR1)
     if (vm.debugger != null) {
-        log("Debugger already active", .{});
+        log("Debugger already active, ignoring SIGUSR1", .{});
         return;
     }
 
@@ -88,51 +89,33 @@ pub fn isInstalled() bool {
 }
 
 const posix = if (Environment.isPosix) struct {
-    var signal_thread: ?std.Thread = null;
+    var previous_action: std.posix.Sigaction = undefined;
 
-    fn signalThreadMain() void {
-        Output.Source.configureNamedThread("SIGUSR1");
-
-        var set = std.posix.sigemptyset();
-        std.posix.sigaddset(&set, std.posix.SIG.USR1);
-
-        while (installed.load(.acquire)) {
-            var sig: c_int = 0;
-            _ = std.c.sigwait(&set, &sig);
-
-            if (sig != std.posix.SIG.USR1) continue;
-            if (!installed.load(.acquire)) break;
-
-            requestInspectorActivation();
-        }
+    fn signalHandler(_: c_int) callconv(.c) void {
+        // This handler runs in signal context, so we can only do async-signal-safe operations.
+        // Set the atomic flag and wake the event loop.
+        requestInspectorActivation();
     }
 
     fn install() bool {
-        var set = std.posix.sigemptyset();
-        std.posix.sigaddset(&set, std.posix.SIG.USR1);
-        std.posix.sigprocmask(std.posix.SIG.BLOCK, &set, null);
-
-        signal_thread = std.Thread.spawn(.{
-            .stack_size = 128 * 1024,
-        }, signalThreadMain, .{}) catch {
-            std.posix.sigprocmask(std.posix.SIG.UNBLOCK, &set, null);
-            return false;
+        // Install a signal handler for SIGUSR1. This approach works regardless of
+        // which threads have SIGUSR1 blocked, because the handler runs in the
+        // context of whichever thread receives the signal.
+        var act: std.posix.Sigaction = .{
+            .handler = .{ .handler = signalHandler },
+            .mask = std.posix.sigemptyset(),
+            .flags = std.posix.SA.RESTART,
         };
 
+        std.posix.sigaction(std.posix.SIG.USR1, &act, &previous_action);
         return true;
     }
 
     fn uninstall() void {
-        if (signal_thread) |thread| {
-            std.posix.kill(std.c.getpid(), std.posix.SIG.USR1) catch {};
-            thread.join();
-            signal_thread = null;
-        }
-
-        // Unblock SIGUSR1 so user handlers can receive it
-        var set = std.posix.sigemptyset();
-        std.posix.sigaddset(&set, std.posix.SIG.USR1);
-        std.posix.sigprocmask(std.posix.SIG.UNBLOCK, &set, null);
+        // Note: We do NOT restore the previous signal handler here.
+        // This function is called when a user adds their own SIGUSR1 handler,
+        // and BunProcess.cpp has already set up the user's handler via sigaction().
+        // Restoring the previous handler would overwrite the user's handler.
     }
 } else struct {};
 
@@ -265,6 +248,32 @@ pub fn uninstallForUserHandler() void {
 
     if (comptime Environment.isPosix) {
         posix.uninstall();
+    }
+}
+
+/// Set SIGUSR1 to default action when --disable-sigusr1 is used.
+/// This allows SIGUSR1 to use its default behavior (terminate process).
+pub fn setDefaultSigusr1Action() void {
+    if (comptime Environment.isPosix) {
+        var act: std.posix.Sigaction = .{
+            .handler = .{ .handler = std.posix.SIG.DFL },
+            .mask = std.posix.sigemptyset(),
+            .flags = 0,
+        };
+        std.posix.sigaction(std.posix.SIG.USR1, &act, null);
+    }
+}
+
+/// Ignore SIGUSR1 when debugger is already enabled via CLI flags.
+/// This prevents SIGUSR1 from terminating the process when the user is already debugging.
+pub fn ignoreSigusr1() void {
+    if (comptime Environment.isPosix) {
+        var act: std.posix.Sigaction = .{
+            .handler = .{ .handler = std.posix.SIG.IGN },
+            .mask = std.posix.sigemptyset(),
+            .flags = 0,
+        };
+        std.posix.sigaction(std.posix.SIG.USR1, &act, null);
     }
 }
 

@@ -417,7 +417,7 @@ void us_internal_update_handshake(struct us_internal_ssl_socket_t *s) {
     }
     s->handshake_state = HANDSHAKE_PENDING;
     s->ssl_write_wants_read = 1;
-    s->s.context->loop->data.last_write_failed = 1;
+    s->s.flags.last_write_failed = 1;
 
     return;
   }
@@ -1923,7 +1923,7 @@ ssl_wrapped_context_on_data(struct us_internal_ssl_socket_t *s, char *data,
   struct us_wrapped_socket_context_t *wrapped_context =
       (struct us_wrapped_socket_context_t *)us_internal_ssl_socket_context_ext(
           context);
-          // raw data if needed
+  // raw data if needed
   if (wrapped_context->old_events.on_data) {
     wrapped_context->old_events.on_data((struct us_socket_t *)s, data, length);
   }

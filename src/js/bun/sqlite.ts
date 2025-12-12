@@ -527,7 +527,11 @@ class Database implements SqliteTypes.Database {
     return createChangesObject();
   }
 
-  prepare(query: string, params: any[] | undefined, flags: number = 0) {
+  prepare(query: string, params: any, flags: number = 0) {
+    // Normalize single primitive values to arrays, similar to run()
+    if (params !== undefined && !isArray(params) && (!params || typeof params !== "object" || isTypedArray(params))) {
+      params = [params];
+    }
     return new Statement(SQL.prepare(this.#handle, query, params, flags || 0, this.#internalFlags));
   }
 

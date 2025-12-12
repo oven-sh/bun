@@ -189,6 +189,11 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                     pending.hostname_len = @as(u8, @truncate(hostname.len));
                     pending.port = port;
 
+                    // Pause readable events on pooled sockets to prevent CPU spin
+                    // when SSL has buffered data or server sends unexpected data.
+                    // The socket will be resumed when reused in existingSocket().
+                    _ = socket.pauseStream();
+
                     log("Keep-Alive release {s}:{d}", .{
                         hostname,
                         port,
@@ -323,8 +328,10 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                         return;
                     }
 
-                    log("Unexpected data on socket", .{});
-
+                    // Unexpected data on a pooled socket - close it to prevent
+                    // potential busy-polling if server sends unsolicited data.
+                    log("Unexpected data on pooled socket, closing", .{});
+                    terminateSocket(socket);
                     return;
                 }
                 log("Unexpected data on unknown socket", .{});
@@ -422,6 +429,10 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                         terminateSocket(http_socket);
                         continue;
                     }
+
+                    // Resume readable events before returning the socket for reuse.
+                    // The socket was paused when released to the pool in releaseSocket().
+                    _ = http_socket.resumeStream();
 
                     assert(context().pending_sockets.put(socket));
                     log("+ Keep-Alive reuse {s}:{d}", .{ hostname, port });

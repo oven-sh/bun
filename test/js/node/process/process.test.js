@@ -760,6 +760,32 @@ describe.concurrent(() => {
     expect(process.constrainedMemory() >= 0).toBe(true);
   });
 
+  it("process.constrainedMemory() respects BUN_JSC_forceRAMSize", async () => {
+    const forcedSize = 500_000_000;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", "console.log(process.constrainedMemory())"],
+      env: {
+        ...bunEnv,
+        BUN_JSC_forceRAMSize: String(forcedSize),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+
+    const reportedSize = parseInt(stdout.trim(), 10);
+    expect(reportedSize).toBe(forcedSize);
+  });
+
   it("process.report", () => {
     // TODO: write better tests
     JSON.stringify(process.report.getReport(), null, 2);

@@ -86,6 +86,11 @@ fn do(this: *@This()) Yield {
     defer arena.deinit();
 
     while (if (this.increment > 0) current <= this._end else current >= this._end) : (current += this.increment) {
+        // Check for abort before continuing
+        if (this.bltn().parentCmd().base.interpreter.isAborted()) {
+            return this.bltn().done(128 + @intFromEnum(bun.SignalCode.SIGTERM));
+        }
+
         const str = bun.handleOom(std.fmt.allocPrint(arena.allocator(), "{d}", .{current}));
         defer _ = arena.reset(.retain_capacity);
         _ = this.print(str);

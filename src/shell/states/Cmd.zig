@@ -511,6 +511,13 @@ fn initSubproc(this: *Cmd) Yield {
 
     if (this.initRedirections(&spawn_args) catch .failed) |yield| return yield;
 
+    // Before spawning, check if we've been aborted
+    // This handles the case where signal was already aborted when .signal() was called,
+    // or the signal fired during shell setup before we got to spawning
+    if (this.base.interpreter.isAborted()) {
+        return this.parent.childDone(this, 128 + @intFromEnum(bun.SignalCode.SIGTERM));
+    }
+
     const buffered_closed = BufferedIoClosed.fromStdio(&spawn_args.stdio);
     log("cmd ({x}) set buffered closed", .{@intFromPtr(this)});
 
@@ -527,6 +534,8 @@ fn initSubproc(this: *Cmd) Yield {
         },
     };
     subproc.ref();
+    // Register subprocess for abort handling immediately after successful spawn
+    this.base.interpreter.registerSubprocess(subproc);
     this.spawn_arena_freed = true;
     arena.deinit();
 
@@ -697,6 +706,8 @@ pub fn deinit(this: *Cmd) void {
     if (this.exec != .none) {
         if (this.exec == .subproc) {
             var cmd = this.exec.subproc.child;
+            // Unregister from interpreter before cleanup
+            this.base.interpreter.unregisterSubprocess(cmd);
             if (cmd.hasExited()) {
                 cmd.unref(true);
             } else {

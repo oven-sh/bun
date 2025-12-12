@@ -202,6 +202,42 @@ declare module "bun" {
        * By default, this is configured to `true`.
        */
       throws(shouldThrow: boolean): this;
+
+      /**
+       * Attach an AbortSignal to cancel this shell command.
+       *
+       * When the signal aborts:
+       * - All processes in the pipeline are terminated with SIGTERM
+       * - The promise rejects with an AbortError (DOMException)
+       * - If `.nothrow()` was used, resolves with exit code 143 (128 + SIGTERM)
+       *
+       * @param signal - The AbortSignal to attach
+       * @returns this - for method chaining
+       * @throws Error if the shell has already started executing
+       *
+       * @example
+       * **Timeout after 5 seconds**
+       * ```ts
+       * await $`long-running-command`.signal(AbortSignal.timeout(5000));
+       * ```
+       *
+       * @example
+       * **Manual cancellation**
+       * ```ts
+       * const controller = new AbortController();
+       * const promise = $`sleep 100`.signal(controller.signal);
+       * setTimeout(() => controller.abort(), 1000);
+       * await promise; // Rejects with AbortError after 1 second
+       * ```
+       *
+       * @example
+       * **With nothrow - returns exit code instead of throwing**
+       * ```ts
+       * const result = await $`sleep 100`.nothrow().signal(AbortSignal.timeout(1000));
+       * console.log(result.exitCode); // 143 (128 + 15)
+       * ```
+       */
+      signal(signal: AbortSignal): this;
     }
 
     /**

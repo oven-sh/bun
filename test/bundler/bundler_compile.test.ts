@@ -735,4 +735,164 @@ const server = serve({
       .env(bunEnv)
       .throws(true);
   });
+
+  itBundled("compile/CopyFileFromEmbeddedFile", {
+    compile: true,
+    assetNaming: "[name].[ext]",
+    files: {
+      "/entry.ts": /* js */ `
+        import { copyFileSync, readFileSync, rmSync, existsSync } from 'fs';
+        import embeddedPath from './data.txt' with { type: 'file' };
+
+        // Remove data.txt from filesystem to verify we're reading from the embedded bundle
+        rmSync('./data.txt', { force: true });
+
+        // Copy embedded file to a new location
+        const destPath = './copied-data.txt';
+        copyFileSync(embeddedPath, destPath);
+
+        // Verify the copy worked
+        if (!existsSync(destPath)) throw new Error('Copy failed: destination does not exist');
+
+        const content = readFileSync(destPath, 'utf8');
+        if (content.trim() !== 'Hello from embedded file!') {
+          throw new Error('Copy failed: content mismatch - got: ' + content);
+        }
+
+        console.log('fs.copyFile from embedded file: OK');
+      `,
+      "/data.txt": "Hello from embedded file!",
+    },
+    run: { stdout: "fs.copyFile from embedded file: OK", setCwd: true },
+  });
+
+  itBundled("compile/CopyFileAsyncFromEmbeddedFile", {
+    compile: true,
+    assetNaming: "[name].[ext]",
+    files: {
+      "/entry.ts": /* js */ `
+        import { copyFile, readFile, rm, access } from 'fs/promises';
+        import embeddedPath from './data-async.txt' with { type: 'file' };
+
+        // Remove data-async.txt from filesystem to verify we're reading from the embedded bundle
+        await rm('./data-async.txt', { force: true });
+
+        // Copy embedded file to a new location using async API
+        const destPath = './copied-data-async.txt';
+        await copyFile(embeddedPath, destPath);
+
+        // Verify the copy worked using async APIs
+        try {
+          await access(destPath);
+        } catch {
+          throw new Error('Copy failed: destination does not exist');
+        }
+
+        const content = await readFile(destPath, 'utf8');
+        if (content.trim() !== 'Async embedded content!') {
+          throw new Error('Copy failed: content mismatch - got: ' + content);
+        }
+
+        console.log('fs.copyFile async from embedded file: OK');
+      `,
+      "/data-async.txt": "Async embedded content!",
+    },
+    run: { stdout: "fs.copyFile async from embedded file: OK", setCwd: true },
+  });
+
+  itBundled("compile/CpFromEmbeddedFile", {
+    compile: true,
+    assetNaming: "[name].[ext]",
+    files: {
+      "/entry.ts": /* js */ `
+        import { cpSync, readFileSync, rmSync, existsSync } from 'fs';
+        import embeddedPath from './source.dat' with { type: 'file' };
+
+        // Remove source.dat from filesystem to verify we're reading from the embedded bundle
+        rmSync('./source.dat', { force: true });
+
+        // Copy embedded file using fs.cp (single file mode)
+        const destPath = './dest.dat';
+        cpSync(embeddedPath, destPath);
+
+        // Verify the copy worked
+        if (!existsSync(destPath)) throw new Error('cp failed: destination does not exist');
+
+        const content = readFileSync(destPath, 'utf8');
+        if (content.trim() !== 'Data from cp test') {
+          throw new Error('cp failed: content mismatch - got: ' + content);
+        }
+
+        console.log('fs.cp from embedded file: OK');
+      `,
+      "/source.dat": "Data from cp test",
+    },
+    run: { stdout: "fs.cp from embedded file: OK", setCwd: true },
+  });
+
+  itBundled("compile/CpAsyncFromEmbeddedFile", {
+    compile: true,
+    assetNaming: "[name].[ext]",
+    files: {
+      "/entry.ts": /* js */ `
+        import { cp, rm, readFile, access } from 'fs/promises';
+        import embeddedPath from './async-source.dat' with { type: 'file' };
+
+        // Remove source file from filesystem to verify we're reading from the embedded bundle
+        await rm('./async-source.dat', { force: true });
+
+        // Copy embedded file using async fs.cp (single file mode)
+        const destPath = './async-dest.dat';
+        await cp(embeddedPath, destPath);
+
+        // Verify the copy worked using async APIs
+        try {
+          await access(destPath);
+        } catch {
+          throw new Error('async cp failed: destination does not exist');
+        }
+
+        const content = await readFile(destPath, 'utf8');
+        if (content.trim() !== 'Async cp test data') {
+          throw new Error('async cp failed: content mismatch - got: ' + content);
+        }
+
+        console.log('fs.cp async from embedded file: OK');
+      `,
+      "/async-source.dat": "Async cp test data",
+    },
+    run: { stdout: "fs.cp async from embedded file: OK", setCwd: true },
+  });
+
+  itBundled("compile/CpFromEmbeddedFileToSubdir", {
+    compile: true,
+    assetNaming: "[name].[ext]",
+    files: {
+      "/entry.ts": /* js */ `
+        import { cpSync, readFileSync, rmSync, existsSync } from 'fs';
+        import embeddedPath from './subdir-test.txt' with { type: 'file' };
+
+        // Remove source file and any existing subdir from filesystem
+        rmSync('./subdir-test.txt', { force: true });
+        rmSync('./newdir', { recursive: true, force: true });
+
+        // Copy embedded file to a nested subdirectory that doesn't exist
+        // fs.cp should create parent directories automatically
+        const destPath = './newdir/nested/copied.txt';
+        cpSync(embeddedPath, destPath);
+
+        // Verify the copy worked
+        if (!existsSync(destPath)) throw new Error('cp failed: destination does not exist');
+
+        const content = readFileSync(destPath, 'utf8');
+        if (content.trim() !== 'Subdir test content') {
+          throw new Error('cp failed: content mismatch - got: ' + content);
+        }
+
+        console.log('fs.cp to subdir from embedded file: OK');
+      `,
+      "/subdir-test.txt": "Subdir test content",
+    },
+    run: { stdout: "fs.cp to subdir from embedded file: OK", setCwd: true },
+  });
 });

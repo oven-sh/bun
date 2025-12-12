@@ -125,7 +125,7 @@ export function readableStreamToText(stream: ReadableStream): Promise<string> {
   // this is a direct stream
   var underlyingSource = $getByIdDirectPrivate(stream, "underlyingSource");
   if (underlyingSource !== undefined) {
-    return $readableStreamToTextDirect(stream, underlyingSource);
+    return $shieldingPromiseResolve($readableStreamToTextDirect(stream, underlyingSource));
   }
   if ($isReadableStreamLocked(stream))
     return $promiseReject(Promise, $ERR_INVALID_STATE_TypeError("ReadableStream is locked"));

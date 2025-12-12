@@ -424,7 +424,7 @@ describe("@types/bun integration test", () => {
         [
           {
             "code": 2345,
-            "line": "registry-invalid-test.ts:10:40",
+            "line": "registry-invalid-test.ts:11:42",
             "message": "Argument of type '\"INVALID_FLAG\"' is not assignable to parameter of type '\"ALLOWED_FLAG\"'.",
           },
         ]

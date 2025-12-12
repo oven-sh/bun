@@ -536,6 +536,37 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
         Global.exit(1);
     }
 
+    // Check if all scripts belong to a single package (single package match)
+    // When only one package is matched, run in foreground mode with interactive stdin
+    const first_pkg = scripts.items[0].package_name;
+    var is_single_package = true;
+    for (scripts.items[1..]) |script| {
+        if (!strings.eql(script.package_name, first_pkg)) {
+            is_single_package = false;
+            break;
+        }
+    }
+
+    // For a single package, run in foreground mode with interactive stdin
+    // This allows interactive scripts like Expo to receive user input
+    if (is_single_package) {
+        for (scripts.items) |script| {
+            const script_cwd = std.fs.path.dirname(script.package_json_path) orelse "";
+            try RunCommand.runPackageScriptForeground(
+                ctx,
+                ctx.allocator,
+                script.script_content,
+                script.script_name,
+                script_cwd,
+                this_transpiler.env,
+                ctx.passthrough,
+                ctx.debug.silent,
+                ctx.debug.use_system_shell,
+            );
+        }
+        Global.exit(0);
+    }
+
     const event_loop = bun.jsc.MiniEventLoop.initGlobal(this_transpiler.env, null);
     const shell_bin: [:0]const u8 = if (Environment.isPosix)
         RunCommand.findShell(this_transpiler.env.get("PATH") orelse "", fsinstance.top_level_dir) orelse return error.MissingShell

@@ -1956,6 +1956,12 @@ pub const sync = struct {
         argv: [*:null]?[*:0]const u8,
         envp: [*:null]?[*:0]const u8,
     ) !Maybe(Result) {
+        // On Windows, when the parent and child share the same console, both receive
+        // CTRL+C events. We register a handler that ignores the event in the parent,
+        // allowing the child to handle it and exit gracefully.
+        Bun__registerSignalsForForwarding();
+        defer Bun__unregisterSignalsForForwarding();
+
         var loop = options.windows.loop.platformEventLoop();
         var spawned = switch (try spawnProcessWindows(&options.toSpawnOptions(), argv, envp)) {
             .err => |err| return .{ .err = err },
@@ -1985,6 +1991,12 @@ pub const sync = struct {
         argv: [*:null]?[*:0]const u8,
         envp: [*:null]?[*:0]const u8,
     ) !Maybe(Result) {
+        // On Windows, when the parent and child share the same console, both receive
+        // CTRL+C events. We register a handler that ignores the event in the parent,
+        // allowing the child to handle it and exit gracefully.
+        Bun__registerSignalsForForwarding();
+        defer Bun__unregisterSignalsForForwarding();
+
         var loop: jsc.EventLoopHandle = options.windows.loop;
         var spawned = switch (try spawnProcessWindows(&options.toSpawnOptions(), argv, envp)) {
             .err => |err| return .{ .err = err },
@@ -2079,15 +2091,19 @@ pub const sync = struct {
     }
 
     // Forward signals from parent to the child process.
+    // On POSIX, this registers signal handlers to forward signals to the child.
+    // On Windows, this registers a console control handler to ignore CTRL+C,
+    // allowing the child (which shares the console) to handle it.
     extern "c" fn Bun__registerSignalsForForwarding() void;
     extern "c" fn Bun__unregisterSignalsForForwarding() void;
 
-    // The PID to forward signals to.
+    // The PID to forward signals to (POSIX only).
     // Set to 0 when unregistering.
     extern "c" var Bun__currentSyncPID: i64;
 
     // Race condition: a signal could be sent before spawnProcessPosix returns.
     // We need to make sure to send it after the process is spawned.
+    // On Windows, this is a no-op.
     extern "c" fn Bun__sendPendingSignalIfNecessary() void;
 
     fn spawnPosix(

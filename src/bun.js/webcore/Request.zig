@@ -866,19 +866,23 @@ pub fn doClone(
 
     const js_wrapper = cloned.toJS(globalThis);
     if (js_wrapper != .zero) {
-        if (cloned.#body.value == .Locked) {
-            if (cloned.#body.value.Locked.readable.get(globalThis)) |readable| {
-                // If we are teed, then we need to update the cached .body
-                // value to point to the new readable stream
-                // We must do this on both the original and cloned request
-                // but especially the original request since it will have a stale .body value now.
-                js.bodySetCached(js_wrapper, globalThis, readable.value);
-                if (this.#body.value.Locked.readable.get(globalThis)) |other_readable| {
-                    js.bodySetCached(this_value, globalThis, other_readable.value);
-                }
-            }
+        // After toJS, checkBodyStreamRef has already moved the streams from
+        // Locked.readable to js.gc.stream. So we need to use js.gc.stream
+        // to get the streams and update the body cache.
+        if (js.gc.stream.get(js_wrapper)) |cloned_stream| {
+            js.bodySetCached(js_wrapper, globalThis, cloned_stream);
         }
     }
+
+    // Update the original request's body cache with the new teed stream.
+    // At this point, this.#body.value.Locked.readable still holds the teed stream
+    // because checkBodyStreamRef hasn't been called on the original request yet.
+    if (this.#body.value == .Locked) {
+        if (this.#body.value.Locked.readable.get(globalThis)) |readable| {
+            js.bodySetCached(this_value, globalThis, readable.value);
+        }
+    }
+
     this.checkBodyStreamRef(globalThis);
     return js_wrapper;
 }

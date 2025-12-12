@@ -424,6 +424,17 @@ pub fn runTasks(
                 const response = metadata.response;
 
                 if (response.status_code > 399) {
+                    if (response.status_code == 404 and extract.resolution.tag == .github) {
+                        try convertGitHubToGitDependency(
+                            manager,
+                            &extract.resolution.value.github,
+                            extract.name.slice(),
+                            extract.dependency_id,
+                        );
+
+                        continue;
+                    }
+
                     if (@TypeOf(callbacks.onPackageDownloadError) != void) {
                         const err = switch (response.status_code) {
                             400 => error.TarballHTTP400,
@@ -1011,6 +1022,70 @@ pub fn allocGitHubURL(this: *const PackageManager, repository: *const Repository
     ) catch unreachable;
 }
 
+fn convertGitHubToGitDependency(
+    manager: *PackageManager,
+    github_dep: *const Repository,
+    package_name: string,
+    dependency_id: DependencyID,
+) !void {
+    const owner = manager.lockfile.str(&github_dep.owner);
+    const repo = manager.lockfile.str(&github_dep.repo);
+    const committish = manager.lockfile.str(&github_dep.committish);
+
+    if (owner.len == 0 or repo.len == 0) {
+        return error.InvalidGitHubDependency;
+    }
+
+    const git_repo_url = try std.fmt.allocPrint(
+        manager.allocator,
+        "https://github.com/{s}/{s}.git",
+        .{ owner, repo },
+    );
+    defer manager.allocator.free(git_repo_url);
+
+    const git_literal = try std.fmt.allocPrint(
+        manager.allocator,
+        "https://github.com/{s}/{s}.git{s}{s}",
+        .{ owner, repo, if (committish.len > 0) "#" else "", committish },
+    );
+    defer manager.allocator.free(git_literal);
+
+    var builder = manager.lockfile.stringBuilder();
+    builder.count(git_repo_url);
+    if (committish.len > 0) {
+        builder.count(committish);
+    }
+    builder.count(package_name);
+    builder.count(git_literal);
+    try builder.allocate();
+
+    const git_repo = Repository{
+        .owner = String.from(""),
+        .repo = builder.append(String, git_repo_url),
+        .committish = if (committish.len > 0) builder.append(String, committish) else String.from(""),
+        .resolved = String.from(""),
+        .package_name = builder.append(String, package_name),
+    };
+
+    const git_version = Dependency.Version{
+        .tag = .git,
+        .literal = builder.append(String, git_literal),
+        .value = .{ .git = git_repo },
+    };
+
+    builder.clamp();
+
+    manager.lockfile.buffers.dependencies.items[dependency_id].version = git_version;
+    manager.lockfile.buffers.resolutions.items[dependency_id] = invalid_package_id;
+
+    try manager.enqueueDependencyWithMain(
+        dependency_id,
+        &manager.lockfile.buffers.dependencies.items[dependency_id],
+        invalid_package_id,
+        false,
+    );
+}
+
 pub fn hasCreatedNetworkTask(this: *PackageManager, task_id: Task.Id, is_required: bool) bool {
     const gpe = bun.handleOom(this.network_dedupe_map.getOrPut(task_id));
 
@@ -1103,6 +1178,7 @@ const FileSystem = Fs.FileSystem;
 const HTTP = bun.http;
 const AsyncHTTP = HTTP.AsyncHTTP;
 
+const Dependency = bun.install.Dependency;
 const DependencyID = bun.install.DependencyID;
 const Features = bun.install.Features;
 const NetworkTask = bun.install.NetworkTask;
@@ -1114,6 +1190,9 @@ const Repository = bun.install.Repository;
 const Store = bun.install.Store;
 const Task = bun.install.Task;
 const invalid_package_id = bun.install.invalid_package_id;
+
+const Semver = bun.Semver;
+const String = Semver.String;
 
 const Lockfile = bun.install.Lockfile;
 const Package = Lockfile.Package;

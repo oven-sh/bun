@@ -1246,18 +1246,36 @@ fn runWithSourceCode(
 
     step.* = .resolve;
 
+    // For copy-only entrypoints (JSON, PNG, etc.), we need to set the unique key
+    // so they get copied properly, even though they don't use the .file loader
+    var final_unique_key = unique_key_for_additional_file;
+    var should_copy_with_hash = loader.shouldCopyForBundling();
+
+    if (!should_copy_with_hash and task.is_entry_point and loader.shouldCopyAsEntrypoint()) {
+        // This is a copy-only entrypoint - generate a unique key for it
+        should_copy_with_hash = true;
+        final_unique_key = .{
+            .key = try std.fmt.allocPrint(
+                allocator,
+                "{any}A{d:0>8}",
+                .{ bun.fmt.hexIntLower(task.ctx.unique_key), source.index.get() },
+            ),
+            .content_hash = ContentHasher.run(source.contents),
+        };
+    }
+
     return .{
         .ast = ast,
         .source = source.*,
         .log = log.*,
         .use_directive = use_directive,
-        .unique_key_for_additional_file = unique_key_for_additional_file.key,
+        .unique_key_for_additional_file = final_unique_key.key,
         .side_effects = task.side_effects,
         .loader = loader,
 
         // Hash the files in here so that we do it in parallel.
-        .content_hash_for_additional_file = if (loader.shouldCopyForBundling())
-            unique_key_for_additional_file.content_hash
+        .content_hash_for_additional_file = if (should_copy_with_hash)
+            final_unique_key.content_hash
         else
             0,
     };

@@ -828,7 +828,11 @@ pub const BundleV2 = struct {
 
         // Handle onLoad plugins as entry points
         if (!this.enqueueOnLoadPluginIfNeeded(task)) {
-            if (loader.shouldCopyForBundling()) {
+            // Mark files for copying if they use the file loader OR if they're copy-only entrypoints
+            const should_copy = loader.shouldCopyForBundling() or
+                (is_entry_point and loader.shouldCopyAsEntrypoint());
+
+            if (should_copy) {
                 var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[source_index.get()];
                 bun.handleOom(additional_files.append(this.allocator(), .{ .source_index = task.source_index.get() }));
                 this.graph.input_files.items(.side_effects)[source_index.get()] = _resolver.SideEffects.no_side_effects__pure_data;
@@ -1472,6 +1476,33 @@ pub const BundleV2 = struct {
         try fetcher.onFetch(fetcher.ctx, &result);
     }
 
+    /// Filter entry points into those that need JS chunks vs those that should only be copied as assets.
+    /// Returns a slice of entry points that should go through chunk creation.
+    /// Copy-only entrypoints (static assets when used as user-specified entrypoints) are filtered out.
+    ///
+    /// Note: This is called before addServerComponentBoundariesAsExtraEntryPoints(), so at this point
+    /// entry_points only contains user-specified entries.
+    fn filterEntryPointsForChunking(this: *BundleV2, alloc: std.mem.Allocator) ![]Index {
+        const loaders = this.graph.input_files.items(.loader);
+        const entry_points = this.graph.entry_points.items;
+
+        var js_entry_points = std.ArrayList(Index).init(alloc);
+
+        for (entry_points) |entry_point| {
+            const source_index = entry_point.get();
+            const loader = loaders[source_index];
+
+            // Skip copy-only entrypoints (JSON, PNG, etc.) - they'll be copied as assets
+            if (loader.shouldCopyAsEntrypoint()) {
+                continue;
+            }
+
+            try js_entry_points.append(entry_point);
+        }
+
+        return js_entry_points.toOwnedSlice();
+    }
+
     pub fn generateFromCLI(
         transpiler: *Transpiler,
         alloc: std.mem.Allocator,
@@ -1525,12 +1556,9 @@ pub const BundleV2 = struct {
 
         try this.cloneAST();
 
-        const chunks = try this.linker.link(
-            this,
-            this.graph.entry_points.items,
-            this.graph.server_component_boundaries,
-            reachable_files,
-        );
+        // Filter out copy-only entrypoints (like JSON/PNG files) that don't need JS chunks
+        const entry_points_for_chunking = try this.filterEntryPointsForChunking(alloc);
+        defer alloc.free(entry_points_for_chunking);
 
         // Do this at the very end, after processing all the imports/exports so that we can follow exports as needed.
         if (fetcher) |fetch| {
@@ -1538,7 +1566,48 @@ pub const BundleV2 = struct {
             return std.array_list.Managed(options.OutputFile).init(alloc);
         }
 
-        return try this.linker.generateChunksInParallel(chunks, false);
+        // Only create chunks if there are JS/CSS/HTML entrypoints
+        if (entry_points_for_chunking.len > 0) {
+            const chunks = try this.linker.link(
+                this,
+                entry_points_for_chunking,
+                this.graph.server_component_boundaries,
+                reachable_files,
+            );
+
+            return try this.linker.generateChunksInParallel(chunks, false);
+        } else {
+            // All entrypoints are copy-only assets - return the additional output files (copied assets)
+            if (this.transpiler.log.errors > 0) {
+                return error.BuildFailed;
+            }
+
+            // Write files to disk if outdir is specified
+            if (this.transpiler.options.output_dir.len > 0) {
+                var root_dir = std.fs.cwd().makeOpenPath(this.transpiler.options.output_dir, .{}) catch |err| {
+                    this.transpiler.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Failed to create output directory {s} {}", .{
+                        @errorName(err),
+                        bun.fmt.quote(this.transpiler.options.output_dir),
+                    }) catch unreachable;
+                    return err;
+                };
+                defer root_dir.close();
+
+                for (this.graph.additional_output_files.items) |*f| {
+                    f.writeToDisk(root_dir, this.transpiler.fs.top_level_dir) catch |err| {
+                        this.transpiler.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Failed to write file {s} {}", .{
+                            @errorName(err),
+                            bun.fmt.quote(f.dest_path),
+                        }) catch unreachable;
+                        return err;
+                    };
+                }
+            }
+
+            var output_files = std.ArrayList(options.OutputFile).init(alloc);
+            try output_files.appendSlice(this.graph.additional_output_files.items);
+            return output_files;
+        }
     }
 
     pub fn generateFromBakeProductionCLI(
@@ -1587,9 +1656,46 @@ pub const BundleV2 = struct {
 
         try this.cloneAST();
 
+        // Filter out copy-only entrypoints (like JSON/PNG files) that don't need JS chunks
+        const entry_points_for_chunking = try this.filterEntryPointsForChunking(bun.default_allocator);
+        defer bun.default_allocator.free(entry_points_for_chunking);
+
+        if (entry_points_for_chunking.len == 0) {
+            // All entrypoints are copy-only assets - return the additional output files (copied assets)
+            if (this.transpiler.log.errors > 0) {
+                return error.BuildFailed;
+            }
+
+            // Write files to disk if outdir is specified
+            if (this.transpiler.options.output_dir.len > 0) {
+                var root_dir = std.fs.cwd().makeOpenPath(this.transpiler.options.output_dir, .{}) catch |err| {
+                    this.transpiler.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Failed to create output directory {s} {}", .{
+                        @errorName(err),
+                        bun.fmt.quote(this.transpiler.options.output_dir),
+                    }) catch unreachable;
+                    return err;
+                };
+                defer root_dir.close();
+
+                for (this.graph.additional_output_files.items) |*f| {
+                    f.writeToDisk(root_dir, this.transpiler.fs.top_level_dir) catch |err| {
+                        this.transpiler.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Failed to write file {s} {}", .{
+                            @errorName(err),
+                            bun.fmt.quote(f.dest_path),
+                        }) catch unreachable;
+                        return err;
+                    };
+                }
+            }
+
+            var output_files = std.ArrayList(options.OutputFile).init(bun.default_allocator);
+            try output_files.appendSlice(this.graph.additional_output_files.items);
+            return output_files;
+        }
+
         const chunks = try this.linker.link(
             this,
-            this.graph.entry_points.items,
+            entry_points_for_chunking,
             this.graph.server_component_boundaries,
             reachable_files,
         );
@@ -1631,18 +1737,42 @@ pub const BundleV2 = struct {
             const additional_files: []BabyList(AdditionalFile) = this.graph.input_files.items(.additional_files);
             const loaders = this.graph.input_files.items(.loader);
 
+            // Check which files are copy-only entrypoints (should not have hash in filename)
+            const entry_points = this.graph.entry_points.items;
+
             for (reachable_files) |reachable_source| {
                 const index = reachable_source.get();
                 const key = unique_key_for_additional_files[index];
                 if (key.len > 0) {
-                    var template = if (this.graph.html_imports.server_source_indices.len > 0 and this.transpiler.options.asset_naming.len == 0)
+                    const loader = loaders[index];
+
+                    // Check if this is a copy-only entrypoint
+                    const is_copy_only_entrypoint = blk: {
+                        if (!loader.shouldCopyAsEntrypoint()) break :blk false;
+
+                        // Check if it's in the entry_points list
+                        for (entry_points) |entry_point| {
+                            if (entry_point.get() == index) break :blk true;
+                        }
+                        break :blk false;
+                    };
+
+                    var template = if (is_copy_only_entrypoint) brk: {
+                        // Use entry naming for copy-only entrypoints (no hash by default)
+                        const entry_naming = this.transpiler.options.entry_naming;
+                        if (entry_naming.len > 0) {
+                            break :brk PathTemplate{ .data = entry_naming };
+                        }
+                        // If no entry naming specified, use "[dir]/[name][ext]" (no hash)
+                        break :brk PathTemplate{ .data = "[dir]/[name][ext]" };
+                    } else if (this.graph.html_imports.server_source_indices.len > 0 and this.transpiler.options.asset_naming.len == 0)
                         PathTemplate.assetWithTarget
                     else
                         PathTemplate.asset;
 
                     const target = targets[index];
                     const asset_naming = this.transpilerForTarget(target).options.asset_naming;
-                    if (asset_naming.len > 0) {
+                    if (!is_copy_only_entrypoint and asset_naming.len > 0) {
                         template.data = asset_naming;
                     }
 
@@ -1669,8 +1799,6 @@ pub const BundleV2 = struct {
                         }
                         break :brk bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{f}", .{template}));
                     };
-
-                    const loader = loaders[index];
 
                     additional_output_files.append(options.OutputFile.init(.{
                         .source_index = .init(index),
@@ -2638,9 +2766,47 @@ pub const BundleV2 = struct {
 
         try this.addServerComponentBoundariesAsExtraEntryPoints();
 
+        // Filter out copy-only entrypoints (like JSON/PNG files) that don't need JS chunks
+        const entry_points_for_chunking = try this.filterEntryPointsForChunking(bun.default_allocator);
+        defer bun.default_allocator.free(entry_points_for_chunking);
+
+        if (entry_points_for_chunking.len == 0) {
+            // All entrypoints are copy-only assets
+            if (this.transpiler.log.errors > 0) {
+                return error.BuildFailed;
+            }
+
+            // Write files to disk if outdir is specified
+            if (this.transpiler.options.output_dir.len > 0) {
+                var root_dir = std.fs.cwd().makeOpenPath(this.transpiler.options.output_dir, .{}) catch |err| {
+                    this.transpiler.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Failed to create output directory {s} {}", .{
+                        @errorName(err),
+                        bun.fmt.quote(this.transpiler.options.output_dir),
+                    }) catch unreachable;
+                    return err;
+                };
+                defer root_dir.close();
+
+                for (this.graph.additional_output_files.items) |*f| {
+                    f.writeToDisk(root_dir, this.transpiler.fs.top_level_dir) catch |err| {
+                        this.transpiler.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Failed to write file {s} {}", .{
+                            @errorName(err),
+                            bun.fmt.quote(f.dest_path),
+                        }) catch unreachable;
+                        return err;
+                    };
+                }
+            }
+
+            // Return the additional output files (copied assets)
+            var output_files = std.ArrayList(options.OutputFile).init(bun.default_allocator);
+            try output_files.appendSlice(this.graph.additional_output_files.items);
+            return output_files;
+        }
+
         const chunks = try this.linker.link(
             this,
-            this.graph.entry_points.items,
+            entry_points_for_chunking,
             this.graph.server_component_boundaries,
             reachable_files,
         );

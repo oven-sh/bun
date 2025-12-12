@@ -3,7 +3,8 @@
 /// Activates the inspector/debugger at runtime via `process._debugProcess(pid)`.
 ///
 /// On POSIX (macOS/Linux):
-///   - Signal handler sets atomic flag and wakes event loop
+///   - Dedicated thread waits for SIGUSR1 using sigwait()
+///   - When signal arrives, sets atomic flag and wakes event loop
 ///   - Main thread checks flag on event loop tick and activates inspector
 ///   - Usage: `kill -USR1 <pid>` to start debugger
 ///
@@ -87,41 +88,51 @@ pub fn isInstalled() bool {
 }
 
 const posix = if (Environment.isPosix) struct {
-    fn handleSigusr1(_: c_int) callconv(.c) void {
-        inspector_activation_requested.store(true, .release);
+    var signal_thread: ?std.Thread = null;
 
-        if (VirtualMachine.getMainThreadVM()) |vm| {
-            vm.eventLoop().wakeup();
+    fn signalThreadMain() void {
+        Output.Source.configureNamedThread("SIGUSR1");
+
+        var set = std.posix.sigemptyset();
+        std.posix.sigaddset(&set, std.posix.SIG.USR1);
+
+        while (installed.load(.acquire)) {
+            var sig: c_int = 0;
+            _ = std.c.sigwait(&set, &sig);
+
+            if (sig != std.posix.SIG.USR1) continue;
+            if (!installed.load(.acquire)) break;
+
+            requestInspectorActivation();
         }
     }
 
     fn install() bool {
-        log("Installing SIGUSR1 handler", .{});
+        var set = std.posix.sigemptyset();
+        std.posix.sigaddset(&set, std.posix.SIG.USR1);
+        std.posix.sigprocmask(std.posix.SIG.BLOCK, &set, null);
 
-        const act = std.posix.Sigaction{
-            .handler = .{ .handler = handleSigusr1 },
-            .mask = std.posix.sigemptyset(),
-            .flags = 0,
+        signal_thread = std.Thread.spawn(.{
+            .stack_size = 128 * 1024,
+        }, signalThreadMain, .{}) catch {
+            std.posix.sigprocmask(std.posix.SIG.UNBLOCK, &set, null);
+            return false;
         };
-        std.posix.sigaction(std.posix.SIG.USR1, &act, null);
 
-        log("SIGUSR1 handler installed successfully", .{});
         return true;
     }
 
-    fn uninstallInternal(restore_default_handler: bool) void {
-        log("Uninstalling SIGUSR1 handler", .{});
-
-        if (restore_default_handler) {
-            const act = std.posix.Sigaction{
-                .handler = .{ .handler = std.posix.SIG.DFL },
-                .mask = std.posix.sigemptyset(),
-                .flags = 0,
-            };
-            std.posix.sigaction(std.posix.SIG.USR1, &act, null);
+    fn uninstall() void {
+        if (signal_thread) |thread| {
+            std.posix.kill(std.c.getpid(), std.posix.SIG.USR1) catch {};
+            thread.join();
+            signal_thread = null;
         }
 
-        log("SIGUSR1 handler uninstalled", .{});
+        // Unblock SIGUSR1 so user handlers can receive it
+        var set = std.posix.sigemptyset();
+        std.posix.sigaddset(&set, std.posix.SIG.USR1);
+        std.posix.sigprocmask(std.posix.SIG.UNBLOCK, &set, null);
     }
 } else struct {};
 
@@ -171,31 +182,21 @@ const windows = if (Environment.isWindows) struct {
 
     var mapping_handle: ?HANDLE = null;
 
-    /// Called from the remote thread created by CreateRemoteThread from another process.
-    /// This function must be safe to call from an arbitrary thread context.
+    /// Called via CreateRemoteThread from another process.
     fn startDebugThreadProc(_: ?LPVOID) callconv(.winapi) DWORD {
-        log("Remote debug thread started", .{});
         requestInspectorActivation();
         return 0;
     }
 
     fn install() bool {
-        log("Installing Windows debug handler", .{});
-
         const pid = GetCurrentProcessId();
 
-        // Create mapping name: "bun-debug-handler-<pid>"
         var mapping_name_buf: [64]u8 = undefined;
-        const name_slice = std.fmt.bufPrint(&mapping_name_buf, "bun-debug-handler-{d}", .{pid}) catch {
-            log("Failed to format mapping name", .{});
-            return false;
-        };
+        const name_slice = std.fmt.bufPrint(&mapping_name_buf, "bun-debug-handler-{d}", .{pid}) catch return false;
 
-        // Convert to wide string (null-terminated)
         var wide_name: [64]u16 = undefined;
         const wide_name_z = bun.strings.toWPath(&wide_name, name_slice);
 
-        // Create file mapping
         mapping_handle = CreateFileMappingW(
             INVALID_HANDLE_VALUE,
             null,
@@ -206,7 +207,6 @@ const windows = if (Environment.isWindows) struct {
         );
 
         if (mapping_handle) |handle| {
-            // Map view and store function pointer
             const handler_ptr = MapViewOfFile(
                 handle,
                 FILE_MAP_ALL_ACCESS,
@@ -216,33 +216,25 @@ const windows = if (Environment.isWindows) struct {
             );
 
             if (handler_ptr) |ptr| {
-                // Store our function pointer in the shared memory
                 const typed_ptr: *LPTHREAD_START_ROUTINE = @ptrCast(@alignCast(ptr));
                 typed_ptr.* = &startDebugThreadProc;
                 _ = UnmapViewOfFile(ptr);
-                log("Windows debug handler installed successfully (pid={d})", .{pid});
                 return true;
             } else {
-                log("Failed to map view of file", .{});
                 _ = bun.windows.CloseHandle(handle);
                 mapping_handle = null;
                 return false;
             }
         } else {
-            log("Failed to create file mapping", .{});
             return false;
         }
     }
 
-    fn uninstallInternal() void {
-        log("Uninstalling Windows debug handler", .{});
-
+    fn uninstall() void {
         if (mapping_handle) |handle| {
             _ = bun.windows.CloseHandle(handle);
             mapping_handle = null;
         }
-
-        log("Windows debug handler uninstalled", .{});
     }
 } else struct {};
 
@@ -265,38 +257,14 @@ pub fn installIfNotAlready() void {
     }
 }
 
-/// Uninstall the handler and clean up resources.
-pub fn uninstall() void {
-    if (comptime Environment.isPosix) {
-        uninstallInternal(true);
-    } else if (comptime Environment.isWindows) {
-        uninstallInternal(false);
-    }
-}
-
 /// Uninstall when a user SIGUSR1 listener takes over (POSIX only).
-/// Does NOT reset the signal handler since BunProcess.cpp already installed forwardSignal.
 pub fn uninstallForUserHandler() void {
-    if (comptime Environment.isPosix) {
-        uninstallInternal(false);
-    }
-}
-
-fn uninstallInternal(restore_default_handler: bool) void {
     if (!installed.swap(false, .acq_rel)) {
         return;
     }
 
     if (comptime Environment.isPosix) {
-        posix.uninstallInternal(restore_default_handler);
-    } else if (comptime Environment.isWindows) {
-        windows.uninstallInternal();
-    }
-}
-
-export fn Bun__onSigusr1Signal(sig: c_int) void {
-    if (comptime Environment.isPosix) {
-        posix.handleSigusr1(sig);
+        posix.uninstall();
     }
 }
 
@@ -307,7 +275,6 @@ export fn Bun__Sigusr1Handler__uninstall() void {
 
 comptime {
     if (Environment.isPosix) {
-        _ = Bun__onSigusr1Signal;
         _ = Bun__Sigusr1Handler__uninstall;
     }
 }

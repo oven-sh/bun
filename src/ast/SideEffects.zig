@@ -72,6 +72,7 @@ pub const SideEffects = enum(u1) {
             .e_undefined,
             .e_string,
             .e_boolean,
+            .e_branch_boolean,
             .e_number,
             .e_big_int,
             .e_inlined_enum,
@@ -88,6 +89,7 @@ pub const SideEffects = enum(u1) {
             .e_undefined,
             .e_missing,
             .e_boolean,
+            .e_branch_boolean,
             .e_number,
             .e_big_int,
             .e_string,
@@ -545,6 +547,7 @@ pub const SideEffects = enum(u1) {
             .e_null,
             .e_undefined,
             .e_boolean,
+            .e_branch_boolean,
             .e_number,
             .e_big_int,
             .e_string,
@@ -651,7 +654,7 @@ pub const SideEffects = enum(u1) {
         }
         switch (exp) {
             // Never null or undefined
-            .e_boolean, .e_number, .e_string, .e_reg_exp, .e_function, .e_arrow, .e_big_int => {
+            .e_boolean, .e_branch_boolean, .e_number, .e_string, .e_reg_exp, .e_function, .e_arrow, .e_big_int => {
                 return Result{ .value = false, .side_effects = .no_side_effects, .ok = true };
             },
 
@@ -770,7 +773,7 @@ pub const SideEffects = enum(u1) {
             .e_null, .e_undefined => {
                 return Result{ .ok = true, .value = false, .side_effects = .no_side_effects };
             },
-            .e_boolean => |e| {
+            .e_boolean, .e_branch_boolean => |e| {
                 return Result{ .ok = true, .value = e.value, .side_effects = .no_side_effects };
             },
             .e_number => |e| {

@@ -11,17 +11,17 @@ describe("Bun.build compile with wasm", () => {
       "app.js": `
         // Import a wasm module and properly instantiate it
         import wasmPath from "./test.wasm";
-        
+
         async function main() {
           try {
             // Read the wasm file as ArrayBuffer
             const wasmBuffer = await Bun.file(wasmPath).arrayBuffer();
             const { instance } = await WebAssembly.instantiate(wasmBuffer);
-            
+
             // Call the add function from wasm
             const result = instance.exports.add(2, 3);
             console.log("WASM result:", result);
-            
+
             if (result === 5) {
               console.log("WASM module loaded successfully");
               process.exit(0);
@@ -34,7 +34,7 @@ describe("Bun.build compile with wasm", () => {
             process.exit(1);
           }
         }
-        
+
         main();
       `,
       // A real WebAssembly module that exports an 'add' function

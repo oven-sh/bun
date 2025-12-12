@@ -553,7 +553,10 @@ pub fn transpileSourceCode(
                 .allocator = null,
                 .source_code = brk: {
                     const written = printer.ctx.getWritten();
-                    const result = cache.output_code orelse bun.String.cloneLatin1(written);
+                    // Use cloneUTF8 to properly handle UTF-8 multi-byte sequences in string literals.
+                    // cloneLatin1 would misinterpret UTF-8 bytes as Latin-1 codepoints.
+                    // See: https://github.com/oven-sh/bun/issues/25169
+                    const result = cache.output_code orelse bun.String.cloneUTF8(written);
 
                     if (written.len > 1024 * 1024 * 2 or jsc_vm.smol) {
                         printer.ctx.buffer.deinit();

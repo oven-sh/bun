@@ -1526,10 +1526,15 @@ fn NewPrinter(
 
         pub fn printStringCharactersUTF8(e: *Printer, text: []const u8, quote: u8) void {
             const writer = e.writer.stdWriter();
+            // Use ascii_only=false to preserve unicode characters in string literals.
+            // This ensures Function.toString() returns strings with actual unicode instead of
+            // escape sequences like \u203C, which is important for code that uses toString()
+            // to extract source code (e.g., unplugin-vue-router).
+            // See: https://github.com/oven-sh/bun/issues/25169
             (switch (quote) {
-                '\'' => writePreQuotedString(text, @TypeOf(writer), writer, '\'', ascii_only, false, .utf8),
-                '"' => writePreQuotedString(text, @TypeOf(writer), writer, '"', ascii_only, false, .utf8),
-                '`' => writePreQuotedString(text, @TypeOf(writer), writer, '`', ascii_only, false, .utf8),
+                '\'' => writePreQuotedString(text, @TypeOf(writer), writer, '\'', false, false, .utf8),
+                '"' => writePreQuotedString(text, @TypeOf(writer), writer, '"', false, false, .utf8),
+                '`' => writePreQuotedString(text, @TypeOf(writer), writer, '`', false, false, .utf8),
                 else => unreachable,
             }) catch |err| switch (err) {};
         }
@@ -1537,10 +1542,12 @@ fn NewPrinter(
             const slice = std.mem.sliceAsBytes(text);
 
             const writer = e.writer.stdWriter();
+            // Use ascii_only=false to preserve unicode characters in string literals.
+            // See comment in printStringCharactersUTF8 above.
             (switch (quote) {
-                '\'' => writePreQuotedString(slice, @TypeOf(writer), writer, '\'', ascii_only, false, .utf16),
-                '"' => writePreQuotedString(slice, @TypeOf(writer), writer, '"', ascii_only, false, .utf16),
-                '`' => writePreQuotedString(slice, @TypeOf(writer), writer, '`', ascii_only, false, .utf16),
+                '\'' => writePreQuotedString(slice, @TypeOf(writer), writer, '\'', false, false, .utf16),
+                '"' => writePreQuotedString(slice, @TypeOf(writer), writer, '"', false, false, .utf16),
+                '`' => writePreQuotedString(slice, @TypeOf(writer), writer, '`', false, false, .utf16),
                 else => unreachable,
             }) catch |err| switch (err) {};
         }

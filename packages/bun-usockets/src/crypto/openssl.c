@@ -15,6 +15,8 @@
  * limitations under the License.
  */
 // clang-format off
+
+//TEST
 #if (defined(LIBUS_USE_OPENSSL) || defined(LIBUS_USE_WOLFSSL))
 
 

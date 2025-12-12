@@ -99,6 +99,9 @@ function normalizeOutput(stdout: string) {
       .replaceAll("\ncounter a", "")
       .split("\n")
       .map(x => x.trim())
+      // Remove intermediate progress lines (timing differences between Bun and Node
+      // can cause different intermediate states to be captured)
+      .filter(x => !/^Generating static pages \(\d+\/\d+\)$/.test(x))
       .join("\n")
   );
 }

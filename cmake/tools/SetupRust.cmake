@@ -20,16 +20,23 @@ else()
   set(RUSTUP_HOME $ENV{HOME}/.rustup)
 endif()
 
-find_command(
-  VARIABLE
-    CARGO_EXECUTABLE
-  COMMAND
-    cargo
-  PATHS
-    ${CARGO_HOME}/bin
-  REQUIRED
-    OFF
-)
+# Prefer rustup-managed cargo to ensure rust-toolchain.toml is respected.
+# System cargo (e.g., Homebrew) may be an older version with different defaults.
+set(RUSTUP_CARGO ${CARGO_HOME}/bin/cargo)
+if(EXISTS ${RUSTUP_CARGO})
+  set(CARGO_EXECUTABLE ${RUSTUP_CARGO})
+else()
+  find_command(
+    VARIABLE
+      CARGO_EXECUTABLE
+    COMMAND
+      cargo
+    PATHS
+      ${CARGO_HOME}/bin
+    REQUIRED
+      OFF
+  )
+endif()
 
 if(EXISTS ${CARGO_EXECUTABLE})
   if(CARGO_EXECUTABLE MATCHES "^${CARGO_HOME}")

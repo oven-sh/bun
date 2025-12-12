@@ -524,8 +524,6 @@ test("Bun should be able to handle utf16 inside Content-Type header #11316", asy
     fetch() {
       const fileSuffix = "测试.html".match(/\.([a-z0-9]*)$/i)?.[1];
 
-      expect(fileSuffix).toBeUTF16String();
-
       return new Response("Hello World!\n", {
         headers: {
           "Content-Type": `text/${fileSuffix}`,

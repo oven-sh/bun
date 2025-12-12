@@ -377,20 +377,29 @@ struct us_listen_socket_t *us_socket_context_listen(int ssl, struct us_socket_co
     struct us_poll_t *p = us_create_poll(context->loop, 0, sizeof(struct us_listen_socket_t));
     us_poll_init(p, listen_socket_fd, POLL_TYPE_SEMI_SOCKET);
     us_poll_start(p, context->loop, LIBUS_SOCKET_READABLE);
-
     struct us_listen_socket_t *ls = (struct us_listen_socket_t *) p;
     struct us_socket_t* s = &ls->s;
+    s->connect_next = NULL;
+    s->connect_state = NULL;
     s->context = context;
     s->timeout = 255;
     s->long_timeout = 255;
     s->flags.low_prio_state = 0;
     s->flags.is_paused = 0;
     s->flags.is_ipc = 0;
+    s->flags.is_readable = true;
+    s->flags.is_writable = true;
+    s->flags.writable_emitted = true;
+    s->flags.has_error = false;
+    s->flags.has_received_eof = false;
+    #ifdef LIBUS_USE_KQUEUE
+    s->flags.needs_update = false;
+    #endif
     s->next = 0;
     s->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
     us_internal_socket_context_link_listen_socket(ssl, context, ls);
-
     ls->socket_ext_size = socket_ext_size;
+    
 
     return ls;
 }
@@ -415,6 +424,7 @@ struct us_listen_socket_t *us_socket_context_listen_unix(int ssl, struct us_sock
     struct us_listen_socket_t *ls = (struct us_listen_socket_t *) p;
     struct us_socket_t* s = &ls->s;
     s->connect_state = NULL;
+    s->connect_next = NULL;
     s->context = context;
     s->timeout = 255;
     s->long_timeout = 255;
@@ -422,6 +432,14 @@ struct us_listen_socket_t *us_socket_context_listen_unix(int ssl, struct us_sock
     s->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
     s->flags.is_paused = 0;
     s->flags.is_ipc = 0;
+    s->flags.is_readable = true;
+    s->flags.is_writable = true;
+    s->flags.writable_emitted = true;
+    s->flags.has_error = false;
+    s->flags.has_received_eof = false;
+    #ifdef LIBUS_USE_KQUEUE
+    s->flags.needs_update = false;
+    #endif
     s->next = 0;
     us_internal_socket_context_link_listen_socket(ssl, context, ls);
 
@@ -453,6 +471,14 @@ struct us_socket_t* us_socket_context_connect_resolved_dns(struct us_socket_cont
     socket->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
     socket->flags.is_paused = 0;
     socket->flags.is_ipc = 0;
+    socket->flags.is_readable = true;
+    socket->flags.is_writable = true;
+    socket->flags.writable_emitted = true;
+    socket->flags.has_error = false;
+    socket->flags.has_received_eof = false;
+    #ifdef LIBUS_USE_KQUEUE
+    socket->flags.needs_update = false;
+    #endif
     socket->connect_state = NULL;
     socket->connect_next = NULL;
 
@@ -583,6 +609,14 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
         flags->allow_half_open = (c->options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
         flags->is_paused = 0;
         flags->is_ipc = 0;
+        flags->is_readable = true;
+        flags->is_writable = true;
+        flags->writable_emitted = true;
+        flags->has_error = false;
+        flags->has_received_eof = false;
+        #ifdef LIBUS_USE_KQUEUE
+        flags->needs_update = false;
+        #endif
         /* Link it into context so that timeout fires properly */
         us_internal_socket_context_link_socket(0, context, s);
 
@@ -760,6 +794,14 @@ struct us_socket_t *us_socket_context_connect_unix(int ssl, struct us_socket_con
     connect_socket->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
     connect_socket->flags.is_paused = 0;
     connect_socket->flags.is_ipc = 0;
+    connect_socket->flags.is_readable = true;
+    connect_socket->flags.is_writable = true;
+    connect_socket->flags.writable_emitted = true;
+    connect_socket->flags.has_error = false;
+    connect_socket->flags.has_received_eof = false;
+    #ifdef LIBUS_USE_KQUEUE
+    connect_socket->flags.needs_update = false;
+    #endif
     connect_socket->connect_state = NULL;
     connect_socket->connect_next = NULL;
     us_internal_socket_context_link_socket(ssl, context, connect_socket);
@@ -818,7 +860,6 @@ struct us_socket_t *us_socket_context_adopt_socket(int ssl, struct us_socket_con
     new_s->context = context;
     new_s->timeout = 255;
     new_s->long_timeout = 255;
-
     if (new_s->flags.low_prio_state == 1) {
         /* update pointers in low-priority queue */
         if (!new_s->prev) loop->data.low_prio_head = new_s;
@@ -830,8 +871,8 @@ struct us_socket_t *us_socket_context_adopt_socket(int ssl, struct us_socket_con
     } else {
         us_internal_socket_context_link_socket(ssl, context, new_s);
     }
-    /* We can safely unref the old context here with can potentially be freed */
-    us_socket_context_unref(ssl, old_context);
+    
+
     return new_s;
 }
 

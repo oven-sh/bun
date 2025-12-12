@@ -24,8 +24,10 @@
 /* uv_poll_t->data always (except for most times after calling us_poll_stop)
  * points to the us_poll_t */
 static void poll_cb(uv_poll_t *p, int status, int events) {
-  us_internal_dispatch_ready_poll((struct us_poll_t *)p->data, status < 0 && status != UV_EOF, status == UV_EOF,
-                                  events);
+  int error = status < 0 && status != UV_EOF;
+  int eof = status == UV_EOF;
+  us_internal_update_ready_poll_state((struct us_poll_t *)p->data, error, eof, events);
+  us_internal_dispatch_ready_poll((struct us_poll_t *)p->data);
 }
 
 static void prepare_cb(uv_prepare_t *p) {
@@ -137,7 +139,6 @@ LIBUS_SOCKET_DESCRIPTOR us_poll_fd(struct us_poll_t *p) { return p->fd; }
 void us_loop_pump(struct us_loop_t *loop) {
   uv_run(loop->uv_loop, UV_RUN_NOWAIT);
 }
-
 struct us_loop_t *us_create_loop(void *hint,
                                  void (*wakeup_cb)(struct us_loop_t *loop),
                                  void (*pre_cb)(struct us_loop_t *loop),

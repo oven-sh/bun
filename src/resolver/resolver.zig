@@ -3110,9 +3110,11 @@ pub const Resolver = struct {
         }
         const imports_map = package_json.imports.?;
 
-        if (import_path.len == 1 or strings.hasPrefix(import_path, "#/")) {
+        // Only reject "#" alone. As of Node.js PR #60864, "#/" prefixed imports are now allowed.
+        // This enables patterns like {"imports": {"#/*": "./src/*"}} as an alternative to "@/".
+        if (import_path.len == 1) {
             if (r.debug_logs) |*debug| {
-                debug.addNoteFmt("The path \"{s}\" must not equal \"#\" and must not start with \"#/\"", .{import_path});
+                debug.addNoteFmt("The path \"{s}\" must not equal \"#\"", .{import_path});
             }
             return .{ .not_found = {} };
         }

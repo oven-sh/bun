@@ -112,12 +112,10 @@ export function readableStreamToArray(stream: ReadableStream): Promise<unknown[]
   // this is a direct stream
   var underlyingSource = $getByIdDirectPrivate(stream, "underlyingSource");
   if (underlyingSource !== undefined) {
-    // Shield InternalPromise from user code
     return $shieldingPromiseResolve($readableStreamToArrayDirect(stream, underlyingSource));
   }
   if ($isReadableStreamLocked(stream))
     return $promiseReject(Promise, $ERR_INVALID_STATE_TypeError("ReadableStream is locked"));
-  // Shield InternalPromise from user code
   return $shieldingPromiseResolve($readableStreamIntoArray(stream));
 }
 
@@ -147,7 +145,7 @@ export function readableStreamToArrayBuffer(stream: ReadableStream<ArrayBuffer>)
   // this is a direct stream
   var underlyingSource = $getByIdDirectPrivate(stream, "underlyingSource");
   if (underlyingSource !== undefined) {
-    return $readableStreamToArrayBufferDirect(stream, underlyingSource, false);
+    return $shieldingPromiseResolve($readableStreamToArrayBufferDirect(stream, underlyingSource, false));
   }
   if ($isReadableStreamLocked(stream))
     return $promiseReject(Promise, $ERR_INVALID_STATE_TypeError("ReadableStream is locked"));
@@ -216,7 +214,7 @@ export function readableStreamToArrayBuffer(stream: ReadableStream<ArrayBuffer>)
     if (completedResult !== result) {
       result = completedResult;
     } else {
-      return result.then(toArrayBuffer);
+      return result.$then(toArrayBuffer);
     }
   }
   return $createFulfilledPromise(toArrayBuffer(result));
@@ -229,7 +227,7 @@ export function readableStreamToBytes(stream: ReadableStream<ArrayBuffer>): Prom
   var underlyingSource = $getByIdDirectPrivate(stream, "underlyingSource");
 
   if (underlyingSource !== undefined) {
-    return $readableStreamToArrayBufferDirect(stream, underlyingSource, true);
+    return $shieldingPromiseResolve($readableStreamToArrayBufferDirect(stream, underlyingSource, true));
   }
   if ($isReadableStreamLocked(stream))
     return $promiseReject(Promise, $ERR_INVALID_STATE_TypeError("ReadableStream is locked"));
@@ -295,7 +293,7 @@ export function readableStreamToBytes(stream: ReadableStream<ArrayBuffer>): Prom
     if (completedResult !== result) {
       result = completedResult;
     } else {
-      return result.then(toBytes);
+      return result.$then(toBytes);
     }
   }
 
@@ -310,7 +308,7 @@ export function readableStreamToFormData(
   if (!$isReadableStream(stream)) throw $ERR_INVALID_ARG_TYPE("stream", "ReadableStream", typeof stream);
   if ($isReadableStreamLocked(stream))
     return $promiseReject(Promise, $ERR_INVALID_STATE_TypeError("ReadableStream is locked"));
-  return Bun.readableStreamToBlob(stream).then(blob => {
+  return Bun.readableStreamToBlob(stream).$then(blob => {
     return FormData.from(blob, contentType);
   });
 }
@@ -335,7 +333,7 @@ export function readableStreamToJSON(stream: ReadableStream): unknown {
     }
   }
 
-  return text.then(globalThis.JSON.parse);
+  return text.$then(globalThis.JSON.parse);
 }
 
 $linkTimeConstant;
@@ -346,7 +344,6 @@ export function readableStreamToBlob(stream: ReadableStream): Promise<Blob> {
 
   return (
     $tryUseReadableStreamBufferedFastPath(stream, "blob") ||
-    // Shield InternalPromise from user code
     $shieldingPromiseResolve(Bun.readableStreamToArray(stream)).$then(array => new Blob(array))
   );
 }

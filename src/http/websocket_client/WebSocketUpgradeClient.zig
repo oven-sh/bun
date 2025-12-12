@@ -84,6 +84,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             header_names: ?[*]const jsc.ZigString,
             header_values: ?[*]const jsc.ZigString,
             header_count: usize,
+            is_unix: bool,
         ) callconv(.c) ?*HTTPClient {
             const vm = global.bunVM();
 
@@ -136,37 +137,43 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             else
                 display_host_;
 
-            if (Socket.connectPtr(
-                display_host,
-                port,
-                @as(*uws.SocketContext, @ptrCast(socket_ctx)),
-                HTTPClient,
-                client,
-                "tcp",
-                false,
-            )) |out| {
-                // I don't think this case gets reached.
-                if (out.state == .failed) {
-                    client.deref();
-                    return null;
-                }
-                bun.analytics.Features.WebSocket += 1;
+            if (!is_unix) {
+                if (Socket.connectPtr(
+                    display_host,
+                    port,
+                    @as(*uws.SocketContext, @ptrCast(socket_ctx)),
+                    HTTPClient,
+                    client,
+                    "tcp",
+                    false,
+                ) catch null) |out| {
+                    bun.analytics.Features.WebSocket += 1;
 
-                if (comptime ssl) {
-                    if (!strings.isIPAddress(host_.slice())) {
-                        out.hostname = bun.default_allocator.dupeZ(u8, host_.slice()) catch "";
+                    if (comptime ssl) {
+                        if (!strings.isIPAddress(host_.slice())) {
+                            out.hostname = bun.default_allocator.dupeZ(u8, host_.slice()) catch "";
+                        }
                     }
-                }
 
-                out.tcp.timeout(120);
-                out.state = .reading;
-                // +1 for cpp_websocket
-                out.ref();
-                return out;
-            } else |_| {
-                client.deref();
+                    out.tcp.timeout(120);
+                    out.state = .reading;
+                    // +1 for cpp_websocket
+                    out.ref();
+                    return out;
+                }
+            } else {
+                if (Socket.connectUnixPtr(display_host, @as(*uws.SocketContext, @ptrCast(socket_ctx)), HTTPClient, client, "tcp", false) catch null) |out| {
+                    bun.analytics.Features.WebSocket += 1;
+
+                    out.tcp.timeout(120);
+                    out.state = .reading;
+                    // +1 for cpp_websocket
+                    out.ref();
+                    return out;
+                }
             }
 
+            client.deref();
             return null;
         }
 

@@ -1,11 +1,10 @@
 /// Runtime Inspector Activation Handler
 ///
-/// Activates the inspector/debugger at runtime
+/// Activates the inspector/debugger at runtime via `process._debugProcess(pid)`.
 ///
 /// On POSIX (macOS/Linux):
-///   - Uses SIGUSR1 signal with a watcher thread pattern
-///   - Signal handler does async-signal-safe semaphore post
-///   - Watcher thread safely activates inspector on main thread
+///   - Signal handler sets atomic flag and wakes event loop
+///   - Main thread checks flag on event loop tick and activates inspector
 ///   - Usage: `kill -USR1 <pid>` to start debugger
 ///
 /// On Windows:
@@ -22,10 +21,6 @@ const inspector_port = "6499";
 
 var installed: std.atomic.Value(bool) = std.atomic.Value(bool).init(false);
 var inspector_activation_requested: std.atomic.Value(bool) = std.atomic.Value(bool).init(false);
-
-// =============================================================================
-// Shared Implementation
-// =============================================================================
 
 fn requestInspectorActivation() void {
     const vm = VirtualMachine.getMainThreadVM() orelse {
@@ -91,119 +86,17 @@ pub fn isInstalled() bool {
     return installed.load(.acquire);
 }
 
-// =============================================================================
-// POSIX Implementation (macOS/Linux)
-// =============================================================================
-
 const posix = if (Environment.isPosix) struct {
-    /// Platform-specific semaphore for async-signal-safe signaling.
-    /// Uses Mach semaphores on macOS, POSIX sem_t on Linux.
-    const Semaphore = if (Environment.isMac) MachSemaphore else PosixSemaphore;
-
-    const MachSemaphore = struct {
-        sem: mach.semaphore_t = 0,
-
-        const mach = struct {
-            const mach_port_t = std.c.mach_port_t;
-            const semaphore_t = mach_port_t;
-            const kern_return_t = c_int;
-            const KERN_SUCCESS: kern_return_t = 0;
-            const KERN_ABORTED: kern_return_t = 14;
-
-            extern "c" fn semaphore_create(task: mach_port_t, semaphore: *semaphore_t, policy: c_int, value: c_int) kern_return_t;
-            extern "c" fn semaphore_destroy(task: mach_port_t, semaphore: semaphore_t) kern_return_t;
-            extern "c" fn semaphore_signal(semaphore: semaphore_t) kern_return_t;
-            extern "c" fn semaphore_wait(semaphore: semaphore_t) kern_return_t;
-        };
-
-        const SYNC_POLICY_FIFO = 0;
-
-        fn init(self: *MachSemaphore) bool {
-            return mach.semaphore_create(std.c.mach_task_self(), &self.sem, SYNC_POLICY_FIFO, 0) == mach.KERN_SUCCESS;
-        }
-
-        fn deinit(self: *MachSemaphore) void {
-            _ = mach.semaphore_destroy(std.c.mach_task_self(), self.sem);
-        }
-
-        fn post(self: *MachSemaphore) void {
-            _ = mach.semaphore_signal(self.sem);
-        }
-
-        fn wait(self: *MachSemaphore) void {
-            while (true) {
-                const result = mach.semaphore_wait(self.sem);
-                if (result != mach.KERN_ABORTED) break;
-            }
-        }
-    };
-
-    const PosixSemaphore = struct {
-        sem: std.c.sem_t = .{},
-
-        fn init(self: *PosixSemaphore) bool {
-            return std.c.sem_init(&self.sem, 0, 0) == 0;
-        }
-
-        fn deinit(self: *PosixSemaphore) void {
-            _ = std.c.sem_destroy(&self.sem);
-        }
-
-        fn post(self: *PosixSemaphore) void {
-            _ = std.c.sem_post(&self.sem);
-        }
-
-        fn wait(self: *PosixSemaphore) void {
-            while (true) {
-                const result = std.c.sem_wait(&self.sem);
-                if (result == 0) break;
-                if (std.c._errno().* != @intFromEnum(std.posix.E.INTR)) break;
-            }
-        }
-    };
-
-    var semaphore: Semaphore = .{};
-    var watcher_thread: ?std.Thread = null;
-
-    /// Signal handler - async-signal-safe. Only does semaphore post.
     fn handleSigusr1(_: c_int) callconv(.c) void {
-        semaphore.post();
-    }
+        inspector_activation_requested.store(true, .release);
 
-    fn watcherThreadMain() void {
-        Output.Source.configureNamedThread("Sigusr1Watcher");
-        log("Watcher thread started", .{});
-
-        while (installed.load(.acquire)) {
-            semaphore.wait();
-
-            if (!installed.load(.acquire)) {
-                log("Watcher thread shutting down", .{});
-                break;
-            }
-
-            log("Watcher thread woken by SIGUSR1", .{});
-            requestInspectorActivation();
+        if (VirtualMachine.getMainThreadVM()) |vm| {
+            vm.eventLoop().wakeup();
         }
-
-        log("Watcher thread exited", .{});
     }
 
     fn install() bool {
-        log("Installing SIGUSR1 handler with watcher thread", .{});
-
-        if (!semaphore.init()) {
-            log("Failed to initialize semaphore", .{});
-            return false;
-        }
-
-        watcher_thread = std.Thread.spawn(.{
-            .stack_size = 128 * 1024,
-        }, watcherThreadMain, .{}) catch |err| {
-            log("Failed to spawn watcher thread: {s}", .{@errorName(err)});
-            semaphore.deinit();
-            return false;
-        };
+        log("Installing SIGUSR1 handler", .{});
 
         const act = std.posix.Sigaction{
             .handler = .{ .handler = handleSigusr1 },
@@ -219,15 +112,6 @@ const posix = if (Environment.isPosix) struct {
     fn uninstallInternal(restore_default_handler: bool) void {
         log("Uninstalling SIGUSR1 handler", .{});
 
-        semaphore.post();
-
-        if (watcher_thread) |thread| {
-            thread.join();
-            watcher_thread = null;
-        }
-
-        semaphore.deinit();
-
         if (restore_default_handler) {
             const act = std.posix.Sigaction{
                 .handler = .{ .handler = std.posix.SIG.DFL },
@@ -239,15 +123,7 @@ const posix = if (Environment.isPosix) struct {
 
         log("SIGUSR1 handler uninstalled", .{});
     }
-
-    fn triggerForTesting() void {
-        semaphore.post();
-    }
 } else struct {};
-
-// =============================================================================
-// Windows Implementation
-// =============================================================================
 
 const windows = if (Environment.isWindows) struct {
     const win32 = std.os.windows;
@@ -370,10 +246,6 @@ const windows = if (Environment.isWindows) struct {
     }
 } else struct {};
 
-// =============================================================================
-// Public API
-// =============================================================================
-
 /// Install the runtime inspector handler.
 /// Safe to call multiple times - subsequent calls are no-ops.
 pub fn installIfNotAlready() void {
@@ -422,16 +294,6 @@ fn uninstallInternal(restore_default_handler: bool) void {
     }
 }
 
-pub fn triggerForTesting() void {
-    if (comptime Environment.isPosix) {
-        posix.triggerForTesting();
-    }
-}
-
-// =============================================================================
-// C++ Exports
-// =============================================================================
-
 export fn Bun__onSigusr1Signal(sig: c_int) void {
     if (comptime Environment.isPosix) {
         posix.handleSigusr1(sig);
@@ -449,10 +311,6 @@ comptime {
         _ = Bun__Sigusr1Handler__uninstall;
     }
 }
-
-// =============================================================================
-// Imports
-// =============================================================================
 
 const std = @import("std");
 

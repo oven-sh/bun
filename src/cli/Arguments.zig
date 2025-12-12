@@ -87,6 +87,7 @@ pub const runtime_params_ = [_]ParamType{
     clap.parseParam("--inspect <STR>?                  Activate Bun's debugger") catch unreachable,
     clap.parseParam("--inspect-wait <STR>?             Activate Bun's debugger, wait for a connection before executing") catch unreachable,
     clap.parseParam("--inspect-brk <STR>?              Activate Bun's debugger, set breakpoint on first line of code and wait") catch unreachable,
+    clap.parseParam("--disable-sigusr1                 Disable SIGUSR1 handler for runtime debugger activation") catch unreachable,
     clap.parseParam("--cpu-prof                        Start CPU profiler and write profile to disk on exit") catch unreachable,
     clap.parseParam("--cpu-prof-name <STR>             Specify the name of the CPU profile file") catch unreachable,
     clap.parseParam("--cpu-prof-dir <STR>              Specify the directory where the CPU profile will be saved") catch unreachable,
@@ -771,6 +772,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         ctx.runtime_options.smol = args.flag("--smol");
         ctx.runtime_options.preconnect = args.options("--fetch-preconnect");
         ctx.runtime_options.expose_gc = args.flag("--expose-gc");
+        ctx.runtime_options.disable_sigusr1 = args.flag("--disable-sigusr1");
 
         if (args.option("--console-depth")) |depth_str| {
             const depth = std.fmt.parseInt(u16, depth_str, 10) catch {

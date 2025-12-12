@@ -320,18 +320,39 @@ pub const UpgradeCommand = struct {
 
         const args = bun.argv;
         if (args.len > 2) {
-            for (args[2..]) |arg| {
-                if (!strings.contains(arg, "--")) {
-                    Output.prettyError(
-                        \\<r><red>error<r><d>:<r> This command updates Bun itself, and does not take package names.
-                        \\<blue>note<r><d>:<r> Use `bun update
-                    , .{});
-                    for (args[2..]) |arg_err| {
-                        Output.prettyError(" {s}", .{arg_err});
+            var upgrade_index: ?usize = null;
+            for (args[1..], 1..) |arg, i| {
+                // if this is after "upgrade", it needs to be one of the specific flags
+                // otherwise, just verify that it's a flag (because BUN_OPTIONS are passed here)
+                if (upgrade_index) |_| {
+                    if (strings.eqlComptime(arg, "--canary") or
+                        strings.eqlComptime(arg, "--profile") or
+                        strings.eqlComptime(arg, "--stable"))
+                    {
+                        continue;
                     }
-                    Output.prettyErrorln("` instead.", .{});
-                    Global.exit(1);
+                } else {
+                    if (strings.startsWith(arg, "--")) continue;
+
+                    if (strings.eqlComptime(arg, "upgrade")) {
+                        upgrade_index = i;
+                        continue;
+                    }
                 }
+
+                Output.prettyError(
+                    \\<r><red>error<r><d>:<r> This command updates Bun itself, and does not take package names.
+                    \\<blue>note<r><d>:<r> Use `bun update
+                , .{});
+
+                const index = upgrade_index orelse 2;
+                for (args, 0..) |arg_err, _i| {
+                    if (_i == 0 or _i == index) continue;
+                    Output.prettyError(" {s}", .{arg_err});
+                }
+
+                Output.prettyErrorln("` instead.", .{});
+                Global.exit(1);
             }
         }
 

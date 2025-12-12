@@ -14,6 +14,7 @@
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "JavaScriptCore/CatchScope.h"
 #include "JavaScriptCore/VM.h"
+#include "JavaScriptCore/Options.h"
 #include "wtf/text/WTFString.h"
 #include "wtf/text/StringView.h"
 #include "wtf/text/ASCIILiteral.h"
@@ -302,9 +303,9 @@ JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Pr
         heapSpaces->putDirect(vm, Identifier::fromString(vm, "shared_large_object_space"_s), constructEmptyObject(globalObject), 0);
         heapSpaces->putDirect(vm, Identifier::fromString(vm, "trusted_large_object_space"_s), constructEmptyObject(globalObject), 0);
 
-        heap->putDirect(vm, Identifier::fromString(vm, "totalMemory"_s), jsNumber(WTF::ramSize()), 0);
+        heap->putDirect(vm, Identifier::fromString(vm, "totalMemory"_s), jsNumber(JSC::Options::forceRAMSize() ? JSC::Options::forceRAMSize() : WTF::ramSize()), 0);
         heap->putDirect(vm, Identifier::fromString(vm, "usedMemory"_s), jsNumber(vm.heap.size()), 0);
-        heap->putDirect(vm, Identifier::fromString(vm, "memoryLimit"_s), jsNumber(WTF::ramSize()), 0);
+        heap->putDirect(vm, Identifier::fromString(vm, "memoryLimit"_s), jsNumber(JSC::Options::forceRAMSize() ? JSC::Options::forceRAMSize() : WTF::ramSize()), 0);
         heap->putDirect(vm, Identifier::fromString(vm, "heapSpaces"_s), heapSpaces, 0);
 
         report->putDirect(vm, Identifier::fromString(vm, "javascriptHeap"_s), heap, 0);

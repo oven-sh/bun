@@ -315,6 +315,109 @@ if (typeof Bun !== "undefined") {
 
 ---
 
+## Terminal (PTY) support
+
+For interactive terminal applications, you can spawn a subprocess with a pseudo-terminal (PTY) attached using the `terminal` option. This makes the subprocess think it's running in a real terminal, enabling features like colored output, cursor movement, and interactive prompts.
+
+```ts
+const proc = Bun.spawn(["bash"], {
+  terminal: {
+    cols: 80,
+    rows: 24,
+    data(terminal, data) {
+      // Called when data is received from the terminal
+      process.stdout.write(data);
+    },
+  },
+});
+
+// Write to the terminal
+proc.terminal.write("echo hello\n");
+
+// Wait for the process to exit
+await proc.exited;
+
+// Close the terminal
+proc.terminal.close();
+```
+
+When the `terminal` option is provided:
+
+- The subprocess sees `process.stdout.isTTY` as `true`
+- `stdin`, `stdout`, and `stderr` are all connected to the terminal
+- `proc.stdin`, `proc.stdout`, and `proc.stderr` return `null` — use the terminal instead
+- Access the terminal via `proc.terminal`
+
+### Terminal options
+
+| Option  | Description                                                                                                                                                        | Default            |
+| ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------ |
+| `cols`  | Number of columns                                                                                                                                                  | `80`               |
+| `rows`  | Number of rows                                                                                                                                                     | `24`               |
+| `name`  | Terminal type for PTY configuration (set `TERM` env var separately via `env` option)                                                                               | `"xterm-256color"` |
+| `data`  | Callback when data is received `(terminal, data) => void`                                                                                                          | —                  |
+| `exit`  | Callback when PTY stream closes (EOF or error). `exitCode` is PTY lifecycle status (0=EOF, 1=error), not subprocess exit code. Use `proc.exited` for process exit. | —                  |
+| `drain` | Callback when ready for more data `(terminal) => void`                                                                                                             | —                  |
+
+### Terminal methods
+
+The `Terminal` object returned by `proc.terminal` has the following methods:
+
+```ts
+// Write data to the terminal
+proc.terminal.write("echo hello\n");
+
+// Resize the terminal
+proc.terminal.resize(120, 40);
+
+// Set raw mode (disable line buffering and echo)
+proc.terminal.setRawMode(true);
+
+// Keep event loop alive while terminal is open
+proc.terminal.ref();
+proc.terminal.unref();
+
+// Close the terminal
+proc.terminal.close();
+```
+
+### Reusable Terminal
+
+You can create a terminal independently and reuse it across multiple subprocesses:
+
+```ts
+await using terminal = new Bun.Terminal({
+  cols: 80,
+  rows: 24,
+  data(term, data) {
+    process.stdout.write(data);
+  },
+});
+
+// Spawn first process
+const proc1 = Bun.spawn(["echo", "first"], { terminal });
+await proc1.exited;
+
+// Reuse terminal for another process
+const proc2 = Bun.spawn(["echo", "second"], { terminal });
+await proc2.exited;
+
+// Terminal is closed automatically by `await using`
+```
+
+When passing an existing `Terminal` object:
+
+- The terminal can be reused across multiple spawns
+- You control when to close the terminal
+- The `exit` callback fires when you call `terminal.close()`, not when each subprocess exits
+- Use `proc.exited` to detect individual subprocess exits
+
+This is useful for running multiple commands in sequence through the same terminal session.
+
+<Note>Terminal support is only available on POSIX systems (Linux, macOS). It is not available on Windows.</Note>
+
+---
+
 ## Blocking API (`Bun.spawnSync()`)
 
 Bun provides a synchronous equivalent of `Bun.spawn` called `Bun.spawnSync`. This is a blocking API that supports the same inputs and parameters as `Bun.spawn`. It returns a `SyncSubprocess` object, which differs from `Subprocess` in a few ways.
@@ -407,6 +510,7 @@ namespace SpawnOptions {
     timeout?: number;
     killSignal?: string | number;
     maxBuffer?: number;
+    terminal?: TerminalOptions; // PTY support (POSIX only)
   }
 
   type Readable =
@@ -435,10 +539,11 @@ namespace SpawnOptions {
 }
 
 interface Subprocess extends AsyncDisposable {
-  readonly stdin: FileSink | number | undefined;
-  readonly stdout: ReadableStream<Uint8Array> | number | undefined;
-  readonly stderr: ReadableStream<Uint8Array> | number | undefined;
-  readonly readable: ReadableStream<Uint8Array> | number | undefined;
+  readonly stdin: FileSink | number | undefined | null;
+  readonly stdout: ReadableStream<Uint8Array<ArrayBuffer>> | number | undefined | null;
+  readonly stderr: ReadableStream<Uint8Array<ArrayBuffer>> | number | undefined | null;
+  readonly readable: ReadableStream<Uint8Array<ArrayBuffer>> | number | undefined | null;
+  readonly terminal: Terminal | undefined;
   readonly pid: number;
   readonly exited: Promise<number>;
   readonly exitCode: number | null;
@@ -463,6 +568,28 @@ interface SyncSubprocess {
   signalCode?: string;
   exitedDueToTimeout?: true;
   pid: number;
+}
+
+interface TerminalOptions {
+  cols?: number;
+  rows?: number;
+  name?: string;
+  data?: (terminal: Terminal, data: Uint8Array<ArrayBuffer>) => void;
+  /** Called when PTY stream closes (EOF or error). exitCode is PTY lifecycle status (0=EOF, 1=error), not subprocess exit code. */
+  exit?: (terminal: Terminal, exitCode: number, signal: string | null) => void;
+  drain?: (terminal: Terminal) => void;
+}
+
+interface Terminal extends AsyncDisposable {
+  readonly stdin: number;
+  readonly stdout: number;
+  readonly closed: boolean;
+  write(data: string | BufferSource): number;
+  resize(cols: number, rows: number): void;
+  setRawMode(enabled: boolean): void;
+  ref(): void;
+  unref(): void;
+  close(): void;
 }
 
 interface ResourceUsage {

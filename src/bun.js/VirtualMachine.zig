@@ -1074,9 +1074,18 @@ pub fn initWithModuleGraph(
     vm.configureDebugger(opts.debugger);
     vm.body_value_hive_allocator = Body.Value.HiveAllocator.init(bun.typedAllocator(jsc.WebCore.Body.Value));
 
-    // Install debug handler for runtime inspector activation (main thread only)
-    if (opts.is_main_thread and !opts.disable_sigusr1) {
-        jsc.EventLoop.RuntimeInspector.installIfNotAlready();
+    // Configure SIGUSR1 handling (main thread only)
+    if (opts.is_main_thread) {
+        if (opts.disable_sigusr1) {
+            // User requested --disable-sigusr1, set SIGUSR1 to default action (terminate)
+            jsc.EventLoop.RuntimeInspector.setDefaultSigusr1Action();
+        } else if (vm.debugger != null) {
+            // Debugger already enabled via CLI flags, ignore SIGUSR1
+            jsc.EventLoop.RuntimeInspector.ignoreSigusr1();
+        } else {
+            // Install RuntimeInspector signal handler for runtime activation
+            jsc.EventLoop.RuntimeInspector.installIfNotAlready();
+        }
     }
 
     return vm;
@@ -1208,9 +1217,18 @@ pub fn init(opts: Options) !*VirtualMachine {
     vm.configureDebugger(opts.debugger);
     vm.body_value_hive_allocator = Body.Value.HiveAllocator.init(bun.typedAllocator(jsc.WebCore.Body.Value));
 
-    // Install debug handler for runtime inspector activation (main thread only)
-    if (opts.is_main_thread and !opts.disable_sigusr1) {
-        jsc.EventLoop.RuntimeInspector.installIfNotAlready();
+    // Configure SIGUSR1 handling (main thread only)
+    if (opts.is_main_thread) {
+        if (opts.disable_sigusr1) {
+            // User requested --disable-sigusr1, set SIGUSR1 to default action (terminate)
+            jsc.EventLoop.RuntimeInspector.setDefaultSigusr1Action();
+        } else if (vm.debugger != null) {
+            // Debugger already enabled via CLI flags, ignore SIGUSR1
+            jsc.EventLoop.RuntimeInspector.ignoreSigusr1();
+        } else {
+            // Install RuntimeInspector signal handler for runtime activation
+            jsc.EventLoop.RuntimeInspector.installIfNotAlready();
+        }
     }
 
     return vm;
@@ -1463,9 +1481,18 @@ pub fn initBake(opts: Options) anyerror!*VirtualMachine {
     vm.configureDebugger(opts.debugger);
     vm.body_value_hive_allocator = Body.Value.HiveAllocator.init(bun.typedAllocator(jsc.WebCore.Body.Value));
 
-    // Install debug handler for runtime inspector activation (main thread only)
-    if (opts.is_main_thread and !opts.disable_sigusr1) {
-        jsc.EventLoop.RuntimeInspector.installIfNotAlready();
+    // Configure SIGUSR1 handling (main thread only)
+    if (opts.is_main_thread) {
+        if (opts.disable_sigusr1) {
+            // User requested --disable-sigusr1, set SIGUSR1 to default action (terminate)
+            jsc.EventLoop.RuntimeInspector.setDefaultSigusr1Action();
+        } else if (vm.debugger != null) {
+            // Debugger already enabled via CLI flags, ignore SIGUSR1
+            jsc.EventLoop.RuntimeInspector.ignoreSigusr1();
+        } else {
+            // Install RuntimeInspector signal handler for runtime activation
+            jsc.EventLoop.RuntimeInspector.installIfNotAlready();
+        }
     }
 
     return vm;

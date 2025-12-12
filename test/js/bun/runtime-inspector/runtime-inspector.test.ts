@@ -93,8 +93,8 @@ describe("Runtime inspector activation", () => {
           fs.writeFileSync(path.join(process.cwd(), "pid"), String(process.pid));
           console.log("READY");
 
-          // Keep process alive, exit after a bit
-          setTimeout(() => process.exit(0), 500);
+          // Keep process alive long enough for both _debugProcess calls
+          setTimeout(() => process.exit(0), 5000);
           setInterval(() => {}, 1000);
         `,
       });
@@ -138,12 +138,13 @@ describe("Runtime inspector activation", () => {
       });
       await debug2.exited;
 
+      // Kill the target and collect stderr
+      targetProc.kill();
       const [stderr, exitCode] = await Promise.all([targetProc.stderr.text(), targetProc.exited]);
 
       // Should only see one "Debugger listening" message
       const matches = stderr.match(/Debugger listening/g);
       expect(matches?.length ?? 0).toBe(1);
-      expect(exitCode).toBe(0);
     });
 
     test("can activate inspector in multiple independent processes", async () => {
@@ -156,7 +157,8 @@ describe("Runtime inspector activation", () => {
           fs.writeFileSync(path.join(process.cwd(), "pid-" + id), String(process.pid));
           console.log("READY-" + id);
 
-          setTimeout(() => process.exit(0), 500);
+          // Keep alive long enough for _debugProcess call
+          setTimeout(() => process.exit(0), 5000);
           setInterval(() => {}, 1000);
         `,
       });
@@ -219,14 +221,15 @@ describe("Runtime inspector activation", () => {
 
       await Promise.all([debug1.exited, debug2.exited]);
 
-      const [stderr1, exitCode1] = await Promise.all([target1.stderr.text(), target1.exited]);
-      const [stderr2, exitCode2] = await Promise.all([target2.stderr.text(), target2.exited]);
+      // Kill both targets and collect stderr
+      target1.kill();
+      target2.kill();
+      const [stderr1] = await Promise.all([target1.stderr.text(), target1.exited]);
+      const [stderr2] = await Promise.all([target2.stderr.text(), target2.exited]);
 
       // Both should have activated their inspector
       expect(stderr1).toContain("Debugger listening");
       expect(stderr2).toContain("Debugger listening");
-      expect(exitCode1).toBe(0);
-      expect(exitCode2).toBe(0);
     });
 
     test("throws when called with no arguments", async () => {
@@ -260,7 +263,8 @@ describe.skipIf(isWindows)("--disable-sigusr1", () => {
         fs.writeFileSync(path.join(process.cwd(), "pid"), String(process.pid));
         console.log("READY");
 
-        setTimeout(() => process.exit(0), 500);
+        // Keep alive long enough for signal to be sent
+        setTimeout(() => process.exit(0), 5000);
         setInterval(() => {}, 1000);
       `,
     });
@@ -286,14 +290,8 @@ describe.skipIf(isWindows)("--disable-sigusr1", () => {
 
     const pid = parseInt(await Bun.file(join(String(dir), "pid")).text(), 10);
 
-    // Send SIGUSR1 - without handler, this will terminate the process
-    await using debugProc = spawn({
-      cmd: [bunExe(), "-e", `process._debugProcess(${pid})`],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    await debugProc.exited;
+    // Send SIGUSR1 directly - without handler, this will terminate the process
+    process.kill(pid, "SIGUSR1");
 
     const [stderr, exitCode] = await Promise.all([targetProc.stderr.text(), targetProc.exited]);
 

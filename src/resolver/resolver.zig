@@ -3779,6 +3779,18 @@ pub const Resolver = struct {
             }
         }
 
+        // If the path itself is an existing directory, don't try to load it as a file.
+        // This prevents "import '.' from 'lib/foo.ts'" incorrectly resolving to a file
+        // named "lib.ts" in the parent directory instead of "lib/index.ts".
+        if (r.dirInfoCached(path) catch null) |_| {
+            if (r.debug_logs) |*debug| {
+                debug.addNoteFmt("\"{s}\" is a directory, not a file", .{path});
+            }
+            return null;
+        }
+
+        const base = std.fs.path.basename(path);
+
         const dir_path = bun.strings.withoutTrailingSlashWindowsPath(Dirname.dirname(path));
 
         const dir_entry: *Fs.FileSystem.RealFS.EntriesOption = rfs.readDirectory(
@@ -3810,8 +3822,6 @@ pub const Resolver = struct {
         }
 
         const entries = dir_entry.entries;
-
-        const base = std.fs.path.basename(path);
 
         // Try the plain path without any extensions
         if (r.debug_logs) |*debug| {

@@ -66,6 +66,7 @@ pub const transpiler_params_ = [_]ParamType{
     clap.parseParam("--tsconfig-override <STR>          Specify custom tsconfig.json. Default <d>$cwd<r>/tsconfig.json") catch unreachable,
     clap.parseParam("-d, --define <STR>...              Substitute K:V while parsing, e.g. --define process.env.NODE_ENV:\"development\". Values are parsed as JSON.") catch unreachable,
     clap.parseParam("--drop <STR>...                   Remove function calls, e.g. --drop=console removes all console.* calls.") catch unreachable,
+    clap.parseParam("--feature <STR>...               Enable a feature flag for dead-code elimination, e.g. --feature=SUPER_SECRET") catch unreachable,
     clap.parseParam("-l, --loader <STR>...             Parse files with .ext:loader, e.g. --loader .js:jsx. Valid loaders: js, jsx, ts, tsx, json, toml, text, file, wasm, napi") catch unreachable,
     clap.parseParam("--no-macros                       Disable macros from being executed in the bundler, transpiler and runtime") catch unreachable,
     clap.parseParam("--jsx-factory <STR>               Changes the function called when compiling JSX elements using the classic JSX runtime") catch unreachable,
@@ -591,6 +592,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
     }
 
     opts.drop = args.options("--drop");
+    opts.feature_flags = args.options("--feature");
 
     // Node added a `--loader` flag (that's kinda like `--register`). It's
     // completely different from ours.

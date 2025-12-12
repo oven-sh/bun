@@ -637,7 +637,7 @@ pub fn SkipTypescript(
                                 try p.skipTypeScriptTypeWithOpts(.bitwise_or, opts, false, {});
                             } else {
                                 try p.skipTypeScriptTypeWithOpts(.bitwise_or, opts, get_metadata, result);
-                                result.mergeUnion(left);
+                                result.mergeUnion(left, p.options.features.strict_null_checks);
                             }
                         } else {
                             try p.skipTypeScriptTypeWithOpts(.bitwise_or, opts, false, {});

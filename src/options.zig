@@ -1724,6 +1724,7 @@ pub const BundleOptions = struct {
     resolve_dir: string = "/",
     jsx: JSX.Pragma = JSX.Pragma{},
     emit_decorator_metadata: bool = false,
+    strict_null_checks: bool = false,
     auto_import_jsx: bool = true,
     allow_runtime: bool = true,
 

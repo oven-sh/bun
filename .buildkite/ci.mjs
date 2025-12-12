@@ -422,7 +422,7 @@ function getTestAgent(platform, options) {
  */
 function getBuildEnv(target, options) {
   const { baseline, abi } = target;
-  const { canary, uploadLinkArtifacts } = options;
+  const { canary } = options;
   const revision = typeof canary === "number" ? canary : 1;
 
   return {
@@ -432,7 +432,6 @@ function getBuildEnv(target, options) {
     ABI: abi === "musl" ? "musl" : undefined,
     CMAKE_VERBOSE_MAKEFILE: "ON",
     CMAKE_TLS_VERIFY: "0",
-    ENABLE_LINK_ARTIFACTS_UPLOAD: isMainBranch() || uploadLinkArtifacts ? "ON" : "OFF",
   };
 }
 
@@ -1045,7 +1044,6 @@ async function getPipelineOptions() {
     buildImages: parseOption(/\[(build images?)\]/i),
     dryRun: parseOption(/\[(dry run)\]/i),
     publishImages: parseOption(/\[(publish images?)\]/i),
-    uploadLinkArtifacts: parseOption(/\[(upload link artifacts?)\]/i),
     buildPlatforms: Array.from(buildPlatformsMap.values()),
     testPlatforms: Array.from(testPlatformsMap.values()),
   };

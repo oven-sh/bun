@@ -176,6 +176,8 @@ struct us_socket_flags {
     bool adopted: 1;
     /* If true, the socket is a TLS socket */
     bool is_tls: 1;
+    /* If true, the last write to this socket failed (would block) */
+    bool last_write_failed: 1;
 
 } __attribute__((packed));
 

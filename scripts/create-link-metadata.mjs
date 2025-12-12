@@ -6,7 +6,7 @@
  */
 
 import { $ } from "bun";
-import { join } from "path";
+import { dirname, join } from "path";
 
 const [buildPath, bunTarget] = process.argv.slice(2);
 
@@ -15,10 +15,19 @@ if (!buildPath || !bunTarget) {
   process.exit(1);
 }
 
+// Get the repo root (parent of scripts directory)
+const repoRoot = dirname(import.meta.dir);
+
 // Extract link command using ninja
 console.log("Extracting link command...");
 const linkCommandResult = await $`ninja -C ${buildPath} -t commands ${bunTarget}`.quiet();
 const linkCommand = linkCommandResult.stdout.toString().trim();
+
+// Read linker-related files from src/
+console.log("Reading linker files...");
+const linkerLds = await Bun.file(join(repoRoot, "src", "linker.lds")).text();
+const symbolsDyn = await Bun.file(join(repoRoot, "src", "symbols.dyn")).text();
+const symbolsTxt = await Bun.file(join(repoRoot, "src", "symbols.txt")).text();
 
 // Create metadata JSON with link command included
 const metadata = {
@@ -28,6 +37,9 @@ const metadata = {
   target: bunTarget,
   timestamp: new Date().toISOString(),
   link_command: linkCommand,
+  linker_lds: linkerLds,
+  symbols_dyn: symbolsDyn,
+  symbols_txt: symbolsTxt,
 };
 
 const metadataPath = join(buildPath, "link-metadata.json");

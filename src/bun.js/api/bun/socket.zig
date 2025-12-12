@@ -528,9 +528,10 @@ pub fn NewSocket(comptime ssl: bool) type {
             };
         }
 
-        pub fn onHandshake(this: *This, _: Socket, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
+        pub fn onHandshake(this: *This, s: Socket, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
             jsc.markBinding(@src());
             this.flags.handshake_complete = true;
+            this.socket = s;
             if (this.socket.isDetached()) return;
             const handlers = this.getHandlers();
             log("onHandshake {s} ({d})", .{ if (handlers.is_server) "S" else "C", success });
@@ -642,8 +643,9 @@ pub fn NewSocket(comptime ssl: bool) type {
             };
         }
 
-        pub fn onData(this: *This, _: Socket, data: []const u8) void {
+        pub fn onData(this: *This, s: Socket, data: []const u8) void {
             jsc.markBinding(@src());
+            this.socket = s;
             if (this.socket.isDetached()) return;
             const handlers = this.getHandlers();
             log("onData {s} ({d})", .{ if (handlers.is_server) "S" else "C", data.len });
@@ -1433,7 +1435,6 @@ pub fn NewSocket(comptime ssl: bool) type {
             }
 
             const options = socket_config.asUSockets();
-            const ext_size = @sizeOf(WrappedSocket);
 
             const handlers_ptr = bun.handleOom(handlers.vm.allocator.create(Handlers));
             handlers_ptr.* = handlers;
@@ -1463,7 +1464,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             // reconfigure context to use the new wrapper handlers
             Socket.unsafeConfigure(this.socket.context().?, true, true, WrappedSocket, TCPHandler);
             const TLSHandler = NewWrappedHandler(true);
-            const new_socket = this.socket.wrapTLS(options, ext_size, true, WrappedSocket, TLSHandler) orelse {
+            const new_socket = this.socket.wrapTLS(options, @sizeOf(*anyopaque), @sizeOf(WrappedSocket), true, WrappedSocket, TLSHandler) orelse {
                 const err = BoringSSL.ERR_get_error();
                 defer if (err != 0) BoringSSL.ERR_clear_error();
                 tls.wrapped = .none;

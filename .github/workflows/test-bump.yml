@@ -14,7 +14,7 @@ env:
 jobs:
   bump:
     name: "Bump version"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     permissions:
       pull-requests: write
       contents: write

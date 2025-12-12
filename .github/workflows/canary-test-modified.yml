@@ -1,0 +1,190 @@
+name: Test Modified Files (Canary)
+
+on:
+  pull_request:
+    paths:
+      - "test/**/*"
+
+jobs:
+  test-canary:
+    name: Test (${{ matrix.os }}-${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            arch: x64
+            runner: ubuntu-latest
+            bun-download-url: https://github.com/oven-sh/bun/releases/download/canary/bun-linux-x64.zip
+          - os: linux
+            arch: arm64
+            runner: ubuntu-24.04-arm
+            bun-download-url: https://github.com/oven-sh/bun/releases/download/canary/bun-linux-aarch64.zip
+          - os: macos
+            arch: x64
+            runner: macos-15-intel
+            bun-download-url: https://github.com/oven-sh/bun/releases/download/canary/bun-darwin-x64.zip
+          - os: macos
+            arch: arm64
+            runner: macos-15
+            bun-download-url: https://github.com/oven-sh/bun/releases/download/canary/bun-darwin-aarch64.zip
+          - os: windows
+            arch: x64
+            runner: windows-latest
+            bun-download-url: https://github.com/oven-sh/bun/releases/download/canary/bun-windows-x64.zip
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun (Canary)
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-download-url: ${{ matrix.bun-download-url }}
+
+      - name: Show Bun version
+        run: bun --version
+
+      - name: Install dependencies
+        run: |
+          bun install --frozen-lockfile
+          cd test && bun install --frozen-lockfile
+
+      - name: Get modified test files
+        id: get-tests
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          files=$(gh pr view ${{ github.event.pull_request.number }} --json files -q '.files[].path' | grep -E '^test/.*\.(test|spec)\.(ts|tsx|js|mjs|cjs)$' | tr '\n' ' ')
+          echo "files=$files" >> $GITHUB_OUTPUT
+          echo "Modified test files: $files"
+
+      - name: Run tests
+        if: steps.get-tests.outputs.files != ''
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          export GITHUB_ACTIONS=""
+          export CI=""
+          mkdir -p test-results
+          TEST_FILES="${{ steps.get-tests.outputs.files }}"
+          echo "Running tests on: $TEST_FILES"
+
+          for file in $TEST_FILES; do
+            echo "Testing: $file"
+            sanitized=$(echo "$file" | tr '/' '_')
+            # Capture both stdout and JUnit XML
+            bun test --reporter=junit --reporter-outfile="test-results/${sanitized}.xml" "$file" 2>&1 | tee "test-results/${sanitized}.txt" || true
+          done
+
+      - name: Create empty results if none
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p test-results
+          if [ -z "$(ls -A test-results 2>/dev/null)" ]; then
+            echo '<testsuites></testsuites>' > test-results/empty.xml
+            echo 'No tests ran' > test-results/empty.txt
+          fi
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.os }}-${{ matrix.arch }}
+          path: test-results/
+          retention-days: 7
+
+  summary:
+    name: Test Summary
+    needs: test-canary
+    if: always()
+    runs-on: ubuntu-slim
+    steps:
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: canary
+          no-cache: true
+
+      - name: Download test results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: test-results-*
+          merge-multiple: false
+
+      - name: Generate Summary
+        run: |
+          bun add fast-xml-parser
+
+          {
+            echo "## Canary Bun Test Summary"
+            echo ""
+            echo "This workflow tests modified test files against **Bun Canary** to verify they fail without the PR's changes."
+            echo ""
+            echo "> **Note:** Test failures are expected - this workflow verifies that tests fail on stable/canary Bun without the PR's changes."
+            echo ""
+          } >> $GITHUB_STEP_SUMMARY
+
+          bun -e '
+            import { XMLParser } from "fast-xml-parser";
+            import { readFileSync, readdirSync, existsSync } from "fs";
+
+            const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "" });
+
+            const dirs = readdirSync(".").filter(d => d.startsWith("test-results-"));
+            const byFile = {};
+
+            for (const dir of dirs) {
+              const platform = dir.replace("test-results-", "");
+              if (!existsSync(dir)) continue;
+
+              const xmlFiles = readdirSync(dir).filter(f => f.endsWith(".xml"));
+
+              for (const xmlFile of xmlFiles) {
+                const baseName = xmlFile.replace(".xml", "");
+                const xmlPath = `${dir}/${xmlFile}`;
+                const txtPath = `${dir}/${baseName}.txt`;
+
+                const content = readFileSync(xmlPath, "utf-8");
+                const parsed = parser.parse(content);
+                const testsuites = parsed.testsuites;
+                if (!testsuites) continue;
+
+                const suites = Array.isArray(testsuites.testsuite) ? testsuites.testsuite : testsuites.testsuite ? [testsuites.testsuite] : [];
+
+                for (const suite of suites) {
+                  // Normalize Windows backslashes to forward slashes
+                  const file = (suite.file || suite.name)?.replace(/\\/g, "/");
+                  if (!file?.startsWith("test/")) continue;
+
+                  const passed = parseInt(suite.tests || 0) - parseInt(suite.failures || 0) - parseInt(suite.skipped || 0);
+                  const output = existsSync(txtPath) ? readFileSync(txtPath, "utf-8") : "No output captured";
+
+                  if (!byFile[file]) byFile[file] = [];
+                  byFile[file].push({ platform, passed, total: parseInt(suite.tests || 0), output });
+                }
+              }
+            }
+
+            const lines = [];
+            for (const [file, platforms] of Object.entries(byFile)) {
+              lines.push(`### \`${file}\`\n`);
+
+              for (const p of platforms) {
+                const status = `${p.passed}/${p.total}`;
+
+                lines.push(`<details>`);
+                lines.push(`<summary><code>${p.platform}</code> (${status})</summary>\n`);
+                lines.push("```");
+                lines.push(p.output.trim());
+                lines.push("```");
+                lines.push(`\n</details>\n`);
+              }
+            }
+
+            console.log(lines.join("\n"));
+          ' >> $GITHUB_STEP_SUMMARY

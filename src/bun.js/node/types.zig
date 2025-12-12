@@ -575,8 +575,11 @@ pub const PathLike = union(enum) {
                     defer bun.path_buffer_pool.put(drive_resolve_buf);
                     const rest = path_handler.PosixToWinNormalizer.resolveCWDWithExternalBufZ(drive_resolve_buf, sliced) catch @panic("Error while resolving path.");
                     buf[0..4].* = bun.windows.long_path_prefix_u8;
-                    // When long path syntax is used, the entire string should be normalized
-                    const n = bun.path.normalizeBuf(rest, buf[4..], .windows).len;
+                    // When long path syntax is used, the entire string should be normalized.
+                    // We use allow_above_root=false because for absolute Windows paths with drive
+                    // letters, ".." components above the root should be silently ignored, not preserved.
+                    // This matches Node.js behavior where e.g. "C:/foo/../../../../bar" resolves to "C:\bar".
+                    const n = bun.path.normalizeStringWindows(rest, buf[4..], false, false).len;
                     buf[4 + n] = 0;
                     return buf[0 .. 4 + n :0];
                 }

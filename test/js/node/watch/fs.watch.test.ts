@@ -196,6 +196,58 @@ describe("fs.watch", () => {
     });
   });
 
+  test.todoIf(isMacOS)("changes to new files are watched", done => {
+    const root = path.join(testDir, "new-files-changes-directory");
+    try {
+      fs.mkdirSync(root);
+    } catch {}
+
+    const watcher = fs.watch(root);
+    var sawRenameEvent = false;
+    var changeEventsSeen = 0;
+    let err: Error | undefined = undefined;
+
+    watcher.on("change", function (event, filename) {
+      try {
+        expect(filename).toBe("watch.txt");
+        if (event == "rename") {
+          sawRenameEvent = true;
+        } else if (event == "change") {
+          changeEventsSeen++;
+        }
+
+        // TODO: currently this only fires because the interval loops twice.
+        // Multiple consecutive `change`s will not be picked up.
+        //
+        // This check will always fail on macOS since Created/Removed flags
+        // seem to _always_ get emitted, meaning we always emit a `rename`. We
+        // can't differentiate from "normal" modify events at this time, which
+        // is why we just skip the test.
+        if (changeEventsSeen >= 2) {
+          expect(sawRenameEvent).toBe(true);
+          watcher.close();
+        }
+      } catch (e: any) {
+        err = e;
+        watcher.close();
+      }
+    });
+
+    watcher.on("error", e => (err = e));
+    watcher.once("close", () => {
+      clearInterval(interval);
+      done(err);
+    });
+
+    const interval = repeat(() => {
+      const file = path.join(root, "watch.txt");
+      fs.writeFileSync(file, "hello");
+      fs.writeFileSync(file, "world");
+
+      fs.rmSync(file);
+    });
+  });
+
   // https://github.com/oven-sh/bun/issues/5442
   test("should work with paths with trailing slashes", done => {
     const testsubdir = tempDirWithFiles("subdir", {

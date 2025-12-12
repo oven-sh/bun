@@ -378,13 +378,17 @@ int kqueue_change(int kqfd, int fd, int old_events, int new_events, void *user_d
 #endif
 
 struct us_poll_t *us_poll_resize(struct us_poll_t *p, struct us_loop_t *loop, unsigned int old_ext_size, unsigned int ext_size) {
-    
+
     unsigned int old_size = sizeof(struct us_poll_t) + old_ext_size;
     unsigned int new_size = sizeof(struct us_poll_t) + ext_size;
     if(new_size <= old_size) return p;
-    
+
     struct us_poll_t *new_p = us_calloc(1, new_size);
     memcpy(new_p, p, old_size);
+
+    /* Increment poll count for the new poll - the old poll will be freed separately
+     * which decrements the count, keeping the total correct */
+    loop->num_polls++;
     
     int events = us_poll_events(p);
 #ifdef LIBUS_USE_EPOLL

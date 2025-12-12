@@ -530,9 +530,7 @@ function getLinkBunStep(platform, options) {
       ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
       ...getBuildEnv(platform, options),
     },
-    // `rustup show` ensures the toolchain from rust-toolchain.toml is installed
-    // and creates ~/.cargo/bin/cargo proxy if missing
-    command: ["rustup show", `${getBuildCommand(platform, options, "build-bun")} --target bun`],
+    command: `${getBuildCommand(platform, options, "build-bun")} --target bun`,
   };
 }
 

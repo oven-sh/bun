@@ -396,6 +396,24 @@ const IncomingMessagePrototype = {
   set trailers(value) {
     // noop
   },
+  get headersDistinct() {
+    const headers = this.headers;
+    const distinct = {};
+    for (const key in headers) {
+      const value = headers[key];
+      distinct[key] = Array.isArray(value) ? value : [value];
+    }
+    return distinct;
+  },
+  get trailersDistinct() {
+    const trailers = this.trailers;
+    const distinct = {};
+    for (const key in trailers) {
+      const value = trailers[key];
+      distinct[key] = Array.isArray(value) ? value : [value];
+    }
+    return distinct;
+  },
   setTimeout(msecs, callback) {
     void this.take;
     const req = this[kHandle] || this[webRequestOrResponse];

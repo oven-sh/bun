@@ -39,18 +39,19 @@ const text = await proc.stdout.text();
 console.log(text); // "const input = "hello world".repeat(400); ..."
 ```
 
-| Value                    | Description                                      |
-| ------------------------ | ------------------------------------------------ |
-| `null`                   | **Default.** Provide no input to the subprocess  |
-| `"pipe"`                 | Return a `FileSink` for fast incremental writing |
-| `"inherit"`              | Inherit the `stdin` of the parent process        |
-| `Bun.file()`             | Read from the specified file                     |
-| `TypedArray \| DataView` | Use a binary buffer as input                     |
-| `Response`               | Use the response `body` as input                 |
-| `Request`                | Use the request `body` as input                  |
-| `ReadableStream`         | Use a readable stream as input                   |
-| `Blob`                   | Use a blob as input                              |
-| `number`                 | Read from the file with a given file descriptor  |
+| Value                    | Description                                                                                                                                |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `null`                   | **Default.** Provide no input to the subprocess                                                                                            |
+| `"pipe"`                 | Return a `FileSink` for fast incremental writing                                                                                           |
+| `"inherit"`              | Inherit the `stdin` of the parent process                                                                                                  |
+| `"pty"`                  | Use a pseudo-terminal (PTY). Child sees `process.stdin.isTTY === true`. Falls back to `"pipe"` on Windows. Not supported with `spawnSync`. |
+| `Bun.file()`             | Read from the specified file                                                                                                               |
+| `TypedArray \| DataView` | Use a binary buffer as input                                                                                                               |
+| `Response`               | Use the response `body` as input                                                                                                           |
+| `Request`                | Use the request `body` as input                                                                                                            |
+| `ReadableStream`         | Use a readable stream as input                                                                                                             |
+| `Blob`                   | Use a blob as input                                                                                                                        |
+| `number`                 | Read from the file with a given file descriptor                                                                                            |
 
 The `"pipe"` option lets incrementally write to the subprocess's input stream from the parent process.
 
@@ -105,13 +106,121 @@ console.log(text); // => "1.3.3\n"
 
 Configure the output stream by passing one of the following values to `stdout/stderr`:
 
-| Value        | Description                                                                                         |
-| ------------ | --------------------------------------------------------------------------------------------------- |
-| `"pipe"`     | **Default for `stdout`.** Pipe the output to a `ReadableStream` on the returned `Subprocess` object |
-| `"inherit"`  | **Default for `stderr`.** Inherit from the parent process                                           |
-| `"ignore"`   | Discard the output                                                                                  |
-| `Bun.file()` | Write to the specified file                                                                         |
-| `number`     | Write to the file with the given file descriptor                                                    |
+| Value        | Description                                                                                                                                 |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `"pipe"`     | **Default for `stdout`.** Pipe the output to a `ReadableStream` on the returned `Subprocess` object                                         |
+| `"inherit"`  | **Default for `stderr`.** Inherit from the parent process                                                                                   |
+| `"ignore"`   | Discard the output                                                                                                                          |
+| `"pty"`      | Use a pseudo-terminal (PTY). Child sees `process.stdout.isTTY === true`. Falls back to `"pipe"` on Windows. Not supported with `spawnSync`. |
+| `Bun.file()` | Write to the specified file                                                                                                                 |
+| `number`     | Write to the file with the given file descriptor                                                                                            |
+
+## Pseudo-terminal (PTY)
+
+Use `"pty"` to spawn a process with a pseudo-terminal, making the child process believe it's running in an interactive terminal. This causes `process.stdout.isTTY` to be `true` in the child, which is useful for:
+
+- Getting colored output from CLI tools that detect TTY
+- Running interactive programs that require a terminal
+- Testing terminal-dependent behavior
+
+### Basic usage
+
+```ts
+const proc = Bun.spawn(["ls", "--color=auto"], {
+  stdout: "pty",
+});
+
+// The child process sees process.stdout.isTTY === true
+const output = await proc.stdout.text();
+console.log(output); // includes ANSI color codes
+```
+
+### Checking isTTY in child process
+
+```ts
+const proc = Bun.spawn(["bun", "-e", "console.log('isTTY:', process.stdout.isTTY)"], {
+  stdout: "pty",
+});
+
+const output = await proc.stdout.text();
+console.log(output); // "isTTY: true"
+```
+
+### Multiple PTY streams
+
+You can use PTY for stdin, stdout, and/or stderr. When multiple streams use PTY, they share the same underlying pseudo-terminal:
+
+```ts
+const code = `
+  console.log("stdout.isTTY:", process.stdout.isTTY);
+  console.log("stdin.isTTY:", process.stdin.isTTY);
+  console.log("stderr.isTTY:", process.stderr.isTTY);
+`;
+
+const proc = Bun.spawn(["bun", "-e", code], {
+  stdin: "pty",
+  stdout: "pty",
+  stderr: "pty",
+});
+
+const output = await proc.stdout.text();
+// stdout.isTTY: true
+// stdin.isTTY: true
+// stderr.isTTY: true
+```
+
+### Custom terminal dimensions
+
+Specify terminal width and height using the object syntax:
+
+```ts
+const code = `
+  console.log("columns:", process.stdout.columns);
+  console.log("rows:", process.stdout.rows);
+`;
+
+const proc = Bun.spawn(["bun", "-e", code], {
+  stdout: {
+    type: "pty",
+    width: 120, // columns
+    height: 40, // rows
+  },
+});
+
+const output = await proc.stdout.text();
+// columns: 120
+// rows: 40
+```
+
+### Getting colored output from git, grep, etc.
+
+Many CLI tools detect whether they're running in a TTY and only emit colors when they are:
+
+```ts
+// Without PTY - no colors
+const noColor = Bun.spawn(["git", "status"], { stdout: "pipe" });
+console.log(await noColor.stdout.text()); // plain text
+
+// With PTY - colors enabled
+const withColor = Bun.spawn(["git", "status"], { stdout: "pty" });
+console.log(await withColor.stdout.text()); // includes ANSI color codes
+```
+
+### Platform support
+
+| Platform | PTY Support                                  |
+| -------- | -------------------------------------------- |
+| macOS    | ✅ Full support                              |
+| Linux    | ✅ Full support                              |
+| Windows  | ⚠️ Falls back to `"pipe"` (no TTY semantics) |
+
+On Windows, `"pty"` silently falls back to `"pipe"` behavior. The child process will see `process.stdout.isTTY` as `undefined`. This allows cross-platform code to work without errors, though TTY-dependent features won't work on Windows.
+
+### Limitations
+
+- **Not supported with `spawnSync`**: PTY requires asynchronous I/O. Using `"pty"` with `Bun.spawnSync()` will throw an error.
+- **Line endings**: PTY converts `\n` to `\r\n` on output (standard terminal behavior).
+- **No dynamic resize**: Terminal dimensions are set at spawn time and cannot be changed after.
 
 ## Exit handling
 
@@ -413,6 +522,7 @@ namespace SpawnOptions {
     | "pipe"
     | "inherit"
     | "ignore"
+    | "pty" // use a pseudo-terminal (macOS/Linux only, falls back to "pipe" on Windows, not supported with spawnSync)
     | null // equivalent to "ignore"
     | undefined // to use default
     | BunFile
@@ -423,6 +533,7 @@ namespace SpawnOptions {
     | "pipe"
     | "inherit"
     | "ignore"
+    | "pty" // use a pseudo-terminal (macOS/Linux only, falls back to "pipe" on Windows, not supported with spawnSync)
     | null // equivalent to "ignore"
     | undefined // to use default
     | BunFile

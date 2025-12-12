@@ -153,6 +153,10 @@ pub const Writable = union(enum) {
                 .ipc, .capture => {
                     return Writable{ .ignore = {} };
                 },
+                .pty => {
+                    // PTY stdin is not supported on Windows; return ignore
+                    return Writable{ .ignore = {} };
+                },
             }
         }
 
@@ -227,6 +231,30 @@ pub const Writable = union(enum) {
             },
             .ipc, .capture => {
                 return Writable{ .ignore = {} };
+            },
+            .pty => {
+                // PTY uses pipe-like semantics, but with the PTY master fd
+                const pipe = jsc.WebCore.FileSink.create(event_loop, result.?);
+
+                switch (pipe.writer.start(pipe.fd, true)) {
+                    .result => {},
+                    .err => {
+                        pipe.deref();
+                        return error.UnexpectedCreatingStdin;
+                    },
+                }
+
+                // PTY master is a character device, NOT a socket
+                // Do NOT set .socket flag - PTY uses write() not send()
+
+                subprocess.weak_file_sink_stdin_ptr = pipe;
+                subprocess.ref();
+                subprocess.flags.has_stdin_destructor_called = false;
+                subprocess.flags.deref_on_stdin_destroyed = true;
+
+                return Writable{
+                    .pipe = pipe,
+                };
             },
         }
     }

@@ -513,3 +513,90 @@ export function lazyAsyncIterator(this) {
   $readableStreamDefineLazyIterators(prototype);
   return prototype[globalThis.Symbol.asyncIterator].$call(this);
 }
+
+$linkTimeConstant;
+export function from(asyncIterable) {
+  if (asyncIterable == null) {
+    throw new TypeError("ReadableStream.from() takes a non-null value");
+  }
+
+  // Check if it's already a ReadableStream - return it directly
+  if ($isReadableStream(asyncIterable)) {
+    return asyncIterable;
+  }
+
+  let iterator;
+  let isAsync = false;
+  
+  // Handle async iterables first (following WebKit reference implementation)
+  const asyncIteratorMethod = asyncIterable[globalThis.Symbol.asyncIterator];
+  if (!$isUndefinedOrNull(asyncIteratorMethod)) {
+    if (!$isCallable(asyncIteratorMethod)) {
+      throw new TypeError("ReadableStream.from requires that the property of the first argument, iterable[Symbol.asyncIterator], when exists, be a function");
+    }
+    iterator = asyncIteratorMethod.$call(asyncIterable);
+    if (!$isObject(iterator)) {
+      throw new TypeError("The return value of asyncIterable[Symbol.asyncIterator] must be an object.");
+    }
+    isAsync = true;
+  } else {
+    // Fall back to sync iterator
+    const iteratorMethod = asyncIterable[globalThis.Symbol.iterator];
+    if (!$isCallable(iteratorMethod)) {
+      throw new TypeError("ReadableStream.from requires that the property of the first argument, iterable[Symbol.iterator], when exists, be a function");
+    }
+    const syncIterator = iteratorMethod.$call(asyncIterable);
+    if (!$isObject(syncIterator)) {
+      throw new TypeError("The return value of asyncIterable[Symbol.iterator] must be an object.");
+    }
+    iterator = syncIterator;
+    isAsync = false;
+  }
+
+  const nextMethod = iterator.next;
+
+  // Use regular ReadableStream constructor with high water mark 0
+  return new ReadableStream({
+    async pull(controller) {
+      let result;
+      try {
+        result = nextMethod.$call(iterator);
+      } catch (e) {
+        return Promise.reject(e);
+      }
+
+      const iterResult = await Promise.resolve(result);
+      if (!$isObject(iterResult)) {
+        throw new TypeError("The result of calling next on an iterator was not an object.");
+      }
+      if (iterResult.done) {
+        controller.close();
+      } else {
+        // For sync iterators, we need to potentially await the value if it's a promise
+        let value = iterResult.value;
+        if (!isAsync && value && typeof value.then === "function") {
+          value = await value;
+        }
+        controller.enqueue(value);
+      }
+    },
+
+    cancel(reason) {
+      try {
+        const returnMethod = iterator.return;
+        if ($isUndefinedOrNull(returnMethod))
+          return Promise.resolve(undefined);
+        if (!$isCallable(returnMethod))
+          throw new TypeError("iterator.return was present but not callable");
+        const returnResult = returnMethod.$call(iterator, reason);
+        return Promise.resolve(returnResult).then((iterResult) => {
+          if (!$isObject(iterResult)) {
+            throw new TypeError("The result of calling return on an iterator was not an object.");
+          }
+        });
+      } catch (e) {
+        return Promise.reject(e);
+      }
+    }
+  }, { highWaterMark: 0 });
+}

@@ -1469,7 +1469,11 @@ pub const PackCommand = struct {
 
             if (comptime !for_publish) {
                 if (manager.options.pack_destination.len == 0 and manager.options.pack_filename.len == 0) {
-                    Output.pretty("\n{f}\n", .{fmtTarballFilename(package_name, package_version, .normalize)});
+                    if (log_level == .silent or log_level == .quiet) {
+                        Output.pretty("{f}\n", .{fmtTarballFilename(package_name, package_version, .normalize)});
+                    } else {
+                        Output.pretty("\n{f}\n", .{fmtTarballFilename(package_name, package_version, .normalize)});
+                    }
                 } else {
                     var dest_buf: PathBuffer = undefined;
                     const abs_tarball_dest, _ = tarballDestination(
@@ -1480,7 +1484,11 @@ pub const PackCommand = struct {
                         package_version,
                         &dest_buf,
                     );
-                    Output.pretty("\n{s}\n", .{abs_tarball_dest});
+                    if (log_level == .silent or log_level == .quiet) {
+                        Output.pretty("{s}\n", .{abs_tarball_dest});
+                    } else {
+                        Output.pretty("\n{s}\n", .{abs_tarball_dest});
+                    }
                 }
             }
 
@@ -1816,9 +1824,17 @@ pub const PackCommand = struct {
 
         if (comptime !for_publish) {
             if (manager.options.pack_destination.len == 0 and manager.options.pack_filename.len == 0) {
-                Output.pretty("\n{f}\n", .{fmtTarballFilename(package_name, package_version, .normalize)});
+                if (log_level == .silent or log_level == .quiet) {
+                    Output.pretty("{f}\n", .{fmtTarballFilename(package_name, package_version, .normalize)});
+                } else {
+                    Output.pretty("\n{f}\n", .{fmtTarballFilename(package_name, package_version, .normalize)});
+                }
             } else {
-                Output.pretty("\n{s}\n", .{abs_tarball_dest});
+                if (log_level == .silent or log_level == .quiet) {
+                    Output.pretty("{s}\n", .{abs_tarball_dest});
+                } else {
+                    Output.pretty("\n{s}\n", .{abs_tarball_dest});
+                }
             }
         }
 

@@ -1297,11 +1297,6 @@ install_sccache() {
 
 install_rust() {
 	case "$distro" in
-	alpine)
-		install_packages \
-			rust \
-			cargo
-		;;
 	freebsd)
 		install_packages lang/rust
 		create_directory "$HOME/.cargo/bin"

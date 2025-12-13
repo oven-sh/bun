@@ -1,0 +1,93 @@
+---
+title: Use assert in the Bun test runner
+sidebarTitle: assert
+mode: center
+---
+
+Bun's test runner exports `assert` from `bun:test`, which is a re-export of Node.js's `node:assert` module. This provides vitest-style assertions alongside Jest-style `expect()`.
+
+```ts test.ts icon="/icons/typescript.svg"
+import { test, assert } from "bun:test";
+
+test("basic assertion", () => {
+  assert(true);
+  assert(1 + 1 === 2, "math should work");
+});
+```
+
+---
+
+## Type narrowing
+
+The `assert` function works as a TypeScript type guard, narrowing types after assertion:
+
+```ts test.ts icon="/icons/typescript.svg"
+import { test, assert } from "bun:test";
+
+test("type narrowing", () => {
+  const value: string | null = getValue();
+  assert(value !== null);
+  // TypeScript now knows value is string
+  console.log(value.toUpperCase());
+});
+```
+
+---
+
+## Available methods
+
+Since `assert` is a re-export of `node:assert`, all Node.js assertion methods are available:
+
+```ts test.ts icon="/icons/typescript.svg"
+import { test, assert } from "bun:test";
+
+test("equality checks", () => {
+  assert.strictEqual(1, 1);
+  assert.deepStrictEqual({ a: 1 }, { a: 1 });
+  assert.notStrictEqual(1, 2);
+});
+
+test("error handling", () => {
+  assert.throws(() => {
+    throw new Error("expected");
+  });
+
+  assert.doesNotThrow(() => {
+    // safe code
+  });
+});
+
+test("async assertions", async () => {
+  await assert.rejects(async () => {
+    throw new Error("async error");
+  });
+});
+```
+
+---
+
+## Using with expect
+
+You can use `assert` alongside Bun's `expect()` in the same test:
+
+```ts test.ts icon="/icons/typescript.svg"
+import { test, expect, assert } from "bun:test";
+
+test("mixed assertions", () => {
+  const result = compute();
+
+  // Use assert for type narrowing
+  assert(result !== null);
+
+  // Use expect for rich matchers
+  expect(result.value).toBeGreaterThan(0);
+  expect(result.items).toContain("expected");
+});
+```
+
+---
+
+See also:
+
+- [Node.js assert documentation](https://nodejs.org/api/assert.html)
+- [Docs > Test runner > Writing tests](/test/writing-tests)

@@ -3088,11 +3088,11 @@ pub const BundleV2 = struct {
                 import_record.source_index = Index.runtime;
             }
 
-            if (import_record.is_unused) {
-                import_record.source_index = Index.invalid;
-            }
+            // Note: We no longer mark is_unused imports as invalid here.
+            // They must go through resolution to validate that the file exists.
+            // After resolution, unused imports will have source_index set to invalid.
 
-            estimated_resolve_queue_count += @as(usize, @intFromBool(!(import_record.is_internal or import_record.is_unused or import_record.source_index.isValid())));
+            estimated_resolve_queue_count += @as(usize, @intFromBool(!(import_record.is_internal or import_record.source_index.isValid())));
         }
         var resolve_queue = ResolveQueue.init(this.allocator());
         bun.handleOom(resolve_queue.ensureTotalCapacity(@intCast(estimated_resolve_queue_count)));
@@ -3100,10 +3100,10 @@ pub const BundleV2 = struct {
         var last_error: ?anyerror = null;
 
         outer: for (ast.import_records.slice(), 0..) |*import_record, i| {
-            if (
-            // Don't resolve TypeScript types
-            import_record.is_unused or
+            // Track if this import was marked as unused during parsing
+            const was_unused = import_record.is_unused;
 
+            if (
                 // Don't resolve the runtime
                 import_record.is_internal or
 
@@ -3436,7 +3436,13 @@ pub const BundleV2 = struct {
                 if (this.transpiler.options.dev_server != null and loader != .html) {
                     import_record.path = this.graph.input_files.items(.source)[id].path;
                 } else {
-                    import_record.source_index = .init(id);
+                    // Only set source_index if the import is actually used
+                    // Unused imports should remain invalid to exclude from bundle
+                    if (!was_unused) {
+                        import_record.source_index = .init(id);
+                    } else {
+                        import_record.source_index = Index.invalid;
+                    }
                 }
                 continue;
             }
@@ -3448,6 +3454,10 @@ pub const BundleV2 = struct {
             const resolve_entry = resolve_queue.getOrPut(path.text) catch |err| bun.handleOom(err);
             if (resolve_entry.found_existing) {
                 import_record.path = resolve_entry.value_ptr.*.path;
+                // Mark unused imports as invalid even when reusing resolve entry
+                if (was_unused) {
+                    import_record.source_index = Index.invalid;
+                }
                 continue;
             }
 
@@ -3485,6 +3495,12 @@ pub const BundleV2 = struct {
 
             if (is_html_entrypoint) {
                 this.generateServerHTMLModule(path, target, import_record, path.text) catch unreachable;
+            }
+
+            // After successful resolution, mark unused imports as invalid
+            // so they don't get included in the bundle
+            if (was_unused) {
+                import_record.source_index = Index.invalid;
             }
         }
 

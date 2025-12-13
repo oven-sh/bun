@@ -328,6 +328,16 @@ describe("bundler", () => {
       "/entry.ts": [`Could not resolve: "./doesNotExist.ts"`],
     },
   });
+  itBundled("ts/ImportTypeOnlyFileUnused", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import {oops} from './does-not-exist.ts';
+      `,
+    },
+    bundleErrors: {
+      "/entry.ts": [`Could not resolve: "./does-not-exist.ts"`],
+    },
+  });
   itBundled("ts/ImportTypeOnlyFile", {
     files: {
       "/entry.ts": /* ts */ `

@@ -97,6 +97,8 @@ typedef int mode_t;
 #include <JavaScriptCore/IntegrityInlines.h>
 #endif
 
+#include <JavaScriptCore/Options.h>
+
 #pragma mark - Node.js Process
 
 #if defined(__APPLE__)
@@ -1912,7 +1914,7 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
         heapSpaces->putDirect(vm, JSC::Identifier::fromString(vm, "shared_large_object_space"_s), JSC::constructEmptyObject(globalObject), 0);
         RETURN_IF_EXCEPTION(scope, {});
 
-        heap->putDirect(vm, JSC::Identifier::fromString(vm, "totalMemory"_s), JSC::jsNumber(WTF::ramSize()), 0);
+        heap->putDirect(vm, JSC::Identifier::fromString(vm, "totalMemory"_s), JSC::jsNumber(JSC::Options::forceRAMSize() ? JSC::Options::forceRAMSize() : WTF::ramSize()), 0);
         heap->putDirect(vm, JSC::Identifier::fromString(vm, "executableMemory"_s), jsNumber(0), 0);
         heap->putDirect(vm, JSC::Identifier::fromString(vm, "totalCommittedMemory"_s), jsNumber(0), 0);
         heap->putDirect(vm, JSC::Identifier::fromString(vm, "availableMemory"_s), jsNumber(0), 0);
@@ -3001,7 +3003,8 @@ static Process* getProcessObject(JSC::JSGlobalObject* lexicalGlobalObject, JSVal
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionConstrainedMemory, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    return JSValue::encode(jsNumber(WTF::ramSize()));
+    size_t memSize = JSC::Options::forceRAMSize() ? JSC::Options::forceRAMSize() : WTF::ramSize();
+    return JSValue::encode(jsNumber(memSize));
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionResourceUsage, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

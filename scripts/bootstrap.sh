@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version: 22
+# Version: 23
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -1155,12 +1155,22 @@ llvm_version() {
 install_llvm() {
 	case "$pm" in
 	apt)
-		bash="$(require bash)"
-		llvm_script="$(download_file "https://apt.llvm.org/llvm.sh")"
-		execute_sudo "$bash" "$llvm_script" "$(llvm_version)" all
+		# Debian 13 (Trixie) has LLVM 19 natively, and apt.llvm.org doesn't have a trixie repo
+		if [ "$distro" = "debian" ] && [ "$release" = "13" ]; then
+			install_packages \
+				"llvm-$(llvm_version)" \
+				"clang-$(llvm_version)" \
+				"lld-$(llvm_version)" \
+				"llvm-$(llvm_version)-dev" \
+				"llvm-$(llvm_version)-tools"
+		else
+			bash="$(require bash)"
+			llvm_script="$(download_file "https://apt.llvm.org/llvm.sh")"
+			execute_sudo "$bash" "$llvm_script" "$(llvm_version)" all
 
-		# Install llvm-symbolizer explicitly to ensure it's available for ASAN
-		install_packages "llvm-$(llvm_version)-tools"
+			# Install llvm-symbolizer explicitly to ensure it's available for ASAN
+			install_packages "llvm-$(llvm_version)-tools"
+		fi
 		;;
 	brew)
 		install_packages "llvm@$(llvm_version)"

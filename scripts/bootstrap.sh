@@ -1312,17 +1312,6 @@ install_rust() {
 		create_directory "$HOME/.cargo/bin"
 		append_to_path "$HOME/.cargo/bin"
 		;;
-	alpine)
-		# Use home directory for rustup to avoid permission issues with /opt/rust
-		create_directory "$HOME/.cargo/bin"
-		append_to_profile "export RUSTUP_HOME=$HOME/.rustup"
-		append_to_profile "export CARGO_HOME=$HOME/.cargo"
-
-		sh="$(require sh)"
-		rustup_script=$(download_file "https://sh.rustup.rs")
-		execute "$sh" -lc "$rustup_script -y --no-modify-path"
-		append_to_path "$HOME/.cargo/bin"
-		;;
 	*)
 		rust_home="/opt/rust"
 		create_directory "$rust_home"
@@ -1333,6 +1322,9 @@ install_rust() {
 		rustup_script=$(download_file "https://sh.rustup.rs")
 		execute "$sh" -lc "$rustup_script -y --no-modify-path"
 		append_to_path "$rust_home/bin"
+
+		# Ensure all rustup files are accessible (for CI builds where different users run builds)
+		grant_to_user "$rust_home"
 		;;
 	esac
 

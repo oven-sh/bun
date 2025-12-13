@@ -312,8 +312,9 @@ pub fn getObject(expr: *const Expr, name: string) ?Expr {
 
 pub fn getBoolean(expr: *const Expr, name: string) ?bool {
     if (expr.asProperty(name)) |query| {
-        if (query.expr.data == .e_boolean) {
-            return query.expr.data.e_boolean.value;
+        switch (query.expr.data) {
+            .e_boolean, .e_branch_boolean => |b| return b.value,
+            else => {},
         }
     }
     return null;
@@ -510,9 +511,10 @@ pub inline fn asStringZ(expr: *const Expr, allocator: std.mem.Allocator) OOM!?st
 pub fn asBool(
     expr: *const Expr,
 ) ?bool {
-    if (expr.data != .e_boolean) return null;
-
-    return expr.data.e_boolean.value;
+    return switch (expr.data) {
+        .e_boolean, .e_branch_boolean => |b| b.value,
+        else => null,
+    };
 }
 
 pub fn asNumber(expr: *const Expr) ?f64 {
@@ -1490,6 +1492,11 @@ pub const Tag = enum {
     e_private_identifier,
     e_commonjs_export_identifier,
     e_boolean,
+    /// Like e_boolean, but produced by `feature()` from `bun:bundle`.
+    /// This tag ensures feature() can only be used directly in conditional
+    /// contexts (if statements, ternaries). Invalid usage is caught during
+    /// the visit phase when this expression appears outside a branch condition.
+    e_branch_boolean,
     e_number,
     e_big_int,
     e_string,
@@ -1513,7 +1520,7 @@ pub const Tag = enum {
     // object, regex and array may have had side effects
     pub fn isPrimitiveLiteral(tag: Tag) bool {
         return switch (tag) {
-            .e_null, .e_undefined, .e_string, .e_boolean, .e_number, .e_big_int => true,
+            .e_null, .e_undefined, .e_string, .e_boolean, .e_branch_boolean, .e_number, .e_big_int => true,
             else => false,
         };
     }
@@ -1522,7 +1529,7 @@ pub const Tag = enum {
         return switch (tag) {
             .e_array, .e_object, .e_null, .e_reg_exp => "object",
             .e_undefined => "undefined",
-            .e_boolean => "boolean",
+            .e_boolean, .e_branch_boolean => "boolean",
             .e_number => "number",
             .e_big_int => "bigint",
             .e_string => "string",
@@ -1537,7 +1544,7 @@ pub const Tag = enum {
             .e_array => writer.writeAll("array"),
             .e_unary => writer.writeAll("unary"),
             .e_binary => writer.writeAll("binary"),
-            .e_boolean => writer.writeAll("boolean"),
+            .e_boolean, .e_branch_boolean => writer.writeAll("boolean"),
             .e_super => writer.writeAll("super"),
             .e_null => writer.writeAll("null"),
             .e_undefined => writer.writeAll("undefined"),
@@ -1627,14 +1634,7 @@ pub const Tag = enum {
         }
     }
     pub fn isBoolean(self: Tag) bool {
-        switch (self) {
-            .e_boolean => {
-                return true;
-            },
-            else => {
-                return false;
-            },
-        }
+        return self == .e_boolean or self == .e_branch_boolean;
     }
     pub fn isSuper(self: Tag) bool {
         switch (self) {
@@ -1921,7 +1921,7 @@ pub const Tag = enum {
 
 pub fn isBoolean(a: *const Expr) bool {
     return switch (a.data) {
-        .e_boolean => true,
+        .e_boolean, .e_branch_boolean => true,
         .e_if => |ex| ex.yes.isBoolean() and ex.no.isBoolean(),
         .e_unary => |ex| ex.op == .un_not or ex.op == .un_delete,
         .e_binary => |ex| switch (ex.op) {
@@ -1978,8 +1978,8 @@ pub fn maybeSimplifyNot(expr: *const Expr, allocator: std.mem.Allocator) ?Expr {
         .e_null, .e_undefined => {
             return expr.at(E.Boolean, E.Boolean{ .value = true }, allocator);
         },
-        .e_boolean => |b| {
-            return expr.at(E.Boolean, E.Boolean{ .value = b.value }, allocator);
+        .e_boolean, .e_branch_boolean => |b| {
+            return expr.at(E.Boolean, E.Boolean{ .value = !b.value }, allocator);
         },
         .e_number => |n| {
             return expr.at(E.Boolean, E.Boolean{ .value = (n.value == 0 or std.math.isNan(n.value)) }, allocator);
@@ -2049,7 +2049,7 @@ pub fn toStringExprWithoutSideEffects(expr: *const Expr, allocator: std.mem.Allo
         .e_null => "null",
         .e_string => return expr.*,
         .e_undefined => "undefined",
-        .e_boolean => |data| if (data.value) "true" else "false",
+        .e_boolean, .e_branch_boolean => |data| if (data.value) "true" else "false",
         .e_big_int => |bigint| bigint.value,
         .e_number => |num| if (num.toString(allocator)) |str|
             str
@@ -2151,6 +2151,7 @@ pub const Data = union(Tag) {
     e_commonjs_export_identifier: E.CommonJSExportIdentifier,
 
     e_boolean: E.Boolean,
+    e_branch_boolean: E.Boolean,
     e_number: E.Number,
     e_big_int: *E.BigInt,
     e_string: *E.String,
@@ -2589,7 +2590,7 @@ pub const Data = union(Tag) {
                 const symbol = e.ref.getSymbol(symbol_table);
                 hasher.update(symbol.original_name);
             },
-            inline .e_boolean, .e_number => |e| {
+            inline .e_boolean, .e_branch_boolean, .e_number => |e| {
                 writeAnyToHasher(hasher, e.value);
             },
             inline .e_big_int, .e_reg_exp => |e| {
@@ -2643,6 +2644,7 @@ pub const Data = union(Tag) {
         return switch (this) {
             .e_number,
             .e_boolean,
+            .e_branch_boolean,
             .e_null,
             .e_undefined,
             .e_inlined_enum,
@@ -2671,6 +2673,7 @@ pub const Data = union(Tag) {
 
             .e_number,
             .e_boolean,
+            .e_branch_boolean,
             .e_null,
             .e_undefined,
             // .e_reg_exp,
@@ -2696,7 +2699,7 @@ pub const Data = union(Tag) {
             // rope strings can throw when toString is called.
             .e_string => |str| str.next == null,
 
-            .e_number, .e_boolean, .e_undefined, .e_null => true,
+            .e_number, .e_boolean, .e_branch_boolean, .e_undefined, .e_null => true,
             // BigInt is deliberately excluded as a large enough BigInt could throw an out of memory error.
             //
 
@@ -2707,7 +2710,7 @@ pub const Data = union(Tag) {
     pub fn knownPrimitive(data: Expr.Data) PrimitiveType {
         return switch (data) {
             .e_big_int => .bigint,
-            .e_boolean => .boolean,
+            .e_boolean, .e_branch_boolean => .boolean,
             .e_null => .null,
             .e_number => .number,
             .e_string => .string,
@@ -2843,7 +2846,7 @@ pub const Data = union(Tag) {
                 // +'1' => 1
                 return stringToEquivalentNumberValue(str.slice8());
             },
-            .e_boolean => @as(f64, if (data.e_boolean.value) 1.0 else 0.0),
+            .e_boolean, .e_branch_boolean => |b| @as(f64, if (b.value) 1.0 else 0.0),
             .e_number => data.e_number.value,
             .e_inlined_enum => |inlined| switch (inlined.value.data) {
                 .e_number => |num| num.value,
@@ -2862,7 +2865,7 @@ pub const Data = union(Tag) {
 
     pub fn toFiniteNumber(data: Expr.Data) ?f64 {
         return switch (data) {
-            .e_boolean => @as(f64, if (data.e_boolean.value) 1.0 else 0.0),
+            .e_boolean, .e_branch_boolean => |b| @as(f64, if (b.value) 1.0 else 0.0),
             .e_number => if (std.math.isFinite(data.e_number.value))
                 data.e_number.value
             else
@@ -2953,12 +2956,12 @@ pub const Data = union(Tag) {
                     .ok = ok,
                 };
             },
-            .e_boolean => |l| {
+            .e_boolean, .e_branch_boolean => |l| {
                 switch (right) {
-                    .e_boolean => {
+                    .e_boolean, .e_branch_boolean => |r| {
                         return .{
                             .ok = true,
-                            .equal = l.value == right.e_boolean.value,
+                            .equal = l.value == r.value,
                         };
                     },
                     .e_number => |num| {
@@ -2996,7 +2999,7 @@ pub const Data = union(Tag) {
                             .equal = l.value == r.value.data.e_number.value,
                         };
                     },
-                    .e_boolean => |r| {
+                    .e_boolean, .e_branch_boolean => |r| {
                         if (comptime kind == .loose) {
                             return .{
                                 .ok = true,
@@ -3111,7 +3114,7 @@ pub const Data = union(Tag) {
             .e_string => |e| e.toJS(allocator, globalObject),
             .e_null => jsc.JSValue.null,
             .e_undefined => .js_undefined,
-            .e_boolean => |boolean| if (boolean.value)
+            .e_boolean, .e_branch_boolean => |boolean| if (boolean.value)
                 .true
             else
                 .false,

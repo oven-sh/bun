@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version: 23
+# Version: 24
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -1310,6 +1310,17 @@ install_rust() {
 	freebsd)
 		install_packages lang/rust
 		create_directory "$HOME/.cargo/bin"
+		append_to_path "$HOME/.cargo/bin"
+		;;
+	alpine)
+		# Use home directory for rustup to avoid permission issues with /opt/rust
+		create_directory "$HOME/.cargo/bin"
+		append_to_profile "export RUSTUP_HOME=$HOME/.rustup"
+		append_to_profile "export CARGO_HOME=$HOME/.cargo"
+
+		sh="$(require sh)"
+		rustup_script=$(download_file "https://sh.rustup.rs")
+		execute "$sh" -lc "$rustup_script -y --no-modify-path"
 		append_to_path "$HOME/.cargo/bin"
 		;;
 	*)

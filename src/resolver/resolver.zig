@@ -591,8 +591,12 @@ pub const Resolver = struct {
         r.dir_cache.deinit();
     }
 
-    pub fn isExternalPattern(r: *ThisResolver, import_path: string) bool {
+    pub fn isExternalPattern(r: *ThisResolver, import_path: string, source_dir: string) bool {
         if (r.opts.packages == .external and isPackagePath(import_path)) {
+            // Before marking as external, check if this might be a tsconfig path alias
+            if (r.couldMatchTSConfigPaths(import_path, source_dir)) {
+                return false;
+            }
             return true;
         }
         for (r.opts.external.patterns) |pattern| {
@@ -606,6 +610,38 @@ pub const Resolver = struct {
                 return true;
             }
         }
+        return false;
+    }
+
+    /// Check if an import path could potentially match a tsconfig path alias
+    /// This is used to avoid marking tsconfig path aliases as external when using --packages=external
+    pub fn couldMatchTSConfigPaths(r: *ThisResolver, import_path: string, source_dir: string) bool {
+        const dir_info_ptr = r.dirInfoCached(source_dir) catch return false;
+        const dir_info = dir_info_ptr orelse return false;
+        const tsconfig = dir_info.enclosing_tsconfig_json orelse return false;
+
+        if (tsconfig.paths.count() == 0) return false;
+
+        // Check for exact matches
+        if (tsconfig.paths.contains(import_path)) {
+            return true;
+        }
+
+        // Check for wildcard matches
+        var iter = tsconfig.paths.iterator();
+        while (iter.next()) |entry| {
+            const key = entry.key_ptr.*;
+
+            if (strings.indexOfChar(key, '*')) |star| {
+                const prefix = if (star == 0) "" else key[0..star];
+                const suffix = if (star == key.len - 1) "" else key[star + 1 ..];
+
+                if (strings.startsWith(import_path, prefix) and strings.endsWith(import_path, suffix)) {
+                    return true;
+                }
+            }
+        }
+
         return false;
     }
 
@@ -699,7 +735,7 @@ pub const Resolver = struct {
         // Certain types of URLs default to being external for convenience,
         // while these rules should not be applied to the entrypoint as it is never external (#12734)
         if (kind != .entry_point_build and kind != .entry_point_run and
-            (r.isExternalPattern(import_path) or
+            (r.isExternalPattern(import_path, source_dir) or
                 // "fill: url(#filter);"
                 (kind.isFromCSS() and strings.startsWith(import_path, "#")) or
 

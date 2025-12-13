@@ -2403,6 +2403,8 @@ extern "C" napi_status napi_typeof(napi_env env, napi_value val,
             return napi_clear_last_error(env);
         case JSC::DerivedStringObjectType:
         case JSC::StringObjectType:
+            *result = napi_object;
+            return napi_clear_last_error(env);
         case JSC::StringType:
             *result = napi_string;
             return napi_clear_last_error(env);

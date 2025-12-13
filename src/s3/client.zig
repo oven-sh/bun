@@ -229,6 +229,7 @@ pub fn upload(
     path: []const u8,
     content: []const u8,
     content_type: ?[]const u8,
+    content_disposition: ?[]const u8,
     acl: ?ACL,
     proxy_url: ?[]const u8,
     storage_class: ?StorageClass,
@@ -241,6 +242,7 @@ pub fn upload(
         .proxy_url = proxy_url,
         .body = content,
         .content_type = content_type,
+        .content_disposition = content_disposition,
         .acl = acl,
         .storage_class = storage_class,
     }, .{ .upload = callback }, callback_context);
@@ -252,6 +254,7 @@ pub fn writableStream(
     globalThis: *jsc.JSGlobalObject,
     options: MultiPartUploadOptions,
     content_type: ?[]const u8,
+    content_disposition: ?[]const u8,
     proxy: ?[]const u8,
     storage_class: ?StorageClass,
 ) bun.JSError!jsc.JSValue {
@@ -295,6 +298,7 @@ pub fn writableStream(
         .path = bun.handleOom(bun.default_allocator.dupe(u8, path)),
         .proxy = if (proxy_url.len > 0) bun.handleOom(bun.default_allocator.dupe(u8, proxy_url)) else "",
         .content_type = if (content_type) |ct| bun.handleOom(bun.default_allocator.dupe(u8, ct)) else null,
+        .content_disposition = if (content_disposition) |cd| bun.handleOom(bun.default_allocator.dupe(u8, cd)) else null,
         .storage_class = storage_class,
 
         .callback = @ptrCast(&Wrapper.callback),
@@ -434,6 +438,7 @@ pub fn uploadStream(
     acl: ?ACL,
     storage_class: ?StorageClass,
     content_type: ?[]const u8,
+    content_disposition: ?[]const u8,
     proxy: ?[]const u8,
     callback: ?*const fn (S3UploadResult, *anyopaque) void,
     callback_context: *anyopaque,
@@ -470,6 +475,7 @@ pub fn uploadStream(
         .path = bun.handleOom(bun.default_allocator.dupe(u8, path)),
         .proxy = if (proxy_url.len > 0) bun.handleOom(bun.default_allocator.dupe(u8, proxy_url)) else "",
         .content_type = if (content_type) |ct| bun.handleOom(bun.default_allocator.dupe(u8, ct)) else null,
+        .content_disposition = if (content_disposition) |cd| bun.handleOom(bun.default_allocator.dupe(u8, cd)) else null,
         .callback = @ptrCast(&S3UploadStreamWrapper.resolve),
         .callback_context = undefined,
         .globalThis = globalThis,

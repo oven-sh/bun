@@ -1141,6 +1141,84 @@ Remove function calls from a bundle. For example, `--drop=console` will remove a
   </Tab>
 </Tabs>
 
+### features
+
+Enable compile-time feature flags for dead-code elimination. This provides a way to conditionally include or exclude code paths at bundle time using `import { feature } from "bun:bundle"`.
+
+```ts title="app.ts" icon="/icons/typescript.svg"
+import { feature } from "bun:bundle";
+
+if (feature("PREMIUM")) {
+  // Only included when PREMIUM flag is enabled
+  initPremiumFeatures();
+}
+
+if (feature("DEBUG")) {
+  // Only included when DEBUG flag is enabled
+  console.log("Debug mode");
+}
+```
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ['./app.ts'],
+      outdir: './out',
+      features: ["PREMIUM"],  // PREMIUM=true, DEBUG=false
+    })
+    ```
+  </Tab>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./app.ts --outdir ./out --feature PREMIUM
+    ```
+  </Tab>
+</Tabs>
+
+The `feature()` function is replaced with `true` or `false` at bundle time. Combined with minification, unreachable code is eliminated:
+
+```ts title="Input" icon="/icons/typescript.svg"
+import { feature } from "bun:bundle";
+const mode = feature("PREMIUM") ? "premium" : "free";
+```
+
+```js title="Output (with --feature PREMIUM --minify)" icon="/icons/javascript.svg"
+var mode = "premium";
+```
+
+```js title="Output (without --feature PREMIUM, with --minify)" icon="/icons/javascript.svg"
+var mode = "free";
+```
+
+**Key behaviors:**
+
+- `feature()` requires a string literal argument — dynamic values are not supported
+- The `bun:bundle` import is completely removed from the output
+- Works with `bun build`, `bun run`, and `bun test`
+- Multiple flags can be enabled: `--feature FLAG_A --feature FLAG_B`
+- For type safety, augment the `Registry` interface to restrict `feature()` to known flags (see below)
+
+**Use cases:**
+
+- Platform-specific code (`feature("SERVER")` vs `feature("CLIENT")`)
+- Environment-based features (`feature("DEVELOPMENT")`)
+- Gradual feature rollouts
+- A/B testing variants
+- Paid tier features
+
+**Type safety:** By default, `feature()` accepts any string. To get autocomplete and catch typos at compile time, create an `env.d.ts` file (or add to an existing `.d.ts`) and augment the `Registry` interface:
+
+```ts title="env.d.ts" icon="/icons/typescript.svg"
+declare module "bun:bundle" {
+  interface Registry {
+    features: "DEBUG" | "PREMIUM" | "BETA_FEATURES";
+  }
+}
+```
+
+Ensure the file is included in your `tsconfig.json` (e.g., `"include": ["src", "env.d.ts"]`). Now `feature()` only accepts those flags, and invalid strings like `feature("TYPO")` become type errors.
+
 ## Outputs
 
 The `Bun.build` function returns a `Promise<BuildOutput>`, defined as:

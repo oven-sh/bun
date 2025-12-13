@@ -1252,6 +1252,22 @@ pub fn ParseStmt(
                                 }
                             },
                             .ts_stmt_declare => {
+                                // Only treat "declare" as a TypeScript ambient modifier when it's
+                                // followed by a valid declaration keyword. Otherwise allow it to be
+                                // used as a plain identifier (e.g. "declare = ...").
+                                const next = p.lexer.token;
+                                const valid_declare = switch (next) {
+                                    .t_var, .t_let, .t_const, .t_function, .t_class, .t_enum, .t_import => true,
+                                    .t_identifier => p.lexer.isContextualKeyword("namespace") or
+                                        p.lexer.isContextualKeyword("module") or
+                                        p.lexer.isContextualKeyword("global") or
+                                        p.lexer.isContextualKeyword("abstract") or
+                                        p.lexer.isContextualKeyword("interface") or
+                                        p.lexer.isContextualKeyword("type"),
+                                    else => false,
+                                };
+                                if (!valid_declare) break;
+
                                 opts.lexical_decl = .allow_all;
                                 opts.is_typescript_declare = true;
 

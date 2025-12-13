@@ -20,8 +20,8 @@ export async function build(dir: string) {
       // so we make it use clang instead
       ...(process.platform == "linux" && isCI
         ? {
-            CC: !isMusl ? "/usr/lib/llvm-19/bin/clang" : "/usr/lib/llvm19/bin/clang",
-            CXX: !isMusl ? "/usr/lib/llvm-19/bin/clang++" : "/usr/lib/llvm19/bin/clang++",
+            CC: !isMusl ? "/usr/lib/llvm-20/bin/clang" : "/usr/lib/llvm20/bin/clang",
+            CXX: !isMusl ? "/usr/lib/llvm-20/bin/clang++" : "/usr/lib/llvm20/bin/clang++",
           }
         : {}),
     },

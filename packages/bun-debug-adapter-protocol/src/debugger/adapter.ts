@@ -691,7 +691,8 @@ export abstract class BaseDebugAdapter<T extends Inspector = Inspector>
     if (process.platform === "win32") {
       url = url ? normalizeWindowsPath(url) : url;
     }
-    const source = this.#getSourceIfPresent(url);
+    let source = this.#getSourceIfPresent(url);
+    let placeholderExists = false;
 
     // If the source is not loaded, set a placeholder breakpoint at the start of the file.
     // If the breakpoint is resolved in the future, a `Debugger.breakpointResolved` event
@@ -703,22 +704,36 @@ export abstract class BaseDebugAdapter<T extends Inspector = Inspector>
           url,
           lineNumber: 0,
         });
+        placeholderExists = true;
       } catch (error) {
         return requests.map(() => invalidBreakpoint(error));
       }
 
       const { breakpointId, locations } = result;
       if (locations.length) {
-        // TODO: Source was loaded while the breakpoint was being set?
+        // If the locations-array is non-empty, it means the source was loaded
+        // while the placeholder breakpoint was being set.
+        // In that case we can discard this line-0 breakpoint and continue like normal.
+        source = this.#getSourceIfPresent(url);
+        if (source) { // (should always be true here)
+          try {
+            await this.send("Debugger.removeBreakpoint", { breakpointId });
+            placeholderExists = false;
+          } catch {
+            // Ignore any errors.
+          }
+        }
       }
 
-      return requests.map(request =>
-        this.#addFutureBreakpoint({
-          breakpointId,
-          url,
-          breakpoint: request,
-        }),
-      );
+      if (placeholderExists) {
+        return requests.map(request =>
+          this.#addFutureBreakpoint({
+            breakpointId,
+            url,
+            breakpoint: request,
+          }),
+        );
+      }
     }
 
     const oldBreakpoints = this.#getBreakpoints(sourceToId(source));

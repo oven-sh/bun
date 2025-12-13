@@ -1977,7 +1977,7 @@ declare module "bun" {
      *
      * Equivalent CLI flags: `--compile-autoload-tsconfig`, `--no-compile-autoload-tsconfig`
      *
-     * @default true
+     * @default false
      */
     autoloadTsconfig?: boolean;
     /**
@@ -1987,7 +1987,7 @@ declare module "bun" {
      *
      * Equivalent CLI flags: `--compile-autoload-package-json`, `--no-compile-autoload-package-json`
      *
-     * @default true
+     * @default false
      */
     autoloadPackageJson?: boolean;
     windows?: {

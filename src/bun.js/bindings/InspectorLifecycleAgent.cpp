@@ -151,7 +151,7 @@ Protocol::ErrorStringOr<ModuleGraph> InspectorLifecycleAgent::getModuleGraph()
 
     Ref<JSON::ArrayOf<String>> esm = JSON::ArrayOf<String>::create();
     {
-        auto iter1 = JSC::JSMapIterator::create(global, global->mapIteratorStructure(), esmMap, JSC::IterationKind::Keys);
+        auto iter1 = JSC::JSMapIterator::create(vm, global->mapIteratorStructure(), esmMap, JSC::IterationKind::Keys);
         RETURN_IF_EXCEPTION(scope, makeUnexpected(ErrorString("Failed to create iterator"_s)));
         JSC::JSValue value;
         while (iter1->next(global, value)) {
@@ -163,7 +163,7 @@ Protocol::ErrorStringOr<ModuleGraph> InspectorLifecycleAgent::getModuleGraph()
 
     Ref<JSON::ArrayOf<String>> cjs = JSON::ArrayOf<String>::create();
     {
-        auto iter2 = JSC::JSMapIterator::create(global, global->mapIteratorStructure(), cjsMap, JSC::IterationKind::Keys);
+        auto iter2 = JSC::JSMapIterator::create(vm, global->mapIteratorStructure(), cjsMap, JSC::IterationKind::Keys);
         RETURN_IF_EXCEPTION(scope, makeUnexpected(ErrorString("Failed to create iterator"_s)));
         JSC::JSValue value;
         while (iter2->next(global, value)) {

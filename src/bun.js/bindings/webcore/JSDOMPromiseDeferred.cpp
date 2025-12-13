@@ -74,15 +74,16 @@ void DeferredPromise::callFunction(JSGlobalObject& lexicalGlobalObject, ResolveM
 
     // FIXME: We could have error since any JS call can throw stack-overflow errors.
     // https://bugs.webkit.org/show_bug.cgi?id=203402
+    auto& vm = lexicalGlobalObject.vm();
     switch (mode) {
     case ResolveMode::Resolve:
         deferred()->resolve(&lexicalGlobalObject, resolution);
         break;
     case ResolveMode::Reject:
-        deferred()->reject(&lexicalGlobalObject, resolution);
+        deferred()->reject(vm, &lexicalGlobalObject, resolution);
         break;
     case ResolveMode::RejectAsHandled:
-        deferred()->rejectAsHandled(&lexicalGlobalObject, resolution);
+        deferred()->rejectAsHandled(vm, &lexicalGlobalObject, resolution);
         break;
     }
 
@@ -236,25 +237,14 @@ void rejectPromiseWithExceptionIfAny(JSC::JSGlobalObject& lexicalGlobalObject, J
 
 JSC::EncodedJSValue createRejectedPromiseWithTypeError(JSC::JSGlobalObject& lexicalGlobalObject, const String& errorMessage, RejectedPromiseWithTypeErrorCause cause)
 {
-    auto& globalObject = lexicalGlobalObject;
     auto& vm = lexicalGlobalObject.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto promiseConstructor = globalObject.promiseConstructor();
-    auto rejectFunction = promiseConstructor->get(&lexicalGlobalObject, vm.propertyNames->builtinNames().rejectPrivateName());
-    RETURN_IF_EXCEPTION(scope, {});
     ErrorInstance* rejectionValue = static_cast<ErrorInstance*>(cause == RejectedPromiseWithTypeErrorCause::InvalidThis ? Bun::createInvalidThisError(&lexicalGlobalObject, errorMessage) : createTypeError(&lexicalGlobalObject, errorMessage));
     if (cause == RejectedPromiseWithTypeErrorCause::NativeGetter)
         rejectionValue->setNativeGetterTypeError();
 
-    auto callData = JSC::getCallData(rejectFunction);
-    ASSERT(callData.type != CallData::Type::None);
-
-    MarkedArgumentBuffer arguments;
-    arguments.append(rejectionValue);
-    ASSERT(!arguments.hasOverflowed());
-
-    RELEASE_AND_RETURN(scope, JSValue::encode(call(&lexicalGlobalObject, rejectFunction, callData, promiseConstructor, arguments)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::JSPromise::rejectedPromise(&lexicalGlobalObject, rejectionValue)));
 }
 
 static inline JSC::JSValue parseAsJSON(JSC::JSGlobalObject* lexicalGlobalObject, const String& data)

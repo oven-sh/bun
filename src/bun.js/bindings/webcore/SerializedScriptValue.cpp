@@ -2578,7 +2578,7 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
     VM& vm = m_lexicalGlobalObject->vm();
     Vector<uint32_t, 16> indexStack;
     Vector<uint32_t, 16> lengthStack;
-    Vector<PropertyNameArray, 16> propertyStack;
+    Vector<PropertyNameArrayBuilder, 16> propertyStack;
     Vector<JSObject*, 32> inputObjectStack;
     Vector<JSMapIterator*, 4> mapIteratorStack;
     Vector<JSSetIterator*, 4> setIteratorStack;
@@ -2612,7 +2612,7 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
                 indexStack.removeLast();
                 lengthStack.removeLast();
 
-                propertyStack.append(PropertyNameArray(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude));
+                propertyStack.append(PropertyNameArrayBuilder(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude));
                 array->getOwnNonIndexPropertyNames(m_lexicalGlobalObject, propertyStack.last(), DontEnumPropertiesMode::Exclude);
                 RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
                 if (propertyStack.last().size()) {
@@ -2666,7 +2666,7 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
                 return SerializationReturnCode::DataCloneError;
             inputObjectStack.append(inObject);
             indexStack.append(0);
-            propertyStack.append(PropertyNameArray(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude));
+            propertyStack.append(PropertyNameArrayBuilder(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude));
             inObject->methodTable()->getOwnPropertyNames(inObject, m_lexicalGlobalObject, propertyStack.last(), DontEnumPropertiesMode::Exclude);
             RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
         }
@@ -2675,7 +2675,7 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
         case ObjectStartVisitMember: {
             JSObject* object = inputObjectStack.last();
             uint32_t index = indexStack.last();
-            PropertyNameArray& properties = propertyStack.last();
+            PropertyNameArrayBuilder& properties = propertyStack.last();
             if (index == properties.size()) {
                 endObject();
                 inputObjectStack.removeLast();
@@ -2719,7 +2719,7 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
             JSMap* inMap = jsCast<JSMap*>(inValue);
             if (!startMap(inMap))
                 break;
-            JSMapIterator* iterator = JSMapIterator::create(m_lexicalGlobalObject, m_lexicalGlobalObject->mapIteratorStructure(), inMap, IterationKind::Entries);
+            JSMapIterator* iterator = JSMapIterator::create(vm, m_lexicalGlobalObject->mapIteratorStructure(), inMap, IterationKind::Entries);
             RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
             m_gcBuffer.appendWithCrashOnOverflow(inMap);
             m_gcBuffer.appendWithCrashOnOverflow(iterator);
@@ -2735,7 +2735,7 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
                 mapIteratorStack.removeLast();
                 JSObject* object = inputObjectStack.last();
                 ASSERT(jsDynamicCast<JSMap*>(object));
-                propertyStack.append(PropertyNameArray(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude));
+                propertyStack.append(PropertyNameArrayBuilder(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude));
                 object->methodTable()->getOwnPropertyNames(object, m_lexicalGlobalObject, propertyStack.last(), DontEnumPropertiesMode::Exclude);
                 RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
                 write(NonMapPropertiesTag);
@@ -2765,7 +2765,7 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
             JSSet* inSet = jsCast<JSSet*>(inValue);
             if (!startSet(inSet))
                 break;
-            JSSetIterator* iterator = JSSetIterator::create(m_lexicalGlobalObject, m_lexicalGlobalObject->setIteratorStructure(), inSet, IterationKind::Keys);
+            JSSetIterator* iterator = JSSetIterator::create(vm, m_lexicalGlobalObject->setIteratorStructure(), inSet, IterationKind::Keys);
             RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
             m_gcBuffer.appendWithCrashOnOverflow(inSet);
             m_gcBuffer.appendWithCrashOnOverflow(iterator);
@@ -2781,7 +2781,7 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
                 setIteratorStack.removeLast();
                 JSObject* object = inputObjectStack.last();
                 ASSERT(jsDynamicCast<JSSet*>(object));
-                propertyStack.append(PropertyNameArray(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude));
+                propertyStack.append(PropertyNameArrayBuilder(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude));
                 object->methodTable()->getOwnPropertyNames(object, m_lexicalGlobalObject, propertyStack.last(), DontEnumPropertiesMode::Exclude);
                 RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
                 write(NonSetPropertiesTag);

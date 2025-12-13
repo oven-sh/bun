@@ -19,16 +19,16 @@ using namespace JSC;
 
 class JSPropertyIterator {
 public:
-    JSPropertyIterator(JSC::VM& m_vm, RefPtr<JSC::PropertyNameArrayData> m_properties)
+    JSPropertyIterator(JSC::VM& m_vm, RefPtr<JSC::PropertyNameArray> m_properties)
         : vm(m_vm)
         , properties(m_properties)
     {
     }
 
-    RefPtr<JSC::PropertyNameArrayData> properties;
+    RefPtr<JSC::PropertyNameArray> properties;
     Ref<JSC::VM> vm;
     bool isSpecialProxy = false;
-    static JSPropertyIterator* create(JSC::VM& vm, RefPtr<JSC::PropertyNameArrayData> data)
+    static JSPropertyIterator* create(JSC::VM& vm, RefPtr<JSC::PropertyNameArray> data)
     {
         return new JSPropertyIterator(vm, data);
     }
@@ -45,7 +45,7 @@ extern "C" JSPropertyIterator* Bun__JSPropertyIterator__create(JSC::JSGlobalObje
     ASSERT(count);
 
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSC::PropertyNameArray array(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+    JSC::PropertyNameArrayBuilder array(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
 
     if (object->hasNonReifiedStaticProperties()) [[unlikely]] {
         object->reifyAllStaticProperties(globalObject);

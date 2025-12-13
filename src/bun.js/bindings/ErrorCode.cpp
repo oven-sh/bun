@@ -32,7 +32,7 @@
 #include "KeyObject.h"
 
 namespace WTF {
-template<> class StringTypeAdapter<GCOwnedDataScope<StringView>, void> {
+template<> class StringTypeAdapter<GCOwnedDataScope<StringView>> {
 public:
     StringTypeAdapter(GCOwnedDataScope<StringView> string)
         : m_string { string }

@@ -104,7 +104,7 @@ static JSValue constructDataProperties(VM& vm, JSGlobalObject* exec, JSArray* ar
         return value;
 
     auto* object = asObject(value);
-    PropertyNameArray propertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+    PropertyNameArrayBuilder propertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
     object->getPropertyNames(exec, propertyNames, DontEnumPropertiesMode::Exclude);
     RETURN_IF_EXCEPTION(scope, {});
     unsigned i = 0;

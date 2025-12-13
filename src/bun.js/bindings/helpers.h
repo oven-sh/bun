@@ -122,9 +122,9 @@ static WTF::AtomString toAtomString(ZigString str)
 {
 
     if (!isTaggedUTF16Ptr(str.ptr)) {
-        return makeAtomString(untag(str.ptr), str.len);
+        return makeAtomString(std::span<const Latin1Character>(untag(str.ptr), str.len));
     } else {
-        return makeAtomString(reinterpret_cast<const char16_t*>(untag(str.ptr)), str.len);
+        return makeAtomString(std::span<const char16_t>(reinterpret_cast<const char16_t*>(untag(str.ptr)), str.len));
     }
 }
 
@@ -419,7 +419,7 @@ static JSC::JSValue getRangeErrorInstance(const ZigString* str, JSC::JSGlobalObj
 static const JSC::Identifier toIdentifier(ZigString str, JSC::JSGlobalObject* global)
 {
     if (str.len == 0 || str.ptr == nullptr) {
-        return JSC::Identifier::EmptyIdentifier;
+        return JSC::Identifier(JSC::Identifier::EmptyIdentifierFlag::EmptyIdentifier);
     }
     WTF::String wtfstr = Zig::isTaggedExternalPtr(str.ptr) ? toString(str) : Zig::toStringCopy(str);
     JSC::Identifier id = JSC::Identifier::fromString(global->vm(), wtfstr);

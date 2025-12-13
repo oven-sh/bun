@@ -115,7 +115,7 @@ JSC_DEFINE_HOST_FUNCTION(functionStartRemoteDebugger,
             globalObject, scope,
             createError(globalObject,
                 makeString("Failed to start server \""_s,
-                    reinterpret_cast<const unsigned char*>(host),
+                    String::fromLatin1(host),
                     ":"_s, port, "\". Is port already in use?"_s)));
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
@@ -718,7 +718,7 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
                 throwException(globalObject, scope, error.value());
                 return JSValue::encode({});
             });
-        promise->performPromiseThen(globalObject, resolve, reject, afterOngoingPromiseCapability);
+        promise->performPromiseThen(vm, globalObject, resolve, reject, afterOngoingPromiseCapability);
         RETURN_IF_EXCEPTION(throwScope, {});
         return JSValue::encode(afterOngoingPromiseCapability);
     }

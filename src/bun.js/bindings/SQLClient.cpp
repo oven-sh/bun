@@ -434,7 +434,7 @@ extern "C" EncodedJSValue JSC__createStructure(JSC::JSGlobalObject* globalObject
 {
     auto& vm = JSC::getVM(globalObject);
 
-    PropertyNameArray propertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+    PropertyNameArrayBuilder propertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
     std::span<ExternColumnIdentifier> names(namesPtr, capacity);
     uint32_t nonDuplicateCount = 0;
 

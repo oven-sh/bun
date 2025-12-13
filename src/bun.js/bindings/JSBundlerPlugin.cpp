@@ -280,8 +280,7 @@ void BundlerPlugin::NativePluginList::append(JSC::VM& vm, JSC::RegExp* filter, S
 bool BundlerPlugin::FilterRegExp::match(JSC::VM& vm, const String& path)
 {
     WTF::Locker locker { lock };
-    constexpr bool usesPatternContextBuffer = false;
-    Yarr::MatchingContextHolder regExpContext(vm, usesPatternContextBuffer, nullptr, Yarr::MatchFrom::CompilerThread);
+    Yarr::MatchingContextHolder regExpContext(vm, nullptr, Yarr::MatchFrom::CompilerThread);
     return regex.match(path) != -1;
 }
 
@@ -670,11 +669,12 @@ extern "C" void JSBundlerPlugin__drainDeferred(Bun::JSBundlerPlugin* pluginObjec
     pluginObject->plugin.deferredPromises.moveTo(pluginObject, arguments);
     ASSERT(!arguments.hasOverflowed());
 
-    auto scope = DECLARE_THROW_SCOPE(pluginObject->vm());
+    auto& vm = pluginObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     for (auto promiseValue : arguments) {
         JSPromise* promise = jsCast<JSPromise*>(JSValue::decode(promiseValue));
         if (rejected) {
-            promise->reject(globalObject, JSC::jsUndefined());
+            promise->reject(vm, globalObject, JSC::jsUndefined());
         } else {
             promise->resolve(globalObject, JSC::jsUndefined());
         }

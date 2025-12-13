@@ -19,6 +19,7 @@ const acceptableOOMErrors = [
   'Array buffer allocation failed',
   'Invalid array buffer length',
   'length too large: 4294968296',
+  'Out of memory'
 ];
 
 const length = 1000;

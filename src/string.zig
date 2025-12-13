@@ -192,7 +192,7 @@ pub const String = extern struct {
         return validateRefCount(bun.cpp.BunString__fromLatin1(bytes.ptr, bytes.len));
     }
 
-    pub inline fn validateRefCount(this: String) String {
+    pub fn validateRefCount(this: String) String {
         if (comptime bun.Environment.isDebug) {
             // Newly created strings should have a ref count of 1
             if (!this.isEmpty()) {
@@ -1131,7 +1131,7 @@ pub const SliceWithUnderlyingString = struct {
 
     did_report_extra_memory_debug: bun.DebugOnly(bool) = if (bun.Environment.isDebug) false,
 
-    pub inline fn reportExtraMemory(this: *SliceWithUnderlyingString, vm: *jsc.VM) void {
+    pub fn reportExtraMemory(this: *SliceWithUnderlyingString, vm: *jsc.VM) void {
         if (comptime bun.Environment.isDebug) {
             bun.assert(!this.did_report_extra_memory_debug);
             this.did_report_extra_memory_debug = true;

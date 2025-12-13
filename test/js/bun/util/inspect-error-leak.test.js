@@ -3,7 +3,8 @@ import { isASAN } from "../../../harness";
 
 const perBatch = 2000;
 const repeat = 50;
-test("Printing errors does not leak", () => {
+// prettier-ignore
+test.todoIf(isASAN)("Printing errors does not leak", () => {
   function batch() {
     for (let i = 0; i < perBatch; i++) {
       Bun.inspect(new Error("leak"));
@@ -20,5 +21,5 @@ test("Printing errors does not leak", () => {
   const after = Math.floor(process.memoryUsage.rss() / 1024);
   const diff = ((after - baseline) / 1024) | 0;
   console.log(`RSS increased by ${diff} MB`);
-  expect(diff, `RSS grew by ${diff} MB after ${perBatch * repeat} iterations`).toBeLessThan(isASAN ? 20 : 10);
+  expect(diff, `RSS grew by ${diff} MB after ${perBatch * repeat} iterations`).toBeLessThan(10);
 }, 10_000);

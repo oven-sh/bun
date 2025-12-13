@@ -33,7 +33,7 @@ pub const Run = struct {
 
         run = .{
             .vm = try VirtualMachine.initWithModuleGraph(.{
-                .allocator = arena.allocator(),
+                .allocator = bun.default_allocator,
                 .log = ctx.log,
                 .args = ctx.args,
                 .graph = graph_ptr,
@@ -177,7 +177,7 @@ pub const Run = struct {
         run = .{
             .vm = try VirtualMachine.init(
                 .{
-                    .allocator = arena.allocator(),
+                    .allocator = bun.default_allocator,
                     .log = ctx.log,
                     .args = ctx.args,
                     .store_fd = ctx.debug.hot_reload != .none,

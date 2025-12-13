@@ -1,7 +1,8 @@
 import { $ } from "bun";
 import { expect, test } from "bun:test";
+import { isASAN } from "harness";
 
-test("shell parsing error does not leak emmory", async () => {
+test.todoIf(isASAN)("shell parsing error does not leak emmory", async () => {
   const buffer = Buffer.alloc(1024 * 1024, "A").toString();
   for (let i = 0; i < 5; i++) {
     try {

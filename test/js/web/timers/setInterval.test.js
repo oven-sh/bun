@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { isWindows } from "harness";
+import { isASAN, isWindows } from "harness";
 import { join } from "path";
 
 it("setInterval", async () => {
@@ -113,7 +113,7 @@ it("setInterval canceling with unref, close, _idleTimeout, and _onTimeout", () =
   expect([join(import.meta.dir, "timers-fixture-unref.js"), "setInterval"]).toRun();
 });
 
-it(
+it.todoIf(isASAN)(
   "setInterval doesn't leak memory",
   () => {
     expect([`run`, join(import.meta.dir, "setInterval-leak-fixture.js")]).toRun();

@@ -2695,7 +2695,7 @@ export function reportAnnotationToBuildKite({ context, label, content, style = "
     return;
   }
   if (attempt > 0) {
-    const cause = error ?? signal ?? `code ${status}`;
+    const cause = error ?? [`signal ${signal}`, `code ${status}`, stderr];
     throw new Error(`Failed to create annotation: ${label}`, { cause });
   }
   const errorContent = formatAnnotationToHtml({

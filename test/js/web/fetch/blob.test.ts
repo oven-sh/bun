@@ -8,7 +8,7 @@ test("blob: imports have sourcemapped stacktraces", async () => {
     [
       `
     export function uhOh(very: any): boolean {
-      return Bun.inspect(new Error());  
+      return Bun.inspect(new Error());
     }
   `,
     ],
@@ -149,6 +149,7 @@ test("blob: can be imported", async () => {
 
 test("blob: can reliable get type from fetch #10072", async () => {
   using server = Bun.serve({
+    port: 0,
     fetch() {
       return new Response(
         new ReadableStream({

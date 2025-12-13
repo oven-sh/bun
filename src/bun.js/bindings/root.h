@@ -86,6 +86,10 @@
 #include <wtf/ThreadSafeRefCounted.h>
 #endif
 
+#if USE(MIMALLOC)
+#include <mimalloc.h>
+#endif
+
 #define ENABLE_WEB_CRYPTO 1
 #define USE_OPENSSL 1
 #define HAVE_RSA_PSS 1
@@ -101,5 +105,14 @@
 // can be nothrow | zero_is_throw | check_slow
 #define ZIG_EXPORT(...)
 #define ZIG_NONNULL
+
+inline void bun_free(void* ptr)
+{
+#if USE(MIMALLOC)
+    mi_free(ptr);
+#else
+    free(ptr);
+#endif
+}
 
 #endif

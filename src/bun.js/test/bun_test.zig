@@ -495,7 +495,7 @@ pub const BunTest = struct {
         const task = jsc.ManagedTask.New(RunTestsTask, RunTestsTask.call).init(done_callback_test);
         const vm = globalThis.bunVM();
         var strong = weak.upgrade() orelse {
-            if (bun.Environment.ci_assert) bun.assert(false); // shouldn't be calling runNextTick after moving on to the next file
+            bun.assert(false); // shouldn't be calling runNextTick after moving on to the next file
             return; // but just in case
         };
         defer strong.deinit();

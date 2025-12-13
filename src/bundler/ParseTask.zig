@@ -1344,8 +1344,7 @@ pub fn runFromThreadPool(this: *ParseTask) void {
         }
     };
 
-    const result = bun.handleOom(bun.default_allocator.create(Result));
-
+    const result: *Result = bun.handleOom(bun.default_allocator.create(Result));
     result.* = .{
         .ctx = this.ctx,
         .task = .{},

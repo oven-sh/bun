@@ -18,8 +18,7 @@ const { chmod, copyFile, lstat, mkdir, opendir, readlink, stat, symlink, unlink,
 const { dirname, isAbsolute, join, parse, resolve, sep } = require("node:path");
 
 const PromisePrototypeThen = $Promise.prototype.$then;
-// Use JSC's promiseReject link-time constant function
-const PromiseReject = (value: unknown) => $promiseReject(Promise, value);
+const PromiseReject = Promise.$reject;
 const ArrayPrototypeFilter = Array.prototype.filter;
 const StringPrototypeSplit = String.prototype.split;
 const ArrayPrototypeEvery = Array.prototype.every;

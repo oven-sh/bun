@@ -94,8 +94,7 @@ const arrayToSafePromiseIterable = (promises, mapFn) =>
     ),
   );
 const PromiseAll = Promise.all;
-// Use JSC's promiseResolve link-time constant function: $promiseResolve(constructor, value)
-const PromiseResolve = value => $promiseResolve(Promise, value);
+const PromiseResolve = Promise.$resolve.bind(Promise);
 const SafePromiseAll = (promises, mapFn) => PromiseAll(arrayToSafePromiseIterable(promises, mapFn));
 const SafePromiseAllReturnArrayLike = (promises, mapFn) =>
   new Promise((resolve, reject) => {

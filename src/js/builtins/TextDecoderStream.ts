@@ -28,7 +28,7 @@ export function initializeTextDecoderStream() {
   const options = arguments.length >= 2 ? arguments[1] : {};
 
   const startAlgorithm = () => {
-    return $promiseResolve(Promise, undefined);
+    return Promise.$resolve();
   };
   const transformAlgorithm = chunk => {
     const decoder = $getByIdDirectPrivate(this, "textDecoder");
@@ -36,14 +36,14 @@ export function initializeTextDecoderStream() {
     try {
       buffer = decoder.decode(chunk, { stream: true });
     } catch (e) {
-      return $promiseReject(Promise, e);
+      return Promise.$reject(e);
     }
     if (buffer) {
       const transformStream = $getByIdDirectPrivate(this, "textDecoderStreamTransform");
       const controller = $getByIdDirectPrivate(transformStream, "controller");
       $transformStreamDefaultControllerEnqueue(controller, buffer);
     }
-    return $promiseResolve(Promise, undefined);
+    return Promise.$resolve();
   };
   const flushAlgorithm = () => {
     const decoder = $getByIdDirectPrivate(this, "textDecoder");
@@ -51,14 +51,14 @@ export function initializeTextDecoderStream() {
     try {
       buffer = decoder.decode(undefined, { stream: false });
     } catch (e) {
-      return $promiseReject(Promise, e);
+      return Promise.$reject(e);
     }
     if (buffer) {
       const transformStream = $getByIdDirectPrivate(this, "textDecoderStreamTransform");
       const controller = $getByIdDirectPrivate(transformStream, "controller");
       $transformStreamDefaultControllerEnqueue(controller, buffer);
     }
-    return $promiseResolve(Promise, undefined);
+    return Promise.$resolve();
   };
 
   const transform = $createTransformStream(startAlgorithm, transformAlgorithm, flushAlgorithm);

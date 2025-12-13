@@ -113,7 +113,7 @@ export function initializeTransformStream(
   };
   const cancelAlgorithm = reason => {
     $transformStreamErrorWritableAndUnblockWrite(stream, reason);
-    return $promiseResolve(Promise, undefined);
+    return Promise.$resolve();
   };
   const underlyingSource = {};
   $putByIdDirectPrivate(underlyingSource, "start", startAlgorithm);
@@ -180,12 +180,12 @@ export function setUpTransformStreamDefaultControllerFromTransformer(stream, tra
     try {
       $transformStreamDefaultControllerEnqueue(controller, chunk);
     } catch (e) {
-      return $promiseReject(Promise, e);
+      return Promise.$reject(e);
     }
-    return $promiseResolve(Promise, undefined);
+    return Promise.$resolve();
   };
   let flushAlgorithm = () => {
-    return $promiseResolve(Promise, undefined);
+    return Promise.$resolve();
   };
 
   if ("transform" in transformerDict)
@@ -275,7 +275,7 @@ export function transformStreamDefaultSinkWriteAlgorithm(stream, chunk) {
 
     const backpressureChangePromise = $getByIdDirectPrivate(stream, "backpressureChangePromise");
     $assert(backpressureChangePromise !== undefined);
-    $shieldingPromiseResolve(backpressureChangePromise.promise).$then(
+    backpressureChangePromise.promise.$then(
       () => {
         const state = $getByIdDirectPrivate(writable, "state");
         if (state === "erroring") {
@@ -284,7 +284,7 @@ export function transformStreamDefaultSinkWriteAlgorithm(stream, chunk) {
         }
 
         $assert(state === "writable");
-        $shieldingPromiseResolve($transformStreamDefaultControllerPerformTransform(controller, chunk)).$then(
+        $transformStreamDefaultControllerPerformTransform(controller, chunk).$then(
           () => {
             promiseCapability.resolve();
           },
@@ -305,7 +305,7 @@ export function transformStreamDefaultSinkWriteAlgorithm(stream, chunk) {
 
 export function transformStreamDefaultSinkAbortAlgorithm(stream, reason) {
   $transformStreamError(stream, reason);
-  return $promiseResolve(Promise, undefined);
+  return Promise.$resolve();
 }
 
 export function transformStreamDefaultSinkCloseAlgorithm(stream) {

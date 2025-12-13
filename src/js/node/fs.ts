@@ -112,7 +112,7 @@ interface StatWatcherHandle {
 }
 
 function openAsBlob(path, options) {
-  return Promise.resolve(Bun.file(path, options));
+  return Promise.$resolve(Bun.file(path, options));
 }
 
 function emitStop(self: StatWatcher) {
@@ -1082,7 +1082,7 @@ class Dir {
       return this.read().then(entry => cb(null, entry));
     }
 
-    if (this.#entries) return Promise.resolve(this.#entries.shift() ?? null);
+    if (this.#entries) return Promise.$resolve(this.#entries.shift() ?? null);
 
     return fs
       .readdir(this.#path, {

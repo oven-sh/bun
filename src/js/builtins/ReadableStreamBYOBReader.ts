@@ -35,27 +35,26 @@ export function initializeReadableStreamBYOBReader(this, stream) {
 }
 
 export function cancel(this, reason) {
-  if (!$isReadableStreamBYOBReader(this)) return $promiseReject(Promise, $ERR_INVALID_THIS("ReadableStreamBYOBReader"));
+  if (!$isReadableStreamBYOBReader(this)) return Promise.$reject($ERR_INVALID_THIS("ReadableStreamBYOBReader"));
 
   if (!$getByIdDirectPrivate(this, "ownerReadableStream"))
-    return $promiseReject(Promise, $ERR_INVALID_STATE_TypeError("The reader is not attached to a stream"));
+    return Promise.$reject($ERR_INVALID_STATE_TypeError("The reader is not attached to a stream"));
 
   return $readableStreamReaderGenericCancel(this, reason);
 }
 
 export function read(this, view: DataView) {
-  if (!$isReadableStreamBYOBReader(this)) return $promiseReject(Promise, $ERR_INVALID_THIS("ReadableStreamBYOBReader"));
+  if (!$isReadableStreamBYOBReader(this)) return Promise.$reject($ERR_INVALID_THIS("ReadableStreamBYOBReader"));
 
   if (!$getByIdDirectPrivate(this, "ownerReadableStream"))
-    return $promiseReject(Promise, $ERR_INVALID_STATE_TypeError("The reader is not attached to a stream"));
+    return Promise.$reject($ERR_INVALID_STATE_TypeError("The reader is not attached to a stream"));
 
-  if (!$isObject(view))
-    return $promiseReject(Promise, $ERR_INVALID_ARG_TYPE("view", "Buffer, TypedArray, or DataView", view));
+  if (!$isObject(view)) return Promise.$reject($ERR_INVALID_ARG_TYPE("view", "Buffer, TypedArray, or DataView", view));
 
   if (!ArrayBuffer.$isView(view))
-    return $promiseReject(Promise, $ERR_INVALID_ARG_TYPE("view", "Buffer, TypedArray, or DataView", view));
+    return Promise.$reject($ERR_INVALID_ARG_TYPE("view", "Buffer, TypedArray, or DataView", view));
 
-  if (view.byteLength === 0) return $promiseReject(Promise, $makeTypeError("Provided view cannot have a 0 byteLength"));
+  if (view.byteLength === 0) return Promise.$reject($makeTypeError("Provided view cannot have a 0 byteLength"));
 
   return $readableStreamBYOBReaderRead(this, view);
 }
@@ -74,7 +73,7 @@ export function releaseLock(this) {
 $getter;
 export function closed(this) {
   if (!$isReadableStreamBYOBReader(this))
-    return $promiseReject(Promise, $makeGetterTypeError("ReadableStreamBYOBReader", "closed"));
+    return Promise.$reject($makeGetterTypeError("ReadableStreamBYOBReader", "closed"));
 
   return $getByIdDirectPrivate(this, "closedPromiseCapability").promise;
 }

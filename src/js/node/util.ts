@@ -247,7 +247,7 @@ function aborted(signal: AbortSignal, resource: object) {
   }
 
   if (signal.aborted) {
-    return Promise.resolve();
+    return Promise.$resolve();
   }
 
   const { promise, resolve } = $newPromiseCapability(Promise);

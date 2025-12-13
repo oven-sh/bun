@@ -1800,9 +1800,14 @@ fn NewPrinter(
                 p.printStringLiteralUTF8(path.pretty, false);
             }
 
+            // Only print import options if the loader hasn't already been applied
+            // When bundling with a loader applied, the transformation has already happened
+            // so we don't need the import options anymore
             if (!import_options.isMissing()) {
-                p.printWhitespacer(ws(", "));
-                p.printExpr(import_options, .comma, .{});
+                if (!p.options.bundling or record.loader == null) {
+                    p.printWhitespacer(ws(", "));
+                    p.printExpr(import_options, .comma, .{});
+                }
             }
 
             p.print(")");
@@ -2093,6 +2098,10 @@ fn NewPrinter(
                     .resolved_specifier_string => |index| {
                         bun.debugAssert(p.options.module_type == .internal_bake_dev);
                         p.printStringLiteralUTF8(p.importRecord(index.get()).path.pretty, true);
+                    },
+                    .import_meta_glob => {
+                        // This should not reach the printer - it should be transformed in the parser
+                        p.print("(function() { throw new Error('import.meta.glob was not transformed at build time'); })");
                     },
                 },
 

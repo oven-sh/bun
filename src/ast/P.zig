@@ -518,6 +518,10 @@ pub fn NewParser_(
                     p.import_records.items[import_record_index].tag = tag;
                 }
 
+                if (state.import_loader) |loader| {
+                    p.import_records.items[import_record_index].loader = loader;
+                }
+
                 p.import_records.items[import_record_index].handles_import_errors = (state.is_await_target and p.fn_or_arrow_data_visit.try_body_count != 0) or state.is_then_catch_target;
                 p.import_records_for_current_part.append(p.allocator, import_record_index) catch unreachable;
 
@@ -6051,6 +6055,231 @@ pub fn NewParser_(
             } };
         }
 
+        pub fn handleImportMetaGlobCall(p: *P, call: *E.Call, loc: logger.Loc) Expr {
+            if (call.args.len == 0) {
+                bun.handleOom(p.log.addError(p.source, loc, "import.meta.glob() requires at least one argument"));
+                return p.newExpr(E.Object{}, loc);
+            }
+
+            // Parse patterns
+            var patterns: std.ArrayListUnmanaged([]const u8) = .{};
+            defer patterns.deinit(p.allocator);
+
+            switch (call.args.at(0).data) {
+                .e_string => |str| bun.handleOom(patterns.append(p.allocator, str.slice(p.allocator))),
+                .e_array => |arr| {
+                    for (arr.items.slice()) |item| {
+                        if (item.data == .e_string) {
+                            bun.handleOom(patterns.append(p.allocator, item.data.e_string.slice(p.allocator)));
+                        } else {
+                            bun.handleOom(p.log.addError(p.source, item.loc, "import.meta.glob() patterns must be string literals"));
+                            return p.newExpr(E.Object{}, loc);
+                        }
+                    }
+                },
+                else => {
+                    bun.handleOom(p.log.addError(p.source, call.args.at(0).loc, "import.meta.glob() patterns must be string literals or an array of string literals"));
+                    return p.newExpr(E.Object{}, loc);
+                },
+            }
+
+            // Parse options
+            var query: ?[]const u8 = null;
+            var import_name: ?[]const u8 = null;
+            var loader: ?options.Loader = null;
+            var with_attrs: ?*const E.Object = null;
+            var base_path: ?[]const u8 = null;
+            var eager: bool = false;
+
+            if (call.args.len >= 2 and call.args.at(1).data == .e_object) {
+                const obj = call.args.at(1).data.e_object;
+                if (obj.get("query")) |query_value| {
+                    if (query_value.data == .e_string) {
+                        query = query_value.data.e_string.slice(p.allocator);
+                    }
+                }
+                if (obj.get("import")) |import_value| {
+                    if (import_value.data == .e_string) {
+                        import_name = import_value.data.e_string.slice(p.allocator);
+                    }
+                }
+                if (obj.get("base")) |base_value| {
+                    if (base_value.data == .e_string) {
+                        const _base_path = base_value.data.e_string.slice(p.allocator);
+                        base_path = if (strings.hasPrefixComptime(_base_path, "./") or strings.hasPrefixComptime(_base_path, "../") or strings.hasPrefixComptime(_base_path, "/"))
+                            _base_path
+                        else
+                            bun.handleOom(std.fmt.allocPrint(p.allocator, "./{s}", .{_base_path}));
+                    }
+                }
+                if (obj.get("with")) |with_value| {
+                    if (with_value.data == .e_object) {
+                        with_attrs = with_value.data.e_object;
+                        if (with_attrs.?.get("type")) |type_value| {
+                            if (type_value.data == .e_string) {
+                                loader = options.Loader.fromString(type_value.data.e_string.slice(p.allocator));
+                            }
+                        }
+                    }
+                }
+                if (obj.get("eager")) |eager_value| {
+                    if (eager_value.data == .e_boolean) {
+                        eager = eager_value.data.e_boolean.value;
+
+                        // todo: support eager mode
+                        if (eager) {
+                            bun.handleOom(p.log.addError(p.source, eager_value.loc, "import.meta.glob() eager mode is not yet supported"));
+                            return p.newExpr(E.Object{}, loc);
+                        }
+                    }
+                }
+            }
+
+            // Find matching files
+            const source_dir = p.source.path.sourceDir();
+            const search_dir = if (base_path) |base| blk: {
+                if (strings.hasPrefixComptime(base, "/")) {
+                    break :blk base;
+                } else {
+                    var path_buf: bun.PathBuffer = undefined;
+                    const resolved = bun.path.joinAbsStringBuf(source_dir, &path_buf, &.{base}, .auto);
+                    break :blk bun.handleOom(p.allocator.dupe(u8, resolved));
+                }
+            } else source_dir;
+
+            var matched_files: std.ArrayListUnmanaged([]const u8) = .{};
+            defer matched_files.deinit(p.allocator);
+
+            var glob_arena = bun.ArenaAllocator.init(p.allocator);
+            defer glob_arena.deinit();
+
+            for (patterns.items) |pattern| {
+                var walker = glob.BunGlobWalker{};
+                defer walker.deinit(false);
+
+                switch (walker.initWithCwd(&glob_arena, pattern, search_dir, true, false, true, false, true) catch continue) {
+                    .err => continue,
+                    .result => {},
+                }
+
+                var iter = glob.BunGlobWalker.Iterator{ .walker = &walker };
+                defer iter.deinit();
+                switch (iter.init() catch continue) {
+                    .err => continue,
+                    .result => {},
+                }
+
+                while (switch (iter.next() catch continue) {
+                    .err => null,
+                    .result => |path| path,
+                }) |path| brk: {
+                    if (patterns.items.len > 0) for (patterns.items) |patt| {
+                        if (patt.len < 1 or patt[0] != '!') continue;
+                        if (glob.match(patt[1..], path).matches()) {
+                            break :brk;
+                        }
+                    };
+
+                    var path_buf: bun.PathBuffer = undefined;
+                    const slash_normalized = if (comptime bun.Environment.isWindows)
+                        strings.normalizeSlashesOnly(&path_buf, path, '/')
+                    else
+                        path;
+
+                    const duped = bun.handleOom(p.allocator.dupe(u8, slash_normalized));
+                    bun.handleOom(matched_files.append(p.allocator, duped));
+                }
+            }
+
+            std.sort.block([]const u8, matched_files.items, {}, struct {
+                fn lessThan(_: void, a: []const u8, b_path: []const u8) bool {
+                    return strings.order(a, b_path) == .lt;
+                }
+            }.lessThan);
+
+            // Create dynamic imports
+            var properties: []G.Property = bun.handleOom(p.allocator.alloc(G.Property, matched_files.items.len));
+
+            for (matched_files.items, 0..) |file_path, i| {
+                // add the base path and/or query string to the import path
+                const import_path: []const u8 = if (base_path) |base|
+                    if (query) |q|
+                        bun.handleOom(std.fmt.allocPrint(p.allocator, "{s}/{s}{s}", .{ base, file_path, q }))
+                    else
+                        bun.handleOom(std.fmt.allocPrint(p.allocator, "{s}/{s}", .{ base, file_path }))
+                else if (query) |q|
+                    bun.handleOom(std.fmt.allocPrint(p.allocator, "{s}{s}", .{ file_path, q }))
+                else
+                    file_path;
+
+                const import_record_index = p.addImportRecord(.dynamic, loc, import_path);
+                bun.handleOom(p.import_records_for_current_part.append(p.allocator, import_record_index));
+
+                if (loader) |l| p.import_records.items[import_record_index].loader = l;
+
+                const import_expr = p.newExpr(E.Import{
+                    .expr = p.newExpr(E.String{ .data = import_path }, loc),
+                    .options = if (with_attrs) |attrs| blk: {
+                        var with_props: []G.Property = bun.handleOom(p.allocator.alloc(G.Property, 1));
+                        with_props[0] = .{
+                            .key = p.newExpr(E.String{ .data = "with" }, loc),
+                            .value = p.newExpr(E.Object{ .properties = attrs.properties }, loc),
+                        };
+                        break :blk p.newExpr(E.Object{ .properties = G.Property.List.fromOwnedSlice(with_props) }, loc);
+                    } else Expr.empty,
+                    .import_record_index = import_record_index,
+                }, loc);
+
+                const return_expr = if (import_name) |name| blk: {
+                    // Create import('./file').then(m => m.name)
+                    const m_ref: Ref = bun.handleOom(p.newSymbol(.other, "m"));
+
+                    var arrow_stmts: []Stmt = bun.handleOom(p.allocator.alloc(Stmt, 1));
+                    arrow_stmts[0] = p.s(S.Return{ .value = p.newExpr(E.Dot{
+                        .target = p.newExpr(E.Identifier{ .ref = m_ref }, loc),
+                        .name = name,
+                        .name_loc = loc,
+                    }, loc) }, loc);
+
+                    var arrow_args: []G.Arg = bun.handleOom(p.allocator.alloc(G.Arg, 1));
+                    arrow_args[0] = .{
+                        .binding = p.b(B.Identifier{ .ref = m_ref }, logger.Loc.Empty),
+                    };
+
+                    const arrow_fn = p.newExpr(E.Arrow{
+                        .args = arrow_args,
+                        .body = .{ .loc = loc, .stmts = arrow_stmts },
+                        .prefer_expr = true,
+                    }, loc);
+
+                    break :blk p.newExpr(E.Call{
+                        .target = p.newExpr(E.Dot{
+                            .target = import_expr,
+                            .name = "then",
+                            .name_loc = loc,
+                        }, loc),
+                        .args = bun.handleOom(ExprNodeList.fromSlice(p.allocator, &.{arrow_fn})),
+                    }, loc);
+                } else import_expr;
+
+                var outer_stmts: []Stmt = bun.handleOom(p.allocator.alloc(Stmt, 1));
+                outer_stmts[0] = p.s(S.Return{ .value = return_expr }, loc);
+
+                properties[i] = .{
+                    .key = p.newExpr(E.String{ .data = file_path }, loc),
+                    .value = p.newExpr(E.Arrow{
+                        .args = &.{},
+                        .body = .{ .loc = loc, .stmts = outer_stmts },
+                        .prefer_expr = true,
+                    }, loc),
+                };
+            }
+
+            return p.newExpr(E.Object{
+                .properties = G.Property.List.fromOwnedSlice(properties),
+            }, loc);
+        }
+
         const ReactRefreshExportKind = enum { named, default };
 
         pub fn handleReactRefreshRegister(p: *P, stmts: *ListManaged(Stmt), original_name: []const u8, ref: Ref, export_kind: ReactRefreshExportKind) !void {
@@ -6759,6 +6988,8 @@ var nullValueExpr = Expr.Data{ .e_null = nullExprValueData };
 var falseValueExpr = Expr.Data{ .e_boolean = E.Boolean{ .value = false } };
 
 const string = []const u8;
+
+const glob = @import("../glob.zig");
 
 const Define = @import("../defines.zig").Define;
 const DefineData = @import("../defines.zig").DefineData;

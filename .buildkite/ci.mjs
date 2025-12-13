@@ -103,7 +103,10 @@ function getTargetLabel(target) {
  * @type {Platform[]}
  */
 const buildPlatforms = [
+  { os: "darwin", arch: "aarch64", release: "13" },
   { os: "darwin", arch: "aarch64", release: "14" },
+  { os: "darwin", arch: "aarch64", release: "15" },
+  { os: "darwin", arch: "aarch64", release: "26" },
   { os: "darwin", arch: "x64", release: "14" },
   { os: "linux", arch: "aarch64", distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "linux", arch: "x64", distro: "amazonlinux", release: "2023", features: ["docker"] },
@@ -609,6 +612,7 @@ function getBuildImageStep(platform, options) {
   const { os, arch, distro, release, features } = platform;
   const { publishImages } = options;
   const action = publishImages ? "publish-image" : "create-image";
+  const cloud = os == "darwin" ? "tart" : "aws";
 
   const command = [
     "node",
@@ -618,7 +622,7 @@ function getBuildImageStep(platform, options) {
     `--arch=${arch}`,
     distro && `--distro=${distro}`,
     `--release=${release}`,
-    "--cloud=aws",
+    `--cloud=${cloud}`,
     "--ci",
     "--authorized-org=oven-sh",
   ];
@@ -657,7 +661,9 @@ function getReleaseStep(buildPlatforms, options) {
     agents: {
       queue: "test-darwin",
     },
-    depends_on: buildPlatforms.filter(p => p.os !== "freebsd").map(platform => `${getTargetKey(platform)}-build-bun`),
+    depends_on: buildPlatforms
+      .filter(p => !(p.os === "freebsd" || p.os === "darwin"))
+      .map(platform => `${getTargetKey(platform)}-build-bun`),
     env: {
       CANARY: revision,
     },
@@ -1070,7 +1076,7 @@ async function getPipeline(options = {}) {
   const imagePlatforms = new Map(
     buildImages || publishImages
       ? [...buildPlatforms, ...testPlatforms]
-          .filter(({ os }) => os !== "darwin")
+          .filter(({ os, arch }) => !(os === "darwin"))
           .map(platform => [getImageKey(platform), platform])
       : [],
   );

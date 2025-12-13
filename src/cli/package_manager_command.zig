@@ -358,7 +358,7 @@ pub const PackageManagerCommand = struct {
             if (first_directory.dependencies.len > 1) more_packages[0] = true;
 
             if (strings.leftHasAnyInRight(args, &.{ "-A", "-a", "--all" })) {
-                try printNodeModulesFolderStructure(&first_directory, null, 0, &directories, lockfile, more_packages);
+                try printNodeModulesFolderStructure(&first_directory, null, 0, &directories, lockfile, more_packages, pm.options.link);
             } else {
                 var cwd_buf: bun.PathBuffer = undefined;
                 const path = bun.getcwd(&cwd_buf) catch {
@@ -386,7 +386,16 @@ pub const PackageManagerCommand = struct {
                     const package_id = lockfile.buffers.resolutions.items[dependency_id];
                     if (package_id >= lockfile.packages.len) continue;
                     const name = dependencies[dependency_id].name.slice(string_bytes);
-                    const resolution = resolutions[package_id].fmt(string_bytes, .auto);
+                    const resolution_item = resolutions[package_id];
+                    const resolution = resolution_item.fmt(string_bytes, .auto);
+
+                    if (pm.options.link) {
+                        const is_link = switch (resolution_item.tag) {
+                            .symlink, .workspace, .folder => true,
+                            else => false,
+                        };
+                        if (!is_link) continue;
+                    }
 
                     if (index < sorted_dependencies.len - 1) {
                         Output.prettyln("<d>├──<r> {s}<r><d>@{f}<r>\n", .{ name, resolution });
@@ -464,6 +473,7 @@ fn printNodeModulesFolderStructure(
     directories: *std.array_list.Managed(NodeModulesFolder),
     lockfile: *Lockfile,
     more_packages: []bool,
+    only_links: bool,
 ) !void {
     const allocator = lockfile.allocator;
     const resolutions = lockfile.packages.items(.resolution);
@@ -559,11 +569,20 @@ fn printNodeModulesFolderStructure(
                 }
 
                 more_packages[new_depth] = true;
-                try printNodeModulesFolderStructure(&next, package_id, new_depth, directories, lockfile, more_packages);
+                try printNodeModulesFolderStructure(&next, package_id, new_depth, directories, lockfile, more_packages, only_links);
             }
         }
 
         if (found_node_modules) continue;
+
+        if (only_links) {
+            const resolution_item = resolutions[package_id];
+            const is_link = switch (resolution_item.tag) {
+                .symlink, .workspace, .folder => true,
+                else => false,
+            };
+            if (!is_link) continue;
+        }
 
         var i: usize = 0;
         while (i < depth) : (i += 1) {

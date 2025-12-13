@@ -484,7 +484,19 @@ function urlFormat(urlObject: unknown) {
 
 Url.prototype.format = function format() {
   var auth: string = this.auth || "";
-  if (auth) {
+
+  // Handle WHATWG URL objects which have username/password instead of auth
+  if (!auth && (this.username || this.password)) {
+    if (this.username) {
+      auth = this.username;
+    }
+    if (this.password) {
+      auth += ":" + this.password;
+    }
+    if (auth) {
+      auth += "@";
+    }
+  } else if (auth) {
     auth = encodeURIComponent(auth);
     auth = auth.replace(/%3A/i, ":");
     auth += "@";

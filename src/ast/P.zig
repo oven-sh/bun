@@ -185,6 +185,13 @@ pub fn NewParser_(
         /// it to the symbol so the code generated `e_import_identifier`'s
         bun_app_namespace_ref: Ref = Ref.None,
 
+        /// Used to track the `feature` function from `import { feature } from "bun:bundle"`.
+        /// When visiting e_call, if the target ref matches this, we replace the call with
+        /// a boolean based on whether the feature flag is enabled.
+        bundler_feature_flag_ref: Ref = Ref.None,
+        /// Set to true when visiting an if/ternary condition. feature() calls are only valid in this context.
+        in_branch_condition: bool = false,
+
         scopes_in_order_visitor_index: usize = 0,
         has_classic_runtime_warned: bool = false,
         macro_call_count: MacroCallCountType = 0,
@@ -2653,6 +2660,34 @@ pub fn NewParser_(
                 return p.s(S.Empty{}, loc);
             }
 
+            // Handle `import { feature } from "bun:bundle"` - this is a special import
+            // that provides static feature flag checking at bundle time.
+            // We handle it here at parse time (similar to macros) rather than at visit time.
+            if (strings.eqlComptime(path.text, "bun:bundle")) {
+                // Look for the "feature" import and validate specifiers
+                for (stmt.items) |*item| {
+                    // In ClauseItem from parseImportClause:
+                    // - alias is the name from the source module ("feature")
+                    // - original_name is the local binding name
+                    // - name.ref is the ref for the local binding
+                    if (strings.eqlComptime(item.alias, "feature")) {
+                        // Check for duplicate imports of feature
+                        if (p.bundler_feature_flag_ref.isValid()) {
+                            try p.log.addError(p.source, item.alias_loc, "`feature` from \"bun:bundle\" may only be imported once");
+                            continue;
+                        }
+                        // Declare the symbol and store the ref
+                        const name = p.loadNameFromRef(item.name.ref.?);
+                        const ref = try p.declareSymbol(.other, item.name.loc, name);
+                        p.bundler_feature_flag_ref = ref;
+                    } else {
+                        try p.log.addErrorFmt(p.source, item.alias_loc, p.allocator, "\"bun:bundle\" has no export named \"{s}\"", .{item.alias});
+                    }
+                }
+                // Return empty statement - the import is completely removed
+                return p.s(S.Empty{}, loc);
+            }
+
             const macro_remap = if (comptime allow_macros)
                 p.options.macro_context.getRemap(path.text)
             else
@@ -3932,6 +3967,7 @@ pub fn NewParser_(
                 .e_undefined,
                 .e_missing,
                 .e_boolean,
+                .e_branch_boolean,
                 .e_number,
                 .e_big_int,
                 .e_string,

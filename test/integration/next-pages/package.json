@@ -10,14 +10,14 @@
     "postinstall": "cd node_modules/puppeteer && bun install.mjs"
   },
   "dependencies": {
-    "@types/node": "24.2.1",
+    "@types/node": "25.0.0",
     "@types/react": "19.1.9",
     "@types/react-dom": "19.1.7",
     "autoprefixer": "10.4.21",
     "bun-types": "^1.2.19",
     "eslint": "^9.33.0",
-    "eslint-config-next": "^15.4.6",
-    "next": "^15.4.6",
+    "eslint-config-next": "15.4.8",
+    "next": "15.4.8",
     "postcss": "8.5.6",
     "puppeteer": "24.16.0",
     "react": "^19.1.1",

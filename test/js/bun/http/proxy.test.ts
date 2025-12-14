@@ -500,29 +500,32 @@ describe("proxy object format with headers", () => {
     }
   });
 
-  test("proxy object without url throws error", async () => {
-    await expect(
-      fetch(httpServer.url, {
-        method: "GET",
-        proxy: {
-          headers: { "X-Test": "value" },
-        } as any,
-        keepalive: false,
-      }),
-    ).rejects.toThrow("fetch() proxy object requires a 'url' property");
+  test("proxy object without url is ignored (regression #25413)", async () => {
+    // When proxy object doesn't have a 'url' property, it should be ignored
+    // This ensures compatibility with libraries that pass URL objects as proxy
+    const response = await fetch(httpServer.url, {
+      method: "GET",
+      proxy: {
+        headers: { "X-Test": "value" },
+      } as any,
+      keepalive: false,
+    });
+    expect(response.ok).toBe(true);
+    expect(response.status).toBe(200);
   });
 
-  test("proxy object with null url throws error", async () => {
-    await expect(
-      fetch(httpServer.url, {
-        method: "GET",
-        proxy: {
-          url: null,
-          headers: { "X-Test": "value" },
-        } as any,
-        keepalive: false,
-      }),
-    ).rejects.toThrow("fetch() proxy object requires a 'url' property");
+  test("proxy object with null url is ignored (regression #25413)", async () => {
+    // When proxy.url is null, the proxy object should be ignored
+    const response = await fetch(httpServer.url, {
+      method: "GET",
+      proxy: {
+        url: null,
+        headers: { "X-Test": "value" },
+      } as any,
+      keepalive: false,
+    });
+    expect(response.ok).toBe(true);
+    expect(response.status).toBe(200);
   });
 
   test("proxy object with empty string url throws error", async () => {
@@ -698,5 +701,23 @@ describe("proxy object format with headers", () => {
       proxyServerWithCapture.close();
       await once(proxyServerWithCapture, "close");
     }
+  });
+
+  test("proxy as URL object should be ignored (no url property)", async () => {
+    // This tests the regression from #25413
+    // When a URL object is passed as proxy, it should be ignored (no error)
+    // because URL objects don't have a "url" property - they have "href"
+    const proxyUrl = new URL(httpProxyServer.url);
+
+    // Passing a URL object as proxy should NOT throw an error
+    // It should just be ignored since there's no "url" string property
+    const response = await fetch(httpServer.url, {
+      method: "GET",
+      proxy: proxyUrl as any,
+      keepalive: false,
+    });
+    // The request should succeed (without proxy, since URL object is ignored)
+    expect(response.ok).toBe(true);
+    expect(response.status).toBe(200);
   });
 });

@@ -136,10 +136,8 @@
         }) {
           inherit packages;
 
-          # --- ADD THIS LINE HERE ---
           # This disables _FORTIFY_SOURCE so debug builds (-O0) can compile
           hardeningDisable = [ "fortify" ]; 
-          # --------------------------
 
           shellHook = ''
             # Set up build environment
@@ -177,7 +175,7 @@
 
           # Additional environment variables
           CMAKE_BUILD_TYPE = "Debug";
-          # ENABLE_CCACHE = "1";
+          ENABLE_CCACHE = "1";
         };
       }
     );

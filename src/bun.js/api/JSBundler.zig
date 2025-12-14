@@ -38,6 +38,7 @@ pub const JSBundler = struct {
         footer: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         css_chunking: bool = false,
         drop: bun.StringSet = bun.StringSet.init(bun.default_allocator),
+        features: bun.StringSet = bun.StringSet.init(bun.default_allocator),
         has_any_on_before_parse: bool = false,
         throw_on_error: bool = true,
         env_behavior: api.DotEnvBehavior = .disable,
@@ -59,6 +60,8 @@ pub const JSBundler = struct {
             outfile: OwnedString = OwnedString.initEmpty(bun.default_allocator),
             autoload_dotenv: bool = true,
             autoload_bunfig: bool = true,
+            autoload_tsconfig: bool = false,
+            autoload_package_json: bool = false,
 
             pub fn fromJS(globalThis: *jsc.JSGlobalObject, config: jsc.JSValue, allocator: std.mem.Allocator, compile_target: ?CompileTarget) JSError!?CompileOptions {
                 var this = CompileOptions{
@@ -185,6 +188,14 @@ pub const JSBundler = struct {
 
                 if (try object.getBooleanLoose(globalThis, "autoloadBunfig")) |autoload_bunfig| {
                     this.autoload_bunfig = autoload_bunfig;
+                }
+
+                if (try object.getBooleanLoose(globalThis, "autoloadTsconfig")) |autoload_tsconfig| {
+                    this.autoload_tsconfig = autoload_tsconfig;
+                }
+
+                if (try object.getBooleanLoose(globalThis, "autoloadPackageJson")) |autoload_package_json| {
+                    this.autoload_package_json = autoload_package_json;
                 }
 
                 return this;
@@ -561,6 +572,15 @@ pub const JSBundler = struct {
                 }
             }
 
+            if (try config.getOwnArray(globalThis, "features")) |features| {
+                var iter = try features.arrayIterator(globalThis);
+                while (try iter.next()) |entry| {
+                    var slice = try entry.toSliceOrNull(globalThis);
+                    defer slice.deinit();
+                    try this.features.insert(slice.slice());
+                }
+            }
+
             // if (try config.getOptional(globalThis, "dir", ZigString.Slice)) |slice| {
             //     defer slice.deinit();
             //     this.appendSliceExact(slice.slice()) catch unreachable;
@@ -804,6 +824,7 @@ pub const JSBundler = struct {
             self.public_path.deinit();
             self.conditions.deinit();
             self.drop.deinit();
+            self.features.deinit();
             self.banner.deinit();
             if (self.compile) |*compile| {
                 compile.deinit();

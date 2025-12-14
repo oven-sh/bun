@@ -119,7 +119,7 @@ pub const StandaloneModuleGraph = struct {
     };
 
     const Macho = struct {
-        pub extern "C" fn Bun__getStandaloneModuleGraphMachoLength() ?*align(1) u32;
+        pub extern "C" fn Bun__getStandaloneModuleGraphMachoLength() ?*align(1) u64;
 
         pub fn getData() ?[]const u8 {
             if (Bun__getStandaloneModuleGraphMachoLength()) |length| {
@@ -127,8 +127,10 @@ pub const StandaloneModuleGraph = struct {
                     return null;
                 }
 
+                // BlobHeader has 8 bytes size (u64), so data starts at offset 8.
+                const data_offset = @sizeOf(u64);
                 const slice_ptr: [*]const u8 = @ptrCast(length);
-                return slice_ptr[4..][0..length.*];
+                return slice_ptr[data_offset..][0..length.*];
             }
 
             return null;
@@ -136,7 +138,7 @@ pub const StandaloneModuleGraph = struct {
     };
 
     const PE = struct {
-        pub extern "C" fn Bun__getStandaloneModuleGraphPELength() u32;
+        pub extern "C" fn Bun__getStandaloneModuleGraphPELength() u64;
         pub extern "C" fn Bun__getStandaloneModuleGraphPEData() ?[*]u8;
 
         pub fn getData() ?[]const u8 {
@@ -296,7 +298,9 @@ pub const StandaloneModuleGraph = struct {
     pub const Flags = packed struct(u32) {
         disable_default_env_files: bool = false,
         disable_autoload_bunfig: bool = false,
-        _padding: u30 = 0,
+        disable_autoload_tsconfig: bool = false,
+        disable_autoload_package_json: bool = false,
+        _padding: u28 = 0,
     };
 
     const trailer = "\n---- Bun! ----\n";

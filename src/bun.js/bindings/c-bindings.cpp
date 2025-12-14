@@ -910,14 +910,14 @@ extern "C" void Bun__signpost_emit(os_log_t log, os_signpost_type_t type, os_sig
 
 extern "C" {
 struct BlobHeader {
-    uint32_t size;
+    uint64_t size; // 64-bit to ensure data[] starts at 8-byte aligned offset (required for bytecode cache)
     uint8_t data[];
 } __attribute__((aligned(BLOB_HEADER_ALIGNMENT)));
 }
 
 extern "C" BlobHeader __attribute__((section("__BUN,__bun"))) BUN_COMPILED = { 0, 0 };
 
-extern "C" uint32_t* Bun__getStandaloneModuleGraphMachoLength()
+extern "C" uint64_t* Bun__getStandaloneModuleGraphMachoLength()
 {
     return &BUN_COMPILED.size;
 }
@@ -927,7 +927,7 @@ extern "C" uint32_t* Bun__getStandaloneModuleGraphMachoLength()
 #include <windows.h>
 #include <winnt.h>
 
-static uint32_t* pe_section_size = nullptr;
+static uint64_t* pe_section_size = nullptr;
 static uint8_t* pe_section_data = nullptr;
 
 // Helper function to find and map the .bun section
@@ -949,9 +949,10 @@ static bool initializePESection()
     for (int i = 0; i < ntHeaders->FileHeader.NumberOfSections; i++) {
         if (strncmp((char*)sectionHeader->Name, ".bun", 4) == 0) {
             // Found the .bun section
+            // Section format: 8 bytes size (uint64_t) + data
             BYTE* sectionData = (BYTE*)hModule + sectionHeader->VirtualAddress;
-            pe_section_size = (uint32_t*)sectionData;
-            pe_section_data = sectionData + sizeof(uint32_t);
+            pe_section_size = (uint64_t*)sectionData;
+            pe_section_data = sectionData + sizeof(uint64_t); // Skip size (8)
             return true;
         }
         sectionHeader++;
@@ -960,7 +961,7 @@ static bool initializePESection()
     return false;
 }
 
-extern "C" uint32_t Bun__getStandaloneModuleGraphPELength()
+extern "C" uint64_t Bun__getStandaloneModuleGraphPELength()
 {
     if (!initializePESection()) return 0;
     return pe_section_size ? *pe_section_size : 0;

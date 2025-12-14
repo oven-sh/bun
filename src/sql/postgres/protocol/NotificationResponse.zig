@@ -15,8 +15,8 @@ pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReade
 
     this.* = .{
         .pid = try reader.int4(),
-        .channel = (try reader.readZ()).toOwned(),
-        .payload = (try reader.readZ()).toOwned(),
+        .channel = try (try reader.readZ()).toOwned(),
+        .payload = try (try reader.readZ()).toOwned(),
     };
 }
 

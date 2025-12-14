@@ -311,6 +311,7 @@ pub fn onData(
             'H' => try connection.on(.CopyOutResponse, Context, reader),
             'c' => try connection.on(.CopyDone, Context, reader),
             'W' => try connection.on(.CopyBothResponse, Context, reader),
+            'A' => try connection.on(.NotificationResponse, Context, reader),
 
             else => {
                 debug("Unknown message: {c}", .{c});

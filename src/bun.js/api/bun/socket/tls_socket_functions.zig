@@ -534,6 +534,11 @@ pub fn disableRenegotiation(this: *This, _: *jsc.JSGlobalObject, _: *jsc.CallFra
     return .js_undefined;
 }
 
+pub fn isSessionReused(this: *This, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
+    const ssl_ptr = this.socket.ssl() orelse return .false;
+    return JSValue.jsBoolean(BoringSSL.SSL_session_reused(ssl_ptr) == 1);
+}
+
 pub fn setVerifyMode(this: *This, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     if (this.socket.isDetached()) {
         return .js_undefined;

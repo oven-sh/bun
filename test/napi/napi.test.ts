@@ -763,6 +763,18 @@ describe("cleanup hooks", () => {
       // Bun has special handling for isEmpty() that Node doesn't have
       expect(output).toContain("napi_typeof");
     });
+
+    it("should return napi_object for boxed primitives (String, Number, Boolean)", async () => {
+      // Regression test for https://github.com/oven-sh/bun/issues/25351
+      // napi_typeof was incorrectly returning napi_string for String objects (new String("hello"))
+      // when it should return napi_object (matching JavaScript's typeof behavior)
+      const output = await checkSameOutput("test_napi_typeof_boxed_primitives", []);
+      expect(output).toContain("PASS: primitive string returns napi_string");
+      expect(output).toContain("PASS: String object returns napi_object");
+      expect(output).toContain("PASS: Number object returns napi_object");
+      expect(output).toContain("PASS: Boolean object returns napi_object");
+      expect(output).toContain("All boxed primitive tests passed!");
+    });
   });
 
   describe("napi_object_freeze and napi_object_seal", () => {

@@ -140,14 +140,15 @@ describe("s3 - Requester Pays", () => {
 
   it("should include x-amz-request-payer in read operations", async () => {
     let reqHeaders: Headers | undefined = undefined;
+    const body = "Test content from requester pays bucket";
     using server = Bun.serve({
       port: 0,
       async fetch(req) {
         reqHeaders = req.headers;
-        return new Response("Test content from requester pays bucket", {
+        return new Response(body, {
           headers: {
             "Content-Type": "text/plain",
-            "Content-Length": "40",
+            "Content-Length": String(body.length),
           },
           status: 200,
         });
@@ -222,5 +223,29 @@ describe("s3 - Requester Pays", () => {
     expect(reqMethod).toBe("DELETE");
     expect(reqHeaders!.get("authorization")).toInclude("x-amz-request-payer");
     expect(reqHeaders!.get("x-amz-request-payer")).toBe("requester");
+  });
+
+  it("should include x-amz-request-payer in presigned URLs", async () => {
+    const file = S3Client.file("test_file", {
+      ...s3Options,
+      requestPayer: true,
+    });
+
+    const presignedUrl = file.presign({ expiresIn: 3600 });
+    const url = new URL(presignedUrl);
+
+    expect(url.searchParams.get("x-amz-request-payer")).toBe("requester");
+  });
+
+  it("should NOT include x-amz-request-payer in presigned URLs when requestPayer is false", async () => {
+    const file = S3Client.file("test_file", {
+      ...s3Options,
+      requestPayer: false,
+    });
+
+    const presignedUrl = file.presign({ expiresIn: 3600 });
+    const url = new URL(presignedUrl);
+
+    expect(url.searchParams.get("x-amz-request-payer")).toBeNull();
   });
 });

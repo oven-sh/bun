@@ -472,13 +472,14 @@ pub fn getPresignUrlFrom(this: *Blob, globalThis: *jsc.JSGlobalObject, extra_opt
     var method: bun.http.Method = .GET;
     var expires: usize = 86400; // 1 day default
 
+    const s3 = &this.store.?.data.s3;
     var credentialsWithOptions: S3.S3CredentialsWithOptions = .{
-        .credentials = this.store.?.data.s3.getCredentials().*,
+        .credentials = s3.getCredentials().*,
+        .request_payer = s3.request_payer,
     };
     defer {
         credentialsWithOptions.deinit();
     }
-    const s3 = &this.store.?.data.s3;
 
     if (extra_options) |options| {
         if (options.isObject()) {
@@ -501,6 +502,7 @@ pub fn getPresignUrlFrom(this: *Blob, globalThis: *jsc.JSGlobalObject, extra_opt
         .method = method,
         .acl = credentialsWithOptions.acl,
         .storage_class = credentialsWithOptions.storage_class,
+        .request_payer = credentialsWithOptions.request_payer,
     }, false, .{ .expires = expires }) catch |sign_err| {
         return S3.throwSignError(sign_err, globalThis);
     };

@@ -1,9 +1,13 @@
 import type { Server, ServerWebSocket, Socket } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, rejectUnauthorizedScope, tempDirWithFiles, tls } from "harness";
+import { bunEnv, bunExe, bunRun, rejectUnauthorizedScope, tempDirWithFiles, tls } from "harness";
 import path from "path";
 
 describe.concurrent("Server", () => {
+  test("should not use 100% CPU when websocket is idle", async () => {
+    const { stderr } = bunRun(path.join(import.meta.dir, "bun-websocket-cpu-fixture.js"));
+    expect(stderr).toBe("");
+  });
   test("normlizes incoming request URLs", async () => {
     using server = Bun.serve({
       fetch(request) {

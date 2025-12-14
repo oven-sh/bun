@@ -725,7 +725,7 @@ export abstract class BaseDebugAdapter<T extends Inspector = Inspector>
         }
       }
 
-      if (placeholderExists) {
+      if (placeholderExists || !source) {
         return requests.map(request =>
           this.#addFutureBreakpoint({
             breakpointId,

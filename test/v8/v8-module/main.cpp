@@ -439,15 +439,21 @@ static Local<Object> setup_object_with_string_field(Isolate *isolate,
 
 static void examine_object_fields(Isolate *isolate, Local<Object> o,
                                   int expected_field0, int expected_field1) {
-  char buf[16];
+  char buf[32] = {0};
   HandleScope hs(isolate);
-  o->GetInternalField(0).As<String>()->WriteUtf8(isolate, buf);
-  assert(atoi(buf) == expected_field0);
+  o->GetInternalField(0).As<String>()->WriteUtf8(isolate, buf, sizeof(buf));
+  if (atoi(buf) != expected_field0) {
+    printf("expected_field0 = %d, got %s\n", expected_field0, buf);
+    assert(false);
+  }
 
   Local<Value> field1 = o->GetInternalField(1).As<Value>();
   if (field1->IsString()) {
-    field1.As<String>()->WriteUtf8(isolate, buf);
-    assert(atoi(buf) == expected_field1);
+    field1.As<String>()->WriteUtf8(isolate, buf, sizeof(buf));
+    if (atoi(buf) != expected_field1) {
+      printf("expected_field1 = %d, got %s\n", expected_field1, buf);
+      assert(false);
+    }
   } else {
     assert(field1->IsUndefined());
   }
@@ -503,9 +509,12 @@ void test_handle_scope_gc(const FunctionCallbackInfo<Value> &info) {
 
     // try to use all mini strings
     for (size_t j = 0; j < num_small_allocs; j++) {
-      char buf[16];
-      mini_strings[j]->WriteUtf8(isolate, buf);
-      assert(atoi(buf) == (int)j);
+      char buf[32] = {0};
+      mini_strings[j]->WriteUtf8(isolate, buf, sizeof(buf));
+      if (atoi(buf) != (int)j) {
+        printf("mini_strings[%zu] = %d\n", j, atoi(buf));
+        assert(false);
+      }
     }
 
     for (size_t j = 0; j < num_small_allocs; j++) {
@@ -533,7 +542,10 @@ void test_handle_scope_gc(const FunctionCallbackInfo<Value> &info) {
   for (size_t i = 0; i < num_strings; i++) {
     huge_strings[i]->WriteUtf8(isolate, string_data);
     for (size_t j = 0; j < string_size - 1; j++) {
-      assert(string_data[j] == (char)(i + 1));
+      if (string_data[j] != (char)(i + 1)) {
+        printf("string_data[%zu] = %c\n", j, string_data[j]);
+        assert(false);
+      }
     }
   }
 
@@ -573,7 +585,7 @@ void test_v8_escapable_handle_scope(const FunctionCallbackInfo<Value> &info) {
   LOG_VALUE_KIND(t);
 
   char buf[16];
-  s->WriteUtf8(isolate, buf);
+  s->WriteUtf8(isolate, buf, sizeof(buf));
   LOG_EXPR(buf);
   LOG_EXPR(n->Value());
 }

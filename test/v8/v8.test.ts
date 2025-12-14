@@ -103,24 +103,50 @@ async function build(
   console.log(err);
 }
 
-describe.todoIf(isBroken && isMusl)("node:v8", () => {
-  beforeAll(async () => {
-    // set up clean directories for our 4 builds
-    directories.bunRelease = tmpdirSync();
-    directories.bunDebug = tmpdirSync();
-    directories.node = tmpdirSync();
-    directories.badModules = tmpdirSync();
+describe.concurrent.todoIf(isBroken && isMusl)("node:v8", () => {
+  beforeAll(
+    async () => {
+      // set up clean directories for our 4 builds
+      directories.bunRelease = tmpdirSync();
+      directories.bunDebug = tmpdirSync();
+      directories.node = tmpdirSync();
+      directories.badModules = tmpdirSync();
 
-    await install(srcDir, directories.bunRelease, Runtime.bun);
-    await install(srcDir, directories.bunDebug, Runtime.bun);
-    await install(srcDir, directories.node, Runtime.node);
-    await install(join(__dirname, "bad-modules"), directories.badModules, Runtime.node);
-
-    await build(srcDir, directories.bunRelease, Runtime.bun, BuildMode.release);
-    await build(srcDir, directories.bunDebug, Runtime.bun, BuildMode.debug);
-    await build(srcDir, directories.node, Runtime.node, BuildMode.release);
-    await build(join(__dirname, "bad-modules"), directories.badModules, Runtime.node, BuildMode.release);
-  });
+      if (isWindows) {
+        let queue = [
+          () => install(srcDir, directories.bunRelease, Runtime.bun),
+          () => build(srcDir, directories.bunRelease, Runtime.bun, BuildMode.release),
+          () => install(srcDir, directories.bunDebug, Runtime.bun),
+          () => build(srcDir, directories.bunDebug, Runtime.bun, BuildMode.debug),
+          () => install(srcDir, directories.node, Runtime.node),
+          () => build(srcDir, directories.node, Runtime.node, BuildMode.release),
+          () => install(join(__dirname, "bad-modules"), directories.badModules, Runtime.node),
+          () => build(join(__dirname, "bad-modules"), directories.badModules, Runtime.node, BuildMode.release),
+        ];
+        for (const task of queue) {
+          await task();
+        }
+      } else {
+        await Promise.all([
+          install(srcDir, directories.bunRelease, Runtime.bun).then(() =>
+            build(srcDir, directories.bunRelease, Runtime.bun, BuildMode.release),
+          ),
+          install(srcDir, directories.bunDebug, Runtime.bun).then(() =>
+            build(srcDir, directories.bunDebug, Runtime.bun, BuildMode.debug),
+          ),
+          install(srcDir, directories.node, Runtime.node).then(() =>
+            build(srcDir, directories.node, Runtime.node, BuildMode.release),
+          ),
+          install(join(__dirname, "bad-modules"), directories.badModules, Runtime.node).then(() =>
+            build(join(__dirname, "bad-modules"), directories.badModules, Runtime.node, BuildMode.release),
+          ),
+        ]);
+      }
+    },
+    {
+      timeout: 1000000,
+    },
+  );
 
   describe("module lifecycle", () => {
     it("can call a basic native function", async () => {
@@ -261,7 +287,7 @@ describe.todoIf(isBroken && isMusl)("node:v8", () => {
     });
     it("keeps GC objects alive", async () => {
       await checkSameOutput("test_handle_scope_gc", []);
-    }, 10000);
+    }, 120000); // 2 minutes for ASAN/debug builds
   });
 
   describe("EscapableHandleScope", () => {

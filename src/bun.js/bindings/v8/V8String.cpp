@@ -162,18 +162,15 @@ int String::WriteUtf8(Isolate* isolate, char* buffer, int length, int* nchars_re
     auto jsString = localToObjectPointer<JSString>();
     WTF::String string = jsString->getString(isolate->globalObject());
 
-    size_t unsigned_length = length < 0 ? SIZE_MAX : length;
+    size_t unsigned_length = length < 0 ? SIZE_MAX : static_cast<size_t>(length);
 
     uint64_t result = string.is8Bit() ? TextEncoder__encodeInto8(string.span8().data(), string.span8().size(), buffer, unsigned_length)
                                       : TextEncoder__encodeInto16(string.span16().data(), string.span16().size(), buffer, unsigned_length);
     uint32_t read = static_cast<uint32_t>(result);
     uint32_t written = static_cast<uint32_t>(result >> 32);
 
-    if (written < length && read == string.length()) {
-        buffer[written] = 0;
-        written++;
-    }
-    if (read < string.length() && U16_IS_SURROGATE(string[read]) && written + 3 <= length) {
+    // Handle unpaired surrogate before adding null terminator
+    if (read < string.length() && U16_IS_SURROGATE(string[read]) && written + 3 <= unsigned_length) {
         // encode unpaired surrogate
         char16_t surrogate = string[read];
         buffer[written + 0] = 0xe0 | (surrogate >> 12);
@@ -181,6 +178,11 @@ int String::WriteUtf8(Isolate* isolate, char* buffer, int length, int* nchars_re
         buffer[written + 2] = 0x80 | (surrogate & 0x3f);
         written += 3;
         read += 1;
+    }
+
+    if (written < unsigned_length && read == string.length()) {
+        buffer[written] = 0;
+        written++;
     }
     if (nchars_ref) {
         *nchars_ref = read;

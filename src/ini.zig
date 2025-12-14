@@ -217,7 +217,34 @@ pub const Parser = struct {
         var val = std.mem.trim(u8, val_, " \n\r\t");
 
         if (isQuoted(val)) out: {
-            // remove single quotes before calling JSON.parse
+            // For values, check if this is a properly quoted string (no interior unescaped quotes)
+            // If so, JSON parse to handle escape sequences, then do env var expansion
+            if (comptime usage == .value) {
+                if (isProperlyQuoted(val)) {
+                    const src = bun.logger.Source.initPathString(this.source.path.text, val);
+                    var log = bun.logger.Log.init(arena_allocator);
+                    defer log.deinit();
+                    // JSON parse to handle escape sequences (e.g., \n, \r, \")
+                    const json_val: Expr = bun.json.parseUTF8Impl(&src, &log, arena_allocator, true) catch {
+                        // If JSON parsing fails, strip quotes and return as-is
+                        const inner = if (val.len > 1) val[1 .. val.len - 1] else "";
+                        const expanded = try this.expandEnvVars(arena_allocator, inner);
+                        return Expr.init(E.String, E.String.init(expanded), Loc{ .start = offset + 1 });
+                    };
+                    if (json_val.asString(arena_allocator)) |str| {
+                        // Do env var expansion on the JSON-parsed string
+                        const expanded = try this.expandEnvVars(arena_allocator, str);
+                        return Expr.init(E.String, E.String.init(expanded), Loc{ .start = offset + 1 });
+                    }
+                    // JSON parsed to non-string (e.g., number, boolean), return as-is
+                    return json_val;
+                }
+                // Not properly quoted (has interior unescaped quotes like `"{ o: "p"...}"`)
+                // Skip to after the if/else block to return val as-is with quotes preserved
+                break :out;
+            }
+
+            // For section/key usage: remove single quotes before calling JSON.parse
             if (val.len > 0 and val[0] == '\'') {
                 val = if (val.len > 1) val[1 .. val.len - 1] else val[1..];
                 offset += 1;
@@ -231,12 +258,9 @@ pub const Parser = struct {
             };
 
             if (json_val.asString(arena_allocator)) |str| {
-                if (comptime usage == .value) return Expr.init(E.String, E.String.init(str), Loc{ .start = @intCast(offset) });
                 if (comptime usage == .section) return strToRope(ropealloc, str);
                 return str;
             }
-
-            if (comptime usage == .value) return json_val;
 
             // unfortunately, we need to match npm/ini behavior here,
             // which requires us to turn these into a string,
@@ -388,6 +412,51 @@ pub const Parser = struct {
         return strToRope(ropealloc, val[0..]);
     }
 
+    /// Expands ${VAR} environment variable substitutions in a string.
+    /// Used for quoted values after JSON parsing has already handled escape sequences.
+    ///
+    /// Behavior differences from unquoted path (parseEnvSubstitution):
+    /// - Backslash escaping is already handled by JSON parsing, so we don't check for \$ here
+    /// - Missing env vars expand to empty string (matching npm's envReplace behavior)
+    /// - This is called AFTER JSON.parse, so "\${VAR}" in the original becomes "${VAR}" here
+    ///   and will be expanded (the backslash was consumed by JSON parsing)
+    fn expandEnvVars(this: *Parser, allocator: Allocator, val: []const u8) OOM![]const u8 {
+        // Quick check if there are any env vars to expand
+        if (std.mem.indexOf(u8, val, "${") == null) {
+            return val;
+        }
+
+        var result = try std.array_list.Managed(u8).initCapacity(allocator, val.len);
+        var i: usize = 0;
+        while (i < val.len) {
+            if (val[i] == '$' and i + 2 < val.len and val[i + 1] == '{') {
+                // Find the closing brace
+                var j = i + 2;
+                var depth: usize = 1;
+                while (j < val.len and depth > 0) {
+                    if (val[j] == '{') {
+                        depth += 1;
+                    } else if (val[j] == '}') {
+                        depth -= 1;
+                    }
+                    if (depth > 0) j += 1;
+                }
+                if (depth == 0) {
+                    const env_var = val[i + 2 .. j];
+                    if (this.env.get(env_var)) |expanded| {
+                        try result.appendSlice(expanded);
+                    }
+                    // If env var not found, expand to empty string (matching npm behavior)
+                    i = j + 1;
+                    continue;
+                }
+            }
+            try result.append(val[i]);
+            i += 1;
+        }
+        return result.items;
+    }
+
     /// Returns index to skip or null if not an env substitution
     /// Invariants:
     /// - `i` must be an index into `val` that points to a '$' char
@@ -489,6 +558,30 @@ pub const Parser = struct {
     fn isQuoted(val: []const u8) bool {
         return (bun.strings.startsWithChar(val, '"') and bun.strings.endsWithChar(val, '"')) or
             (bun.strings.startsWithChar(val, '\'') and bun.strings.endsWithChar(val, '\''));
+    }
+
+    /// Check if a string is properly quoted (quotes at start/end with no unescaped quotes in between).
+    /// This matches npm/ini behavior where `"hello"` is properly quoted but `"hello "world""` is not.
+    fn isProperlyQuoted(val: []const u8) bool {
+        if (val.len < 2) return false;
+        const quote_char = val[0];
+        if (quote_char != '"' and quote_char != '\'') return false;
+        if (val[val.len - 1] != quote_char) return false;
+
+        // Check for unescaped quotes in the interior
+        var i: usize = 1;
+        while (i < val.len - 1) : (i += 1) {
+            if (val[i] == '\\' and i + 1 < val.len - 1) {
+                // Skip escaped character
+                i += 1;
+                continue;
+            }
+            if (val[i] == quote_char) {
+                // Found an unescaped quote in the interior
+                return false;
+            }
+        }
+        return true;
     }
 };
 

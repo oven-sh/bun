@@ -109,6 +109,54 @@ hello = greeting: \${LOL
       expected: { hello: "greeting: ${LOL" },
     });
 
+    envVarTest({
+      name: "double quoted env var",
+      ini: /* ini */ `
+hello = "\${LOL}"
+      `,
+      env: { LOL: "hi" },
+      expected: { hello: "hi" },
+    });
+
+    envVarTest({
+      name: "single quoted env var",
+      ini: /* ini */ `
+hello = '\${LOL}'
+      `,
+      env: { LOL: "hi" },
+      expected: { hello: "hi" },
+    });
+
+    envVarTest({
+      name: "double quoted env var with prefix",
+      ini: /* ini */ `
+hello = "Bearer \${TOKEN}"
+      `,
+      env: { TOKEN: "secret123" },
+      expected: { hello: "Bearer secret123" },
+    });
+
+    envVarTest({
+      name: "double quoted env var not found",
+      ini: /* ini */ `
+hello = "\${NOTFOUND}"
+      `,
+      env: {},
+      expected: { hello: "" },
+    });
+
+    // Note: In JSON strings, \$ is just $ (backslash doesn't escape $)
+    // So "\\${LOL}" in .npmrc becomes "\${LOL}" after JSON parsing, which expands to "\hi"
+    // This matches npm behavior where escaping env vars in quoted strings requires \\$
+    envVarTest({
+      name: "double quoted with backslash before env var",
+      ini: /* ini */ `
+hello = "\\\\$\{LOL}"
+      `,
+      env: { LOL: "hi" },
+      expected: { hello: "\\hi" },
+    });
+
     function envVarTest(args: { name: string; ini: string; env: Record<string, string>; expected: any }) {
       const { name, ini, env, expected } = args;
       test(name, async () => {

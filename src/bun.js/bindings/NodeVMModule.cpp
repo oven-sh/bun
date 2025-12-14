@@ -127,8 +127,7 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
     }
 
     if (vm.hasPendingTerminationException()) {
-        vm.setExecutionForbidden();
-        vm.drainMicrotasks();
+        vm.drainMicrotasksForGlobalObject(nodeVmGlobalObject);
         scope.clearException();
         vm.clearHasTerminationRequest();
         if (getSigintReceived()) {

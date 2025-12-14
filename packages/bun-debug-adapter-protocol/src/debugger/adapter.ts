@@ -711,9 +711,9 @@ export abstract class BaseDebugAdapter<T extends Inspector = Inspector>
 
       const { breakpointId, locations } = result;
       if (locations.length) {
-        // If the locations-array is non-empty, it means the source was loaded
-        // while the placeholder breakpoint was being set.
-        // In that case we can discard this line-0 breakpoint and continue like normal.
+        // The source was loaded while the placeholder breakpoint was being set (race condition).
+        // In that case we need to discard the placeholder breakpoint and continue processing
+        // the breakpoints, or else they will stay unverified.
         source = this.#getSourceIfPresent(url);
         if (source) { // (should always be true here)
           try {

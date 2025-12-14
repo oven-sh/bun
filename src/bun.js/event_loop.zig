@@ -526,6 +526,11 @@ pub fn waitForPromise(this: *EventLoop, promise: jsc.AnyPromise) void {
     switch (promise.status(jsc_vm)) {
         .pending => {
             while (promise.status(jsc_vm) == .pending) {
+                // If execution is forbidden (e.g. due to a timeout in vm.SourceTextModule.evaluate),
+                // the Promise callbacks can never run, so we must exit to avoid an infinite loop.
+                if (jsc_vm.executionForbidden()) {
+                    break;
+                }
                 this.tick();
 
                 if (promise.status(jsc_vm) == .pending) {

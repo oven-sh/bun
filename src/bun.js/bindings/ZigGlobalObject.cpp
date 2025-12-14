@@ -3237,35 +3237,44 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* j
             return promise->rejectWithCaughtException(globalObject, scope);
         }
 
-        if (queryString.len == 0) {
+        // Extract type attribute from import options BEFORE creating the cache key.
+        // This ensures that imports with different type attributes are cached separately.
+        // e.g., import("./foo.html") and import("./foo.html", { with: { type: "file" } })
+        // should be cached as different modules.
+        String typeAttributeForKey;
+        if (parameters && parameters.isObject()) {
+            auto* object = parameters.toObject(globalObject);
+            auto withObject = object->getIfPropertyExists(globalObject, vm.propertyNames->withKeyword);
+            if (!scope.exception() && withObject && withObject.isObject()) {
+                auto* with = jsCast<JSObject*>(withObject);
+                auto type = with->getIfPropertyExists(globalObject, vm.propertyNames->type);
+                if (!scope.exception() && type && type.isString()) {
+                    typeAttributeForKey = type.toWTFString(globalObject);
+                    parameters = JSC::JSScriptFetchParameters::create(vm, ScriptFetchParameters::create(typeAttributeForKey));
+                }
+            }
+            if (scope.exception()) [[unlikely]] {
+                moduleNameZ.deref();
+                sourceOriginZ.deref();
+                return JSC::JSInternalPromise::rejectedPromiseWithCaughtException(globalObject, scope);
+            }
+        }
+
+        // Build the cache key, including the type attribute if present.
+        // The format is: "resolved_path" or "resolved_path?query" or "resolved_path#type=attr"
+        // or "resolved_path?query#type=attr"
+        if (queryString.len == 0 && typeAttributeForKey.isEmpty()) {
             resolvedIdentifier = JSC::Identifier::fromString(vm, resolved.result.value.toWTFString());
-        } else {
+        } else if (typeAttributeForKey.isEmpty()) {
             resolvedIdentifier = JSC::Identifier::fromString(vm, makeString(resolved.result.value.toWTFString(BunString::ZeroCopy), Zig::toString(queryString)));
+        } else if (queryString.len == 0) {
+            resolvedIdentifier = JSC::Identifier::fromString(vm, makeString(resolved.result.value.toWTFString(BunString::ZeroCopy), "#type="_s, typeAttributeForKey));
+        } else {
+            resolvedIdentifier = JSC::Identifier::fromString(vm, makeString(resolved.result.value.toWTFString(BunString::ZeroCopy), Zig::toString(queryString), "#type="_s, typeAttributeForKey));
         }
 
         moduleNameZ.deref();
         sourceOriginZ.deref();
-    }
-
-    // This gets passed through the "parameters" argument to moduleLoaderFetch.
-    // Therefore, we modify it in place.
-    if (parameters && parameters.isObject()) {
-        auto* object = parameters.toObject(globalObject);
-        auto withObject = object->getIfPropertyExists(globalObject, vm.propertyNames->withKeyword);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (withObject) {
-            if (withObject.isObject()) {
-                auto* with = jsCast<JSObject*>(withObject);
-                auto type = with->getIfPropertyExists(globalObject, vm.propertyNames->type);
-                RETURN_IF_EXCEPTION(scope, {});
-                if (type) {
-                    if (type.isString()) {
-                        const auto typeString = type.toWTFString(globalObject);
-                        parameters = JSC::JSScriptFetchParameters::create(vm, ScriptFetchParameters::create(typeString));
-                    }
-                }
-            }
-        }
     }
 
     auto result = JSC::importModule(globalObject, resolvedIdentifier,

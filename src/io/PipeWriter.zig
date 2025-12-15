@@ -947,8 +947,6 @@ pub fn WindowsBufferedWriter(Parent: type, function_table: anytype) type {
         write_req: uv.uv_write_t = std.mem.zeroes(uv.uv_write_t),
         write_buffer: uv.uv_buf_t = uv.uv_buf_t.init(""),
         pending_payload_size: usize = 0,
-        // Track pending file writes to keep event loop alive
-        file_write_pending: bool = false,
 
         const onWrite: *const fn (*Parent, amount: usize, status: WriteStatus) void = function_table.onWrite;
         const onError: *const fn (*Parent, bun.sys.Error) void = function_table.onError;
@@ -1030,14 +1028,6 @@ pub fn WindowsBufferedWriter(Parent: type, function_table: anytype) type {
 
             const this = bun.cast(*WindowsWriter, parent_ptr);
 
-            // Release event loop reference when file write completes
-            defer {
-                if (this.file_write_pending) {
-                    this.file_write_pending = false;
-                    this.parent.loop().dec();
-                }
-            }
-
             if (was_canceled) {
                 // Canceled write - clear pending state
                 this.pending_payload_size = 0;
@@ -1074,16 +1064,7 @@ pub fn WindowsBufferedWriter(Parent: type, function_table: anytype) type {
                     file.prepare();
                     this.write_buffer = uv.uv_buf_t.init(buffer);
 
-                    // Keep event loop alive during file write
-                    if (!this.file_write_pending) {
-                        this.file_write_pending = true;
-                        this.parent.loop().inc();
-                    }
-
                     if (uv.uv_fs_write(this.parent.loop(), &file.fs, file.file, @ptrCast(&this.write_buffer), 1, -1, onFsWriteComplete).toError(.write)) |err| {
-                        // Release event loop reference on error
-                        this.file_write_pending = false;
-                        this.parent.loop().dec();
                         file.complete(false);
                         this.close();
                         onError(this.parent, err);
@@ -1271,8 +1252,6 @@ pub fn WindowsStreamingWriter(comptime Parent: type, function_table: anytype) ty
         last_write_result: WriteResult = .{ .wrote = 0 },
         // some error happed? we will not report onClose only onError
         closed_without_reporting: bool = false,
-        // Track pending file writes to keep event loop alive
-        file_write_pending: bool = false,
 
         const internals = BaseWindowsPipeWriter(WindowsWriter, Parent);
         pub const getFd = internals.getFd;
@@ -1375,14 +1354,6 @@ pub fn WindowsStreamingWriter(comptime Parent: type, function_table: anytype) ty
 
             const this = bun.cast(*WindowsWriter, parent_ptr);
 
-            // Release event loop reference when file write completes
-            defer {
-                if (this.file_write_pending) {
-                    this.file_write_pending = false;
-                    this.parent.loop().dec();
-                }
-            }
-
             if (was_canceled) {
                 // Canceled write - reset buffers
                 this.current_payload.reset();
@@ -1438,16 +1409,7 @@ pub fn WindowsStreamingWriter(comptime Parent: type, function_table: anytype) ty
                     file.prepare();
                     this.write_buffer = uv.uv_buf_t.init(bytes);
 
-                    // Keep event loop alive during file write
-                    if (!this.file_write_pending) {
-                        this.file_write_pending = true;
-                        this.parent.loop().inc();
-                    }
-
                     if (uv.uv_fs_write(this.parent.loop(), &file.fs, file.file, @ptrCast(&this.write_buffer), 1, -1, onFsWriteComplete).toError(.write)) |err| {
-                        // Release event loop reference on error
-                        this.file_write_pending = false;
-                        this.parent.loop().dec();
                         file.complete(false);
                         this.last_write_result = .{ .err = err };
                         onError(this.parent, err);

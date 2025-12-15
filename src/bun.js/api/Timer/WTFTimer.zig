@@ -45,7 +45,7 @@ pub fn update(this: *WTFTimer, seconds: f64, repeat: bool) void {
     }
 
     const modf = std.math.modf(seconds);
-    var interval = bun.timespec.now();
+    var interval = bun.timespec.now(.force_real_time);
     interval.sec += @intFromFloat(modf.ipart);
     interval.nsec += @intFromFloat(modf.fpart * std.time.ns_per_s);
     if (interval.nsec >= std.time.ns_per_s) {
@@ -129,7 +129,7 @@ export fn WTFTimer__secondsUntilTimer(this: *WTFTimer) f64 {
     this.lock.lock();
     defer this.lock.unlock();
     if (this.event_loop_timer.state == .ACTIVE) {
-        const until = this.event_loop_timer.next.duration(&bun.timespec.now());
+        const until = this.event_loop_timer.next.duration(&bun.timespec.now(.force_real_time));
         const sec: f64, const nsec: f64 = .{ @floatFromInt(until.sec), @floatFromInt(until.nsec) };
         return sec + nsec / std.time.ns_per_s;
     }

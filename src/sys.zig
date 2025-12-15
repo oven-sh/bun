@@ -221,6 +221,7 @@ pub const Tag = enum(u8) {
     mmap,
     munmap,
     open,
+    openpty,
     pread,
     pwrite,
     read,
@@ -4275,6 +4276,69 @@ pub fn dlsymWithHandle(comptime Type: type, comptime name: [:0]const u8, comptim
         return null;
     }
     return Wrapper.function;
+}
+
+// =============================================================================
+// PTY (Pseudo-Terminal) Support
+// =============================================================================
+
+/// Result of opening a PTY pair
+pub const PtyPair = struct {
+    master: bun.FileDescriptor,
+    slave: bun.FileDescriptor,
+};
+
+/// Window size structure for terminal dimensions
+pub const WinSize = extern struct {
+    ws_row: u16,
+    ws_col: u16,
+    ws_xpixel: u16 = 0,
+    ws_ypixel: u16 = 0,
+};
+
+/// Opens a pseudo-terminal pair (master and slave)
+/// Returns the master and slave file descriptors
+pub fn openpty(winsize: ?*const WinSize) Maybe(PtyPair) {
+    if (comptime Environment.isWindows) {
+        @compileError("PTY is not supported on Windows");
+    }
+
+    // Use openpty() from libc which handles all the PTY setup
+    // On Linux it's in libutil, on macOS it's in libc
+    var master_fd: c_int = undefined;
+    var slave_fd: c_int = undefined;
+
+    // openpty is provided by libutil on Linux, libc on macOS
+    // Zig's std.c already links libutil on Linux when needed
+    const openpty_fn = @extern(*const fn (
+        amaster: *c_int,
+        aslave: *c_int,
+        name: ?[*:0]u8,
+        termp: ?*const anyopaque,
+        winp: ?*const WinSize,
+    ) callconv(.c) c_int, .{ .name = "openpty" });
+
+    const rc = openpty_fn(
+        &master_fd,
+        &slave_fd,
+        null, // name - we don't need the slave name
+        null, // termios - use defaults
+        winsize, // window size
+    );
+
+    log("openpty() = {d} (master={d}, slave={d})", .{ rc, master_fd, slave_fd });
+
+    if (rc != 0) {
+        return .{ .err = .{
+            .errno = @intCast(@intFromEnum(std.posix.errno(rc))),
+            .syscall = .openpty,
+        } };
+    }
+
+    return .{ .result = .{
+        .master = bun.FileDescriptor.fromNative(master_fd),
+        .slave = bun.FileDescriptor.fromNative(slave_fd),
+    } };
 }
 
 pub const umask = switch (Environment.os) {

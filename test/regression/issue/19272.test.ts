@@ -2,120 +2,56 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import path from "path";
 
-test.concurrent(
-  "bun init --react=shadcn should not have TypeScript errors",
-  async () => {
-    using dir = tempDir("issue-19272", {});
+test.concurrent.each([
+  { template: "shadcn", dirName: "issue-19272-shadcn" },
+  { template: "tailwind", dirName: "issue-19272-tailwind" },
+])("bun init --react=$template should not have TypeScript errors", async ({ template, dirName }) => {
+  using dir = tempDir(dirName, {});
 
-    // Create shadcn project
-    await using initProc = Bun.spawn({
-      cmd: [bunExe(), "init", "--react=shadcn"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+  // Create React project with specified template
+  await using initProc = Bun.spawn({
+    cmd: [bunExe(), "init", `--react=${template}`],
+    cwd: String(dir),
+    env: bunEnv,
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
 
-    const initExitCode = await initProc.exited;
-    expect(initExitCode).toBe(0);
+  const initExitCode = await initProc.exited;
+  expect(initExitCode).toBe(0);
 
-    // Install TypeScript for type checking
-    await using installProc = Bun.spawn({
-      cmd: [bunExe(), "add", "--dev", "typescript"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+  // Install TypeScript for type checking
+  await using installProc = Bun.spawn({
+    cmd: [bunExe(), "add", "--dev", "typescript"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
 
-    const installExitCode = await installProc.exited;
-    expect(installExitCode).toBe(0);
+  const installExitCode = await installProc.exited;
+  expect(installExitCode).toBe(0);
 
-    // Run TypeScript compiler to check for errors
-    await using tscProc = Bun.spawn({
-      cmd: [bunExe(), "x", "tsc", "--noEmit"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+  // Run TypeScript compiler to check for errors
+  await using tscProc = Bun.spawn({
+    cmd: [bunExe(), "x", "tsc", "--noEmit"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      tscProc.stdout.text(),
-      tscProc.stderr.text(),
-      tscProc.exited,
-    ]);
+  const [stdout, stderr, exitCode] = await Promise.all([tscProc.stdout.text(), tscProc.stderr.text(), tscProc.exited]);
 
-    // TypeScript should not report any errors
-    expect(stdout).not.toContain("error TS");
-    expect(stderr).not.toContain("error TS");
-    expect(exitCode).toBe(0);
+  // TypeScript should not report any errors
+  expect(stdout).not.toContain("error TS");
+  expect(stderr).not.toContain("error TS");
+  expect(exitCode).toBe(0);
 
-    // Verify tsconfig excludes build.ts
-    const tsconfig = await Bun.file(path.join(String(dir), "tsconfig.json")).json();
-    expect(tsconfig.exclude).toContain("build.ts");
-  },
-  60_000,
-);
-
-test.concurrent(
-  "bun init --react=tailwind should not have TypeScript errors",
-  async () => {
-    using dir = tempDir("issue-19272-tailwind", {});
-
-    // Create tailwind project
-    await using initProc = Bun.spawn({
-      cmd: [bunExe(), "init", "--react=tailwind"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const initExitCode = await initProc.exited;
-    expect(initExitCode).toBe(0);
-
-    // Install TypeScript for type checking
-    await using installProc = Bun.spawn({
-      cmd: [bunExe(), "add", "--dev", "typescript"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const installExitCode = await installProc.exited;
-    expect(installExitCode).toBe(0);
-
-    // Run TypeScript compiler to check for errors
-    await using tscProc = Bun.spawn({
-      cmd: [bunExe(), "x", "tsc", "--noEmit"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [stdout, stderr, exitCode] = await Promise.all([
-      tscProc.stdout.text(),
-      tscProc.stderr.text(),
-      tscProc.exited,
-    ]);
-
-    // TypeScript should not report any errors
-    expect(stdout).not.toContain("error TS");
-    expect(stderr).not.toContain("error TS");
-    expect(exitCode).toBe(0);
-
-    // Verify tsconfig excludes build.ts
-    const tsconfig = await Bun.file(path.join(String(dir), "tsconfig.json")).json();
-    expect(tsconfig.exclude).toContain("build.ts");
-  },
-  60_000,
-);
+  // Verify tsconfig excludes build.ts
+  const tsconfig = await Bun.file(path.join(String(dir), "tsconfig.json")).json();
+  expect(tsconfig.exclude).toContain("build.ts");
+});

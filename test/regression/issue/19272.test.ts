@@ -63,5 +63,6 @@ test.concurrent.each([
   const tsconfigPath = path.join(String(dir), "tsconfig.json");
   expect(await Bun.file(tsconfigPath).exists()).toBe(true);
   const tsconfig = await Bun.file(tsconfigPath).json();
+  expect(Array.isArray(tsconfig.exclude)).toBe(true);
   expect(tsconfig.exclude).toContain("build.ts");
 });

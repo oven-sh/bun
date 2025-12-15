@@ -21,7 +21,6 @@ pub fn getTitle(_: *JSGlobalObject, title: *bun.String) callconv(.c) void {
     title.* = bun.String.cloneUTF8(str orelse "bun");
 }
 
-// TODO: https://github.com/nodejs/node/blob/master/deps/uv/src/unix/darwin-proctitle.c
 pub fn setTitle(globalObject: *JSGlobalObject, newvalue: *bun.String) callconv(.c) void {
     defer newvalue.deref();
     title_mutex.lock();
@@ -34,6 +33,12 @@ pub fn setTitle(globalObject: *JSGlobalObject, newvalue: *bun.String) callconv(.
 
     if (bun.cli.Bun__Node__ProcessTitle) |slice| bun.default_allocator.free(slice);
     bun.cli.Bun__Node__ProcessTitle = new_title;
+
+    // On Linux, update the process title in /proc/self/cmdline so that
+    // tools like `ps` and `top` can see it.
+    if (comptime bun.Environment.isLinux) {
+        bun.process_title_info.setTitle(new_title);
+    }
 }
 
 pub fn createArgv0(globalObject: *jsc.JSGlobalObject) callconv(.c) jsc.JSValue {

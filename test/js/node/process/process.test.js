@@ -102,6 +102,26 @@ it("process.title with UTF-16 characters", () => {
   expect(process.title).toBe("bun");
 });
 
+it.skipIf(!process.platform.startsWith("linux"))(
+  "process.title is visible in /proc/self/cmdline on Linux",
+  async () => {
+    // On Linux, process.title should be visible via /proc/self/cmdline
+    // This is how tools like `ps` and `top` see the process title
+    const fs = await import("fs");
+
+    const testTitle = "bun-test-title-12345";
+    process.title = testTitle;
+    expect(process.title).toBe(testTitle);
+
+    // Read /proc/self/cmdline to verify the title is set
+    const cmdline = fs.readFileSync("/proc/self/cmdline", "utf8");
+    expect(cmdline).toContain(testTitle);
+
+    // Reset title
+    process.title = "bun";
+  },
+);
+
 it("process.chdir() on root dir", () => {
   const cwd = process.cwd();
   try {

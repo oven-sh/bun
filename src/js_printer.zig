@@ -735,7 +735,7 @@ fn NewPrinter(
                             .e_await, .e_undefined, .e_number => {
                                 left_level.* = .call;
                             },
-                            .e_boolean => {
+                            .e_boolean, .e_branch_boolean => {
                                 // When minifying, booleans are printed as "!0 and "!1"
                                 if (p.options.minify_syntax) {
                                     left_level.* = .call;
@@ -2677,7 +2677,7 @@ fn NewPrinter(
                         p.print(")");
                     }
                 },
-                .e_boolean => |e| {
+                .e_boolean, .e_branch_boolean => |e| {
                     p.addSourceMapping(expr.loc);
                     if (p.options.minify_syntax) {
                         if (level.gte(Level.prefix)) {

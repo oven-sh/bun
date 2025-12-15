@@ -1949,10 +1949,9 @@ pub const ProcessTitleInfo = struct {
 
         // Also set the thread name via prctl (limited to 16 bytes including null)
         // This is what shows up in `top` and `htop` under the thread name column
-        var name_buf: [16]u8 = undefined;
+        var name_buf: [16]u8 = .{0} ** 16;
         const name_len = @min(title.len, 15);
         @memcpy(name_buf[0..name_len], title[0..name_len]);
-        name_buf[name_len] = 0;
         _ = std.posix.prctl(.SET_NAME, .{@intFromPtr(&name_buf)}) catch {};
     }
 };

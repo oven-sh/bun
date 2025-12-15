@@ -1,9 +1,12 @@
 import { spawn } from "bun";
-import { beforeAll, describe, expect, it } from "bun:test";
+import { beforeAll, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { bunEnv, bunExe, isASAN, isBroken, isMusl, isWindows, nodeExe, tmpdirSync } from "harness";
 import assert from "node:assert";
 import fs from "node:fs/promises";
 import { basename, join } from "path";
+
+// Building native modules with node-gyp takes a long time
+setDefaultTimeout(1000 * 60 * 5); // 5 minutes
 
 enum Runtime {
   node,

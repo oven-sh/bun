@@ -121,6 +121,10 @@ export default [
       stdio: {
         getter: "getStdio",
       },
+      terminal: {
+        getter: "getTerminal",
+        cache: true,
+      },
     },
     values: ["exitedPromise", "onExitCallback", "onDisconnectCallback", "ipcCallback"],
   }),

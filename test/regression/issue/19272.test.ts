@@ -18,7 +18,11 @@ test.concurrent.each([
     stderr: "pipe",
   });
 
-  const initExitCode = await initProc.exited;
+  const [initStdout, initStderr, initExitCode] = await Promise.all([
+    initProc.stdout.text(),
+    initProc.stderr.text(),
+    initProc.exited,
+  ]);
   expect(initExitCode).toBe(0);
 
   // Install TypeScript for type checking
@@ -31,7 +35,11 @@ test.concurrent.each([
     stderr: "pipe",
   });
 
-  const installExitCode = await installProc.exited;
+  const [installStdout, installStderr, installExitCode] = await Promise.all([
+    installProc.stdout.text(),
+    installProc.stderr.text(),
+    installProc.exited,
+  ]);
   expect(installExitCode).toBe(0);
 
   // Run TypeScript compiler to check for errors
@@ -52,6 +60,8 @@ test.concurrent.each([
   expect(exitCode).toBe(0);
 
   // Verify tsconfig excludes build.ts
-  const tsconfig = await Bun.file(path.join(String(dir), "tsconfig.json")).json();
+  const tsconfigPath = path.join(String(dir), "tsconfig.json");
+  expect(await Bun.file(tsconfigPath).exists()).toBe(true);
+  const tsconfig = await Bun.file(tsconfigPath).json();
   expect(tsconfig.exclude).toContain("build.ts");
 });

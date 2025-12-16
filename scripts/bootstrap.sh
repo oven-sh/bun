@@ -1156,7 +1156,7 @@ install_llvm() {
 	case "$pm" in
 	apt)
 		# Debian 13 (Trixie) has LLVM 19 natively, and apt.llvm.org doesn't have a trixie repo
-		if [ "$distro" = "debian" ] && [ "$release" = "13" ]; then
+		if [ "$distro" = "debian" ] then
 			install_packages \
 				"llvm-$(llvm_version)" \
 				"clang-$(llvm_version)" \

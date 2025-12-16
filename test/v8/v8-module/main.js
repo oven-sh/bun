@@ -5,8 +5,15 @@ const buildMode = process.argv[5];
 
 const tests = require("./module")(buildMode === "debug");
 
+// Custom JSON reviver to handle BigInt
+function parseArgs(str) {
+  return JSON.parse(str, (_, value) =>
+    value && typeof value === "object" && "__bigint__" in value ? BigInt(value.__bigint__) : value,
+  );
+}
+
 const testName = process.argv[2];
-const args = JSON.parse(process.argv[3] ?? "[]");
+const args = parseArgs(process.argv[3] ?? "[]");
 const thisValue = JSON.parse(process.argv[4] ?? "null");
 
 function runGC() {

@@ -2159,7 +2159,6 @@ pub fn Parser(comptime enc: Encoding) type {
                             continue :end parser.next();
                         },
 
-                        // YAML 1.2 Core Schema: hex letters (a-f, A-F) are valid in hex numbers
                         'a'...'d',
                         'f',
                         'A'...'D',
@@ -2178,7 +2177,6 @@ pub fn Parser(comptime enc: Encoding) type {
                             continue :end parser.next();
                         },
 
-                        // YAML 1.2 Core Schema: hexadecimal (0x...) is supported
                         'x' => {
                             first = false;
                             if (x) {
@@ -2243,7 +2241,6 @@ pub fn Parser(comptime enc: Encoding) type {
                     }
 
                     var scalar: NodeScalar = scalar: {
-                        // YAML 1.2 Core Schema: octal (0o...) and hex (0x...) are supported
                         if (x or o or hex) {
                             const unsigned = std.fmt.parseUnsigned(u64, parser.slice(start, end), 0) catch {
                                 return;
@@ -2469,20 +2466,17 @@ pub fn Parser(comptime enc: Encoding) type {
                         'n' => {
                             const n_start = self.pos;
                             self.inc(1);
-                            // YAML 1.2: only lowercase 'null' is valid
                             if (self.remainStartsWith("ull")) {
                                 try ctx.resolve(.null, n_start, "null");
                                 self.inc(3);
                                 continue :next self.next();
                             }
-                            // YAML 1.2: 'no' is a string, not a boolean
                             try ctx.appendSource(c, n_start);
                             continue :next self.next();
                         },
                         'N' => {
                             const n_start = self.pos;
                             self.inc(1);
-                            // YAML 1.2 Core Schema: Null and NULL are valid null
                             if (self.remainStartsWith("ull")) {
                                 try ctx.resolve(.null, n_start, "Null");
                                 self.inc(3);
@@ -2493,7 +2487,6 @@ pub fn Parser(comptime enc: Encoding) type {
                                 self.inc(3);
                                 continue :next self.next();
                             }
-                            // YAML 1.2: 'No', 'NO' are strings, not booleans
                             try ctx.appendSource(c, n_start);
                             continue :next self.next();
                         },
@@ -2517,7 +2510,6 @@ pub fn Parser(comptime enc: Encoding) type {
                         'T' => {
                             const t_start = self.pos;
                             self.inc(1);
-                            // YAML 1.2 Core Schema: True and TRUE are valid booleans
                             if (self.remainStartsWith("rue")) {
                                 try ctx.resolve(.{ .boolean = true }, t_start, "True");
                                 self.inc(3);
@@ -2545,7 +2537,6 @@ pub fn Parser(comptime enc: Encoding) type {
                         'F' => {
                             const f_start = self.pos;
                             self.inc(1);
-                            // YAML 1.2 Core Schema: False and FALSE are valid booleans
                             if (self.remainStartsWith("alse")) {
                                 try ctx.resolve(.{ .boolean = false }, f_start, "False");
                                 self.inc(4);

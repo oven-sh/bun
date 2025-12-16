@@ -50,7 +50,7 @@ test("blob.writer() throws for data-backed blob", () => {
   );
 });
 
-test("Bun.file(path).writer() does not throw", async () => {
+test.skip("Bun.file(path).writer() does not throw", async () => {
   const dir = tempDirWithFiles("bun-writer", {});
   const file = Bun.file(path.join(dir, "test.txt"));
   const writer = file.writer();

@@ -872,6 +872,7 @@ target_include_directories(${bun} PRIVATE
   ${CODEGEN_PATH}
   ${VENDOR_PATH}
   ${VENDOR_PATH}/picohttpparser
+  ${VENDOR_PATH}/zlib
   ${NODEJS_HEADERS_PATH}/include
   ${NODEJS_HEADERS_PATH}/include/node
 )

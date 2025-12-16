@@ -77,6 +77,7 @@ pub const BunObject = struct {
     pub const s3 = toJSLazyPropertyCallback(Bun.getS3DefaultClient);
     pub const ValkeyClient = toJSLazyPropertyCallback(Bun.getValkeyClientConstructor);
     pub const valkey = toJSLazyPropertyCallback(Bun.getValkeyDefaultClient);
+    pub const Terminal = toJSLazyPropertyCallback(Bun.getTerminalConstructor);
     // --- Lazy property callbacks ---
 
     // --- Getters ---
@@ -143,6 +144,7 @@ pub const BunObject = struct {
         @export(&BunObject.s3, .{ .name = lazyPropertyCallbackName("s3") });
         @export(&BunObject.ValkeyClient, .{ .name = lazyPropertyCallbackName("ValkeyClient") });
         @export(&BunObject.valkey, .{ .name = lazyPropertyCallbackName("valkey") });
+        @export(&BunObject.Terminal, .{ .name = lazyPropertyCallbackName("Terminal") });
         // --- Lazy property callbacks ---
 
         // --- Callbacks ---
@@ -946,13 +948,8 @@ pub fn indexOfLine(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
 
     var offset: usize = 0;
     if (arguments.len > 1) {
-        offset = @as(
-            usize,
-            @intCast(@max(
-                arguments[1].to(u32),
-                0,
-            )),
-        );
+        const offset_value = try arguments[1].coerce(i64, globalThis);
+        offset = @intCast(@max(offset_value, 0));
     }
 
     const bytes = buffer.byteSlice();
@@ -1217,11 +1214,19 @@ pub fn mmapFile(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.
         }
 
         if (try opts.get(globalThis, "size")) |value| {
-            map_size = @as(usize, @intCast(value.toInt64()));
+            const size_value = try value.coerceToInt64(globalThis);
+            if (size_value < 0) {
+                return globalThis.throwInvalidArguments("size must be a non-negative integer", .{});
+            }
+            map_size = @intCast(size_value);
         }
 
         if (try opts.get(globalThis, "offset")) |value| {
-            offset = @as(usize, @intCast(value.toInt64()));
+            const offset_value = try value.coerceToInt64(globalThis);
+            if (offset_value < 0) {
+                return globalThis.throwInvalidArguments("offset must be a non-negative integer", .{});
+            }
+            offset = @intCast(offset_value);
             offset = std.mem.alignBackwardAnyAlign(usize, offset, std.heap.pageSize());
         }
     }
@@ -1310,6 +1315,10 @@ pub fn getValkeyDefaultClient(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject)
 
 pub fn getValkeyClientConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
     return jsc.API.Valkey.js.getConstructor(globalThis);
+}
+
+pub fn getTerminalConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
+    return api.Terminal.js.getConstructor(globalThis);
 }
 
 pub fn getEmbeddedFiles(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) bun.JSError!jsc.JSValue {

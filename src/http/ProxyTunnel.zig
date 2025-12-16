@@ -19,6 +19,7 @@ const ProxyTunnelWrapper = SSLWrapper(*HTTPClient);
 
 fn onOpen(this: *HTTPClient) void {
     log("ProxyTunnel onOpen", .{});
+    bun.analytics.Features.http_client_proxy += 1;
     this.state.response_stage = .proxy_handshake;
     this.state.request_stage = .proxy_handshake;
     if (this.proxy_tunnel) |proxy| {

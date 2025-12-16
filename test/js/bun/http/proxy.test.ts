@@ -248,6 +248,144 @@ test("unsupported protocol", async () => {
   );
 });
 
+/**
+ * Creates an HTTP proxy server that captures Proxy-Authorization headers.
+ * The server forwards requests to their destination and pipes responses back.
+ */
+async function createAuthCapturingProxy() {
+  const capturedAuths: string[] = [];
+  const server = net.createServer((clientSocket: net.Socket) => {
+    clientSocket.once("data", data => {
+      const request = data.toString();
+      const lines = request.split("\r\n");
+      for (const line of lines) {
+        if (line.toLowerCase().startsWith("proxy-authorization:")) {
+          capturedAuths.push(line.substring("proxy-authorization:".length).trim());
+        }
+      }
+
+      const [method, path] = request.split(" ");
+      let host: string;
+      let port: number | string = 0;
+      let request_path = "";
+      if (path.indexOf("http") !== -1) {
+        const url = new URL(path);
+        host = url.hostname;
+        port = url.port;
+        request_path = url.pathname + (url.search || "");
+      } else {
+        [host, port] = path.split(":");
+      }
+      const destinationPort = Number.parseInt((port || "80").toString(), 10);
+      const destinationHost = host || "";
+
+      const serverSocket = net.connect(destinationPort, destinationHost, () => {
+        serverSocket.write(`${method} ${request_path} HTTP/1.1\r\n`);
+        serverSocket.write(data.slice(request.indexOf("\r\n") + 2));
+        serverSocket.pipe(clientSocket);
+      });
+      clientSocket.on("error", () => {});
+      serverSocket.on("error", () => {
+        clientSocket.end();
+      });
+    });
+  });
+
+  server.listen(0);
+  await once(server, "listening");
+  const port = (server.address() as net.AddressInfo).port;
+
+  return {
+    server,
+    port,
+    capturedAuths,
+    async close() {
+      server.close();
+      await once(server, "close");
+    },
+  };
+}
+
+test("proxy with long password (> 4096 chars) sends correct authorization", async () => {
+  const proxy = await createAuthCapturingProxy();
+
+  // Create a password longer than 4096 chars (e.g., simulating a JWT token)
+  // Use Buffer.alloc which is faster in debug JavaScriptCore builds
+  const longPassword = Buffer.alloc(5000, "a").toString();
+  const username = "testuser";
+  const proxyUrl = `http://${username}:${longPassword}@localhost:${proxy.port}`;
+
+  try {
+    const response = await fetch(httpServer.url, {
+      method: "GET",
+      proxy: proxyUrl,
+      keepalive: false,
+    });
+    expect(response.ok).toBe(true);
+    expect(response.status).toBe(200);
+
+    // Verify the auth header was sent and contains both username and password
+    expect(proxy.capturedAuths.length).toBeGreaterThanOrEqual(1);
+    const capturedAuth = proxy.capturedAuths[0];
+    expect(capturedAuth.startsWith("Basic ")).toBe(true);
+
+    // Decode and verify
+    const encoded = capturedAuth.substring("Basic ".length);
+    const decoded = Buffer.from(encoded, "base64url").toString();
+    expect(decoded).toBe(`${username}:${longPassword}`);
+  } finally {
+    await proxy.close();
+  }
+});
+
+test("proxy with long password (> 4096 chars) works correctly after redirect", async () => {
+  // This test verifies that the reset() code path (used during redirects)
+  // also handles long passwords correctly
+  const proxy = await createAuthCapturingProxy();
+
+  // Create a server that issues a redirect
+  using redirectServer = Bun.serve({
+    port: 0,
+    fetch(req) {
+      if (req.url.endsWith("/redirect")) {
+        return Response.redirect("/final", 302);
+      }
+      return new Response("OK", { status: 200 });
+    },
+  });
+
+  // Use Buffer.alloc which is faster in debug JavaScriptCore builds
+  const longPassword = Buffer.alloc(5000, "a").toString();
+  const username = "testuser";
+  const proxyUrl = `http://${username}:${longPassword}@localhost:${proxy.port}`;
+
+  try {
+    const response = await fetch(`${redirectServer.url.origin}/redirect`, {
+      method: "GET",
+      proxy: proxyUrl,
+      keepalive: false,
+    });
+    expect(response.ok).toBe(true);
+    expect(response.status).toBe(200);
+    const text = await response.text();
+    expect(text).toBe("OK");
+
+    // Verify auth was sent on requests. Due to connection reuse, the proxy may
+    // only see one request even though a redirect occurred (the redirected
+    // request reuses the same connection). We verify at least one auth was sent
+    // and that all captured auths are correct.
+    expect(proxy.capturedAuths.length).toBeGreaterThanOrEqual(1);
+    for (const capturedAuth of proxy.capturedAuths) {
+      expect(capturedAuth.startsWith("Basic ")).toBe(true);
+      const encoded = capturedAuth.substring("Basic ".length);
+      const decoded = Buffer.from(encoded, "base64url").toString();
+      expect(decoded).toBe(`${username}:${longPassword}`);
+    }
+  } finally {
+    await proxy.close();
+  }
+});
+
 test("axios with https-proxy-agent", async () => {
   httpProxyServer.log.length = 0;
   const httpsAgent = new HttpsProxyAgent(httpProxyServer.url, {
@@ -336,4 +474,388 @@ test("HTTPS origin close-delimited body via HTTP proxy does not ECONNRESET", asy
     originServer.close();
     await once(originServer, "close");
   }
+});
+
+describe("proxy object format with headers", () => {
+  test("proxy object with url string works same as string proxy", async () => {
+    const response = await fetch(httpServer.url, {
+      method: "GET",
+      proxy: {
+        url: httpProxyServer.url,
+      },
+      keepalive: false,
+    });
+    expect(response.ok).toBe(true);
+    expect(response.status).toBe(200);
+  });
+
+  test("proxy object with url and headers sends headers to proxy (HTTP proxy)", async () => {
+    // Create a proxy server that captures headers
+    const capturedHeaders: string[] = [];
+    const proxyServerWithCapture = net.createServer((clientSocket: net.Socket) => {
+      clientSocket.once("data", data => {
+        const request = data.toString();
+        // Capture headers
+        const lines = request.split("\r\n");
+        for (const line of lines) {
+          if (line.toLowerCase().startsWith("x-proxy-")) {
+            capturedHeaders.push(line.toLowerCase());
+          }
+        }
+
+        const [method, path] = request.split(" ");
+        let host: string;
+        let port: number | string = 0;
+        let request_path = "";
+        if (path.indexOf("http") !== -1) {
+          const url = new URL(path);
+          host = url.hostname;
+          port = url.port;
+          request_path = url.pathname + (url.search || "");
+        } else {
+          [host, port] = path.split(":");
+        }
+        const destinationPort = Number.parseInt((port || (method === "CONNECT" ? "443" : "80")).toString(), 10);
+        const destinationHost = host || "";
+
+        const serverSocket = net.connect(destinationPort, destinationHost, () => {
+          if (method === "CONNECT") {
+            clientSocket.write("HTTP/1.1 200 OK\r\nHost: localhost\r\n\r\n");
+            clientSocket.pipe(serverSocket);
+            serverSocket.pipe(clientSocket);
+          } else {
+            serverSocket.write(`${method} ${request_path} HTTP/1.1\r\n`);
+            serverSocket.write(data.slice(request.indexOf("\r\n") + 2));
+            serverSocket.pipe(clientSocket);
+          }
+        });
+        clientSocket.on("error", () => {});
+        serverSocket.on("error", () => {
+          clientSocket.end();
+        });
+      });
+    });
+
+    proxyServerWithCapture.listen(0);
+    await once(proxyServerWithCapture, "listening");
+    const proxyPort = (proxyServerWithCapture.address() as net.AddressInfo).port;
+    const proxyUrl = `http://localhost:${proxyPort}`;
+
+    try {
+      const response = await fetch(httpServer.url, {
+        method: "GET",
+        proxy: {
+          url: proxyUrl,
+          headers: {
+            "X-Proxy-Custom-Header": "custom-value",
+            "X-Proxy-Another": "another-value",
+          },
+        },
+        keepalive: false,
+      });
+      expect(response.ok).toBe(true);
+      expect(response.status).toBe(200);
+      // Verify the custom headers were sent to the proxy (case-insensitive check)
+      expect(capturedHeaders).toContainEqual(expect.stringContaining("x-proxy-custom-header: custom-value"));
+      expect(capturedHeaders).toContainEqual(expect.stringContaining("x-proxy-another: another-value"));
+    } finally {
+      proxyServerWithCapture.close();
+      await once(proxyServerWithCapture, "close");
+    }
+  });
+
+  test("proxy object with url and headers sends headers in CONNECT request (HTTPS target)", async () => {
+    // Create a proxy server that captures headers
+    const capturedHeaders: string[] = [];
+    const proxyServerWithCapture = net.createServer((clientSocket: net.Socket) => {
+      clientSocket.once("data", data => {
+        const request = data.toString();
+        // Capture headers
+        const lines = request.split("\r\n");
+        for (const line of lines) {
+          if (line.toLowerCase().startsWith("x-proxy-")) {
+            capturedHeaders.push(line.toLowerCase());
+          }
+        }
+
+        const [method, path] = request.split(" ");
+        let host: string;
+        let port: number | string = 0;
+        if (path.indexOf("http") !== -1) {
+          const url = new URL(path);
+          host = url.hostname;
+          port = url.port;
+        } else {
+          [host, port] = path.split(":");
+        }
+        const destinationPort = Number.parseInt((port || (method === "CONNECT" ? "443" : "80")).toString(), 10);
+        const destinationHost = host || "";
+
+        const serverSocket = net.connect(destinationPort, destinationHost, () => {
+          if (method === "CONNECT") {
+            clientSocket.write("HTTP/1.1 200 OK\r\nHost: localhost\r\n\r\n");
+            clientSocket.pipe(serverSocket);
+            serverSocket.pipe(clientSocket);
+          } else {
+            clientSocket.write("HTTP/1.1 502 Bad Gateway\r\n\r\n");
+            clientSocket.end();
+          }
+        });
+        clientSocket.on("error", () => {});
+        serverSocket.on("error", () => {
+          clientSocket.end();
+        });
+      });
+    });
+
+    proxyServerWithCapture.listen(0);
+    await once(proxyServerWithCapture, "listening");
+    const proxyPort = (proxyServerWithCapture.address() as net.AddressInfo).port;
+    const proxyUrl = `http://localhost:${proxyPort}`;
+
+    try {
+      const response = await fetch(httpsServer.url, {
+        method: "GET",
+        proxy: {
+          url: proxyUrl,
+          headers: new Headers({
+            "X-Proxy-Auth-Token": "secret-token-123",
+          }),
+        },
+        keepalive: false,
+        tls: {
+          ca: tlsCert.cert,
+          rejectUnauthorized: false,
+        },
+      });
+      expect(response.ok).toBe(true);
+      expect(response.status).toBe(200);
+      // Verify the custom headers were sent in the CONNECT request (case-insensitive check)
+      expect(capturedHeaders).toContainEqual(expect.stringContaining("x-proxy-auth-token: secret-token-123"));
+    } finally {
+      proxyServerWithCapture.close();
+      await once(proxyServerWithCapture, "close");
+    }
+  });
+
+  test("proxy object without url is ignored (regression #25413)", async () => {
+    // When proxy object doesn't have a 'url' property, it should be ignored
+    // This ensures compatibility with libraries that pass URL objects as proxy
+    const response = await fetch(httpServer.url, {
+      method: "GET",
+      proxy: {
+        headers: { "X-Test": "value" },
+      } as any,
+      keepalive: false,
+    });
+    expect(response.ok).toBe(true);
+    expect(response.status).toBe(200);
+  });
+
+  test("proxy object with null url is ignored (regression #25413)", async () => {
+    // When proxy.url is null, the proxy object should be ignored
+    const response = await fetch(httpServer.url, {
+      method: "GET",
+      proxy: {
+        url: null,
+        headers: { "X-Test": "value" },
+      } as any,
+      keepalive: false,
+    });
+    expect(response.ok).toBe(true);
+    expect(response.status).toBe(200);
+  });
+
+  test("proxy object with empty string url throws error", async () => {
+    await expect(
+      fetch(httpServer.url, {
+        method: "GET",
+        proxy: {
+          url: "",
+          headers: { "X-Test": "value" },
+        } as any,
+        keepalive: false,
+      }),
+    ).rejects.toThrow("fetch() proxy.url must be a non-empty string");
+  });
+
+  test("proxy object with empty headers object works", async () => {
+    const response = await fetch(httpServer.url, {
+      method: "GET",
+      proxy: {
+        url: httpProxyServer.url,
+        headers: {},
+      },
+      keepalive: false,
+    });
+    expect(response.ok).toBe(true);
+    expect(response.status).toBe(200);
+  });
+
+  test("proxy object with undefined headers works", async () => {
+    const response = await fetch(httpServer.url, {
+      method: "GET",
+      proxy: {
+        url: httpProxyServer.url,
+        headers: undefined,
+      },
+      keepalive: false,
+    });
+    expect(response.ok).toBe(true);
+    expect(response.status).toBe(200);
+  });
+
+  test("proxy object with headers as Headers instance", async () => {
+    const capturedHeaders: string[] = [];
+    const proxyServerWithCapture = net.createServer((clientSocket: net.Socket) => {
+      clientSocket.once("data", data => {
+        const request = data.toString();
+        const lines = request.split("\r\n");
+        for (const line of lines) {
+          if (line.toLowerCase().startsWith("x-custom-")) {
+            capturedHeaders.push(line.toLowerCase());
+          }
+        }
+
+        const [method, path] = request.split(" ");
+        let host: string;
+        let port: number | string = 0;
+        let request_path = "";
+        if (path.indexOf("http") !== -1) {
+          const url = new URL(path);
+          host = url.hostname;
+          port = url.port;
+          request_path = url.pathname + (url.search || "");
+        } else {
+          [host, port] = path.split(":");
+        }
+        const destinationPort = Number.parseInt((port || "80").toString(), 10);
+        const destinationHost = host || "";
+
+        const serverSocket = net.connect(destinationPort, destinationHost, () => {
+          serverSocket.write(`${method} ${request_path} HTTP/1.1\r\n`);
+          serverSocket.write(data.slice(request.indexOf("\r\n") + 2));
+          serverSocket.pipe(clientSocket);
+        });
+        clientSocket.on("error", () => {});
+        serverSocket.on("error", () => {
+          clientSocket.end();
+        });
+      });
+    });
+
+    proxyServerWithCapture.listen(0);
+    await once(proxyServerWithCapture, "listening");
+    const proxyPort = (proxyServerWithCapture.address() as net.AddressInfo).port;
+    const proxyUrl = `http://localhost:${proxyPort}`;
+
+    try {
+      const headers = new Headers();
+      headers.set("X-Custom-Header-1", "value1");
+      headers.set("X-Custom-Header-2", "value2");
+
+      const response = await fetch(httpServer.url, {
+        method: "GET",
+        proxy: {
+          url: proxyUrl,
+          headers: headers,
+        },
+        keepalive: false,
+      });
+      expect(response.ok).toBe(true);
+      expect(response.status).toBe(200);
+      // Case-insensitive check
+      expect(capturedHeaders).toContainEqual(expect.stringContaining("x-custom-header-1: value1"));
+      expect(capturedHeaders).toContainEqual(expect.stringContaining("x-custom-header-2: value2"));
+    } finally {
+      proxyServerWithCapture.close();
+      await once(proxyServerWithCapture, "close");
+    }
+  });
+
+  test("user-provided Proxy-Authorization header overrides URL credentials", async () => {
+    const capturedHeaders: string[] = [];
+    const proxyServerWithCapture = net.createServer((clientSocket: net.Socket) => {
+      clientSocket.once("data", data => {
+        const request = data.toString();
+        const lines = request.split("\r\n");
+        for (const line of lines) {
+          if (line.toLowerCase().startsWith("proxy-authorization:")) {
+            capturedHeaders.push(line.toLowerCase());
+          }
+        }
+
+        const [method, path] = request.split(" ");
+        let host: string;
+        let port: number | string = 0;
+        let request_path = "";
+        if (path.indexOf("http") !== -1) {
+          const url = new URL(path);
+          host = url.hostname;
+          port = url.port;
+          request_path = url.pathname + (url.search || "");
+        } else {
+          [host, port] = path.split(":");
+        }
+        const destinationPort = Number.parseInt((port || "80").toString(), 10);
+        const destinationHost = host || "";
+
+        const serverSocket = net.connect(destinationPort, destinationHost, () => {
+          serverSocket.write(`${method} ${request_path} HTTP/1.1\r\n`);
+          serverSocket.write(data.slice(request.indexOf("\r\n") + 2));
+          serverSocket.pipe(clientSocket);
+        });
+        clientSocket.on("error", () => {});
+        serverSocket.on("error", () => {
+          clientSocket.end();
+        });
+      });
+    });
+
+    proxyServerWithCapture.listen(0);
+    await once(proxyServerWithCapture, "listening");
+    const proxyPort = (proxyServerWithCapture.address() as net.AddressInfo).port;
+    // Proxy URL with credentials that would generate Basic auth
+    const proxyUrl = `http://urluser:urlpass@localhost:${proxyPort}`;
+
+    try {
+      const response = await fetch(httpServer.url, {
+        method: "GET",
+        proxy: {
+          url: proxyUrl,
+          headers: {
+            // User-provided Proxy-Authorization should override the URL-based one
+            "Proxy-Authorization": "Bearer custom-token-12345",
+          },
+        },
+        keepalive: false,
+      });
+      expect(response.ok).toBe(true);
+      expect(response.status).toBe(200);
+      // Should only have one Proxy-Authorization header (the user-provided one)
+      expect(capturedHeaders.length).toBe(1);
+      expect(capturedHeaders[0]).toBe("proxy-authorization: bearer custom-token-12345");
+    } finally {
+      proxyServerWithCapture.close();
+      await once(proxyServerWithCapture, "close");
+    }
+  });
+
+  test("proxy as URL object should be ignored (no url property)", async () => {
+    // This tests the regression from #25413
+    // When a URL object is passed as proxy, it should be ignored (no error)
+    // because URL objects don't have a "url" property - they have "href"
+    const proxyUrl = new URL(httpProxyServer.url);
+
+    // Passing a URL object as proxy should NOT throw an error
+    // It should just be ignored since there's no "url" string property
+    const response = await fetch(httpServer.url, {
+      method: "GET",
+      proxy: proxyUrl as any,
+      keepalive: false,
+    });
+    // The request should succeed (without proxy, since URL object is ignored)
+    expect(response.ok).toBe(true);
+    expect(response.status).toBe(200);
+  });
 });

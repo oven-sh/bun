@@ -446,7 +446,7 @@ declare module "bun" {
     closeOnBackpressureLimit?: boolean;
 
     /**
-     * Sets the the number of seconds to wait before timing out a connection
+     * Sets the number of seconds to wait before timing out a connection
      * due to no messages or pings.
      *
      * @default 120
@@ -758,7 +758,7 @@ declare module "bun" {
       ipv6Only?: boolean;
 
       /**
-       * Sets the the number of seconds to wait before timing out a connection
+       * Sets the number of seconds to wait before timing out a connection
        * due to inactivity.
        *
        * @default 10
@@ -1081,6 +1081,15 @@ declare module "bun" {
      * ```
      */
     readonly hostname: string | undefined;
+
+    /**
+     * The protocol the server is listening on.
+     *
+     * - "http" for normal servers
+     * - "https" when TLS is enabled
+     * - null for unix sockets or when unavailable
+     */
+    readonly protocol: "http" | "https" | null;
 
     /**
      * Is the server running in development mode?

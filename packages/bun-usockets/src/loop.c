@@ -375,7 +375,11 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 /* Note: if we failed a write as a socket of one loop then adopted
                  * to another loop, this will be wrong. Absurd case though */
                 loop->data.last_write_failed = 0;
-
+                #ifdef LIBUS_USE_KQUEUE
+                /* Kqueue is one-shot so is not writable anymore */
+                p->state.poll_type = us_internal_poll_type(p) | ((events & LIBUS_SOCKET_READABLE) ? POLL_TYPE_POLLING_IN : 0);
+                #endif
+                
                 s = s->context->on_writable(s);
 
                 if (!s || us_socket_is_closed(0, s)) {
@@ -385,6 +389,11 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 /* If we have no failed write or if we shut down, then stop polling for more writable */
                 if (!loop->data.last_write_failed || us_socket_is_shut_down(0, s)) {
                     us_poll_change(&s->p, loop, us_poll_events(&s->p) & LIBUS_SOCKET_READABLE);
+                } else {
+                    #ifdef LIBUS_USE_KQUEUE
+                    /* Kqueue one-shot writable needs to be re-enabled */
+                    us_poll_change(&s->p, loop, us_poll_events(&s->p) | LIBUS_SOCKET_WRITABLE);
+                    #endif
                 }
             }
 

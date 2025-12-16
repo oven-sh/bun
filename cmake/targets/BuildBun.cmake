@@ -1200,6 +1200,28 @@ set_target_properties(${bun} PROPERTIES LINK_DEPENDS ${BUN_SYMBOLS_PATH})
 
 include(SetupWebKit)
 
+if(BUN_LINK_ONLY)
+  register_command(
+    TARGET
+      ${bun}
+    TARGET_PHASE
+      POST_BUILD
+    COMMENT
+      "Uploading link metadata"
+    COMMAND
+      ${CMAKE_COMMAND} -E env
+        WEBKIT_DOWNLOAD_URL=${WEBKIT_DOWNLOAD_URL}
+        WEBKIT_VERSION=${WEBKIT_VERSION}
+        ZIG_COMMIT=${ZIG_COMMIT}
+        ${BUN_EXECUTABLE} ${CWD}/scripts/create-link-metadata.mjs ${BUILD_PATH} ${bun}
+    SOURCES
+      ${BUN_ZIG_OUTPUT}
+      ${BUN_CPP_OUTPUT}
+    ARTIFACTS
+      ${BUILD_PATH}/link-metadata.json
+  )
+endif()
+
 if(WIN32)
   if(DEBUG)
     target_link_libraries(${bun} PRIVATE

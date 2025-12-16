@@ -65,6 +65,7 @@ pub const install_params: []const ParamType = &(shared_params ++ [_]ParamType{
     clap.parseParam("--filter <STR>...                 Install packages for the matching workspaces") catch unreachable,
     clap.parseParam("-a, --analyze                   Analyze & install all dependencies of files passed as arguments recursively (using Bun's bundler)") catch unreachable,
     clap.parseParam("--only-missing                  Only add dependencies to package.json if they are not already present") catch unreachable,
+    clap.parseParam("--catalog <STR>?                Use catalog for version (optionally specify catalog name)") catch unreachable,
     clap.parseParam("<POS> ...                         ") catch unreachable,
 });
 
@@ -1031,7 +1032,7 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
         cli.exact = args.flag("--exact");
         cli.analyze = args.flag("--analyze");
         cli.only_missing = args.flag("--only-missing");
-        if (comptime subcommand == .add) {
+        if (comptime subcommand == .add or subcommand == .install) {
             cli.catalog_name = args.option("--catalog");
         }
     }

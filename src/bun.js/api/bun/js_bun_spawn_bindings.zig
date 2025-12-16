@@ -142,10 +142,17 @@ pub fn spawnMaybeSync(
     var windows_hide: bool = false;
     var windows_verbatim_arguments: bool = false;
     var abort_signal: ?*jsc.WebCore.AbortSignal = null;
+    var terminal_info: ?Terminal.CreateResult = null;
+    var existing_terminal: ?*Terminal = null; // Existing terminal passed by user
+    var terminal_js_value: jsc.JSValue = .zero;
     defer {
-        // Ensure we clean it up on error.
         if (abort_signal) |signal| {
             signal.unref();
+        }
+        // If we created a new terminal but spawn failed, clean it up
+        if (terminal_info) |info| {
+            info.terminal.closeInternal();
+            info.terminal.deref();
         }
     }
 
@@ -184,6 +191,13 @@ pub fn spawnMaybeSync(
         }
 
         if (args != .zero and args.isObject()) {
+            // Reject terminal option on spawnSync
+            if (comptime is_sync) {
+                if (try args.getTruthy(globalThis, "terminal")) |_| {
+                    return globalThis.throwInvalidArguments("terminal option is only supported for Bun.spawn, not Bun.spawnSync", .{});
+                }
+            }
+
             // This must run before the stdio parsing happens
             if (!is_sync) {
                 if (try args.getTruthy(globalThis, "ipc")) |val| {
@@ -353,6 +367,47 @@ pub fn spawnMaybeSync(
                     }
                 }
             }
+
+            if (comptime !is_sync) {
+                if (try args.getTruthy(globalThis, "terminal")) |terminal_val| {
+                    if (comptime !Environment.isPosix) {
+                        return globalThis.throwInvalidArguments("terminal option is not supported on this platform", .{});
+                    }
+
+                    // Check if it's an existing Terminal object
+                    if (Terminal.fromJS(terminal_val)) |terminal| {
+                        if (terminal.flags.closed) {
+                            return globalThis.throwInvalidArguments("terminal is closed", .{});
+                        }
+                        if (terminal.slave_fd == bun.invalid_fd) {
+                            return globalThis.throwInvalidArguments("terminal slave fd is no longer valid", .{});
+                        }
+                        existing_terminal = terminal;
+                        terminal_js_value = terminal_val;
+                    } else if (terminal_val.isObject()) {
+                        // Create a new terminal from options
+                        var term_options = try Terminal.Options.parseFromJS(globalThis, terminal_val);
+                        terminal_info = Terminal.createFromSpawn(globalThis, term_options) catch |err| {
+                            term_options.deinit();
+                            return switch (err) {
+                                error.OpenPtyFailed => globalThis.throw("Failed to open PTY", .{}),
+                                error.DupFailed => globalThis.throw("Failed to duplicate PTY file descriptor", .{}),
+                                error.NotSupported => globalThis.throw("PTY not supported on this platform", .{}),
+                                error.WriterStartFailed => globalThis.throw("Failed to start terminal writer", .{}),
+                                error.ReaderStartFailed => globalThis.throw("Failed to start terminal reader", .{}),
+                            };
+                        };
+                    } else {
+                        return globalThis.throwInvalidArguments("terminal must be a Terminal object or options object", .{});
+                    }
+
+                    const terminal = existing_terminal orelse terminal_info.?.terminal;
+                    const slave_fd = terminal.getSlaveFd();
+                    stdio[0] = .{ .fd = slave_fd };
+                    stdio[1] = .{ .fd = slave_fd };
+                    stdio[2] = .{ .fd = slave_fd };
+                }
+            }
         } else {
             try getArgv(globalThis, cmd_value, PATH, cwd, &argv0, allocator, &argv);
         }
@@ -504,6 +559,12 @@ pub fn spawnMaybeSync(
         .extra_fds = extra_fds.items,
         .argv0 = argv0,
         .can_block_entire_thread_to_reduce_cpu_usage_in_fast_path = can_block_entire_thread_to_reduce_cpu_usage_in_fast_path,
+        // Only pass pty_slave_fd for newly created terminals (for setsid+TIOCSCTTY setup).
+        // For existing terminals, the session is already set up - child just uses the fd as stdio.
+        .pty_slave_fd = if (Environment.isPosix) blk: {
+            if (terminal_info) |ti| break :blk ti.terminal.getSlaveFd().native();
+            break :blk -1;
+        } else {},
 
         .windows = if (Environment.isWindows) .{
             .hide_window = windows_hide,
@@ -633,7 +694,17 @@ pub fn spawnMaybeSync(
         .killSignal = killSignal,
         .stderr_maxbuf = subprocess.stderr_maxbuf,
         .stdout_maxbuf = subprocess.stdout_maxbuf,
+        .terminal = existing_terminal orelse if (terminal_info) |info| info.terminal else null,
     };
+
+    // For inline terminal options: close parent's slave_fd so EOF is received when child exits
+    // For existing terminal: keep slave_fd open so terminal can be reused for more spawns
+    if (terminal_info) |info| {
+        terminal_js_value = info.js_value;
+        info.terminal.closeSlaveFd();
+        terminal_info = null;
+    }
+    // existing_terminal: don't close slave_fd - user manages lifecycle and can reuse
 
     subprocess.process.setExitHandler(subprocess);
 
@@ -711,7 +782,7 @@ pub fn spawnMaybeSync(
         // This must go before other things happen so that the exit handler is
         // registered before onProcessExit can potentially be called.
         if (timeout) |timeout_val| {
-            subprocess.event_loop_timer.next = bun.timespec.msFromNow(timeout_val);
+            subprocess.event_loop_timer.next = bun.timespec.msFromNow(.allow_mocked_time, timeout_val);
             globalThis.bunVM().timer.insert(&subprocess.event_loop_timer);
             subprocess.setEventLoopTimerRefd(true);
         }
@@ -730,6 +801,11 @@ pub fn spawnMaybeSync(
 
         if (stdio[0] == .readable_stream) {
             jsc.Codegen.JSSubprocess.stdinSetCached(out, globalThis, stdio[0].readable_stream.value);
+        }
+
+        // Cache the terminal JS value if a terminal was created
+        if (terminal_js_value != .zero) {
+            jsc.Codegen.JSSubprocess.terminalSetCached(out, globalThis, terminal_js_value);
         }
 
         switch (subprocess.process.watch()) {
@@ -840,7 +916,7 @@ pub fn spawnMaybeSync(
     // This ensures JavaScript timers don't fire and stdin/stdout from the main process aren't affected
     {
         var absolute_timespec = bun.timespec.epoch;
-        var now = bun.timespec.now();
+        var now = bun.timespec.now(.allow_mocked_time);
         var user_timespec: bun.timespec = if (timeout) |timeout_ms| now.addMs(timeout_ms) else absolute_timespec;
 
         // Support `AbortSignal.timeout`, but it's best-effort.
@@ -894,10 +970,10 @@ pub fn spawnMaybeSync(
             // The timeout check is done at the top of the loop
             switch (sync_loop.tickWithTimeout(if (has_timespec and !did_timeout) &absolute_timespec else null)) {
                 .completed => {
-                    now = bun.timespec.now();
+                    now = bun.timespec.now(.allow_mocked_time);
                 },
                 .timeout => {
-                    now = bun.timespec.now();
+                    now = bun.timespec.now(.allow_mocked_time);
                     const did_user_timeout = has_user_timespec and (absolute_timespec.eql(&user_timespec) or user_timespec.order(&now) == .lt);
 
                     if (did_user_timeout) {
@@ -1001,6 +1077,7 @@ const log = Output.scoped(.Subprocess, .hidden);
 extern "C" const BUN_DEFAULT_PATH_FOR_SPAWN: [*:0]const u8;
 
 const IPC = @import("../../ipc.zig");
+const Terminal = @import("./Terminal.zig");
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 

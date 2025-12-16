@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isBroken, isMusl, isWindows, nodeExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isBroken, isMusl, isWindows, nodeExe, tmpdirSync } from "harness";
 import assert from "node:assert";
 import fs from "node:fs/promises";
 import { basename, join } from "path";
@@ -272,9 +272,15 @@ describe.todoIf(isBroken && isMusl)("node:v8", () => {
     it("can hold a lot of locals", async () => {
       await checkSameOutput("test_many_v8_locals", []);
     });
-    it("keeps GC objects alive", async () => {
-      await checkSameOutput("test_handle_scope_gc", []);
-    }, 10000);
+    // Skip on ASAN: false positives due to dynamic library boundary crossing where
+    // Bun is built with ASAN+UBSAN but the native addon is not
+    it.skipIf(isASAN)(
+      "keeps GC objects alive",
+      async () => {
+        await checkSameOutput("test_handle_scope_gc", []);
+      },
+      10000,
+    );
   });
 
   describe("EscapableHandleScope", () => {

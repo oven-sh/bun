@@ -607,6 +607,9 @@ const Stringifier = struct {
             '\t',
             '\n',
             '\r',
+            // trailing colon can be misinterpreted as a mapping indicator
+            // https://github.com/oven-sh/bun/issues/25439
+            ':',
             => return true,
             else => {},
         }

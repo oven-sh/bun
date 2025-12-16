@@ -1399,6 +1399,9 @@ pub fn resetTerminal(
     return .js_undefined;
 }
 
+/// ghostty-vt module provides terminal VT emulation
+const ghostty = @import("ghostty");
+
 const std = @import("std");
 
 const bun = @import("bun");
@@ -1407,6 +1410,3 @@ const Environment = bun.Environment;
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
-
-/// ghostty-vt module provides terminal VT emulation
-const ghostty = @import("ghostty");

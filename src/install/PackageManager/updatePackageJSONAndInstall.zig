@@ -356,51 +356,87 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
 
     try manager.installWithManager(ctx, root_package_json_path, original_cwd);
 
-    // If using --catalog, update the root package.json's catalog with resolved versions
+    // If using --catalog, update the package.json with catalog data
     if (manager.options.catalog_name != null and (subcommand == .add or subcommand == .install)) {
-        const root_package_json_entry = manager.workspace_package_json_cache.getWithPath(
-            manager.allocator,
-            manager.log,
-            root_package_json_path,
-            .{},
-        ).unwrap() catch |err| {
-            Output.err(err, "failed to read/parse root package.json at '{s}'", .{root_package_json_path});
-            Global.exit(1);
-        };
+        // Check if we're in a workspace (editing a different package.json than the root)
+        const is_workspace = !strings.eql(manager.original_package_json_path, root_package_json_path);
 
-        try PackageJSONEditor.editCatalog(
-            manager,
-            &root_package_json_entry.root,
-            updates.*,
-            manager.options.catalog_name,
-        );
+        if (is_workspace) {
+            // In a workspace: catalog goes to root package.json, dependencies already in current_package_json
+            const root_package_json_entry = manager.workspace_package_json_cache.getWithPath(
+                manager.allocator,
+                manager.log,
+                root_package_json_path,
+                .{},
+            ).unwrap() catch |err| {
+                Output.err(err, "failed to read/parse root package.json at '{s}'", .{root_package_json_path});
+                Global.exit(1);
+            };
 
-        // Write updated root package.json
-        var root_buffer_writer = JSPrinter.BufferWriter.init(manager.allocator);
-        try root_buffer_writer.buffer.list.ensureTotalCapacity(manager.allocator, root_package_json_entry.source.contents.len + 1);
-        root_buffer_writer.append_newline = root_package_json_entry.source.contents.len > 0 and
-            root_package_json_entry.source.contents[root_package_json_entry.source.contents.len - 1] == '\n';
-        var root_package_json_writer = JSPrinter.BufferPrinter.init(root_buffer_writer);
+            try PackageJSONEditor.editCatalog(
+                manager,
+                &root_package_json_entry.root,
+                updates.*,
+                manager.options.catalog_name,
+            );
 
-        _ = JSPrinter.printJSON(
-            @TypeOf(&root_package_json_writer),
-            &root_package_json_writer,
-            root_package_json_entry.root,
-            &root_package_json_entry.source,
-            .{
-                .indent = root_package_json_entry.indentation,
-                .mangled_props = null,
-            },
-        ) catch |err| {
-            Output.prettyErrorln("root package.json failed to write due to error {s}", .{@errorName(err)});
-            Global.crash();
-        };
+            // Write updated root package.json
+            var root_buffer_writer = JSPrinter.BufferWriter.init(manager.allocator);
+            try root_buffer_writer.buffer.list.ensureTotalCapacity(manager.allocator, root_package_json_entry.source.contents.len + 256);
+            root_buffer_writer.append_newline = root_package_json_entry.source.contents.len > 0 and
+                root_package_json_entry.source.contents[root_package_json_entry.source.contents.len - 1] == '\n';
+            var root_package_json_writer = JSPrinter.BufferPrinter.init(root_buffer_writer);
 
-        const root_package_json_source = try manager.allocator.dupe(u8, root_package_json_writer.ctx.writtenWithoutTrailingZero());
+            _ = JSPrinter.printJSON(
+                @TypeOf(&root_package_json_writer),
+                &root_package_json_writer,
+                root_package_json_entry.root,
+                &root_package_json_entry.source,
+                .{
+                    .indent = root_package_json_entry.indentation,
+                    .mangled_props = null,
+                },
+            ) catch |err| {
+                Output.prettyErrorln("root package.json failed to write due to error {s}", .{@errorName(err)});
+                Global.crash();
+            };
 
-        // Write root package.json to disk
-        if (manager.options.do.write_package_json) {
-            try writePackageJSONToDisk(root_package_json_path, root_package_json_source);
+            if (manager.options.do.write_package_json) {
+                try writePackageJSONToDisk(root_package_json_path, root_package_json_writer.ctx.writtenWithoutTrailingZero());
+            }
+        } else {
+            // Not in a workspace: add catalog entries to current_package_json
+            try PackageJSONEditor.editCatalog(
+                manager,
+                &current_package_json.root,
+                updates.*,
+                manager.options.catalog_name,
+            );
+
+            // Re-serialize current_package_json with the catalog data
+            var catalog_buffer_writer = JSPrinter.BufferWriter.init(manager.allocator);
+            try catalog_buffer_writer.buffer.list.ensureTotalCapacity(manager.allocator, current_package_json.source.contents.len + 256);
+            catalog_buffer_writer.append_newline = current_package_json.source.contents.len > 0 and
+                current_package_json.source.contents[current_package_json.source.contents.len - 1] == '\n';
+            var catalog_package_json_writer = JSPrinter.BufferPrinter.init(catalog_buffer_writer);
+
+            _ = JSPrinter.printJSON(
+                @TypeOf(&catalog_package_json_writer),
+                &catalog_package_json_writer,
+                current_package_json.root,
+                &current_package_json.source,
+                .{
+                    .indent = current_package_json.indentation,
+                    .mangled_props = null,
+                },
+            ) catch |err| {
+                Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
+                Global.crash();
+            };
+
+            // Update new_package_json_source with the catalog data
+            new_package_json_source = try manager.allocator.dupe(u8, catalog_package_json_writer.ctx.writtenWithoutTrailingZero());
+            current_package_json.source.contents = new_package_json_source;
         }
     }
 

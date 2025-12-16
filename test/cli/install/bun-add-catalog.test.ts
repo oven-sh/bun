@@ -41,8 +41,8 @@ describe("bun add --catalog", () => {
     // The add command should succeed
     expect(exitCode).toBe(0);
 
-    // Verify node_modules was NOT created (catalog mode shouldn't install)
-    expect(existsSync(join(packageDir, "node_modules"))).toBe(false);
+    // Verify node_modules WAS created (--catalog installs to resolve versions)
+    expect(existsSync(join(packageDir, "node_modules"))).toBe(true);
 
     // Check that package.json was updated with catalog reference
     const updatedPackageJson = await file(join(packageDir, "package.json")).json();

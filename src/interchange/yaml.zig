@@ -2159,6 +2159,7 @@ pub fn Parser(comptime enc: Encoding) type {
                             continue :end parser.next();
                         },
 
+                        // YAML 1.2 Core Schema: hex letters (a-f, A-F) are valid in hex numbers
                         'a'...'d',
                         'f',
                         'A'...'D',
@@ -2177,6 +2178,7 @@ pub fn Parser(comptime enc: Encoding) type {
                             continue :end parser.next();
                         },
 
+                        // YAML 1.2 Core Schema: hexadecimal (0x...) is supported
                         'x' => {
                             first = false;
                             if (x) {
@@ -2241,6 +2243,7 @@ pub fn Parser(comptime enc: Encoding) type {
                     }
 
                     var scalar: NodeScalar = scalar: {
+                        // YAML 1.2 Core Schema: octal (0o...) and hex (0x...) are supported
                         if (x or o or hex) {
                             const unsigned = std.fmt.parseUnsigned(u64, parser.slice(start, end), 0) catch {
                                 return;
@@ -2466,22 +2469,20 @@ pub fn Parser(comptime enc: Encoding) type {
                         'n' => {
                             const n_start = self.pos;
                             self.inc(1);
+                            // YAML 1.2: only lowercase 'null' is valid
                             if (self.remainStartsWith("ull")) {
                                 try ctx.resolve(.null, n_start, "null");
                                 self.inc(3);
                                 continue :next self.next();
                             }
-                            if (self.remainStartsWithChar('o')) {
-                                try ctx.resolve(.{ .boolean = false }, n_start, "no");
-                                self.inc(1);
-                                continue :next self.next();
-                            }
+                            // YAML 1.2: 'no' is a string, not a boolean
                             try ctx.appendSource(c, n_start);
                             continue :next self.next();
                         },
                         'N' => {
                             const n_start = self.pos;
                             self.inc(1);
+                            // YAML 1.2 Core Schema: Null and NULL are valid null
                             if (self.remainStartsWith("ull")) {
                                 try ctx.resolve(.null, n_start, "Null");
                                 self.inc(3);
@@ -2492,16 +2493,7 @@ pub fn Parser(comptime enc: Encoding) type {
                                 self.inc(3);
                                 continue :next self.next();
                             }
-                            if (self.remainStartsWithChar('o')) {
-                                try ctx.resolve(.{ .boolean = false }, n_start, "No");
-                                self.inc(1);
-                                continue :next self.next();
-                            }
-                            if (self.remainStartsWithChar('O')) {
-                                try ctx.resolve(.{ .boolean = false }, n_start, "NO");
-                                self.inc(1);
-                                continue :next self.next();
-                            }
+                            // YAML 1.2: 'No', 'NO' are strings, not booleans
                             try ctx.appendSource(c, n_start);
                             continue :next self.next();
                         },
@@ -2525,6 +2517,7 @@ pub fn Parser(comptime enc: Encoding) type {
                         'T' => {
                             const t_start = self.pos;
                             self.inc(1);
+                            // YAML 1.2 Core Schema: True and TRUE are valid booleans
                             if (self.remainStartsWith("rue")) {
                                 try ctx.resolve(.{ .boolean = true }, t_start, "True");
                                 self.inc(3);
@@ -2536,75 +2529,6 @@ pub fn Parser(comptime enc: Encoding) type {
                                 continue :next self.next();
                             }
                             try ctx.appendSource(c, t_start);
-                            continue :next self.next();
-                        },
-                        'y' => {
-                            const y_start = self.pos;
-                            self.inc(1);
-                            if (self.remainStartsWith("es")) {
-                                try ctx.resolve(.{ .boolean = true }, y_start, "yes");
-                                self.inc(2);
-                                continue :next self.next();
-                            }
-                            try ctx.appendSource(c, y_start);
-                            continue :next self.next();
-                        },
-                        'Y' => {
-                            const y_start = self.pos;
-                            self.inc(1);
-                            if (self.remainStartsWith("es")) {
-                                try ctx.resolve(.{ .boolean = true }, y_start, "Yes");
-                                self.inc(2);
-                                continue :next self.next();
-                            }
-                            if (self.remainStartsWith("ES")) {
-                                try ctx.resolve(.{ .boolean = true }, y_start, "YES");
-                                self.inc(2);
-                                continue :next self.next();
-                            }
-                            try ctx.appendSource(c, y_start);
-                            continue :next self.next();
-                        },
-                        'o' => {
-                            const o_start = self.pos;
-                            self.inc(1);
-                            if (self.remainStartsWithChar('n')) {
-                                try ctx.resolve(.{ .boolean = true }, o_start, "on");
-                                self.inc(1);
-                                continue :next self.next();
-                            }
-                            if (self.remainStartsWith("ff")) {
-                                try ctx.resolve(.{ .boolean = false }, o_start, "off");
-                                self.inc(2);
-                                continue :next self.next();
-                            }
-                            try ctx.appendSource(c, o_start);
-                            continue :next self.next();
-                        },
-                        'O' => {
-                            const o_start = self.pos;
-                            self.inc(1);
-                            if (self.remainStartsWithChar('n')) {
-                                try ctx.resolve(.{ .boolean = true }, o_start, "On");
-                                self.inc(1);
-                                continue :next self.next();
-                            }
-                            if (self.remainStartsWithChar('N')) {
-                                try ctx.resolve(.{ .boolean = true }, o_start, "ON");
-                                self.inc(1);
-                                continue :next self.next();
-                            }
-                            if (self.remainStartsWith("ff")) {
-                                try ctx.resolve(.{ .boolean = false }, o_start, "Off");
-                                self.inc(2);
-                                continue :next self.next();
-                            }
-                            if (self.remainStartsWith("FF")) {
-                                try ctx.resolve(.{ .boolean = false }, o_start, "OFF");
-                                self.inc(2);
-                                continue :next self.next();
-                            }
-                            try ctx.appendSource(c, o_start);
                             continue :next self.next();
                         },
                         'f' => {
@@ -2621,6 +2545,7 @@ pub fn Parser(comptime enc: Encoding) type {
                         'F' => {
                             const f_start = self.pos;
                             self.inc(1);
+                            // YAML 1.2 Core Schema: False and FALSE are valid booleans
                             if (self.remainStartsWith("alse")) {
                                 try ctx.resolve(.{ .boolean = false }, f_start, "False");
                                 self.inc(4);

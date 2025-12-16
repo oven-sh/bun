@@ -449,6 +449,10 @@ pub fn printHelp(subcommand: Subcommand) void {
                 \\  <b><green>bun add<r> <cyan>--optional<r> <blue>lodash<r>
                 \\  <b><green>bun add<r> <cyan>--peer<r> <blue>esbuild<r>
                 \\
+                \\  <d>Add with catalog reference (monorepo version management)<r>
+                \\  <b><green>bun add<r> <cyan>--catalog<r> <blue>react<r>
+                \\  <b><green>bun add<r> <cyan>--catalog=dev<r> <blue>typescript<r>
+                \\
                 \\Full documentation is available at <magenta>https://bun.com/docs/cli/add<r>.
                 \\
             ;

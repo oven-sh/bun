@@ -5,12 +5,33 @@ const dependency_groups = &.{
     .{ "peerDependencies", .{ .peer = true } },
 };
 
+const CATALOG_PREFIX = "catalog:";
+
 pub const EditOptions = struct {
     exact_versions: bool = false,
     add_trusted_dependencies: bool = false,
     before_install: bool = false,
     catalog_name: ?string = null,
 };
+
+/// Validates and formats a catalog reference string.
+/// Returns null if the catalog name is invalid (contains whitespace or ':').
+fn formatCatalogReference(allocator: std.mem.Allocator, catalog_name: ?string) !?string {
+    const catalog = catalog_name orelse return null;
+    const trimmed = strings.trim(catalog, " \t\r\n");
+
+    // Validate: catalog name must not contain whitespace or ':'
+    for (trimmed) |c| {
+        if (c == ':' or std.ascii.isWhitespace(c)) {
+            return null; // Invalid catalog name
+        }
+    }
+
+    if (trimmed.len == 0) {
+        return try allocator.dupe(u8, CATALOG_PREFIX);
+    }
+    return try std.fmt.allocPrint(allocator, "{s}{s}", .{ CATALOG_PREFIX, trimmed });
+}
 
 pub fn editCatalog(
     manager: *PackageManager,
@@ -52,7 +73,7 @@ pub fn editCatalog(
                 if (request.package_id < resolutions.len and resolutions[request.package_id].tag == .npm) {
                     const version_str = try std.fmt.allocPrint(
                         allocator,
-                        "^{}",
+                        "^{f}",
                         .{resolutions[request.package_id].value.npm.version.fmt(manager.lockfile.buffers.string_bytes.items)},
                     );
                     const version_expr = try Expr.init(E.String, E.String{ .data = version_str }, logger.Loc.Empty).clone(allocator);
@@ -85,7 +106,7 @@ pub fn editCatalog(
                 if (request.package_id < resolutions.len and resolutions[request.package_id].tag == .npm) {
                     const version_str = try std.fmt.allocPrint(
                         allocator,
-                        "^{}",
+                        "^{f}",
                         .{resolutions[request.package_id].value.npm.version.fmt(manager.lockfile.buffers.string_bytes.items)},
                     );
                     const version_expr = try Expr.init(E.String, E.String{ .data = version_str }, logger.Loc.Empty).clone(allocator);
@@ -769,12 +790,15 @@ pub fn edit(
     for (updates.*) |*request| {
         if (request.e_string) |e_string| {
             // If catalog is specified, use catalog reference
-            if (options.catalog_name) |catalog| {
-                e_string.data = if (catalog.len == 0)
-                    try allocator.dupe(u8, "catalog:")
-                else
-                    try std.fmt.allocPrint(allocator, "catalog:{s}", .{catalog});
-                continue;
+            if (options.catalog_name != null) {
+                if (try formatCatalogReference(allocator, options.catalog_name)) |catalog_ref| {
+                    e_string.data = catalog_ref;
+                    continue;
+                } else {
+                    // Invalid catalog name - log error and skip catalog reference
+                    Output.errGeneric("Invalid catalog name: contains whitespace or ':'", .{});
+                    Global.exit(1);
+                }
             }
 
             if (request.package_id >= resolutions.len or resolutions[request.package_id].tag == .uninitialized) {
@@ -883,6 +907,8 @@ const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
+const Global = bun.Global;
+const Output = bun.Output;
 const Semver = bun.Semver;
 const logger = bun.logger;
 const strings = bun.strings;

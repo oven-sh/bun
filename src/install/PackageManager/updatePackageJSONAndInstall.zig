@@ -1,3 +1,18 @@
+/// Helper to write package.json content to disk.
+/// Opens the file, writes the content, truncates to the exact length, and closes.
+fn writePackageJSONToDisk(path: [:0]const u8, content: []const u8) !void {
+    const file = (try bun.sys.File.openat(
+        .cwd(),
+        path,
+        bun.O.RDWR,
+        0,
+    ).unwrap()).handle.stdFile();
+
+    try file.pwriteAll(content, 0);
+    std.posix.ftruncate(file.handle, content.len) catch {};
+    file.close();
+}
+
 pub fn updatePackageJSONAndInstallWithManager(
     manager: *PackageManager,
     ctx: Command.Context,
@@ -385,16 +400,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
 
         // Write root package.json to disk
         if (manager.options.do.write_package_json) {
-            const root_package_json_file = (try bun.sys.File.openat(
-                .cwd(),
-                root_package_json_path,
-                bun.O.RDWR,
-                0,
-            ).unwrap()).handle.stdFile();
-
-            try root_package_json_file.pwriteAll(root_package_json_source, 0);
-            std.posix.ftruncate(root_package_json_file.handle, root_package_json_source.len) catch {};
-            root_package_json_file.close();
+            try writePackageJSONToDisk(root_package_json_path, root_package_json_source);
         }
     }
 
@@ -476,16 +482,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
 
         // Now that we've run the install step
         // We can save our in-memory package.json to disk
-        const workspace_package_json_file = (try bun.sys.File.openat(
-            .cwd(),
-            path,
-            bun.O.RDWR,
-            0,
-        ).unwrap()).handle.stdFile();
-
-        try workspace_package_json_file.pwriteAll(source, 0);
-        std.posix.ftruncate(workspace_package_json_file.handle, source.len) catch {};
-        workspace_package_json_file.close();
+        try writePackageJSONToDisk(path, source);
 
         if (subcommand == .remove) {
             if (!any_changes) {

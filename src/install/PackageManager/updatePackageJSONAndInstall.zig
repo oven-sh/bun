@@ -357,7 +357,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
     try manager.installWithManager(ctx, root_package_json_path, original_cwd);
 
     // If using --catalog, update the root package.json's catalog with resolved versions
-    if (manager.options.catalog_name != null and (subcommand == .add)) {
+    if (manager.options.catalog_name != null and (subcommand == .add or subcommand == .install)) {
         const root_package_json_entry = manager.workspace_package_json_cache.getWithPath(
             manager.allocator,
             manager.log,

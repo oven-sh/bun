@@ -954,8 +954,7 @@ const envPlugin: BunPlugin = {
   setup(build) {
     build.onLoad({ filter: /\.env\.json$/ }, async (args) => {
       // Transform .env.json files into validated config objects
-      const text = await Bun.file(args.path).text();
-      const env = JSON.parse(text);
+      const env = await Bun.file(args.path).json();
 
       return {
         contents: `export default ${JSON.stringify(env)};`,

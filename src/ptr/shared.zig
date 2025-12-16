@@ -61,12 +61,6 @@ pub fn AtomicSharedIn(comptime Pointer: type, comptime Allocator: type) type {
 
 /// Like `Shared`, but takes explicit options.
 pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
-    const Allocator = options.Allocator;
-    const info = parsePointer(Pointer);
-    const Child = info.Child;
-    const NonOptionalPointer = info.NonOptionalPointer;
-    const Data = FullData(Child, options);
-
     if (options.allow_weak) {
         // Weak pointers only make sense if `deinit` will be called, since their only function
         // is to ensure `deinit` can be called before the memory is freed (weak pointers keep
@@ -84,6 +78,11 @@ pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
 
     return struct {
         const Self = @This();
+        const Allocator = options.Allocator;
+        const info = parsePointer(Pointer);
+        const Child = info.Child;
+        const NonOptionalPointer = info.NonOptionalPointer;
+        const Data = FullData(Child, options);
 
         #pointer: Pointer,
 
@@ -139,7 +138,12 @@ pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
         /// Creates a weak clone of this shared pointer.
         pub const cloneWeak = if (options.allow_weak) struct {
             pub fn cloneWeak(self: Self) Self.Weak {
-                return .{ .#pointer = self.#pointer };
+                const data = if (comptime info.isOptional())
+                    self.getData() orelse return .initNull()
+                else
+                    self.getData();
+                data.incrementWeak();
+                return .{ .#pointer = &data.value };
             }
         }.cloneWeak;
 
@@ -178,17 +182,18 @@ pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
         /// `deinit` on `self`.
         pub const take = if (info.isOptional()) struct {
             pub fn take(self: *Self) ?SharedNonOptional {
+                defer self.* = .initNull();
                 return .{ .#pointer = self.#pointer orelse return null };
             }
         }.take;
 
-        const SharedOptional = WithOptions(?Pointer, options);
+        pub const Optional = WithOptions(?Pointer, options);
 
         /// Converts a `Shared(*T)` into a non-null `Shared(?*T)`.
         ///
         /// This method invalidates `self`.
         pub const toOptional = if (!info.isOptional()) struct {
-            pub fn toOptional(self: *Self) SharedOptional {
+            pub fn toOptional(self: *Self) Optional {
                 defer self.* = undefined;
                 return .{ .#pointer = self.#pointer };
             }
@@ -232,15 +237,37 @@ pub fn WithOptions(comptime Pointer: type, comptime options: Options) type {
         fn getData(self: Self) if (info.isOptional()) ?*Data else *Data {
             return .fromValuePtr(self.#pointer);
         }
+
+        /// Turns a shared pointer into a raw pointer without decrementing the reference count.
+        ///
+        /// This method invalidates `self`. To avoid leaks, the raw pointer should be turned back
+        /// into a shared pointer with `adoptRawUnsafe`.
+        pub fn leak(self: *Self) Pointer {
+            defer self.* = undefined;
+            return self.#pointer;
+        }
+
+        /// Creates a shared pointer from a raw pointer returned by `leak`.
+        ///
+        /// `pointer` must have been previously returned by `leak`. `adoptRawUnsafe` should not be
+        /// called again on this pointer.
+        pub fn adoptRawUnsafe(pointer: Pointer) Self {
+            return .{ .#pointer = pointer };
+        }
+
+        /// Clones a shared pointer, given a raw pointer that originally came from a shared pointer.
+        ///
+        /// `pointer` must have come from a shared pointer, and the shared pointer from which it
+        /// came must remain valid (i.e., not be deinitialized) at least until this function
+        /// returns.
+        pub fn cloneFromRawUnsafe(pointer: Pointer) Self {
+            const temp: Self = .{ .#pointer = pointer };
+            return temp.clone();
+        }
     };
 }
 
 fn Weak(comptime Pointer: type, comptime options: Options) type {
-    const info = parsePointer(Pointer);
-    const Child = info.Child;
-    const NonOptionalPointer = info.NonOptionalPointer;
-    const Data = FullData(Child, options);
-
     bun.assertf(
         options.allow_weak and options.deinit,
         "options incompatible with shared.Weak",
@@ -249,21 +276,22 @@ fn Weak(comptime Pointer: type, comptime options: Options) type {
 
     return struct {
         const Self = @This();
+        const info = parsePointer(Pointer);
+        const Child = info.Child;
+        const NonOptionalPointer = info.NonOptionalPointer;
+        const Data = FullData(Child, options);
 
         #pointer: Pointer,
 
         const SharedNonOptional = WithOptions(NonOptionalPointer, options);
 
-        /// Upgrades this weak pointer into a normal shared pointer.
-        ///
-        /// This method invalidates `self`.
+        /// Clones this weak pointer and upgrades it to a shared pointer. You still need to `deinit` the weak pointer.
         pub fn upgrade(self: Self) ?SharedNonOptional {
             const data = if (comptime info.isOptional())
                 self.getData() orelse return null
             else
                 self.getData();
             if (!data.tryIncrementStrong()) return null;
-            data.incrementWeak();
             return .{ .#pointer = &data.value };
         }
 
@@ -424,6 +452,7 @@ fn FullData(comptime Child: type, comptime options: Options) type {
             // .acq_rel because we need to make sure other threads are done using the object before
             // we free it.
             if ((comptime !options.allow_weak) or self.weak_count.decrement() == 0) {
+                if (bun.Environment.ci_assert) bun.assert(self.strong_count.get(.monotonic) == 0);
                 self.destroy();
             }
         }

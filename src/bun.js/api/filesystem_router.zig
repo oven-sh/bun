@@ -68,7 +68,7 @@ pub const FileSystemRouter = struct {
         var arena = globalThis.allocator().create(bun.ArenaAllocator) catch unreachable;
         arena.* = bun.ArenaAllocator.init(globalThis.allocator());
         const allocator = arena.allocator();
-        var extensions = std.ArrayList(string).init(allocator);
+        var extensions = std.array_list.Managed(string).init(allocator);
         if (try argument.get(globalThis, "fileExtensions")) |file_extensions| {
             if (!file_extensions.jsType().isArray()) {
                 origin_str.deinit();
@@ -87,7 +87,7 @@ pub const FileSystemRouter = struct {
                     return globalThis.throwInvalidArguments("Expected fileExtensions to be an Array of strings", .{});
                 }
                 if (try val.getLength(globalThis) == 0) continue;
-                extensions.appendAssumeCapacity(((try val.toSlice(globalThis, allocator)).cloneIfNeeded(allocator) catch unreachable).slice()[1..]);
+                extensions.appendAssumeCapacity((try val.toUTF8Bytes(globalThis, allocator))[1..]);
             }
         }
 
@@ -99,7 +99,7 @@ pub const FileSystemRouter = struct {
                 return globalThis.throwInvalidArguments("Expected assetPrefix to be a string", .{});
             }
 
-            asset_prefix_slice = (try asset_prefix.toSlice(globalThis, allocator)).cloneIfNeeded(allocator) catch unreachable;
+            asset_prefix_slice = try (try asset_prefix.toSlice(globalThis, allocator)).cloneIfBorrowed(allocator);
         }
         const orig_log = vm.transpiler.resolver.log;
         var log = Log.Log.init(allocator);
@@ -165,6 +165,10 @@ pub const FileSystemRouter = struct {
         router.config.dir = fs_router.base_dir.?.slice();
         fs_router.base_dir.?.ref();
 
+        // TODO: Memory leak? We haven't freed `asset_prefix_slice`, but we can't do so because the
+        // underlying string is borrowed in `fs_router.router.config.asset_prefix_path`.
+        // `FileSystemRouter.deinit` frees `fs_router.asset_prefix`, but that's a clone of
+        // `asset_prefix_slice`. The original is not freed.
         return fs_router;
     }
 
@@ -247,8 +251,8 @@ pub const FileSystemRouter = struct {
             return globalThis.throwValue(try log.toJS(globalThis, globalThis.allocator(), "loading routes"));
         };
 
-        this.arena.deinit();
         this.router.deinit();
+        this.arena.deinit();
         globalThis.allocator().destroy(this.arena);
 
         this.arena = arena;
@@ -271,7 +275,7 @@ pub const FileSystemRouter = struct {
 
         var path: ZigString.Slice = brk: {
             if (argument.isString()) {
-                break :brk (try argument.toSlice(globalThis, globalThis.allocator())).cloneIfNeeded(globalThis.allocator()) catch unreachable;
+                break :brk try (try argument.toSlice(globalThis, globalThis.allocator())).cloneIfBorrowed(globalThis.allocator());
             }
 
             if (argument.isCell()) {
@@ -281,7 +285,7 @@ pub const FileSystemRouter = struct {
                 }
 
                 if (argument.as(jsc.WebCore.Response)) |resp| {
-                    break :brk resp.url.toUTF8(globalThis.allocator());
+                    break :brk resp.getUTF8Url(globalThis.allocator());
                 }
             }
 
@@ -289,13 +293,14 @@ pub const FileSystemRouter = struct {
         };
 
         if (path.len == 0 or (path.len == 1 and path.ptr[0] == '/')) {
+            path.deinit();
             path = ZigString.Slice.fromUTF8NeverFree("/");
         }
 
         if (strings.hasPrefixComptime(path.slice(), "http://") or strings.hasPrefixComptime(path.slice(), "https://") or strings.hasPrefixComptime(path.slice(), "file://")) {
             const prev_path = path;
-            path = ZigString.init(URL.parse(path.slice()).pathname).toSliceFast(globalThis.allocator()).cloneIfNeeded(globalThis.allocator()) catch unreachable;
-            prev_path.deinit();
+            defer prev_path.deinit();
+            path = try .initDupe(globalThis.allocator(), URL.parse(path.slice()).pathname);
         }
 
         const url_path = URLPath.parse(path.slice()) catch |err| {
@@ -319,6 +324,13 @@ pub const FileSystemRouter = struct {
             this.asset_prefix,
             this.base_dir.?,
         ) catch unreachable;
+
+        // TODO: Memory leak? We haven't freed `path`, but we can't do so because the underlying
+        // string is borrowed in `result.route_holder.pathname` and `result.route_holder.query_string`
+        // (see `Routes.matchPageWithAllocator`, which does not clone these fields but rather
+        // directly reuses parts of the `URLPath`, which itself borrows from `path`).
+        // `MatchedRoute.deinit` doesn't free any fields of `route_holder`, so the string is not
+        // freed.
         return result.toJS(globalThis);
     }
 
@@ -363,7 +375,7 @@ pub const FileSystemRouter = struct {
 
     pub fn finalize(
         this: *FileSystemRouter,
-    ) callconv(.C) void {
+    ) callconv(.c) void {
         if (this.asset_prefix) |prefix| {
             prefix.deref();
         }
@@ -472,7 +484,7 @@ pub const MatchedRoute = struct {
 
     pub fn finalize(
         this: *MatchedRoute,
-    ) callconv(.C) void {
+    ) callconv(.c) void {
         this.deinit();
     }
 
@@ -517,7 +529,7 @@ pub const MatchedRoute = struct {
     pub fn createQueryObject(ctx: *jsc.JSGlobalObject, map: *QueryStringMap) JSValue {
         const QueryObjectCreator = struct {
             query: *QueryStringMap,
-            pub fn create(this: *@This(), obj: *JSObject, global: *JSGlobalObject) void {
+            pub fn create(this: *@This(), obj: *JSObject, global: *JSGlobalObject) bun.JSError!void {
                 var iter = this.query.iter();
                 while (iter.next(&query_string_values_buf)) |entry| {
                     const entry_name = entry.name;
@@ -529,10 +541,10 @@ pub const MatchedRoute = struct {
                         for (entry.values, 0..) |value, i| {
                             values[i] = ZigString.init(value).withEncoding();
                         }
-                        obj.putRecord(global, &str, values);
+                        try obj.putRecord(global, &str, values);
                     } else {
                         query_string_value_refs_buf[0] = ZigString.init(entry.values[0]).withEncoding();
-                        obj.putRecord(global, &str, query_string_value_refs_buf[0..1]);
+                        try obj.putRecord(global, &str, query_string_value_refs_buf[0..1]);
                     }
                 }
             }

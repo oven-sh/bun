@@ -4,13 +4,14 @@ pub fn installHoistedPackages(
     workspace_filters: []const WorkspaceFilter,
     install_root_dependencies: bool,
     log_level: PackageManager.Options.LogLevel,
+    packages_to_install: ?[]const PackageID,
 ) !PackageInstall.Summary {
     bun.analytics.Features.hoisted_bun_install += 1;
 
     const original_trees = this.lockfile.buffers.trees;
     const original_tree_dep_ids = this.lockfile.buffers.hoisted_dependencies;
 
-    try this.lockfile.filter(this.log, this, install_root_dependencies, workspace_filters);
+    try this.lockfile.filter(this.log, this, install_root_dependencies, workspace_filters, packages_to_install);
 
     defer {
         this.lockfile.buffers.trees = original_trees;
@@ -153,7 +154,7 @@ pub fn installHoistedPackages(
                 .lockfile = this.lockfile,
                 .node = &install_node,
                 .node_modules = .{
-                    .path = std.ArrayList(u8).fromOwnedSlice(
+                    .path = std.array_list.Managed(u8).fromOwnedSlice(
                         this.allocator,
                         try this.allocator.dupe(
                             u8,
@@ -171,7 +172,6 @@ pub fn installHoistedPackages(
                     this.allocator,
                     this.lockfile.packages.len,
                 ),
-                .tree_iterator = &iterator,
                 .command_ctx = ctx,
                 .tree_ids_to_trees_the_id_depends_on = tree_ids_to_trees_the_id_depends_on,
                 .completed_trees = completed_trees,
@@ -202,10 +202,6 @@ pub fn installHoistedPackages(
             installer.node_modules.tree_id = node_modules.tree_id;
             var remaining = node_modules.dependencies;
             installer.current_tree_id = node_modules.tree_id;
-
-            if (comptime Environment.allow_assert) {
-                bun.assert(node_modules.dependencies.len == this.lockfile.buffers.trees.items[installer.current_tree_id].dependencies.len);
-            }
 
             // cache line is 64 bytes on ARM64 and x64
             // PackageIDs are 4 bytes

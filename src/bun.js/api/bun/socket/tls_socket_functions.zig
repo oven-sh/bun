@@ -259,7 +259,7 @@ pub fn getSharedSigalgs(this: *This, globalObject: *jsc.JSGlobalObject, _: *jsc.
 pub fn getCipher(this: *This, globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
     const ssl_ptr = this.socket.ssl() orelse return .js_undefined;
     const cipher = BoringSSL.SSL_get_current_cipher(ssl_ptr);
-    var result = JSValue.createEmptyObject(globalObject, 3);
+    var result = JSValue.createEmptyObject(globalObject, 0);
 
     if (cipher == null) {
         result.put(globalObject, ZigString.static("name"), JSValue.jsNull());
@@ -383,9 +383,9 @@ pub fn getEphemeralKeyInfo(this: *This, globalObject: *jsc.JSGlobalObject, _: *j
     if (this.isServer()) {
         return JSValue.jsNull();
     }
-    var result = JSValue.createEmptyObject(globalObject, 3);
 
     const ssl_ptr = this.socket.ssl() orelse return JSValue.jsNull();
+    var result = JSValue.createEmptyObject(globalObject, 0);
 
     // TODO: investigate better option or compatible way to get the key
     // this implementation follows nodejs but for BoringSSL SSL_get_server_tmp_key will always return 0
@@ -566,7 +566,7 @@ pub fn setVerifyMode(this: *This, globalObject: *jsc.JSGlobalObject, callframe: 
     return .js_undefined;
 }
 
-fn alwaysAllowSSLVerifyCallback(_: c_int, _: ?*BoringSSL.X509_STORE_CTX) callconv(.C) c_int {
+fn alwaysAllowSSLVerifyCallback(_: c_int, _: ?*BoringSSL.X509_STORE_CTX) callconv(.c) c_int {
     return 1;
 }
 
@@ -623,7 +623,7 @@ noinline fn getSSLException(globalThis: *jsc.JSGlobalObject, defaultMessage: []c
         const message = output_buf[0..written];
         zig_str = ZigString.init(bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "OpenSSL {s}", .{message})));
         var encoded_str = zig_str.withEncoding();
-        encoded_str.mark();
+        encoded_str.markGlobal();
 
         // We shouldn't *need* to do this but it's not entirely clear.
         BoringSSL.ERR_clear_error();

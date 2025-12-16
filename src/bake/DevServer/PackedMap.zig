@@ -19,8 +19,8 @@ end_state: struct {
     original_column: i32,
 },
 
-pub fn newNonEmpty(chunk: SourceMap.Chunk, escaped_source: Owned([]u8)) bun.ptr.Shared(*Self) {
-    var buffer = chunk.buffer;
+pub fn newNonEmpty(chunk: *SourceMap.Chunk, escaped_source: Owned([]u8)) bun.ptr.Shared(*Self) {
+    var buffer = &chunk.buffer;
     assert(!buffer.isEmpty());
     const dev_allocator = DevAllocator.downcast(buffer.allocator);
     return .new(.{
@@ -114,7 +114,7 @@ pub const Shared = union(enum) {
 
 const bun = @import("bun");
 const Environment = bun.Environment;
-const SourceMap = bun.sourcemap;
+const SourceMap = bun.SourceMap;
 const assert = bun.assert;
 const assert_eql = bun.assert_eql;
 const Chunk = bun.bundle_v2.Chunk;

@@ -66,24 +66,24 @@ pub const attrs = struct {
             operation: ParsedAttrSelectorOperation(Impl.SelectorImpl.AttrValue),
             never_matches: bool,
 
-            pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
+            pub fn toCss(this: *const @This(), dest: *Printer) PrintErr!void {
                 try dest.writeChar('[');
                 if (this.namespace) |nsp| switch (nsp) {
                     .specific => |v| {
-                        try css.IdentFns.toCss(&v.prefix, W, dest);
+                        try css.IdentFns.toCss(&v.prefix, dest);
                         try dest.writeChar('|');
                     },
                     .any => {
                         try dest.writeStr("*|");
                     },
                 };
-                try css.IdentFns.toCss(&this.local_name, W, dest);
+                try css.IdentFns.toCss(&this.local_name, dest);
                 switch (this.operation) {
                     .exists => {},
                     .with_value => |v| {
-                        try v.operator.toCss(W, dest);
+                        try v.operator.toCss(dest);
                         // try v.expected_value.toCss(dest);
-                        try CSSStringFns.toCss(&v.expected_value, W, dest);
+                        try CSSStringFns.toCss(&v.expected_value, dest);
                         switch (v.case_sensitivity) {
                             .case_sensitive, .ascii_case_insensitive_if_in_html_element_in_html_document => {},
                             .ascii_case_insensitive => {
@@ -168,7 +168,7 @@ pub const attrs = struct {
         suffix,
 
         const This = @This();
-        pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
+        pub fn toCss(this: *const This, dest: *Printer) PrintErr!void {
             // https://drafts.csswg.org/cssom/#serializing-selectors
             // See "attribute selector".
             return dest.writeStr(switch (this.*) {
@@ -715,8 +715,8 @@ pub const Direction = enum {
         return css.enum_property_util.parse(@This(), input);
     }
 
-    pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
-        return css.enum_property_util.toCss(@This(), this, W, dest);
+    pub fn toCss(this: *const @This(), dest: *Printer) PrintErr!void {
+        return css.enum_property_util.toCss(@This(), this, dest);
     }
 };
 
@@ -905,15 +905,14 @@ pub const PseudoClass = union(enum) {
         return this.eql(other);
     }
 
-    pub fn toCss(this: *const PseudoClass, comptime W: type, dest: *Printer(W)) PrintErr!void {
-        var s = ArrayList(u8){};
+    pub fn toCss(this: *const PseudoClass, dest: *Printer) PrintErr!void {
+        var s = std.Io.Writer.Allocating.init(dest.allocator);
         // PERF(alloc): I don't like making these little allocations
-        const writer = s.writer(dest.allocator);
-        const W2 = @TypeOf(writer);
-        const scratchbuf = std.ArrayList(u8).init(dest.allocator);
-        var printer = Printer(W2).new(dest.allocator, scratchbuf, writer, css.PrinterOptions.default(), dest.import_info, dest.local_names, dest.symbols);
-        try serialize.serializePseudoClass(this, W2, &printer, null);
-        return dest.writeStr(s.items);
+        const writer = &s.writer;
+        const scratchbuf = std.array_list.Managed(u8).init(dest.allocator);
+        var printer = Printer.new(dest.allocator, scratchbuf, writer, css.PrinterOptions.default(), dest.import_info, dest.local_names, dest.symbols);
+        try serialize.serializePseudoClass(this, &printer, null);
+        return dest.writeStr(s.written());
     }
 
     pub fn eql(lhs: *const PseudoClass, rhs: *const PseudoClass) bool {
@@ -1384,17 +1383,15 @@ pub fn GenericSelectorList(comptime Impl: type) type {
         const DebugFmt = struct {
             this: *const This,
 
-            pub fn format(this: @This(), comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+            pub fn format(this: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
                 if (comptime !bun.Environment.isDebug) return;
-                _ = fmt; // autofix
-                _ = options; // autofix
                 try writer.print("SelectorList[\n", .{});
                 const last = this.this.v.len() -| 1;
                 for (this.this.v.slice(), 0..) |*sel, i| {
                     if (i != last) {
-                        try writer.print(" {}\n", .{sel.debug()});
+                        try writer.print(" {f}\n", .{sel.debug()});
                     } else {
-                        try writer.print(" {},\n", .{sel.debug()});
+                        try writer.print(" {f},\n", .{sel.debug()});
                     }
                 }
                 try writer.print("]\n", .{});
@@ -1423,7 +1420,7 @@ pub fn GenericSelectorList(comptime Impl: type) type {
             return true;
         }
 
-        pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
+        pub fn toCss(this: *const This, dest: *Printer) PrintErr!void {
             _ = this; // autofix
             _ = dest; // autofix
             @compileError("Do not call this! Use `serializer.serializeSelectorList()` or `tocss_servo.toCss_SelectorList()` instead.");
@@ -1623,23 +1620,21 @@ pub fn GenericSelector(comptime Impl: type) type {
         const DebugFmt = struct {
             this: *const This,
 
-            pub fn format(this: @This(), comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+            pub fn format(this: @This(), writer: *std.Io.Writer) !void {
                 if (comptime !bun.Environment.isDebug) return;
-                _ = fmt; // autofix
-                _ = options; // autofix
                 try writer.print("Selector(", .{});
-                var arraylist = ArrayList(u8){};
-                const w = arraylist.writer(bun.default_allocator);
-                defer arraylist.deinit(bun.default_allocator);
+                var arraylist = std.Io.Writer.Allocating.init(bun.default_allocator);
+                const w = &arraylist.writer;
+                defer arraylist.deinit();
                 const symbols = bun.ast.Symbol.Map{};
-                const P = css.Printer(@TypeOf(w));
-                var printer = P.new(bun.default_allocator, std.ArrayList(u8).init(bun.default_allocator), w, css.PrinterOptions.default(), null, null, &symbols);
+                const P = css.Printer;
+                var printer = P.new(bun.default_allocator, std.array_list.Managed(u8).init(bun.default_allocator), w, css.PrinterOptions.default(), null, null, &symbols);
                 defer printer.deinit();
                 P.in_debug_fmt = true;
                 defer P.in_debug_fmt = false;
 
-                css.selector.tocss_servo.toCss_Selector(this.this, @TypeOf(w), &printer) catch |e| return try writer.print("<error writing selector: {s}>\n", .{@errorName(e)});
-                try writer.writeAll(arraylist.items);
+                css.selector.tocss_servo.toCss_Selector(this.this, &printer) catch |e| return try writer.print("<error writing selector: {s}>\n", .{@errorName(e)});
+                try writer.writeAll(arraylist.written());
             }
         };
 
@@ -1653,7 +1648,7 @@ pub fn GenericSelector(comptime Impl: type) type {
             return parse_selector(Impl, parser, input, &state, .none);
         }
 
-        pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
+        pub fn toCss(this: *const This, dest: *Printer) PrintErr!void {
             _ = this; // autofix
             _ = dest; // autofix
             @compileError("Do not call this! Use `serializer.serializeSelector()` or `tocss_servo.toCss_Selector()` instead.");
@@ -1910,12 +1905,12 @@ pub fn GenericComponent(comptime Impl: type) type {
             return css.implementEql(This, lhs, rhs);
         }
 
-        pub fn format(this: *const This, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(this: *const This, writer: *std.Io.Writer) !void {
             switch (this.*) {
                 .local_name => return try writer.print("local_name={s}", .{this.local_name.name.v}),
-                .combinator => return try writer.print("combinator='{}'", .{this.combinator}),
-                .pseudo_element => return try writer.print("pseudo_element={}", .{this.pseudo_element}),
-                .class => return try writer.print("class={}", .{this.class}),
+                .combinator => return try writer.print("combinator='{f}'", .{this.combinator}),
+                .pseudo_element => return try writer.print("pseudo_element={f}", .{this.pseudo_element}),
+                .class => return try writer.print("class={f}", .{this.class}),
                 else => {},
             }
             return writer.print("{s}", .{@tagName(this.*)});
@@ -1948,7 +1943,7 @@ pub fn GenericComponent(comptime Impl: type) type {
             return this.* == .combinator;
         }
 
-        pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
+        pub fn toCss(this: *const This, dest: *Printer) PrintErr!void {
             _ = this; // autofix
             _ = dest; // autofix
             @compileError("Do not call this! Use `serializer.serializeComponent()` or `tocss_servo.toCss_Component()` instead.");
@@ -1999,7 +1994,7 @@ pub const NthSelectorData = struct {
         };
     }
 
-    pub fn writeStart(this: *const @This(), comptime W: type, dest: *Printer(W), is_function: bool) PrintErr!void {
+    pub fn writeStart(this: *const @This(), dest: *Printer, is_function: bool) PrintErr!void {
         try dest.writeStr(switch (this.ty) {
             .child => if (is_function) ":nth-child(" else ":first-child",
             .last_child => if (is_function) ":nth-last-child(" else ":last-child",
@@ -2021,7 +2016,7 @@ pub const NthSelectorData = struct {
         return "";
     }
 
-    pub fn writeAffine(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn writeAffine(this: *const @This(), dest: *Printer) PrintErr!void {
         // PERF: this could be made faster
         if (this.a == 0 and this.b == 0) {
             try dest.writeChar('0');
@@ -2240,7 +2235,7 @@ pub const Combinator = enum {
         return lhs.* == rhs.*;
     }
 
-    pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const @This(), dest: *Printer) PrintErr!void {
         _ = this; // autofix
         _ = dest; // autofix
         @compileError("Do not call this! Use `serializer.serializeCombinator()` or `tocss_servo.toCss_Combinator()` instead.");
@@ -2253,7 +2248,7 @@ pub const Combinator = enum {
         };
     }
 
-    pub fn format(this: *const Combinator, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(this: *const Combinator, writer: *std.Io.Writer) !void {
         return switch (this.*) {
             .child => writer.print(">", .{}),
             .descendant => writer.print("`descendant` (space)", .{}),
@@ -2477,7 +2472,7 @@ pub const PseudoElement = union(enum) {
         };
     }
 
-    pub fn format(this: *const PseudoElement, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(this: *const PseudoElement, writer: *std.Io.Writer) !void {
         try writer.print("{s}", .{@tagName(this.*)});
     }
 
@@ -2512,15 +2507,14 @@ pub const PseudoElement = union(enum) {
         };
     }
 
-    pub fn toCss(this: *const PseudoElement, comptime W: type, dest: *Printer(W)) PrintErr!void {
-        var s = ArrayList(u8){};
+    pub fn toCss(this: *const PseudoElement, dest: *Printer) PrintErr!void {
+        var s = std.Io.Writer.Allocating.init(dest.allocator);
         // PERF(alloc): I don't like making small allocations here for the string.
-        const writer = s.writer(dest.allocator);
-        const W2 = @TypeOf(writer);
-        const scratchbuf = std.ArrayList(u8).init(dest.allocator);
-        var printer = Printer(W2).new(dest.allocator, scratchbuf, writer, css.PrinterOptions.default(), dest.import_info, dest.local_names, dest.symbols);
-        try serialize.serializePseudoElement(this, W2, &printer, null);
-        return dest.writeStr(s.items);
+        const writer = &s.writer;
+        const scratchbuf = std.array_list.Managed(u8).init(dest.allocator);
+        var printer = Printer.new(dest.allocator, scratchbuf, writer, css.PrinterOptions.default(), dest.import_info, dest.local_names, dest.symbols);
+        try serialize.serializePseudoElement(this, &printer, null);
+        return dest.writeStr(s.written());
     }
 };
 
@@ -3504,8 +3498,8 @@ pub fn LocalName(comptime Impl: type) type {
         name: Impl.SelectorImpl.LocalName,
         lower_name: Impl.SelectorImpl.LocalName,
 
-        pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
-            return css.IdentFns.toCss(&this.name, W, dest);
+        pub fn toCss(this: *const @This(), dest: *Printer) PrintErr!void {
+            return css.IdentFns.toCss(&this.name, dest);
         }
 
         pub fn __generateEql() void {}
@@ -3591,17 +3585,31 @@ pub const ViewTransitionPartName = union(enum) {
     all,
     /// <custom-ident>
     name: css.css_values.ident.CustomIdent,
+    /// .<custom-ident>
+    class: css.css_values.ident.CustomIdent,
 
-    pub fn toCss(this: *const @This(), comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+    pub fn toCss(this: *const @This(), dest: *css.Printer) css.PrintErr!void {
         return switch (this.*) {
             .all => try dest.writeStr("*"),
-            .name => |name| try css.CustomIdentFns.toCss(&name, W, dest),
+            .name => |name| try css.CustomIdentFns.toCss(&name, dest),
+            .class => |name| {
+                try dest.writeChar('.');
+                try css.CustomIdentFns.toCss(&name, dest);
+            },
         };
     }
 
     pub fn parse(input: *css.Parser) Result(ViewTransitionPartName) {
         if (input.tryParse(css.Parser.expectDelim, .{'*'}).isOk()) {
             return .{ .result = .all };
+        }
+
+        // Try to parse a class selector (.<custom-ident>)
+        if (input.tryParse(css.Parser.expectDelim, .{'.'}).isOk()) {
+            return .{ .result = .{ .class = switch (css.css_values.ident.CustomIdent.parse(input)) {
+                .result => |v| v,
+                .err => |e| return .{ .err = e },
+            } } };
         }
 
         return .{ .result = .{ .name = switch (css.css_values.ident.CustomIdent.parse(input)) {

@@ -38,7 +38,7 @@ pub fn cpus(global: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
         .linux => cpusImplLinux,
         .mac => cpusImplDarwin,
         .windows => cpusImplWindows,
-        else => @compileError("Unsupported OS"),
+        .wasm => @compileError("Unsupported OS"),
     };
 
     return cpusImpl(global) catch {
@@ -56,15 +56,15 @@ fn cpusImplLinux(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
     var num_cpus: u32 = 0;
 
     var stack_fallback = std.heap.stackFallback(1024 * 8, bun.default_allocator);
-    var file_buf = std.ArrayList(u8).init(stack_fallback.get());
+    var file_buf = std.array_list.Managed(u8).init(stack_fallback.get());
     defer file_buf.deinit();
 
     // Read /proc/stat to get number of CPUs and times
     {
-        const file = try std.fs.openFileAbsolute("/proc/stat", .{});
+        const file = try std.fs.cwd().openFile("/proc/stat", .{});
         defer file.close();
 
-        const read = try bun.sys.File.from(file).readToEndWithArrayList(&file_buf, true).unwrap();
+        const read = try bun.sys.File.from(file).readToEndWithArrayList(&file_buf, .probably_small).unwrap();
         defer file_buf.clearRetainingCapacity();
         const contents = file_buf.items[0..read];
 
@@ -92,7 +92,7 @@ fn cpusImplLinux(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
             times.irq = scale * try std.fmt.parseInt(u64, toks.next() orelse return error.eol, 10);
 
             // Actually create the JS object representing the CPU
-            const cpu = jsc.JSValue.createEmptyObject(globalThis, 3);
+            const cpu = jsc.JSValue.createEmptyObject(globalThis, 1);
             cpu.put(globalThis, jsc.ZigString.static("times"), times.toValue(globalThis));
             try values.putIndex(globalThis, num_cpus, cpu);
 
@@ -101,10 +101,10 @@ fn cpusImplLinux(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
     }
 
     // Read /proc/cpuinfo to get model information (optional)
-    if (std.fs.openFileAbsolute("/proc/cpuinfo", .{})) |file| {
+    if (std.fs.cwd().openFile("/proc/cpuinfo", .{})) |file| {
         defer file.close();
 
-        const read = try bun.sys.File.from(file).readToEndWithArrayList(&file_buf, true).unwrap();
+        const read = try bun.sys.File.from(file).readToEndWithArrayList(&file_buf, .probably_small).unwrap();
         defer file_buf.clearRetainingCapacity();
         const contents = file_buf.items[0..read];
 
@@ -152,10 +152,10 @@ fn cpusImplLinux(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
 
         var path_buf: [128]u8 = undefined;
         const path = try std.fmt.bufPrint(&path_buf, "/sys/devices/system/cpu/cpu{}/cpufreq/scaling_cur_freq", .{cpu_index});
-        if (std.fs.openFileAbsolute(path, .{})) |file| {
+        if (std.fs.cwd().openFile(path, .{})) |file| {
             defer file.close();
 
-            const read = try bun.sys.File.from(file).readToEndWithArrayList(&file_buf, true).unwrap();
+            const read = try bun.sys.File.from(file).readToEndWithArrayList(&file_buf, .probably_small).unwrap();
             defer file_buf.clearRetainingCapacity();
             const contents = file_buf.items[0..read];
 
@@ -278,7 +278,7 @@ pub fn cpusImplWindows(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
 
 pub fn freemem() u64 {
     // OsBinding.cpp
-    return @extern(*const fn () callconv(.C) u64, .{
+    return @extern(*const fn () callconv(.c) u64, .{
         .name = "Bun__Os__getFreeMemory",
     })();
 }
@@ -314,7 +314,7 @@ pub fn homedir(global: *jsc.JSGlobalObject) !bun.String {
 
         // The posix implementation of uv_os_homedir first checks the HOME
         // environment variable, then falls back to reading the passwd entry.
-        if (bun.getenvZ("HOME")) |home| {
+        if (bun.env_var.HOME.get()) |home| {
             if (home.len > 0)
                 return bun.String.init(home);
         }
@@ -452,7 +452,7 @@ pub fn loadavg(global: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
 pub const networkInterfaces = switch (Environment.os) {
     .linux, .mac => networkInterfacesPosix,
     .windows => networkInterfacesWindows,
-    else => @compileError("Unsupported OS"),
+    .wasm => @compileError("Unsupported OS"),
 };
 
 fn networkInterfacesPosix(globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
@@ -511,7 +511,7 @@ fn networkInterfacesPosix(globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSVal
         num_inet_interfaces += 1;
     }
 
-    var ret = jsc.JSValue.createEmptyObject(globalThis, 8);
+    var ret = jsc.JSValue.createEmptyObject(globalThis, 0);
 
     // Second pass through, populate each interface object
     it = interface_start;
@@ -522,7 +522,7 @@ fn networkInterfacesPosix(globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSVal
         const addr = std.net.Address.initPosix(@alignCast(@as(*std.posix.sockaddr, @ptrCast(iface.ifa_addr))));
         const netmask = std.net.Address.initPosix(@alignCast(@as(*std.posix.sockaddr, @ptrCast(iface.ifa_netmask))));
 
-        var interface = jsc.JSValue.createEmptyObject(globalThis, 7);
+        var interface = jsc.JSValue.createEmptyObject(globalThis, 0);
 
         // address <string> The assigned IPv4 or IPv6 address
         // cidr <string> The assigned IPv4 or IPv6 address with the routing prefix in CIDR notation. If the netmask is invalid, this property is set to null.
@@ -787,7 +787,7 @@ pub fn release() bun.String {
             @memcpy(name_buffer[0..value.len], value);
             break :slice name_buffer[0..value.len];
         },
-        else => @compileError("unsupported os"),
+        .wasm => @compileError("unsupported os"),
     };
 
     return bun.String.cloneUTF8(value);
@@ -881,7 +881,7 @@ pub fn totalmem() u64 {
         .windows => {
             return libuv.uv_get_total_memory();
         },
-        else => @compileError("unsupported os"),
+        .wasm => @compileError("unsupported os"),
     }
 }
 
@@ -923,7 +923,7 @@ pub fn uptime(global: *jsc.JSGlobalObject) bun.JSError!f64 {
                 return @floatFromInt(info.uptime);
             return 0;
         },
-        else => @compileError("unsupported os"),
+        .wasm => @compileError("unsupported os"),
     }
 }
 
@@ -938,15 +938,15 @@ pub fn userInfo(globalThis: *jsc.JSGlobalObject, options: gen.UserInfoOptions) b
     result.put(globalThis, jsc.ZigString.static("homedir"), home.toJS(globalThis));
 
     if (comptime Environment.isWindows) {
-        result.put(globalThis, jsc.ZigString.static("username"), jsc.ZigString.init(bun.getenvZ("USERNAME") orelse "unknown").withEncoding().toJS(globalThis));
+        result.put(globalThis, jsc.ZigString.static("username"), jsc.ZigString.init(bun.env_var.USER.get() orelse "unknown").withEncoding().toJS(globalThis));
         result.put(globalThis, jsc.ZigString.static("uid"), jsc.JSValue.jsNumber(-1));
         result.put(globalThis, jsc.ZigString.static("gid"), jsc.JSValue.jsNumber(-1));
         result.put(globalThis, jsc.ZigString.static("shell"), jsc.JSValue.jsNull());
     } else {
-        const username = bun.getenvZ("USER") orelse "unknown";
+        const username = bun.env_var.USER.get() orelse "unknown";
 
         result.put(globalThis, jsc.ZigString.static("username"), jsc.ZigString.init(username).withEncoding().toJS(globalThis));
-        result.put(globalThis, jsc.ZigString.static("shell"), jsc.ZigString.init(bun.getenvZ("SHELL") orelse "unknown").withEncoding().toJS(globalThis));
+        result.put(globalThis, jsc.ZigString.static("shell"), jsc.ZigString.init(bun.env_var.SHELL.get() orelse "unknown").withEncoding().toJS(globalThis));
         result.put(globalThis, jsc.ZigString.static("uid"), jsc.JSValue.jsNumber(c.getuid()));
         result.put(globalThis, jsc.ZigString.static("gid"), jsc.JSValue.jsNumber(c.getgid()));
     }
@@ -990,7 +990,7 @@ pub fn version() bun.JSError!bun.String {
             @memcpy(name_buffer[0..slice.len], slice);
             break :slice name_buffer[0..slice.len];
         },
-        else => @compileError("unsupported os"),
+        .wasm => @compileError("unsupported os"),
     };
 
     return bun.String.cloneUTF8(slice);

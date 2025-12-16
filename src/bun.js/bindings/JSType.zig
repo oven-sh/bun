@@ -484,13 +484,17 @@ pub const JSType = enum(u8) {
     /// ```
     JSPromise = 76,
 
+    /// Context object for Promise.all() operations.
+    /// Internal object used to track the state of Promise.all() resolution.
+    PromiseAllContext = 77,
+
     /// JavaScript Map object for key-value storage.
     /// ```js
     /// new Map()
     /// map.set(key, value)
     /// map.get(key)
     /// ```
-    Map = 77,
+    Map = 78,
 
     /// JavaScript Set object for unique value storage.
     /// ```js
@@ -498,34 +502,34 @@ pub const JSType = enum(u8) {
     /// set.add(value)
     /// set.has(value)
     /// ```
-    Set = 78,
+    Set = 79,
 
     /// WeakMap for weak key-value references.
     /// ```js
     /// new WeakMap()
     /// weakMap.set(object, value)
     /// ```
-    WeakMap = 79,
+    WeakMap = 80,
 
     /// WeakSet for weak value references.
     /// ```js
     /// new WeakSet()
     /// weakSet.add(object)
     /// ```
-    WeakSet = 80,
+    WeakSet = 81,
 
-    WebAssemblyModule = 81,
-    WebAssemblyInstance = 82,
-    WebAssemblyGCObject = 83,
+    WebAssemblyModule = 82,
+    WebAssemblyInstance = 83,
+    WebAssemblyGCObject = 84,
 
     /// Boxed String object.
     /// ```js
     /// new String("hello")
     /// ```
-    StringObject = 84,
+    StringObject = 85,
 
-    DerivedStringObject = 85,
-    InternalFieldTuple = 86,
+    DerivedStringObject = 86,
+    InternalFieldTuple = 87,
 
     MaxJS = 0b11111111,
     Event = 0b11101111,
@@ -569,6 +573,7 @@ pub const JSType = enum(u8) {
             .Map,
             .MapIterator,
             .JSPromise,
+            .PromiseAllContext,
             .Set,
             .SetIterator,
             .IteratorHelper,

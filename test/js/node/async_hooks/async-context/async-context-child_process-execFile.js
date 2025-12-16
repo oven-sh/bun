@@ -1,3 +1,4 @@
+process.exitCode = 1;
 const { AsyncLocalStorage } = require("async_hooks");
 const { execFile } = require("child_process");
 

@@ -7,6 +7,13 @@ declare module "bun" {
     type LibWorkerOrBunWorker = LibDomIsLoaded extends true ? {} : Bun.Worker;
     type LibEmptyOrBunWebSocket = LibDomIsLoaded extends true ? {} : Bun.WebSocket;
 
+    type LibEmptyOrNodeStreamWebCompressionStream = LibDomIsLoaded extends true
+      ? {}
+      : import("node:stream/web").CompressionStream;
+    type LibEmptyOrNodeStreamWebDecompressionStream = LibDomIsLoaded extends true
+      ? {}
+      : import("node:stream/web").DecompressionStream;
+
     type LibPerformanceOrNodePerfHooksPerformance = LibDomIsLoaded extends true ? {} : import("perf_hooks").Performance;
     type LibEmptyOrPerformanceEntry = LibDomIsLoaded extends true ? {} : import("node:perf_hooks").PerformanceEntry;
     type LibEmptyOrPerformanceMark = LibDomIsLoaded extends true ? {} : import("node:perf_hooks").PerformanceMark;
@@ -270,6 +277,30 @@ declare var Event: {
   readonly BUBBLING_PHASE: 3;
   new (type: string, eventInitDict?: Bun.EventInit): Event;
 };
+
+/**
+ * Unimplemented in Bun
+ */
+interface CompressionStream extends Bun.__internal.LibEmptyOrNodeStreamWebCompressionStream {}
+/**
+ * Unimplemented in Bun
+ */
+declare var CompressionStream: Bun.__internal.UseLibDomIfAvailable<
+  "CompressionStream",
+  typeof import("node:stream/web").CompressionStream
+>;
+
+/**
+ * Unimplemented in Bun
+ */
+interface DecompressionStream extends Bun.__internal.LibEmptyOrNodeStreamWebCompressionStream {}
+/**
+ * Unimplemented in Bun
+ */
+declare var DecompressionStream: Bun.__internal.UseLibDomIfAvailable<
+  "DecompressionStream",
+  typeof import("node:stream/web").DecompressionStream
+>;
 
 interface EventTarget {
   /**
@@ -860,7 +891,10 @@ interface ErrnoException extends Error {
   syscall?: string | undefined;
 }
 
-/** An abnormal event (called an exception) which occurs as a result of calling a method or accessing a property of a web API. */
+/**
+ * An abnormal event (called an exception) which occurs as a result of calling a
+ * method or accessing a property of a web API
+ */
 interface DOMException extends Error {
   readonly message: string;
   readonly name: string;
@@ -890,11 +924,35 @@ interface DOMException extends Error {
   readonly INVALID_NODE_TYPE_ERR: 24;
   readonly DATA_CLONE_ERR: 25;
 }
-
-// declare var DOMException: {
-//   prototype: DOMException;
-//   new (message?: string, name?: string): DOMException;
-// };
+declare var DOMException: {
+  prototype: DOMException;
+  new (message?: string, name?: string): DOMException;
+  readonly INDEX_SIZE_ERR: 1;
+  readonly DOMSTRING_SIZE_ERR: 2;
+  readonly HIERARCHY_REQUEST_ERR: 3;
+  readonly WRONG_DOCUMENT_ERR: 4;
+  readonly INVALID_CHARACTER_ERR: 5;
+  readonly NO_DATA_ALLOWED_ERR: 6;
+  readonly NO_MODIFICATION_ALLOWED_ERR: 7;
+  readonly NOT_FOUND_ERR: 8;
+  readonly NOT_SUPPORTED_ERR: 9;
+  readonly INUSE_ATTRIBUTE_ERR: 10;
+  readonly INVALID_STATE_ERR: 11;
+  readonly SYNTAX_ERR: 12;
+  readonly INVALID_MODIFICATION_ERR: 13;
+  readonly NAMESPACE_ERR: 14;
+  readonly INVALID_ACCESS_ERR: 15;
+  readonly VALIDATION_ERR: 16;
+  readonly TYPE_MISMATCH_ERR: 17;
+  readonly SECURITY_ERR: 18;
+  readonly NETWORK_ERR: 19;
+  readonly ABORT_ERR: 20;
+  readonly URL_MISMATCH_ERR: 21;
+  readonly QUOTA_EXCEEDED_ERR: 22;
+  readonly TIMEOUT_ERR: 23;
+  readonly INVALID_NODE_TYPE_ERR: 24;
+  readonly DATA_CLONE_ERR: 25;
+};
 
 declare function alert(message?: string): void;
 declare function confirm(message?: string): boolean;
@@ -1396,7 +1454,6 @@ interface Blob {
    *
    * This first decodes the data from UTF-8, then parses it as JSON.
    */
-  // eslint-disable-next-line @definitelytyped/no-unnecessary-generics
   json(): Promise<any>;
 
   /**
@@ -1556,6 +1613,15 @@ declare var URL: Bun.__internal.UseLibDomIfAvailable<
   }
 >;
 
+/**
+ * The **`AbortController`** interface represents a controller object that allows you to abort one or more Web requests as and when desired.
+ *
+ * [MDN Reference](https://developer.mozilla.org/docs/Web/API/AbortController)
+ */
+interface AbortController {
+  readonly signal: AbortSignal;
+  abort(reason?: any): void;
+}
 declare var AbortController: Bun.__internal.UseLibDomIfAvailable<
   "AbortController",
   {
@@ -1594,12 +1660,6 @@ declare var AbortSignal: Bun.__internal.UseLibDomIfAvailable<
      */
     any(signals: AbortSignal[]): AbortSignal;
   }
->;
-
-interface DOMException {}
-declare var DOMException: Bun.__internal.UseLibDomIfAvailable<
-  "DOMException",
-  { prototype: DOMException; new (): DOMException }
 >;
 
 interface FormData {
@@ -1860,14 +1920,44 @@ interface BunFetchRequestInit extends RequestInit {
    * Override http_proxy or HTTPS_PROXY
    * This is a custom property that is not part of the Fetch API specification.
    *
+   * Can be a string URL or an object with `url` and optional `headers`.
+   *
    * @example
    * ```js
+   * // String format
    * const response = await fetch("http://example.com", {
    *  proxy: "https://username:password@127.0.0.1:8080"
    * });
+   *
+   * // Object format with custom headers sent to the proxy
+   * const response = await fetch("http://example.com", {
+   *  proxy: {
+   *    url: "https://127.0.0.1:8080",
+   *    headers: {
+   *      "Proxy-Authorization": "Bearer token",
+   *      "X-Custom-Proxy-Header": "value"
+   *    }
+   *  }
+   * });
    * ```
+   *
+   * If a `Proxy-Authorization` header is provided in `proxy.headers`, it takes
+   * precedence over credentials parsed from the proxy URL.
    */
-  proxy?: string;
+  proxy?:
+    | string
+    | {
+        /**
+         * The proxy URL
+         */
+        url: string;
+        /**
+         * Custom headers to send to the proxy server.
+         * These headers are sent in the CONNECT request (for HTTPS targets)
+         * or in the proxy request (for HTTP targets).
+         */
+        headers?: Bun.HeadersInit;
+      };
 
   /**
    * Override the default S3 options

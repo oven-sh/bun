@@ -19,7 +19,7 @@ pub fn toJS(globalObject: *jsc.JSGlobalObject) jsc.JSValue {
         object.put(
             globalObject,
             comptime ZigString.static(field),
-            jsc.createCallback(globalObject, comptime ZigString.static(field), 1, comptime @field(fields, field)),
+            jsc.JSFunction.create(globalObject, field, @field(fields, field), 1, .{}),
         );
     }
 
@@ -415,7 +415,7 @@ const ValueOrError = union(enum) {
 };
 
 pub fn getPtrSlice(globalThis: *JSGlobalObject, value: JSValue, byteOffset: ?JSValue, byteLength: ?JSValue) ValueOrError {
-    if (!value.isNumber() or value.asNumber() < 0 or value.asNumber() > std.math.maxInt(usize)) {
+    if (!value.isNumber() or value.asNumber() < 0 or value.asNumber() > @as(f64, @as(comptime_float, std.math.maxInt(usize)))) {
         return .{ .err = globalThis.toInvalidArguments("ptr must be a number.", .{}) };
     }
 
@@ -582,7 +582,7 @@ pub fn toBuffer(
                 return jsc.JSValue.createBufferWithCtx(globalThis, slice, ctx, callback);
             }
 
-            return jsc.JSValue.createBuffer(globalThis, slice, null);
+            return jsc.JSValue.createBuffer(globalThis, slice);
         },
     }
 }

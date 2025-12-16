@@ -84,7 +84,7 @@ pub const RunCommand = struct {
     // Replace them with "bun run"
 
     pub inline fn replacePackageManagerRun(
-        copy_script: *std.ArrayList(u8),
+        copy_script: *std.array_list.Managed(u8),
         script: string,
     ) OOM!void {
         var entry_i: usize = 0;
@@ -222,7 +222,7 @@ pub const RunCommand = struct {
 
         var copy_script_capacity: usize = original_script.len;
         for (passthrough) |part| copy_script_capacity += 1 + part.len;
-        var copy_script = try std.ArrayList(u8).initCapacity(allocator, copy_script_capacity);
+        var copy_script = try std.array_list.Managed(u8).initCapacity(allocator, copy_script_capacity);
 
         // We're going to do this slowly.
         // Find exact matches of yarn, pnpm, npm
@@ -246,7 +246,7 @@ pub const RunCommand = struct {
         }
 
         if (!use_system_shell) {
-            const mini = bun.jsc.MiniEventLoop.initGlobal(env);
+            const mini = bun.jsc.MiniEventLoop.initGlobal(env, cwd);
             const code = bun.shell.Interpreter.initAndRunFromSource(ctx, mini, name, copy_script.items, cwd) catch |err| {
                 if (!silent) {
                     Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ name, @errorName(err) });
@@ -274,7 +274,7 @@ pub const RunCommand = struct {
         };
 
         const ipc_fd: ?bun.FD = if (!Environment.isWindows) blk: {
-            const node_ipc_fd = bun.getenvZ("NODE_CHANNEL_FD") orelse break :blk null;
+            const node_ipc_fd = bun.env_var.NODE_CHANNEL_FD.get() orelse break :blk null;
             const fd = std.fmt.parseInt(u31, node_ipc_fd, 10) catch break :blk null;
             break :blk bun.FD.fromNative(fd);
         } else null; // TODO: implement on Windows
@@ -294,7 +294,7 @@ pub const RunCommand = struct {
             .ipc = ipc_fd,
 
             .windows = if (Environment.isWindows) .{
-                .loop = jsc.EventLoopHandle.init(jsc.MiniEventLoop.initGlobal(env)),
+                .loop = jsc.EventLoopHandle.init(jsc.MiniEventLoop.initGlobal(env, null)),
             },
         }) catch |err| {
             if (!silent) {
@@ -306,7 +306,7 @@ pub const RunCommand = struct {
         })) {
             .err => |err| {
                 if (!silent) {
-                    Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error:\n{}", .{ name, err });
+                    Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error:\n{f}", .{ name, err });
                 }
 
                 Output.flush();
@@ -318,10 +318,10 @@ pub const RunCommand = struct {
         switch (spawn_result.status) {
             .exited => |exit_code| {
                 if (exit_code.signal.valid() and exit_code.signal != .SIGINT and !silent) {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> was terminated by signal {}<r>", .{ name, exit_code.signal.fmt(Output.enable_ansi_colors_stderr) });
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> was terminated by signal {f}<r>", .{ name, exit_code.signal.fmt(Output.enable_ansi_colors_stderr) });
                     Output.flush();
 
-                    if (bun.getRuntimeFeatureFlag(.BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN)) {
+                    if (bun.feature_flag.BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get()) {
                         bun.crash_handler.suppressReporting();
                     }
 
@@ -340,11 +340,11 @@ pub const RunCommand = struct {
 
             .signaled => |signal| {
                 if (signal.valid() and signal != .SIGINT and !silent) {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> was terminated by signal {}<r>", .{ name, signal.fmt(Output.enable_ansi_colors_stderr) });
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> was terminated by signal {f}<r>", .{ name, signal.fmt(Output.enable_ansi_colors_stderr) });
                     Output.flush();
                 }
 
-                if (bun.getRuntimeFeatureFlag(.BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN)) {
+                if (bun.feature_flag.BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get()) {
                     bun.crash_handler.suppressReporting();
                 }
 
@@ -353,7 +353,7 @@ pub const RunCommand = struct {
 
             .err => |err| {
                 if (!silent) {
-                    Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error:\n{}", .{ name, err });
+                    Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error:\n{f}", .{ name, err });
                 }
 
                 Output.flush();
@@ -426,7 +426,7 @@ pub const RunCommand = struct {
 
     fn runBinaryGenericError(executable: []const u8, silent: bool, err: bun.sys.Error) noreturn {
         if (!silent) {
-            Output.prettyErrorln("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to:\n{}", .{ basenameOrBun(executable), err.withPath(executable) });
+            Output.prettyErrorln("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to:\n{f}", .{ basenameOrBun(executable), err.withPath(executable) });
         }
 
         Global.exit(1);
@@ -445,7 +445,7 @@ pub const RunCommand = struct {
         var argv: []const string = &argv_;
 
         if (passthrough.len > 0) {
-            var array_list = std.ArrayList(string).init(ctx.allocator);
+            var array_list = std.array_list.Managed(string).init(ctx.allocator);
             try array_list.append(executable);
             try array_list.appendSlice(passthrough);
             argv = try array_list.toOwnedSlice();
@@ -467,7 +467,7 @@ pub const RunCommand = struct {
             .use_execve_on_macos = silent,
 
             .windows = if (Environment.isWindows) .{
-                .loop = jsc.EventLoopHandle.init(jsc.MiniEventLoop.initGlobal(env)),
+                .loop = jsc.EventLoopHandle.init(jsc.MiniEventLoop.initGlobal(env, null)),
             },
         }) catch |err| {
             bun.handleErrorReturnTrace(err, @errorReturnTrace());
@@ -486,7 +486,7 @@ pub const RunCommand = struct {
                             .err => |err2| {
                                 switch (err2.getErrno()) {
                                     .NOENT, .PERM, .NOTDIR => {
-                                        Output.prettyErrorln("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to error:\n{}", .{ basenameOrBun(executable), err2 });
+                                        Output.prettyErrorln("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to error:\n{f}", .{ basenameOrBun(executable), err2 });
                                         break :print_error;
                                     },
                                     else => {},
@@ -521,7 +521,7 @@ pub const RunCommand = struct {
                             });
                         }
 
-                        if (bun.getRuntimeFeatureFlag(.BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN)) {
+                        if (bun.feature_flag.BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get()) {
                             bun.crash_handler.suppressReporting();
                         }
 
@@ -538,7 +538,7 @@ pub const RunCommand = struct {
                                 });
                             }
 
-                            if (bun.getRuntimeFeatureFlag(.BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN)) {
+                            if (bun.feature_flag.BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get()) {
                                 bun.crash_handler.suppressReporting();
                             }
 
@@ -640,7 +640,7 @@ pub const RunCommand = struct {
     }
 
     pub fn createFakeTemporaryNodeExecutable(
-        PATH: *std.ArrayList(u8),
+        PATH: *std.array_list.Managed(u8),
         optional_bun_path: *string,
     ) (OOM || std.fs.SelfExePathError)!void {
         // If we are already running as "node", the path should exist
@@ -793,7 +793,7 @@ pub const RunCommand = struct {
         const root_dir_info = this_transpiler.resolver.readDirInfo(this_transpiler.fs.top_level_dir) catch |err| {
             if (!log_errors) return error.CouldntReadCurrentDirectory;
             ctx.log.print(Output.errorWriter()) catch {};
-            Output.prettyErrorln("<r><red>error<r><d>:<r> <b>{s}<r> loading directory {}", .{ @errorName(err), bun.fmt.QuotedFormatter{ .text = this_transpiler.fs.top_level_dir } });
+            Output.prettyErrorln("<r><red>error<r><d>:<r> <b>{s}<r> loading directory {f}", .{ @errorName(err), bun.fmt.QuotedFormatter{ .text = this_transpiler.fs.top_level_dir } });
             Output.flush();
             return err;
         } orelse {
@@ -814,6 +814,8 @@ pub const RunCommand = struct {
                 }
             }
 
+            // Always skip default .env files for package.json script runner
+            // (see comment in env_loader.zig:542-548 - the script's own bun instance loads .env)
             this_transpiler.runEnvLoader(true) catch {};
         }
 
@@ -907,7 +909,7 @@ pub const RunCommand = struct {
             new_path_len += bun_node_dir_win.len + 1;
         }
 
-        var new_path = try std.ArrayList(u8).initCapacity(ctx.allocator, new_path_len);
+        var new_path = try std.array_list.Managed(u8).initCapacity(ctx.allocator, new_path_len);
 
         if (needs_to_force_bun) {
             createFakeTemporaryNodeExecutable(
@@ -1019,7 +1021,7 @@ pub const RunCommand = struct {
         }
 
         var results = ResultList.init(ctx.allocator);
-        var descriptions = std.ArrayList(string).init(ctx.allocator);
+        var descriptions = std.array_list.Managed(string).init(ctx.allocator);
 
         if (filter != .script_exclude) {
             if (default_completions) |defaults| {
@@ -1053,9 +1055,6 @@ pub const RunCommand = struct {
                                 bun.copy(u8, path_buf[dir_slice.len..], base);
                                 path_buf[dir_slice.len + base.len] = 0;
                                 const slice = path_buf[0 .. dir_slice.len + base.len :0];
-                                if (Environment.isWindows) {
-                                    @panic("TODO");
-                                }
                                 if (!(bun.sys.isExecutableFilePath(slice))) continue;
                                 // we need to dupe because the string pay point to a pointer that only exists in the current scope
                                 _ = try results.getOrPut(this_transpiler.fs.filename_store.append(@TypeOf(base), base) catch continue);
@@ -1320,10 +1319,6 @@ pub const RunCommand = struct {
             };
         }
 
-        if (!ctx.debug.loaded_bunfig) {
-            bun.cli.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand) catch {};
-        }
-
         _ = _bootAndHandleError(ctx, absolute_script_path.?, null);
         return true;
     }
@@ -1368,21 +1363,20 @@ pub const RunCommand = struct {
             }
         }
 
+        if (!ctx.debug.loaded_bunfig) {
+            bun.cli.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand) catch {};
+        }
+
         // try fast run (check if the file exists and is not a folder, then run it)
         if (try_fast_run and maybeOpenWithBunJS(ctx)) return true;
 
         // setup
-
         const force_using_bun = ctx.debug.run_in_bun;
         var ORIGINAL_PATH: string = "";
         var this_transpiler: transpiler.Transpiler = undefined;
         const root_dir_info = try configureEnvForRun(ctx, &this_transpiler, null, log_errors, false);
         try configurePathForRun(ctx, root_dir_info, &this_transpiler, &ORIGINAL_PATH, root_dir_info.abs_path, force_using_bun);
         this_transpiler.env.map.put("npm_command", "run-script") catch unreachable;
-
-        if (!ctx.debug.loaded_bunfig) {
-            bun.cli.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand) catch {};
-        }
 
         // check for empty command
 
@@ -1405,11 +1399,12 @@ pub const RunCommand = struct {
 
             // read from stdin
             var stack_fallback = std.heap.stackFallback(2048, bun.default_allocator);
-            var list = std.ArrayList(u8).init(stack_fallback.get());
+            var list = std.Io.Writer.Allocating.init(stack_fallback.get());
             errdefer list.deinit();
 
-            std.io.getStdIn().reader().readAllArrayList(&list, 1024 * 1024 * 1024) catch return false;
-            ctx.runtime_options.eval.script = list.items;
+            var file_reader = std.fs.File.stdin().readerStreaming(&.{});
+            _ = file_reader.interface.streamRemaining(&list.writer) catch return false;
+            ctx.runtime_options.eval.script = list.written();
 
             const trigger = bun.pathLiteral("/[stdin]");
             var entry_point_buf: [bun.MAX_PATH_BYTES + trigger.len]u8 = undefined;
@@ -1417,7 +1412,7 @@ pub const RunCommand = struct {
             @memcpy(entry_point_buf[cwd.len..][0..trigger.len], trigger);
             const entry_path = entry_point_buf[0 .. cwd.len + trigger.len];
 
-            var passthrough_list = try std.ArrayList(string).initCapacity(ctx.allocator, ctx.passthrough.len + 1);
+            var passthrough_list = try std.array_list.Managed(string).initCapacity(ctx.allocator, ctx.passthrough.len + 1);
             passthrough_list.appendAssumeCapacity("-");
             passthrough_list.appendSliceAssumeCapacity(ctx.passthrough);
             ctx.passthrough = passthrough_list.items;
@@ -1507,10 +1502,7 @@ pub const RunCommand = struct {
             const preserve_symlinks = this_transpiler.resolver.opts.preserve_symlinks;
             defer this_transpiler.resolver.opts.preserve_symlinks = preserve_symlinks;
             this_transpiler.resolver.opts.preserve_symlinks = ctx.runtime_options.preserve_symlinks_main or
-                if (bun.getenvZ("NODE_PRESERVE_SYMLINKS_MAIN")) |env|
-                    bun.strings.eqlComptime(env, "1")
-                else
-                    false;
+                bun.env_var.NODE_PRESERVE_SYMLINKS_MAIN.get();
             break :brk this_transpiler.resolver.resolve(
                 this_transpiler.fs.top_level_dir,
                 target_name,
@@ -1567,7 +1559,7 @@ pub const RunCommand = struct {
             @memcpy(ptr[0..ext.len], ext);
             ptr[ext.len] = 0;
 
-            const l = root.len + cwd_len + prefix.len + target_name.len + ext.len;
+            const l = root.len + cwd_len + prefix.len + encoded.len + ext.len;
             const path_to_use = BunXFastPath.direct_launch_buffer[0..l :0];
             BunXFastPath.tryLaunch(ctx, path_to_use, this_transpiler.env, ctx.passthrough);
         }
@@ -1601,6 +1593,12 @@ pub const RunCommand = struct {
 
         if (ctx.runtime_options.if_present) {
             return true;
+        }
+
+        if (ctx.filters.len == 0 and !ctx.workspaces and CLI.Cli.cmd != null and CLI.Cli.cmd.? == .AutoCommand) {
+            if (bun.strings.eqlComptime(target_name, "feedback")) {
+                try @"bun feedback"(ctx);
+            }
         }
 
         if (log_errors) {
@@ -1665,6 +1663,19 @@ pub const RunCommand = struct {
             Global.exit(1);
         };
     }
+
+    fn @"bun feedback"(ctx: Command.Context) !noreturn {
+        const trigger = bun.pathLiteral("/[eval]");
+        var entry_point_buf: [bun.MAX_PATH_BYTES + trigger.len]u8 = undefined;
+        const cwd = try std.posix.getcwd(&entry_point_buf);
+        @memcpy(entry_point_buf[cwd.len..][0..trigger.len], trigger);
+        ctx.runtime_options.eval.script = if (bun.Environment.codegen_embed)
+            @embedFile("eval/feedback.ts")
+        else
+            bun.runtimeEmbedFile(.codegen, "eval/feedback.ts");
+        try Run.boot(ctx, entry_point_buf[0 .. cwd.len + trigger.len], null);
+        Global.exit(0);
+    }
 };
 
 pub const BunXFastPath = struct {
@@ -1681,7 +1692,7 @@ pub const BunXFastPath = struct {
         bun.assert(bun.isSliceInBufferT(u16, path_to_use, &BunXFastPath.direct_launch_buffer));
         var command_line = BunXFastPath.direct_launch_buffer[path_to_use.len..];
 
-        debug("Attempting to find and load bunx file: '{}'", .{bun.fmt.utf16(path_to_use)});
+        debug("Attempting to find and load bunx file: '{f}'", .{bun.fmt.utf16(path_to_use)});
         if (Environment.allow_assert) {
             bun.assert(std.fs.path.isAbsoluteWindowsWTF16(path_to_use));
         }
@@ -1717,9 +1728,9 @@ pub const BunXFastPath = struct {
         };
 
         if (Environment.isDebug) {
-            debug("run_ctx.handle: '{}'", .{bun.FD.fromSystem(handle)});
-            debug("run_ctx.base_path: '{}'", .{bun.fmt.utf16(run_ctx.base_path)});
-            debug("run_ctx.arguments: '{}'", .{bun.fmt.utf16(run_ctx.arguments)});
+            debug("run_ctx.handle: '{f}'", .{bun.FD.fromSystem(handle)});
+            debug("run_ctx.base_path: '{f}'", .{bun.fmt.utf16(run_ctx.base_path)});
+            debug("run_ctx.arguments: '{f}'", .{bun.fmt.utf16(run_ctx.arguments)});
             debug("run_ctx.force_use_bun: '{}'", .{run_ctx.force_use_bun});
         }
 

@@ -111,6 +111,8 @@ export function getStdinStream(
     $debug("ref();", reader ? "already has reader" : "getting reader");
     reader ??= native.getReader();
     source.updateRef(forceUnref ? false : true);
+    source?.setFlowing?.(true);
+
     shouldDisown = false;
     if (needsInternalReadRefresh) {
       needsInternalReadRefresh = false;
@@ -120,6 +122,7 @@ export function getStdinStream(
 
   function disown() {
     $debug("unref();");
+    source?.setFlowing?.(false);
 
     if (reader) {
       try {
@@ -183,13 +186,11 @@ export function getStdinStream(
 
   const originalPause = stream.pause;
   stream.pause = function () {
-    $debug("pause();");
     return originalPause.$call(this);
   };
 
   const originalResume = stream.resume;
   stream.resume = function () {
-    $debug("resume();");
     own();
     return originalResume.$call(this);
   };
@@ -252,10 +253,11 @@ export function getStdinStream(
 
   stream.on("pause", () => {
     process.nextTick(() => {
+      // Only disown if the stream is still paused (not resumed in the meantime)
       if (!stream.readableFlowing) {
         stream._readableState.reading = false;
+        disown();
       }
-      disown();
     });
   });
 
@@ -357,23 +359,6 @@ export function initializeNextTickQueue(
   }
 
   return nextTick;
-}
-
-$getter;
-export function mainModule() {
-  var existing = $getByIdDirectPrivate(this, "main");
-  // note: this doesn't handle "process.mainModule = undefined"
-  if (typeof existing !== "undefined") {
-    return existing;
-  }
-
-  return $requireMap.$get(Bun.main);
-}
-
-$overriddenName = "set mainModule";
-export function setMainModule(value) {
-  $putByIdDirectPrivate(this, "main", value);
-  return true;
 }
 
 type InternalEnvMap = Record<string, string>;

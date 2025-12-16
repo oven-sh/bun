@@ -21,6 +21,7 @@ function generate(ssl) {
         fn: "pauseFromJS",
         length: 0,
       },
+
       getTLSFinishedMessage: {
         fn: "getTLSFinishedMessage",
         length: 0,
@@ -90,6 +91,9 @@ function generate(ssl) {
       },
       bytesWritten: {
         getter: "getBytesWritten",
+      },
+      fd: {
+        getter: "getFD",
       },
       setNoDelay: {
         fn: "setNoDelay",
@@ -263,7 +267,9 @@ export default [
         fn: "unref",
         length: 0,
       },
-
+      fd: {
+        getter: "getFD",
+      },
       port: {
         getter: "getPort",
       },
@@ -302,7 +308,7 @@ export default [
     JSType: "0b11101110",
     finalize: true,
     construct: true,
-    hasPendingActivity: true,
+    values: ["on_data", "on_drain", "on_error"],
     proto: {
       send: {
         fn: "send",

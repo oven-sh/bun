@@ -129,7 +129,7 @@ const LockedState = struct {
 
     fn trackFree(self: Self, buf: []const u8, ret_addr: usize) FreeError!void {
         const entry = self.history.allocations.fetchRemove(buf.ptr) orelse {
-            Output.errGeneric("Invalid free, pointer {any}, len {d}", .{ buf.ptr, buf.len });
+            Output.errGeneric("Invalid free, pointer {*}, len {d}", .{ buf.ptr, buf.len });
 
             if (self.history.frees.getPtr(buf.ptr)) |free_entry| {
                 Output.printErrorln("Pointer allocated here:", .{});
@@ -186,14 +186,14 @@ const State = struct {
         self.history.unlock();
     }
 
-    fn deinit(self: *Self) void {
+    pub fn deinit(self: *Self) void {
         defer self.* = undefined;
         var history = self.history.intoUnprotected();
-        defer history.deinit();
+        defer history.deinit(self.parent);
 
         const count = history.allocations.count();
         if (count == 0) return;
-        Output.errGeneric("Allocation scope leaked {d} allocations ({})", .{
+        Output.errGeneric("Allocation scope leaked {d} allocations ({f})", .{
             count,
             bun.fmt.size(history.total_memory_allocated, .{}),
         });
@@ -206,7 +206,7 @@ const State = struct {
                 break;
             }
             Output.prettyErrorln(
-                "- {any}, len {d}, at:",
+                "- {*}, len {d}, at:",
                 .{ entry.key_ptr.*, entry.value_ptr.len },
             );
             bun.crash_handler.dumpStackTrace(
@@ -223,7 +223,7 @@ const State = struct {
         }
 
         Output.panic(
-            "Allocation scope leaked {}",
+            "Allocation scope leaked {f}",
             .{bun.fmt.size(history.total_memory_allocated, .{})},
         );
     }
@@ -505,6 +505,12 @@ pub fn AllocationScopeIn(comptime Allocator: type) type {
 
         pub fn setPointerExtra(self: Self, ptr: *anyopaque, extra: Extra) void {
             return self.borrow().setPointerExtra(ptr, extra);
+        }
+
+        pub fn leakSlice(self: Self, memory: anytype) void {
+            if (comptime !Self.enabled) return;
+            _ = @typeInfo(@TypeOf(memory)).pointer;
+            self.trackExternalFree(memory, null) catch @panic("tried to free memory that was not allocated by the allocation scope");
         }
     };
 }

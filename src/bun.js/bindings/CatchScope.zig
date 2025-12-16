@@ -77,7 +77,7 @@ pub const CatchScope = struct {
 
     /// Intended for use with `try`. Returns if there is already a pending exception or if traps cause
     /// an exception to be thrown (this is the same as how RETURN_IF_EXCEPTION behaves in C++)
-    pub fn returnIfException(self: *CatchScope) bun.JSError!void {
+    pub fn returnIfException(self: *CatchScope) !void {
         if (self.exceptionIncludingTraps() != null) return error.JSError;
     }
 
@@ -102,12 +102,12 @@ pub const CatchScope = struct {
     }
 
     /// If no exception, returns.
-    /// If termination exception, returns JSExecutionTerminated (so you can `try`)
+    /// If termination exception, returns JSTerminated (so you can `try`)
     /// If non-termination exception, assertion failure.
-    pub fn assertNoExceptionExceptTermination(self: *CatchScope) bun.JSExecutionTerminated!void {
+    pub fn assertNoExceptionExceptTermination(self: *CatchScope) bun.JSTerminated!void {
         if (self.exception()) |e| {
             if (jsc.JSValue.fromCell(e).isTerminationException())
-                return error.JSExecutionTerminated
+                return error.JSTerminated
             else if (comptime Environment.ci_assert)
                 self.assertionFailure(e);
             // Unconditionally panicking here is worse for our users.
@@ -166,9 +166,9 @@ pub const ExceptionValidationScope = struct {
     }
 
     /// If no exception, returns.
-    /// If termination exception, returns JSExecutionTerminated (so you can `try`)
+    /// If termination exception, returns JSTerminated (so you can `try`)
     /// If non-termination exception, assertion failure.
-    pub fn assertNoExceptionExceptTermination(self: *ExceptionValidationScope) bun.JSExecutionTerminated!void {
+    pub fn assertNoExceptionExceptTermination(self: *ExceptionValidationScope) bun.JSTerminated!void {
         if (Environment.ci_assert) {
             return self.scope.assertNoExceptionExceptTermination();
         }

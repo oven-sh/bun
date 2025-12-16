@@ -37,13 +37,7 @@ const OptionalThreadId = struct {
         return .{ .inner = id };
     }
 
-    pub fn format(
-        self: OptionalThreadId,
-        comptime fmt: []const u8,
-        options: std.fmt.FormatOptions,
-        writer: anytype,
-    ) !void {
-        _ = .{ fmt, options };
+    pub fn format(self: OptionalThreadId, writer: *std.Io.Writer) !void {
         if (self.inner == invalid_thread_id) {
             try writer.writeAll("another thread");
         } else {
@@ -126,7 +120,7 @@ const State = struct {
                 else => {
                     self.showTrace();
                     std.debug.panic(
-                        "race condition: thread {} tried to modify data being read by {}",
+                        "race condition: thread {} tried to modify data being read by {f}",
                         .{ current_id, OptionalThreadId.init(owner_id) },
                     );
                 },
@@ -135,7 +129,7 @@ const State = struct {
         } else {
             self.showTrace();
             std.debug.panic(
-                "race condition: thread {} tried to modify data being accessed by {}",
+                "race condition: thread {} tried to modify data being accessed by {f}",
                 .{ current_id, OptionalThreadId.init(owner_id) },
             );
         }
@@ -197,11 +191,11 @@ pub fn end(self: *Self) void {
     if (comptime enabled) self.internal_state.unlock();
 }
 
+pub const enabled = bun.Environment.ci_assert;
+
 const bun = @import("bun");
 const invalid_thread_id = @import("./thread_id.zig").invalid;
 const StoredTrace = bun.crash_handler.StoredTrace;
-
-const enabled = bun.Environment.ci_assert;
 const traces_enabled = bun.Environment.isDebug;
 
 const std = @import("std");

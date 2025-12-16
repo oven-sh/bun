@@ -72,6 +72,8 @@ $debug("Module loaded:", name);         // Debug (stripped in release)
 $assert(condition, "message");          // Assertions (stripped in release)
 ```
 
+**Platform detection**: `process.platform` and `process.arch` are inlined and dead-code eliminated
+
 ## Validation and Errors
 
 ```typescript

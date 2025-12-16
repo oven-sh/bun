@@ -70,28 +70,11 @@ jobs:
       - name: Update SQLite if needed
         if: success() && steps.check-version.outputs.current_num < steps.check-version.outputs.latest_num
         run: |
-          set -euo pipefail
-
-          TEMP_DIR=$(mktemp -d)
-          cd $TEMP_DIR
-
-          echo "Downloading from: https://sqlite.org/${{ steps.check-version.outputs.latest_year }}/sqlite-amalgamation-${{ steps.check-version.outputs.latest_num }}.zip"
-
-          # Download and extract latest version
-          wget "https://sqlite.org/${{ steps.check-version.outputs.latest_year }}/sqlite-amalgamation-${{ steps.check-version.outputs.latest_num }}.zip"
-          unzip "sqlite-amalgamation-${{ steps.check-version.outputs.latest_num }}.zip"
-          cd "sqlite-amalgamation-${{ steps.check-version.outputs.latest_num }}"
-
-          # Add header comment and copy files
-          echo "// clang-format off" > $GITHUB_WORKSPACE/src/bun.js/bindings/sqlite/sqlite3.c
-          cat sqlite3.c >> $GITHUB_WORKSPACE/src/bun.js/bindings/sqlite/sqlite3.c
-
-          echo "// clang-format off" > $GITHUB_WORKSPACE/src/bun.js/bindings/sqlite/sqlite3_local.h
-          cat sqlite3.h >> $GITHUB_WORKSPACE/src/bun.js/bindings/sqlite/sqlite3_local.h
+          ./scripts/update-sqlite-amalgamation.sh ${{ steps.check-version.outputs.latest_num }} ${{ steps.check-version.outputs.latest_year }}
 
       - name: Create Pull Request
         if: success() && steps.check-version.outputs.current_num < steps.check-version.outputs.latest_num
-        uses: peter-evans/create-pull-request@v4
+        uses: peter-evans/create-pull-request@v7
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           add-paths: |

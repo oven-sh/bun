@@ -16,8 +16,10 @@ pub const c_abi = false;
 pub const oniguruma = false;
 
 /// SIMD acceleration for optimized UTF-8 and escape sequence parsing.
-/// Uses highway SIMD library with simdutf for fast UTF-8 decoding.
-pub const simd = true;
+/// Currently disabled because ghostty's SIMD uses C++ implementations (vt.cpp)
+/// that would need to be built and linked separately.
+/// The scalar fallback paths provide correct functionality.
+pub const simd = false;
 
 /// Slow runtime safety checks - disabled in production
 pub const slow_runtime_safety = false;

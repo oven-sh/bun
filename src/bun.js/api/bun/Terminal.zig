@@ -69,6 +69,13 @@ this_value: jsc.JSRef = jsc.JSRef.empty(),
 /// State flags
 flags: Flags = .{},
 
+/// Virtual terminal emulator (ghostty-vt) for parsing escape sequences
+/// and maintaining screen state. Lazily initialized on first use.
+vt: ?*VirtualTerminal = null,
+
+/// Terminal title set via OSC sequences (initialized in initTerminal)
+vt_title: std.ArrayList(u8) = .empty,
+
 pub const Flags = packed struct(u8) {
     closed: bool = false,
     finalized: bool = false,
@@ -950,6 +957,12 @@ fn deinit(this: *Terminal) void {
     this.term_name.deinit();
     this.reader.deinit();
     this.writer.deinit();
+    // Clean up virtual terminal if initialized
+    if (this.vt) |vt| {
+        vt.deinit();
+        bun.default_allocator.destroy(vt);
+    }
+    this.vt_title.deinit(bun.default_allocator);
     bun.destroy(this);
 }
 
@@ -963,6 +976,429 @@ pub fn finalize(this: *Terminal) callconv(.c) void {
     this.deref();
 }
 
+// ============================================================================
+// Virtual Terminal (ghostty-vt) Integration
+// ============================================================================
+//
+// The VirtualTerminal wraps ghostty-vt to provide full terminal emulation:
+// - Parses escape sequences (CSI, OSC, DCS, etc.)
+// - Maintains screen state (cells, cursor, colors, scrollback)
+// - Supports alternate screen buffer
+// - Tracks terminal title via OSC sequences
+
+/// VirtualTerminal wraps ghostty's Terminal for full VT emulation.
+/// It processes escape sequences and maintains terminal screen state.
+pub const VirtualTerminal = struct {
+    /// The ghostty Terminal instance that manages all terminal state
+    terminal: ?ghostty.Terminal = null,
+    /// Terminal title set via OSC sequences
+    title: std.ArrayList(u8) = .empty,
+    /// Dimensions
+    cols: u16,
+    rows: u16,
+
+    const Self = @This();
+
+    pub fn init(cols: u16, rows: u16) !*Self {
+        const vt = try bun.default_allocator.create(Self);
+        errdefer bun.default_allocator.destroy(vt);
+
+        // Initialize ghostty Terminal
+        var terminal = try ghostty.Terminal.init(bun.default_allocator, .{
+            .cols = cols,
+            .rows = rows,
+            .max_scrollback = 10_000,
+        });
+        errdefer terminal.deinit(bun.default_allocator);
+
+        vt.* = .{
+            .terminal = terminal,
+            .cols = cols,
+            .rows = rows,
+        };
+        return vt;
+    }
+
+    pub fn deinit(self: *Self) void {
+        if (self.terminal) |*term| {
+            term.deinit(bun.default_allocator);
+        }
+        self.title.deinit(bun.default_allocator);
+    }
+
+    /// Feed a slice of bytes to the terminal, processing escape sequences
+    pub fn feed(self: *Self, data: []const u8) !void {
+        if (self.terminal) |*term| {
+            var stream = term.vtStream();
+            defer stream.deinit();
+            try stream.nextSlice(data);
+        }
+    }
+
+    /// Get the text content of the active screen
+    pub fn getText(self: *Self, alloc: std.mem.Allocator) ![]const u8 {
+        if (self.terminal) |*term| {
+            return try term.screens.active.dumpStringAlloc(alloc, .{ .active = .{} });
+        }
+        return "";
+    }
+
+    /// Get a line of text relative to the bottom of the screen
+    /// offset 0 = bottom visible line, 1 = one above bottom, etc.
+    pub fn getLineFromBottom(self: *Self, alloc: std.mem.Allocator, offset_from_bottom: usize) ![]const u8 {
+        if (self.terminal) |*term| {
+            const screen = term.screens.active;
+            const total_rows = self.rows;
+            if (offset_from_bottom >= total_rows) return "";
+
+            // Convert bottom-relative offset to top-relative row
+            // offset 0 = bottom = row (total_rows - 1)
+            // offset 1 = one above = row (total_rows - 2)
+            const row_from_top: usize = total_rows - 1 - offset_from_bottom;
+
+            // Build the line by iterating cells in the row
+            var result: std.ArrayListUnmanaged(u8) = .{};
+            errdefer result.deinit(alloc);
+
+            const cols = self.cols;
+            var col: usize = 0;
+            while (col < cols) : (col += 1) {
+                const cell = screen.pages.getCell(.{ .active = .{
+                    .x = @intCast(col),
+                    .y = @intCast(row_from_top),
+                } }) orelse continue;
+
+                const cp = cell.cell.content.codepoint;
+                if (cp == 0) continue; // Skip empty cells
+
+                // Encode the codepoint as UTF-8
+                var buf: [4]u8 = undefined;
+                const len = std.unicode.utf8Encode(cp, &buf) catch continue;
+                try result.appendSlice(alloc, buf[0..len]);
+            }
+
+            // Trim trailing spaces
+            while (result.items.len > 0 and result.items[result.items.len - 1] == ' ') {
+                _ = result.pop();
+            }
+
+            return try result.toOwnedSlice(alloc);
+        }
+        return "";
+    }
+
+    /// Get cell at position (x, y)
+    pub fn getCell(self: *Self, x: usize, y: usize) ?CellInfo {
+        if (self.terminal) |*term| {
+            const screen = term.screens.active;
+            if (x >= self.cols or y >= self.rows) return null;
+
+            const cell = screen.pages.getCell(.{ .active = .{
+                .x = @intCast(x),
+                .y = @intCast(y),
+            } }) orelse return null;
+
+            const cp = cell.cell.content.codepoint;
+            return CellInfo{
+                .char = if (cp == 0) ' ' else cp,
+                .wide = cell.cell.wide != .narrow,
+                .styled = cell.cell.style_id != 0,
+            };
+        }
+        return null;
+    }
+
+    /// Get cursor position
+    pub fn getCursorPos(self: *Self) struct { x: u16, y: u16 } {
+        if (self.terminal) |*term| {
+            const cursor = term.screens.active.cursor;
+            return .{ .x = cursor.x, .y = cursor.y };
+        }
+        return .{ .x = 0, .y = 0 };
+    }
+
+    /// Get cursor style
+    pub fn getCursorStyle(self: *Self) enum { block, bar, underline } {
+        if (self.terminal) |*term| {
+            return switch (term.screens.active.cursor.cursor_style) {
+                .block, .block_hollow => .block,
+                .bar => .bar,
+                .underline => .underline,
+            };
+        }
+        return .block;
+    }
+
+    /// Check if alternate screen is active
+    pub fn isAlternateScreen(self: *Self) bool {
+        if (self.terminal) |*term| {
+            return term.screens.active_key == .alternate;
+        }
+        return false;
+    }
+
+    /// Get scrollback line count
+    pub fn getScrollbackLines(self: *Self) usize {
+        if (self.terminal) |*term| {
+            // Count scrollback by checking how many rows are beyond the visible area
+            const visible_rows: usize = term.rows;
+            const page_rows: usize = term.screens.active.pages.rows;
+            return if (page_rows > visible_rows) page_rows - visible_rows else 0;
+        }
+        return 0;
+    }
+
+    /// Clear the screen
+    pub fn clearScreen(self: *Self) void {
+        if (self.terminal) |*term| {
+            term.eraseDisplay(.complete, false);
+        }
+    }
+
+    /// Reset terminal to initial state
+    pub fn reset(self: *Self) void {
+        if (self.terminal) |*term| {
+            term.fullReset();
+        }
+    }
+
+    /// Resize the terminal
+    pub fn resize(self: *Self, new_cols: u16, new_rows: u16) !void {
+        if (self.terminal) |*term| {
+            try term.resize(.{
+                .cols = new_cols,
+                .rows = new_rows,
+            });
+            self.cols = new_cols;
+            self.rows = new_rows;
+        }
+    }
+};
+
+/// Cell information returned by getCell
+pub const CellInfo = struct {
+    char: u21,
+    wide: bool,
+    styled: bool,
+};
+
+/// Lazily initialize the virtual terminal
+fn getOrCreateVT(this: *Terminal) !*VirtualTerminal {
+    if (this.vt) |vt| return vt;
+
+    const vt = try VirtualTerminal.init(this.cols, this.rows);
+    this.vt = vt;
+    return vt;
+}
+
+// ----- Virtual Terminal JS API Methods -----
+
+/// Feed data to the virtual terminal parser
+/// Processes escape sequences and updates terminal state
+pub fn feed(
+    this: *Terminal,
+    globalObject: *jsc.JSGlobalObject,
+    callframe: *jsc.CallFrame,
+) bun.JSError!JSValue {
+    const data_arg = callframe.argumentsAsArray(1)[0];
+    if (data_arg.isUndefinedOrNull()) {
+        return globalObject.throw("feed() requires a string or ArrayBuffer argument", .{});
+    }
+
+    const vt = this.getOrCreateVT() catch {
+        return globalObject.throw("Failed to initialize virtual terminal", .{});
+    };
+
+    // Get the data to feed using StringOrBuffer
+    const string_or_buffer = try jsc.Node.StringOrBuffer.fromJS(globalObject, bun.default_allocator, data_arg) orelse {
+        return globalObject.throw("feed() argument must be a string or ArrayBuffer", .{});
+    };
+    defer string_or_buffer.deinit();
+
+    vt.feed(string_or_buffer.slice()) catch |err| {
+        return globalObject.throw("Failed to process terminal data: {s}", .{@errorName(err)});
+    };
+
+    return .js_undefined;
+}
+
+/// Get a cell from the screen buffer at position (x, y)
+/// Returns { char: string, wide: boolean, styled: boolean } or null
+pub fn at(
+    this: *Terminal,
+    globalObject: *jsc.JSGlobalObject,
+    callframe: *jsc.CallFrame,
+) bun.JSError!JSValue {
+    const args = callframe.argumentsAsArray(2);
+    const x_arg = args[0];
+    const y_arg = args[1];
+
+    if (x_arg.isUndefinedOrNull() or y_arg.isUndefinedOrNull()) {
+        return globalObject.throw("at() requires x and y arguments", .{});
+    }
+
+    const x = x_arg.toInt32();
+    const y = y_arg.toInt32();
+    if (x < 0 or y < 0) {
+        return JSValue.jsNull();
+    }
+
+    const vt = this.vt orelse return JSValue.jsNull();
+    const cell_info = vt.getCell(@intCast(x), @intCast(y)) orelse return JSValue.jsNull();
+
+    const result = JSValue.createEmptyObject(globalObject, 3);
+
+    // Convert codepoint to string
+    var char_buf: [4]u8 = undefined;
+    const char_len = std.unicode.utf8Encode(cell_info.char, &char_buf) catch 1;
+    if (char_len == 1 and cell_info.char == ' ') {
+        result.put(globalObject, jsc.ZigString.static("char"), jsc.ZigString.static(" ").toJS(globalObject));
+    } else {
+        result.put(globalObject, jsc.ZigString.static("char"), jsc.ZigString.init(char_buf[0..char_len]).toJS(globalObject));
+    }
+
+    result.put(globalObject, jsc.ZigString.static("wide"), JSValue.jsBoolean(cell_info.wide));
+    result.put(globalObject, jsc.ZigString.static("styled"), JSValue.jsBoolean(cell_info.styled));
+
+    return result;
+}
+
+/// Get a line of text relative to the bottom of the screen
+/// line(0) = bottom line, line(1) = one above bottom, etc.
+pub fn line(
+    this: *Terminal,
+    globalObject: *jsc.JSGlobalObject,
+    callframe: *jsc.CallFrame,
+) bun.JSError!JSValue {
+    const row_arg = callframe.argumentsAsArray(1)[0];
+    if (row_arg.isUndefinedOrNull()) {
+        return globalObject.throw("line() requires a row number argument", .{});
+    }
+
+    const offset_from_bottom = row_arg.toInt32();
+    if (offset_from_bottom < 0) {
+        return jsc.ZigString.static("").toJS(globalObject);
+    }
+
+    const vt = this.vt orelse return jsc.ZigString.static("").toJS(globalObject);
+
+    const line_text = vt.getLineFromBottom(bun.default_allocator, @intCast(offset_from_bottom)) catch {
+        return jsc.ZigString.static("").toJS(globalObject);
+    };
+    defer if (line_text.len > 0) bun.default_allocator.free(line_text);
+
+    if (line_text.len == 0) {
+        return jsc.ZigString.static("").toJS(globalObject);
+    }
+
+    return jsc.ZigString.init(line_text).toJS(globalObject);
+}
+
+/// Get the full screen text (getter)
+pub fn getText(this: *Terminal, globalObject: *jsc.JSGlobalObject) JSValue {
+    const vt = this.vt orelse return jsc.ZigString.static("").toJS(globalObject);
+
+    const text = vt.getText(bun.default_allocator) catch {
+        return jsc.ZigString.static("").toJS(globalObject);
+    };
+    defer if (text.len > 0) bun.default_allocator.free(text);
+
+    if (text.len == 0) {
+        return jsc.ZigString.static("").toJS(globalObject);
+    }
+
+    return jsc.ZigString.init(text).toJS(globalObject);
+}
+
+/// Get cursor position and state
+/// Returns { x: number, y: number, visible: boolean, style: string }
+pub fn getCursor(this: *Terminal, globalObject: *jsc.JSGlobalObject) JSValue {
+    const result = JSValue.createEmptyObject(globalObject, 4);
+
+    if (this.vt) |vt| {
+        const pos = vt.getCursorPos();
+        const cursor_style = vt.getCursorStyle();
+
+        result.put(globalObject, jsc.ZigString.static("x"), JSValue.jsNumber(pos.x));
+        result.put(globalObject, jsc.ZigString.static("y"), JSValue.jsNumber(pos.y));
+        result.put(globalObject, jsc.ZigString.static("visible"), JSValue.jsBoolean(true));
+
+        const style_str = switch (cursor_style) {
+            .block => jsc.ZigString.static("block"),
+            .bar => jsc.ZigString.static("bar"),
+            .underline => jsc.ZigString.static("underline"),
+        };
+        result.put(globalObject, jsc.ZigString.static("style"), style_str.toJS(globalObject));
+    } else {
+        result.put(globalObject, jsc.ZigString.static("x"), JSValue.jsNumber(0));
+        result.put(globalObject, jsc.ZigString.static("y"), JSValue.jsNumber(0));
+        result.put(globalObject, jsc.ZigString.static("visible"), JSValue.jsBoolean(true));
+        result.put(globalObject, jsc.ZigString.static("style"), jsc.ZigString.static("block").toJS(globalObject));
+    }
+
+    return result;
+}
+
+/// Get cols
+pub fn getCols(this: *Terminal, _: *jsc.JSGlobalObject) JSValue {
+    return JSValue.jsNumber(this.cols);
+}
+
+/// Get rows
+pub fn getRows(this: *Terminal, _: *jsc.JSGlobalObject) JSValue {
+    return JSValue.jsNumber(this.rows);
+}
+
+/// Get terminal title (set via OSC escape sequences)
+pub fn getTitle(this: *Terminal, globalObject: *jsc.JSGlobalObject) JSValue {
+    if (this.vt) |vt| {
+        if (vt.title.items.len > 0) {
+            return jsc.ZigString.init(vt.title.items).toJS(globalObject);
+        }
+    }
+    return jsc.ZigString.static("").toJS(globalObject);
+}
+
+/// Check if in alternate screen mode
+pub fn getAlternateScreen(this: *Terminal, _: *jsc.JSGlobalObject) JSValue {
+    if (this.vt) |vt| {
+        return JSValue.jsBoolean(vt.isAlternateScreen());
+    }
+    return JSValue.jsBoolean(false);
+}
+
+/// Get scrollback line count
+pub fn getScrollbackLines(this: *Terminal, _: *jsc.JSGlobalObject) JSValue {
+    if (this.vt) |vt| {
+        return JSValue.jsNumber(vt.getScrollbackLines());
+    }
+    return JSValue.jsNumber(0);
+}
+
+/// Clear the screen
+pub fn clearScreen(
+    this: *Terminal,
+    _: *jsc.JSGlobalObject,
+    _: *jsc.CallFrame,
+) bun.JSError!JSValue {
+    if (this.vt) |vt| {
+        vt.clearScreen();
+    }
+    return .js_undefined;
+}
+
+/// Reset terminal to initial state
+pub fn resetTerminal(
+    this: *Terminal,
+    _: *jsc.JSGlobalObject,
+    _: *jsc.CallFrame,
+) bun.JSError!JSValue {
+    if (this.vt) |vt| {
+        vt.reset();
+    }
+    return .js_undefined;
+}
+
 const std = @import("std");
 
 const bun = @import("bun");
@@ -971,3 +1407,6 @@ const Environment = bun.Environment;
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
+
+/// ghostty-vt module provides terminal VT emulation
+const ghostty = @import("ghostty");

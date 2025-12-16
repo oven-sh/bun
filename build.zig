@@ -609,7 +609,6 @@ fn configureObj(b: *Build, opts: *BunBuildOptions, obj: *Compile) void {
 
     obj.no_link_obj = opts.os != .windows and !opts.no_llvm;
 
-
     if (opts.enable_asan and !enableFastBuild(b)) {
         if (@hasField(Build.Module, "sanitize_address")) {
             if (opts.enable_fuzzilli) {
@@ -800,6 +799,11 @@ fn addInternalImports(b: *Build, mod: *Module, opts: *BunBuildOptions) void {
         });
     }
 
+    // libghostty-vt: Terminal VT emulator library from Ghostty
+    // Provides terminal escape sequence parsing, state management, input encoding
+    // Source is cloned by CMake to vendor/ghostty
+    addGhosttyModule(b, mod, opts);
+
     // Finally, make it so all modules share the same import table.
     propagateImports(mod) catch @panic("OOM");
 }
@@ -830,6 +834,45 @@ fn validateGeneratedPath(path: []const u8) void {
             \\Make sure to use CMake and Ninja, or pass a manual codegen folder with '-Dgenerated-code=...'
         , .{path});
     }
+}
+
+/// Adds the ghostty-vt module for terminal emulation functionality.
+/// Ghostty source is cloned to vendor/ghostty by CMake (see BuildGhosttyVt.cmake).
+///
+/// The ghostty-vt module provides:
+/// - VT escape sequence parsing (CSI, OSC, DCS, etc.)
+/// - Terminal state management (screen, cursor, colors)
+/// - Input encoding for terminal applications
+fn addGhosttyModule(b: *Build, mod: *Module, opts: *BunBuildOptions) void {
+    _ = opts;
+
+    // Create the ghostty-vt module from vendor/ghostty/src/lib_vt.zig
+    const ghostty_vt = b.createModule(.{
+        .root_source_file = b.path("vendor/ghostty/src/lib_vt.zig"),
+    });
+
+    // Add terminal_options - build configuration for the terminal module
+    ghostty_vt.addAnonymousImport("terminal_options", .{
+        .root_source_file = b.path("src/deps/ghostty/terminal_options.zig"),
+    });
+
+    // Add unicode_tables - stub tables for unicode property lookups
+    ghostty_vt.addAnonymousImport("unicode_tables", .{
+        .root_source_file = b.path("src/deps/ghostty/unicode_tables.zig"),
+    });
+
+    // Add symbols_tables - stub tables for symbol detection
+    ghostty_vt.addAnonymousImport("symbols_tables", .{
+        .root_source_file = b.path("src/deps/ghostty/symbols_tables.zig"),
+    });
+
+    // Add props module for Properties type used by unicode_tables
+    ghostty_vt.addAnonymousImport("props", .{
+        .root_source_file = b.path("vendor/ghostty/src/unicode/props.zig"),
+    });
+
+    // Export ghostty module to bun
+    mod.addImport("ghostty", ghostty_vt);
 }
 
 const WindowsShim = struct {

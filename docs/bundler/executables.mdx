@@ -59,6 +59,7 @@ To build for Linux x64 (most servers):
     # modern is faster, but baseline is more compatible.
     bun build --compile --target=bun-linux-x64-modern ./index.ts --outfile myapp
     ```
+
   </Tab>
   <Tab title="JavaScript">
     ```ts build.ts icon="/icons/typescript.svg"
@@ -89,6 +90,7 @@ To build for Linux x64 (most servers):
       },
     });
     ```
+
   </Tab>
 </Tabs>
 
@@ -129,6 +131,7 @@ To build for Windows x64:
 
     # note: if no .exe extension is provided, Bun will automatically add it for Windows executables
     ```
+
   </Tab>
   <Tab title="JavaScript">
     ```ts build.ts icon="/icons/typescript.svg"
@@ -150,6 +153,7 @@ To build for Windows x64:
       },
     });
     ```
+
   </Tab>
 </Tabs>
 
@@ -405,6 +409,7 @@ To disable `.env` or `bunfig.toml` loading for deterministic execution:
     # Disable all config loading
     bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig ./app.ts --outfile myapp
     ```
+
   </Tab>
   <Tab title="JavaScript">
     ```ts build.ts icon="/icons/typescript.svg"
@@ -422,6 +427,7 @@ To disable `.env` or `bunfig.toml` loading for deterministic execution:
       },
     });
     ```
+
   </Tab>
 </Tabs>
 
@@ -823,6 +829,7 @@ To embed a directory with `bun build --compile`, include file patterns in your b
       },
     });
     ```
+
   </Tab>
 </Tabs>
 
@@ -958,6 +965,7 @@ To trim down the size of the executable, enable minification:
       },
     });
     ```
+
   </Tab>
 </Tabs>
 
@@ -978,6 +986,7 @@ When compiling a standalone executable on Windows, there are platform-specific o
     # Hide console window (for GUI apps)
     bun build --compile --windows-hide-console ./app.ts --outfile myapp
     ```
+
   </Tab>
   <Tab title="JavaScript">
     ```ts build.ts icon="/icons/typescript.svg"
@@ -1002,6 +1011,7 @@ When compiling a standalone executable on Windows, there are platform-specific o
 </Tabs>
 
 Available Windows options:
+
 - `icon` - Path to `.ico` file for the executable icon
 - `hideConsole` - Disable the background terminal (for GUI apps)
 - `title` - Application title in file properties
@@ -1120,7 +1130,7 @@ import type { BunPlugin } from "bun";
 const envPlugin: BunPlugin = {
   name: "env-loader",
   setup(build) {
-    build.onLoad({ filter: /\.env\.json$/ }, async (args) => {
+    build.onLoad({ filter: /\.env\.json$/ }, async args => {
       // Transform .env.json files into validated config objects
       const env = await Bun.file(args.path).json();
 
@@ -1177,21 +1187,21 @@ interface BuildConfig {
 }
 
 interface CompileBuildOptions {
-  target?: Bun.Build.Target;      // Cross-compilation target
-  outfile?: string;               // Output executable path
-  execArgv?: string[];            // Runtime arguments (process.execArgv)
-  autoloadTsconfig?: boolean;     // Load tsconfig.json (default: false)
-  autoloadPackageJson?: boolean;  // Load package.json (default: false)
-  autoloadDotenv?: boolean;       // Load .env files (default: true)
-  autoloadBunfig?: boolean;       // Load bunfig.toml (default: true)
+  target?: Bun.Build.Target; // Cross-compilation target
+  outfile?: string; // Output executable path
+  execArgv?: string[]; // Runtime arguments (process.execArgv)
+  autoloadTsconfig?: boolean; // Load tsconfig.json (default: false)
+  autoloadPackageJson?: boolean; // Load package.json (default: false)
+  autoloadDotenv?: boolean; // Load .env files (default: true)
+  autoloadBunfig?: boolean; // Load bunfig.toml (default: true)
   windows?: {
-    icon?: string;                // Path to .ico file
-    hideConsole?: boolean;        // Hide console window
-    title?: string;               // Application title
-    publisher?: string;           // Publisher name
-    version?: string;             // Version string
-    description?: string;         // Description
-    copyright?: string;           // Copyright notice
+    icon?: string; // Path to .ico file
+    hideConsole?: boolean; // Hide console window
+    title?: string; // Application title
+    publisher?: string; // Publisher name
+    version?: string; // Version string
+    description?: string; // Description
+    copyright?: string; // Copyright notice
   };
 }
 ```

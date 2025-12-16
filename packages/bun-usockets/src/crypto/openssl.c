@@ -417,8 +417,7 @@ void us_internal_update_handshake(struct us_internal_ssl_socket_t *s) {
     }
     s->handshake_state = HANDSHAKE_PENDING;
     s->ssl_write_wants_read = 1;
-    s->s.context->loop->data.last_write_failed = 1;
-
+    s->s.flags.last_write_failed = 1;
     return;
   }
   // success

@@ -1115,9 +1115,6 @@ void perform_object_set_by_key(const FunctionCallbackInfo<Value> &info) {
 }
 
 void test_v8_value_type_checks(const FunctionCallbackInfo<Value> &info) {
-  Isolate *isolate = info.GetIsolate();
-  Local<Context> context = isolate->GetCurrentContext();
-
   if (info.Length() < 1) {
     return fail(info, "Expected 1 argument");
   }

@@ -330,6 +330,11 @@ async function checkSameOutput(testName: string, args: any[], thisValue?: any) {
   return nodeResult;
 }
 
+// Custom JSON serialization that handles BigInt
+function serializeArgs(args: any[]): string {
+  return JSON.stringify(args, (_, value) => (typeof value === "bigint" ? { __bigint__: value.toString() } : value));
+}
+
 async function runOn(runtime: Runtime, buildMode: BuildMode, testName: string, jsArgs: any[], thisValue?: any) {
   if (runtime == Runtime.node) {
     assert(buildMode == BuildMode.release);
@@ -347,7 +352,7 @@ async function runOn(runtime: Runtime, buildMode: BuildMode, testName: string, j
     ...(runtime == Runtime.bun ? ["--smol"] : []),
     join(baseDir, "main.js"),
     testName,
-    JSON.stringify(jsArgs),
+    serializeArgs(jsArgs),
     JSON.stringify(thisValue ?? null),
   ];
   if (buildMode == BuildMode.debug) {

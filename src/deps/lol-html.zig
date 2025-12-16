@@ -79,7 +79,7 @@ pub const HTMLRewriter = opaque {
             encoding: [*]const u8,
             encoding_len: usize,
             memory_settings: MemorySettings,
-            output_sink: ?*const fn ([*]const u8, usize, *anyopaque) callconv(.C) void,
+            output_sink: ?*const fn ([*]const u8, usize, *anyopaque) callconv(.c) void,
             output_sink_user_data: *anyopaque,
             strict: bool,
         ) ?*HTMLRewriter;
@@ -88,7 +88,7 @@ pub const HTMLRewriter = opaque {
             encoding: [*]const u8,
             encoding_len: usize,
             memory_settings: MemorySettings,
-            output_sink: ?*const fn ([*]const u8, usize, *anyopaque) callconv(.C) void,
+            output_sink: ?*const fn ([*]const u8, usize, *anyopaque) callconv(.c) void,
             output_sink_user_data: *anyopaque,
             strict: bool,
         ) ?*HTMLRewriter;
@@ -261,9 +261,9 @@ pub const HTMLRewriter = opaque {
             comptime OutputSinkType: type,
             comptime Writer: (fn (*OutputSinkType, bytes: []const u8) void),
             comptime Done: (fn (*OutputSinkType) void),
-        ) (fn ([*]const u8, usize, *anyopaque) callconv(.C) void) {
+        ) (fn ([*]const u8, usize, *anyopaque) callconv(.c) void) {
             return struct {
-                fn writeChunk(ptr: [*]const u8, len: usize, user_data: *anyopaque) callconv(.C) void {
+                fn writeChunk(ptr: [*]const u8, len: usize, user_data: *anyopaque) callconv(.c) void {
                     auto_disable();
 
                     @setRuntimeSafety(false);
@@ -595,7 +595,7 @@ pub const HTMLString = extern struct {
         return this.ptr[0..this.len];
     }
 
-    fn deinit_external(_: [*]u8, ptr: *anyopaque, len: u32) callconv(.C) void {
+    fn deinit_external(_: [*]u8, ptr: *anyopaque, len: u32) callconv(.c) void {
         auto_disable();
         lol_html_str_free(.{ .ptr = @as([*]const u8, @ptrCast(ptr)), .len = len });
     }
@@ -760,11 +760,11 @@ pub const Directive = enum(c_uint) {
     @"continue" = 0,
     stop = 1,
 };
-pub const lol_html_comment_handler_t = *const fn (*Comment, ?*anyopaque) callconv(.C) Directive;
-pub const lol_html_text_handler_handler_t = *const fn (*TextChunk, ?*anyopaque) callconv(.C) Directive;
-pub const lol_html_element_handler_t = *const fn (*Element, ?*anyopaque) callconv(.C) Directive;
-pub const lol_html_doc_end_handler_t = *const fn (*DocEnd, ?*anyopaque) callconv(.C) Directive;
-pub const lol_html_end_tag_handler_t = *const fn (*EndTag, ?*anyopaque) callconv(.C) Directive;
+pub const lol_html_comment_handler_t = *const fn (*Comment, ?*anyopaque) callconv(.c) Directive;
+pub const lol_html_text_handler_handler_t = *const fn (*TextChunk, ?*anyopaque) callconv(.c) Directive;
+pub const lol_html_element_handler_t = *const fn (*Element, ?*anyopaque) callconv(.c) Directive;
+pub const lol_html_doc_end_handler_t = *const fn (*DocEnd, ?*anyopaque) callconv(.c) Directive;
+pub const lol_html_end_tag_handler_t = *const fn (*EndTag, ?*anyopaque) callconv(.c) Directive;
 pub const DocEnd = opaque {
     extern fn lol_html_doc_end_append(doc_end: ?*DocEnd, content: [*]const u8, content_len: usize, is_html: bool) c_int;
 
@@ -779,7 +779,7 @@ pub const DocEnd = opaque {
 };
 
 fn DirectiveFunctionType(comptime Container: type) type {
-    return *const fn (*Container, ?*anyopaque) callconv(.C) Directive;
+    return *const fn (*Container, ?*anyopaque) callconv(.c) Directive;
 }
 
 fn DirectiveFunctionTypeForHandler(comptime Container: type, comptime UserDataType: type) type {
@@ -792,7 +792,7 @@ fn DocTypeHandlerCallback(comptime UserDataType: type) type {
 
 pub fn DirectiveHandler(comptime Container: type, comptime UserDataType: type, comptime Callback: (*const fn (this: *UserDataType, container: *Container) bool)) DirectiveFunctionType(Container) {
     return struct {
-        pub fn callback(this: *Container, user_data: ?*anyopaque) callconv(.C) Directive {
+        pub fn callback(this: *Container, user_data: ?*anyopaque) callconv(.c) Directive {
             auto_disable();
             return @as(
                 Directive,
@@ -825,7 +825,7 @@ pub const DocType = opaque {
     extern fn lol_html_doctype_is_removed(doctype: *const DocType) bool;
     extern fn lol_html_doctype_source_location_bytes(doctype: *const DocType) SourceLocationBytes;
 
-    pub const Callback = *const fn (*DocType, ?*anyopaque) callconv(.C) Directive;
+    pub const Callback = *const fn (*DocType, ?*anyopaque) callconv(.c) Directive;
 
     pub fn getName(this: *const DocType) HTMLString {
         auto_disable();

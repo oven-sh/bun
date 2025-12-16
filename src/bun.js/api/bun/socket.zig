@@ -14,7 +14,7 @@ fn JSSocketType(comptime ssl: bool) type {
     }
 }
 
-fn selectALPNCallback(_: ?*BoringSSL.SSL, out: [*c][*c]const u8, outlen: [*c]u8, in: [*c]const u8, inlen: c_uint, arg: ?*anyopaque) callconv(.C) c_int {
+fn selectALPNCallback(_: ?*BoringSSL.SSL, out: [*c][*c]const u8, outlen: [*c]u8, in: [*c]const u8, inlen: c_uint, arg: ?*anyopaque) callconv(.c) c_int {
     const this = bun.cast(*TLSSocket, arg);
     if (this.protos) |protos| {
         if (protos.len == 0) {
@@ -76,7 +76,7 @@ pub fn NewSocket(comptime ssl: bool) type {
         has_pending_activity: std.atomic.Value(bool) = std.atomic.Value(bool).init(true),
         native_callback: NativeCallbacks = .none,
 
-        pub fn hasPendingActivity(this: *This) callconv(.C) bool {
+        pub fn hasPendingActivity(this: *This) callconv(.c) bool {
             return this.has_pending_activity.load(.acquire);
         }
 
@@ -687,7 +687,7 @@ pub fn NewSocket(comptime ssl: bool) type {
         }
 
         pub fn getListener(this: *This, _: *jsc.JSGlobalObject) JSValue {
-            const handlers = this.getHandlers();
+            const handlers = this.handlers orelse return .js_undefined;
 
             if (!handlers.is_server or this.socket.isDetached()) {
                 return .js_undefined;
@@ -1357,6 +1357,10 @@ pub fn NewSocket(comptime ssl: bool) type {
             return .js_undefined;
         }
 
+        pub fn getFD(this: *This, _: *jsc.JSGlobalObject) JSValue {
+            return this.socket.fd().toJSWithoutMakingLibUVOwned();
+        }
+
         pub fn getBytesWritten(this: *This, _: *jsc.JSGlobalObject) JSValue {
             return jsc.JSValue.jsNumber(this.bytes_written + this.buffered_data_for_node_net.len);
         }
@@ -1573,6 +1577,7 @@ pub fn NewSocket(comptime ssl: bool) type {
         }
 
         pub const disableRenegotiation = if (ssl) tls_socket_functions.disableRenegotiation else tcp_socket_function_that_returns_undefined;
+        pub const isSessionReused = if (ssl) tls_socket_functions.isSessionReused else tcp_socket_function_that_returns_false;
         pub const setVerifyMode = if (ssl) tls_socket_functions.setVerifyMode else tcp_socket_function_that_returns_undefined;
         pub const renegotiate = if (ssl) tls_socket_functions.renegotiate else tcp_socket_function_that_returns_undefined;
         pub const getTLSTicket = if (ssl) tls_socket_functions.getTLSTicket else tcp_socket_function_that_returns_undefined;

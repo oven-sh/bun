@@ -266,6 +266,24 @@ describe.concurrent("napi", () => {
     });
   });
 
+  describe("napi_create_external_buffer", () => {
+    it("handles empty/null data without throwing", async () => {
+      const result = await checkSameOutput("test_napi_create_external_buffer_empty", []);
+      expect(result).toContain("PASS: napi_create_external_buffer with nullptr and zero length");
+      expect(result).toContain("PASS: napi_create_external_buffer with non-null data and zero length");
+      expect(result).toContain("PASS: napi_create_external_buffer with nullptr finalizer");
+      expect(result).not.toContain("FAIL");
+    });
+
+    it("empty buffer returns null pointer and 0 length from napi_get_buffer_info and napi_get_typedarray_info", async () => {
+      const result = await checkSameOutput("test_napi_empty_buffer_info", []);
+      expect(result).toContain("PASS: napi_get_buffer_info returns null pointer and 0 length for empty buffer");
+      expect(result).toContain("PASS: napi_get_typedarray_info returns null pointer and 0 length for empty buffer");
+      expect(result).toContain("PASS: napi_is_detached_arraybuffer returns true for empty buffer's arraybuffer");
+      expect(result).not.toContain("FAIL");
+    });
+  });
+
   describe("napi_async_work", () => {
     it("null checks execute callbacks", async () => {
       const output = await checkSameOutput("test_napi_async_work_execute_null_check", []);
@@ -531,6 +549,14 @@ describe.concurrent("napi", () => {
     await checkSameOutput("test_deferred_exceptions", []);
   });
 
+  it("behaves as expected when performing operations with numeric string keys", async () => {
+    await checkSameOutput("test_napi_numeric_string_keys", []);
+  });
+
+  it("behaves as expected when performing operations with default values", async () => {
+    await checkSameOutput("test_napi_get_default_values", []);
+  });
+
   it("NAPI finalizer iterator invalidation crash prevention", () => {
     // This test verifies that the DeferGCForAWhile fix prevents iterator invalidation
     // during NAPI finalizer cleanup. While we couldn't reproduce the exact crash
@@ -736,6 +762,18 @@ describe("cleanup hooks", () => {
       // This test explores edge cases with empty/invalid napi_values
       // Bun has special handling for isEmpty() that Node doesn't have
       expect(output).toContain("napi_typeof");
+    });
+
+    it("should return napi_object for boxed primitives (String, Number, Boolean)", async () => {
+      // Regression test for https://github.com/oven-sh/bun/issues/25351
+      // napi_typeof was incorrectly returning napi_string for String objects (new String("hello"))
+      // when it should return napi_object (matching JavaScript's typeof behavior)
+      const output = await checkSameOutput("test_napi_typeof_boxed_primitives", []);
+      expect(output).toContain("PASS: primitive string returns napi_string");
+      expect(output).toContain("PASS: String object returns napi_object");
+      expect(output).toContain("PASS: Number object returns napi_object");
+      expect(output).toContain("PASS: Boolean object returns napi_object");
+      expect(output).toContain("All boxed primitive tests passed!");
     });
   });
 

@@ -41,7 +41,7 @@ it("should install vendored node_modules with hardlink", async () => {
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install", "--backend", "hardlink"],
+    cmd: [bunExe(), "install", "--backend", "hardlink", "--linker=hoisted"],
     cwd: package_dir,
     stdout: "pipe",
     stdin: "pipe",

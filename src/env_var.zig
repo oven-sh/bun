@@ -8,6 +8,12 @@
 //! If default values are provided, the .get() method is guaranteed not to return a nullable type,
 //! whereas if no default is provided, the .get() method will return an optional type.
 //!
+//! Note that environment variables may fail to parse silently. If they do fail to parse, the
+//! default is to show a debug warning and treat them as not set. This behavior can be customized,
+//! but environment variables are not meant to be a robust configuration mechanism. If you do think
+//! your feature needs more customization, consider using other means. The reason we have decided
+//! upon this behavior is to avoid panics due to environment variable pollution.
+//!
 //! TODO(markovejnovic): It would be neat if this library supported loading floats as
 //!                      well as strings, integers and booleans, but for now this will do.
 //!
@@ -91,7 +97,6 @@ pub const JENKINS_URL = New(kind.string, "JENKINS_URL", .{});
 /// `MIMALLOC_VERBOSE`, documented here: https://microsoft.github.io/mimalloc/environment.html
 pub const MI_VERBOSE = New(kind.boolean, "MI_VERBOSE", .{ .default = false });
 pub const NO_COLOR = New(kind.boolean, "NO_COLOR", .{ .default = false });
-pub const NODE = New(kind.string, "NODE", .{});
 pub const NODE_CHANNEL_FD = New(kind.string, "NODE_CHANNEL_FD", .{});
 pub const NODE_PRESERVE_SYMLINKS_MAIN = New(kind.boolean, "NODE_PRESERVE_SYMLINKS_MAIN", .{ .default = false });
 pub const NODE_USE_SYSTEM_CA = New(kind.boolean, "NODE_USE_SYSTEM_CA", .{ .default = false });
@@ -131,6 +136,13 @@ pub const feature_flag = struct {
     pub const BUN_BE_BUN = newFeatureFlag("BUN_BE_BUN", .{});
     pub const BUN_DEBUG_NO_DUMP = newFeatureFlag("BUN_DEBUG_NO_DUMP", .{});
     pub const BUN_DESTRUCT_VM_ON_EXIT = newFeatureFlag("BUN_DESTRUCT_VM_ON_EXIT", .{});
+
+    /// Disable "nativeDependencies"
+    pub const BUN_FEATURE_FLAG_DISABLE_NATIVE_DEPENDENCY_LINKER = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_NATIVE_DEPENDENCY_LINKER", .{});
+
+    /// Disable "ignoreScripts" in package.json
+    pub const BUN_FEATURE_FLAG_DISABLE_IGNORE_SCRIPTS = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_IGNORE_SCRIPTS", .{});
+
     pub const BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG", .{});
     pub const BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER", .{});
     pub const BUN_FEATURE_FLAG_DISABLE_DNS_CACHE = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_DNS_CACHE", .{});
@@ -341,6 +353,9 @@ const kind = struct {
             default: ?ValueType = null,
             deser: struct {
                 /// Control how deserializing and deserialization errors are handled.
+                ///
+                /// Note that deserialization errors cannot panic. If you need more robust means of
+                /// handling inputs, consider not using environment variables.
                 error_handling: enum {
                     /// debug_warn on deserialization errors.
                     debug_warn,

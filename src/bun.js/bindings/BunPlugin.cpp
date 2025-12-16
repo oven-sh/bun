@@ -303,6 +303,7 @@ static inline JSC::EncodedJSValue setupBunPlugin(JSC::JSGlobalObject* globalObje
             String targetString = targetJSString->value(globalObject);
             if (!(targetString == "node"_s || targetString == "bun"_s || targetString == "browser"_s)) {
                 JSC::throwTypeError(globalObject, throwScope, "plugin target must be one of 'node', 'bun' or 'browser'"_s);
+                return {};
             }
         }
     }
@@ -522,6 +523,8 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
 
     auto resolveSpecifier = [&]() -> void {
         JSC::SourceOrigin sourceOrigin = callframe->callerSourceOrigin(vm);
+        if (sourceOrigin.isNull())
+            return;
         const URL& url = sourceOrigin.url();
 
         if (specifier.startsWith("file:"_s)) {

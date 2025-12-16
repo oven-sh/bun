@@ -31,7 +31,7 @@ pub fn installIsolatedPackages(
             pkg_id: PackageID,
         };
 
-        var node_queue: std.fifo.LinearFifo(QueuedNode, .Dynamic) = .init(lockfile.allocator);
+        var node_queue: bun.LinearFifo(QueuedNode, .Dynamic) = .init(lockfile.allocator);
         defer node_queue.deinit();
 
         try node_queue.writeItem(.{
@@ -51,10 +51,10 @@ pub fn installIsolatedPackages(
         var early_dedupe: std.AutoHashMap(PackageID, Store.Node.Id) = .init(lockfile.allocator);
         defer early_dedupe.deinit();
 
-        var peer_dep_ids: std.ArrayList(DependencyID) = .init(lockfile.allocator);
+        var peer_dep_ids: std.array_list.Managed(DependencyID) = .init(lockfile.allocator);
         defer peer_dep_ids.deinit();
 
-        var visited_parent_node_ids: std.ArrayList(Store.Node.Id) = .init(lockfile.allocator);
+        var visited_parent_node_ids: std.array_list.Managed(Store.Node.Id) = .init(lockfile.allocator);
         defer visited_parent_node_ids.deinit();
 
         // First pass: create full dependency tree with resolved peers
@@ -250,7 +250,7 @@ pub fn installIsolatedPackages(
                 }
             }
 
-            next_peer: for (peer_dep_ids.items) |peer_dep_id| {
+            for (peer_dep_ids.items) |peer_dep_id| {
                 const resolved_pkg_id, const auto_installed = resolved_pkg_id: {
 
                     // Go through the peers parents looking for a package with the same name.
@@ -316,12 +316,11 @@ pub fn installIsolatedPackages(
                             // version. Only mark all parents if resolution is
                             // different from this transitive peer.
 
-                            if (peer_dep.behavior.isOptionalPeer()) {
-                                // exclude it
-                                continue :next_peer;
-                            }
-
                             const best_version = resolutions[peer_dep_id];
+
+                            if (best_version == invalid_package_id) {
+                                break :resolved_pkg_id .{ invalid_package_id, true };
+                            }
 
                             if (best_version == ids.pkg_id) {
                                 break :resolved_pkg_id .{ ids.pkg_id, true };
@@ -344,16 +343,15 @@ pub fn installIsolatedPackages(
                         curr_id = node_parent_ids[curr_id.get()];
                     }
 
-                    if (peer_dep.behavior.isOptionalPeer()) {
-                        // exclude it
-                        continue;
-                    }
-
                     // choose the current best version
                     break :resolved_pkg_id .{ resolutions[peer_dep_id], true };
                 };
 
-                bun.debugAssert(resolved_pkg_id != invalid_package_id);
+                if (resolved_pkg_id == invalid_package_id) {
+                    // these are optional peers that failed to find any dependency with a matching
+                    // name. they are completely excluded
+                    continue;
+                }
 
                 for (visited_parent_node_ids.items) |visited_parent_id| {
                     const ctx: Store.Node.TransitivePeer.OrderedArraySetCtx = .{
@@ -384,7 +382,7 @@ pub fn installIsolatedPackages(
         if (manager.options.log_level.isVerbose()) {
             const full_tree_end = timer.read();
             timer.reset();
-            Output.prettyErrorln("Resolved peers [{}]", .{bun.fmt.fmtDurationOneDecimal(full_tree_end)});
+            Output.prettyErrorln("Resolved peers [{f}]", .{bun.fmt.fmtDurationOneDecimal(full_tree_end)});
         }
 
         const DedupeInfo = struct {
@@ -396,7 +394,7 @@ pub fn installIsolatedPackages(
         var dedupe: std.AutoHashMapUnmanaged(PackageID, std.ArrayListUnmanaged(DedupeInfo)) = .empty;
         defer dedupe.deinit(lockfile.allocator);
 
-        var res_fmt_buf: std.ArrayList(u8) = .init(lockfile.allocator);
+        var res_fmt_buf: std.array_list.Managed(u8) = .init(lockfile.allocator);
         defer res_fmt_buf.deinit();
 
         const nodes_slice = nodes.slice();
@@ -411,7 +409,7 @@ pub fn installIsolatedPackages(
             node_id: Store.Node.Id,
             entry_parent_id: Store.Entry.Id,
         };
-        var entry_queue: std.fifo.LinearFifo(QueuedEntry, .Dynamic) = .init(lockfile.allocator);
+        var entry_queue: bun.LinearFifo(QueuedEntry, .Dynamic) = .init(lockfile.allocator);
         defer entry_queue.deinit();
 
         try entry_queue.writeItem(.{
@@ -499,7 +497,7 @@ pub fn installIsolatedPackages(
                     hasher.update(pkg_name.slice(string_buf));
                     const pkg_res = pkg_resolutions[peer_ids.pkg_id];
                     res_fmt_buf.clearRetainingCapacity();
-                    try res_fmt_buf.writer().print("{}", .{pkg_res.fmt(string_buf, .posix)});
+                    try res_fmt_buf.writer().print("{f}", .{pkg_res.fmt(string_buf, .posix)});
                     hasher.update(res_fmt_buf.items);
                 }
                 break :peer_hash .from(hasher.final());
@@ -607,7 +605,7 @@ pub fn installIsolatedPackages(
 
         if (manager.options.log_level.isVerbose()) {
             const dedupe_end = timer.read();
-            Output.prettyErrorln("Created store [{}]", .{bun.fmt.fmtDurationOneDecimal(dedupe_end)});
+            Output.prettyErrorln("Created store [{f}]", .{bun.fmt.fmtDurationOneDecimal(dedupe_end)});
         }
 
         break :store .{
@@ -1028,7 +1026,7 @@ pub fn installIsolatedPackages(
                             ) catch |err| switch (err) {
                                 error.OutOfMemory => |oom| return oom,
                                 error.InvalidURL => {
-                                    Output.err(err, "failed to enqueue package for download: {s}@{}", .{
+                                    Output.err(err, "failed to enqueue package for download: {s}@{f}", .{
                                         pkg_name.slice(string_buf),
                                         pkg_res.fmt(string_buf, .auto),
                                     });
@@ -1065,7 +1063,7 @@ pub fn installIsolatedPackages(
                             ) catch |err| switch (err) {
                                 error.OutOfMemory => bun.outOfMemory(),
                                 error.InvalidURL => {
-                                    Output.err(err, "failed to enqueue github package for download: {s}@{}", .{
+                                    Output.err(err, "failed to enqueue github package for download: {s}@{f}", .{
                                         pkg_name.slice(string_buf),
                                         pkg_res.fmt(string_buf, .auto),
                                     });
@@ -1099,7 +1097,7 @@ pub fn installIsolatedPackages(
                             ) catch |err| switch (err) {
                                 error.OutOfMemory => bun.outOfMemory(),
                                 error.InvalidURL => {
-                                    Output.err(err, "failed to enqueue tarball for download: {s}@{}", .{
+                                    Output.err(err, "failed to enqueue tarball for download: {s}@{f}", .{
                                         pkg_name.slice(string_buf),
                                         pkg_res.fmt(string_buf, .auto),
                                     });

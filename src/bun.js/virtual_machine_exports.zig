@@ -4,7 +4,7 @@ comptime {
     }
 }
 
-pub export fn Bun__VirtualMachine__isShuttingDown(this: *const VirtualMachine) callconv(.C) bool {
+pub export fn Bun__VirtualMachine__isShuttingDown(this: *const VirtualMachine) callconv(.c) bool {
     return this.isShuttingDown();
 }
 
@@ -18,6 +18,10 @@ pub export fn Bun__drainMicrotasks() void {
 }
 
 export fn Bun__readOriginTimer(vm: *jsc.VirtualMachine) u64 {
+    // Check if performance.now() is overridden (for fake timers)
+    if (vm.overridden_performance_now) |overridden| {
+        return overridden;
+    }
     return vm.origin_timer.read();
 }
 
@@ -78,7 +82,7 @@ pub export fn Bun__queueTask(global: *JSGlobalObject, task: *jsc.CppTask) void {
     global.bunVM().eventLoop().enqueueTask(jsc.Task.init(task));
 }
 
-pub export fn Bun__reportUnhandledError(globalObject: *JSGlobalObject, value: JSValue) callconv(.C) JSValue {
+pub export fn Bun__reportUnhandledError(globalObject: *JSGlobalObject, value: JSValue) callconv(.c) JSValue {
     jsc.markBinding(@src());
 
     if (!value.isTerminationException()) {
@@ -142,7 +146,7 @@ pub export fn Bun__onDidAppendPlugin(jsc_vm: *VirtualMachine, globalObject: *JSG
     jsc_vm.transpiler.linker.plugin_runner = &jsc_vm.plugin_runner.?;
 }
 
-pub fn Bun__ZigGlobalObject__uvLoop(jsc_vm: *VirtualMachine) callconv(.C) *bun.windows.libuv.Loop {
+pub fn Bun__ZigGlobalObject__uvLoop(jsc_vm: *VirtualMachine) callconv(.c) *bun.windows.libuv.Loop {
     return jsc_vm.uvLoop();
 }
 
@@ -224,10 +228,10 @@ const std = @import("std");
 const bun = @import("bun");
 const PluginRunner = bun.transpiler.PluginRunner;
 
+const BakeSourceProvider = bun.SourceMap.BakeSourceProvider;
+const DevServerSourceProvider = bun.SourceMap.DevServerSourceProvider;
+
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
 const VirtualMachine = jsc.VirtualMachine;
-
-const BakeSourceProvider = bun.sourcemap.BakeSourceProvider;
-const DevServerSourceProvider = bun.sourcemap.DevServerSourceProvider;

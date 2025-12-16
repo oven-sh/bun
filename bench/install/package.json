@@ -1,31 +1,52 @@
 {
+  "name": "installbench",
+  "version": "0.1.0",
   "private": true,
-  "sideEffects": false,
+  "type": "module",
   "scripts": {
-    "build": "remix build",
-    "dev": "remix dev",
-    "start": "remix-serve build",
-    "typecheck": "tsc",
-    "clean": "rm -rf node_modules",
-    "bench": "hyperfine --prepare 'rm -rf node_modules' --warmup 1 --runs 3 'bun install' 'pnpm install' 'yarn' 'npm install'"
+    "build": "next build",
+    "check": "biome check .",
+    "check:unsafe": "biome check --write --unsafe .",
+    "check:write": "biome check --write .",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:push": "drizzle-kit push",
+    "db:studio": "drizzle-kit studio",
+    "dev": "next dev --turbo",
+    "preview": "next build && next start",
+    "start": "next start",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@remix-run/node": "^1.15.0",
-    "@remix-run/react": "^1.15.0",
-    "@remix-run/serve": "^1.15.0",
-    "isbot": "^3.6.5",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "@auth/drizzle-adapter": "^1.7.2",
+    "@t3-oss/env-nextjs": "^0.12.0",
+    "@tanstack/react-query": "^5.69.0",
+    "@trpc/client": "^11.0.0",
+    "@trpc/react-query": "^11.0.0",
+    "@trpc/server": "^11.0.0",
+    "drizzle-orm": "^0.41.0",
+    "esbuild": "^0.25.11",
+    "next": "15.5.7",
+    "next-auth": "5.0.0-beta.25",
+    "postgres": "^3.4.4",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "server-only": "^0.0.1",
+    "superjson": "^2.2.1",
+    "zod": "^3.24.2"
   },
   "devDependencies": {
-    "@remix-run/dev": "^1.15.0",
-    "@remix-run/eslint-config": "^1.15.0",
-    "@types/react": "^18.0.25",
-    "@types/react-dom": "^18.0.8",
-    "eslint": "^8.27.0",
-    "typescript": "^4.8.4"
+    "@biomejs/biome": "1.9.4",
+    "@tailwindcss/postcss": "^4.0.15",
+    "@types/node": "^20.14.10",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "drizzle-kit": "^0.30.5",
+    "postcss": "^8.5.3",
+    "tailwindcss": "^4.0.15",
+    "typescript": "^5.8.2"
   },
-  "engines": {
-    "node": ">=14"
+  "ct3aMetadata": {
+    "initVersion": "7.39.3"
   }
 }

@@ -1,12 +1,14 @@
 import { spawn as nodeSpawn } from "node:child_process";
-import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { basename, join, relative, resolve } from "node:path";
 import {
   formatAnnotationToHtml,
+  getEnv,
   getSecret,
   isCI,
   isWindows,
   parseAnnotations,
+  parseBoolean,
   printEnvironment,
   reportAnnotationToBuildKite,
   startGroup,
@@ -61,6 +63,7 @@ async function build(args) {
 
   const generateOptions = parseOptions(args, generateFlags);
   const buildOptions = parseOptions(args, buildFlags);
+  const ciCppBuild = isCI && !!process.env.BUN_CPP_ONLY;
 
   const buildPath = resolve(generateOptions["-B"] || buildOptions["--build"] || "build");
   generateOptions["-B"] = buildPath;
@@ -70,43 +73,8 @@ async function build(args) {
     generateOptions["-S"] = process.cwd();
   }
 
-  const cacheRead = isCacheReadEnabled();
-  const cacheWrite = isCacheWriteEnabled();
-  if (cacheRead || cacheWrite) {
-    const cachePath = getCachePath();
-    if (cacheRead && !existsSync(cachePath)) {
-      const mainCachePath = getCachePath(getDefaultBranch());
-      if (existsSync(mainCachePath)) {
-        mkdirSync(cachePath, { recursive: true });
-        try {
-          cpSync(mainCachePath, cachePath, { recursive: true, force: true });
-        } catch (error) {
-          const { code } = error;
-          switch (code) {
-            case "EPERM":
-            case "EACCES":
-              try {
-                chmodSync(mainCachePath, 0o777);
-                cpSync(mainCachePath, cachePath, { recursive: true, force: true });
-              } catch (error) {
-                console.warn("Failed to copy cache with permissions fix", error);
-              }
-              break;
-            default:
-              console.warn("Failed to copy cache", error);
-          }
-        }
-      }
-    }
-    generateOptions["-DCACHE_PATH"] = cmakePath(cachePath);
-    generateOptions["--fresh"] = undefined;
-    if (cacheRead && cacheWrite) {
-      generateOptions["-DCACHE_STRATEGY"] = "read-write";
-    } else if (cacheRead) {
-      generateOptions["-DCACHE_STRATEGY"] = "read-only";
-    } else if (cacheWrite) {
-      generateOptions["-DCACHE_STRATEGY"] = "write-only";
-    }
+  if (!generateOptions["-DCACHE_STRATEGY"]) {
+    generateOptions["-DCACHE_STRATEGY"] = parseBoolean(getEnv("RELEASE", false) || "false") ? "none" : "auto";
   }
 
   const toolchain = generateOptions["--toolchain"];
@@ -119,6 +87,9 @@ async function build(args) {
     flag.startsWith("-D") ? [`${flag}=${value}`] : [flag, value],
   );
 
+  try {
+    await Bun.file(buildPath + "/CMakeCache.txt").delete();
+  } catch (e) {}
   await startGroup("CMake Configure", () => spawn("cmake", generateArgs, { env }));
 
   const envPath = resolve(buildPath, ".env");
@@ -136,56 +107,17 @@ async function build(args) {
 
   await startGroup("CMake Build", () => spawn("cmake", buildArgs, { env }));
 
+  if (ciCppBuild) {
+    await startGroup("sccache stats", () => {
+      spawn("sccache", ["--show-stats"], { env });
+    });
+  }
+
   printDuration("total", Date.now() - startTime);
-}
-
-function cmakePath(path) {
-  return path.replace(/\\/g, "/");
-}
-
-/** @param {string} str */
-const toAlphaNumeric = str => str.replace(/[^a-z0-9]/gi, "-");
-function getCachePath(branch) {
-  const {
-    BUILDKITE_BUILD_PATH: buildPath,
-    BUILDKITE_REPO: repository,
-    BUILDKITE_PULL_REQUEST_REPO: fork,
-    BUILDKITE_BRANCH,
-    BUILDKITE_STEP_KEY,
-  } = process.env;
-
-  // NOTE: settings that could be long should be truncated to avoid hitting max
-  // path length limit on windows (4096)
-  const repositoryKey = toAlphaNumeric(
-    // remove domain name, only leaving 'org/repo'
-    (fork || repository).replace(/^https?:\/\/github\.com\/?/, ""),
-  );
-  const branchName = toAlphaNumeric(branch || BUILDKITE_BRANCH);
-  const branchKey = branchName.startsWith("gh-readonly-queue-")
-    ? branchName.slice(18, branchName.indexOf("-pr-"))
-    : branchName.slice(0, 32);
-  const stepKey = toAlphaNumeric(BUILDKITE_STEP_KEY);
-  return resolve(buildPath, "..", "cache", repositoryKey, branchKey, stepKey);
-}
-
-function isCacheReadEnabled() {
-  return (
-    isBuildkite() &&
-    process.env.BUILDKITE_CLEAN_CHECKOUT !== "true" &&
-    process.env.BUILDKITE_BRANCH !== getDefaultBranch()
-  );
-}
-
-function isCacheWriteEnabled() {
-  return isBuildkite();
 }
 
 function isBuildkite() {
   return process.env.BUILDKITE === "true";
-}
-
-function getDefaultBranch() {
-  return process.env.BUILDKITE_PIPELINE_DEFAULT_BRANCH || "main";
 }
 
 function parseOptions(args, flags = []) {

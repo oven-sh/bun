@@ -390,7 +390,7 @@ pub fn editUpdateNoArgs(
                                     const new_version = new_version: {
                                         const version_fmt = resolution.value.npm.version.fmt(string_buf);
                                         if (options.exact_versions) {
-                                            break :new_version try std.fmt.allocPrint(allocator, "{}", .{version_fmt});
+                                            break :new_version try std.fmt.allocPrint(allocator, "{f}", .{version_fmt});
                                         }
 
                                         const version_literal = version_literal: {
@@ -403,9 +403,9 @@ pub fn editUpdateNoArgs(
 
                                         const pinned_version = Semver.Version.whichVersionIsPinned(version_literal);
                                         break :new_version try switch (pinned_version) {
-                                            .patch => std.fmt.allocPrint(allocator, "{}", .{version_fmt}),
-                                            .minor => std.fmt.allocPrint(allocator, "~{}", .{version_fmt}),
-                                            .major => std.fmt.allocPrint(allocator, "^{}", .{version_fmt}),
+                                            .patch => std.fmt.allocPrint(allocator, "{f}", .{version_fmt}),
+                                            .minor => std.fmt.allocPrint(allocator, "~{f}", .{version_fmt}),
+                                            .major => std.fmt.allocPrint(allocator, "^{f}", .{version_fmt}),
                                         };
                                     };
 
@@ -804,7 +804,7 @@ pub fn edit(
                             const new_version = new_version: {
                                 const version_fmt = resolutions[request.package_id].value.npm.version.fmt(manager.lockfile.buffers.string_bytes.items);
                                 if (options.exact_versions) {
-                                    break :new_version try std.fmt.allocPrint(allocator, "{}", .{version_fmt});
+                                    break :new_version try std.fmt.allocPrint(allocator, "{f}", .{version_fmt});
                                 }
 
                                 const version_literal = version_literal: {
@@ -819,9 +819,9 @@ pub fn edit(
 
                                 const pinned_version = Semver.Version.whichVersionIsPinned(version_literal);
                                 break :new_version try switch (pinned_version) {
-                                    .patch => std.fmt.allocPrint(allocator, "{}", .{version_fmt}),
-                                    .minor => std.fmt.allocPrint(allocator, "~{}", .{version_fmt}),
-                                    .major => std.fmt.allocPrint(allocator, "^{}", .{version_fmt}),
+                                    .patch => std.fmt.allocPrint(allocator, "{f}", .{version_fmt}),
+                                    .minor => std.fmt.allocPrint(allocator, "~{f}", .{version_fmt}),
+                                    .major => std.fmt.allocPrint(allocator, "^{f}", .{version_fmt}),
                                 };
                             };
 
@@ -845,7 +845,7 @@ pub fn edit(
                         const new_version = try switch (options.exact_versions) {
                             inline else => |exact_versions| std.fmt.allocPrint(
                                 allocator,
-                                if (comptime exact_versions) "{}" else "^{}",
+                                if (comptime exact_versions) "{f}" else "^{f}",
                                 .{
                                     resolutions[request.package_id].value.npm.version.fmt(request.version_buf),
                                 },

@@ -192,7 +192,7 @@ const Options = struct {
             //     len: u16,
             // },
             // .array_list => struct {
-            //     list: std.ArrayList(opts.pathUnit()),
+            //     list: std.array_list.Managed(opts.pathUnit()),
             // },
 
         };

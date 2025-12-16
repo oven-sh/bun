@@ -28,6 +28,8 @@ patched_dependencies: PatchedDependenciesMap = .{},
 overrides: OverrideMap = .{},
 catalogs: CatalogMap = .{},
 
+saved_config_version: ?bun.ConfigVersion,
+
 pub const DepSorter = struct {
     lockfile: *const Lockfile,
 
@@ -190,6 +192,26 @@ pub const LoadResult = union(enum) {
         }
     }
 
+    // configVersion and boolean for if the configVersion previously existed/needs to be saved to lockfile
+    pub fn chooseConfigVersion(this: *const LoadResult) struct { bun.ConfigVersion, bool } {
+        return switch (this.*) {
+            .not_found, .err => .{ .current, true },
+            .ok => |ok| switch (ok.migrated) {
+                .none => {
+                    if (ok.lockfile.saved_config_version) |config_version| {
+                        return .{ config_version, false };
+                    }
+
+                    // existing bun project without configVersion
+                    return .{ .v0, true };
+                },
+                .pnpm => .{ .v1, true },
+                .npm => .{ .v0, true },
+                .yarn => .{ .v0, true },
+            },
+        };
+    }
+
     pub const Step = enum { open_file, read_file, parse_file, migrating };
 };
 
@@ -313,22 +335,20 @@ pub fn loadFromDir(
 
     switch (result) {
         .ok => {
-            if (bun.getenvZ("BUN_DEBUG_TEST_TEXT_LOCKFILE") != null and manager != null) {
+            if (bun.env_var.BUN_DEBUG_TEST_TEXT_LOCKFILE.get() and manager != null) {
 
                 // Convert the loaded binary lockfile into a text lockfile in memory, then
                 // parse it back into a binary lockfile.
 
-                var writer_buf = MutableString.initEmpty(allocator);
-                var buffered_writer = writer_buf.bufferedWriter();
-                const writer = buffered_writer.writer();
+                var writer_allocating = std.Io.Writer.Allocating.init(allocator);
+                defer writer_allocating.deinit();
+                const writer = &writer_allocating.writer;
 
-                TextLockfile.Stringifier.saveFromBinary(allocator, result.ok.lockfile, &result, writer) catch |err| {
+                TextLockfile.Stringifier.saveFromBinary(allocator, result.ok.lockfile, &result, &manager.?.options, writer) catch |err| {
                     Output.panic("failed to convert binary lockfile to text lockfile: {s}", .{@errorName(err)});
                 };
 
-                bun.handleOom(buffered_writer.flush());
-
-                const text_lockfile_bytes = writer_buf.list.items;
+                const text_lockfile_bytes = bun.handleOom(writer_allocating.toOwnedSlice());
 
                 const source = &logger.Source.initPathString("bun.lock", text_lockfile_bytes);
                 initializeStore();
@@ -461,14 +481,14 @@ fn preprocessUpdateRequests(old: *Lockfile, manager: *PackageManager, updates: [
                 if (update.package_id == invalid_package_id) {
                     for (root_deps, old_resolutions) |dep, old_resolution| {
                         if (dep.name_hash == String.Builder.stringHash(update.name)) {
-                            if (old_resolution > old.packages.len) continue;
+                            if (old_resolution >= old.packages.len) continue;
                             const res = resolutions_of_yore[old_resolution];
                             if (res.tag != .npm or update.version.tag != .dist_tag) continue;
 
                             // TODO(dylan-conway): this will need to handle updating dependencies (exact, ^, or ~) and aliases
 
                             const len = switch (exact_versions) {
-                                else => |exact| std.fmt.count("{s}{}", .{
+                                else => |exact| std.fmt.count("{s}{f}", .{
                                     if (exact) "" else "^",
                                     res.value.npm.version.fmt(old.buffers.string_bytes.items),
                                 }),
@@ -499,14 +519,14 @@ fn preprocessUpdateRequests(old: *Lockfile, manager: *PackageManager, updates: [
                 if (update.package_id == invalid_package_id) {
                     for (root_deps, old_resolutions) |*dep, old_resolution| {
                         if (dep.name_hash == String.Builder.stringHash(update.name)) {
-                            if (old_resolution > old.packages.len) continue;
+                            if (old_resolution >= old.packages.len) continue;
                             const res = resolutions_of_yore[old_resolution];
                             if (res.tag != .npm or update.version.tag != .dist_tag) continue;
 
                             // TODO(dylan-conway): this will need to handle updating dependencies (exact, ^, or ~) and aliases
 
                             const buf = switch (exact_versions) {
-                                else => |exact| std.fmt.bufPrint(&temp_buf, "{s}{}", .{
+                                else => |exact| std.fmt.bufPrint(&temp_buf, "{s}{f}", .{
                                     if (exact) "" else "^",
                                     res.value.npm.version.fmt(old.buffers.string_bytes.items),
                                 }) catch break,
@@ -801,7 +821,7 @@ pub fn cleanWithLogger(
     }
 
     if (log_level.isVerbose()) {
-        Output.prettyErrorln("Clean lockfile: {d} packages -> {d} packages in {}\n", .{
+        Output.prettyErrorln("Clean lockfile: {d} packages -> {d} packages in {f}\n", .{
             old.packages.len,
             new.packages.len,
             bun.fmt.fmtDurationOneDecimal(timer.read()),
@@ -814,17 +834,16 @@ pub fn cleanWithLogger(
 pub const MetaHashFormatter = struct {
     meta_hash: *const MetaHash,
 
-    pub fn format(this: MetaHashFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(this: MetaHashFormatter, writer: *std.Io.Writer) !void {
         var remain: []const u8 = this.meta_hash[0..];
 
-        try std.fmt.format(
-            writer,
-            "{}-{}-{}-{}",
+        try writer.print(
+            "{X}-{x}-{X}-{x}",
             .{
-                std.fmt.fmtSliceHexUpper(remain[0..8]),
-                std.fmt.fmtSliceHexLower(remain[8..16]),
-                std.fmt.fmtSliceHexUpper(remain[16..24]),
-                std.fmt.fmtSliceHexLower(remain[24..32]),
+                remain[0..8],
+                remain[8..16],
+                remain[16..24],
+                remain[24..32],
             },
         );
     }
@@ -914,7 +933,6 @@ pub fn hoist(
     var slice = lockfile.packages.slice();
 
     var builder = Tree.Builder(method){
-        .name_hashes = slice.items(.name_hash),
         .queue = .init(allocator),
         .resolution_lists = slice.items(.resolutions),
         .resolutions = lockfile.buffers.resolutions.items,
@@ -926,6 +944,7 @@ pub fn hoist(
         .install_root_dependencies = install_root_dependencies,
         .workspace_filters = workspace_filters,
         .packages_to_install = packages_to_install,
+        .pending_optional_peers = .init(allocator),
     };
 
     try (Tree{}).processSubtree(
@@ -956,7 +975,7 @@ const PendingResolution = struct {
     parent: PackageID,
 };
 
-const PendingResolutions = std.ArrayList(PendingResolution);
+const PendingResolutions = std.array_list.Managed(PendingResolution);
 
 pub fn fetchNecessaryPackageMetadataAfterYarnOrPnpmMigration(this: *Lockfile, manager: *PackageManager, comptime update_os_cpu: bool) OOM!void {
     manager.populateManifestCache(.all) catch return;
@@ -1121,7 +1140,7 @@ pub const Printer = struct {
                 Global.crash();
             },
             .not_found => {
-                Output.prettyErrorln("<r><red>lockfile not found:<r> {}", .{
+                Output.prettyErrorln("<r><red>lockfile not found:<r> {f}", .{
                     bun.fmt.QuotedFormatter{ .text = std.mem.sliceAsBytes(lockfile_path) },
                 });
                 Global.crash();
@@ -1220,26 +1239,26 @@ pub fn saveToDisk(this: *Lockfile, load_result: *const LoadResult, options: *con
 
     const bytes = bytes: {
         if (save_format == .text) {
-            var writer_buf = MutableString.initEmpty(bun.default_allocator);
-            var buffered_writer = writer_buf.bufferedWriter();
-            const writer = buffered_writer.writer();
+            var writer_allocating = std.Io.Writer.Allocating.init(bun.default_allocator);
+            defer writer_allocating.deinit();
+            const writer = &writer_allocating.writer;
 
-            TextLockfile.Stringifier.saveFromBinary(bun.default_allocator, this, load_result, writer) catch |err| switch (err) {
-                error.OutOfMemory => bun.outOfMemory(),
+            TextLockfile.Stringifier.saveFromBinary(bun.default_allocator, this, load_result, options, writer) catch |err| switch (err) {
+                error.WriteFailed => bun.outOfMemory(),
             };
 
-            buffered_writer.flush() catch |err| switch (err) {
-                error.OutOfMemory => bun.outOfMemory(),
+            writer.flush() catch |err| switch (err) {
+                error.WriteFailed => bun.outOfMemory(),
             };
 
-            break :bytes writer_buf.list.items;
+            break :bytes bun.handleOom(writer_allocating.toOwnedSlice());
         }
 
-        var bytes = std.ArrayList(u8).init(bun.default_allocator);
+        var bytes = std.array_list.Managed(u8).init(bun.default_allocator);
 
         var total_size: usize = 0;
         var end_pos: usize = 0;
-        Lockfile.Serializer.save(this, options.log_level.isVerbose(), &bytes, &total_size, &end_pos) catch |err| {
+        Lockfile.Serializer.save(this, options, &bytes, &total_size, &end_pos) catch |err| {
             Output.err(err, "failed to serialize lockfile", .{});
             Global.crash();
         };
@@ -1253,9 +1272,9 @@ pub fn saveToDisk(this: *Lockfile, load_result: *const LoadResult, options: *con
     var base64_bytes: [8]u8 = undefined;
     bun.csprng(&base64_bytes);
     const tmpname = if (save_format == .text)
-        std.fmt.bufPrintZ(&tmpname_buf, ".lock-{s}.tmp", .{std.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable
+        std.fmt.bufPrintZ(&tmpname_buf, ".lock-{x}.tmp", .{&base64_bytes}) catch unreachable
     else
-        std.fmt.bufPrintZ(&tmpname_buf, ".lockb-{s}.tmp", .{std.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable;
+        std.fmt.bufPrintZ(&tmpname_buf, ".lockb-{x}.tmp", .{&base64_bytes}) catch unreachable;
 
     const file = switch (File.openat(.cwd(), tmpname, bun.O.CREAT | bun.O.WRONLY, 0o777)) {
         .err => |err| {
@@ -1343,6 +1362,7 @@ pub fn initEmpty(this: *Lockfile, allocator: Allocator) void {
         .overrides = .{},
         .catalogs = .{},
         .meta_hash = zero_hash,
+        .saved_config_version = null,
     };
 }
 
@@ -1539,7 +1559,7 @@ pub fn stringBuf(this: *Lockfile) String.Buf {
 
 pub const Scratch = struct {
     pub const DuplicateCheckerMap = std.HashMap(PackageNameHash, logger.Loc, IdentityContext(PackageNameHash), 80);
-    pub const DependencyQueue = std.fifo.LinearFifo(DependencySlice, .Dynamic);
+    pub const DependencyQueue = bun.LinearFifo(DependencySlice, .Dynamic);
 
     duplicate_checker_map: DuplicateCheckerMap = undefined,
     dependency_list_queue: DependencyQueue = undefined,
@@ -1926,14 +1946,14 @@ pub fn generateMetaHash(this: *Lockfile, print_name_version_string: bool, packag
             inline while (j < 16) : (j += 1) {
                 alphabetized_names[(i + j) - 1] = @as(PackageID, @truncate((i + j)));
                 // posix path separators because we only use posix in the lockfile
-                string_builder.fmtCount("{s}@{}\n", .{ names[i + j].slice(bytes), resolutions[i + j].fmt(bytes, .posix) });
+                string_builder.fmtCount("{s}@{f}\n", .{ names[i + j].slice(bytes), resolutions[i + j].fmt(bytes, .posix) });
             }
         }
 
         while (i < packages_len) : (i += 1) {
             alphabetized_names[i - 1] = @as(PackageID, @truncate(i));
             // posix path separators because we only use posix in the lockfile
-            string_builder.fmtCount("{s}@{}\n", .{ names[i].slice(bytes), resolutions[i].fmt(bytes, .posix) });
+            string_builder.fmtCount("{s}@{f}\n", .{ names[i].slice(bytes), resolutions[i].fmt(bytes, .posix) });
         }
     }
 
@@ -1972,7 +1992,7 @@ pub fn generateMetaHash(this: *Lockfile, print_name_version_string: bool, packag
     string_builder.len += hash_prefix.len;
 
     for (alphabetized_names) |i| {
-        _ = string_builder.fmt("{s}@{}\n", .{ names[i].slice(bytes), resolutions[i].fmt(bytes, .any) });
+        _ = string_builder.fmt("{s}@{f}\n", .{ names[i].slice(bytes), resolutions[i].fmt(bytes, .any) });
     }
 
     if (has_scripts) {
@@ -2160,7 +2180,6 @@ const Environment = bun.Environment;
 const Global = bun.Global;
 const GlobalStringBuilder = bun.StringBuilder;
 const JSON = bun.json;
-const MutableString = bun.MutableString;
 const OOM = bun.OOM;
 const Output = bun.Output;
 const assert = bun.assert;

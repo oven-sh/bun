@@ -246,3 +246,80 @@ if (typeof process !== "undefined") {
   // @ts-expect-error - -Infinity
   fetch("https://example.com", { body: -Infinity });
 }
+
+// Proxy option types
+{
+  // String proxy URL is valid
+  fetch("https://example.com", { proxy: "http://proxy.example.com:8080" });
+  fetch("https://example.com", { proxy: "https://user:pass@proxy.example.com:8080" });
+}
+
+{
+  // Object proxy with url is valid
+  fetch("https://example.com", {
+    proxy: {
+      url: "http://proxy.example.com:8080",
+    },
+  });
+}
+
+{
+  // Object proxy with url and headers (plain object) is valid
+  fetch("https://example.com", {
+    proxy: {
+      url: "http://proxy.example.com:8080",
+      headers: {
+        "Proxy-Authorization": "Bearer token",
+        "X-Custom-Header": "value",
+      },
+    },
+  });
+}
+
+{
+  // Object proxy with url and headers (Headers instance) is valid
+  fetch("https://example.com", {
+    proxy: {
+      url: "http://proxy.example.com:8080",
+      headers: new Headers({ "Proxy-Authorization": "Bearer token" }),
+    },
+  });
+}
+
+{
+  // Object proxy with url and headers (array of tuples) is valid
+  fetch("https://example.com", {
+    proxy: {
+      url: "http://proxy.example.com:8080",
+      headers: [
+        ["Proxy-Authorization", "Bearer token"],
+        ["X-Custom", "value"],
+      ],
+    },
+  });
+}
+
+{
+  // @ts-expect-error - Proxy object without url is invalid
+  fetch("https://example.com", { proxy: { headers: { "X-Custom": "value" } } });
+}
+
+{
+  // @ts-expect-error - Proxy url must be string, not number
+  fetch("https://example.com", { proxy: { url: 8080 } });
+}
+
+{
+  // @ts-expect-error - Proxy must be string or object, not number
+  fetch("https://example.com", { proxy: 8080 });
+}
+
+{
+  // @ts-expect-error - Proxy must be string or object, not boolean
+  fetch("https://example.com", { proxy: true });
+}
+
+{
+  // @ts-expect-error - Proxy must be string or object, not array
+  fetch("https://example.com", { proxy: ["http://proxy.example.com"] });
+}

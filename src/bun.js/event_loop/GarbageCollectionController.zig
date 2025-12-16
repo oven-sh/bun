@@ -37,7 +37,7 @@ pub fn init(this: *GarbageCollectionController, vm: *VirtualMachine) void {
     actual.internal_loop_data.jsc_vm = vm.jsc_vm;
 
     if (comptime Environment.isDebug) {
-        if (bun.getenvZ("BUN_TRACK_LAST_FN_NAME") != null) {
+        if (bun.env_var.BUN_TRACK_LAST_FN_NAME.get()) {
             vm.eventLoop().debug.track_last_fn_name = true;
         }
     }
@@ -72,7 +72,7 @@ pub fn bunVM(this: *GarbageCollectionController) *VirtualMachine {
     return @alignCast(@fieldParentPtr("gc_controller", this));
 }
 
-pub fn onGCTimer(timer: *uws.Timer) callconv(.C) void {
+pub fn onGCTimer(timer: *uws.Timer) callconv(.c) void {
     var this = timer.as(*GarbageCollectionController);
     if (this.disabled) return;
     this.gc_timer_state = .run_on_next_tick;
@@ -101,7 +101,7 @@ pub fn updateGCRepeatTimer(this: *GarbageCollectionController, comptime setting:
     }
 }
 
-pub fn onGCRepeatingTimer(timer: *uws.Timer) callconv(.C) void {
+pub fn onGCRepeatingTimer(timer: *uws.Timer) callconv(.c) void {
     var this = timer.as(*GarbageCollectionController);
     const prev_heap_size = this.gc_last_heap_size_on_repeating_timer;
     this.performGC();

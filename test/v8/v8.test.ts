@@ -135,16 +135,24 @@ describe.todoIf(isBroken && isMusl)("node:v8", () => {
   });
 
   describe("Value type checks", () => {
-    it("correctly identifies value types with IsMap, IsArray, IsInt32, and IsBigInt", async () => {
-      // Test a representative sample of each type, not every possible value
-      // The C++ test function will be called once with each value
-      await checkSameOutput("test_v8_value_type_checks", [new Map()]);
-      await checkSameOutput("test_v8_value_type_checks", [[]]);
-      await checkSameOutput("test_v8_value_type_checks", [42]);
-      await checkSameOutput("test_v8_value_type_checks", [123n]);
-      await checkSameOutput("test_v8_value_type_checks", [3.14]);
-      await checkSameOutput("test_v8_value_type_checks", ["string"]);
-      await checkSameOutput("test_v8_value_type_checks", [{}]);
+    it("matches Node for IsMap/IsArray/IsInt32/IsBigInt on representative values", async () => {
+      // Each entry is an argument list; we wrap each value so the addon receives it as info[0].
+      const cases: any[][] = [
+        [new Map()],
+        [[]],
+        [42],
+        [2147483647], // INT32_MAX
+        [2147483648], // INT32_MAX + 1 (should not be Int32)
+        [-2147483648], // INT32_MIN
+        [-2147483649], // INT32_MIN - 1 (should not be Int32)
+        [123n],
+        [3.14],
+        ["string"],
+        [{}],
+      ];
+      for (const args of cases) {
+        await checkSameOutput("test_v8_value_type_checks", args);
+      }
     });
   });
   describe("Number", () => {

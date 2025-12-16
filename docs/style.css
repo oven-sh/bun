@@ -91,6 +91,7 @@ html.dark .shiki span {
 footer#footer a[href*="mintlify.com"] {
   display: none;
 }
+
 .nav-tabs {
   width: 100% !important;
 }
@@ -142,6 +143,10 @@ html.dark .code-block + .code-block[language="text"] div[data-component-part="co
 .code-block:has(+ .code-block[language="text"]) div[data-component-part="code-block-root"] {
   border-bottom-right-radius: 0px;
   border-bottom-left-radius: 0px;
+}
+
+div.callout .code-block {
+  margin-bottom: 0px;
 }
 
 .code-block[language="shellscript"] code span.line:not(:empty):has(span)::before {

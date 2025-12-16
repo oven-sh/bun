@@ -115,6 +115,8 @@ To print a list of installed dependencies in the current project and their resol
 
 ```bash terminal icon="terminal"
 bun pm ls
+# or
+bun list
 ```
 
 ```txt
@@ -130,6 +132,8 @@ To print all installed dependencies, including nth-order dependencies.
 
 ```bash terminal icon="terminal"
 bun pm ls --all
+# or
+bun list --all
 ```
 
 ```txt
@@ -244,7 +248,7 @@ bun pm version
 ```
 
 ```txt
-bun pm version v1.3.1 (ca7428e9)
+bun pm version v1.3.3 (ca7428e9)
 Current package version: v1.0.0
 
 Increment:
@@ -299,7 +303,7 @@ scripts[test:watch]        # bracket for special chars
 Examples:
 
 ```bash terminal icon="terminal"
-# set
+# get
 bun pm pkg get name                               # single property
 bun pm pkg get name version                       # multiple properties
 bun pm pkg get                                    # entire package.json

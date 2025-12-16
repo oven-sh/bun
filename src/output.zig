@@ -23,54 +23,70 @@ pub const Source = struct {
             break :brk std.io.FixedBufferStream([]u8);
         } else {
             break :brk File;
-            // var stdout = std.io.getStdOut();
-            // return @TypeOf(std.io.bufferedWriter(stdout.writer()));
+            // var stdout = std.fs.File.stdout();
+            // return @TypeOf(bun.deprecated.bufferedWriter(stdout.writer()));
         }
     };
-    pub const BufferedStream: type = struct {
-        fn getBufferedStream() type {
-            if (comptime Environment.isWasm)
-                return StreamType;
 
-            return std.io.BufferedWriter(4096, @TypeOf(StreamType.quietWriter(undefined)));
-        }
-    }.getBufferedStream();
+    stdout_buffer: [4096]u8,
+    stderr_buffer: [4096]u8,
+    buffered_stream_backing: @TypeOf(StreamType.quietWriter(undefined)).Adapter,
+    buffered_error_stream_backing: @TypeOf(StreamType.quietWriter(undefined)).Adapter,
+    buffered_stream: *std.Io.Writer,
+    buffered_error_stream: *std.Io.Writer,
 
-    buffered_stream: BufferedStream,
-    buffered_error_stream: BufferedStream,
+    stream_backing: @TypeOf(StreamType.quietWriter(undefined)).Adapter,
+    error_stream_backing: @TypeOf(StreamType.quietWriter(undefined)).Adapter,
+    stream: *std.Io.Writer,
+    error_stream: *std.Io.Writer,
 
-    stream: StreamType,
-    error_stream: StreamType,
+    raw_stream: StreamType,
+    raw_error_stream: StreamType,
     out_buffer: []u8 = &([_]u8{}),
     err_buffer: []u8 = &([_]u8{}),
 
     pub fn init(
+        out: *Source,
         stream: StreamType,
         err_stream: StreamType,
-    ) Source {
+    ) void {
         if ((comptime Environment.isDebug and use_mimalloc) and !source_set) {
             bun.mimalloc.mi_option_set(.show_errors, 1);
         }
         source_set = true;
 
-        return Source{
-            .stream = stream,
-            .error_stream = err_stream,
-            .buffered_stream = if (Environment.isNative)
-                BufferedStream{ .unbuffered_writer = stream.quietWriter() }
-            else
-                stream,
-            .buffered_error_stream = if (Environment.isNative)
-                BufferedStream{ .unbuffered_writer = err_stream.quietWriter() }
-            else
-                err_stream,
+        out.* = .{
+            .raw_stream = stream,
+            .raw_error_stream = err_stream,
+
+            .stdout_buffer = undefined,
+            .stderr_buffer = undefined,
+            .buffered_stream = undefined,
+            .buffered_stream_backing = undefined,
+            .buffered_error_stream_backing = undefined,
+            .buffered_error_stream = undefined,
+
+            .stream_backing = undefined,
+            .error_stream_backing = undefined,
+            .stream = undefined,
+            .error_stream = undefined,
         };
+
+        out.buffered_stream_backing = out.raw_stream.quietWriter().adaptToNewApi(&out.stdout_buffer);
+        out.buffered_error_stream_backing = out.raw_error_stream.quietWriter().adaptToNewApi(&out.stderr_buffer);
+        out.buffered_stream = &out.buffered_stream_backing.new_interface;
+        out.buffered_error_stream = &out.buffered_error_stream_backing.new_interface;
+
+        out.stream_backing = out.raw_stream.quietWriter().adaptToNewApi(&.{});
+        out.error_stream_backing = out.raw_error_stream.quietWriter().adaptToNewApi(&.{});
+        out.stream = &out.stream_backing.new_interface;
+        out.error_stream = &out.error_stream_backing.new_interface;
     }
 
     pub fn configureThread() void {
         if (source_set) return;
         bun.debugAssert(stdout_stream_set);
-        source = Source.init(stdout_stream, stderr_stream);
+        source.init(stdout_stream, stderr_stream);
         bun.StackCheck.configureThread();
     }
 
@@ -124,7 +140,7 @@ pub const Source = struct {
         pub var console_codepage = @as(u32, 0);
         pub var console_output_codepage = @as(u32, 0);
 
-        pub export fn Bun__restoreWindowsStdio() callconv(.C) void {
+        pub export fn Bun__restoreWindowsStdio() callconv(.c) void {
             restore();
         }
         comptime {
@@ -174,7 +190,7 @@ pub const Source = struct {
             console_output_codepage = c.GetConsoleOutputCP();
             _ = c.SetConsoleOutputCP(CP_UTF8);
 
-            console_codepage = c.GetConsoleOutputCP();
+            console_codepage = c.GetConsoleCP();
             _ = c.SetConsoleCP(CP_UTF8);
 
             var mode: w.DWORD = undefined;
@@ -225,11 +241,10 @@ pub const Source = struct {
                 WindowsStdio.init();
             }
 
-            const stdout = bun.sys.File.from(std.io.getStdOut());
-            const stderr = bun.sys.File.from(std.io.getStdErr());
+            const stdout = bun.sys.File.from(std.fs.File.stdout());
+            const stderr = bun.sys.File.from(std.fs.File.stderr());
 
-            Source.init(stdout, stderr)
-                .set();
+            Source.setInit(stdout, stderr);
 
             if (comptime Environment.isDebug or Environment.enable_logs) {
                 initScopedDebugWriterAtStartup();
@@ -363,8 +378,8 @@ pub const Source = struct {
         return lazy_color_depth;
     }
 
-    pub fn set(new_source: *const Source) void {
-        source = new_source.*;
+    pub fn setInit(stdout: StreamType, stderr: StreamType) void {
+        source.init(stdout, stderr);
 
         source_set = true;
         if (!stdout_stream_set) {
@@ -393,8 +408,8 @@ pub const Source = struct {
                 enable_ansi_colors_stderr = enable_color orelse is_stderr_tty;
             }
 
-            stdout_stream = new_source.stream;
-            stderr_stream = new_source.error_stream;
+            stdout_stream = stdout;
+            stderr_stream = stderr;
         }
     }
 };
@@ -529,31 +544,41 @@ pub fn panic(comptime fmt: string, args: anytype) noreturn {
 
 pub const WriterType: type = @TypeOf(Source.StreamType.quietWriter(undefined));
 
+pub fn rawErrorWriter() Source.StreamType {
+    bun.debugAssert(source_set);
+    return source.raw_error_stream;
+}
+
 // TODO: investigate migrating this to the buffered one.
-pub fn errorWriter() WriterType {
-    bun.debugAssert(source_set);
-    return source.error_stream.quietWriter();
-}
-
-pub fn errorWriterBuffered() Source.BufferedStream.Writer {
-    bun.debugAssert(source_set);
-    return source.buffered_error_stream.writer();
-}
-
-// TODO: investigate returning the buffered_error_stream
-pub fn errorStream() Source.StreamType {
+pub fn errorWriter() *std.Io.Writer {
     bun.debugAssert(source_set);
     return source.error_stream;
 }
 
-pub fn writer() WriterType {
+pub fn errorWriterBuffered() *std.Io.Writer {
     bun.debugAssert(source_set);
-    return source.stream.quietWriter();
+    return source.buffered_error_stream;
 }
 
-pub fn writerBuffered() Source.BufferedStream.Writer {
+// TODO: investigate returning the buffered_error_stream
+pub fn errorStream() *std.Io.Writer {
     bun.debugAssert(source_set);
-    return source.buffered_stream.writer();
+    return source.error_stream;
+}
+
+pub fn rawWriter() Source.StreamType {
+    bun.debugAssert(source_set);
+    return source.raw_stream;
+}
+
+pub fn writer() *std.Io.Writer {
+    bun.debugAssert(source_set);
+    return source.stream;
+}
+
+pub fn writerBuffered() *std.Io.Writer {
+    bun.debugAssert(source_set);
+    return source.buffered_stream;
 }
 
 pub fn resetTerminal() void {
@@ -562,17 +587,17 @@ pub fn resetTerminal() void {
     }
 
     if (enable_ansi_colors_stderr) {
-        _ = source.error_stream.write("\x1B[2J\x1B[3J\x1B[H").unwrap() catch 0;
+        source.error_stream.writeAll("\x1B[2J\x1B[3J\x1B[H") catch {};
     } else {
-        _ = source.stream.write("\x1B[2J\x1B[3J\x1B[H").unwrap() catch 0;
+        source.stream.writeAll("\x1B[2J\x1B[3J\x1B[H") catch {};
     }
 }
 
 pub fn resetTerminalAll() void {
     if (enable_ansi_colors_stderr)
-        _ = source.error_stream.write("\x1B[2J\x1B[3J\x1B[H").unwrap() catch 0;
+        source.error_stream.writeAll("\x1B[2J\x1B[3J\x1B[H") catch {};
     if (enable_ansi_colors_stdout)
-        _ = source.stream.write("\x1B[2J\x1B[3J\x1B[H").unwrap() catch 0;
+        source.stream.writeAll("\x1B[2J\x1B[3J\x1B[H") catch {};
 }
 
 /// Write buffered stdout & stderr to the terminal.
@@ -591,7 +616,7 @@ pub const ElapsedFormatter = struct {
     colors: bool,
     duration_ns: u64 = 0,
 
-    pub fn format(self: ElapsedFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer_: anytype) !void {
+    pub fn format(self: ElapsedFormatter, writer_: *std.Io.Writer) !void {
         switch (self.duration_ns) {
             0...std.time.ns_per_ms * 10 => {
                 const fmt_str = "<r><d>[{d:>.2}ms<r><d>]<r>";
@@ -691,7 +716,7 @@ pub noinline fn printErrorable(comptime fmt: string, args: anytype) !void {
         try source.stream.writer().print(fmt, args);
         root.console_error(root.Uint8Array.fromSlice(source.stream.buffer[0..source.stream.pos]));
     } else {
-        std.fmt.format(source.stream.writer(), fmt, args) catch unreachable;
+        source.stream.writer().print(fmt, args) catch unreachable;
     }
 }
 
@@ -720,19 +745,19 @@ pub inline fn _debug(comptime fmt: string, args: anytype) void {
 }
 
 // callconv is a workaround for a zig wasm bug?
-pub noinline fn print(comptime fmt: string, args: anytype) callconv(std.builtin.CallingConvention.Unspecified) void {
+pub noinline fn print(comptime fmt: string, args: anytype) callconv(std.builtin.CallingConvention.auto) void {
     if (comptime Environment.isWasm) {
         source.stream.pos = 0;
-        std.fmt.format(source.stream.writer(), fmt, args) catch unreachable;
+        source.stream.writer().print(fmt, args) catch unreachable;
         root.console_log(root.Uint8Array.fromSlice(source.stream.buffer[0..source.stream.pos]));
     } else {
         bun.debugAssert(source_set);
 
         // There's not much we can do if this errors. Especially if it's something like BrokenPipe.
         if (enable_buffering) {
-            std.fmt.format(source.buffered_stream.writer(), fmt, args) catch {};
+            source.buffered_stream.print(fmt, args) catch {};
         } else {
-            std.fmt.format(writer(), fmt, args) catch {};
+            writer().print(fmt, args) catch {};
         }
     }
 }
@@ -785,10 +810,9 @@ fn ScopedLogger(comptime tagname: []const u8, comptime visibility: Visibility) t
     }
 
     return struct {
-        const BufferedWriter = std.io.BufferedWriter(4096, bun.sys.File.QuietWriter);
-
-        var buffered_writer: BufferedWriter = undefined;
-        var out: BufferedWriter.Writer = undefined;
+        var buffer: [4096]u8 = undefined;
+        var buffered_writer: File.QuietWriter.Adapter = undefined;
+        var out: *std.Io.Writer = undefined;
         var out_set = false;
         var really_disable = std.atomic.Value(bool).init(visibility == .hidden);
 
@@ -850,33 +874,24 @@ fn ScopedLogger(comptime tagname: []const u8, comptime visibility: Visibility) t
                 return;
 
             if (!out_set) {
-                buffered_writer = .{
-                    .unbuffered_writer = scopedWriter(),
-                };
-                out = buffered_writer.writer();
+                buffered_writer = scopedWriter().adaptToNewApi(&buffer);
+                out = &buffered_writer.new_interface;
                 out_set = true;
             }
             lock.lock();
             defer lock.unlock();
 
-            if (enable_ansi_colors_stdout and source_set and buffered_writer.unbuffered_writer.context.handle == writer().context.handle) {
-                out.print(comptime prettyFmt("<r><d>[" ++ tagname ++ "]<r> " ++ fmt, true), args) catch {
-                    really_disable.store(true, .monotonic);
-                    return;
-                };
-                buffered_writer.flush() catch {
-                    really_disable.store(true, .monotonic);
-                    return;
-                };
-            } else {
-                out.print(comptime prettyFmt("<r><d>[" ++ tagname ++ "]<r> " ++ fmt, false), args) catch {
-                    really_disable.store(true, .monotonic);
-                    return;
-                };
-                buffered_writer.flush() catch {
-                    really_disable.store(true, .monotonic);
-                    return;
-                };
+            switch (enable_ansi_colors_stdout and source_set and scopedWriter().context.handle == rawWriter().handle) {
+                inline else => |use_ansi| {
+                    out.print(comptime prettyFmt("<r><d>[" ++ tagname ++ "]<r> " ++ fmt, use_ansi), args) catch {
+                        really_disable.store(true, .monotonic);
+                        return;
+                    };
+                    out.flush() catch {
+                        really_disable.store(true, .monotonic);
+                        return;
+                    };
+                },
             }
         }
     };
@@ -1087,9 +1102,9 @@ pub noinline fn printError(comptime fmt: string, args: anytype) void {
     } else {
         // There's not much we can do if this errors. Especially if it's something like BrokenPipe
         if (enable_buffering)
-            std.fmt.format(source.buffered_error_stream.writer(), fmt, args) catch {}
+            source.buffered_error_stream.print(fmt, args) catch {}
         else
-            std.fmt.format(source.error_stream.writer(), fmt, args) catch {};
+            source.error_stream.print(fmt, args) catch {};
     }
 }
 
@@ -1108,10 +1123,10 @@ pub const DebugTimer = struct {
 
     pub const WriteError = error{};
 
-    pub fn format(self: DebugTimer, comptime _: []const u8, _: std.fmt.FormatOptions, w: anytype) WriteError!void {
+    pub fn format(self: DebugTimer, w: *std.Io.Writer) std.Io.Writer.Error!void {
         if (comptime Environment.isDebug) {
             var timer = self.timer;
-            w.print("{d:.3}ms", .{@as(f64, @floatFromInt(timer.read())) / std.time.ns_per_ms}) catch unreachable;
+            try w.print("{d:.3}ms", .{@as(f64, @floatFromInt(timer.read())) / std.time.ns_per_ms});
         }
     }
 };
@@ -1255,7 +1270,7 @@ pub fn initScopedDebugWriterAtStartup() void {
         }
     }
 
-    ScopedDebugWriter.scoped_file_writer = source.stream.quietWriter();
+    ScopedDebugWriter.scoped_file_writer = source.raw_stream.quietWriter();
 }
 fn scopedWriter() File.QuietWriter {
     if (comptime !Environment.isDebug and !Environment.enable_logs) {
@@ -1272,11 +1287,12 @@ pub inline fn errGeneric(comptime fmt: []const u8, args: anytype) void {
 
 /// Print a red error message with "error: " as the prefix and a formatted message.
 pub inline fn errFmt(formatter: anytype) void {
-    return errGeneric("{}", .{formatter});
+    return errGeneric("{f}", .{formatter});
 }
 
-pub var buffered_stdin = std.io.BufferedReader(4096, File.Reader){
+pub var buffered_stdin = bun.deprecated.BufferedReader(4096, File.Reader){
     .unbuffered_reader = .{ .context = .{ .handle = if (Environment.isWindows) undefined else .stdin() } },
+    .buf = undefined,
 };
 
 const string = []const u8;

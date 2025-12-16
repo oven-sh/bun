@@ -188,7 +188,7 @@
           {
             "group": "Publishing & Analysis",
             "icon": "upload",
-            "pages": ["/pm/cli/publish", "/pm/cli/outdated", "/pm/cli/why", "/pm/cli/audit"]
+            "pages": ["/pm/cli/publish", "/pm/cli/outdated", "/pm/cli/why", "/pm/cli/audit", "/pm/cli/info"]
           },
           {
             "group": "Workspace Management",
@@ -298,7 +298,14 @@
           {
             "group": "Deployment",
             "icon": "rocket",
-            "pages": ["/guides/deployment/vercel", "/guides/deployment/railway", "/guides/deployment/render"]
+            "pages": [
+              "/guides/deployment/vercel",
+              "/guides/deployment/railway",
+              "/guides/deployment/render",
+              "/guides/deployment/aws-lambda",
+              "/guides/deployment/digital-ocean",
+              "/guides/deployment/google-cloud-run"
+            ]
           },
           {
             "group": "Runtime & Debugging",
@@ -319,6 +326,7 @@
             "group": "Utilities",
             "icon": "wrench",
             "pages": [
+              "/guides/util/upgrade",
               "/guides/util/detect-bun",
               "/guides/util/version",
               "/guides/util/hash-a-password",
@@ -347,7 +355,7 @@
               "/guides/ecosystem/discordjs",
               "/guides/ecosystem/docker",
               "/guides/ecosystem/drizzle",
-              "/guides/ecosystem/edgedb",
+              "/guides/ecosystem/gel",
               "/guides/ecosystem/elysia",
               "/guides/ecosystem/express",
               "/guides/ecosystem/hono",
@@ -362,13 +370,15 @@
               "/guides/ecosystem/qwik",
               "/guides/ecosystem/react",
               "/guides/ecosystem/remix",
+              "/guides/ecosystem/tanstack-start",
               "/guides/ecosystem/sentry",
               "/guides/ecosystem/solidstart",
               "/guides/ecosystem/ssr-react",
               "/guides/ecosystem/stric",
               "/guides/ecosystem/sveltekit",
               "/guides/ecosystem/systemd",
-              "/guides/ecosystem/vite"
+              "/guides/ecosystem/vite",
+              "/guides/ecosystem/upstash"
             ]
           },
           {
@@ -455,6 +465,7 @@
               "/guides/test/update-snapshots",
               "/guides/test/coverage",
               "/guides/test/coverage-threshold",
+              "/guides/test/concurrent-test-glob",
               "/guides/test/skip-tests",
               "/guides/test/todo-tests",
               "/guides/test/timeout",

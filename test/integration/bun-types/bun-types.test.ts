@@ -34,7 +34,7 @@ beforeAll(async () => {
   TEMP_FIXTURE_DIR = join(TEMP_DIR, "fixture");
 
   try {
-    await $`mkdir -p ${TEMP_FIXTURE_DIR}`;
+    await $`mkdir -p ${TEMP_FIXTURE_DIR}`.quiet();
 
     await cp(FIXTURE_SOURCE_DIR, TEMP_FIXTURE_DIR, { recursive: true });
 
@@ -42,7 +42,7 @@ beforeAll(async () => {
       cd ${BUN_TYPES_PACKAGE_ROOT}
       bun install --no-cache
       cp package.json package.json.backup
-    `;
+    `.quiet();
 
     const pkg = await Bun.file(BUN_TYPES_PACKAGE_JSON_PATH).json();
 
@@ -58,10 +58,9 @@ beforeAll(async () => {
       cd ${TEMP_FIXTURE_DIR}
       bun add bun-types@${BUN_TYPES_TARBALL_NAME}
       rm ${BUN_TYPES_TARBALL_NAME}
-    `;
+    `.quiet();
 
     const atTypesBunDir = join(TEMP_FIXTURE_DIR, "node_modules", "@types", "bun");
-    console.log("Making tree", atTypesBunDir);
 
     await mkdir(atTypesBunDir, { recursive: true });
     await makeTree(atTypesBunDir, {
@@ -195,140 +194,7 @@ async function diagnose(
   };
 }
 
-const expectedEmptyInterfacesWhenNoDOM = new Set([
-  "ThisType",
-  "Document",
-  "DataTransfer",
-  "StyleMedia",
-  "Element",
-  "DocumentFragment",
-  "HTMLElement",
-  "HTMLAnchorElement",
-  "HTMLAreaElement",
-  "HTMLAudioElement",
-  "HTMLBaseElement",
-  "HTMLBodyElement",
-  "HTMLBRElement",
-  "HTMLButtonElement",
-  "HTMLCanvasElement",
-  "HTMLDataElement",
-  "HTMLDataListElement",
-  "HTMLDetailsElement",
-  "HTMLDialogElement",
-  "HTMLDivElement",
-  "HTMLDListElement",
-  "HTMLEmbedElement",
-  "HTMLFieldSetElement",
-  "HTMLFormElement",
-  "HTMLHeadingElement",
-  "HTMLHeadElement",
-  "HTMLHRElement",
-  "HTMLHtmlElement",
-  "HTMLIFrameElement",
-  "HTMLImageElement",
-  "HTMLInputElement",
-  "HTMLModElement",
-  "HTMLLabelElement",
-  "HTMLLegendElement",
-  "HTMLLIElement",
-  "HTMLLinkElement",
-  "HTMLMapElement",
-  "HTMLMetaElement",
-  "HTMLMeterElement",
-  "HTMLObjectElement",
-  "HTMLOListElement",
-  "HTMLOptGroupElement",
-  "HTMLOptionElement",
-  "HTMLOutputElement",
-  "HTMLParagraphElement",
-  "HTMLParamElement",
-  "HTMLPreElement",
-  "HTMLProgressElement",
-  "HTMLQuoteElement",
-  "HTMLSlotElement",
-  "HTMLScriptElement",
-  "HTMLSelectElement",
-  "HTMLSourceElement",
-  "HTMLSpanElement",
-  "HTMLStyleElement",
-  "HTMLTableElement",
-  "HTMLTableColElement",
-  "HTMLTableDataCellElement",
-  "HTMLTableHeaderCellElement",
-  "HTMLTableRowElement",
-  "HTMLTableSectionElement",
-  "HTMLTemplateElement",
-  "HTMLTextAreaElement",
-  "HTMLTimeElement",
-  "HTMLTitleElement",
-  "HTMLTrackElement",
-  "HTMLUListElement",
-  "HTMLVideoElement",
-  "HTMLWebViewElement",
-  "SVGElement",
-  "SVGSVGElement",
-  "SVGCircleElement",
-  "SVGClipPathElement",
-  "SVGDefsElement",
-  "SVGDescElement",
-  "SVGEllipseElement",
-  "SVGFEBlendElement",
-  "SVGFEColorMatrixElement",
-  "SVGFEComponentTransferElement",
-  "SVGFECompositeElement",
-  "SVGFEConvolveMatrixElement",
-  "SVGFEDiffuseLightingElement",
-  "SVGFEDisplacementMapElement",
-  "SVGFEDistantLightElement",
-  "SVGFEDropShadowElement",
-  "SVGFEFloodElement",
-  "SVGFEFuncAElement",
-  "SVGFEFuncBElement",
-  "SVGFEFuncGElement",
-  "SVGFEFuncRElement",
-  "SVGFEGaussianBlurElement",
-  "SVGFEImageElement",
-  "SVGFEMergeElement",
-  "SVGFEMergeNodeElement",
-  "SVGFEMorphologyElement",
-  "SVGFEOffsetElement",
-  "SVGFEPointLightElement",
-  "SVGFESpecularLightingElement",
-  "SVGFESpotLightElement",
-  "SVGFETileElement",
-  "SVGFETurbulenceElement",
-  "SVGFilterElement",
-  "SVGForeignObjectElement",
-  "SVGGElement",
-  "SVGImageElement",
-  "SVGLineElement",
-  "SVGLinearGradientElement",
-  "SVGMarkerElement",
-  "SVGMaskElement",
-  "SVGMetadataElement",
-  "SVGPathElement",
-  "SVGPatternElement",
-  "SVGPolygonElement",
-  "SVGPolylineElement",
-  "SVGRadialGradientElement",
-  "SVGRectElement",
-  "SVGSetElement",
-  "SVGStopElement",
-  "SVGSwitchElement",
-  "SVGSymbolElement",
-  "SVGTextElement",
-  "SVGTextPathElement",
-  "SVGTSpanElement",
-  "SVGUseElement",
-  "SVGViewElement",
-  "Text",
-  "TouchList",
-  "WebGLRenderingContext",
-  "WebGL2RenderingContext",
-  "TrustedHTML",
-  "MediaStream",
-  "MediaSource",
-]);
+const expectedEmptyInterfacesWhenNoDOM = new Set(["ThisType"]);
 
 function checkForEmptyInterfaces(program: ts.Program) {
   const empties = new Set<string>();
@@ -385,11 +251,12 @@ function checkForEmptyInterfaces(program: ts.Program) {
 
 afterAll(async () => {
   if (TEMP_DIR) {
-    console.log(TEMP_DIR);
-
     if (Bun.env.TYPES_INTEGRATION_TEST_KEEP_TEMP_DIR === "true") {
       console.log(`Keeping temp dir ${TEMP_DIR}/fixture for debugging`);
-      await cp(TSCONFIG_SOURCE_PATH, join(TEMP_DIR, "fixture", "tsconfig.json"));
+      // Write tsconfig with skipLibCheck disabled for proper type checking
+      const tsconfig = structuredClone(sourceTsconfig);
+      tsconfig.compilerOptions.skipLibCheck = false;
+      await Bun.write(join(TEMP_DIR, "fixture", "tsconfig.json"), JSON.stringify(tsconfig, null, 2));
     } else {
       await rm(TEMP_DIR, { recursive: true, force: true });
     }
@@ -493,6 +360,100 @@ describe("@types/bun integration test", () => {
     });
   });
 
+  describe("bun:bundle feature() type safety with Registry", () => {
+    test("Registry augmentation restricts feature() to known flags", async () => {
+      const testCode = `
+        // Augment the Registry to define known flags
+        declare module "bun:bundle" {
+          interface Registry {
+            features: "DEBUG" | "PREMIUM" | "BETA";
+          }
+        }
+
+        import { feature } from "bun:bundle";
+
+        // Valid flags work
+        const a: boolean = feature("DEBUG");
+        const b: boolean = feature("PREMIUM");
+        const c: boolean = feature("BETA");
+
+        // Invalid flags are caught at compile time
+        // @ts-expect-error - "INVALID_FLAG" is not assignable to "DEBUG" | "PREMIUM" | "BETA"
+        const invalid: boolean = feature("INVALID_FLAG");
+
+        // @ts-expect-error - typos are caught
+        const typo: boolean = feature("DEUBG");
+      `;
+
+      const { diagnostics, emptyInterfaces } = await diagnose(TEMP_FIXTURE_DIR, {
+        files: {
+          "registry-test.ts": testCode,
+        },
+      });
+
+      expect(emptyInterfaces).toEqual(expectedEmptyInterfacesWhenNoDOM);
+      // Filter to only our test file - no diagnostics because @ts-expect-error suppresses errors
+      const relevantDiagnostics = diagnostics.filter(d => d.line?.startsWith("registry-test.ts"));
+      expect(relevantDiagnostics).toEqual([]);
+    });
+
+    test("Registry augmentation produces type errors for invalid flags", async () => {
+      // Verify that without @ts-expect-error, invalid flags actually produce errors
+      const invalidTestCode = `
+        declare module "bun:bundle" {
+          interface Registry {
+            features: "ALLOWED_FLAG";
+          }
+        }
+
+        import { feature } from "bun:bundle";
+
+        // This should cause a type error - INVALID_FLAG is not in Registry.features
+        const invalid: boolean = feature("INVALID_FLAG");
+      `;
+
+      const { diagnostics, emptyInterfaces } = await diagnose(TEMP_FIXTURE_DIR, {
+        files: {
+          "registry-invalid-test.ts": invalidTestCode,
+        },
+      });
+
+      expect(emptyInterfaces).toEqual(expectedEmptyInterfacesWhenNoDOM);
+      const relevantDiagnostics = diagnostics.filter(d => d.line?.startsWith("registry-invalid-test.ts"));
+      expect(relevantDiagnostics).toMatchInlineSnapshot(`
+        [
+          {
+            "code": 2345,
+            "line": "registry-invalid-test.ts:11:42",
+            "message": "Argument of type '\"INVALID_FLAG\"' is not assignable to parameter of type '\"ALLOWED_FLAG\"'.",
+          },
+        ]
+      `);
+    });
+
+    test("without Registry augmentation, feature() accepts any string", async () => {
+      // When Registry is not augmented, feature() falls back to accepting any string
+      const testCode = `
+        import { feature } from "bun:bundle";
+
+        // Any string works when Registry.features is not defined
+        const a: boolean = feature("ANY_FLAG");
+        const b: boolean = feature("ANOTHER_FLAG");
+        const c: boolean = feature("whatever");
+      `;
+
+      const { diagnostics, emptyInterfaces } = await diagnose(TEMP_FIXTURE_DIR, {
+        files: {
+          "no-registry-test.ts": testCode,
+        },
+      });
+
+      expect(emptyInterfaces).toEqual(expectedEmptyInterfacesWhenNoDOM);
+      const relevantDiagnostics = diagnostics.filter(d => d.line?.startsWith("no-registry-test.ts"));
+      expect(relevantDiagnostics).toEqual([]);
+    });
+  });
+
   test("checks with no lib at all", async () => {
     const { diagnostics, emptyInterfaces } = await diagnose(TEMP_FIXTURE_DIR, {
       options: {
@@ -515,13 +476,13 @@ describe("@types/bun integration test", () => {
 
     expect(emptyInterfaces).toEqual(expectedEmptyInterfacesWhenNoDOM);
     expect(diagnostics).toEqual([
-      // This is expected because we, of course, can't check that our tsx file is passing
-      // when tsx is turned off...
-      {
-        "code": 17004,
-        "line": "[slug].tsx:17:10",
-        "message": "Cannot use JSX unless the '--jsx' flag is provided.",
-      },
+      // // This is expected because we, of course, can't check that our tsx file is passing
+      // // when tsx is turned off...
+      // {
+      //   "code": 17004,
+      //   "line": "[slug].tsx:17:10",
+      //   "message": "Cannot use JSX unless the '--jsx' flag is provided.",
+      // },
     ]);
   });
 
@@ -564,7 +525,6 @@ describe("@types/bun integration test", () => {
         "WebGLUniformLocation",
         "WebGLVertexArrayObject",
         "WebGLVertexArrayObjectOES",
-        "TrustedHTML",
       ]),
     );
     expect(diagnostics).toEqual([
@@ -572,7 +532,7 @@ describe("@types/bun integration test", () => {
         code: 2322,
         line: "24154.ts:11:3",
         message:
-          "Type 'Blob' is not assignable to type 'import(\"buffer\").Blob'.\nThe types returned by 'stream()' are incompatible between these types.\nType 'ReadableStream<Uint8Array<ArrayBuffer>>' is missing the following properties from type 'ReadableStream<any>': blob, text, bytes, json, and 2 more.",
+          "Type 'Blob' is not assignable to type 'import(\"node:buffer\").Blob'.\nThe types returned by 'stream()' are incompatible between these types.\nType 'ReadableStream<Uint8Array<ArrayBuffer>>' is missing the following properties from type 'ReadableStream<NonSharedUint8Array>': blob, text, bytes, json",
       },
       {
         code: 2769,
@@ -661,6 +621,26 @@ describe("@types/bun integration test", () => {
         "code": 2339,
         "line": "streams.ts:49:19",
         "message": "Property 'blob' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
+      },
+      {
+        code: 2345,
+        line: "streams.ts:63:66",
+        message: "Argument of type '\"brotli\"' is not assignable to parameter of type 'CompressionFormat'.",
+      },
+      {
+        code: 2345,
+        line: "streams.ts:63:113",
+        message: "Argument of type '\"brotli\"' is not assignable to parameter of type 'CompressionFormat'.",
+      },
+      {
+        code: 2345,
+        line: "streams.ts:64:66",
+        message: "Argument of type '\"zstd\"' is not assignable to parameter of type 'CompressionFormat'.",
+      },
+      {
+        code: 2345,
+        line: "streams.ts:64:111",
+        message: "Argument of type '\"zstd\"' is not assignable to parameter of type 'CompressionFormat'.",
       },
       {
         code: 2353,

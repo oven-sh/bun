@@ -17,7 +17,7 @@ This will add the package to `peerDependencies` in `package.json`.
 ```json package.json icon="file-json"
 {
   "peerDependencies": {
-    "@types/bun": "^1.3.1" // [!code ++]
+    "@types/bun": "^1.3.3" // [!code ++]
   }
 }
 ```
@@ -26,14 +26,14 @@ This will add the package to `peerDependencies` in `package.json`.
 
 Running `bun install` will install peer dependencies by default, unless marked optional in `peerDependenciesMeta`.
 
+{/* prettier-ignore */}
 ```json package.json icon="file-json"
 {
   "peerDependencies": {
-    "@types/bun": "^1.3.1"
+    "@types/bun": "^1.3.3"
   },
   "peerDependenciesMeta": {
-    "@types/bun": {
-      // [!code ++]
+    "@types/bun": { // [!code ++]
       "optional": true // [!code ++]
     } // [!code ++]
   }
@@ -42,4 +42,4 @@ Running `bun install` will install peer dependencies by default, unless marked o
 
 ---
 
-See [Docs > Package manager](https://bun.com/docs/cli/install) for complete documentation of Bun's package manager.
+See [Docs > Package manager](/pm/cli/install) for complete documentation of Bun's package manager.

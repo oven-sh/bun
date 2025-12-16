@@ -268,7 +268,7 @@ function ClientRequest(input, options, cb) {
     const method = this[kMethod];
 
     let keepalive = true;
-    const agentKeepalive = this[kAgent]?.keepalive;
+    const agentKeepalive = this[kAgent]?.keepAlive;
     if (agentKeepalive !== undefined) {
       keepalive = agentKeepalive;
     }
@@ -909,13 +909,9 @@ function ClientRequest(input, options, cb) {
 
   this[kEmitState] = 0;
 
-  this.setSocketKeepAlive = (_enable = true, _initialDelay = 0) => {
-    $debug(`${NODE_HTTP_WARNING}\n`, "WARN: ClientRequest.setSocketKeepAlive is a no-op");
-  };
+  this.setSocketKeepAlive = (_enable = true, _initialDelay = 0) => {};
 
-  this.setNoDelay = (_noDelay = true) => {
-    $debug(`${NODE_HTTP_WARNING}\n`, "WARN: ClientRequest.setNoDelay is a no-op");
-  };
+  this.setNoDelay = (_noDelay = true) => {};
 
   this[kClearTimeout] = () => {
     const timeoutTimer = this[kTimeoutTimer];

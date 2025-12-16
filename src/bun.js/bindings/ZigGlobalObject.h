@@ -685,9 +685,6 @@ public:
     String agentClusterID() const;
     static String defaultAgentClusterID();
 
-    void trackFFIFunction(JSC::JSFunction* function);
-    bool untrackFFIFunction(JSC::JSFunction* function);
-
     BunPlugin::OnLoad onLoadPlugins {};
     BunPlugin::OnResolve onResolvePlugins {};
 
@@ -747,7 +744,6 @@ private:
     WebCore::SubtleCrypto* m_subtleCrypto = nullptr;
 
     Bun::WriteBarrierList<JSC::JSPromise> m_aboutToBeNotifiedRejectedPromises;
-    Bun::WriteBarrierList<JSC::JSFunction> m_ffiFunctions;
 };
 
 class EvalGlobalObject : public GlobalObject {

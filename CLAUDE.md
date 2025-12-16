@@ -6,7 +6,7 @@ This is the Bun repository - an all-in-one JavaScript runtime & toolkit designed
 
 - **Build Bun**: `bun bd`
   - Creates a debug build at `./build/debug/bun-debug`
-  - **CRITICAL**: no need for a timeout, the build is really fast!
+  - **CRITICAL**: do not set a timeout when running `bun bd`
 - **Run tests with your debug build**: `bun bd test <test-file>`
   - **CRITICAL**: Never use `bun test` directly - it won't include your changes
 - **Run any command with debug build**: `bun bd <command>`
@@ -38,16 +38,36 @@ If no valid issue number is provided, find the best existing file to modify inst
 
 ### Writing Tests
 
-Tests use Bun's Jest-compatible test runner with proper test fixtures:
+Tests use Bun's Jest-compatible test runner with proper test fixtures.
+
+- For **single-file tests**, prefer `-e` over `tempDir`.
+- For **multi-file tests**, prefer `tempDir` and `Bun.spawn`.
 
 ```typescript
 import { test, expect } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 
-test("my feature", async () => {
+test("(single-file test) my feature", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", "console.log('Hello, world!')"],
+    env: bunEnv,
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([
+    proc.stdout.text(),
+    proc.stderr.text(),
+    proc.exited,
+  ]);
+
+  expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`"Hello, world!"`);
+  expect(exitCode).toBe(0);
+});
+
+test("(multi-file test) my feature", async () => {
   // Create temp directory with test files
   using dir = tempDir("test-prefix", {
-    "index.js": `console.log("hello");`,
+    "index.js": `import { foo } from "./foo.ts"; foo();`,
+    "foo.ts": `export function foo() { console.log("foo"); }`,
   });
 
   // Spawn Bun process
@@ -74,7 +94,7 @@ test("my feature", async () => {
 
 - Always use `port: 0`. Do not hardcode ports. Do not use your own random port number function.
 - Use `normalizeBunSnapshot` to normalize snapshot output of the test.
-- NEVER write tests that check for no "panic" or "uncaught exception" or similar in the test output. That is NOT a valid test.
+- NEVER write tests that check for no "panic" or "uncaught exception" or similar in the test output. These tests will never fail in CI.
 - Use `tempDir` from `"harness"` to create a temporary directory. **Do not** use `tmpdirSync` or `fs.mkdtempSync` to create temporary directories.
 - When spawning processes, tests should expect(stdout).toBe(...) BEFORE expect(exitCode).toBe(0). This gives you a more useful error message on test failure.
 - **CRITICAL**: Do not write flaky tests. Do not use `setTimeout` in tests. Instead, `await` the condition to be met. You are not testing the TIME PASSING, you are testing the CONDITION.

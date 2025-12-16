@@ -106,7 +106,7 @@ For each file specified in `entrypoints`, Bun will generate a new bundle. This b
 
 The contents of `out/index.js` will look something like this:
 
-```ts title="out/index.js" icon="/icons/javascript.svg"
+```js title="out/index.js" icon="/icons/javascript.svg"
 // out/index.js
 // ...
 // ~20k lines of code
@@ -160,8 +160,12 @@ Like the Bun runtime, the bundler supports an array of file types out of the box
 | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `.js` `.jsx` `.cjs` `.mjs` `.mts` `.cts` `.ts` `.tsx` | Uses Bun's built-in transpiler to parse the file and transpile TypeScript/JSX syntax to vanilla JavaScript. The bundler executes a set of default transforms including dead code elimination and tree shaking. At the moment Bun does not attempt to down-convert syntax; if you use recently ECMAScript syntax, that will be reflected in the bundled code. |
 | `.json`                                               | JSON files are parsed and inlined into the bundle as a JavaScript object.<br/><br/>`js<br/>import pkg from "./package.json";<br/>pkg.name; // => "my-package"<br/>`                                                                                                                                                                                          |
+| `.jsonc`                                              | JSON with comments. Files are parsed and inlined into the bundle as a JavaScript object.<br/><br/>`js<br/>import config from "./config.jsonc";<br/>config.name; // => "my-config"<br/>`                                                                                                                                                                      |
 | `.toml`                                               | TOML files are parsed and inlined into the bundle as a JavaScript object.<br/><br/>`js<br/>import config from "./bunfig.toml";<br/>config.logLevel; // => "debug"<br/>`                                                                                                                                                                                      |
+| `.yaml` `.yml`                                        | YAML files are parsed and inlined into the bundle as a JavaScript object.<br/><br/>`js<br/>import config from "./config.yaml";<br/>config.name; // => "my-app"<br/>`                                                                                                                                                                                         |
 | `.txt`                                                | The contents of the text file are read and inlined into the bundle as a string.<br/><br/>`js<br/>import contents from "./file.txt";<br/>console.log(contents); // => "Hello, world!"<br/>`                                                                                                                                                                   |
+| `.html`                                               | HTML files are processed and any referenced assets (scripts, stylesheets, images) are bundled.                                                                                                                                                                                                                                                               |
+| `.css`                                                | CSS files are bundled together into a single `.css` file in the output directory.                                                                                                                                                                                                                                                                            |
 | `.node` `.wasm`                                       | These files are supported by the Bun runtime, but during bundling they are treated as assets.                                                                                                                                                                                                                                                                |
 
 ### Assets
@@ -523,7 +527,7 @@ Injects environment variables into the bundled output by converting `process.env
 
 For the input below:
 
-```ts title="input.js" icon="/icons/javascript.svg"
+```js title="input.js" icon="/icons/javascript.svg"
 // input.js
 console.log(process.env.FOO);
 console.log(process.env.BAZ);
@@ -531,7 +535,7 @@ console.log(process.env.BAZ);
 
 The generated bundle will contain the following code:
 
-```ts title="output.js" icon="/icons/javascript.svg"
+```js title="output.js" icon="/icons/javascript.svg"
 // output.js
 console.log("bar");
 console.log("123");
@@ -576,7 +580,7 @@ console.log(process.env.BAZ);
 
 The generated bundle will contain the following code:
 
-```ts title="output.js" icon="/icons/javascript.svg"
+```js title="output.js" icon="/icons/javascript.svg"
 console.log(process.env.FOO);
 console.log("https://acme.com");
 console.log(process.env.BAZ);
@@ -718,7 +722,7 @@ Normally, bundling `index.tsx` would generate a bundle containing the entire sou
 
 The generated bundle will look something like this:
 
-```ts title="out/index.js" icon="/icons/javascript.svg"
+```js title="out/index.js" icon="/icons/javascript.svg"
 import { z } from "zod";
 
 // ...
@@ -1022,7 +1026,7 @@ Setting `publicPath` will prefix all file paths with the specified value.
 
 The output file would now look something like this.
 
-```ts title="out/index.js" icon="/icons/javascript.svg"
+```js title="out/index.js" icon="/icons/javascript.svg"
 var logo = "https://cdn.example.com/logo-a7305bdef.svg";
 ```
 
@@ -1136,6 +1140,84 @@ Remove function calls from a bundle. For example, `--drop=console` will remove a
     ```
   </Tab>
 </Tabs>
+
+### features
+
+Enable compile-time feature flags for dead-code elimination. This provides a way to conditionally include or exclude code paths at bundle time using `import { feature } from "bun:bundle"`.
+
+```ts title="app.ts" icon="/icons/typescript.svg"
+import { feature } from "bun:bundle";
+
+if (feature("PREMIUM")) {
+  // Only included when PREMIUM flag is enabled
+  initPremiumFeatures();
+}
+
+if (feature("DEBUG")) {
+  // Only included when DEBUG flag is enabled
+  console.log("Debug mode");
+}
+```
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ['./app.ts'],
+      outdir: './out',
+      features: ["PREMIUM"],  // PREMIUM=true, DEBUG=false
+    })
+    ```
+  </Tab>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./app.ts --outdir ./out --feature PREMIUM
+    ```
+  </Tab>
+</Tabs>
+
+The `feature()` function is replaced with `true` or `false` at bundle time. Combined with minification, unreachable code is eliminated:
+
+```ts title="Input" icon="/icons/typescript.svg"
+import { feature } from "bun:bundle";
+const mode = feature("PREMIUM") ? "premium" : "free";
+```
+
+```js title="Output (with --feature PREMIUM --minify)" icon="/icons/javascript.svg"
+var mode = "premium";
+```
+
+```js title="Output (without --feature PREMIUM, with --minify)" icon="/icons/javascript.svg"
+var mode = "free";
+```
+
+**Key behaviors:**
+
+- `feature()` requires a string literal argument — dynamic values are not supported
+- The `bun:bundle` import is completely removed from the output
+- Works with `bun build`, `bun run`, and `bun test`
+- Multiple flags can be enabled: `--feature FLAG_A --feature FLAG_B`
+- For type safety, augment the `Registry` interface to restrict `feature()` to known flags (see below)
+
+**Use cases:**
+
+- Platform-specific code (`feature("SERVER")` vs `feature("CLIENT")`)
+- Environment-based features (`feature("DEVELOPMENT")`)
+- Gradual feature rollouts
+- A/B testing variants
+- Paid tier features
+
+**Type safety:** By default, `feature()` accepts any string. To get autocomplete and catch typos at compile time, create an `env.d.ts` file (or add to an existing `.d.ts`) and augment the `Registry` interface:
+
+```ts title="env.d.ts" icon="/icons/typescript.svg"
+declare module "bun:bundle" {
+  interface Registry {
+    features: "DEBUG" | "PREMIUM" | "BETA_FEATURES";
+  }
+}
+```
+
+Ensure the file is included in your `tsconfig.json` (e.g., `"include": ["src", "env.d.ts"]`). Now `feature()` only accepts those flags, and invalid strings like `feature("TYPO")` become type errors.
 
 ## Outputs
 
@@ -1352,10 +1434,12 @@ interface BuildConfig {
    * JSX configuration object for controlling JSX transform behavior
    */
   jsx?: {
+    runtime?: "automatic" | "classic";
+    importSource?: string;
     factory?: string;
     fragment?: string;
-    importSource?: string;
-    runtime?: "automatic" | "classic";
+    sideEffects?: boolean;
+    development?: boolean;
   };
   naming?:
     | string
@@ -1372,7 +1456,7 @@ interface BuildConfig {
   publicPath?: string;
   define?: Record<string, string>;
   loader?: { [k in string]: Loader };
-  sourcemap?: "none" | "linked" | "inline" | "external" | "linked" | boolean; // default: "none", true -> "inline"
+  sourcemap?: "none" | "linked" | "inline" | "external" | boolean; // default: "none", true -> "inline"
   /**
    * package.json `exports` conditions used when resolving imports
    *
@@ -1439,13 +1523,20 @@ interface BuildConfig {
   drop?: string[];
 
   /**
-   * When set to `true`, the returned promise rejects with an AggregateError when a build failure happens.
-   * When set to `false`, the `success` property of the returned object will be `false` when a build failure happens.
+   * - When set to `true`, the returned promise rejects with an AggregateError when a build failure happens.
+   * - When set to `false`, returns a {@link BuildOutput} with `{success: false}`
    *
-   * This defaults to `false` in Bun 1.1 and will change to `true` in Bun 1.2
-   * as most usage of `Bun.build` forgets to check for errors.
+   * @default true
    */
   throw?: boolean;
+
+  /**
+   * Custom tsconfig.json file path to use for path resolution.
+   * Equivalent to `--tsconfig-override` in the CLI.
+   */
+  tsconfig?: string;
+
+  outdir?: string;
 }
 
 interface BuildOutput {
@@ -1462,7 +1553,21 @@ interface BuildArtifact extends Blob {
   sourcemap: BuildArtifact | null;
 }
 
-type Loader = "js" | "jsx" | "ts" | "tsx" | "json" | "toml" | "file" | "napi" | "wasm" | "text";
+type Loader =
+  | "js"
+  | "jsx"
+  | "ts"
+  | "tsx"
+  | "css"
+  | "json"
+  | "jsonc"
+  | "toml"
+  | "yaml"
+  | "text"
+  | "file"
+  | "napi"
+  | "wasm"
+  | "html";
 
 interface BuildOutput {
   outputs: BuildArtifact[];

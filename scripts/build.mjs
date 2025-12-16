@@ -63,6 +63,7 @@ async function build(args) {
 
   const generateOptions = parseOptions(args, generateFlags);
   const buildOptions = parseOptions(args, buildFlags);
+  const ciCppBuild = isCI && !!process.env.BUN_CPP_ONLY;
 
   const buildPath = resolve(generateOptions["-B"] || buildOptions["--build"] || "build");
   generateOptions["-B"] = buildPath;
@@ -73,7 +74,7 @@ async function build(args) {
   }
 
   if (!generateOptions["-DCACHE_STRATEGY"]) {
-    generateOptions["-DCACHE_STRATEGY"] = parseBoolean(getEnv("RELEASE", false) || "false") ? "none" : "read-write";
+    generateOptions["-DCACHE_STRATEGY"] = parseBoolean(getEnv("RELEASE", false) || "false") ? "none" : "auto";
   }
 
   const toolchain = generateOptions["--toolchain"];
@@ -86,6 +87,9 @@ async function build(args) {
     flag.startsWith("-D") ? [`${flag}=${value}`] : [flag, value],
   );
 
+  try {
+    await Bun.file(buildPath + "/CMakeCache.txt").delete();
+  } catch (e) {}
   await startGroup("CMake Configure", () => spawn("cmake", generateArgs, { env }));
 
   const envPath = resolve(buildPath, ".env");
@@ -103,7 +107,7 @@ async function build(args) {
 
   await startGroup("CMake Build", () => spawn("cmake", buildArgs, { env }));
 
-  if (isCI) {
+  if (ciCppBuild) {
     await startGroup("sccache stats", () => {
       spawn("sccache", ["--show-stats"], { env });
     });

@@ -1740,7 +1740,6 @@ declare module "bun" {
      * @default "esm"
      */
     format?: /**
-
      * ECMAScript Module format
      */
     | "esm"
@@ -1788,7 +1787,7 @@ declare module "bun" {
      * @see {@link outdir} required for `"linked"` maps
      * @see {@link publicPath} to customize the base url of linked source maps
      */
-    sourcemap?: "none" | "linked" | "inline" | "external" | "linked" | boolean;
+    sourcemap?: "none" | "linked" | "inline" | "external" | boolean;
 
     /**
      * package.json `exports` conditions used when resolving imports
@@ -1893,6 +1892,24 @@ declare module "bun" {
     drop?: string[];
 
     /**
+     * Enable feature flags for dead-code elimination via `import { feature } from "bun:bundle"`.
+     *
+     * When `feature("FLAG_NAME")` is called, it returns `true` if FLAG_NAME is in this array,
+     * or `false` otherwise. This enables static dead-code elimination at bundle time.
+     *
+     * Equivalent to the CLI `--feature` flag.
+     *
+     * @example
+     * ```ts
+     * await Bun.build({
+     *   entrypoints: ['./src/index.ts'],
+     *   features: ['FEATURE_A', 'FEATURE_B'],
+     * });
+     * ```
+     */
+    features?: string[];
+
+    /**
      * - When set to `true`, the returned promise rejects with an AggregateError when a build failure happens.
      * - When set to `false`, returns a {@link BuildOutput} with `{success: false}`
      *
@@ -1933,6 +1950,26 @@ declare module "bun" {
     execArgv?: string[];
     executablePath?: string;
     outfile?: string;
+    /**
+     * Whether to autoload .env files when the standalone executable runs
+     *
+     * Standalone-only: applies only when building/running the standalone executable.
+     *
+     * Equivalent CLI flags: `--compile-autoload-dotenv`, `--no-compile-autoload-dotenv`
+     *
+     * @default true
+     */
+    autoloadDotenv?: boolean;
+    /**
+     * Whether to autoload bunfig.toml when the standalone executable runs
+     *
+     * Standalone-only: applies only when building/running the standalone executable.
+     *
+     * Equivalent CLI flags: `--compile-autoload-bunfig`, `--no-compile-autoload-bunfig`
+     *
+     * @default true
+     */
+    autoloadBunfig?: boolean;
     windows?: {
       hideConsole?: boolean;
       icon?: string;
@@ -3868,6 +3905,9 @@ declare module "bun" {
     static readonly byteLength: 32;
   }
 
+  /** Extends the standard web formats with `brotli` and `zstd` support. */
+  type CompressionFormat = "gzip" | "deflate" | "deflate-raw" | "brotli" | "zstd";
+
   /** Compression options for `Bun.deflateSync` and `Bun.gzipSync` */
   interface ZlibCompressionOptions {
     /**
@@ -4041,7 +4081,21 @@ declare module "bun" {
     | "browser";
 
   /** https://bun.com/docs/bundler/loaders */
-  type Loader = "js" | "jsx" | "ts" | "tsx" | "json" | "toml" | "file" | "napi" | "wasm" | "text" | "css" | "html";
+  type Loader =
+    | "js"
+    | "jsx"
+    | "ts"
+    | "tsx"
+    | "json"
+    | "jsonc"
+    | "toml"
+    | "yaml"
+    | "file"
+    | "napi"
+    | "wasm"
+    | "text"
+    | "css"
+    | "html";
 
   interface PluginConstraints {
     /**
@@ -5289,7 +5343,12 @@ declare module "bun" {
     options: udp.ConnectSocketOptions<DataBinaryType>,
   ): Promise<udp.ConnectedSocket<DataBinaryType>>;
 
-  namespace SpawnOptions {
+  /**
+   * @deprecated use {@link Bun.Spawn} instead
+   */
+  export import SpawnOptions = Spawn;
+
+  namespace Spawn {
     /**
      * Option for stdout/stderr
      */
@@ -5320,13 +5379,34 @@ declare module "bun" {
       | Response
       | Request;
 
-    interface OptionsObject<In extends Writable, Out extends Readable, Err extends Readable> {
+    /**
+     * @deprecated use BaseOptions or the specific options for the specific {@link spawn} or {@link spawnSync} usage
+     */
+    type OptionsObject<In extends Writable, Out extends Readable, Err extends Readable> = BaseOptions<In, Out, Err>;
+
+    interface BaseOptions<In extends Writable, Out extends Readable, Err extends Readable> {
       /**
        * The current working directory of the process
        *
        * Defaults to `process.cwd()`
        */
       cwd?: string;
+
+      /**
+       * Run the child in a separate process group, detached from the parent.
+       *
+       * - POSIX: calls `setsid()` so the child starts a new session and becomes
+       *   the process group leader. It can outlive the parent and receive
+       *   signals independently of the parent’s terminal/process group.
+       * - Windows: sets `UV_PROCESS_DETACHED`, allowing the child to outlive
+       *   the parent and receive signals independently.
+       *
+       * Note: stdio may keep the parent process alive. Pass `stdio: ["ignore",
+       * "ignore", "ignore"]` to the spawn constructor to prevent this.
+       *
+       * @default false
+       */
+      detached?: boolean;
 
       /**
        * The environment variables of the process
@@ -5429,6 +5509,48 @@ declare module "bun" {
          */
         error?: ErrorLike,
       ): void | Promise<void>;
+
+      /**
+       * Called exactly once when the IPC channel between the parent and this
+       * subprocess is closed. After this runs, no further IPC messages will be
+       * delivered.
+       *
+       * When it fires:
+       * - The child called `process.disconnect()` or the parent called
+       *   `subprocess.disconnect()`.
+       * - The child exited for any reason (normal exit or due to a signal like
+       *   `SIGILL`, `SIGKILL`, etc.).
+       * - The child replaced itself with a program that does not support Bun
+       *   IPC.
+       *
+       * Notes:
+       * - This callback indicates that the pipe is closed; it is not an error
+       *   by itself. Use {@link onExit} or {@link Subprocess.exited} to
+       *   determine why the process ended.
+       * - It may occur before or after {@link onExit} depending on timing; do
+       *   not rely on ordering. Typically, if you or the child call
+       *   `disconnect()` first, this fires before {@link onExit}; if the
+       *   process exits without an explicit disconnect, either may happen
+       *   first.
+       * - Only runs when {@link ipc} is enabled and runs at most once per
+       *   subprocess.
+       * - If the child becomes a zombie (exited but not yet reaped), the IPC is
+       *   already closed, and this callback will fire (or may already have
+       *   fired).
+       *
+       * @example
+       *
+       * ```ts
+       * const subprocess = spawn({
+       *  cmd: ["echo", "hello"],
+       *  ipc: (message) => console.log(message),
+       *  onDisconnect: () => {
+       *    console.log("IPC channel disconnected");
+       *  },
+       * });
+       * ```
+       */
+      onDisconnect?(): void | Promise<void>;
 
       /**
        * When specified, Bun will open an IPC channel to the subprocess. The passed callback is called for
@@ -5549,6 +5671,72 @@ declare module "bun" {
       maxBuffer?: number;
     }
 
+    interface SpawnSyncOptions<In extends Writable, Out extends Readable, Err extends Readable>
+      extends BaseOptions<In, Out, Err> {}
+
+    interface SpawnOptions<In extends Writable, Out extends Readable, Err extends Readable>
+      extends BaseOptions<In, Out, Err> {
+      /**
+       * If true, stdout and stderr pipes will not automatically start reading
+       * data. Reading will only begin when you access the `stdout` or `stderr`
+       * properties.
+       *
+       * This can improve performance when you don't need to read output
+       * immediately.
+       *
+       * @default false
+       *
+       * @example
+       * ```ts
+       * const subprocess = Bun.spawn({
+       *   cmd: ["echo", "hello"],
+       *   lazy: true, // Don't start reading stdout until accessed
+       * });
+       * // stdout reading hasn't started yet
+       * await subprocess.stdout.text(); // Now reading starts
+       * ```
+       */
+      lazy?: boolean;
+
+      /**
+       * Spawn the subprocess with a pseudo-terminal (PTY) attached.
+       *
+       * When this option is provided:
+       * - `stdin`, `stdout`, and `stderr` are all connected to the terminal
+       * - The subprocess sees itself running in a real terminal (`isTTY = true`)
+       * - Access the terminal via `subprocess.terminal`
+       * - `subprocess.stdin`, `subprocess.stdout`, `subprocess.stderr` return `null`
+       *
+       * Only available on POSIX systems (Linux, macOS).
+       *
+       * @example
+       * ```ts
+       * const proc = Bun.spawn(["bash"], {
+       *   terminal: {
+       *     cols: 80,
+       *     rows: 24,
+       *     data: (term, data) => console.log(data.toString()),
+       *   },
+       * });
+       *
+       * proc.terminal.write("echo hello\n");
+       * await proc.exited;
+       * proc.terminal.close();
+       * ```
+       *
+       * You can also pass an existing `Terminal` object for reuse across multiple spawns:
+       * ```ts
+       * const terminal = new Bun.Terminal({ ... });
+       * const proc1 = Bun.spawn(["echo", "first"], { terminal });
+       * await proc1.exited;
+       * const proc2 = Bun.spawn(["echo", "second"], { terminal });
+       * await proc2.exited;
+       * terminal.close();
+       * ```
+       */
+      terminal?: TerminalOptions | Terminal;
+    }
+
     type ReadableToIO<X extends Readable> = X extends "pipe" | undefined
       ? ReadableStream<Uint8Array<ArrayBuffer>>
       : X extends BunFile | ArrayBufferView | number
@@ -5660,6 +5848,24 @@ declare module "bun" {
     readonly stdin: SpawnOptions.WritableToIO<In>;
     readonly stdout: SpawnOptions.ReadableToIO<Out>;
     readonly stderr: SpawnOptions.ReadableToIO<Err>;
+
+    /**
+     * The terminal attached to this subprocess, if spawned with the `terminal` option.
+     * Returns `undefined` if no terminal was attached.
+     *
+     * When a terminal is attached, `stdin`, `stdout`, and `stderr` return `null`.
+     * Use `terminal.write()` and the `data` callback instead.
+     *
+     * @example
+     * ```ts
+     * const proc = Bun.spawn(["bash"], {
+     *   terminal: { data: (term, data) => console.log(data.toString()) },
+     * });
+     *
+     * proc.terminal?.write("echo hello\n");
+     * ```
+     */
+    readonly terminal: Terminal | undefined;
 
     /**
      * Access extra file descriptors passed to the `stdio` option in the options object.
@@ -5806,7 +6012,7 @@ declare module "bun" {
     const Out extends SpawnOptions.Readable = "pipe",
     const Err extends SpawnOptions.Readable = "inherit",
   >(
-    options: SpawnOptions.OptionsObject<In, Out, Err> & {
+    options: SpawnOptions.SpawnOptions<In, Out, Err> & {
       /**
        * The command to run
        *
@@ -5856,7 +6062,7 @@ declare module "bun" {
      * ```
      */
     cmds: string[],
-    options?: SpawnOptions.OptionsObject<In, Out, Err>,
+    options?: SpawnOptions.SpawnOptions<In, Out, Err>,
   ): Subprocess<In, Out, Err>;
 
   /**
@@ -5878,7 +6084,7 @@ declare module "bun" {
     const Out extends SpawnOptions.Readable = "pipe",
     const Err extends SpawnOptions.Readable = "pipe",
   >(
-    options: SpawnOptions.OptionsObject<In, Out, Err> & {
+    options: SpawnOptions.SpawnSyncOptions<In, Out, Err> & {
       /**
        * The command to run
        *
@@ -5929,7 +6135,7 @@ declare module "bun" {
      * ```
      */
     cmds: string[],
-    options?: SpawnOptions.OptionsObject<In, Out, Err>,
+    options?: SpawnOptions.SpawnSyncOptions<In, Out, Err>,
   ): SyncSubprocess<Out, Err>;
 
   /** Utility type for any process from {@link Bun.spawn()} with both stdout and stderr set to `"pipe"` */
@@ -5951,6 +6157,154 @@ declare module "bun" {
     "ignore" | "inherit" | null | undefined,
     "ignore" | "inherit" | null | undefined
   >;
+
+  /**
+   * Options for creating a pseudo-terminal (PTY).
+   */
+  interface TerminalOptions {
+    /**
+     * Number of columns for the terminal.
+     * @default 80
+     */
+    cols?: number;
+    /**
+     * Number of rows for the terminal.
+     * @default 24
+     */
+    rows?: number;
+    /**
+     * Terminal name (e.g., "xterm-256color").
+     * @default "xterm-256color"
+     */
+    name?: string;
+    /**
+     * Callback invoked when data is received from the terminal.
+     * @param terminal The terminal instance
+     * @param data The data received as a Uint8Array
+     */
+    data?: (terminal: Terminal, data: Uint8Array<ArrayBuffer>) => void;
+    /**
+     * Callback invoked when the PTY stream closes (EOF or read error).
+     * Note: exitCode is a PTY lifecycle status (0=clean EOF, 1=error), NOT the subprocess exit code.
+     * Use Subprocess.exited or onExit callback for actual process exit information.
+     * @param terminal The terminal instance
+     * @param exitCode PTY lifecycle status (0 for EOF, 1 for error)
+     * @param signal Reserved for future signal reporting, currently null
+     */
+    exit?: (terminal: Terminal, exitCode: number, signal: string | null) => void;
+    /**
+     * Callback invoked when the terminal is ready to receive more data.
+     * @param terminal The terminal instance
+     */
+    drain?: (terminal: Terminal) => void;
+  }
+
+  /**
+   * A pseudo-terminal (PTY) that can be used to spawn interactive terminal programs.
+   *
+   * @example
+   * ```ts
+   * await using terminal = new Bun.Terminal({
+   *   cols: 80,
+   *   rows: 24,
+   *   data(term, data) {
+   *     console.log("Received:", new TextDecoder().decode(data));
+   *   },
+   * });
+   *
+   * // Spawn a shell connected to the PTY
+   * const proc = Bun.spawn(["bash"], { terminal });
+   *
+   * // Write to the terminal
+   * terminal.write("echo hello\n");
+   *
+   * // Wait for process to exit
+   * await proc.exited;
+   *
+   * // Terminal is closed automatically by `await using`
+   * ```
+   */
+  class Terminal implements AsyncDisposable {
+    constructor(options: TerminalOptions);
+
+    /**
+     * Whether the terminal is closed.
+     */
+    readonly closed: boolean;
+
+    /**
+     * Write data to the terminal.
+     * @param data The data to write (string or BufferSource)
+     * @returns The number of bytes written
+     */
+    write(data: string | BufferSource): number;
+
+    /**
+     * Resize the terminal.
+     * @param cols New number of columns
+     * @param rows New number of rows
+     */
+    resize(cols: number, rows: number): void;
+
+    /**
+     * Set raw mode on the terminal.
+     * In raw mode, input is passed directly without processing.
+     * @param enabled Whether to enable raw mode
+     */
+    setRawMode(enabled: boolean): void;
+
+    /**
+     * Reference the terminal to keep the event loop alive.
+     */
+    ref(): void;
+
+    /**
+     * Unreference the terminal to allow the event loop to exit.
+     */
+    unref(): void;
+
+    /**
+     * Close the terminal.
+     */
+    close(): void;
+
+    /**
+     * Async dispose for use with `await using`.
+     */
+    [Symbol.asyncDispose](): Promise<void>;
+
+    /**
+     * Terminal input flags (c_iflag from termios).
+     * Controls input processing behavior like ICRNL, IXON, etc.
+     * Returns 0 if terminal is closed.
+     * Setting returns true on success, false on failure.
+     */
+    inputFlags: number;
+
+    /**
+     * Terminal output flags (c_oflag from termios).
+     * Controls output processing behavior like OPOST, ONLCR, etc.
+     * Returns 0 if terminal is closed.
+     * Setting returns true on success, false on failure.
+     */
+    outputFlags: number;
+
+    /**
+     * Terminal local flags (c_lflag from termios).
+     * Controls local processing like ICANON, ECHO, ISIG, etc.
+     * Returns 0 if terminal is closed.
+     * Setting returns true on success, false on failure.
+     */
+    localFlags: number;
+
+    /**
+     * Terminal control flags (c_cflag from termios).
+     * Controls hardware characteristics like CSIZE, PARENB, etc.
+     * Returns 0 if terminal is closed.
+     * Setting returns true on success, false on failure.
+     */
+    controlFlags: number;
+  }
 
   // Blocked on https://github.com/oven-sh/bun/issues/8329
   // /**
@@ -6333,6 +6687,16 @@ declare module "bun" {
     catalog?: Record<string, string>;
     /** @see https://bun.com/docs/install/catalogs */
     catalogs?: Record<string, Record<string, string>>;
+
+    /**
+     * `0` / `undefined` for projects created before v1.3.2, `1` for projects created after.
+     *
+     * ---
+     * Right now this only changes the default [install linker strategy](https://bun.com/docs/pm/cli/install#isolated-installs):
+     * - With `0`, the linker is hoisted.
+     * - With `1`, the linker is isolated for workspaces and hoisted for single-package projects.
+     */
+    configVersion?: 0 | 1;
 
     /**
      * ```

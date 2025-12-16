@@ -20,6 +20,9 @@ stderr: Readable,
 stdio_pipes: if (Environment.isWindows) std.ArrayListUnmanaged(StdioResult) else std.ArrayListUnmanaged(bun.FileDescriptor) = .{},
 pid_rusage: ?Rusage = null,
 
+/// Terminal attached to this subprocess (if spawned with terminal option)
+terminal: ?*Terminal = null,
+
 globalThis: *jsc.JSGlobalObject,
 observable_getters: std.enums.EnumSet(enum {
     stdin,
@@ -40,10 +43,7 @@ abort_signal: ?*webcore.AbortSignal = null,
 event_loop_timer_refd: bool = false,
 event_loop_timer: bun.api.Timer.EventLoopTimer = .{
     .tag = .SubprocessTimeout,
-    .next = .{
-        .sec = 0,
-        .nsec = 0,
-    },
+    .next = .epoch,
 },
 killSignal: SignalCode,
 
@@ -108,7 +108,7 @@ pub const StdioKind = enum {
     }
 };
 
-pub fn onAbortSignal(subprocess_ctx: ?*anyopaque, _: jsc.JSValue) callconv(.C) void {
+pub fn onAbortSignal(subprocess_ctx: ?*anyopaque, _: jsc.JSValue) callconv(.c) void {
     var this: *Subprocess = @ptrCast(@alignCast(subprocess_ctx.?));
     this.clearAbortSignal();
     _ = this.tryKill(this.killSignal);
@@ -167,7 +167,7 @@ pub fn updateHasPendingActivity(this: *Subprocess) void {
 
     const has_pending = this.computeHasPendingActivity();
     if (comptime Environment.isDebug) {
-        log("updateHasPendingActivity() -> {any}", .{has_pending});
+        log("updateHasPendingActivity() -> {}", .{has_pending});
     }
 
     // Upgrade or downgrade the reference based on pending activity
@@ -272,21 +272,40 @@ pub const PipeReader = @import("./subprocess/SubprocessPipeReader.zig");
 pub const Readable = @import("./subprocess/Readable.zig").Readable;
 
 pub fn getStderr(this: *Subprocess, globalThis: *JSGlobalObject) bun.JSError!JSValue {
+    // When terminal is used, stderr goes through the terminal
+    if (this.terminal != null) {
+        return .null;
+    }
     this.observable_getters.insert(.stderr);
     return this.stderr.toJS(globalThis, this.hasExited());
 }
 
 pub fn getStdin(this: *Subprocess, globalThis: *JSGlobalObject) bun.JSError!JSValue {
+    // When terminal is used, stdin goes through the terminal
+    if (this.terminal != null) {
+        return .null;
+    }
     this.observable_getters.insert(.stdin);
     return this.stdin.toJS(globalThis, this);
 }
 
 pub fn getStdout(this: *Subprocess, globalThis: *JSGlobalObject) bun.JSError!JSValue {
+    // When terminal is used, stdout goes through the terminal
+    if (this.terminal != null) {
+        return .null;
+    }
     this.observable_getters.insert(.stdout);
     // NOTE: ownership of internal buffers is transferred to the JSValue, which
     // gets cached on JSSubprocess (created via bindgen). This makes it
     // re-accessable to JS code but not via `this.stdout`, which is now `.closed`.
     return this.stdout.toJS(globalThis, this.hasExited());
+}
+
+pub fn getTerminal(this: *Subprocess, globalThis: *JSGlobalObject) JSValue {
+    if (this.terminal) |terminal| {
+        return terminal.toJS(globalThis);
+    }
+    return .js_undefined;
 }
 
 pub fn asyncDispose(this: *Subprocess, global: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
@@ -574,7 +593,7 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
             if (existing_stdin_value.isCell()) {
                 if (stdin == null) {
                     // TODO: review this cast
-                    stdin = @alignCast(@ptrCast(jsc.WebCore.FileSink.JSSink.fromJS(existing_value)));
+                    stdin = @ptrCast(@alignCast(jsc.WebCore.FileSink.JSSink.fromJS(existing_value)));
                 }
 
                 if (!this.flags.is_stdin_a_readable_stream) {
@@ -701,7 +720,7 @@ fn closeIO(this: *Subprocess, comptime io: @Type(.enum_literal)) void {
     }
 }
 
-fn onPipeClose(this: *uv.Pipe) callconv(.C) void {
+fn onPipeClose(this: *uv.Pipe) callconv(.c) void {
     // safely free the pipes
     bun.default_allocator.destroy(this);
 }
@@ -747,7 +766,7 @@ fn clearAbortSignal(this: *Subprocess) void {
     }
 }
 
-pub fn finalize(this: *Subprocess) callconv(.C) void {
+pub fn finalize(this: *Subprocess) callconv(.c) void {
     log("finalize", .{});
     // Ensure any code which references the "this" value doesn't attempt to
     // access it after it's been freed We cannot call any methods which
@@ -899,6 +918,7 @@ pub const spawnSync = js_bun_spawn_bindings.spawnSync;
 pub const spawn = js_bun_spawn_bindings.spawn;
 
 const IPC = @import("../../ipc.zig");
+const Terminal = @import("./Terminal.zig");
 const js_bun_spawn_bindings = @import("./js_bun_spawn_bindings.zig");
 const node_cluster_binding = @import("../../node/node_cluster_binding.zig");
 const std = @import("std");

@@ -43,6 +43,9 @@ extern void Bun__internal_ensureDateHeaderTimerIsEnabled(struct us_loop_t *loop)
 
 void sweep_timer_cb(struct us_internal_callback_t *cb);
 
+// when the sweep timer is disabled, we don't need to do anything
+void sweep_timer_noop(struct us_timer_t *timer) {}
+
 void us_internal_enable_sweep_timer(struct us_loop_t *loop) {
     loop->data.sweep_timer_count++;
     if (loop->data.sweep_timer_count == 1) {
@@ -54,7 +57,7 @@ void us_internal_enable_sweep_timer(struct us_loop_t *loop) {
 void us_internal_disable_sweep_timer(struct us_loop_t *loop) {
     loop->data.sweep_timer_count--;
     if (loop->data.sweep_timer_count == 0) {
-        us_timer_set(loop->data.sweep_timer, (void (*)(struct us_timer_t *)) sweep_timer_cb, 0, 0);
+        us_timer_set(loop->data.sweep_timer, (void (*)(struct us_timer_t *)) sweep_timer_noop, 0, 0);
     }
 }
 
@@ -372,7 +375,11 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 /* Note: if we failed a write as a socket of one loop then adopted
                  * to another loop, this will be wrong. Absurd case though */
                 loop->data.last_write_failed = 0;
-
+                #ifdef LIBUS_USE_KQUEUE
+                /* Kqueue is one-shot so is not writable anymore */
+                p->state.poll_type = us_internal_poll_type(p) | ((events & LIBUS_SOCKET_READABLE) ? POLL_TYPE_POLLING_IN : 0);
+                #endif
+                
                 s = s->context->on_writable(s);
 
                 if (!s || us_socket_is_closed(0, s)) {
@@ -382,6 +389,11 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 /* If we have no failed write or if we shut down, then stop polling for more writable */
                 if (!loop->data.last_write_failed || us_socket_is_shut_down(0, s)) {
                     us_poll_change(&s->p, loop, us_poll_events(&s->p) & LIBUS_SOCKET_READABLE);
+                } else {
+                    #ifdef LIBUS_USE_KQUEUE
+                    /* Kqueue one-shot writable needs to be re-enabled */
+                    us_poll_change(&s->p, loop, us_poll_events(&s->p) | LIBUS_SOCKET_WRITABLE);
+                    #endif
                 }
             }
 

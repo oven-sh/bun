@@ -72,13 +72,11 @@ bool JSNodeHTTPServerSocket::isAuthorized() const
     // is secure means that tls was established successfully
     if (!is_ssl || !socket)
         return false;
-    auto* context = us_socket_context(is_ssl, socket);
-    if (!context)
+    // Read from per-socket HttpResponseData instead of context-level data
+    auto* httpResponseData = reinterpret_cast<uWS::HttpResponseData<true>*>(us_socket_ext(is_ssl, socket));
+    if (!httpResponseData)
         return false;
-    auto* data = (uWS::HttpContextData<true>*)us_socket_context_ext(is_ssl, context);
-    if (!data)
-        return false;
-    return data->flags.isAuthorized;
+    return httpResponseData->isAuthorized;
 }
 
 JSNodeHTTPServerSocket::~JSNodeHTTPServerSocket()

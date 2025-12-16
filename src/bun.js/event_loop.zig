@@ -110,7 +110,7 @@ pub fn pipeReadBuffer(this: *const EventLoop) []u8 {
     return this.virtual_machine.rareData().pipeReadBuffer();
 }
 
-pub const Queue = std.fifo.LinearFifo(Task, .Dynamic);
+pub const Queue = bun.LinearFifo(Task, .Dynamic);
 const log = bun.Output.scoped(.EventLoop, .hidden);
 
 pub fn tickWhilePaused(this: *EventLoop, done: *bool) void {
@@ -383,7 +383,7 @@ pub fn autoTick(this: *EventLoop) void {
         loop.tickWithTimeout(if (ctx.timer.getTimeout(&timespec, ctx)) &timespec else null);
 
         if (comptime Environment.isDebug) {
-            log("tick {}, timeout: {}", .{ std.fmt.fmtDuration(event_loop_sleep_timer.read()), std.fmt.fmtDuration(timespec.ns()) });
+            log("tick {D}, timeout: {D}", .{ event_loop_sleep_timer.read(), timespec.ns() });
         }
     } else {
         loop.tickWithoutIdle();
@@ -429,7 +429,7 @@ pub fn tickPossiblyForever(this: *EventLoop) void {
     this.tick();
 }
 
-fn noopForeverTimer(_: *uws.Timer) callconv(.C) void {
+fn noopForeverTimer(_: *uws.Timer) callconv(.c) void {
     // do nothing
 }
 
@@ -510,6 +510,15 @@ pub fn tick(this: *EventLoop) void {
     }
 
     this.global.handleRejectedPromises();
+}
+
+pub fn tickWithoutJS(this: *EventLoop) void {
+    const ctx = this.virtual_machine;
+    this.tickConcurrent();
+
+    while (this.tickWithCount(ctx) > 0) {
+        this.tickConcurrent();
+    }
 }
 
 pub fn waitForPromise(this: *EventLoop, promise: jsc.AnyPromise) void {
@@ -650,6 +659,12 @@ pub fn getActiveTasks(globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.
     result.put(globalObject, jsc.ZigString.static("numPolls"), jsc.JSValue.jsNumber(num_polls));
 
     return result;
+}
+
+pub fn deinit(this: *EventLoop) void {
+    this.tasks.deinit();
+    this.immediate_tasks.clearAndFree(bun.default_allocator);
+    this.next_immediate_tasks.clearAndFree(bun.default_allocator);
 }
 
 pub const AnyEventLoop = @import("./event_loop/AnyEventLoop.zig").AnyEventLoop;

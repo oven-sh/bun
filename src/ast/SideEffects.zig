@@ -72,6 +72,7 @@ pub const SideEffects = enum(u1) {
             .e_undefined,
             .e_string,
             .e_boolean,
+            .e_branch_boolean,
             .e_number,
             .e_big_int,
             .e_inlined_enum,
@@ -88,6 +89,7 @@ pub const SideEffects = enum(u1) {
             .e_undefined,
             .e_missing,
             .e_boolean,
+            .e_branch_boolean,
             .e_number,
             .e_big_int,
             .e_string,
@@ -277,7 +279,7 @@ pub const SideEffects = enum(u1) {
                                 }
                             }
 
-                            properties_slice[end] = prop_;
+                            properties_slice[end] = prop;
                             end += 1;
                         }
 
@@ -365,7 +367,7 @@ pub const SideEffects = enum(u1) {
                 else => false,
             });
         }
-        const stack: *std.ArrayList(BinaryExpressionSimplifyVisitor) = &p.binary_expression_simplify_stack;
+        const stack: *std.array_list.Managed(BinaryExpressionSimplifyVisitor) = &p.binary_expression_simplify_stack;
         const stack_bottom = stack.items.len;
         defer stack.shrinkRetainingCapacity(stack_bottom);
 
@@ -399,7 +401,7 @@ pub const SideEffects = enum(u1) {
         return if (result.isMissing()) null else result;
     }
 
-    fn findIdentifiers(binding: Binding, decls: *std.ArrayList(G.Decl)) void {
+    fn findIdentifiers(binding: Binding, decls: *std.array_list.Managed(G.Decl)) void {
         switch (binding.data) {
             .b_identifier => {
                 decls.append(.{ .binding = binding }) catch unreachable;
@@ -460,7 +462,7 @@ pub const SideEffects = enum(u1) {
                     return true;
                 }
 
-                var decls = std.ArrayList(G.Decl).initCapacity(allocator, local.decls.len) catch unreachable;
+                var decls = std.array_list.Managed(G.Decl).initCapacity(allocator, local.decls.len) catch unreachable;
                 for (local.decls.slice()) |decl| {
                     findIdentifiers(decl.binding, &decls);
                 }
@@ -545,6 +547,7 @@ pub const SideEffects = enum(u1) {
             .e_null,
             .e_undefined,
             .e_boolean,
+            .e_branch_boolean,
             .e_number,
             .e_big_int,
             .e_string,
@@ -651,7 +654,7 @@ pub const SideEffects = enum(u1) {
         }
         switch (exp) {
             // Never null or undefined
-            .e_boolean, .e_number, .e_string, .e_reg_exp, .e_function, .e_arrow, .e_big_int => {
+            .e_boolean, .e_branch_boolean, .e_number, .e_string, .e_reg_exp, .e_function, .e_arrow, .e_big_int => {
                 return Result{ .value = false, .side_effects = .no_side_effects, .ok = true };
             },
 
@@ -770,7 +773,7 @@ pub const SideEffects = enum(u1) {
             .e_null, .e_undefined => {
                 return Result{ .ok = true, .value = false, .side_effects = .no_side_effects };
             },
-            .e_boolean => |e| {
+            .e_boolean, .e_branch_boolean => |e| {
                 return Result{ .ok = true, .value = e.value, .side_effects = .no_side_effects };
             },
             .e_number => |e| {

@@ -160,8 +160,8 @@ describe("Terminal VT emulation (ghostty)", () => {
 
     test("handles very long string", () => {
       const terminal = new Bun.Terminal({ rows: 10, cols: 40 });
-      const longString = "A".repeat(10000);
-      expect(() => terminal.feed(longString)).not.toThrow();
+      const longBuffer = Buffer.alloc(10000, "A");
+      expect(() => terminal.feed(longBuffer)).not.toThrow();
       terminal.close();
     });
 
@@ -813,7 +813,7 @@ describe("Terminal VT emulation (ghostty)", () => {
 
     test("cursor stays within bounds", () => {
       const terminal = new Bun.Terminal({ rows: 5, cols: 10 });
-      terminal.feed("A".repeat(100));
+      terminal.feed(Buffer.alloc(100, "A"));
 
       // Cursor should be within terminal bounds
       expect(terminal.cursor.x).toBeLessThan(10);

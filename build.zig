@@ -802,7 +802,7 @@ fn addInternalImports(b: *Build, mod: *Module, opts: *BunBuildOptions) void {
     // libghostty-vt: Terminal VT emulator library from Ghostty
     // Provides terminal escape sequence parsing, state management, input encoding
     // Source is cloned by CMake to vendor/ghostty
-    addGhosttyModule(b, mod, opts);
+    addGhosttyModule(b, mod);
 
     // Finally, make it so all modules share the same import table.
     propagateImports(mod) catch @panic("OOM");
@@ -843,8 +843,7 @@ fn validateGeneratedPath(path: []const u8) void {
 /// - VT escape sequence parsing (CSI, OSC, DCS, etc.)
 /// - Terminal state management (screen, cursor, colors)
 /// - Input encoding for terminal applications
-fn addGhosttyModule(b: *Build, mod: *Module, opts: *BunBuildOptions) void {
-    _ = opts;
+fn addGhosttyModule(b: *Build, mod: *Module) void {
 
     // Create the ghostty-vt module from vendor/ghostty/src/lib_vt.zig
     const ghostty_vt = b.createModule(.{

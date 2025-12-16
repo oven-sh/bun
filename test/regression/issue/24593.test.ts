@@ -219,43 +219,45 @@ describe("WebSocket server.publish with perMessageDeflate", () => {
     });
 
     const clients: WebSocket[] = [];
-    const allClientsOpen = Promise.all(
-      Array.from({ length: numClients }, (_, i) => {
-        return new Promise<void>((resolve, reject) => {
-          const client = new WebSocket(`ws://localhost:${server.port}`);
-          clients.push(client);
-          client.onopen = () => resolve();
-          client.onerror = e => reject(e);
-        });
-      }),
-    );
+    try {
+      const allClientsOpen = Promise.all(
+        Array.from({ length: numClients }, (_, i) => {
+          return new Promise<void>((resolve, reject) => {
+            const client = new WebSocket(`ws://localhost:${server.port}`);
+            clients.push(client);
+            client.onopen = () => resolve();
+            client.onerror = e => reject(e);
+          });
+        }),
+      );
 
-    await allClientsOpen;
+      await allClientsOpen;
 
-    const allMessagesReceived = Promise.all(
-      clients.map(
-        (client, i) =>
-          new Promise<void>(resolve => {
-            client.onmessage = event => {
-              expect(event.data.length).toBe(largeMessage.length);
-              clientsReceived[i] = true;
-              resolve();
-            };
-          }),
-      ),
-    );
+      const allMessagesReceived = Promise.all(
+        clients.map(
+          (client, i) =>
+            new Promise<void>(resolve => {
+              client.onmessage = event => {
+                expect(event.data.length).toBe(largeMessage.length);
+                clientsReceived[i] = true;
+                resolve();
+              };
+            }),
+        ),
+      );
 
-    // Publish to all subscribers
-    const published = server.publish("broadcast", largeMessage);
-    expect(published).toBeGreaterThan(0); // Returns bytes sent
+      // Publish to all subscribers
+      const published = server.publish("broadcast", largeMessage);
+      expect(published).toBeGreaterThan(0); // Returns bytes sent
 
-    await allMessagesReceived;
-    expect(clientsReceived.every(r => r)).toBe(true);
-
-    for (const c of clients) {
-      try {
-        c.close();
-      } catch {}
+      await allMessagesReceived;
+      expect(clientsReceived.every(r => r)).toBe(true);
+    } finally {
+      for (const c of clients) {
+        try {
+          c.close();
+        } catch {}
+      }
     }
   });
 
@@ -291,10 +293,21 @@ describe("WebSocket server.publish with perMessageDeflate", () => {
     const client = new WebSocket(`ws://localhost:${server.port}`);
 
     const { promise: openPromise, resolve: resolveOpen, reject: rejectOpen } = Promise.withResolvers<void>();
-    const { promise: messagePromise, resolve: resolveMessage } = Promise.withResolvers<string>();
+    const { promise: messagePromise, resolve: resolveMessage, reject: rejectMessage } = Promise.withResolvers<string>();
 
-    client.onopen = () => resolveOpen();
-    client.onerror = e => rejectOpen(e);
+    let openSettled = false;
+    client.onopen = () => {
+      openSettled = true;
+      resolveOpen();
+    };
+    client.onerror = e => {
+      if (!openSettled) {
+        openSettled = true;
+        rejectOpen(e);
+      } else {
+        rejectMessage(e);
+      }
+    };
     client.onmessage = event => resolveMessage(event.data);
 
     await openPromise;

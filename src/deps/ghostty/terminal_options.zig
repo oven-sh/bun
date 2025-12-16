@@ -15,9 +15,10 @@ pub const c_abi = false;
 /// Oniguruma regex support - disabled for minimal build
 pub const oniguruma = false;
 
-/// SIMD acceleration - disabled during initial integration for stability.
-/// TODO: Enable SIMD once the integration is stable and tested across platforms.
-/// Ghostty has SIMD-optimized paths that fall back to scalar implementations.
+/// SIMD acceleration for optimized UTF-8 and escape sequence parsing.
+/// Currently disabled because ghostty's SIMD uses C++ implementations (vt.cpp)
+/// that would need to be built and linked separately.
+/// The scalar fallback paths provide correct functionality.
 pub const simd = false;
 
 /// Slow runtime safety checks - disabled in production

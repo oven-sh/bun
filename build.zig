@@ -870,6 +870,11 @@ fn addGhosttyModule(b: *Build, mod: *Module) void {
         .root_source_file = b.path("vendor/ghostty/src/unicode/props.zig"),
     });
 
+    // Add build_options for ghostty's SIMD code
+    ghostty_vt.addAnonymousImport("build_options", .{
+        .root_source_file = b.path("src/deps/ghostty/build_options.zig"),
+    });
+
     // Export ghostty module to bun
     mod.addImport("ghostty", ghostty_vt);
 }

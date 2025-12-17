@@ -1405,13 +1405,14 @@ pub const CommandLineReporter = struct {
                     enable_ansi_colors,
                 );
 
+                // Calculate total changed coverage percentage once for reuse
+                const total_changed_pct: f64 = if (total_changed_executable > 0)
+                    @as(f64, @floatFromInt(total_covered_changed)) / @as(f64, @floatFromInt(total_changed_executable))
+                else
+                    1.0;
+
                 // Add total changed coverage
                 if (has_git_diff) {
-                    const total_changed_pct: f64 = if (total_changed_executable > 0)
-                        @as(f64, @floatFromInt(total_covered_changed)) / @as(f64, @floatFromInt(total_changed_executable))
-                    else
-                        1.0;
-
                     try console.writeAll(Output.prettyFmt("<r><d> | <r>", enable_ansi_colors));
                     if (total_changed_pct < base_fraction.lines and total_changed_executable > 0) {
                         try console.writeAll(Output.prettyFmt("<b><red>", enable_ansi_colors));
@@ -1436,10 +1437,6 @@ pub const CommandLineReporter = struct {
 
                 // Print failure message for changed lines coverage
                 if (has_git_diff and changes_failing) {
-                    const total_changed_pct: f64 = if (total_changed_executable > 0)
-                        @as(f64, @floatFromInt(total_covered_changed)) / @as(f64, @floatFromInt(total_changed_executable))
-                    else
-                        1.0;
                     try console.print(Output.prettyFmt("\n<red><b>Coverage for changed lines ({d:.2}%) is below threshold ({d:.2}%)<r>\n", enable_ansi_colors), .{ total_changed_pct * 100.0, base_fraction.lines * 100.0 });
                 }
             }

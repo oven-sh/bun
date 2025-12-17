@@ -1028,8 +1028,6 @@ pub fn WindowsBufferedWriter(Parent: type, function_table: anytype) type {
 
             const this = bun.cast(*WindowsWriter, parent_ptr);
 
-            this.parent.loop().dec();
-
             if (was_canceled) {
                 // Canceled write - clear pending state
                 this.pending_payload_size = 0;
@@ -1066,10 +1064,7 @@ pub fn WindowsBufferedWriter(Parent: type, function_table: anytype) type {
                     file.prepare();
                     this.write_buffer = uv.uv_buf_t.init(buffer);
 
-                    this.parent.loop().inc();
-
                     if (uv.uv_fs_write(this.parent.loop(), &file.fs, file.file, @ptrCast(&this.write_buffer), 1, -1, onFsWriteComplete).toError(.write)) |err| {
-                        this.parent.loop().dec();
                         file.complete(false);
                         this.close();
                         onError(this.parent, err);
@@ -1359,8 +1354,6 @@ pub fn WindowsStreamingWriter(comptime Parent: type, function_table: anytype) ty
 
             const this = bun.cast(*WindowsWriter, parent_ptr);
 
-            this.parent.loop().dec();
-
             if (was_canceled) {
                 // Canceled write - reset buffers
                 this.current_payload.reset();
@@ -1416,10 +1409,7 @@ pub fn WindowsStreamingWriter(comptime Parent: type, function_table: anytype) ty
                     file.prepare();
                     this.write_buffer = uv.uv_buf_t.init(bytes);
 
-                    this.parent.loop().inc();
-
                     if (uv.uv_fs_write(this.parent.loop(), &file.fs, file.file, @ptrCast(&this.write_buffer), 1, -1, onFsWriteComplete).toError(.write)) |err| {
-                        this.parent.loop().dec();
                         file.complete(false);
                         this.last_write_result = .{ .err = err };
                         onError(this.parent, err);

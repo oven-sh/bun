@@ -1021,8 +1021,6 @@ pub const WindowsBufferedReader = struct {
 
         var this: *WindowsBufferedReader = bun.cast(*WindowsBufferedReader, parent_ptr);
 
-        this.vtable.loop(this.parent).dec();
-
         // Mark no longer in flight
         this.flags.has_inflight_read = false;
 
@@ -1069,10 +1067,7 @@ pub const WindowsBufferedReader = struct {
                                     file_ptr.iov = uv.uv_buf_t.init(buf);
                                     this.flags.has_inflight_read = true;
 
-                                    this.vtable.loop(this.parent).inc();
-
                                     if (uv.uv_fs_read(this.vtable.loop(this.parent), &file_ptr.fs, file_ptr.file, @ptrCast(&file_ptr.iov), 1, if (this.flags.use_pread) @intCast(this._offset) else -1, onFileRead).toError(.write)) |err| {
-                                        this.vtable.loop(this.parent).dec();
                                         file_ptr.complete(false);
                                         this.flags.has_inflight_read = false;
                                         this.flags.is_paused = true;
@@ -1122,10 +1117,7 @@ pub const WindowsBufferedReader = struct {
                 file.iov = uv.uv_buf_t.init(buf);
                 this.flags.has_inflight_read = true;
 
-                this.vtable.loop(this.parent).inc();
-
                 if (uv.uv_fs_read(this.vtable.loop(this.parent), &file.fs, file.file, @ptrCast(&file.iov), 1, if (this.flags.use_pread) @intCast(this._offset) else -1, onFileRead).toError(.write)) |err| {
-                    this.vtable.loop(this.parent).dec();
                     file.complete(false);
                     this.flags.has_inflight_read = false;
                     return .{ .err = err };

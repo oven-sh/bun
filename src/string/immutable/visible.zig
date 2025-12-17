@@ -8,6 +8,10 @@ pub fn isZeroWidthCodepointType(comptime T: type, cp: T) bool {
         return true;
     }
 
+    // Soft hyphen (U+00AD) - invisible/zero-width
+    if (cp == 0xad)
+        return true;
+
     if (comptime @sizeOf(T) == 1) {
         return false;
     }
@@ -18,7 +22,12 @@ pub fn isZeroWidthCodepointType(comptime T: type, cp: T) bool {
     }
 
     if (cp >= 0x200b and cp <= 0x200f) {
-        // Modifying Invisible Characters
+        // Modifying Invisible Characters (ZWS, ZWNJ, ZWJ, LRM, RLM)
+        return true;
+    }
+
+    if (cp >= 0x2060 and cp <= 0x2064) {
+        // Word joiner (U+2060), invisible operators
         return true;
     }
 
@@ -37,8 +46,51 @@ pub fn isZeroWidthCodepointType(comptime T: type, cp: T) bool {
         // Zero Width No-Break Space (BOM, ZWNBSP)
         return true;
 
+    if (cp >= 0xd800 and cp <= 0xdfff)
+        // Surrogates (including lone surrogates)
+        return true;
+
+    // Arabic formatting characters
+    if ((cp >= 0x600 and cp <= 0x605) or cp == 0x6dd or cp == 0x70f or cp == 0x8e2)
+        return true;
+
+    // Indic script combining marks (Devanagari through Malayalam)
+    if (cp >= 0x900 and cp <= 0xd4f) {
+        const offset = cp & 0x7f;
+        // Signs at block start (except position 0x03 which is often a visible Visarga)
+        if (offset <= 0x02) return true;
+        // Vowel signs, virama (0x3a-0x4d), but exclude:
+        // - 0x3D (Avagraha - visible letter in most blocks)
+        if (offset >= 0x3a and offset <= 0x4d and offset != 0x3d) return true;
+        // Position 0x4E-0x4F are visible symbols in some blocks (e.g., Malayalam Sign Para)
+        // Stress signs (0x51-0x57)
+        if (offset >= 0x51 and offset <= 0x57) return true;
+        // Vowel signs (0x62-0x63)
+        if (offset >= 0x62 and offset <= 0x63) return true;
+    }
+
+    // Thai combining marks
+    if ((cp >= 0xe31 and cp <= 0xe3a) or (cp >= 0xe47 and cp <= 0xe4e))
+        return true;
+
+    // Lao combining marks
+    if ((cp >= 0xeb1 and cp <= 0xebc) or (cp >= 0xec8 and cp <= 0xecd))
+        return true;
+
+    // Combining Diacritical Marks Extended
+    if (cp >= 0x1ab0 and cp <= 0x1aff)
+        return true;
+
+    // Combining Diacritical Marks Supplement
+    if (cp >= 0x1dc0 and cp <= 0x1dff)
+        return true;
+
+    // Tag characters
+    if (cp >= 0xe0000 and cp <= 0xe007f)
+        return true;
+
     if (cp >= 0xe0100 and cp <= 0xe01ef)
-        // Variation Selectors
+        // Variation Selectors Supplement
         return true;
 
     return false;
@@ -643,7 +695,8 @@ pub const visible = struct {
     }
 
     fn visibleLatin1WidthScalar(c: u8) u1 {
-        return if ((c >= 127 and c <= 159) or c < 32) 0 else 1;
+        // Zero-width: control chars (0x00-0x1F, 0x7F-0x9F) and soft hyphen (0xAD)
+        return if ((c >= 127 and c <= 159) or c < 32 or c == 0xAD) 0 else 1;
     }
 
     fn visibleLatin1WidthExcludeANSIColors(input_: anytype) usize {
@@ -657,11 +710,35 @@ pub const visible = struct {
             length += visibleLatin1Width(input[0..i]);
             input = input[i..];
 
-            if (input.len < 3) return length;
+            if (input.len < 2) return length;
 
             if (input[1] == '[') {
-                const end = indexFn(input[2..], 'm') orelse return length;
-                input = input[end + 3 ..];
+                // CSI sequence: ESC [ <params> <final byte>
+                // Final byte is in range 0x40-0x7E (@ through ~)
+                if (input.len < 3) return length;
+                input = input[2..];
+                while (input.len > 0) {
+                    const c = input[0];
+                    input = input[1..];
+                    // Final byte terminates the sequence
+                    if (c >= 0x40 and c <= 0x7E) break;
+                }
+            } else if (input[1] == ']') {
+                // OSC sequence: ESC ] ... (BEL or ST)
+                // Find terminator: BEL (0x07) or ST (ESC \)
+                input = input[2..];
+                while (input.len > 0) {
+                    if (input[0] == 0x07) {
+                        // BEL terminator
+                        input = input[1..];
+                        break;
+                    } else if (input[0] == 0x1b and input.len > 1 and input[1] == '\\') {
+                        // ST terminator (ESC \)
+                        input = input[2..];
+                        break;
+                    }
+                    input = input[1..];
+                }
             } else {
                 input = input[1..];
             }
@@ -702,84 +779,334 @@ pub const visible = struct {
         return len;
     }
 
+    /// Packed state for grapheme tracking - all small fields in one u32
+    const PackedState = packed struct(u32) {
+        non_emoji_width: u10 = 0, // Accumulated width (max 1024)
+        base_width: u2 = 0, // Width of first codepoint (0, 1, or 2)
+        count: u8 = 0, // Number of codepoints in grapheme
+        // Flags
+        emoji_base: bool = false,
+        keycap: bool = false,
+        regional_indicator: bool = false,
+        skin_tone: bool = false,
+        zwj: bool = false,
+        vs15: bool = false,
+        vs16: bool = false,
+        _pad: u5 = 0,
+    };
+
+    const GraphemeState = struct {
+        first_cp: u32 = 0,
+        last_cp: u32 = 0,
+        s: PackedState = .{},
+
+        inline fn reset(self: *GraphemeState, cp: u32, ambiguousAsWide: bool) void {
+            self.first_cp = cp;
+            self.last_cp = cp;
+
+            // Fast path for ASCII - no emoji complexity, simple width calculation
+            if (cp < 0x80) {
+                const w: u2 = if (cp >= 0x20 and cp < 0x7F) 1 else 0;
+                self.s = .{ .count = 1, .base_width = w, .non_emoji_width = w };
+                return;
+            }
+
+            const w: u3_fast = if (!isZeroWidthCodepointType(u32, cp))
+                visibleCodepointWidthType(u32, cp, ambiguousAsWide)
+            else
+                0;
+
+            self.s = .{
+                .count = 1,
+                .base_width = @truncate(w),
+                .non_emoji_width = w,
+                .emoji_base = isEmojiBase(cp),
+                .keycap = cp == 0x20E3,
+                .regional_indicator = isRegionalIndicator(cp),
+                .skin_tone = isSkinToneModifier(cp),
+                .zwj = cp == 0x200D,
+            };
+        }
+
+        fn add(self: *GraphemeState, cp: u32, ambiguousAsWide: bool) void {
+            self.last_cp = cp;
+            self.s.count +|= 1;
+            self.s.keycap = self.s.keycap or (cp == 0x20E3);
+            self.s.regional_indicator = self.s.regional_indicator or isRegionalIndicator(cp);
+            self.s.skin_tone = self.s.skin_tone or isSkinToneModifier(cp);
+            self.s.zwj = self.s.zwj or (cp == 0x200D);
+            self.s.vs15 = self.s.vs15 or (cp == 0xFE0E);
+            self.s.vs16 = self.s.vs16 or (cp == 0xFE0F);
+
+            if (!isZeroWidthCodepointType(u32, cp)) {
+                self.s.non_emoji_width +|= visibleCodepointWidthType(u32, cp, ambiguousAsWide);
+            }
+        }
+
+        inline fn width(self: *const GraphemeState) usize {
+            const s = self.s;
+            if (s.count == 0) return 0;
+
+            // Regional indicator pair (flag emoji) → width 2
+            if (s.regional_indicator and s.count >= 2) return 2;
+            // Keycap sequence → width 2
+            if (s.keycap) return 2;
+            // Single regional indicator → width 1
+            if (s.regional_indicator) return 1;
+            // Emoji with skin tone or ZWJ → width 2
+            if (s.emoji_base and (s.skin_tone or s.zwj)) return 2;
+
+            // Handle variation selectors
+            if (s.vs15 or s.vs16) {
+                if (s.base_width == 2) return 2;
+                if (s.vs16) {
+                    const cp = self.first_cp;
+                    if ((cp >= 0x30 and cp <= 0x39) or cp == 0x23 or cp == 0x2A) return 1;
+                    if (cp < 0x80) return 1;
+                    return 2;
+                }
+                return 1;
+            }
+
+            return s.non_emoji_width;
+        }
+
+        fn isEmojiBase(cp: u32) bool {
+            // Note: ASCII fast path is handled in reset(), so cp >= 0x80 here
+
+            // Fast path: nothing below U+203C can be an emoji base
+            if (cp < 0x203C) return false;
+
+            // Fast path: common non-emoji BMP ranges
+            if (cp >= 0x2C00 and cp < 0x1F000) return false;
+
+            // Exclude variation selectors and ZWJ which are handled separately
+            if (cp == 0xFE0E or cp == 0xFE0F or cp == 0x200D) return false;
+
+            // Use ICU for accurate emoji detection
+            // UCHAR_EMOJI = 57
+            return icu_hasBinaryProperty(cp, 57);
+        }
+
+        fn isRegionalIndicator(cp: u32) bool {
+            return cp >= 0x1F1E6 and cp <= 0x1F1FF;
+        }
+
+        fn isSkinToneModifier(cp: u32) bool {
+            return cp >= 0x1F3FB and cp <= 0x1F3FF;
+        }
+    };
+
+    /// Count printable ASCII characters (0x20-0x7E) in a UTF-16 slice using SIMD
+    fn countPrintableAscii16(input: []const u16) usize {
+        var total: usize = 0;
+        var remaining = input;
+
+        // Process 8 u16 values at a time using SIMD
+        const vec_len = 8;
+        while (remaining.len >= vec_len) {
+            const chunk: @Vector(vec_len, u16) = remaining[0..vec_len].*;
+            const low: @Vector(vec_len, u16) = @splat(0x20);
+            const high: @Vector(vec_len, u16) = @splat(0x7F);
+            const ge_low = chunk >= low;
+            const lt_high = chunk < high;
+            const printable = @select(bool, ge_low, lt_high, @as(@Vector(vec_len, bool), @splat(false)));
+            total += @popCount(@as(u8, @bitCast(printable)));
+            remaining = remaining[vec_len..];
+        }
+
+        // Handle remaining elements
+        for (remaining) |c| {
+            total += @intFromBool(c >= 0x20 and c < 0x7F);
+        }
+
+        return total;
+    }
+
     fn visibleUTF16WidthFn(input_: []const u16, exclude_ansi_colors: bool, ambiguousAsWide: bool) usize {
         var input = input_;
         var len: usize = 0;
-        var prev: ?u21 = 0;
+        var prev: ?u32 = null;
         var break_state = grapheme.BreakState{};
-        var break_start: u21 = 0;
+        var grapheme_state = GraphemeState{};
         var saw_1b = false;
-        var saw_bracket = false;
+        var saw_csi = false; // CSI: ESC [
+        var saw_osc = false; // OSC: ESC ]
         var stretch_len: usize = 0;
 
         while (true) {
             {
                 const idx = firstNonASCII16(input) orelse input.len;
+
+                // Fast path: bulk ASCII processing when not in escape sequence
+                // ASCII chars are always their own graphemes, so we can count directly
+                if (idx > 0 and !saw_1b and !saw_csi and !saw_osc) {
+                    // Find how much we can bulk process
+                    // If stripping ANSI, stop at first ESC; otherwise process entire run
+                    const bulk_end = if (exclude_ansi_colors)
+                        strings.indexOfChar16Usize(input[0..idx], 0x1b) orelse idx
+                    else
+                        idx;
+
+                    if (bulk_end > 0) {
+                        // Flush any pending grapheme from previous non-ASCII
+                        if (grapheme_state.s.count > 0) {
+                            len += grapheme_state.width();
+                        }
+
+                        // Count all but last char in bulk using SIMD
+                        // Last char goes into grapheme_state in case combining mark follows
+                        if (bulk_end > 1) {
+                            len += countPrintableAscii16(input[0 .. bulk_end - 1]);
+                        }
+
+                        // Last char before ESC (or end) uses reset()
+                        const last_cp: u32 = input[bulk_end - 1];
+                        grapheme_state.reset(last_cp, ambiguousAsWide);
+                        prev = last_cp;
+                        break_state = grapheme.BreakState{};
+
+                        // If we consumed everything, advance and continue
+                        if (bulk_end == idx) {
+                            input = input[idx..];
+                            continue;
+                        }
+
+                        // Otherwise we hit ESC - start escape sequence handling
+                        saw_1b = true;
+                        prev = 0x1b;
+                        input = input[bulk_end + 1 ..];
+                        continue;
+                    }
+                }
+
                 for (0..idx) |j| {
-                    const cp = input[j];
+                    const cp: u32 = input[j];
                     defer prev = cp;
 
-                    if (saw_bracket) {
-                        if (cp == 'm') {
+                    if (saw_osc) {
+                        // In OSC sequence, look for BEL (0x07) or ST (ESC \)
+                        if (cp == 0x07) {
                             saw_1b = false;
-                            saw_bracket = false;
+                            saw_osc = false;
                             stretch_len = 0;
+                            continue;
+                        } else if (cp == '\\' and prev == 0x1b) {
+                            // ST terminator complete (ESC \)
+                            saw_1b = false;
+                            saw_osc = false;
+                            stretch_len = 0;
+                            continue;
+                        } else if (cp == 0x1b) {
+                            // ESC inside OSC - might be start of ST terminator
+                            // Don't exit OSC yet, wait to see if next char is '\'
                             continue;
                         }
                         stretch_len += visibleCodepointWidth(cp, ambiguousAsWide);
                         continue;
                     }
-                    if (saw_1b) {
-                        if (cp == '[') {
-                            saw_bracket = true;
+                    if (saw_csi) {
+                        // CSI final byte is in range 0x40-0x7E (@ through ~)
+                        if (cp >= 0x40 and cp <= 0x7E) {
+                            saw_1b = false;
+                            saw_csi = false;
                             stretch_len = 0;
                             continue;
                         }
+                        // Parameter bytes - don't add to width
+                        continue;
+                    }
+                    if (saw_1b) {
+                        if (cp == '[') {
+                            saw_csi = true;
+                            stretch_len = 0;
+                            continue;
+                        } else if (cp == ']') {
+                            saw_osc = true;
+                            stretch_len = 0;
+                            continue;
+                        } else if (cp == 0x1b) {
+                            // Another ESC - this one starts a new potential sequence
+                            // Keep saw_1b = true, don't add width (ESC is control char anyway)
+                            continue;
+                        }
                         len += visibleCodepointWidth(cp, ambiguousAsWide);
+                        saw_1b = false;
                         continue;
                     }
                     if (!exclude_ansi_colors or cp != 0x1b) {
                         if (prev) |prev_| {
-                            const should_break = grapheme.graphemeBreak(prev_, cp, &break_state);
+                            const should_break = grapheme.graphemeBreak(@truncate(prev_), @truncate(cp), &break_state);
                             if (should_break) {
-                                len += visibleCodepointWidthMaybeEmoji(break_start, cp == 0xFE0F, ambiguousAsWide);
-                                break_start = cp;
+                                len += grapheme_state.width();
+                                grapheme_state.reset(@truncate(cp), ambiguousAsWide);
                             } else {
-                                //
+                                grapheme_state.add(cp, ambiguousAsWide);
                             }
                         } else {
-                            len += visibleCodepointWidth(cp, ambiguousAsWide);
-                            break_start = cp;
+                            grapheme_state.reset(@truncate(cp), ambiguousAsWide);
                         }
                         continue;
                     }
                     saw_1b = true;
                     continue;
                 }
-                len += stretch_len;
+                // Only add stretch_len if we completed the escape sequence
+                // (unterminated sequences should not contribute to width)
+                if (!saw_csi and !saw_osc) {
+                    len += stretch_len;
+                }
+                stretch_len = 0;
                 input = input[idx..];
             }
             if (input.len == 0) break;
             const replacement = utf16CodepointWithFFFD(input);
             defer input = input[replacement.len..];
-            if (replacement.fail) continue;
-            const cp: u21 = @intCast(replacement.code_point);
+            // Skip invalid sequences and lone surrogates (treat as zero-width)
+            if (replacement.fail or replacement.is_lead) continue;
+            const cp: u32 = @intCast(replacement.code_point);
             defer prev = cp;
 
+            // Handle non-ASCII characters inside escape sequences
+            if (saw_osc) {
+                // In OSC sequence, look for BEL (0x07) or ST (ESC \)
+                // Non-ASCII chars inside OSC should not contribute to width
+                if (cp == 0x07) {
+                    saw_1b = false;
+                    saw_osc = false;
+                    stretch_len = 0;
+                }
+                // Note: ST (ESC \) only uses ASCII chars, so we don't need to check here
+                continue;
+            }
+            if (saw_csi) {
+                // CSI sequences should only contain ASCII parameters and final bytes
+                // Non-ASCII char ends the CSI sequence abnormally - don't count it
+                saw_1b = false;
+                saw_csi = false;
+                stretch_len = 0;
+                continue;
+            }
+            if (saw_1b) {
+                // ESC followed by non-ASCII - not a valid sequence start
+                saw_1b = false;
+                // Don't count this char as part of escape, treat normally below
+            }
+
             if (prev) |prev_| {
-                const should_break = grapheme.graphemeBreak(prev_, cp, &break_state);
+                const should_break = grapheme.graphemeBreak(@truncate(prev_), @truncate(cp), &break_state);
                 if (should_break) {
-                    len += visibleCodepointWidthMaybeEmoji(break_start, cp == 0xFE0F, ambiguousAsWide);
-                    break_start = cp;
+                    len += grapheme_state.width();
+                    grapheme_state.reset(cp, ambiguousAsWide);
+                } else {
+                    grapheme_state.add(cp, ambiguousAsWide);
                 }
             } else {
-                len += visibleCodepointWidth(cp, ambiguousAsWide);
-                break_start = cp;
+                grapheme_state.reset(cp, ambiguousAsWide);
             }
         }
-        if (break_start > 0) {
-            len += visibleCodepointWidthMaybeEmoji(break_start, (prev orelse 0) == 0xFE0F, ambiguousAsWide);
-        }
+        // Add width of final grapheme
+        len += grapheme_state.width();
         return len;
     }
 

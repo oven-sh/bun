@@ -810,9 +810,9 @@ extern "C" void napi_module_register(napi_module* mod)
     // knows that napi_module_register was attempted
     globalObject->napiModuleRegisterCallCount++;
 
-    // Store the entire module struct to be processed after dlopen completes
+    // Append to vector to accumulate ALL module registrations during dlopen
     if (mod && mod->nm_register_func) {
-        globalObject->m_pendingNapiModule = *mod;
+        globalObject->m_pendingNapiModules.append(*mod);
         // Increment the counter to signal that a module registered itself
         Bun__napi_module_register_count++;
     } else {
@@ -2403,6 +2403,8 @@ extern "C" napi_status napi_typeof(napi_env env, napi_value val,
             return napi_clear_last_error(env);
         case JSC::DerivedStringObjectType:
         case JSC::StringObjectType:
+            *result = napi_object;
+            return napi_clear_last_error(env);
         case JSC::StringType:
             *result = napi_string;
             return napi_clear_last_error(env);

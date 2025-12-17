@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isBroken, isMusl, isWindows, nodeExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isBroken, isMusl, isWindows, nodeExe, tmpdirSync } from "harness";
 import assert from "node:assert";
 import fs from "node:fs/promises";
 import { basename, join } from "path";
@@ -134,6 +134,27 @@ describe.todoIf(isBroken && isMusl)("node:v8", () => {
     });
   });
 
+  describe("Value type checks", () => {
+    it("matches Node for IsMap/IsArray/IsInt32/IsBigInt on representative values", async () => {
+      // Each entry is an argument list; we wrap each value so the addon receives it as info[0].
+      const cases: any[][] = [
+        [new Map()],
+        [[]],
+        [42],
+        [2147483647], // INT32_MAX
+        [2147483648], // INT32_MAX + 1 (should not be Int32)
+        [-2147483648], // INT32_MIN
+        [-2147483649], // INT32_MIN - 1 (should not be Int32)
+        [123n],
+        [3.14],
+        ["string"],
+        [{}],
+      ];
+      for (const args of cases) {
+        await checkSameOutput("test_v8_value_type_checks", args);
+      }
+    });
+  });
   describe("Number", () => {
     it("can create small integer", async () => {
       await checkSameOutput("test_v8_number_int", []);
@@ -259,9 +280,15 @@ describe.todoIf(isBroken && isMusl)("node:v8", () => {
     it("can hold a lot of locals", async () => {
       await checkSameOutput("test_many_v8_locals", []);
     });
-    it("keeps GC objects alive", async () => {
-      await checkSameOutput("test_handle_scope_gc", []);
-    }, 10000);
+    // Skip on ASAN: false positives due to dynamic library boundary crossing where
+    // Bun is built with ASAN+UBSAN but the native addon is not
+    it.skipIf(isASAN)(
+      "keeps GC objects alive",
+      async () => {
+        await checkSameOutput("test_handle_scope_gc", []);
+      },
+      10000,
+    );
   });
 
   describe("EscapableHandleScope", () => {
@@ -317,6 +344,11 @@ async function checkSameOutput(testName: string, args: any[], thisValue?: any) {
   return nodeResult;
 }
 
+// Custom JSON serialization that handles BigInt
+function serializeArgs(args: any[]): string {
+  return JSON.stringify(args, (_, value) => (typeof value === "bigint" ? { __bigint__: value.toString() } : value));
+}
+
 async function runOn(runtime: Runtime, buildMode: BuildMode, testName: string, jsArgs: any[], thisValue?: any) {
   if (runtime == Runtime.node) {
     assert(buildMode == BuildMode.release);
@@ -334,7 +366,7 @@ async function runOn(runtime: Runtime, buildMode: BuildMode, testName: string, j
     ...(runtime == Runtime.bun ? ["--smol"] : []),
     join(baseDir, "main.js"),
     testName,
-    JSON.stringify(jsArgs),
+    serializeArgs(jsArgs),
     JSON.stringify(thisValue ?? null),
   ];
   if (buildMode == BuildMode.debug) {

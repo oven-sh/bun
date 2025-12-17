@@ -9,6 +9,8 @@ interface Config {
   // Server + Client
   main: Id;
 
+  generation: number;
+
   // Server
   separateSSRGraph?: true;
 

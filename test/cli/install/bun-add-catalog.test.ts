@@ -1,6 +1,7 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync } from "fs";
+import { mkdir } from "fs/promises";
 import { bunExe, bunEnv as env } from "harness";
 import { join } from "path";
 import {
@@ -148,7 +149,7 @@ describe("bun add --catalog", () => {
 
     // Create workspace package
     const workspaceDir = join(package_dir, "packages", "pkg1");
-    await Bun.$`mkdir -p ${workspaceDir}`;
+    await mkdir(workspaceDir, { recursive: true });
     await Bun.write(join(workspaceDir, "package.json"), JSON.stringify({ name: "pkg1" }, null, 2));
 
     // Run bun add --catalog from workspace directory

@@ -1,10 +1,10 @@
 import { spawn } from "bun";
+import { jscDescribe } from "bun:jsc";
 import { beforeAll, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isASAN, isBroken, isMusl, isWindows, nodeExe, tmpdirSync } from "harness";
 import assert from "node:assert";
 import fs from "node:fs/promises";
 import { basename, join } from "path";
-import { jscDescribe } from "bun:jsc";
 
 enum Runtime {
   node,

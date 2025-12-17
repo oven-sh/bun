@@ -52,16 +52,11 @@ test("blob.writer() throws for data-backed blob", () => {
 
 test("Bun.file(path).writer() does not throw", async () => {
   const dir = tempDirWithFiles("bun-writer", {});
-  console.log("before Bun.file");
   const file = Bun.file(path.join(dir, "test.txt"));
-  console.log("before file.write");
   const writer = file.writer();
   expect(writer).toBeDefined();
-  console.log("before writer.write");
   writer.write("New content");
-  console.log("before await writer.end()");
   await writer.end();
-  console.log("before await file.text()");
   expect(await file.text()).toBe("New content");
 });
 

@@ -1389,9 +1389,6 @@ function getTestTimeout(testPath) {
   if (/integration|3rd_party|docker|bun-install-registry|v8/i.test(testPath)) {
     return integrationTimeout;
   }
-  if (/blob-write/i.test(testPath)) {
-    return 10 * 60_000; // 10 minutes
-  }
   return testTimeout;
 }
 

@@ -31,6 +31,7 @@ const symbolsTxt = await Bun.file(join(repoRoot, "src", "symbols.txt")).text();
 
 // Create metadata JSON with link command included
 const metadata = {
+  bun_version: process.env.BUN_VERSION || "",
   webkit_url: process.env.WEBKIT_DOWNLOAD_URL || "",
   webkit_version: process.env.WEBKIT_VERSION || "",
   zig_commit: process.env.ZIG_COMMIT || "",

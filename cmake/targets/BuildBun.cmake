@@ -1210,6 +1210,7 @@ if(BUN_LINK_ONLY)
       "Uploading link metadata"
     COMMAND
       ${CMAKE_COMMAND} -E env
+        BUN_VERSION=${VERSION}
         WEBKIT_DOWNLOAD_URL=${WEBKIT_DOWNLOAD_URL}
         WEBKIT_VERSION=${WEBKIT_VERSION}
         ZIG_COMMIT=${ZIG_COMMIT}

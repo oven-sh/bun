@@ -1925,6 +1925,39 @@ pub const StatFS = switch (Environment.os) {
 
 pub var argv: [][:0]const u8 = &[_][:0]const u8{};
 
+/// Original argv buffer for process title on Linux.
+/// This stores the original argv memory location so we can overwrite it
+/// when setting process.title, which is how `ps` and other tools see the title.
+pub const ProcessTitleInfo = struct {
+    /// Pointer to the start of the original argv buffer
+    buffer: ?[*]u8 = null,
+    /// Total capacity of the argv buffer (all args plus the null terminators)
+    capacity: usize = 0,
+
+    pub fn setTitle(self: *ProcessTitleInfo, title: []const u8) void {
+        if (comptime !Environment.isLinux) return;
+
+        const buf = self.buffer orelse return;
+        const cap = self.capacity;
+        if (cap == 0) return;
+
+        // Copy the title into the original argv buffer
+        const title_len = @min(title.len, cap - 1);
+        @memcpy(buf[0..title_len], title[0..title_len]);
+        // Zero out the rest of the buffer
+        @memset(buf[title_len..cap], 0);
+
+        // Also set the thread name via prctl (limited to 16 bytes including null)
+        // This is what shows up in `top` and `htop` under the thread name column
+        var name_buf: [16]u8 = .{0} ** 16;
+        const name_len = @min(title.len, 15);
+        @memcpy(name_buf[0..name_len], title[0..name_len]);
+        _ = std.posix.prctl(.SET_NAME, .{@intFromPtr(&name_buf)}) catch {};
+    }
+};
+
+pub var process_title_info: ProcessTitleInfo = .{};
+
 pub fn appendOptionsEnv(env: []const u8, args: *std.array_list.Managed([:0]const u8), allocator: std.mem.Allocator) !void {
     var i: usize = 0;
     var offset_in_args: usize = 1;
@@ -2040,6 +2073,23 @@ pub fn initArgv(allocator: std.mem.Allocator) !void {
         argv = try allocator.alloc([:0]const u8, std.os.argv.len);
         for (0..argv.len) |i| {
             argv[i] = std.mem.sliceTo(std.os.argv[i], 0);
+        }
+
+        // On Linux, store the original argv buffer location so we can
+        // overwrite it when setting process.title. This is how tools
+        // like `ps` see the process title.
+        if (comptime Environment.isLinux) {
+            if (std.os.argv.len > 0) {
+                const first_arg = std.os.argv[0];
+                const last_arg = std.os.argv[std.os.argv.len - 1];
+                // Calculate the total capacity: from first arg to end of last arg
+                const last_arg_slice = std.mem.sliceTo(last_arg, 0);
+                const capacity = @intFromPtr(last_arg) - @intFromPtr(first_arg) + last_arg_slice.len + 1;
+                process_title_info = .{
+                    .buffer = @ptrCast(first_arg),
+                    .capacity = capacity,
+                };
+            }
         }
     } else if (comptime Environment.isWindows) {
         // Zig's implementation of `std.process.argsAlloc()`on Windows platforms

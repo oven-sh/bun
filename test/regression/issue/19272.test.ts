@@ -23,7 +23,7 @@ test.concurrent.each([
     initProc.stderr.text(),
     initProc.exited,
   ]);
-  expect(initExitCode).toBe(0);
+  expect(initExitCode, `Init failed for ${template} template.\nstdout: ${initStdout}\nstderr: ${initStderr}`).toBe(0);
 
   // Install TypeScript for type checking
   await using installProc = Bun.spawn({
@@ -40,7 +40,10 @@ test.concurrent.each([
     installProc.stderr.text(),
     installProc.exited,
   ]);
-  expect(installExitCode).toBe(0);
+  expect(
+    installExitCode,
+    `TypeScript install failed for ${template} template.\nstdout: ${installStdout}\nstderr: ${installStderr}`,
+  ).toBe(0);
 
   // Run TypeScript compiler to check for errors
   await using tscProc = Bun.spawn({
@@ -57,7 +60,10 @@ test.concurrent.each([
   // TypeScript should not report any errors
   expect(stdout).not.toContain("error TS");
   expect(stderr).not.toContain("error TS");
-  expect(exitCode).toBe(0);
+  expect(
+    exitCode,
+    `TypeScript compilation failed for ${template} template.\nstdout: ${stdout}\nstderr: ${stderr}`,
+  ).toBe(0);
 
   // Verify tsconfig excludes build.ts
   const tsconfigPath = path.join(String(dir), "tsconfig.json");

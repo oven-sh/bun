@@ -1836,6 +1836,8 @@ pub const BundleV2 = struct {
             );
             transpiler.options.env.behavior = config.env_behavior;
             transpiler.options.env.prefix = config.env_prefix.slice();
+            // Use the StringSet directly instead of the slice passed through TransformOptions
+            transpiler.options.bundler_feature_flags = &config.features;
             if (config.force_node_env != .unspecified) {
                 transpiler.options.force_node_env = config.force_node_env;
             }

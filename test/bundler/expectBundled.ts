@@ -161,6 +161,8 @@ export interface BundlerTestInput {
   footer?: string;
   define?: Record<string, string | number>;
   drop?: string[];
+  /** Feature flags for dead-code elimination via `import { feature } from "bun:bundle"` */
+  features?: string[];
 
   /** Use for resolve custom conditions */
   conditions?: string[];
@@ -444,6 +446,7 @@ function expectBundled(
     external,
     packages,
     drop = [],
+    features = [],
     files,
     footer,
     format,
@@ -748,6 +751,7 @@ function expectBundled(
               minifySyntax && `--minify-syntax`,
               minifyWhitespace && `--minify-whitespace`,
               drop?.length && drop.map(x => ["--drop=" + x]),
+              features?.length && features.map(x => ["--feature=" + x]),
               globalName && `--global-name=${globalName}`,
               jsx.runtime && ["--jsx-runtime", jsx.runtime],
               jsx.factory && ["--jsx-factory", jsx.factory],
@@ -1116,6 +1120,7 @@ function expectBundled(
           emitDCEAnnotations,
           ignoreDCEAnnotations,
           drop,
+          features,
           define: define ?? {},
           throw: _throw ?? false,
           compile,

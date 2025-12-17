@@ -1338,6 +1338,8 @@ pub const Formatter = struct {
                     .JSArrayIterator,
                     .Iterator,
                     .IteratorHelper,
+                    .Generator,
+                    .AsyncGenerator,
                     .Object,
                     .FinalObject,
                     .ModuleNamespaceObject,

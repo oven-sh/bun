@@ -1448,10 +1448,16 @@ pub const CommandLineReporter = struct {
             if (Output.isAIAgent() and ai_prompt_files.items.len > 0) {
                 try console.writeAll("\n<errors>\n");
                 for (ai_prompt_files.items) |file_info| {
+                    // Escape file path for XML to handle special characters like &, <, >, "
+                    var escaped_path_buf = std.array_list.Managed(u8).init(bun.default_allocator);
+                    defer escaped_path_buf.deinit();
+                    try escapeXml(file_info.path, escaped_path_buf.writer());
+                    const escaped_path = escaped_path_buf.items;
+
                     // Output uncovered line ranges as <file> tags
                     if (file_info.uncovered_ranges.len > 0) {
-                        try console.print("  <file path=\"{s}\">\n", .{file_info.path});
-                        try console.print("    In {s}, lines ", .{file_info.path});
+                        try console.print("  <file path=\"{s}\">\n", .{escaped_path});
+                        try console.print("    In {s}, lines ", .{escaped_path});
                         for (file_info.uncovered_ranges, 0..) |range, i| {
                             if (i > 0) try console.writeAll(", ");
                             if (range.start == range.end) {
@@ -1469,8 +1475,8 @@ pub const CommandLineReporter = struct {
                     for (file_info.uncovered_functions) |func| {
                         const start = func.start_line.oneBased();
                         const end = func.end_line.oneBased();
-                        try console.print("  <function path=\"{s}\" startLine=\"{d}\" endLine=\"{d}\">\n", .{ file_info.path, start, end });
-                        try console.print("    In {s}, the function at lines {d}-{d} is never called. Write a test that calls this function, or delete it if it is dead code.\n", .{ file_info.path, start, end });
+                        try console.print("  <function path=\"{s}\" startLine=\"{d}\" endLine=\"{d}\">\n", .{ escaped_path, start, end });
+                        try console.print("    In {s}, the function at lines {d}-{d} is never called. Write a test that calls this function, or delete it if it is dead code.\n", .{ escaped_path, start, end });
                         try console.writeAll("  </function>\n");
                     }
                 }

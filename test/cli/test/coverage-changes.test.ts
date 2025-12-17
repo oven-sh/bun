@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDirWithFiles } from "harness";
 
 // Helper to create a git repo, commit, make changes, and run coverage
-async function setupGitRepo(files: Record<string, string>) {
+function setupGitRepo(files: Record<string, string>) {
   const dir = tempDirWithFiles("cov-changes", files);
 
   // Initialize git repo
@@ -40,7 +40,7 @@ async function setupGitRepo(files: Record<string, string>) {
   return dir;
 }
 
-async function gitAddCommit(dir: string, message: string) {
+function gitAddCommit(dir: string, message: string) {
   let result = spawnSync(["git", "add", "-A"], {
     cwd: dir,
     env: bunEnv,
@@ -56,7 +56,7 @@ async function gitAddCommit(dir: string, message: string) {
   if (result.exitCode !== 0) throw new Error("git commit failed");
 }
 
-async function gitCheckoutBranch(dir: string, branchName: string) {
+function gitCheckoutBranch(dir: string, branchName: string) {
   const result = spawnSync(["git", "checkout", "-b", branchName], {
     cwd: dir,
     env: bunEnv,

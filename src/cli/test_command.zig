@@ -1080,27 +1080,32 @@ pub const CommandLineReporter = struct {
         var ai_prompt_files: std.ArrayListUnmanaged(AIPromptFile) = .empty;
         defer ai_prompt_files.deinit(bun.default_allocator);
 
+        // Skip table output for AI agents when using --coverage-changes (only show <errors> prompt)
+        const skip_table_for_ai = Output.isAIAgent() and has_git_diff;
+
         if (comptime reporters.text) {
-            console.writeAll(Output.prettyFmt("<r><d>", enable_ansi_colors)) catch return;
-            console.splatByteAll('-', max_filepath_length + 2) catch return;
-            if (has_git_diff) {
-                console.writeAll(Output.prettyFmt("|---------|---------|---------|-------------------<r>\n", enable_ansi_colors)) catch return;
-            } else {
-                console.writeAll(Output.prettyFmt("|---------|---------|-------------------<r>\n", enable_ansi_colors)) catch return;
-            }
-            console.writeAll("File") catch return;
-            console.splatByteAll(' ', max_filepath_length - "File".len + 1) catch return;
-            if (has_git_diff) {
-                console.writeAll(Output.prettyFmt(" <d>|<r> % Funcs <d>|<r> % Lines <d>|<r> % Chang <d>|<r> Uncovered Line #s\n", enable_ansi_colors)) catch return;
-            } else {
-                console.writeAll(Output.prettyFmt(" <d>|<r> % Funcs <d>|<r> % Lines <d>|<r> Uncovered Line #s\n", enable_ansi_colors)) catch return;
-            }
-            console.writeAll(Output.prettyFmt("<d>", enable_ansi_colors)) catch return;
-            console.splatByteAll('-', max_filepath_length + 2) catch return;
-            if (has_git_diff) {
-                console.writeAll(Output.prettyFmt("|---------|---------|---------|-------------------<r>\n", enable_ansi_colors)) catch return;
-            } else {
-                console.writeAll(Output.prettyFmt("|---------|---------|-------------------<r>\n", enable_ansi_colors)) catch return;
+            if (!skip_table_for_ai) {
+                console.writeAll(Output.prettyFmt("<r><d>", enable_ansi_colors)) catch return;
+                console.splatByteAll('-', max_filepath_length + 2) catch return;
+                if (has_git_diff) {
+                    console.writeAll(Output.prettyFmt("|---------|---------|---------|-------------------<r>\n", enable_ansi_colors)) catch return;
+                } else {
+                    console.writeAll(Output.prettyFmt("|---------|---------|-------------------<r>\n", enable_ansi_colors)) catch return;
+                }
+                console.writeAll("File") catch return;
+                console.splatByteAll(' ', max_filepath_length - "File".len + 1) catch return;
+                if (has_git_diff) {
+                    console.writeAll(Output.prettyFmt(" <d>|<r> % Funcs <d>|<r> % Lines <d>|<r> % Chang <d>|<r> Uncovered Line #s\n", enable_ansi_colors)) catch return;
+                } else {
+                    console.writeAll(Output.prettyFmt(" <d>|<r> % Funcs <d>|<r> % Lines <d>|<r> Uncovered Line #s\n", enable_ansi_colors)) catch return;
+                }
+                console.writeAll(Output.prettyFmt("<d>", enable_ansi_colors)) catch return;
+                console.splatByteAll('-', max_filepath_length + 2) catch return;
+                if (has_git_diff) {
+                    console.writeAll(Output.prettyFmt("|---------|---------|---------|-------------------<r>\n", enable_ansi_colors)) catch return;
+                } else {
+                    console.writeAll(Output.prettyFmt("|---------|---------|-------------------<r>\n", enable_ansi_colors)) catch return;
+                }
             }
         }
 
@@ -1265,84 +1270,86 @@ pub const CommandLineReporter = struct {
                     const failed = fns < base_fraction.functions or lines < base_fraction.lines;
                     fraction.failing = failed;
 
-                    CodeCoverageReport.Text.writeFormatWithValues(
-                        relative_path,
-                        max_filepath_length,
-                        fraction,
-                        base_fraction,
-                        failed,
-                        console_writer,
-                        true,
-                        enable_ansi_colors,
-                    ) catch continue;
+                    if (!skip_table_for_ai) {
+                        CodeCoverageReport.Text.writeFormatWithValues(
+                            relative_path,
+                            max_filepath_length,
+                            fraction,
+                            base_fraction,
+                            failed,
+                            console_writer,
+                            true,
+                            enable_ansi_colors,
+                        ) catch continue;
 
-                    // Add % Changed column
-                    if (changed_coverage) |cc| {
+                        // Add % Changed column
+                        if (changed_coverage) |cc| {
+                            try console_writer.writeAll(Output.prettyFmt("<r><d> | <r>", enable_ansi_colors));
+                            if (cc < base_fraction.lines) {
+                                try console_writer.writeAll(Output.prettyFmt("<b><red>", enable_ansi_colors));
+                            } else {
+                                try console_writer.writeAll(Output.prettyFmt("<b><green>", enable_ansi_colors));
+                            }
+                            try console_writer.print("{d: >7.2}", .{cc * 100.0});
+                            try console_writer.writeAll(Output.prettyFmt("<r>", enable_ansi_colors));
+                        } else {
+                            try console_writer.writeAll(Output.prettyFmt("<r><d> |       -<r>", enable_ansi_colors));
+                        }
+
+                        // Now print uncovered lines column (manually, same as writeFormat does)
                         try console_writer.writeAll(Output.prettyFmt("<r><d> | <r>", enable_ansi_colors));
-                        if (cc < base_fraction.lines) {
-                            try console_writer.writeAll(Output.prettyFmt("<b><red>", enable_ansi_colors));
-                        } else {
-                            try console_writer.writeAll(Output.prettyFmt("<b><green>", enable_ansi_colors));
-                        }
-                        try console_writer.print("{d: >7.2}", .{cc * 100.0});
-                        try console_writer.writeAll(Output.prettyFmt("<r>", enable_ansi_colors));
-                    } else {
-                        try console_writer.writeAll(Output.prettyFmt("<r><d> |       -<r>", enable_ansi_colors));
-                    }
 
-                    // Now print uncovered lines column (manually, same as writeFormat does)
-                    try console_writer.writeAll(Output.prettyFmt("<r><d> | <r>", enable_ansi_colors));
+                        var executable_lines_that_havent_been_executed = bun.handleOom(report.lines_which_have_executed.clone(bun.default_allocator));
+                        defer executable_lines_that_havent_been_executed.deinit(bun.default_allocator);
+                        executable_lines_that_havent_been_executed.toggleAll();
+                        executable_lines_that_havent_been_executed.setIntersection(report.executable_lines);
 
-                    var executable_lines_that_havent_been_executed = bun.handleOom(report.lines_which_have_executed.clone(bun.default_allocator));
-                    defer executable_lines_that_havent_been_executed.deinit(bun.default_allocator);
-                    executable_lines_that_havent_been_executed.toggleAll();
-                    executable_lines_that_havent_been_executed.setIntersection(report.executable_lines);
+                        var iter = executable_lines_that_havent_been_executed.iterator(.{});
+                        var start_of_line_range: usize = 0;
+                        var prev_line: usize = 0;
+                        var is_first = true;
 
-                    var iter = executable_lines_that_havent_been_executed.iterator(.{});
-                    var start_of_line_range: usize = 0;
-                    var prev_line: usize = 0;
-                    var is_first = true;
+                        while (iter.next()) |next_line| {
+                            if (next_line == (prev_line + 1)) {
+                                prev_line = next_line;
+                                continue;
+                            } else if (is_first and start_of_line_range == 0 and prev_line == 0) {
+                                start_of_line_range = next_line;
+                                prev_line = next_line;
+                                continue;
+                            }
 
-                    while (iter.next()) |next_line| {
-                        if (next_line == (prev_line + 1)) {
+                            if (is_first) {
+                                is_first = false;
+                            } else {
+                                try console_writer.print(Output.prettyFmt("<r><d>,<r>", enable_ansi_colors), .{});
+                            }
+
+                            if (start_of_line_range == prev_line) {
+                                try console_writer.print(Output.prettyFmt("<red>{d}", enable_ansi_colors), .{start_of_line_range + 1});
+                            } else {
+                                try console_writer.print(Output.prettyFmt("<red>{d}-{d}", enable_ansi_colors), .{ start_of_line_range + 1, prev_line + 1 });
+                            }
+
                             prev_line = next_line;
-                            continue;
-                        } else if (is_first and start_of_line_range == 0 and prev_line == 0) {
                             start_of_line_range = next_line;
-                            prev_line = next_line;
-                            continue;
                         }
 
-                        if (is_first) {
-                            is_first = false;
-                        } else {
-                            try console_writer.print(Output.prettyFmt("<r><d>,<r>", enable_ansi_colors), .{});
-                        }
+                        if (prev_line != start_of_line_range) {
+                            if (is_first) {
+                                is_first = false;
+                            } else {
+                                try console_writer.print(Output.prettyFmt("<r><d>,<r>", enable_ansi_colors), .{});
+                            }
 
-                        if (start_of_line_range == prev_line) {
-                            try console_writer.print(Output.prettyFmt("<red>{d}", enable_ansi_colors), .{start_of_line_range + 1});
-                        } else {
-                            try console_writer.print(Output.prettyFmt("<red>{d}-{d}", enable_ansi_colors), .{ start_of_line_range + 1, prev_line + 1 });
-                        }
-
-                        prev_line = next_line;
-                        start_of_line_range = next_line;
-                    }
-
-                    if (prev_line != start_of_line_range) {
-                        if (is_first) {
-                            is_first = false;
-                        } else {
-                            try console_writer.print(Output.prettyFmt("<r><d>,<r>", enable_ansi_colors), .{});
-                        }
-
-                        if (start_of_line_range == prev_line) {
-                            try console_writer.print(Output.prettyFmt("<red>{d}", enable_ansi_colors), .{start_of_line_range + 1});
-                        } else {
-                            try console_writer.print(Output.prettyFmt("<red>{d}-{d}", enable_ansi_colors), .{ start_of_line_range + 1, prev_line + 1 });
+                            if (start_of_line_range == prev_line) {
+                                try console_writer.print(Output.prettyFmt("<red>{d}", enable_ansi_colors), .{start_of_line_range + 1});
+                            } else {
+                                try console_writer.print(Output.prettyFmt("<red>{d}-{d}", enable_ansi_colors), .{ start_of_line_range + 1, prev_line + 1 });
+                            }
                         }
                     }
-                } else {
+                } else if (!skip_table_for_ai) {
                     // No git diff - use the standard writeFormat
                     CodeCoverageReport.Text.writeFormat(&report, max_filepath_length, &fraction, relative_dir, console_writer, enable_ansi_colors) catch continue;
                 }
@@ -1355,7 +1362,9 @@ pub const CommandLineReporter = struct {
                     failing = true;
                 }
 
-                console_writer.writeAll("\n") catch continue;
+                if (!skip_table_for_ai) {
+                    console_writer.writeAll("\n") catch continue;
+                }
             }
 
             if (comptime reporters.lcov) {
@@ -1368,7 +1377,7 @@ pub const CommandLineReporter = struct {
         }
 
         if (comptime reporters.text) {
-            {
+            if (!skip_table_for_ai) {
                 if (avg_count == 0) {
                     avg.functions = 0;
                     avg.lines = 0;
@@ -1414,25 +1423,25 @@ pub const CommandLineReporter = struct {
                 } else {
                     try console.writeAll(Output.prettyFmt("<r><d> |<r>\n", enable_ansi_colors));
                 }
-            }
 
-            console_writer.flush() catch return;
-            try console.writeAll(console_buffer.written());
-            try console.writeAll(Output.prettyFmt("<r><d>", enable_ansi_colors));
-            console.splatByteAll('-', max_filepath_length + 2) catch return;
-            if (has_git_diff) {
-                console.writeAll(Output.prettyFmt("|---------|---------|---------|-------------------<r>\n", enable_ansi_colors)) catch return;
-            } else {
-                console.writeAll(Output.prettyFmt("|---------|---------|-------------------<r>\n", enable_ansi_colors)) catch return;
-            }
+                console_writer.flush() catch return;
+                try console.writeAll(console_buffer.written());
+                try console.writeAll(Output.prettyFmt("<r><d>", enable_ansi_colors));
+                console.splatByteAll('-', max_filepath_length + 2) catch return;
+                if (has_git_diff) {
+                    console.writeAll(Output.prettyFmt("|---------|---------|---------|-------------------<r>\n", enable_ansi_colors)) catch return;
+                } else {
+                    console.writeAll(Output.prettyFmt("|---------|---------|-------------------<r>\n", enable_ansi_colors)) catch return;
+                }
 
-            // Print failure message for changed lines coverage
-            if (has_git_diff and changes_failing) {
-                const total_changed_pct: f64 = if (total_changed_executable > 0)
-                    @as(f64, @floatFromInt(total_covered_changed)) / @as(f64, @floatFromInt(total_changed_executable))
-                else
-                    1.0;
-                try console.print(Output.prettyFmt("\n<red><b>Coverage for changed lines ({d:.2}%) is below threshold ({d:.2}%)<r>\n", enable_ansi_colors), .{ total_changed_pct * 100.0, base_fraction.lines * 100.0 });
+                // Print failure message for changed lines coverage
+                if (has_git_diff and changes_failing) {
+                    const total_changed_pct: f64 = if (total_changed_executable > 0)
+                        @as(f64, @floatFromInt(total_covered_changed)) / @as(f64, @floatFromInt(total_changed_executable))
+                    else
+                        1.0;
+                    try console.print(Output.prettyFmt("\n<red><b>Coverage for changed lines ({d:.2}%) is below threshold ({d:.2}%)<r>\n", enable_ansi_colors), .{ total_changed_pct * 100.0, base_fraction.lines * 100.0 });
+                }
             }
 
             // Output AI agent prompts if applicable

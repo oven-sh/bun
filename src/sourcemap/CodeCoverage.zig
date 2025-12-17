@@ -805,11 +805,20 @@ pub const ChangesReport = struct {
                     range_start = null;
                 }
             } else {
-                // Uncovered line - start or extend range
+                // Uncovered line - start or extend range only if consecutive
                 if (range_start == null) {
+                    // Start new range
                     range_start = line;
+                    range_end = line;
+                } else if (line == range_end + 1) {
+                    // Extend consecutive range
+                    range_end = line;
+                } else {
+                    // Gap detected - close current range and start new one
+                    try uncovered_ranges.append(allocator, .{ .start = range_start.?, .end = range_end });
+                    range_start = line;
+                    range_end = line;
                 }
-                range_end = line;
             }
         }
 
@@ -839,7 +848,7 @@ pub const ChangesReport = struct {
                 }
             }
 
-            if (all_lines_changed and start_ordinal.isValid()) {
+            if (all_lines_changed and start_ordinal.isValid() and end_ordinal.isValid()) {
                 try uncovered_functions.append(allocator, .{
                     // Store as Ordinals (already converted from 0-indexed)
                     .start_line = start_ordinal,

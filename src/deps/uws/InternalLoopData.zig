@@ -4,7 +4,6 @@ pub const InternalLoopData = extern struct {
     sweep_timer: ?*Timer,
     sweep_timer_count: i32,
     wakeup_async: ?*us_internal_async,
-    last_write_failed: i32,
     head: ?*SocketContext,
     iterator: ?*SocketContext,
     closed_context_head: ?*SocketContext,

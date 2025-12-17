@@ -7,7 +7,7 @@ import { bunEnv, bunExe } from "harness";
 // When logging an async generator, Bun shows `{}` instead of something like
 // `Object [AsyncGenerator] {}` (Node.js) or `AsyncGenerator {}`.
 
-test("console.log should properly identify async generator objects", async () => {
+test.concurrent("console.log should properly identify async generator objects", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -40,7 +40,7 @@ console.log(arrayToIter([]));
   expect(exitCode).toBe(0);
 });
 
-test("console.log should properly identify regular generator objects", async () => {
+test.concurrent("console.log should properly identify regular generator objects", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -72,7 +72,7 @@ console.log(gen());
   expect(exitCode).toBe(0);
 });
 
-test("console.log shows generator state when it has yielded values", async () => {
+test.concurrent("console.log shows generator state when it has yielded values", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -104,7 +104,7 @@ console.log(g);
   expect(exitCode).toBe(0);
 });
 
-test("Bun.inspect should properly identify async generator", async () => {
+test.concurrent("Bun.inspect should properly identify async generator", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

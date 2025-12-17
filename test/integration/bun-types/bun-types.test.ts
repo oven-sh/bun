@@ -360,6 +360,100 @@ describe("@types/bun integration test", () => {
     });
   });
 
+  describe("bun:bundle feature() type safety with Registry", () => {
+    test("Registry augmentation restricts feature() to known flags", async () => {
+      const testCode = `
+        // Augment the Registry to define known flags
+        declare module "bun:bundle" {
+          interface Registry {
+            features: "DEBUG" | "PREMIUM" | "BETA";
+          }
+        }
+
+        import { feature } from "bun:bundle";
+
+        // Valid flags work
+        const a: boolean = feature("DEBUG");
+        const b: boolean = feature("PREMIUM");
+        const c: boolean = feature("BETA");
+
+        // Invalid flags are caught at compile time
+        // @ts-expect-error - "INVALID_FLAG" is not assignable to "DEBUG" | "PREMIUM" | "BETA"
+        const invalid: boolean = feature("INVALID_FLAG");
+
+        // @ts-expect-error - typos are caught
+        const typo: boolean = feature("DEUBG");
+      `;
+
+      const { diagnostics, emptyInterfaces } = await diagnose(TEMP_FIXTURE_DIR, {
+        files: {
+          "registry-test.ts": testCode,
+        },
+      });
+
+      expect(emptyInterfaces).toEqual(expectedEmptyInterfacesWhenNoDOM);
+      // Filter to only our test file - no diagnostics because @ts-expect-error suppresses errors
+      const relevantDiagnostics = diagnostics.filter(d => d.line?.startsWith("registry-test.ts"));
+      expect(relevantDiagnostics).toEqual([]);
+    });
+
+    test("Registry augmentation produces type errors for invalid flags", async () => {
+      // Verify that without @ts-expect-error, invalid flags actually produce errors
+      const invalidTestCode = `
+        declare module "bun:bundle" {
+          interface Registry {
+            features: "ALLOWED_FLAG";
+          }
+        }
+
+        import { feature } from "bun:bundle";
+
+        // This should cause a type error - INVALID_FLAG is not in Registry.features
+        const invalid: boolean = feature("INVALID_FLAG");
+      `;
+
+      const { diagnostics, emptyInterfaces } = await diagnose(TEMP_FIXTURE_DIR, {
+        files: {
+          "registry-invalid-test.ts": invalidTestCode,
+        },
+      });
+
+      expect(emptyInterfaces).toEqual(expectedEmptyInterfacesWhenNoDOM);
+      const relevantDiagnostics = diagnostics.filter(d => d.line?.startsWith("registry-invalid-test.ts"));
+      expect(relevantDiagnostics).toMatchInlineSnapshot(`
+        [
+          {
+            "code": 2345,
+            "line": "registry-invalid-test.ts:11:42",
+            "message": "Argument of type '\"INVALID_FLAG\"' is not assignable to parameter of type '\"ALLOWED_FLAG\"'.",
+          },
+        ]
+      `);
+    });
+
+    test("without Registry augmentation, feature() accepts any string", async () => {
+      // When Registry is not augmented, feature() falls back to accepting any string
+      const testCode = `
+        import { feature } from "bun:bundle";
+
+        // Any string works when Registry.features is not defined
+        const a: boolean = feature("ANY_FLAG");
+        const b: boolean = feature("ANOTHER_FLAG");
+        const c: boolean = feature("whatever");
+      `;
+
+      const { diagnostics, emptyInterfaces } = await diagnose(TEMP_FIXTURE_DIR, {
+        files: {
+          "no-registry-test.ts": testCode,
+        },
+      });
+
+      expect(emptyInterfaces).toEqual(expectedEmptyInterfacesWhenNoDOM);
+      const relevantDiagnostics = diagnostics.filter(d => d.line?.startsWith("no-registry-test.ts"));
+      expect(relevantDiagnostics).toEqual([]);
+    });
+  });
+
   test("checks with no lib at all", async () => {
     const { diagnostics, emptyInterfaces } = await diagnose(TEMP_FIXTURE_DIR, {
       options: {

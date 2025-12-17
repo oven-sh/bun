@@ -257,7 +257,10 @@ pub const CopyFile = struct {
             switch (bun.sys.getErrno(written)) {
                 .SUCCESS => {},
 
-                .NOSYS, .XDEV => {
+                // XDEV: cross-device copy not supported
+                // NOSYS: syscall not available
+                // OPNOTSUPP: filesystem doesn't support this operation
+                .NOSYS, .XDEV, .OPNOTSUPP => {
                     // TODO: this should use non-blocking I/O.
                     switch (jsc.Node.fs.NodeFS.copyFileUsingReadWriteLoop("", "", src_fd, dest_fd, if (unknown_size) 0 else remain, &total_written)) {
                         .err => |err| {
@@ -271,6 +274,8 @@ pub const CopyFile = struct {
                     }
                 },
 
+                // EINVAL: eCryptfs and other filesystems may not support copy_file_range.
+                // Also returned when the file descriptor is incompatible with the syscall.
                 .INVAL => {
                     if (comptime clear_append_if_invalid) {
                         if (!has_unset_append) {
@@ -287,7 +292,7 @@ pub const CopyFile = struct {
                     }
 
                     // If the Linux machine doesn't support
-                    // copy_file_range or the file descrpitor is
+                    // copy_file_range or the file descriptor is
                     // incompatible with the chosen syscall, fall back
                     // to a read/write loop
                     if (total_written == 0) {

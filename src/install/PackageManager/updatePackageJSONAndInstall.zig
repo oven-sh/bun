@@ -1,16 +1,5 @@
-/// Helper to write package.json content to disk.
-/// Opens the file, writes the content, truncates to the exact length, and closes.
 fn writePackageJSONToDisk(path: [:0]const u8, content: []const u8) !void {
-    const file = (try bun.sys.File.openat(
-        .cwd(),
-        path,
-        bun.O.RDWR,
-        0,
-    ).unwrap()).handle.stdFile();
-
-    try file.pwriteAll(content, 0);
-    std.posix.ftruncate(file.handle, content.len) catch {};
-    file.close();
+    try bun.sys.File.writeFile(bun.FD.cwd(), path, content).unwrap();
 }
 
 pub fn updatePackageJSONAndInstallWithManager(

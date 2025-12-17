@@ -77,6 +77,7 @@ pub const BunObject = struct {
     pub const s3 = toJSLazyPropertyCallback(Bun.getS3DefaultClient);
     pub const ValkeyClient = toJSLazyPropertyCallback(Bun.getValkeyClientConstructor);
     pub const valkey = toJSLazyPropertyCallback(Bun.getValkeyDefaultClient);
+    pub const Terminal = toJSLazyPropertyCallback(Bun.getTerminalConstructor);
     // --- Lazy property callbacks ---
 
     // --- Getters ---
@@ -143,6 +144,7 @@ pub const BunObject = struct {
         @export(&BunObject.s3, .{ .name = lazyPropertyCallbackName("s3") });
         @export(&BunObject.ValkeyClient, .{ .name = lazyPropertyCallbackName("ValkeyClient") });
         @export(&BunObject.valkey, .{ .name = lazyPropertyCallbackName("valkey") });
+        @export(&BunObject.Terminal, .{ .name = lazyPropertyCallbackName("Terminal") });
         // --- Lazy property callbacks ---
 
         // --- Callbacks ---
@@ -508,10 +510,10 @@ export fn Bun__inspect_singleline(globalThis: *JSGlobalObject, value: JSValue) b
 }
 
 pub fn getInspect(globalObject: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
-    const fun = jsc.createCallback(globalObject, ZigString.static("inspect"), 2, inspect);
+    const fun = jsc.JSFunction.create(globalObject, "inspect", inspect, 2, .{});
     var str = ZigString.init("nodejs.util.inspect.custom");
     fun.put(globalObject, ZigString.static("custom"), jsc.JSValue.symbolFor(globalObject, &str));
-    fun.put(globalObject, ZigString.static("table"), jsc.createCallback(globalObject, ZigString.static("table"), 3, inspectTable));
+    fun.put(globalObject, ZigString.static("table"), jsc.JSFunction.create(globalObject, "table", inspectTable, 3, .{}));
     return fun;
 }
 
@@ -946,13 +948,8 @@ pub fn indexOfLine(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
 
     var offset: usize = 0;
     if (arguments.len > 1) {
-        offset = @as(
-            usize,
-            @intCast(@max(
-                arguments[1].to(u32),
-                0,
-            )),
-        );
+        const offset_value = try arguments[1].coerce(i64, globalThis);
+        offset = @intCast(@max(offset_value, 0));
     }
 
     const bytes = buffer.byteSlice();
@@ -1217,11 +1214,19 @@ pub fn mmapFile(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.
         }
 
         if (try opts.get(globalThis, "size")) |value| {
-            map_size = @as(usize, @intCast(value.toInt64()));
+            const size_value = try value.coerceToInt64(globalThis);
+            if (size_value < 0) {
+                return globalThis.throwInvalidArguments("size must be a non-negative integer", .{});
+            }
+            map_size = @intCast(size_value);
         }
 
         if (try opts.get(globalThis, "offset")) |value| {
-            offset = @as(usize, @intCast(value.toInt64()));
+            const offset_value = try value.coerceToInt64(globalThis);
+            if (offset_value < 0) {
+                return globalThis.throwInvalidArguments("offset must be a non-negative integer", .{});
+            }
+            offset = @intCast(offset_value);
             offset = std.mem.alignBackwardAnyAlign(usize, offset, std.heap.pageSize());
         }
     }
@@ -1312,6 +1317,10 @@ pub fn getValkeyClientConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObj
     return jsc.API.Valkey.js.getConstructor(globalThis);
 }
 
+pub fn getTerminalConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
+    return api.Terminal.js.getConstructor(globalThis);
+}
+
 pub fn getEmbeddedFiles(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) bun.JSError!jsc.JSValue {
     const vm = globalThis.bunVM();
     const graph = vm.standalone_module_graph orelse return try jsc.JSValue.createEmptyArray(globalThis, 0);
@@ -1375,13 +1384,13 @@ const CSRFObject = struct {
         object.put(
             globalThis,
             ZigString.static("generate"),
-            jsc.createCallback(globalThis, ZigString.static("generate"), 1, @import("../../csrf.zig").csrf__generate),
+            jsc.JSFunction.create(globalThis, "generate", @import("../../csrf.zig").csrf__generate, 1, .{}),
         );
 
         object.put(
             globalThis,
             ZigString.static("verify"),
-            jsc.createCallback(globalThis, ZigString.static("verify"), 1, @import("../../csrf.zig").csrf__verify),
+            jsc.JSFunction.create(globalThis, "verify", @import("../../csrf.zig").csrf__verify, 1, .{}),
         );
 
         return object;

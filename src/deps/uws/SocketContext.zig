@@ -192,8 +192,8 @@ pub const SocketContext = opaque {
         c.us_socket_context_remove_server_name(@intFromBool(ssl), this, hostname_pattern);
     }
 
-    pub fn adoptSocket(this: *SocketContext, ssl: bool, s: *us_socket_t, ext_size: i32) ?*us_socket_t {
-        return c.us_socket_context_adopt_socket(@intFromBool(ssl), this, s, ext_size);
+    pub fn adoptSocket(this: *SocketContext, ssl: bool, s: *us_socket_t, old_ext_size: i32, ext_size: i32) ?*us_socket_t {
+        return c.us_socket_context_adopt_socket(@intFromBool(ssl), this, s, old_ext_size, ext_size);
     }
 
     pub fn connect(this: *SocketContext, ssl: bool, host: [*:0]const u8, port: i32, options: i32, socket_ext_size: i32, has_dns_resolved: *i32) ?*anyopaque {
@@ -252,7 +252,7 @@ pub const c = struct {
     pub extern fn us_create_bun_nossl_socket_context(loop: ?*Loop, ext_size: i32) ?*SocketContext;
     pub extern fn us_create_bun_ssl_socket_context(loop: ?*Loop, ext_size: i32, options: SocketContext.BunSocketContextOptions, err: *create_bun_socket_error_t) ?*SocketContext;
     pub extern fn us_create_child_socket_context(ssl: i32, context: ?*SocketContext, context_ext_size: i32) ?*SocketContext;
-    pub extern fn us_socket_context_adopt_socket(ssl: i32, context: *SocketContext, s: *us_socket_t, ext_size: i32) ?*us_socket_t;
+    pub extern fn us_socket_context_adopt_socket(ssl: i32, context: *SocketContext, s: *us_socket_t, old_ext_size: i32, ext_size: i32) ?*us_socket_t;
     pub extern fn us_socket_context_close(ssl: i32, ctx: *anyopaque) void;
     pub extern fn us_socket_context_connect(ssl: i32, context: *SocketContext, host: [*:0]const u8, port: i32, options: i32, socket_ext_size: i32, has_dns_resolved: *i32) ?*anyopaque;
     pub extern fn us_socket_context_connect_unix(ssl: i32, context: *SocketContext, path: [*:0]const u8, pathlen: usize, options: i32, socket_ext_size: i32) ?*us_socket_t;

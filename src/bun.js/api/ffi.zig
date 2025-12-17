@@ -780,7 +780,6 @@ pub const FFI = struct {
                         &str,
                         @as(u32, @intCast(function.arg_types.items.len)),
                         bun.cast(*const jsc.JSHostFn, compiled.ptr),
-                        false,
                         true,
                         function.symbol_from_dynamic_library,
                     );
@@ -1011,7 +1010,7 @@ pub const FFI = struct {
                     .linux => "so",
                     .mac => "dylib",
                     .windows => "dll",
-                    else => @compileError("TODO"),
+                    .wasm => @compileError("TODO"),
                 },
             )) |resolved| {
                 @memcpy(filepath_buf[0..resolved.len], resolved);
@@ -1134,7 +1133,6 @@ pub const FFI = struct {
                         &str,
                         @as(u32, @intCast(function.arg_types.items.len)),
                         bun.cast(*const jsc.JSHostFn, compiled.ptr),
-                        false,
                         true,
                         function.symbol_from_dynamic_library,
                     );
@@ -1237,7 +1235,6 @@ pub const FFI = struct {
                         name,
                         @as(u32, @intCast(function.arg_types.items.len)),
                         bun.cast(*jsc.JSHostFn, compiled.ptr),
-                        false,
                         true,
                         function.symbol_from_dynamic_library,
                     );
@@ -1363,7 +1360,7 @@ pub const FFI = struct {
                 const num = ptr.asPtrAddress();
                 if (num > 0)
                     function.symbol_from_dynamic_library = @as(*anyopaque, @ptrFromInt(num));
-            } else {
+            } else if (ptr.isHeapBigInt()) {
                 const num = ptr.toUInt64NoTruncate();
                 if (num > 0) {
                     function.symbol_from_dynamic_library = @as(*anyopaque, @ptrFromInt(num));
@@ -1449,7 +1446,6 @@ pub const FFI = struct {
                 // val.allocator.free(val.step.compiled.buf);
                 if (val.step.compiled.js_function != .zero) {
                     _ = globalThis;
-                    // _ = jsc.untrackFunction(globalThis, val.step.compiled.js_function);
                     val.step.compiled.js_function = .zero;
                 }
 

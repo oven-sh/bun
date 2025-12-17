@@ -326,6 +326,7 @@
             "group": "Utilities",
             "icon": "wrench",
             "pages": [
+              "/guides/util/upgrade",
               "/guides/util/detect-bun",
               "/guides/util/version",
               "/guides/util/hash-a-password",
@@ -456,7 +457,6 @@
             "pages": [
               "/guides/test/run-tests",
               "/guides/test/watch-mode",
-              "/guides/test/concurrent-test-glob",
               "/guides/test/migrate-from-jest",
               "/guides/test/mock-functions",
               "/guides/test/spy-on",
@@ -465,6 +465,7 @@
               "/guides/test/update-snapshots",
               "/guides/test/coverage",
               "/guides/test/coverage-threshold",
+              "/guides/test/concurrent-test-glob",
               "/guides/test/skip-tests",
               "/guides/test/todo-tests",
               "/guides/test/timeout",

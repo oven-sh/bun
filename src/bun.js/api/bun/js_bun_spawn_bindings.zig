@@ -597,6 +597,17 @@ pub fn spawnMaybeSync(
             spawn_options.deinit();
             switch (err.getErrno()) {
                 .ACCES, .NOENT, .PERM, .ISDIR, .NOTDIR => |errno| {
+                    // For ENOENT, check if cwd exists first - if not, the error is about cwd, not the binary
+                    if (errno == .NOENT and cwd.len > 0) {
+                        // Check if cwd directory exists
+                        const cwd_stat = bun.sys.stat(cwd);
+                        if (cwd_stat == .err and cwd_stat.err.getErrno() == .NOENT) {
+                            // cwd doesn't exist - report error about cwd, not the binary
+                            var systemerror = err.withPath(cwd).toSystemError();
+                            systemerror.errno = -bun.sys.UV_E.NOENT;
+                            return globalThis.throwValue(systemerror.toErrorInstance(globalThis));
+                        }
+                    }
                     const display_path: [:0]const u8 = if (argv.items.len > 0 and argv.items[0] != null)
                         std.mem.sliceTo(argv.items[0].?, 0)
                     else

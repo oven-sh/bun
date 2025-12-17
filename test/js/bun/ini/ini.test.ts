@@ -137,12 +137,75 @@ hello = "Bearer \${TOKEN}"
     });
 
     envVarTest({
-      name: "double quoted env var not found",
+      name: "double quoted env var not found leaves as-is",
       ini: /* ini */ `
 hello = "\${NOTFOUND}"
       `,
       env: {},
+      expected: { hello: "${NOTFOUND}" },
+    });
+
+    envVarTest({
+      name: "unquoted optional env var expands to empty when not found",
+      ini: /* ini */ `
+hello = \${NOTFOUND?}
+      `,
+      env: {},
       expected: { hello: "" },
+    });
+
+    envVarTest({
+      name: "unquoted optional env var expands to value when found",
+      ini: /* ini */ `
+hello = \${TOKEN?}
+      `,
+      env: { TOKEN: "secret" },
+      expected: { hello: "secret" },
+    });
+
+    envVarTest({
+      name: "double quoted optional env var expands to empty when not found",
+      ini: /* ini */ `
+hello = "\${NOTFOUND?}"
+      `,
+      env: {},
+      expected: { hello: "" },
+    });
+
+    envVarTest({
+      name: "double quoted optional env var expands to value when found",
+      ini: /* ini */ `
+hello = "\${TOKEN?}"
+      `,
+      env: { TOKEN: "secret" },
+      expected: { hello: "secret" },
+    });
+
+    envVarTest({
+      name: "single quoted optional env var expands to empty when not found",
+      ini: /* ini */ `
+hello = '\${NOTFOUND?}'
+      `,
+      env: {},
+      expected: { hello: "" },
+    });
+
+    envVarTest({
+      name: "unquoted optional env var with prefix",
+      ini: /* ini */ `
+hello = Bearer \${TOKEN?}
+      `,
+      env: {},
+      expected: { hello: "Bearer " },
+    });
+
+    envVarTest({
+      name: "double quoted optional env var with prefix",
+      ini: /* ini */ `
+hello = "Bearer \${TOKEN?}"
+      `,
+      env: {},
+      expected: { hello: "Bearer " },
     });
 
     // Note: In JSON strings, \$ is just $ (backslash doesn't escape $)

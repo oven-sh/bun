@@ -217,34 +217,7 @@ pub const Parser = struct {
         var val = std.mem.trim(u8, val_, " \n\r\t");
 
         if (isQuoted(val)) out: {
-            // For values, check if this is a properly quoted string (no interior unescaped quotes)
-            // If so, JSON parse to handle escape sequences, then do env var expansion
-            if (comptime usage == .value) {
-                if (isProperlyQuoted(val)) {
-                    const src = bun.logger.Source.initPathString(this.source.path.text, val);
-                    var log = bun.logger.Log.init(arena_allocator);
-                    defer log.deinit();
-                    // JSON parse to handle escape sequences (e.g., \n, \r, \")
-                    const json_val: Expr = bun.json.parseUTF8Impl(&src, &log, arena_allocator, true) catch {
-                        // If JSON parsing fails, strip quotes and return as-is
-                        const inner = if (val.len > 1) val[1 .. val.len - 1] else "";
-                        const expanded = try this.expandEnvVars(arena_allocator, inner);
-                        return Expr.init(E.String, E.String.init(expanded), Loc{ .start = offset + 1 });
-                    };
-                    if (json_val.asString(arena_allocator)) |str| {
-                        // Do env var expansion on the JSON-parsed string
-                        const expanded = try this.expandEnvVars(arena_allocator, str);
-                        return Expr.init(E.String, E.String.init(expanded), Loc{ .start = offset + 1 });
-                    }
-                    // JSON parsed to non-string (e.g., number, boolean), return as-is
-                    return json_val;
-                }
-                // Not properly quoted (has interior unescaped quotes like `"{ o: "p"...}"`)
-                // Skip to after the if/else block to return val as-is with quotes preserved
-                break :out;
-            }
-
-            // For section/key usage: remove single quotes before calling JSON.parse
+            // remove single quotes before calling JSON.parse
             if (val.len > 0 and val[0] == '\'') {
                 val = if (val.len > 1) val[1 .. val.len - 1] else val[1..];
                 offset += 1;
@@ -252,15 +225,26 @@ pub const Parser = struct {
             const src = bun.logger.Source.initPathString(this.source.path.text, val);
             var log = bun.logger.Log.init(arena_allocator);
             defer log.deinit();
-            // Try to parse it and it if fails will just treat it as a string
+            // Try to parse it and if it fails will just treat it as a string
             const json_val: Expr = bun.json.parseUTF8Impl(&src, &log, arena_allocator, true) catch {
+                // JSON parse failed (e.g., single-quoted string like '${VAR}')
+                // Still need to expand env vars in the content
+                if (comptime usage == .value) {
+                    const expanded = try this.expandEnvVars(arena_allocator, val);
+                    return Expr.init(E.String, E.String.init(expanded), Loc{ .start = @intCast(offset) });
+                }
                 break :out;
             };
 
             if (json_val.asString(arena_allocator)) |str| {
-                if (comptime usage == .section) return strToRope(ropealloc, str);
-                return str;
+                // Expand env vars in the JSON-parsed string
+                const expanded = if (comptime usage == .value) try this.expandEnvVars(arena_allocator, str) else str;
+                if (comptime usage == .value) return Expr.init(E.String, E.String.init(expanded), Loc{ .start = @intCast(offset) });
+                if (comptime usage == .section) return strToRope(ropealloc, expanded);
+                return expanded;
             }
+
+            if (comptime usage == .value) return json_val;
 
             // unfortunately, we need to match npm/ini behavior here,
             // which requires us to turn these into a string,
@@ -412,14 +396,13 @@ pub const Parser = struct {
         return strToRope(ropealloc, val[0..]);
     }
 
-    /// Expands ${VAR} environment variable substitutions in a string.
+    /// Expands ${VAR} and ${VAR?} environment variable substitutions in a string.
     /// Used for quoted values after JSON parsing has already handled escape sequences.
     ///
-    /// Behavior differences from unquoted path (parseEnvSubstitution):
-    /// - Backslash escaping is already handled by JSON parsing, so we don't check for \$ here
-    /// - Missing env vars expand to empty string (matching npm's envReplace behavior)
-    /// - This is called AFTER JSON.parse, so "\${VAR}" in the original becomes "${VAR}" here
-    ///   and will be expanded (the backslash was consumed by JSON parsing)
+    /// Behavior (same as unquoted):
+    /// - ${VAR} - if VAR is undefined, leave as "${VAR}" (no expansion)
+    /// - ${VAR?} - if VAR is undefined, expand to empty string
+    /// - Backslash escaping is already handled by JSON parsing
     fn expandEnvVars(this: *Parser, allocator: Allocator, val: []const u8) OOM![]const u8 {
         // Quick check if there are any env vars to expand
         if (std.mem.indexOf(u8, val, "${") == null) {
@@ -442,11 +425,17 @@ pub const Parser = struct {
                     if (depth > 0) j += 1;
                 }
                 if (depth == 0) {
-                    const env_var = val[i + 2 .. j];
+                    const env_var_raw = val[i + 2 .. j];
+                    const optional = env_var_raw.len > 0 and env_var_raw[env_var_raw.len - 1] == '?';
+                    const env_var = if (optional) env_var_raw[0 .. env_var_raw.len - 1] else env_var_raw;
+
                     if (this.env.get(env_var)) |expanded| {
                         try result.appendSlice(expanded);
+                    } else if (!optional) {
+                        // Not found and not optional: leave as-is
+                        try result.appendSlice(val[i .. j + 1]);
                     }
-                    // If env var not found, expand to empty string (matching npm behavior)
+                    // If optional and not found: expand to empty string (append nothing)
                     i = j + 1;
                     continue;
                 }
@@ -462,6 +451,9 @@ pub const Parser = struct {
     /// - `i` must be an index into `val` that points to a '$' char
     ///
     /// npm/ini uses a regex pattern that will select the inner most ${...}
+    /// Supports ${VAR} and ${VAR?} syntax:
+    /// - ${VAR} - if undefined, returns null (leaves as-is)
+    /// - ${VAR?} - if undefined, expands to empty string
     fn parseEnvSubstitution(this: *Parser, val: []const u8, start: usize, i: usize, unesc: *std.array_list.Managed(u8)) OOM!?usize {
         bun.debugAssert(val[i] == '$');
         var esc = false;
@@ -488,10 +480,18 @@ pub const Parser = struct {
                 try unesc.appendSlice(missed);
             }
 
-            const env_var = val[i + 2 .. j];
+            const env_var_raw = val[i + 2 .. j];
+            const optional = env_var_raw.len > 0 and env_var_raw[env_var_raw.len - 1] == '?';
+            const env_var = if (optional) env_var_raw[0 .. env_var_raw.len - 1] else env_var_raw;
+
             // https://github.com/npm/cli/blob/534ad7789e5c61f579f44d782bdd18ea3ff1ee20/workspaces/config/lib/env-replace.js#L6
-            const expanded = this.env.get(env_var) orelse return null;
-            try unesc.appendSlice(expanded);
+            if (this.env.get(env_var)) |expanded| {
+                try unesc.appendSlice(expanded);
+            } else if (!optional) {
+                // Not found and not optional: return null to leave as-is
+                return null;
+            }
+            // If optional and not found: expand to empty string (append nothing)
 
             return j;
         }
@@ -558,30 +558,6 @@ pub const Parser = struct {
     fn isQuoted(val: []const u8) bool {
         return (bun.strings.startsWithChar(val, '"') and bun.strings.endsWithChar(val, '"')) or
             (bun.strings.startsWithChar(val, '\'') and bun.strings.endsWithChar(val, '\''));
-    }
-
-    /// Check if a string is properly quoted (quotes at start/end with no unescaped quotes in between).
-    /// This matches npm/ini behavior where `"hello"` is properly quoted but `"hello "world""` is not.
-    fn isProperlyQuoted(val: []const u8) bool {
-        if (val.len < 2) return false;
-        const quote_char = val[0];
-        if (quote_char != '"' and quote_char != '\'') return false;
-        if (val[val.len - 1] != quote_char) return false;
-
-        // Check for unescaped quotes in the interior
-        var i: usize = 1;
-        while (i < val.len - 1) : (i += 1) {
-            if (val[i] == '\\' and i + 1 < val.len - 1) {
-                // Skip escaped character
-                i += 1;
-                continue;
-            }
-            if (val[i] == quote_char) {
-                // Found an unescaped quote in the interior
-                return false;
-            }
-        }
-        return true;
     }
 };
 

@@ -225,7 +225,7 @@ test("should call both functions", () => {
   expect(result.exitCode).toBe(0); // Should pass
 });
 
-test("--coverage-changes defaults to main branch", async () => {
+test("--coverage-changes defaults to HEAD (uncommitted changes)", async () => {
   // Create initial files
   const dir = await setupGitRepo({
     "lib.ts": `
@@ -246,10 +246,7 @@ test("should call foo", () => {
   // Initial commit on main
   await gitAddCommit(dir, "Initial commit");
 
-  // Create feature branch
-  await gitCheckoutBranch(dir, "feature");
-
-  // Add new covered function
+  // Add new covered function WITHOUT committing (uncommitted changes)
   await Bun.write(
     `${dir}/lib.ts`,
     `
@@ -276,9 +273,7 @@ test("should call both", () => {
 `,
   );
 
-  await gitAddCommit(dir, "Add bar");
-
-  // Run coverage with --coverage-changes without specifying branch (defaults to main)
+  // Run coverage with --coverage-changes without specifying branch (defaults to HEAD for uncommitted changes)
   const result = spawnSync([bunExe(), "test", "--coverage", "--coverage-changes"], {
     cwd: dir,
     env: bunEnv,
@@ -287,7 +282,7 @@ test("should call both", () => {
 
   const stderr = normalizeBunSnapshot(result.stderr.toString("utf-8"), dir);
 
-  // Should show % Chang column (defaults to comparing against main)
+  // Should show % Chang column (defaults to HEAD, showing uncommitted changes)
   expect(stderr).toContain("% Chang");
   expect(result.exitCode).toBe(0);
 });

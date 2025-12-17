@@ -188,7 +188,7 @@ fn saveChangedFile(
 }
 
 /// Runs git diff and returns the changed files map
-/// base_branch: the branch to diff against (e.g., "main", "origin/main")
+/// base_branch: the branch to diff against (e.g., "main", "origin/main", or "HEAD" for uncommitted changes)
 /// cwd: working directory for git command (null for current directory)
 pub fn getChangedFiles(allocator: std.mem.Allocator, base_branch: []const u8, cwd: ?[]const u8) !GitDiffResult {
     var path_buf: bun.PathBuffer = undefined;
@@ -200,9 +200,13 @@ pub fn getChangedFiles(allocator: std.mem.Allocator, base_branch: []const u8, cw
         };
     };
 
-    // Run: git diff <base_branch>...HEAD -U0 --no-color
-    // The ... syntax shows changes since the branches diverged
-    const diff_ref = try std.fmt.allocPrint(allocator, "{s}...HEAD", .{base_branch});
+    // When base_branch is "HEAD", show uncommitted changes (staged + unstaged)
+    // Otherwise, use the ... syntax to show changes since branches diverged
+    const is_head = std.mem.eql(u8, base_branch, "HEAD");
+    const diff_ref = if (is_head)
+        try allocator.dupe(u8, "HEAD")
+    else
+        try std.fmt.allocPrint(allocator, "{s}...HEAD", .{base_branch});
     defer allocator.free(diff_ref);
 
     const proc = bun.spawnSync(&.{

@@ -1,5 +1,7 @@
 fn writePackageJSONToDisk(path: [:0]const u8, content: []const u8) !void {
-    try bun.sys.File.writeFile(bun.FD.cwd(), path, content).unwrap();
+    const file = try bun.sys.File.openat(bun.FD.cwd(), path, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o664).unwrap();
+    defer file.close();
+    try file.writeAll(content).unwrap();
 }
 
 pub fn updatePackageJSONAndInstallWithManager(

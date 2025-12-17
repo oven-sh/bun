@@ -1953,7 +1953,7 @@ declare module "bun" {
     /**
      * Whether to autoload .env files when the standalone executable runs
      *
-     * Standalone-only: aplies only when building/running the standalone executable.
+     * Standalone-only: applies only when building/running the standalone executable.
      *
      * Equivalent CLI flags: `--compile-autoload-dotenv`, `--no-compile-autoload-dotenv`
      *

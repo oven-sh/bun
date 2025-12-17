@@ -991,7 +991,20 @@ pub const CommandLineReporter = struct {
             bun.SourceMap.coverage.ByteRangeMapping.isLessThan,
         );
 
-        try this.printCodeCoverage(vm, opts, byte_ranges.items, reporters, enable_ansi_colors);
+        // Get git diff if --coverage-changes was specified
+        var git_diff: ?bun.SourceMap.GitDiff.GitDiffResult = null;
+        defer if (git_diff) |*gd| gd.deinit();
+
+        if (opts.changes_base_branch) |base_branch| {
+            git_diff = try bun.SourceMap.GitDiff.getChangedFiles(bun.default_allocator, base_branch, vm.transpiler.fs.top_level_dir);
+            if (git_diff.?.error_message) |err_msg| {
+                Output.prettyErrorln("<r><red>error<r>: Failed to get git diff: {s}", .{err_msg});
+                git_diff.?.deinit();
+                git_diff = null;
+            }
+        }
+
+        try this.printCodeCoverage(vm, opts, byte_ranges.items, if (git_diff) |*gd| gd else null, reporters, enable_ansi_colors);
     }
 
     pub fn printCodeCoverage(
@@ -999,6 +1012,7 @@ pub const CommandLineReporter = struct {
         vm: *jsc.VirtualMachine,
         opts: *TestCommand.CodeCoverageOptions,
         byte_ranges: []bun.SourceMap.coverage.ByteRangeMapping,
+        git_diff: ?*bun.SourceMap.GitDiff.GitDiffResult,
         comptime reporters: TestCommand.Reporters,
         comptime enable_ansi_colors: bool,
     ) !void {
@@ -1018,6 +1032,7 @@ pub const CommandLineReporter = struct {
         }
 
         const relative_dir = vm.transpiler.fs.top_level_dir;
+        const has_git_diff = git_diff != null and git_diff.?.files.count() > 0;
 
         // --- Text ---
         const max_filepath_length: usize = if (reporters.text) brk: {
@@ -1047,21 +1062,46 @@ pub const CommandLineReporter = struct {
             break :brk len;
         } else 0;
 
-        var console = Output.errorWriter();
+        const console = Output.errorWriter();
         const base_fraction = opts.fractions;
         var failing = false;
+
+        // Track changed lines coverage
+        var total_changed_executable: u32 = 0;
+        var total_covered_changed: u32 = 0;
+        var changes_failing = false;
+
+        // For AI agent prompts - collect uncovered files info
+        const AIPromptFile = struct {
+            path: []const u8,
+            uncovered_ranges: []const coverage.ChangesResult.LineRange,
+            uncovered_functions: []const coverage.ChangesResult.UncoveredFunction,
+        };
+        var ai_prompt_files: std.ArrayListUnmanaged(AIPromptFile) = .empty;
+        defer ai_prompt_files.deinit(bun.default_allocator);
 
         if (comptime reporters.text) {
             console.writeAll(Output.prettyFmt("<r><d>", enable_ansi_colors)) catch return;
             console.splatByteAll('-', max_filepath_length + 2) catch return;
-            console.writeAll(Output.prettyFmt("|---------|---------|-------------------<r>\n", enable_ansi_colors)) catch return;
+            if (has_git_diff) {
+                console.writeAll(Output.prettyFmt("|---------|---------|---------|-------------------<r>\n", enable_ansi_colors)) catch return;
+            } else {
+                console.writeAll(Output.prettyFmt("|---------|---------|-------------------<r>\n", enable_ansi_colors)) catch return;
+            }
             console.writeAll("File") catch return;
             console.splatByteAll(' ', max_filepath_length - "File".len + 1) catch return;
-            // writer.writeAll(Output.prettyFmt(" <d>|<r> % Funcs <d>|<r> % Blocks <d>|<r> % Lines <d>|<r> Uncovered Line #s\n", enable_ansi_colors)) catch return;
-            console.writeAll(Output.prettyFmt(" <d>|<r> % Funcs <d>|<r> % Lines <d>|<r> Uncovered Line #s\n", enable_ansi_colors)) catch return;
+            if (has_git_diff) {
+                console.writeAll(Output.prettyFmt(" <d>|<r> % Funcs <d>|<r> % Lines <d>|<r> % Chang <d>|<r> Uncovered Line #s\n", enable_ansi_colors)) catch return;
+            } else {
+                console.writeAll(Output.prettyFmt(" <d>|<r> % Funcs <d>|<r> % Lines <d>|<r> Uncovered Line #s\n", enable_ansi_colors)) catch return;
+            }
             console.writeAll(Output.prettyFmt("<d>", enable_ansi_colors)) catch return;
             console.splatByteAll('-', max_filepath_length + 2) catch return;
-            console.writeAll(Output.prettyFmt("|---------|---------|-------------------<r>\n", enable_ansi_colors)) catch return;
+            if (has_git_diff) {
+                console.writeAll(Output.prettyFmt("|---------|---------|---------|-------------------<r>\n", enable_ansi_colors)) catch return;
+            } else {
+                console.writeAll(Output.prettyFmt("|---------|---------|-------------------<r>\n", enable_ansi_colors)) catch return;
+            }
         }
 
         var console_buffer = std.Io.Writer.Allocating.init(bun.default_allocator);
@@ -1138,11 +1178,11 @@ pub const CommandLineReporter = struct {
         // --- LCOV ---
 
         for (byte_ranges) |*entry| {
+            const utf8 = entry.source_url.slice();
+            const relative_path = bun.path.relative(relative_dir, utf8);
+
             // Check if this file should be ignored based on coveragePathIgnorePatterns
             if (opts.ignore_patterns.len > 0) {
-                const utf8 = entry.source_url.slice();
-                const relative_path = bun.path.relative(relative_dir, utf8);
-
                 var should_ignore = false;
                 for (opts.ignore_patterns) |pattern| {
                     if (bun.glob.match(pattern, relative_path).matches()) {
@@ -1159,9 +1199,154 @@ pub const CommandLineReporter = struct {
             var report = CodeCoverageReport.generate(vm.global, bun.default_allocator, entry, opts.ignore_sourcemap) orelse continue;
             defer report.deinit(bun.default_allocator);
 
+            // Compute changed lines coverage if we have git diff
+            var changed_coverage: ?f64 = null;
+            var uncovered_changed_ranges: ?std.ArrayListUnmanaged(coverage.ChangesResult.LineRange) = null;
+            defer if (uncovered_changed_ranges) |*ranges| ranges.deinit(bun.default_allocator);
+            var uncovered_changed_functions: ?std.ArrayListUnmanaged(coverage.ChangesResult.UncoveredFunction) = null;
+            defer if (uncovered_changed_functions) |*funcs| funcs.deinit(bun.default_allocator);
+
+            if (git_diff) |gd| {
+                // Skip test files for changed lines tracking
+                var is_test_file = false;
+                if (opts.skip_test_files) {
+                    const ext = std.fs.path.extension(relative_path);
+                    const name_without_extension = relative_path[0 .. relative_path.len - ext.len];
+                    inline for (Scanner.test_name_suffixes) |suffix| {
+                        if (bun.strings.endsWithComptime(name_without_extension, suffix)) {
+                            is_test_file = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (!is_test_file) {
+                    if (gd.files.getPtr(relative_path)) |changed_file| {
+                        const changes_stats = try coverage.ChangesReport.computeForReport(&report, changed_file, bun.default_allocator);
+                        uncovered_changed_ranges = changes_stats.uncovered_ranges;
+                        uncovered_changed_functions = changes_stats.uncovered_functions;
+
+                        if (changes_stats.total_changed_executable > 0) {
+                            total_changed_executable += changes_stats.total_changed_executable;
+                            total_covered_changed += changes_stats.covered_changed;
+                            changed_coverage = @as(f64, @floatFromInt(changes_stats.covered_changed)) / @as(f64, @floatFromInt(changes_stats.total_changed_executable));
+
+                            if (changed_coverage.? < base_fraction.lines) {
+                                changes_failing = true;
+                                // Collect for AI prompts (only if there are uncovered ranges or functions)
+                                const has_uncovered_ranges = uncovered_changed_ranges.?.items.len > 0;
+                                const has_uncovered_funcs = uncovered_changed_functions.?.items.len > 0;
+                                if (has_uncovered_ranges or has_uncovered_funcs) {
+                                    try ai_prompt_files.append(bun.default_allocator, .{
+                                        .path = try bun.default_allocator.dupe(u8, relative_path),
+                                        .uncovered_ranges = try bun.default_allocator.dupe(coverage.ChangesResult.LineRange, uncovered_changed_ranges.?.items),
+                                        .uncovered_functions = try bun.default_allocator.dupe(coverage.ChangesResult.UncoveredFunction, uncovered_changed_functions.?.items),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             if (comptime reporters.text) {
                 var fraction = base_fraction;
-                CodeCoverageReport.Text.writeFormat(&report, max_filepath_length, &fraction, relative_dir, console_writer, enable_ansi_colors) catch continue;
+
+                // If we have git diff, use writeFormatWithValues (without uncovered lines)
+                // so we can insert % Chang column before uncovered lines
+                if (has_git_diff) {
+                    const fns = report.functionCoverageFraction();
+                    const lines = report.linesCoverageFraction();
+                    const stmts = report.stmtsCoverageFraction();
+                    fraction.functions = fns;
+                    fraction.lines = lines;
+                    fraction.stmts = stmts;
+
+                    const failed = fns < base_fraction.functions or lines < base_fraction.lines;
+                    fraction.failing = failed;
+
+                    CodeCoverageReport.Text.writeFormatWithValues(
+                        relative_path,
+                        max_filepath_length,
+                        fraction,
+                        base_fraction,
+                        failed,
+                        console_writer,
+                        true,
+                        enable_ansi_colors,
+                    ) catch continue;
+
+                    // Add % Changed column
+                    if (changed_coverage) |cc| {
+                        try console_writer.writeAll(Output.prettyFmt("<r><d> | <r>", enable_ansi_colors));
+                        if (cc < base_fraction.lines) {
+                            try console_writer.writeAll(Output.prettyFmt("<b><red>", enable_ansi_colors));
+                        } else {
+                            try console_writer.writeAll(Output.prettyFmt("<b><green>", enable_ansi_colors));
+                        }
+                        try console_writer.print("{d: >7.2}", .{cc * 100.0});
+                        try console_writer.writeAll(Output.prettyFmt("<r>", enable_ansi_colors));
+                    } else {
+                        try console_writer.writeAll(Output.prettyFmt("<r><d> |       -<r>", enable_ansi_colors));
+                    }
+
+                    // Now print uncovered lines column (manually, same as writeFormat does)
+                    try console_writer.writeAll(Output.prettyFmt("<r><d> | <r>", enable_ansi_colors));
+
+                    var executable_lines_that_havent_been_executed = bun.handleOom(report.lines_which_have_executed.clone(bun.default_allocator));
+                    defer executable_lines_that_havent_been_executed.deinit(bun.default_allocator);
+                    executable_lines_that_havent_been_executed.toggleAll();
+                    executable_lines_that_havent_been_executed.setIntersection(report.executable_lines);
+
+                    var iter = executable_lines_that_havent_been_executed.iterator(.{});
+                    var start_of_line_range: usize = 0;
+                    var prev_line: usize = 0;
+                    var is_first = true;
+
+                    while (iter.next()) |next_line| {
+                        if (next_line == (prev_line + 1)) {
+                            prev_line = next_line;
+                            continue;
+                        } else if (is_first and start_of_line_range == 0 and prev_line == 0) {
+                            start_of_line_range = next_line;
+                            prev_line = next_line;
+                            continue;
+                        }
+
+                        if (is_first) {
+                            is_first = false;
+                        } else {
+                            try console_writer.print(Output.prettyFmt("<r><d>,<r>", enable_ansi_colors), .{});
+                        }
+
+                        if (start_of_line_range == prev_line) {
+                            try console_writer.print(Output.prettyFmt("<red>{d}", enable_ansi_colors), .{start_of_line_range + 1});
+                        } else {
+                            try console_writer.print(Output.prettyFmt("<red>{d}-{d}", enable_ansi_colors), .{ start_of_line_range + 1, prev_line + 1 });
+                        }
+
+                        prev_line = next_line;
+                        start_of_line_range = next_line;
+                    }
+
+                    if (prev_line != start_of_line_range) {
+                        if (is_first) {
+                            is_first = false;
+                        } else {
+                            try console_writer.print(Output.prettyFmt("<r><d>,<r>", enable_ansi_colors), .{});
+                        }
+
+                        if (start_of_line_range == prev_line) {
+                            try console_writer.print(Output.prettyFmt("<red>{d}", enable_ansi_colors), .{start_of_line_range + 1});
+                        } else {
+                            try console_writer.print(Output.prettyFmt("<red>{d}-{d}", enable_ansi_colors), .{ start_of_line_range + 1, prev_line + 1 });
+                        }
+                    }
+                } else {
+                    // No git diff - use the standard writeFormat
+                    CodeCoverageReport.Text.writeFormat(&report, max_filepath_length, &fraction, relative_dir, console_writer, enable_ansi_colors) catch continue;
+                }
+
                 avg.functions += fraction.functions;
                 avg.lines += fraction.lines;
                 avg.stmts += fraction.stmts;
@@ -1211,16 +1396,87 @@ pub const CommandLineReporter = struct {
                     enable_ansi_colors,
                 );
 
-                try console.writeAll(Output.prettyFmt("<r><d> |<r>\n", enable_ansi_colors));
+                // Add total changed coverage
+                if (has_git_diff) {
+                    const total_changed_pct: f64 = if (total_changed_executable > 0)
+                        @as(f64, @floatFromInt(total_covered_changed)) / @as(f64, @floatFromInt(total_changed_executable))
+                    else
+                        1.0;
+
+                    try console.writeAll(Output.prettyFmt("<r><d> | <r>", enable_ansi_colors));
+                    if (total_changed_pct < base_fraction.lines and total_changed_executable > 0) {
+                        try console.writeAll(Output.prettyFmt("<b><red>", enable_ansi_colors));
+                    } else {
+                        try console.writeAll(Output.prettyFmt("<b><green>", enable_ansi_colors));
+                    }
+                    try console.print("{d: >7.2}", .{total_changed_pct * 100.0});
+                    try console.writeAll(Output.prettyFmt("<r><d> |<r>\n", enable_ansi_colors));
+                } else {
+                    try console.writeAll(Output.prettyFmt("<r><d> |<r>\n", enable_ansi_colors));
+                }
             }
 
             console_writer.flush() catch return;
             try console.writeAll(console_buffer.written());
             try console.writeAll(Output.prettyFmt("<r><d>", enable_ansi_colors));
             console.splatByteAll('-', max_filepath_length + 2) catch return;
-            console.writeAll(Output.prettyFmt("|---------|---------|-------------------<r>\n", enable_ansi_colors)) catch return;
+            if (has_git_diff) {
+                console.writeAll(Output.prettyFmt("|---------|---------|---------|-------------------<r>\n", enable_ansi_colors)) catch return;
+            } else {
+                console.writeAll(Output.prettyFmt("|---------|---------|-------------------<r>\n", enable_ansi_colors)) catch return;
+            }
+
+            // Print failure message for changed lines coverage
+            if (has_git_diff and changes_failing) {
+                const total_changed_pct: f64 = if (total_changed_executable > 0)
+                    @as(f64, @floatFromInt(total_covered_changed)) / @as(f64, @floatFromInt(total_changed_executable))
+                else
+                    1.0;
+                try console.print(Output.prettyFmt("\n<red><b>Coverage for changed lines ({d:.2}%) is below threshold ({d:.2}%)<r>\n", enable_ansi_colors), .{ total_changed_pct * 100.0, base_fraction.lines * 100.0 });
+            }
+
+            // Output AI agent prompts if applicable
+            if (Output.isAIAgent() and ai_prompt_files.items.len > 0) {
+                try console.writeAll("\n<errors>\n");
+                for (ai_prompt_files.items) |file_info| {
+                    // Output uncovered line ranges as <file> tags
+                    if (file_info.uncovered_ranges.len > 0) {
+                        try console.print("  <file path=\"{s}\">\n", .{file_info.path});
+                        try console.print("    In {s}, lines ", .{file_info.path});
+                        for (file_info.uncovered_ranges, 0..) |range, i| {
+                            if (i > 0) try console.writeAll(", ");
+                            if (range.start == range.end) {
+                                try console.print("{d}", .{range.start});
+                            } else {
+                                try console.print("{d}-{d}", .{ range.start, range.end });
+                            }
+                        }
+                        try console.writeAll(" do not have test coverage. Write tests to cover these lines.\n");
+                        try console.writeAll("  </file>\n");
+                    }
+
+                    // Output uncovered functions as <function> tags
+                    // func.start_line and func.end_line are already Ordinals, use oneBased() for display
+                    for (file_info.uncovered_functions) |func| {
+                        const start = func.start_line.oneBased();
+                        const end = func.end_line.oneBased();
+                        try console.print("  <function path=\"{s}\" startLine=\"{d}\" endLine=\"{d}\">\n", .{ file_info.path, start, end });
+                        try console.print("    In {s}, the function at lines {d}-{d} is never called. Write a test that calls this function, or delete it if it is dead code.\n", .{ file_info.path, start, end });
+                        try console.writeAll("  </function>\n");
+                    }
+                }
+                try console.writeAll("</errors>\n");
+
+                // Free the allocated memory for AI prompt files
+                for (ai_prompt_files.items) |file_info| {
+                    bun.default_allocator.free(file_info.path);
+                    bun.default_allocator.free(file_info.uncovered_ranges);
+                    bun.default_allocator.free(file_info.uncovered_functions);
+                }
+            }
 
             opts.fractions.failing = failing;
+            opts.changes_failing = changes_failing;
             Output.flush();
         }
 
@@ -1294,6 +1550,8 @@ pub const TestCommand = struct {
         enabled: bool = false,
         fail_on_low_coverage: bool = false,
         ignore_patterns: []const string = &.{},
+        changes_base_branch: ?string = null,
+        changes_failing: bool = false,
     };
     pub const Reporter = enum {
         text,
@@ -1782,7 +2040,8 @@ pub const TestCommand = struct {
         const summary = reporter.summary();
 
         const should_fail_on_no_tests = !ctx.test_options.pass_with_no_tests and (failed_to_find_any_tests or summary.didLabelFilterOutAllTests());
-        if (should_fail_on_no_tests or summary.fail > 0 or (coverage_options.enabled and coverage_options.fractions.failing and coverage_options.fail_on_low_coverage) or !write_snapshots_success) {
+        const coverage_failed = coverage_options.enabled and coverage_options.fail_on_low_coverage and (coverage_options.fractions.failing or coverage_options.changes_failing);
+        if (should_fail_on_no_tests or summary.fail > 0 or coverage_failed or !write_snapshots_success) {
             vm.exit_handler.exit_code = 1;
         } else if (reporter.jest.unhandled_errors_between_tests > 0) {
             vm.exit_handler.exit_code = 1;

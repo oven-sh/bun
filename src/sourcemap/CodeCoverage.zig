@@ -721,6 +721,259 @@ pub const Block = struct {
     end_line: u32 = 0,
 };
 
+/// Result from computing coverage changes report
+pub const ChangesResult = struct {
+    /// Total changed lines that are executable
+    total_changed_executable_lines: u32 = 0,
+    /// Changed lines that were executed/covered
+    covered_changed_lines: u32 = 0,
+    /// List of uncovered changed line ranges per file
+    uncovered_files: std.ArrayListUnmanaged(UncoveredFile) = .{},
+
+    pub const UncoveredFile = struct {
+        filename: []const u8,
+        uncovered_ranges: std.ArrayListUnmanaged(LineRange),
+        uncovered_functions: std.ArrayListUnmanaged(UncoveredFunction),
+    };
+
+    pub const LineRange = struct {
+        start: u32,
+        end: u32,
+    };
+
+    /// An uncovered function (entire function body is in changed lines and not executed)
+    /// Line numbers are stored as 1-indexed Ordinals for unambiguous display
+    pub const UncoveredFunction = struct {
+        start_line: bun.Ordinal,
+        end_line: bun.Ordinal,
+    };
+
+    pub fn coverageFraction(self: *const ChangesResult) f64 {
+        if (self.total_changed_executable_lines == 0) return 1.0;
+        return @as(f64, @floatFromInt(self.covered_changed_lines)) / @as(f64, @floatFromInt(self.total_changed_executable_lines));
+    }
+
+    pub fn deinit(self: *ChangesResult, allocator: std.mem.Allocator) void {
+        for (self.uncovered_files.items) |*file| {
+            file.uncovered_ranges.deinit(allocator);
+            file.uncovered_functions.deinit(allocator);
+        }
+        self.uncovered_files.deinit(allocator);
+    }
+};
+
+pub const ChangesReport = struct {
+    /// Compute coverage for changed lines only
+    /// Returns statistics about coverage for lines that were changed in the diff
+    pub fn computeForReport(
+        report: *const Report,
+        changed_file: *const GitDiff.ChangedFile,
+        allocator: std.mem.Allocator,
+    ) !struct {
+        total_changed_executable: u32,
+        covered_changed: u32,
+        uncovered_ranges: std.ArrayListUnmanaged(ChangesResult.LineRange),
+        uncovered_functions: std.ArrayListUnmanaged(ChangesResult.UncoveredFunction),
+    } {
+        var total_changed_executable: u32 = 0;
+        var covered_changed: u32 = 0;
+        var uncovered_ranges = std.ArrayListUnmanaged(ChangesResult.LineRange){};
+        errdefer uncovered_ranges.deinit(allocator);
+        var uncovered_functions = std.ArrayListUnmanaged(ChangesResult.UncoveredFunction){};
+        errdefer uncovered_functions.deinit(allocator);
+
+        // Iterate through executable lines and check if they're changed
+        var iter = report.executable_lines.iterator(.{});
+        var range_start: ?u32 = null;
+        var range_end: u32 = 0;
+
+        while (iter.next()) |line_idx| {
+            const line: u32 = @intCast(line_idx + 1); // Convert to 1-indexed
+
+            // Check if this line is in the changed set
+            if (!changed_file.isLineChanged(line)) continue;
+
+            total_changed_executable += 1;
+
+            const is_covered = report.lines_which_have_executed.isSet(line_idx);
+
+            if (is_covered) {
+                covered_changed += 1;
+                // Close any open uncovered range
+                if (range_start) |start| {
+                    try uncovered_ranges.append(allocator, .{ .start = start, .end = range_end });
+                    range_start = null;
+                }
+            } else {
+                // Uncovered line - start or extend range
+                if (range_start == null) {
+                    range_start = line;
+                }
+                range_end = line;
+            }
+        }
+
+        // Close final uncovered range
+        if (range_start) |start| {
+            try uncovered_ranges.append(allocator, .{ .start = start, .end = range_end });
+        }
+
+        // Find uncovered functions that are entirely within changed lines
+        // Note: func.start_line and func.end_line from coverage report are 0-indexed
+        // isLineChanged expects 1-indexed line numbers
+        for (report.functions.items, 0..) |func, func_idx| {
+            // Check if this function was NOT executed
+            if (report.functions_which_have_executed.isSet(func_idx)) continue;
+
+            // Convert from 0-indexed to 1-indexed using Ordinal for clarity
+            const start_ordinal = bun.Ordinal.fromZeroBased(@intCast(func.start_line));
+            const end_ordinal = bun.Ordinal.fromZeroBased(@intCast(func.end_line));
+
+            // Check if the function's lines are all in changed lines
+            var all_lines_changed = true;
+            var line: u32 = @intCast(start_ordinal.oneBased());
+            while (line <= end_ordinal.oneBased()) : (line += 1) {
+                if (!changed_file.isLineChanged(line)) {
+                    all_lines_changed = false;
+                    break;
+                }
+            }
+
+            if (all_lines_changed and start_ordinal.isValid()) {
+                try uncovered_functions.append(allocator, .{
+                    // Store as Ordinals (already converted from 0-indexed)
+                    .start_line = start_ordinal,
+                    .end_line = end_ordinal,
+                });
+            }
+        }
+
+        return .{
+            .total_changed_executable = total_changed_executable,
+            .covered_changed = covered_changed,
+            .uncovered_ranges = uncovered_ranges,
+            .uncovered_functions = uncovered_functions,
+        };
+    }
+
+    pub fn writeHeader(
+        writer: *std.Io.Writer,
+        max_filename_length: usize,
+        comptime enable_colors: bool,
+    ) !void {
+        try writer.writeAll(prettyFmt("<r>\n<b>Coverage for Changed Lines:<r>\n", enable_colors));
+        try writer.writeAll(prettyFmt("<d>", enable_colors));
+        try writer.splatByteAll('-', max_filename_length + 2);
+        try writer.writeAll(prettyFmt("|---------|-------------------<r>\n", enable_colors));
+        try writer.writeAll("File");
+        try writer.splatByteAll(' ', max_filename_length - "File".len + 1);
+        try writer.writeAll(prettyFmt(" <d>|<r> % Lines <d>|<r> Uncovered Line #s\n", enable_colors));
+        try writer.writeAll(prettyFmt("<d>", enable_colors));
+        try writer.splatByteAll('-', max_filename_length + 2);
+        try writer.writeAll(prettyFmt("|---------|-------------------<r>\n", enable_colors));
+    }
+
+    pub fn writeFileRow(
+        filename: []const u8,
+        max_filename_length: usize,
+        coverage_pct: f64,
+        threshold: f64,
+        uncovered_ranges: []const ChangesResult.LineRange,
+        writer: *std.Io.Writer,
+        comptime enable_colors: bool,
+    ) !void {
+        const failed = coverage_pct < threshold;
+
+        if (comptime enable_colors) {
+            if (failed) {
+                try writer.writeAll(prettyFmt("<r><b><red>", true));
+            } else {
+                try writer.writeAll(prettyFmt("<r><b><green>", true));
+            }
+        }
+
+        try writer.writeAll(" ");
+        try writer.writeAll(filename);
+        try writer.splatByteAll(' ', max_filename_length - filename.len);
+        try writer.writeAll(prettyFmt("<r><d> | <r>", enable_colors));
+
+        if (comptime enable_colors) {
+            if (failed) {
+                try writer.writeAll(prettyFmt("<b><red>", true));
+            } else {
+                try writer.writeAll(prettyFmt("<b><green>", true));
+            }
+        }
+
+        try writer.print("{d: >7.2}", .{coverage_pct * 100.0});
+        try writer.writeAll(prettyFmt("<r><d> | <r>", enable_colors));
+
+        // Write uncovered line ranges
+        var is_first = true;
+        for (uncovered_ranges) |range| {
+            if (!is_first) {
+                try writer.writeAll(prettyFmt("<r><d>,<r>", enable_colors));
+            }
+            is_first = false;
+
+            if (range.start == range.end) {
+                try writer.print(prettyFmt("<red>{d}", enable_colors), .{range.start});
+            } else {
+                try writer.print(prettyFmt("<red>{d}-{d}", enable_colors), .{ range.start, range.end });
+            }
+        }
+
+        try writer.writeAll("\n");
+    }
+
+    pub fn writeSummary(
+        writer: *std.Io.Writer,
+        max_filename_length: usize,
+        total_pct: f64,
+        threshold: f64,
+        comptime enable_colors: bool,
+    ) !void {
+        const failed = total_pct < threshold;
+
+        try writer.writeAll(prettyFmt("<d>", enable_colors));
+        try writer.splatByteAll('-', max_filename_length + 2);
+        try writer.writeAll(prettyFmt("|---------|-------------------<r>\n", enable_colors));
+
+        if (comptime enable_colors) {
+            if (failed) {
+                try writer.writeAll(prettyFmt("<r><b><red>", true));
+            } else {
+                try writer.writeAll(prettyFmt("<r><b><green>", true));
+            }
+        }
+
+        try writer.writeAll("All changed");
+        try writer.splatByteAll(' ', max_filename_length - "All changed".len + 1);
+        try writer.writeAll(prettyFmt("<r><d> | <r>", enable_colors));
+
+        if (comptime enable_colors) {
+            if (failed) {
+                try writer.writeAll(prettyFmt("<b><red>", true));
+            } else {
+                try writer.writeAll(prettyFmt("<b><green>", true));
+            }
+        }
+
+        try writer.print("{d: >7.2}", .{total_pct * 100.0});
+        try writer.writeAll(prettyFmt("<r><d> |<r>\n", enable_colors));
+
+        try writer.writeAll(prettyFmt("<d>", enable_colors));
+        try writer.splatByteAll('-', max_filename_length + 2);
+        try writer.writeAll(prettyFmt("|---------|-------------------<r>\n", enable_colors));
+
+        if (failed) {
+            try writer.print(prettyFmt("\n<red><b>Coverage for changed lines ({d:.2}%) is below threshold ({d:.2}%)<r>\n", enable_colors), .{ total_pct * 100.0, threshold * 100.0 });
+        }
+    }
+};
+
+const GitDiff = @import("./GitDiff.zig");
+
 const std = @import("std");
 
 const bun = @import("bun");

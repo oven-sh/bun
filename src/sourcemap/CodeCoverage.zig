@@ -973,7 +973,6 @@ pub const ChangesReport = struct {
 };
 
 const GitDiff = @import("./GitDiff.zig");
-
 const std = @import("std");
 
 const bun = @import("bun");

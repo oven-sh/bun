@@ -1,9 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Output = bun.Output;
-const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
-const Environment = bun.Environment;
-
 /// Represents a range of changed lines
 pub const LineRange = struct {
     start: u32,
@@ -371,3 +365,9 @@ test "parseGitDiff" {
     try std.testing.expect(!bar.?.isLineChanged(0));
     try std.testing.expect(!bar.?.isLineChanged(11));
 }
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Bitset = bun.bit_set.DynamicBitSetUnmanaged;

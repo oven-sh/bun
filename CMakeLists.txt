@@ -63,6 +63,7 @@ include(GenerateDependencyVersions)
 # --- Targets ---
 
 include(BuildBun)
+include(BuildMisctools)
 
 # --- Analysis ---
 

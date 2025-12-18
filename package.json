@@ -93,6 +93,13 @@
     "machine:linux:amazonlinux": "./scripts/machine.mjs ssh --cloud=aws --arch=x64 --instance-type c7i.2xlarge --os=linux --distro=amazonlinux --release=2023",
     "machine:windows:2019": "./scripts/machine.mjs ssh --cloud=aws --arch=x64 --instance-type c7i.2xlarge --os=windows --release=2019",
     "machine:freebsd": "./scripts/machine.mjs ssh --cloud=aws --arch=x64 --instance-type c7i.2xlarge --os=freebsd --release=14.3",
-    "sync-webkit-source": "bun ./scripts/sync-webkit-source.ts"
+    "sync-webkit-source": "bun ./scripts/sync-webkit-source.ts",
+    "bench:coldstart": "bun run bench:coldstart:build && bun run bench:coldstart:run",
+    "bench:coldstart:build": "cmake --build build/release --target cold-jsc-start cold-v8-start bench-jsc-e2e bench-v8-e2e bench-jsc-100-e2e bench-v8-100-e2e bench-jsc-multi-eval bench-v8-multi-eval 2>&1 | tail -5",
+    "bench:coldstart:run": "bun run bench:coldstart:e2e && bun run bench:coldstart:100 && bun run bench:coldstart:multi",
+    "bench:coldstart:e2e": "echo '=== Single E2E Cold Start ===' && echo '--- JSC ---' && ./build/release/bench-jsc-e2e && echo '' && echo '--- V8 ---' && ./build/release/bench-v8-e2e",
+    "bench:coldstart:100": "echo '=== 100 Full E2E (VM + GlobalObject + eval) ===' && echo '--- JSC ---' && ./build/release/bench-jsc-100-e2e && echo '' && echo '--- V8 ---' && ./build/release/bench-v8-100-e2e",
+    "bench:coldstart:multi": "echo '=== 100 Scripts in Same VM ===' && echo '--- JSC ---' && ./build/release/bench-jsc-multi-eval && echo '' && echo '--- V8 ---' && ./build/release/bench-v8-multi-eval",
+    "bench:coldstart:vm": "echo '=== 100 VMs/Isolates Batch ===' && echo '--- JSC ---' && ./build/release/cold-jsc-start --benchmark-vm && echo '' && echo '--- V8 ---' && ./build/release/cold-v8-start --benchmark-isolate"
   }
 }

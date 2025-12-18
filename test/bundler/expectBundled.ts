@@ -161,6 +161,8 @@ export interface BundlerTestInput {
   footer?: string;
   define?: Record<string, string | number>;
   drop?: string[];
+  /** Feature flags for dead-code elimination via `import { feature } from "bun:bundle"` */
+  features?: string[];
 
   /** Use for resolve custom conditions */
   conditions?: string[];
@@ -444,6 +446,7 @@ function expectBundled(
     external,
     packages,
     drop = [],
+    features = [],
     files,
     footer,
     format,
@@ -731,6 +734,12 @@ function expectBundled(
                 : [],
               compileFlag("autoloadDotenv", "--compile-autoload-dotenv", "--no-compile-autoload-dotenv"),
               compileFlag("autoloadBunfig", "--compile-autoload-bunfig", "--no-compile-autoload-bunfig"),
+              compileFlag("autoloadTsconfig", "--compile-autoload-tsconfig", "--no-compile-autoload-tsconfig"),
+              compileFlag(
+                "autoloadPackageJson",
+                "--compile-autoload-package-json",
+                "--no-compile-autoload-package-json",
+              ),
               outfile ? `--outfile=${outfile}` : `--outdir=${outdir}`,
               define && Object.entries(define).map(([k, v]) => ["--define", `${k}=${v}`]),
               `--target=${target}`,
@@ -742,6 +751,7 @@ function expectBundled(
               minifySyntax && `--minify-syntax`,
               minifyWhitespace && `--minify-whitespace`,
               drop?.length && drop.map(x => ["--drop=" + x]),
+              features?.length && features.map(x => ["--feature=" + x]),
               globalName && `--global-name=${globalName}`,
               jsx.runtime && ["--jsx-runtime", jsx.runtime],
               jsx.factory && ["--jsx-factory", jsx.factory],
@@ -1110,6 +1120,7 @@ function expectBundled(
           emitDCEAnnotations,
           ignoreDCEAnnotations,
           drop,
+          features,
           define: define ?? {},
           throw: _throw ?? false,
           compile,

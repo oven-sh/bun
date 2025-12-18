@@ -1740,7 +1740,6 @@ declare module "bun" {
      * @default "esm"
      */
     format?: /**
-
      * ECMAScript Module format
      */
     | "esm"
@@ -1891,6 +1890,24 @@ declare module "bun" {
      * Drop function calls to matching property accesses.
      */
     drop?: string[];
+
+    /**
+     * Enable feature flags for dead-code elimination via `import { feature } from "bun:bundle"`.
+     *
+     * When `feature("FLAG_NAME")` is called, it returns `true` if FLAG_NAME is in this array,
+     * or `false` otherwise. This enables static dead-code elimination at bundle time.
+     *
+     * Equivalent to the CLI `--feature` flag.
+     *
+     * @example
+     * ```ts
+     * await Bun.build({
+     *   entrypoints: ['./src/index.ts'],
+     *   features: ['FEATURE_A', 'FEATURE_B'],
+     * });
+     * ```
+     */
+    features?: string[];
 
     /**
      * - When set to `true`, the returned promise rejects with an AggregateError when a build failure happens.
@@ -3888,6 +3905,9 @@ declare module "bun" {
     static readonly byteLength: 32;
   }
 
+  /** Extends the standard web formats with `brotli` and `zstd` support. */
+  type CompressionFormat = "gzip" | "deflate" | "deflate-raw" | "brotli" | "zstd";
+
   /** Compression options for `Bun.deflateSync` and `Bun.gzipSync` */
   interface ZlibCompressionOptions {
     /**
@@ -5677,6 +5697,44 @@ declare module "bun" {
        * ```
        */
       lazy?: boolean;
+
+      /**
+       * Spawn the subprocess with a pseudo-terminal (PTY) attached.
+       *
+       * When this option is provided:
+       * - `stdin`, `stdout`, and `stderr` are all connected to the terminal
+       * - The subprocess sees itself running in a real terminal (`isTTY = true`)
+       * - Access the terminal via `subprocess.terminal`
+       * - `subprocess.stdin`, `subprocess.stdout`, `subprocess.stderr` return `null`
+       *
+       * Only available on POSIX systems (Linux, macOS).
+       *
+       * @example
+       * ```ts
+       * const proc = Bun.spawn(["bash"], {
+       *   terminal: {
+       *     cols: 80,
+       *     rows: 24,
+       *     data: (term, data) => console.log(data.toString()),
+       *   },
+       * });
+       *
+       * proc.terminal.write("echo hello\n");
+       * await proc.exited;
+       * proc.terminal.close();
+       * ```
+       *
+       * You can also pass an existing `Terminal` object for reuse across multiple spawns:
+       * ```ts
+       * const terminal = new Bun.Terminal({ ... });
+       * const proc1 = Bun.spawn(["echo", "first"], { terminal });
+       * await proc1.exited;
+       * const proc2 = Bun.spawn(["echo", "second"], { terminal });
+       * await proc2.exited;
+       * terminal.close();
+       * ```
+       */
+      terminal?: TerminalOptions | Terminal;
     }
 
     type ReadableToIO<X extends Readable> = X extends "pipe" | undefined
@@ -5790,6 +5848,24 @@ declare module "bun" {
     readonly stdin: SpawnOptions.WritableToIO<In>;
     readonly stdout: SpawnOptions.ReadableToIO<Out>;
     readonly stderr: SpawnOptions.ReadableToIO<Err>;
+
+    /**
+     * The terminal attached to this subprocess, if spawned with the `terminal` option.
+     * Returns `undefined` if no terminal was attached.
+     *
+     * When a terminal is attached, `stdin`, `stdout`, and `stderr` return `null`.
+     * Use `terminal.write()` and the `data` callback instead.
+     *
+     * @example
+     * ```ts
+     * const proc = Bun.spawn(["bash"], {
+     *   terminal: { data: (term, data) => console.log(data.toString()) },
+     * });
+     *
+     * proc.terminal?.write("echo hello\n");
+     * ```
+     */
+    readonly terminal: Terminal | undefined;
 
     /**
      * Access extra file descriptors passed to the `stdio` option in the options object.
@@ -6081,6 +6157,154 @@ declare module "bun" {
     "ignore" | "inherit" | null | undefined,
     "ignore" | "inherit" | null | undefined
   >;
+
+  /**
+   * Options for creating a pseudo-terminal (PTY).
+   */
+  interface TerminalOptions {
+    /**
+     * Number of columns for the terminal.
+     * @default 80
+     */
+    cols?: number;
+    /**
+     * Number of rows for the terminal.
+     * @default 24
+     */
+    rows?: number;
+    /**
+     * Terminal name (e.g., "xterm-256color").
+     * @default "xterm-256color"
+     */
+    name?: string;
+    /**
+     * Callback invoked when data is received from the terminal.
+     * @param terminal The terminal instance
+     * @param data The data received as a Uint8Array
+     */
+    data?: (terminal: Terminal, data: Uint8Array<ArrayBuffer>) => void;
+    /**
+     * Callback invoked when the PTY stream closes (EOF or read error).
+     * Note: exitCode is a PTY lifecycle status (0=clean EOF, 1=error), NOT the subprocess exit code.
+     * Use Subprocess.exited or onExit callback for actual process exit information.
+     * @param terminal The terminal instance
+     * @param exitCode PTY lifecycle status (0 for EOF, 1 for error)
+     * @param signal Reserved for future signal reporting, currently null
+     */
+    exit?: (terminal: Terminal, exitCode: number, signal: string | null) => void;
+    /**
+     * Callback invoked when the terminal is ready to receive more data.
+     * @param terminal The terminal instance
+     */
+    drain?: (terminal: Terminal) => void;
+  }
+
+  /**
+   * A pseudo-terminal (PTY) that can be used to spawn interactive terminal programs.
+   *
+   * @example
+   * ```ts
+   * await using terminal = new Bun.Terminal({
+   *   cols: 80,
+   *   rows: 24,
+   *   data(term, data) {
+   *     console.log("Received:", new TextDecoder().decode(data));
+   *   },
+   * });
+   *
+   * // Spawn a shell connected to the PTY
+   * const proc = Bun.spawn(["bash"], { terminal });
+   *
+   * // Write to the terminal
+   * terminal.write("echo hello\n");
+   *
+   * // Wait for process to exit
+   * await proc.exited;
+   *
+   * // Terminal is closed automatically by `await using`
+   * ```
+   */
+  class Terminal implements AsyncDisposable {
+    constructor(options: TerminalOptions);
+
+    /**
+     * Whether the terminal is closed.
+     */
+    readonly closed: boolean;
+
+    /**
+     * Write data to the terminal.
+     * @param data The data to write (string or BufferSource)
+     * @returns The number of bytes written
+     */
+    write(data: string | BufferSource): number;
+
+    /**
+     * Resize the terminal.
+     * @param cols New number of columns
+     * @param rows New number of rows
+     */
+    resize(cols: number, rows: number): void;
+
+    /**
+     * Set raw mode on the terminal.
+     * In raw mode, input is passed directly without processing.
+     * @param enabled Whether to enable raw mode
+     */
+    setRawMode(enabled: boolean): void;
+
+    /**
+     * Reference the terminal to keep the event loop alive.
+     */
+    ref(): void;
+
+    /**
+     * Unreference the terminal to allow the event loop to exit.
+     */
+    unref(): void;
+
+    /**
+     * Close the terminal.
+     */
+    close(): void;
+
+    /**
+     * Async dispose for use with `await using`.
+     */
+    [Symbol.asyncDispose](): Promise<void>;
+
+    /**
+     * Terminal input flags (c_iflag from termios).
+     * Controls input processing behavior like ICRNL, IXON, etc.
+     * Returns 0 if terminal is closed.
+     * Setting returns true on success, false on failure.
+     */
+    inputFlags: number;
+
+    /**
+     * Terminal output flags (c_oflag from termios).
+     * Controls output processing behavior like OPOST, ONLCR, etc.
+     * Returns 0 if terminal is closed.
+     * Setting returns true on success, false on failure.
+     */
+    outputFlags: number;
+
+    /**
+     * Terminal local flags (c_lflag from termios).
+     * Controls local processing like ICANON, ECHO, ISIG, etc.
+     * Returns 0 if terminal is closed.
+     * Setting returns true on success, false on failure.
+     */
+    localFlags: number;
+
+    /**
+     * Terminal control flags (c_cflag from termios).
+     * Controls hardware characteristics like CSIZE, PARENB, etc.
+     * Returns 0 if terminal is closed.
+     * Setting returns true on success, false on failure.
+     */
+    controlFlags: number;
+  }
 
   // Blocked on https://github.com/oven-sh/bun/issues/8329
   // /**

@@ -44,7 +44,7 @@ pub const MachoFile = struct {
         const PAGE_SIZE: u64 = 1 << 12;
         const HASH_SIZE: usize = 32; // SHA256 = 32 bytes
 
-        const header_size = @sizeOf(u32);
+        const header_size = @sizeOf(u64);
         const total_size = header_size + data.len;
         const aligned_size = alignSize(total_size, blob_alignment);
 
@@ -164,14 +164,14 @@ pub const MachoFile = struct {
         const prev_after_bun_slice = prev_data_slice[original_segsize..];
         bun.memmove(after_bun_slice, prev_after_bun_slice);
 
-        // Now we copy the u32 size header
-        std.mem.writeInt(u32, self.data.items[original_fileoff..][0..4], @intCast(data.len), .little);
+        // Now we copy the u64 size header (8 bytes for alignment)
+        std.mem.writeInt(u64, self.data.items[original_fileoff..][0..8], @intCast(data.len), .little);
 
         // Now we copy the data itself
-        @memcpy(self.data.items[original_fileoff + 4 ..][0..data.len], data);
+        @memcpy(self.data.items[original_fileoff + 8 ..][0..data.len], data);
 
         // Lastly, we zero any of the padding that was added
-        const padding_bytes = self.data.items[original_fileoff..][data.len + 4 .. aligned_size];
+        const padding_bytes = self.data.items[original_fileoff..][data.len + 8 .. aligned_size];
         @memset(padding_bytes, 0);
 
         if (code_sign_cmd) |cs| {

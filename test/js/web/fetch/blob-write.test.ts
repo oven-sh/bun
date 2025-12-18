@@ -65,7 +65,7 @@ test("Bun.file(path).writer() does not throw", async () => {
   } else {
     console.log("`typeof promise`: ", typeof promise);
   }
-  console.log("before await promise")
+  console.log("before await promise");
   await promise;
   expect(await file.text()).toBe("New content");
 });

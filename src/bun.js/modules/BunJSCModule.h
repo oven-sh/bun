@@ -50,7 +50,7 @@
 #include <JavaScriptCore/ControlFlowProfiler.h>
 
 #if OS(DARWIN)
-#if ASSERT_ENABLED
+#if (ASSERT_ENABLED || ENABLE(MALLOC_HEAP_BREAKDOWN))
 #if !__has_feature(address_sanitizer)
 #include <malloc/malloc.h>
 #define IS_MALLOC_DEBUGGING_ENABLED 1
@@ -310,13 +310,16 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
         Vector<std::pair<Identifier, size_t>> zoneSizes;
         zoneSizes.reserveInitialCapacity(count);
         for (unsigned i = 0; i < count; i++) {
-            auto zone = reinterpret_cast<malloc_zone_t*>(zones[i]);
-            if (const char* name = malloc_get_zone_name(zone)) {
-                malloc_zone_statistics(reinterpret_cast<malloc_zone_t*>(zones[i]),
-                    &zone_stats);
-                zoneSizes.append(
-                    std::make_pair(Identifier::fromString(vm, String::fromUTF8(name)),
-                        zone_stats.size_in_use));
+            auto* zone = reinterpret_cast<malloc_zone_t*>(zones[i]);
+            if (zone) {
+                if (const char* name = malloc_get_zone_name(zone)) {
+                    auto nameString = String::fromUTF8(name);
+                    malloc_zone_statistics(reinterpret_cast<malloc_zone_t*>(zones[i]),
+                        &zone_stats);
+                    zoneSizes.append(
+                        std::make_pair(Identifier::fromString(vm, nameString),
+                            zone_stats.size_in_use));
+                }
             }
         }
 

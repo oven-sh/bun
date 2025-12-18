@@ -170,7 +170,7 @@ pub const OutKind = union(enum) {
     fn to_subproc_stdio(this: OutKind, shellio: *?*shell.IOWriter) bun.shell.subproc.Stdio {
         return switch (this) {
             .fd => |val| brk: {
-                shellio.* = val.writer.refSelf();
+                shellio.* = val.writer.dupeRef();
                 break :brk if (val.captured) |cap| .{
                     .capture = .{
                         .buf = cap,

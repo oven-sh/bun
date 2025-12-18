@@ -94,7 +94,7 @@ test("(multi-file test) my feature", async () => {
 
 - Always use `port: 0`. Do not hardcode ports. Do not use your own random port number function.
 - Use `normalizeBunSnapshot` to normalize snapshot output of the test.
-- NEVER write tests that check for no "panic" or "uncaught exception" or similar in the test output. That is NOT a valid test.
+- NEVER write tests that check for no "panic" or "uncaught exception" or similar in the test output. These tests will never fail in CI.
 - Use `tempDir` from `"harness"` to create a temporary directory. **Do not** use `tmpdirSync` or `fs.mkdtempSync` to create temporary directories.
 - When spawning processes, tests should expect(stdout).toBe(...) BEFORE expect(exitCode).toBe(0). This gives you a more useful error message on test failure.
 - **CRITICAL**: Do not write flaky tests. Do not use `setTimeout` in tests. Instead, `await` the condition to be met. You are not testing the TIME PASSING, you are testing the CONDITION.

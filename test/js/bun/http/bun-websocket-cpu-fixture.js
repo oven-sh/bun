@@ -23,7 +23,9 @@ const server = Bun.serve({
 });
 
 const ws = new WebSocket(`wss://${server.hostname}:${server.port}`, { tls: { rejectUnauthorized: false } });
-await Bun.sleep(1000);
+const { promise: openWS, resolve: onWSOpen } = Promise.withResolvers();
+ws.onopen = onWSOpen;
+await openWS;
 for (let i = 0; i < 1000; i++) {
   ws.send("hello");
 }

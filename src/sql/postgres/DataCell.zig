@@ -151,8 +151,8 @@ fn parseArray(bytes: []const u8, bigint: bool, comptime arrayType: types.Tag, gl
                     .jsonb_array,
                     => {
                         const str_bytes = slice[1..current_idx];
-                        const needs_dynamic_buffer = str_bytes.len < stack_buffer.len;
-                        const buffer = if (needs_dynamic_buffer) try bun.default_allocator.alloc(u8, str_bytes.len) else stack_buffer[0..];
+                        const needs_dynamic_buffer = str_bytes.len > stack_buffer.len;
+                        const buffer = if (needs_dynamic_buffer) try bun.default_allocator.alloc(u8, str_bytes.len) else stack_buffer[0..str_bytes.len];
                         defer if (needs_dynamic_buffer) bun.default_allocator.free(buffer);
                         const unescaped = unescapePostgresString(str_bytes, buffer) catch return error.InvalidByteSequence;
                         try array.append(bun.default_allocator, SQLDataCell{ .tag = .json, .value = .{ .json = if (unescaped.len > 0) String.cloneUTF8(unescaped).value.WTFStringImpl else null }, .free_value = 1 });
@@ -168,8 +168,8 @@ fn parseArray(bytes: []const u8, bigint: bool, comptime arrayType: types.Tag, gl
                     slice = trySlice(slice, current_idx + 1);
                     continue;
                 }
-                const needs_dynamic_buffer = str_bytes.len < stack_buffer.len;
-                const buffer = if (needs_dynamic_buffer) try bun.default_allocator.alloc(u8, str_bytes.len) else stack_buffer[0..];
+                const needs_dynamic_buffer = str_bytes.len > stack_buffer.len;
+                const buffer = if (needs_dynamic_buffer) try bun.default_allocator.alloc(u8, str_bytes.len) else stack_buffer[0..str_bytes.len];
                 defer if (needs_dynamic_buffer) bun.default_allocator.free(buffer);
                 const string_bytes = unescapePostgresString(str_bytes, buffer) catch return error.InvalidByteSequence;
                 try array.append(bun.default_allocator, SQLDataCell{ .tag = .string, .value = .{ .string = if (string_bytes.len > 0) String.cloneUTF8(string_bytes).value.WTFStringImpl else null }, .free_value = 1 });

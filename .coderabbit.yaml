@@ -1,5 +1,11 @@
 language: en-US
 
+issue_enrichment:
+  auto_enrich:
+    enabled: false
+  planning:
+    enabled: false
+
 reviews:
   profile: assertive
   request_changes_workflow: false

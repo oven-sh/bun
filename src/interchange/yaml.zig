@@ -2471,11 +2471,6 @@ pub fn Parser(comptime enc: Encoding) type {
                                 self.inc(3);
                                 continue :next self.next();
                             }
-                            if (self.remainStartsWithChar('o')) {
-                                try ctx.resolve(.{ .boolean = false }, n_start, "no");
-                                self.inc(1);
-                                continue :next self.next();
-                            }
                             try ctx.appendSource(c, n_start);
                             continue :next self.next();
                         },
@@ -2490,16 +2485,6 @@ pub fn Parser(comptime enc: Encoding) type {
                             if (self.remainStartsWith("ULL")) {
                                 try ctx.resolve(.null, n_start, "NULL");
                                 self.inc(3);
-                                continue :next self.next();
-                            }
-                            if (self.remainStartsWithChar('o')) {
-                                try ctx.resolve(.{ .boolean = false }, n_start, "No");
-                                self.inc(1);
-                                continue :next self.next();
-                            }
-                            if (self.remainStartsWithChar('O')) {
-                                try ctx.resolve(.{ .boolean = false }, n_start, "NO");
-                                self.inc(1);
                                 continue :next self.next();
                             }
                             try ctx.appendSource(c, n_start);
@@ -2536,75 +2521,6 @@ pub fn Parser(comptime enc: Encoding) type {
                                 continue :next self.next();
                             }
                             try ctx.appendSource(c, t_start);
-                            continue :next self.next();
-                        },
-                        'y' => {
-                            const y_start = self.pos;
-                            self.inc(1);
-                            if (self.remainStartsWith("es")) {
-                                try ctx.resolve(.{ .boolean = true }, y_start, "yes");
-                                self.inc(2);
-                                continue :next self.next();
-                            }
-                            try ctx.appendSource(c, y_start);
-                            continue :next self.next();
-                        },
-                        'Y' => {
-                            const y_start = self.pos;
-                            self.inc(1);
-                            if (self.remainStartsWith("es")) {
-                                try ctx.resolve(.{ .boolean = true }, y_start, "Yes");
-                                self.inc(2);
-                                continue :next self.next();
-                            }
-                            if (self.remainStartsWith("ES")) {
-                                try ctx.resolve(.{ .boolean = true }, y_start, "YES");
-                                self.inc(2);
-                                continue :next self.next();
-                            }
-                            try ctx.appendSource(c, y_start);
-                            continue :next self.next();
-                        },
-                        'o' => {
-                            const o_start = self.pos;
-                            self.inc(1);
-                            if (self.remainStartsWithChar('n')) {
-                                try ctx.resolve(.{ .boolean = true }, o_start, "on");
-                                self.inc(1);
-                                continue :next self.next();
-                            }
-                            if (self.remainStartsWith("ff")) {
-                                try ctx.resolve(.{ .boolean = false }, o_start, "off");
-                                self.inc(2);
-                                continue :next self.next();
-                            }
-                            try ctx.appendSource(c, o_start);
-                            continue :next self.next();
-                        },
-                        'O' => {
-                            const o_start = self.pos;
-                            self.inc(1);
-                            if (self.remainStartsWithChar('n')) {
-                                try ctx.resolve(.{ .boolean = true }, o_start, "On");
-                                self.inc(1);
-                                continue :next self.next();
-                            }
-                            if (self.remainStartsWithChar('N')) {
-                                try ctx.resolve(.{ .boolean = true }, o_start, "ON");
-                                self.inc(1);
-                                continue :next self.next();
-                            }
-                            if (self.remainStartsWith("ff")) {
-                                try ctx.resolve(.{ .boolean = false }, o_start, "Off");
-                                self.inc(2);
-                                continue :next self.next();
-                            }
-                            if (self.remainStartsWith("FF")) {
-                                try ctx.resolve(.{ .boolean = false }, o_start, "OFF");
-                                self.inc(2);
-                                continue :next self.next();
-                            }
-                            try ctx.appendSource(c, o_start);
                             continue :next self.next();
                         },
                         'f' => {

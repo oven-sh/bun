@@ -994,6 +994,8 @@ pub const PosixSpawnOptions = struct {
     /// for stdout. This is used to preserve
     /// consistent shell semantics.
     no_sigpipe: bool = true,
+    /// PTY slave fd for controlling terminal setup (-1 if not using PTY).
+    pty_slave_fd: i32 = -1,
 
     pub const Stdio = union(enum) {
         path: []const u8,
@@ -1062,6 +1064,8 @@ pub const WindowsSpawnOptions = struct {
     stream: bool = true,
     use_execve_on_macos: bool = false,
     can_block_entire_thread_to_reduce_cpu_usage_in_fast_path: bool = false,
+    /// PTY not supported on Windows - this is a void placeholder for struct compatibility
+    pty_slave_fd: void = {},
     pub const WindowsOptions = struct {
         verbatim_arguments: bool = false,
         hide_window: bool = true,
@@ -1256,6 +1260,9 @@ pub fn spawnProcessPosix(
     if (options.detached) {
         flags |= bun.c.POSIX_SPAWN_SETSID;
     }
+
+    // Pass PTY slave fd to attr for controlling terminal setup
+    attr.pty_slave_fd = options.pty_slave_fd;
 
     if (options.cwd.len > 0) {
         try actions.chdir(options.cwd);

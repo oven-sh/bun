@@ -177,7 +177,7 @@ pub const CowFd = struct {
         this.refcount += 1;
     }
 
-    pub fn refSelf(this: *CowFd) *CowFd {
+    pub fn dupeRef(this: *CowFd) *CowFd {
         this.ref();
         return this;
     }

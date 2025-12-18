@@ -381,17 +381,20 @@ pub fn doClone(
     const js_wrapper = Response.makeMaybePooled(globalThis, cloned);
 
     if (js_wrapper != .zero) {
-        if (cloned.#body.value == .Locked) {
-            if (cloned.#body.value.Locked.readable.get(globalThis)) |readable| {
-                // If we are teed, then we need to update the cached .body
-                // value to point to the new readable stream
-                // We must do this on both the original and cloned response
-                // but especially the original response since it will have a stale .body value now.
-                js.bodySetCached(js_wrapper, globalThis, readable.value);
-                if (this.#body.value.Locked.readable.get(globalThis)) |other_readable| {
-                    js.bodySetCached(this_value, globalThis, other_readable.value);
-                }
-            }
+        // After toJS/makeMaybePooled, checkBodyStreamRef has already moved
+        // the streams from Locked.readable to js.gc.stream. So we need to
+        // use js.gc.stream to get the streams and update the body cache.
+        if (js.gc.stream.get(js_wrapper)) |cloned_stream| {
+            js.bodySetCached(js_wrapper, globalThis, cloned_stream);
+        }
+    }
+
+    // Update the original response's body cache with the new teed stream.
+    // At this point, this.#body.value.Locked.readable still holds the teed stream
+    // because checkBodyStreamRef hasn't been called on the original response yet.
+    if (this.#body.value == .Locked) {
+        if (this.#body.value.Locked.readable.get(globalThis)) |readable| {
+            js.bodySetCached(this_value, globalThis, readable.value);
         }
     }
 

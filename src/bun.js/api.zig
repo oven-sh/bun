@@ -24,6 +24,7 @@ pub const TLSSocket = @import("./api/bun/socket.zig").TLSSocket;
 pub const SocketHandlers = @import("./api/bun/socket.zig").Handlers;
 
 pub const Subprocess = @import("./api/bun/subprocess.zig");
+pub const Terminal = @import("./api/bun/Terminal.zig");
 pub const HashObject = @import("./api/HashObject.zig");
 pub const UnsafeObject = @import("./api/UnsafeObject.zig");
 pub const TOMLObject = @import("./api/TOMLObject.zig");

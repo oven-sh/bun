@@ -467,7 +467,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
       }
     }
     SocketHandlers.error(socket, error, true);
-    data.server.emit("clientError", error, data);
+    this.server?.emit("clientError", error, data);
   },
   timeout(socket) {
     SocketHandlers.timeout(socket);

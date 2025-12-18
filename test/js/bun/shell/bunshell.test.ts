@@ -786,6 +786,55 @@ booga"
       const { stdout } = await $`cd ${temp_dir} && pwd && cd - && pwd`;
       expect(stdout.toString()).toEqual(`${temp_dir}\n${process.cwd().replaceAll("\\", "/")}\n`);
     });
+
+    test(".cwd('.') uses current working directory", async () => {
+      const result = await $`pwd`.cwd(".").text();
+      expect(result.trim()).toBe(process.cwd());
+    });
+
+    test(".cwd('') uses current working directory", async () => {
+      const result = await $`pwd`.cwd("").text();
+      expect(result.trim()).toBe(process.cwd());
+    });
+
+    test(".cwd('./') uses current working directory", async () => {
+      const result = await $`pwd`.cwd("./").text();
+      expect(result.trim()).toBe(process.cwd());
+    });
+
+    test(".cwd(undefined) uses current working directory", async () => {
+      const result = await $`pwd`.cwd(undefined).text();
+      expect(result.trim()).toBe(process.cwd());
+    });
+
+    test(".cwd(temp_dir).cwd('.') resets to current working directory", async () => {
+      const tmpResult = await $`pwd`.cwd(temp_dir).text();
+      expect(tmpResult.trim()).toBe(temp_dir);
+
+      const resetResult = await $`pwd`.cwd(temp_dir).cwd(".").text();
+      expect(resetResult.trim()).toBe(process.cwd());
+    });
+
+    test("$.cwd('.') sets default cwd to current working directory", async () => {
+      $.cwd(".");
+      const result = await $`pwd`.text();
+      expect(result.trim()).toBe(process.cwd());
+    });
+
+    test("$.cwd(temp_dir) then $.cwd('.') resets default cwd", async () => {
+      $.cwd(temp_dir);
+      const tmpResult = await $`pwd`.text();
+      expect(tmpResult.trim()).toBe(temp_dir);
+
+      $.cwd(".");
+      const resetResult = await $`pwd`.text();
+      expect(resetResult.trim()).toBe(process.cwd());
+
+      // Reset to original cwd for other tests
+      $.cwd(process.cwd());
+      const finalResult = await $`pwd`.text();
+      expect(finalResult.trim()).toBe(process.cwd());
+    });
   });
 
   test("which", async () => {

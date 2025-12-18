@@ -185,7 +185,7 @@ pub fn onWrite(this: *FileSink, amount: usize, status: bun.io.WriteStatus) void 
         if (comptime Environment.isWindows) {
             this.runPendingLater();
         } else {
-           this.runPending();
+            this.runPending();
         }
 
         // this.done == true means ended was called

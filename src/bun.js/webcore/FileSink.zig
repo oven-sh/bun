@@ -178,15 +178,7 @@ pub fn onWrite(this: *FileSink, amount: usize, status: bun.io.WriteStatus) void 
             this.pending.result = .{ .owned = this.pending.consumed };
         }
 
-        // On Windows, always defer runPending to the next tick to ensure
-        // the Promise is fully registered in JS before we try to resolve it.
-        // This fixes a race condition where the libuv write callback fires
-        // before the Promise is properly set up.
-        if (comptime Environment.isWindows) {
-            this.runPendingLater();
-        } else {
-            this.runPending();
-        }
+        this.runPending();
 
         // this.done == true means ended was called
         const ended_and_done = this.done and status == .end_of_file;

@@ -30,7 +30,7 @@ const InitFlags = packed struct(u8) {
     __unused: u5 = 0,
 };
 
-pub fn refSelf(this: *IOReader) *IOReader {
+pub fn dupeRef(this: *IOReader) *IOReader {
     this.ref();
     return this;
 }

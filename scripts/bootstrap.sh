@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version: 20
+# Version: 24
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -1155,12 +1155,22 @@ llvm_version() {
 install_llvm() {
 	case "$pm" in
 	apt)
-		bash="$(require bash)"
-		llvm_script="$(download_file "https://apt.llvm.org/llvm.sh")"
-		execute_sudo "$bash" "$llvm_script" "$(llvm_version)" all
+		# Debian 13 (Trixie) has LLVM 19 natively, and apt.llvm.org doesn't have a trixie repo
+		if [ "$distro" = "debian" ]; then
+			install_packages \
+				"llvm-$(llvm_version)" \
+				"clang-$(llvm_version)" \
+				"lld-$(llvm_version)" \
+				"llvm-$(llvm_version)-dev" \
+				"llvm-$(llvm_version)-tools"
+		else
+			bash="$(require bash)"
+			llvm_script="$(download_file "https://apt.llvm.org/llvm.sh")"
+			execute_sudo "$bash" "$llvm_script" "$(llvm_version)" all
 
-		# Install llvm-symbolizer explicitly to ensure it's available for ASAN
-		install_packages "llvm-$(llvm_version)-tools"
+			# Install llvm-symbolizer explicitly to ensure it's available for ASAN
+			install_packages "llvm-$(llvm_version)-tools"
+		fi
 		;;
 	brew)
 		install_packages "llvm@$(llvm_version)"
@@ -1297,11 +1307,6 @@ install_sccache() {
 
 install_rust() {
 	case "$distro" in
-	alpine)
-		install_packages \
-			rust \
-			cargo
-		;;
 	freebsd)
 		install_packages lang/rust
 		create_directory "$HOME/.cargo/bin"
@@ -1317,6 +1322,9 @@ install_rust() {
 		rustup_script=$(download_file "https://sh.rustup.rs")
 		execute "$sh" -lc "$rustup_script -y --no-modify-path"
 		append_to_path "$rust_home/bin"
+
+		# Ensure all rustup files are accessible (for CI builds where different users run builds)
+		grant_to_user "$rust_home"
 		;;
 	esac
 
@@ -1565,7 +1573,7 @@ install_buildkite() {
 		return
 	fi
 
-	buildkite_version="3.87.0"
+	buildkite_version="3.114.0"
 	case "$arch" in
 	aarch64)
 		buildkite_arch="arm64"
@@ -1766,7 +1774,7 @@ ensure_no_tmpfs() {
 	if ! [ "$os" = "linux" ]; then
 		return
 	fi
-	if ! [ "$distro" = "ubuntu" ]; then
+	if ! ( [ "$distro" = "ubuntu" ] || [ "$distro" = "debian" ] ); then
 		return
 	fi
 

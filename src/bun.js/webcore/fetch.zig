@@ -632,7 +632,11 @@ pub fn Bun__fetch_(
         break :extract_verbose verbose;
     };
 
-    // proxy: string | undefined;
+    // proxy: string | { url: string, headers?: Headers } | undefined;
+    var proxy_headers: ?Headers = null;
+    defer if (proxy_headers) |*hdrs| {
+        hdrs.deinit();
+    };
     url_proxy_buffer = extract_proxy: {
         const objects_to_try = [_]jsc.JSValue{
             options_object orelse .zero,
@@ -641,6 +645,7 @@ pub fn Bun__fetch_(
         inline for (0..2) |i| {
             if (objects_to_try[i] != .zero) {
                 if (try objects_to_try[i].get(globalThis, "proxy")) |proxy_arg| {
+                    // Handle string format: proxy: "http://proxy.example.com:8080"
                     if (proxy_arg.isString() and try proxy_arg.getLength(ctx) > 0) {
                         var href = try jsc.URL.hrefFromJS(proxy_arg, globalThis);
                         if (href.tag == .Dead) {
@@ -660,6 +665,54 @@ pub fn Bun__fetch_(
                         proxy = ZigURL.parse(buffer[url.href.len..]);
                         allocator.free(url_proxy_buffer);
                         break :extract_proxy buffer;
+                    }
+                    // Handle object format: proxy: { url: "http://proxy.example.com:8080", headers?: Headers }
+                    // If the proxy object doesn't have a 'url' property, ignore it.
+                    // This handles cases like passing a URL object directly as proxy (which has 'href' not 'url').
+                    if (proxy_arg.isObject()) {
+                        // Get the URL from the proxy object
+                        if (try proxy_arg.get(globalThis, "url")) |proxy_url_arg| {
+                            if (!proxy_url_arg.isUndefinedOrNull()) {
+                                if (proxy_url_arg.isString() and try proxy_url_arg.getLength(ctx) > 0) {
+                                    var href = try jsc.URL.hrefFromJS(proxy_url_arg, globalThis);
+                                    if (href.tag == .Dead) {
+                                        const err = ctx.toTypeError(.INVALID_ARG_VALUE, "fetch() proxy URL is invalid", .{});
+                                        is_error = true;
+                                        return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
+                                    }
+                                    defer href.deref();
+                                    const buffer = try std.fmt.allocPrint(allocator, "{s}{f}", .{ url_proxy_buffer, href });
+                                    url = ZigURL.parse(buffer[0..url.href.len]);
+                                    if (url.isFile()) {
+                                        url_type = URLType.file;
+                                    } else if (url.isBlob()) {
+                                        url_type = URLType.blob;
+                                    }
+
+                                    proxy = ZigURL.parse(buffer[url.href.len..]);
+                                    allocator.free(url_proxy_buffer);
+                                    url_proxy_buffer = buffer;
+
+                                    // Get the headers from the proxy object (optional)
+                                    if (try proxy_arg.get(globalThis, "headers")) |headers_value| {
+                                        if (!headers_value.isUndefinedOrNull()) {
+                                            if (headers_value.as(FetchHeaders)) |fetch_hdrs| {
+                                                proxy_headers = Headers.from(fetch_hdrs, allocator, .{}) catch |err| bun.handleOom(err);
+                                            } else if (try FetchHeaders.createFromJS(ctx, headers_value)) |fetch_hdrs| {
+                                                defer fetch_hdrs.deref();
+                                                proxy_headers = Headers.from(fetch_hdrs, allocator, .{}) catch |err| bun.handleOom(err);
+                                            }
+                                        }
+                                    }
+
+                                    break :extract_proxy url_proxy_buffer;
+                                } else {
+                                    const err = ctx.toTypeError(.INVALID_ARG_VALUE, "fetch() proxy.url must be a non-empty string", .{});
+                                    is_error = true;
+                                    return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -1248,6 +1301,7 @@ pub fn Bun__fetch_(
                 credentialsWithOptions.acl,
                 credentialsWithOptions.storage_class,
                 if (headers) |h| (h.getContentType()) else null,
+                if (headers) |h| h.getContentDisposition() else null,
                 proxy_url,
                 @ptrCast(&Wrapper.resolve),
                 s3_stream,
@@ -1338,6 +1392,7 @@ pub fn Bun__fetch_(
             .redirect_type = redirect_type,
             .verbose = verbose,
             .proxy = proxy,
+            .proxy_headers = proxy_headers,
             .url_proxy_buffer = url_proxy_buffer,
             .signal = signal,
             .globalThis = globalThis,
@@ -1372,6 +1427,7 @@ pub fn Bun__fetch_(
         body = FetchTasklet.HTTPRequestBody.Empty;
     }
     proxy = null;
+    proxy_headers = null;
     url_proxy_buffer = "";
     signal = null;
     ssl_config = null;

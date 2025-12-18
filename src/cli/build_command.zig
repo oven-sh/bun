@@ -82,6 +82,7 @@ pub const BuildCommand = struct {
         this_transpiler.options.banner = ctx.bundler_options.banner;
         this_transpiler.options.footer = ctx.bundler_options.footer;
         this_transpiler.options.drop = ctx.args.drop;
+        this_transpiler.options.bundler_feature_flags = Runtime.Features.initBundlerFeatureFlags(allocator, ctx.args.feature_flags);
 
         this_transpiler.options.css_chunking = ctx.bundler_options.css_chunking;
 
@@ -443,6 +444,8 @@ pub const BuildCommand = struct {
                     .{
                         .disable_default_env_files = !ctx.bundler_options.compile_autoload_dotenv,
                         .disable_autoload_bunfig = !ctx.bundler_options.compile_autoload_bunfig,
+                        .disable_autoload_tsconfig = !ctx.bundler_options.compile_autoload_tsconfig,
+                        .disable_autoload_package_json = !ctx.bundler_options.compile_autoload_package_json,
                     },
                 ) catch |err| {
                     Output.printErrorln("failed to create executable: {s}", .{@errorName(err)});
@@ -653,6 +656,7 @@ const resolve_path = @import("../resolver/resolve_path.zig");
 const std = @import("std");
 const BundleV2 = @import("../bundler/bundle_v2.zig").BundleV2;
 const Command = @import("../cli.zig").Command;
+const Runtime = @import("../runtime.zig").Runtime;
 
 const bun = @import("bun");
 const Global = bun.Global;

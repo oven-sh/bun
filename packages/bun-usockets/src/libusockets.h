@@ -349,7 +349,7 @@ struct us_loop_t *us_socket_context_loop(int ssl, us_socket_context_r context) n
 
 /* Invalidates passed socket, returning a new resized socket which belongs to a different socket context.
  * Used mainly for "socket upgrades" such as when transitioning from HTTP to WebSocket. */
-struct us_socket_t *us_socket_context_adopt_socket(int ssl, us_socket_context_r context, us_socket_r s, int ext_size);
+struct us_socket_t *us_socket_context_adopt_socket(int ssl, us_socket_context_r context, us_socket_r s, int old_ext_size, int ext_size);
 
 struct us_socket_t *us_socket_upgrade_to_tls(us_socket_r s, us_socket_context_r new_context, const char *sni);
 
@@ -411,7 +411,7 @@ void *us_poll_ext(us_poll_r p) nonnull_fn_decl;
 LIBUS_SOCKET_DESCRIPTOR us_poll_fd(us_poll_r p) nonnull_fn_decl;
 
 /* Resize an active poll */
-struct us_poll_t *us_poll_resize(us_poll_r p, us_loop_r loop, unsigned int ext_size) nonnull_fn_decl;
+struct us_poll_t *us_poll_resize(us_poll_r p, us_loop_r loop, unsigned int old_ext_size, unsigned int ext_size) nonnull_fn_decl;
 
 /* Public interfaces for sockets */
 
@@ -470,7 +470,7 @@ void us_socket_local_address(int ssl, us_socket_r s, char *nonnull_arg buf, int 
 /* Bun extras */
 struct us_socket_t *us_socket_pair(struct us_socket_context_t *ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR* fds);
 struct us_socket_t *us_socket_from_fd(struct us_socket_context_t *ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR fd, int ipc);
-struct us_socket_t *us_socket_wrap_with_tls(int ssl, us_socket_r s, struct us_bun_socket_context_options_t options, struct us_socket_events_t events, int socket_ext_size);
+struct us_socket_t *us_socket_wrap_with_tls(int ssl, us_socket_r s, struct us_bun_socket_context_options_t options, struct us_socket_events_t events, int old_socket_ext_size, int socket_ext_size);
 int us_socket_raw_write(int ssl, us_socket_r s, const char *data, int length);
 struct us_socket_t* us_socket_open(int ssl, struct us_socket_t * s, int is_client, char* ip, int ip_length);
 int us_raw_root_certs(struct us_cert_string_t**out);

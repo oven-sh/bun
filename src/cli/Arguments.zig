@@ -574,7 +574,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         }
 
         for (args.options("--test-path-ignore-patterns")) |pattern| {
-            ctx.test_options.ignore_patterns.append(pattern) catch bun.outOfMemory();
+            try ctx.test_options.ignore_patterns.append(pattern);
         }
     }
 

@@ -60,6 +60,7 @@ test("Bun.file(path).writer() does not throw", async () => {
   writer.write("New content");
   const promise = writer.end();
   registry.register(promise as Promise<number>, undefined);
+
   await promise;
   expect(await file.text()).toBe("New content");
 });

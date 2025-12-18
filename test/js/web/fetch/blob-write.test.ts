@@ -55,7 +55,7 @@ test("Bun.file(path).writer() does not throw", async () => {
   const file = Bun.file(path.join(dir, "test.txt"));
   const writer = file.writer();
   expect(writer).toBeDefined();
-  writer.write("New content");
+  await writer.write("New content");
   await writer.end();
   expect(await file.text()).toBe("New content");
 });

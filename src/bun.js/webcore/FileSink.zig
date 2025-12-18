@@ -579,13 +579,26 @@ pub fn endFromJS(this: *FileSink, globalThis: *JSGlobalObject) bun.sys.Maybe(JSV
         return .{ .result = JSValue.jsNumber(this.written) };
     }
 
+    // Create the Promise before calling flush() to ensure state = .pending
+    // before any I/O callbacks can fire. This fixes a race condition on Windows
+    // where libuv callbacks can fire synchronously during flush(), and if
+    // pending.state is still .none at that point, pending.run() will early-return
+    // without resolving the Promise.
+    const promise = this.pending.promise(globalThis);
+
     switch (this.writer.flush()) {
         .done => |written| {
+            // Completed synchronously - Promise was not needed, clean up
+            this.pending.state = .none;
+            this.pending.future.deinit();
             this.updateRef(false);
             this.writer.end();
             return .{ .result = JSValue.jsNumber(written) };
         },
         .err => |err| {
+            // Error - Promise was not needed, clean up
+            this.pending.state = .none;
+            this.pending.future.deinit();
             this.writer.close();
             return .{ .err = err };
         },
@@ -597,9 +610,13 @@ pub fn endFromJS(this: *FileSink, globalThis: *JSGlobalObject) bun.sys.Maybe(JSV
             }
             this.done = true;
             this.pending.result = .{ .owned = @truncate(pending_written) };
-            return .{ .result = this.pending.promise(globalThis).toJS() };
+            // Promise is already created, return it
+            return .{ .result = promise.toJS() };
         },
         .wrote => |written| {
+            // Completed synchronously - Promise was not needed, clean up
+            this.pending.state = .none;
+            this.pending.future.deinit();
             this.writer.end();
             return .{ .result = JSValue.jsNumber(written) };
         },

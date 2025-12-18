@@ -49,14 +49,18 @@ test("blob.writer() throws for data-backed blob", () => {
     `"Cannot write to a Blob backed by bytes, which are always read-only"`,
   );
 });
-
+var registry = new FinalizationRegistry(() => {
+  console.log("COLLECTED!!");
+});
 test("Bun.file(path).writer() does not throw", async () => {
   const dir = tempDirWithFiles("bun-writer", {});
   const file = Bun.file(path.join(dir, "test.txt"));
   const writer = file.writer();
   expect(writer).toBeDefined();
   writer.write("New content");
-  await writer.end();
+  const promise = writer.end();
+  registry.register(promise as Promise<number>, undefined);
+  await promise;
   expect(await file.text()).toBe("New content");
 });
 

@@ -224,6 +224,7 @@ pub const test_only_params = [_]ParamType{
     clap.parseParam("--dots                           Enable dots reporter. Shorthand for --reporter=dots.") catch unreachable,
     clap.parseParam("--only-failures                  Only display test failures, hiding passing tests.") catch unreachable,
     clap.parseParam("--max-concurrency <NUMBER>        Maximum number of concurrent tests to execute at once. Default is 20.") catch unreachable,
+    clap.parseParam("--test-path-ignore-patterns <STR>... Glob patterns to exclude from test discovery.") catch unreachable,
 };
 pub const test_params = test_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
@@ -570,6 +571,10 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 Output.prettyErrorln("<red>error<r>: Invalid seed value: {s}", .{seed_str});
                 std.process.exit(1);
             };
+        }
+
+        for (args.options("--test-path-ignore-patterns")) |pattern| {
+            ctx.test_options.ignore_patterns.append(pattern) catch bun.outOfMemory();
         }
     }
 

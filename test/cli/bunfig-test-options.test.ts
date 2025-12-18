@@ -365,4 +365,90 @@ describe("bunfig.toml test options", () => {
     expect(output).not.toContain("RUNNING: fixture");
     expect(output).toContain("1 pass");
   });
+
+  test("--test-path-ignore-patterns CLI option works", async () => {
+    const dir = tempDirWithFiles("bunfig-test-ignore-cli", {
+      "included.test.ts": `
+        import { test, expect } from "bun:test";
+        test("included", () => {
+          console.log("RUNNING: included");
+          expect(1).toBe(1);
+        });
+      `,
+      "excluded.test.ts": `
+        import { test, expect } from "bun:test";
+        test("excluded", () => {
+          console.log("RUNNING: excluded");
+          expect(1).toBe(1);
+        });
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--test-path-ignore-patterns", "**/excluded*"],
+      env: bunEnv,
+      cwd: dir,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    expect(exitCode).toBe(0);
+    const output = stdout + stderr;
+    expect(output).toContain("RUNNING: included");
+    expect(output).not.toContain("RUNNING: excluded");
+    expect(output).toContain("1 pass");
+  });
+
+  test("--test-path-ignore-patterns CLI option works with multiple patterns", async () => {
+    const dir = tempDirWithFiles("bunfig-test-ignore-cli-multi", {
+      "a.test.ts": `
+        import { test, expect } from "bun:test";
+        test("test a", () => {
+          console.log("RUNNING: a");
+          expect(1).toBe(1);
+        });
+      `,
+      "skip1.test.ts": `
+        import { test, expect } from "bun:test";
+        test("skip1", () => {
+          console.log("RUNNING: skip1");
+          expect(1).toBe(1);
+        });
+      `,
+      "skip2.test.ts": `
+        import { test, expect } from "bun:test";
+        test("skip2", () => {
+          console.log("RUNNING: skip2");
+          expect(1).toBe(1);
+        });
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--test-path-ignore-patterns", "**/skip1*", "--test-path-ignore-patterns", "**/skip2*"],
+      env: bunEnv,
+      cwd: dir,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    expect(exitCode).toBe(0);
+    const output = stdout + stderr;
+    expect(output).toContain("RUNNING: a");
+    expect(output).not.toContain("RUNNING: skip1");
+    expect(output).not.toContain("RUNNING: skip2");
+    expect(output).toContain("1 pass");
+  });
 });

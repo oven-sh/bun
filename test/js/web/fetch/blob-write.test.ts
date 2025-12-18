@@ -59,7 +59,8 @@ test("Bun.file(path).writer() does not throw", async () => {
   expect(writer).toBeDefined();
   writer.write("New content");
   const promise = writer.end();
-  registry.register(promise as Promise<number>, undefined);
+  if (typeof promise !== "number")
+    registry.register(promise, undefined);
 
   await promise;
   expect(await file.text()).toBe("New content");

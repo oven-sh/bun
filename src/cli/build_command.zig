@@ -82,6 +82,7 @@ pub const BuildCommand = struct {
         this_transpiler.options.banner = ctx.bundler_options.banner;
         this_transpiler.options.footer = ctx.bundler_options.footer;
         this_transpiler.options.drop = ctx.args.drop;
+        this_transpiler.options.bundler_feature_flags = Runtime.Features.initBundlerFeatureFlags(allocator, ctx.args.feature_flags);
 
         this_transpiler.options.css_chunking = ctx.bundler_options.css_chunking;
 
@@ -655,6 +656,7 @@ const resolve_path = @import("../resolver/resolve_path.zig");
 const std = @import("std");
 const BundleV2 = @import("../bundler/bundle_v2.zig").BundleV2;
 const Command = @import("../cli.zig").Command;
+const Runtime = @import("../runtime.zig").Runtime;
 
 const bun = @import("bun");
 const Global = bun.Global;

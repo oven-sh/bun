@@ -196,4 +196,173 @@ describe("bunfig.toml test options", () => {
     // 2 tests * 2 reruns = 4 total test runs
     expect(output).toContain("4 pass");
   });
+
+  test("testPathIgnorePatterns excludes matching files", async () => {
+    const dir = tempDirWithFiles("bunfig-test-ignore-patterns", {
+      "included.test.ts": `
+        import { test, expect } from "bun:test";
+        test("included", () => {
+          console.log("RUNNING: included");
+          expect(1).toBe(1);
+        });
+      `,
+      "ignored.test.ts": `
+        import { test, expect } from "bun:test";
+        test("ignored", () => {
+          console.log("RUNNING: ignored");
+          expect(1).toBe(1);
+        });
+      `,
+      "bunfig.toml": `[test]\ntestPathIgnorePatterns = ["ignored.test.ts"]`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test"],
+      env: bunEnv,
+      cwd: dir,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    expect(exitCode).toBe(0);
+    const output = stdout + stderr;
+    // Only the included test should run
+    expect(output).toContain("RUNNING: included");
+    expect(output).not.toContain("RUNNING: ignored");
+    expect(output).toContain("1 pass");
+  });
+
+  test("testPathIgnorePatterns works with glob patterns", async () => {
+    const dir = tempDirWithFiles("bunfig-test-ignore-glob", {
+      "a.test.ts": `
+        import { test, expect } from "bun:test";
+        test("test a", () => {
+          console.log("RUNNING: a");
+          expect(1).toBe(1);
+        });
+      `,
+      "b.test.ts": `
+        import { test, expect } from "bun:test";
+        test("test b", () => {
+          console.log("RUNNING: b");
+          expect(1).toBe(1);
+        });
+      `,
+      "ignored/c.test.ts": `
+        import { test, expect } from "bun:test";
+        test("test c", () => {
+          console.log("RUNNING: c");
+          expect(1).toBe(1);
+        });
+      `,
+      "bunfig.toml": `[test]\ntestPathIgnorePatterns = ["ignored/**"]`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test"],
+      env: bunEnv,
+      cwd: dir,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    expect(exitCode).toBe(0);
+    const output = stdout + stderr;
+    expect(output).toContain("RUNNING: a");
+    expect(output).toContain("RUNNING: b");
+    expect(output).not.toContain("RUNNING: c");
+    expect(output).toContain("2 pass");
+  });
+
+  test("testPathIgnorePatterns works with single string", async () => {
+    const dir = tempDirWithFiles("bunfig-test-ignore-string", {
+      "included.test.ts": `
+        import { test, expect } from "bun:test";
+        test("included", () => {
+          console.log("RUNNING: included");
+          expect(1).toBe(1);
+        });
+      `,
+      "skipped.test.ts": `
+        import { test, expect } from "bun:test";
+        test("skipped", () => {
+          console.log("RUNNING: skipped");
+          expect(1).toBe(1);
+        });
+      `,
+      "bunfig.toml": `[test]\ntestPathIgnorePatterns = "**/skipped*"`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test"],
+      env: bunEnv,
+      cwd: dir,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    expect(exitCode).toBe(0);
+    const output = stdout + stderr;
+    expect(output).toContain("RUNNING: included");
+    expect(output).not.toContain("RUNNING: skipped");
+    expect(output).toContain("1 pass");
+  });
+
+  test("testPathIgnorePatterns excludes matching directories", async () => {
+    const dir = tempDirWithFiles("bunfig-test-ignore-dir", {
+      "a.test.ts": `
+        import { test, expect } from "bun:test";
+        test("test a", () => {
+          console.log("RUNNING: a");
+          expect(1).toBe(1);
+        });
+      `,
+      "__fixtures__/fixture.test.ts": `
+        import { test, expect } from "bun:test";
+        test("fixture test", () => {
+          console.log("RUNNING: fixture");
+          expect(1).toBe(1);
+        });
+      `,
+      "bunfig.toml": `[test]\ntestPathIgnorePatterns = ["__fixtures__"]`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test"],
+      env: bunEnv,
+      cwd: dir,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    expect(exitCode).toBe(0);
+    const output = stdout + stderr;
+    expect(output).toContain("RUNNING: a");
+    expect(output).not.toContain("RUNNING: fixture");
+    expect(output).toContain("1 pass");
+  });
 });

@@ -470,6 +470,19 @@ pub const Bunfig = struct {
                             },
                         }
                     }
+
+                    if (test_.get("testPathIgnorePatterns")) |path_ignore_patterns_expr| {
+                        if (try path_ignore_patterns_expr.asStringCloned(bun.default_allocator)) |pattern| {
+                            try this.ctx.test_options.ignore_patterns.append(pattern);
+                        } else if (path_ignore_patterns_expr.asArray()) |patterns_arr| {
+                            try this.ctx.test_options.ignore_patterns.ensureUnusedCapacity(patterns_arr.array.items.len);
+                            for (patterns_arr.array.items.slice()) |pattern_expr| {
+                                if (try pattern_expr.asStringCloned(bun.default_allocator)) |pattern| {
+                                    this.ctx.test_options.ignore_patterns.appendAssumeCapacity(pattern);
+                                }
+                            }
+                        }
+                    }
                 }
             }
 

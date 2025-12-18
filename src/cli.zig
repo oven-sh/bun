@@ -353,6 +353,7 @@ pub const Command = struct {
         test_filter_pattern: ?[]const u8 = null,
         test_filter_regex: ?*RegularExpression = null,
         max_concurrency: u32 = 20,
+        ignore_patterns: bun.collections.ArrayListDefault([]const u8) = .init(),
 
         reporters: struct {
             dots: bool = false,

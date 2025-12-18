@@ -154,17 +154,6 @@ declare module "bun:sqlite" {
      * | `bigint`        | `INTEGER`              |
      * | `null`          | `NULL`                 |
      *
-     * @param sql The SQL query to run
-     * @param bindings Optional bindings for the query
-     * @returns A `Changes` object with `changes` and `lastInsertRowid` properties
-     *
-     * @example
-     * ```ts
-     * db.run("CREATE TABLE foo (bar TEXT)");
-     * db.run("INSERT INTO foo VALUES (?)", ["baz"]);
-     * // => { changes: 1, lastInsertRowid: 1 }
-     * ```
-     *
      * Useful for queries like:
      * - `CREATE TABLE`
      * - `INSERT INTO`
@@ -182,6 +171,17 @@ declare module "bun:sqlite" {
      * - `CREATE VIEW`
      * - `CREATE VIRTUAL TABLE`
      * - `CREATE TEMPORARY TABLE`
+     *
+     * @param sql The SQL query to run
+     * @param bindings Optional bindings for the query
+     * @returns A `Changes` object with `changes` and `lastInsertRowid` properties
+     *
+     * @example
+     * ```ts
+     * db.run("CREATE TABLE foo (bar TEXT)");
+     * db.run("INSERT INTO foo VALUES (?)", ["baz"]);
+     * // => { changes: 1, lastInsertRowid: 1 }
+     * ```
      */
     run<ParamsType extends SQLQueryBindings[]>(sql: string, ...bindings: ParamsType[]): Changes;
 

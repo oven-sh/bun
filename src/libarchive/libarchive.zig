@@ -173,6 +173,37 @@ pub const BufferReadStream = struct {
     // }
 };
 
+/// Validates that a symlink target doesn't escape the extraction directory.
+/// Returns true if the symlink is safe (target stays within extraction dir),
+/// false if it would escape (e.g., via ../ traversal or absolute path).
+///
+/// The check works by resolving the symlink target relative to the symlink's
+/// directory location using a fake root, then checking if the result stays
+/// within that fake root.
+fn isSymlinkTargetSafe(symlink_path: []const u8, link_target: [:0]const u8) bool {
+    // Absolute symlink targets are never safe - they could point anywhere
+    if (link_target.len > 0 and link_target[0] == '/') {
+        return false;
+    }
+
+    // Get the directory containing the symlink
+    const symlink_dir = std.fs.path.dirname(symlink_path) orelse "";
+
+    // Use a fake root to resolve the path and check if it escapes
+    const fake_root = "/packages/";
+
+    var buf: bun.PathBuffer = undefined;
+    const resolved = bun.path.joinAbsStringBuf(
+        fake_root,
+        &buf,
+        &.{ symlink_dir, link_target },
+        .posix,
+    );
+
+    // If the resolved path doesn't start with our fake root, it escaped
+    return strings.hasPrefix(resolved, fake_root);
+}
+
 pub const Archiver = struct {
     // impl: *lib.archive = undefined,
     // buf: []const u8 = undefined,
@@ -436,6 +467,19 @@ pub const Archiver = struct {
                         .sym_link => {
                             const link_target = entry.symlink();
                             if (Environment.isPosix) {
+                                // Validate that the symlink target doesn't escape the extraction directory.
+                                // This prevents path traversal attacks where a malicious tarball creates a symlink
+                                // pointing outside (e.g., to /tmp), then writes files through that symlink.
+                                if (!isSymlinkTargetSafe(path_slice, link_target)) {
+                                    // Skip symlinks that would escape the extraction directory
+                                    if (options.log) {
+                                        Output.warn("Skipping symlink with unsafe target: {f} -> {s}\n", .{
+                                            bun.fmt.fmtOSPath(path_slice, .{}),
+                                            link_target,
+                                        });
+                                    }
+                                    continue;
+                                }
                                 bun.sys.symlinkat(link_target, .fromNative(dir_fd), path).unwrap() catch |err| brk: {
                                     switch (err) {
                                         error.EPERM, error.ENOENT => {

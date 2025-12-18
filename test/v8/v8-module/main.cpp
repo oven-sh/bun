@@ -1120,13 +1120,13 @@ void test_v8_value_type_checks(const FunctionCallbackInfo<Value> &info) {
   }
 
   Local<Value> value = info[0];
-  
+
   // Test all type checks
   printf("IsMap: %s\n", value->IsMap() ? "true" : "false");
   printf("IsArray: %s\n", value->IsArray() ? "true" : "false");
   printf("IsInt32: %s\n", value->IsInt32() ? "true" : "false");
   printf("IsBigInt: %s\n", value->IsBigInt() ? "true" : "false");
-  
+
   // Also test some existing checks for comparison
   printf("IsNumber: %s\n", value->IsNumber() ? "true" : "false");
   printf("IsUint32: %s\n", value->IsUint32() ? "true" : "false");
@@ -1134,7 +1134,7 @@ void test_v8_value_type_checks(const FunctionCallbackInfo<Value> &info) {
   printf("IsBoolean: %s\n", value->IsBoolean() ? "true" : "false");
   printf("IsString: %s\n", value->IsString() ? "true" : "false");
   printf("IsFunction: %s\n", value->IsFunction() ? "true" : "false");
-  
+
   return ok(info);
 }
 

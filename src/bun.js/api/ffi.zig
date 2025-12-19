@@ -1001,10 +1001,14 @@ pub const FFI = struct {
         if (object_value.isEmptyOrUndefinedOrNull()) return invalidOptionsArg(global);
         const object = object_value.getObject() orelse return invalidOptionsArg(global);
 
-        var filepath_buf: bun.PathBuffer = undefined;
+        var filepath_buf = bun.path_buffer_pool.get();
+        defer bun.path_buffer_pool.put(filepath_buf);
+        var linux_memfd_to_close: i32 = -1;
         const name = brk: {
             if (jsc.ModuleLoader.resolveEmbeddedFile(
                 vm,
+                filepath_buf,
+                &linux_memfd_to_close,
                 name_slice.slice(),
                 switch (Environment.os) {
                     .linux => "so",
@@ -1013,7 +1017,6 @@ pub const FFI = struct {
                     .wasm => @compileError("TODO"),
                 },
             )) |resolved| {
-                @memcpy(filepath_buf[0..resolved.len], resolved);
                 filepath_buf[resolved.len] = 0;
                 break :brk filepath_buf[0..resolved.len];
             }

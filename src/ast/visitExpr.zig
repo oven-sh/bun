@@ -923,7 +923,10 @@ pub fn VisitExpr(
                 const e_ = expr.data.e_if;
                 const is_call_target = @as(Expr.Data, p.call_target) == .e_if and expr.data.e_if == p.call_target.e_if;
 
+                const prev_in_branch = p.in_branch_condition;
+                p.in_branch_condition = true;
                 e_.test_ = p.visitExpr(e_.test_);
+                p.in_branch_condition = prev_in_branch;
 
                 e_.test_ = SideEffects.simplifyBoolean(p, e_.test_);
 
@@ -1274,6 +1277,15 @@ pub fn VisitExpr(
                     if (method_call_should_be_replaced_with_undefined) {
                         p.is_control_flow_dead = old_is_control_flow_dead;
                         return .{ .data = .{ .e_undefined = .{} }, .loc = expr.loc };
+                    }
+                }
+
+                // Handle `feature("FLAG_NAME")` calls from `import { feature } from "bun:bundle"`
+                // Check if the bundler_feature_flag_ref is set before calling the function
+                // to avoid stack memory usage from copying values back and forth.
+                if (p.bundler_feature_flag_ref.isValid()) {
+                    if (maybeReplaceBundlerFeatureCall(p, e_, expr.loc)) |result| {
+                        return result;
                     }
                 }
 
@@ -1630,6 +1642,66 @@ pub fn VisitExpr(
                 }
 
                 return expr;
+            }
+
+            /// Handles `feature("FLAG_NAME")` calls from `import { feature } from "bun:bundle"`.
+            /// This enables statically analyzable dead-code elimination through feature gating.
+            ///
+            /// When a feature flag is enabled via `--feature=FLAG_NAME`, `feature("FLAG_NAME")`
+            /// is replaced with `true`, otherwise it's replaced with `false`. This allows
+            /// bundlers to eliminate dead code branches at build time.
+            ///
+            /// Returns the replacement expression if this is a feature() call, or null otherwise.
+            /// Note: Caller must check `p.bundler_feature_flag_ref.isValid()` before calling.
+            fn maybeReplaceBundlerFeatureCall(p: *P, e_: *E.Call, loc: logger.Loc) ?Expr {
+                // Check if the target is the `feature` function from "bun:bundle"
+                // It could be e_identifier (for unbound) or e_import_identifier (for imports)
+                const target_ref: ?Ref = switch (e_.target.data) {
+                    .e_identifier => |ident| ident.ref,
+                    .e_import_identifier => |ident| ident.ref,
+                    else => null,
+                };
+
+                if (target_ref == null or !target_ref.?.eql(p.bundler_feature_flag_ref)) {
+                    return null;
+                }
+
+                // If control flow is dead, just return false without validation errors
+                if (p.is_control_flow_dead) {
+                    return p.newExpr(E.Boolean{ .value = false }, loc);
+                }
+
+                // Validate: exactly one argument required
+                if (e_.args.len != 1) {
+                    p.log.addError(p.source, loc, "feature() requires exactly one string argument") catch unreachable;
+                    return p.newExpr(E.Boolean{ .value = false }, loc);
+                }
+
+                const arg = e_.args.slice()[0];
+
+                // Validate: argument must be a string literal
+                if (arg.data != .e_string) {
+                    p.log.addError(p.source, arg.loc, "feature() argument must be a string literal") catch unreachable;
+                    return p.newExpr(E.Boolean{ .value = false }, loc);
+                }
+
+                // Check if the feature flag is enabled
+                // Use the underlying string data directly without allocation.
+                // Feature flag names should be ASCII identifiers, so UTF-16 is unexpected.
+                const flag_string = arg.data.e_string;
+                if (flag_string.is_utf16) {
+                    p.log.addError(p.source, arg.loc, "feature() flag name must be an ASCII string") catch unreachable;
+                    return p.newExpr(E.Boolean{ .value = false }, loc);
+                }
+
+                // feature() can only be used directly in an if statement or ternary condition
+                if (!p.in_branch_condition) {
+                    p.log.addError(p.source, loc, "feature() from \"bun:bundle\" can only be used directly in an if statement or ternary condition") catch unreachable;
+                    return p.newExpr(E.Boolean{ .value = false }, loc);
+                }
+
+                const is_enabled = p.options.features.bundler_feature_flags.map.contains(flag_string.data);
+                return .{ .data = .{ .e_branch_boolean = .{ .value = is_enabled } }, .loc = loc };
             }
         };
     };

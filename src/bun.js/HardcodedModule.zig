@@ -10,6 +10,7 @@ pub const HardcodedModule = enum {
     @"bun:test",
     @"bun:wrap",
     @"bun:sqlite",
+    @"bun:diff",
     @"node:assert",
     @"node:assert/strict",
     @"node:async_hooks",
@@ -97,6 +98,7 @@ pub const HardcodedModule = enum {
         .{ "bun:main", .@"bun:main" },
         .{ "bun:test", .@"bun:test" },
         .{ "bun:sqlite", .@"bun:sqlite" },
+        .{ "bun:diff", .@"bun:diff" },
         .{ "bun:wrap", .@"bun:wrap" },
         .{ "bun:internal-for-testing", .@"bun:internal-for-testing" },
         // Node.js
@@ -362,6 +364,7 @@ pub const HardcodedModule = enum {
             .{ "bun:ffi", .{ .path = "bun:ffi" } },
             .{ "bun:jsc", .{ .path = "bun:jsc" } },
             .{ "bun:sqlite", .{ .path = "bun:sqlite" } },
+            .{ "bun:diff", .{ .path = "bun:diff" } },
             .{ "bun:wrap", .{ .path = "bun:wrap" } },
             .{ "bun:internal-for-testing", .{ .path = "bun:internal-for-testing" } },
             .{ "ffi", .{ .path = "bun:ffi" } },

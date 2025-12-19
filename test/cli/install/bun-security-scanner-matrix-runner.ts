@@ -1,4 +1,4 @@
-import { bunEnv, bunExe, runBunInstall, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, runBunInstall, tempDirWithFiles } from "harness";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { isCI } from "../../harness";
@@ -493,40 +493,15 @@ scanner = "${scannerPath}"`,
   const sortedPackages = [...requestedPackages].sort();
   const sortedTarballs = [...requestedTarballs].sort();
 
-  if (command === "install") {
-    expect(sortedPackages).toMatchSnapshot("requested-packages: install");
-    expect(sortedTarballs).toMatchSnapshot("requested-tarballs: install");
-  } else if (command === "add") {
-    expect(sortedPackages).toMatchSnapshot("requested-packages: add");
-    expect(sortedTarballs).toMatchSnapshot("requested-tarballs: add");
-  } else if (command === "update") {
-    if (args.length > 0) {
-      expect(sortedPackages).toMatchSnapshot("requested-packages: update with args");
-      expect(sortedTarballs).toMatchSnapshot("requested-tarballs: update with args");
-    } else {
-      expect(sortedPackages).toMatchSnapshot("requested-packages: update without args");
-      expect(sortedTarballs).toMatchSnapshot("requested-tarballs: update without args");
-    }
-  } else if (command === "remove" || command === "uninstall") {
-    if (args.length > 0) {
-      expect(sortedPackages).toMatchSnapshot("requested-packages: remove with args");
-      expect(sortedTarballs).toMatchSnapshot("requested-tarballs: remove with args");
-    } else {
-      expect(sortedPackages).toMatchSnapshot("requested-packages: remove without args");
-      expect(sortedTarballs).toMatchSnapshot("requested-tarballs: remove without args");
-    }
-  } else {
-    expect(sortedPackages).toMatchSnapshot("requested-packages: unknown command");
-    expect(sortedTarballs).toMatchSnapshot("requested-tarballs: unknown command");
-  }
+  const key = `${command} ${args.length > 0 ? "with args" : "without args"}` as const;
+  expect(sortedPackages).toMatchSnapshot(`requested-packages: ${key}`);
+  expect(sortedTarballs).toMatchSnapshot(`requested-tarballs: ${key}`);
 }
 
 export function runSecurityScannerTests(selfModuleName: string, hasExistingNodeModules: boolean) {
   let i = 0;
 
-  const bunTest = Bun.jest(selfModuleName);
-
-  const { describe, beforeAll, afterAll, test } = bunTest;
+  const { describe, beforeAll, afterAll, test } = Bun.jest(selfModuleName);
 
   beforeAll(async () => {
     registryUrl = await startRegistry(DO_TEST_DEBUG);
@@ -573,8 +548,7 @@ export function runSecurityScannerTests(selfModuleName: string, hasExistingNodeM
                   });
                 }
 
-                // Skip TTY tests on Windows - PTY not supported
-                if (hasTTY && process.platform === "win32") {
+                if (hasTTY && isWindows) {
                   return test.skip(testName, async () => {
                     // PTY not supported on Windows
                   });
@@ -600,8 +574,6 @@ export function runSecurityScannerTests(selfModuleName: string, hasExistingNodeM
                 // but is not referenced in package.json anywhere and is not in the lockfile, so the only knowledge
                 // of this package's existence is the fact that it was defined in as the value in bunfig.toml
                 // Therefore, we should fail because we don't know where to install it from
-
-                // Determine if this test should fail
                 const shouldFail =
                   scannerType === "npm.bunfigonly" ||
                   scannerReturns === "fatal" ||

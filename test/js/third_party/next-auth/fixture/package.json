@@ -9,8 +9,8 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "next": "^15.5.9",
-    "next-auth": "5.0.0-beta.25",
+    "next": "^16.1.0",
+    "next-auth": "5.0.0-beta.30",
     "react": "^19.2.3",
     "react-dom": "^19.2.3"
   },
@@ -21,7 +21,7 @@
     "@types/react": "^19.2.3",
     "@types/react-dom": "^19.2.3",
     "eslint": "^9",
-    "eslint-config-next": "^15.5.9",
+    "eslint-config-next": "^16.1.0",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

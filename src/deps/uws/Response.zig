@@ -90,8 +90,8 @@ pub fn NewResponse(ssl_flag: i32) type {
         pub fn endSendFile(res: *Response, write_offset: u64, close_connection: bool) void {
             c.uws_res_end_sendfile(ssl_flag, res.downcast(), write_offset, close_connection);
         }
-        pub fn timeout(res: *Response, seconds: u8) void {
-            c.uws_res_timeout(ssl_flag, res.downcast(), seconds);
+        pub fn timeout(res: *Response, seconds: u16) void {
+            c.uws_res_timeout(ssl_flag, res.downcast(), @truncate(seconds));
         }
         pub fn resetTimeout(res: *Response) void {
             c.uws_res_reset_timeout(ssl_flag, res.downcast());
@@ -431,7 +431,7 @@ pub const AnyResponse = union(enum) {
         };
     }
 
-    pub fn timeout(this: AnyResponse, seconds: u8) void {
+    pub fn timeout(this: AnyResponse, seconds: u16) void {
         switch (this) {
             inline else => |resp| resp.timeout(seconds),
         }

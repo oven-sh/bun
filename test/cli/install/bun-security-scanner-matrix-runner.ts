@@ -541,6 +541,7 @@ export function runSecurityScannerTests(selfModuleName: string, hasExistingNodeM
     { hasTTY: true, ttyResponse: "y", ttyLabel: "TTY:y" } as const,
     { hasTTY: true, ttyResponse: "n", ttyLabel: "TTY:n" } as const,
   ];
+  const ttyConfigsNoTTY = ttyConfigs.filter(c => !c.hasTTY);
 
   describe.each(["install", "update", "add", "remove", "uninstall"] as const)("bun %s", command => {
     describe.each([
@@ -553,7 +554,7 @@ export function runSecurityScannerTests(selfModuleName: string, hasExistingNodeM
           describe.each([true, false] as const)("(bun.lock exists: %p)", hasLockfile => {
             describe.each(["none", "warn", "fatal"] as const)("(advisories: %s)", scannerReturns => {
               // TTY tests only apply to "warn" cases - for "none" and "fatal", only test non-TTY
-              const applicableTtyConfigs = scannerReturns === "warn" ? ttyConfigs : ttyConfigs.filter(c => !c.hasTTY);
+              const applicableTtyConfigs = scannerReturns === "warn" ? ttyConfigs : ttyConfigsNoTTY;
 
               describe.each(applicableTtyConfigs)("($ttyLabel)", ({ hasTTY, ttyResponse }) => {
                 if ((command === "add" || command === "uninstall" || command === "remove") && args.length === 0) {

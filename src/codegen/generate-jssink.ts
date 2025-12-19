@@ -101,6 +101,7 @@ function header() {
             static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
             static size_t estimatedSize(JSCell* cell, JSC::VM& vm);
             static size_t memoryCost(void* sinkPtr);
+            static bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown>, void*, JSC::AbstractSlotVisitor&, ASCIILiteral*);
 
             void ref();
             void unref();
@@ -280,6 +281,7 @@ namespace WebCore {
 using namespace JSC;
 
 ${classes.map(name => `extern "C" size_t ${name}__memoryCost(void* sinkPtr);`).join("\n")}
+${classes.map(name => `extern "C" bool ${name}__hasPendingActivity(void* sinkPtr);`).join("\n")}
 
 JSC_DEFINE_HOST_FUNCTION(functionStartDirectStream, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))
 {
@@ -414,6 +416,20 @@ size_t ${className}::memoryCost(void* sinkPtr) {
         return 0;
 
     return ${name}__memoryCost(sinkPtr);
+}
+
+bool ${className}::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, JSC::AbstractSlotVisitor& visitor, ASCIILiteral* reason)
+{
+    auto* sink = jsCast<${className}*>(handle.slot()->asCell());
+    void* ptr = sink->wrapped();
+    if (!ptr)
+        return false;
+    if (${name}__hasPendingActivity(ptr)) {
+        if (reason) [[unlikely]]
+            *reason = "${name} has pending activity"_s;
+        return true;
+    }
+    return false;
 }
 
 size_t ${controller}::memoryCost(void* sinkPtr) {

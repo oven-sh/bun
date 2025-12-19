@@ -110,14 +110,26 @@ pub const LineIndex = struct {
         self.allocator.free(self.lines);
     }
 
-    /// Get the content of a line by index
+    /// Get the content of a line by index.
+    /// Asserts that idx is within bounds.
     pub fn getLine(self: LineIndex, idx: usize) []const u8 {
+        std.debug.assert(idx < self.lines.len);
         const l = self.lines[idx];
+        std.debug.assert(l.start + l.len <= self.content.len);
         return self.content[l.start..][0..l.len];
     }
 
-    /// Check if two lines are equal (hash first, then SIMD comparison)
-    pub fn linesEqual(self: LineIndex, other: LineIndex, self_idx: usize, other_idx: usize) bool {
+    /// Check if two lines are equal (hash first, then SIMD comparison).
+    /// Asserts that both indices are within bounds.
+    pub fn linesEqual(
+        self: LineIndex,
+        other: LineIndex,
+        self_idx: usize,
+        other_idx: usize,
+    ) bool {
+        std.debug.assert(self_idx < self.lines.len);
+        std.debug.assert(other_idx < other.lines.len);
+
         const a = self.lines[self_idx];
         const b = other.lines[other_idx];
 

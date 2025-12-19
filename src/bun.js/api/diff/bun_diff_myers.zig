@@ -67,6 +67,10 @@ pub fn diffWithConfig(
     const n_full: usize = old.len();
     const m_full: usize = new.len();
 
+    // Preconditions: line counts must fit in u32 for Range fields
+    std.debug.assert(n_full <= std.math.maxInt(u32));
+    std.debug.assert(m_full <= std.math.maxInt(u32));
+
     // Edge cases
     if (n_full == 0 and m_full == 0) {
         return try allocator.alloc(Edit, 0);
@@ -165,7 +169,8 @@ pub fn diffWithConfig(
     return result.toOwnedSlice();
 }
 
-/// Core Myers diff on a subrange of lines
+/// Core Myers diff on a subrange of lines.
+/// Returns edit script for lines[offset..offset+n_len] vs lines[offset..offset+m_len].
 fn diffCore(
     old: LineIndex,
     new: LineIndex,
@@ -175,6 +180,13 @@ fn diffCore(
     allocator: std.mem.Allocator,
     comptime config: DiffConfig,
 ) ![]Edit {
+    // Preconditions
+    std.debug.assert(n_len <= std.math.maxInt(isize));
+    std.debug.assert(m_len <= std.math.maxInt(isize));
+    std.debug.assert(offset <= std.math.maxInt(u32));
+    std.debug.assert(offset + n_len <= old.len());
+    std.debug.assert(offset + m_len <= new.len());
+
     const n: isize = @intCast(n_len);
     const m: isize = @intCast(m_len);
     const off: u32 = @intCast(offset);
@@ -183,28 +195,57 @@ fn diffCore(
     if (n == 0 and m == 0) {
         return try allocator.alloc(Edit, 0);
     }
-
     if (n == 0) {
-        const edits = try allocator.alloc(Edit, 1);
-        edits[0] = .{ .insert = .{
-            .old_start = off,
-            .old_end = off,
-            .new_start = off,
-            .new_end = off + @as(u32, @intCast(m)),
-        } };
-        return edits;
+        return try buildSingleEdit(.insert, off, 0, @intCast(m), allocator);
+    }
+    if (m == 0) {
+        return try buildSingleEdit(.delete, off, @intCast(n), 0, allocator);
     }
 
-    if (m == 0) {
-        const edits = try allocator.alloc(Edit, 1);
-        edits[0] = .{ .delete = .{
-            .old_start = off,
-            .old_end = off + @as(u32, @intCast(n)),
-            .new_start = off,
-            .new_end = off,
-        } };
-        return edits;
+    // Run Myers algorithm
+    const myers_result = try runMyers(old, new, offset, n, m, allocator, config);
+    defer {
+        for (myers_result.trace) |t| allocator.free(t);
+        allocator.free(myers_result.trace);
     }
+
+    if (myers_result.exceeded_limit) {
+        return try buildFallbackEdits(off, @intCast(n), @intCast(m), allocator);
+    }
+
+    // Backtrack to build edit script
+    const raw_edits = try backtrack(
+        myers_result.trace,
+        n,
+        m,
+        n + m,
+        myers_result.edit_distance,
+        off,
+        allocator,
+    );
+    defer allocator.free(raw_edits);
+
+    return coalesce(raw_edits, allocator);
+}
+
+const MyersResult = struct {
+    trace: [][]isize,
+    edit_distance: usize,
+    exceeded_limit: bool,
+};
+
+/// Run the core Myers shortest-path algorithm.
+/// Returns trace data for backtracking, or indicates early termination.
+fn runMyers(
+    old: LineIndex,
+    new: LineIndex,
+    offset: usize,
+    n: isize,
+    m: isize,
+    allocator: std.mem.Allocator,
+    comptime config: DiffConfig,
+) !MyersResult {
+    std.debug.assert(n > 0 and m > 0);
 
     const max: isize = n + m;
     const max_usize: usize = @intCast(max);
@@ -216,7 +257,7 @@ fn diffCore(
         max_usize;
 
     // V array: stores furthest reaching x for each diagonal k
-    // Index as v[offset + k] where offset = max
+    // Index as v[max + k] where k ranges from -d to d
     const v_size = 2 * max_usize + 1;
     var v = try allocator.alloc(isize, v_size);
     defer allocator.free(v);
@@ -224,14 +265,15 @@ fn diffCore(
 
     // Trace for backtracking - store V state at each step
     var trace = std.array_list.Managed([]isize).init(allocator);
-    defer {
+    errdefer {
         for (trace.items) |t| allocator.free(t);
         trace.deinit();
     }
 
-    // Find shortest edit script
+    // Find shortest edit script using Myers algorithm
     var found_d: usize = 0;
     var exceeded_limit = false;
+
     outer: for (0..edit_limit + 1) |d_usize| {
         const d: isize = @intCast(d_usize);
 
@@ -239,35 +281,17 @@ fn diffCore(
         const v_copy = try allocator.dupe(isize, v);
         try trace.append(v_copy);
 
-        // k ranges from -d to d in steps of 2
+        // k ranges from -d to d in steps of 2 (parity constraint)
         var k: isize = -d;
         while (k <= d) : (k += 2) {
-            // Determine x from previous step
-            var x: isize = undefined;
-
-            // Decide whether to move down (insert) or right (delete)
-            // At the edges we have no choice, in the middle compare furthest x
-            const go_down = if (k == -d) true else if (k == d) false else blk: {
-                const k_minus_1_idx: usize = @intCast(max + k - 1);
-                const k_plus_1_idx: usize = @intCast(max + k + 1);
-                break :blk v[k_minus_1_idx] < v[k_plus_1_idx];
-            };
-
-            if (go_down) {
-                // Move down (insert)
-                const k_plus_1_idx: usize = @intCast(max + k + 1);
-                x = v[k_plus_1_idx];
-            } else {
-                // Move right (delete)
-                const k_minus_1_idx: usize = @intCast(max + k - 1);
-                x = v[k_minus_1_idx] + 1;
-            }
-
+            var x = computeX(v, max, k, d);
             var y = x - k;
 
             // Follow diagonal (matching lines)
-            // Note: x,y are relative to trimmed range, but linesEqual needs absolute indices
-            while (x < n and y < m and old.linesEqual(new, @intCast(offset + @as(usize, @intCast(x))), @intCast(offset + @as(usize, @intCast(y))))) {
+            while (x < n and y < m) {
+                const old_idx = offset + @as(usize, @intCast(x));
+                const new_idx = offset + @as(usize, @intCast(y));
+                if (!old.linesEqual(new, old_idx, new_idx)) break;
                 x += 1;
                 y += 1;
             }
@@ -288,30 +312,75 @@ fn diffCore(
         }
     }
 
-    // If we exceeded the limit, fall back to simple delete+insert
-    if (exceeded_limit) {
-        const edits = try allocator.alloc(Edit, 2);
-        edits[0] = .{ .delete = .{
+    return .{
+        .trace = try trace.toOwnedSlice(),
+        .edit_distance = found_d,
+        .exceeded_limit = exceeded_limit,
+    };
+}
+
+/// Compute x coordinate for diagonal k at edit distance d.
+/// Decides whether to move down (insert) or right (delete).
+fn computeX(v: []isize, max: isize, k: isize, d: isize) isize {
+    // At edges we have no choice; in middle, pick furthest x
+    const go_down = if (k == -d) true else if (k == d) false else blk: {
+        const k_minus_1: usize = @intCast(max + k - 1);
+        const k_plus_1: usize = @intCast(max + k + 1);
+        break :blk v[k_minus_1] < v[k_plus_1];
+    };
+
+    if (go_down) {
+        const idx: usize = @intCast(max + k + 1);
+        return v[idx];
+    } else {
+        const idx: usize = @intCast(max + k - 1);
+        return v[idx] + 1;
+    }
+}
+
+/// Build a single edit (insert or delete) for edge cases.
+fn buildSingleEdit(
+    comptime edit_type: enum { insert, delete },
+    off: u32,
+    n: u32,
+    m: u32,
+    allocator: std.mem.Allocator,
+) ![]Edit {
+    const edits = try allocator.alloc(Edit, 1);
+    edits[0] = switch (edit_type) {
+        .insert => .{ .insert = .{
             .old_start = off,
-            .old_end = off + @as(u32, @intCast(n)),
+            .old_end = off,
+            .new_start = off,
+            .new_end = off + m,
+        } },
+        .delete => .{ .delete = .{
+            .old_start = off,
+            .old_end = off + n,
             .new_start = off,
             .new_end = off,
-        } };
-        edits[1] = .{ .insert = .{
-            .old_start = off + @as(u32, @intCast(n)),
-            .old_end = off + @as(u32, @intCast(n)),
-            .new_start = off,
-            .new_end = off + @as(u32, @intCast(m)),
-        } };
-        return edits;
-    }
+        } },
+    };
+    return edits;
+}
 
-    // Backtrack to build edit script
-    const raw_edits = try backtrack(trace.items, n, m, max, found_d, off, allocator);
-    defer allocator.free(raw_edits);
-
-    // Coalesce adjacent edits of the same type
-    return coalesce(raw_edits, allocator);
+/// Build fallback edits when edit distance limit is exceeded.
+/// Returns simple delete-all + insert-all.
+fn buildFallbackEdits(off: u32, n: u32, m: u32, allocator: std.mem.Allocator) ![]Edit {
+    const edits = try allocator.alloc(Edit, 2);
+    edits[0] = .{ .delete = .{
+        .old_start = off,
+        .old_end = off + n,
+        .new_start = off,
+        .new_end = off,
+    } };
+    edits[1] = .{ .insert = .{
+        .old_start = off + n,
+        .old_end = off + n,
+        .new_start = off,
+        .new_end = off + m,
+    } };
+    return edits;
 }
 
 fn backtrack(
@@ -320,10 +389,16 @@ fn backtrack(
     m: isize,
     max: isize,
     found_d: usize,
-    offset: u32, // Add offset to convert relative indices to absolute
+    offset: u32,
     allocator: std.mem.Allocator,
 ) ![]Edit {
+    // Preconditions
+    std.debug.assert(found_d < trace.len);
+    std.debug.assert(n >= 0);
+    std.debug.assert(m >= 0);
+
     var edits = std.array_list.Managed(Edit).init(allocator);
+    errdefer edits.deinit();
 
     var x = n;
     var y = m;
@@ -403,6 +478,7 @@ fn coalesce(edits: []const Edit, allocator: std.mem.Allocator) ![]Edit {
     if (edits.len == 0) return try allocator.alloc(Edit, 0);
 
     var result = std.array_list.Managed(Edit).init(allocator);
+    errdefer result.deinit();
 
     var current = edits[0];
 

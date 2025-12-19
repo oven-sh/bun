@@ -455,6 +455,8 @@ function expectBundled(
     legalComments,
     loader,
     mainFields,
+    mangleProps,
+    mangleQuoted,
     matchesReference,
     metafile,
     minifyIdentifiers,
@@ -1113,6 +1115,8 @@ function expectBundled(
           define: define ?? {},
           throw: _throw ?? false,
           compile,
+          mangleProps,
+          mangleQuoted,
           jsx: jsx
             ? {
                 runtime: jsx.runtime,

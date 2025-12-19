@@ -7,6 +7,7 @@ pub fn generateChunksInParallel(
     defer trace.end();
 
     c.mangleLocalCss();
+    c.mangleJsProps();
 
     var has_js_chunk = false;
     var has_css_chunk = false;

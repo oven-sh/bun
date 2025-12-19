@@ -292,6 +292,12 @@ pub fn NewParser_(
 
         jest: Jest = .{},
 
+        /// Map from property name to symbol ref for property mangling.
+        /// Only populated when options.mangle_props is set.
+        mangled_props: js_ast.Ast.MangledPropsMap = .{},
+        /// Set of property names that should NOT be mangled.
+        reserved_props: js_ast.Ast.ReservedPropsSet = .{},
+
         // Imports (both ES6 and CommonJS) are tracked at the top level
         import_records: ImportRecordList,
         import_records_for_current_part: List(u32) = .{},
@@ -2892,6 +2898,64 @@ pub fn NewParser_(
                 .source_index = @intCast(p.source.index.get()),
                 .tag = .symbol,
             };
+        }
+
+        /// Permanent reserved properties that must NEVER be mangled due to JavaScript semantics.
+        /// These properties have special meaning in the language.
+        const permanent_reserved_props = std.StaticStringMap(void).initComptime(.{
+            .{ "__proto__", {} },
+            .{ "constructor", {} },
+            .{ "prototype", {} },
+        });
+
+        /// Check if a property name should be mangled based on the mangle_props regex.
+        /// Returns true if the property matches the mangle pattern and is not reserved.
+        pub fn isMangledProp(p: *P, name: []const u8) bool {
+            // If mangle_props is not enabled, nothing is mangled
+            const mangle_regex = p.options.mangle_props orelse return false;
+
+            // Check permanent reserved properties
+            if (permanent_reserved_props.has(name)) {
+                return false;
+            }
+
+            // Check if already reserved
+            if (p.reserved_props.contains(name)) {
+                return false;
+            }
+
+            // Check if name matches the reserve_props pattern
+            if (p.options.reserve_props) |reserve_regex| {
+                const name_str = bun.String.borrowUTF8(name);
+                if (reserve_regex.matches(name_str)) {
+                    // Add to reserved set so we don't check again
+                    p.reserved_props.put(p.allocator, name, {}) catch {};
+                    return false;
+                }
+            }
+
+            // Check if name matches the mangle_props pattern
+            const name_str = bun.String.borrowUTF8(name);
+            return mangle_regex.matches(name_str);
+        }
+
+        /// Get or create a symbol for a mangled property name.
+        /// The symbol is stored in mangled_props map for later use during linking.
+        pub fn symbolForMangledProp(p: *P, name: []const u8) !Ref {
+            // Check if we already have a symbol for this property
+            if (p.mangled_props.get(name)) |ref| {
+                // Increment use count estimate
+                p.symbols.items[ref.innerIndex()].use_count_estimate += 1;
+                return ref;
+            }
+
+            // Create a new symbol for the mangled property
+            const ref = try p.newSymbol(.mangled_prop, name);
+
+            // Store in mangled_props map
+            try p.mangled_props.put(p.allocator, name, ref);
+
+            return ref;
         }
 
         pub fn defaultNameForExpr(p: *P, expr: Expr, loc: logger.Loc) LocRef {
@@ -6558,6 +6622,10 @@ pub fn NewParser_(
                 .symbols = js_ast.Symbol.List.moveFromList(&p.symbols),
                 .parts = bun.BabyList(js_ast.Part).moveFromList(parts),
                 .import_records = ImportRecord.List.moveFromList(&p.import_records),
+
+                // Property mangling data
+                .mangled_props = p.mangled_props,
+                .reserved_props = p.reserved_props,
             };
         }
 

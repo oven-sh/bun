@@ -23,6 +23,7 @@ pub const JSBundler = struct {
         force_node_env: options.BundleOptions.ForceNodeEnv = .unspecified,
         code_splitting: bool = false,
         minify: Minify = .{},
+        mangle_props: MangleProps = .{},
         no_macros: bool = false,
         ignore_dce_annotations: bool = false,
         emit_dce_annotations: ?bool = null,
@@ -478,6 +479,45 @@ pub const JSBundler = struct {
                 }
             }
 
+            // Parse mangleProps option
+            // Can be a string (regex pattern), a RegExp object, or an object with props, reserve, and quoted fields
+            if (try config.getTruthy(globalThis, "mangleProps")) |mangle_props| {
+                if (mangle_props.isString()) {
+                    var slice = try mangle_props.toSliceOrNull(globalThis);
+                    defer slice.deinit();
+                    try this.mangle_props.props.appendSliceExact(slice.slice());
+                } else if (mangle_props.isRegExp()) {
+                    // Extract the source pattern from the RegExp object
+                    // Use getTruthyComptime to get accessor properties like 'source'
+                    if (try mangle_props.getTruthyComptime(globalThis, "source")) |source_value| {
+                        if (source_value.isString()) {
+                            var slice = try source_value.toSliceOrNull(globalThis);
+                            defer slice.deinit();
+                            try this.mangle_props.props.appendSliceExact(slice.slice());
+                        }
+                    }
+                } else if (mangle_props.isObject()) {
+                    if (try mangle_props.getOptional(globalThis, "props", ZigString.Slice)) |props_slice| {
+                        defer props_slice.deinit();
+                        try this.mangle_props.props.appendSliceExact(props_slice.slice());
+                    }
+                    if (try mangle_props.getOptional(globalThis, "reserve", ZigString.Slice)) |reserve_slice| {
+                        defer reserve_slice.deinit();
+                        try this.mangle_props.reserve.appendSliceExact(reserve_slice.slice());
+                    }
+                    if (try mangle_props.getBooleanLoose(globalThis, "quoted")) |quoted| {
+                        this.mangle_props.quoted = quoted;
+                    }
+                } else {
+                    return globalThis.throwInvalidArguments("Expected mangleProps to be a string (regex pattern), a RegExp, or an object", .{});
+                }
+            }
+
+            // Parse mangleQuoted option
+            if (try config.getBooleanLoose(globalThis, "mangleQuoted")) |quoted| {
+                this.mangle_props.quoted = quoted;
+            }
+
             if (try config.getArray(globalThis, "entrypoints") orelse try config.getArray(globalThis, "entryPoints")) |entry_points| {
                 var iter = try entry_points.arrayIterator(globalThis);
                 while (try iter.next()) |entry_point| {
@@ -761,6 +801,24 @@ pub const JSBundler = struct {
             keep_names: bool = false,
         };
 
+        pub const MangleProps = struct {
+            /// Regex pattern string for property names to mangle
+            props: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+            /// Regex pattern string for property names to exclude from mangling
+            reserve: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+            /// If true, also mangle property names in quoted property accesses
+            quoted: bool = false,
+
+            pub fn deinit(self: *MangleProps) void {
+                self.props.deinit();
+                self.reserve.deinit();
+            }
+
+            pub fn hasPattern(self: *const MangleProps) bool {
+                return self.props.list.items.len > 0;
+            }
+        };
+
         pub const Serve = struct {
             handler_path: OwnedString = OwnedString.initEmpty(bun.default_allocator),
             prefix: OwnedString = OwnedString.initEmpty(bun.default_allocator),
@@ -811,6 +869,7 @@ pub const JSBundler = struct {
             self.env_prefix.deinit();
             self.footer.deinit();
             self.tsconfig_override.deinit();
+            self.mangle_props.deinit();
         }
     };
 

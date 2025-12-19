@@ -850,15 +850,15 @@ x
 
 ### Property mangling
 
-**Mode:** `--minify-identifiers` (with configuration)
+**Mode:** `--mangle-props` (requires explicit pattern)
 
-Renames object properties to shorter names when configured.
+Renames object properties to shorter names when configured with a regex pattern. See the [Property Mangling](#property-mangling) section below for detailed usage.
 
 ```ts Input
-obj.longPropertyName
+obj.privateValue_
 ```
 
-```js Output (with property mangling enabled)
+```js Output (with --mangle-props='_$')
 obj.a
 ```
 
@@ -1243,6 +1243,143 @@ await Bun.build({
 ```
 
 This preserves the `.name` property on functions and classes while still minifying the actual identifier names in the code.
+
+## Property Mangling
+
+Property mangling renames object properties to shorter names, providing additional size reduction beyond identifier minification. Unlike identifier minification which only renames local variables, property mangling can rename property accesses like `obj.longPropertyName` to `obj.a`.
+
+**Important:** Property mangling is opt-in and requires specifying a regex pattern to match property names. This is because indiscriminate property mangling can break code that relies on property names at runtime (like serialization, reflection, or external APIs).
+
+### CLI Usage
+
+```bash
+# Mangle properties ending with underscore
+bun build ./index.ts --mangle-props='_$' --minify-syntax --outfile=out.js
+
+# Mangle properties starting with underscore (private-like)
+bun build ./index.ts --mangle-props='^_' --minify-syntax --outfile=out.js
+
+# Also mangle quoted properties and string literal accesses
+bun build ./index.ts --mangle-props='_$' --mangle-quoted --minify-syntax --outfile=out.js
+```
+
+### JavaScript API
+
+```ts
+await Bun.build({
+  entrypoints: ["./index.ts"],
+  outdir: "./out",
+  minify: {
+    syntax: true,
+  },
+  // Mangle properties matching this regex pattern
+  mangleProps: /_$/,
+});
+```
+
+With `mangleQuoted` to also mangle quoted property names and string literal accesses:
+
+```ts
+await Bun.build({
+  entrypoints: ["./index.ts"],
+  outdir: "./out",
+  minify: {
+    syntax: true,
+  },
+  mangleProps: /_$/,
+  mangleQuoted: true,
+});
+```
+
+### Example
+
+```ts Input
+const obj = {
+  publicData: 1,      // Not mangled (no underscore suffix)
+  privateValue_: 42,  // Mangled (underscore suffix)
+  secretKey_: "abc",  // Mangled (underscore suffix)
+};
+console.log(obj.privateValue_, obj.secretKey_);
+```
+
+```js Output (with --mangle-props='_$')
+const obj = {
+  publicData: 1,
+  a: 42,
+  b: "abc",
+};
+console.log(obj.a, obj.b);
+```
+
+### Common Patterns
+
+**Suffix pattern (`_$`):** Properties ending with underscore. This is a common convention for "private" properties.
+
+```ts
+const obj = {
+  name_: "private",  // → obj.a
+  data_: [1, 2, 3],  // → obj.b
+};
+```
+
+**Prefix pattern (`^_`):** Properties starting with underscore. Another common private property convention.
+
+```ts
+const obj = {
+  _internal: true,   // → obj.a
+  _cache: {},        // → obj.b
+};
+```
+
+### mangleQuoted Option
+
+By default, quoted property names and bracket notation accesses are not mangled:
+
+```ts Input
+const obj = {
+  "foo_": 1,  // Quoted - not mangled by default
+  bar_: 2,    // Not quoted - mangled
+};
+console.log(obj["foo_"], obj.bar_);
+```
+
+```js Output (without mangleQuoted)
+const obj = {
+  "foo_": 1,
+  a: 2,
+};
+console.log(obj["foo_"], obj.a);
+```
+
+With `mangleQuoted: true`, quoted properties are also mangled:
+
+```js Output (with mangleQuoted)
+const obj = {
+  a: 1,
+  b: 2,
+};
+console.log(obj.a, obj.b);
+```
+
+### Reserved Properties
+
+Certain properties are never mangled regardless of the pattern:
+
+- Built-in properties: `__proto__`, `constructor`, `prototype`
+- JavaScript standard methods and properties
+
+### Cross-file Consistency
+
+Property names are consistently mangled across all files in a bundle. If `secret_` appears in multiple files, it will be mangled to the same short name everywhere, ensuring correct behavior:
+
+```ts
+// file1.ts
+export const config = { secret_: 42 };
+
+// file2.ts
+import { config } from "./file1";
+console.log(config.secret_);  // Works correctly - same mangled name
+```
 
 ## Combined Example
 

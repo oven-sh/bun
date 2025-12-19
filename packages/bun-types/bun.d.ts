@@ -1740,9 +1740,9 @@ declare module "bun" {
      * @default "esm"
      */
     format?: /**
-       * ECMAScript Module format
-       */
-      | "esm"
+     * ECMAScript Module format
+     */
+    | "esm"
       /**
        * CommonJS format
        * **Experimental**
@@ -1890,6 +1890,40 @@ declare module "bun" {
      * Drop function calls to matching property accesses.
      */
     drop?: string[];
+
+    /**
+     * Mangle property names matching the given regular expression pattern.
+     *
+     * Properties matching this pattern will be renamed to shorter names in the output.
+     * This can significantly reduce bundle size but requires careful use to avoid
+     * breaking code that relies on property name strings.
+     *
+     * Common patterns:
+     * - `/_$/` - mangle properties ending with underscore (e.g., `foo_`)
+     * - `/^_/` - mangle properties starting with underscore (e.g., `_private`)
+     *
+     * @example
+     * ```ts
+     * await Bun.build({
+     *   entrypoints: ['./src/index.ts'],
+     *   mangleProps: /_$/,  // mangle properties ending with _
+     * });
+     * ```
+     *
+     * Note: Built-in properties like `__proto__`, `constructor`, and `prototype`
+     * are never mangled regardless of the pattern.
+     */
+    mangleProps?: RegExp;
+
+    /**
+     * When `true`, also mangle property names in quoted property accesses
+     * (e.g., `obj["foo_"]`) and quoted object literal keys (e.g., `{"foo_": 1}`).
+     *
+     * By default, only unquoted property accesses are mangled.
+     *
+     * @default false
+     */
+    mangleQuoted?: boolean;
 
     /**
      * - When set to `true`, the returned promise rejects with an AggregateError when a build failure happens.
@@ -3316,10 +3350,10 @@ declare module "bun" {
   function color(
     input: ColorInput,
     outputFormat?: /**
-       * True color ANSI color string, for use in terminals
-       * @example \x1b[38;2;100;200;200m
-       */
-      | "ansi"
+     * True color ANSI color string, for use in terminals
+     * @example \x1b[38;2;100;200;200m
+     */
+    | "ansi"
       | "ansi-16"
       | "ansi-16m"
       /**
@@ -5650,17 +5684,11 @@ declare module "bun" {
       maxBuffer?: number;
     }
 
-    interface SpawnSyncOptions<In extends Writable, Out extends Readable, Err extends Readable> extends BaseOptions<
-      In,
-      Out,
-      Err
-    > {}
+    interface SpawnSyncOptions<In extends Writable, Out extends Readable, Err extends Readable>
+      extends BaseOptions<In, Out, Err> {}
 
-    interface SpawnOptions<In extends Writable, Out extends Readable, Err extends Readable> extends BaseOptions<
-      In,
-      Out,
-      Err
-    > {
+    interface SpawnOptions<In extends Writable, Out extends Readable, Err extends Readable>
+      extends BaseOptions<In, Out, Err> {
       /**
        * If true, stdout and stderr pipes will not automatically start reading
        * data. Reading will only begin when you access the `stdout` or `stderr`

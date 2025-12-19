@@ -78,6 +78,27 @@ pub const BuildCommand = struct {
         this_transpiler.options.keep_names = ctx.bundler_options.keep_names;
         this_transpiler.options.emit_dce_annotations = ctx.bundler_options.emit_dce_annotations;
         this_transpiler.options.ignore_dce_annotations = ctx.bundler_options.ignore_dce_annotations;
+        this_transpiler.options.mangle_quoted = ctx.bundler_options.mangle_quoted;
+
+        // Compile mangle props regex patterns
+        if (ctx.bundler_options.mangle_props.len > 0) {
+            bun.jsc.initialize(false);
+            const pattern = bun.String.borrowUTF8(ctx.bundler_options.mangle_props);
+            this_transpiler.options.mangle_props = bun.jsc.RegularExpression.init(pattern, .none) catch {
+                Output.prettyErrorln("<r><red>error<r><d>:<r> invalid --mangle-props regex pattern: \"{s}\"", .{ctx.bundler_options.mangle_props});
+                Global.exit(1);
+                return;
+            };
+        }
+        if (ctx.bundler_options.reserve_props.len > 0) {
+            bun.jsc.initialize(false);
+            const pattern = bun.String.borrowUTF8(ctx.bundler_options.reserve_props);
+            this_transpiler.options.reserve_props = bun.jsc.RegularExpression.init(pattern, .none) catch {
+                Output.prettyErrorln("<r><red>error<r><d>:<r> invalid --reserve-props regex pattern: \"{s}\"", .{ctx.bundler_options.reserve_props});
+                Global.exit(1);
+                return;
+            };
+        }
 
         this_transpiler.options.banner = ctx.bundler_options.banner;
         this_transpiler.options.footer = ctx.bundler_options.footer;

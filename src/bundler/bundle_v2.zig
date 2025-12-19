@@ -1903,6 +1903,20 @@ pub const BundleV2 = struct {
             transpiler.options.banner = config.banner.slice();
             transpiler.options.footer = config.footer.slice();
 
+            // Set up mangle props options
+            if (config.mangle_props.hasPattern()) {
+                bun.jsc.initialize(false);
+                const pattern = bun.String.borrowUTF8(config.mangle_props.props.list.items);
+                transpiler.options.mangle_props = bun.jsc.RegularExpression.init(pattern, .none) catch null;
+
+                if (config.mangle_props.reserve.list.items.len > 0) {
+                    const reserve_pattern = bun.String.borrowUTF8(config.mangle_props.reserve.list.items);
+                    transpiler.options.reserve_props = bun.jsc.RegularExpression.init(reserve_pattern, .none) catch null;
+                }
+
+                transpiler.options.mangle_quoted = config.mangle_props.quoted;
+            }
+
             if (transpiler.options.compile) {
                 // Emitting DCE annotations is nonsensical in --compile.
                 transpiler.options.emit_dce_annotations = false;

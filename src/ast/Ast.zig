@@ -70,6 +70,15 @@ ts_enums: TsEnumsMap = .{},
 has_commonjs_export_names: bool = false,
 import_meta_ref: Ref = Ref.None,
 
+/// Map from original property name to its symbol ref. Used for property mangling.
+/// Property names that match the mangle_props pattern get symbols created for them,
+/// and these symbols are renamed to shorter names during linking.
+mangled_props: MangledPropsMap = .{},
+
+/// Map from original property name to true if the property should NOT be mangled.
+/// This is populated by the reserve_props pattern.
+reserved_props: ReservedPropsSet = .{},
+
 pub const CommonJSNamedExport = struct {
     loc_ref: LocRef,
     needs_decl: bool = true,
@@ -80,6 +89,11 @@ pub const NamedImports = std.ArrayHashMapUnmanaged(Ref, NamedImport, RefHashCtx,
 pub const NamedExports = bun.StringArrayHashMapUnmanaged(NamedExport);
 pub const ConstValuesMap = std.ArrayHashMapUnmanaged(Ref, Expr, RefHashCtx, false);
 pub const TsEnumsMap = std.ArrayHashMapUnmanaged(Ref, bun.StringHashMapUnmanaged(InlinedEnumValue), RefHashCtx, false);
+
+/// Map from original property name to symbol ref for property mangling
+pub const MangledPropsMap = bun.StringArrayHashMapUnmanaged(Ref);
+/// Set of property names that should NOT be mangled (from reserve_props pattern)
+pub const ReservedPropsSet = bun.StringArrayHashMapUnmanaged(void);
 
 pub fn fromParts(parts: []Part) Ast {
     return Ast{

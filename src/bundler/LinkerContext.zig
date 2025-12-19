@@ -1466,6 +1466,124 @@ pub const LinkerContext = struct {
         }
     }
 
+    /// Collect all mangled property symbols from all files and assign them
+    /// short names (a, b, c, ...). This is similar to how esbuild handles
+    /// property name mangling in the linker phase.
+    pub fn mangleJsProps(c: *LinkerContext) void {
+        const all_mangled_props: []const JSAst.MangledPropsMap = c.graph.ast.items(.mangled_props);
+
+        // Collect all mangled property symbols across all files
+        // We merge symbols with the same name by linking them together,
+        // so the printer can follow the link chain to find the canonical ref
+        var merged_props = std.StringArrayHashMap(Ref).init(c.allocator());
+        defer merged_props.deinit();
+
+        // Count of property usages for sorting (most used gets shortest name)
+        var usage_counts = std.StringArrayHashMap(u32).init(c.allocator());
+        defer usage_counts.deinit();
+
+        for (all_mangled_props) |mangled_props| {
+            // Get mangled props from this file's AST
+            for (mangled_props.keys(), mangled_props.values()) |name, ref| {
+                const entry = bun.handleOom(merged_props.getOrPut(name));
+                if (entry.found_existing) {
+                    // Link this symbol to the canonical one for this property name
+                    // The printer uses symbols.follow() to resolve the link chain
+                    // IMPORTANT: Use c.graph.symbols (not c.graph.ast.items(.symbols))
+                    // because the renamer uses c.graph.symbols which is a cloned copy
+                    const canonical_ref = entry.value_ptr.*;
+                    const symbol = c.graph.symbols.get(ref).?;
+                    symbol.link = canonical_ref;
+                } else {
+                    // First occurrence - this becomes the canonical ref
+                    entry.value_ptr.* = ref;
+                }
+
+                // Track usage counts
+                const symbol = c.graph.symbols.getConst(ref).?;
+                const count_entry = bun.handleOom(usage_counts.getOrPut(name));
+                if (count_entry.found_existing) {
+                    count_entry.value_ptr.* += symbol.use_count_estimate;
+                } else {
+                    count_entry.value_ptr.* = symbol.use_count_estimate;
+                }
+            }
+        }
+
+        if (merged_props.count() == 0) return;
+
+        // Sort properties by usage count (descending) so most used get shortest names
+        const PropWithCount = struct {
+            name: []const u8,
+            ref: Ref,
+            count: u32,
+        };
+
+        var props_list = std.ArrayList(PropWithCount).initCapacity(c.allocator(), merged_props.count()) catch return;
+        defer props_list.deinit(c.allocator());
+
+        for (merged_props.keys(), merged_props.values()) |name, ref| {
+            const count = usage_counts.get(name) orelse 0;
+            props_list.appendAssumeCapacity(.{
+                .name = name,
+                .ref = ref,
+                .count = count,
+            });
+        }
+
+        // Sort by count descending
+        std.mem.sort(PropWithCount, props_list.items, {}, struct {
+            fn lessThan(_: void, a: PropWithCount, b: PropWithCount) bool {
+                return a.count > b.count;
+            }
+        }.lessThan);
+
+        // Assign short names (a, b, c, ..., aa, ab, ...)
+        var reserved_names = bun.StringHashMap(void).init(c.allocator());
+        defer reserved_names.deinit();
+
+        // Reserve JavaScript keywords and strict mode reserved words
+        const js_keywords = [_][]const u8{
+            "break",      "case",       "catch",     "class",    "const",   "continue", "debugger",
+            "default",    "delete",     "do",        "else",     "enum",    "export",   "extends",
+            "false",      "finally",    "for",       "function", "if",      "import",   "in",
+            "instanceof", "new",        "null",      "return",   "super",   "switch",   "this",
+            "throw",      "true",       "try",       "typeof",   "var",     "void",     "while",
+            "with",
+            // Strict mode reserved words
+                  "implements", "interface", "let",      "package", "private",  "protected",
+            "public",     "static",     "yield",
+        };
+        for (js_keywords) |keyword| {
+            bun.handleOom(reserved_names.put(keyword, {}));
+        }
+
+        // Also reserve any existing property names in the merged set that don't match
+        // the mangle pattern (these might be used alongside mangled props)
+        for (merged_props.keys()) |name| {
+            bun.handleOom(reserved_names.put(name, {}));
+        }
+
+        var name_index: i32 = 0;
+        for (props_list.items) |prop| {
+            // Generate a short name, avoiding reserved names
+            var mangled_name: []const u8 = undefined;
+            while (true) {
+                mangled_name = js_ast.NameMinifier.defaultNumberToMinifiedName(c.allocator(), name_index) catch {
+                    return;
+                };
+                name_index += 1;
+                if (!reserved_names.contains(mangled_name)) break;
+            }
+
+            // Store the mangled name for the canonical ref only
+            // Other refs with the same property name are linked to this one,
+            // so the printer will follow the link and find this mapping
+            bun.handleOom(c.mangled_props.put(c.allocator(), prop.ref, mangled_name));
+            bun.handleOom(reserved_names.put(mangled_name, {}));
+        }
+    }
+
     pub fn appendIsolatedHashesForImportedChunks(
         c: *LinkerContext,
         hash: *ContentHasher,

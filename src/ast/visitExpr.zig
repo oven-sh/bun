@@ -917,6 +917,23 @@ pub fn VisitExpr(
                         }
                     }
                 }
+
+                // Property mangling: Convert unquoted property accesses to mangled symbols
+                // This converts "obj.foo_" to effectively "obj[mangledSymbol]" where the
+                // mangled symbol will be renamed to a short name during linking.
+                if (p.isMangledProp(e_.name)) {
+                    if (p.symbolForMangledProp(e_.name)) |ref| {
+                        return p.newExpr(
+                            E.Index{
+                                .target = e_.target,
+                                .index = p.newExpr(E.NameOfSymbol{ .ref = ref }, e_.name_loc),
+                                .optional_chain = e_.optional_chain,
+                            },
+                            expr.loc,
+                        );
+                    } else |_| {}
+                }
+
                 return expr;
             }
             pub fn e_if(p: *P, expr: Expr, _: ExprIn) Expr {
@@ -1049,7 +1066,7 @@ pub fn VisitExpr(
                 for (e_.properties.slice()) |*property| {
                     if (property.kind != .spread) {
                         property.key = p.visitExpr(property.key orelse Output.panic("Expected property key", .{}));
-                        const key = property.key.?;
+                        var key = property.key.?;
                         // Forbid duplicate "__proto__" properties according to the specification
                         if (!property.flags.contains(.is_computed) and
                             !property.flags.contains(.was_shorthand) and
@@ -1067,6 +1084,19 @@ pub fn VisitExpr(
                                 p.log.addRangeError(p.source, r, "Cannot specify the \"__proto__\" property more than once per object") catch unreachable;
                             }
                             has_proto = true;
+                        }
+
+                        // Property mangling for object literal keys: Convert unquoted property keys
+                        // to mangled symbols. This transforms { foo_: 1 } to { [mangledSymbol]: 1 }.
+                        if (!property.flags.contains(.is_computed) and key.data.isStringValue()) {
+                            const name = key.data.e_string.slice(p.allocator);
+                            if (p.isMangledProp(name)) {
+                                if (p.symbolForMangledProp(name)) |ref| {
+                                    key = p.newExpr(E.NameOfSymbol{ .ref = ref }, key.loc);
+                                    property.key = key;
+                                    property.flags.insert(.is_computed);
+                                } else |_| {}
+                            }
                         }
                     } else {
                         has_spread = true;

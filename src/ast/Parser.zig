@@ -21,6 +21,13 @@ pub const Parser = struct {
         bundle: bool = false,
         package_version: string = "",
 
+        /// Regex pattern for property names to mangle
+        mangle_props: ?*bun.jsc.RegularExpression = null,
+        /// Regex pattern for property names to exclude from mangling
+        reserve_props: ?*bun.jsc.RegularExpression = null,
+        /// If true, also mangle property names in quoted property accesses
+        mangle_quoted: bool = false,
+
         macro_context: *MacroContextType() = undefined,
 
         warn_about_unbundled_modules: bool = true,

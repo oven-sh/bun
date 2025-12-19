@@ -50,6 +50,9 @@ target: bun.options.Target = .browser,
 // const_values: ConstValuesMap = .{},
 ts_enums: Ast.TsEnumsMap = .{},
 
+/// Map from original property name to its symbol ref. Used for property mangling.
+mangled_props: Ast.MangledPropsMap = .{},
+
 flags: BundledAst.Flags = .{},
 
 pub const Flags = packed struct(u8) {
@@ -108,6 +111,8 @@ pub fn toAST(this: *const BundledAst) Ast {
         // .const_values = this.const_values,
         .ts_enums = this.ts_enums,
 
+        .mangled_props = this.mangled_props,
+
         .uses_exports_ref = this.flags.uses_exports_ref,
         .uses_module_ref = this.flags.uses_module_ref,
         // .uses_require_ref = ast.uses_require_ref,
@@ -158,6 +163,8 @@ pub fn init(ast: Ast) BundledAst {
         // .const_values = ast.const_values,
         .ts_enums = ast.ts_enums,
 
+        .mangled_props = ast.mangled_props,
+
         .flags = .{
             .uses_exports_ref = ast.uses_exports_ref,
             .uses_module_ref = ast.uses_module_ref,
@@ -203,6 +210,7 @@ pub fn addUrlForCss(
 
 pub const CommonJSNamedExports = Ast.CommonJSNamedExports;
 pub const ConstValuesMap = Ast.ConstValuesMap;
+pub const MangledPropsMap = Ast.MangledPropsMap;
 pub const NamedExports = Ast.NamedExports;
 pub const NamedImports = Ast.NamedImports;
 pub const TopLevelSymbolToParts = Ast.TopLevelSymbolToParts;

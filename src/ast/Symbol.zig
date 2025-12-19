@@ -179,7 +179,7 @@ pub fn slotNamespace(this: *const Symbol) SlotNamespace {
     }
 
     return switch (kind) {
-        // .mangled_prop => .mangled_prop,
+        .mangled_prop => .mangled_prop,
         .label => .label,
         else => .default,
     };
@@ -269,6 +269,11 @@ pub const Kind = enum {
 
     // CSS identifiers that are renamed to be unique to the file they are in
     local_css,
+
+    /// A symbol used for property name mangling. These symbols are created
+    /// for property names that match the mangle props pattern, and are
+    /// renamed during linking to shorter names.
+    mangled_prop,
 
     /// This annotates all other symbols that don't have special behavior.
     other,

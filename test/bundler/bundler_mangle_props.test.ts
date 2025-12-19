@@ -819,4 +819,288 @@ describe("bundler", () => {
       expect(code).not.toContain("regular_");
     },
   });
+
+  // ==========================================
+  // RUNTIME-CORRECTNESS EDGE CASES
+  // ==========================================
+
+  // Test reflective operations (Object.keys/values/entries)
+  // Note: Mangling affects property names, so reflective operations return mangled names
+  itBundled("mangle-props/ReflectiveOperations", {
+    files: {
+      "/entry.js": /* js */ `
+        const obj = {
+          foo_: 1,
+          bar_: 2,
+          baz: 3,
+        };
+        console.log(Object.keys(obj));
+        console.log(Object.values(obj));
+        console.log(Object.entries(obj));
+        console.log(Object.getOwnPropertyNames(obj));
+      `,
+    },
+    mangleProps: /_$/,
+    minifySyntax: true,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // foo_ and bar_ should be mangled in the object definition
+      expect(code).not.toContain('"foo_"');
+      expect(code).not.toContain('"bar_"');
+      // baz should remain unchanged
+      expect(code).toContain("baz");
+      // Reflective operations should still be present
+      expect(code).toContain("Object.keys");
+      expect(code).toContain("Object.values");
+      expect(code).toContain("Object.entries");
+      expect(code).toContain("Object.getOwnPropertyNames");
+    },
+  });
+
+  // Test delete operator on mangled properties
+  itBundled("mangle-props/DeleteOperator", {
+    files: {
+      "/entry.js": /* js */ `
+        const obj = {
+          toDelete_: 1,
+          toKeep_: 2,
+        };
+        delete obj.toDelete_;
+        console.log(obj.toKeep_);
+      `,
+    },
+    mangleProps: /_$/,
+    minifySyntax: true,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // Both properties should be mangled
+      expect(code).not.toContain("toDelete_");
+      expect(code).not.toContain("toKeep_");
+      // delete operator should still be present
+      expect(code).toContain("delete");
+    },
+  });
+
+  // Test 'in' operator and for...in enumeration
+  // Note: String literals in "in" checks are not mangled - only property definitions/accesses
+  itBundled("mangle-props/InOperatorAndForIn", {
+    files: {
+      "/entry.js": /* js */ `
+        const obj = {
+          exists_: 1,
+          another_: 2,
+        };
+        // String literal "exists_" in "in" operator is preserved
+        // Only the property definition is mangled
+        console.log("exists_" in obj);
+        for (const key in obj) {
+          console.log(key, obj[key]);
+        }
+      `,
+    },
+    mangleProps: /_$/,
+    mangleQuoted: true,
+    minifySyntax: true,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // Property definitions should be mangled (["a"], ["b"])
+      expect(code).toMatch(/\["[a-z]"\]\s*:\s*1/);
+      expect(code).toMatch(/\["[a-z]"\]\s*:\s*2/);
+      // for...in should still work
+      expect(code).toMatch(/for\s*\(/);
+    },
+  });
+
+  // Test JSON.stringify/parse round-trip
+  itBundled("mangle-props/JSONRoundTrip", {
+    files: {
+      "/entry.js": /* js */ `
+        const obj = {
+          data_: 42,
+          nested_: { value_: "test" },
+        };
+        const json = JSON.stringify(obj);
+        const parsed = JSON.parse(json);
+        console.log(json, parsed);
+      `,
+    },
+    mangleProps: /_$/,
+    minifySyntax: true,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // Property names should be mangled
+      expect(code).not.toContain("data_");
+      expect(code).not.toContain("nested_");
+      expect(code).not.toContain("value_");
+      // JSON methods should be present
+      expect(code).toContain("JSON.stringify");
+      expect(code).toContain("JSON.parse");
+    },
+  });
+
+  // Test private class fields (should NEVER be mangled)
+  itBundled("mangle-props/PrivateClassFields", {
+    files: {
+      "/entry.js": /* js */ `
+        class MyClass {
+          #private_ = 1;
+          public_ = 2;
+
+          getPrivate() {
+            return this.#private_;
+          }
+          getPublic() {
+            return this.public_;
+          }
+        }
+        const obj = new MyClass();
+        console.log(obj.getPublic());
+      `,
+    },
+    mangleProps: /_$/,
+    minifySyntax: true,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // Private fields (#private_) should remain unchanged - they're truly private
+      expect(code).toContain("#private_");
+      // Public property should be mangled
+      expect(code).not.toContain(".public_");
+    },
+  });
+
+  // Test numeric property keys (should not be mangled)
+  itBundled("mangle-props/NumericPropertyKeys", {
+    files: {
+      "/entry.js": /* js */ `
+        const obj = {
+          0: "zero",
+          1: "one",
+          123: "numeric",
+          "456": "string numeric",
+          prop_: "mangled",
+        };
+        console.log(obj[0], obj[1], obj[123], obj["456"], obj.prop_);
+      `,
+    },
+    mangleProps: /_$/,
+    minifySyntax: true,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // Numeric keys should remain as-is
+      expect(code).toMatch(/\b0\b/);
+      expect(code).toMatch(/\b1\b/);
+      expect(code).toMatch(/\b123\b/);
+      // prop_ should be mangled
+      expect(code).not.toContain("prop_");
+    },
+  });
+
+  // Test compound assignment operators on mangled properties
+  itBundled("mangle-props/CompoundAssignmentOperators", {
+    files: {
+      "/entry.js": /* js */ `
+        const obj = {
+          count_: 0,
+          value_: 10,
+          str_: "hello",
+        };
+        obj.count_ += 1;
+        obj.count_ -= 1;
+        obj.value_ *= 2;
+        obj.value_ /= 2;
+        obj.value_ %= 3;
+        obj.value_ **= 2;
+        obj.str_ += " world";
+        obj.count_ &&= 5;
+        obj.count_ ||= 10;
+        obj.count_ ??= 15;
+        console.log(obj.count_, obj.value_, obj.str_);
+      `,
+    },
+    mangleProps: /_$/,
+    minifySyntax: true,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // All properties should be mangled
+      expect(code).not.toContain("count_");
+      expect(code).not.toContain("value_");
+      expect(code).not.toContain("str_");
+      // Verify mangled properties exist
+      expect(code).toMatch(/\["[a-z]"\]/);
+    },
+  });
+
+  // Test that property mangling works correctly with hasOwnProperty
+  itBundled("mangle-props/HasOwnProperty", {
+    files: {
+      "/entry.js": /* js */ `
+        const obj = { prop_: 1 };
+        console.log(obj.hasOwnProperty("prop_"));
+        console.log(Object.hasOwn(obj, "prop_"));
+      `,
+    },
+    mangleProps: /_$/,
+    mangleQuoted: true,
+    minifySyntax: true,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // Property name in object should be mangled
+      expect(code).toMatch(/\["[a-z]"\]\s*:/);
+      // hasOwnProperty and Object.hasOwn should be present
+      expect(code).toContain("hasOwnProperty");
+    },
+  });
+
+  // Test property descriptors (defineProperty/getOwnPropertyDescriptor)
+  itBundled("mangle-props/PropertyDescriptors", {
+    files: {
+      "/entry.js": /* js */ `
+        const obj = { existing_: 1 };
+        Object.defineProperty(obj, "defined_", {
+          value: 42,
+          writable: true,
+        });
+        const desc = Object.getOwnPropertyDescriptor(obj, "existing_");
+        console.log(obj.existing_, obj.defined_, desc);
+      `,
+    },
+    mangleProps: /_$/,
+    mangleQuoted: true,
+    minifySyntax: true,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // Property accesses should be mangled
+      expect(code).not.toMatch(/obj\.existing_/);
+      expect(code).not.toMatch(/obj\.defined_/);
+      // Object methods should be present
+      expect(code).toContain("Object.defineProperty");
+      expect(code).toContain("Object.getOwnPropertyDescriptor");
+    },
+  });
+
+  // Test Proxy with mangled properties
+  itBundled("mangle-props/ProxyHandler", {
+    files: {
+      "/entry.js": /* js */ `
+        const target = { value_: 42 };
+        const handler = {
+          get_: function(obj, prop) {
+            return obj[prop];
+          }
+        };
+        const proxy = new Proxy(target, { get: handler.get_ });
+        console.log(proxy.value_);
+      `,
+    },
+    mangleProps: /_$/,
+    minifySyntax: true,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // value_ and get_ should be mangled
+      expect(code).not.toContain("value_");
+      expect(code).not.toContain("get_");
+      // Proxy should be present
+      expect(code).toContain("Proxy");
+    },
+  });
 });

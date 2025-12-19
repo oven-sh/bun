@@ -440,7 +440,6 @@ pub const Command = struct {
             keep_names: bool = false,
             mangle_props: []const u8 = "",
             reserve_props: []const u8 = "",
-            mangle_quoted: bool = false,
             ignore_dce_annotations: bool = false,
             emit_dce_annotations: bool = true,
             output_format: options.Format = .esm,

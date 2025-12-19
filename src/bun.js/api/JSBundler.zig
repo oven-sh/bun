@@ -529,17 +529,9 @@ pub const JSBundler = struct {
                             }
                         }
                     }
-                    if (try mangle_props.getBooleanLoose(globalThis, "quoted")) |quoted| {
-                        this.mangle_props.quoted = quoted;
-                    }
                 } else {
                     return globalThis.throwInvalidArguments("Expected mangleProps to be a string (regex pattern), a RegExp, or an object", .{});
                 }
-            }
-
-            // Parse mangleQuoted option
-            if (try config.getBooleanLoose(globalThis, "mangleQuoted")) |quoted| {
-                this.mangle_props.quoted = quoted;
             }
 
             if (try config.getArray(globalThis, "entrypoints") orelse try config.getArray(globalThis, "entryPoints")) |entry_points| {
@@ -830,8 +822,6 @@ pub const JSBundler = struct {
             props: OwnedString = OwnedString.initEmpty(bun.default_allocator),
             /// Regex pattern string for property names to exclude from mangling
             reserve: OwnedString = OwnedString.initEmpty(bun.default_allocator),
-            /// If true, also mangle property names in quoted property accesses
-            quoted: bool = false,
 
             pub fn deinit(self: *MangleProps) void {
                 self.props.deinit();

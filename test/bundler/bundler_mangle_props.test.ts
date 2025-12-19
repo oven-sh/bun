@@ -127,84 +127,6 @@ describe("bundler", () => {
   });
 
   // ==========================================
-  // QUOTED PROPERTIES (mangleQuoted option)
-  // ==========================================
-
-  // Test computed property access with mangleQuoted
-  itBundled("mangle-props/MangleQuoted", {
-    files: {
-      "/entry.js": /* js */ `
-        const obj = {
-          "foo_": 1,
-          "bar_": 2,
-        };
-        console.log(obj["foo_"], obj["bar_"]);
-      `,
-    },
-    mangleProps: /_$/,
-    mangleQuoted: true,
-    minifySyntax: true,
-    onAfterBundle(api) {
-      const code = api.readFile("/out.js");
-      // With mangleQuoted, quoted properties should be mangled
-      expect(code).not.toContain("foo_");
-      expect(code).not.toContain("bar_");
-    },
-  });
-
-  // Test with mangleQuoted: false
-  // Note: Currently the implementation mangles all matching properties regardless of quoting.
-  // The mangleQuoted option is plumbed through but not yet differentiated in the parser.
-  // This test verifies current behavior: all matching properties are mangled.
-  // TODO: Update this test when parser supports quoted-vs-unquoted differentiation.
-  //       Expected behavior with mangleQuoted: false:
-  //       - obj.prop_ (unquoted access) -> mangled
-  //       - obj["prop_"] (quoted access) -> preserved as "prop_"
-  itBundled("mangle-props/PreserveQuotedKeys", {
-    files: {
-      "/entry.js": /* js */ `
-        const obj = {
-          prop_: 1,
-        };
-        console.log(obj.prop_);
-        console.log(obj["prop_"]);
-      `,
-    },
-    mangleProps: /_$/,
-    mangleQuoted: false,
-    minifySyntax: true,
-    onAfterBundle(api) {
-      const code = api.readFile("/out.js");
-      // Currently both quoted and unquoted accesses are mangled
-      // All prop_ accesses should be mangled to the same short name
-      expect(code).not.toContain("prop_");
-      // Should have mangled property accesses (currently all are mangled)
-      expect(code).toMatch(/\["[a-z]"\]/);
-    },
-  });
-
-  // Test mixed quoted and unquoted with mangleQuoted: true
-  itBundled("mangle-props/MixedQuotedUnquoted", {
-    files: {
-      "/entry.js": /* js */ `
-        const obj = {
-          prop_: 1,
-          "prop_": 2,  // Same name, quoted
-        };
-        console.log(obj.prop_, obj["prop_"]);
-      `,
-    },
-    mangleProps: /_$/,
-    mangleQuoted: true,
-    minifySyntax: true,
-    onAfterBundle(api) {
-      const code = api.readFile("/out.js");
-      // Both should be mangled to the same name
-      expect(code).not.toContain("prop_");
-    },
-  });
-
-  // ==========================================
   // CROSS-FILE CONSISTENCY
   // ==========================================
 
@@ -522,7 +444,6 @@ describe("bundler", () => {
       `,
     },
     mangleProps: /_$/,
-    mangleQuoted: true,
     minifySyntax: true,
     onAfterBundle(api) {
       const code = api.readFile("/out.js");
@@ -903,7 +824,6 @@ describe("bundler", () => {
       `,
     },
     mangleProps: /_$/,
-    mangleQuoted: true,
     minifySyntax: true,
     onAfterBundle(api) {
       const code = api.readFile("/out.js");
@@ -1044,7 +964,6 @@ describe("bundler", () => {
       `,
     },
     mangleProps: /_$/,
-    mangleQuoted: true,
     minifySyntax: true,
     onAfterBundle(api) {
       const code = api.readFile("/out.js");
@@ -1069,7 +988,6 @@ describe("bundler", () => {
       `,
     },
     mangleProps: /_$/,
-    mangleQuoted: true,
     minifySyntax: true,
     onAfterBundle(api) {
       const code = api.readFile("/out.js");

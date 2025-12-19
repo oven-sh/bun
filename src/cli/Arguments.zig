@@ -181,7 +181,6 @@ pub const build_only_params = [_]ParamType{
     clap.parseParam("--keep-names                     Preserve original function and class names when minifying") catch unreachable,
     clap.parseParam("--mangle-props <STR>             Mangle property names matching regex pattern (e.g. '^_' for underscore-prefixed)") catch unreachable,
     clap.parseParam("--reserve-props <STR>            Exclude property names matching regex pattern from mangling") catch unreachable,
-    clap.parseParam("--mangle-quoted                  Also mangle property names in quoted property accesses") catch unreachable,
     clap.parseParam("--css-chunking                   Chunk CSS files together to reduce duplicated CSS loaded in a browser. Only has an effect when multiple entrypoints import CSS") catch unreachable,
     clap.parseParam("--dump-environment-variables") catch unreachable,
     clap.parseParam("--conditions <STR>...            Pass custom conditions to resolve") catch unreachable,
@@ -958,7 +957,6 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             };
             ctx.bundler_options.reserve_props = reserve_props;
         }
-        ctx.bundler_options.mangle_quoted = args.flag("--mangle-quoted");
 
         ctx.bundler_options.css_chunking = args.flag("--css-chunking");
 

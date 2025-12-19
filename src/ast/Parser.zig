@@ -25,8 +25,6 @@ pub const Parser = struct {
         mangle_props: ?*bun.jsc.RegularExpression = null,
         /// Regex pattern for property names to exclude from mangling
         reserve_props: ?*bun.jsc.RegularExpression = null,
-        /// If true, also mangle property names in quoted property accesses
-        mangle_quoted: bool = false,
 
         macro_context: *MacroContextType() = undefined,
 

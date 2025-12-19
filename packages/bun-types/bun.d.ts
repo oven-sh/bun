@@ -1916,16 +1916,6 @@ declare module "bun" {
     mangleProps?: RegExp;
 
     /**
-     * When `true`, also mangle property names in quoted property accesses
-     * (e.g., `obj["foo_"]`) and quoted object literal keys (e.g., `{"foo_": 1}`).
-     *
-     * By default, only unquoted property accesses are mangled.
-     *
-     * @default false
-     */
-    mangleQuoted?: boolean;
-
-    /**
      * - When set to `true`, the returned promise rejects with an AggregateError when a build failure happens.
      * - When set to `false`, returns a {@link BuildOutput} with `{success: false}`
      *

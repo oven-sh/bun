@@ -201,7 +201,6 @@ export interface BundlerTestInput {
   legalComments?: "none" | "inline" | "eof" | "linked" | "external";
   loader?: Record<`.${string}`, Loader>;
   mangleProps?: RegExp;
-  mangleQuoted?: boolean;
   mainFields?: string[];
   metafile?: boolean | string;
   minifyIdentifiers?: boolean;
@@ -456,7 +455,6 @@ function expectBundled(
     loader,
     mainFields,
     mangleProps,
-    mangleQuoted,
     matchesReference,
     metafile,
     minifyIdentifiers,
@@ -1116,7 +1114,6 @@ function expectBundled(
           throw: _throw ?? false,
           compile,
           mangleProps,
-          mangleQuoted,
           jsx: jsx
             ? {
                 runtime: jsx.runtime,

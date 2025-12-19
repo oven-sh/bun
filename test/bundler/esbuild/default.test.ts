@@ -6063,7 +6063,6 @@ describe("bundler", () => {
       `,
     },
     mangleProps: /_/,
-    mangleQuoted: false,
   });
   itBundled("default/MangleNoQuotedPropsMinifySyntax", {
     // GENERATED
@@ -6084,92 +6083,11 @@ describe("bundler", () => {
       `,
     },
     mangleProps: /_/,
-    mangleQuoted: false,
     minifySyntax: true,
   });
-  itBundled("default/MangleQuotedProps", {
-    files: {
-      "/keep.js": /* js */ `
-        foo("_keepThisProperty");
-        foo((x, "_keepThisProperty"));
-        foo(x ? "_keepThisProperty" : "_keepThisPropertyToo");
-        x[foo("_keepThisProperty")];
-        x?.[foo("_keepThisProperty")];
-        ({ [foo("_keepThisProperty")]: x });
-        (class { [foo("_keepThisProperty")] = x });
-        var { [foo("_keepThisProperty")]: x } = y;
-        foo("_keepThisProperty") in x;
-      `,
-      "/mangle.js": /* js */ `
-        x['_mangleThis'];
-        x?.['_mangleThis'];
-        x[y ? '_mangleThis' : z];
-        x?.[y ? '_mangleThis' : z];
-        x[y ? z : '_mangleThis'];
-        x?.[y ? z : '_mangleThis'];
-        x[y, '_mangleThis'];
-        x?.[y, '_mangleThis'];
-        ({ '_mangleThis': x });
-        ({ ['_mangleThis']: x });
-        ({ [(y, '_mangleThis')]: x });
-        (class { '_mangleThis' = x });
-        (class { ['_mangleThis'] = x });
-        (class { [(y, '_mangleThis')] = x });
-        var { '_mangleThis': x } = y;
-        var { ['_mangleThis']: x } = y;
-        var { [(z, '_mangleThis')]: x } = y;
-        '_mangleThis' in x;
-        (y ? '_mangleThis' : z) in x;
-        (y ? z : '_mangleThis') in x;
-        (y, '_mangleThis') in x;
-      `,
-    },
-    entryPoints: ["/keep.js", "/mangle.js"],
-    mangleProps: /_/,
-    mangleQuoted: true,
-  });
-  itBundled("default/MangleQuotedPropsMinifySyntax", {
-    files: {
-      "/keep.js": /* js */ `
-        foo("_keepThisProperty");
-        foo((x, "_keepThisProperty"));
-        foo(x ? "_keepThisProperty" : "_keepThisPropertyToo");
-        x[foo("_keepThisProperty")];
-        x?.[foo("_keepThisProperty")];
-        ({ [foo("_keepThisProperty")]: x });
-        (class { [foo("_keepThisProperty")] = x });
-        var { [foo("_keepThisProperty")]: x } = y;
-        foo("_keepThisProperty") in x;
-      `,
-      "/mangle.js": /* js */ `
-        x['_mangleThis'];
-        x?.['_mangleThis'];
-        x[y ? '_mangleThis' : z];
-        x?.[y ? '_mangleThis' : z];
-        x[y ? z : '_mangleThis'];
-        x?.[y ? z : '_mangleThis'];
-        x[y, '_mangleThis'];
-        x?.[y, '_mangleThis'];
-        ({ '_mangleThis': x });
-        ({ ['_mangleThis']: x });
-        ({ [(y, '_mangleThis')]: x });
-        (class { '_mangleThis' = x });
-        (class { ['_mangleThis'] = x });
-        (class { [(y, '_mangleThis')] = x });
-        var { '_mangleThis': x } = y;
-        var { ['_mangleThis']: x } = y;
-        var { [(z, '_mangleThis')]: x } = y;
-        '_mangleThis' in x;
-        (y ? '_mangleThis' : z) in x;
-        (y ? z : '_mangleThis') in x;
-        (y, '_mangleThis') in x;
-      `,
-    },
-    entryPoints: ["/keep.js", "/mangle.js"],
-    mangleProps: /_/,
-    mangleQuoted: true,
-    minifySyntax: true,
-  });
+  // mangleQuoted is not supported - these tests are skipped
+  // itBundled("default/MangleQuotedProps", { ... });
+  // itBundled("default/MangleQuotedPropsMinifySyntax", { ... });
   // we dont check debug messages
   // itBundled("default/IndirectRequireMessage", {
   //   // GENERATED

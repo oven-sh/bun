@@ -1202,7 +1202,6 @@ fn runWithSourceCode(
     // Set up mangle props options from transpiler
     opts.mangle_props = transpiler.options.mangle_props;
     opts.reserve_props = transpiler.options.reserve_props;
-    opts.mangle_quoted = transpiler.options.mangle_quoted;
 
     // For files that are not user-specified entrypoints, set `import.meta.main` to `false`.
     // Entrypoints will have `import.meta.main` set as "unknown", unless we use `--compile`,

@@ -1277,20 +1277,6 @@ await Bun.build({
 });
 ```
 
-With `mangleQuoted` to also mangle quoted property names and string literal accesses:
-
-```ts
-await Bun.build({
-  entrypoints: ["./index.ts"],
-  outdir: "./out",
-  minify: {
-    syntax: true,
-  },
-  mangleProps: /_$/,
-  mangleQuoted: true,
-});
-```
-
 ### Example
 
 ```ts Input
@@ -1329,36 +1315,6 @@ const obj = {
   _internal: true,   // → obj.a
   _cache: {},        // → obj.b
 };
-```
-
-### mangleQuoted Option
-
-By default, quoted property names and bracket notation accesses are not mangled:
-
-```ts Input
-const obj = {
-  "foo_": 1,  // Quoted - not mangled by default
-  bar_: 2,    // Not quoted - mangled
-};
-console.log(obj["foo_"], obj.bar_);
-```
-
-```js Output (without mangleQuoted)
-const obj = {
-  "foo_": 1,
-  a: 2,
-};
-console.log(obj["foo_"], obj.a);
-```
-
-With `mangleQuoted: true`, quoted properties are also mangled:
-
-```js Output (with mangleQuoted)
-const obj = {
-  a: 1,
-  b: 2,
-};
-console.log(obj.a, obj.b);
 ```
 
 ### Reserved Properties

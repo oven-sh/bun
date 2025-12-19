@@ -1931,8 +1931,6 @@ pub const BundleV2 = struct {
                         break :blk null;
                     };
                 }
-
-                transpiler.options.mangle_quoted = config.mangle_props.quoted;
             }
 
             if (transpiler.options.compile) {

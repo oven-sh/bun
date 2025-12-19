@@ -1806,9 +1806,6 @@ pub const BundleOptions = struct {
     /// Regex pattern for property names to exclude from mangling. Properties matching
     /// this pattern will NOT be mangled even if they match mangle_props.
     reserve_props: ?*bun.jsc.RegularExpression = null,
-    /// If true, also mangle property names in quoted property accesses (e.g., obj["prop"]).
-    /// Default is false, meaning only unquoted property accesses are mangled.
-    mangle_quoted: bool = false,
 
     ignore_dce_annotations: bool = false,
     emit_dce_annotations: bool = false,

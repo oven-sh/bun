@@ -789,6 +789,10 @@ pub const Bin = extern struct {
             };
         }
 
+        /// Atomic counter for generating unique temporary symlink names.
+        /// Combined with thread ID to ensure uniqueness across parallel installs.
+        var atomic_temp_counter = std.atomic.Value(u32).init(0);
+
         fn createSymlink(this: *Linker, abs_target: [:0]const u8, abs_dest: [:0]const u8, global: bool) void {
             defer {
                 if (this.err == null) {
@@ -822,16 +826,16 @@ pub const Bin = extern struct {
 
                         switch (bun.sys.symlinkRunningExecutable(rel_target, abs_dest)) {
                             .err => |real_error| {
-                                // It was just created, no need to delete destination and symlink again
-                                this.err = real_error.toZigErr();
-                                return;
+                                // Handle EEXIST after creating .bin directory - another process may have created the symlink
+                                if (real_error.getErrno() == .EXIST) {
+                                    // Fall through to atomic replacement below
+                                } else {
+                                    this.err = real_error.toZigErr();
+                                    return;
+                                }
                             },
                             .result => return,
                         }
-                        bun.sys.symlinkRunningExecutable(rel_target, abs_dest).unwrap() catch |real_err| {
-                            this.err = real_err;
-                        };
-                        return;
                     }
 
                     // beyond this error can only be `.EXIST`
@@ -840,11 +844,60 @@ pub const Bin = extern struct {
                 .result => return,
             }
 
-            // delete and try again
-            std.fs.deleteTreeAbsolute(abs_dest) catch {};
-            bun.sys.symlinkRunningExecutable(rel_target, abs_dest).unwrap() catch |err| {
-                this.err = err;
+            // Use atomic symlink replacement to handle parallel installs safely.
+            // Instead of delete-then-create (which races), create a temp symlink and rename.
+            // rename(2) atomically replaces the target on POSIX systems.
+            this.atomicSymlinkReplace(rel_target, abs_dest, abs_dest_dir);
+        }
+
+        /// Atomically replace a symlink by creating a temporary symlink and renaming it.
+        /// This avoids race conditions when multiple processes try to create the same symlink.
+        fn atomicSymlinkReplace(this: *Linker, rel_target: [:0]const u8, abs_dest: [:0]const u8, abs_dest_dir: []const u8) void {
+            // Generate a unique temporary name using thread ID and atomic counter
+            const counter = atomic_temp_counter.fetchAdd(1, .monotonic);
+            const thread_id: u32 = @truncate(std.Thread.getCurrentId());
+
+            // Build temporary symlink path: <dest_dir>/.bun-tmp-<thread_id>-<counter>
+            var temp_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            const temp_path = std.fmt.bufPrintZ(&temp_buf, "{s}/.bun-tmp-{x}-{x}", .{
+                abs_dest_dir,
+                thread_id,
+                counter,
+            }) catch {
+                // Fallback to non-atomic method if buffer is too small (extremely unlikely)
+                std.fs.deleteTreeAbsolute(abs_dest) catch {};
+                bun.sys.symlinkRunningExecutable(rel_target, abs_dest).unwrap() catch |err| {
+                    this.err = err;
+                };
+                return;
             };
+
+            // Create temporary symlink
+            switch (bun.sys.symlinkRunningExecutable(rel_target, temp_path)) {
+                .err => |symlink_err| {
+                    // If temp symlink creation fails (e.g., disk full), fall back to non-atomic method
+                    std.fs.deleteTreeAbsolute(abs_dest) catch {};
+                    bun.sys.symlinkRunningExecutable(rel_target, abs_dest).unwrap() catch |err| {
+                        this.err = err;
+                    };
+                    // Clean up temp file if it somehow exists
+                    _ = bun.sys.unlink(temp_path);
+                    _ = symlink_err; // suppress unused variable warning
+                    return;
+                },
+                .result => {},
+            }
+
+            // Atomically rename temp symlink to destination.
+            // rename(2) will atomically replace abs_dest if it exists.
+            switch (bun.sys.rename(temp_path, abs_dest)) {
+                .err => |rename_err| {
+                    // Clean up temp symlink on failure
+                    _ = bun.sys.unlink(temp_path);
+                    this.err = rename_err.toZigErr();
+                },
+                .result => {},
+            }
         }
 
         /// uses `this.abs_target_buf`

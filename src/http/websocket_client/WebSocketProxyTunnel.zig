@@ -257,12 +257,12 @@ pub fn hasBackpressure(this: *const WebSocketProxyTunnel) bool {
 
 const log = bun.Output.scoped(.WebSocketProxyTunnel, .visible);
 
-const std = @import("std");
-const bun = @import("bun");
-const uws = bun.uws;
-const jsc = bun.jsc;
-const BoringSSL = bun.BoringSSL;
-const SSLWrapper = @import("../../bun.js/api/bun/ssl_wrapper.zig").SSLWrapper;
-const SSLConfig = jsc.API.ServerConfig.SSLConfig;
-const NewHTTPUpgradeClient = @import("./WebSocketUpgradeClient.zig").NewHTTPUpgradeClient;
 const ErrorCode = @import("../websocket_client.zig").ErrorCode;
+const NewHTTPUpgradeClient = @import("./WebSocketUpgradeClient.zig").NewHTTPUpgradeClient;
+const SSLWrapper = @import("../../bun.js/api/bun/ssl_wrapper.zig").SSLWrapper;
+
+const bun = @import("bun");
+const BoringSSL = bun.BoringSSL;
+const jsc = bun.jsc;
+const uws = bun.uws;
+const SSLConfig = jsc.API.ServerConfig.SSLConfig;

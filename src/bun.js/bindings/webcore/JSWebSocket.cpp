@@ -211,7 +211,7 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
 
     Vector<String> protocols;
     int rejectUnauthorized = -1;
-    void* sslConfig = nullptr;  // SSLConfig pointer from Zig
+    void* sslConfig = nullptr; // SSLConfig pointer from Zig
     auto headersInit = std::optional<Converter<IDLUnion<IDLSequence<IDLSequence<IDLByteString>>, IDLRecord<IDLByteString, IDLByteString>>>::ReturnType>();
 
     // Proxy options

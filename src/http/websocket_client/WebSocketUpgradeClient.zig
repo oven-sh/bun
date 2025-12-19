@@ -1204,6 +1204,7 @@ comptime {
 }
 
 const WebSocketDeflate = @import("./WebSocketDeflate.zig");
+const WebSocketProxyTunnel = @import("./WebSocketProxyTunnel.zig");
 const std = @import("std");
 const CppWebSocket = @import("./CppWebSocket.zig").CppWebSocket;
 
@@ -1222,4 +1223,3 @@ const strings = bun.strings;
 const uws = bun.uws;
 const Headers = bun.http.Headers;
 const SSLConfig = jsc.API.ServerConfig.SSLConfig;
-const WebSocketProxyTunnel = @import("./WebSocketProxyTunnel.zig");

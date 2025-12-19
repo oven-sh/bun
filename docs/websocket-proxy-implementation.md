@@ -8,32 +8,32 @@ This document describes the implementation of HTTP proxy support for WebSocket c
 
 ```javascript
 // String format
-new WebSocket("wss://example.com", { proxy: "http://proxy:8080" })
+new WebSocket("wss://example.com", { proxy: "http://proxy:8080" });
 
 // Object format with custom headers
 new WebSocket("wss://example.com", {
   proxy: {
     url: "http://proxy:8080",
-    headers: { "Proxy-Authorization": "Bearer token" }
-  }
-})
+    headers: { "Proxy-Authorization": "Bearer token" },
+  },
+});
 
 // Proxy URL with credentials (Basic auth)
-new WebSocket("wss://example.com", { proxy: "http://user:pass@proxy:8080" })
+new WebSocket("wss://example.com", { proxy: "http://user:pass@proxy:8080" });
 
 // HTTPS proxy (TLS connection to proxy)
 new WebSocket("ws://example.com", {
   proxy: "https://proxy:8443",
-  tls: { rejectUnauthorized: false }  // For self-signed proxy certs
-})
+  tls: { rejectUnauthorized: false }, // For self-signed proxy certs
+});
 
 // Combined with other options
 new WebSocket("wss://example.com", {
   proxy: "http://proxy:8080",
   headers: { "Authorization": "Bearer token" },
   protocols: ["graphql-ws"],
-  tls: { rejectUnauthorized: true }
-})
+  tls: { rejectUnauthorized: true },
+});
 ```
 
 ## Architecture
@@ -116,21 +116,21 @@ Client                         HTTP Proxy                    WebSocket Server
 
 ### C++ Files
 
-| File | Changes |
-|------|---------|
-| `src/bun.js/bindings/webcore/JSWebSocket.cpp` | Parse `proxy` option (string or object format) |
-| `src/bun.js/bindings/webcore/WebSocket.h` | Add proxy member fields |
-| `src/bun.js/bindings/webcore/WebSocket.cpp` | New `create()` overloads with proxy, pass to Zig |
-| `src/bun.js/bindings/webcore/WebSocketErrorCode.h` | Add proxy error codes |
-| `src/bun.js/bindings/headers.h` | Update function signatures with proxy params |
+| File                                               | Changes                                          |
+| -------------------------------------------------- | ------------------------------------------------ |
+| `src/bun.js/bindings/webcore/JSWebSocket.cpp`      | Parse `proxy` option (string or object format)   |
+| `src/bun.js/bindings/webcore/WebSocket.h`          | Add proxy member fields                          |
+| `src/bun.js/bindings/webcore/WebSocket.cpp`        | New `create()` overloads with proxy, pass to Zig |
+| `src/bun.js/bindings/webcore/WebSocketErrorCode.h` | Add proxy error codes                            |
+| `src/bun.js/bindings/headers.h`                    | Update function signatures with proxy params     |
 
 ### Zig Files
 
-| File | Changes |
-|------|---------|
-| `src/http/websocket_client.zig` | Add proxy error codes to `ErrorCode` enum |
+| File                                                   | Changes                                     |
+| ------------------------------------------------------ | ------------------------------------------- |
+| `src/http/websocket_client.zig`                        | Add proxy error codes to `ErrorCode` enum   |
 | `src/http/websocket_client/WebSocketUpgradeClient.zig` | Proxy state machine, TLS tunnel integration |
-| `src/http/websocket_client/WebSocketProxyTunnel.zig` | **New file** - TLS inside CONNECT tunnel |
+| `src/http/websocket_client/WebSocketProxyTunnel.zig`   | **New file** - TLS inside CONNECT tunnel    |
 
 ## Implementation Details
 
@@ -190,25 +190,25 @@ if (!socket->m_proxyUrl.user().isEmpty()) {
 
 New error codes added for proxy-related failures:
 
-| Code | Name | Description |
-|------|------|-------------|
-| 33 | `proxy_connect_failed` | Proxy returned non-200 status |
-| 34 | `proxy_authentication_required` | Proxy returned 407 |
-| 35 | `proxy_connection_refused` | Could not connect to proxy |
-| 36 | `proxy_tunnel_failed` | TLS tunnel setup failed |
+| Code | Name                            | Description                   |
+| ---- | ------------------------------- | ----------------------------- |
+| 33   | `proxy_connect_failed`          | Proxy returned non-200 status |
+| 34   | `proxy_authentication_required` | Proxy returned 407            |
+| 35   | `proxy_connection_refused`      | Could not connect to proxy    |
+| 36   | `proxy_tunnel_failed`           | TLS tunnel setup failed       |
 
 ## Supported Scenarios
 
-| Scenario | Status |
-|----------|--------|
-| ws:// through HTTP proxy | ✅ Working |
-| wss:// through HTTP proxy | ✅ Working (TLS tunnel) |
-| ws:// through HTTPS proxy | ✅ Working (with `rejectUnauthorized: false`) |
-| wss:// through HTTPS proxy | ✅ Working (with `rejectUnauthorized: false`) |
-| Proxy authentication (Basic) | ✅ Working |
-| Custom proxy headers | ✅ Working |
-| Certificate verification (target) | ✅ Working |
-| Custom CA for HTTPS proxy | ⚠️ Not yet implemented |
+| Scenario                          | Status                                        |
+| --------------------------------- | --------------------------------------------- |
+| ws:// through HTTP proxy          | ✅ Working                                    |
+| wss:// through HTTP proxy         | ✅ Working (TLS tunnel)                       |
+| ws:// through HTTPS proxy         | ✅ Working (with `rejectUnauthorized: false`) |
+| wss:// through HTTPS proxy        | ✅ Working (with `rejectUnauthorized: false`) |
+| Proxy authentication (Basic)      | ✅ Working                                    |
+| Custom proxy headers              | ✅ Working                                    |
+| Certificate verification (target) | ✅ Working                                    |
+| Custom CA for HTTPS proxy         | ⚠️ Not yet implemented                        |
 
 **Note:** HTTPS proxy support works with `tls: { rejectUnauthorized: false }`. Custom CA certificates for HTTPS proxy connections (e.g., self-signed proxy certs) require applying `SSLConfig` to the proxy socket context, which is not yet implemented. The `tls.ca` option currently only applies to the target connection (wss://) or TLS tunnel, not the initial TLS connection to an HTTPS proxy.
 
@@ -256,11 +256,11 @@ describe("WebSocket through HTTP CONNECT proxy", () => {
 
 The CLI respects standard proxy environment variables:
 
-| Variable | Description |
-|----------|-------------|
-| `HTTP_PROXY` | Proxy for HTTP requests |
-| `HTTPS_PROXY` | Proxy for HTTPS requests |
-| `NO_PROXY` | Comma-separated list of hosts to bypass proxy |
+| Variable      | Description                                   |
+| ------------- | --------------------------------------------- |
+| `HTTP_PROXY`  | Proxy for HTTP requests                       |
+| `HTTPS_PROXY` | Proxy for HTTPS requests                      |
+| `NO_PROXY`    | Comma-separated list of hosts to bypass proxy |
 
 ## Future Improvements
 

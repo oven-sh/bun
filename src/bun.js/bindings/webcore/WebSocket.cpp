@@ -567,7 +567,7 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
     // Pass SSLConfig pointer to Zig (ownership transferred - Zig will deinit when connection closes)
     // After this call, m_sslConfig should not be used by C++ anymore
     void* sslConfig = m_sslConfig;
-    m_sslConfig = nullptr;  // Transfer ownership
+    m_sslConfig = nullptr; // Transfer ownership
 
     // Use TLS client if either:
     // 1. Target is wss:// (is_secure), OR

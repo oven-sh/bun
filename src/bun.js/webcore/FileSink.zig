@@ -165,10 +165,11 @@ pub fn onWrite(this: *FileSink, amount: usize, status: bun.io.WriteStatus) void 
 
     // DEBUG: CI diagnostic for Windows timeout issue
     if (comptime Environment.isWindows) {
-        Output.prettyErrorln("[FileSink] onWrite: amount={d}, status={s}, pending.state={s}, done={}", .{
+        Output.prettyErrorln("[FileSink] onWrite ENTRY: amount={d}, status={s}, pending.state={s}, pending.future={s}, done={}", .{
             amount,
             @tagName(status),
             @tagName(this.pending.state),
+            @tagName(this.pending.future),
             this.done,
         });
         Output.flush();
@@ -207,6 +208,14 @@ pub fn onWrite(this: *FileSink, amount: usize, status: bun.io.WriteStatus) void 
             this.pending.result = .{ .owned_and_done = this.pending.consumed };
         } else {
             this.pending.result = .{ .owned = this.pending.consumed };
+        }
+
+        // DEBUG: CI diagnostic for Windows timeout issue
+        if (comptime Environment.isWindows) {
+            Output.prettyErrorln("[FileSink] onWrite: BEFORE runPending(), pending.future={s}", .{
+                @tagName(this.pending.future),
+            });
+            Output.flush();
         }
 
         this.runPending();
@@ -504,6 +513,15 @@ pub fn flushFromJS(this: *FileSink, globalThis: *JSGlobalObject, wait: bool) bun
 }
 
 pub fn finalize(this: *FileSink) void {
+    // DEBUG: CI diagnostic for Windows timeout issue
+    if (comptime bun.Environment.isWindows) {
+        Output.prettyErrorln("[FileSink] finalize() called! this={*}, pending.state={s}, pending.future={s}", .{
+            this,
+            @tagName(this.pending.state),
+            @tagName(this.pending.future),
+        });
+        Output.flush();
+    }
     this.readable_stream.deinit();
     this.pending.deinit();
     this.deref();
@@ -596,6 +614,15 @@ pub fn end(this: *FileSink, _: ?bun.sys.Error) bun.sys.Maybe(void) {
 }
 
 fn deinit(this: *FileSink) void {
+    // DEBUG: CI diagnostic for Windows timeout issue
+    if (comptime bun.Environment.isWindows) {
+        Output.prettyErrorln("[FileSink] deinit() called! this={*}, pending.state={s}, pending.future={s}", .{
+            this,
+            @tagName(this.pending.state),
+            @tagName(this.pending.future),
+        });
+        Output.flush();
+    }
     this.pending.deinit();
     this.writer.deinit();
     this.readable_stream.deinit();

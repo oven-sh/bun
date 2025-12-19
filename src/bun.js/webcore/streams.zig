@@ -293,6 +293,15 @@ pub const Result = union(Tag) {
             state: Result.Pending.State = .none,
 
             pub fn deinit(this: *@This()) void {
+                // DEBUG: CI diagnostic for Windows timeout issue
+                if (comptime bun.Environment.isWindows) {
+                    Output.prettyErrorln("[streams] Pending.deinit() called! this={*}, state={s}, future={s}", .{
+                        this,
+                        @tagName(this.state),
+                        @tagName(this.future),
+                    });
+                    Output.flush();
+                }
                 this.future.deinit();
             }
 
@@ -305,6 +314,14 @@ pub const Result = union(Tag) {
                 handler: Handler,
 
                 pub fn deinit(this: *@This()) void {
+                    // DEBUG: CI diagnostic for Windows timeout issue
+                    if (comptime bun.Environment.isWindows) {
+                        Output.prettyErrorln("[streams] Future.deinit() called! this={*}, current={s}", .{
+                            this,
+                            @tagName(this.*),
+                        });
+                        Output.flush();
+                    }
                     if (this.* == .promise) {
                         this.promise.strong.deinit();
                         this.* = .{ .none = {} };

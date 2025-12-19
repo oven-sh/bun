@@ -686,7 +686,7 @@ const c = struct {
     pub extern fn uws_res_write_header_int(ssl: i32, res: *c.uws_res, key: [*c]const u8, key_length: usize, value: u64) void;
     pub extern fn uws_res_end_without_body(ssl: i32, res: *c.uws_res, close_connection: bool) void;
     pub extern fn uws_res_end_sendfile(ssl: i32, res: *c.uws_res, write_offset: u64, close_connection: bool) void;
-    pub extern fn uws_res_timeout(ssl: i32, res: *c.uws_res, timeout: u8) void;
+    pub extern fn uws_res_timeout(ssl: i32, res: *c.uws_res, timeout: u16) void;
     pub extern fn uws_res_reset_timeout(ssl: i32, res: *c.uws_res) void;
     pub extern fn uws_res_get_buffered_amount(ssl: i32, res: *c.uws_res) u64;
     pub extern fn uws_res_write(ssl: i32, res: *c.uws_res, data: ?[*]const u8, length: *usize) bool;

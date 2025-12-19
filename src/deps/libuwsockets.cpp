@@ -1312,7 +1312,7 @@ extern "C"
       uwsRes->resetTimeout();
     }
   }
-  void uws_res_timeout(int ssl, uws_res_r res, uint8_t seconds) {
+  void uws_res_timeout(int ssl, uws_res_r res, u_int16_t seconds) {
     if (ssl) {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
       uwsRes->setTimeout(seconds);

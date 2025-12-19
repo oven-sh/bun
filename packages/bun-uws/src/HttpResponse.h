@@ -55,7 +55,7 @@ public:
         return (HttpResponseData<SSL> *) us_socket_ext(SSL, s);
     }
 
-    void setTimeout(uint8_t seconds) {
+    void setTimeout(u_int16_t seconds) {
         auto* data = getHttpResponseData();
         data->idleTimeout = seconds;
         Super::timeout(data->idleTimeout);
@@ -318,17 +318,17 @@ public:
         /* Move any backpressure out of HttpResponse */
         auto* responseData = getHttpResponseData();
         BackPressure backpressure(std::move(((AsyncSocketData<SSL> *) responseData)->buffer));
-        
+
         auto* socketData = responseData->socketData;
         HttpContextData<SSL> *httpContextData = httpContext->getSocketContextData();
-        
+
         /* Destroy HttpResponseData */
         responseData->~HttpResponseData();
 
         /* Before we adopt and potentially change socket, check if we are corked */
         bool wasCorked = Super::isCorked();
 
-        
+
 
         /* Adopting a socket invalidates it, do not rely on it directly to carry any data */
         us_socket_t *usSocket = us_socket_context_adopt_socket(SSL, (us_socket_context_t *) webSocketContext, (us_socket_t *) this, sizeof(HttpResponseData<SSL>), sizeof(WebSocketData) + sizeof(UserData));

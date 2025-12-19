@@ -27,6 +27,11 @@ run_pending_later: FlushPendingTask = .{},
 /// Currently, only used when `stdin` in `Bun.spawn` is a ReadableStream.
 readable_stream: jsc.WebCore.ReadableStream.Strong = .{},
 
+/// Strong reference to the JS wrapper object to prevent GC from collecting it
+/// while an async operation is pending. This is set when endFromJS returns a
+/// pending Promise and cleared when the operation completes.
+js_sink_ref: jsc.Strong.Optional = .empty,
+
 const log = Output.scoped(.FileSink, .visible);
 
 pub const RefCount = bun.ptr.RefCount(FileSink, "ref_count", deinit, .{});
@@ -139,6 +144,11 @@ fn runPending(this: *FileSink) void {
     l.enter();
     defer l.exit();
     this.pending.run();
+
+    // Release the JS wrapper reference now that the pending operation is complete.
+    // This was held to prevent GC from collecting the wrapper while the async
+    // operation was in progress.
+    this.js_sink_ref.deinit();
 }
 
 pub fn onWrite(this: *FileSink, amount: usize, status: bun.io.WriteStatus) void {
@@ -476,6 +486,7 @@ pub fn flushFromJS(this: *FileSink, globalThis: *JSGlobalObject, wait: bool) bun
 pub fn finalize(this: *FileSink) void {
     this.readable_stream.deinit();
     this.pending.deinit();
+    this.js_sink_ref.deinit();
     this.deref();
 }
 
@@ -484,6 +495,13 @@ pub fn finalize(this: *FileSink) void {
 /// async operations (like write) are in progress.
 pub fn hasPendingActivity(this: *const FileSink) callconv(.c) bool {
     return this.pending.state == .pending;
+}
+
+/// Protect the JS wrapper object from GC collection while an async operation is pending.
+/// This should be called when endFromJS returns a pending Promise.
+/// The reference is released when runPending() completes.
+pub fn protectJSWrapper(this: *FileSink, globalThis: *jsc.JSGlobalObject, js_wrapper: jsc.JSValue) void {
+    this.js_sink_ref.set(globalThis, js_wrapper);
 }
 
 pub fn init(fd: bun.FileDescriptor, event_loop_handle: anytype) *FileSink {
@@ -564,6 +582,7 @@ fn deinit(this: *FileSink) void {
     this.pending.deinit();
     this.writer.deinit();
     this.readable_stream.deinit();
+    this.js_sink_ref.deinit();
     if (this.event_loop_handle.globalObject()) |global| {
         webcore.AutoFlusher.unregisterDeferredMicrotaskWithType(@This(), this, global.bunVM());
     }

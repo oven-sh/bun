@@ -33,7 +33,7 @@ const TESTS_TO_SKIP: Set<string> = new Set<TestName>([
 
 interface SecurityScannerTestOptions {
   command: "install" | "update" | "add" | "remove" | "uninstall";
-  args: string[];
+  args: readonly string[];
   hasExistingNodeModules: boolean;
   linker: "hoisted" | "isolated";
   scannerType: "local" | "npm" | "npm.bunfigonly";
@@ -238,7 +238,6 @@ scanner = "${scannerPath}"`,
   let exitCode: number;
 
   if (hasTTY) {
-    // Use Bun.Terminal to create a PTY environment for testing interactive prompts
     let responseSent = false;
 
     await using terminal = new Bun.Terminal({
@@ -286,7 +285,7 @@ scanner = "${scannerPath}"`,
 
     if (DO_TEST_DEBUG) {
       const write = (chunk: Uint8Array<ArrayBuffer>, stream: NodeJS.WriteStream, decoder: TextDecoder) => {
-        const str = decoder.decode(chunk);
+        const str = decoder.decode(chunk, { stream: true });
 
         errAndOut += str;
 
@@ -537,12 +536,11 @@ export function runSecurityScannerTests(selfModuleName: string, hasExistingNodeM
     stopRegistry();
   });
 
-  // TTY configs for testing interactive prompts
   const ttyConfigs = [
-    { hasTTY: false, ttyResponse: "n", ttyLabel: "no-TTY" },
-    { hasTTY: true, ttyResponse: "y", ttyLabel: "TTY:y" },
-    { hasTTY: true, ttyResponse: "n", ttyLabel: "TTY:n" },
-  ] as const;
+    { hasTTY: false, ttyResponse: "n", ttyLabel: "no-TTY" } as const,
+    { hasTTY: true, ttyResponse: "y", ttyLabel: "TTY:y" } as const,
+    { hasTTY: true, ttyResponse: "n", ttyLabel: "TTY:n" } as const,
+  ];
 
   describe.each(["install", "update", "add", "remove", "uninstall"] as const)("bun %s", command => {
     describe.each([

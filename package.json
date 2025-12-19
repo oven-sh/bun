@@ -16,8 +16,8 @@
     "peechy": "0.4.34",
     "prettier": "^3.6.2",
     "prettier-plugin-organize-imports": "^4.3.0",
-    "react": "^19.2.3",
-    "react-dom": "^19.2.3",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
     "source-map-js": "^1.2.1",
     "typescript": "5.9.2"
   },

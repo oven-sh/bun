@@ -60,11 +60,18 @@ pub fn start(this: *PipeReader, process: *Subprocess, event_loop: *jsc.EventLoop
     this.process = process;
     this.event_loop = event_loop;
     if (Environment.isWindows) {
-        return this.reader.startWithCurrentPipe();
+        switch (this.reader.startWithCurrentPipe()) {
+            .err => |err| {
+                this.deref();
+                return .{ .err = err };
+            },
+            .result => return .success,
+        }
     }
 
     switch (this.reader.start(this.stdio_result.?, true)) {
         .err => |err| {
+            this.deref();
             return .{ .err = err };
         },
         .result => {

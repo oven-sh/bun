@@ -64,10 +64,17 @@ pub fn NewStaticPipeWriter(comptime ProcessType: type) type {
             this.ref();
             this.buffer = this.source.slice();
             if (Environment.isWindows) {
-                return this.writer.startWithCurrentPipe();
+                switch (this.writer.startWithCurrentPipe()) {
+                    .err => |err| {
+                        this.deref();
+                        return .{ .err = err };
+                    },
+                    .result => return .success,
+                }
             }
             switch (this.writer.start(this.stdio_result.?, true)) {
                 .err => |err| {
+                    this.deref();
                     return .{ .err = err };
                 },
                 .result => {

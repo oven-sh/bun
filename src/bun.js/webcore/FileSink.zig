@@ -677,6 +677,7 @@ fn handleResolveStream(this: *FileSink, globalThis: *jsc.JSGlobalObject) void {
     if (this.readable_stream.get(globalThis)) |*stream| {
         stream.done(globalThis);
     }
+    this.readable_stream.deinit();
 
     if (!this.done) {
         this.writer.close();
@@ -687,8 +688,8 @@ fn handleResolveStream(this: *FileSink, globalThis: *jsc.JSGlobalObject) void {
 fn handleRejectStream(this: *FileSink, globalThis: *jsc.JSGlobalObject, _: jsc.JSValue) void {
     if (this.readable_stream.get(globalThis)) |*stream| {
         stream.abort(globalThis);
-        this.readable_stream.deinit();
     }
+    this.readable_stream.deinit();
 
     if (!this.done) {
         this.writer.close();

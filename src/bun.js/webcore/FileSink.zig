@@ -138,7 +138,11 @@ fn runPending(this: *FileSink) void {
 
     // DEBUG: CI diagnostic for Windows timeout issue
     if (comptime Environment.isWindows) {
-        Output.prettyErrorln("[FileSink] runPending: pending.state={s}", .{@tagName(this.pending.state)});
+        Output.prettyErrorln("[FileSink] runPending: this.pending={*}, pending.state={s}, pending.future={s}", .{
+            &this.pending,
+            @tagName(this.pending.state),
+            @tagName(this.pending.future),
+        });
         Output.flush();
     }
 
@@ -148,7 +152,10 @@ fn runPending(this: *FileSink) void {
 
     // DEBUG: CI diagnostic for Windows timeout issue
     if (comptime Environment.isWindows) {
-        Output.prettyErrorln("[FileSink] runPending done: pending.state={s}", .{@tagName(this.pending.state)});
+        Output.prettyErrorln("[FileSink] runPending done: pending.state={s}, pending.future={s}", .{
+            @tagName(this.pending.state),
+            @tagName(this.pending.future),
+        });
         Output.flush();
     }
 }
@@ -526,7 +533,19 @@ pub fn write(this: *@This(), data: streams.Result) streams.Result.Writable {
         return .{ .done = {} };
     }
 
-    return this.toResult(this.writer.write(data.slice()));
+    const result = this.toResult(this.writer.write(data.slice()));
+
+    // DEBUG: CI diagnostic for Windows timeout issue
+    if (comptime Environment.isWindows) {
+        Output.prettyErrorln("[FileSink] write: result={s}, pending.state={s}, pending.future={s}", .{
+            @tagName(result),
+            @tagName(this.pending.state),
+            @tagName(this.pending.future),
+        });
+        Output.flush();
+    }
+
+    return result;
 }
 pub const writeBytes = write;
 pub fn writeLatin1(this: *@This(), data: streams.Result) streams.Result.Writable {
@@ -597,9 +616,11 @@ pub fn toJSWithDestructor(this: *FileSink, globalThis: *JSGlobalObject, destruct
 pub fn endFromJS(this: *FileSink, globalThis: *JSGlobalObject) bun.sys.Maybe(JSValue) {
     // DEBUG: CI diagnostic for Windows timeout issue
     if (comptime Environment.isWindows) {
-        Output.prettyErrorln("[FileSink] endFromJS called: done={}, pending.state={s}", .{
+        Output.prettyErrorln("[FileSink] endFromJS called: this.pending={*}, done={}, pending.state={s}, pending.future={s}", .{
+            &this.pending,
             this.done,
             @tagName(this.pending.state),
+            @tagName(this.pending.future),
         });
         Output.flush();
     }
@@ -657,11 +678,25 @@ pub fn endFromJS(this: *FileSink, globalThis: *JSGlobalObject) bun.sys.Maybe(JSV
 
             // DEBUG: CI diagnostic for Windows timeout issue
             if (comptime Environment.isWindows) {
-                Output.prettyErrorln("[FileSink] endFromJS: creating Promise, pending_written={d}", .{pending_written});
+                Output.prettyErrorln("[FileSink] endFromJS: BEFORE promise(), pending.state={s}, pending.future={s}", .{
+                    @tagName(this.pending.state),
+                    @tagName(this.pending.future),
+                });
                 Output.flush();
             }
 
-            return .{ .result = this.pending.promise(globalThis).toJS() };
+            const promise_result = this.pending.promise(globalThis);
+
+            // DEBUG: CI diagnostic for Windows timeout issue
+            if (comptime Environment.isWindows) {
+                Output.prettyErrorln("[FileSink] endFromJS: AFTER promise(), pending.state={s}, pending.future={s}", .{
+                    @tagName(this.pending.state),
+                    @tagName(this.pending.future),
+                });
+                Output.flush();
+            }
+
+            return .{ .result = promise_result.toJS() };
         },
         .wrote => |written| {
             if (comptime Environment.isWindows) {
@@ -716,6 +751,15 @@ fn toResult(this: *FileSink, write_result: bun.io.WriteResult) streams.Result.Wr
             return .{ .err = err };
         },
         .pending => |pending_written| {
+            // DEBUG: CI diagnostic for Windows timeout issue
+            if (comptime Environment.isWindows) {
+                Output.prettyErrorln("[FileSink] toResult: returning .pending, this.pending={*}, pending.state={s}, pending.future={s}", .{
+                    &this.pending,
+                    @tagName(this.pending.state),
+                    @tagName(this.pending.future),
+                });
+                Output.flush();
+            }
             if (!this.must_be_kept_alive_until_eof) {
                 this.must_be_kept_alive_until_eof = true;
                 this.ref();

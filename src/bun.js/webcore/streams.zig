@@ -313,10 +313,26 @@ pub const Result = union(Tag) {
             };
 
             pub fn promise(this: *Writable.Pending, globalThis: *jsc.JSGlobalObject) *JSPromise {
+                // DEBUG: CI diagnostic for Windows timeout issue
+                if (comptime bun.Environment.isWindows) {
+                    Output.prettyErrorln("[streams] Pending.promise() ENTRY: this={*}, state={s}, future={s}", .{
+                        this,
+                        @tagName(this.state),
+                        @tagName(this.future),
+                    });
+                    Output.flush();
+                }
+
                 this.state = .pending;
 
                 switch (this.future) {
                     .promise => |p| {
+                        if (comptime bun.Environment.isWindows) {
+                            Output.prettyErrorln("[streams] Pending.promise() EXIT: returning EXISTING promise, future={s}", .{
+                                @tagName(this.future),
+                            });
+                            Output.flush();
+                        }
                         return p.strong.get();
                     },
                     else => {
@@ -327,6 +343,12 @@ pub const Result = union(Tag) {
                             },
                         };
 
+                        if (comptime bun.Environment.isWindows) {
+                            Output.prettyErrorln("[streams] Pending.promise() EXIT: created NEW promise, future={s}", .{
+                                @tagName(this.future),
+                            });
+                            Output.flush();
+                        }
                         return this.future.promise.strong.get();
                     },
                 }
@@ -352,7 +374,8 @@ pub const Result = union(Tag) {
             pub fn run(this: *Writable.Pending) void {
                 // DEBUG: CI diagnostic for Windows timeout issue
                 if (comptime bun.Environment.isWindows) {
-                    Output.prettyErrorln("[streams] Pending.run called: state={s}, future={s}, result={s}", .{
+                    Output.prettyErrorln("[streams] Pending.run called: this={*}, state={s}, future={s}, result={s}", .{
+                        this,
                         @tagName(this.state),
                         @tagName(this.future),
                         @tagName(this.result),
@@ -360,24 +383,45 @@ pub const Result = union(Tag) {
                     Output.flush();
                 }
 
-                if (this.state != .pending) return;
+                if (this.state != .pending) {
+                    if (comptime bun.Environment.isWindows) {
+                        Output.prettyErrorln("[streams] Pending.run: EARLY RETURN, state is not pending!", .{});
+                        Output.flush();
+                    }
+                    return;
+                }
                 this.state = .used;
 
                 if (comptime bun.Environment.isWindows) {
-                    Output.prettyErrorln("[streams] Pending.run: processing promise", .{});
+                    Output.prettyErrorln("[streams] Pending.run: state set to used, switching on future={s}", .{
+                        @tagName(this.future),
+                    });
                     Output.flush();
                 }
 
                 switch (this.future) {
                     .promise => {
+                        if (comptime bun.Environment.isWindows) {
+                            Output.prettyErrorln("[streams] Pending.run: BRANCH .promise - calling fulfillPromise", .{});
+                            Output.flush();
+                        }
                         var p = this.future.promise;
                         this.future = .none;
                         Writable.fulfillPromise(this.result, p.strong.swap(), p.global);
                     },
                     .handler => |h| {
+                        if (comptime bun.Environment.isWindows) {
+                            Output.prettyErrorln("[streams] Pending.run: BRANCH .handler - calling handler", .{});
+                            Output.flush();
+                        }
                         h.handler(h.ctx, this.result);
                     },
-                    .none => {},
+                    .none => {
+                        if (comptime bun.Environment.isWindows) {
+                            Output.prettyErrorln("[streams] Pending.run: BRANCH .none - DOING NOTHING! Promise will NOT be resolved!", .{});
+                            Output.flush();
+                        }
+                    },
                 }
             }
         };

@@ -737,6 +737,12 @@ const Scrypt = struct {
         this.password.deinitAndUnprotect();
         this.buf.deinit();
     }
+
+    fn deinitSync(this: *Scrypt) void {
+        this.salt.deinit();
+        this.password.deinit();
+        this.buf.deinit();
+    }
 };
 
 fn scrypt(global: *JSGlobalObject, callFrame: *jsc.CallFrame) JSError!JSValue {
@@ -747,10 +753,7 @@ fn scrypt(global: *JSGlobalObject, callFrame: *jsc.CallFrame) JSError!JSValue {
 
 fn scryptSync(global: *JSGlobalObject, callFrame: *jsc.CallFrame) JSError!JSValue {
     var ctx = try Scrypt.fromJS(global, callFrame, false);
-    defer {
-        ctx.salt.deinit();
-        ctx.password.deinit();
-    }
+    defer ctx.deinitSync();
     const buf, const bytes = try jsc.ArrayBuffer.alloc(global, .ArrayBuffer, ctx.keylen);
     ctx.runTask(bytes);
     return buf;

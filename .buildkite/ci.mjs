@@ -572,8 +572,7 @@ function getTestBunStep(platform, options, testOptions = {}) {
   if (buildId) {
     args.push(`--build-id=${buildId}`);
   }
-  // TEMPORARY: Only run test/js/web/fetch tests for debugging Windows timeout issue
-  args.push(`--include=js/web/fetch`);
+
   if (testFiles) {
     args.push(...testFiles.map(testFile => `--include=${testFile}`));
   }

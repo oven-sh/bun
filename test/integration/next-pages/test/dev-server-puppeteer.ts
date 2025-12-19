@@ -1,8 +1,8 @@
 import assert from "assert";
-import { copyFileSync } from "fs";
+import { copyFileSync, existsSync } from "fs";
 import { join } from "path";
-import type { ConsoleMessage, Page } from "puppeteer";
-import { launch } from "puppeteer";
+import type { ConsoleMessage, Page } from "puppeteer-core";
+import { launch } from "puppeteer-core";
 import { which } from "bun";
 const root = join(import.meta.dir, "../");
 
@@ -13,19 +13,33 @@ if (process.argv.length > 2) {
   url = process.argv[2];
 }
 
-const browserPath = which("chromium-browser") || which("chromium") || which("chrome") || undefined;
+function getDefaultBrowserPath() {
+  if (process.platform === "darwin") {
+    if (existsSync("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")) {
+      return "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+    } else if (existsSync("/Applications/Chromium.app/Contents/MacOS/Chromium")) {
+      return "/Applications/Chromium.app/Contents/MacOS/Chromium";
+    }
+  }
+}
+
+const browserPath =
+  which("chromium-browser") ||
+  which("chromium") ||
+  which("chrome") ||
+  which("google-chrome") ||
+  getDefaultBrowserPath() ||
+  undefined;
 if (!browserPath) {
   console.warn("Since a Chromium browser was not found, it will be downloaded by Puppeteer.");
 }
 
 const b = await launch({
-  // On macOS, there are issues using the new headless mode.
-  // "TargetCloseError: Protocol error (Target.setAutoAttach): Target closed"
-  headless: process.platform === "darwin" ? "shell" : true,
+  headless: "shell",
+  pipe: true,
+
   // Inherit the stdout and stderr of the browser process.
   dumpio: true,
-  // Prefer to use a pipe to connect to the browser, instead of a WebSocket.
-  pipe: true,
   // Disable timeouts.
   timeout: 0,
   protocolTimeout: 0,

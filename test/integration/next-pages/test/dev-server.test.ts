@@ -1,6 +1,6 @@
 import { Subprocess } from "bun";
 import { install_test_helpers } from "bun:internal-for-testing";
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { expect, test } from "bun:test";
 import { copyFileSync } from "fs";
 import { cp, rm } from "fs/promises";
 import { join } from "path";
@@ -11,13 +11,6 @@ const { parseLockfile } = install_test_helpers;
 expect.extend({ toMatchNodeModulesAt });
 
 let root = tmpdirSync();
-
-beforeAll(async () => {
-  await rm(root, { recursive: true, force: true });
-  await cp(join(import.meta.dir, "../"), root, { recursive: true, force: true });
-  await rm(join(root, ".next"), { recursive: true, force: true });
-  console.log("Copied to:", root);
-});
 
 let dev_server: undefined | Subprocess<"ignore", "pipe", "inherit">;
 let baseUrl: string;
@@ -85,7 +78,12 @@ async function getDevServerURL() {
   return baseUrl;
 }
 
-beforeAll(async () => {
+async function setupNextApp() {
+  await rm(root, { recursive: true, force: true });
+  await cp(join(import.meta.dir, "../"), root, { recursive: true, force: true });
+  await rm(join(root, ".next"), { recursive: true, force: true });
+  console.log("Copied to:", root);
+
   copyFileSync(join(root, "src/Counter1.txt"), join(root, "src/Counter.tsx"));
 
   const install = Bun.spawnSync([bunExe(), "i"], {
@@ -107,14 +105,7 @@ beforeAll(async () => {
     dev_server?.kill?.();
     dev_server = undefined;
   }
-});
-
-afterAll(() => {
-  if (dev_server_pid) {
-    process?.kill?.(dev_server_pid);
-    dev_server_pid = undefined;
-  }
-});
+}
 
 // Chrome for Testing doesn't support arm64 yet
 //
@@ -126,6 +117,7 @@ const puppeteer_unsupported = process.platform === "linux" && process.arch === "
 test.skipIf(puppeteer_unsupported || (isWindows && isCI))(
   "hot reloading works on the client (+ tailwind hmr)",
   async () => {
+    await setupNextApp();
     expect(dev_server).not.toBeUndefined();
     expect(baseUrl).not.toBeUndefined();
 

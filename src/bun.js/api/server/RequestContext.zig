@@ -1224,7 +1224,11 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                                 this,
                                 onResolveStream,
                                 onRejectStream,
-                            ) catch {}; // TODO: properly propagate exception upwards
+                            ) catch {
+                                // JSTerminated - VM is shutting down, clean up our ref
+                                this.deref();
+                                return;
+                            };
                             // the response_stream should be GC'd
 
                         },
@@ -1479,7 +1483,11 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         const path = blob.store.?.data.s3.path();
                         const env = globalThis.bunVM().transpiler.env;
 
-                        S3.stat(credentials, path, @ptrCast(&onS3SizeResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null) catch {}; // TODO: properly propagate exception upwards
+                        S3.stat(credentials, path, @ptrCast(&onS3SizeResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null) catch {
+                            // JSTerminated - VM is shutting down, clean up our ref
+                            this.deref();
+                            return;
+                        };
                         return;
                     }
                     this.renderMetadata();
@@ -1585,7 +1593,11 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 switch (promise.unwrap(vm.global.vm(), .mark_handled)) {
                     .pending => {
                         ctx.ref();
-                        response_value.then(this.globalThis, ctx, RequestContext.onResolve, RequestContext.onReject) catch {}; // TODO: properly propagate exception upwards
+                        response_value.then(this.globalThis, ctx, RequestContext.onResolve, RequestContext.onReject) catch {
+                            // JSTerminated - VM is shutting down, clean up our ref
+                            ctx.deref();
+                            return;
+                        };
                         return;
                     },
                     .fulfilled => |fulfilled_value| {
@@ -2154,7 +2166,11 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         ctx,
                         RequestContext.onResolve,
                         RequestContext.onReject,
-                    ) catch {}; // TODO: properly propagate exception upwards
+                    ) catch {
+                        // JSTerminated - VM is shutting down, clean up our ref
+                        ctx.deref();
+                        return;
+                    };
                 },
                 .fulfilled => |fulfilled_value| {
                     // if you return a Response object or a Promise<Response>

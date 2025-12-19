@@ -24,6 +24,7 @@
 /// <reference path="./sql.d.ts" />
 /// <reference path="./security.d.ts" />
 /// <reference path="./bundle.d.ts" />
+/// <reference path="./diff.d.ts" />
 
 /// <reference path="./bun.ns.d.ts" />
 

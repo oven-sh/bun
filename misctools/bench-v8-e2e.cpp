@@ -95,10 +95,6 @@ int main(int argc, char* argv[]) {
         fprintf(stderr, "  Peak RSS:      %6.1f MB\n", rssMB);
     }
 
-    isolate->Dispose();
-    V8::Dispose();
-    V8::DisposePlatform();
-    delete create_params.array_buffer_allocator;
-
+    // Skip cleanup - just exit like JSC benchmarks do
     return 0;
 }

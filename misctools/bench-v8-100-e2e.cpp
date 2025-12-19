@@ -101,8 +101,6 @@ int main(int argc, char* argv[]) {
     fprintf(stderr, "  Per instance:  %6.3f ms\n", totalTime / NUM_ISOLATES);
     fprintf(stderr, "  Peak RSS:      %6.1f MB (%.2f MB per instance)\n", rssMB, rssMB / NUM_ISOLATES);
 
-    // Cleanup
-    delete create_params.array_buffer_allocator;
-
+    // Skip cleanup - just exit like JSC benchmarks do
     return 0;
 }

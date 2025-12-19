@@ -1,12 +1,14 @@
-// JSC multi-eval benchmark - 100 slightly different scripts in same VM
+// JSC multi-eval benchmark - 1000 scripts in same VM
 //
-// Tests compile + eval performance for varied scripts
+// Tests compile + eval performance for same vs varied scripts
 //
 // Build: cmake --build build/release --target bench-jsc-multi-eval
 // Usage: ./bench-jsc-multi-eval
 
 #define ENABLE_COCOA_WEBM_PLAYER 0
 #include "root.h"
+
+#include <sys/resource.h>
 
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/Completion.h>
@@ -37,8 +39,18 @@ double WTFTimer__secondsUntilTimer(void*) { return 0.0; }
 void* Bun__getVM() { return nullptr; }
 }
 
+static double getRSSMB() {
+    struct rusage usage;
+    getrusage(RUSAGE_SELF, &usage);
+#ifdef __APPLE__
+    return usage.ru_maxrss / (1024.0 * 1024.0);
+#else
+    return usage.ru_maxrss / 1024.0;
+#endif
+}
+
 int main() {
-    constexpr int NUM_SCRIPTS = 100;
+    constexpr int NUM_SCRIPTS = 1000;
 
     // Initialize
     WTF::initialize();
@@ -64,43 +76,74 @@ int main() {
     auto* globalObject = JSC::JSGlobalObject::create(vm, structure);
     JSC::gcProtect(globalObject);
 
-    fprintf(stderr, "JSC Multi-Eval Benchmark (%d scripts in same VM):\n\n", NUM_SCRIPTS);
+    // ============ SAME SCRIPT (1000x) ============
+    {
+        auto timer = Stopwatch::create();
+        timer->start();
 
-    // Generate and run 100 slightly different scripts
-    auto timer = Stopwatch::create();
-    timer->start();
+        const char* sameScript = "function compute(n) { var sum = 0; for (var j = 0; j < n; j++) sum += j; return sum; } compute(100)";
 
-    for (int i = 0; i < NUM_SCRIPTS; i++) {
-        // Each script is slightly different
-        char scriptBuf[256];
-        snprintf(scriptBuf, sizeof(scriptBuf),
-            "function compute_%d(n) { var sum = %d; for (var j = 0; j < n; j++) sum += j * %d; return sum; } compute_%d(100)",
-            i, i, i + 1, i);
+        for (int i = 0; i < NUM_SCRIPTS; i++) {
+            char nameBuf[32];
+            snprintf(nameBuf, sizeof(nameBuf), "same_%d.js", i);
 
-        char nameBuf[32];
-        snprintf(nameBuf, sizeof(nameBuf), "script_%d.js", i);
+            auto source = JSC::makeSource(
+                WTF::String::fromUTF8(sameScript),
+                SourceOrigin(WTF::URL(WTF::String::fromUTF8(nameBuf))),
+                JSC::SourceTaintedOrigin::Untainted,
+                WTF::String::fromUTF8(nameBuf));
 
-        auto source = JSC::makeSource(
-            WTF::String::fromUTF8(scriptBuf),
-            SourceOrigin(WTF::URL(WTF::String::fromUTF8(nameBuf))),
-            JSC::SourceTaintedOrigin::Untainted,
-            WTF::String::fromUTF8(nameBuf));
+            NakedPtr<Exception> exception;
+            JSValue result = JSC::profiledEvaluate(globalObject, ProfilingReason::API, source, globalObject, exception);
 
-        NakedPtr<Exception> exception;
-        JSValue result = JSC::profiledEvaluate(globalObject, ProfilingReason::API, source, globalObject, exception);
-
-        if (exception) {
-            fprintf(stderr, "Exception in script %d: %s\n", i,
-                exception->value().toWTFString(globalObject).utf8().data());
-            return 1;
+            if (exception) {
+                fprintf(stderr, "Exception in same script %d: %s\n", i,
+                    exception->value().toWTFString(globalObject).utf8().data());
+                return 1;
+            }
         }
+
+        double totalTime = timer->elapsedTime().milliseconds();
+        double rssMB = getRSSMB();
+
+        fprintf(stderr, "same_script:    %8.3f ms  %6.1f MB\n", totalTime, rssMB);
     }
 
-    double totalTime = timer->elapsedTime().milliseconds();
+    // ============ DIFFERENT SCRIPTS (1000x) ============
+    {
+        auto timer = Stopwatch::create();
+        timer->start();
 
-    fprintf(stderr, "  Total time:    %6.3f ms\n", totalTime);
-    fprintf(stderr, "  Per script:    %6.3f ms\n", totalTime / NUM_SCRIPTS);
-    fprintf(stderr, "  Scripts/sec:   %6.0f\n", NUM_SCRIPTS / (totalTime / 1000.0));
+        for (int i = 0; i < NUM_SCRIPTS; i++) {
+            char scriptBuf[256];
+            snprintf(scriptBuf, sizeof(scriptBuf),
+                "function compute_%d(n) { var sum = %d; for (var j = 0; j < n; j++) sum += j * %d; return sum; } compute_%d(100)",
+                i, i, i + 1, i);
+
+            char nameBuf[32];
+            snprintf(nameBuf, sizeof(nameBuf), "diff_%d.js", i);
+
+            auto source = JSC::makeSource(
+                WTF::String::fromUTF8(scriptBuf),
+                SourceOrigin(WTF::URL(WTF::String::fromUTF8(nameBuf))),
+                JSC::SourceTaintedOrigin::Untainted,
+                WTF::String::fromUTF8(nameBuf));
+
+            NakedPtr<Exception> exception;
+            JSValue result = JSC::profiledEvaluate(globalObject, ProfilingReason::API, source, globalObject, exception);
+
+            if (exception) {
+                fprintf(stderr, "Exception in diff script %d: %s\n", i,
+                    exception->value().toWTFString(globalObject).utf8().data());
+                return 1;
+            }
+        }
+
+        double totalTime = timer->elapsedTime().milliseconds();
+        double rssMB = getRSSMB();
+
+        fprintf(stderr, "diff_script:    %8.3f ms  %6.1f MB\n", totalTime, rssMB);
+    }
 
     return 0;
 }

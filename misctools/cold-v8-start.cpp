@@ -218,11 +218,6 @@ int main(int argc, char* argv[]) {
         fprintf(stderr, "\neval took %f ms\n", timer.elapsedMs());
     }
 
-    // Cleanup
-    isolate->Dispose();
-    V8::Dispose();
-    V8::DisposePlatform();
-    delete create_params.array_buffer_allocator;
-
+    // Skip cleanup - just exit like JSC benchmarks do
     return 0;
 }

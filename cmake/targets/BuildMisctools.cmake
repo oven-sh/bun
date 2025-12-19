@@ -55,8 +55,8 @@ if(NOT WIN32 AND NOT BUN_LINK_ONLY AND NOT BUN_CPP_ONLY)
     endif()
 
     target_link_libraries(cold-jsc-start PRIVATE
-      ${COLD_JSC_WEBKIT_PATH}/lib/libWTF.a
       ${COLD_JSC_WEBKIT_PATH}/lib/libJavaScriptCore.a
+      ${COLD_JSC_WEBKIT_PATH}/lib/libWTF.a
     )
 
     if(EXISTS ${COLD_JSC_WEBKIT_PATH}/lib/libbmalloc.a)
@@ -79,12 +79,13 @@ if(NOT WIN32 AND NOT BUN_LINK_ONLY AND NOT BUN_CPP_ONLY)
 
     if(LINUX)
       target_link_libraries(cold-jsc-start PRIVATE
-        ${COLD_JSC_WEBKIT_PATH}/lib/libicudata.a
         ${COLD_JSC_WEBKIT_PATH}/lib/libicui18n.a
         ${COLD_JSC_WEBKIT_PATH}/lib/libicuuc.a
+        ${COLD_JSC_WEBKIT_PATH}/lib/libicudata.a
         pthread
         dl
       )
+      target_link_options(cold-jsc-start PRIVATE -no-pie)
       if(USE_STATIC_LIBATOMIC)
         target_link_libraries(cold-jsc-start PRIVATE libatomic.a)
       else()
@@ -126,8 +127,8 @@ if(NOT WIN32 AND NOT BUN_LINK_ONLY AND NOT BUN_CPP_ONLY)
     )
   endif()
   target_link_libraries(bench-jsc-e2e PRIVATE
-    ${COLD_JSC_WEBKIT_PATH}/lib/libWTF.a
     ${COLD_JSC_WEBKIT_PATH}/lib/libJavaScriptCore.a
+    ${COLD_JSC_WEBKIT_PATH}/lib/libWTF.a
   )
   if(EXISTS ${COLD_JSC_WEBKIT_PATH}/lib/libbmalloc.a)
     target_link_libraries(bench-jsc-e2e PRIVATE ${COLD_JSC_WEBKIT_PATH}/lib/libbmalloc.a)
@@ -144,6 +145,15 @@ if(NOT WIN32 AND NOT BUN_LINK_ONLY AND NOT BUN_CPP_ONLY)
       -Wl,-w
       -fno-keep-static-consts
     )
+  endif()
+  if(LINUX)
+    target_link_libraries(bench-jsc-e2e PRIVATE
+      ${COLD_JSC_WEBKIT_PATH}/lib/libicui18n.a
+      ${COLD_JSC_WEBKIT_PATH}/lib/libicuuc.a
+      ${COLD_JSC_WEBKIT_PATH}/lib/libicudata.a
+      pthread dl atomic
+    )
+    target_link_options(bench-jsc-e2e PRIVATE -no-pie)
   endif()
 
   # bench-jsc-100-e2e: 100 VMs + GlobalObjects + eval
@@ -181,8 +191,8 @@ if(NOT WIN32 AND NOT BUN_LINK_ONLY AND NOT BUN_CPP_ONLY)
     )
   endif()
   target_link_libraries(bench-jsc-100-e2e PRIVATE
-    ${COLD_JSC_WEBKIT_PATH}/lib/libWTF.a
     ${COLD_JSC_WEBKIT_PATH}/lib/libJavaScriptCore.a
+    ${COLD_JSC_WEBKIT_PATH}/lib/libWTF.a
   )
   if(EXISTS ${COLD_JSC_WEBKIT_PATH}/lib/libbmalloc.a)
     target_link_libraries(bench-jsc-100-e2e PRIVATE ${COLD_JSC_WEBKIT_PATH}/lib/libbmalloc.a)
@@ -199,6 +209,15 @@ if(NOT WIN32 AND NOT BUN_LINK_ONLY AND NOT BUN_CPP_ONLY)
       -Wl,-w
       -fno-keep-static-consts
     )
+  endif()
+  if(LINUX)
+    target_link_libraries(bench-jsc-100-e2e PRIVATE
+      ${COLD_JSC_WEBKIT_PATH}/lib/libicui18n.a
+      ${COLD_JSC_WEBKIT_PATH}/lib/libicuuc.a
+      ${COLD_JSC_WEBKIT_PATH}/lib/libicudata.a
+      pthread dl atomic
+    )
+    target_link_options(bench-jsc-100-e2e PRIVATE -no-pie)
   endif()
 
   # bench-jsc-multi-eval: Multi-script eval benchmark
@@ -236,8 +255,8 @@ if(NOT WIN32 AND NOT BUN_LINK_ONLY AND NOT BUN_CPP_ONLY)
     )
   endif()
   target_link_libraries(bench-jsc-multi-eval PRIVATE
-    ${COLD_JSC_WEBKIT_PATH}/lib/libWTF.a
     ${COLD_JSC_WEBKIT_PATH}/lib/libJavaScriptCore.a
+    ${COLD_JSC_WEBKIT_PATH}/lib/libWTF.a
   )
   if(EXISTS ${COLD_JSC_WEBKIT_PATH}/lib/libbmalloc.a)
     target_link_libraries(bench-jsc-multi-eval PRIVATE ${COLD_JSC_WEBKIT_PATH}/lib/libbmalloc.a)
@@ -254,6 +273,15 @@ if(NOT WIN32 AND NOT BUN_LINK_ONLY AND NOT BUN_CPP_ONLY)
       -Wl,-w
       -fno-keep-static-consts
     )
+  endif()
+  if(LINUX)
+    target_link_libraries(bench-jsc-multi-eval PRIVATE
+      ${COLD_JSC_WEBKIT_PATH}/lib/libicui18n.a
+      ${COLD_JSC_WEBKIT_PATH}/lib/libicuuc.a
+      ${COLD_JSC_WEBKIT_PATH}/lib/libicudata.a
+      pthread dl atomic
+    )
+    target_link_options(bench-jsc-multi-eval PRIVATE -no-pie)
   endif()
 
   else()
@@ -365,7 +393,7 @@ if(NOT V8_FOUND AND LINUX)
           set(V8_LIBRARY_DIRS ${V8_SEARCH_PATH}/lib)
           set(V8_LIBRARIES v8 v8_libplatform)
         endif()
-        set(V8_DEFINITIONS V8_COMPRESS_POINTERS V8_31BIT_SMIS_ON_64BIT_ARCH)
+        set(V8_DEFINITIONS V8_COMPRESS_POINTERS V8_31BIT_SMIS_ON_64BIT_ARCH V8_ENABLE_SANDBOX)
         if(V8_STATIC)
           message(STATUS "V8 benchmarks will use static V8 from: ${V8_SEARCH_PATH}")
         else()
@@ -396,7 +424,9 @@ if(V8_FOUND)
       if(APPLE)
         target_link_libraries(${TARGET_NAME} PRIVATE pthread dl)
       elseif(LINUX)
-        target_link_libraries(${TARGET_NAME} PRIVATE pthread dl rt)
+        target_link_libraries(${TARGET_NAME} PRIVATE pthread dl rt atomic)
+        # Use lld linker to handle V8's chromium-built objects
+        target_link_options(${TARGET_NAME} PRIVATE -fuse-ld=lld)
       endif()
     elseif(V8_RPATH)
       set_target_properties(${TARGET_NAME} PROPERTIES

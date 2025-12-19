@@ -209,3 +209,15 @@ Built-in JavaScript modules use special syntax and are organized as:
 12. **Branch names must start with `claude/`** - This is a requirement for the CI to work.
 
 **ONLY** push up changes after running `bun bd test <file>` and ensuring your tests pass.
+
+---
+
+Issue to solve: https://github.com/oven-sh/bun/issues/12917
+Your prepared branch: issue-12917-3548db24a756
+Your prepared working directory: /tmp/gh-issue-solver-1766181328019
+Your forked repository: konard/oven-sh-bun
+Original repository (upstream): oven-sh/bun
+
+Proceed.
+
+Run timestamp: 2025-12-19T21:57:50.985Z

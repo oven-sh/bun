@@ -9,19 +9,19 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "next": "15.3.6",
+    "next": "^16.1.0",
     "next-auth": "5.0.0-beta.25",
-    "react": "19.0.1",
-    "react-dom": "19.0.1"
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
     "@tailwindcss/postcss": "^4",
     "@types/node": "25.0.0",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
+    "@types/react": "^19.2.3",
+    "@types/react-dom": "^19.2.3",
     "eslint": "^9",
-    "eslint-config-next": "15.3.6",
+    "eslint-config-next": "^16.1.0",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

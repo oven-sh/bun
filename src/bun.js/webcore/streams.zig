@@ -293,15 +293,6 @@ pub const Result = union(Tag) {
             state: Result.Pending.State = .none,
 
             pub fn deinit(this: *@This()) void {
-                // DEBUG: CI diagnostic for Windows timeout issue
-                if (comptime bun.Environment.isWindows) {
-                    Output.prettyErrorln("[streams] Pending.deinit() called! this={*}, state={s}, future={s}", .{
-                        this,
-                        @tagName(this.state),
-                        @tagName(this.future),
-                    });
-                    Output.flush();
-                }
                 this.future.deinit();
             }
 
@@ -314,14 +305,6 @@ pub const Result = union(Tag) {
                 handler: Handler,
 
                 pub fn deinit(this: *@This()) void {
-                    // DEBUG: CI diagnostic for Windows timeout issue
-                    if (comptime bun.Environment.isWindows) {
-                        Output.prettyErrorln("[streams] Future.deinit() called! this={*}, current={s}", .{
-                            this,
-                            @tagName(this.*),
-                        });
-                        Output.flush();
-                    }
                     if (this.* == .promise) {
                         this.promise.strong.deinit();
                         this.* = .{ .none = {} };
@@ -330,26 +313,10 @@ pub const Result = union(Tag) {
             };
 
             pub fn promise(this: *Writable.Pending, globalThis: *jsc.JSGlobalObject) *JSPromise {
-                // DEBUG: CI diagnostic for Windows timeout issue
-                if (comptime bun.Environment.isWindows) {
-                    Output.prettyErrorln("[streams] Pending.promise() ENTRY: this={*}, state={s}, future={s}", .{
-                        this,
-                        @tagName(this.state),
-                        @tagName(this.future),
-                    });
-                    Output.flush();
-                }
-
                 this.state = .pending;
 
                 switch (this.future) {
                     .promise => |p| {
-                        if (comptime bun.Environment.isWindows) {
-                            Output.prettyErrorln("[streams] Pending.promise() EXIT: returning EXISTING promise, future={s}", .{
-                                @tagName(this.future),
-                            });
-                            Output.flush();
-                        }
                         return p.strong.get();
                     },
                     else => {
@@ -360,12 +327,6 @@ pub const Result = union(Tag) {
                             },
                         };
 
-                        if (comptime bun.Environment.isWindows) {
-                            Output.prettyErrorln("[streams] Pending.promise() EXIT: created NEW promise, future={s}", .{
-                                @tagName(this.future),
-                            });
-                            Output.flush();
-                        }
                         return this.future.promise.strong.get();
                     },
                 }
@@ -389,56 +350,21 @@ pub const Result = union(Tag) {
             };
 
             pub fn run(this: *Writable.Pending) void {
-                // DEBUG: CI diagnostic for Windows timeout issue
-                if (comptime bun.Environment.isWindows) {
-                    Output.prettyErrorln("[streams] Pending.run called: this={*}, state={s}, future={s}, result={s}", .{
-                        this,
-                        @tagName(this.state),
-                        @tagName(this.future),
-                        @tagName(this.result),
-                    });
-                    Output.flush();
-                }
-
                 if (this.state != .pending) {
-                    if (comptime bun.Environment.isWindows) {
-                        Output.prettyErrorln("[streams] Pending.run: EARLY RETURN, state is not pending!", .{});
-                        Output.flush();
-                    }
                     return;
                 }
                 this.state = .used;
 
-                if (comptime bun.Environment.isWindows) {
-                    Output.prettyErrorln("[streams] Pending.run: state set to used, switching on future={s}", .{
-                        @tagName(this.future),
-                    });
-                    Output.flush();
-                }
-
                 switch (this.future) {
                     .promise => {
-                        if (comptime bun.Environment.isWindows) {
-                            Output.prettyErrorln("[streams] Pending.run: BRANCH .promise - calling fulfillPromise", .{});
-                            Output.flush();
-                        }
                         var p = this.future.promise;
                         this.future = .none;
                         Writable.fulfillPromise(this.result, p.strong.swap(), p.global);
                     },
                     .handler => |h| {
-                        if (comptime bun.Environment.isWindows) {
-                            Output.prettyErrorln("[streams] Pending.run: BRANCH .handler - calling handler", .{});
-                            Output.flush();
-                        }
                         h.handler(h.ctx, this.result);
                     },
-                    .none => {
-                        if (comptime bun.Environment.isWindows) {
-                            Output.prettyErrorln("[streams] Pending.run: BRANCH .none - DOING NOTHING! Promise will NOT be resolved!", .{});
-                            Output.flush();
-                        }
-                    },
+                    .none => {},
                 }
             }
         };
@@ -451,16 +377,6 @@ pub const Result = union(Tag) {
         }
 
         pub fn fulfillPromise(result: Writable, promise: *JSPromise, globalThis: *JSGlobalObject) void {
-            // DEBUG: CI diagnostic for Windows timeout issue
-            if (comptime bun.Environment.isWindows) {
-                const status_before = promise.status(globalThis.vm());
-                Output.prettyErrorln("[streams] fulfillPromise: result={s}, promise_status_before={s}", .{
-                    @tagName(result),
-                    @tagName(status_before),
-                });
-                Output.flush();
-            }
-
             defer promise.toJS().unprotect();
             switch (result) {
                 .err => |err| {
@@ -472,15 +388,6 @@ pub const Result = union(Tag) {
                 else => {
                     promise.resolve(globalThis, result.toJS(globalThis)) catch {}; // TODO: properly propagate exception upwards
                 },
-            }
-
-            // DEBUG: CI diagnostic for Windows timeout issue
-            if (comptime bun.Environment.isWindows) {
-                const status_after = promise.status(globalThis.vm());
-                Output.prettyErrorln("[streams] fulfillPromise done: promise_status_after={s}", .{
-                    @tagName(status_after),
-                });
-                Output.flush();
             }
         }
 

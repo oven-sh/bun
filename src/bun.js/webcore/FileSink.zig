@@ -136,44 +136,13 @@ fn runPending(this: *FileSink) void {
     this.run_pending_later.has = false;
     const l = this.eventLoop();
 
-    // DEBUG: CI diagnostic for Windows timeout issue
-    if (comptime Environment.isWindows) {
-        Output.prettyErrorln("[FileSink] runPending: this.pending={*}, pending.state={s}, pending.future={s}", .{
-            &this.pending,
-            @tagName(this.pending.state),
-            @tagName(this.pending.future),
-        });
-        Output.flush();
-    }
-
     l.enter();
     defer l.exit();
     this.pending.run();
-
-    // DEBUG: CI diagnostic for Windows timeout issue
-    if (comptime Environment.isWindows) {
-        Output.prettyErrorln("[FileSink] runPending done: pending.state={s}, pending.future={s}", .{
-            @tagName(this.pending.state),
-            @tagName(this.pending.future),
-        });
-        Output.flush();
-    }
 }
 
 pub fn onWrite(this: *FileSink, amount: usize, status: bun.io.WriteStatus) void {
     log("onWrite({d}, {any})", .{ amount, status });
-
-    // DEBUG: CI diagnostic for Windows timeout issue
-    if (comptime Environment.isWindows) {
-        Output.prettyErrorln("[FileSink] onWrite ENTRY: amount={d}, status={s}, pending.state={s}, pending.future={s}, done={}", .{
-            amount,
-            @tagName(status),
-            @tagName(this.pending.state),
-            @tagName(this.pending.future),
-            this.done,
-        });
-        Output.flush();
-    }
 
     this.written += amount;
 
@@ -208,14 +177,6 @@ pub fn onWrite(this: *FileSink, amount: usize, status: bun.io.WriteStatus) void 
             this.pending.result = .{ .owned_and_done = this.pending.consumed };
         } else {
             this.pending.result = .{ .owned = this.pending.consumed };
-        }
-
-        // DEBUG: CI diagnostic for Windows timeout issue
-        if (comptime Environment.isWindows) {
-            Output.prettyErrorln("[FileSink] onWrite: BEFORE runPending(), pending.future={s}", .{
-                @tagName(this.pending.future),
-            });
-            Output.flush();
         }
 
         this.runPending();
@@ -513,15 +474,6 @@ pub fn flushFromJS(this: *FileSink, globalThis: *JSGlobalObject, wait: bool) bun
 }
 
 pub fn finalize(this: *FileSink) void {
-    // DEBUG: CI diagnostic for Windows timeout issue
-    if (comptime bun.Environment.isWindows) {
-        Output.prettyErrorln("[FileSink] finalize() called! this={*}, pending.state={s}, pending.future={s}", .{
-            this,
-            @tagName(this.pending.state),
-            @tagName(this.pending.future),
-        });
-        Output.flush();
-    }
     this.readable_stream.deinit();
     this.pending.deinit();
     this.deref();
@@ -551,19 +503,7 @@ pub fn write(this: *@This(), data: streams.Result) streams.Result.Writable {
         return .{ .done = {} };
     }
 
-    const result = this.toResult(this.writer.write(data.slice()));
-
-    // DEBUG: CI diagnostic for Windows timeout issue
-    if (comptime Environment.isWindows) {
-        Output.prettyErrorln("[FileSink] write: result={s}, pending.state={s}, pending.future={s}", .{
-            @tagName(result),
-            @tagName(this.pending.state),
-            @tagName(this.pending.future),
-        });
-        Output.flush();
-    }
-
-    return result;
+    return this.toResult(this.writer.write(data.slice()));
 }
 pub const writeBytes = write;
 pub fn writeLatin1(this: *@This(), data: streams.Result) streams.Result.Writable {
@@ -614,15 +554,6 @@ pub fn end(this: *FileSink, _: ?bun.sys.Error) bun.sys.Maybe(void) {
 }
 
 fn deinit(this: *FileSink) void {
-    // DEBUG: CI diagnostic for Windows timeout issue
-    if (comptime bun.Environment.isWindows) {
-        Output.prettyErrorln("[FileSink] deinit() called! this={*}, pending.state={s}, pending.future={s}", .{
-            this,
-            @tagName(this.pending.state),
-            @tagName(this.pending.future),
-        });
-        Output.flush();
-    }
     this.pending.deinit();
     this.writer.deinit();
     this.readable_stream.deinit();
@@ -641,56 +572,23 @@ pub fn toJSWithDestructor(this: *FileSink, globalThis: *JSGlobalObject, destruct
 }
 
 pub fn endFromJS(this: *FileSink, globalThis: *JSGlobalObject) bun.sys.Maybe(JSValue) {
-    // DEBUG: CI diagnostic for Windows timeout issue
-    if (comptime Environment.isWindows) {
-        Output.prettyErrorln("[FileSink] endFromJS called: this.pending={*}, done={}, pending.state={s}, pending.future={s}", .{
-            &this.pending,
-            this.done,
-            @tagName(this.pending.state),
-            @tagName(this.pending.future),
-        });
-        Output.flush();
-    }
-
     if (this.done) {
         if (this.pending.state == .pending) {
-            if (comptime Environment.isWindows) {
-                Output.prettyErrorln("[FileSink] endFromJS: already done, returning existing promise", .{});
-                Output.flush();
-            }
             return .{ .result = this.pending.future.promise.strong.value() };
         }
 
-        if (comptime Environment.isWindows) {
-            Output.prettyErrorln("[FileSink] endFromJS: already done, returning written={d}", .{this.written});
-            Output.flush();
-        }
         return .{ .result = JSValue.jsNumber(this.written) };
     }
 
     const flush_result = this.writer.flush();
 
-    // DEBUG: CI diagnostic for Windows timeout issue
-    if (comptime Environment.isWindows) {
-        Output.prettyErrorln("[FileSink] endFromJS flush result: {s}", .{@tagName(flush_result)});
-        Output.flush();
-    }
-
     switch (flush_result) {
         .done => |written| {
-            if (comptime Environment.isWindows) {
-                Output.prettyErrorln("[FileSink] endFromJS: sync done, written={d}", .{written});
-                Output.flush();
-            }
             this.updateRef(false);
             this.writer.end();
             return .{ .result = JSValue.jsNumber(written) };
         },
         .err => |err| {
-            if (comptime Environment.isWindows) {
-                Output.prettyErrorln("[FileSink] endFromJS: error errno={d}", .{err.errno});
-                Output.flush();
-            }
             this.writer.close();
             return .{ .err = err };
         },
@@ -703,33 +601,11 @@ pub fn endFromJS(this: *FileSink, globalThis: *JSGlobalObject) bun.sys.Maybe(JSV
             this.done = true;
             this.pending.result = .{ .owned = @truncate(pending_written) };
 
-            // DEBUG: CI diagnostic for Windows timeout issue
-            if (comptime Environment.isWindows) {
-                Output.prettyErrorln("[FileSink] endFromJS: BEFORE promise(), pending.state={s}, pending.future={s}", .{
-                    @tagName(this.pending.state),
-                    @tagName(this.pending.future),
-                });
-                Output.flush();
-            }
-
             const promise_result = this.pending.promise(globalThis);
-
-            // DEBUG: CI diagnostic for Windows timeout issue
-            if (comptime Environment.isWindows) {
-                Output.prettyErrorln("[FileSink] endFromJS: AFTER promise(), pending.state={s}, pending.future={s}", .{
-                    @tagName(this.pending.state),
-                    @tagName(this.pending.future),
-                });
-                Output.flush();
-            }
 
             return .{ .result = promise_result.toJS() };
         },
         .wrote => |written| {
-            if (comptime Environment.isWindows) {
-                Output.prettyErrorln("[FileSink] endFromJS: sync wrote, written={d}", .{written});
-                Output.flush();
-            }
             this.writer.end();
             return .{ .result = JSValue.jsNumber(written) };
         },
@@ -778,15 +654,6 @@ fn toResult(this: *FileSink, write_result: bun.io.WriteResult) streams.Result.Wr
             return .{ .err = err };
         },
         .pending => |pending_written| {
-            // DEBUG: CI diagnostic for Windows timeout issue
-            if (comptime Environment.isWindows) {
-                Output.prettyErrorln("[FileSink] toResult: returning .pending, this.pending={*}, pending.state={s}, pending.future={s}", .{
-                    &this.pending,
-                    @tagName(this.pending.state),
-                    @tagName(this.pending.future),
-                });
-                Output.flush();
-            }
             if (!this.must_be_kept_alive_until_eof) {
                 this.must_be_kept_alive_until_eof = true;
                 this.ref();

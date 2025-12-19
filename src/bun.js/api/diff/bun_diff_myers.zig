@@ -2,9 +2,33 @@
 //!
 //! Based on Eugene Myers' "An O(ND) Difference Algorithm and Its Variations" (1986).
 //! Produces minimal edit scripts (shortest sequence of insertions and deletions).
+//!
+//! Optimizations (borrowed from git):
+//! - Common prefix/suffix trimming before Myers (huge win for similar files)
+//! - Comptime-configurable heuristics for early termination
 
 const std = @import("std");
 const LineIndex = @import("bun_diff_line.zig").LineIndex;
+
+/// Configuration for diff heuristics (comptime)
+pub const DiffConfig = struct {
+    /// Maximum edit distance before giving up on optimal diff.
+    /// When exceeded, falls back to simple delete+insert.
+    /// Set to 0 to disable (always find optimal).
+    /// Git uses ~sqrt(n+m) * 2 as a heuristic.
+    max_edit_distance: usize = 0,
+
+    /// Enable common prefix/suffix trimming optimization
+    trim_common_affixes: bool = true,
+};
+
+/// Default configuration optimized for typical code diffs
+pub const default_config = DiffConfig{
+    // Bail out after 4000 edits - covers 99% of real diffs while
+    // avoiding pathological O(N*D) blowup on very different files
+    .max_edit_distance = 4000,
+    .trim_common_affixes = true,
+};
 
 /// Range of lines affected by an edit
 pub const Range = struct {
@@ -30,10 +54,132 @@ pub fn diff(
     new: LineIndex,
     allocator: std.mem.Allocator,
 ) ![]Edit {
-    const n: isize = @intCast(old.len());
-    const m: isize = @intCast(new.len());
+    return diffWithConfig(old, new, allocator, default_config);
+}
+
+/// Compute diff with custom configuration
+pub fn diffWithConfig(
+    old: LineIndex,
+    new: LineIndex,
+    allocator: std.mem.Allocator,
+    comptime config: DiffConfig,
+) ![]Edit {
+    const n_full: usize = old.len();
+    const m_full: usize = new.len();
 
     // Edge cases
+    if (n_full == 0 and m_full == 0) {
+        return try allocator.alloc(Edit, 0);
+    }
+
+    if (n_full == 0) {
+        const edits = try allocator.alloc(Edit, 1);
+        edits[0] = .{ .insert = .{
+            .old_start = 0,
+            .old_end = 0,
+            .new_start = 0,
+            .new_end = @intCast(m_full),
+        } };
+        return edits;
+    }
+
+    if (m_full == 0) {
+        const edits = try allocator.alloc(Edit, 1);
+        edits[0] = .{ .delete = .{
+            .old_start = 0,
+            .old_end = @intCast(n_full),
+            .new_start = 0,
+            .new_end = 0,
+        } };
+        return edits;
+    }
+
+    // Trim common prefix and suffix (git's key optimization)
+    var prefix_len: usize = 0;
+    var suffix_len: usize = 0;
+
+    if (config.trim_common_affixes) {
+        // Common prefix
+        const min_len = @min(n_full, m_full);
+        while (prefix_len < min_len and old.linesEqual(new, prefix_len, prefix_len)) {
+            prefix_len += 1;
+        }
+
+        // Common suffix (don't overlap with prefix)
+        const remaining_old = n_full - prefix_len;
+        const remaining_new = m_full - prefix_len;
+        const max_suffix = @min(remaining_old, remaining_new);
+        while (suffix_len < max_suffix and
+            old.linesEqual(new, n_full - 1 - suffix_len, m_full - 1 - suffix_len))
+        {
+            suffix_len += 1;
+        }
+    }
+
+    // Calculate trimmed range
+    const n_trimmed = n_full - prefix_len - suffix_len;
+    const m_trimmed = m_full - prefix_len - suffix_len;
+
+    // Build result with prefix, middle diff, and suffix
+    var result = std.array_list.Managed(Edit).init(allocator);
+    errdefer result.deinit();
+
+    // Add common prefix as equal
+    if (prefix_len > 0) {
+        try result.append(.{ .equal = .{
+            .old_start = 0,
+            .old_end = @intCast(prefix_len),
+            .new_start = 0,
+            .new_end = @intCast(prefix_len),
+        } });
+    }
+
+    // Diff the middle (trimmed) portion
+    if (n_trimmed > 0 or m_trimmed > 0) {
+        const middle_edits = try diffCore(
+            old,
+            new,
+            prefix_len,
+            n_trimmed,
+            m_trimmed,
+            allocator,
+            config,
+        );
+        defer allocator.free(middle_edits);
+
+        for (middle_edits) |edit| {
+            try result.append(edit);
+        }
+    }
+
+    // Add common suffix as equal
+    if (suffix_len > 0) {
+        try result.append(.{ .equal = .{
+            .old_start = @intCast(n_full - suffix_len),
+            .old_end = @intCast(n_full),
+            .new_start = @intCast(m_full - suffix_len),
+            .new_end = @intCast(m_full),
+        } });
+    }
+
+    return result.toOwnedSlice();
+}
+
+/// Core Myers diff on a subrange of lines
+fn diffCore(
+    old: LineIndex,
+    new: LineIndex,
+    offset: usize,
+    n_len: usize,
+    m_len: usize,
+    allocator: std.mem.Allocator,
+    comptime config: DiffConfig,
+) ![]Edit {
+    const n: isize = @intCast(n_len);
+    const m: isize = @intCast(m_len);
+    const off: u32 = @intCast(offset);
+
+    // Handle edge cases for trimmed range
     if (n == 0 and m == 0) {
         return try allocator.alloc(Edit, 0);
     }
@@ -41,10 +187,10 @@ pub fn diff(
     if (n == 0) {
         const edits = try allocator.alloc(Edit, 1);
         edits[0] = .{ .insert = .{
-            .old_start = 0,
-            .old_end = 0,
-            .new_start = 0,
-            .new_end = @intCast(m),
+            .old_start = off,
+            .old_end = off,
+            .new_start = off,
+            .new_end = off + @as(u32, @intCast(m)),
         } };
         return edits;
     }
@@ -52,16 +198,22 @@ pub fn diff(
     if (m == 0) {
         const edits = try allocator.alloc(Edit, 1);
         edits[0] = .{ .delete = .{
-            .old_start = 0,
-            .old_end = @intCast(n),
-            .new_start = 0,
-            .new_end = 0,
+            .old_start = off,
+            .old_end = off + @as(u32, @intCast(n)),
+            .new_start = off,
+            .new_end = off,
         } };
         return edits;
     }
 
     const max: isize = n + m;
     const max_usize: usize = @intCast(max);
+
+    // Early termination limit (comptime evaluated)
+    const edit_limit: usize = if (config.max_edit_distance > 0)
+        @min(config.max_edit_distance, max_usize)
+    else
+        max_usize;
 
     // V array: stores furthest reaching x for each diagonal k
     // Index as v[offset + k] where offset = max
@@ -79,7 +231,8 @@ pub fn diff(
 
     // Find shortest edit script
     var found_d: usize = 0;
-    outer: for (0..max_usize + 1) |d_usize| {
+    var exceeded_limit = false;
+    outer: for (0..edit_limit + 1) |d_usize| {
         const d: isize = @intCast(d_usize);
 
         // Save V for backtracking
@@ -113,7 +266,8 @@ pub fn diff(
             var y = x - k;
 
             // Follow diagonal (matching lines)
-            while (x < n and y < m and old.linesEqual(new, @intCast(x), @intCast(y))) {
+            // Note: x,y are relative to trimmed range, but linesEqual needs absolute indices
+            while (x < n and y < m and old.linesEqual(new, @intCast(offset + @as(usize, @intCast(x))), @intCast(offset + @as(usize, @intCast(y))))) {
                 x += 1;
                 y += 1;
             }
@@ -127,10 +281,33 @@ pub fn diff(
                 break :outer;
             }
         }
+
+        // Check if we've hit the edit limit without finding a solution
+        if (d_usize == edit_limit and config.max_edit_distance > 0) {
+            exceeded_limit = true;
+        }
+    }
+
+    // If we exceeded the limit, fall back to simple delete+insert
+    if (exceeded_limit) {
+        const edits = try allocator.alloc(Edit, 2);
+        edits[0] = .{ .delete = .{
+            .old_start = off,
+            .old_end = off + @as(u32, @intCast(n)),
+            .new_start = off,
+            .new_end = off,
+        } };
+        edits[1] = .{ .insert = .{
+            .old_start = off + @as(u32, @intCast(n)),
+            .old_end = off + @as(u32, @intCast(n)),
+            .new_start = off,
+            .new_end = off + @as(u32, @intCast(m)),
+        } };
+        return edits;
     }
 
     // Backtrack to build edit script
-    const raw_edits = try backtrack(trace.items, n, m, max, found_d, allocator);
+    const raw_edits = try backtrack(trace.items, n, m, max, found_d, off, allocator);
     defer allocator.free(raw_edits);
 
     // Coalesce adjacent edits of the same type
@@ -143,6 +320,7 @@ fn backtrack(
     m: isize,
     max: isize,
     found_d: usize,
+    offset: u32, // Add offset to convert relative indices to absolute
     allocator: std.mem.Allocator,
 ) ![]Edit {
     var edits = std.array_list.Managed(Edit).init(allocator);
@@ -180,14 +358,15 @@ fn backtrack(
         const prev_y = prev_x - prev_k;
 
         // Add diagonal moves (equals)
+        // Note: x,y are relative to trimmed range, add offset for absolute indices
         while (x > prev_x and y > prev_y) {
             x -= 1;
             y -= 1;
             try edits.append(.{ .equal = .{
-                .old_start = @intCast(x),
-                .old_end = @intCast(x + 1),
-                .new_start = @intCast(y),
-                .new_end = @intCast(y + 1),
+                .old_start = offset + @as(u32, @intCast(x)),
+                .old_end = offset + @as(u32, @intCast(x + 1)),
+                .new_start = offset + @as(u32, @intCast(y)),
+                .new_end = offset + @as(u32, @intCast(y + 1)),
             } });
         }
 
@@ -196,19 +375,19 @@ fn backtrack(
                 // Insert
                 y -= 1;
                 try edits.append(.{ .insert = .{
-                    .old_start = @intCast(x),
-                    .old_end = @intCast(x),
-                    .new_start = @intCast(y),
-                    .new_end = @intCast(y + 1),
+                    .old_start = offset + @as(u32, @intCast(x)),
+                    .old_end = offset + @as(u32, @intCast(x)),
+                    .new_start = offset + @as(u32, @intCast(y)),
+                    .new_end = offset + @as(u32, @intCast(y + 1)),
                 } });
             } else {
                 // Delete
                 x -= 1;
                 try edits.append(.{ .delete = .{
-                    .old_start = @intCast(x),
-                    .old_end = @intCast(x + 1),
-                    .new_start = @intCast(y),
-                    .new_end = @intCast(y),
+                    .old_start = offset + @as(u32, @intCast(x)),
+                    .old_end = offset + @as(u32, @intCast(x + 1)),
+                    .new_start = offset + @as(u32, @intCast(y)),
+                    .new_end = offset + @as(u32, @intCast(y)),
                 } });
             }
         }

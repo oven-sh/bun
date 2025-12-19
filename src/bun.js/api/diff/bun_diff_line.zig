@@ -71,15 +71,15 @@ pub const LineIndex = struct {
             }
         } else {
             // Scalar path for small content
-            var start: u32 = 0;
-            var i: u32 = 0;
+            var start: usize = 0;
+            var i: usize = 0;
 
             while (i < content.len) : (i += 1) {
                 if (content[i] == '\n') {
-                    const line_len: u32 = i - start;
+                    const line_len: u32 = @intCast(i - start);
                     const line_content = content[start..][0..line_len];
                     try lines.append(.{
-                        .start = start,
+                        .start = @intCast(start),
                         .len = line_len,
                         .hash = std.hash.Wyhash.hash(0, line_content),
                     });
@@ -92,7 +92,7 @@ pub const LineIndex = struct {
                 const last_len: u32 = @intCast(content.len - start);
                 const line_content = content[start..][0..last_len];
                 try lines.append(.{
-                    .start = start,
+                    .start = @intCast(start),
                     .len = last_len,
                     .hash = std.hash.Wyhash.hash(0, line_content),
                 });

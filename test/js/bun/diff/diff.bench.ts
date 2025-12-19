@@ -8,6 +8,9 @@
 
 import { spawnSync } from "bun";
 import { diff } from "bun:diff";
+import { unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 // Generate test content
 function generateLines(count: number, prefix: string): string {
@@ -42,9 +45,10 @@ interface BenchmarkResult {
 }
 
 async function benchmarkGitDiff(a: string, b: string): Promise<number> {
-  // Write temp files
-  const tmpA = `/tmp/bun-diff-bench-a-${Date.now()}.txt`;
-  const tmpB = `/tmp/bun-diff-bench-b-${Date.now()}.txt`;
+  // Write temp files using cross-platform temp directory
+  const tmp = tmpdir();
+  const tmpA = join(tmp, `bun-diff-bench-a-${Date.now()}.txt`);
+  const tmpB = join(tmp, `bun-diff-bench-b-${Date.now()}.txt`);
 
   await Bun.write(tmpA, a);
   await Bun.write(tmpB, b);
@@ -56,8 +60,13 @@ async function benchmarkGitDiff(a: string, b: string): Promise<number> {
   });
   const elapsed = performance.now() - start;
 
-  // Cleanup
-  await Bun.$`rm -f ${tmpA} ${tmpB}`.quiet();
+  // Cleanup using cross-platform file removal
+  try {
+    unlinkSync(tmpA);
+    unlinkSync(tmpB);
+  } catch {
+    // Ignore cleanup errors
+  }
 
   return elapsed;
 }

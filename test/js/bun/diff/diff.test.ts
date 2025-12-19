@@ -471,4 +471,92 @@ New section.
       expect(result.stats.linesAdded).toBeGreaterThan(0);
     });
   });
+
+  describe("large files and optimization", () => {
+    test("handles files with only prefix changes efficiently", () => {
+      // Create content where only the beginning differs
+      const commonSuffix = Buffer.alloc(1000, "common line\n").toString();
+      const oldContent = "old first line\n" + commonSuffix;
+      const newContent = "new first line\n" + commonSuffix;
+
+      const result = diff(oldContent, newContent);
+
+      // Should detect the change at the beginning
+      expect(result.stats.linesDeleted).toBe(1);
+      expect(result.stats.linesAdded).toBe(1);
+      // Most lines should be equal (trimmed as common suffix)
+      const equalCount = result.edits
+        .filter(e => e.type === "equal")
+        .reduce((sum, e) => sum + (e.newEnd - e.newStart), 0);
+      expect(equalCount).toBeGreaterThan(50);
+    });
+
+    test("handles files with only suffix changes efficiently", () => {
+      // Create content where only the end differs
+      const commonPrefix = Buffer.alloc(1000, "common line\n").toString();
+      const oldContent = commonPrefix + "old last line\n";
+      const newContent = commonPrefix + "new last line\n";
+
+      const result = diff(oldContent, newContent);
+
+      // Should detect the change at the end
+      expect(result.stats.linesDeleted).toBe(1);
+      expect(result.stats.linesAdded).toBe(1);
+      // Most lines should be equal (trimmed as common prefix)
+      const equalCount = result.edits
+        .filter(e => e.type === "equal")
+        .reduce((sum, e) => sum + (e.newEnd - e.newStart), 0);
+      expect(equalCount).toBeGreaterThan(50);
+    });
+
+    test("handles files with only middle changes", () => {
+      // Create content where both prefix and suffix are common
+      const commonPrefix = Buffer.alloc(500, "prefix line\n").toString();
+      const commonSuffix = Buffer.alloc(500, "suffix line\n").toString();
+      const oldContent = commonPrefix + "old middle\n" + commonSuffix;
+      const newContent = commonPrefix + "new middle\n" + commonSuffix;
+
+      const result = diff(oldContent, newContent);
+
+      // Should only detect the middle change
+      expect(result.stats.linesDeleted).toBe(1);
+      expect(result.stats.linesAdded).toBe(1);
+    });
+
+    test("handles large files with many changes gracefully", () => {
+      // Create a large file that would exceed typical edit limits
+      // This tests the max_edit_distance early termination
+      const lineCount = 5000;
+      const oldLines: string[] = [];
+      const newLines: string[] = [];
+
+      for (let i = 0; i < lineCount; i++) {
+        oldLines.push(`line ${i}: original content`);
+        // Make every other line different
+        newLines.push(i % 2 === 0 ? `line ${i}: original content` : `line ${i}: modified content`);
+      }
+
+      const oldContent = oldLines.join("\n") + "\n";
+      const newContent = newLines.join("\n") + "\n";
+
+      const result = diff(oldContent, newContent);
+
+      // Should complete without error and produce valid results
+      expect(result.edits.length).toBeGreaterThan(0);
+      expect(result.stats.linesAdded).toBeGreaterThan(0);
+      expect(result.stats.linesDeleted).toBeGreaterThan(0);
+    });
+
+    test("identical large files have no changes", () => {
+      const content = Buffer.alloc(10000, "identical line content here\n").toString();
+
+      const result = diff(content, content);
+
+      expect(result.stats.linesAdded).toBe(0);
+      expect(result.stats.linesDeleted).toBe(0);
+      expect(result.stats.hunks).toBe(0);
+      // All edits should be "equal"
+      expect(result.edits.every(e => e.type === "equal")).toBe(true);
+    });
+  });
 });

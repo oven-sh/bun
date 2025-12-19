@@ -442,7 +442,8 @@ pub fn PosixStreamingWriter(comptime Parent: type, comptime function_table: anyt
 
             this.closeWithoutReporting();
             this.is_done = true;
-            this.outgoing.reset();
+            // Free the buffer completely since we're done with this writer due to error
+            this.outgoing.deinit();
 
             onError(@ptrCast(@alignCast(this.parent)), err);
             this.close();
@@ -461,10 +462,13 @@ pub fn PosixStreamingWriter(comptime Parent: type, comptime function_table: anyt
 
             if (this.outgoing.isEmpty()) {
                 this.outgoing.cursor = 0;
-                if (status != .end_of_file) {
+                if (status == .end_of_file) {
+                    // Free the buffer completely since we're done with this writer
+                    this.outgoing.deinit();
+                } else {
                     this.outgoing.maybeShrink();
+                    this.outgoing.list.clearRetainingCapacity();
                 }
-                this.outgoing.list.clearRetainingCapacity();
             }
 
             onWrite(this.parent, written, status);
@@ -1302,6 +1306,10 @@ pub fn WindowsStreamingWriter(comptime Parent: type, function_table: anytype) ty
                 this.last_write_result = .{ .err = err };
                 log("onWrite() = {s}", .{err.name()});
 
+                // Free buffers completely on error since we're done with this writer
+                this.outgoing.deinit();
+                this.current_payload.deinit();
+
                 onError(this.parent, err);
                 this.closeWithoutReporting();
                 return;
@@ -1318,7 +1326,9 @@ pub fn WindowsStreamingWriter(comptime Parent: type, function_table: anytype) ty
             log("onWrite({d}) ({d} left)", .{ written, this.outgoing.size() });
 
             if (was_done and done) {
-                // we already call .end lets close the connection
+                // we already call .end lets close the connection - free buffers completely
+                this.outgoing.deinit();
+                this.current_payload.deinit();
                 this.last_write_result = .{ .done = written };
                 onWrite(this.parent, written, .end_of_file);
                 return;
@@ -1355,12 +1365,16 @@ pub fn WindowsStreamingWriter(comptime Parent: type, function_table: anytype) ty
             const this = bun.cast(*WindowsWriter, parent_ptr);
 
             if (was_canceled) {
-                // Canceled write - reset buffers
-                this.current_payload.reset();
+                // Canceled write - free buffers completely
+                this.current_payload.deinit();
+                this.outgoing.deinit();
                 return;
             }
 
             if (result.toError(.write)) |err| {
+                // Free buffers completely on error since we're done with this writer
+                this.outgoing.deinit();
+                this.current_payload.deinit();
                 this.close();
                 onError(this.parent, err);
                 return;

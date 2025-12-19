@@ -752,6 +752,16 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 stream.unpipeWithoutDeref();
             }
 
+            // Clean up response stream sink if it wasn't already destroyed
+            // This can happen if the connection was aborted during streaming
+            if (this.sink) |wrapper| {
+                ctxLog("finalizeWithoutDeinit: cleaning up leaked sink", .{});
+                wrapper.sink.finalize();
+                wrapper.detach(globalThis);
+                this.sink = null;
+                wrapper.sink.destroy();
+            }
+
             this.response_body_readable_stream_ref.deinit();
 
             if (!this.pathname.isEmpty()) {
@@ -1270,6 +1280,8 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 response_stream.sink.onFirstWrite = null;
 
                 response_stream.sink.finalize();
+                this.sink = null;
+                response_stream.sink.destroy();
                 return;
             }
             var response_body_readable_stream_ref = this.response_body_readable_stream_ref;
@@ -1295,6 +1307,9 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             response_stream.detach(globalThis);
             stream.cancel(globalThis);
             response_stream.sink.markDone();
+            response_stream.sink.finalize();
+            this.sink = null;
+            response_stream.sink.destroy();
             this.renderMissing();
         }
 

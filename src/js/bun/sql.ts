@@ -450,8 +450,13 @@ const SQL: typeof Bun.SQL = function SQL(
     reserved_sql.transaction = reserved_sql.begin;
     reserved_sql.distributed = reserved_sql.beginDistributed;
     reserved_sql.end = reserved_sql.close;
-    // Expose underlying connection for LISTEN/NOTIFY support
-    (reserved_sql as any).__pooledConnection = pooledConnection;
+    // Expose underlying connection for LISTEN/NOTIFY support (non-enumerable)
+    Object.defineProperty(reserved_sql, "__pooledConnection", {
+      value: pooledConnection,
+      enumerable: false,
+      writable: false,
+      configurable: false,
+    });
     resolve(reserved_sql);
   }
   async function onTransactionConnected(
@@ -927,6 +932,21 @@ const SQL: typeof Bun.SQL = function SQL(
   };
 
   sql.close = async (options?: { timeout?: number }) => {
+    // Clean up listen connection before closing the pool
+    if (listenConnection) {
+      const pooledConn = (listenConnection as any)?.__pooledConnection;
+      if (pooledConn?.connection) {
+        pooledConn.connection.onnotification = undefined;
+      }
+      try {
+        await listenConnection.release();
+      } catch {
+        // Ignore errors during cleanup
+      }
+      listenConnection = null;
+      listenConnectionPromise = null;
+      listeners.clear();
+    }
     await pool.close(options);
   };
 
@@ -966,17 +986,23 @@ const SQL: typeof Bun.SQL = function SQL(
     if (listenConnectionPromise) return listenConnectionPromise;
 
     listenConnectionPromise = (async () => {
-      // Reserve a connection for listening
-      const reserved = await sql.reserve();
-      listenConnection = reserved;
+      try {
+        // Reserve a connection for listening
+        const reserved = await sql.reserve();
+        listenConnection = reserved;
 
-      // Set up notification handler on the underlying connection
-      const pooledConn = (reserved as any).__pooledConnection;
-      if (pooledConn?.connection) {
-        pooledConn.connection.onnotification = onNotification;
+        // Set up notification handler on the underlying connection
+        const pooledConn = (reserved as any).__pooledConnection;
+        if (pooledConn?.connection) {
+          pooledConn.connection.onnotification = onNotification;
+        }
+
+        return reserved;
+      } catch (e) {
+        // Reset promise so future calls can retry
+        listenConnectionPromise = null;
+        throw e;
       }
-
-      return reserved;
     })();
 
     return listenConnectionPromise;

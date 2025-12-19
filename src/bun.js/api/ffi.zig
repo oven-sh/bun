@@ -1004,6 +1004,15 @@ pub const FFI = struct {
         var filepath_buf = bun.path_buffer_pool.get();
         defer bun.path_buffer_pool.put(filepath_buf);
         var linux_memfd_to_close: i32 = -1;
+        defer {
+            if (Environment.isLinux) {
+                if (linux_memfd_to_close != -1) {
+                    _ = bun.FD.fromSystem(linux_memfd_to_close).close();
+                }
+            } else {
+                bun.debugAssert(linux_memfd_to_close == -1);
+            }
+        }
         const name = brk: {
             if (jsc.ModuleLoader.resolveEmbeddedFile(
                 vm,

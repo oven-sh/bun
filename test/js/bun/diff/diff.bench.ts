@@ -21,14 +21,29 @@ function generateLines(count: number, prefix: string): string {
   return lines.join("\n") + "\n";
 }
 
+// Simple seeded PRNG (mulberry32) for reproducible benchmarks
+function mulberry32(seed: number): () => number {
+  return () => {
+    seed |= 0;
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 function generateModifiedContent(original: string, changePercent: number): string {
   const lines = original.split("\n");
   const numChanges = Math.floor((lines.length * changePercent) / 100);
   const indices = new Set<number>();
 
-  // Pick random lines to change
+  // Use seeded PRNG for reproducible line selection
+  // Seed based on content length and changePercent for consistency
+  const seed = lines.length * 1000 + changePercent;
+  const random = mulberry32(seed);
+
   while (indices.size < numChanges && indices.size < lines.length) {
-    indices.add(Math.floor(Math.random() * lines.length));
+    indices.add(Math.floor(random() * lines.length));
   }
 
   return lines.map((line, i) => (indices.has(i) ? `MODIFIED: ${line}` : line)).join("\n");

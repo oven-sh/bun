@@ -2974,7 +2974,7 @@ pub fn munmap(memory: []align(page_size_min) const u8) Maybe(void) {
 pub const MemfdFlags = enum(u32) {
     // Recent Linux kernel versions require MFD_EXEC.
     executable = MFD_EXEC | MFD_ALLOW_SEALING | MFD_CLOEXEC,
-    non_executable = MFD_NOEXEC_SEAL | MFD_ALLOW_SEALING,
+    non_executable = MFD_NOEXEC_SEAL | MFD_ALLOW_SEALING | MFD_CLOEXEC,
     cross_process = MFD_NOEXEC_SEAL,
 
     pub fn olderKernelFlag(this: MemfdFlags) u32 {

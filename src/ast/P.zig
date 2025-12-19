@@ -2902,7 +2902,7 @@ pub fn NewParser_(
 
         /// Permanent reserved properties that must NEVER be mangled due to JavaScript semantics.
         /// These properties have special meaning in the language.
-        const permanent_reserved_props = std.StaticStringMap(void).initComptime(.{
+        const permanent_reserved_props = bun.ComptimeStringMap(void, .{
             .{ "__proto__", {} },
             .{ "constructor", {} },
             .{ "prototype", {} },

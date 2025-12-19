@@ -1469,23 +1469,23 @@ pub const LinkerContext = struct {
     /// Collect all mangled property symbols from all files and assign them
     /// short names (a, b, c, ...). This is similar to how esbuild handles
     /// property name mangling in the linker phase.
-    pub fn mangleJsProps(c: *LinkerContext) void {
+    pub fn mangleJsProps(c: *LinkerContext) !void {
         const all_mangled_props: []const JSAst.MangledPropsMap = c.graph.ast.items(.mangled_props);
 
         // Collect all mangled property symbols across all files
         // We merge symbols with the same name by linking them together,
         // so the printer can follow the link chain to find the canonical ref
-        var merged_props = std.StringArrayHashMap(Ref).init(c.allocator());
+        var merged_props = bun.StringArrayHashMap(Ref).init(c.allocator());
         defer merged_props.deinit();
 
         // Count of property usages for sorting (most used gets shortest name)
-        var usage_counts = std.StringArrayHashMap(u32).init(c.allocator());
+        var usage_counts = bun.StringArrayHashMap(u32).init(c.allocator());
         defer usage_counts.deinit();
 
         for (all_mangled_props) |mangled_props| {
             // Get mangled props from this file's AST
             for (mangled_props.keys(), mangled_props.values()) |name, ref| {
-                const entry = bun.handleOom(merged_props.getOrPut(name));
+                const entry = try merged_props.getOrPut(name);
                 if (entry.found_existing) {
                     // Link this symbol to the canonical one for this property name
                     // The printer uses symbols.follow() to resolve the link chain
@@ -1501,7 +1501,7 @@ pub const LinkerContext = struct {
 
                 // Track usage counts
                 const symbol = c.graph.symbols.getConst(ref).?;
-                const count_entry = bun.handleOom(usage_counts.getOrPut(name));
+                const count_entry = try usage_counts.getOrPut(name);
                 if (count_entry.found_existing) {
                     count_entry.value_ptr.* += symbol.use_count_estimate;
                 } else {
@@ -1519,7 +1519,7 @@ pub const LinkerContext = struct {
             count: u32,
         };
 
-        var props_list = std.ArrayList(PropWithCount).initCapacity(c.allocator(), merged_props.count()) catch return;
+        var props_list = try std.ArrayList(PropWithCount).initCapacity(c.allocator(), merged_props.count());
         defer props_list.deinit(c.allocator());
 
         for (merged_props.keys(), merged_props.values()) |name, ref| {
@@ -1543,25 +1543,18 @@ pub const LinkerContext = struct {
         defer reserved_names.deinit();
 
         // Reserve JavaScript keywords and strict mode reserved words
-        const js_keywords = [_][]const u8{
-            "break",      "case",       "catch",     "class",    "const",   "continue", "debugger",
-            "default",    "delete",     "do",        "else",     "enum",    "export",   "extends",
-            "false",      "finally",    "for",       "function", "if",      "import",   "in",
-            "instanceof", "new",        "null",      "return",   "super",   "switch",   "this",
-            "throw",      "true",       "try",       "typeof",   "var",     "void",     "while",
-            "with",
-            // Strict mode reserved words
-                  "implements", "interface", "let",      "package", "private",  "protected",
-            "public",     "static",     "yield",
-        };
-        for (js_keywords) |keyword| {
-            bun.handleOom(reserved_names.put(keyword, {}));
+        // Use the tables from js_lexer to avoid duplication
+        for (lex.Keywords.kvs) |kv| {
+            try reserved_names.put(kv.key, {});
+        }
+        for (lex.StrictModeReservedWords.kvs) |kv| {
+            try reserved_names.put(kv.key, {});
         }
 
         // Also reserve any existing property names in the merged set that don't match
         // the mangle pattern (these might be used alongside mangled props)
         for (merged_props.keys()) |name| {
-            bun.handleOom(reserved_names.put(name, {}));
+            try reserved_names.put(name, {});
         }
 
         var name_index: i32 = 0;
@@ -1569,9 +1562,7 @@ pub const LinkerContext = struct {
             // Generate a short name, avoiding reserved names
             var mangled_name: []const u8 = undefined;
             while (true) {
-                mangled_name = js_ast.NameMinifier.defaultNumberToMinifiedName(c.allocator(), name_index) catch {
-                    return;
-                };
+                mangled_name = try js_ast.NameMinifier.defaultNumberToMinifiedName(c.allocator(), name_index);
                 name_index += 1;
                 if (!reserved_names.contains(mangled_name)) break;
             }
@@ -1579,8 +1570,8 @@ pub const LinkerContext = struct {
             // Store the mangled name for the canonical ref only
             // Other refs with the same property name are linked to this one,
             // so the printer will follow the link and find this mapping
-            bun.handleOom(c.mangled_props.put(c.allocator(), prop.ref, mangled_name));
-            bun.handleOom(reserved_names.put(mangled_name, {}));
+            try c.mangled_props.put(c.allocator(), prop.ref, mangled_name);
+            try reserved_names.put(mangled_name, {});
         }
     }
 

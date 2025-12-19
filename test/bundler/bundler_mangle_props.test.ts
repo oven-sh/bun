@@ -156,6 +156,10 @@ describe("bundler", () => {
   // Note: Currently the implementation mangles all matching properties regardless of quoting.
   // The mangleQuoted option is plumbed through but not yet differentiated in the parser.
   // This test verifies current behavior: all matching properties are mangled.
+  // TODO: Update this test when parser supports quoted-vs-unquoted differentiation.
+  //       Expected behavior with mangleQuoted: false:
+  //       - obj.prop_ (unquoted access) -> mangled
+  //       - obj["prop_"] (quoted access) -> preserved as "prop_"
   itBundled("mangle-props/PreserveQuotedKeys", {
     files: {
       "/entry.js": /* js */ `

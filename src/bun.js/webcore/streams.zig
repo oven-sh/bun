@@ -352,6 +352,16 @@ pub const Result = union(Tag) {
             pub fn run(this: *Writable.Pending) void {
                 if (this.state != .pending) return;
                 this.state = .used;
+
+                // DEBUG: CI diagnostic for Windows timeout issue
+                if (comptime bun.Environment.isWindows) {
+                    Output.prettyErrorln("[streams] Pending.run: future={s}, result={s}", .{
+                        @tagName(this.future),
+                        @tagName(this.result),
+                    });
+                    Output.flush();
+                }
+
                 switch (this.future) {
                     .promise => {
                         var p = this.future.promise;
@@ -374,6 +384,16 @@ pub const Result = union(Tag) {
         }
 
         pub fn fulfillPromise(result: Writable, promise: *JSPromise, globalThis: *JSGlobalObject) void {
+            // DEBUG: CI diagnostic for Windows timeout issue
+            if (comptime bun.Environment.isWindows) {
+                const status_before = promise.status(globalThis.vm());
+                Output.prettyErrorln("[streams] fulfillPromise: result={s}, promise_status_before={s}", .{
+                    @tagName(result),
+                    @tagName(status_before),
+                });
+                Output.flush();
+            }
+
             defer promise.toJS().unprotect();
             switch (result) {
                 .err => |err| {
@@ -385,6 +405,15 @@ pub const Result = union(Tag) {
                 else => {
                     promise.resolve(globalThis, result.toJS(globalThis)) catch {}; // TODO: properly propagate exception upwards
                 },
+            }
+
+            // DEBUG: CI diagnostic for Windows timeout issue
+            if (comptime bun.Environment.isWindows) {
+                const status_after = promise.status(globalThis.vm());
+                Output.prettyErrorln("[streams] fulfillPromise done: promise_status_after={s}", .{
+                    @tagName(status_after),
+                });
+                Output.flush();
             }
         }
 

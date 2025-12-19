@@ -2943,6 +2943,14 @@ pub fn NewParser_(
         /// Get or create a symbol for a mangled property name.
         /// The symbol is stored in mangled_props map for later use during linking.
         pub fn symbolForMangledProp(p: *P, name: []const u8) !Ref {
+            // During substitution revisits, return existing symbol without modifications
+            // to avoid double-counting (mirrors recordUsage behavior)
+            if (p.is_revisit_for_substitution) {
+                if (p.mangled_props.get(name)) |existing_ref| {
+                    return existing_ref;
+                }
+            }
+
             // Get or create a symbol for this property
             const gop = try p.mangled_props.getOrPut(p.allocator, name);
             const ref = if (gop.found_existing)
@@ -2953,8 +2961,8 @@ pub fn NewParser_(
                 break :blk new_ref;
             };
 
-            // Only increment use count if not in dead code path
-            if (!p.is_control_flow_dead) {
+            // Only increment use count if not in dead code path and not revisiting
+            if (!p.is_control_flow_dead and !p.is_revisit_for_substitution) {
                 p.symbols.items[ref.innerIndex()].use_count_estimate += 1;
             }
 

@@ -461,7 +461,7 @@ pub fn fromBytes(binary: bool, bigint: bool, oid: types.Tag, bytes: []const u8, 
         // TODO: .int2_array, .float8_array
         inline .int4_array, .float4_array => |tag| {
             if (binary) {
-                if (bytes.len < 16) {
+                if (bytes.len < 12) {
                     return error.InvalidBinaryData;
                 }
                 // https://github.com/postgres/postgres/blob/master/src/backend/utils/adt/arrayfuncs.c#L1549-L1645

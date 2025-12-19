@@ -23,7 +23,6 @@ describe.skipIf(isWindows)("parallel bun install bin linking", () => {
   test("multiple parallel installs with same bin should not fail with EEXIST", async () => {
     // Create 5 separate project directories that all depend on the same package with a bin
     const numParallelInstalls = 5;
-    const projects: string[] = [];
 
     // We'll use a simple npm package that has a bin entry
     // Using 'cowsay' as it's a well-known package with a binary
@@ -35,49 +34,51 @@ describe.skipIf(isWindows)("parallel bun install bin linking", () => {
       },
     };
 
-    // Create project directories
+    // Create project directories - store the tempDir handles to prevent cleanup
+    const projectDirs: Array<{ dir: ReturnType<typeof tempDir>; path: string }> = [];
     for (let i = 0; i < numParallelInstalls; i++) {
-      using dir = tempDir(`parallel-install-${i}`, {
+      const dir = tempDir(`parallel-install-${i}`, {
         "package.json": JSON.stringify(packageJson, null, 2),
       });
-      projects.push(String(dir));
+      projectDirs.push({ dir, path: String(dir) });
     }
 
-    // Run all installs in parallel
-    const installPromises = projects.map(async projectDir => {
-      const proc = spawn({
-        cmd: [bunExe(), "install"],
-        cwd: projectDir,
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
+    try {
+      // Run all installs in parallel
+      const installPromises = projectDirs.map(async ({ path: projectDir }) => {
+        const proc = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: projectDir,
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+        return { projectDir, stdout, stderr, exitCode };
       });
 
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const results = await Promise.all(installPromises);
 
-      return { projectDir, stdout, stderr, exitCode };
-    });
+      // Check that all installs succeeded
+      for (const result of results) {
+        // Should not contain the EEXIST error
+        expect(result.stderr).not.toContain("Failed to link");
+        expect(result.stderr).not.toContain("EEXIST");
+        expect(result.exitCode).toBe(0);
+      }
 
-    const results = await Promise.all(installPromises);
-
-    // Check that all installs succeeded
-    for (const result of results) {
-      // Should not contain the EEXIST error
-      expect(result.stderr).not.toContain("Failed to link");
-      expect(result.stderr).not.toContain("EEXIST");
-      expect(result.exitCode).toBe(0);
-    }
-
-    // Verify that the bin was actually created in each project
-    for (const projectDir of projects) {
-      const binPath = join(projectDir, "node_modules", ".bin", "cowsay");
-      const files = await readdir(join(projectDir, "node_modules", ".bin")).catch(() => []);
-      expect(files).toContain("cowsay");
-    }
-
-    // Cleanup
-    for (const projectDir of projects) {
-      await rm(projectDir, { recursive: true, force: true }).catch(() => {});
+      // Verify that the bin was actually created in each project
+      for (const { path: projectDir } of projectDirs) {
+        const files = await readdir(join(projectDir, "node_modules", ".bin")).catch(() => []);
+        expect(files).toContain("cowsay");
+      }
+    } finally {
+      // Cleanup
+      for (const { path: projectDir } of projectDirs) {
+        await rm(projectDir, { recursive: true, force: true }).catch(() => {});
+      }
     }
   });
 

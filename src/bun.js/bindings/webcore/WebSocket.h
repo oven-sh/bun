@@ -68,6 +68,9 @@ public:
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const Vector<String>& protocols);
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&&);
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, bool rejectUnauthorized);
+    // With proxy support
+    static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&&, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders);
+    static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, bool rejectUnauthorized, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders);
     ~WebSocket();
 
     enum State {
@@ -158,6 +161,16 @@ public:
         return m_rejectUnauthorized;
     }
 
+    void setSSLConfig(void* config)
+    {
+        m_sslConfig = config;
+    }
+
+    void* sslConfig() const
+    {
+        return m_sslConfig;
+    }
+
     void incPendingActivityCount()
     {
         ASSERT(m_pendingActivityCount < std::numeric_limits<size_t>::max());
@@ -227,6 +240,15 @@ private:
     AnyWebSocket m_connectedWebSocket { nullptr };
     ConnectedWebSocketKind m_connectedWebSocketKind { ConnectedWebSocketKind::None };
     size_t m_pendingActivityCount { 0 };
+
+    // Proxy support
+    URL m_proxyUrl;
+    String m_proxyAuthorization;
+    Vector<std::pair<String, String>> m_proxyHeaders;
+    bool m_proxyIsHTTPS { false };
+
+    // TLS options (SSLConfig pointer from Zig - ownership transferred to Zig)
+    void* m_sslConfig { nullptr };
 
     bool m_dispatchedErrorEvent { false };
     // RefPtr<PendingActivity<WebSocket>> m_pendingActivity;

@@ -3042,7 +3042,10 @@ declare module "bun" {
 
   type WebSocketOptionsTLS = {
     /**
-     * Options for the TLS connection
+     * Options for the TLS connection.
+     *
+     * Supports full TLS configuration including custom CA certificates,
+     * client certificates, and other TLS settings (similar to fetch).
      */
     tls?: {
       /**
@@ -3051,6 +3054,73 @@ declare module "bun" {
        * @default true
        */
       rejectUnauthorized?: boolean;
+
+      /**
+       * Custom CA certificate(s) to use for certificate verification.
+       * Can be a string, Buffer, or array of strings/Buffers.
+       *
+       * @example
+       * ```ts
+       * const ws = new WebSocket("wss://example.com", {
+       *   tls: {
+       *     ca: fs.readFileSync("./ca.pem")
+       *   }
+       * });
+       * ```
+       */
+      ca?: string | Buffer | (string | Buffer)[];
+
+      /**
+       * Client certificate to use for mutual TLS authentication.
+       * Can be a string, Buffer, or array of strings/Buffers.
+       */
+      cert?: string | Buffer | (string | Buffer)[];
+
+      /**
+       * Private key for the client certificate.
+       * Can be a string, Buffer, or array of strings/Buffers.
+       */
+      key?: string | Buffer | (string | Buffer)[];
+
+      /**
+       * Passphrase for the private key.
+       */
+      passphrase?: string;
+
+      /**
+       * Path to the CA certificate file.
+       */
+      caFile?: string;
+
+      /**
+       * Path to the client certificate file.
+       */
+      certFile?: string;
+
+      /**
+       * Path to the private key file.
+       */
+      keyFile?: string;
+
+      /**
+       * Server name for SNI (Server Name Indication).
+       */
+      serverName?: string;
+
+      /**
+       * SSL ciphers to use.
+       */
+      ciphers?: string;
+
+      /**
+       * Whether to request a certificate from the server.
+       */
+      requestCert?: boolean;
+
+      /**
+       * Secure protocol options (bitmask).
+       */
+      secureOptions?: number;
     };
   };
 
@@ -3061,10 +3131,56 @@ declare module "bun" {
     headers?: import("node:http").OutgoingHttpHeaders;
   };
 
+  type WebSocketOptionsProxy = {
+    /**
+     * HTTP proxy to use for the WebSocket connection.
+     *
+     * Can be a string URL or an object with `url` and optional `headers`.
+     *
+     * @example
+     * ```ts
+     * // String format
+     * const ws = new WebSocket("wss://example.com", {
+     *   proxy: "http://proxy.example.com:8080"
+     * });
+     *
+     * // With credentials
+     * const ws = new WebSocket("wss://example.com", {
+     *   proxy: "http://user:pass@proxy.example.com:8080"
+     * });
+     *
+     * // Object format with custom headers
+     * const ws = new WebSocket("wss://example.com", {
+     *   proxy: {
+     *     url: "http://proxy.example.com:8080",
+     *     headers: {
+     *       "Proxy-Authorization": "Bearer token"
+     *     }
+     *   }
+     * });
+     * ```
+     */
+    proxy?:
+      | string
+      | {
+          /**
+           * The proxy URL (http:// or https://)
+           */
+          url: string;
+          /**
+           * Custom headers to send to the proxy server
+           */
+          headers?: import("node:http").OutgoingHttpHeaders;
+        };
+  };
+
   /**
    * Constructor options for the `Bun.WebSocket` client
    */
-  type WebSocketOptions = WebSocketOptionsProtocolsOrProtocol & WebSocketOptionsTLS & WebSocketOptionsHeaders;
+  type WebSocketOptions = WebSocketOptionsProtocolsOrProtocol &
+    WebSocketOptionsTLS &
+    WebSocketOptionsHeaders &
+    WebSocketOptionsProxy;
 
   interface WebSocketEventMap {
     close: CloseEvent;

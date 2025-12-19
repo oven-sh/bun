@@ -36,6 +36,7 @@
 #include "blob.h"
 #include "ZigGeneratedClasses.h"
 #include "CloseEvent.h"
+#include <wtf/text/Base64.h>
 // #include "ContentSecurityPolicy.h"
 // #include "DOMWindow.h"
 // #include "Document.h"
@@ -264,6 +265,95 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
     return socket;
 }
 
+ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders)
+{
+    if (url.isNull())
+        return Exception { SyntaxError };
+
+    auto socket = adoptRef(*new WebSocket(context));
+
+    // Set up proxy if provided
+    if (!proxyUrl.isNull() && !proxyUrl.isEmpty()) {
+        socket->m_proxyUrl = URL { proxyUrl };
+        if (!socket->m_proxyUrl.isValid()) {
+            return Exception { SyntaxError, makeString("Invalid proxy URL: "_s, proxyUrl) };
+        }
+        socket->m_proxyIsHTTPS = socket->m_proxyUrl.protocolIs("https"_s);
+
+        // Compute Basic auth from proxy URL credentials
+        if (!socket->m_proxyUrl.user().isEmpty()) {
+            auto credentials = makeString(socket->m_proxyUrl.user(), ':', socket->m_proxyUrl.password());
+            auto utf8 = credentials.utf8();
+            auto encoded = base64EncodeToString(std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(utf8.data()), utf8.length()));
+            socket->m_proxyAuthorization = makeString("Basic "_s, encoded);
+        }
+
+        // Store proxy headers
+        if (proxyHeaders) {
+            auto headersOrException = FetchHeaders::create(WTFMove(proxyHeaders));
+            if (!headersOrException.hasException()) {
+                auto hdrs = headersOrException.releaseReturnValue();
+                auto iterator = hdrs.get().createIterator(false);
+                while (auto value = iterator.next()) {
+                    socket->m_proxyHeaders.append({ value->key, value->value });
+                }
+            }
+        }
+    }
+
+    auto result = socket->connect(url, protocols, WTFMove(headers));
+
+    if (result.hasException())
+        return result.releaseException();
+
+    return socket;
+}
+
+ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, bool rejectUnauthorized, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders)
+{
+    if (url.isNull())
+        return Exception { SyntaxError };
+
+    auto socket = adoptRef(*new WebSocket(context));
+    socket->setRejectUnauthorized(rejectUnauthorized);
+
+    // Set up proxy if provided
+    if (!proxyUrl.isNull() && !proxyUrl.isEmpty()) {
+        socket->m_proxyUrl = URL { proxyUrl };
+        if (!socket->m_proxyUrl.isValid()) {
+            return Exception { SyntaxError, makeString("Invalid proxy URL: "_s, proxyUrl) };
+        }
+        socket->m_proxyIsHTTPS = socket->m_proxyUrl.protocolIs("https"_s);
+
+        // Compute Basic auth from proxy URL credentials
+        if (!socket->m_proxyUrl.user().isEmpty()) {
+            auto credentials = makeString(socket->m_proxyUrl.user(), ':', socket->m_proxyUrl.password());
+            auto utf8 = credentials.utf8();
+            auto encoded = base64EncodeToString(std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(utf8.data()), utf8.length()));
+            socket->m_proxyAuthorization = makeString("Basic "_s, encoded);
+        }
+
+        // Store proxy headers
+        if (proxyHeaders) {
+            auto headersOrException = FetchHeaders::create(WTFMove(proxyHeaders));
+            if (!headersOrException.hasException()) {
+                auto hdrs = headersOrException.releaseReturnValue();
+                auto iterator = hdrs.get().createIterator(false);
+                while (auto value = iterator.next()) {
+                    socket->m_proxyHeaders.append({ value->key, value->value });
+                }
+            }
+        }
+    }
+
+    auto result = socket->connect(url, protocols, WTFMove(headers));
+
+    if (result.hasException())
+        return result.releaseException();
+
+    return socket;
+}
+
 ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url, const String& protocol)
 {
     return create(context, url, Vector<String> { 1, protocol });
@@ -457,16 +547,59 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
     m_isSecure = is_secure;
     this->incPendingActivityCount();
 
-    if (is_secure) {
+    // Prepare proxy parameters
+    ZigString proxyHost = Zig::toZigString(m_proxyUrl.isValid() ? m_proxyUrl.host() : StringView());
+    ZigString proxyAuth = Zig::toZigString(m_proxyAuthorization);
+    uint16_t proxyPort = 0;
+    if (m_proxyUrl.isValid()) {
+        proxyPort = m_proxyUrl.port().value_or(m_proxyIsHTTPS ? 443 : 80);
+    }
+
+    Vector<ZigString, 8> proxyHeaderNames;
+    Vector<ZigString, 8> proxyHeaderValues;
+    proxyHeaderNames.reserveInitialCapacity(m_proxyHeaders.size());
+    proxyHeaderValues.reserveInitialCapacity(m_proxyHeaders.size());
+    for (const auto& header : m_proxyHeaders) {
+        proxyHeaderNames.unsafeAppendWithoutCapacityCheck(Zig::toZigString(header.first));
+        proxyHeaderValues.unsafeAppendWithoutCapacityCheck(Zig::toZigString(header.second));
+    }
+
+    // Pass SSLConfig pointer to Zig (ownership transferred - Zig will deinit when connection closes)
+    // After this call, m_sslConfig should not be used by C++ anymore
+    void* sslConfig = m_sslConfig;
+    m_sslConfig = nullptr;  // Transfer ownership
+
+    // Use TLS client if either:
+    // 1. Target is wss:// (is_secure), OR
+    // 2. Proxy is https:// (m_proxyIsHTTPS)
+    bool useTLSClient = is_secure || m_proxyIsHTTPS;
+
+    if (useTLSClient) {
         us_socket_context_t* ctx = scriptExecutionContext()->webSocketContext<true>();
         RELEASE_ASSERT(ctx);
-        this->m_upgradeClient = Bun__WebSocketHTTPSClient__connect(scriptExecutionContext()->jsGlobalObject(), ctx, reinterpret_cast<CppWebSocket*>(this), &host, port, &path, &clientProtocolString, headerNames.begin(), headerValues.begin(), headerNames.size());
+        this->m_upgradeClient = Bun__WebSocketHTTPSClient__connect(
+            scriptExecutionContext()->jsGlobalObject(), ctx, reinterpret_cast<CppWebSocket*>(this),
+            &host, port, &path, &clientProtocolString,
+            headerNames.begin(), headerValues.begin(), headerNames.size(),
+            m_proxyUrl.isValid() ? &proxyHost : nullptr, proxyPort, m_proxyIsHTTPS,
+            m_proxyAuthorization.isEmpty() ? nullptr : &proxyAuth,
+            proxyHeaderNames.begin(), proxyHeaderValues.begin(), proxyHeaderNames.size(),
+            sslConfig, is_secure);
     } else {
         us_socket_context_t* ctx = scriptExecutionContext()->webSocketContext<false>();
         RELEASE_ASSERT(ctx);
-        this->m_upgradeClient = Bun__WebSocketHTTPClient__connect(scriptExecutionContext()->jsGlobalObject(), ctx, reinterpret_cast<CppWebSocket*>(this), &host, port, &path, &clientProtocolString, headerNames.begin(), headerValues.begin(), headerNames.size());
+        this->m_upgradeClient = Bun__WebSocketHTTPClient__connect(
+            scriptExecutionContext()->jsGlobalObject(), ctx, reinterpret_cast<CppWebSocket*>(this),
+            &host, port, &path, &clientProtocolString,
+            headerNames.begin(), headerValues.begin(), headerNames.size(),
+            m_proxyUrl.isValid() ? &proxyHost : nullptr, proxyPort, m_proxyIsHTTPS,
+            m_proxyAuthorization.isEmpty() ? nullptr : &proxyAuth,
+            proxyHeaderNames.begin(), proxyHeaderValues.begin(), proxyHeaderNames.size(),
+            sslConfig, is_secure);
     }
 
+    proxyHeaderValues.clear();
+    proxyHeaderNames.clear();
     headerValues.clear();
     headerNames.clear();
 
@@ -1319,7 +1452,12 @@ void WebSocket::didConnect(us_socket_t* socket, char* bufferedData, size_t buffe
         this->m_extensions = extensions.toString();
     }
 
-    if (m_isSecure) {
+    // Use TLS WebSocket client if:
+    // 1. Target is wss:// (m_isSecure), OR
+    // 2. Connected through HTTPS proxy (m_proxyIsHTTPS) - the socket is TLS even for ws:// target
+    bool useTLSSocket = m_isSecure || m_proxyIsHTTPS;
+
+    if (useTLSSocket) {
         us_socket_context_t* ctx = (us_socket_context_t*)this->scriptExecutionContext()->connectedWebSocketContext<true, false>();
         this->m_connectedWebSocket.clientSSL = Bun__WebSocketClientTLS__init(reinterpret_cast<CppWebSocket*>(this), socket, ctx, this->scriptExecutionContext()->jsGlobalObject(), reinterpret_cast<unsigned char*>(bufferedData), bufferedDataSize, deflate_params);
         this->m_connectedWebSocketKind = ConnectedWebSocketKind::ClientSSL;
@@ -1474,6 +1612,22 @@ void WebSocket::didFailWithErrorCode(Bun::WebSocketErrorCode code)
     }
     case Bun::WebSocketErrorCode::invalid_compressed_data: {
         didReceiveClose(CleanStatus::NotClean, 1002, "Invalid compressed data"_s);
+        break;
+    }
+    case Bun::WebSocketErrorCode::proxy_connect_failed: {
+        didReceiveClose(CleanStatus::NotClean, 1006, "Proxy connection failed"_s, true);
+        break;
+    }
+    case Bun::WebSocketErrorCode::proxy_authentication_required: {
+        didReceiveClose(CleanStatus::NotClean, 1006, "Proxy authentication required"_s, true);
+        break;
+    }
+    case Bun::WebSocketErrorCode::proxy_connection_refused: {
+        didReceiveClose(CleanStatus::NotClean, 1006, "Proxy connection refused"_s, true);
+        break;
+    }
+    case Bun::WebSocketErrorCode::proxy_tunnel_failed: {
+        didReceiveClose(CleanStatus::NotClean, 1006, "Proxy tunnel failed"_s, true);
         break;
     }
     }

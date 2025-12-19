@@ -574,7 +574,14 @@ BUN_DECLARE_HOST_FUNCTION(NetworkSink__write);
 #ifdef __cplusplus
 
 ZIG_DECL void Bun__WebSocketHTTPClient__cancel(WebSocketHTTPClient* arg0);
-ZIG_DECL WebSocketHTTPClient* Bun__WebSocketHTTPClient__connect(JSC::JSGlobalObject* arg0, void* arg1, CppWebSocket* arg2, const ZigString* arg3, uint16_t arg4, const ZigString* arg5, const ZigString* arg6, ZigString* arg7, ZigString* arg8, size_t arg9);
+ZIG_DECL WebSocketHTTPClient* Bun__WebSocketHTTPClient__connect(
+    JSC::JSGlobalObject* globalObject, void* socketContext, CppWebSocket* websocket,
+    const ZigString* host, uint16_t port, const ZigString* path, const ZigString* protocols,
+    ZigString* headerNames, ZigString* headerValues, size_t headerCount,
+    const ZigString* proxyHost, uint16_t proxyPort, bool proxyIsHTTPS,
+    const ZigString* proxyAuthorization,
+    ZigString* proxyHeaderNames, ZigString* proxyHeaderValues, size_t proxyHeaderCount,
+    void* sslConfig, bool targetIsSecure);
 ZIG_DECL void Bun__WebSocketHTTPClient__register(JSC::JSGlobalObject* arg0, void* arg1, void* arg2);
 ZIG_DECL size_t Bun__WebSocketHTTPClient__memoryCost(WebSocketHTTPClient* arg0);
 #endif
@@ -582,9 +589,19 @@ ZIG_DECL size_t Bun__WebSocketHTTPClient__memoryCost(WebSocketHTTPClient* arg0);
 #ifdef __cplusplus
 
 ZIG_DECL void Bun__WebSocketHTTPSClient__cancel(WebSocketHTTPSClient* arg0);
-ZIG_DECL WebSocketHTTPSClient* Bun__WebSocketHTTPSClient__connect(JSC::JSGlobalObject* arg0, void* arg1, CppWebSocket* arg2, const ZigString* arg3, uint16_t arg4, const ZigString* arg5, const ZigString* arg6, ZigString* arg7, ZigString* arg8, size_t arg9);
+ZIG_DECL WebSocketHTTPSClient* Bun__WebSocketHTTPSClient__connect(
+    JSC::JSGlobalObject* globalObject, void* socketContext, CppWebSocket* websocket,
+    const ZigString* host, uint16_t port, const ZigString* path, const ZigString* protocols,
+    ZigString* headerNames, ZigString* headerValues, size_t headerCount,
+    const ZigString* proxyHost, uint16_t proxyPort, bool proxyIsHTTPS,
+    const ZigString* proxyAuthorization,
+    ZigString* proxyHeaderNames, ZigString* proxyHeaderValues, size_t proxyHeaderCount,
+    void* sslConfig, bool targetIsSecure);
 ZIG_DECL void Bun__WebSocketHTTPSClient__register(JSC::JSGlobalObject* arg0, void* arg1, void* arg2);
 ZIG_DECL size_t Bun__WebSocketHTTPSClient__memoryCost(WebSocketHTTPSClient* arg0);
+
+// Parse TLS options from JavaScript object using SSLConfig.fromJS
+ZIG_DECL void* Bun__WebSocket__parseSSLConfig(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue tlsValue);
 #endif
 
 #ifdef __cplusplus

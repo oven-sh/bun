@@ -1,0 +1,268 @@
+/// WebSocketProxyTunnel handles TLS inside an HTTP CONNECT tunnel for wss:// through HTTP proxy.
+///
+/// This is used when connecting to a wss:// WebSocket server through an HTTP proxy.
+/// The flow is:
+/// 1. HTTP CONNECT request to proxy (handled by WebSocketUpgradeClient)
+/// 2. Proxy responds with 200 Connection Established
+/// 3. TLS handshake inside the tunnel (handled by this module using SSLWrapper)
+/// 4. WebSocket upgrade request through the TLS tunnel
+/// 5. WebSocket 101 response
+/// 6. Hand off to WebSocket client
+const WebSocketProxyTunnel = @This();
+
+const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
+pub const ref = RefCount.ref;
+pub const deref = RefCount.deref;
+
+ref_count: RefCount,
+/// Reference to the upgrade client (WebSocketUpgradeClient)
+upgrade_client: ?*anyopaque = null,
+/// SSL wrapper for TLS inside tunnel
+wrapper: ?SSLWrapperType = null,
+/// Socket reference (the proxy connection)
+socket: SocketUnion = .{ .none = {} },
+/// Write buffer for encrypted data (maintains TLS record ordering)
+write_buffer: bun.io.StreamBuffer = .{},
+/// Target hostname for SNI
+target_hostname: ?[]const u8 = null,
+/// Whether to reject unauthorized certificates
+reject_unauthorized: bool = true,
+
+const SocketUnion = union(enum) {
+    tcp: uws.NewSocketHandler(false),
+    ssl: uws.NewSocketHandler(true),
+    none: void,
+
+    pub fn write(self: SocketUnion, data: []const u8) c_int {
+        return switch (self) {
+            .tcp => |s| s.write(data),
+            .ssl => |s| s.write(data),
+            .none => 0,
+        };
+    }
+
+    pub fn isClosed(self: SocketUnion) bool {
+        return switch (self) {
+            .tcp => |s| s.isClosed(),
+            .ssl => |s| s.isClosed(),
+            .none => true,
+        };
+    }
+};
+
+const SSLWrapperType = SSLWrapper(*WebSocketProxyTunnel);
+
+/// Initialize a new proxy tunnel
+pub fn init() *WebSocketProxyTunnel {
+    return bun.new(WebSocketProxyTunnel, .{
+        .ref_count = .init(),
+    });
+}
+
+fn deinit(this: *WebSocketProxyTunnel) void {
+    if (this.wrapper) |*wrapper| {
+        wrapper.deinit();
+        this.wrapper = null;
+    }
+    this.write_buffer.deinit();
+    if (this.target_hostname) |hostname| {
+        bun.default_allocator.free(hostname);
+        this.target_hostname = null;
+    }
+    bun.destroy(this);
+}
+
+/// Start TLS handshake inside the tunnel
+/// The ssl_options should contain all TLS configuration including CA certificates.
+pub fn start(this: *WebSocketProxyTunnel, ssl_options: SSLConfig, initial_data: []const u8) !void {
+    var options = ssl_options;
+    // We verify certificates manually after handshake
+    options.reject_unauthorized = 0;
+    options.request_cert = 1;
+
+    this.wrapper = try SSLWrapperType.init(options, true, .{
+        .ctx = this,
+        .onOpen = onOpen,
+        .onData = onData,
+        .onHandshake = onHandshake,
+        .onClose = onClose,
+        .write = writeEncrypted,
+    });
+
+    if (initial_data.len > 0) {
+        this.wrapper.?.startWithPayload(initial_data);
+    } else {
+        this.wrapper.?.start();
+    }
+}
+
+/// SSLWrapper callback: Called before TLS handshake starts
+fn onOpen(this: *WebSocketProxyTunnel) void {
+    log("onOpen", .{});
+    // Configure SNI with target hostname
+    if (this.wrapper) |*wrapper| {
+        if (wrapper.ssl) |ssl_ptr| {
+            if (this.target_hostname) |hostname| {
+                if (!bun.strings.isIPAddress(hostname)) {
+                    // Set SNI hostname
+                    const hostname_z = bun.default_allocator.dupeZ(u8, hostname) catch return;
+                    defer bun.default_allocator.free(hostname_z);
+                    ssl_ptr.configureHTTPClient(hostname_z);
+                }
+            }
+        }
+    }
+}
+
+/// SSLWrapper callback: Called with decrypted data from the network
+fn onData(this: *WebSocketProxyTunnel, decrypted_data: []const u8) void {
+    log("onData: {} bytes", .{decrypted_data.len});
+    if (decrypted_data.len == 0) return;
+
+    // Get the upgrade client and forward decrypted data
+    if (this.upgrade_client) |client_ptr| {
+        const Client = NewHTTPUpgradeClient(false);
+        const client: *Client = @ptrCast(@alignCast(client_ptr));
+        // Forward to client's data handler for WebSocket response processing
+        client.handleDecryptedData(decrypted_data);
+    }
+}
+
+/// SSLWrapper callback: Called after TLS handshake completes
+fn onHandshake(this: *WebSocketProxyTunnel, success: bool, ssl_error: uws.us_bun_verify_error_t) void {
+    log("onHandshake: success={}", .{success});
+
+    if (this.upgrade_client) |client_ptr| {
+        const Client = NewHTTPUpgradeClient(false);
+        const client: *Client = @ptrCast(@alignCast(client_ptr));
+
+        if (!success) {
+            client.terminate(ErrorCode.tls_handshake_failed);
+            return;
+        }
+
+        // Check for SSL errors if we need to reject unauthorized
+        if (this.reject_unauthorized) {
+            if (ssl_error.error_no != 0) {
+                client.terminate(ErrorCode.tls_handshake_failed);
+                return;
+            }
+
+            // Verify server identity
+            if (this.wrapper) |*wrapper| {
+                if (wrapper.ssl) |ssl_ptr| {
+                    if (this.target_hostname) |hostname| {
+                        if (!BoringSSL.checkServerIdentity(ssl_ptr, hostname)) {
+                            client.terminate(ErrorCode.tls_handshake_failed);
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
+        // TLS handshake successful - notify client to send WebSocket upgrade
+        client.onProxyTLSHandshakeComplete();
+    }
+}
+
+/// SSLWrapper callback: Called when connection is closing
+fn onClose(this: *WebSocketProxyTunnel) void {
+    log("onClose", .{});
+    if (this.upgrade_client) |client_ptr| {
+        const Client = NewHTTPUpgradeClient(false);
+        const client: *Client = @ptrCast(@alignCast(client_ptr));
+        client.terminate(ErrorCode.ended);
+    }
+}
+
+/// SSLWrapper callback: Called with encrypted data to send to network
+fn writeEncrypted(this: *WebSocketProxyTunnel, encrypted_data: []const u8) void {
+    log("writeEncrypted: {} bytes", .{encrypted_data.len});
+
+    // If data is already buffered, queue this to maintain TLS record ordering
+    if (this.write_buffer.isNotEmpty()) {
+        bun.handleOom(this.write_buffer.write(encrypted_data));
+        return;
+    }
+
+    // Try direct write to socket
+    const written = this.socket.write(encrypted_data);
+    if (written < 0) {
+        // Write failed
+        return;
+    }
+
+    // Buffer remaining data
+    const written_usize: usize = @intCast(written);
+    if (written_usize < encrypted_data.len) {
+        bun.handleOom(this.write_buffer.write(encrypted_data[written_usize..]));
+    }
+}
+
+/// Called when the socket becomes writable - flush buffered encrypted data
+pub fn onWritable(this: *WebSocketProxyTunnel) void {
+    this.ref();
+    defer this.deref();
+
+    // Flush the SSL state machine
+    if (this.wrapper) |*wrapper| {
+        _ = wrapper.flush();
+    }
+
+    // Send buffered encrypted data
+    const to_send = this.write_buffer.slice();
+    if (to_send.len == 0) return;
+
+    const written = this.socket.write(to_send);
+    if (written < 0) return;
+
+    const written_usize: usize = @intCast(written);
+    if (written_usize == to_send.len) {
+        this.write_buffer.reset();
+    } else {
+        this.write_buffer.cursor += written_usize;
+    }
+}
+
+/// Feed encrypted data from the network to the SSL wrapper for decryption
+pub fn receiveData(this: *WebSocketProxyTunnel, data: []const u8) void {
+    this.ref();
+    defer this.deref();
+
+    if (this.wrapper) |*wrapper| {
+        wrapper.receiveData(data);
+    }
+}
+
+/// Write application data through the tunnel (will be encrypted)
+pub fn writeData(this: *WebSocketProxyTunnel, data: []const u8) !usize {
+    if (this.wrapper) |*wrapper| {
+        return try wrapper.writeData(data);
+    }
+    return error.ConnectionClosed;
+}
+
+/// Gracefully shutdown the TLS connection
+pub fn shutdown(this: *WebSocketProxyTunnel) void {
+    if (this.wrapper) |*wrapper| {
+        _ = wrapper.shutdown(true); // Fast shutdown
+    }
+}
+
+/// Check if the tunnel has backpressure
+pub fn hasBackpressure(this: *const WebSocketProxyTunnel) bool {
+    return this.write_buffer.isNotEmpty();
+}
+
+const log = bun.Output.scoped(.WebSocketProxyTunnel, .visible);
+
+const std = @import("std");
+const bun = @import("bun");
+const uws = bun.uws;
+const jsc = bun.jsc;
+const BoringSSL = bun.BoringSSL;
+const SSLWrapper = @import("../../bun.js/api/bun/ssl_wrapper.zig").SSLWrapper;
+const SSLConfig = jsc.API.ServerConfig.SSLConfig;
+const NewHTTPUpgradeClient = @import("./WebSocketUpgradeClient.zig").NewHTTPUpgradeClient;
+const ErrorCode = @import("../websocket_client.zig").ErrorCode;

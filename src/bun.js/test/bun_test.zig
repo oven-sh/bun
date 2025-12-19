@@ -570,7 +570,7 @@ pub const BunTest = struct {
                 group.log("-> inserting timer", .{});
                 globalThis.bunVM().timer.insert(&this.timer);
                 if (group.getLogEnabled()) {
-                    const duration = this.timer.next.duration(&bun.timespec.now());
+                    const duration = this.timer.next.duration(&bun.timespec.now(.force_real_time));
                     group.log("-> timer duration: {}", .{duration});
                 }
             }
@@ -1024,6 +1024,8 @@ pub const RunOneResult = union(enum) {
         timeout: bun.timespec = .epoch,
     },
 };
+
+pub const FakeTimers = @import("./timers/FakeTimers.zig");
 
 pub const Execution = @import("./Execution.zig");
 pub const debug = @import("./debug.zig");

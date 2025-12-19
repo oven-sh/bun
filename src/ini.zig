@@ -225,15 +225,23 @@ pub const Parser = struct {
             const src = bun.logger.Source.initPathString(this.source.path.text, val);
             var log = bun.logger.Log.init(arena_allocator);
             defer log.deinit();
-            // Try to parse it and it if fails will just treat it as a string
+            // Try to parse it and if it fails will just treat it as a string
             const json_val: Expr = bun.json.parseUTF8Impl(&src, &log, arena_allocator, true) catch {
+                // JSON parse failed (e.g., single-quoted string like '${VAR}')
+                // Still need to expand env vars in the content
+                if (comptime usage == .value) {
+                    const expanded = try this.expandEnvVars(arena_allocator, val);
+                    return Expr.init(E.String, E.String.init(expanded), Loc{ .start = @intCast(offset) });
+                }
                 break :out;
             };
 
             if (json_val.asString(arena_allocator)) |str| {
-                if (comptime usage == .value) return Expr.init(E.String, E.String.init(str), Loc{ .start = @intCast(offset) });
-                if (comptime usage == .section) return strToRope(ropealloc, str);
-                return str;
+                // Expand env vars in the JSON-parsed string
+                const expanded = if (comptime usage == .value) try this.expandEnvVars(arena_allocator, str) else str;
+                if (comptime usage == .value) return Expr.init(E.String, E.String.init(expanded), Loc{ .start = @intCast(offset) });
+                if (comptime usage == .section) return strToRope(ropealloc, expanded);
+                return expanded;
             }
 
             if (comptime usage == .value) return json_val;
@@ -388,11 +396,64 @@ pub const Parser = struct {
         return strToRope(ropealloc, val[0..]);
     }
 
+    /// Expands ${VAR} and ${VAR?} environment variable substitutions in a string.
+    /// Used for quoted values after JSON parsing has already handled escape sequences.
+    ///
+    /// Behavior (same as unquoted):
+    /// - ${VAR} - if VAR is undefined, leave as "${VAR}" (no expansion)
+    /// - ${VAR?} - if VAR is undefined, expand to empty string
+    /// - Backslash escaping is already handled by JSON parsing
+    fn expandEnvVars(this: *Parser, allocator: Allocator, val: []const u8) OOM![]const u8 {
+        // Quick check if there are any env vars to expand
+        if (std.mem.indexOf(u8, val, "${") == null) {
+            return val;
+        }
+
+        var result = try std.array_list.Managed(u8).initCapacity(allocator, val.len);
+        var i: usize = 0;
+        while (i < val.len) {
+            if (val[i] == '$' and i + 2 < val.len and val[i + 1] == '{') {
+                // Find the closing brace
+                var j = i + 2;
+                var depth: usize = 1;
+                while (j < val.len and depth > 0) {
+                    if (val[j] == '{') {
+                        depth += 1;
+                    } else if (val[j] == '}') {
+                        depth -= 1;
+                    }
+                    if (depth > 0) j += 1;
+                }
+                if (depth == 0) {
+                    const env_var_raw = val[i + 2 .. j];
+                    const optional = env_var_raw.len > 0 and env_var_raw[env_var_raw.len - 1] == '?';
+                    const env_var = if (optional) env_var_raw[0 .. env_var_raw.len - 1] else env_var_raw;
+
+                    if (this.env.get(env_var)) |expanded| {
+                        try result.appendSlice(expanded);
+                    } else if (!optional) {
+                        // Not found and not optional: leave as-is
+                        try result.appendSlice(val[i .. j + 1]);
+                    }
+                    // If optional and not found: expand to empty string (append nothing)
+                    i = j + 1;
+                    continue;
+                }
+            }
+            try result.append(val[i]);
+            i += 1;
+        }
+        return result.items;
+    }
+
     /// Returns index to skip or null if not an env substitution
     /// Invariants:
     /// - `i` must be an index into `val` that points to a '$' char
     ///
     /// npm/ini uses a regex pattern that will select the inner most ${...}
+    /// Supports ${VAR} and ${VAR?} syntax:
+    /// - ${VAR} - if undefined, returns null (leaves as-is)
+    /// - ${VAR?} - if undefined, expands to empty string
     fn parseEnvSubstitution(this: *Parser, val: []const u8, start: usize, i: usize, unesc: *std.array_list.Managed(u8)) OOM!?usize {
         bun.debugAssert(val[i] == '$');
         var esc = false;
@@ -419,10 +480,18 @@ pub const Parser = struct {
                 try unesc.appendSlice(missed);
             }
 
-            const env_var = val[i + 2 .. j];
+            const env_var_raw = val[i + 2 .. j];
+            const optional = env_var_raw.len > 0 and env_var_raw[env_var_raw.len - 1] == '?';
+            const env_var = if (optional) env_var_raw[0 .. env_var_raw.len - 1] else env_var_raw;
+
             // https://github.com/npm/cli/blob/534ad7789e5c61f579f44d782bdd18ea3ff1ee20/workspaces/config/lib/env-replace.js#L6
-            const expanded = this.env.get(env_var) orelse return null;
-            try unesc.appendSlice(expanded);
+            if (this.env.get(env_var)) |expanded| {
+                try unesc.appendSlice(expanded);
+            } else if (!optional) {
+                // Not found and not optional: return null to leave as-is
+                return null;
+            }
+            // If optional and not found: expand to empty string (append nothing)
 
             return j;
         }
@@ -947,7 +1016,7 @@ pub fn loadNpmrc(
     if (out.asProperty("ca")) |query| {
         if (query.expr.asUtf8StringLiteral()) |str| {
             install.ca = .{
-                .str = str,
+                .str = try allocator.dupe(u8, str),
             };
         } else if (query.expr.isArray()) {
             const arr = query.expr.data.e_array;

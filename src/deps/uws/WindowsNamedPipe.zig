@@ -548,7 +548,7 @@ pub fn setTimeoutInMilliseconds(this: *WindowsNamedPipe, ms: c_uint) void {
     }
 
     // reschedule the timer
-    this.event_loop_timer.next = bun.timespec.msFromNow(ms);
+    this.event_loop_timer.next = bun.timespec.msFromNow(.allow_mocked_time, ms);
     this.vm.timer.insert(&this.event_loop_timer);
 }
 pub fn setTimeout(this: *WindowsNamedPipe, seconds: c_uint) void {

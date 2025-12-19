@@ -124,15 +124,16 @@ private:
                 // if we are closing or already closed, we don't need to do anything
                 if (!us_socket_is_closed(SSL, s)) {
                     HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
-                    httpContextData->flags.isAuthorized = success;
+                    // Set per-socket authorization status
+                    auto *httpResponseData = reinterpret_cast<HttpResponseData<SSL> *>(us_socket_ext(SSL, s));
                     if(httpContextData->flags.rejectUnauthorized) {
                         if(!success || verify_error.error != 0) {
                             // we failed to handshake, close the socket
                             us_socket_close(SSL, s, 0, nullptr);
                             return;
                         }
-                        httpContextData->flags.isAuthorized = true;
                     }
+                    httpResponseData->isAuthorized = success;
 
                     /* Any connected socket should timeout until it has a request */
                     ((HttpResponse<SSL> *) s)->resetTimeout();

@@ -1024,19 +1024,26 @@ const SQL: typeof Bun.SQL = function SQL(
     // Ensure we have a dedicated connection for listening
     const conn = await ensureListenConnection();
 
-    // Add callback to listeners
+    // Check if this is a new channel
     let callbacks = listeners.get(channel);
     const isNewChannel = !callbacks;
-    if (!callbacks) {
+
+    // If this is a new channel, send LISTEN command BEFORE registering callback
+    // This ensures we don't have dangling callbacks if LISTEN fails
+    if (isNewChannel) {
+      try {
+        await conn.unsafe(`LISTEN ${pool.escapeIdentifier(channel)}`);
+      } catch (e) {
+        // LISTEN failed, don't register the callback
+        throw e;
+      }
+      // LISTEN succeeded, now create the callback set
       callbacks = new Set();
       listeners.set(channel, callbacks);
     }
-    callbacks.add(callback);
 
-    // If this is a new channel, send LISTEN command
-    if (isNewChannel) {
-      await conn.unsafe(`LISTEN ${pool.escapeIdentifier(channel)}`);
-    }
+    // Add callback to listeners (LISTEN already succeeded for new channels)
+    callbacks!.add(callback);
 
     // Return unlisten function
     return async () => {

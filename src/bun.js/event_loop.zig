@@ -83,7 +83,26 @@ pub fn exit(this: *EventLoop) void {
     defer this.debug.exit();
 
     if (count == 1 and !this.virtual_machine.is_inside_deferred_task_queue) {
+        // DEBUG: CI diagnostic for Windows timeout issue
+        if (comptime Environment.isWindows) {
+            bun.Output.prettyErrorln("[EventLoop] exit: draining microtasks (count={d})", .{count});
+            bun.Output.flush();
+        }
         this.drainMicrotasksWithGlobal(this.global, this.virtual_machine.jsc_vm) catch {};
+        // DEBUG: CI diagnostic for Windows timeout issue
+        if (comptime Environment.isWindows) {
+            bun.Output.prettyErrorln("[EventLoop] exit: microtasks drained", .{});
+            bun.Output.flush();
+        }
+    } else {
+        // DEBUG: CI diagnostic for Windows timeout issue
+        if (comptime Environment.isWindows) {
+            bun.Output.prettyErrorln("[EventLoop] exit: NOT draining microtasks (count={d}, is_inside_deferred={any})", .{
+                count,
+                this.virtual_machine.is_inside_deferred_task_queue,
+            });
+            bun.Output.flush();
+        }
     }
 
     this.entered_event_loop_count -= 1;

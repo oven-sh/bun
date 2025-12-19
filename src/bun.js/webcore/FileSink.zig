@@ -135,13 +135,37 @@ fn runPending(this: *FileSink) void {
 
     this.run_pending_later.has = false;
     const l = this.eventLoop();
+
+    // DEBUG: CI diagnostic for Windows timeout issue
+    if (comptime Environment.isWindows) {
+        Output.prettyErrorln("[FileSink] runPending: pending.state={s}", .{@tagName(this.pending.state)});
+        Output.flush();
+    }
+
     l.enter();
     defer l.exit();
     this.pending.run();
+
+    // DEBUG: CI diagnostic for Windows timeout issue
+    if (comptime Environment.isWindows) {
+        Output.prettyErrorln("[FileSink] runPending done: pending.state={s}", .{@tagName(this.pending.state)});
+        Output.flush();
+    }
 }
 
 pub fn onWrite(this: *FileSink, amount: usize, status: bun.io.WriteStatus) void {
     log("onWrite({d}, {any})", .{ amount, status });
+
+    // DEBUG: CI diagnostic for Windows timeout issue
+    if (comptime Environment.isWindows) {
+        Output.prettyErrorln("[FileSink] onWrite: amount={d}, status={s}, pending.state={s}, done={}", .{
+            amount,
+            @tagName(status),
+            @tagName(this.pending.state),
+            this.done,
+        });
+        Output.flush();
+    }
 
     this.written += amount;
 
@@ -571,6 +595,15 @@ pub fn toJSWithDestructor(this: *FileSink, globalThis: *JSGlobalObject, destruct
 }
 
 pub fn endFromJS(this: *FileSink, globalThis: *JSGlobalObject) bun.sys.Maybe(JSValue) {
+    // DEBUG: CI diagnostic for Windows timeout issue
+    if (comptime Environment.isWindows) {
+        Output.prettyErrorln("[FileSink] endFromJS called: done={}, pending.state={s}", .{
+            this.done,
+            @tagName(this.pending.state),
+        });
+        Output.flush();
+    }
+
     if (this.done) {
         if (this.pending.state == .pending) {
             return .{ .result = this.pending.future.promise.strong.value() };
@@ -579,7 +612,15 @@ pub fn endFromJS(this: *FileSink, globalThis: *JSGlobalObject) bun.sys.Maybe(JSV
         return .{ .result = JSValue.jsNumber(this.written) };
     }
 
-    switch (this.writer.flush()) {
+    const flush_result = this.writer.flush();
+
+    // DEBUG: CI diagnostic for Windows timeout issue
+    if (comptime Environment.isWindows) {
+        Output.prettyErrorln("[FileSink] endFromJS flush result: {s}", .{@tagName(flush_result)});
+        Output.flush();
+    }
+
+    switch (flush_result) {
         .done => |written| {
             this.updateRef(false);
             this.writer.end();
@@ -597,6 +638,13 @@ pub fn endFromJS(this: *FileSink, globalThis: *JSGlobalObject) bun.sys.Maybe(JSV
             }
             this.done = true;
             this.pending.result = .{ .owned = @truncate(pending_written) };
+
+            // DEBUG: CI diagnostic for Windows timeout issue
+            if (comptime Environment.isWindows) {
+                Output.prettyErrorln("[FileSink] endFromJS: creating Promise, pending.state will be 'pending'", .{});
+                Output.flush();
+            }
+
             return .{ .result = this.pending.promise(globalThis).toJS() };
         },
         .wrote => |written| {

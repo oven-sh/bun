@@ -1339,6 +1339,14 @@ pub fn WindowsStreamingWriter(comptime Parent: type, function_table: anytype) ty
         }
 
         fn onFsWriteComplete(fs: *uv.fs_t) callconv(.c) void {
+            // DEBUG: CI diagnostic for Windows timeout issue
+            // Note: This code is inside WindowsStreamingWriter which is Windows-only,
+            // but we add the guard for clarity and consistency.
+            if (comptime bun.Environment.isWindows) {
+                bun.Output.prettyErrorln("[PipeWriter] onFsWriteComplete called", .{});
+                bun.Output.flush();
+            }
+
             const file = Source.File.fromFS(fs);
             const result = fs.result;
             const was_canceled = result.int() == uv.UV_ECANCELED;
@@ -1349,21 +1357,38 @@ pub fn WindowsStreamingWriter(comptime Parent: type, function_table: anytype) ty
 
             // If detached, file may be closing (owned fd) or just stopped (non-owned fd)
             if (parent_ptr == null) {
+                if (comptime bun.Environment.isWindows) {
+                    bun.Output.prettyErrorln("[PipeWriter] onFsWriteComplete: parent_ptr is null", .{});
+                    bun.Output.flush();
+                }
                 return;
             }
 
             const this = bun.cast(*WindowsWriter, parent_ptr);
 
             if (was_canceled) {
+                if (comptime bun.Environment.isWindows) {
+                    bun.Output.prettyErrorln("[PipeWriter] onFsWriteComplete: write was canceled", .{});
+                    bun.Output.flush();
+                }
                 // Canceled write - reset buffers
                 this.current_payload.reset();
                 return;
             }
 
             if (result.toError(.write)) |err| {
+                if (comptime bun.Environment.isWindows) {
+                    bun.Output.prettyErrorln("[PipeWriter] onFsWriteComplete: write error: {s}", .{@tagName(err.getErrno())});
+                    bun.Output.flush();
+                }
                 this.close();
                 onError(this.parent, err);
                 return;
+            }
+
+            if (comptime bun.Environment.isWindows) {
+                bun.Output.prettyErrorln("[PipeWriter] onFsWriteComplete: success, calling onWriteComplete", .{});
+                bun.Output.flush();
             }
 
             this.onWriteComplete(.zero);

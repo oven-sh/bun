@@ -1814,11 +1814,11 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
             const channel_js = jsc.ZigString.init(notification.channel.slice()).toJS(this.globalObject);
             const payload_js = jsc.ZigString.init(notification.payload.slice()).toJS(this.globalObject);
 
-            // Call the callback directly (ignore errors from user callback)
+            // Call the callback and report any unhandled exceptions
             _ = on_notification.call(this.globalObject, .js_undefined, &[_]JSValue{
                 channel_js,
                 payload_js,
-            }) catch {};
+            }) catch |e| this.globalObject.reportActiveExceptionAsUnhandled(e);
         },
         else => @compileError("Unknown message type: " ++ @tagName(MessageType)),
     }

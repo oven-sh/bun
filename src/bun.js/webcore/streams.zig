@@ -350,15 +350,21 @@ pub const Result = union(Tag) {
             };
 
             pub fn run(this: *Writable.Pending) void {
-                if (this.state != .pending) return;
-                this.state = .used;
-
                 // DEBUG: CI diagnostic for Windows timeout issue
                 if (comptime bun.Environment.isWindows) {
-                    Output.prettyErrorln("[streams] Pending.run: future={s}, result={s}", .{
+                    Output.prettyErrorln("[streams] Pending.run called: state={s}, future={s}, result={s}", .{
+                        @tagName(this.state),
                         @tagName(this.future),
                         @tagName(this.result),
                     });
+                    Output.flush();
+                }
+
+                if (this.state != .pending) return;
+                this.state = .used;
+
+                if (comptime bun.Environment.isWindows) {
+                    Output.prettyErrorln("[streams] Pending.run: processing promise", .{});
                     Output.flush();
                 }
 

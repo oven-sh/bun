@@ -606,9 +606,17 @@ pub fn endFromJS(this: *FileSink, globalThis: *JSGlobalObject) bun.sys.Maybe(JSV
 
     if (this.done) {
         if (this.pending.state == .pending) {
+            if (comptime Environment.isWindows) {
+                Output.prettyErrorln("[FileSink] endFromJS: already done, returning existing promise", .{});
+                Output.flush();
+            }
             return .{ .result = this.pending.future.promise.strong.value() };
         }
 
+        if (comptime Environment.isWindows) {
+            Output.prettyErrorln("[FileSink] endFromJS: already done, returning written={d}", .{this.written});
+            Output.flush();
+        }
         return .{ .result = JSValue.jsNumber(this.written) };
     }
 
@@ -622,11 +630,19 @@ pub fn endFromJS(this: *FileSink, globalThis: *JSGlobalObject) bun.sys.Maybe(JSV
 
     switch (flush_result) {
         .done => |written| {
+            if (comptime Environment.isWindows) {
+                Output.prettyErrorln("[FileSink] endFromJS: sync done, written={d}", .{written});
+                Output.flush();
+            }
             this.updateRef(false);
             this.writer.end();
             return .{ .result = JSValue.jsNumber(written) };
         },
         .err => |err| {
+            if (comptime Environment.isWindows) {
+                Output.prettyErrorln("[FileSink] endFromJS: error errno={d}", .{err.errno});
+                Output.flush();
+            }
             this.writer.close();
             return .{ .err = err };
         },
@@ -641,13 +657,17 @@ pub fn endFromJS(this: *FileSink, globalThis: *JSGlobalObject) bun.sys.Maybe(JSV
 
             // DEBUG: CI diagnostic for Windows timeout issue
             if (comptime Environment.isWindows) {
-                Output.prettyErrorln("[FileSink] endFromJS: creating Promise, pending.state will be 'pending'", .{});
+                Output.prettyErrorln("[FileSink] endFromJS: creating Promise, pending_written={d}", .{pending_written});
                 Output.flush();
             }
 
             return .{ .result = this.pending.promise(globalThis).toJS() };
         },
         .wrote => |written| {
+            if (comptime Environment.isWindows) {
+                Output.prettyErrorln("[FileSink] endFromJS: sync wrote, written={d}", .{written});
+                Output.flush();
+            }
             this.writer.end();
             return .{ .result = JSValue.jsNumber(written) };
         },

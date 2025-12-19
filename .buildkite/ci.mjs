@@ -30,6 +30,9 @@ import {
   writeFile,
 } from "../scripts/utils.mjs";
 
+console.log("TEST TEST TEST");
+process.exit(1);
+
 /**
  * @typedef {"linux" | "darwin" | "windows" | "freebsd"} Os
  * @typedef {"aarch64" | "x64"} Arch

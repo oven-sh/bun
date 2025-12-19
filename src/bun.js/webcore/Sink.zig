@@ -242,14 +242,6 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
             return @sizeOf(ThisSink) + SinkType.memoryCost(&this.sink);
         }
 
-        pub fn hasPendingActivity(ptr: *anyopaque) callconv(.c) bool {
-            const this: *ThisSink = @ptrCast(@alignCast(ptr));
-            if (@hasDecl(SinkType, "hasPendingActivity")) {
-                return SinkType.hasPendingActivity(&this.sink);
-            }
-            return false;
-        }
-
         const AssignToStreamFn = *const fn (*JSGlobalObject, JSValue, *anyopaque, **anyopaque) callconv(.c) JSValue;
         const OnCloseFn = *const fn (JSValue, JSValue) callconv(.c) void;
         const OnReadyFn = *const fn (JSValue, JSValue, JSValue) callconv(.c) void;
@@ -619,7 +611,6 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
                 @export(&endWithSink, .{ .name = abi_name ++ "__endWithSink" });
                 @export(&updateRef, .{ .name = abi_name ++ "__updateRef" });
                 @export(&memoryCost, .{ .name = abi_name ++ "__memoryCost" });
-                @export(&hasPendingActivity, .{ .name = abi_name ++ "__hasPendingActivity" });
             }
         }
     };

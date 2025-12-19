@@ -490,13 +490,6 @@ pub fn finalize(this: *FileSink) void {
     this.deref();
 }
 
-/// Returns true if this sink has pending async activity that should prevent GC collection.
-/// This is used by isReachableFromOpaqueRoots to keep the JS wrapper alive while
-/// async operations (like write) are in progress.
-pub fn hasPendingActivity(this: *const FileSink) callconv(.c) bool {
-    return this.pending.state == .pending;
-}
-
 /// Protect the JS wrapper object from GC collection while an async operation is pending.
 /// This should be called when endFromJS returns a pending Promise.
 /// The reference is released when runPending() completes.

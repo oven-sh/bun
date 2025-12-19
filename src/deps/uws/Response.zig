@@ -91,7 +91,7 @@ pub fn NewResponse(ssl_flag: i32) type {
             c.uws_res_end_sendfile(ssl_flag, res.downcast(), write_offset, close_connection);
         }
         pub fn timeout(res: *Response, seconds: u16) void {
-            c.uws_res_timeout(ssl_flag, res.downcast(), @truncate(seconds));
+            c.uws_res_timeout(ssl_flag, res.downcast(), seconds);
         }
         pub fn resetTimeout(res: *Response) void {
             c.uws_res_reset_timeout(ssl_flag, res.downcast());

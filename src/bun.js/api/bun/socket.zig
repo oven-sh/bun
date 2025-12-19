@@ -929,7 +929,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             const buffer: jsc.Node.StringOrBuffer = if (data_value.isUndefined())
                 jsc.Node.StringOrBuffer.empty
             else
-                jsc.Node.StringOrBuffer.fromJSWithEncodingValueMaybeAsync(globalObject, stack_fallback.get(), data_value, encoding_value, allow_string_object) catch {
+                jsc.Node.StringOrBuffer.fromJSWithEncodingValueAllowStringObject(globalObject, stack_fallback.get(), data_value, encoding_value, allow_string_object) catch {
                     return .fail;
                 } orelse {
                     if (!globalObject.hasException()) {

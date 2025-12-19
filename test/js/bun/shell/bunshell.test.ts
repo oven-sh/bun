@@ -803,6 +803,7 @@ booga"
     });
 
     test(".cwd(undefined) uses current working directory", async () => {
+      // @ts-expect-error
       const result = await $`pwd`.cwd(undefined).text();
       expect(result.trim()).toBe(process.cwd());
     });
@@ -831,9 +832,9 @@ booga"
       expect(resetResult.trim()).toBe(process.cwd());
 
       // Reset to original cwd for other tests
-      $.cwd(process.cwd());
+      $.cwd(process.cwd().replaceAll("\\", "/"));
       const finalResult = await $`pwd`.text();
-      expect(finalResult.trim()).toBe(process.cwd());
+      expect(finalResult.trim()).toBe(process.cwd().replaceAll("\\", "/"));
     });
   });
 

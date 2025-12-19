@@ -678,7 +678,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         }
 
         pub fn setIdleTimeout(this: *ThisServer, seconds: c_uint) void {
-            this.config.idleTimeout = @truncate(@min(seconds, 255));
+            this.config.idleTimeout = @truncate(@min(seconds, 65535));
         }
 
         pub fn setFlags(this: *ThisServer, require_host_header: bool, use_strict_method_validation: bool) void {

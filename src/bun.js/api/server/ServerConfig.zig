@@ -23,7 +23,7 @@ address: union(enum) {
 } = .{
     .tcp = .{},
 },
-idleTimeout: u8 = 10, //TODO: should we match websocket default idleTimeout of 120?
+idleTimeout: u16 = 3610, //TODO: should we match websocket default idleTimeout of 120?
 has_idleTimeout: bool = false,
 // TODO: use webkit URL parser instead of bun's
 base_url: URL = URL{},
@@ -727,8 +727,8 @@ pub fn fromJS(
                 args.has_idleTimeout = true;
 
                 const idleTimeout: u64 = @intCast(@max(value.toInt64(), 0));
-                if (idleTimeout > 255) {
-                    return global.throwInvalidArguments("Bun.serve expects idleTimeout to be 255 or less", .{});
+                if (idleTimeout > 65535) {
+                    return global.throwInvalidArguments("Bun.serve expects idleTimeout to be 65535 or less", .{});
                 }
 
                 args.idleTimeout = @truncate(idleTimeout);

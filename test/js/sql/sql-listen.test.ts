@@ -163,40 +163,28 @@ if (isDockerEnabled()) {
     test("listen validates channel argument", async () => {
       await using sql = new SQL(options);
 
-      try {
+      expect(async () => {
         await sql.listen("", () => {});
-        expect.unreachable("should have thrown");
-      } catch (e) {
-        expect(e).toBeInstanceOf(Error);
-      }
+      }).toThrow();
 
-      try {
+      expect(async () => {
         // @ts-expect-error - Testing invalid argument
         await sql.listen(null, () => {});
-        expect.unreachable("should have thrown");
-      } catch (e) {
-        expect(e).toBeInstanceOf(Error);
-      }
+      }).toThrow();
     });
 
     test("listen validates callback argument", async () => {
       await using sql = new SQL(options);
 
-      try {
+      expect(async () => {
         // @ts-expect-error - Testing invalid argument
         await sql.listen("test", "not a function");
-        expect.unreachable("should have thrown");
-      } catch (e) {
-        expect(e).toBeInstanceOf(Error);
-      }
+      }).toThrow();
 
-      try {
+      expect(async () => {
         // @ts-expect-error - Testing invalid argument
         await sql.listen("test", null);
-        expect.unreachable("should have thrown");
-      } catch (e) {
-        expect(e).toBeInstanceOf(Error);
-      }
+      }).toThrow();
     });
   });
 } else {

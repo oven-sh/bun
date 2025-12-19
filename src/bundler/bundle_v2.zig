@@ -1907,11 +1907,29 @@ pub const BundleV2 = struct {
             if (config.mangle_props.hasPattern()) {
                 bun.jsc.initialize(false);
                 const pattern = bun.String.borrowUTF8(config.mangle_props.props.list.items);
-                transpiler.options.mangle_props = bun.jsc.RegularExpression.init(pattern, .none) catch null;
+                transpiler.options.mangle_props = bun.jsc.RegularExpression.init(pattern, .none) catch |err| blk: {
+                    try completion.log.addErrorFmt(
+                        null,
+                        Logger.Loc.Empty,
+                        alloc,
+                        "Invalid mangleProps regex pattern: {s} ({})",
+                        .{ config.mangle_props.props.list.items, err },
+                    );
+                    break :blk null;
+                };
 
                 if (config.mangle_props.reserve.list.items.len > 0) {
                     const reserve_pattern = bun.String.borrowUTF8(config.mangle_props.reserve.list.items);
-                    transpiler.options.reserve_props = bun.jsc.RegularExpression.init(reserve_pattern, .none) catch null;
+                    transpiler.options.reserve_props = bun.jsc.RegularExpression.init(reserve_pattern, .none) catch |err| blk: {
+                        try completion.log.addErrorFmt(
+                            null,
+                            Logger.Loc.Empty,
+                            alloc,
+                            "Invalid reserveProps regex pattern: {s} ({})",
+                            .{ config.mangle_props.reserve.list.items, err },
+                        );
+                        break :blk null;
+                    };
                 }
 
                 transpiler.options.mangle_quoted = config.mangle_props.quoted;

@@ -2924,9 +2924,11 @@ pub fn NewParser_(
                 return false;
             }
 
+            // Create bun.String once for all regex checks
+            const name_str = bun.String.borrowUTF8(name);
+
             // Check if name matches the reserve_props pattern
             if (p.options.reserve_props) |reserve_regex| {
-                const name_str = bun.String.borrowUTF8(name);
                 if (reserve_regex.matches(name_str)) {
                     // Add to reserved set so we don't check again
                     p.reserved_props.put(p.allocator, name, {}) catch {};
@@ -2935,25 +2937,26 @@ pub fn NewParser_(
             }
 
             // Check if name matches the mangle_props pattern
-            const name_str = bun.String.borrowUTF8(name);
             return mangle_regex.matches(name_str);
         }
 
         /// Get or create a symbol for a mangled property name.
         /// The symbol is stored in mangled_props map for later use during linking.
         pub fn symbolForMangledProp(p: *P, name: []const u8) !Ref {
-            // Check if we already have a symbol for this property
-            if (p.mangled_props.get(name)) |ref| {
-                // Increment use count estimate
+            // Get or create a symbol for this property
+            const gop = try p.mangled_props.getOrPut(p.allocator, name);
+            const ref = if (gop.found_existing)
+                gop.value_ptr.*
+            else blk: {
+                const new_ref = try p.newSymbol(.mangled_prop, name);
+                gop.value_ptr.* = new_ref;
+                break :blk new_ref;
+            };
+
+            // Only increment use count if not in dead code path
+            if (!p.is_control_flow_dead) {
                 p.symbols.items[ref.innerIndex()].use_count_estimate += 1;
-                return ref;
             }
-
-            // Create a new symbol for the mangled property
-            const ref = try p.newSymbol(.mangled_prop, name);
-
-            // Store in mangled_props map
-            try p.mangled_props.put(p.allocator, name, ref);
 
             return ref;
         }

@@ -497,13 +497,37 @@ pub const JSBundler = struct {
                         }
                     }
                 } else if (mangle_props.isObject()) {
-                    if (try mangle_props.getOptional(globalThis, "props", ZigString.Slice)) |props_slice| {
-                        defer props_slice.deinit();
-                        try this.mangle_props.props.appendSliceExact(props_slice.slice());
+                    // Handle props field - can be string or RegExp
+                    if (try mangle_props.getTruthy(globalThis, "props")) |props_value| {
+                        if (props_value.isString()) {
+                            var slice = try props_value.toSliceOrNull(globalThis);
+                            defer slice.deinit();
+                            try this.mangle_props.props.appendSliceExact(slice.slice());
+                        } else if (props_value.isRegExp()) {
+                            if (try props_value.getTruthyComptime(globalThis, "source")) |source_value| {
+                                if (source_value.isString()) {
+                                    var slice = try source_value.toSliceOrNull(globalThis);
+                                    defer slice.deinit();
+                                    try this.mangle_props.props.appendSliceExact(slice.slice());
+                                }
+                            }
+                        }
                     }
-                    if (try mangle_props.getOptional(globalThis, "reserve", ZigString.Slice)) |reserve_slice| {
-                        defer reserve_slice.deinit();
-                        try this.mangle_props.reserve.appendSliceExact(reserve_slice.slice());
+                    // Handle reserve field - can be string or RegExp
+                    if (try mangle_props.getTruthy(globalThis, "reserve")) |reserve_value| {
+                        if (reserve_value.isString()) {
+                            var slice = try reserve_value.toSliceOrNull(globalThis);
+                            defer slice.deinit();
+                            try this.mangle_props.reserve.appendSliceExact(slice.slice());
+                        } else if (reserve_value.isRegExp()) {
+                            if (try reserve_value.getTruthyComptime(globalThis, "source")) |source_value| {
+                                if (source_value.isString()) {
+                                    var slice = try source_value.toSliceOrNull(globalThis);
+                                    defer slice.deinit();
+                                    try this.mangle_props.reserve.appendSliceExact(slice.slice());
+                                }
+                            }
+                        }
                     }
                     if (try mangle_props.getBooleanLoose(globalThis, "quoted")) |quoted| {
                         this.mangle_props.quoted = quoted;

@@ -929,9 +929,33 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         ctx.bundler_options.keep_names = args.flag("--keep-names");
 
         if (args.option("--mangle-props")) |mangle_props| {
+            // Validate regex pattern at parse time
+            _ = RegularExpression.init(bun.String.fromBytes(mangle_props), RegularExpression.Flags.none) catch {
+                Output.prettyErrorln(
+                    "<r><red>error<r>: --mangle-props expects a valid regular expression but received {f}",
+                    .{
+                        bun.fmt.QuotedFormatter{
+                            .text = mangle_props,
+                        },
+                    },
+                );
+                Global.exit(1);
+            };
             ctx.bundler_options.mangle_props = mangle_props;
         }
         if (args.option("--reserve-props")) |reserve_props| {
+            // Validate regex pattern at parse time
+            _ = RegularExpression.init(bun.String.fromBytes(reserve_props), RegularExpression.Flags.none) catch {
+                Output.prettyErrorln(
+                    "<r><red>error<r>: --reserve-props expects a valid regular expression but received {f}",
+                    .{
+                        bun.fmt.QuotedFormatter{
+                            .text = reserve_props,
+                        },
+                    },
+                );
+                Global.exit(1);
+            };
             ctx.bundler_options.reserve_props = reserve_props;
         }
         ctx.bundler_options.mangle_quoted = args.flag("--mangle-quoted");

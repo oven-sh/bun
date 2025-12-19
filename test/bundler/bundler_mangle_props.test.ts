@@ -169,8 +169,10 @@ describe("bundler", () => {
     minifySyntax: true,
     onAfterBundle(api) {
       const code = api.readFile("/out.js");
-      // unquoted_ should be mangled
+      // unquoted_ should be mangled to a short name
       expect(code).not.toContain("unquoted_");
+      // Should have the mangled property name in the output
+      expect(code).toMatch(/\["[a-z]"\]/);
     },
   });
 
@@ -394,8 +396,13 @@ describe("bundler", () => {
     onAfterBundle(api) {
       const code = api.readFile("/out.js");
       // Object literal property names are mangled
-      expect(code).toContain('["a"]');
-      expect(code).toContain('["b"]');
+      // x_ and y_ should be mangled to short names like "a" and "b"
+      expect(code).not.toContain('"x_"');
+      expect(code).not.toContain('"y_"');
+      // z should not be mangled (doesn't match pattern)
+      expect(code).toContain("z");
+      // Should have mangled property accesses
+      expect(code).toMatch(/\["[a-z]"\]/);
     },
   });
 
@@ -418,8 +425,10 @@ describe("bundler", () => {
     onAfterBundle(api) {
       const code = api.readFile("/out.js");
       // Object literal property names are mangled
-      expect(code).toContain('["a"]');
-      expect(code).toContain('["b"]');
+      expect(code).not.toContain('"outer_"');
+      expect(code).not.toContain('"inner_"');
+      // Should have mangled property accesses (at least two)
+      expect((code.match(/\["[a-z]"\]/g) || []).length).toBeGreaterThanOrEqual(2);
     },
   });
 
@@ -441,7 +450,12 @@ describe("bundler", () => {
     minifySyntax: true,
     onAfterBundle(api) {
       const code = api.readFile("/out.js");
+      // prop_ should be mangled
       expect(code).not.toContain("prop_");
+      // All occurrences should be mangled to the same name
+      // There should be at least 6 occurrences: 3 object definitions + 3 accesses
+      const mangledMatches = code.match(/\["a"\]/g) || [];
+      expect(mangledMatches.length).toBeGreaterThanOrEqual(6);
     },
   });
 

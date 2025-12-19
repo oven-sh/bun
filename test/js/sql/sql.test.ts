@@ -12342,5 +12342,29 @@ CREATE TABLE ${table_name} (
         });
       });
     }); // Close "Misc" describe
+    test("Issue #25505: empty integer array stored as {} causes 'Failed to read data'", async () => {
+      const db = postgres(options);
+      const tableName = `test_${randomUUIDv7("hex").replaceAll("-", "")}`;
+
+      try {
+        await db`CREATE TEMPORARY TABLE ${db(tableName)} (id SERIAL PRIMARY KEY, numbers INTEGER[])`;
+
+        // Inserting using the SQL array constructor triggers the "Failed to read data" error on SELECT.
+        await db`INSERT INTO ${db(tableName)} (numbers) VALUES (ARRAY[]::integer[])`;
+
+        // // Read back - this typically succeeds on the first try
+        const result1 = await db`SELECT * FROM ${db(tableName)}`;
+        expect(result1).toBeArray();
+        expect(result1[0].numbers).toEqual([]);
+
+        // Second read to trigger connection reuse issue
+        // This is where it fails with ERR_POSTGRES_INVALID_BINARY_DATA
+        const result2 = await db`SELECT * FROM ${db(tableName)}`;
+        expect(result2).toBeArray();
+        expect(result2[0].numbers).toEqual([]);
+      } finally {
+        await db.end();
+      }
+    });
   }); // Close "PostgreSQL tests" describe
 } // Close if (isDockerEnabled())

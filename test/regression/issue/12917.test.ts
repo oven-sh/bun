@@ -1,5 +1,5 @@
 import { spawn } from "bun";
-import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { readdir, rm } from "fs/promises";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
@@ -16,10 +16,6 @@ import { join } from "path";
 
 // Skip on Windows as the fix is specific to POSIX symlink handling
 describe.skipIf(isWindows)("parallel bun install bin linking", () => {
-  beforeAll(() => {
-    setDefaultTimeout(1000 * 60 * 5);
-  });
-
   test("multiple parallel installs with same bin should not fail with EEXIST", async () => {
     // Create 5 separate project directories that all depend on the same package with a bin
     const numParallelInstalls = 5;

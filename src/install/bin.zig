@@ -865,7 +865,7 @@ pub const Bin = extern struct {
                 counter,
             }) catch {
                 // Fallback to non-atomic method if buffer is too small (extremely unlikely)
-                std.fs.deleteTreeAbsolute(abs_dest) catch {};
+                _ = bun.sys.unlink(abs_dest);
                 bun.sys.symlinkRunningExecutable(rel_target, abs_dest).unwrap() catch |err| {
                     this.err = err;
                 };
@@ -874,15 +874,14 @@ pub const Bin = extern struct {
 
             // Create temporary symlink
             switch (bun.sys.symlinkRunningExecutable(rel_target, temp_path)) {
-                .err => |symlink_err| {
+                .err => |_| {
                     // If temp symlink creation fails (e.g., disk full), fall back to non-atomic method
-                    std.fs.deleteTreeAbsolute(abs_dest) catch {};
+                    _ = bun.sys.unlink(abs_dest);
                     bun.sys.symlinkRunningExecutable(rel_target, abs_dest).unwrap() catch |err| {
                         this.err = err;
                     };
                     // Clean up temp file if it somehow exists
                     _ = bun.sys.unlink(temp_path);
-                    _ = symlink_err; // suppress unused variable warning
                     return;
                 },
                 .result => {},

@@ -1343,11 +1343,124 @@ interface ImportMeta {
    */
   main: boolean;
 
+  /**
+   * Import multiple modules using glob patterns.
+   * Inspired by [Vite's `import.meta.glob`](https://vite.dev/guide/features.html#glob-import).
+   *
+   * @param pattern - A glob pattern or array of glob patterns to match files
+   * @param options - Options for how imports are handled
+   * @returns An object mapping file paths to dynamic import functions
+   *
+   * @example
+   * const modules = import.meta.glob('./src/*.ts')
+   * const module = await modules['./src/foo.ts']()
+   *
+   * // equivalent to
+   * const modules = {
+   *   './src/foo.ts': () => import('./src/foo.ts'),
+   *   './src/bar.ts': () => import('./src/bar.ts'),
+   * }
+   * const module = await modules['./src/foo.ts']()
+   */
+  glob<Eager extends boolean = false, TModule = unknown>(
+    pattern: string | string[],
+    options?: ImportMetaGlobOptions<Eager>,
+  ): Eager extends true ? Record<string, TModule> : Record<string, () => Promise<TModule>>;
+  glob<TModule = unknown>(
+    pattern: string | string[],
+    options?: ImportMetaGlobOptions<false>,
+  ): Record<string, () => Promise<TModule>>;
+  glob<TModule = unknown>(pattern: string | string[], options?: ImportMetaGlobOptions<true>): Record<string, TModule>;
+
   /** Alias of `import.meta.dir`. Exists for Node.js compatibility */
   dirname: string;
 
   /** Alias of `import.meta.path`. Exists for Node.js compatibility */
   filename: string;
+}
+
+interface ImportMetaGlobOptions<Eager extends boolean = false> {
+  // todo:
+  // /**
+  //  * If true, imports all modules eagerly as if they were top level imports.
+  //  * If false (default), returns functions that import modules lazily with dynamic imports.
+  //  *
+  //  * @example
+  //  * const eager = import.meta.glob('./src/*.ts', { eager: true })
+  //  * const normal = import.meta.glob('./src/*.ts', { eager: false })
+  //  *
+  //  * // equivalent to
+  //  * import * as __modules_foo from './src/foo.ts'
+  //  * import * as __modules_bar from './src/bar.ts'
+  //  *
+  //  * const eager = {
+  //  *   './src/foo.ts': __modules_foo,
+  //  *   './src/bar.ts': __modules_bar,
+  //  * }
+  //  * const normal = {
+  //  *   './src/foo.ts': () => import('./src/foo.ts'),
+  //  *   './src/bar.ts': () => import('./src/bar.ts'),
+  //  * }
+  //  */
+  // eager?: Eager;
+  /** Right now Bun doesn't support eager mode */
+  eager?: false;
+  /**
+   * Specify a named export to import from matched modules.
+   * If not specified, imports the entire module.
+   *
+   * @example
+   * const modules = import.meta.glob('./src/*.ts', { import: 'default' })
+   *
+   * // equivalent to
+   * const modules = {
+   *   './src/bar.ts': () => import('./src/bar.ts').then((m) => m.default),
+   *   './src/foo.ts': () => import('./src/foo.ts').then((m) => m.default),
+   * }
+   */
+  import?: "default" | (string & {});
+  /**
+   * Add a query string to the end of the "generated" dynamic import.
+   *
+   * @example
+   * const modules = import.meta.glob('./assets/*.txt', { query: '?something' })
+   *
+   * // equivalent to
+   * const modules = {
+   *   './assets/file.txt': () => import('./assets/file.txt?something'),
+   * }
+   */
+  query?: string;
+  /**
+   * Import attributes to pass to the import statement.
+   * This is like the standard way to specify import options to a normal dynamic import.
+   *
+   * @example
+   * const modules = import.meta.glob('./assets/*.txt', { with: { type: 'text' } })
+   *
+   * // equivalent to
+   * const modules = {
+   *   './assets/file.txt': () => import('./assets/file.txt', { with: { type: 'text' } }),
+   * }
+   */
+  with?: ImportAttributes;
+  /**
+   * The base path to prepend to the imports.
+   * Basically changing the "cwd" of the directory to scan.
+   *
+   * @example
+   * const modules = import.meta.glob('./*.txt', { base: '../public' })
+   *
+   * // equivalent to
+   * const modules = {
+   *   './file.txt': () => import('../public/file.txt'),
+   * }
+   */
+  base?: string;
+}
+
+interface ImportAttributes {
+  type: "css" | "file" | "json" | "jsonc" | "toml" | "yaml" | "txt" | "text" | "html" | (string & {});
 }
 
 /**

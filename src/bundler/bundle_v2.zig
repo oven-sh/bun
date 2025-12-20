@@ -2465,7 +2465,16 @@ pub const BundleV2 = struct {
                         existing.value_ptr.* = source_index.get();
                         out_source_index = source_index;
                         this.graph.ast.append(this.allocator(), JSAst.empty) catch unreachable;
-                        const loader = path.loader(&this.transpiler.options.loaders) orelse options.Loader.file;
+
+                        const loader = blk: {
+                            if (this.graph.ast.len > resolve.import_record.importer_source_index) {
+                                const record: *ImportRecord = &this.graph.ast.items(.import_records)[resolve.import_record.importer_source_index].slice()[resolve.import_record.import_record_index];
+                                if (record.loader) |override_loader| {
+                                    break :blk override_loader;
+                                }
+                            }
+                            break :blk path.loader(&this.transpiler.options.loaders) orelse options.Loader.file;
+                        };
 
                         this.graph.input_files.append(this.allocator(), .{
                             .source = .{

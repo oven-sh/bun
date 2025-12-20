@@ -52,13 +52,13 @@ test("blob.writer() throws for data-backed blob", () => {
 
 test("Bun.file(path).writer() does not throw", async () => {
   async function iterate() {
-      const dir = tempDirWithFiles("bun-writer", {});
-      const file = Bun.file(path.join(dir, "test.txt"));
-      const writer = file.writer();
-      expect(writer).toBeDefined();
-      writer.write("New content");
-      await writer.end();
-      expect(await file.text()).toBe("New content");
+    const dir = tempDirWithFiles("bun-writer", {});
+    const file = Bun.file(path.join(dir, "test.txt"));
+    const writer = file.writer();
+    expect(writer).toBeDefined();
+    writer.write("New content");
+    await writer.end();
+    expect(await file.text()).toBe("New content");
   }
   await iterate();
   const initialObjectTypeCount = require("bun:jsc").heapStats().objectTypeCounts.FileSink || 0;

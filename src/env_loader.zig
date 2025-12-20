@@ -189,22 +189,23 @@ pub const Loader = struct {
                     return http_proxy;
                 }
 
-                var no_proxy_list = std.mem.splitScalar(u8, no_proxy_text, ',');
-                var next = no_proxy_list.next();
-                while (next != null) {
-                    var host = strings.trim(next.?, &strings.whitespace_chars);
+                var no_proxy_iter = std.mem.splitScalar(u8, no_proxy_text, ',');
+                while (no_proxy_iter.next()) |no_proxy_item| {
+                    var host = strings.trim(no_proxy_item, &strings.whitespace_chars);
+                    if (host.len == 0) {
+                        continue;
+                    }
                     if (strings.eql(host, "*")) {
                         return null;
                     }
                     //strips .
-                    if (host[0] == '.') {
+                    if (strings.startsWithChar(host, '.')) {
                         host = host[1..];
                     }
                     //hostname ends with suffix
                     if (strings.endsWith(hostname.?, host)) {
                         return null;
                     }
-                    next = no_proxy_list.next();
                 }
             }
         }

@@ -420,8 +420,6 @@ pub const SendQueue = struct {
     internal_msg_queue: node_cluster_binding.InternalMsgHolder = .{},
     incoming: bun.ByteList = .{}, // Maybe we should use StreamBuffer here as well
     incoming_fd: ?bun.FileDescriptor = null,
-    /// Counter for processed messages; used to trigger periodic memory reclamation
-    messages_processed: u32 = 0,
 
     socket: SocketUnion,
     owner: SendQueueOwner,
@@ -793,30 +791,6 @@ pub const SendQueue = struct {
         };
     }
 
-    /// Reclaim excess memory from buffers. Called periodically after processing messages.
-    fn reclaimMemory(this: *SendQueue) void {
-        // Shrink the incoming buffer if it has excess capacity.
-        // Only reclaim if capacity exceeds 2MB to avoid frequent reallocations.
-        const shrink_threshold = 2 * 1024 * 1024;
-        const min_capacity = 4096;
-
-        if (this.incoming.cap > shrink_threshold and this.incoming.len < this.incoming.cap / 4) {
-            const new_cap = @max(this.incoming.len * 2, min_capacity);
-            if (new_cap < this.incoming.cap) {
-                this.incoming.shrinkAndFree(bun.default_allocator, new_cap);
-            }
-        }
-
-        // Shrink the send queue if it has excess capacity (2MB worth of SendHandle entries)
-        const queue_shrink_threshold = shrink_threshold / @sizeOf(SendHandle);
-        if (this.queue.capacity > queue_shrink_threshold and this.queue.items.len < this.queue.capacity / 4) {
-            const new_cap = @max(this.queue.items.len * 2, 16);
-            if (new_cap < this.queue.capacity) {
-                this.queue.shrinkAndFree(new_cap);
-            }
-        }
-    }
-
     /// starts a write request. on posix, this always calls _onWriteComplete immediately. on windows, it may
     /// call _onWriteComplete later.
     fn _write(this: *SendQueue, data: []const u8, fd: ?bun.FileDescriptor) void {
@@ -1079,7 +1053,6 @@ fn handleIPCMessage(send_queue: *SendQueue, message: DecodedIPCMessage, globalTh
                     _ = globalThis.takeException(e);
                     break :handle_message;
                 };
-                defer cmd_str.deref();
                 if (cmd_str.eqlComptime("NODE_HANDLE")) {
                     internal_command = .{ .handle = msg_data };
                 } else if (cmd_str.eqlComptime("NODE_HANDLE_ACK")) {
@@ -1162,13 +1135,11 @@ fn onData2(send_queue: *SendQueue, all_data: []const u8) void {
     // Decode the message with just the temporary buffer, and if that
     // fails (not enough bytes) then we allocate to .ipc_buffer
     if (send_queue.incoming.len == 0) {
-        var messages_in_batch: u32 = 0;
         while (true) {
             const result = decodeIPCMessage(send_queue.mode, data, globalThis) catch |e| switch (e) {
                 error.NotEnoughBytes => {
                     _ = bun.handleOom(send_queue.incoming.write(bun.default_allocator, data));
                     log("hit NotEnoughBytes", .{});
-                    send_queue.messages_processed +%= messages_in_batch;
                     return;
                 },
                 error.InvalidFormat, error.JSError, error.JSTerminated => {
@@ -1183,16 +1154,10 @@ fn onData2(send_queue: *SendQueue, all_data: []const u8) void {
             };
 
             handleIPCMessage(send_queue, result.message, globalThis);
-            messages_in_batch += 1;
 
             if (result.bytes_consumed < data.len) {
                 data = data[result.bytes_consumed..];
             } else {
-                send_queue.messages_processed +%= messages_in_batch;
-                // Periodically reclaim memory (every 256 messages)
-                if (send_queue.messages_processed & 0xFF == 0) {
-                    send_queue.reclaimMemory();
-                }
                 return;
             }
         }
@@ -1201,7 +1166,6 @@ fn onData2(send_queue: *SendQueue, all_data: []const u8) void {
     _ = bun.handleOom(send_queue.incoming.write(bun.default_allocator, data));
 
     var slice = send_queue.incoming.slice();
-    var messages_in_batch: u32 = 0;
     while (true) {
         const result = decodeIPCMessage(send_queue.mode, slice, globalThis) catch |e| switch (e) {
             error.NotEnoughBytes => {
@@ -1209,7 +1173,6 @@ fn onData2(send_queue: *SendQueue, all_data: []const u8) void {
                 bun.copy(u8, send_queue.incoming.ptr[0..slice.len], slice);
                 send_queue.incoming.len = @truncate(slice.len);
                 log("hit NotEnoughBytes2", .{});
-                send_queue.messages_processed +%= messages_in_batch;
                 return;
             },
             error.InvalidFormat, error.JSError, error.JSTerminated => {
@@ -1224,18 +1187,12 @@ fn onData2(send_queue: *SendQueue, all_data: []const u8) void {
         };
 
         handleIPCMessage(send_queue, result.message, globalThis);
-        messages_in_batch += 1;
 
         if (result.bytes_consumed < slice.len) {
             slice = slice[result.bytes_consumed..];
         } else {
             // clear the buffer
             send_queue.incoming.len = 0;
-            send_queue.messages_processed +%= messages_in_batch;
-            // Periodically reclaim memory (every 256 messages)
-            if (send_queue.messages_processed & 0xFF == 0) {
-                send_queue.reclaimMemory();
-            }
             return;
         }
     }
@@ -1370,7 +1327,6 @@ pub const IPCHandlers = struct {
             bun.assert(send_queue.incoming.len <= send_queue.incoming.cap);
             bun.assert(bun.isSliceInBuffer(buffer, send_queue.incoming.allocatedSlice()));
 
-            var messages_in_batch: u32 = 0;
             while (true) {
                 const result = decodeIPCMessage(send_queue.mode, slice, globalThis) catch |e| switch (e) {
                     error.NotEnoughBytes => {
@@ -1378,7 +1334,6 @@ pub const IPCHandlers = struct {
                         bun.copy(u8, send_queue.incoming.ptr[0..slice.len], slice);
                         send_queue.incoming.len = @truncate(slice.len);
                         log("hit NotEnoughBytes3", .{});
-                        send_queue.messages_processed +%= messages_in_batch;
                         return;
                     },
                     error.InvalidFormat, error.JSError, error.JSTerminated => {
@@ -1393,18 +1348,12 @@ pub const IPCHandlers = struct {
                 };
 
                 handleIPCMessage(send_queue, result.message, globalThis);
-                messages_in_batch += 1;
 
                 if (result.bytes_consumed < slice.len) {
                     slice = slice[result.bytes_consumed..];
                 } else {
                     // clear the buffer
                     send_queue.incoming.len = 0;
-                    send_queue.messages_processed +%= messages_in_batch;
-                    // Periodically reclaim memory (every 256 messages)
-                    if (send_queue.messages_processed & 0xFF == 0) {
-                        send_queue.reclaimMemory();
-                    }
                     return;
                 }
             }

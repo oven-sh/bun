@@ -1,8 +1,5 @@
 import { afterAll, beforeAll, expect, it } from "bun:test";
-import fs from "fs";
-import { bunEnv, bunExe, gc } from "harness";
-import { tmpdir } from "os";
-import path from "path";
+import { bunEnv, bunExe } from "harness";
 
 let proxy, auth_proxy, server;
 beforeAll(() => {
@@ -195,4 +192,27 @@ it.each([
   } finally {
     fs.unlinkSync(path);
   }
+});
+
+it.each([
+  // Empty entries in NO_PROXY should not cause out-of-bounds access
+  ["localhost, , example.com"],
+  [",localhost,example.com"],
+  ["localhost,example.com,"],
+  ["  ,  ,  "],
+  [",,,"],
+  [". , .. , ..."],
+])("NO_PROXY with empty entries does not crash: %s", async no_proxy => {
+  // We just need to verify parsing NO_PROXY doesn't crash.
+  // The fetch target doesn't matter - NO_PROXY parsing happens before the connection.
+  const { exitCode } = Bun.spawnSync({
+    cmd: [bunExe(), "-e", `fetch("http://localhost:1").catch(() => {})`],
+    env: {
+      ...bunEnv,
+      http_proxy: "http://127.0.0.1:1",
+      NO_PROXY: no_proxy,
+    },
+  });
+
+  expect(exitCode).toBe(0);
 });

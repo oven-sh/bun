@@ -1346,7 +1346,7 @@ pub fn spawnProcessPosix(
                             else => "spawn_stdio_generic",
                         };
 
-                        const fd = bun.sys.memfd_create(label, 0).unwrap() catch break :use_memfd;
+                        const fd = bun.sys.memfd_create(label, .cross_process).unwrap() catch break :use_memfd;
 
                         to_close_on_error.append(fd) catch {};
                         to_set_cloexec.append(fd) catch {};

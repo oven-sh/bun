@@ -201,6 +201,9 @@ pub const Loader = struct {
                     //strips .
                     if (strings.startsWithChar(host, '.')) {
                         host = host[1..];
+                        if (host.len == 0) {
+                            continue;
+                        }
                     }
                     //hostname ends with suffix
                     if (strings.endsWith(hostname.?, host)) {

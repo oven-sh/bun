@@ -1,5 +1,8 @@
 import { afterAll, beforeAll, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import fs from "fs";
+import { bunEnv, bunExe, gc } from "harness";
+import { tmpdir } from "os";
+import path from "path";
 
 let proxy, auth_proxy, server;
 beforeAll(() => {

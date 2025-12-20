@@ -13,6 +13,24 @@ const dir = tempDirWithFiles("sql-test", {
 function rel(filename: string) {
   return path.join(dir, filename);
 }
+
+function waitForFinalization(timeout: number = 5000) {
+  let finalized = false;
+  const registry = new FinalizationRegistry(() => {
+    finalized = true;
+  });
+  return {
+    register: (obj: object) => registry.register(obj, undefined),
+    waitForGC: async () => {
+      const start = Date.now();
+      while (!finalized && Date.now() - start < timeout) {
+        Bun.gc(true);
+        await Bun.sleep(50);
+      }
+      return finalized;
+    },
+  };
+}
 // Use docker-compose infrastructure
 import * as dockerCompose from "../../docker/index.ts";
 import { UnixDomainSocketProxy } from "../../unix-domain-socket-proxy.ts";
@@ -12342,5 +12360,81 @@ CREATE TABLE ${table_name} (
         });
       });
     }); // Close "Misc" describe
+
+    describe("orphan connection reuse", () => {
+      test("reuses orphaned connection with matching config", async () => {
+        let sql1: ReturnType<typeof postgres> | null = postgres({ ...options, idle_timeout: 60 });
+        const result1 = await sql1`SELECT pg_backend_pid() as pid`;
+        const pid1 = result1[0].pid;
+
+        sql1 = null;
+        for (let i = 0; i < 5; i++) {
+          Bun.gc(true);
+          await Bun.sleep(50);
+        }
+
+        const sql2 = postgres({ ...options, idle_timeout: 60 });
+        const result2 = await sql2`SELECT pg_backend_pid() as pid`;
+        expect(result2[0].pid).toBe(pid1);
+        await sql2.close();
+      });
+
+      test("different config creates new connection", async () => {
+        const sql1 = postgres({ ...options, idle_timeout: 60 });
+        const result1 = await sql1`SELECT pg_backend_pid() as pid`;
+        const pid1 = result1[0].pid;
+
+        const sql2 = postgres({ ...options, database: "postgres", idle_timeout: 60 });
+        const result2 = await sql2`SELECT pg_backend_pid() as pid`;
+        expect(result2[0].pid).not.toBe(pid1);
+
+        await sql1.close();
+        await sql2.close();
+      });
+
+      test("orphaned connection remains functional", async () => {
+        let sql: ReturnType<typeof postgres> | null = postgres({ ...options, idle_timeout: 60 });
+        const result1 = await sql`SELECT 1 as x`;
+        expect(result1[0].x).toBe(1);
+
+        sql = null;
+        Bun.gc(true);
+        await Bun.sleep(100);
+
+        const sql2 = postgres({ ...options, idle_timeout: 60 });
+        const result2 = await sql2`SELECT 2 as x`;
+        expect(result2[0].x).toBe(2);
+        await sql2.close();
+      });
+
+      test("explicitly closed connection is not reused", async () => {
+        const sql1 = postgres({ ...options, idle_timeout: 60 });
+        const result1 = await sql1`SELECT pg_backend_pid() as pid`;
+        const pid1 = result1[0].pid;
+
+        await sql1.close();
+        Bun.gc(true);
+        await Bun.sleep(100);
+
+        const sql2 = postgres({ ...options, idle_timeout: 60 });
+        const result2 = await sql2`SELECT pg_backend_pid() as pid`;
+        expect(result2[0].pid).not.toBe(pid1);
+        await sql2.close();
+      });
+
+      test("closed connection is garbage collected", async () => {
+        const finalizer = waitForFinalization(5000);
+
+        await (async () => {
+          const sql = postgres({ ...options, idle_timeout: 60 });
+          await sql`SELECT 1`;
+          finalizer.register(sql);
+          await sql.close();
+        })();
+
+        const wasFinalized = await finalizer.waitForGC();
+        expect(wasFinalized).toBe(true);
+      });
+    });
   }); // Close "PostgreSQL tests" describe
 } // Close if (isDockerEnabled())

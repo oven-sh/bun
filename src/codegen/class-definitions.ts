@@ -212,6 +212,18 @@ export class ClassDefinition {
    */
   memoryCost?: boolean;
   hasPendingActivity?: boolean;
+  /**
+   * If true, enables orphan tracking for connection reuse (e.g., hot reload).
+   * When JS references are gone but the connection is still alive, it's registered
+   * as an orphan and kept alive for potential reuse by new connections with matching config.
+   *
+   * A Zig callback `onCheckOrphanStatus(ptr) -> bool` is called during GC to determine
+   * if the object should be kept alive. Returns true if connected (keep for reuse),
+   * false if disconnected (allow GC).
+   *
+   * Requires hasPendingActivity to be true.
+   */
+  trackOrphans?: boolean;
   isEventEmitter?: boolean;
   supportsObjectCreate?: boolean;
 

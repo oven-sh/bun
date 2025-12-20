@@ -1395,16 +1395,40 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
   var weakInit = ``;
   if (obj.hasPendingActivity) {
     weakInit = `m_weakThis = JSC::Weak<${name}>(this, getOwner());`;
-    weakOwner = `
-    JSC::Weak<${name}> m_weakThis;
 
+    // Generate different isReachableFromOpaqueRoots depending on trackOrphans
+    const isReachableBody = obj.trackOrphans
+      ? `
+              auto* controller = JSC::jsCast<${name}*>(handle.slot()->asCell());
+              bool hasRoot = visitor.containsOpaqueRoot(context);
 
-    static bool hasPendingActivity(void* ctx);
+              // If JS still references this object, keep it alive (not an orphan)
+              if (hasRoot) {
+                  return true;
+              }
 
-    class Owner final : public JSC::WeakHandleOwner {
-      public:
-          bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void* context, JSC::AbstractSlotVisitor& visitor, ASCIILiteral* reason) final
-          {
+              // No JS references - check if we should keep alive for orphan reuse.
+              // This must be called BEFORE hasPendingActivity because connected
+              // connections report hasPendingActivity=true (status != disconnected).
+              // Returns true if connection is still connected and registered as orphan.
+              if (${name}::onCheckOrphanStatus(controller->wrapped())) {
+                  if (reason) [[unlikely]] {
+                    *reason = "orphaned but connected, kept for reuse"_s;
+                  }
+                  return true;
+              }
+
+              // If there's pending activity (like pending queries), keep alive
+              if (${name}::hasPendingActivity(controller->wrapped())) {
+                  if (reason) [[unlikely]] {
+                    *reason = "has pending activity"_s;
+                  }
+                  return true;
+              }
+
+              // No JS references, not connected, no pending activity - allow GC
+              return false;`
+      : `
               auto* controller = JSC::jsCast<${name}*>(handle.slot()->asCell());
               if (${name}::hasPendingActivity(controller->wrapped())) {
                   if (reason) [[unlikely]] {
@@ -1413,7 +1437,20 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
                   return true;
               }
 
-              return visitor.containsOpaqueRoot(context);
+              return visitor.containsOpaqueRoot(context);`;
+
+    const orphanStatusDecl = obj.trackOrphans ? `\n    static bool onCheckOrphanStatus(void* ctx);` : "";
+
+    weakOwner = `
+    JSC::Weak<${name}> m_weakThis;
+
+
+    static bool hasPendingActivity(void* ctx);${orphanStatusDecl}
+
+    class Owner final : public JSC::WeakHandleOwner {
+      public:
+          bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void* context, JSC::AbstractSlotVisitor& visitor, ASCIILiteral* reason) final
+          {${isReachableBody}
           }
           void finalize(JSC::Handle<JSC::Unknown>, void* context) final {}
       };
@@ -1675,6 +1712,17 @@ ${renderCallbacksCppImpl(typeName, callbacks)}
     output += `
     bool ${name}::hasPendingActivity(void* ctx) {
         return ${symbolName(typeName, "hasPendingActivity")}(ctx);
+    }
+`;
+  }
+
+  if (obj.trackOrphans) {
+    externs +=
+      `extern JSC_CALLCONV bool JSC_HOST_CALL_ATTRIBUTES ${symbolName(typeName, "onCheckOrphanStatus")}(void* ptr);` +
+      "\n";
+    output += `
+    bool ${name}::onCheckOrphanStatus(void* ctx) {
+        return ${symbolName(typeName, "onCheckOrphanStatus")}(ctx);
     }
 `;
   }
@@ -2031,6 +2079,7 @@ function generateZig(
     values = [],
     valuesArray = false,
     hasPendingActivity = false,
+    trackOrphans = false,
     structuredClone = false,
     getInternalProperties = false,
     callbacks = {},
@@ -2040,6 +2089,10 @@ function generateZig(
 
   if (hasPendingActivity) {
     exports.set("hasPendingActivity", symbolName(typeName, "hasPendingActivity"));
+  }
+
+  if (trackOrphans) {
+    exports.set("onCheckOrphanStatus", symbolName(typeName, "onCheckOrphanStatus"));
   }
 
   if (getInternalProperties) {
@@ -2171,6 +2224,15 @@ const JavaScriptCoreBindings = struct {
       output += `
         pub fn ${symbolName(typeName, "hasPendingActivity")}(thisValue: *${typeName}) callconv(jsc.conv) bool {
           return @call(bun.callmod_inline, ${typeName}.hasPendingActivity, .{thisValue});
+        }
+      `;
+    }
+
+    if (trackOrphans) {
+      exports.set("onCheckOrphanStatus", symbolName(typeName, "onCheckOrphanStatus"));
+      output += `
+        pub fn ${symbolName(typeName, "onCheckOrphanStatus")}(thisValue: *${typeName}) callconv(jsc.conv) bool {
+          return @call(bun.callmod_inline, ${typeName}.onCheckOrphanStatus, .{thisValue});
         }
       `;
     }

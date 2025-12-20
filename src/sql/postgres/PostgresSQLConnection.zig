@@ -60,6 +60,11 @@ max_lifetime_timer: bun.api.Timer.EventLoopTimer = .{
 },
 auto_flusher: AutoFlusher = .{},
 
+/// For orphan reuse: hash of connection config to match against new connection requests.
+config_hash: u64 = 0,
+/// For orphan reuse: true if registered in orphan registry. Atomic for GC thread safety.
+is_orphaned: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+
 pub const ref = RefCount.ref;
 pub const deref = RefCount.deref;
 
@@ -184,7 +189,7 @@ pub fn setupTLS(this: *PostgresSQLConnection) void {
 
     this.start();
 }
-fn setupMaxLifetimeTimerIfNecessary(this: *PostgresSQLConnection) void {
+pub fn setupMaxLifetimeTimerIfNecessary(this: *PostgresSQLConnection) void {
     if (this.max_lifetime_interval_ms == 0) return;
     if (this.max_lifetime_timer.state == .ACTIVE) return;
 
@@ -235,6 +240,25 @@ fn start(this: *PostgresSQLConnection) void {
 
 pub fn hasPendingActivity(this: *PostgresSQLConnection) bool {
     return this.pending_activity_count.load(.acquire) > 0;
+}
+
+/// Called by GC when no JS references exist. Per Bun's expected behavior, connected
+/// connections are never collected - they're registered as orphans for reuse instead.
+pub fn onCheckOrphanStatus(this: *PostgresSQLConnection) bool {
+    if (this.status == .connected) {
+        if (!this.is_orphaned.load(.acquire)) {
+            debug("Connection orphaned, registering for reuse (hash: {})", .{this.config_hash});
+            this.is_orphaned.store(true, .release);
+            this.vm.rareData().postgresql_context.registerOrphan(this);
+        }
+        return true;
+    }
+
+    if (this.is_orphaned.load(.acquire)) {
+        this.is_orphaned.store(false, .release);
+        this.vm.rareData().postgresql_context.unregisterOrphan(this);
+    }
+    return false;
 }
 
 fn updateHasPendingActivity(this: *PostgresSQLConnection) void {
@@ -692,6 +716,58 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
     const max_lifetime = arguments[13].toInt32();
     const use_unnamed_prepared_statements = arguments[14].asBoolean();
 
+    // Try to reuse an orphaned connection with matching config
+    const config_hash: u64 = brk: {
+        const hostname = hostname_str.toUTF8(bun.default_allocator);
+        defer hostname.deinit();
+        break :brk computeConfigHash(
+            hostname.slice(),
+            port,
+            username,
+            password,
+            database,
+            ssl_mode,
+            path,
+        );
+    };
+
+    if (vm.rareData().postgresql_context.claimOrphan(config_hash)) |orphan| {
+        debug("Reusing orphaned connection (hash: {})", .{config_hash});
+
+        orphan.is_orphaned.store(false, .release);
+
+        // Create new JS wrapper for the existing native connection
+        const js_value = orphan.toJS(globalObject);
+        js_value.ensureStillAlive();
+        orphan.js_value = js_value;
+
+        js.onconnectSetCached(js_value, globalObject, on_connect);
+        js.oncloseSetCached(js_value, globalObject, on_close);
+
+        // Reset timers with new config values
+        orphan.idle_timeout_interval_ms = @intCast(idle_timeout);
+        orphan.connection_timeout_ms = @intCast(connection_timeout);
+        if (orphan.max_lifetime_timer.state == .ACTIVE) {
+            orphan.vm.timer.remove(&orphan.max_lifetime_timer);
+            orphan.max_lifetime_timer.state = .CANCELLED;
+        }
+        orphan.max_lifetime_interval_ms = @intCast(max_lifetime);
+        orphan.setupMaxLifetimeTimerIfNecessary();
+        orphan.resetConnectionTimeout();
+
+        // Clean up resources allocated for this call that we won't use
+        if (options_buf.len > 0) {
+            bun.default_allocator.free(options_buf);
+        }
+        tls_config.deinit();
+        if (tls_ctx) |ctx| {
+            ctx.deinit(true);
+        }
+
+        // Don't call onConnect here - JS handles it after await completes
+        return js_value;
+    }
+
     const ptr: *PostgresSQLConnection = try bun.default_allocator.create(PostgresSQLConnection);
 
     ptr.* = PostgresSQLConnection{
@@ -717,6 +793,9 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
             .use_unnamed_prepared_statements = use_unnamed_prepared_statements,
         },
     };
+
+    // Set the pre-computed config hash
+    ptr.config_hash = config_hash;
 
     {
         const hostname = hostname_str.toUTF8(bun.default_allocator);
@@ -959,6 +1038,13 @@ fn refAndClose(this: *@This(), js_reason: ?jsc.JSValue) void {
 pub fn disconnect(this: *@This()) void {
     this.stopTimers();
     this.unregisterAutoFlusher();
+
+    // If this connection was orphaned, remove it from the registry
+    if (this.is_orphaned.load(.acquire)) {
+        this.is_orphaned.store(false, .release);
+        this.vm.rareData().postgresql_context.unregisterOrphan(this);
+    }
+
     if (this.status == .connected) {
         this.status = .disconnected;
         this.refAndClose(null);
@@ -988,6 +1074,27 @@ pub fn canPipeline(this: *PostgresSQLConnection) bool {
         !this.flags.waiting_to_prepare and // cannot pipeline when waiting prepare
         !this.flags.has_backpressure and // dont make sense to buffer more if we have backpressure
         this.write_buffer.len() < MAX_PIPELINE_SIZE; // buffer is too big need to flush before pipeline more
+}
+
+/// Hash connection config for orphan matching.
+pub fn computeConfigHash(
+    hostname: []const u8,
+    port: i32,
+    username: []const u8,
+    password: []const u8,
+    database: []const u8,
+    ssl_mode: SSLMode,
+    path: []const u8,
+) u64 {
+    var hasher = std.hash.Wyhash.init(0);
+    hasher.update(hostname);
+    hasher.update(std.mem.asBytes(&port));
+    hasher.update(username);
+    hasher.update(password);
+    hasher.update(database);
+    hasher.update(std.mem.asBytes(&@intFromEnum(ssl_mode)));
+    hasher.update(path);
+    return hasher.final();
 }
 
 pub const Writer = struct {

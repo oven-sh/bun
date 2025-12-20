@@ -563,6 +563,7 @@ pub fn deinit(this: *RareData) void {
     }
 
     this.valkey_context.deinit();
+    this.postgresql_context.deinitOrphans();
 }
 
 pub fn websocketDeflate(this: *RareData) *WebSocketDeflate.RareData {

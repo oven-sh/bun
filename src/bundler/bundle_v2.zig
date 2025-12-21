@@ -1836,6 +1836,8 @@ pub const BundleV2 = struct {
             );
             transpiler.options.env.behavior = config.env_behavior;
             transpiler.options.env.prefix = config.env_prefix.slice();
+            // Use the StringSet directly instead of the slice passed through TransformOptions
+            transpiler.options.bundler_feature_flags = &config.features;
             if (config.force_node_env != .unspecified) {
                 transpiler.options.force_node_env = config.force_node_env;
             }
@@ -2045,6 +2047,8 @@ pub const BundleV2 = struct {
                 .{
                     .disable_default_env_files = !compile_options.autoload_dotenv,
                     .disable_autoload_bunfig = !compile_options.autoload_bunfig,
+                    .disable_autoload_tsconfig = !compile_options.autoload_tsconfig,
+                    .disable_autoload_package_json = !compile_options.autoload_package_json,
                 },
             ) catch |err| {
                 return bun.StandaloneModuleGraph.CompileResult.failFmt("{s}", .{@errorName(err)});

@@ -438,7 +438,7 @@ pub const Transpiler = struct {
     }
 
     pub fn deinit(this: *Transpiler) void {
-        this.options.deinit();
+        this.options.deinit(this.allocator);
         this.log.deinit();
         this.resolver.deinit();
         this.fs.deinit();
@@ -806,6 +806,7 @@ pub const Transpiler = struct {
                     .runtime_transpiler_cache = runtime_transpiler_cache,
                     .print_dce_annotations = transpiler.options.emit_dce_annotations,
                     .hmr_ref = ast.wrapper_ref,
+                    .mangled_props = null,
                 },
                 enable_source_map,
             ),
@@ -1113,6 +1114,7 @@ pub const Transpiler = struct {
                 opts.features.minify_identifiers = transpiler.options.minify_identifiers;
                 opts.features.dead_code_elimination = transpiler.options.dead_code_elimination;
                 opts.features.remove_cjs_module_wrapper = this_parse.remove_cjs_module_wrapper;
+                opts.features.bundler_feature_flags = transpiler.options.bundler_feature_flags;
 
                 if (transpiler.macro_context == null) {
                     transpiler.macro_context = js_ast.Macro.MacroContext.init(transpiler);

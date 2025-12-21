@@ -121,6 +121,9 @@ argv: []const []const u8 = &[_][]const u8{},
 
 origin_timer: std.time.Timer = undefined,
 origin_timestamp: u64 = 0,
+/// For fake timers: override performance.now() with a specific value (in nanoseconds)
+/// When null, use the real timer. When set, return this value instead.
+overridden_performance_now: ?u64 = null,
 macro_event_loop: EventLoop = EventLoop{},
 regular_event_loop: EventLoop = EventLoop{},
 event_loop: *EventLoop = undefined,
@@ -1053,7 +1056,9 @@ pub fn initWithModuleGraph(
     vm.transpiler.macro_context = js_ast.Macro.MacroContext.init(&vm.transpiler);
     if (opts.is_main_thread) {
         VMHolder.main_thread_vm = vm;
+        vm.is_main_thread = true;
     }
+    is_smol_mode = opts.smol;
     vm.global = JSGlobalObject.create(
         vm,
         vm.console,

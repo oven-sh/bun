@@ -739,6 +739,9 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
     if (vm.rareData().postgresql_context.claimOrphan(config_hash)) |orphan| {
         debug("Reusing orphaned connection (hash: {})", .{config_hash});
 
+        bun.assert(orphan.status == .connected);
+        bun.assert(orphan.requests.readableLength() == 0);
+
         orphan.is_orphaned.store(false, .release);
 
         // Create new JS wrapper for the existing native connection

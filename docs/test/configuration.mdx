@@ -376,22 +376,15 @@ timeout = 10000
 
 ## Environment Variables
 
-Environment variables for tests should be set using `.env` files or preload scripts. Bun automatically loads `.env` files, or you can set them in a preload script:
+Environment variables for tests should be set using `.env` files. Bun automatically loads `.env` files from your project root. For test-specific variables, create a `.env.test` file:
 
-```ts title="test-setup.ts" icon="/icons/typescript.svg"
-// Set environment variables in a preload script
-process.env.NODE_ENV = "test";
-process.env.DATABASE_URL = "postgresql://localhost:5432/test_db";
-process.env.LOG_LEVEL = "error";
+```ini title=".env.test" icon="settings"
+NODE_ENV=test
+DATABASE_URL=postgresql://localhost:5432/test_db
+LOG_LEVEL=error
 ```
 
-```toml title="bunfig.toml" icon="settings"
-[test]
-preload = ["./test-setup.ts"]
-coverage = true
-```
-
-Alternatively, create a `.env.test` file and load it with `--env-file`:
+Then load it with `--env-file`:
 
 ```bash terminal icon="terminal"
 bun test --env-file=.env.test

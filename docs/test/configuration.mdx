@@ -376,16 +376,25 @@ timeout = 10000
 
 ## Environment Variables
 
-You can also set environment variables in your configuration that affect test behavior:
+Environment variables for tests should be set using `.env` files or preload scripts. Bun automatically loads `.env` files, or you can set them in a preload script:
+
+```ts title="test-setup.ts" icon="/icons/typescript.svg"
+// Set environment variables in a preload script
+process.env.NODE_ENV = "test";
+process.env.DATABASE_URL = "postgresql://localhost:5432/test_db";
+process.env.LOG_LEVEL = "error";
+```
 
 ```toml title="bunfig.toml" icon="settings"
-[env]
-NODE_ENV = "test"
-DATABASE_URL = "postgresql://localhost:5432/test_db"
-LOG_LEVEL = "error"
-
 [test]
+preload = ["./test-setup.ts"]
 coverage = true
+```
+
+Alternatively, create a `.env.test` file and load it with `--env-file`:
+
+```bash terminal icon="terminal"
+bun test --env-file=.env.test
 ```
 
 ## Complete Configuration Example
@@ -397,13 +406,6 @@ Here's a comprehensive example showing all available test configuration options:
 # Install settings inherited by tests
 registry = "https://registry.npmjs.org/"
 exact = true
-
-[env]
-# Environment variables for tests
-NODE_ENV = "test"
-DATABASE_URL = "postgresql://localhost:5432/test_db"
-API_URL = "http://localhost:3001"
-LOG_LEVEL = "error"
 
 [test]
 # Test discovery

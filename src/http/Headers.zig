@@ -83,8 +83,18 @@ pub fn getContentType(this: *const Headers) ?[]const u8 {
     const header_names = header_entries.items(.name);
     const header_values = header_entries.items(.value);
 
-    for (header_names, 0..header_names.len) |name, i| {
-        if (bun.strings.eqlCaseInsensitiveASCII(this.asStr(name), "content-type", true)) {
+    for (header_names, 0..) |name, i| {
+        const name_str = this.asStr(name);
+
+        // Fast path: "content-type" is 12 chars
+        if (name_str.len != 12) continue;
+
+        // Fast path: check first byte (case-insensitive c/C)
+        const first = name_str[0];
+        if (first != 'c' and first != 'C') continue;
+
+        // Slow path: full case-insensitive comparison
+        if (bun.strings.eqlCaseInsensitiveASCII(name_str, "content-type", true)) {
             return this.asStr(header_values[i]);
         }
     }

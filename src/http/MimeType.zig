@@ -130,88 +130,95 @@ pub const Category = enum {
                 after_slash = after_slash[0..semicolon];
             }
 
-            if (strings.eqlComptime(category, "text")) {
-                if (strings.eqlComptime(after_slash, "javascript")) {
-                    return .javascript;
-                }
-
-                if (strings.eqlComptime(after_slash, "css")) {
-                    return .css;
-                }
-
-                if (strings.eqlComptime(after_slash, "html")) {
-                    return .html;
-                }
-
-                if (strings.eqlComptime(after_slash, "json")) {
-                    return .json;
-                }
-
-                return .text;
-            }
-
-            if (strings.eqlComptime(category, "application")) {
-                if (strings.eqlComptime(after_slash, "wasm")) {
-                    return .wasm;
-                }
-
-                if (strings.eqlComptime(after_slash, "javascript")) {
-                    return .javascript;
-                }
-
-                if (strings.eqlComptime(after_slash, "json")) {
-                    return .json;
-                }
-
-                if (strings.eqlComptime(after_slash, "octet-stream")) {
-                    return .other;
-                }
-
-                return .application;
-            }
-
-            if (strings.eqlComptime(category, "image")) {
-                return .image;
-            }
-
-            if (strings.eqlComptime(category, "video")) {
-                return .video;
-            }
-
-            if (strings.eqlComptime(category, "audio")) {
-                return .audio;
-            }
-
-            if (strings.eqlComptime(category, "font")) {
-                return .font;
-            }
-
-            if (strings.eqlComptime(category, "multipart")) {
-                return .multipart;
-            }
-
-            if (strings.eqlComptime(category, "model")) {
-                return .model;
-            }
-
-            if (strings.eqlComptime(category, "message")) {
-                return .message;
-            }
-
-            if (strings.eqlComptime(category, "x-conference")) {
-                return .@"x-conference";
-            }
-
-            if (strings.eqlComptime(category, "x-shader")) {
-                return .@"x-shader";
-            }
-
-            if (strings.eqlComptime(category, "chemical")) {
-                return .chemical;
+            // Length-based dispatch for categories to avoid unnecessary string comparisons
+            switch (category.len) {
+                4 => {
+                    // "text" or "font"
+                    switch (category[0]) {
+                        't' => if (strings.eqlComptime(category, "text")) {
+                            return parseTextSubtype(after_slash);
+                        },
+                        'f' => if (strings.eqlComptime(category, "font")) {
+                            return .font;
+                        },
+                        else => {},
+                    }
+                },
+                5 => {
+                    // "image", "audio", "video", "model"
+                    switch (category[0]) {
+                        'i' => if (strings.eqlComptime(category, "image")) return .image,
+                        'a' => if (strings.eqlComptime(category, "audio")) return .audio,
+                        'v' => if (strings.eqlComptime(category, "video")) return .video,
+                        'm' => if (strings.eqlComptime(category, "model")) return .model,
+                        else => {},
+                    }
+                },
+                7 => {
+                    // "message"
+                    if (category[0] == 'm' and strings.eqlComptime(category, "message")) {
+                        return .message;
+                    }
+                },
+                8 => {
+                    // "chemical", "x-shader"
+                    switch (category[0]) {
+                        'c' => if (strings.eqlComptime(category, "chemical")) return .chemical,
+                        'x' => if (strings.eqlComptime(category, "x-shader")) return .@"x-shader",
+                        else => {},
+                    }
+                },
+                9 => {
+                    // "multipart"
+                    if (category[0] == 'm' and strings.eqlComptime(category, "multipart")) {
+                        return .multipart;
+                    }
+                },
+                11 => {
+                    // "application"
+                    if (category[0] == 'a' and strings.eqlComptime(category, "application")) {
+                        return parseApplicationSubtype(after_slash);
+                    }
+                },
+                12 => {
+                    // "x-conference"
+                    if (category[0] == 'x' and strings.eqlComptime(category, "x-conference")) {
+                        return .@"x-conference";
+                    }
+                },
+                else => {},
             }
         }
 
         return .other;
+    }
+
+    fn parseTextSubtype(after_slash: string) Category {
+        switch (after_slash.len) {
+            3 => if (strings.eqlComptime(after_slash, "css")) return .css,
+            4 => switch (after_slash[0]) {
+                'j' => if (strings.eqlComptime(after_slash, "json")) return .json,
+                'h' => if (strings.eqlComptime(after_slash, "html")) return .html,
+                else => {},
+            },
+            10 => if (strings.eqlComptime(after_slash, "javascript")) return .javascript,
+            else => {},
+        }
+        return .text;
+    }
+
+    fn parseApplicationSubtype(after_slash: string) Category {
+        switch (after_slash.len) {
+            4 => switch (after_slash[0]) {
+                'w' => if (strings.eqlComptime(after_slash, "wasm")) return .wasm,
+                'j' => if (strings.eqlComptime(after_slash, "json")) return .json,
+                else => {},
+            },
+            10 => if (strings.eqlComptime(after_slash, "javascript")) return .javascript,
+            12 => if (strings.eqlComptime(after_slash, "octet-stream")) return .other,
+            else => {},
+        }
+        return .application;
     }
 
     pub fn isCode(this: Category) bool {

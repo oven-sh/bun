@@ -668,14 +668,30 @@ fn buildRequestBody(
     var user_key: ?jsc.ZigString = null;
     var user_protocol: ?jsc.ZigString = null;
 
+    var found_count: u8 = 0;
     for (extra_headers.names, extra_headers.values) |name, value| {
         const name_slice = name.slice();
-        if (user_host == null and strings.eqlCaseInsensitiveASCII(name_slice, "host", true)) {
-            user_host = value;
-        } else if (user_key == null and strings.eqlCaseInsensitiveASCII(name_slice, "sec-websocket-key", true)) {
-            user_key = value;
-        } else if (user_protocol == null and strings.eqlCaseInsensitiveASCII(name_slice, "sec-websocket-protocol", true)) {
-            user_protocol = value;
+        if (name_slice.len == 0) continue;
+
+        // Fast rejection by first character (lowercase)
+        const first = name_slice[0] | 0x20;
+
+        if (first == 'h' and user_host == null) {
+            if (strings.eqlCaseInsensitiveASCII(name_slice, "host", true)) {
+                user_host = value;
+                found_count += 1;
+                if (found_count == 3) break; // Early exit
+            }
+        } else if (first == 's' and (user_key == null or user_protocol == null)) {
+            if (user_key == null and strings.eqlCaseInsensitiveASCII(name_slice, "sec-websocket-key", true)) {
+                user_key = value;
+                found_count += 1;
+                if (found_count == 3) break;
+            } else if (user_protocol == null and strings.eqlCaseInsensitiveASCII(name_slice, "sec-websocket-protocol", true)) {
+                user_protocol = value;
+                found_count += 1;
+                if (found_count == 3) break;
+            }
         }
     }
 
@@ -734,6 +750,20 @@ fn buildRequestBody(
 
     for (extra_headers.names, extra_headers.values) |name, value| {
         const name_slice = name.slice();
+        if (name_slice.len == 0) {
+            try writer.print("{f}: {f}\r\n", .{ name, value });
+            continue;
+        }
+
+        // Fast path: first-byte check to quickly reject most headers.
+        // Only headers starting with 'h', 'c', 'u', or 's' could be in the exclusion list.
+        const first = name_slice[0] | 0x20; // lowercase
+        if (first != 'h' and first != 'c' and first != 'u' and first != 's') {
+            try writer.print("{f}: {f}\r\n", .{ name, value });
+            continue;
+        }
+
+        // Slow path: full case-insensitive comparison for potential matches
         if (strings.eqlCaseInsensitiveASCII(name_slice, "host", true) or
             strings.eqlCaseInsensitiveASCII(name_slice, "connection", true) or
             strings.eqlCaseInsensitiveASCII(name_slice, "upgrade", true) or

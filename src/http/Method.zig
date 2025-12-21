@@ -64,6 +64,38 @@ pub const Method = enum(u8) {
     }
 
     pub fn find(str: []const u8) ?Method {
+        // Fast path: check common methods first (covers 90%+ of requests)
+        switch (str.len) {
+            3 => {
+                if (std.mem.eql(u8, str, "GET")) return .GET;
+                if (std.mem.eql(u8, str, "PUT")) return .PUT;
+                if (std.mem.eql(u8, str, "get")) return .GET;
+                if (std.mem.eql(u8, str, "put")) return .PUT;
+            },
+            4 => {
+                if (std.mem.eql(u8, str, "POST")) return .POST;
+                if (std.mem.eql(u8, str, "HEAD")) return .HEAD;
+                if (std.mem.eql(u8, str, "post")) return .POST;
+                if (std.mem.eql(u8, str, "head")) return .HEAD;
+            },
+            5 => {
+                if (std.mem.eql(u8, str, "PATCH")) return .PATCH;
+                if (std.mem.eql(u8, str, "patch")) return .PATCH;
+            },
+            6 => {
+                if (std.mem.eql(u8, str, "DELETE")) return .DELETE;
+                if (std.mem.eql(u8, str, "delete")) return .DELETE;
+            },
+            7 => {
+                if (std.mem.eql(u8, str, "OPTIONS")) return .OPTIONS;
+                if (std.mem.eql(u8, str, "options")) return .OPTIONS;
+                if (std.mem.eql(u8, str, "CONNECT")) return .CONNECT;
+                if (std.mem.eql(u8, str, "connect")) return .CONNECT;
+            },
+            else => {},
+        }
+
+        // Slow path: full map lookup for rare methods
         return Map.get(str);
     }
 

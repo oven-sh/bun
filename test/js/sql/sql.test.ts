@@ -12400,15 +12400,21 @@ CREATE TABLE ${table_name} (
       });
 
       test("different config creates new connection", async () => {
-        const sql1 = postgres({ ...options, idle_timeout: 60 });
+        // Create first connection and let it become an orphan
+        let sql1: ReturnType<typeof postgres> | null = postgres({ ...orphanTestOptions, idle_timeout: 60 });
+        const collector = waitForCollection(sql1);
         const result1 = await sql1`SELECT pg_backend_pid() as pid`;
         const pid1 = result1[0].pid;
 
+        sql1 = null;
+        const collected = await collector.wait();
+        expect(collected).toBe(true);
+
+        // Create second connection with different database - should NOT reuse the orphan
         const sql2 = postgres({ ...options, database: "postgres", idle_timeout: 60 });
         const result2 = await sql2`SELECT pg_backend_pid() as pid`;
         expect(result2[0].pid).not.toBe(pid1);
 
-        await sql1.close();
         await sql2.close();
       });
 
@@ -12457,20 +12463,15 @@ CREATE TABLE ${table_name} (
         // This matches standard PostgreSQL behavior where servers can terminate
         // connections at any time (admin commands, max connections, timeouts, etc.)
         let sql3 = postgres({ ...options, idle_timeout: 60 });
-        console.log("2");
         let pid3: number;
         let gotError = false;
         try {
-          console.log("3");
           const result3 = await sql3`SELECT pg_backend_pid() as pid`;
-          console.log("4");
           pid3 = result3[0].pid;
         } catch (e: any) {
-          console.log("5 - caught:", e.message);
           gotError = true;
           expect(e.code).toBe("ERR_POSTGRES_SERVER_ERROR");
         }
-        console.log("6");
 
         if (gotError) {
           sql3 = postgres({ ...options, idle_timeout: 60 });

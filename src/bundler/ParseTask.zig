@@ -117,7 +117,7 @@ pub fn init(resolve_result: *const _resolver.Result, source_index: Index, ctx: *
         .jsx = resolve_result.jsx,
         .source_index = source_index,
         .module_type = resolve_result.module_type,
-        .emit_decorator_metadata = resolve_result.emit_decorator_metadata,
+        .emit_decorator_metadata = resolve_result.flags.emit_decorator_metadata,
         .package_version = if (resolve_result.package_json) |package_json| package_json.version else "",
         .known_target = ctx.transpiler.options.target,
     };

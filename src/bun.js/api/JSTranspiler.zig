@@ -1028,7 +1028,7 @@ fn namedImportsToJS(global: *JSGlobalObject, import_records: []const ImportRecor
     array.ensureStillAlive();
 
     for (import_records, 0..) |record, i| {
-        if (record.is_internal) continue;
+        if (record.flags.is_internal) continue;
 
         array.ensureStillAlive();
         const path = jsc.ZigString.init(record.path.text).toJS(global);

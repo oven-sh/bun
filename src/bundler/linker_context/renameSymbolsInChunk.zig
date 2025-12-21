@@ -101,14 +101,18 @@ pub fn renameSymbolsInChunk(
                 try minify_renamer.accumulateSymbolUseCount(&top_level_symbols, module_ref, 1, stable_source_indices);
             }
 
-            for (parts.slice()) |part| {
+            // Cache slice result before inner loop
+            const parts_slice = parts.slice();
+            for (parts_slice) |part| {
                 if (!part.is_live) {
                     continue;
                 }
 
                 try minify_renamer.accumulateSymbolUseCounts(&top_level_symbols, part.symbol_uses, stable_source_indices);
 
-                for (part.declared_symbols.refs()) |declared_ref| {
+                // Cache refs slice before innermost loop
+                const declared_refs = part.declared_symbols.refs();
+                for (declared_refs) |declared_ref| {
                     try minify_renamer.accumulateSymbolUseCount(&top_level_symbols, declared_ref, 1, stable_source_indices);
                 }
             }

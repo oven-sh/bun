@@ -163,6 +163,18 @@ pub const DataURL = struct {
         }
     };
 
+    /// Precomputed lookup table for characters that always need escaping.
+    /// '\t' (0x09), '\n' (0x0A), '\r' (0x0D), '#' (0x23) always need escape.
+    /// '%' (0x25) needs special handling (only escape if followed by two hex digits).
+    const escape_table: [256]bool = blk: {
+        var table = [_]bool{false} ** 256;
+        table['\t'] = true;
+        table['\n'] = true;
+        table['\r'] = true;
+        table['#'] = true;
+        break :blk table;
+    };
+
     pub fn encodeStringAsPercentEscapedDataURL(buf: anytype, mime_type: []const u8, text: []const u8) !bool {
         const hex = "0123456789ABCDEF";
 
@@ -187,15 +199,12 @@ pub const DataURL = struct {
         var i: usize = 0;
         var run_start: usize = 0;
 
-        // TODO: vectorize this
         while (i < text.len) {
             const first_byte = text[i];
 
-            // Check if we need to escape this character
-            const needs_escape = first_byte == '\t' or
-                first_byte == '\n' or
-                first_byte == '\r' or
-                first_byte == '#' or
+            // Check if we need to escape this character using lookup table
+            // Single table lookup instead of cascading OR conditions
+            const needs_escape = escape_table[first_byte] or
                 i >= trailing_start or
                 (first_byte == '%' and i + 2 < text.len and
                     PercentEncoding.isHex(text[i + 1]) and

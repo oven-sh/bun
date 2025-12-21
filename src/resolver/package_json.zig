@@ -112,6 +112,22 @@ pub const PackageJSON = struct {
         return normalized;
     }
 
+    /// Normalize path separators in-place using a provided buffer (avoids heap allocation)
+    fn normalizePathForGlobInPlace(path: []const u8, buf: []u8) []const u8 {
+        if (path.len > buf.len) {
+            // Path too long for buffer, return as-is (best effort)
+            return path;
+        }
+        @memcpy(buf[0..path.len], path);
+        const normalized = buf[0..path.len];
+        for (normalized) |*char| {
+            if (char.* == '\\') {
+                char.* = '/';
+            }
+        }
+        return normalized;
+    }
+
     pub const SideEffects = union(enum) {
         /// either `package.json` is missing "sideEffects", it is true, or some
         /// other unsupported value. Treat all files as side effects
@@ -140,14 +156,14 @@ pub const PackageJSON = struct {
         };
 
         pub fn hasSideEffects(side_effects: SideEffects, path: []const u8) bool {
-            return switch (side_effects) {
-                .unspecified => true,
-                .false => false,
-                .map => |map| map.contains(bun.StringHashMapUnowned.Key.init(path)),
+            switch (side_effects) {
+                .unspecified => return true,
+                .false => return false,
+                .map => |map| return map.contains(bun.StringHashMapUnowned.Key.init(path)),
                 .glob => |glob_list| {
-                    // Normalize path for cross-platform glob matching
-                    const normalized_path = normalizePathForGlob(bun.default_allocator, path) catch return true;
-                    defer bun.default_allocator.free(normalized_path);
+                    // Normalize path once using stack buffer to avoid heap allocation
+                    var normalized_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                    const normalized_path = normalizePathForGlobInPlace(path, &normalized_buf);
 
                     for (glob_list.items) |pattern| {
                         if (glob.match(pattern, normalized_path).matches()) {
@@ -157,13 +173,13 @@ pub const PackageJSON = struct {
                     return false;
                 },
                 .mixed => |mixed| {
-                    // First check exact matches
+                    // First check exact matches (cheaper, no normalization needed)
                     if (mixed.exact.contains(bun.StringHashMapUnowned.Key.init(path))) {
                         return true;
                     }
-                    // Then check glob patterns with normalized path
-                    const normalized_path = normalizePathForGlob(bun.default_allocator, path) catch return true;
-                    defer bun.default_allocator.free(normalized_path);
+                    // Normalize path once using stack buffer for glob patterns
+                    var normalized_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                    const normalized_path = normalizePathForGlobInPlace(path, &normalized_buf);
 
                     for (mixed.globs.items) |pattern| {
                         if (glob.match(pattern, normalized_path).matches()) {
@@ -172,7 +188,7 @@ pub const PackageJSON = struct {
                     }
                     return false;
                 },
-            };
+            }
         }
     };
 

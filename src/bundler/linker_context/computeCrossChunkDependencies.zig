@@ -121,41 +121,42 @@ const CrossChunkDependencies = struct {
                 // with our map of which chunk a given symbol is declared in to
                 // determine if the symbol needs to be imported from another chunk.
                 for (used_refs) |ref| {
-                    const ref_to_use = brk: {
-                        var ref_to_use = ref;
-                        var symbol = deps.symbols.getConst(ref_to_use).?;
+                    var ref_to_use = ref;
 
-                        // Ignore unbound symbols
-                        if (symbol.kind == .unbound)
-                            continue;
+                    // Single initial lookup - cache the symbol
+                    var symbol = deps.symbols.getConst(ref_to_use) orelse continue;
 
-                        // Ignore symbols that are going to be replaced by undefined
-                        if (symbol.import_item_status == .missing)
-                            continue;
+                    // Ignore unbound symbols
+                    if (symbol.kind == .unbound)
+                        continue;
 
-                        // If this is imported from another file, follow the import
-                        // reference and reference the symbol in that file instead
-                        if (imports_to_bind.get(ref_to_use)) |import_data| {
-                            ref_to_use = import_data.data.import_ref;
-                            symbol = deps.symbols.getConst(ref_to_use).?;
-                        } else if (wrap == .cjs and ref_to_use.eql(wrapper_ref)) {
-                            // The only internal symbol that wrapped CommonJS files export
-                            // is the wrapper itself.
-                            continue;
-                        }
+                    // Ignore symbols that are going to be replaced by undefined
+                    if (symbol.import_item_status == .missing)
+                        continue;
 
-                        // If this is an ES6 import from a CommonJS file, it will become a
-                        // property access off the namespace symbol instead of a bare
-                        // identifier. In that case we want to pull in the namespace symbol
-                        // instead. The namespace symbol stores the result of "require()".
-                        if (symbol.namespace_alias) |*namespace_alias| {
-                            ref_to_use = namespace_alias.namespace_ref;
-                        }
-                        break :brk ref_to_use;
-                    };
+                    // If this is imported from another file, follow the import
+                    // reference and reference the symbol in that file instead
+                    if (imports_to_bind.get(ref_to_use)) |import_data| {
+                        ref_to_use = import_data.data.import_ref;
+                        // Only re-lookup if ref changed
+                        symbol = deps.symbols.getConst(ref_to_use) orelse continue;
+                    } else if (wrap == .cjs and ref_to_use.eql(wrapper_ref)) {
+                        // The only internal symbol that wrapped CommonJS files export
+                        // is the wrapper itself.
+                        continue;
+                    }
 
+                    // If this is an ES6 import from a CommonJS file, it will become a
+                    // property access off the namespace symbol instead of a bare
+                    // identifier. In that case we want to pull in the namespace symbol
+                    // instead. The namespace symbol stores the result of "require()".
+                    if (symbol.namespace_alias) |*namespace_alias| {
+                        ref_to_use = namespace_alias.namespace_ref;
+                    }
+
+                    // Use cached symbol for debug output when ref hasn't changed
                     if (comptime Environment.allow_assert)
-                        debug("Cross-chunk import: {s} {f}", .{ deps.symbols.get(ref_to_use).?.original_name, ref_to_use });
+                        debug("Cross-chunk import: {s} {f}", .{ symbol.original_name, ref_to_use });
 
                     // We must record this relationship even for symbols that are not
                     // imports. Due to code splitting, the definition of a symbol may

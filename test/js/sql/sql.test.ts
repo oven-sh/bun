@@ -1,6 +1,6 @@
 import { $, randomUUIDv7, sql, SQL } from "bun";
 import { afterAll, describe, expect, mock, test } from "bun:test";
-import { bunEnv, bunExe, isCI, isDockerEnabled, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isCI, isDockerEnabled, tempDirWithFiles, waitForCollection } from "harness";
 import * as net from "node:net";
 import path from "path";
 const postgres = (...args) => new SQL(...args);
@@ -14,41 +14,6 @@ function rel(filename: string) {
   return path.join(dir, filename);
 }
 
-function waitForFinalization(timeout: number = 5000) {
-  let finalized = false;
-  const registry = new FinalizationRegistry(() => {
-    finalized = true;
-  });
-  return {
-    register: (obj: object) => registry.register(obj, undefined),
-    waitForGC: async () => {
-      const start = Date.now();
-      while (!finalized && Date.now() - start < timeout) {
-        Bun.gc(true);
-        await Bun.sleep(50);
-      }
-      return finalized;
-    },
-  };
-}
-
-// Helper to wait for an object to be garbage collected
-function waitForCollection(obj: object, timeout: number = 5000, interval: number = 50) {
-  const weakRef = new WeakRef(obj);
-  return {
-    async wait(): Promise<boolean> {
-      const start = Date.now();
-      while (Date.now() - start < timeout) {
-        Bun.gc(true);
-        if (weakRef.deref() === undefined) {
-          return true;
-        }
-        await Bun.sleep(interval);
-      }
-      return false;
-    },
-  };
-}
 // Use docker-compose infrastructure
 import * as dockerCompose from "../../docker/index.ts";
 import { UnixDomainSocketProxy } from "../../unix-domain-socket-proxy.ts";
@@ -12486,17 +12451,16 @@ CREATE TABLE ${table_name} (
       });
 
       test("closed connection is garbage collected", async () => {
-        const finalizer = waitForFinalization(5000);
-
-        await (async () => {
+        const collector = await (async () => {
           const sql = postgres({ ...options, idle_timeout: 60 });
+          const c = waitForCollection(sql);
           await sql`SELECT 1`;
-          finalizer.register(sql);
           await sql.close();
+          return c;
         })();
 
-        const wasFinalized = await finalizer.waitForGC();
-        expect(wasFinalized).toBe(true);
+        const collected = await collector.wait();
+        expect(collected).toBe(true);
       });
 
       test("different prepare option creates new connection", async () => {

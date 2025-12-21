@@ -990,6 +990,10 @@ pub const Node = struct {
             assert(size <= capacity);
             assert(size == 0); // we should only be stealing if our array is empty
 
+            // Exponential backoff state for contention handling.
+            // Reduces CPU waste when multiple threads compete to steal from the same buffer.
+            var backoff: u3 = 0;
+
             while (true) : (std.atomic.spinLoopHint()) {
                 const buffer_head = buffer.head.load(.acquire);
                 const buffer_tail = buffer.tail.load(.acquire);
@@ -1037,6 +1041,17 @@ pub const Node = struct {
                         .pushed = pushed > 0,
                     };
                 };
+
+                // CAS failed due to contention. Apply exponential backoff to reduce CPU waste.
+                // This is especially beneficial on high-core systems where multiple threads
+                // may compete to steal from the same buffer simultaneously.
+                if (backoff < 7) {
+                    const spins = @as(u32, 1) << backoff;
+                    for (0..spins) |_| {
+                        std.atomic.spinLoopHint();
+                    }
+                    backoff += 1;
+                }
             }
         }
     };

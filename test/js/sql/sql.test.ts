@@ -31,6 +31,24 @@ function waitForFinalization(timeout: number = 5000) {
     },
   };
 }
+
+// Helper to wait for an object to be garbage collected
+function waitForCollection(obj: object, timeout: number = 5000, interval: number = 50) {
+  const weakRef = new WeakRef(obj);
+  return {
+    async wait(): Promise<boolean> {
+      const start = Date.now();
+      while (Date.now() - start < timeout) {
+        Bun.gc(true);
+        if (weakRef.deref() === undefined) {
+          return true;
+        }
+        await Bun.sleep(interval);
+      }
+      return false;
+    },
+  };
+}
 // Use docker-compose infrastructure
 import * as dockerCompose from "../../docker/index.ts";
 import { UnixDomainSocketProxy } from "../../unix-domain-socket-proxy.ts";
@@ -12364,14 +12382,13 @@ CREATE TABLE ${table_name} (
     describe("orphan connection reuse", () => {
       test("reuses orphaned connection with matching config", async () => {
         let sql1: ReturnType<typeof postgres> | null = postgres({ ...options, idle_timeout: 60 });
+        const collector = waitForCollection(sql1);
         const result1 = await sql1`SELECT pg_backend_pid() as pid`;
         const pid1 = result1[0].pid;
 
         sql1 = null;
-        for (let i = 0; i < 5; i++) {
-          Bun.gc(true);
-          await Bun.sleep(50);
-        }
+        const collected = await collector.wait();
+        expect(collected).toBe(true);
 
         const sql2 = postgres({ ...options, idle_timeout: 60 });
         const result2 = await sql2`SELECT pg_backend_pid() as pid`;
@@ -12394,12 +12411,13 @@ CREATE TABLE ${table_name} (
 
       test("orphaned connection remains functional", async () => {
         let sql: ReturnType<typeof postgres> | null = postgres({ ...options, idle_timeout: 60 });
+        const collector = waitForCollection(sql);
         const result1 = await sql`SELECT 1 as x`;
         expect(result1[0].x).toBe(1);
 
         sql = null;
-        Bun.gc(true);
-        await Bun.sleep(100);
+        const collected = await collector.wait();
+        expect(collected).toBe(true);
 
         const sql2 = postgres({ ...options, idle_timeout: 60 });
         const result2 = await sql2`SELECT 2 as x`;
@@ -12435,6 +12453,65 @@ CREATE TABLE ${table_name} (
         const wasFinalized = await finalizer.waitForGC();
         expect(wasFinalized).toBe(true);
       });
+
+      test("different prepare option creates new connection", async () => {
+        let sql1: ReturnType<typeof postgres> | null = postgres({ ...options, idle_timeout: 60, prepare: true });
+        const collector = waitForCollection(sql1);
+        const result1 = await sql1`SELECT pg_backend_pid() as pid`;
+        const pid1 = result1[0].pid;
+
+        sql1 = null;
+        await collector.wait();
+
+        const sql2 = postgres({ ...options, idle_timeout: 60, prepare: false });
+        const result2 = await sql2`SELECT pg_backend_pid() as pid`;
+        expect(result2[0].pid).not.toBe(pid1);
+        await sql2.close();
+      });
+
+      test("same prepare option reuses connection", async () => {
+        let sql1: ReturnType<typeof postgres> | null = postgres({ ...options, idle_timeout: 60, prepare: false });
+        const collector = waitForCollection(sql1);
+        const result1 = await sql1`SELECT pg_backend_pid() as pid`;
+        const pid1 = result1[0].pid;
+
+        sql1 = null;
+        await collector.wait();
+
+        const sql2 = postgres({ ...options, idle_timeout: 60, prepare: false });
+        const result2 = await sql2`SELECT pg_backend_pid() as pid`;
+        expect(result2[0].pid).toBe(pid1);
+        await sql2.close();
+      });
+
+      test("multiple sequential orphan reuses work correctly", async () => {
+        // First connection
+        let sql1: ReturnType<typeof postgres> | null = postgres({ ...options, idle_timeout: 60 });
+        const collector1 = waitForCollection(sql1);
+        const result1 = await sql1`SELECT pg_backend_pid() as pid`;
+        const pid1 = result1[0].pid;
+
+        sql1 = null;
+        const collected1 = await collector1.wait();
+        expect(collected1).toBe(true);
+
+        // Second connection should reuse the orphan
+        let sql2: ReturnType<typeof postgres> | null = postgres({ ...options, idle_timeout: 60 });
+        const collector2 = waitForCollection(sql2);
+        const result2 = await sql2`SELECT pg_backend_pid() as pid`;
+        expect(result2[0].pid).toBe(pid1);
+
+        sql2 = null;
+        const collected2 = await collector2.wait();
+        expect(collected2).toBe(true);
+
+        // Third connection should also reuse the same orphan
+        const sql3 = postgres({ ...options, idle_timeout: 60 });
+        const result3 = await sql3`SELECT pg_backend_pid() as pid`;
+        expect(result3[0].pid).toBe(pid1);
+        await sql3.close();
+      });
+    });
 
     test("Handles empty integer array stored as {}", async () => {
       await using db = postgres(options);

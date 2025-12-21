@@ -728,6 +728,9 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
             database,
             ssl_mode,
             path,
+            options,
+            use_unnamed_prepared_statements,
+            &tls_config,
         );
     };
 
@@ -1085,6 +1088,9 @@ pub fn computeConfigHash(
     database: []const u8,
     ssl_mode: SSLMode,
     path: []const u8,
+    options: []const u8,
+    use_unnamed_prepared_statements: bool,
+    tls_config: *const jsc.API.ServerConfig.SSLConfig,
 ) u64 {
     var hasher = std.hash.Wyhash.init(0);
     hasher.update(hostname);
@@ -1094,6 +1100,9 @@ pub fn computeConfigHash(
     hasher.update(database);
     hasher.update(std.mem.asBytes(&@intFromEnum(ssl_mode)));
     hasher.update(path);
+    hasher.update(options);
+    hasher.update(std.mem.asBytes(&use_unnamed_prepared_statements));
+    tls_config.hash(&hasher);
     return hasher.final();
 }
 

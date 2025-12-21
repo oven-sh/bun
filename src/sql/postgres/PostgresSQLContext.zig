@@ -22,7 +22,7 @@ pub fn claimOrphan(this: *@This(), config_hash: u64) ?*PostgresSQLConnection {
     while (i < this.orphaned_connections.items.len) {
         const conn = this.orphaned_connections.items[i];
 
-        if (conn.status != .connected) {
+        if (conn.status != .connected or conn.socket.isClosed()) {
             _ = this.orphaned_connections.swapRemove(i);
             continue; // swapRemove moves last element here, don't increment
         }

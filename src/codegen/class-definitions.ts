@@ -282,6 +282,13 @@ export function define(
     ...rest
   } = {} as Partial<ClassDefinition>,
 ): ClassDefinition {
+  if (rest.trackOrphans && !rest.hasPendingActivity) {
+    throw new Error(
+      `Class "${rest.name}": trackOrphans requires hasPendingActivity to be true. ` +
+        `The orphan tracking mechanism relies on hasPendingActivity to keep connections alive.`,
+    );
+  }
+
   if (inspectCustom) {
     proto.inspectCustom = {
       fn: "inspectCustom",

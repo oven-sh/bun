@@ -121,18 +121,24 @@ pub fn hash(this: *const SSLConfig, hasher: *std.hash.Wyhash) void {
         switch (field.type) {
             ?[*:0]const u8 => {
                 if (value) |v| {
+                    hasher.update(&[_]u8{1}); // present marker
                     hasher.update(bun.asByteSlice(v));
+                    hasher.update(&[_]u8{0}); // separator
+                } else {
+                    hasher.update(&[_]u8{0}); // absent marker
                 }
-                hasher.update(&[_]u8{0}); // separator
             },
             ?[][*:0]const u8 => {
                 if (value) |slice| {
+                    hasher.update(&[_]u8{1}); // present marker
                     for (slice) |v| {
                         hasher.update(bun.asByteSlice(v));
-                        hasher.update(&[_]u8{0}); // separator
+                        hasher.update(&[_]u8{0}); // element separator
                     }
+                    hasher.update(&[_]u8{0}); // end of array
+                } else {
+                    hasher.update(&[_]u8{0}); // absent marker
                 }
-                hasher.update(&[_]u8{0}); // end of array
             },
             else => hasher.update(std.mem.asBytes(&value)),
         }

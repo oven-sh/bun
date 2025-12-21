@@ -12431,7 +12431,13 @@ CREATE TABLE ${table_name} (
         const result1 = await sql1`SELECT pg_backend_pid() as pid`;
         const pid1 = result1[0].pid;
 
+        // Create sql2 and run a query to establish its own connection BEFORE
+        // sql1 becomes orphaned. Otherwise, sql2 would claim sql1's orphan
+        // (same config hash) and terminate its own connection.
         const sql2 = postgres({ ...options, idle_timeout: 60 });
+        const result2 = await sql2`SELECT pg_backend_pid() as pid`;
+        const pid2 = result2[0].pid;
+        expect(pid2).not.toBe(pid1); // Different connection
 
         sql1 = null;
         const collected = await collector.wait();

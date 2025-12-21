@@ -2175,8 +2175,8 @@ function reportOutputToGitHubAction(name, value) {
   if (!outputPath) {
     return;
   }
-  const delimeter = Math.random().toString(36).substring(2, 15);
-  const content = `${name}<<${delimeter}\n${value}\n${delimeter}\n`;
+  const delimiter = Math.random().toString(36).substring(2, 15);
+  const content = `${name}<<${delimiter}\n${value}\n${delimiter}\n`;
   appendFileSync(outputPath, content);
 }
 

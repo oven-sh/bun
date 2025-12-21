@@ -108,8 +108,8 @@ export function setEnv(name, value) {
   if (isGithubAction && !/^GITHUB_/i.test(name)) {
     const envFilePath = process.env["GITHUB_ENV"];
     if (envFilePath) {
-      const delimeter = Math.random().toString(36).substring(2, 15);
-      const content = `${name}<<${delimeter}\n${value}\n${delimeter}\n`;
+      const delimiter = Math.random().toString(36).substring(2, 15);
+      const content = `${name}<<${delimiter}\n${value}\n${delimiter}\n`;
       appendFileSync(outputPath, content);
     }
   }

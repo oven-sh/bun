@@ -13,6 +13,22 @@ pub noinline fn computeChunks(
     defer arena.deinit();
 
     var temp_allocator = arena.allocator();
+
+    // String interning pool to avoid duplicate allocations for chunk keys
+    var key_pool = bun.StringHashMapUnmanaged(void){};
+    try key_pool.ensureTotalCapacity(temp_allocator, @intCast(this.graph.entry_points.len));
+
+    // Helper to intern string keys - returns existing key if found, otherwise dupes and stores it
+    const intern = struct {
+        fn call(pool: *bun.StringHashMapUnmanaged(void), allocator: std.mem.Allocator, key: []const u8) []const u8 {
+            const gop = pool.getOrPutAssumeCapacity(key);
+            if (!gop.found_existing) {
+                gop.key_ptr.* = allocator.dupe(u8, key) catch bun.outOfMemory();
+            }
+            return gop.key_ptr.*;
+        }
+    }.call;
+
     var js_chunks = bun.StringArrayHashMap(Chunk).init(temp_allocator);
     try js_chunks.ensureUnusedCapacity(this.graph.entry_points.len);
 
@@ -41,7 +57,8 @@ pub noinline fn computeChunks(
         const has_html_chunk = loaders[source_index] == .html;
         const js_chunk_key = brk: {
             if (code_splitting) {
-                break :brk try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len));
+                // Use interning to avoid duplicate allocations for identical keys
+                break :brk intern(&key_pool, temp_allocator, entry_bits.bytes(this.graph.entry_points.len));
             } else {
                 // Force HTML chunks to always be generated, even if there's an identical JS file.
                 break :brk try std.fmt.allocPrint(temp_allocator, "{f}", .{JSChunkKeyFormatter{
@@ -74,7 +91,8 @@ pub noinline fn computeChunks(
             // Create a chunk for the entry point here to ensure that the chunk is
             // always generated even if the resulting file is empty
             const hash_to_use = if (!this.options.css_chunking)
-                bun.hash(try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len)))
+                // Hash directly without allocation
+                bun.hash(entry_bits.bytes(this.graph.entry_points.len))
             else brk: {
                 var hasher = std.hash.Wyhash.init(5);
                 bun.writeAnyToHasher(&hasher, order.len);
@@ -137,7 +155,8 @@ pub noinline fn computeChunks(
 
                 const use_content_based_key = css_chunking or has_server_html_imports;
                 const hash_to_use = if (!use_content_based_key)
-                    bun.hash(try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len)))
+                    // Hash directly without allocation
+                    bun.hash(entry_bits.bytes(this.graph.entry_points.len))
                 else brk: {
                     var hasher = std.hash.Wyhash.init(5);
                     bun.writeAnyToHasher(&hasher, order.len);
@@ -204,7 +223,8 @@ pub noinline fn computeChunks(
                     if (css_reprs[source_index.get()] != null) continue;
 
                     if (this.graph.code_splitting) {
-                        const js_chunk_key = try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len));
+                        // Use interning to avoid duplicate allocations for identical keys
+                        const js_chunk_key = intern(&key_pool, temp_allocator, entry_bits.bytes(this.graph.entry_points.len));
                         var js_chunk_entry = try js_chunks.getOrPut(js_chunk_key);
 
                         if (!js_chunk_entry.found_existing) {

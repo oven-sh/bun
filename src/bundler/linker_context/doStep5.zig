@@ -82,6 +82,10 @@ pub fn doStep5(c: *LinkerContext, source_index_: Index, _: usize) void {
     defer local_dependencies.deinit();
 
     const parts_slice: []Part = c.graph.ast.items(.parts)[id].slice();
+
+    // Pre-size based on expected number of parts to reduce allocations during linking
+    const expected_size: u32 = @intCast(@min(parts_slice.len, 64));
+    local_dependencies.ensureTotalCapacity(expected_size) catch {};
     const named_imports: *js_ast.Ast.NamedImports = &c.graph.ast.items(.named_imports)[id];
 
     const our_imports_to_bind = imports_to_bind[id];

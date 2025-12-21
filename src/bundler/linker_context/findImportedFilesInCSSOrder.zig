@@ -204,27 +204,38 @@ pub fn findImportedFilesInCSSOrder(this: *LinkerContext, temp_allocator: std.mem
     // the file when bundling, even though doing so will change the order of CSS
     // evaluation.
     if (visitor.has_external_import) {
-        // Pass 1: Pull out leading "@layer" and external "@import" rules
+        // Pre-size the output to avoid repeated allocations
+        wip_order.ensureTotalCapacity(temp_allocator, order.len) catch {};
+
+        // Count leading layer entries and external paths in a single pass
+        var layer_and_external_count: u32 = 0;
         var is_at_layer_prefix = true;
         for (order.slice()) |*entry| {
             if ((entry.kind == .layers and is_at_layer_prefix) or entry.kind == .external_path) {
-                bun.handleOom(wip_order.append(temp_allocator, entry.*));
+                layer_and_external_count += 1;
             }
             if (entry.kind != .layers) {
                 is_at_layer_prefix = false;
             }
         }
 
-        // Pass 2: Append everything that we didn't pull out in pass 1
+        // Single pass: insert leading layers and externals at front, others at back
+        var layer_idx: u32 = 0;
+        var other_idx: u32 = layer_and_external_count;
         is_at_layer_prefix = true;
         for (order.slice()) |*entry| {
-            if ((entry.kind != .layers or !is_at_layer_prefix) and entry.kind != .external_path) {
-                bun.handleOom(wip_order.append(temp_allocator, entry.*));
+            if ((entry.kind == .layers and is_at_layer_prefix) or entry.kind == .external_path) {
+                wip_order.mut(layer_idx).* = entry.*;
+                layer_idx += 1;
+            } else {
+                wip_order.mut(other_idx).* = entry.*;
+                other_idx += 1;
             }
             if (entry.kind != .layers) {
                 is_at_layer_prefix = false;
             }
         }
+        wip_order.len = order.len;
 
         order.len = wip_order.len;
         @memcpy(order.slice(), wip_order.slice());

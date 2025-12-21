@@ -243,12 +243,12 @@ pub fn hasPendingActivity(this: *PostgresSQLConnection) bool {
 }
 
 /// Called by GC when no JS references exist. Per Bun's expected behavior, connected
-/// connections are never collected - they're registered as orphans for reuse instead.
+/// connections are never collected - therefore register them as orphans for reuse.
 pub fn onCheckOrphanStatus(this: *PostgresSQLConnection) bool {
     if (this.vm.isShuttingDown()) return false;
     if (this.status == .connected) {
         if (!this.is_orphaned.load(.acquire)) {
-            debug("Connection orphaned, registering for reuse (hash: {})", .{this.config_hash});
+            debug("onCheckOrphanStatus: registering as orphan hash={}", .{this.config_hash});
             this.is_orphaned.store(true, .release);
             this.vm.rareData().postgresql_context.registerOrphan(this);
         }
@@ -256,6 +256,7 @@ pub fn onCheckOrphanStatus(this: *PostgresSQLConnection) bool {
     }
 
     if (this.is_orphaned.load(.acquire)) {
+        debug("onCheckOrphanStatus: unregistering orphan hash={}", .{this.config_hash});
         this.is_orphaned.store(false, .release);
         this.vm.rareData().postgresql_context.unregisterOrphan(this);
     }

@@ -12379,9 +12379,12 @@ CREATE TABLE ${table_name} (
       });
     }); // Close "Misc" describe
 
-    describe("orphan connection reuse", () => {
+    describe.serial("orphan connection reuse", () => {
+      // Use a separate database to avoid orphan pool pollution from other tests
+      const orphanTestOptions = { ...options, database: "bun_sql_test_orphan" };
+
       test("reuses orphaned connection with matching config", async () => {
-        let sql1: ReturnType<typeof postgres> | null = postgres({ ...options, idle_timeout: 60 });
+        let sql1: ReturnType<typeof postgres> | null = postgres({ ...orphanTestOptions, idle_timeout: 60 });
         const collector = waitForCollection(sql1);
         const result1 = await sql1`SELECT pg_backend_pid() as pid`;
         const pid1 = result1[0].pid;
@@ -12390,7 +12393,7 @@ CREATE TABLE ${table_name} (
         const collected = await collector.wait();
         expect(collected).toBe(true);
 
-        const sql2 = postgres({ ...options, idle_timeout: 60 });
+        const sql2 = postgres({ ...orphanTestOptions, idle_timeout: 60 });
         const result2 = await sql2`SELECT pg_backend_pid() as pid`;
         expect(result2[0].pid).toBe(pid1);
         await sql2.close();
@@ -12512,7 +12515,11 @@ CREATE TABLE ${table_name} (
       });
 
       test("same prepare option reuses connection", async () => {
-        let sql1: ReturnType<typeof postgres> | null = postgres({ ...options, idle_timeout: 60, prepare: false });
+        let sql1: ReturnType<typeof postgres> | null = postgres({
+          ...orphanTestOptions,
+          idle_timeout: 60,
+          prepare: false,
+        });
         const collector = waitForCollection(sql1);
         const result1 = await sql1`SELECT pg_backend_pid() as pid`;
         const pid1 = result1[0].pid;
@@ -12521,14 +12528,14 @@ CREATE TABLE ${table_name} (
         const collected = await collector.wait();
         expect(collected).toBe(true);
 
-        const sql2 = postgres({ ...options, idle_timeout: 60, prepare: false });
+        const sql2 = postgres({ ...orphanTestOptions, idle_timeout: 60, prepare: false });
         const result2 = await sql2`SELECT pg_backend_pid() as pid`;
         expect(result2[0].pid).toBe(pid1);
         await sql2.close();
       });
 
       test("multiple sequential orphan reuses work correctly", async () => {
-        let sql1: ReturnType<typeof postgres> | null = postgres({ ...options, idle_timeout: 60 });
+        let sql1: ReturnType<typeof postgres> | null = postgres({ ...orphanTestOptions, idle_timeout: 60 });
         const collector1 = waitForCollection(sql1);
         const result1 = await sql1`SELECT pg_backend_pid() as pid`;
         const pid1 = result1[0].pid;
@@ -12537,7 +12544,7 @@ CREATE TABLE ${table_name} (
         const collected1 = await collector1.wait();
         expect(collected1).toBe(true);
 
-        let sql2: ReturnType<typeof postgres> | null = postgres({ ...options, idle_timeout: 60 });
+        let sql2: ReturnType<typeof postgres> | null = postgres({ ...orphanTestOptions, idle_timeout: 60 });
         const collector2 = waitForCollection(sql2);
         const result2 = await sql2`SELECT pg_backend_pid() as pid`;
         expect(result2[0].pid).toBe(pid1);
@@ -12546,7 +12553,7 @@ CREATE TABLE ${table_name} (
         const collected2 = await collector2.wait();
         expect(collected2).toBe(true);
 
-        const sql3 = postgres({ ...options, idle_timeout: 60 });
+        const sql3 = postgres({ ...orphanTestOptions, idle_timeout: 60 });
         const result3 = await sql3`SELECT pg_backend_pid() as pid`;
         expect(result3[0].pid).toBe(pid1);
         await sql3.close();

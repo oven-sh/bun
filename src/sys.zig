@@ -2971,15 +2971,51 @@ pub fn munmap(memory: []align(page_size_min) const u8) Maybe(void) {
     } else return .success;
 }
 
-pub fn memfd_create(name: [:0]const u8, flags: u32) Maybe(bun.FileDescriptor) {
+pub const MemfdFlags = enum(u32) {
+    // Recent Linux kernel versions require MFD_EXEC.
+    executable = MFD_EXEC | MFD_ALLOW_SEALING | MFD_CLOEXEC,
+    non_executable = MFD_NOEXEC_SEAL | MFD_ALLOW_SEALING | MFD_CLOEXEC,
+    cross_process = MFD_NOEXEC_SEAL,
+
+    pub fn olderKernelFlag(this: MemfdFlags) u32 {
+        return switch (this) {
+            .non_executable, .executable => MFD_CLOEXEC,
+            .cross_process => 0,
+        };
+    }
+
+    const MFD_NOEXEC_SEAL: u32 = 0x0008;
+    const MFD_EXEC: u32 = 0x0010;
+    const MFD_CLOEXEC: u32 = std.os.linux.MFD.CLOEXEC;
+    const MFD_ALLOW_SEALING: u32 = std.os.linux.MFD.ALLOW_SEALING;
+};
+pub fn memfd_create(name: [:0]const u8, flags_: MemfdFlags) Maybe(bun.FileDescriptor) {
     if (comptime !Environment.isLinux) @compileError("linux only!");
+    var flags: u32 = @intFromEnum(flags_);
+    while (true) {
+        const rc = std.os.linux.memfd_create(name, flags);
+        log("memfd_create({s}, {s}) = {d}", .{ name, @tagName(flags_), rc });
 
-    const rc = std.os.linux.memfd_create(name, flags);
+        if (Maybe(bun.FileDescriptor).errnoSys(rc, .memfd_create)) |err| {
+            switch (err.getErrno()) {
+                .INTR => continue,
+                .INVAL => {
+                    // MFD_EXEC / MFD_NOEXEC_SEAL require Linux 6.3.
+                    if (@intFromEnum(flags_) == flags) {
+                        flags = flags_.olderKernelFlag();
+                        log("memfd_create retrying without exec/noexec flag, using {d}", .{flags});
+                        continue;
+                    }
+                },
+                else => {},
+            }
 
-    log("memfd_create({s}, {d}) = {d}", .{ name, flags, rc });
+            return err;
+        }
 
-    return Maybe(bun.FileDescriptor).errnoSys(rc, .memfd_create) orelse
-        .{ .result = .fromNative(@intCast(rc)) };
+        return .{ .result = .fromNative(@intCast(rc)) };
+    }
+    unreachable;
 }
 
 pub fn setPipeCapacityOnLinux(fd: bun.FileDescriptor, capacity: usize) Maybe(usize) {

@@ -72,7 +72,10 @@ pub const Loc = struct {
 
 pub const Location = struct {
     // Field ordering optimized to reduce padding:
-    // 8-byte aligned fields first, then 4-byte fields at end
+    // - 16-byte fields first: string (ptr+len), ?string (ptr+len+null flag)
+    // - 8-byte fields next: usize
+    // - 4-byte fields last: i32
+    // This eliminates padding between differently-sized fields.
 
     file: string,
     namespace: string = "file",

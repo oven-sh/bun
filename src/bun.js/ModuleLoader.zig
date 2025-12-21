@@ -257,6 +257,7 @@ pub fn transpileSourceCode(
                 .macro_remappings = macro_remappings,
                 .jsx = jsc_vm.transpiler.options.jsx,
                 .emit_decorator_metadata = jsc_vm.transpiler.options.emit_decorator_metadata,
+                .strict_null_checks = jsc_vm.transpiler.options.strict_null_checks,
                 .virtual_source = virtual_source,
                 .dont_bundle_twice = true,
                 .allow_commonjs = true,
@@ -680,7 +681,7 @@ pub fn transpileSourceCode(
         .sqlite_embedded, .sqlite => {
             const sqlite_module_source_code_string = brk: {
                 if (jsc_vm.hot_reload == .hot) {
-                    break :brk 
+                    break :brk
                     \\// Generated code
                     \\import {Database} from 'bun:sqlite';
                     \\const {path} = import.meta;
@@ -700,7 +701,7 @@ pub fn transpileSourceCode(
                     ;
                 }
 
-                break :brk 
+                break :brk
                 \\// Generated code
                 \\import {Database} from 'bun:sqlite';
                 \\export const db = new Database(import.meta.path);

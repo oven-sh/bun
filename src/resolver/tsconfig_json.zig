@@ -42,8 +42,29 @@ pub const TSConfigJSON = struct {
 
     emit_decorator_metadata: bool = false,
 
+    // strictNullChecks can be explicitly set, or enabled via "strict": true
+    strict_null_checks: ?bool = null,
+    strict: ?bool = null,
+
     pub fn hasBaseURL(tsconfig: *const TSConfigJSON) bool {
         return tsconfig.base_url.len > 0;
+    }
+
+    /// Check if strictNullChecks is effectively enabled.
+    /// strictNullChecks can be explicitly set, or enabled via "strict": true.
+    /// If strictNullChecks is explicitly set (true or false), that takes precedence.
+    /// Otherwise, if "strict" is true, strictNullChecks is enabled.
+    pub fn isStrictNullChecksEnabled(tsconfig: *const TSConfigJSON) bool {
+        // Explicit strictNullChecks setting takes precedence
+        if (tsconfig.strict_null_checks) |value| {
+            return value;
+        }
+        // Fall back to "strict" flag
+        if (tsconfig.strict) |value| {
+            return value;
+        }
+        // Default is false
+        return false;
     }
 
     pub const ImportsNotUsedAsValue = enum {
@@ -174,6 +195,20 @@ pub const TSConfigJSON = struct {
             if (compiler_opts.expr.asProperty("emitDecoratorMetadata")) |emit_decorator_metadata_prop| {
                 if (emit_decorator_metadata_prop.expr.asBool()) |val| {
                     result.emit_decorator_metadata = val;
+                }
+            }
+
+            // Parse "strict"
+            if (compiler_opts.expr.asProperty("strict")) |strict_prop| {
+                if (strict_prop.expr.asBool()) |val| {
+                    result.strict = val;
+                }
+            }
+
+            // Parse "strictNullChecks" (takes precedence over "strict")
+            if (compiler_opts.expr.asProperty("strictNullChecks")) |strict_null_checks_prop| {
+                if (strict_null_checks_prop.expr.asBool()) |val| {
+                    result.strict_null_checks = val;
                 }
             }
 

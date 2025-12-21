@@ -165,6 +165,7 @@ pub const Result = struct {
     module_type: options.ModuleType = options.ModuleType.unknown,
 
     emit_decorator_metadata: bool = false,
+    strict_null_checks: bool = false,
 
     debug_meta: ?DebugMeta = null,
 
@@ -998,6 +999,7 @@ pub const Resolver = struct {
             if (dir.enclosing_tsconfig_json) |tsconfig| {
                 result.jsx = tsconfig.mergeJSX(result.jsx);
                 result.emit_decorator_metadata = result.emit_decorator_metadata or tsconfig.emit_decorator_metadata;
+                result.strict_null_checks = result.strict_null_checks or tsconfig.isStrictNullChecksEnabled();
             }
 
             // If you use mjs or mts, then you're using esm
@@ -4220,6 +4222,8 @@ pub const Resolver = struct {
                     // successively apply the inheritable attributes to the next config
                     while (parent_configs.pop()) |parent_config| {
                         merged_config.emit_decorator_metadata = merged_config.emit_decorator_metadata or parent_config.emit_decorator_metadata;
+                        merged_config.strict_null_checks = merged_config.strict_null_checks orelse parent_config.strict_null_checks;
+                        merged_config.strict = merged_config.strict orelse parent_config.strict;
                         if (parent_config.base_url.len > 0) {
                             merged_config.base_url = parent_config.base_url;
                             merged_config.base_url_for_paths = parent_config.base_url_for_paths;

@@ -116,7 +116,7 @@ pub const Linker = struct {
         switch (result.loader) {
             .jsx, .js, .ts, .tsx => {
                 for (result.ast.import_records.slice(), 0..) |*import_record, record_i| {
-                    if (import_record.is_unused or
+                    if (import_record.flags.is_unused or
                         (is_bun and is_deferred and !result.isPendingImport(@intCast(record_i)))) continue;
 
                     const record_index = record_i;
@@ -147,7 +147,7 @@ pub const Linker = struct {
                                 continue;
                             import_record.path.text = replacement.path;
                             import_record.tag = replacement.tag;
-                            import_record.is_external_without_side_effects = true;
+                            import_record.flags.is_external_without_side_effects = true;
                             continue;
                         }
                         if (strings.startsWith(import_record.path.text, "node:")) {
@@ -195,7 +195,7 @@ pub const Linker = struct {
                                     origin,
                                     import_path_format,
                                 );
-                                import_record.print_namespace_in_path = true;
+                                import_record.flags.print_namespace_in_path = true;
                                 continue;
                             }
                         }
@@ -215,7 +215,7 @@ pub const Linker = struct {
         result: *_transpiler.ParseResult,
         comptime is_bun: bool,
     ) !bool {
-        if (import_record.handles_import_errors) {
+        if (import_record.flags.handles_import_errors) {
             import_record.path.is_disabled = true;
             return false;
         }

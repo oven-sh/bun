@@ -115,10 +115,11 @@ class BunInspectorConnection : public Inspector::FrontendChannel {
 public:
     BunInspectorConnection(ScriptExecutionContext& scriptExecutionContext, JSC::JSGlobalObject* globalObject, bool shouldRefEventLoop)
         : Inspector::FrontendChannel()
-        , globalObject(globalObject)
         , scriptExecutionContextIdentifier(scriptExecutionContext.identifier())
         , unrefOnDisconnect(shouldRefEventLoop)
     {
+        // IMPORTANT: Do not store JSGlobalObject* from potentially non-owning thread.
+        UNUSED_PARAM(globalObject);
     }
 
     ~BunInspectorConnection()
@@ -137,11 +138,28 @@ public:
 
     void doConnect(WebCore::ScriptExecutionContext& context)
     {
-        this->status = ConnectionStatus::Connected;
         auto* globalObject = context.jsGlobalObject();
-        if (this->unrefOnDisconnect) {
-            Bun__eventLoop__incrementRefConcurrently(static_cast<Zig::GlobalObject*>(globalObject)->bunVM(), 1);
+        if (!globalObject) {
+            // Context is shutting down / no global. Treat as already disconnected.
+            this->status = ConnectionStatus::Disconnected;
+            return;
         }
+
+        // If a disconnect already started, do not attach to WebKit.
+        ConnectionStatus s = this->status.load();
+        if (s == ConnectionStatus::Disconnecting || s == ConnectionStatus::Disconnected)
+            return;
+
+        this->status = ConnectionStatus::Connected;
+
+        // Ref the event loop only if we actually reached the point where we connect.
+        // This avoids unbalanced -1 on disconnect when the client drops before doConnect runs.
+        if (this->unrefOnDisconnect && !this->didRefEventLoop) {
+            this->bunVMAtConnect = static_cast<Zig::GlobalObject*>(globalObject)->bunVM();
+            Bun__eventLoop__incrementRefConcurrently(this->bunVMAtConnect, 1);
+            this->didRefEventLoop = true;
+        }
+
         globalObject->setInspectable(true);
         auto& inspector = globalObject->inspectorDebuggable();
         inspector.setInspectable(true);
@@ -160,8 +178,19 @@ public:
                 WTF::makeUnique<Inspector::InspectorHTTPServerAgent>(*globalObject));
         }
 
-        this->hasEverConnected = true;
         globalObject->inspectorController().connectFrontend(*this, true, false); // waitingForConnection
+
+        // Record the *exact* controller instance we connected to.
+        // If Bun later replaces the controller (or WebKit drops it), calling disconnect on a different
+        // controller will trigger FrontendRouter::disconnectFrontend ASSERT/UNREACHABLE.
+        this->isConnectedToWebKit = true;
+        this->inspectorControllerAtConnect.store(static_cast<void*>(globalObject->m_inspectorController.get()), std::memory_order_relaxed);
+
+        // Signal that a debugger has connected - this unblocks waitForDebugger()
+        if (waitingForConnection) {
+            waitingForConnection = false;
+            Debugger__didConnect();
+        }
 
         Inspector::JSGlobalObjectDebugger* debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(globalObject->debugger());
         if (debugger) {
@@ -175,29 +204,17 @@ public:
 
     void connect()
     {
-        switch (this->status) {
-        case ConnectionStatus::Disconnected:
-        case ConnectionStatus::Disconnecting: {
+        ConnectionStatus s = this->status.load();
+        if (s == ConnectionStatus::Disconnected || s == ConnectionStatus::Disconnecting)
             return;
-        }
-        default: {
-            break;
-        }
-        }
 
         if (this->jsWaitForMessageFromInspectorLock.isLocked())
             this->jsWaitForMessageFromInspectorLock.unlockFairly();
 
         ScriptExecutionContext::ensureOnContextThread(scriptExecutionContextIdentifier, [connection = this](ScriptExecutionContext& context) {
-            switch (connection->status) {
-            case ConnectionStatus::Pending: {
-                connection->doConnect(context);
-                break;
-            }
-            default: {
-                break;
-            }
-            }
+            if (connection->status != ConnectionStatus::Pending)
+                return;
+            connection->doConnect(context);
         });
     }
 
@@ -206,14 +223,22 @@ public:
         if (jsWaitForMessageFromInspectorLock.isLocked())
             jsWaitForMessageFromInspectorLock.unlockFairly();
 
-        switch (this->status) {
-        case ConnectionStatus::Disconnected: {
+        // Make disconnect strictly idempotent and non-reentrant:
+        // - First caller transitions to Disconnecting
+        // - Exactly one caller schedules the JS-thread teardown task
+        ConnectionStatus s = this->status.load();
+        for (;;) {
+            if (s == ConnectionStatus::Disconnected)
+                return;
+            if (s == ConnectionStatus::Disconnecting)
+                break;
+            if (this->status.compare_exchange_weak(s, ConnectionStatus::Disconnecting))
+                break;
+        }
+
+        bool expected = false;
+        if (!this->disconnectTaskScheduled.compare_exchange_strong(expected, true))
             return;
-        }
-        default: {
-            break;
-        }
-        }
 
         ScriptExecutionContext::ensureOnContextThread(scriptExecutionContextIdentifier, [connection = this](ScriptExecutionContext& context) {
             if (connection->status == ConnectionStatus::Disconnected)
@@ -221,22 +246,36 @@ public:
 
             connection->status = ConnectionStatus::Disconnected;
 
-            // Do not call .disconnect() if we never actually connected.
-            if (connection->hasEverConnected) {
-                connection->inspector().disconnect(*connection);
+            // Only call into WebKit if:
+            //  1) We actually registered a frontend (connectFrontend happened),
+            //  2) The InspectorController instance is the same one we connected to.
+            //
+            // If Bun replaced the controller/debuggable (or WebKit already dropped the frontend),
+            // disconnecting on the "new" router will hit FrontendRouter::disconnectFrontend ASSERT/UNREACHABLE.
+            auto* globalObject = context.jsGlobalObject();
+            if (globalObject && connection->isConnectedToWebKit) {
+                void* controllerAtConnect = connection->inspectorControllerAtConnect.load(std::memory_order_relaxed);
+                void* controllerNow = static_cast<void*>(globalObject->m_inspectorController.get());
+
+                if (controllerAtConnect && controllerAtConnect == controllerNow) {
+                    globalObject->inspectorDebuggable().disconnect(*connection);
+                }
+
+                connection->isConnectedToWebKit = false;
+                connection->inspectorControllerAtConnect.store(nullptr, std::memory_order_relaxed);
             }
 
-            if (connection->unrefOnDisconnect) {
+            if (connection->unrefOnDisconnect && connection->didRefEventLoop) {
                 connection->unrefOnDisconnect = false;
-                Bun__eventLoop__incrementRefConcurrently(static_cast<Zig::GlobalObject*>(context.jsGlobalObject())->bunVM(), -1);
+                connection->didRefEventLoop = false;
+                if (connection->bunVMAtConnect) {
+                    Bun__eventLoop__incrementRefConcurrently(connection->bunVMAtConnect, -1);
+                    connection->bunVMAtConnect = nullptr;
+                }
             }
         });
     }
 
-    JSC::JSGlobalObjectDebuggable& inspector()
-    {
-        return globalObject->inspectorDebuggable();
-    }
 
     void sendMessageToFrontend(const String& message) override
     {
@@ -413,7 +452,6 @@ public:
     WTF::Lock jsThreadMessagesLock = WTF::Lock();
     std::atomic<uint32_t> jsThreadMessageScheduledCount { 0 };
 
-    JSC::JSGlobalObject* globalObject;
     ScriptExecutionContextIdentifier scriptExecutionContextIdentifier;
     JSC::Strong<JSC::Unknown> jsBunDebuggerOnMessageFunction {};
 
@@ -422,7 +460,19 @@ public:
 
     bool unrefOnDisconnect = false;
 
-    bool hasEverConnected = false;
+    // Disconnect scheduling must only happen once per connection object.
+    std::atomic<bool> disconnectTaskScheduled { false };
+
+    // Tracks the exact InspectorController instance we connected to (pointer identity).
+    // If Bun replaces the controller, we must not call disconnect on the new one.
+    std::atomic<void*> inspectorControllerAtConnect { nullptr };
+
+    // Event loop ref/unref must be balanced even if the client disconnects before doConnect().
+    void* bunVMAtConnect { nullptr };
+    bool didRefEventLoop { false };
+
+    // True only after connectFrontend() has succeeded in registering this channel.
+    bool isConnectedToWebKit { false };
 };
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionSend);
@@ -511,18 +561,17 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSend, (JSC::JSGlobalObject * globalObject, JS
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionDisconnect, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
+    UNUSED_PARAM(globalObject);
     auto* jsConnection = jsDynamicCast<JSBunInspectorConnection*>(callFrame->thisValue());
     if (!jsConnection)
         return JSValue::encode(jsUndefined());
 
     auto& connection = *jsConnection->connection();
 
-    if (connection.status == ConnectionStatus::Connected || connection.status == ConnectionStatus::Pending) {
-        connection.status = ConnectionStatus::Disconnecting;
-        connection.disconnect();
-        if (connection.jsWaitForMessageFromInspectorLock.isLocked())
-            connection.jsWaitForMessageFromInspectorLock.unlockFairly();
-    }
+    // disconnect() is now fully idempotent and handles state transitions internally.
+    connection.disconnect();
+    if (connection.jsWaitForMessageFromInspectorLock.isLocked())
+        connection.jsWaitForMessageFromInspectorLock.unlockFairly();
 
     return JSValue::encode(jsUndefined());
 }
@@ -546,11 +595,24 @@ extern "C" void Bun__tickWhilePaused(bool*);
 
 extern "C" void Bun__ensureDebugger(ScriptExecutionContextIdentifier scriptId, bool pauseOnStart)
 {
+    ScriptExecutionContext* context = ScriptExecutionContext::getScriptExecutionContext(scriptId);
+    if (!context)
+        return;
 
-    auto* globalObject = ScriptExecutionContext::getScriptExecutionContext(scriptId)->jsGlobalObject();
-    globalObject->m_inspectorController = makeUnique<Inspector::JSGlobalObjectInspectorController>(*globalObject, Bun::BunInjectedScriptHost::create());
-    globalObject->m_inspectorDebuggable = BunJSGlobalObjectDebuggable::create(*globalObject);
-    globalObject->m_inspectorDebuggable->init();
+    auto* globalObject = context->jsGlobalObject();
+    if (!globalObject)
+        return;
+
+    // CRITICAL:
+    // Do not replace an existing InspectorController/Debuggable instance.
+    // Replacing it while a frontend is (or was) connected will orphan the FrontendRouter's channel list.
+    // Subsequent disconnect attempts will call into a *different* router and hit ASSERT/UNREACHABLE in
+    // Inspector::FrontendRouter::disconnectFrontend.
+    if (!globalObject->m_inspectorController || !globalObject->m_inspectorDebuggable) {
+        globalObject->m_inspectorController = makeUnique<Inspector::JSGlobalObjectInspectorController>(*globalObject, Bun::BunInjectedScriptHost::create());
+        globalObject->m_inspectorDebuggable = BunJSGlobalObjectDebuggable::create(*globalObject);
+        globalObject->m_inspectorDebuggable->init();
+    }
 
     globalObject->setInspectable(true);
 
@@ -564,7 +626,32 @@ extern "C" void Bun__ensureDebugger(ScriptExecutionContextIdentifier scriptId, b
         };
     }
     if (pauseOnStart) {
-        waitingForConnection = true;
+        // If a frontend is already connected when waitForDebugger starts, we must not "miss" the signal.
+        // Otherwise the caller can block forever.
+        bool alreadyConnected = false;
+        {
+            Locker<Lock> locker(inspectorConnectionsLock);
+            if (inspectorConnections) {
+                auto it = inspectorConnections->find(scriptId);
+                if (it != inspectorConnections->end()) {
+                    for (auto* connection : it->value) {
+                        if (!connection)
+                            continue;
+                        if (connection->status.load() == ConnectionStatus::Connected) {
+                            alreadyConnected = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (alreadyConnected) {
+            waitingForConnection = false;
+            Debugger__didConnect();
+        } else {
+            waitingForConnection = true;
+        }
     }
 }
 
@@ -600,7 +687,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateConnection, (JSGlobalObject * globalObj
     auto& vm = JSC::getVM(globalObject);
     auto connection = BunInspectorConnection::create(
         *targetContext,
-        targetContext->jsGlobalObject(), shouldRef);
+        nullptr, // do not touch targetContext->jsGlobalObject() from the debugger thread
+        shouldRef);
 
     {
         Locker<Lock> locker(inspectorConnectionsLock);

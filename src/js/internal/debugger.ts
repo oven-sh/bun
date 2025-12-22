@@ -119,6 +119,17 @@ function safeCallReportError(fn: ReportErrorFn | undefined, message: string) {
   }
 }
 
+function stopActiveDebugger(): void {
+  if (!activeDebugger) return;
+  try {
+    activeDebugger.stop();
+  } catch {
+    // ignore
+  } finally {
+    activeDebugger = undefined;
+  }
+}
+
 export default function (
   executionContextId: number,
   url: string,
@@ -133,29 +144,14 @@ export default function (
 ): void {
   // Stop command: url empty or only whitespace.
   if (!url || url.trim().length === 0) {
-    try {
-      activeDebugger?.stop();
-    } catch {
-      // ignore
-    } finally {
-      activeDebugger = undefined;
-    }
-
+    stopActiveDebugger();
     safeCallSetInspectorUrl(setInspectorUrl, undefined);
     return;
   }
 
   // Programmatic use can call into this multiple times. Make it safe.
   // Avoid port conflicts by stopping the previous server first.
-  if (activeDebugger) {
-    try {
-      activeDebugger.stop();
-    } catch {
-      // ignore
-    } finally {
-      activeDebugger = undefined;
-    }
-  }
+  stopActiveDebugger();
 
   if (urlIsServer) {
     // Connect mode (VSCode extension style). There is no listening URL to report.

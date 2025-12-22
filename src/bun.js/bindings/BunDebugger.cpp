@@ -16,8 +16,14 @@
 #include "InspectorBunFrontendDevServerAgent.h"
 #include "InspectorHTTPServerAgent.h"
 
+#include <wtf/Condition.h>
+
 extern "C" void Bun__tickWhilePaused(bool*);
 extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
+
+// Zig exports for node:inspector bootstrap + wait
+extern "C" void Bun__nodeInspectorInit(JSC::JSGlobalObject* globalObject);
+extern "C" void Bun__nodeInspectorWaitForDebugger();
 
 namespace Bun {
 using namespace JSC;
@@ -31,6 +37,40 @@ static WTF::UncheckedKeyHashMap<ScriptExecutionContextIdentifier, Vector<BunInsp
 
 static bool waitingForConnection = false;
 extern "C" void Debugger__didConnect();
+
+// Shared state for node:inspector.{open,close,url}
+static WTF::Lock nodeInspectorLock;
+static WTF::Condition nodeInspectorCondition;
+static bool nodeInspectorOpPending = false;
+static WTF::String nodeInspectorUrl;
+static WTF::String nodeInspectorError;
+
+static void nodeInspectorBeginOp()
+{
+    Locker<Lock> locker(nodeInspectorLock);
+    nodeInspectorOpPending = true;
+    nodeInspectorError = WTF::String();
+}
+
+static WTF::String nodeInspectorWaitOp()
+{
+    Locker<Lock> locker(nodeInspectorLock);
+    while (nodeInspectorOpPending) {
+        nodeInspectorCondition.wait(nodeInspectorLock);
+    }
+
+    WTF::String err = nodeInspectorError.isolatedCopy();
+    nodeInspectorError = WTF::String();
+    return err;
+}
+
+static void nodeInspectorSignalDone()
+{
+    if (nodeInspectorOpPending) {
+        nodeInspectorOpPending = false;
+        nodeInspectorCondition.notifyAll();
+    }
+}
 
 class BunJSGlobalObjectDebuggable final : public JSC::JSGlobalObjectDebuggable {
 public:
@@ -225,12 +265,6 @@ public:
             }
         }
 
-        // for (auto* connection : connections) {
-        //     if (connection->status == ConnectionStatus::Connected) {
-        //         connection->jsWaitForMessageFromInspectorLock.lock();
-        //     }
-        // }
-
         if (connections.size() == 1) {
             while (!isDoneProcessingEvents) {
                 auto* connection = connections[0];
@@ -392,6 +426,13 @@ public:
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionSend);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionDisconnect);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionSetInspectorUrl);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionReportInspectorError);
+
+JSC_DECLARE_HOST_FUNCTION(jsBunInspectorOpen);
+JSC_DECLARE_HOST_FUNCTION(jsBunInspectorClose);
+JSC_DECLARE_HOST_FUNCTION(jsBunInspectorUrl);
+JSC_DECLARE_HOST_FUNCTION(jsBunInspectorWaitForDebugger);
 
 class JSBunInspectorConnection final : public JSC::JSNonFinalObject {
 public:
@@ -415,9 +456,9 @@ public:
         return WebCore::subspaceForImpl<JSBunInspectorConnection, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForBunInspectorConnection.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForBunInspectorConnection = std::forward<decltype(space)>(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForBunInspectorConnection = std::forward<decltype(space)> (space); },
             [](auto& spaces) { return spaces.m_subspaceForBunInspectorConnection.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForBunInspectorConnection = std::forward<decltype(space)>(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForBunInspectorConnection = std::forward<decltype(space)> (space); });
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
@@ -572,11 +613,55 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateConnection, (JSGlobalObject * globalObj
     return JSValue::encode(JSBunInspectorConnection::create(vm, JSBunInspectorConnection::createStructure(vm, globalObject, globalObject->objectPrototype()), connection));
 }
 
-extern "C" void Bun__startJSDebuggerThread(Zig::GlobalObject* debuggerGlobalObject, ScriptExecutionContextIdentifier scriptId, BunString* portOrPathString, int isAutomatic, bool isUrlServer)
+JSC_DEFINE_HOST_FUNCTION(jsFunctionSetInspectorUrl, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    if (!debuggerScriptExecutionContext)
-        debuggerScriptExecutionContext = debuggerGlobalObject->scriptExecutionContext();
+    WTF::String url;
+    if (callFrame->argumentCount() > 0) {
+        auto v = callFrame->argument(0);
+        if (v.isString())
+            url = v.toWTFString(globalObject).isolatedCopy();
+    }
 
+    {
+        Locker<Lock> locker(nodeInspectorLock);
+        nodeInspectorUrl = url;
+        // Only clear error if we have a valid URL (success case).
+        // If URL is empty, an error may have been set by reportError.
+        if (!url.isEmpty())
+            nodeInspectorError = WTF::String();
+        nodeInspectorSignalDone();
+    }
+
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionReportInspectorError, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    WTF::String msg;
+    if (callFrame->argumentCount() > 0) {
+        msg = callFrame->argument(0).toWTFString(globalObject).isolatedCopy();
+    } else {
+        msg = "Inspector error"_s;
+    }
+
+    {
+        Locker<Lock> locker(nodeInspectorLock);
+        nodeInspectorError = msg;
+        nodeInspectorUrl = WTF::String();
+        nodeInspectorSignalDone();
+    }
+
+    return JSValue::encode(jsUndefined());
+}
+
+static void callInternalDebugger(
+    Zig::GlobalObject* debuggerGlobalObject,
+    ScriptExecutionContextIdentifier scriptId,
+    const WTF::String& urlString,
+    bool isAutomatic,
+    bool isUrlServer,
+    bool fatalOnError)
+{
     JSC::VM& vm = debuggerGlobalObject->vm();
     auto scope = DECLARE_CATCH_SCOPE(vm);
     JSValue defaultValue = debuggerGlobalObject->internalModuleRegistry()->requireId(debuggerGlobalObject, vm, InternalModuleRegistry::Field::InternalDebugger);
@@ -586,15 +671,181 @@ extern "C" void Bun__startJSDebuggerThread(Zig::GlobalObject* debuggerGlobalObje
     MarkedArgumentBuffer arguments;
 
     arguments.append(jsNumber(static_cast<unsigned int>(scriptId)));
-    arguments.append(Bun::toJS(debuggerGlobalObject, *portOrPathString));
+    arguments.append(jsString(vm, urlString));
     arguments.append(JSFunction::create(vm, debuggerGlobalObject, 3, String(), jsFunctionCreateConnection, ImplementationVisibility::Public));
     arguments.append(JSFunction::create(vm, debuggerGlobalObject, 1, String("send"_s), jsFunctionSend, ImplementationVisibility::Public));
     arguments.append(JSFunction::create(vm, debuggerGlobalObject, 0, String("disconnect"_s), jsFunctionDisconnect, ImplementationVisibility::Public));
     arguments.append(jsBoolean(isAutomatic));
     arguments.append(jsBoolean(isUrlServer));
+    arguments.append(JSFunction::create(vm, debuggerGlobalObject, 1, String("setInspectorUrl"_s), jsFunctionSetInspectorUrl, ImplementationVisibility::Public));
+    arguments.append(JSFunction::create(vm, debuggerGlobalObject, 1, String("reportError"_s), jsFunctionReportInspectorError, ImplementationVisibility::Public));
+    arguments.append(jsBoolean(fatalOnError));
 
-    JSC::call(debuggerGlobalObject, debuggerDefaultFn, arguments, "Bun__initJSDebuggerThread - debuggerDefaultFn"_s);
+    JSC::call(debuggerGlobalObject, debuggerDefaultFn, arguments, "Bun::callInternalDebugger"_s);
     scope.assertNoException();
+}
+
+static void scheduleInternalDebuggerCall(
+    ScriptExecutionContextIdentifier scriptId,
+    const WTF::String& urlString,
+    bool isAutomatic,
+    bool isUrlServer,
+    bool fatalOnError)
+{
+    if (!debuggerScriptExecutionContext)
+        return;
+
+    WTF::String urlCopy = urlString.isolatedCopy();
+    debuggerScriptExecutionContext->postTaskConcurrently([scriptId, urlCopy = WTFMove(urlCopy), isAutomatic, isUrlServer, fatalOnError](ScriptExecutionContext& context) mutable {
+        auto* dbgGlobal = static_cast<Zig::GlobalObject*>(context.jsGlobalObject());
+        if (!dbgGlobal)
+            return;
+        callInternalDebugger(dbgGlobal, scriptId, urlCopy, isAutomatic, isUrlServer, fatalOnError);
+    });
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsBunInspectorOpen, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* thisGlobalObject = jsDynamicCast<Zig::GlobalObject*>(globalObject);
+    if (!thisGlobalObject)
+        return JSValue::encode(jsUndefined());
+
+    if (callFrame->argumentCount() < 1 || !callFrame->argument(0).isString()) {
+        return throwVMTypeError(globalObject, scope, "inspector.open(url, wait): url must be a string"_s);
+    }
+
+    WTF::String requestedUrl = callFrame->argument(0).toWTFString(globalObject).isolatedCopy();
+    bool wait = callFrame->argumentCount() > 1 ? callFrame->argument(1).toBoolean(globalObject) : false;
+
+    // Ensure debugger thread is started (bootstraps internal/debugger once with a stop command).
+    Bun__nodeInspectorInit(globalObject);
+
+    // If already open, be idempotent.
+    {
+        Locker<Lock> locker(nodeInspectorLock);
+        if (!nodeInspectorUrl.isEmpty()) {
+            if (wait)
+                Bun__nodeInspectorWaitForDebugger();
+            return JSValue::encode(jsUndefined());
+        }
+    }
+
+    if (!debuggerScriptExecutionContext) {
+        return throwVMTypeError(globalObject, scope, "Inspector debugger thread not initialized"_s);
+    }
+
+    nodeInspectorBeginOp();
+
+    scheduleInternalDebuggerCall(
+        thisGlobalObject->scriptExecutionContext()->identifier(),
+        requestedUrl,
+        true, // isAutomatic => no banner
+        false, // urlIsServer
+        false // fatalOnError => report error instead of exit
+    );
+
+    WTF::String err = nodeInspectorWaitOp();
+    if (!err.isEmpty()) {
+        return throwVMTypeError(globalObject, scope, err);
+    }
+
+    if (wait) {
+        Bun__nodeInspectorWaitForDebugger();
+    }
+
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsBunInspectorClose, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    UNUSED_PARAM(callFrame);
+
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* thisGlobalObject = jsDynamicCast<Zig::GlobalObject*>(globalObject);
+    if (!thisGlobalObject)
+        return JSValue::encode(jsUndefined());
+
+    {
+        Locker<Lock> locker(nodeInspectorLock);
+        if (nodeInspectorUrl.isEmpty()) {
+            return JSValue::encode(jsUndefined());
+        }
+    }
+
+    if (!debuggerScriptExecutionContext) {
+        // If we have a URL but no thread, something is inconsistent; clear and return.
+        Locker<Lock> locker(nodeInspectorLock);
+        nodeInspectorUrl = WTF::String();
+        return JSValue::encode(jsUndefined());
+    }
+
+    nodeInspectorBeginOp();
+
+    // Stop command: whitespace/empty string => internal debugger stops server.
+    scheduleInternalDebuggerCall(
+        thisGlobalObject->scriptExecutionContext()->identifier(),
+        " "_s,
+        true,
+        false,
+        false);
+
+    WTF::String err = nodeInspectorWaitOp();
+    if (!err.isEmpty()) {
+        return throwVMTypeError(globalObject, scope, err);
+    }
+
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsBunInspectorUrl, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    UNUSED_PARAM(callFrame);
+
+    auto& vm = JSC::getVM(globalObject);
+
+    WTF::String urlCopy;
+    {
+        Locker<Lock> locker(nodeInspectorLock);
+        urlCopy = nodeInspectorUrl.isolatedCopy();
+    }
+
+    if (urlCopy.isEmpty())
+        return JSValue::encode(jsUndefined());
+
+    return JSValue::encode(jsString(vm, urlCopy));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsBunInspectorWaitForDebugger, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    UNUSED_PARAM(callFrame);
+    UNUSED_PARAM(globalObject);
+
+    Bun__nodeInspectorWaitForDebugger();
+    return JSValue::encode(jsUndefined());
+}
+
+extern "C" void Bun__startJSDebuggerThread(Zig::GlobalObject* debuggerGlobalObject, ScriptExecutionContextIdentifier scriptId, BunString* portOrPathString, int isAutomatic, bool isUrlServer)
+{
+    if (!debuggerScriptExecutionContext)
+        debuggerScriptExecutionContext = debuggerGlobalObject->scriptExecutionContext();
+
+    // Always call internal debugger with URL reporting hooks so node:inspector.url()
+    // can reflect --inspect as well.
+    JSC::JSValue jsVal = Bun::toJS(debuggerGlobalObject, *portOrPathString);
+    WTF::String urlString = jsVal.toWTFString(debuggerGlobalObject).isolatedCopy();
+    callInternalDebugger(
+        debuggerGlobalObject,
+        scriptId,
+        urlString,
+        isAutomatic != 0,
+        isUrlServer,
+        true // fatalOnError for CLI path
+    );
 }
 
 enum class AsyncCallTypeUint8 : uint8_t {
@@ -658,4 +909,4 @@ extern "C" void Debugger__willDispatchAsyncCall(JSGlobalObject* globalObject, As
 
     agent->willDispatchAsyncCall(getCallType(callType), callbackId);
 }
-}
+} // namespace Bun

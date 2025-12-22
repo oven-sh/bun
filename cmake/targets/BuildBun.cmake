@@ -1311,6 +1311,7 @@ if(WIN32)
     dbghelp
     crypt32
     wsock32 # ws2_32 required by TransmitFile aka sendfile on windows
+    xmllite # required by libarchive for xar format
     delayimp.lib
   )
 endif()

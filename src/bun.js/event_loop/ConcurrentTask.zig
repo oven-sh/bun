@@ -50,22 +50,22 @@ pub const PackedNextPtr = enum(usize) {
 
     pub inline fn atomicStorePtr(self: *PackedNextPtr, ptr: ?*ConcurrentTask, ordering: std.builtin.AtomicOrder) void {
         const ptr_bits = if (ptr) |p| @intFromPtr(p) else 0;
+        // auto_delete is immutable after construction, so we can safely read it
+        // with a relaxed load and preserve it in the new value.
         const self_ptr: *usize = @ptrCast(self);
-        var current = @atomicLoad(usize, self_ptr, .monotonic);
-        while (true) {
-            const new_value = ptr_bits | (current & 1);
-            if (@cmpxchgWeak(usize, self_ptr, current, new_value, ordering, .monotonic)) |updated| {
-                current = updated;
-            } else {
-                break;
-            }
-        }
+        const auto_del_bit = @atomicLoad(usize, self_ptr, .monotonic) & 1;
+        @atomicStore(usize, self_ptr, ptr_bits | auto_del_bit, ordering);
     }
 };
 
 comptime {
     if (@sizeOf(ConcurrentTask) != 16) {
         @compileError("ConcurrentTask should be 16 bytes, but is " ++ std.fmt.comptimePrint("{}", .{@sizeOf(ConcurrentTask)}) ++ " bytes");
+    }
+    // PackedNextPtr stores a pointer in the upper bits and auto_delete in bit 0.
+    // This requires ConcurrentTask to be at least 2-byte aligned.
+    if (@alignOf(ConcurrentTask) < 2) {
+        @compileError("ConcurrentTask must be at least 2-byte aligned for pointer packing, but alignment is " ++ std.fmt.comptimePrint("{}", .{@alignOf(ConcurrentTask)}));
     }
 }
 

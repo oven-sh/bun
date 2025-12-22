@@ -6,9 +6,29 @@ pub const cache_line_length = switch (@import("builtin").target.cpu.arch) {
 };
 
 pub fn UnboundedQueue(comptime T: type, comptime next_field: meta.FieldEnum(T)) type {
+    return UnboundedQueuePacked(T, next_field, .unpacked);
+}
+
+pub fn UnboundedQueuePacked(comptime T: type, comptime next_field: meta.FieldEnum(T), comptime packed_or_unpacked: enum { @"packed", unpacked }) type {
     const next_name = meta.fieldInfo(T, next_field).name;
     return struct {
         const Self = @This();
+
+        fn getter(instance: *T) ?*T {
+            if (packed_or_unpacked == .@"packed") {
+                return @field(instance, next_name).get();
+            } else {
+                return @field(instance, next_name);
+            }
+        }
+
+        fn setter(instance: *T, value: ?*T) void {
+            if (packed_or_unpacked == .@"packed") {
+                @field(instance, next_name) = @field(instance, next_name).initPreserveAutoDelete(value);
+            } else {
+                @field(instance, next_name) = value;
+            }
+        }
 
         pub const Batch = struct {
             pub const Iterator = struct {
@@ -17,7 +37,7 @@ pub fn UnboundedQueue(comptime T: type, comptime next_field: meta.FieldEnum(T)) 
                 pub fn next(self: *Self.Batch.Iterator) ?*T {
                     if (self.batch.count == 0) return null;
                     const front = self.batch.front orelse unreachable;
-                    self.batch.front = @field(front, next_name);
+                    self.batch.front = getter(front);
                     self.batch.count -= 1;
                     return front;
                 }
@@ -43,25 +63,43 @@ pub fn UnboundedQueue(comptime T: type, comptime next_field: meta.FieldEnum(T)) 
         }
 
         pub fn pushBatch(self: *Self, first: *T, last: *T) void {
-            @field(last, next) = null;
+            setter(last, null);
             if (comptime bun.Environment.allow_assert) {
                 var item = first;
-                while (@field(item, next)) |next_item| {
+                while (getter(item)) |next_item| {
                     item = next_item;
                 }
                 assertf(item == last, "`last` should be reachable from `first`", .{});
             }
-            const prev_next_ptr = if (self.back.swap(last, .acq_rel)) |old_back|
-                &@field(old_back, next)
-            else
-                &self.front.raw;
-            @atomicStore(?*T, prev_next_ptr, first, .release);
+
+            if (self.back.swap(last, .acq_rel)) |old_back| {
+                // There was a previous back item - set its `next` field to point to `first`
+                if (packed_or_unpacked == .@"packed") {
+                    // We need to preserve old_back's auto_delete flag while updating the pointer
+                    const prev_next_ptr = @as(*usize, @ptrCast(&@field(old_back, next)));
+                    const current_packed = @atomicLoad(usize, prev_next_ptr, .monotonic);
+                    const current_typed: @TypeOf(@field(first, next_name)) = @enumFromInt(current_packed);
+                    const new_packed = current_typed.initPreserveAutoDelete(first);
+                    @atomicStore(usize, prev_next_ptr, @intFromEnum(new_packed), .release);
+                } else {
+                    @atomicStore(?*T, &@field(old_back, next), first, .release);
+                }
+            } else {
+                // Queue was empty - set front to point to `first`
+                // front/back atomics hold plain pointers, not PackedNext
+                @atomicStore(?*T, &self.front.raw, first, .release);
+            }
         }
 
         pub fn pop(self: *Self) ?*T {
             var first = self.front.load(.acquire) orelse return null;
             const next_item = while (true) {
-                const next_item = @atomicLoad(?*T, &@field(first, next), .acquire);
+                const next_item = if (packed_or_unpacked == .@"packed") blk: {
+                    const packed_val = @atomicLoad(usize, @as(*usize, @ptrCast(&@field(first, next))), .acquire);
+                    const packed_typed: @TypeOf(@field(first, next_name)) = @enumFromInt(packed_val);
+                    break :blk packed_typed.get();
+                } else @atomicLoad(?*T, &@field(first, next), .acquire);
+
                 const maybe_first = self.front.cmpxchgWeak(
                     first,
                     next_item,
@@ -85,7 +123,13 @@ pub fn UnboundedQueue(comptime T: type, comptime next_field: meta.FieldEnum(T)) 
             // Another item was added to the queue before we could finish removing this one.
             const new_first = while (true) : (atomic.spinLoopHint()) {
                 // Wait for push/pushBatch to set `next`.
-                break @atomicLoad(?*T, &@field(first, next), .acquire) orelse continue;
+                if (packed_or_unpacked == .@"packed") {
+                    const packed_val = @atomicLoad(usize, @as(*usize, @ptrCast(&@field(first, next))), .acquire);
+                    const packed_typed: @TypeOf(@field(first, next_name)) = @enumFromInt(packed_val);
+                    break packed_typed.get() orelse continue;
+                } else {
+                    break @atomicLoad(?*T, &@field(first, next), .acquire) orelse continue;
+                }
             };
 
             self.front.store(new_first, .release);
@@ -108,7 +152,13 @@ pub fn UnboundedQueue(comptime T: type, comptime next_field: meta.FieldEnum(T)) 
             while (next_item != last) : (batch.count += 1) {
                 next_item = while (true) : (atomic.spinLoopHint()) {
                     // Wait for push/pushBatch to set `next`.
-                    break @atomicLoad(?*T, &@field(next_item, next), .acquire) orelse continue;
+                    if (packed_or_unpacked == .@"packed") {
+                        const packed_val = @atomicLoad(usize, @as(*usize, @ptrCast(&@field(next_item, next))), .acquire);
+                        const packed_typed: @TypeOf(@field(next_item, next_name)) = @enumFromInt(packed_val);
+                        break packed_typed.get() orelse continue;
+                    } else {
+                        break @atomicLoad(?*T, &@field(next_item, next), .acquire) orelse continue;
+                    }
                 };
             }
 

@@ -46,6 +46,7 @@
 #include "JavaScriptCore/JSArray.h"
 #include "JavaScriptCore/JSArrayBuffer.h"
 #include "JavaScriptCore/JSArrayInlines.h"
+#include "JavaScriptCore/JSFunction.h"
 #include "JavaScriptCore/ErrorInstanceInlines.h"
 #include "JavaScriptCore/BigIntObject.h"
 #include "JavaScriptCore/OrderedHashTableHelper.h"
@@ -2915,12 +2916,12 @@ JSC::EncodedJSValue JSC__JSModuleLoader__evaluate(JSC::JSGlobalObject* globalObj
         promise->rejectWithCaughtException(globalObject, scope);
     }
 
-    auto status = promise->status(vm);
+    auto status = promise->status();
 
     if (status == JSC::JSPromise::Status::Fulfilled) {
-        return JSC::JSValue::encode(promise->result(vm));
+        return JSC::JSValue::encode(promise->result());
     } else if (status == JSC::JSPromise::Status::Rejected) {
-        *arg6 = JSC::JSValue::encode(promise->result(vm));
+        *arg6 = JSC::JSValue::encode(promise->result());
         return JSC::JSValue::encode(JSC::jsUndefined());
     } else {
         return JSC::JSValue::encode(promise);
@@ -3328,7 +3329,7 @@ JSC__JSModuleLoader__loadAndEvaluateModule(JSC::JSGlobalObject* globalObject,
     JSC::JSNativeStdFunction* resolverFunction = JSC::JSNativeStdFunction::create(
         vm, globalObject, 1, String(), resolverFunctionCallback);
 
-    auto* newPromise = promise->then(globalObject, resolverFunction, nullptr);
+    auto* newPromise = promise->then(globalObject, resolverFunction, globalObject->promiseEmptyOnRejectedFunction());
     EXCEPTION_ASSERT(!!scope.exception() == !newPromise);
     return newPromise;
 }
@@ -3428,7 +3429,7 @@ JSC::EncodedJSValue JSC__JSPromise__wrap(JSC::JSGlobalObject* globalObject, void
     ASSERT_WITH_MESSAGE(!value.isEmpty(), "Promise.reject cannot be called with a empty JSValue");
     auto& vm = JSC::getVM(globalObject);
     ASSERT_WITH_MESSAGE(arg0->inherits<JSC::JSPromise>(), "Argument is not a promise");
-    ASSERT_WITH_MESSAGE(arg0->status(vm) == JSC::JSPromise::Status::Pending, "Promise is already resolved or rejected");
+    ASSERT_WITH_MESSAGE(arg0->status() == JSC::JSPromise::Status::Pending, "Promise is already resolved or rejected");
 
     JSC::Exception* exception = nullptr;
     if (!value.inherits<JSC::Exception>()) {
@@ -3443,7 +3444,7 @@ JSC::EncodedJSValue JSC__JSPromise__wrap(JSC::JSGlobalObject* globalObject, void
 [[ZIG_EXPORT(check_slow)]] void JSC__JSPromise__rejectAsHandled(JSC::JSPromise* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2)
 {
     ASSERT_WITH_MESSAGE(arg0->inherits<JSC::JSPromise>(), "Argument is not a promise");
-    ASSERT_WITH_MESSAGE(arg0->status(arg0->vm()) == JSC::JSPromise::Status::Pending, "Promise is already resolved or rejected");
+    ASSERT_WITH_MESSAGE(arg0->status() == JSC::JSPromise::Status::Pending, "Promise is already resolved or rejected");
 
     arg0->rejectAsHandled(arg1, JSC::JSValue::decode(JSValue2));
 }
@@ -3458,7 +3459,7 @@ JSC::JSPromise* JSC__JSPromise__rejectedPromise(JSC::JSGlobalObject* arg0, JSC::
     JSValue target = JSValue::decode(JSValue2);
 
     ASSERT_WITH_MESSAGE(arg0->inherits<JSC::JSPromise>(), "Argument is not a promise");
-    ASSERT_WITH_MESSAGE(arg0->status(arg0->vm()) == JSC::JSPromise::Status::Pending, "Promise is already resolved or rejected");
+    ASSERT_WITH_MESSAGE(arg0->status() == JSC::JSPromise::Status::Pending, "Promise is already resolved or rejected");
     ASSERT(!target.isEmpty());
     ASSERT_WITH_MESSAGE(arg0 != target, "Promise cannot be resolved to itself");
 
@@ -3521,12 +3522,8 @@ void JSC__JSPromise__rejectOnNextTickWithHandled(JSC::JSPromise* promise, JSC::J
             value = jsUndefined();
         }
 
-        globalObject->queueMicrotask(
-            microtaskFunction,
-            rejectPromiseFunction,
-            globalObject->m_asyncContextData.get()->getInternalField(0),
-            promise,
-            value);
+        JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::BunPerformMicrotaskJob, globalObject, microtaskFunction, rejectPromiseFunction, globalObject->m_asyncContextData.get()->getInternalField(0), promise, value };
+        globalObject->vm().queueMicrotask(WTFMove(task));
         RETURN_IF_EXCEPTION(scope, );
     }
 }
@@ -3546,7 +3543,7 @@ JSC::JSPromise* JSC__JSPromise__resolvedPromise(JSC::JSGlobalObject* globalObjec
 
     // if the promise is rejected we automatically mark it as handled so it
     // doesn't end up in the promise rejection tracker
-    switch (promise->status(vm)) {
+    switch (promise->status()) {
     case JSC::JSPromise::Status::Rejected: {
         uint32_t flags = promise->internalField(JSC::JSPromise::Field::Flags).get().asUInt32();
         if (!(flags & JSC::JSPromise::isFirstResolvingFunctionCalledFlag)) {
@@ -3555,7 +3552,7 @@ JSC::JSPromise* JSC__JSPromise__resolvedPromise(JSC::JSGlobalObject* globalObjec
     }
     // fallthrough intended
     case JSC::JSPromise::Status::Fulfilled: {
-        return JSValue::encode(promise->result(vm));
+        return JSValue::encode(promise->result());
     }
     default:
         return JSValue::encode(JSValue {});
@@ -3564,7 +3561,7 @@ JSC::JSPromise* JSC__JSPromise__resolvedPromise(JSC::JSGlobalObject* globalObjec
 
 [[ZIG_EXPORT(nothrow)]] uint32_t JSC__JSPromise__status(const JSC::JSPromise* arg0, JSC::VM* arg1)
 {
-    switch (arg0->status(*arg1)) {
+    switch (arg0->status()) {
     case JSC::JSPromise::Status::Pending:
         return 0;
     case JSC::JSPromise::Status::Fulfilled:
@@ -3577,13 +3574,11 @@ JSC::JSPromise* JSC__JSPromise__resolvedPromise(JSC::JSGlobalObject* globalObjec
 }
 [[ZIG_EXPORT(nothrow)]] bool JSC__JSPromise__isHandled(const JSC::JSPromise* arg0, JSC::VM* arg1)
 {
-    return arg0->isHandled(*arg1);
+    return arg0->isHandled();
 }
 [[ZIG_EXPORT(nothrow)]] void JSC__JSPromise__setHandled(JSC::JSPromise* promise, JSC::VM* arg1)
 {
-    auto& vm = *arg1;
-    auto flags = promise->internalField(JSC::JSPromise::Field::Flags).get().asUInt32();
-    promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, jsNumber(flags | JSC::JSPromise::isHandledFlag));
+    promise->markAsHandled();
 }
 
 #pragma mark - JSC::JSInternalPromise
@@ -3642,11 +3637,11 @@ JSC::JSInternalPromise* JSC__JSInternalPromise__resolvedPromise(JSC::JSGlobalObj
 
 JSC::EncodedJSValue JSC__JSInternalPromise__result(const JSC::JSInternalPromise* arg0, JSC::VM* arg1)
 {
-    return JSC::JSValue::encode(arg0->result(*arg1));
+    return JSC::JSValue::encode(arg0->result());
 }
 uint32_t JSC__JSInternalPromise__status(const JSC::JSInternalPromise* arg0, JSC::VM* arg1)
 {
-    switch (arg0->status(*arg1)) {
+    switch (arg0->status()) {
     case JSC::JSInternalPromise::Status::Pending:
         return 0;
     case JSC::JSInternalPromise::Status::Fulfilled:
@@ -3659,7 +3654,7 @@ uint32_t JSC__JSInternalPromise__status(const JSC::JSInternalPromise* arg0, JSC:
 }
 bool JSC__JSInternalPromise__isHandled(const JSC::JSInternalPromise* arg0, JSC::VM* arg1)
 {
-    return arg0->isHandled(*arg1);
+    return arg0->isHandled();
 }
 void JSC__JSInternalPromise__setHandled(JSC::JSInternalPromise* promise, JSC::VM* arg1)
 {
@@ -5391,7 +5386,7 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskJob(JSC::JSGlobalObject* arg0
     if (microtaskArgs[3].isEmpty()) {
         microtaskArgs[3] = jsUndefined();
     }
-    auto microTaskFunction = globalObject->performMicrotaskFunction();
+    JSC::JSFunction* microTaskFunction = globalObject->performMicrotaskFunction();
 #if ASSERT_ENABLED
     ASSERT_WITH_MESSAGE(microTaskFunction, "Invalid microtask function");
     auto& vm = globalObject->vm();
@@ -5413,12 +5408,8 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskJob(JSC::JSGlobalObject* arg0
 
 #endif
 
-    globalObject->queueMicrotask(
-        microTaskFunction,
-        WTFMove(microtaskArgs[0]),
-        WTFMove(microtaskArgs[1]),
-        WTFMove(microtaskArgs[2]),
-        WTFMove(microtaskArgs[3]));
+    JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::BunPerformMicrotaskJob, globalObject, microTaskFunction, WTFMove(microtaskArgs[0]), WTFMove(microtaskArgs[1]), WTFMove(microtaskArgs[2]), WTFMove(microtaskArgs[3]) };
+    globalObject->vm().queueMicrotask(WTFMove(task));
 }
 
 extern "C" WebCore::AbortSignal* WebCore__AbortSignal__new(JSC::JSGlobalObject* globalObject)

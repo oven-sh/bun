@@ -488,13 +488,17 @@ pub const JSType = enum(u8) {
     /// Internal object used to track the state of Promise.all() resolution.
     PromiseAllContext = 77,
 
+    /// Promise reaction object for tracking promise callbacks.
+    /// Internal object used in the promise resolution mechanism.
+    PromiseReaction = 78,
+
     /// JavaScript Map object for key-value storage.
     /// ```js
     /// new Map()
     /// map.set(key, value)
     /// map.get(key)
     /// ```
-    Map = 78,
+    Map = 79,
 
     /// JavaScript Set object for unique value storage.
     /// ```js
@@ -502,34 +506,34 @@ pub const JSType = enum(u8) {
     /// set.add(value)
     /// set.has(value)
     /// ```
-    Set = 79,
+    Set = 80,
 
     /// WeakMap for weak key-value references.
     /// ```js
     /// new WeakMap()
     /// weakMap.set(object, value)
     /// ```
-    WeakMap = 80,
+    WeakMap = 81,
 
     /// WeakSet for weak value references.
     /// ```js
     /// new WeakSet()
     /// weakSet.add(object)
     /// ```
-    WeakSet = 81,
+    WeakSet = 82,
 
-    WebAssemblyModule = 82,
-    WebAssemblyInstance = 83,
-    WebAssemblyGCObject = 84,
+    WebAssemblyModule = 83,
+    WebAssemblyInstance = 84,
+    WebAssemblyGCObject = 85,
 
     /// Boxed String object.
     /// ```js
     /// new String("hello")
     /// ```
-    StringObject = 85,
+    StringObject = 86,
 
-    DerivedStringObject = 86,
-    InternalFieldTuple = 87,
+    DerivedStringObject = 87,
+    InternalFieldTuple = 88,
 
     MaxJS = 0b11111111,
     Event = 0b11101111,

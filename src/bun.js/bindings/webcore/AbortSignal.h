@@ -95,7 +95,8 @@ public:
     CommonAbortReason commonReason() const { return m_commonReason; }
 
     void cleanNativeBindings(void* ref);
-    void addNativeCallback(NativeCallbackTuple callback) {
+    void addNativeCallback(NativeCallbackTuple callback)
+    {
         m_native_callbacks.append(callback);
         eventListenersDidChange();
     }

@@ -295,6 +295,13 @@ fn getHomeConfigPath(buf: *bun.PathBuffer) ?[:0]const u8 {
     return null;
 }
 pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx: Command.Context, comptime cmd: Command.Tag) OOM!void {
+    // For standalone executables, respect compile-time flag to disable bunfig autoloading
+    if (bun.StandaloneModuleGraph.get()) |graph| {
+        if (graph.flags.disable_autoload_bunfig) {
+            return;
+        }
+    }
+
     var config_buf: bun.PathBuffer = undefined;
     if (comptime cmd.readGlobalConfig()) {
         if (!ctx.has_loaded_global_config) {

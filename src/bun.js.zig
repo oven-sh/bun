@@ -18,9 +18,14 @@ pub const Run = struct {
         bun.jsc.initialize(false);
         bun.analytics.Features.standalone_executable += 1;
 
-        const graph_ptr = try bun.default_allocator.create(bun.StandaloneModuleGraph);
-        graph_ptr.* = graph;
-        graph_ptr.set();
+        // Use existing graph if already set (set early in cli.zig for execArgv case),
+        // otherwise create and set it now
+        const graph_ptr = bun.StandaloneModuleGraph.get() orelse blk: {
+            const ptr = try bun.default_allocator.create(bun.StandaloneModuleGraph);
+            ptr.* = graph;
+            ptr.set();
+            break :blk ptr;
+        };
 
         js_ast.Expr.Data.Store.create();
         js_ast.Stmt.Data.Store.create();

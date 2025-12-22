@@ -213,6 +213,59 @@ console.log("PRELOAD");
     },
   });
 
+  // Test that autoloadBunfig: false is respected when execArgv is set
+  // Regression test: execArgv was causing bunfig.toml to be loaded even when disabled
+  itBundled("compile/AutoloadBunfigDisabledWithExecArgv", {
+    compile: {
+      autoloadBunfig: false,
+      execArgv: ["--smol"],
+    },
+    files: {
+      "/entry.ts": /* js */ `
+        console.log("ENTRY");
+      `,
+    },
+    runtimeFiles: {
+      "/bunfig.toml": `
+preload = ["./preload.ts"]
+      `,
+      "/preload.ts": `
+console.log("PRELOAD");
+      `,
+    },
+    run: {
+      // When bunfig is disabled, preload should NOT execute even with execArgv
+      stdout: "ENTRY",
+      setCwd: true,
+    },
+  });
+
+  // Test CLI backend: autoloadBunfig: false with execArgv
+  itBundled("compile/AutoloadBunfigDisabledWithExecArgvCLI", {
+    compile: {
+      autoloadBunfig: false,
+      execArgv: ["--smol"],
+    },
+    backend: "cli",
+    files: {
+      "/entry.ts": /* js */ `
+        console.log("ENTRY");
+      `,
+    },
+    runtimeFiles: {
+      "/bunfig.toml": `
+preload = ["./preload.ts"]
+      `,
+      "/preload.ts": `
+console.log("PRELOAD");
+      `,
+    },
+    run: {
+      stdout: "ENTRY",
+      setCwd: true,
+    },
+  });
+
   // Test CLI backend with autoloadBunfig: true
   itBundled("compile/AutoloadBunfigEnabledCLI", {
     compile: {

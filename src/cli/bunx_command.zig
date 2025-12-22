@@ -256,6 +256,60 @@ pub const BunxCommand = struct {
         return try getBinNameFromSubpath(transpiler, dir_fd, subpath_z);
     }
 
+    /// Discovers the package name from the lockfile for tarball URL dependencies.
+    /// When a tarball URL is installed, we don't know the package name upfront.
+    /// The lockfile contains the mapping from package name to URL in the dependencies.
+    fn discoverPackageFromLockfile(allocator: std.mem.Allocator, tempdir_name: []const u8, url: []const u8) ?[]const u8 {
+        var lockfile_path_buf: bun.PathBuffer = undefined;
+        const lockfile_path = std.fmt.bufPrintZ(&lockfile_path_buf, bun.pathLiteral("{s}/bun.lock"), .{tempdir_name}) catch return null;
+
+        const lockfile_fd = bun.sys.openatA(bun.FD.cwd(), lockfile_path, bun.O.RDONLY, 0).unwrap() catch return null;
+        const lockfile = bun.sys.File{ .handle = lockfile_fd };
+        defer lockfile.close();
+
+        const read_result = lockfile.readToEnd(allocator);
+        if (read_result.err != null) return null;
+        const contents = read_result.bytes.items;
+        defer allocator.free(contents);
+
+        // Parse the lockfile JSON to find the package name for this URL.
+        // The format is: "workspaces": { "": { "dependencies": { "package-name": "url" } } }
+        // We look for the URL in the dependencies and extract the package name.
+
+        // Simple approach: search for the URL in the lockfile and extract the key before it
+        // Format in lockfile: "package-name": "https://..."
+        if (strings.indexOf(contents, url)) |url_pos| {
+            // Work backwards from the URL to find the package name
+            // We're looking for: "package-name": "url"
+            // So we need to find the ": " before the URL, then find the quoted string before that
+            if (url_pos >= 4) { // At minimum: "x": "
+                // Find the start of the URL quote
+                var pos = url_pos - 1;
+                // Skip backwards past ": "
+                while (pos > 0 and (contents[pos] == ' ' or contents[pos] == ':' or contents[pos] == '"')) {
+                    pos -= 1;
+                }
+                // Now we should be at the end of the package name (before the closing quote)
+                const name_end = pos + 1;
+                // Find the opening quote of the package name
+                while (pos > 0 and contents[pos] != '"') {
+                    pos -= 1;
+                }
+                if (contents[pos] == '"') {
+                    const name_start = pos + 1;
+                    if (name_end > name_start) {
+                        const package_name = contents[name_start..name_end];
+                        // Validate it looks like a package name (not empty, doesn't start with special chars except @)
+                        if (package_name.len > 0 and (std.ascii.isAlphanumeric(package_name[0]) or package_name[0] == '@')) {
+                            return allocator.dupe(u8, package_name) catch null;
+                        }
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
     fn getBinNameFromTempDirectory(transpiler: *bun.Transpiler, tempdir_name: []const u8, package_name: []const u8, with_stale_check: bool) ![]const u8 {
         var subpath: bun.PathBuffer = undefined;
         if (with_stale_check) {
@@ -457,7 +511,7 @@ pub const BunxCommand = struct {
                 }),
                 update_request.name,
             }
-        else
+        else if (initial_bin_name.len > 0)
             // When there is not a clear package name (URL/GitHub/etc), we force the package name
             // to be the same as the calculated initial bin name. This allows us to have a predictable
             // node_modules folder structure.
@@ -467,6 +521,13 @@ pub const BunxCommand = struct {
                     display_version,
                 }),
                 initial_bin_name,
+            }
+        else
+            // For tarball URLs where we cannot determine the package name, pass the URL directly.
+            // The package name will be discovered after extraction from the tarball's package.json.
+            .{
+                display_version,
+                display_version,
             };
         debug("install_param: {s}", .{install_param});
         debug("result_package_name: {s}", .{result_package_name});
@@ -826,7 +887,15 @@ pub const BunxCommand = struct {
         // 2. The "bin" is possibly not the same as the package name, so we load the package.json to figure out what "bin" to use
         // BUT: Skip this if --package was used, as the user explicitly specified the binary name
         if (opts.binary_name == null) {
-            if (getBinNameFromTempDirectory(&this_transpiler, bunx_cache_dir, result_package_name, false)) |package_name_for_bin| {
+            // For tarball URLs, result_package_name might be the URL itself.
+            // In that case, try to discover the actual package name from the lockfile.
+            const actual_package_name = if (strings.hasPrefixComptime(result_package_name, "http://") or
+                strings.hasPrefixComptime(result_package_name, "https://"))
+                discoverPackageFromLockfile(ctx.allocator, bunx_cache_dir, result_package_name) orelse result_package_name
+            else
+                result_package_name;
+
+            if (getBinNameFromTempDirectory(&this_transpiler, bunx_cache_dir, actual_package_name, false)) |package_name_for_bin| {
                 if (!strings.eqlLong(package_name_for_bin, initial_bin_name, true)) {
                     absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/node_modules/.bin/{s}{s}", .{ bunx_cache_dir, package_name_for_bin, bun.exe_suffix }) catch unreachable;
 
@@ -865,12 +934,9 @@ pub const BunxCommand = struct {
 
 const string = []const u8;
 
-const std = @import("std");
-const Run = @import("./run_command.zig").RunCommand;
-const Allocator = std.mem.Allocator;
 
-const cli = @import("../cli.zig");
-const Command = cli.Command;
+const std = @import("std");
+const Allocator = std.mem.Allocator;
 
 const bun = @import("bun");
 const Environment = bun.Environment;
@@ -879,3 +945,8 @@ const Output = bun.Output;
 const default_allocator = bun.default_allocator;
 const strings = bun.strings;
 const UpdateRequest = bun.PackageManager.UpdateRequest;
+
+const cli = @import("../cli.zig");
+const Command = cli.Command;
+const Run = @import("./run_command.zig").RunCommand;
+

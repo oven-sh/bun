@@ -72,6 +72,11 @@ JSC_DECLARE_HOST_FUNCTION(jsBunInspectorOpen);
 JSC_DECLARE_HOST_FUNCTION(jsBunInspectorClose);
 JSC_DECLARE_HOST_FUNCTION(jsBunInspectorUrl);
 JSC_DECLARE_HOST_FUNCTION(jsBunInspectorWaitForDebugger);
+
+// Session host functions (implemented in BunInspectorSession.cpp)
+JSC_DECLARE_HOST_FUNCTION(jsBunInspectorCreateSession);
+JSC_DECLARE_HOST_FUNCTION(jsBunInspectorSessionSend);
+JSC_DECLARE_HOST_FUNCTION(jsBunInspectorSessionDisconnect);
 }
 
 extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__ExposeNodeModuleGlobals(Zig::GlobalObject* globalObject)
@@ -93,7 +98,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__ExposeNodeModuleGlobals(Zig::Global
 #undef PUT_CUSTOM_GETTER_SETTER
 
     // Internal, non-enumerable binding used by src/js/node/inspector.ts
-    auto* bunInspector = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 4);
+    auto* bunInspector = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 7);
 
     bunInspector->putDirect(
         vm,
@@ -117,6 +122,24 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__ExposeNodeModuleGlobals(Zig::Global
         vm,
         JSC::Identifier::fromString(vm, "waitForDebugger"_s),
         JSC::JSFunction::create(vm, globalObject, 0, "waitForDebugger"_s, Bun::jsBunInspectorWaitForDebugger, JSC::ImplementationVisibility::Public),
+        0);
+
+    bunInspector->putDirect(
+        vm,
+        JSC::Identifier::fromString(vm, "createSession"_s),
+        JSC::JSFunction::create(vm, globalObject, 2, "createSession"_s, Bun::jsBunInspectorCreateSession, JSC::ImplementationVisibility::Public),
+        0);
+
+    bunInspector->putDirect(
+        vm,
+        JSC::Identifier::fromString(vm, "sessionSend"_s),
+        JSC::JSFunction::create(vm, globalObject, 1, "sessionSend"_s, Bun::jsBunInspectorSessionSend, JSC::ImplementationVisibility::Public),
+        0);
+
+    bunInspector->putDirect(
+        vm,
+        JSC::Identifier::fromString(vm, "sessionDisconnect"_s),
+        JSC::JSFunction::create(vm, globalObject, 0, "sessionDisconnect"_s, Bun::jsBunInspectorSessionDisconnect, JSC::ImplementationVisibility::Public),
         0);
 
     globalObject->putDirect(

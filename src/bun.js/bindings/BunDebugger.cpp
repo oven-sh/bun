@@ -64,6 +64,7 @@ static WTF::String nodeInspectorWaitOp()
     return err;
 }
 
+// Caller must hold nodeInspectorLock
 static void nodeInspectorSignalDone()
 {
     if (nodeInspectorOpPending) {

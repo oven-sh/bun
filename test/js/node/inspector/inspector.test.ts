@@ -70,7 +70,7 @@ test("node:inspector open/close loop (state stability)", () => {
 });
 
 test("node:inspector open error path: port in use throws (and does not exit)", () => {
-  const occupied = Bun.serve({
+  using occupied = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
     fetch() {
@@ -78,12 +78,8 @@ test("node:inspector open error path: port in use throws (and does not exit)", (
     },
   });
 
-  try {
-    expect(() => inspector.open(occupied.port, "127.0.0.1", false)).toThrow();
-    expect(inspector.url()).toBeUndefined();
-  } finally {
-    occupied.stop();
-  }
+  expect(() => inspector.open(occupied.port, "127.0.0.1", false)).toThrow();
+  expect(inspector.url()).toBeUndefined();
 });
 
 test.skip("node:inspector waitForDebugger (no setTimeout, use subprocess connector)", () => {

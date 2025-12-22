@@ -1,8 +1,4 @@
 // Hardcoded module "node:inspector" and "node:inspector/promises"
-//
-// PR2 scope:
-// - Implement open/close/url/waitForDebugger.
-// - Keep Session as NotImplemented (implemented in PR3).
 
 const { hideFromStack, throwNotImplemented } = require("internal/shared");
 const EventEmitter = require("node:events");
@@ -12,6 +8,11 @@ type NativeInspectorBinding = {
   close: () => void;
   url: () => string | undefined;
   waitForDebugger: () => void;
+
+  // Session bindings
+  createSession: (unrefEventLoop: boolean, onMessage: (...messages: string[]) => void) => unknown;
+  sessionSend: (message: string | string[]) => void;
+  sessionDisconnect: () => void;
 };
 
 let cachedBinding: NativeInspectorBinding | undefined;
@@ -25,13 +26,20 @@ function getBinding(): NativeInspectorBinding {
     typeof binding.open !== "function" ||
     typeof binding.close !== "function" ||
     typeof binding.url !== "function" ||
-    typeof binding.waitForDebugger !== "function"
+    typeof binding.waitForDebugger !== "function" ||
+    typeof binding.createSession !== "function" ||
+    typeof binding.sessionSend !== "function" ||
+    typeof binding.sessionDisconnect !== "function"
   ) {
     throwNotImplemented("node:inspector", 2445, "Missing Bun internal binding (__bunInspector)");
   }
 
   cachedBinding = binding;
   return binding;
+}
+
+function callNative(fn: Function, thisArg: any, ...args: any[]) {
+  return fn.$call(thisArg, ...args);
 }
 
 const DEFAULT_PORT = 9229;
@@ -92,12 +100,10 @@ function normalizeOpenArgs(
   host: string;
   wait: boolean;
 } {
-  // Node signature: open([port[, host[, wait]]])
   let p = port;
   let h = host;
   let w = wait;
 
-  // Convenience: open(true) or open(port, true)
   if (typeof p === "boolean") {
     w = p;
     p = undefined;
@@ -117,7 +123,6 @@ function open(port?: number, host?: string, wait?: boolean): void {
   const binding = getBinding();
   const args = normalizeOpenArgs(port, host, wait);
 
-  // If already open, be idempotent.
   const existing = binding.url();
   if (existing) {
     if (args.wait) binding.waitForDebugger();
@@ -127,9 +132,7 @@ function open(port?: number, host?: string, wait?: boolean): void {
   const urlHost = formatHostForURL(args.host);
   const pathname = randomPathname();
 
-  // port=0 allowed, native side will bind and then update url()
   const wsUrl = `ws://${urlHost}:${args.port}${pathname}`;
-
   binding.open(wsUrl, args.wait);
 }
 
@@ -144,16 +147,184 @@ function url(): string | undefined {
 function waitForDebugger(): void {
   const binding = getBinding();
   if (!binding.url()) {
-    open(undefined as any, undefined as any, true as any);
+    open(true as any);
     return;
   }
   binding.waitForDebugger();
 }
 
+type PendingRequest = {
+  resolve: (value: any) => void;
+  reject: (reason: any) => void;
+  callback?: (err: Error | null, result?: any) => void;
+};
+
+// ---------------------------------------------------------------------------
+// Hybrid fix (part 1): process-wide message id counter.
+// Why:
+// - Bun's in-process inspector sessions share the same underlying InspectorController,
+//   which broadcasts responses to all connected frontends.
+// - If each Session starts ids at 1, concurrent sessions collide and cross-talk.
+// - Using a module-scope counter makes ids unique within the process.
+// ---------------------------------------------------------------------------
+let nextInspectorMessageId = 1;
+
 class Session extends EventEmitter {
-  constructor() {
-    super();
-    throwNotImplemented("node:inspector", 2445, "Session is implemented in PR3");
+  #handle: any = null;
+  #connected = false;
+
+  #pending = new Map<number, PendingRequest>();
+
+  #onNativeMessage?: (...messages: string[]) => void;
+
+  connect(): void {
+    if (this.#connected) return;
+
+    const binding = getBinding();
+
+    this.#onNativeMessage = (...messages: string[]) => {
+      for (const msg of messages) {
+        if (typeof msg === "string") this.#handleMessage(msg);
+      }
+    };
+
+    // Node Session should not keep the process alive by default.
+    const unrefEventLoop = true;
+
+    const handle = binding.createSession(unrefEventLoop, this.#onNativeMessage);
+    if (!handle) throw new Error("Failed to create inspector session");
+
+    this.#handle = handle;
+    this.#connected = true;
+  }
+
+  connectToMainThread(): void {
+    // WorkerThreads compatibility: for now, treat it as connect().
+    this.connect();
+  }
+
+  disconnect(): void {
+    if (!this.#connected) return;
+
+    const binding = getBinding();
+    const handle = this.#handle;
+
+    this.#handle = null;
+    this.#connected = false;
+
+    try {
+      callNative(binding.sessionDisconnect, handle);
+    } catch {
+      // ignore
+    }
+
+    const err = new Error("Inspector session disconnected");
+    for (const pending of this.#pending.values()) {
+      try {
+        pending.callback?.(err);
+      } catch {
+        // ignore
+      }
+      try {
+        pending.reject(err);
+      } catch {
+        // ignore
+      }
+    }
+    this.#pending.clear();
+  }
+
+  post(method: string, params?: any, callback?: (err: Error | null, result?: any) => void): Promise<any> | void {
+    if (typeof params === "function") {
+      callback = params;
+      params = undefined;
+    }
+
+    if (typeof method !== "string" || method.length === 0) {
+      throw new TypeError("Inspector Session.post: method must be a non-empty string");
+    }
+
+    if (!this.#connected || !this.#handle) {
+      throw new Error("Inspector session is not connected");
+    }
+
+    const id = nextInspectorMessageId++;
+    const message = params !== undefined ? { id, method, params } : { id, method };
+    const payload = JSON.stringify(message);
+
+    const binding = getBinding();
+
+    if (typeof callback === "function") {
+      this.#pending.set(id, {
+        resolve: () => {},
+        reject: () => {},
+        callback,
+      });
+
+      callNative(binding.sessionSend, this.#handle, payload);
+      return;
+    }
+
+    // Promise style (needed because Bun aliases inspector/promises -> inspector)
+    return new Promise((resolve, reject) => {
+      this.#pending.set(id, { resolve, reject });
+      try {
+        callNative(binding.sessionSend, this.#handle, payload);
+      } catch (err) {
+        this.#pending.delete(id);
+        reject(err);
+      }
+    });
+  }
+
+  #handleMessage(data: string): void {
+    let msg: any;
+    try {
+      msg = JSON.parse(data);
+    } catch {
+      return;
+    }
+
+    // Response
+    if (msg && typeof msg.id === "number") {
+      const pending = this.#pending.get(msg.id);
+      if (!pending) return;
+      this.#pending.delete(msg.id);
+
+      if (msg.error) {
+        const err = new Error(msg.error.message || "Inspector error");
+        (err as any).code = msg.error.code;
+        (err as any).data = msg.error.data;
+
+        if (pending.callback) {
+          try {
+            pending.callback(err);
+          } catch {
+            // ignore
+          }
+        } else {
+          pending.reject(err);
+        }
+        return;
+      }
+
+      if (pending.callback) {
+        try {
+          pending.callback(null, msg.result);
+        } catch {
+          // ignore
+        }
+      } else {
+        pending.resolve(msg.result);
+      }
+      return;
+    }
+
+    // Notification
+    if (msg && typeof msg.method === "string") {
+      this.emit("inspectorNotification", msg);
+      this.emit(msg.method, msg.params);
+    }
   }
 }
 

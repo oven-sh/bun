@@ -152,7 +152,7 @@ pub fn doReadFile(this: *Blob, comptime Function: anytype, global: *JSGlobalObje
         handler,
         Handler.run,
     ) catch |err| bun.handleOom(err);
-    var read_file_task = bun.handleOom(read_file.ReadFileTask.createOnJSThread(bun.default_allocator, global, file_read));
+    var read_file_task = read_file.ReadFileTask.createOnJSThread(bun.default_allocator, global, file_read);
 
     // Create the Promise only after the store has been ref()'d.
     // The garbage collector runs on memory allocations
@@ -190,7 +190,7 @@ pub fn doReadFileInternal(this: *Blob, comptime Handler: type, ctx: Handler, com
         this.offset,
         this.size,
     ) catch |err| bun.handleOom(err);
-    var read_file_task = bun.handleOom(read_file.ReadFileTask.createOnJSThread(bun.default_allocator, global, file_read));
+    var read_file_task = read_file.ReadFileTask.createOnJSThread(bun.default_allocator, global, file_read);
     read_file_task.schedule();
 }
 
@@ -1036,7 +1036,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
             WriteFilePromise.run,
             options.mkdirp_if_not_exists orelse true,
         ) catch unreachable;
-        var task = bun.handleOom(write_file.WriteFileTask.createOnJSThread(bun.default_allocator, ctx, file_copier));
+        var task = write_file.WriteFileTask.createOnJSThread(bun.default_allocator, ctx, file_copier);
         // Defer promise creation until we're just about to schedule the task
         var promise = jsc.JSPromise.create(ctx);
         const promise_value = promise.asValue(ctx);
@@ -1064,7 +1064,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
             destination_blob.size,
             ctx,
             options.mkdirp_if_not_exists orelse true,
-        ) catch unreachable;
+        );
         file_copier.schedule();
         return file_copier.promise.value();
     } else if (destination_type == .file and source_type == .s3) {

@@ -124,6 +124,7 @@ export function setEnv(name, value) {
  * @property {(error: Error) => boolean} [retryOnError]
  * @property {string} [stdin]
  * @property {boolean} [privileged]
+ * @property {boolean} [detached]
  */
 
 /**
@@ -2186,7 +2187,7 @@ export async function getCloudMetadata(name, cloud) {
     throw new Error(`Unsupported cloud: ${inspect(cloud)}`);
   }
 
-  const { error, body } = await curl(url, { headers, retries: 10 });
+  const { error, body } = await curl(url, { headers, retries: 3 });
   if (error) {
     console.warn("Failed to get cloud metadata:", error);
     return;
@@ -2237,7 +2238,7 @@ export async function getBuildMetadata(name) {
  * @returns {Promise<Error | undefined>}
  */
 export async function waitForPort(options) {
-  const { hostname, port, retries = 10 } = options;
+  const { hostname, port, retries = 3 } = options;
   console.log("Connecting...", `${hostname}:${port}`);
 
   let cause;
@@ -2247,7 +2248,7 @@ export async function waitForPort(options) {
     }
 
     const connected = new Promise((resolve, reject) => {
-      const socket = connect({ host: hostname, port });
+      const socket = connect({ host: hostname, port, timeout: 10_000 });
       socket.on("connect", () => {
         socket.destroy();
         console.log("Connected:", `${hostname}:${port}`);
@@ -3025,7 +3026,7 @@ export async function spawnSshSafe(options, spawnOptions = {}) {
  * @returns {Promise<import("./utils.mjs").SpawnResult>}
  */
 export async function spawnSsh(options, spawnOptions = {}) {
-  const { hostname, port, username, identityPaths, password, retries = 10, command: spawnCommand } = options;
+  const { hostname, port, username, identityPaths, password, retries = 3, command: spawnCommand } = options;
 
   if (!hostname.includes("@")) {
     await waitForPort({
@@ -3113,4 +3114,62 @@ export async function setupUserData(machine, options) {
     // Clean up the temporary file
     rm(tmpFile);
   }
+}
+
+/**
+ * @typedef ScpOptions
+ * @property {string} hostname
+ * @property {string} source
+ * @property {string} destination
+ * @property {string[]} [identityPaths]
+ * @property {string} [port]
+ * @property {string} [username]
+ * @property {number} [retries]
+ */
+
+/**
+ * @param {ScpOptions} options
+ * @returns {Promise<void>}
+ */
+export async function spawnScp(options) {
+  const { hostname, port, username, identityPaths, password, source, destination, retries = 3 } = options;
+  await waitForPort({ hostname, port: port || 22 });
+
+  const command = ["scp", "-o", "StrictHostKeyChecking=no"];
+  command.push("-O"); // use SCP instead of SFTP
+  if (!password) {
+    command.push("-o", "BatchMode=yes");
+  }
+  if (port) {
+    command.push("-P", port);
+  }
+  if (password) {
+    const sshPass = which("sshpass", { required: true });
+    command.unshift(sshPass, "-p", password);
+  } else if (identityPaths) {
+    command.push(...identityPaths.flatMap(path => ["-i", path]));
+  }
+  command.push(resolve(source));
+  if (username) {
+    command.push(`${username}@${hostname}:${destination}`);
+  } else {
+    command.push(`${hostname}:${destination}`);
+  }
+
+  let cause;
+  for (let i = 0; i < retries; i++) {
+    const result = await spawn(command, { stdio: "inherit" });
+    const { exitCode, stderr } = result;
+    if (exitCode === 0) {
+      return;
+    }
+
+    cause = stderr.trim() || undefined;
+    if (/(bad configuration option)|(no such file or directory)/i.test(stderr)) {
+      break;
+    }
+    await new Promise(resolve => setTimeout(resolve, Math.pow(2, i) * 1000));
+  }
+
+  throw new Error(`SCP failed: ${source} -> ${username}@${hostname}:${destination}`, { cause });
 }

@@ -155,7 +155,7 @@ const LibC = struct {
         ) catch |err| bun.handleOom(err);
         const promise_value = request.head.promise.value();
 
-        var io = bun.handleOom(GetAddrInfoRequest.Task.createOnJSThread(this.vm.allocator, globalThis, request));
+        var io = GetAddrInfoRequest.Task.createOnJSThread(this.vm.allocator, globalThis, request);
 
         io.schedule();
         this.requestSent(globalThis.bunVM());

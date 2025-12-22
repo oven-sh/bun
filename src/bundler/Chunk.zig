@@ -25,10 +25,6 @@ pub const Chunk = struct {
 
     entry_point: Chunk.EntryPoint = .{},
 
-    is_executable: bool = false,
-    has_html_chunk: bool = false,
-    is_browser_chunk_from_server_build: bool = false,
-
     output_source_map: SourceMap.SourceMapPieces,
 
     intermediate_output: IntermediateOutput = .{ .empty = {} },
@@ -37,6 +33,17 @@ pub const Chunk = struct {
     renamer: renamer.Renamer = undefined,
 
     compile_results_for_chunk: []CompileResult = &.{},
+
+    /// Pack boolean flags to reduce padding overhead.
+    /// Previously 3 separate bool fields caused ~21 bytes of padding waste.
+    flags: Flags = .{},
+
+    pub const Flags = packed struct(u8) {
+        is_executable: bool = false,
+        has_html_chunk: bool = false,
+        is_browser_chunk_from_server_build: bool = false,
+        _padding: u5 = 0,
+    };
 
     pub inline fn isEntryPoint(this: *const Chunk) bool {
         return this.entry_point.is_entry_point;

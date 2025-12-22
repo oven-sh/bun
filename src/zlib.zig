@@ -840,7 +840,10 @@ pub const ZlibCompressorArrayList = struct {
             @sizeOf(zStream_struct),
         )) {
             ReturnCode.Ok => {
-                try zlib_reader.list.ensureTotalCapacityPrecise(list_allocator, deflateBound(&zlib_reader.zlib, input.len));
+                zlib_reader.list.ensureTotalCapacityPrecise(list_allocator, deflateBound(&zlib_reader.zlib, input.len)) catch {
+                    zlib_reader.deinit();
+                    return error.OutOfMemory;
+                };
                 zlib_reader.list_ptr.* = zlib_reader.list;
                 zlib_reader.zlib.avail_out = @truncate(zlib_reader.list.capacity);
                 zlib_reader.zlib.next_out = zlib_reader.list.items.ptr;

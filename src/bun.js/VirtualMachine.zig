@@ -1056,7 +1056,9 @@ pub fn initWithModuleGraph(
     vm.transpiler.macro_context = js_ast.Macro.MacroContext.init(&vm.transpiler);
     if (opts.is_main_thread) {
         VMHolder.main_thread_vm = vm;
+        vm.is_main_thread = true;
     }
+    is_smol_mode = opts.smol;
     vm.global = JSGlobalObject.create(
         vm,
         vm.console,

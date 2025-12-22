@@ -64,7 +64,7 @@ pub noinline fn computeChunks(
                     .entry_bits = entry_bits.*,
                     .content = .html,
                     .output_source_map = SourceMap.SourceMapPieces.init(this.allocator()),
-                    .is_browser_chunk_from_server_build = could_be_browser_target_from_server_build and ast_targets[source_index] == .browser,
+                    .flags = .{ .is_browser_chunk_from_server_build = could_be_browser_target_from_server_build and ast_targets[source_index] == .browser },
                 };
             }
         }
@@ -98,8 +98,10 @@ pub noinline fn computeChunks(
                         },
                     },
                     .output_source_map = SourceMap.SourceMapPieces.init(this.allocator()),
-                    .has_html_chunk = has_html_chunk,
-                    .is_browser_chunk_from_server_build = could_be_browser_target_from_server_build and ast_targets[source_index] == .browser,
+                    .flags = .{
+                        .has_html_chunk = has_html_chunk,
+                        .is_browser_chunk_from_server_build = could_be_browser_target_from_server_build and ast_targets[source_index] == .browser,
+                    },
                 };
             }
 
@@ -119,9 +121,11 @@ pub noinline fn computeChunks(
             .content = .{
                 .javascript = .{},
             },
-            .has_html_chunk = has_html_chunk,
             .output_source_map = SourceMap.SourceMapPieces.init(this.allocator()),
-            .is_browser_chunk_from_server_build = could_be_browser_target_from_server_build and ast_targets[source_index] == .browser,
+            .flags = .{
+                .has_html_chunk = has_html_chunk,
+                .is_browser_chunk_from_server_build = could_be_browser_target_from_server_build and ast_targets[source_index] == .browser,
+            },
         };
 
         {
@@ -174,8 +178,10 @@ pub noinline fn computeChunks(
                         },
                         .files_with_parts_in_chunk = css_files_with_parts_in_chunk,
                         .output_source_map = SourceMap.SourceMapPieces.init(this.allocator()),
-                        .has_html_chunk = has_html_chunk,
-                        .is_browser_chunk_from_server_build = could_be_browser_target_from_server_build and ast_targets[source_index] == .browser,
+                        .flags = .{
+                            .has_html_chunk = has_html_chunk,
+                            .is_browser_chunk_from_server_build = could_be_browser_target_from_server_build and ast_targets[source_index] == .browser,
+                        },
                     };
                 }
             }
@@ -218,7 +224,7 @@ pub noinline fn computeChunks(
                                     .javascript = .{},
                                 },
                                 .output_source_map = SourceMap.SourceMapPieces.init(this.allocator()),
-                                .is_browser_chunk_from_server_build = is_browser_chunk_from_server_build,
+                                .flags = .{ .is_browser_chunk_from_server_build = is_browser_chunk_from_server_build },
                             };
                         }
 
@@ -256,7 +262,7 @@ pub noinline fn computeChunks(
             sorted_chunks.appendAssumeCapacity(chunk);
 
             // Attempt to order the JS HTML chunk immediately after the non-html one.
-            if (chunk.has_html_chunk) {
+            if (chunk.flags.has_html_chunk) {
                 if (html_chunks.fetchSwapRemove(key)) |html_chunk| {
                     sorted_chunks.appendAssumeCapacity(html_chunk.value);
                 }
@@ -337,14 +343,14 @@ pub noinline fn computeChunks(
             this.unique_key_prefix = chunk.unique_key[0..std.fmt.count("{f}", .{bun.fmt.hexIntLower(unique_key)})];
 
         if (chunk.entry_point.is_entry_point and
-            (chunk.content == .html or (kinds[chunk.entry_point.source_index] == .user_specified and !chunk.has_html_chunk)))
+            (chunk.content == .html or (kinds[chunk.entry_point.source_index] == .user_specified and !chunk.flags.has_html_chunk)))
         {
             // Use fileWithTarget template if there are HTML imports and user hasn't manually set naming
             if (has_server_html_imports and bv2.transpiler.options.entry_naming.len == 0) {
                 chunk.template = PathTemplate.fileWithTarget;
             } else {
                 chunk.template = PathTemplate.file;
-                if (chunk.is_browser_chunk_from_server_build) {
+                if (chunk.flags.is_browser_chunk_from_server_build) {
                     chunk.template.data = bv2.transpilerForTarget(.browser).options.entry_naming;
                 } else {
                     chunk.template.data = bv2.transpiler.options.entry_naming;
@@ -355,7 +361,7 @@ pub noinline fn computeChunks(
                 chunk.template = PathTemplate.chunkWithTarget;
             } else {
                 chunk.template = PathTemplate.chunk;
-                if (chunk.is_browser_chunk_from_server_build) {
+                if (chunk.flags.is_browser_chunk_from_server_build) {
                     chunk.template.data = bv2.transpilerForTarget(.browser).options.chunk_naming;
                 } else {
                     chunk.template.data = bv2.transpiler.options.chunk_naming;

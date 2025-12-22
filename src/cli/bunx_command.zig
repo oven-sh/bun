@@ -259,6 +259,7 @@ pub const BunxCommand = struct {
     /// Discovers the package name from the lockfile for tarball URL dependencies.
     /// When a tarball URL is installed, we don't know the package name upfront.
     /// The lockfile contains the mapping from package name to URL in the dependencies.
+    /// Returns an allocated string owned by the caller (must be freed), or null if not found.
     fn discoverPackageFromLockfile(allocator: std.mem.Allocator, tempdir_name: []const u8, url: []const u8) ?[]const u8 {
         var lockfile_path_buf: bun.PathBuffer = undefined;
         const lockfile_path = std.fmt.bufPrintZ(&lockfile_path_buf, bun.pathLiteral("{s}/bun.lock"), .{tempdir_name}) catch return null;
@@ -889,11 +890,14 @@ pub const BunxCommand = struct {
         if (opts.binary_name == null) {
             // For tarball URLs, result_package_name might be the URL itself.
             // In that case, try to discover the actual package name from the lockfile.
-            const actual_package_name = if (strings.hasPrefixComptime(result_package_name, "http://") or
+            const discovered_package_name: ?[]const u8 = if (strings.hasPrefixComptime(result_package_name, "http://") or
                 strings.hasPrefixComptime(result_package_name, "https://"))
-                discoverPackageFromLockfile(ctx.allocator, bunx_cache_dir, result_package_name) orelse result_package_name
+                discoverPackageFromLockfile(ctx.allocator, bunx_cache_dir, result_package_name)
             else
-                result_package_name;
+                null;
+            defer if (discovered_package_name) |name| ctx.allocator.free(name);
+
+            const actual_package_name = discovered_package_name orelse result_package_name;
 
             if (getBinNameFromTempDirectory(&this_transpiler, bunx_cache_dir, actual_package_name, false)) |package_name_for_bin| {
                 if (!strings.eqlLong(package_name_for_bin, initial_bin_name, true)) {

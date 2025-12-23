@@ -5,6 +5,9 @@ pub const Task = TaggedPointerUnion(.{
     Access,
     AnyTask,
     AppendFile,
+    ArchiveExtractTask,
+    ArchiveBlobTask,
+    ArchiveWriteTask,
     AsyncGlobWalkTask,
     AsyncTransformTask,
     bun.bake.DevServer.HotReloadEvent,
@@ -133,6 +136,18 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine, co
         log("run {s}", .{@tagName(task.tag())});
         defer counter.* += 1;
         switch (task.tag()) {
+            @field(Task.Tag, @typeName(ArchiveExtractTask)) => {
+                var archive_task: *ArchiveExtractTask = task.get(ArchiveExtractTask).?;
+                try archive_task.runFromJS();
+            },
+            @field(Task.Tag, @typeName(ArchiveBlobTask)) => {
+                var archive_task: *ArchiveBlobTask = task.get(ArchiveBlobTask).?;
+                try archive_task.runFromJS();
+            },
+            @field(Task.Tag, @typeName(ArchiveWriteTask)) => {
+                var archive_task: *ArchiveWriteTask = task.get(ArchiveWriteTask).?;
+                try archive_task.runFromJS();
+            },
             @field(Task.Tag, @typeName(ShellAsync)) => {
                 var shell_ls_task: *ShellAsync = task.get(ShellAsync).?;
                 shell_ls_task.runFromMainThread();
@@ -613,6 +628,9 @@ const StreamPending = jsc.WebCore.streams.Result.Pending;
 const NativeBrotli = jsc.API.NativeBrotli;
 const NativeZlib = jsc.API.NativeZlib;
 const NativeZstd = jsc.API.NativeZstd;
+const ArchiveExtractTask = jsc.API.Archive.ExtractTask;
+const ArchiveBlobTask = jsc.API.Archive.BlobTask;
+const ArchiveWriteTask = jsc.API.Archive.WriteTask;
 const AsyncGlobWalkTask = jsc.API.Glob.WalkTask.AsyncGlobWalkTask;
 const AsyncTransformTask = jsc.API.JSTranspiler.TransformTask.AsyncTransformTask;
 

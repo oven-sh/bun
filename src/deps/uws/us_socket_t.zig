@@ -295,7 +295,7 @@ pub const c = struct {
         const node_buffer: jsc.Node.BlobOrStringOrBuffer = if (data.isUndefined())
             jsc.Node.BlobOrStringOrBuffer{ .string_or_buffer = jsc.Node.StringOrBuffer.empty }
         else
-            jsc.Node.BlobOrStringOrBuffer.fromJSWithEncodingValueMaybeAsyncAllowRequestResponse(globalObject, stack_fallback.get(), data, encoding, false, true) catch {
+            jsc.Node.BlobOrStringOrBuffer.fromJSWithEncodingValueAllowRequestResponse(globalObject, stack_fallback.get(), data, encoding, true) catch {
                 return .zero;
             } orelse {
                 if (!globalObject.hasException()) {

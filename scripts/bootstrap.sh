@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version: 22
+# Version: 25
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -1155,19 +1155,23 @@ llvm_version() {
 install_llvm() {
 	case "$pm" in
 	apt)
-		bash="$(require bash)"
-		llvm_script="$(download_file "https://apt.llvm.org/llvm.sh")"
-		# Debian Trixie (13) needs to use the unstable repo since apt.llvm.org
-		# doesn't have a dedicated trixie repository. The llvm.sh script doesn't
-		# detect this automatically because trixie's VERSION is not "testing".
-		if [ "$distro" = "debian" ] && [ "$release" = "13" ]; then
-			execute_sudo "$bash" "$llvm_script" "$(llvm_version)" all -n unstable
+		# Debian 13 (Trixie) has LLVM 19 natively, and apt.llvm.org doesn't have a trixie repo
+		if [ "$distro" = "debian" ]; then
+			install_packages \
+				"llvm-$(llvm_version)" \
+				"clang-$(llvm_version)" \
+				"lld-$(llvm_version)" \
+				"llvm-$(llvm_version)-dev" \
+				"llvm-$(llvm_version)-tools" \
+				"libclang-rt-$(llvm_version)-dev"
 		else
+			bash="$(require bash)"
+			llvm_script="$(download_file "https://apt.llvm.org/llvm.sh")"
 			execute_sudo "$bash" "$llvm_script" "$(llvm_version)" all
-		fi
 
-		# Install llvm-symbolizer explicitly to ensure it's available for ASAN
-		install_packages "llvm-$(llvm_version)-tools"
+			# Install llvm-symbolizer explicitly to ensure it's available for ASAN
+			install_packages "llvm-$(llvm_version)-tools"
+		fi
 		;;
 	brew)
 		install_packages "llvm@$(llvm_version)"
@@ -1304,11 +1308,6 @@ install_sccache() {
 
 install_rust() {
 	case "$distro" in
-	alpine)
-		install_packages \
-			rust \
-			cargo
-		;;
 	freebsd)
 		install_packages lang/rust
 		create_directory "$HOME/.cargo/bin"
@@ -1324,6 +1323,9 @@ install_rust() {
 		rustup_script=$(download_file "https://sh.rustup.rs")
 		execute "$sh" -lc "$rustup_script -y --no-modify-path"
 		append_to_path "$rust_home/bin"
+
+		# Ensure all rustup files are accessible (for CI builds where different users run builds)
+		grant_to_user "$rust_home"
 		;;
 	esac
 

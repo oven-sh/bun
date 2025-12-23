@@ -38,6 +38,9 @@ pub const Run = struct {
                 .args = ctx.args,
                 .graph = graph_ptr,
                 .is_main_thread = true,
+                .smol = ctx.runtime_options.smol,
+                .debugger = ctx.runtime_options.debugger,
+                .dns_result_order = DNSResolver.Order.fromStringOrDie(ctx.runtime_options.dns_result_order),
             }),
             .arena = arena,
             .ctx = ctx,
@@ -89,6 +92,11 @@ pub const Run = struct {
         } else {
             b.options.env.behavior = .load_all_without_inlining;
         }
+
+        // Control loading of tsconfig.json and package.json at runtime
+        // By default, these are disabled for standalone executables
+        b.resolver.opts.load_tsconfig_json = !graph.flags.disable_autoload_tsconfig;
+        b.resolver.opts.load_package_json = !graph.flags.disable_autoload_package_json;
 
         b.configureDefines() catch {
             failWithBuildError(vm);

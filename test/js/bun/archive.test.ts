@@ -174,7 +174,7 @@ describe("Bun.Archive", () => {
     });
 
     test("gzip is smaller for larger repetitive data", async () => {
-      const largeContent = "Hello, World!".repeat(1000);
+      const largeContent = Buffer.alloc(13000, "Hello, World!");
       const archive = Bun.Archive.from({
         "large.txt": largeContent,
       });
@@ -233,7 +233,7 @@ describe("Bun.Archive", () => {
     });
 
     test("gzip is smaller for larger repetitive data", async () => {
-      const largeContent = "Hello, World!".repeat(1000);
+      const largeContent = Buffer.alloc(13000, "Hello, World!");
       const archive = Bun.Archive.from({
         "large.txt": largeContent,
       });
@@ -568,11 +568,12 @@ describe("Bun.Archive", () => {
     test("writes gzipped archive to file", async () => {
       using dir = tempDir("archive-write-gzip-test", {});
       const archivePath = join(String(dir), "test.tar.gz");
+      const largeContent = Buffer.alloc(1300, "Hello, World!");
 
       await Bun.Archive.write(
         archivePath,
         {
-          "hello.txt": "Hello, World!".repeat(100),
+          "hello.txt": largeContent,
         },
         "gzip",
       );
@@ -584,7 +585,7 @@ describe("Bun.Archive", () => {
       // Compare with uncompressed
       const uncompressedPath = join(String(dir), "test.tar");
       await Bun.Archive.write(uncompressedPath, {
-        "hello.txt": "Hello, World!".repeat(100),
+        "hello.txt": largeContent,
       });
 
       expect(file.size).toBeLessThan(Bun.file(uncompressedPath).size);
@@ -622,7 +623,7 @@ describe("Bun.Archive", () => {
       // Extract it
       const blob = await Bun.file(archivePath).bytes();
       const archive = Bun.Archive.from(blob);
-      await Bun.$`mkdir -p ${extractDir}`;
+      require("fs").mkdirSync(extractDir, { recursive: true });
       const count = await archive.extract(extractDir);
       expect(count).toBeGreaterThan(0);
 
@@ -803,7 +804,7 @@ describe("Bun.Archive", () => {
 
   describe("large archives", () => {
     test("handles large file content", async () => {
-      const largeContent = "x".repeat(1024 * 1024); // 1MB
+      const largeContent = Buffer.alloc(1024 * 1024, "x"); // 1MB
       const archive = Bun.Archive.from({
         "large.txt": largeContent,
       });
@@ -811,8 +812,8 @@ describe("Bun.Archive", () => {
       using dir = tempDir("archive-large", {});
       await archive.extract(String(dir));
 
-      const extracted = await Bun.file(join(String(dir), "large.txt")).text();
-      expect(extracted.length).toBe(largeContent.length);
+      const extracted = await Bun.file(join(String(dir), "large.txt")).arrayBuffer();
+      expect(extracted.byteLength).toBe(largeContent.length);
     });
 
     test("handles many files", async () => {

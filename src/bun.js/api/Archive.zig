@@ -5,13 +5,14 @@ pub const toJS = js.toJS;
 pub const fromJS = js.fromJS;
 pub const fromJSDirect = js.fromJSDirect;
 
-const log = bun.Output.scoped(.Archive, .visible);
+const log = bun.Output.scoped(.Archive, .hidden);
 
 /// The underlying data for the archive - owned bytes
 data: []u8,
 allocator: std.mem.Allocator,
 
 pub fn finalize(this: *Archive) void {
+    jsc.markBinding(@src());
     this.allocator.free(this.data);
     bun.destroy(this);
 }
@@ -610,14 +611,14 @@ pub const WriteTask = struct {
         };
         defer bun.default_allocator.free(path_z);
 
-        const file = std.fs.cwd().createFile(path_z, .{}) catch {
-            this.result = .{ .err = "failed to create file" };
+        const file = std.fs.cwd().createFile(path_z, .{}) catch |err| {
+            this.result = .{ .err = @errorName(err) };
             return;
         };
         defer file.close();
 
-        file.writeAll(data_to_write) catch {
-            this.result = .{ .err = "failed to write file" };
+        file.writeAll(data_to_write) catch |err| {
+            this.result = .{ .err = @errorName(err) };
             return;
         };
 

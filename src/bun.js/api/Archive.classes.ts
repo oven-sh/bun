@@ -24,11 +24,11 @@ export default [
       },
       blob: {
         fn: "blob",
-        length: 1,
+        length: 0,
       },
       bytes: {
         fn: "bytes",
-        length: 1,
+        length: 0,
       },
     },
   }),

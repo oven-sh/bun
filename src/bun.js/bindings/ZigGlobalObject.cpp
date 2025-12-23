@@ -1069,8 +1069,9 @@ JSC_DEFINE_HOST_FUNCTION(functionQueueMicrotask,
         asyncContext = JSC::jsUndefined();
     }
 
-    // This is a JSC builtin function
-    // BunPerformMicrotaskJob expects: performMicrotask, job, asyncContext, arg0, arg1
+    // BunPerformMicrotaskJob accepts a variable number of arguments (up to: performMicrotask, job, asyncContext, arg0, arg1).
+    // The runtime inspects argumentCount to determine which arguments are present, so callers may pass only the subset they need.
+    // Here we pass: function, callback, asyncContext.
     JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::BunPerformMicrotaskJob, globalObject, function, callback, asyncContext };
     globalObject->vm().queueMicrotask(WTFMove(task));
 

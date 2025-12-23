@@ -217,7 +217,7 @@ pub const JSPromise = opaque {
         return resolvedPromiseValue(globalObject, value);
     }
 
-    pub fn status(this: *const JSPromise, _: *VM) Status {
+    pub fn status(this: *const JSPromise) Status {
         return @enumFromInt(bun.cpp.JSC__JSPromise__status(this));
     }
 
@@ -225,11 +225,11 @@ pub const JSPromise = opaque {
         return bun.cpp.JSC__JSPromise__result(this, vm);
     }
 
-    pub fn isHandled(this: *const JSPromise, _: *VM) bool {
+    pub fn isHandled(this: *const JSPromise) bool {
         return bun.cpp.JSC__JSPromise__isHandled(this);
     }
 
-    pub fn setHandled(this: *JSPromise, _: *VM) void {
+    pub fn setHandled(this: *JSPromise) void {
         bun.cpp.JSC__JSPromise__setHandled(this);
     }
 
@@ -330,11 +330,11 @@ pub const JSPromise = opaque {
     pub const UnwrapMode = enum { mark_handled, leave_unhandled };
 
     pub fn unwrap(promise: *JSPromise, vm: *VM, mode: UnwrapMode) Unwrapped {
-        return switch (promise.status(vm)) {
+        return switch (promise.status()) {
             .pending => .pending,
             .fulfilled => .{ .fulfilled = promise.result(vm) },
             .rejected => {
-                if (mode == .mark_handled) promise.setHandled(vm);
+                if (mode == .mark_handled) promise.setHandled();
                 return .{ .rejected = promise.result(vm) };
             },
         };

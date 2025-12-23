@@ -760,7 +760,7 @@ pub fn assignToStream(this: *FileSink, stream: *jsc.WebCore.ReadableStream, glob
 
     if (!promise_result.isEmptyOrUndefinedOrNull()) {
         if (promise_result.asAnyPromise()) |promise| {
-            switch (promise.status(globalThis.vm())) {
+            switch (promise.status()) {
                 .pending => {
                     this.writer.enableKeepingProcessAlive(this.event_loop_handle);
                     this.ref();

@@ -9,34 +9,29 @@ pub const JSInternalPromise = opaque {
     extern fn JSC__JSInternalPromise__setHandled(arg0: *JSInternalPromise, arg1: *VM) void;
     extern fn JSC__JSInternalPromise__status(arg0: *const JSInternalPromise) JSPromise.Status;
 
-    /// Note: VM parameter is unused but kept for API compatibility with JSPromise,
-    /// allowing AnyPromise to use `inline else` pattern.
-    pub fn status(this: *const JSInternalPromise, _: *VM) JSPromise.Status {
+    pub fn status(this: *const JSInternalPromise) JSPromise.Status {
         return JSC__JSInternalPromise__status(this);
     }
 
-    /// Note: VM parameter is unused but kept for API compatibility with JSPromise,
-    /// allowing AnyPromise to use `inline else` pattern.
-    pub fn result(this: *const JSInternalPromise, _: *VM) JSValue {
+    pub fn result(this: *const JSInternalPromise) JSValue {
         return JSC__JSInternalPromise__result(this);
     }
 
-    /// Note: VM parameter is unused but kept for API compatibility with JSPromise,
-    /// allowing AnyPromise to use `inline else` pattern.
-    pub fn isHandled(this: *const JSInternalPromise, _: *VM) bool {
+    pub fn isHandled(this: *const JSInternalPromise) bool {
         return JSC__JSInternalPromise__isHandled(this);
     }
+
     pub fn setHandled(this: *JSInternalPromise, vm: *VM) void {
         JSC__JSInternalPromise__setHandled(this, vm);
     }
 
     pub fn unwrap(promise: *JSInternalPromise, vm: *VM, mode: JSPromise.UnwrapMode) JSPromise.Unwrapped {
-        return switch (promise.status(vm)) {
+        return switch (promise.status()) {
             .pending => .pending,
-            .fulfilled => .{ .fulfilled = promise.result(vm) },
+            .fulfilled => .{ .fulfilled = promise.result() },
             .rejected => {
                 if (mode == .mark_handled) promise.setHandled(vm);
-                return .{ .rejected = promise.result(vm) };
+                return .{ .rejected = promise.result() };
             },
         };
     }

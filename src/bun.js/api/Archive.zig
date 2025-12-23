@@ -727,7 +727,9 @@ fn compressGzip(data: []const u8) ![]u8 {
         return error.GzipCompressFailed;
     }
 
-    // Shrink to actual size
+    // Shrink to actual size. If realloc fails, return the original buffer slice.
+    // This is a non-critical optimization - we accept slightly larger memory usage
+    // rather than failing the entire operation.
     return bun.default_allocator.realloc(output, result.written) catch output[0..result.written];
 }
 

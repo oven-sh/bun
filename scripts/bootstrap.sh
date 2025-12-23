@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version: 21
+# Version: 22
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -1157,7 +1157,14 @@ install_llvm() {
 	apt)
 		bash="$(require bash)"
 		llvm_script="$(download_file "https://apt.llvm.org/llvm.sh")"
-		execute_sudo "$bash" "$llvm_script" "$(llvm_version)" all
+		# Debian Trixie (13) needs to use the unstable repo since apt.llvm.org
+		# doesn't have a dedicated trixie repository. The llvm.sh script doesn't
+		# detect this automatically because trixie's VERSION is not "testing".
+		if [ "$distro" = "debian" ] && [ "$release" = "13" ]; then
+			execute_sudo "$bash" "$llvm_script" "$(llvm_version)" all -n unstable
+		else
+			execute_sudo "$bash" "$llvm_script" "$(llvm_version)" all
+		fi
 
 		# Install llvm-symbolizer explicitly to ensure it's available for ASAN
 		install_packages "llvm-$(llvm_version)-tools"

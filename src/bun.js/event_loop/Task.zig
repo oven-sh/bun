@@ -628,11 +628,12 @@ const StreamPending = jsc.WebCore.streams.Result.Pending;
 const NativeBrotli = jsc.API.NativeBrotli;
 const NativeZlib = jsc.API.NativeZlib;
 const NativeZstd = jsc.API.NativeZstd;
-const ArchiveExtractTask = jsc.API.Archive.ExtractTask;
-const ArchiveBlobTask = jsc.API.Archive.BlobTask;
-const ArchiveWriteTask = jsc.API.Archive.WriteTask;
 const AsyncGlobWalkTask = jsc.API.Glob.WalkTask.AsyncGlobWalkTask;
 const AsyncTransformTask = jsc.API.JSTranspiler.TransformTask.AsyncTransformTask;
+
+const ArchiveBlobTask = jsc.API.Archive.BlobTask;
+const ArchiveExtractTask = jsc.API.Archive.ExtractTask;
+const ArchiveWriteTask = jsc.API.Archive.WriteTask;
 
 const Timer = jsc.API.Timer;
 const ImmediateObject = Timer.ImmediateObject;

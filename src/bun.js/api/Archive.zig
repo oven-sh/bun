@@ -839,7 +839,8 @@ fn buildTarballFromEntries(entries: std.StringArrayHashMap([]u8), use_gzip: bool
     return growing_buffer.toOwnedSlice();
 }
 
+const libarchive = @import("../../libarchive/libarchive.zig");
 const std = @import("std");
+
 const bun = @import("bun");
 const jsc = bun.jsc;
-const libarchive = @import("../../libarchive/libarchive.zig");

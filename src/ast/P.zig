@@ -1075,7 +1075,13 @@ pub fn NewParser_(
             // The correctness of TypeScript-to-JavaScript conversion relies on accurate
             // symbol use counts for the whole file, including dead code regions. This is
             // tracked separately in a parser-only data structure.
-            if (is_typescript_enabled) {
+            //
+            // However, we also skip counting in dead code regions for ts_use_counts.
+            // This ensures that imports only used in dead code (e.g., code eliminated
+            // by feature flags from bun:bundle) are properly removed. This is safe because
+            // dead code will be eliminated anyway, so we don't need to preserve imports
+            // for type checking purposes in those regions.
+            if (is_typescript_enabled and !p.is_control_flow_dead) {
                 p.ts_use_counts.items[ref.innerIndex()] += 1;
             }
         }

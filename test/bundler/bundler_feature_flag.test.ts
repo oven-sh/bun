@@ -424,6 +424,30 @@ console.log(x);
         api.expectFile("out.js").not.toInclude("A");
       },
     });
+
+    // Test that unused imports with side effects are eliminated when feature flag is disabled
+    itBundled(`feature_flag/${backend}/UnusedImportWithSideEffectEliminated`, {
+      backend,
+      files: {
+        "/a.ts": `
+import { feature } from "bun:bundle";
+import { sideEffectFn } from "./side-effect.ts";
+
+if (feature("ENABLE_FEATURE")) {
+  sideEffectFn();
+}
+`,
+        "/side-effect.ts": `
+console.log(42);
+export function sideEffectFn() { return "side-effect"; }
+`,
+      },
+      // Feature is disabled, so the import should be completely eliminated
+      minifySyntax: true,
+      run: {
+        stdout: "", // No output - the side effect module should not be imported
+      },
+    });
   }
 
   // Runtime tests - these must remain as manual tests since they test bun run and bun test

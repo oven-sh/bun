@@ -955,7 +955,7 @@ static JSC::JSValue rebindObject(JSC::JSGlobalObject* globalObject, SQLiteBindin
             JSValue value = getValue(name, i);
             if (!value && !scope.exception()) {
                 if (throwOnMissing) {
-                    throwException(globalObject, scope, createError(globalObject, makeString("Missing parameter \""_s, String::fromLatin1(name), "\""_s)));
+                    throwException(globalObject, scope, createError(globalObject, makeString("Missing parameter \""_s, WTF::String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const unsigned char*>(name), strlen(name) }), "\""_s)));
                 } else {
                     continue;
                 }

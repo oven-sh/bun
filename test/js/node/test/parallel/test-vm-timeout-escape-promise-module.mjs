@@ -13,14 +13,14 @@ const NS_PER_MS = 1000000n;
 
 const hrtime = process.hrtime.bigint;
 
-function loop(id) {
+function loop() {
   const start = hrtime();
   while (1) {
     const current = hrtime();
     const span = (current - start) / NS_PER_MS;
     if (span >= 2000n) {
       throw new Error(
-        `escaped timeout at ${span} milliseconds! ${id}`);
+        `escaped timeout at ${span} milliseconds!`);
     }
   }
 }

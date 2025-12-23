@@ -217,20 +217,20 @@ pub const JSPromise = opaque {
         return resolvedPromiseValue(globalObject, value);
     }
 
-    pub fn status(this: *const JSPromise, vm: *VM) Status {
-        return @enumFromInt(bun.cpp.JSC__JSPromise__status(this, vm));
+    pub fn status(this: *const JSPromise, _: *VM) Status {
+        return @enumFromInt(bun.cpp.JSC__JSPromise__status(this));
     }
 
     pub fn result(this: *JSPromise, vm: *VM) JSValue {
         return bun.cpp.JSC__JSPromise__result(this, vm);
     }
 
-    pub fn isHandled(this: *const JSPromise, vm: *VM) bool {
-        return bun.cpp.JSC__JSPromise__isHandled(this, vm);
+    pub fn isHandled(this: *const JSPromise, _: *VM) bool {
+        return bun.cpp.JSC__JSPromise__isHandled(this);
     }
 
-    pub fn setHandled(this: *JSPromise, vm: *VM) void {
-        bun.cpp.JSC__JSPromise__setHandled(this, vm);
+    pub fn setHandled(this: *JSPromise, _: *VM) void {
+        bun.cpp.JSC__JSPromise__setHandled(this);
     }
 
     /// Create a new resolved promise resolving to a given value.

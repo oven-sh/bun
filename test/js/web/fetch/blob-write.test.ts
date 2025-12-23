@@ -61,6 +61,8 @@ test("Bun.file(path).writer() does not throw", async () => {
     expect(await file.text()).toBe("New content");
   }
   await iterate();
+  // Force GC before capturing baseline to ensure first iteration's FileSink is collected
+  Bun.gc(true);
   const initialObjectTypeCount = require("bun:jsc").heapStats().objectTypeCounts.FileSink || 0;
   for (let i = 0; i < 5; i++) {
     await iterate();

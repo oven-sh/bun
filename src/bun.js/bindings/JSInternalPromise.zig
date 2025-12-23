@@ -1,22 +1,30 @@
 pub const JSInternalPromise = opaque {
     extern fn JSC__JSInternalPromise__create(arg0: *JSGlobalObject) *JSInternalPromise;
-    extern fn JSC__JSInternalPromise__isHandled(arg0: *const JSInternalPromise, arg1: *VM) bool;
+    extern fn JSC__JSInternalPromise__isHandled(arg0: *const JSInternalPromise) bool;
     extern fn JSC__JSInternalPromise__rejectAsHandled(arg0: *JSInternalPromise, arg1: *JSGlobalObject, JSValue2: JSValue) void;
     extern fn JSC__JSInternalPromise__rejectAsHandledException(arg0: *JSInternalPromise, arg1: *JSGlobalObject, arg2: *jsc.Exception) void;
     extern fn JSC__JSInternalPromise__rejectedPromise(arg0: *JSGlobalObject, JSValue1: JSValue) *JSInternalPromise;
     extern fn JSC__JSInternalPromise__resolvedPromise(arg0: *JSGlobalObject, JSValue1: JSValue) *JSInternalPromise;
-    extern fn JSC__JSInternalPromise__result(arg0: *const JSInternalPromise, arg1: *VM) JSValue;
+    extern fn JSC__JSInternalPromise__result(arg0: *const JSInternalPromise) JSValue;
     extern fn JSC__JSInternalPromise__setHandled(arg0: *JSInternalPromise, arg1: *VM) void;
-    extern fn JSC__JSInternalPromise__status(arg0: *const JSInternalPromise, arg1: *VM) JSPromise.Status;
+    extern fn JSC__JSInternalPromise__status(arg0: *const JSInternalPromise) JSPromise.Status;
 
-    pub fn status(this: *const JSInternalPromise, vm: *VM) JSPromise.Status {
-        return JSC__JSInternalPromise__status(this, vm);
+    /// Note: VM parameter is unused but kept for API compatibility with JSPromise,
+    /// allowing AnyPromise to use `inline else` pattern.
+    pub fn status(this: *const JSInternalPromise, _: *VM) JSPromise.Status {
+        return JSC__JSInternalPromise__status(this);
     }
-    pub fn result(this: *const JSInternalPromise, vm: *VM) JSValue {
-        return JSC__JSInternalPromise__result(this, vm);
+
+    /// Note: VM parameter is unused but kept for API compatibility with JSPromise,
+    /// allowing AnyPromise to use `inline else` pattern.
+    pub fn result(this: *const JSInternalPromise, _: *VM) JSValue {
+        return JSC__JSInternalPromise__result(this);
     }
-    pub fn isHandled(this: *const JSInternalPromise, vm: *VM) bool {
-        return JSC__JSInternalPromise__isHandled(this, vm);
+
+    /// Note: VM parameter is unused but kept for API compatibility with JSPromise,
+    /// allowing AnyPromise to use `inline else` pattern.
+    pub fn isHandled(this: *const JSInternalPromise, _: *VM) bool {
+        return JSC__JSInternalPromise__isHandled(this);
     }
     pub fn setHandled(this: *JSInternalPromise, vm: *VM) void {
         JSC__JSInternalPromise__setHandled(this, vm);

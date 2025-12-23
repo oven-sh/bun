@@ -3561,7 +3561,7 @@ JSC::JSPromise* JSC__JSPromise__resolvedPromise(JSC::JSGlobalObject* globalObjec
     }
 }
 
-[[ZIG_EXPORT(nothrow)]] uint32_t JSC__JSPromise__status(const JSC::JSPromise* arg0, JSC::VM* arg1)
+[[ZIG_EXPORT(nothrow)]] uint32_t JSC__JSPromise__status(const JSC::JSPromise* arg0)
 {
     switch (arg0->status()) {
     case JSC::JSPromise::Status::Pending:
@@ -3574,11 +3574,11 @@ JSC::JSPromise* JSC__JSPromise__resolvedPromise(JSC::JSGlobalObject* globalObjec
         return 255;
     }
 }
-[[ZIG_EXPORT(nothrow)]] bool JSC__JSPromise__isHandled(const JSC::JSPromise* arg0, JSC::VM* arg1)
+[[ZIG_EXPORT(nothrow)]] bool JSC__JSPromise__isHandled(const JSC::JSPromise* arg0)
 {
     return arg0->isHandled();
 }
-[[ZIG_EXPORT(nothrow)]] void JSC__JSPromise__setHandled(JSC::JSPromise* promise, JSC::VM* arg1)
+[[ZIG_EXPORT(nothrow)]] void JSC__JSPromise__setHandled(JSC::JSPromise* promise)
 {
     promise->markAsHandled();
 }
@@ -3639,11 +3639,11 @@ JSC::JSInternalPromise* JSC__JSInternalPromise__resolvedPromise(JSC::JSGlobalObj
         JSC::JSInternalPromise::resolvedPromise(arg0, JSC::JSValue::decode(JSValue1)));
 }
 
-JSC::EncodedJSValue JSC__JSInternalPromise__result(const JSC::JSInternalPromise* arg0, JSC::VM* arg1)
+JSC::EncodedJSValue JSC__JSInternalPromise__result(const JSC::JSInternalPromise* arg0)
 {
     return JSC::JSValue::encode(arg0->result());
 }
-uint32_t JSC__JSInternalPromise__status(const JSC::JSInternalPromise* arg0, JSC::VM* arg1)
+uint32_t JSC__JSInternalPromise__status(const JSC::JSInternalPromise* arg0)
 {
     switch (arg0->status()) {
     case JSC::JSInternalPromise::Status::Pending:
@@ -3656,7 +3656,7 @@ uint32_t JSC__JSInternalPromise__status(const JSC::JSInternalPromise* arg0, JSC:
         return 255;
     }
 }
-bool JSC__JSInternalPromise__isHandled(const JSC::JSInternalPromise* arg0, JSC::VM* arg1)
+bool JSC__JSInternalPromise__isHandled(const JSC::JSInternalPromise* arg0)
 {
     return arg0->isHandled();
 }
@@ -4161,7 +4161,7 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
         if (length == 0) {
             auto* valueObject = value.toObject(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
-            JSValue prop = valueObject->getIfPropertyExists(globalObject, PropertyName(Identifier(Identifier::EmptyIdentifierFlag::EmptyIdentifier)));
+            JSValue prop = valueObject->getIfPropertyExists(globalObject, vm.propertyNames->emptyIdentifier);
             RETURN_IF_EXCEPTION(scope, {});
             return JSValue::encode(prop);
         }
@@ -4178,7 +4178,7 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
         if (pathString.characterAt(0) == '.') {
             auto* currPropObject = currProp.toObject(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
-            currProp = currPropObject->getIfPropertyExists(globalObject, PropertyName(Identifier(Identifier::EmptyIdentifierFlag::EmptyIdentifier)));
+            currProp = currPropObject->getIfPropertyExists(globalObject, vm.propertyNames->emptyIdentifier);
             RETURN_IF_EXCEPTION(scope, {});
             if (currProp.isEmpty()) {
                 return JSValue::encode(currProp);
@@ -4194,7 +4194,7 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
                     if (ic == '.') {
                         auto* currPropObject = currProp.toObject(globalObject);
                         RETURN_IF_EXCEPTION(scope, {});
-                        currProp = currPropObject->getIfPropertyExists(globalObject, PropertyName(Identifier(Identifier::EmptyIdentifierFlag::EmptyIdentifier)));
+                        currProp = currPropObject->getIfPropertyExists(globalObject, vm.propertyNames->emptyIdentifier);
                         RETURN_IF_EXCEPTION(scope, {});
                         return JSValue::encode(currProp);
                     }
@@ -4212,7 +4212,7 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
                 if (previous == '.' && ic == '.') {
                     auto* currPropObject = currProp.toObject(globalObject);
                     RETURN_IF_EXCEPTION(scope, {});
-                    currProp = currPropObject->getIfPropertyExists(globalObject, PropertyName(Identifier(Identifier::EmptyIdentifierFlag::EmptyIdentifier)));
+                    currProp = currPropObject->getIfPropertyExists(globalObject, vm.propertyNames->emptyIdentifier);
                     RETURN_IF_EXCEPTION(scope, {});
                     if (currProp.isEmpty()) {
                         return JSValue::encode(currProp);

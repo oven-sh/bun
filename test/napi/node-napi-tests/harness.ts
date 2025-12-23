@@ -1,4 +1,4 @@
-import { spawn, spawnSync } from "bun";
+import { spawn, spawnSync, which } from "bun";
 import { bunExe, bunEnv, isCI, isMusl } from "../../harness";
 
 // Tests that intentionally abort and should not generate core dumps when they abort
@@ -20,8 +20,8 @@ export async function build(dir: string) {
       // so we make it use clang instead
       ...(process.platform == "linux" && isCI
         ? {
-            CC: !isMusl ? "/usr/lib/llvm-19/bin/clang" : "/usr/lib/llvm19/bin/clang",
-            CXX: !isMusl ? "/usr/lib/llvm-19/bin/clang++" : "/usr/lib/llvm19/bin/clang++",
+            CC: which("clang-19") ?? (!isMusl ? "/usr/lib/llvm-19/bin/clang" : "/usr/lib/llvm19/bin/clang"),
+            CXX: which("clang++-19") ?? (!isMusl ? "/usr/lib/llvm-19/bin/clang++" : "/usr/lib/llvm19/bin/clang++"),
           }
         : {}),
     },

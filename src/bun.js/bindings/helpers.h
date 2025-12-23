@@ -419,7 +419,7 @@ static JSC::JSValue getRangeErrorInstance(const ZigString* str, JSC::JSGlobalObj
 static const JSC::Identifier toIdentifier(ZigString str, JSC::JSGlobalObject* global)
 {
     if (str.len == 0 || str.ptr == nullptr) {
-        return JSC::Identifier(JSC::Identifier::EmptyIdentifierFlag::EmptyIdentifier);
+        return global->vm().propertyNames->emptyIdentifier;
     }
     WTF::String wtfstr = Zig::isTaggedExternalPtr(str.ptr) ? toString(str) : Zig::toStringCopy(str);
     JSC::Identifier id = JSC::Identifier::fromString(global->vm(), wtfstr);

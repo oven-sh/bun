@@ -740,11 +740,6 @@ void unsafeEvalNoop(JSGlobalObject*, const WTF::String&) {}
 
 static void promiseRejectionTrackerForNodeVM(JSGlobalObject* globalObject, JSC::JSPromise* promise, JSC::JSPromiseRejectionOperation operation)
 {
-    // JSInternalPromise should not be tracked through the normal promise rejection mechanism
-    // as they are internal to the engine and should not be exposed to user space.
-    if (jsDynamicCast<JSC::JSInternalPromise*>(promise))
-        return;
-
     // Delegate to the parent Zig::GlobalObject so that unhandled rejections
     // in VM contexts are reported to the main process (matching Node.js behavior)
     auto* zigGlobalObject = defaultGlobalObject(globalObject);

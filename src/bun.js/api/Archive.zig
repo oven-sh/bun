@@ -17,6 +17,57 @@ pub fn finalize(this: *Archive) void {
     bun.destroy(this);
 }
 
+/// Pretty-print for console.log
+pub fn writeFormat(this: *const Archive, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
+    const Writer = @TypeOf(writer);
+    const Output = bun.Output;
+
+    // Count files in the archive
+    const file_count = countFilesInArchive(this.data);
+
+    try writer.print(comptime Output.prettyFmt("Archive ({f}) {{\n", enable_ansi_colors), .{bun.fmt.size(this.data.len, .{})});
+
+    {
+        formatter.indent += 1;
+        defer formatter.indent -|= 1;
+
+        try formatter.writeIndent(Writer, writer);
+        try writer.writeAll(comptime Output.prettyFmt("<r>files<d>:<r> ", enable_ansi_colors));
+        try formatter.printAs(.Double, Writer, writer, jsc.JSValue.jsNumber(file_count), .NumberObject, enable_ansi_colors);
+    }
+    try writer.writeAll("\n");
+    try formatter.writeIndent(Writer, writer);
+    try writer.writeAll("}");
+    formatter.resetLine();
+}
+
+/// Count the number of files in an archive
+fn countFilesInArchive(data: []const u8) u32 {
+    const lib = libarchive.lib;
+    const archive = lib.Archive.readNew();
+    defer _ = archive.readFree();
+
+    // Support all formats and filters
+    _ = archive.readSupportFormatAll();
+    _ = archive.readSupportFilterAll();
+
+    // Open the archive from memory
+    if (archive.readOpenMemory(data) != .ok) {
+        return 0;
+    }
+
+    var count: u32 = 0;
+    var entry: *lib.Archive.Entry = undefined;
+    while (archive.readNextHeader(&entry) == .ok) {
+        // Only count regular files, not directories
+        if (entry.filetype() == @intFromEnum(lib.FileType.regular)) {
+            count += 1;
+        }
+    }
+
+    return count;
+}
+
 /// Constructor: new Archive() - throws an error since users should use Archive.from()
 pub fn constructor(globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!*Archive {
     return globalThis.throwInvalidArguments("Archive cannot be constructed directly. Use Archive.from() instead.", .{});

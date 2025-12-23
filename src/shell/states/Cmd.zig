@@ -27,10 +27,15 @@ spawn_arena_freed: bool = false,
 
 args: std.array_list.Managed(?[*:0]const u8),
 
-/// If the cmd redirects to a file we have to expand that string.
+/// Expanded redirect paths for stdin/stdout/stderr (if they are atom redirects)
 /// Allocated in `spawn_arena`
-redirection_file: std.array_list.Managed(u8),
-redirection_fd: ?*CowFd = null,
+redirect_stdin_path: std.array_list.Managed(u8),
+redirect_stdout_path: std.array_list.Managed(u8),
+redirect_stderr_path: std.array_list.Managed(u8),
+/// File descriptors opened for redirections
+redirect_stdin_fd: ?*CowFd = null,
+redirect_stdout_fd: ?*CowFd = null,
+redirect_stderr_fd: ?*CowFd = null,
 
 /// The underlying state to manage the command (builtin or subprocess)
 exec: Exec = .none,
@@ -41,7 +46,8 @@ state: union(enum) {
     idle,
     expanding_assigns: Assigns,
     expanding_redirect: struct {
-        idx: u32 = 0,
+        /// Which redirect are we expanding: stdin, stdout, or stderr
+        which: ast.Redirects.IoKind = .stdin,
         expansion: Expansion,
     },
     expanding_args: struct {
@@ -150,7 +156,7 @@ const BufferedIoClosed = struct {
                     const readable = io.stdout;
 
                     // If the shell state is piped (inside a cmd substitution) aggregate the output of this command
-                    if (cmd.io.stdout == .pipe and cmd.io.stdout == .pipe and !cmd.node.redirect.redirectsElsewhere(.stdout)) {
+                    if (cmd.io.stdout == .pipe and cmd.io.stdout == .pipe and !cmd.redirectsElsewhere(.stdout)) {
                         const the_slice = readable.pipe.slice();
                         bun.handleOom(cmd.base.shell.buffered_stdout().appendSlice(bun.default_allocator, the_slice));
                     }
@@ -164,7 +170,7 @@ const BufferedIoClosed = struct {
                     const readable = io.stderr;
 
                     // If the shell state is piped (inside a cmd substitution) aggregate the output of this command
-                    if (cmd.io.stderr == .pipe and cmd.io.stderr == .pipe and !cmd.node.redirect.redirectsElsewhere(.stderr)) {
+                    if (cmd.io.stderr == .pipe and cmd.io.stderr == .pipe and !cmd.redirectsElsewhere(.stderr)) {
                         const the_slice = readable.pipe.slice();
                         bun.handleOom(cmd.base.shell.buffered_stderr().appendSlice(bun.default_allocator, the_slice));
                     }
@@ -211,6 +217,11 @@ pub fn isSubproc(this: *Cmd) bool {
     return this.exec == .subproc;
 }
 
+/// Check if a given io stream is redirected elsewhere
+pub fn redirectsElsewhere(this: *const Cmd, comptime io_kind: ast.Redirects.IoKind) bool {
+    return this.node.redirects.redirectsElsewhere(io_kind);
+}
+
 /// If starting a command results in an error (failed to find executable in path for example)
 /// then it should write to the stderr of the entire shell script process
 pub fn writeFailingError(this: *Cmd, comptime fmt: []const u8, args: anytype) Yield {
@@ -237,7 +248,9 @@ pub fn init(
 
         .spawn_arena = undefined,
         .args = undefined,
-        .redirection_file = undefined,
+        .redirect_stdin_path = undefined,
+        .redirect_stdout_path = undefined,
+        .redirect_stderr_path = undefined,
 
         .exit_code = null,
         .io = io,
@@ -245,7 +258,9 @@ pub fn init(
     };
     cmd.spawn_arena = bun.ArenaAllocator.init(cmd.base.allocator());
     cmd.args = bun.handleOom(std.array_list.Managed(?[*:0]const u8).initCapacity(cmd.base.allocator(), node.name_and_args.len));
-    cmd.redirection_file = std.array_list.Managed(u8).init(cmd.spawn_arena.allocator());
+    cmd.redirect_stdin_path = std.array_list.Managed(u8).init(cmd.spawn_arena.allocator());
+    cmd.redirect_stdout_path = std.array_list.Managed(u8).init(cmd.spawn_arena.allocator());
+    cmd.redirect_stderr_path = std.array_list.Managed(u8).init(cmd.spawn_arena.allocator());
 
     return cmd;
 }
@@ -262,45 +277,66 @@ pub fn next(this: *Cmd) Yield {
                 return .suspended;
             },
             .expanding_redirect => {
-                if (this.state.expanding_redirect.idx >= 1) {
-                    this.state = .{
-                        .expanding_args = .{
-                            .expansion = undefined, // initialized in the next iteration
-                        },
+                // Expand stdin, stdout, stderr redirect paths in order
+                while (true) {
+                    const io_kind = this.state.expanding_redirect.which;
+
+                    // Get the redirect target for current stream
+                    const maybe_target: ?*const ast.RedirectTarget = switch (io_kind) {
+                        .stdin => if (this.node.redirects.stdin) |*r| r else null,
+                        .stdout => if (this.node.redirects.stdout) |*r| r else null,
+                        .stderr => if (this.node.redirects.stderr) |*r| r else null,
                     };
-                    continue;
+
+                    // Check if this redirect needs atom expansion (and hasn't been expanded yet)
+                    const path_list = switch (io_kind) {
+                        .stdin => &this.redirect_stdin_path,
+                        .stdout => &this.redirect_stdout_path,
+                        .stderr => &this.redirect_stderr_path,
+                    };
+                    const already_expanded = path_list.items.len > 0;
+                    const needs_expansion = if (maybe_target) |target| target.* == .atom and !already_expanded else false;
+
+                    if (needs_expansion) {
+                        const target = maybe_target.?;
+
+                        Expansion.init(
+                            this.base.interpreter,
+                            this.base.shell,
+                            &this.state.expanding_redirect.expansion,
+                            &target.atom.atom,
+                            Expansion.ParentPtr.init(this),
+                            .{
+                                .single = .{
+                                    .list = path_list,
+                                },
+                            },
+                            this.io.copy(),
+                        );
+
+                        return this.state.expanding_redirect.expansion.start();
+                    }
+
+                    // Move to next redirect or to expanding_args
+                    switch (io_kind) {
+                        .stdin => {
+                            this.state.expanding_redirect.which = .stdout;
+                        },
+                        .stdout => {
+                            this.state.expanding_redirect.which = .stderr;
+                        },
+                        .stderr => {
+                            // Done with all redirects, move to args
+                            this.state = .{
+                                .expanding_args = .{
+                                    .expansion = undefined,
+                                },
+                            };
+                            break;
+                        },
+                    }
                 }
-                this.state.expanding_redirect.idx += 1;
-
-                // Get the node to expand otherwise go straight to
-                // `expanding_args` state
-                const node_to_expand = brk: {
-                    if (this.node.redirect_file != null and this.node.redirect_file.? == .atom) break :brk &this.node.redirect_file.?.atom;
-                    this.state = .{
-                        .expanding_args = .{
-                            .expansion = undefined, // initialized in the next iteration
-                        },
-                    };
-                    continue;
-                };
-
-                this.redirection_file = std.array_list.Managed(u8).init(this.spawn_arena.allocator());
-
-                Expansion.init(
-                    this.base.interpreter,
-                    this.base.shell,
-                    &this.state.expanding_redirect.expansion,
-                    node_to_expand,
-                    Expansion.ParentPtr.init(this),
-                    .{
-                        .single = .{
-                            .list = &this.redirection_file,
-                        },
-                    },
-                    this.io.copy(),
-                );
-
-                return this.state.expanding_redirect.expansion.start();
+                continue;
             },
             .expanding_args => {
                 if (this.state.expanding_args.idx >= this.node.name_and_args.len) {
@@ -545,100 +581,113 @@ fn initSubproc(this: *Cmd) Yield {
 }
 
 fn initRedirections(this: *Cmd, spawn_args: *Subprocess.SpawnArgs) bun.JSError!?Yield {
-    if (this.node.redirect_file) |redirect| {
-        const in_cmd_subst = false;
+    const redirects = &this.node.redirects;
 
-        if (comptime in_cmd_subst) {
-            setStdioFromRedirect(&spawn_args.stdio, this.node.redirect, .ignore);
-        } else switch (redirect) {
-            .jsbuf => |val| {
-                // JS values in here is probably a bug
-                if (this.base.eventLoop() != .js) @panic("JS values not allowed in this context");
-                const global = this.base.eventLoop().js.global;
-
-                if (this.base.interpreter.jsobjs[val.idx].asArrayBuffer(global)) |buf| {
-                    const stdio: bun.shell.subproc.Stdio = .{ .array_buffer = jsc.ArrayBuffer.Strong{
-                        .array_buffer = buf,
-                        .held = .create(buf.value, global),
-                    } };
-
-                    setStdioFromRedirect(&spawn_args.stdio, this.node.redirect, stdio);
-                } else if (this.base.interpreter.jsobjs[val.idx].as(jsc.WebCore.Blob)) |blob__| {
-                    const blob = blob__.dupe();
-                    if (this.node.redirect.stdin) {
-                        try spawn_args.stdio[stdin_no].extractBlob(global, .{ .Blob = blob }, stdin_no);
-                    } else if (this.node.redirect.stdout) {
-                        try spawn_args.stdio[stdin_no].extractBlob(global, .{ .Blob = blob }, stdout_no);
-                    } else if (this.node.redirect.stderr) {
-                        try spawn_args.stdio[stdin_no].extractBlob(global, .{ .Blob = blob }, stderr_no);
-                    }
-                } else if (try jsc.WebCore.ReadableStream.fromJS(this.base.interpreter.jsobjs[val.idx], global)) |rstream| {
-                    _ = rstream;
-                    @panic("TODO SHELL READABLE STREAM");
-                } else if (this.base.interpreter.jsobjs[val.idx].as(jsc.WebCore.Response)) |req| {
-                    req.getBodyValue().toBlobIfPossible();
-                    if (this.node.redirect.stdin) {
-                        try spawn_args.stdio[stdin_no].extractBlob(global, req.getBodyValue().useAsAnyBlob(), stdin_no);
-                    }
-                    if (this.node.redirect.stdout) {
-                        try spawn_args.stdio[stdout_no].extractBlob(global, req.getBodyValue().useAsAnyBlob(), stdout_no);
-                    }
-                    if (this.node.redirect.stderr) {
-                        try spawn_args.stdio[stderr_no].extractBlob(global, req.getBodyValue().useAsAnyBlob(), stderr_no);
-                    }
-                } else {
-                    const jsval = this.base.interpreter.jsobjs[val.idx];
-                    return global.throw("Unknown JS value used in shell: {f}", .{jsval.fmtString(global)});
-                }
-            },
-            .atom => {
-                if (this.redirection_file.items.len == 0) {
-                    return this.writeFailingError("bun: ambiguous redirect: at `{s}`\n", .{spawn_args.cmd_parent.args.items[0] orelse "<unknown>"});
-                }
-                const path = this.redirection_file.items[0..this.redirection_file.items.len -| 1 :0];
-                log("Expanded Redirect: {s}\n", .{this.redirection_file.items[0..]});
-                const perm = 0o666;
-                const flags = this.node.redirect.toFlags();
-                const redirfd = switch (ShellSyscall.openat(this.base.shell.cwd_fd, path, flags, perm)) {
-                    .err => |e| {
-                        return this.writeFailingError("bun: {f}: {s}", .{ e.toShellSystemError().message, path });
-                    },
-                    .result => |f| f,
-                };
-                this.redirection_fd = CowFd.init(redirfd);
-                setStdioFromRedirect(&spawn_args.stdio, this.node.redirect, .{ .fd = redirfd });
-            },
+    // Handle stdin redirect
+    if (redirects.stdin) |target| {
+        if (try this.initSingleRedirect(spawn_args, target, .stdin, &this.redirect_stdin_path, &this.redirect_stdin_fd)) |yield| {
+            return yield;
         }
-    } else if (this.node.redirect.duplicate_out) {
-        if (this.node.redirect.stdout) {
-            spawn_args.stdio[stderr_no] = .{ .dup2 = .{ .out = .stderr, .to = .stdout } };
-        }
+    }
 
-        if (this.node.redirect.stderr) {
-            spawn_args.stdio[stdout_no] = .{ .dup2 = .{ .out = .stdout, .to = .stderr } };
+    // Handle stdout redirect
+    if (redirects.stdout) |target| {
+        if (try this.initSingleRedirect(spawn_args, target, .stdout, &this.redirect_stdout_path, &this.redirect_stdout_fd)) |yield| {
+            return yield;
+        }
+    }
+
+    // Handle stderr redirect
+    if (redirects.stderr) |target| {
+        if (try this.initSingleRedirect(spawn_args, target, .stderr, &this.redirect_stderr_path, &this.redirect_stderr_fd)) |yield| {
+            return yield;
         }
     }
 
     return null;
 }
 
-fn setStdioFromRedirect(stdio: *[3]shell.subproc.Stdio, flags: ast.RedirectFlags, val: shell.subproc.Stdio) void {
-    if (flags.stdin) {
-        stdio.*[stdin_no] = val;
-    }
+fn initSingleRedirect(
+    this: *Cmd,
+    spawn_args: *Subprocess.SpawnArgs,
+    target: ast.RedirectTarget,
+    comptime io_kind: ast.Redirects.IoKind,
+    expanded_path: *std.array_list.Managed(u8),
+    fd_out: *?*CowFd,
+) bun.JSError!?Yield {
+    const fd_idx = switch (io_kind) {
+        .stdin => stdin_no,
+        .stdout => stdout_no,
+        .stderr => stderr_no,
+    };
 
-    if (flags.duplicate_out) {
-        stdio.*[stdout_no] = val;
-        stdio.*[stderr_no] = val;
-    } else {
-        if (flags.stdout) {
-            stdio.*[stdout_no] = val;
-        }
+    switch (target) {
+        .atom => |atom_info| {
+            if (expanded_path.items.len == 0) {
+                return this.writeFailingError("bun: ambiguous redirect: at `{s}`\n", .{spawn_args.cmd_parent.args.items[0] orelse "<unknown>"});
+            }
+            const path = expanded_path.items[0..expanded_path.items.len -| 1 :0];
+            log("Expanded Redirect ({s}): {s}\n", .{ @tagName(io_kind), expanded_path.items[0..] });
 
-        if (flags.stderr) {
-            stdio.*[stderr_no] = val;
-        }
+            const perm = 0o666;
+            const flags = toOpenFlags(io_kind, atom_info.append);
+            const redirfd = switch (ShellSyscall.openat(this.base.shell.cwd_fd, path, flags, perm)) {
+                .err => |e| {
+                    return this.writeFailingError("bun: {f}: {s}", .{ e.toShellSystemError().message, path });
+                },
+                .result => |f| f,
+            };
+            fd_out.* = CowFd.init(redirfd);
+            spawn_args.stdio[fd_idx] = .{ .fd = redirfd };
+        },
+        .jsbuf => |val| {
+            if (this.base.eventLoop() != .js) @panic("JS values not allowed in this context");
+            const global = this.base.eventLoop().js.global;
+
+            if (this.base.interpreter.jsobjs[val.idx].asArrayBuffer(global)) |buf| {
+                spawn_args.stdio[fd_idx] = .{ .array_buffer = jsc.ArrayBuffer.Strong{
+                    .array_buffer = buf,
+                    .held = .create(buf.value, global),
+                } };
+            } else if (this.base.interpreter.jsobjs[val.idx].as(jsc.WebCore.Blob)) |blob__| {
+                const blob = blob__.dupe();
+                try spawn_args.stdio[fd_idx].extractBlob(global, .{ .Blob = blob }, fd_idx);
+            } else if (try jsc.WebCore.ReadableStream.fromJS(this.base.interpreter.jsobjs[val.idx], global)) |rstream| {
+                _ = rstream;
+                @panic("TODO SHELL READABLE STREAM");
+            } else if (this.base.interpreter.jsobjs[val.idx].as(jsc.WebCore.Response)) |req| {
+                req.getBodyValue().toBlobIfPossible();
+                try spawn_args.stdio[fd_idx].extractBlob(global, req.getBodyValue().useAsAnyBlob(), fd_idx);
+            } else {
+                const jsval = this.base.interpreter.jsobjs[val.idx];
+                return global.throw("Unknown JS value used in shell: {f}", .{jsval.fmtString(global)});
+            }
+        },
+        .dup => |dup_target| {
+            // Duplicate to another fd (e.g., 2>&1 means stderr goes to stdout)
+            const to_fd: jsc.Subprocess.StdioKind = switch (dup_target) {
+                .stdin => .stdin,
+                .stdout => .stdout,
+                .stderr => .stderr,
+            };
+            const out_fd: jsc.Subprocess.StdioKind = switch (io_kind) {
+                .stdin => .stdin,
+                .stdout => .stdout,
+                .stderr => .stderr,
+            };
+            spawn_args.stdio[fd_idx] = .{ .dup2 = .{ .out = out_fd, .to = to_fd } };
+        },
     }
+    return null;
+}
+
+fn toOpenFlags(comptime io_kind: ast.Redirects.IoKind, append: bool) i32 {
+    if (io_kind == .stdin) {
+        return bun.O.RDONLY;
+    }
+    // stdout or stderr
+    const base_flags = bun.O.WRONLY | bun.O.CREAT;
+    return if (append) base_flags | bun.O.APPEND else base_flags | bun.O.TRUNC;
 }
 
 /// Returns null if stdout is buffered
@@ -653,7 +702,7 @@ pub fn stdoutSlice(this: *Cmd) ?[]const u8 {
         },
         .bltn => {
             switch (this.exec.bltn.stdout) {
-                .buf => return this.exec.bltn.stdout.buf.items[0..],
+                .buf => return this.exec.bltn.stdout.buf.get().items[0..],
                 .arraybuf => return this.exec.bltn.stdout.arraybuf.buf.slice(),
                 .blob => return this.exec.bltn.stdout.blob.sharedView(),
                 else => return null,
@@ -689,9 +738,18 @@ pub fn onExit(this: *Cmd, exit_code: ExitCode) void {
 // TODO check that this also makes sure that the poll ref is killed because if it isn't then this Cmd pointer will be stale and so when the event for pid exit happens it will cause crash
 pub fn deinit(this: *Cmd) void {
     log("Cmd(0x{x}, {s}) cmd deinit", .{ @intFromPtr(this), @tagName(this.exec) });
-    if (this.redirection_fd) |redirfd| {
-        this.redirection_fd = null;
-        redirfd.deref();
+    // Clean up redirection file descriptors
+    if (this.redirect_stdin_fd) |fd| {
+        fd.deref();
+        this.redirect_stdin_fd = null;
+    }
+    if (this.redirect_stdout_fd) |fd| {
+        fd.deref();
+        this.redirect_stdout_fd = null;
+    }
+    if (this.redirect_stderr_fd) |fd| {
+        fd.deref();
+        this.redirect_stderr_fd = null;
     }
 
     if (this.exec != .none) {
@@ -763,7 +821,7 @@ pub fn bufferedOutputCloseStdout(this: *Cmd, err: ?jsc.SystemError) void {
     if (err) |e| {
         this.exit_code = @as(ExitCode, @intCast(@intFromEnum(e.getErrno())));
     }
-    if (this.io.stdout == .fd and this.io.stdout.fd.captured != null and !this.node.redirect.redirectsElsewhere(.stdout)) {
+    if (this.io.stdout == .fd and this.io.stdout.fd.captured != null and !this.redirectsElsewhere(.stdout)) {
         var buf = this.io.stdout.fd.captured.?;
         const the_slice = this.exec.subproc.child.stdout.pipe.slice();
         bun.handleOom(buf.appendSlice(bun.default_allocator, the_slice));
@@ -780,7 +838,7 @@ pub fn bufferedOutputCloseStderr(this: *Cmd, err: ?jsc.SystemError) void {
     if (err) |e| {
         this.exit_code = @as(ExitCode, @intCast(@intFromEnum(e.getErrno())));
     }
-    if (this.io.stderr == .fd and this.io.stderr.fd.captured != null and !this.node.redirect.redirectsElsewhere(.stderr)) {
+    if (this.io.stderr == .fd and this.io.stderr.fd.captured != null and !this.redirectsElsewhere(.stderr)) {
         var buf = this.io.stderr.fd.captured.?;
         bun.handleOom(buf.appendSlice(bun.default_allocator, this.exec.subproc.child.stderr.pipe.slice()));
     }

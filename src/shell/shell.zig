@@ -805,8 +805,7 @@ pub const AST = struct {
     pub const Cmd = struct {
         assigns: []Assign,
         name_and_args: []Atom,
-        redirect: RedirectFlags = .{},
-        redirect_file: ?Redirect = null,
+        redirects: Redirects = .{},
 
         pub fn memoryCost(this: *const @This()) usize {
             var cost: usize = @sizeOf(Cmd);
@@ -816,11 +815,52 @@ pub const AST = struct {
             for (this.name_and_args) |*atom| {
                 cost += atom.memoryCost();
             }
-
-            if (this.redirect_file) |*redirect_file| {
-                cost += redirect_file.memoryCost();
-            }
+            cost += this.redirects.memoryCost();
             return cost;
+        }
+    };
+
+    /// Redirect destinations for stdin, stdout, and stderr
+    pub const Redirects = struct {
+        stdin: ?RedirectTarget = null,
+        stdout: ?RedirectTarget = null,
+        stderr: ?RedirectTarget = null,
+
+        /// Type for specifying which IO stream
+        pub const IoKind = enum { stdin, stdout, stderr };
+
+        pub fn memoryCost(this: *const @This()) usize {
+            var cost: usize = @sizeOf(Redirects);
+            if (this.stdin) |*r| cost += r.memoryCost();
+            if (this.stdout) |*r| cost += r.memoryCost();
+            if (this.stderr) |*r| cost += r.memoryCost();
+            return cost;
+        }
+
+        /// Check if a given io stream is redirected elsewhere
+        pub fn redirectsElsewhere(this: *const Redirects, comptime io_kind: IoKind) bool {
+            return @field(this, @tagName(io_kind)) != null;
+        }
+    };
+
+    /// Where a stream is redirected to
+    pub const RedirectTarget = union(enum) {
+        /// Redirect to a file path (from shell text)
+        atom: struct {
+            atom: Atom,
+            append: bool = false,
+        },
+        /// Redirect to a JS object (ArrayBuffer, Blob, etc.)
+        jsbuf: JSBuf,
+        /// Duplicate to another fd (e.g., 2>&1 means stderr duplicates to stdout's destination)
+        dup: enum { stdin, stdout, stderr },
+
+        pub fn memoryCost(this: *const @This()) usize {
+            return switch (this.*) {
+                .atom => |a| @sizeOf(RedirectTarget) + a.atom.memoryCost(),
+                .jsbuf => @sizeOf(RedirectTarget),
+                .dup => @sizeOf(RedirectTarget),
+            };
         }
     };
 
@@ -833,8 +873,6 @@ pub const AST = struct {
     /// - `1>>` = Redirect.Append | Redirect.Stdout
     /// - `2>>` = Redirect.Append | Redirect.Stderr
     /// - `&>>` = Redirect.Append | Redirect.Stdout | Redirect.Stderr
-    ///
-    /// Multiple redirects and redirecting stdin is not supported yet.
     pub const RedirectFlags = packed struct(u8) {
         stdin: bool = false,
         stdout: bool = false,
@@ -849,7 +887,9 @@ pub const AST = struct {
             return @as(u8, @bitCast(this)) == 0;
         }
 
-        pub fn redirectsElsewhere(this: RedirectFlags, io_kind: enum { stdin, stdout, stderr }) bool {
+        pub const IoKind = enum { stdin, stdout, stderr };
+
+        pub fn redirectsElsewhere(this: RedirectFlags, io_kind: IoKind) bool {
             return switch (io_kind) {
                 .stdin => this.stdin,
                 .stdout => if (this.duplicate_out) !this.stdout else this.stdout,
@@ -1636,16 +1676,67 @@ pub const Parser = struct {
         while (try self.parse_atom()) |arg| {
             try name_and_args.append(arg);
         }
-        const parsed_redirect = try self.parse_redirect();
+        const redirects = try self.parse_redirects();
 
         return .{ .cmd = .{
             .assigns = assigns.items[0..],
             .name_and_args = name_and_args.items[0..],
-            .redirect_file = parsed_redirect.redirect,
-            .redirect = parsed_redirect.flags,
+            .redirects = redirects,
         } };
     }
 
+    /// Parse zero or more redirections and build a Redirects struct.
+    /// Each redirect updates the appropriate field (stdin, stdout, stderr).
+    /// For duplicate redirects like 2>&1, we set the target to .dup.
+    fn parse_redirects(self: *Parser) !AST.Redirects {
+        var redirects: AST.Redirects = .{};
+
+        while (self.match(.Redirect)) {
+            const flags = self.prev().Redirect;
+
+            // Handle fd duplication (2>&1, 1>&2)
+            if (flags.duplicate_out) {
+                // For "2>&1": flags.stdout=true means stderr goes to stdout
+                // For "1>&2": flags.stderr=true means stdout goes to stderr
+                if (flags.stdout) {
+                    redirects.stderr = .{ .dup = .stdout };
+                }
+                if (flags.stderr) {
+                    redirects.stdout = .{ .dup = .stderr };
+                }
+                continue;
+            }
+
+            // Parse the redirect target (file path or JS object)
+            const target: AST.RedirectTarget = target: {
+                if (self.match(.JSObjRef)) {
+                    const obj_ref = self.prev().JSObjRef;
+                    break :target .{ .jsbuf = AST.JSBuf.new(obj_ref) };
+                }
+
+                const atom = try self.parse_atom() orelse {
+                    try self.add_error("Redirection with no file", .{});
+                    return ParseError.Expected;
+                };
+                break :target .{ .atom = .{ .atom = atom, .append = flags.append } };
+            };
+
+            // Set the appropriate redirect field based on which fd is being redirected
+            if (flags.stdin) {
+                redirects.stdin = target;
+            }
+            if (flags.stdout) {
+                redirects.stdout = target;
+            }
+            if (flags.stderr) {
+                redirects.stderr = target;
+            }
+        }
+
+        return redirects;
+    }
+
+    /// Parse a single redirect (used for subshells which only support one redirect)
     fn parse_redirect(self: *Parser) !ParsedRedirect {
         const has_redirect = self.match(.Redirect);
         const redirect = if (has_redirect) self.prev().Redirect else AST.RedirectFlags{};
@@ -1656,16 +1747,15 @@ pub const Parser = struct {
                     break :redirect_file .{ .jsbuf = AST.JSBuf.new(obj_ref) };
                 }
 
-                const redirect_file = try self.parse_atom() orelse {
+                const redirect_target = try self.parse_atom() orelse {
                     if (redirect.duplicate_out) break :redirect_file null;
                     try self.add_error("Redirection with no file", .{});
                     return ParseError.Expected;
                 };
-                break :redirect_file .{ .atom = redirect_file };
+                break :redirect_file .{ .atom = redirect_target };
             }
             break :redirect_file null;
         };
-        // TODO check for multiple redirects and error
         return .{ .flags = redirect, .redirect = redirect_file };
     }
 
@@ -2962,6 +3052,42 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                     .out => AST.RedirectFlags.@">>"(),
                     .in => AST.RedirectFlags.@"<<"(),
                 };
+            }
+
+            // Check for >&1 or >&2 (fd duplication without explicit source fd)
+            // >&2 means stdout goes to stderr, >&1 means stdout goes to stdout (no-op)
+            if (dir == .out) {
+                if (self.peek()) |peeked| {
+                    if (!peeked.escaped and peeked.char == '&') {
+                        _ = self.eat();
+                        if (self.peek()) |peeked2| {
+                            switch (peeked2.char) {
+                                '1' => {
+                                    // >&1 means stdout to stdout (no-op in practice, but valid syntax)
+                                    _ = self.eat();
+                                    return .{
+                                        .stdout = true,
+                                        .duplicate_out = true,
+                                    };
+                                },
+                                '2' => {
+                                    // >&2 means stdout goes to stderr
+                                    _ = self.eat();
+                                    return .{
+                                        .stdout = false, // We're redirecting stdout
+                                        .stderr = true, // to stderr
+                                        .duplicate_out = true,
+                                    };
+                                },
+                                else => {
+                                    // Not a valid fd dup, backtrack the '&'
+                                    // Actually we can't easily backtrack, so this case will
+                                    // be handled as an error later. For now just return > redirect.
+                                },
+                            }
+                        }
+                    }
+                }
             }
 
             return switch (dir) {

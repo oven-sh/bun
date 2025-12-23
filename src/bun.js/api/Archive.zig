@@ -535,11 +535,13 @@ pub const BlobTask = struct {
 
     pub fn runFromJS(this: *BlobTask) bun.JSTerminated!void {
         defer {
-            // Free archive_data if ownership wasn't transferred (gzip case or error)
+            // Free archive_data if ownership wasn't transferred (gzip case keeps archive_data)
             if (this.archive_data.len > 0) {
                 bun.default_allocator.free(this.archive_data);
             }
-            // Free result data if ownership wasn't transferred (error or shutdown)
+            // Free result data if ownership wasn't transferred to Blob/Buffer.
+            // On success, ownership transfers to Blob/Buffer and result is set to .pending.
+            // This only runs on: shutdown, error in doCreateBlob, or if promise.resolve throws.
             if (this.result == .success and this.result.success.len > 0) {
                 bun.default_allocator.free(this.result.success);
             }

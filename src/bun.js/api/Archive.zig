@@ -119,10 +119,16 @@ fn createArchive(globalThis: *jsc.JSGlobalObject, data: []u8, allocator: std.mem
 }
 
 fn fromObject(globalThis: *jsc.JSGlobalObject, obj: jsc.JSValue) bun.JSError!jsc.JSValue {
+    const archive_bytes = try buildTarballFromObject(globalThis, obj);
+    return createArchive(globalThis, archive_bytes, bun.default_allocator);
+}
+
+/// Shared helper that builds tarball bytes from a JS object
+fn buildTarballFromObject(globalThis: *jsc.JSGlobalObject, obj: jsc.JSValue) bun.JSError![]u8 {
     const allocator = bun.default_allocator;
 
     const js_obj = obj.getObject() orelse {
-        return globalThis.throwInvalidArguments("Archive.from expects an object", .{});
+        return globalThis.throwInvalidArguments("Expected an object", .{});
     };
 
     // Collect entries first
@@ -163,11 +169,9 @@ fn fromObject(globalThis: *jsc.JSGlobalObject, obj: jsc.JSValue) bun.JSError!jsc
     }
 
     // Build the tarball immediately
-    const archive_bytes = buildTarballFromEntries(entries, false, allocator) catch |err| {
+    return buildTarballFromEntries(entries, false, allocator) catch |err| {
         return globalThis.throwInvalidArguments("Failed to create tarball: {s}", .{@errorName(err)});
     };
-
-    return createArchive(globalThis, archive_bytes, allocator);
 }
 
 fn getEntryDataCopy(globalThis: *jsc.JSGlobalObject, value: jsc.JSValue, allocator: std.mem.Allocator) bun.JSError![]u8 {
@@ -219,7 +223,7 @@ pub fn write(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
     errdefer bun.default_allocator.free(archive_data);
 
     // Create write task - it takes ownership of archive_data
-    const task = WriteTask.createWithData(globalThis, archive_data, path_slice.slice(), use_gzip);
+    const task = try WriteTask.createWithData(globalThis, archive_data, path_slice.slice(), use_gzip);
     const promise_js = task.promise.value();
     task.schedule();
 
@@ -247,61 +251,10 @@ fn getArchiveData(globalThis: *jsc.JSGlobalObject, arg: jsc.JSValue) bun.JSError
 
     // Check if it's an object with entries (plain object) - build tarball
     if (arg.isObject()) {
-        return getArchiveDataFromObject(globalThis, arg);
+        return buildTarballFromObject(globalThis, arg);
     }
 
     return globalThis.throwInvalidArguments("Archive.write expects an object, Blob, TypedArray, ArrayBuffer, or Archive", .{});
-}
-
-/// Build archive data from an object without creating an Archive object
-fn getArchiveDataFromObject(globalThis: *jsc.JSGlobalObject, obj: jsc.JSValue) bun.JSError![]u8 {
-    const allocator = bun.default_allocator;
-
-    const js_obj = obj.getObject() orelse {
-        return globalThis.throwInvalidArguments("Archive.write expects an object", .{});
-    };
-
-    // Collect entries first
-    var entries = std.StringArrayHashMap([]u8).init(allocator);
-    defer {
-        var iter = entries.iterator();
-        while (iter.next()) |entry| {
-            allocator.free(entry.key_ptr.*);
-            allocator.free(entry.value_ptr.*);
-        }
-        entries.deinit();
-    }
-
-    // Iterate over object properties
-    const PropIterator = jsc.JSPropertyIterator(.{
-        .skip_empty_name = true,
-        .include_value = true,
-    });
-
-    var iter = try PropIterator.init(globalThis, js_obj);
-    defer iter.deinit();
-
-    while (try iter.next()) |key| {
-        const value = iter.value;
-        if (value == .zero) continue;
-
-        // Get the key as a string
-        const key_slice = key.toUTF8(allocator);
-        defer key_slice.deinit();
-        const key_str = try allocator.dupeZ(u8, key_slice.slice());
-        errdefer allocator.free(key_str);
-
-        // Get the value data - copy it immediately
-        const entry_data = try getEntryDataCopy(globalThis, value, allocator);
-        errdefer allocator.free(entry_data);
-
-        try entries.put(key_str, entry_data);
-    }
-
-    // Build the tarball immediately
-    return buildTarballFromEntries(entries, false, allocator) catch |err| {
-        return globalThis.throwInvalidArguments("Failed to create tarball: {s}", .{@errorName(err)});
-    };
 }
 
 fn parseCompressArg(globalThis: *jsc.JSGlobalObject, arg: jsc.JSValue) bun.JSError!bool {
@@ -339,7 +292,7 @@ pub fn extract(this: *Archive, globalThis: *jsc.JSGlobalObject, callframe: *jsc.
     defer path_slice.deinit();
 
     // Create extract task (it manages its own promise)
-    const task = ExtractTask.create(globalThis, this, path_slice.slice());
+    const task = try ExtractTask.create(globalThis, this, path_slice.slice());
     const promise_js = task.promise.value();
     task.schedule();
 
@@ -355,7 +308,7 @@ pub fn blob(this: *Archive, globalThis: *jsc.JSGlobalObject, callframe: *jsc.Cal
     const use_gzip = try parseCompressArg(globalThis, compress_arg);
 
     // Create blob task (it manages its own promise)
-    const task = BlobTask.create(globalThis, this, use_gzip, .blob);
+    const task = try BlobTask.create(globalThis, this, use_gzip, .blob);
     const promise_js = task.promise.value();
     task.schedule();
 
@@ -371,7 +324,7 @@ pub fn bytes(this: *Archive, globalThis: *jsc.JSGlobalObject, callframe: *jsc.Ca
     const use_gzip = try parseCompressArg(globalThis, compress_arg);
 
     // Create blob task (it manages its own promise)
-    const task = BlobTask.create(globalThis, this, use_gzip, .bytes);
+    const task = try BlobTask.create(globalThis, this, use_gzip, .bytes);
     const promise_js = task.promise.value();
     task.schedule();
 
@@ -394,12 +347,14 @@ pub const ExtractTask = struct {
     concurrent_task: jsc.ConcurrentTask = .{},
     ref: bun.Async.KeepAlive = .{},
 
-    pub fn create(globalThis: *jsc.JSGlobalObject, archive: *Archive, path: []const u8) *ExtractTask {
+    pub fn create(globalThis: *jsc.JSGlobalObject, archive: *Archive, path: []const u8) bun.JSError!*ExtractTask {
         const vm = globalThis.bunVM();
+        const archive_data = bun.default_allocator.dupe(u8, archive.data) catch return error.OutOfMemory;
+        errdefer bun.default_allocator.free(archive_data);
+        const path_copy = bun.default_allocator.dupe(u8, path) catch return error.OutOfMemory;
         const extract_task = bun.new(ExtractTask, .{
-            // Copy archive data to avoid GC issues - Archive could be finalized while task runs
-            .archive_data = bun.default_allocator.dupe(u8, archive.data) catch @panic("OOM"),
-            .path = bun.default_allocator.dupe(u8, path) catch @panic("OOM"),
+            .archive_data = archive_data,
+            .path = path_copy,
             .promise = jsc.JSPromise.Strong.init(globalThis),
             .vm = vm,
         });
@@ -487,11 +442,12 @@ pub const BlobTask = struct {
     concurrent_task: jsc.ConcurrentTask = .{},
     ref: bun.Async.KeepAlive = .{},
 
-    pub fn create(globalThis: *jsc.JSGlobalObject, archive: *Archive, use_gzip: bool, output_type: OutputType) *BlobTask {
+    pub fn create(globalThis: *jsc.JSGlobalObject, archive: *Archive, use_gzip: bool, output_type: OutputType) bun.JSError!*BlobTask {
         const vm = globalThis.bunVM();
+        // Copy archive data to avoid GC issues - Archive could be finalized while task runs
+        const archive_data = bun.default_allocator.dupe(u8, archive.data) catch return error.OutOfMemory;
         const blob_task = bun.new(BlobTask, .{
-            // Copy archive data to avoid GC issues - Archive could be finalized while task runs
-            .archive_data = bun.default_allocator.dupe(u8, archive.data) catch @panic("OOM"),
+            .archive_data = archive_data,
             .use_gzip = use_gzip,
             .promise = jsc.JSPromise.Strong.init(globalThis),
             .vm = vm,
@@ -540,8 +496,9 @@ pub const BlobTask = struct {
                 bun.default_allocator.free(this.archive_data);
             }
             // Free result data if ownership wasn't transferred to Blob/Buffer.
-            // On success, ownership transfers to Blob/Buffer and result is set to .pending.
-            // This only runs on: shutdown, error in doCreateBlob, or if promise.resolve throws.
+            // Ownership transfers at Blob/Buffer creation (lines 522, 531), and result
+            // is set to .pending immediately after. This cleanup only runs on:
+            // shutdown or error in doCreateBlob (result stays .success or .err).
             if (this.result == .success and this.result.success.len > 0) {
                 bun.default_allocator.free(this.result.success);
             }
@@ -562,19 +519,21 @@ pub const BlobTask = struct {
             .success => |data| {
                 switch (this.output_type) {
                     .blob => {
-                        // Transfer ownership to Blob
+                        // Transfer ownership to Blob - ownership transfers at creation time
                         const blob_struct = jsc.WebCore.Blob.createWithBytesAndAllocator(data, bun.default_allocator, globalThis, false);
                         const blob_ptr = jsc.WebCore.Blob.new(blob_struct);
-                        // Only mark as transferred after resolve succeeds
+                        // Mark as transferred immediately after Blob takes ownership,
+                        // before resolve which could throw
+                        this.result = .pending;
                         try promise.resolve(globalThis, blob_ptr.toJS(globalThis));
-                        this.result = .pending; // Ownership transferred to Blob
                     },
                     .bytes => {
-                        // Transfer ownership to the buffer
+                        // Transfer ownership to Buffer - ownership transfers at creation time
                         const array = jsc.JSValue.createBuffer(globalThis, data);
-                        // Only mark as transferred after resolve succeeds
+                        // Mark as transferred immediately after Buffer takes ownership,
+                        // before resolve which could throw
+                        this.result = .pending;
                         try promise.resolve(globalThis, array);
-                        this.result = .pending; // Ownership transferred to Buffer
                     },
                 }
             },
@@ -604,12 +563,15 @@ pub const WriteTask = struct {
     concurrent_task: jsc.ConcurrentTask = .{},
     ref: bun.Async.KeepAlive = .{},
 
-    pub fn create(globalThis: *jsc.JSGlobalObject, archive: *Archive, path: []const u8, use_gzip: bool) *WriteTask {
+    pub fn create(globalThis: *jsc.JSGlobalObject, archive: *Archive, path: []const u8, use_gzip: bool) bun.JSError!*WriteTask {
         const vm = globalThis.bunVM();
+        // Copy archive data to avoid GC issues - Archive could be finalized while task runs
+        const archive_data = bun.default_allocator.dupe(u8, archive.data) catch return error.OutOfMemory;
+        errdefer bun.default_allocator.free(archive_data);
+        const path_copy = bun.default_allocator.dupe(u8, path) catch return error.OutOfMemory;
         const write_task = bun.new(WriteTask, .{
-            // Copy archive data to avoid GC issues - Archive could be finalized while task runs
-            .archive_data = bun.default_allocator.dupe(u8, archive.data) catch @panic("OOM"),
-            .path = bun.default_allocator.dupe(u8, path) catch @panic("OOM"),
+            .archive_data = archive_data,
+            .path = path_copy,
             .use_gzip = use_gzip,
             .promise = jsc.JSPromise.Strong.init(globalThis),
             .vm = vm,
@@ -618,13 +580,13 @@ pub const WriteTask = struct {
         return write_task;
     }
 
-    /// Create with pre-allocated data (takes ownership)
-    pub fn createWithData(globalThis: *jsc.JSGlobalObject, archive_data: []u8, path: []const u8, use_gzip: bool) *WriteTask {
+    /// Create with pre-allocated data (takes ownership of archive_data on success)
+    pub fn createWithData(globalThis: *jsc.JSGlobalObject, archive_data: []u8, path: []const u8, use_gzip: bool) bun.JSError!*WriteTask {
         const vm = globalThis.bunVM();
+        const path_copy = bun.default_allocator.dupe(u8, path) catch return error.OutOfMemory;
         const write_task = bun.new(WriteTask, .{
-            // Takes ownership of archive_data
             .archive_data = archive_data,
-            .path = bun.default_allocator.dupe(u8, path) catch @panic("OOM"),
+            .path = path_copy,
             .use_gzip = use_gzip,
             .promise = jsc.JSPromise.Strong.init(globalThis),
             .vm = vm,

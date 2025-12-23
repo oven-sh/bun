@@ -539,22 +539,17 @@ pub const BlobTask = struct {
             if (this.archive_data.len > 0) {
                 bun.default_allocator.free(this.archive_data);
             }
-            // Free result data on shutdown or error
+            // Free result data if ownership wasn't transferred (error or shutdown)
             if (this.result == .success and this.result.success.len > 0) {
-                // This only happens if we're shutting down or hit an error below
-                // In normal success case, ownership is transferred to Blob/Buffer
+                bun.default_allocator.free(this.result.success);
             }
             bun.destroy(this);
         }
 
         this.ref.unref(this.vm);
 
-        // Free result data on shutdown
+        // On shutdown, defer will free result data
         if (this.vm.isShuttingDown()) {
-            if (this.result == .success) {
-                bun.default_allocator.free(this.result.success);
-                this.result = .pending; // Mark as freed
-            }
             return;
         }
 
@@ -568,14 +563,16 @@ pub const BlobTask = struct {
                         // Transfer ownership to Blob
                         const blob_struct = jsc.WebCore.Blob.createWithBytesAndAllocator(data, bun.default_allocator, globalThis, false);
                         const blob_ptr = jsc.WebCore.Blob.new(blob_struct);
-                        this.result = .pending; // Ownership transferred
+                        // Only mark as transferred after resolve succeeds
                         try promise.resolve(globalThis, blob_ptr.toJS(globalThis));
+                        this.result = .pending; // Ownership transferred to Blob
                     },
                     .bytes => {
                         // Transfer ownership to the buffer
                         const array = jsc.JSValue.createBuffer(globalThis, data);
-                        this.result = .pending; // Ownership transferred
+                        // Only mark as transferred after resolve succeeds
                         try promise.resolve(globalThis, array);
+                        this.result = .pending; // Ownership transferred to Buffer
                     },
                 }
             },

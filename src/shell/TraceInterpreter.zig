@@ -973,12 +973,18 @@ fn expandBraces(ctx: *TraceContext, input: []const u8) std.array_list.Managed([]
     defer arena.deinit();
     const arena_alloc = arena.allocator();
 
-    // Tokenize the brace pattern
-    const lexer_output = Braces.Lexer.tokenize(arena_alloc, input) catch {
-        // On error, return input as-is
-        bun.handleOom(out.append(bun.handleOom(ctx.allocator.dupe(u8, input))));
-        return out;
-    };
+    // Tokenize the brace pattern - use appropriate lexer based on content
+    const lexer_output = if (bun.strings.isAllASCII(input))
+        Braces.Lexer.tokenize(arena_alloc, input) catch {
+            // On error, return input as-is
+            bun.handleOom(out.append(bun.handleOom(ctx.allocator.dupe(u8, input))));
+            return out;
+        }
+    else
+        Braces.NewLexer(.wtf8).tokenize(arena_alloc, input) catch {
+            bun.handleOom(out.append(bun.handleOom(ctx.allocator.dupe(u8, input))));
+            return out;
+        };
 
     const expansion_count = Braces.calculateExpandedAmount(lexer_output.tokens.items[0..]);
     if (expansion_count == 0) {
@@ -1184,43 +1190,6 @@ fn expandSimple(ctx: *TraceContext, simple: *const ast.SimpleAtom, out: *std.arr
                 bun.handleOom(out.appendSlice("~"));
             }
         },
-    }
-}
-
-fn expandDoubleQuoted(ctx: *TraceContext, text: []const u8, out: *std.array_list.Managed(u8)) void {
-    var i: usize = 0;
-    while (i < text.len) {
-        if (text[i] == '$' and i + 1 < text.len) {
-            // Variable expansion
-            const start = i + 1;
-            var end = start;
-            if (text[start] == '{') {
-                // ${var} form
-                end = start + 1;
-                while (end < text.len and text[end] != '}') : (end += 1) {}
-                if (end < text.len) {
-                    const varname = text[start + 1 .. end];
-                    if (ctx.getVar(varname)) |val| {
-                        bun.handleOom(out.appendSlice(val));
-                    }
-                    i = end + 1;
-                    continue;
-                }
-            } else {
-                // $var form
-                while (end < text.len and (std.ascii.isAlphanumeric(text[end]) or text[end] == '_')) : (end += 1) {}
-                if (end > start) {
-                    const varname = text[start..end];
-                    if (ctx.getVar(varname)) |val| {
-                        bun.handleOom(out.appendSlice(val));
-                    }
-                    i = end;
-                    continue;
-                }
-            }
-        }
-        bun.handleOom(out.append(text[i]));
-        i += 1;
     }
 }
 

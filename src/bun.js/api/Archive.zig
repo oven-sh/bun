@@ -546,7 +546,8 @@ pub const WriteTask = struct {
     result: union(enum) {
         pending: void,
         success: void,
-        err: []const u8,
+        zig_err: []const u8,
+        sys_err: bun.sys.Error,
     } = .pending,
     task: jsc.WorkPoolTask = .{ .callback = &run },
     concurrent_task: jsc.ConcurrentTask = .{},
@@ -597,7 +598,7 @@ pub const WriteTask = struct {
     fn doWrite(this: *WriteTask) void {
         const data_to_write = if (this.use_gzip)
             compressGzip(this.archive_data) catch |err| {
-                this.result = .{ .err = @errorName(err) };
+                this.result = .{ .zig_err = @errorName(err) };
                 return;
             }
         else
@@ -607,14 +608,14 @@ pub const WriteTask = struct {
 
         // Write to file
         const path_z = bun.default_allocator.dupeZ(u8, this.path) catch {
-            this.result = .{ .err = "out of memory" };
+            this.result = .{ .zig_err = "OutOfMemory" };
             return;
         };
         defer bun.default_allocator.free(path_z);
 
         const file = switch (bun.sys.File.openat(.cwd(), path_z, bun.O.CREAT | bun.O.WRONLY | bun.O.TRUNC, 0o644)) {
             .err => |err| {
-                this.result = .{ .err = err.name() };
+                this.result = .{ .sys_err = err };
                 return;
             },
             .result => |f| f,
@@ -623,7 +624,7 @@ pub const WriteTask = struct {
 
         switch (file.writeAll(data_to_write)) {
             .err => |err| {
-                this.result = .{ .err = err.name() };
+                this.result = .{ .sys_err = err };
                 return;
             },
             .result => {},
@@ -658,9 +659,12 @@ pub const WriteTask = struct {
             .success => {
                 try promise.resolve(globalThis, jsc.JSValue.js_undefined);
             },
-            .err => |err_msg| {
+            .zig_err => |err_msg| {
                 const err = globalThis.createErrorInstance("{s}", .{err_msg});
                 try promise.reject(globalThis, err);
+            },
+            .sys_err => |sys_err| {
+                try promise.reject(globalThis, sys_err.toJS(globalThis));
             },
             .pending => unreachable,
         }

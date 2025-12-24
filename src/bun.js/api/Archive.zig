@@ -485,7 +485,7 @@ pub const BlobTask = struct {
                 bun.default_allocator.free(this.archive_data);
             }
             // Free result data if ownership wasn't transferred to Blob/Buffer.
-            // Ownership transfers at Blob/Buffer creation (lines 522, 531), and result
+            // Ownership transfers at Blob/Buffer creation (lines 512, 521), and result
             // is set to .pending immediately after. This cleanup only runs on:
             // shutdown or error in doCreateBlob (result stays .success or .err).
             if (this.result == .success and this.result.success.len > 0) {

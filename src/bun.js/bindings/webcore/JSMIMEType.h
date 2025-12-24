@@ -36,10 +36,10 @@ public:
     DECLARE_VISIT_CHILDREN;
 
     const WTF::String& type() const { return m_type; }
-    void setType(WTF::String type) { m_type = WTFMove(type); }
+    void setType(WTF::String type) { m_type = std::move(type); }
 
     const WTF::String& subtype() const { return m_subtype; }
-    void setSubtype(WTF::String subtype) { m_subtype = WTFMove(subtype); }
+    void setSubtype(WTF::String subtype) { m_subtype = std::move(subtype); }
 
     JSMIMEParams* parameters() const { return m_parameters.get(); }
 

@@ -11,7 +11,7 @@ public:
     using Base = JSDOMWrapper<JSC::Wasm::StreamingCompiler>;
     static JSWasmStreamingCompiler* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<JSC::Wasm::StreamingCompiler>&& impl)
     {
-        JSWasmStreamingCompiler* ptr = new (NotNull, JSC::allocateCell<JSWasmStreamingCompiler>(globalObject->vm())) JSWasmStreamingCompiler(structure, *globalObject, WTFMove(impl));
+        JSWasmStreamingCompiler* ptr = new (NotNull, JSC::allocateCell<JSWasmStreamingCompiler>(globalObject->vm())) JSWasmStreamingCompiler(structure, *globalObject, std::move(impl));
         ptr->finishCreation(globalObject->vm());
         return ptr;
     }

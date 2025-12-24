@@ -174,7 +174,7 @@ static void addToTextCodecMap(ASCIILiteral name, NewTextCodecFunction&& function
 {
     ASCIILiteral atomName = textEncodingNameMap().get(name);
     ASSERT(!atomName.isNull());
-    textCodecMap().add(atomName, WTFMove(function));
+    textCodecMap().add(atomName, std::move(function));
 }
 
 static void pruneBlocklistedCodecs() WTF_REQUIRES_LOCK(encodingRegistryLock)

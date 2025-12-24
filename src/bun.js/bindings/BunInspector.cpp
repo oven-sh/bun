@@ -74,7 +74,7 @@ public:
                 Bun__tickWhilePaused(&done);
             };
         }
-        this->globalObject->inspectorDebuggable().dispatchMessageFromRemote(WTFMove(messageString));
+        this->globalObject->inspectorDebuggable().dispatchMessageFromRemote(std::move(messageString));
     }
 
     void drain()

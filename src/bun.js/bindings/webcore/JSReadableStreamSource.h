@@ -31,7 +31,7 @@ public:
     using Base = JSDOMWrapper<ReadableStreamSource>;
     static JSReadableStreamSource* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<ReadableStreamSource>&& impl)
     {
-        JSReadableStreamSource* ptr = new (NotNull, JSC::allocateCell<JSReadableStreamSource>(globalObject->vm())) JSReadableStreamSource(structure, *globalObject, WTFMove(impl));
+        JSReadableStreamSource* ptr = new (NotNull, JSC::allocateCell<JSReadableStreamSource>(globalObject->vm())) JSReadableStreamSource(structure, *globalObject, std::move(impl));
         ptr->finishCreation(globalObject->vm());
         return ptr;
     }

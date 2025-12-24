@@ -169,7 +169,7 @@ ExceptionOr<Ref<FetchHeaders>> FetchHeaders::create(std::optional<Init>&& header
             return result.releaseException();
     }
 
-    return adoptRef(*new FetchHeaders { Guard::None, WTFMove(headers) });
+    return adoptRef(*new FetchHeaders { Guard::None, std::move(headers) });
 }
 
 ExceptionOr<void> FetchHeaders::fill(const Init& headerInit)
@@ -184,7 +184,7 @@ ExceptionOr<void> FetchHeaders::fill(const FetchHeaders& otherHeaders)
         headers.commonHeaders().appendVector(otherHeaders.m_headers.commonHeaders());
         headers.uncommonHeaders().appendVector(otherHeaders.m_headers.uncommonHeaders());
         headers.getSetCookieHeaders().appendVector(otherHeaders.m_headers.getSetCookieHeaders());
-        setInternalHeaders(WTFMove(headers));
+        setInternalHeaders(std::move(headers));
         m_updateCounter++;
         return {};
     }
@@ -343,7 +343,7 @@ std::optional<KeyValuePair<String, String>> FetchHeaders::Iterator::next()
         if (key.isNull()) {
             if (m_cookieIndex < setCookieHeaders.size()) {
                 String value = setCookieHeaders[m_cookieIndex++];
-                return KeyValuePair<String, String> { WTF::httpHeaderNameStringImpl(HTTPHeaderName::SetCookie), WTFMove(value) };
+                return KeyValuePair<String, String> { WTF::httpHeaderNameStringImpl(HTTPHeaderName::SetCookie), std::move(value) };
             }
             m_currentIndex++;
             continue;
@@ -352,7 +352,7 @@ std::optional<KeyValuePair<String, String>> FetchHeaders::Iterator::next()
         m_currentIndex++;
         auto value = m_headers->m_headers.get(key);
         if (!value.isNull())
-            return KeyValuePair<String, String> { WTFMove(key), WTFMove(value) };
+            return KeyValuePair<String, String> { std::move(key), std::move(value) };
     }
 
     return std::nullopt;

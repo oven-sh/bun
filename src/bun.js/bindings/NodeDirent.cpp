@@ -349,14 +349,14 @@ extern "C" JSC::EncodedJSValue Bun__Dirent__toJS(Zig::GlobalObject* globalObject
 
     if (!pathValue) {
         auto pathString = path->transferToWTFString();
-        pathValue = jsString(vm, WTFMove(pathString));
+        pathValue = jsString(vm, std::move(pathString));
         if (previousPath) {
             *previousPath = pathValue;
         }
     }
 
     auto nameString = name->transferToWTFString();
-    auto nameValue = jsString(vm, WTFMove(nameString));
+    auto nameValue = jsString(vm, std::move(nameString));
     auto typeValue = jsNumber(type);
     object->putDirectOffset(vm, 0, nameValue);
     object->putDirectOffset(vm, 1, pathValue);

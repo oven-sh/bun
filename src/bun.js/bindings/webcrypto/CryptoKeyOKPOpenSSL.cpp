@@ -56,11 +56,11 @@ std::optional<CryptoKeyPair> CryptoKeyOKP::platformGeneratePair(CryptoAlgorithmI
     }
 
     bool isPublicKeyExtractable = true;
-    auto publicKey = CryptoKeyOKP::create(identifier, namedCurve, CryptoKeyType::Public, WTFMove(public_key), isPublicKeyExtractable, usages);
+    auto publicKey = CryptoKeyOKP::create(identifier, namedCurve, CryptoKeyType::Public, std::move(public_key), isPublicKeyExtractable, usages);
     ASSERT(publicKey);
     auto privateKey = CryptoKeyOKP::create(identifier, namedCurve, CryptoKeyType::Private, Vector<uint8_t>(std::span { private_key.begin(), isEd25519 ? (unsigned int)ED25519_PRIVATE_KEY_LEN : (unsigned int)X25519_PRIVATE_KEY_LEN }), extractable, usages);
     ASSERT(privateKey);
-    return CryptoKeyPair { WTFMove(publicKey), WTFMove(privateKey) };
+    return CryptoKeyPair { std::move(publicKey), std::move(privateKey) };
 }
 
 // Per https://www.ietf.org/rfc/rfc5280.txt
@@ -179,7 +179,7 @@ ExceptionOr<Vector<uint8_t>> CryptoKeyOKP::exportSpki() const
 
     ASSERT(result.size() == totalSize);
 
-    return WTFMove(result);
+    return std::move(result);
 }
 
 // Per https://www.ietf.org/rfc/rfc5280.txt
@@ -288,7 +288,7 @@ ExceptionOr<Vector<uint8_t>> CryptoKeyOKP::exportPkcs8() const
 
     ASSERT(result.size() == totalSize);
 
-    return WTFMove(result);
+    return std::move(result);
 }
 
 String CryptoKeyOKP::generateJwkD() const

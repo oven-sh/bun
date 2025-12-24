@@ -101,7 +101,7 @@ JSC_DEFINE_HOST_FUNCTION(structuredCloneForStream, (JSGlobalObject * globalObjec
 #define CLONE_TYPED_ARRAY(name)                                                                                                                                                 \
     do {                                                                                                                                                                        \
         if (bufferView->inherits<JS##name##Array>())                                                                                                                            \
-            RELEASE_AND_RETURN(scope, JSValue::encode(JS##name##Array::create(globalObject, structure, WTFMove(bufferClone), bufferView->byteOffset(), bufferView->length()))); \
+            RELEASE_AND_RETURN(scope, JSValue::encode(JS##name##Array::create(globalObject, structure, std::move(bufferClone), bufferView->byteOffset(), bufferView->length()))); \
     } while (0);
 
         FOR_EACH_TYPED_ARRAY_TYPE_EXCLUDING_DATA_VIEW(CLONE_TYPED_ARRAY)
@@ -109,7 +109,7 @@ JSC_DEFINE_HOST_FUNCTION(structuredCloneForStream, (JSGlobalObject * globalObjec
 #undef CLONE_TYPED_ARRAY
 
         if (value.inherits<JSDataView>())
-            RELEASE_AND_RETURN(scope, JSValue::encode(JSDataView::create(globalObject, structure, WTFMove(bufferClone), bufferView->byteOffset(), bufferView->length())));
+            RELEASE_AND_RETURN(scope, JSValue::encode(JSDataView::create(globalObject, structure, std::move(bufferClone), bufferView->byteOffset(), bufferView->length())));
     }
 
     throwTypeError(globalObject, scope, "structuredClone not implemented for non-ArrayBuffer / non-ArrayBufferView"_s);
@@ -151,7 +151,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionStructuredClone, (JSC::JSGlobalObject * globa
     }
 
     Vector<RefPtr<MessagePort>> ports;
-    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTFMove(transferList), ports);
+    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, std::move(transferList), ports);
     if (serialized.hasException()) {
         WebCore::propagateException(*globalObject, throwScope, serialized.releaseException());
         RELEASE_AND_RETURN(throwScope, {});
@@ -214,7 +214,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionStructuredCloneAdvanced, (JSC::JSGlobalObject
     }
 
     Vector<RefPtr<MessagePort>> ports;
-    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTFMove(transferList), ports, forStorage, serializationContext, forTransfer);
+    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, std::move(transferList), ports, forStorage, serializationContext, forTransfer);
     if (serialized.hasException()) {
         WebCore::propagateException(*globalObject, throwScope, serialized.releaseException());
         RELEASE_AND_RETURN(throwScope, {});

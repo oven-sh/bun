@@ -31,7 +31,7 @@ public:
     using Base = JSDOMWrapper<PerformanceEntry>;
     static JSPerformanceEntry* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<PerformanceEntry>&& impl)
     {
-        JSPerformanceEntry* ptr = new (NotNull, JSC::allocateCell<JSPerformanceEntry>(globalObject->vm())) JSPerformanceEntry(structure, *globalObject, WTFMove(impl));
+        JSPerformanceEntry* ptr = new (NotNull, JSC::allocateCell<JSPerformanceEntry>(globalObject->vm())) JSPerformanceEntry(structure, *globalObject, std::move(impl));
         ptr->finishCreation(globalObject->vm());
         return ptr;
     }

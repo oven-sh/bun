@@ -35,7 +35,7 @@ extern "C" JSC::EncodedJSValue URLSearchParams__create(JSDOMGlobalObject* global
 {
     String str = Zig::toString(*input);
     auto result = URLSearchParams::create(str, nullptr);
-    return JSC::JSValue::encode(WebCore::toJSNewlyCreated(globalObject, globalObject, WTFMove(result)));
+    return JSC::JSValue::encode(WebCore::toJSNewlyCreated(globalObject, globalObject, std::move(result)));
 }
 
 extern "C" WebCore::URLSearchParams* URLSearchParams__fromJS(JSC::EncodedJSValue value)
@@ -75,7 +75,7 @@ ExceptionOr<Ref<URLSearchParams>> URLSearchParams::create(std::variant<Vector<Ve
                 return Exception { TypeError };
             pairs.append({pair[0], pair[1]});
         }
-        return adoptRef(*new URLSearchParams(WTFMove(pairs))); }, [&](const Vector<KeyValuePair<String, String>>& pairs) -> ExceptionOr<Ref<URLSearchParams>> { return adoptRef(*new URLSearchParams(pairs)); }, [&](const String& string) -> ExceptionOr<Ref<URLSearchParams>> { return adoptRef(*new URLSearchParams(string, nullptr)); });
+        return adoptRef(*new URLSearchParams(std::move(pairs))); }, [&](const Vector<KeyValuePair<String, String>>& pairs) -> ExceptionOr<Ref<URLSearchParams>> { return adoptRef(*new URLSearchParams(pairs)); }, [&](const String& string) -> ExceptionOr<Ref<URLSearchParams>> { return adoptRef(*new URLSearchParams(string, nullptr)); });
     return std::visit(visitor, variant);
 }
 

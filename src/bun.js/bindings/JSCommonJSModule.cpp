@@ -715,7 +715,7 @@ JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * glo
     }
 
     moduleObject->sourceCode = makeSource(
-        WTFMove(wrappedString),
+        std::move(wrappedString),
         SourceOrigin(URL::fileURLWithFileSystemPath(filenameString)),
         JSC::SourceTaintedOrigin::Untainted,
         filenameString,
@@ -1365,7 +1365,7 @@ void JSCommonJSModule::evaluate(
     if (this->hasEvaluated)
         return;
 
-    this->sourceCode = JSC::SourceCode(WTFMove(sourceProvider));
+    this->sourceCode = JSC::SourceCode(std::move(sourceProvider));
 
     evaluateCommonJSModuleOnce(vm, globalObject, this, this->m_dirname.get(), this->m_filename.get());
 }
@@ -1466,7 +1466,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
         moduleObject = JSCommonJSModule::create(
             vm,
             globalObject->CommonJSModuleObjectStructure(),
-            requireMapKey, filename, dirname, WTFMove(JSC::SourceCode(WTFMove(sourceProvider))));
+            requireMapKey, filename, dirname, std::move(JSC::SourceCode(std::move(sourceProvider))));
 
         moduleObject->putDirect(vm,
             WebCore::clientData(vm)->builtinNames().exportsPublicName(),

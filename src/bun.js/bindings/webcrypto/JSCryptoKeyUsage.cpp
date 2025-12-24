@@ -64,19 +64,22 @@ template<> JSString* convertEnumerationToJS(JSGlobalObject& lexicalGlobalObject,
 template<> std::optional<CryptoKeyUsage> parseEnumeration<CryptoKeyUsage>(JSGlobalObject& lexicalGlobalObject, JSValue value)
 {
     auto stringValue = value.toWTFString(&lexicalGlobalObject);
-    static constexpr std::pair<ComparableASCIILiteral, CryptoKeyUsage> mappings[] = {
-        { "decrypt"_s, CryptoKeyUsage::Decrypt },
-        { "deriveBits"_s, CryptoKeyUsage::DeriveBits },
-        { "deriveKey"_s, CryptoKeyUsage::DeriveKey },
-        { "encrypt"_s, CryptoKeyUsage::Encrypt },
-        { "sign"_s, CryptoKeyUsage::Sign },
-        { "unwrapKey"_s, CryptoKeyUsage::UnwrapKey },
-        { "verify"_s, CryptoKeyUsage::Verify },
-        { "wrapKey"_s, CryptoKeyUsage::WrapKey },
-    };
-    static constexpr SortedArrayMap enumerationMapping { mappings };
-    if (auto* enumerationValue = enumerationMapping.tryGet(stringValue); enumerationValue) [[likely]]
-        return *enumerationValue;
+    if (stringValue == "decrypt"_s)
+        return CryptoKeyUsage::Decrypt;
+    if (stringValue == "deriveBits"_s)
+        return CryptoKeyUsage::DeriveBits;
+    if (stringValue == "deriveKey"_s)
+        return CryptoKeyUsage::DeriveKey;
+    if (stringValue == "encrypt"_s)
+        return CryptoKeyUsage::Encrypt;
+    if (stringValue == "sign"_s)
+        return CryptoKeyUsage::Sign;
+    if (stringValue == "unwrapKey"_s)
+        return CryptoKeyUsage::UnwrapKey;
+    if (stringValue == "verify"_s)
+        return CryptoKeyUsage::Verify;
+    if (stringValue == "wrapKey"_s)
+        return CryptoKeyUsage::WrapKey;
     return std::nullopt;
 }
 

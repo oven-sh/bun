@@ -298,7 +298,7 @@ JSValue toJS(JSGlobalObject* lexicalGlobalObject, ThrowScope& scope, const ncryp
     }
     memcpy(buf->data(), bptr->data, bptr->length);
 
-    return JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTFMove(buf), 0, bptr->length);
+    return JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), std::move(buf), 0, bptr->length);
 }
 
 JSC::JSValue KeyObject::exportPublic(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, const ncrypto::EVPKeyPointer::PublicKeyEncodingConfig& config)
@@ -312,7 +312,7 @@ JSC::JSValue KeyObject::exportPublic(JSC::JSGlobalObject* lexicalGlobalObject, J
         KeyObject keyObject = *this;
         keyObject.type() = CryptoKeyType::Public;
         Structure* structure = globalObject->m_JSPublicKeyObjectClassStructure.get(lexicalGlobalObject);
-        JSPublicKeyObject* publicKey = JSPublicKeyObject::create(vm, structure, lexicalGlobalObject, WTFMove(keyObject));
+        JSPublicKeyObject* publicKey = JSPublicKeyObject::create(vm, structure, lexicalGlobalObject, std::move(keyObject));
         return publicKey;
     }
 
@@ -340,7 +340,7 @@ JSValue KeyObject::exportPrivate(JSGlobalObject* lexicalGlobalObject, ThrowScope
     if (config.output_key_object) {
         KeyObject keyObject = *this;
         Structure* structure = globalObject->m_JSPrivateKeyObjectClassStructure.get(lexicalGlobalObject);
-        JSPrivateKeyObject* privateKey = JSPrivateKeyObject::create(vm, structure, lexicalGlobalObject, WTFMove(keyObject));
+        JSPrivateKeyObject* privateKey = JSPrivateKeyObject::create(vm, structure, lexicalGlobalObject, std::move(keyObject));
         return privateKey;
     }
 
@@ -420,7 +420,7 @@ JSValue KeyObject::exportSecret(JSGlobalObject* lexicalGlobalObject, ThrowScope&
             return {};
         }
         memcpy(buf->data(), key.begin(), key.size());
-        return JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTFMove(buf), 0, key.size());
+        return JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), std::move(buf), 0, key.size());
     };
 
     if (!optionsValue.isUndefined()) {
@@ -648,7 +648,7 @@ static std::optional<const Vector<uint8_t>*> getSymmetricKey(const WebCore::Cryp
 
 KeyObject KeyObject::create(CryptoKeyType type, RefPtr<KeyObjectData>&& data)
 {
-    return KeyObject(type, WTFMove(data));
+    return KeyObject(type, std::move(data));
 }
 
 WebCore::ExceptionOr<KeyObject> KeyObject::create(WebCore::CryptoKey& key)
@@ -664,7 +664,7 @@ WebCore::ExceptionOr<KeyObject> KeyObject::create(WebCore::CryptoKey& key)
 
         WTF::Vector<uint8_t> copy;
         copy.appendVector(*keyData.value());
-        return create(WTFMove(copy));
+        return create(std::move(copy));
     }
 
     case WebCore::CryptoKeyType::Public: {
@@ -678,7 +678,7 @@ WebCore::ExceptionOr<KeyObject> KeyObject::create(WebCore::CryptoKey& key)
         EVP_PKEY_up_ref(keyValue.key);
         ncrypto::EVPKeyPointer keyPtr(keyValue.key);
 
-        return create(CryptoKeyType::Public, WTFMove(keyPtr));
+        return create(CryptoKeyType::Public, std::move(keyPtr));
     }
 
     case WebCore::CryptoKeyType::Private: {
@@ -692,7 +692,7 @@ WebCore::ExceptionOr<KeyObject> KeyObject::create(WebCore::CryptoKey& key)
         EVP_PKEY_up_ref(keyValue.key);
         ncrypto::EVPKeyPointer keyPtr(keyValue.key);
 
-        return create(CryptoKeyType::Private, WTFMove(keyPtr));
+        return create(CryptoKeyType::Private, std::move(keyPtr));
     }
     }
 
@@ -701,14 +701,14 @@ WebCore::ExceptionOr<KeyObject> KeyObject::create(WebCore::CryptoKey& key)
 
 KeyObject KeyObject::create(WTF::Vector<uint8_t>&& symmetricKey)
 {
-    RefPtr<KeyObjectData> data = KeyObjectData::create(WTFMove(symmetricKey));
-    return KeyObject(CryptoKeyType::Secret, WTFMove(data));
+    RefPtr<KeyObjectData> data = KeyObjectData::create(std::move(symmetricKey));
+    return KeyObject(CryptoKeyType::Secret, std::move(data));
 }
 
 KeyObject KeyObject::create(CryptoKeyType type, ncrypto::EVPKeyPointer&& asymmetricKey)
 {
-    RefPtr<KeyObjectData> data = KeyObjectData::create(WTFMove(asymmetricKey));
-    return KeyObject(type, WTFMove(data));
+    RefPtr<KeyObjectData> data = KeyObjectData::create(std::move(asymmetricKey));
+    return KeyObject(type, std::move(data));
 }
 
 void KeyObject::getKeyObjectFromHandle(JSGlobalObject* globalObject, ThrowScope& scope, JSValue keyValue, const KeyObject& handle, PrepareAsymmetricKeyMode mode)
@@ -880,7 +880,7 @@ KeyObject KeyObject::getKeyObjectHandleFromJwk(JSGlobalObject* globalObject, Thr
             return {};
         }
 
-        return create(keyType, WTFMove(key));
+        return create(keyType, std::move(key));
     }
     case Kty::Ec: {
         auto crvView = getJwkStringView(globalObject, scope, jwk, "crv"_s, "key.crv"_s);
@@ -942,7 +942,7 @@ KeyObject KeyObject::getKeyObjectHandleFromJwk(JSGlobalObject* globalObject, Thr
         auto key = EVPKeyPointer::New();
         key.set(ec);
 
-        return create(keyType, WTFMove(key));
+        return create(keyType, std::move(key));
     }
     case Kty::Rsa: {
         auto nView = getJwkStringView(globalObject, scope, jwk, "n"_s, "key.n"_s);
@@ -989,8 +989,8 @@ KeyObject KeyObject::getKeyObjectHandleFromJwk(JSGlobalObject* globalObject, Thr
             }
         }
 
-        auto key = EVPKeyPointer::NewRSA(WTFMove(rsa));
-        return create(keyType, WTFMove(key));
+        auto key = EVPKeyPointer::NewRSA(std::move(rsa));
+        return create(keyType, std::move(key));
     }
     }
 
@@ -1041,7 +1041,7 @@ EVPKeyPointer::PrivateKeyEncodingConfig KeyObject::getPrivateKeyEncoding(
         }
 
         if (passphrase) {
-            config.passphrase = WTFMove(*passphrase);
+            config.passphrase = std::move(*passphrase);
         }
     }
 
@@ -1071,13 +1071,13 @@ KeyObject KeyObject::getPublicOrPrivateKey(
             formatType,
             encodingType,
             cipher,
-            WTFMove(passphrase),
+            std::move(passphrase),
             KeyEncodingContext::Input);
         RETURN_IF_EXCEPTION(scope, {});
 
         auto res = EVPKeyPointer::TryParsePrivateKey(config, buf);
         if (res) {
-            return create(CryptoKeyType::Private, WTFMove(res.value));
+            return create(CryptoKeyType::Private, std::move(res.value));
         }
 
         if (res.error.value() == EVPKeyPointer::PKParseError::NEED_PASSPHRASE) {
@@ -1099,20 +1099,20 @@ KeyObject KeyObject::getPublicOrPrivateKey(
         formatType,
         encodingType,
         cipher,
-        WTFMove(passphrase),
+        std::move(passphrase),
         KeyEncodingContext::Input);
     RETURN_IF_EXCEPTION(scope, {});
 
     if (config.format == EVPKeyPointer::PKFormatType::PEM) {
         auto publicRes = EVPKeyPointer::TryParsePublicKeyPEM(buf);
         if (publicRes) {
-            return create(CryptoKeyType::Public, WTFMove(publicRes.value));
+            return create(CryptoKeyType::Public, std::move(publicRes.value));
         }
 
         if (publicRes.error.value() == EVPKeyPointer::PKParseError::NOT_RECOGNIZED) {
             auto privateRes = EVPKeyPointer::TryParsePrivateKey(config, buf);
             if (privateRes) {
-                return create(CryptoKeyType::Public, WTFMove(privateRes.value));
+                return create(CryptoKeyType::Public, std::move(privateRes.value));
             }
 
             if (privateRes.error.value() == EVPKeyPointer::PKParseError::NEED_PASSPHRASE) {
@@ -1145,7 +1145,7 @@ KeyObject KeyObject::getPublicOrPrivateKey(
     if (isPublic(config, buf)) {
         auto res = EVPKeyPointer::TryParsePublicKey(config, buf);
         if (res) {
-            return create(CryptoKeyType::Public, WTFMove(res.value));
+            return create(CryptoKeyType::Public, std::move(res.value));
         }
 
         throwCryptoError(globalObject, scope, res.openssl_error.value_or(0), "Failed to read asymmetric key"_s);
@@ -1154,7 +1154,7 @@ KeyObject KeyObject::getPublicOrPrivateKey(
 
     auto res = EVPKeyPointer::TryParsePrivateKey(config, buf);
     if (res) {
-        return create(CryptoKeyType::Private, WTFMove(res.value));
+        return create(CryptoKeyType::Private, std::move(res.value));
     }
 
     if (res.error.value() == EVPKeyPointer::PKParseError::NEED_PASSPHRASE) {
@@ -1343,7 +1343,7 @@ KeyObject::PrepareAsymmetricKeyResult KeyObject::prepareAsymmetricKey(JSC::JSGlo
                     .formatType = config.format,
                     .encodingType = config.type,
                     .cipher = config.cipher,
-                    .passphrase = WTFMove(config.passphrase),
+                    .passphrase = std::move(config.passphrase),
                 };
             }
         }
@@ -1360,7 +1360,7 @@ KeyObject::PrepareAsymmetricKeyResult KeyObject::prepareAsymmetricKey(JSC::JSGlo
                 .formatType = config.format,
                 .encodingType = config.type,
                 .cipher = config.cipher,
-                .passphrase = WTFMove(config.passphrase),
+                .passphrase = std::move(config.passphrase),
             };
         }
 
@@ -1377,7 +1377,7 @@ KeyObject::PrepareAsymmetricKeyResult KeyObject::prepareAsymmetricKey(JSC::JSGlo
                 .formatType = config.format,
                 .encodingType = config.type,
                 .cipher = config.cipher,
-                .passphrase = WTFMove(config.passphrase),
+                .passphrase = std::move(config.passphrase),
             };
         }
 
@@ -1460,14 +1460,14 @@ KeyObject KeyObject::prepareSecretKey(JSGlobalObject* globalObject, ThrowScope& 
 
         Vector<uint8_t> copy;
         copy.append(view->span());
-        return create(WTFMove(copy));
+        return create(std::move(copy));
     }
 
     // TODO(dylan-conway): avoid copying by keeping the buffer alive
     if (auto* view = jsDynamicCast<JSArrayBufferView*>(keyValue)) {
         Vector<uint8_t> copy;
         copy.append(view->span());
-        return create(WTFMove(copy));
+        return create(std::move(copy));
     }
 
     // TODO(dylan-conway): avoid copying by keeping the buffer alive
@@ -1475,7 +1475,7 @@ KeyObject KeyObject::prepareSecretKey(JSGlobalObject* globalObject, ThrowScope& 
         auto* impl = arrayBuffer->impl();
         Vector<uint8_t> copy;
         copy.append(impl->span());
-        return create(WTFMove(copy));
+        return create(std::move(copy));
     }
 
     if (bufferOnly) {

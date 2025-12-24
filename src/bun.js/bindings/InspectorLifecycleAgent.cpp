@@ -122,7 +122,7 @@ void InspectorLifecycleAgent::reportError(ZigException& exception)
     }
 
     // error(const String& message, const String& name, Ref<JSON::ArrayOf<String>>&& urls, Ref<JSON::ArrayOf<int>>&& lineColumns, Ref<JSON::ArrayOf<String>>&& sourceLines);
-    m_frontendDispatcher->error(WTFMove(message), WTFMove(name), WTFMove(urls), WTFMove(lineColumns), WTFMove(sourceLines));
+    m_frontendDispatcher->error(std::move(message), std::move(name), std::move(urls), std::move(lineColumns), std::move(sourceLines));
 }
 
 Protocol::ErrorStringOr<void> InspectorLifecycleAgent::preventExit()
@@ -206,7 +206,7 @@ Protocol::ErrorStringOr<ModuleGraph> InspectorLifecycleAgent::getModuleGraph()
         RETURN_IF_EXCEPTION(scope, makeUnexpected(ErrorString("Failed to convert value to string"_s)));
     }
 
-    return ModuleGraph { WTFMove(esm), WTFMove(cjs), WTFMove(cwd), WTFMove(main), WTFMove(argv) };
+    return ModuleGraph { std::move(esm), std::move(cjs), std::move(cwd), std::move(main), std::move(argv) };
 }
 
 }

@@ -25,7 +25,7 @@ public:
 
     static JSPublicKeyObject* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* globalObject, KeyObject&& keyObject)
     {
-        JSPublicKeyObject* instance = new (NotNull, JSC::allocateCell<JSPublicKeyObject>(vm)) JSPublicKeyObject(vm, structure, WTFMove(keyObject));
+        JSPublicKeyObject* instance = new (NotNull, JSC::allocateCell<JSPublicKeyObject>(vm)) JSPublicKeyObject(vm, structure, std::move(keyObject));
         instance->finishCreation(vm, globalObject);
         return instance;
     }
@@ -51,7 +51,7 @@ public:
     void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
 
     JSPublicKeyObject(JSC::VM& vm, JSC::Structure* structure, KeyObject&& keyObject)
-        : Base(vm, structure, WTFMove(keyObject))
+        : Base(vm, structure, std::move(keyObject))
     {
     }
 };

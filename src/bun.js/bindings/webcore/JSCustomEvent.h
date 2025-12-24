@@ -33,7 +33,7 @@ public:
     using DOMWrapped = CustomEvent;
     static JSCustomEvent* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<CustomEvent>&& impl)
     {
-        JSCustomEvent* ptr = new (NotNull, JSC::allocateCell<JSCustomEvent>(globalObject->vm())) JSCustomEvent(structure, *globalObject, WTFMove(impl));
+        JSCustomEvent* ptr = new (NotNull, JSC::allocateCell<JSCustomEvent>(globalObject->vm())) JSCustomEvent(structure, *globalObject, std::move(impl));
         ptr->finishCreation(globalObject->vm());
         return ptr;
     }

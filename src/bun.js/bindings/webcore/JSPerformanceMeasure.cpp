@@ -119,7 +119,7 @@ void JSPerformanceMeasurePrototype::finishCreation(VM& vm)
 const ClassInfo JSPerformanceMeasure::s_info = { "PerformanceMeasure"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPerformanceMeasure) };
 
 JSPerformanceMeasure::JSPerformanceMeasure(Structure* structure, JSDOMGlobalObject& globalObject, Ref<PerformanceMeasure>&& impl)
-    : JSPerformanceEntry(structure, globalObject, WTFMove(impl))
+    : JSPerformanceEntry(structure, globalObject, std::move(impl))
 {
 }
 

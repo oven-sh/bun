@@ -34,7 +34,7 @@ public:
     using DOMWrapped = ErrorEvent;
     static JSErrorEvent* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<ErrorEvent>&& impl)
     {
-        JSErrorEvent* ptr = new (NotNull, JSC::allocateCell<JSErrorEvent>(globalObject->vm())) JSErrorEvent(structure, *globalObject, WTFMove(impl));
+        JSErrorEvent* ptr = new (NotNull, JSC::allocateCell<JSErrorEvent>(globalObject->vm())) JSErrorEvent(structure, *globalObject, std::move(impl));
         ptr->finishCreation(globalObject->vm());
         return ptr;
     }

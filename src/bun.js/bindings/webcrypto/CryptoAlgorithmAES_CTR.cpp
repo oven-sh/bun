@@ -78,8 +78,8 @@ void CryptoAlgorithmAES_CTR::encrypt(const CryptoAlgorithmParameters& parameters
         return;
     }
 
-    dispatchOperationInWorkQueue(workQueue, context, WTFMove(callback), WTFMove(exceptionCallback),
-        [parameters = crossThreadCopy(aesParameters), key = WTFMove(key), plainText = WTFMove(plainText)] {
+    dispatchOperationInWorkQueue(workQueue, context, std::move(callback), std::move(exceptionCallback),
+        [parameters = crossThreadCopy(aesParameters), key = std::move(key), plainText = std::move(plainText)] {
             return platformEncrypt(parameters, downcast<CryptoKeyAES>(key.get()), plainText);
         });
 }
@@ -92,8 +92,8 @@ void CryptoAlgorithmAES_CTR::decrypt(const CryptoAlgorithmParameters& parameters
         return;
     }
 
-    dispatchOperationInWorkQueue(workQueue, context, WTFMove(callback), WTFMove(exceptionCallback),
-        [parameters = crossThreadCopy(aesParameters), key = WTFMove(key), cipherText = WTFMove(cipherText)] {
+    dispatchOperationInWorkQueue(workQueue, context, std::move(callback), std::move(exceptionCallback),
+        [parameters = crossThreadCopy(aesParameters), key = std::move(key), cipherText = std::move(cipherText)] {
             return platformDecrypt(parameters, downcast<CryptoKeyAES>(key.get()), cipherText);
         });
 }
@@ -113,7 +113,7 @@ void CryptoAlgorithmAES_CTR::generateKey(const CryptoAlgorithmParameters& parame
         return;
     }
 
-    callback(WTFMove(result));
+    callback(std::move(result));
 }
 
 void CryptoAlgorithmAES_CTR::importKey(CryptoKeyFormat format, KeyData&& data, const CryptoAlgorithmParameters& parameters, bool extractable, CryptoKeyUsageBitmap usages, KeyCallback&& callback, ExceptionCallback&& exceptionCallback)
@@ -128,7 +128,7 @@ void CryptoAlgorithmAES_CTR::importKey(CryptoKeyFormat format, KeyData&& data, c
     RefPtr<CryptoKeyAES> result;
     switch (format) {
     case CryptoKeyFormat::Raw:
-        result = CryptoKeyAES::importRaw(parameters.identifier, WTFMove(std::get<Vector<uint8_t>>(data)), extractable, usages);
+        result = CryptoKeyAES::importRaw(parameters.identifier, std::move(std::get<Vector<uint8_t>>(data)), extractable, usages);
         break;
     case CryptoKeyFormat::Jwk: {
         auto checkAlgCallback = [](size_t length, const String& alg) -> bool {
@@ -142,7 +142,7 @@ void CryptoAlgorithmAES_CTR::importKey(CryptoKeyFormat format, KeyData&& data, c
             }
             return false;
         };
-        result = CryptoKeyAES::importJwk(parameters.identifier, WTFMove(std::get<JsonWebKey>(data)), extractable, usages, WTFMove(checkAlgCallback));
+        result = CryptoKeyAES::importJwk(parameters.identifier, std::move(std::get<JsonWebKey>(data)), extractable, usages, std::move(checkAlgCallback));
         break;
     }
     default:
@@ -187,7 +187,7 @@ void CryptoAlgorithmAES_CTR::exportKey(CryptoKeyFormat format, Ref<CryptoKey>&& 
         default:
             ASSERT_NOT_REACHED();
         }
-        result = WTFMove(jwk);
+        result = std::move(jwk);
         break;
     }
     default:
@@ -195,7 +195,7 @@ void CryptoAlgorithmAES_CTR::exportKey(CryptoKeyFormat format, Ref<CryptoKey>&& 
         return;
     }
 
-    callback(format, WTFMove(result));
+    callback(format, std::move(result));
 }
 
 ExceptionOr<size_t> CryptoAlgorithmAES_CTR::getKeyLength(const CryptoAlgorithmParameters& parameters)

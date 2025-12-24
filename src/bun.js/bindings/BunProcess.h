@@ -35,7 +35,7 @@ class Process : public WebCore::JSEventEmitter {
 
 public:
     Process(JSC::Structure* structure, WebCore::JSDOMGlobalObject& globalObject, Ref<WebCore::EventEmitter>&& impl)
-        : Base(structure, globalObject, WTFMove(impl))
+        : Base(structure, globalObject, std::move(impl))
     {
     }
 
@@ -88,7 +88,7 @@ public:
     static Process* create(WebCore::JSDOMGlobalObject& globalObject, JSC::Structure* structure)
     {
         auto emitter = WebCore::EventEmitter::create(*globalObject.scriptExecutionContext());
-        Process* accessor = new (NotNull, JSC::allocateCell<Process>(globalObject.vm())) Process(structure, globalObject, WTFMove(emitter));
+        Process* accessor = new (NotNull, JSC::allocateCell<Process>(globalObject.vm())) Process(structure, globalObject, std::move(emitter));
         accessor->finishCreation(globalObject.vm());
         return accessor;
     }

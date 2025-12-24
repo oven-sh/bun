@@ -108,7 +108,7 @@ void JSWritableStreamSinkPrototype::finishCreation(VM& vm)
 const ClassInfo JSWritableStreamSink::s_info = { "WritableStreamSink"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWritableStreamSink) };
 
 JSWritableStreamSink::JSWritableStreamSink(Structure* structure, JSDOMGlobalObject& globalObject, Ref<WritableStreamSink>&& impl)
-    : JSDOMWrapper<WritableStreamSink>(structure, globalObject, WTFMove(impl))
+    : JSDOMWrapper<WritableStreamSink>(structure, globalObject, std::move(impl))
 {
 }
 
@@ -153,7 +153,7 @@ static inline JSC::EncodedJSValue jsWritableStreamSinkPrototypeFunction_writeBod
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto value = convert<IDLAny>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLUndefined>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) { return impl.write(*context, WTFMove(value), WTFMove(promise)); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLUndefined>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) { return impl.write(*context, std::move(value), std::move(promise)); })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWritableStreamSinkPrototypeFunction_write, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -188,7 +188,7 @@ static inline JSC::EncodedJSValue jsWritableStreamSinkPrototypeFunction_errorBod
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto message = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.error(WTFMove(message)); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.error(std::move(message)); })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWritableStreamSinkPrototypeFunction_error, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -232,7 +232,7 @@ void JSWritableStreamSinkOwner::finalize(JSC::Handle<JSC::Unknown> handle, void*
 
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<WritableStreamSink>&& impl)
 {
-    return createWrapper<WritableStreamSink>(globalObject, WTFMove(impl));
+    return createWrapper<WritableStreamSink>(globalObject, std::move(impl));
 }
 
 JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, WritableStreamSink& impl)

@@ -49,7 +49,7 @@ public:
             ASSERT_GC_OBJECT_INHERITS(thisObject, JSClass::info());
 
             // FIXME: We should refactor the binding generated code to use references for lexicalGlobalObject and thisObject.
-            return operation(&lexicalGlobalObject, &callFrame, thisObject, WTFMove(promise));
+            return operation(&lexicalGlobalObject, &callFrame, thisObject, std::move(promise));
         }));
     }
 
@@ -77,7 +77,7 @@ public:
     {
         return JSC::JSValue::encode(callPromiseFunction(lexicalGlobalObject, callFrame, [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::CallFrame& callFrame, Ref<DeferredPromise>&& promise) {
             // FIXME: We should refactor the binding generated code to use references for lexicalGlobalObject.
-            return operation(&lexicalGlobalObject, &callFrame, WTFMove(promise));
+            return operation(&lexicalGlobalObject, &callFrame, std::move(promise));
         }));
     }
 

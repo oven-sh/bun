@@ -56,7 +56,7 @@ void CryptoAlgorithmX25519::generateKey(const CryptoAlgorithmParameters&, bool e
     auto pair = result.releaseReturnValue();
     pair.publicKey->setUsagesBitmap(0);
     pair.privateKey->setUsagesBitmap(pair.privateKey->usagesBitmap() & (CryptoKeyUsageDeriveKey | CryptoKeyUsageDeriveBits));
-    callback(WTFMove(pair));
+    callback(std::move(pair));
 }
 
 #if !PLATFORM(COCOA) && !USE(GCRYPT)
@@ -97,13 +97,13 @@ void CryptoAlgorithmX25519::deriveBits(const CryptoAlgorithmParameters& paramete
         return;
     }
 
-    auto unifiedCallback = [callback = WTFMove(callback), exceptionCallback = WTFMove(exceptionCallback)](std::optional<Vector<uint8_t>>&& derivedKey, std::optional<size_t> length) mutable {
+    auto unifiedCallback = [callback = std::move(callback), exceptionCallback = std::move(exceptionCallback)](std::optional<Vector<uint8_t>>&& derivedKey, std::optional<size_t> length) mutable {
         if (!derivedKey) {
             exceptionCallback(ExceptionCode::OperationError, ""_s);
             return;
         }
         if (!length) {
-            callback(WTFMove(*derivedKey));
+            callback(std::move(*derivedKey));
             return;
         }
 #if !HAVE(X25519_ZERO_CHECKS)
@@ -121,16 +121,16 @@ void CryptoAlgorithmX25519::deriveBits(const CryptoAlgorithmParameters& paramete
             return;
         }
         (*derivedKey).shrink(lengthInBytes);
-        callback(WTFMove(*derivedKey));
+        callback(std::move(*derivedKey));
     };
     // This is a special case that can't use dispatchOperation() because it bundles
     // the result validation and callback dispatch into unifiedCallback.
     workQueue.dispatch(
         context.globalObject(),
-        [baseKey = WTFMove(baseKey), publicKey = ecParameters.publicKey, length, unifiedCallback = WTFMove(unifiedCallback), contextIdentifier = context.identifier()]() mutable {
+        [baseKey = std::move(baseKey), publicKey = ecParameters.publicKey, length, unifiedCallback = std::move(unifiedCallback), contextIdentifier = context.identifier()]() mutable {
             auto derivedKey = platformDeriveBits(downcast<CryptoKeyOKP>(baseKey.get()), downcast<CryptoKeyOKP>(*publicKey));
-            ScriptExecutionContext::postTaskTo(contextIdentifier, [derivedKey = WTFMove(derivedKey), length, unifiedCallback = WTFMove(unifiedCallback)](auto&) mutable {
-                unifiedCallback(WTFMove(derivedKey), length);
+            ScriptExecutionContext::postTaskTo(contextIdentifier, [derivedKey = std::move(derivedKey), length, unifiedCallback = std::move(unifiedCallback)](auto&) mutable {
+                unifiedCallback(std::move(derivedKey), length);
             });
         });
 }
@@ -140,7 +140,7 @@ void CryptoAlgorithmX25519::importKey(CryptoKeyFormat format, KeyData&& data, co
     RefPtr<CryptoKeyOKP> result;
     switch (format) {
     case CryptoKeyFormat::Jwk: {
-        JsonWebKey key = WTFMove(std::get<JsonWebKey>(data));
+        JsonWebKey key = std::move(std::get<JsonWebKey>(data));
 
         bool isUsagesAllowed = false;
         if (!key.d.isNull()) {
@@ -159,7 +159,7 @@ void CryptoAlgorithmX25519::importKey(CryptoKeyFormat format, KeyData&& data, co
             return;
         }
 
-        result = CryptoKeyOKP::importJwk(CryptoAlgorithmIdentifier::X25519, CryptoKeyOKP::NamedCurve::X25519, WTFMove(key), extractable, usages);
+        result = CryptoKeyOKP::importJwk(CryptoAlgorithmIdentifier::X25519, CryptoKeyOKP::NamedCurve::X25519, std::move(key), extractable, usages);
         break;
     }
     case CryptoKeyFormat::Raw:
@@ -167,21 +167,21 @@ void CryptoAlgorithmX25519::importKey(CryptoKeyFormat format, KeyData&& data, co
             exceptionCallback(ExceptionCode::SyntaxError, ""_s);
             return;
         }
-        result = CryptoKeyOKP::importRaw(CryptoAlgorithmIdentifier::X25519, CryptoKeyOKP::NamedCurve::X25519, WTFMove(std::get<Vector<uint8_t>>(data)), extractable, usages);
+        result = CryptoKeyOKP::importRaw(CryptoAlgorithmIdentifier::X25519, CryptoKeyOKP::NamedCurve::X25519, std::move(std::get<Vector<uint8_t>>(data)), extractable, usages);
         break;
     case CryptoKeyFormat::Spki:
         if (usages) {
             exceptionCallback(ExceptionCode::SyntaxError, ""_s);
             return;
         }
-        result = CryptoKeyOKP::importSpki(CryptoAlgorithmIdentifier::X25519, CryptoKeyOKP::NamedCurve::X25519, WTFMove(std::get<Vector<uint8_t>>(data)), extractable, usages);
+        result = CryptoKeyOKP::importSpki(CryptoAlgorithmIdentifier::X25519, CryptoKeyOKP::NamedCurve::X25519, std::move(std::get<Vector<uint8_t>>(data)), extractable, usages);
         break;
     case CryptoKeyFormat::Pkcs8:
         if (usages && (usages ^ CryptoKeyUsageDeriveKey) && (usages ^ CryptoKeyUsageDeriveBits) && (usages ^ (CryptoKeyUsageDeriveKey | CryptoKeyUsageDeriveBits))) {
             exceptionCallback(ExceptionCode::SyntaxError, ""_s);
             return;
         }
-        result = CryptoKeyOKP::importPkcs8(CryptoAlgorithmIdentifier::X25519, CryptoKeyOKP::NamedCurve::X25519, WTFMove(std::get<Vector<uint8_t>>(data)), extractable, usages);
+        result = CryptoKeyOKP::importPkcs8(CryptoAlgorithmIdentifier::X25519, CryptoKeyOKP::NamedCurve::X25519, std::move(std::get<Vector<uint8_t>>(data)), extractable, usages);
         break;
     }
     if (!result) {
@@ -241,7 +241,7 @@ void CryptoAlgorithmX25519::exportKey(CryptoKeyFormat format, Ref<CryptoKey>&& k
     }
     }
 
-    callback(format, WTFMove(result));
+    callback(format, std::move(result));
 }
 
 } // namespace WebCore

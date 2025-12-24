@@ -62,8 +62,8 @@ void CryptoAlgorithmECDSA::sign(const CryptoAlgorithmParameters& parameters, Ref
         return;
     }
 
-    dispatchOperationInWorkQueue(workQueue, context, WTFMove(callback), WTFMove(exceptionCallback),
-        [parameters = crossThreadCopy(downcast<CryptoAlgorithmEcdsaParams>(parameters)), key = WTFMove(key), data = WTFMove(data)] {
+    dispatchOperationInWorkQueue(workQueue, context, std::move(callback), std::move(exceptionCallback),
+        [parameters = crossThreadCopy(downcast<CryptoAlgorithmEcdsaParams>(parameters)), key = std::move(key), data = std::move(data)] {
             return platformSign(parameters, downcast<CryptoKeyEC>(key.get()), data);
         });
 }
@@ -75,8 +75,8 @@ void CryptoAlgorithmECDSA::verify(const CryptoAlgorithmParameters& parameters, R
         return;
     }
 
-    dispatchOperationInWorkQueue(workQueue, context, WTFMove(callback), WTFMove(exceptionCallback),
-        [parameters = crossThreadCopy(downcast<CryptoAlgorithmEcdsaParams>(parameters)), key = WTFMove(key), signature = WTFMove(signature), data = WTFMove(data)] {
+    dispatchOperationInWorkQueue(workQueue, context, std::move(callback), std::move(exceptionCallback),
+        [parameters = crossThreadCopy(downcast<CryptoAlgorithmEcdsaParams>(parameters)), key = std::move(key), signature = std::move(signature), data = std::move(data)] {
             return platformVerify(parameters, downcast<CryptoKeyEC>(key.get()), signature, data);
         });
 }
@@ -99,7 +99,7 @@ void CryptoAlgorithmECDSA::generateKey(const CryptoAlgorithmParameters& paramete
     auto pair = result.releaseReturnValue();
     pair.publicKey->setUsagesBitmap(pair.publicKey->usagesBitmap() & CryptoKeyUsageVerify);
     pair.privateKey->setUsagesBitmap(pair.privateKey->usagesBitmap() & CryptoKeyUsageSign);
-    callback(WTFMove(pair));
+    callback(std::move(pair));
 }
 
 void CryptoAlgorithmECDSA::importKey(CryptoKeyFormat format, KeyData&& data, const CryptoAlgorithmParameters& parameters, bool extractable, CryptoKeyUsageBitmap usages, KeyCallback&& callback, ExceptionCallback&& exceptionCallback)
@@ -110,7 +110,7 @@ void CryptoAlgorithmECDSA::importKey(CryptoKeyFormat format, KeyData&& data, con
     RefPtr<CryptoKeyEC> result;
     switch (format) {
     case CryptoKeyFormat::Jwk: {
-        JsonWebKey key = WTFMove(std::get<JsonWebKey>(data));
+        JsonWebKey key = std::move(std::get<JsonWebKey>(data));
 
         if (usages && ((!key.d.isNull() && (usages ^ CryptoKeyUsageSign)) || (key.d.isNull() && (usages ^ CryptoKeyUsageVerify)))) {
             exceptionCallback(SyntaxError, ""_s);
@@ -133,7 +133,7 @@ void CryptoAlgorithmECDSA::importKey(CryptoKeyFormat format, KeyData&& data, con
             return;
         }
 
-        result = CryptoKeyEC::importJwk(ecParameters.identifier, ecParameters.namedCurve, WTFMove(key), extractable, usages);
+        result = CryptoKeyEC::importJwk(ecParameters.identifier, ecParameters.namedCurve, std::move(key), extractable, usages);
         break;
     }
     case CryptoKeyFormat::Raw:
@@ -141,21 +141,21 @@ void CryptoAlgorithmECDSA::importKey(CryptoKeyFormat format, KeyData&& data, con
             exceptionCallback(SyntaxError, ""_s);
             return;
         }
-        result = CryptoKeyEC::importRaw(ecParameters.identifier, ecParameters.namedCurve, WTFMove(std::get<Vector<uint8_t>>(data)), extractable, usages);
+        result = CryptoKeyEC::importRaw(ecParameters.identifier, ecParameters.namedCurve, std::move(std::get<Vector<uint8_t>>(data)), extractable, usages);
         break;
     case CryptoKeyFormat::Spki:
         if (usages && (usages ^ CryptoKeyUsageVerify)) {
             exceptionCallback(SyntaxError, ""_s);
             return;
         }
-        result = CryptoKeyEC::importSpki(ecParameters.identifier, ecParameters.namedCurve, WTFMove(std::get<Vector<uint8_t>>(data)), extractable, usages);
+        result = CryptoKeyEC::importSpki(ecParameters.identifier, ecParameters.namedCurve, std::move(std::get<Vector<uint8_t>>(data)), extractable, usages);
         break;
     case CryptoKeyFormat::Pkcs8:
         if (usages && (usages ^ CryptoKeyUsageSign)) {
             exceptionCallback(SyntaxError, ""_s);
             return;
         }
-        result = CryptoKeyEC::importPkcs8(ecParameters.identifier, ecParameters.namedCurve, WTFMove(std::get<Vector<uint8_t>>(data)), extractable, usages);
+        result = CryptoKeyEC::importPkcs8(ecParameters.identifier, ecParameters.namedCurve, std::move(std::get<Vector<uint8_t>>(data)), extractable, usages);
         break;
     }
     if (!result) {
@@ -215,7 +215,7 @@ void CryptoAlgorithmECDSA::exportKey(CryptoKeyFormat format, Ref<CryptoKey>&& ke
     }
     }
 
-    callback(format, WTFMove(result));
+    callback(format, std::move(result));
 }
 
 } // namespace WebCore

@@ -33,7 +33,7 @@ extern "C" void Bun__EcKeyPairJobCtx__runFromJS(EcKeyPairJobCtx* ctx, JSGlobalOb
 extern "C" EcKeyPairJob* Bun__EcKeyPairJob__create(JSGlobalObject* globalObject, EcKeyPairJobCtx* ctx, EncodedJSValue callback);
 EcKeyPairJob* EcKeyPairJob::create(JSGlobalObject* globalObject, EcKeyPairJobCtx&& ctx, JSValue callback)
 {
-    EcKeyPairJobCtx* ctxCopy = new EcKeyPairJobCtx(WTFMove(ctx));
+    EcKeyPairJobCtx* ctxCopy = new EcKeyPairJobCtx(std::move(ctx));
     return Bun__EcKeyPairJob__create(globalObject, ctxCopy, JSValue::encode(callback));
 }
 
@@ -46,7 +46,7 @@ void EcKeyPairJob::schedule()
 extern "C" void Bun__EcKeyPairJob__createAndSchedule(JSGlobalObject* globalObject, EcKeyPairJobCtx* ctx, EncodedJSValue callback);
 void EcKeyPairJob::createAndSchedule(JSGlobalObject* globalObject, EcKeyPairJobCtx&& ctx, JSValue callback)
 {
-    EcKeyPairJobCtx* ctxCopy = new EcKeyPairJobCtx(WTFMove(ctx));
+    EcKeyPairJobCtx* ctxCopy = new EcKeyPairJobCtx(std::move(ctx));
     Bun__EcKeyPairJob__createAndSchedule(globalObject, ctxCopy, JSValue::encode(callback));
 }
 

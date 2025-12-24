@@ -56,7 +56,7 @@ void IdentifierEventListenerMap::replace(const JSC::Identifier& eventType, Event
     ASSERT(index != notFound);
     auto& registeredListener = listeners->at(index);
     registeredListener->markAsRemoved();
-    registeredListener = SimpleRegisteredEventListener::create(WTFMove(newListener), once);
+    registeredListener = SimpleRegisteredEventListener::create(std::move(newListener), once);
 }
 
 bool IdentifierEventListenerMap::add(const JSC::Identifier& eventType, Ref<EventListener>&& listener, bool once)
@@ -66,11 +66,11 @@ bool IdentifierEventListenerMap::add(const JSC::Identifier& eventType, Ref<Event
     if (auto* listeners = find(eventType)) {
         if (findListener(*listeners, listener) != notFound)
             return false; // Duplicate listener.
-        listeners->append(SimpleRegisteredEventListener::create(WTFMove(listener), once));
+        listeners->append(SimpleRegisteredEventListener::create(std::move(listener), once));
         return true;
     }
 
-    m_entries.append({ eventType, SimpleEventListenerVector { SimpleRegisteredEventListener::create(WTFMove(listener), once) } });
+    m_entries.append({ eventType, SimpleEventListenerVector { SimpleRegisteredEventListener::create(std::move(listener), once) } });
     return true;
 }
 
@@ -81,11 +81,11 @@ bool IdentifierEventListenerMap::prepend(const JSC::Identifier& eventType, Ref<E
     if (auto* listeners = find(eventType)) {
         if (findListener(*listeners, listener) != notFound)
             return false; // Duplicate listener.
-        listeners->insert(0, SimpleRegisteredEventListener::create(WTFMove(listener), once));
+        listeners->insert(0, SimpleRegisteredEventListener::create(std::move(listener), once));
         return true;
     }
 
-    m_entries.append({ eventType, SimpleEventListenerVector { SimpleRegisteredEventListener::create(WTFMove(listener), once) } });
+    m_entries.append({ eventType, SimpleEventListenerVector { SimpleRegisteredEventListener::create(std::move(listener), once) } });
     return true;
 }
 

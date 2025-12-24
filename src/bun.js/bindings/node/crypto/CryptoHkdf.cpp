@@ -17,19 +17,19 @@ namespace Bun {
 HkdfJobCtx::HkdfJobCtx(Digest digest, size_t length, KeyObject&& key, WTF::Vector<uint8_t>&& info, WTF::Vector<uint8_t>&& salt)
     : m_digest(digest)
     , m_length(length)
-    , m_key(WTFMove(key))
-    , m_info(WTFMove(info))
-    , m_salt(WTFMove(salt))
+    , m_key(std::move(key))
+    , m_info(std::move(info))
+    , m_salt(std::move(salt))
 {
 }
 
 HkdfJobCtx::HkdfJobCtx(HkdfJobCtx&& other)
     : m_digest(other.m_digest)
     , m_length(other.m_length)
-    , m_key(WTFMove(other.m_key))
-    , m_info(WTFMove(other.m_info))
-    , m_salt(WTFMove(other.m_salt))
-    , m_result(WTFMove(other.m_result))
+    , m_key(std::move(other.m_key))
+    , m_info(std::move(other.m_info))
+    , m_salt(std::move(other.m_salt))
+    , m_result(std::move(other.m_result))
 {
 }
 
@@ -113,7 +113,7 @@ void HkdfJobCtx::deinit()
 extern "C" HkdfJob* Bun__HkdfJob__create(JSGlobalObject* globalObject, HkdfJobCtx* ctx, EncodedJSValue callback);
 HkdfJob* HkdfJob::create(JSGlobalObject* globalObject, HkdfJobCtx&& ctx, JSValue callback)
 {
-    HkdfJobCtx* ctxCopy = new HkdfJobCtx(WTFMove(ctx));
+    HkdfJobCtx* ctxCopy = new HkdfJobCtx(std::move(ctx));
     return Bun__HkdfJob__create(globalObject, ctxCopy, JSValue::encode(callback));
 }
 
@@ -126,7 +126,7 @@ void HkdfJob::schedule()
 extern "C" void Bun__HkdfJob__createAndSchedule(JSGlobalObject* globalObject, HkdfJobCtx* ctx, EncodedJSValue callback);
 void HkdfJob::createAndSchedule(JSGlobalObject* globalObject, HkdfJobCtx&& ctx, JSValue callback)
 {
-    HkdfJobCtx* ctxCopy = new HkdfJobCtx(WTFMove(ctx));
+    HkdfJobCtx* ctxCopy = new HkdfJobCtx(std::move(ctx));
     return Bun__HkdfJob__createAndSchedule(globalObject, ctxCopy, JSValue::encode(callback));
 }
 
@@ -151,21 +151,21 @@ KeyObject prepareKey(JSGlobalObject* globalObject, ThrowScope& scope, JSValue ke
 
         Vector<uint8_t> copy;
         copy.append(view->span());
-        return KeyObject::create(WTFMove(copy));
+        return KeyObject::create(std::move(copy));
     }
 
     // Handle ArrayBuffer types
     if (auto* view = jsDynamicCast<JSC::JSArrayBufferView*>(key)) {
         Vector<uint8_t> copy;
         copy.append(view->span());
-        return KeyObject::create(WTFMove(copy));
+        return KeyObject::create(std::move(copy));
     }
 
     if (auto* buf = jsDynamicCast<JSC::JSArrayBuffer*>(key)) {
         auto* impl = buf->impl();
         Vector<uint8_t> copy;
         copy.append(impl->span());
-        return KeyObject::create(WTFMove(copy));
+        return KeyObject::create(std::move(copy));
     }
 
     ERR::INVALID_ARG_TYPE(scope, globalObject, "ikm"_s, "string or an instance of SecretKeyObject, ArrayBuffer, TypedArray, DataView, or Buffer"_s, key);
@@ -236,7 +236,7 @@ std::optional<HkdfJobCtx> HkdfJobCtx::fromJS(JSGlobalObject* lexicalGlobalObject
         return std::nullopt;
     }
 
-    return HkdfJobCtx(hash, length, WTFMove(keyObject), WTFMove(info), WTFMove(salt));
+    return HkdfJobCtx(hash, length, std::move(keyObject), std::move(info), std::move(salt));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsHkdf, (JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -251,7 +251,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHkdf, (JSGlobalObject * lexicalGlobalObject, JSC::Cal
     V::validateFunction(scope, lexicalGlobalObject, callback, "callback"_s);
     RETURN_IF_EXCEPTION(scope, {});
 
-    HkdfJob::createAndSchedule(lexicalGlobalObject, WTFMove(ctx.value()), callback);
+    HkdfJob::createAndSchedule(lexicalGlobalObject, std::move(ctx.value()), callback);
 
     return JSValue::encode(jsUndefined());
 }

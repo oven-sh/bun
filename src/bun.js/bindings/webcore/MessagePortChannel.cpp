@@ -95,7 +95,7 @@ void MessagePortChannel::disentanglePort(const MessagePortIdentifier& port)
 
     // This set of steps is to guarantee that the lock is unlocked before the
     // last ref to this object is released.
-    auto protectedThis = WTFMove(m_entangledToProcessProtectors[i]);
+    auto protectedThis = std::move(m_entangledToProcessProtectors[i]);
 }
 
 void MessagePortChannel::closePort(const MessagePortIdentifier& port)
@@ -121,7 +121,7 @@ bool MessagePortChannel::postMessageToRemote(MessageWithMessagePorts&& message, 
     ASSERT(remoteTarget == m_ports[0] || remoteTarget == m_ports[1]);
     size_t i = remoteTarget == m_ports[0] ? 0 : 1;
 
-    m_pendingMessages[i].append(WTFMove(message));
+    m_pendingMessages[i].append(std::move(message));
     // LOG(MessagePorts, "MessagePortChannel %s (%p) now has %zu messages pending on port %s", logString().utf8().data(), this, m_pendingMessages[i].size(), remoteTarget.logString().utf8().data());
 
     if (m_pendingMessages[i].size() == 1) {
@@ -154,7 +154,7 @@ void MessagePortChannel::takeAllMessagesForPort(const MessagePortIdentifier& por
 
     // LOG(MessagePorts, "There are %zu messages to take for port %s. Taking them now, messages in flight is now %" PRIu64, result.size(), port.logString().utf8().data(), m_messageBatchesInFlight);
 
-    callback(WTFMove(result), [this, port, protectedThis = WTFMove(m_pendingMessageProtectors[i])] {
+    callback(std::move(result), [this, port, protectedThis = std::move(m_pendingMessageProtectors[i])] {
         UNUSED_PARAM(port);
         --m_messageBatchesInFlight;
         // LOG(MessagePorts, "Message port channel %s was notified that a batch of %zu message port messages targeted for port %s just completed dispatch, in flight is now %" PRIu64, logString().utf8().data(), size, port.logString().utf8().data(), m_messageBatchesInFlight);
@@ -171,7 +171,7 @@ std::optional<MessageWithMessagePorts> MessagePortChannel::tryTakeMessageForPort
 
     auto message = m_pendingMessages[i].first();
     m_pendingMessages[i].removeAt(0);
-    return WTFMove(message);
+    return std::move(message);
 }
 
 } // namespace WebCore

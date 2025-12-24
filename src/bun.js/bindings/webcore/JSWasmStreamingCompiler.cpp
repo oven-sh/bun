@@ -82,7 +82,7 @@ void JSWasmStreamingCompilerPrototype::finishCreation(VM& vm)
 const ClassInfo JSWasmStreamingCompiler::s_info = { "WasmStreamingCompiler"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWasmStreamingCompiler) };
 
 JSWasmStreamingCompiler::JSWasmStreamingCompiler(Structure* structure, JSDOMGlobalObject& globalObject, Ref<Wasm::StreamingCompiler>&& impl)
-    : JSDOMWrapper<Wasm::StreamingCompiler>(structure, globalObject, WTFMove(impl))
+    : JSDOMWrapper<Wasm::StreamingCompiler>(structure, globalObject, std::move(impl))
 {
 }
 
@@ -220,7 +220,7 @@ void JSWasmStreamingCompilerOwner::finalize(JSC::Handle<JSC::Unknown> handle, vo
 
 JSValue toJSNewlyCreated(JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<Wasm::StreamingCompiler>&& impl)
 {
-    return createWrapper<Wasm::StreamingCompiler>(globalObject, WTFMove(impl));
+    return createWrapper<Wasm::StreamingCompiler>(globalObject, std::move(impl));
 }
 
 JSValue toJS(JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, Wasm::StreamingCompiler& impl)

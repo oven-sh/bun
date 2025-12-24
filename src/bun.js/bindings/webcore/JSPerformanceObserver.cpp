@@ -180,7 +180,7 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSPerformanceObserverDOMConst
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
-    auto jsValue = toJSNewlyCreated<IDLInterface<PerformanceObserver>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTFMove(object));
+    auto jsValue = toJSNewlyCreated<IDLInterface<PerformanceObserver>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, std::move(object));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     setSubclassStructureIfNeeded<PerformanceObserver>(lexicalGlobalObject, callFrame, asObject(jsValue));
@@ -228,7 +228,7 @@ void JSPerformanceObserverPrototype::finishCreation(VM& vm)
 const ClassInfo JSPerformanceObserver::s_info = { "PerformanceObserver"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPerformanceObserver) };
 
 JSPerformanceObserver::JSPerformanceObserver(Structure* structure, JSDOMGlobalObject& globalObject, Ref<PerformanceObserver>&& impl)
-    : JSDOMWrapper<PerformanceObserver>(structure, globalObject, WTFMove(impl))
+    : JSDOMWrapper<PerformanceObserver>(structure, globalObject, std::move(impl))
 {
 }
 
@@ -290,7 +290,7 @@ static inline JSC::EncodedJSValue jsPerformanceObserverPrototypeFunction_observe
     EnsureStillAliveScope argument0 = callFrame->argument(0);
     auto options = convert<IDLDictionary<PerformanceObserver::Init>>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.observe(WTFMove(options)); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.observe(std::move(options)); })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsPerformanceObserverPrototypeFunction_observe, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -408,7 +408,7 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
         // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
 #endif
     }
-    return createWrapper<PerformanceObserver>(globalObject, WTFMove(impl));
+    return createWrapper<PerformanceObserver>(globalObject, std::move(impl));
 }
 
 JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, PerformanceObserver& impl)

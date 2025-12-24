@@ -133,7 +133,7 @@ void JSPerformanceServerTimingPrototype::finishCreation(VM& vm)
 const ClassInfo JSPerformanceServerTiming::s_info = { "PerformanceServerTiming"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPerformanceServerTiming) };
 
 JSPerformanceServerTiming::JSPerformanceServerTiming(Structure* structure, JSDOMGlobalObject& globalObject, Ref<PerformanceServerTiming>&& impl)
-    : JSDOMWrapper<PerformanceServerTiming>(structure, globalObject, WTFMove(impl))
+    : JSDOMWrapper<PerformanceServerTiming>(structure, globalObject, std::move(impl))
 {
 }
 
@@ -296,7 +296,7 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
     //         RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
     // #endif
     // }
-    return createWrapper<PerformanceServerTiming>(globalObject, WTFMove(impl));
+    return createWrapper<PerformanceServerTiming>(globalObject, std::move(impl));
 }
 
 JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, PerformanceServerTiming& impl)

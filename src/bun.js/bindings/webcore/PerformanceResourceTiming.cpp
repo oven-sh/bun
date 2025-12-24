@@ -91,13 +91,13 @@ static double entryEndTime(MonotonicTime timeOrigin, const ResourceTiming& resou
 
 Ref<PerformanceResourceTiming> PerformanceResourceTiming::create(MonotonicTime timeOrigin, ResourceTiming&& resourceTiming)
 {
-    return adoptRef(*new PerformanceResourceTiming(timeOrigin, WTFMove(resourceTiming)));
+    return adoptRef(*new PerformanceResourceTiming(timeOrigin, std::move(resourceTiming)));
 }
 
 PerformanceResourceTiming::PerformanceResourceTiming(MonotonicTime timeOrigin, ResourceTiming&& resourceTiming)
     : PerformanceEntry(resourceTiming.url().string(), entryStartTime(timeOrigin, resourceTiming), entryEndTime(timeOrigin, resourceTiming))
     , m_timeOrigin(timeOrigin)
-    , m_resourceTiming(WTFMove(resourceTiming))
+    , m_resourceTiming(std::move(resourceTiming))
     , m_serverTiming(m_resourceTiming.populateServerTiming())
 {
 }

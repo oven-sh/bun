@@ -33,7 +33,7 @@ extern "C" void Bun__NidKeyPairJobCtx__runFromJS(NidKeyPairJobCtx* ctx, JSGlobal
 extern "C" NidKeyPairJob* Bun__NidKeyPairJob__create(JSGlobalObject* globalObject, NidKeyPairJobCtx* ctx, EncodedJSValue callback);
 NidKeyPairJob* NidKeyPairJob::create(JSGlobalObject* globalObject, NidKeyPairJobCtx&& ctx, JSValue callback)
 {
-    NidKeyPairJobCtx* ctxCopy = new NidKeyPairJobCtx(WTFMove(ctx));
+    NidKeyPairJobCtx* ctxCopy = new NidKeyPairJobCtx(std::move(ctx));
     return Bun__NidKeyPairJob__create(globalObject, ctxCopy, JSValue::encode(callback));
 }
 
@@ -46,7 +46,7 @@ void NidKeyPairJob::schedule()
 extern "C" void Bun__NidKeyPairJob__createAndSchedule(JSGlobalObject* globalObject, NidKeyPairJobCtx* ctx, EncodedJSValue callback);
 void NidKeyPairJob::createAndSchedule(JSGlobalObject* globalObject, NidKeyPairJobCtx&& ctx, JSValue callback)
 {
-    NidKeyPairJobCtx* ctxCopy = new NidKeyPairJobCtx(WTFMove(ctx));
+    NidKeyPairJobCtx* ctxCopy = new NidKeyPairJobCtx(std::move(ctx));
     Bun__NidKeyPairJob__createAndSchedule(globalObject, ctxCopy, JSValue::encode(callback));
 }
 

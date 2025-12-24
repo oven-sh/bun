@@ -31,7 +31,7 @@ public:
     using Base = JSDOMWrapper<ReadableStreamSink>;
     static JSReadableStreamSink* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<ReadableStreamSink>&& impl)
     {
-        JSReadableStreamSink* ptr = new (NotNull, JSC::allocateCell<JSReadableStreamSink>(globalObject->vm())) JSReadableStreamSink(structure, *globalObject, WTFMove(impl));
+        JSReadableStreamSink* ptr = new (NotNull, JSC::allocateCell<JSReadableStreamSink>(globalObject->vm())) JSReadableStreamSink(structure, *globalObject, std::move(impl));
         ptr->finishCreation(globalObject->vm());
         return ptr;
     }

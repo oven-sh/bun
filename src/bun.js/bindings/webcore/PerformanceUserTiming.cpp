@@ -66,11 +66,14 @@ static constexpr std::pair<ComparableASCIILiteral, NavigationTimingFunction> res
     { "unloadEventEnd"_s, &PerformanceTiming::unloadEventEnd },
     { "unloadEventStart"_s, &PerformanceTiming::unloadEventStart },
 };
-static constexpr SortedArrayMap restrictedMarkFunctions { restrictedMarkMappings };
 
 bool PerformanceUserTiming::isRestrictedMarkName(const String& markName)
 {
-    return restrictedMarkFunctions.contains(markName);
+    for (const auto& mapping : restrictedMarkMappings) {
+        if (markName == mapping.first.literal)
+            return true;
+    }
+    return false;
 }
 
 PerformanceUserTiming::PerformanceUserTiming(Performance& performance)
@@ -125,7 +128,7 @@ ExceptionOr<Ref<PerformanceMark>> PerformanceUserTiming::mark(JSC::JSGlobalObjec
 
     // InspectorInstrumentation::performanceMark(context.get(), markName, timestamp, nullptr);
 
-    auto mark = PerformanceMark::create(globalObject, context, markName, WTFMove(markOptions));
+    auto mark = PerformanceMark::create(globalObject, context, markName, std::move(markOptions));
     if (mark.hasException())
         return mark.releaseException();
 

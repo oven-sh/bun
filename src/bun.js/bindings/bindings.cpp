@@ -1806,7 +1806,7 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromJS(JSC::JSGlobalObject* 
     // `fill` doesn't set an exception on the VM if it fails, it returns an
     //  ExceptionOr<void>.  So we need to check for the exception and, if set,
     //  translate it to JSValue and throw it.
-    WebCore::propagateException(*lexicalGlobalObject, throwScope, headers->fill(WTFMove(init.value())));
+    WebCore::propagateException(*lexicalGlobalObject, throwScope, headers->fill(std::move(init.value())));
 
     // If there's an exception, it will be thrown by the above call to fill().
     // in that case, let's also free the headers to make memory leaks harder.
@@ -1841,7 +1841,7 @@ JSC::EncodedJSValue WebCore__FetchHeaders__clone(WebCore::FetchHeaders* headers,
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(arg1);
     auto* clone = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
     WebCore::propagateException(*arg1, throwScope, clone->fill(*headers));
-    return JSC::JSValue::encode(WebCore::toJSNewlyCreated(arg1, globalObject, WTFMove(clone)));
+    return JSC::JSValue::encode(WebCore::toJSNewlyCreated(arg1, globalObject, std::move(clone)));
 }
 
 WebCore::FetchHeaders* WebCore__FetchHeaders__cloneThis(WebCore::FetchHeaders* headers, JSC::JSGlobalObject* lexicalGlobalObject)
@@ -1972,7 +1972,7 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(const void*
             }
         }
 
-        headers->setInternalHeaders(WTFMove(map));
+        headers->setInternalHeaders(std::move(map));
     }
     return headers;
 }
@@ -1995,12 +1995,12 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(void* arg1)
         HTTPHeaderName name;
 
         if (WebCore::findHTTPHeaderName(nameView, name)) {
-            map.add(name, WTFMove(value));
+            map.add(name, std::move(value));
         } else {
-            map.setUncommonHeader(nameView.toString().isolatedCopy(), WTFMove(value));
+            map.setUncommonHeader(nameView.toString().isolatedCopy(), std::move(value));
         }
     }
-    headers->setInternalHeaders(WTFMove(map));
+    headers->setInternalHeaders(std::move(map));
     return headers;
 }
 void WebCore__FetchHeaders__deref(WebCore::FetchHeaders* arg0)
@@ -2022,7 +2022,7 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createValueNotJS(JSC::JSGlobalObje
 
     auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
     headers->relaxAdoptionRequirement();
-    WebCore::propagateException(*arg0, throwScope, headers->fill(WebCore::FetchHeaders::Init(WTFMove(pairs))));
+    WebCore::propagateException(*arg0, throwScope, headers->fill(WebCore::FetchHeaders::Init(std::move(pairs))));
     if (throwScope.exception()) {
         headers->deref();
         return nullptr;
@@ -2043,9 +2043,9 @@ JSC::EncodedJSValue WebCore__FetchHeaders__createValue(JSC::JSGlobalObject* arg0
     }
 
     Ref<WebCore::FetchHeaders> headers = WebCore::FetchHeaders::create();
-    WebCore::propagateException(*arg0, throwScope, headers->fill(WebCore::FetchHeaders::Init(WTFMove(pairs))));
+    WebCore::propagateException(*arg0, throwScope, headers->fill(WebCore::FetchHeaders::Init(std::move(pairs))));
 
-    JSValue value = WebCore::toJSNewlyCreated(arg0, static_cast<Zig::GlobalObject*>(arg0), WTFMove(headers));
+    JSValue value = WebCore::toJSNewlyCreated(arg0, static_cast<Zig::GlobalObject*>(arg0), std::move(headers));
 
     JSFetchHeaders* fetchHeaders = jsCast<JSFetchHeaders*>(value);
     fetchHeaders->computeMemoryCost();
@@ -2908,7 +2908,7 @@ JSC::EncodedJSValue JSC__JSModuleLoader__evaluate(JSC::JSGlobalObject* globalObj
     JSC::SourceCode sourceCode = JSC::makeSource(
         src, JSC::SourceOrigin { origin }, JSC::SourceTaintedOrigin::Untainted, origin.fileSystemPath(),
         WTF::TextPosition(), JSC::SourceProviderSourceType::Module);
-    globalObject->moduleLoader()->provideFetch(globalObject, jsString(vm, origin.fileSystemPath()), WTFMove(sourceCode));
+    globalObject->moduleLoader()->provideFetch(globalObject, jsString(vm, origin.fileSystemPath()), std::move(sourceCode));
     auto* promise = JSC::importModule(globalObject, JSC::Identifier::fromString(vm, origin.fileSystemPath()), JSValue(jsString(vm, referrer.fileSystemPath())), JSValue(), JSValue());
 
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -3138,8 +3138,8 @@ JSC::EncodedJSValue JSC__JSGlobalObject__createAggregateError(JSC::JSGlobalObjec
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSC::JSValue message = JSC::jsOwnedString(vm, Zig::toString(*arg3));
-    JSC::JSValue options = JSC::jsUndefined();
+    WTF::String message = Zig::toString(*arg3);
+    JSC::JSValue cause = JSC::jsUndefined();
     JSC::JSArray* array = nullptr;
     {
         JSC::ObjectInitializationScope initializationScope(vm);
@@ -3160,14 +3160,14 @@ JSC::EncodedJSValue JSC__JSGlobalObject__createAggregateError(JSC::JSGlobalObjec
 
     JSC::Structure* errorStructure = globalObject->errorStructure(JSC::ErrorType::AggregateError);
 
-    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::createAggregateError(globalObject, vm, errorStructure, array, message, options, nullptr, JSC::TypeNothing, false)));
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::createAggregateError(vm, errorStructure, array, message, cause, nullptr, JSC::TypeNothing, false)));
 }
-JSC::EncodedJSValue JSC__JSGlobalObject__createAggregateErrorWithArray(JSC::JSGlobalObject* global, JSC::JSArray* array, BunString message, JSValue options)
+JSC::EncodedJSValue JSC__JSGlobalObject__createAggregateErrorWithArray(JSC::JSGlobalObject* global, JSC::JSArray* array, BunString message, JSValue cause)
 {
     auto& vm = JSC::getVM(global);
     JSC::Structure* errorStructure = global->errorStructure(JSC::ErrorType::AggregateError);
     WTF::String messageString = message.toWTFString();
-    return JSC::JSValue::encode(JSC::createAggregateError(global, vm, errorStructure, array, JSC::jsString(vm, messageString), options, nullptr, JSC::TypeNothing, false));
+    return JSC::JSValue::encode(JSC::createAggregateError(vm, errorStructure, array, messageString, cause, nullptr, JSC::TypeNothing, false));
 }
 
 JSC::EncodedJSValue ZigString__toAtomicValue(const ZigString* arg0, JSC::JSGlobalObject* arg1)
@@ -3178,11 +3178,11 @@ JSC::EncodedJSValue ZigString__toAtomicValue(const ZigString* arg0, JSC::JSGloba
 
     if (isTaggedUTF16Ptr(arg0->ptr)) {
         if (auto impl = WTF::AtomStringImpl::lookUp(std::span { reinterpret_cast<const char16_t*>(untag(arg0->ptr)), arg0->len })) {
-            return JSC::JSValue::encode(JSC::jsString(arg1->vm(), WTF::String(WTFMove(impl))));
+            return JSC::JSValue::encode(JSC::jsString(arg1->vm(), WTF::String(std::move(impl))));
         }
     } else {
         if (auto impl = WTF::AtomStringImpl::lookUp(std::span { untag(arg0->ptr), arg0->len })) {
-            return JSC::JSValue::encode(JSC::jsString(arg1->vm(), WTF::String(WTFMove(impl))));
+            return JSC::JSValue::encode(JSC::jsString(arg1->vm(), WTF::String(std::move(impl))));
         }
     }
 
@@ -3203,7 +3203,7 @@ JSC::EncodedJSValue ZigString__toExternalU16(const uint16_t* arg0, size_t len, J
 
     auto ref = String(ExternalStringImpl::create({ reinterpret_cast<const char16_t*>(arg0), len }, reinterpret_cast<void*>(const_cast<uint16_t*>(arg0)), free_global_string));
 
-    return JSC::JSValue::encode(JSC::jsString(global->vm(), WTFMove(ref)));
+    return JSC::JSValue::encode(JSC::jsString(global->vm(), std::move(ref)));
 }
 
 // This must be a globally allocated string
@@ -3215,10 +3215,10 @@ JSC::EncodedJSValue ZigString__toExternalU16(const uint16_t* arg0, size_t len, J
     }
     if (Zig::isTaggedUTF16Ptr(str.ptr)) {
         auto ref = String(ExternalStringImpl::create({ reinterpret_cast<const char16_t*>(Zig::untag(str.ptr)), str.len }, Zig::untagVoid(str.ptr), free_global_string));
-        return JSC::JSValue::encode(JSC::jsString(arg1->vm(), WTFMove(ref)));
+        return JSC::JSValue::encode(JSC::jsString(arg1->vm(), std::move(ref)));
     } else {
         auto ref = String(ExternalStringImpl::create({ Zig::untag(str.ptr), str.len }, Zig::untagVoid(str.ptr), free_global_string));
-        return JSC::JSValue::encode(JSC::jsString(arg1->vm(), WTFMove(ref)));
+        return JSC::JSValue::encode(JSC::jsString(arg1->vm(), std::move(ref)));
     }
 }
 
@@ -3525,7 +3525,7 @@ void JSC__JSPromise__rejectOnNextTickWithHandled(JSC::JSPromise* promise, JSC::J
         }
 
         JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::BunPerformMicrotaskJob, globalObject, microtaskFunction, rejectPromiseFunction, globalObject->m_asyncContextData.get()->getInternalField(0), promise, value };
-        globalObject->vm().queueMicrotask(WTFMove(task));
+        globalObject->vm().queueMicrotask(std::move(task));
         RETURN_IF_EXCEPTION(scope, );
     }
 }
@@ -5412,8 +5412,8 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskJob(JSC::JSGlobalObject* arg0
 
 #endif
 
-    JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::BunPerformMicrotaskJob, globalObject, microTaskFunction, WTFMove(microtaskArgs[0]), WTFMove(microtaskArgs[1]), WTFMove(microtaskArgs[2]), WTFMove(microtaskArgs[3]) };
-    globalObject->vm().queueMicrotask(WTFMove(task));
+    JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::BunPerformMicrotaskJob, globalObject, microTaskFunction, std::move(microtaskArgs[0]), std::move(microtaskArgs[1]), std::move(microtaskArgs[2]), std::move(microtaskArgs[3]) };
+    globalObject->vm().queueMicrotask(std::move(task));
 }
 
 extern "C" WebCore::AbortSignal* WebCore__AbortSignal__new(JSC::JSGlobalObject* globalObject)
@@ -5430,7 +5430,7 @@ extern "C" JSC::EncodedJSValue WebCore__AbortSignal__create(JSC::JSGlobalObject*
     auto* context = thisObject->scriptExecutionContext();
     auto abortSignal = WebCore::AbortSignal::create(context);
 
-    return JSValue::encode(toJSNewlyCreated<IDLInterface<WebCore::AbortSignal>>(*globalObject, *jsCast<JSDOMGlobalObject*>(globalObject), WTFMove(abortSignal)));
+    return JSValue::encode(toJSNewlyCreated<IDLInterface<WebCore::AbortSignal>>(*globalObject, *jsCast<JSDOMGlobalObject*>(globalObject), std::move(abortSignal)));
 }
 extern "C" JSC::EncodedJSValue WebCore__AbortSignal__toJS(WebCore::AbortSignal* arg0, JSC::JSGlobalObject* globalObject)
 {
@@ -5697,15 +5697,15 @@ CPP_DECL JSC::EncodedJSValue WebCore__DOMFormData__createFromURLQuery(JSC::JSGlo
         auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
         return Bun::ERR::STRING_TOO_LONG(scope, globalObject);
     }
-    auto formData = DOMFormData::create(globalObject->scriptExecutionContext(), WTFMove(str));
-    return JSValue::encode(toJSNewlyCreated(arg0, globalObject, WTFMove(formData)));
+    auto formData = DOMFormData::create(globalObject->scriptExecutionContext(), std::move(str));
+    return JSValue::encode(toJSNewlyCreated(arg0, globalObject, std::move(formData)));
 }
 
 CPP_DECL JSC::EncodedJSValue WebCore__DOMFormData__create(JSC::JSGlobalObject* arg0)
 {
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(arg0);
     auto formData = DOMFormData::create(globalObject->scriptExecutionContext());
-    return JSValue::encode(toJSNewlyCreated(arg0, globalObject, WTFMove(formData)));
+    return JSValue::encode(toJSNewlyCreated(arg0, globalObject, std::move(formData)));
 }
 
 CPP_DECL WebCore::DOMFormData* WebCore__DOMFormData__fromJS(JSC::EncodedJSValue JSValue1)

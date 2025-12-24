@@ -66,11 +66,11 @@ public:
 private:
     ResourceTiming(const URL& url, const String& initiatorType, const NetworkLoadMetrics& networkLoadMetrics);
     ResourceTiming(URL&& url, String&& initiatorType, NetworkLoadMetrics&& networkLoadMetrics, Vector<ServerTiming>&& serverTiming)
-        : m_url(WTFMove(url))
-        , m_initiatorType(WTFMove(initiatorType))
+        : m_url(std::move(url))
+        , m_initiatorType(std::move(initiatorType))
         , m_resourceLoadTiming(ResourceLoadTiming())
-        , m_networkLoadMetrics(WTFMove(networkLoadMetrics))
-        , m_serverTiming(WTFMove(serverTiming))
+        , m_networkLoadMetrics(std::move(networkLoadMetrics))
+        , m_serverTiming(std::move(serverTiming))
     {
     }
 

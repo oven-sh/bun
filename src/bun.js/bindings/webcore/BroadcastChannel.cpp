@@ -71,7 +71,7 @@ static UncheckedKeyHashMap<BroadcastChannelIdentifier, ScriptExecutionContextIde
 // {
 //     Ref securityOrigin { *context.securityOrigin() };
 //     Ref topOrigin { context.settingsValues().broadcastChannelOriginPartitioningEnabled ? context.topOrigin() : securityOrigin.get() };
-//     return { WTFMove(topOrigin), WTFMove(securityOrigin) };
+//     return { std::move(topOrigin), std::move(securityOrigin) };
 // }
 
 class BroadcastChannel::MainThreadBridge : public ThreadSafeRefCounted<MainThreadBridge, WTF::DestructionThread::Main>, public Identified<BroadcastChannelIdentifier> {
@@ -123,7 +123,7 @@ void BroadcastChannel::MainThreadBridge::ensureOnMainThread(Function<void(void*)
 
     Ref protectedThis { *this };
 
-    ScriptExecutionContext::ensureOnMainThread([protectedThis = WTFMove(protectedThis), task = WTFMove(task)](auto& context) {
+    ScriptExecutionContext::ensureOnMainThread([protectedThis = std::move(protectedThis), task = std::move(task)](auto& context) {
         task(nullptr);
     });
 }
@@ -132,7 +132,7 @@ void BroadcastChannel::MainThreadBridge::registerChannel(ScriptExecutionContext&
 {
     Ref protectedThis { *this };
 
-    ScriptExecutionContext::ensureOnMainThread([protectedThis = WTFMove(protectedThis), contextId = context.identifier()](auto& context) mutable {
+    ScriptExecutionContext::ensureOnMainThread([protectedThis = std::move(protectedThis), contextId = context.identifier()](auto& context) mutable {
         context.broadcastChannelRegistry().registerChannel(protectedThis->m_name, protectedThis->identifier());
         channelToContextIdentifier().add(protectedThis->identifier(), contextId);
     });
@@ -142,7 +142,7 @@ void BroadcastChannel::MainThreadBridge::unregisterChannel()
 {
     Ref protectedThis { *this };
 
-    ScriptExecutionContext::ensureOnMainThread([protectedThis = WTFMove(protectedThis)](auto& context) {
+    ScriptExecutionContext::ensureOnMainThread([protectedThis = std::move(protectedThis)](auto& context) {
         context.broadcastChannelRegistry().unregisterChannel(protectedThis->m_name, protectedThis->identifier());
         channelToContextIdentifier().remove(protectedThis->identifier());
     });
@@ -152,8 +152,8 @@ void BroadcastChannel::MainThreadBridge::postMessage(Ref<SerializedScriptValue>&
 {
     Ref protectedThis { *this };
 
-    ScriptExecutionContext::ensureOnMainThread([protectedThis = WTFMove(protectedThis), message = WTFMove(message)](auto& context) mutable {
-        context.broadcastChannelRegistry().postMessage(protectedThis->m_name, protectedThis->identifier(), WTFMove(message));
+    ScriptExecutionContext::ensureOnMainThread([protectedThis = std::move(protectedThis), message = std::move(message)](auto& context) mutable {
+        context.broadcastChannelRegistry().postMessage(protectedThis->m_name, protectedThis->identifier(), std::move(message));
     });
 }
 
@@ -237,14 +237,14 @@ void BroadcastChannel::dispatchMessageTo(BroadcastChannelIdentifier channelIdent
     if (!contextIdentifier)
         return;
 
-    ScriptExecutionContext::ensureOnContextThread(contextIdentifier, [channelIdentifier, message = WTFMove(message)](auto&) mutable {
+    ScriptExecutionContext::ensureOnContextThread(contextIdentifier, [channelIdentifier, message = std::move(message)](auto&) mutable {
         RefPtr<BroadcastChannel> channel;
         {
             Locker locker { allBroadcastChannelsLock };
             channel = allBroadcastChannels().get(channelIdentifier);
         }
         if (channel)
-            channel->dispatchMessage(WTFMove(message));
+            channel->dispatchMessage(std::move(message));
     });
 }
 
@@ -256,7 +256,7 @@ void BroadcastChannel::dispatchMessage(Ref<SerializedScriptValue>&& message)
     if (m_isClosed)
         return;
 
-    ScriptExecutionContext::postTaskTo(contextIdForBroadcastChannelId(m_mainThreadBridge->identifier()), [this, message = WTFMove(message)](ScriptExecutionContext& context) mutable {
+    ScriptExecutionContext::postTaskTo(contextIdForBroadcastChannelId(m_mainThreadBridge->identifier()), [this, message = std::move(message)](ScriptExecutionContext& context) mutable {
         if (m_isClosed)
             return;
 
@@ -267,7 +267,7 @@ void BroadcastChannel::dispatchMessage(Ref<SerializedScriptValue>&& message)
         auto& vm = JSC::getVM(globalObject);
         auto scope = DECLARE_CATCH_SCOPE(vm);
         Vector<RefPtr<MessagePort>> dummyPorts;
-        auto event = MessageEvent::create(*globalObject, WTFMove(message), {}, {}, nullptr, WTFMove(dummyPorts));
+        auto event = MessageEvent::create(*globalObject, std::move(message), {}, {}, nullptr, std::move(dummyPorts));
         if (scope.exception()) [[unlikely]] {
             // Currently, we assume that the only way we can get here is if we have a termination.
             RELEASE_ASSERT(vm.hasPendingTerminationException());

@@ -182,13 +182,13 @@ struct Result final {
     std::optional<int> openssl_error = std::nullopt;
     Result(T&& value)
         : has_value(true)
-        , value(WTFMove(value))
+        , value(std::move(value))
     {
     }
     Result(E&& error, std::optional<int> openssl_error = std::nullopt)
         : has_value(false)
-        , error(WTFMove(error))
-        , openssl_error(WTFMove(openssl_error))
+        , error(std::move(error))
+        , openssl_error(std::move(openssl_error))
     {
     }
     inline operator bool() const { return has_value; }

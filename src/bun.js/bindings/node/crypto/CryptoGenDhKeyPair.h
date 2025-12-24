@@ -12,7 +12,7 @@ struct DhKeyPairJobCtx : KeyPairJobCtx {
 public:
     DhKeyPairJobCtx(ncrypto::DHPointer&& group, const KeyEncodingConfig& config)
         : KeyPairJobCtx(config.publicKeyEncoding, config.privateKeyEncoding)
-        , m_prime(WTFMove(group))
+        , m_prime(std::move(group))
     {
     }
 
@@ -25,7 +25,7 @@ public:
 
     DhKeyPairJobCtx(ncrypto::BignumPointer&& prime, const KeyEncodingConfig& config)
         : KeyPairJobCtx(config.publicKeyEncoding, config.privateKeyEncoding)
-        , m_prime(WTFMove(prime))
+        , m_prime(std::move(prime))
     {
     }
 

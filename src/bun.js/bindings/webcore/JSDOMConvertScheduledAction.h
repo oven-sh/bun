@@ -41,7 +41,7 @@ template<> struct Converter<IDLScheduledAction> : DefaultConverter<IDLScheduledA
         if (!value.isCallable()) {
             auto code = Converter<IDLDOMString>::convert(lexicalGlobalObject, value);
             RETURN_IF_EXCEPTION(scope, nullptr);
-            return ScheduledAction::create(globalObject.world(), WTFMove(code));
+            return ScheduledAction::create(globalObject.world(), std::move(code));
         }
 
         // The value must be an object at this point because no non-object values are callable.

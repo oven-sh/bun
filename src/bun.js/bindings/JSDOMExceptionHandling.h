@@ -80,7 +80,7 @@ ALWAYS_INLINE void propagateException(JSC::JSGlobalObject& lexicalGlobalObject, 
 {
     if (throwScope.exception())
         return;
-    propagateExceptionSlowPath(lexicalGlobalObject, throwScope, WTFMove(exception));
+    propagateExceptionSlowPath(lexicalGlobalObject, throwScope, std::move(exception));
 }
 
 inline void propagateException(JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& throwScope, ExceptionOr<void>&& value)
@@ -91,7 +91,7 @@ inline void propagateException(JSC::JSGlobalObject& lexicalGlobalObject, JSC::Th
 
 ALWAYS_INLINE void propagateException(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& throwScope, Exception&& exception)
 {
-    return propagateException(*lexicalGlobalObject, throwScope, WTFMove(exception));
+    return propagateException(*lexicalGlobalObject, throwScope, std::move(exception));
 }
 
 template<typename Functor> void invokeFunctorPropagatingExceptionIfNecessary(JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& throwScope, Functor&& functor)

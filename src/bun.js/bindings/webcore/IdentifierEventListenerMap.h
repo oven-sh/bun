@@ -14,7 +14,7 @@ class SimpleRegisteredEventListener : public RefCounted<SimpleRegisteredEventLis
 public:
     static Ref<SimpleRegisteredEventListener> create(Ref<EventListener>&& listener, bool once)
     {
-        return adoptRef(*new SimpleRegisteredEventListener(WTFMove(listener), once));
+        return adoptRef(*new SimpleRegisteredEventListener(std::move(listener), once));
     }
 
     EventListener& callback() const { return m_callback; }
@@ -27,7 +27,7 @@ private:
     SimpleRegisteredEventListener(Ref<EventListener>&& listener, bool once)
         : m_isOnce(once)
         , m_wasRemoved(false)
-        , m_callback(WTFMove(listener))
+        , m_callback(std::move(listener))
     {
     }
 

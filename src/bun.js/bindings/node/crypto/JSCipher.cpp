@@ -76,7 +76,7 @@ JSValue rsaFunction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* ca
         RETURN_IF_EXCEPTION(scope, {});
         if (prepareResult.keyData) {
             RefPtr<KeyObjectData> data = *prepareResult.keyData;
-            keyObject = KeyObject::create(CryptoKeyType::Public, WTFMove(data));
+            keyObject = KeyObject::create(CryptoKeyType::Public, std::move(data));
         } else {
             keyObject = KeyObject::getPublicOrPrivateKey(
                 globalObject,
@@ -86,7 +86,7 @@ JSValue rsaFunction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* ca
                 prepareResult.formatType,
                 prepareResult.encodingType,
                 prepareResult.cipher,
-                WTFMove(prepareResult.passphrase));
+                std::move(prepareResult.passphrase));
             RETURN_IF_EXCEPTION(scope, {});
         }
         break;
@@ -97,7 +97,7 @@ JSValue rsaFunction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* ca
         RETURN_IF_EXCEPTION(scope, {});
         if (prepareResult.keyData) {
             RefPtr<KeyObjectData> data = *prepareResult.keyData;
-            keyObject = KeyObject::create(CryptoKeyType::Private, WTFMove(data));
+            keyObject = KeyObject::create(CryptoKeyType::Private, std::move(data));
         } else {
             keyObject = KeyObject::getPublicOrPrivateKey(
                 globalObject,
@@ -107,7 +107,7 @@ JSValue rsaFunction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* ca
                 prepareResult.formatType,
                 prepareResult.encodingType,
                 prepareResult.cipher,
-                WTFMove(prepareResult.passphrase));
+                std::move(prepareResult.passphrase));
             RETURN_IF_EXCEPTION(scope, {});
         }
         break;
@@ -215,7 +215,7 @@ JSValue rsaFunction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* ca
         return {};
     }
 
-    RELEASE_AND_RETURN(scope, JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTFMove(outBuf), 0, result.size()));
+    RELEASE_AND_RETURN(scope, JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), std::move(outBuf), 0, result.size()));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsPublicEncrypt, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

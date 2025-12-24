@@ -34,7 +34,7 @@ void startCPUProfiler(JSC::VM& vm)
     auto stopwatch = WTF::Stopwatch::create();
     stopwatch->start();
 
-    JSC::SamplingProfiler& samplingProfiler = vm.ensureSamplingProfiler(WTFMove(stopwatch));
+    JSC::SamplingProfiler& samplingProfiler = vm.ensureSamplingProfiler(std::move(stopwatch));
 
     // Set sampling interval to 1ms (1000 microseconds) to match Node.js
     samplingProfiler.setTimingInterval(WTF::Seconds::fromMicroseconds(1000));
@@ -92,7 +92,7 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
     rootNode.lineNumber = -1;
     rootNode.columnNumber = -1;
     rootNode.hitCount = 0;
-    nodes.append(WTFMove(rootNode));
+    nodes.append(std::move(rootNode));
 
     int nextNodeId = 2;
     WTF::Vector<int> samples;
@@ -229,7 +229,7 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
                 node.columnNumber = columnNumber;
                 node.hitCount = 0;
 
-                nodes.append(WTFMove(node));
+                nodes.append(std::move(node));
 
                 // Add this node as child of parent
                 if (currentParentId > 0) {

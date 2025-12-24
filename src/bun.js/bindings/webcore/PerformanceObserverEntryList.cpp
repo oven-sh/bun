@@ -32,11 +32,11 @@ namespace WebCore {
 
 Ref<PerformanceObserverEntryList> PerformanceObserverEntryList::create(Vector<RefPtr<PerformanceEntry>>&& entries)
 {
-    return adoptRef(*new PerformanceObserverEntryList(WTFMove(entries)));
+    return adoptRef(*new PerformanceObserverEntryList(std::move(entries)));
 }
 
 PerformanceObserverEntryList::PerformanceObserverEntryList(Vector<RefPtr<PerformanceEntry>>&& entries)
-    : m_entries(WTFMove(entries))
+    : m_entries(std::move(entries))
 {
     ASSERT(!m_entries.isEmpty());
 

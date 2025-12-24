@@ -33,7 +33,7 @@
 namespace WebCore {
 
 ReadableStreamToSharedBufferSink::ReadableStreamToSharedBufferSink(Callback&& callback)
-    : m_callback { WTFMove(callback) }
+    : m_callback { std::move(callback) }
 {
 }
 
@@ -61,8 +61,8 @@ void ReadableStreamToSharedBufferSink::close()
 
 void ReadableStreamToSharedBufferSink::error(String&& message)
 {
-    if (auto callback = WTFMove(m_callback))
-        callback(Exception { TypeError, WTFMove(message) });
+    if (auto callback = std::move(m_callback))
+        callback(Exception { TypeError, std::move(message) });
 }
 
 } // namespace WebCore

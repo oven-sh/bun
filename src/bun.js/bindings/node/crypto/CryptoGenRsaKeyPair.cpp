@@ -34,7 +34,7 @@ extern "C" void Bun__RsaKeyPairJobCtx__runFromJS(RsaKeyPairJobCtx* ctx, JSGlobal
 extern "C" RsaKeyPairJob* Bun__RsaKeyPairJob__create(JSGlobalObject* globalObject, RsaKeyPairJobCtx* ctx, EncodedJSValue callback);
 RsaKeyPairJob* RsaKeyPairJob::create(JSGlobalObject* globalObject, RsaKeyPairJobCtx&& ctx, JSValue callback)
 {
-    RsaKeyPairJobCtx* ctxCopy = new RsaKeyPairJobCtx(WTFMove(ctx));
+    RsaKeyPairJobCtx* ctxCopy = new RsaKeyPairJobCtx(std::move(ctx));
     return Bun__RsaKeyPairJob__create(globalObject, ctxCopy, JSValue::encode(callback));
 }
 
@@ -47,7 +47,7 @@ void RsaKeyPairJob::schedule()
 extern "C" void Bun__RsaKeyPairJob__createAndSchedule(JSGlobalObject* globalObject, RsaKeyPairJobCtx* ctx, EncodedJSValue callback);
 void RsaKeyPairJob::createAndSchedule(JSGlobalObject* globalObject, RsaKeyPairJobCtx&& ctx, JSValue callback)
 {
-    RsaKeyPairJobCtx* ctxCopy = new RsaKeyPairJobCtx(WTFMove(ctx));
+    RsaKeyPairJobCtx* ctxCopy = new RsaKeyPairJobCtx(std::move(ctx));
     Bun__RsaKeyPairJob__createAndSchedule(globalObject, ctxCopy, JSValue::encode(callback));
 }
 
@@ -61,7 +61,7 @@ ncrypto::EVPKeyCtxPointer RsaKeyPairJobCtx::setup()
 
     if (m_exponent != ncrypto::EVPKeyCtxPointer::kDefaultRsaExponent) {
         auto bn = ncrypto::BignumPointer::New();
-        if (!bn.setWord(m_exponent) || !ctx.setRsaKeygenPubExp(WTFMove(bn))) {
+        if (!bn.setWord(m_exponent) || !ctx.setRsaKeygenPubExp(std::move(bn))) {
             m_opensslError = ERR_get_error();
             return {};
         }

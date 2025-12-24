@@ -118,11 +118,11 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSBroadcastChannelDOMCon
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto name = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    auto object = BroadcastChannel::create(*context, WTFMove(name));
+    auto object = BroadcastChannel::create(*context, std::move(name));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
-    auto jsValue = toJSNewlyCreated<IDLInterface<BroadcastChannel>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTFMove(object));
+    auto jsValue = toJSNewlyCreated<IDLInterface<BroadcastChannel>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, std::move(object));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     setSubclassStructureIfNeeded<BroadcastChannel>(lexicalGlobalObject, callFrame, asObject(jsValue));
@@ -244,7 +244,7 @@ void JSBroadcastChannelPrototype::finishCreation(VM& vm, JSGlobalObject* globalO
 const ClassInfo JSBroadcastChannel::s_info = { "BroadcastChannel"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBroadcastChannel) };
 
 JSBroadcastChannel::JSBroadcastChannel(Structure* structure, JSDOMGlobalObject& globalObject, Ref<BroadcastChannel>&& impl)
-    : JSEventTarget(structure, globalObject, WTFMove(impl))
+    : JSEventTarget(structure, globalObject, std::move(impl))
 {
 }
 
@@ -356,7 +356,7 @@ static inline JSC::EncodedJSValue jsBroadcastChannelPrototypeFunction_postMessag
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto message = convert<IDLAny>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.postMessage(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), WTFMove(message)); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.postMessage(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), std::move(message)); })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsBroadcastChannelPrototypeFunction_postMessage, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -483,7 +483,7 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
         // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
 #endif
     }
-    return createWrapper<BroadcastChannel>(globalObject, WTFMove(impl));
+    return createWrapper<BroadcastChannel>(globalObject, std::move(impl));
 }
 
 JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, BroadcastChannel& impl)

@@ -218,11 +218,11 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSErrorEventDOMConstruct
     EnsureStillAliveScope argument1 = callFrame->argument(1);
     auto eventInitDict = convert<IDLDictionary<ErrorEvent::Init>>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    auto object = ErrorEvent::create(type, WTFMove(eventInitDict));
+    auto object = ErrorEvent::create(type, std::move(eventInitDict));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
-    auto jsValue = toJSNewlyCreated<IDLInterface<ErrorEvent>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTFMove(object));
+    auto jsValue = toJSNewlyCreated<IDLInterface<ErrorEvent>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, std::move(object));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     setSubclassStructureIfNeeded<ErrorEvent>(lexicalGlobalObject, callFrame, asObject(jsValue));
@@ -270,7 +270,7 @@ void JSErrorEventPrototype::finishCreation(VM& vm)
 const ClassInfo JSErrorEvent::s_info = { "ErrorEvent"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSErrorEvent) };
 
 JSErrorEvent::JSErrorEvent(Structure* structure, JSDOMGlobalObject& globalObject, Ref<ErrorEvent>&& impl)
-    : JSEvent(structure, globalObject, WTFMove(impl))
+    : JSEvent(structure, globalObject, std::move(impl))
 {
 }
 
@@ -444,7 +444,7 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
     //         // by adding the SkipVTableValidation attribute to the interface IDL definition
     //         // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
     // #endif
-    return createWrapper<ErrorEvent>(globalObject, WTFMove(impl));
+    return createWrapper<ErrorEvent>(globalObject, std::move(impl));
 }
 
 JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, ErrorEvent& impl)

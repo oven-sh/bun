@@ -56,7 +56,7 @@ static inline String redact(const String& input)
 }
 
 inline DOMURL::DOMURL(URL&& completeURL)
-    : m_url(WTFMove(completeURL))
+    : m_url(std::move(completeURL))
     , m_initialURLCostForGC(static_cast<uint16_t>(std::min<size_t>(m_url.string().impl()->costDuringGC(), std::numeric_limits<uint16_t>::max())))
 {
     ASSERT(m_url.isValid());
@@ -67,7 +67,7 @@ ExceptionOr<Ref<DOMURL>> DOMURL::create(const String& url)
     URL completeURL { url };
     if (!completeURL.isValid())
         return Exception { InvalidURLError, makeString(redact(url), " cannot be parsed as a URL."_s) };
-    return adoptRef(*new DOMURL(WTFMove(completeURL)));
+    return adoptRef(*new DOMURL(std::move(completeURL)));
 }
 
 ExceptionOr<Ref<DOMURL>> DOMURL::create(const String& url, const URL& base)
@@ -76,7 +76,7 @@ ExceptionOr<Ref<DOMURL>> DOMURL::create(const String& url, const URL& base)
     URL completeURL { base, url };
     if (!completeURL.isValid())
         return Exception { InvalidURLError, makeString(redact(url), " cannot be parsed as a URL."_s) };
-    return adoptRef(*new DOMURL(WTFMove(completeURL)));
+    return adoptRef(*new DOMURL(std::move(completeURL)));
 }
 
 ExceptionOr<Ref<DOMURL>> DOMURL::create(const String& url, const String& base)
@@ -102,7 +102,7 @@ RefPtr<DOMURL> DOMURL::parse(const String& url, const String& base)
     auto completeURL = parseInternal(url, base);
     if (!completeURL.isValid())
         return {};
-    return adoptRef(*new DOMURL(WTFMove(completeURL)));
+    return adoptRef(*new DOMURL(std::move(completeURL)));
 }
 
 bool DOMURL::canParse(const String& url, const String& base)
@@ -117,7 +117,7 @@ ExceptionOr<void> DOMURL::setHref(const String& url)
 
         return Exception { InvalidURLError, makeString(redact(url), " cannot be parsed as a URL."_s) };
     }
-    m_url = WTFMove(completeURL);
+    m_url = std::move(completeURL);
     if (m_searchParams)
         m_searchParams->updateFromAssociatedURL();
     return {};

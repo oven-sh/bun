@@ -34,7 +34,7 @@ public:
     using Base = JSDOMWrapper<CryptoKey>;
     static JSCryptoKey* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<CryptoKey>&& impl)
     {
-        JSCryptoKey* ptr = new (NotNull, JSC::allocateCell<JSCryptoKey>(globalObject->vm())) JSCryptoKey(structure, *globalObject, WTFMove(impl));
+        JSCryptoKey* ptr = new (NotNull, JSC::allocateCell<JSCryptoKey>(globalObject->vm())) JSCryptoKey(structure, *globalObject, std::move(impl));
         ptr->finishCreation(globalObject->vm());
         return ptr;
     }

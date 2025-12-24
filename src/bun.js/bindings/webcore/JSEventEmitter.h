@@ -17,7 +17,7 @@ public:
     using Base = JSDOMWrapper<EventEmitter>;
     static JSEventEmitter* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<EventEmitter>&& impl)
     {
-        JSEventEmitter* ptr = new (NotNull, JSC::allocateCell<JSEventEmitter>(globalObject->vm())) JSEventEmitter(structure, *globalObject, WTFMove(impl));
+        JSEventEmitter* ptr = new (NotNull, JSC::allocateCell<JSEventEmitter>(globalObject->vm())) JSEventEmitter(structure, *globalObject, std::move(impl));
         ptr->finishCreation(globalObject->vm());
         return ptr;
     }

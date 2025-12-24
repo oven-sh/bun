@@ -34,7 +34,7 @@ namespace WebCore {
 struct StructuredSerializeOptions {
     StructuredSerializeOptions() = default;
     StructuredSerializeOptions(Vector<JSC::Strong<JSC::JSObject>>&& transfer)
-        : transfer(WTFMove(transfer))
+        : transfer(std::move(transfer))
     {
     }
 

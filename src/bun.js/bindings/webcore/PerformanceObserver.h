@@ -48,7 +48,7 @@ public:
 
     static Ref<PerformanceObserver> create(ScriptExecutionContext& context, Ref<PerformanceObserverCallback>&& callback)
     {
-        return adoptRef(*new PerformanceObserver(context, WTFMove(callback)));
+        return adoptRef(*new PerformanceObserver(context, std::move(callback)));
     }
 
     static Vector<String> supportedEntryTypes(ScriptExecutionContext&);

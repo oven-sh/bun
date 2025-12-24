@@ -191,7 +191,7 @@ void AbortSignal::signalAbort(JSC::JSValue reason)
     for (Ref dependentSignal : std::exchange(m_dependentSignals, {})) {
         if (!dependentSignal->aborted()) {
             dependentSignal->markAborted(reason);
-            dependentSignalsToAbort.append(WTFMove(dependentSignal));
+            dependentSignalsToAbort.append(std::move(dependentSignal));
         }
     }
 
@@ -222,7 +222,7 @@ void AbortSignal::cleanNativeBindings(void* ref)
         return ctx == ref;
     });
 
-    std::exchange(m_native_callbacks, WTFMove(callbacks));
+    std::exchange(m_native_callbacks, std::move(callbacks));
     this->eventListenersDidChange();
 }
 
@@ -257,7 +257,7 @@ uint32_t AbortSignal::addAbortAlgorithmToSignal(AbortSignal& signal, Ref<AbortAl
         algorithm->handleEvent(signal.jsReason(*signal.scriptExecutionContext()->jsGlobalObject()));
         return 0;
     }
-    return signal.addAlgorithm([algorithm = WTFMove(algorithm)](JSC::JSValue value) mutable {
+    return signal.addAlgorithm([algorithm = std::move(algorithm)](JSC::JSValue value) mutable {
         algorithm->handleEvent(value);
     });
 }
@@ -269,7 +269,7 @@ void AbortSignal::removeAbortAlgorithmFromSignal(AbortSignal& signal, uint32_t a
 
 uint32_t AbortSignal::addAlgorithm(Algorithm&& algorithm)
 {
-    m_algorithms.append(std::make_pair(++m_algorithmIdentifier, WTFMove(algorithm)));
+    m_algorithms.append(std::make_pair(++m_algorithmIdentifier, std::move(algorithm)));
     return m_algorithmIdentifier;
 }
 

@@ -31,7 +31,7 @@ public:
     using Base = JSDOMWrapper<URLSearchParams>;
     static JSURLSearchParams* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<URLSearchParams>&& impl)
     {
-        JSURLSearchParams* ptr = new (NotNull, JSC::allocateCell<JSURLSearchParams>(globalObject->vm())) JSURLSearchParams(structure, *globalObject, WTFMove(impl));
+        JSURLSearchParams* ptr = new (NotNull, JSC::allocateCell<JSURLSearchParams>(globalObject->vm())) JSURLSearchParams(structure, *globalObject, std::move(impl));
         ptr->finishCreation(globalObject->vm());
         return ptr;
     }

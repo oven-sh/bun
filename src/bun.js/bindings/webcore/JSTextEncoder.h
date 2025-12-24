@@ -34,7 +34,7 @@ public:
     using Base = JSDOMWrapper<TextEncoder>;
     static JSTextEncoder* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<TextEncoder>&& impl)
     {
-        JSTextEncoder* ptr = new (NotNull, JSC::allocateCell<JSTextEncoder>(globalObject->vm())) JSTextEncoder(structure, *globalObject, WTFMove(impl));
+        JSTextEncoder* ptr = new (NotNull, JSC::allocateCell<JSTextEncoder>(globalObject->vm())) JSTextEncoder(structure, *globalObject, std::move(impl));
         ptr->finishCreation(globalObject->vm());
         return ptr;
     }

@@ -146,7 +146,7 @@ private:
                         auto addResult = resultMap.add(typedKey, result.size());
                         if (!addResult.isNewEntry) {
                             ASSERT(result[addResult.iterator->value].key == typedKey);
-                            result[addResult.iterator->value].value = WTFMove(typedValue);
+                            result[addResult.iterator->value].value = std::move(typedValue);
                             return true;
                         }
                     }
@@ -154,7 +154,7 @@ private:
                     UNUSED_VARIABLE(resultMap);
 
                 // 5. Otherwise, append to result a mapping (typedKey, typedValue).
-                result.append({ WTFMove(typedKey), WTFMove(typedValue) });
+                result.append({ std::move(typedKey), std::move(typedValue) });
                 return true;
             });
 
@@ -203,7 +203,7 @@ private:
                         auto addResult = resultMap.add(typedKey, result.size());
                         if (!addResult.isNewEntry) {
                             ASSERT(result[addResult.iterator->value].key == typedKey);
-                            result[addResult.iterator->value].value = WTFMove(typedValue);
+                            result[addResult.iterator->value].value = std::move(typedValue);
                             continue;
                         }
                     }
@@ -211,7 +211,7 @@ private:
                     UNUSED_VARIABLE(resultMap);
 
                 // 5. Otherwise, append to result a mapping (typedKey, typedValue).
-                result.append({ WTFMove(typedKey), WTFMove(typedValue) });
+                result.append({ std::move(typedKey), std::move(typedValue) });
             }
         }
 

@@ -116,7 +116,7 @@ void JSReadableStreamSourcePrototype::finishCreation(VM& vm)
 const ClassInfo JSReadableStreamSource::s_info = { "ReadableStreamSource"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStreamSource) };
 
 JSReadableStreamSource::JSReadableStreamSource(Structure* structure, JSDOMGlobalObject& globalObject, Ref<ReadableStreamSource>&& impl)
-    : JSDOMWrapper<ReadableStreamSource>(structure, globalObject, WTFMove(impl))
+    : JSDOMWrapper<ReadableStreamSource>(structure, globalObject, std::move(impl))
 {
 }
 
@@ -163,7 +163,7 @@ static inline JSC::EncodedJSValue jsReadableStreamSourcePrototypeFunction_startB
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
-    RELEASE_AND_RETURN(throwScope, (JSValue::encode(castedThis->start(*lexicalGlobalObject, *callFrame, WTFMove(promise)))));
+    RELEASE_AND_RETURN(throwScope, (JSValue::encode(castedThis->start(*lexicalGlobalObject, *callFrame, std::move(promise)))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsReadableStreamSourcePrototypeFunction_start, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -177,7 +177,7 @@ static inline JSC::EncodedJSValue jsReadableStreamSourcePrototypeFunction_pullBo
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
-    RELEASE_AND_RETURN(throwScope, (JSValue::encode(castedThis->pull(*lexicalGlobalObject, *callFrame, WTFMove(promise)))));
+    RELEASE_AND_RETURN(throwScope, (JSValue::encode(castedThis->pull(*lexicalGlobalObject, *callFrame, std::move(promise)))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsReadableStreamSourcePrototypeFunction_pull, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -197,7 +197,7 @@ static inline JSC::EncodedJSValue jsReadableStreamSourcePrototypeFunction_cancel
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto reason = convert<IDLAny>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.cancel(WTFMove(reason)); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.cancel(std::move(reason)); })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsReadableStreamSourcePrototypeFunction_cancel, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -252,7 +252,7 @@ void JSReadableStreamSourceOwner::finalize(JSC::Handle<JSC::Unknown> handle, voi
 
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<ReadableStreamSource>&& impl)
 {
-    return createWrapper<ReadableStreamSource>(globalObject, WTFMove(impl));
+    return createWrapper<ReadableStreamSource>(globalObject, std::move(impl));
 }
 
 JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, ReadableStreamSource& impl)

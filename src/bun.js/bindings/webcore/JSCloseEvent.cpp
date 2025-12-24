@@ -189,11 +189,11 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCloseEventDOMConstruct
     EnsureStillAliveScope argument1 = callFrame->argument(1);
     auto eventInitDict = convert<IDLDictionary<CloseEvent::Init>>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    auto object = CloseEvent::create(WTFMove(type), WTFMove(eventInitDict));
+    auto object = CloseEvent::create(std::move(type), std::move(eventInitDict));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
-    auto jsValue = toJSNewlyCreated<IDLInterface<CloseEvent>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTFMove(object));
+    auto jsValue = toJSNewlyCreated<IDLInterface<CloseEvent>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, std::move(object));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     setSubclassStructureIfNeeded<CloseEvent>(lexicalGlobalObject, callFrame, asObject(jsValue));
@@ -239,7 +239,7 @@ void JSCloseEventPrototype::finishCreation(VM& vm)
 const ClassInfo JSCloseEvent::s_info = { "CloseEvent"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCloseEvent) };
 
 JSCloseEvent::JSCloseEvent(Structure* structure, JSDOMGlobalObject& globalObject, Ref<CloseEvent>&& impl)
-    : JSEvent(structure, globalObject, WTFMove(impl))
+    : JSEvent(structure, globalObject, std::move(impl))
 {
 }
 
@@ -366,7 +366,7 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
         // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
 #endif
     }
-    return createWrapper<CloseEvent>(globalObject, WTFMove(impl));
+    return createWrapper<CloseEvent>(globalObject, std::move(impl));
 }
 
 JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, CloseEvent& impl)

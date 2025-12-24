@@ -171,7 +171,7 @@ ExceptionOr<Vector<uint8_t>> CryptoAlgorithmAES_GCM::platformEncrypt(const Crypt
     auto output = cryptEncrypt(key.key(), parameters.ivVector(), plainText, parameters.additionalDataVector(), parameters.tagLength.value_or(0) / 8);
     if (!output)
         return Exception { OperationError };
-    return WTFMove(*output);
+    return std::move(*output);
 }
 
 ExceptionOr<Vector<uint8_t>> CryptoAlgorithmAES_GCM::platformDecrypt(const CryptoAlgorithmAesGcmParams& parameters, const CryptoKeyAES& key, const Vector<uint8_t>& cipherText)
@@ -179,7 +179,7 @@ ExceptionOr<Vector<uint8_t>> CryptoAlgorithmAES_GCM::platformDecrypt(const Crypt
     auto output = cryptDecrypt(key.key(), parameters.ivVector(), cipherText, parameters.additionalDataVector(), parameters.tagLength.value_or(0) / 8);
     if (!output)
         return Exception { OperationError };
-    return WTFMove(*output);
+    return std::move(*output);
 }
 
 } // namespace WebCore

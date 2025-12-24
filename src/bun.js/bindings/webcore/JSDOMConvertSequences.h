@@ -173,7 +173,7 @@ struct GenericSequenceConverter {
             // auto convertedValue = Converter<IDLType>::convert(*lexicalGlobalObject, nextValue);
             auto convertedValue = Bun::convertIDL<IDLType>(*lexicalGlobalObject, nextValue, elementCtx);
             RETURN_IF_EXCEPTION(scope, );
-            Traits::append(*lexicalGlobalObject, result, index++, WTFMove(convertedValue));
+            Traits::append(*lexicalGlobalObject, result, index++, std::move(convertedValue));
             RETURN_IF_EXCEPTION(scope, );
         });
 
@@ -182,13 +182,13 @@ struct GenericSequenceConverter {
         if (index != result.size()) {
             throwTypeError(&lexicalGlobalObject, scope);
         }
-        return WTFMove(result);
+        return std::move(result);
     }
 
     static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSObject* object, ReturnType&& result)
     {
         auto ctx = Bun::DefaultConversionContext {};
-        return convert(lexicalGlobalObject, object, WTFMove(result), ctx);
+        return convert(lexicalGlobalObject, object, std::move(result), ctx);
     }
 
     template<typename ExceptionThrower = DefaultExceptionThrower>
@@ -205,7 +205,7 @@ struct GenericSequenceConverter {
 
             auto convertedValue = Converter<IDLType>::convert(*lexicalGlobalObject, nextValue, std::forward<ExceptionThrower>(exceptionThrower));
             RETURN_IF_EXCEPTION(scope, );
-            Traits::append(*lexicalGlobalObject, result, index++, WTFMove(convertedValue));
+            Traits::append(*lexicalGlobalObject, result, index++, std::move(convertedValue));
             RETURN_IF_EXCEPTION(scope, );
         });
 
@@ -214,7 +214,7 @@ struct GenericSequenceConverter {
         if (index != result.size()) {
             throwTypeError(&lexicalGlobalObject, scope);
         }
-        return WTFMove(result);
+        return std::move(result);
     }
 
     static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSObject* object, JSC::JSValue method)
@@ -233,7 +233,7 @@ struct GenericSequenceConverter {
 
             auto convertedValue = Converter<IDLType>::convert(lexicalGlobalObject, nextValue);
             RETURN_IF_EXCEPTION(scope, );
-            Traits::append(lexicalGlobalObject, result, index++, WTFMove(convertedValue));
+            Traits::append(lexicalGlobalObject, result, index++, std::move(convertedValue));
             RETURN_IF_EXCEPTION(scope, );
         });
 
@@ -242,7 +242,7 @@ struct GenericSequenceConverter {
         if (index != result.size()) {
             throwTypeError(&lexicalGlobalObject, scope);
         }
-        return WTFMove(result);
+        return std::move(result);
     }
 };
 
@@ -268,7 +268,7 @@ struct NumericSequenceConverter {
                     Traits::append(lexicalGlobalObject, result, i, indexValue.asInt32());
                 RETURN_IF_EXCEPTION(scope, {});
             }
-            return WTFMove(result);
+            return std::move(result);
         }
 
         ASSERT(indexingType == JSC::DoubleShape);
@@ -285,7 +285,7 @@ struct NumericSequenceConverter {
                 RETURN_IF_EXCEPTION(scope, {});
             }
         }
-        return WTFMove(result);
+        return std::move(result);
     }
 
     static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
@@ -325,9 +325,9 @@ struct NumericSequenceConverter {
         RETURN_IF_EXCEPTION(scope, {});
 
         if (!isLengthExact)
-            RELEASE_AND_RETURN(scope, GenericConverter::convert(lexicalGlobalObject, object, WTFMove(result)));
+            RELEASE_AND_RETURN(scope, GenericConverter::convert(lexicalGlobalObject, object, std::move(result)));
 
-        return convertArray(lexicalGlobalObject, scope, array, length, indexingType, WTFMove(result));
+        return convertArray(lexicalGlobalObject, scope, array, length, indexingType, std::move(result));
     }
 
     static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSObject* object, JSC::JSValue method)
@@ -360,9 +360,9 @@ struct NumericSequenceConverter {
         RETURN_IF_EXCEPTION(scope, {});
 
         if (!isLengthExact)
-            RELEASE_AND_RETURN(scope, GenericConverter::convert(lexicalGlobalObject, object, method, WTFMove(result)));
+            RELEASE_AND_RETURN(scope, GenericConverter::convert(lexicalGlobalObject, object, method, std::move(result)));
 
-        return convertArray(lexicalGlobalObject, scope, array, length, indexingType, WTFMove(result));
+        return convertArray(lexicalGlobalObject, scope, array, length, indexingType, std::move(result));
     }
 };
 
@@ -395,7 +395,7 @@ struct SequenceConverter {
                 // auto convertedValue = Converter<IDLType>::convert(lexicalGlobalObject, indexValue);
                 auto convertedValue = Bun::convertIDL<IDLType>(lexicalGlobalObject, indexValue, elementCtx);
                 RETURN_IF_EXCEPTION(scope, {});
-                Traits::append(lexicalGlobalObject, result, i, WTFMove(convertedValue));
+                Traits::append(lexicalGlobalObject, result, i, std::move(convertedValue));
             }
             return result;
         }
@@ -410,7 +410,7 @@ struct SequenceConverter {
             // auto convertedValue = Converter<IDLType>::convert(lexicalGlobalObject, indexValue);
             auto convertedValue = Bun::convertIDL<IDLType>(lexicalGlobalObject, indexValue, elementCtx);
             RETURN_IF_EXCEPTION(scope, {});
-            Traits::append(lexicalGlobalObject, result, i, WTFMove(convertedValue));
+            Traits::append(lexicalGlobalObject, result, i, std::move(convertedValue));
         }
         return result;
     }
@@ -443,7 +443,7 @@ struct SequenceConverter {
 
                 auto convertedValue = Converter<IDLType>::convert(lexicalGlobalObject, indexValue, std::forward<ExceptionThrower>(exceptionThrower));
                 RETURN_IF_EXCEPTION(scope, {});
-                Traits::append(lexicalGlobalObject, result, i, WTFMove(convertedValue));
+                Traits::append(lexicalGlobalObject, result, i, std::move(convertedValue));
                 RETURN_IF_EXCEPTION(scope, {});
             }
             return result;
@@ -458,7 +458,7 @@ struct SequenceConverter {
 
             auto convertedValue = Converter<IDLType>::convert(lexicalGlobalObject, indexValue, std::forward<ExceptionThrower>(exceptionThrower));
             RETURN_IF_EXCEPTION(scope, {});
-            Traits::append(lexicalGlobalObject, result, i, WTFMove(convertedValue));
+            Traits::append(lexicalGlobalObject, result, i, std::move(convertedValue));
             RETURN_IF_EXCEPTION(scope, {});
         }
         return result;

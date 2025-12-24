@@ -130,9 +130,9 @@ std::optional<CryptoKeyPair> CryptoKeyEC::platformGeneratePair(CryptoAlgorithmId
     if (EVP_PKEY_set1_EC_KEY(publicPKey.get(), publicECKey.get()) <= 0)
         return std::nullopt;
 
-    auto publicKey = CryptoKeyEC::create(identifier, curve, CryptoKeyType::Public, WTFMove(publicPKey), true, usages);
-    auto privateKey = CryptoKeyEC::create(identifier, curve, CryptoKeyType::Private, WTFMove(privatePKey), extractable, usages);
-    return CryptoKeyPair { WTFMove(publicKey), WTFMove(privateKey) };
+    auto publicKey = CryptoKeyEC::create(identifier, curve, CryptoKeyType::Public, std::move(publicPKey), true, usages);
+    auto privateKey = CryptoKeyEC::create(identifier, curve, CryptoKeyType::Private, std::move(privatePKey), extractable, usages);
+    return CryptoKeyPair { std::move(publicKey), std::move(privateKey) };
 }
 
 RefPtr<CryptoKeyEC> CryptoKeyEC::platformImportRaw(CryptoAlgorithmIdentifier identifier, NamedCurve curve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap usages)
@@ -157,7 +157,7 @@ RefPtr<CryptoKeyEC> CryptoKeyEC::platformImportRaw(CryptoAlgorithmIdentifier ide
     if (EVP_PKEY_set1_EC_KEY(pkey.get(), key.get()) <= 0)
         return nullptr;
 
-    return create(identifier, curve, CryptoKeyType::Public, WTFMove(pkey), extractable, usages);
+    return create(identifier, curve, CryptoKeyType::Public, std::move(pkey), extractable, usages);
 }
 
 RefPtr<CryptoKeyEC> CryptoKeyEC::platformImportJWKPublic(CryptoAlgorithmIdentifier identifier, NamedCurve curve, Vector<uint8_t>&& x, Vector<uint8_t>&& y, bool extractable, CryptoKeyUsageBitmap usages)
@@ -183,7 +183,7 @@ RefPtr<CryptoKeyEC> CryptoKeyEC::platformImportJWKPublic(CryptoAlgorithmIdentifi
     if (EVP_PKEY_set1_EC_KEY(pkey.get(), key.get()) <= 0)
         return nullptr;
 
-    return create(identifier, curve, CryptoKeyType::Public, WTFMove(pkey), extractable, usages);
+    return create(identifier, curve, CryptoKeyType::Public, std::move(pkey), extractable, usages);
 }
 
 RefPtr<CryptoKeyEC> CryptoKeyEC::platformImportJWKPrivate(CryptoAlgorithmIdentifier identifier, NamedCurve curve, Vector<uint8_t>&& x, Vector<uint8_t>&& y, Vector<uint8_t>&& d, bool extractable, CryptoKeyUsageBitmap usages)
@@ -212,7 +212,7 @@ RefPtr<CryptoKeyEC> CryptoKeyEC::platformImportJWKPrivate(CryptoAlgorithmIdentif
     if (EVP_PKEY_set1_EC_KEY(pkey.get(), key.get()) <= 0)
         return nullptr;
 
-    return create(identifier, curve, CryptoKeyType::Private, WTFMove(pkey), extractable, usages);
+    return create(identifier, curve, CryptoKeyType::Private, std::move(pkey), extractable, usages);
 }
 
 static const ASN1_OBJECT* ecPublicKeyIdentifier()
@@ -342,7 +342,7 @@ RefPtr<CryptoKeyEC> CryptoKeyEC::platformImportSpki(CryptoAlgorithmIdentifier id
     if (EVP_PKEY_set1_EC_KEY(pkey.get(), key.get()) <= 0)
         return nullptr;
 
-    return adoptRef(new CryptoKeyEC(identifier, curve, CryptoKeyType::Public, WTFMove(pkey), extractable, usages));
+    return adoptRef(new CryptoKeyEC(identifier, curve, CryptoKeyType::Public, std::move(pkey), extractable, usages));
 }
 
 RefPtr<CryptoKeyEC> CryptoKeyEC::platformImportPkcs8(CryptoAlgorithmIdentifier identifier, NamedCurve curve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap usages)
@@ -373,7 +373,7 @@ RefPtr<CryptoKeyEC> CryptoKeyEC::platformImportPkcs8(CryptoAlgorithmIdentifier i
 
     EC_KEY_set_asn1_flag(ecKey, OPENSSL_EC_NAMED_CURVE);
 
-    return adoptRef(new CryptoKeyEC(identifier, curve, CryptoKeyType::Private, WTFMove(pkey), extractable, usages));
+    return adoptRef(new CryptoKeyEC(identifier, curve, CryptoKeyType::Private, std::move(pkey), extractable, usages));
 }
 
 Vector<uint8_t> CryptoKeyEC::platformExportRaw() const

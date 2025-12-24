@@ -105,11 +105,11 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSPerformanceMarkDOMConstruct
     EnsureStillAliveScope argument1 = callFrame->argument(1);
     auto markOptions = convert<IDLDictionary<PerformanceMarkOptions>>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    auto object = PerformanceMark::create(*castedThis->globalObject(), *context, WTFMove(markName), WTFMove(markOptions));
+    auto object = PerformanceMark::create(*castedThis->globalObject(), *context, std::move(markName), std::move(markOptions));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
-    auto jsValue = toJSNewlyCreated<IDLInterface<PerformanceMark>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTFMove(object));
+    auto jsValue = toJSNewlyCreated<IDLInterface<PerformanceMark>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, std::move(object));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     setSubclassStructureIfNeeded<PerformanceMark>(lexicalGlobalObject, callFrame, asObject(jsValue));
@@ -153,7 +153,7 @@ void JSPerformanceMarkPrototype::finishCreation(VM& vm)
 const ClassInfo JSPerformanceMark::s_info = { "PerformanceMark"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPerformanceMark) };
 
 JSPerformanceMark::JSPerformanceMark(Structure* structure, JSDOMGlobalObject& globalObject, Ref<PerformanceMark>&& impl)
-    : JSPerformanceEntry(structure, globalObject, WTFMove(impl))
+    : JSPerformanceEntry(structure, globalObject, std::move(impl))
 {
 }
 
@@ -266,7 +266,7 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
         // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
 #endif
     }
-    return createWrapper<PerformanceMark>(globalObject, WTFMove(impl));
+    return createWrapper<PerformanceMark>(globalObject, std::move(impl));
 }
 
 JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, PerformanceMark& impl)

@@ -52,19 +52,19 @@ void CryptoAlgorithmSHA384::digest(Vector<uint8_t>&& message, VectorCallback&& c
     }
 
     if (message.size() < 64) {
-        auto moved = WTFMove(message);
+        auto moved = std::move(message);
         digest->addBytes(moved.begin(), moved.size());
         auto result = digest->computeHash();
-        ScriptExecutionContext::postTaskTo(context.identifier(), [callback = WTFMove(callback), result = WTFMove(result)](auto&) {
+        ScriptExecutionContext::postTaskTo(context.identifier(), [callback = std::move(callback), result = std::move(result)](auto&) {
             callback(result);
         });
         return;
     }
 
-    workQueue.dispatch(context.globalObject(), [digest = WTFMove(digest), message = WTFMove(message), callback = WTFMove(callback), contextIdentifier = context.identifier()]() mutable {
+    workQueue.dispatch(context.globalObject(), [digest = std::move(digest), message = std::move(message), callback = std::move(callback), contextIdentifier = context.identifier()]() mutable {
         digest->addBytes(message.begin(), message.size());
         auto result = digest->computeHash();
-        ScriptExecutionContext::postTaskTo(contextIdentifier, [callback = WTFMove(callback), result = WTFMove(result)](auto&) {
+        ScriptExecutionContext::postTaskTo(contextIdentifier, [callback = std::move(callback), result = std::move(result)](auto&) {
             callback(result);
         });
     });

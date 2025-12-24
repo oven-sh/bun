@@ -39,7 +39,7 @@ public:
 
     BufferSource() {}
     BufferSource(VariantType&& variant)
-        : m_variant(WTFMove(variant))
+        : m_variant(std::move(variant))
     {
     }
 

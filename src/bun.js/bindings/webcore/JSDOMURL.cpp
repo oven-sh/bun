@@ -162,11 +162,11 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDOMURLDOMConstructor::const
     EnsureStillAliveScope argument1 = callFrame->argument(1);
     auto base = argument1.value().isUndefined() ? String() : convert<IDLUSVString>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    auto object = base.isEmpty() ? DOMURL::create(WTFMove(url)) : DOMURL::create(WTFMove(url), WTFMove(base));
+    auto object = base.isEmpty() ? DOMURL::create(std::move(url)) : DOMURL::create(std::move(url), std::move(base));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
-    auto jsValue = toJSNewlyCreated<IDLInterface<DOMURL>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTFMove(object));
+    auto jsValue = toJSNewlyCreated<IDLInterface<DOMURL>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, std::move(object));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     setSubclassStructureIfNeeded<DOMURL>(lexicalGlobalObject, callFrame, asObject(jsValue));
@@ -239,7 +239,7 @@ void JSDOMURLPrototype::finishCreation(VM& vm)
 const ClassInfo JSDOMURL::s_info = { "URL"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDOMURL) };
 
 JSDOMURL::JSDOMURL(Structure* structure, JSDOMGlobalObject& globalObject, Ref<DOMURL>&& impl)
-    : JSDOMWrapper<DOMURL>(structure, globalObject, WTFMove(impl))
+    : JSDOMWrapper<DOMURL>(structure, globalObject, std::move(impl))
 {
 }
 
@@ -300,7 +300,7 @@ static inline bool setJSDOMURL_hrefSetter(JSGlobalObject& lexicalGlobalObject, J
     auto nativeValue = convert<IDLUSVString>(lexicalGlobalObject, value);
     RETURN_IF_EXCEPTION(throwScope, false);
     invokeFunctorPropagatingExceptionIfNecessary(lexicalGlobalObject, throwScope, [&] {
-        return impl.setHref(WTFMove(nativeValue));
+        return impl.setHref(std::move(nativeValue));
     });
     return true;
 }
@@ -345,7 +345,7 @@ static inline bool setJSDOMURL_protocolSetter(JSGlobalObject& lexicalGlobalObjec
     auto nativeValue = convert<IDLUSVString>(lexicalGlobalObject, value);
     RETURN_IF_EXCEPTION(throwScope, false);
     invokeFunctorPropagatingExceptionIfNecessary(lexicalGlobalObject, throwScope, [&] {
-        return impl.setProtocol(WTFMove(nativeValue));
+        return impl.setProtocol(std::move(nativeValue));
     });
     return true;
 }
@@ -377,7 +377,7 @@ static inline bool setJSDOMURL_usernameSetter(JSGlobalObject& lexicalGlobalObjec
     auto nativeValue = convert<IDLUSVString>(lexicalGlobalObject, value);
     RETURN_IF_EXCEPTION(throwScope, false);
     invokeFunctorPropagatingExceptionIfNecessary(lexicalGlobalObject, throwScope, [&] {
-        return impl.setUsername(WTFMove(nativeValue));
+        return impl.setUsername(std::move(nativeValue));
     });
     return true;
 }
@@ -409,7 +409,7 @@ static inline bool setJSDOMURL_passwordSetter(JSGlobalObject& lexicalGlobalObjec
     auto nativeValue = convert<IDLUSVString>(lexicalGlobalObject, value);
     RETURN_IF_EXCEPTION(throwScope, false);
     invokeFunctorPropagatingExceptionIfNecessary(lexicalGlobalObject, throwScope, [&] {
-        return impl.setPassword(WTFMove(nativeValue));
+        return impl.setPassword(std::move(nativeValue));
     });
     return true;
 }
@@ -441,7 +441,7 @@ static inline bool setJSDOMURL_hostSetter(JSGlobalObject& lexicalGlobalObject, J
     auto nativeValue = convert<IDLUSVString>(lexicalGlobalObject, value);
     RETURN_IF_EXCEPTION(throwScope, false);
     invokeFunctorPropagatingExceptionIfNecessary(lexicalGlobalObject, throwScope, [&] {
-        return impl.setHost(WTFMove(nativeValue));
+        return impl.setHost(std::move(nativeValue));
     });
     return true;
 }
@@ -473,7 +473,7 @@ static inline bool setJSDOMURL_hostnameSetter(JSGlobalObject& lexicalGlobalObjec
     auto nativeValue = convert<IDLUSVString>(lexicalGlobalObject, value);
     RETURN_IF_EXCEPTION(throwScope, false);
     invokeFunctorPropagatingExceptionIfNecessary(lexicalGlobalObject, throwScope, [&] {
-        return impl.setHostname(WTFMove(nativeValue));
+        return impl.setHostname(std::move(nativeValue));
     });
     return true;
 }
@@ -505,7 +505,7 @@ static inline bool setJSDOMURL_portSetter(JSGlobalObject& lexicalGlobalObject, J
     auto nativeValue = convert<IDLUSVString>(lexicalGlobalObject, value);
     RETURN_IF_EXCEPTION(throwScope, false);
     invokeFunctorPropagatingExceptionIfNecessary(lexicalGlobalObject, throwScope, [&] {
-        return impl.setPort(WTFMove(nativeValue));
+        return impl.setPort(std::move(nativeValue));
     });
     return true;
 }
@@ -537,7 +537,7 @@ static inline bool setJSDOMURL_pathnameSetter(JSGlobalObject& lexicalGlobalObjec
     auto nativeValue = convert<IDLUSVString>(lexicalGlobalObject, value);
     RETURN_IF_EXCEPTION(throwScope, false);
     invokeFunctorPropagatingExceptionIfNecessary(lexicalGlobalObject, throwScope, [&] {
-        return impl.setPathname(WTFMove(nativeValue));
+        return impl.setPathname(std::move(nativeValue));
     });
     return true;
 }
@@ -569,7 +569,7 @@ static inline bool setJSDOMURL_hashSetter(JSGlobalObject& lexicalGlobalObject, J
     auto nativeValue = convert<IDLUSVString>(lexicalGlobalObject, value);
     RETURN_IF_EXCEPTION(throwScope, false);
     invokeFunctorPropagatingExceptionIfNecessary(lexicalGlobalObject, throwScope, [&] {
-        return impl.setHash(WTFMove(nativeValue));
+        return impl.setHash(std::move(nativeValue));
     });
     return true;
 }
@@ -601,7 +601,7 @@ static inline bool setJSDOMURL_searchSetter(JSGlobalObject& lexicalGlobalObject,
     auto nativeValue = convert<IDLUSVString>(lexicalGlobalObject, value);
     RETURN_IF_EXCEPTION(throwScope, false);
     invokeFunctorPropagatingExceptionIfNecessary(lexicalGlobalObject, throwScope, [&] {
-        return impl.setSearch(WTFMove(nativeValue));
+        return impl.setSearch(std::move(nativeValue));
     });
     return true;
 }
@@ -643,7 +643,7 @@ static inline JSC::EncodedJSValue jsDOMURLConstructorFunction_parseBody(JSC::JSG
     EnsureStillAliveScope argument1 = callFrame->argument(1);
     auto base = argument1.value().isUndefined() ? String() : convert<IDLUSVString>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLNullable<IDLInterface<DOMURL>>>(*lexicalGlobalObject, *jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), throwScope, DOMURL::parse(WTFMove(url), WTFMove(base)))));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLNullable<IDLInterface<DOMURL>>>(*lexicalGlobalObject, *jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), throwScope, DOMURL::parse(std::move(url), std::move(base)))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsDOMURLConstructorFunction_parse, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -665,7 +665,7 @@ static inline JSC::EncodedJSValue jsDOMURLConstructorFunction_canParseBody(JSC::
     EnsureStillAliveScope argument1 = callFrame->argument(1);
     auto base = argument1.value().isUndefined() ? String() : convert<IDLUSVString>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLBoolean>(*lexicalGlobalObject, throwScope, DOMURL::canParse(WTFMove(url), WTFMove(base)))));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLBoolean>(*lexicalGlobalObject, throwScope, DOMURL::canParse(std::move(url), std::move(base)))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsDOMURLConstructorFunction_canParse, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -717,7 +717,7 @@ static inline JSC::EncodedJSValue jsDOMURLConstructorFunction_revokeObjectURLBod
     // EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     // auto url = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
     // RETURN_IF_EXCEPTION(throwScope, {});
-    // RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return DOMURL::revokeObjectURL(*context, WTFMove(url)); })));
+    // RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return DOMURL::revokeObjectURL(*context, std::move(url)); })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsDOMURLConstructorFunction_revokeObjectURL, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -854,7 +854,7 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
         // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
 #endif
     }
-    return createWrapper<DOMURL>(globalObject, WTFMove(impl));
+    return createWrapper<DOMURL>(globalObject, std::move(impl));
 }
 
 JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, DOMURL& impl)

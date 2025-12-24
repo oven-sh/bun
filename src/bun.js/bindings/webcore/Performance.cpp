@@ -288,10 +288,10 @@ void Performance::addResourceTiming(ResourceTiming&& resourceTiming)
 {
     ASSERT(scriptExecutionContext());
 
-    auto entry = PerformanceResourceTiming::create(m_timeOrigin, WTFMove(resourceTiming));
+    auto entry = PerformanceResourceTiming::create(m_timeOrigin, std::move(resourceTiming));
 
     if (m_waitingForBackupBufferToBeProcessed) {
-        m_backupResourceTimingBuffer.append(WTFMove(entry));
+        m_backupResourceTimingBuffer.append(std::move(entry));
         return;
     }
 
@@ -304,14 +304,14 @@ void Performance::addResourceTiming(ResourceTiming&& resourceTiming)
 
     if (isResourceTimingBufferFull()) {
         // ASSERT(!m_resourceTimingBufferFullTimer.isActive());
-        m_backupResourceTimingBuffer.append(WTFMove(entry));
+        m_backupResourceTimingBuffer.append(std::move(entry));
         m_waitingForBackupBufferToBeProcessed = true;
         // m_resourceTimingBufferFullTimer.startOneShot(0_s);
         return;
     }
 
     queueEntry(entry.get());
-    m_resourceTimingBuffer.append(WTFMove(entry));
+    m_resourceTimingBuffer.append(std::move(entry));
 }
 
 bool Performance::isResourceTimingBufferFull() const
@@ -326,7 +326,7 @@ bool Performance::isResourceTimingBufferFull() const
 //     while (!m_backupResourceTimingBuffer.isEmpty()) {
 //         auto beforeCount = m_backupResourceTimingBuffer.size();
 
-//         auto backupBuffer = WTFMove(m_backupResourceTimingBuffer);
+//         auto backupBuffer = std::move(m_backupResourceTimingBuffer);
 //         ASSERT(m_backupResourceTimingBuffer.isEmpty());
 
 //         if (isResourceTimingBufferFull()) {
@@ -371,7 +371,7 @@ ExceptionOr<Ref<PerformanceMark>> Performance::mark(JSC::JSGlobalObject& globalO
     if (!m_userTiming)
         m_userTiming = makeUnique<PerformanceUserTiming>(*this);
 
-    auto mark = m_userTiming->mark(globalObject, markName, WTFMove(markOptions));
+    auto mark = m_userTiming->mark(globalObject, markName, std::move(markOptions));
     if (mark.hasException())
         return mark.releaseException();
 
@@ -391,7 +391,7 @@ ExceptionOr<Ref<PerformanceMeasure>> Performance::measure(JSC::JSGlobalObject& g
     if (!m_userTiming)
         m_userTiming = makeUnique<PerformanceUserTiming>(*this);
 
-    auto measure = m_userTiming->measure(globalObject, measureName, WTFMove(startOrMeasureOptions), endMark);
+    auto measure = m_userTiming->measure(globalObject, measureName, std::move(startOrMeasureOptions), endMark);
     if (measure.hasException())
         return measure.releaseException();
 

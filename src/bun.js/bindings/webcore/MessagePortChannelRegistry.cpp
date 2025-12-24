@@ -135,7 +135,7 @@ bool MessagePortChannelRegistry::didPostMessageToRemote(MessageWithMessagePorts&
         return false;
     }
 
-    return channel->postMessageToRemote(WTFMove(message), remoteTarget);
+    return channel->postMessageToRemote(std::move(message), remoteTarget);
 }
 
 void MessagePortChannelRegistry::takeAllMessagesForPort(const MessagePortIdentifier& port, CompletionHandler<void(Vector<MessageWithMessagePorts>&&, CompletionHandler<void()>&&)>&& callback)
@@ -149,7 +149,7 @@ void MessagePortChannelRegistry::takeAllMessagesForPort(const MessagePortIdentif
         return;
     }
 
-    channel->takeAllMessagesForPort(port, WTFMove(callback));
+    channel->takeAllMessagesForPort(port, std::move(callback));
 }
 
 std::optional<MessageWithMessagePorts> MessagePortChannelRegistry::tryTakeMessageForPort(const MessagePortIdentifier& port)

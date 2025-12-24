@@ -189,7 +189,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSTextEncoderDOMConstruc
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
-    auto jsValue = toJSNewlyCreated<IDLInterface<TextEncoder>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTFMove(object));
+    auto jsValue = toJSNewlyCreated<IDLInterface<TextEncoder>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, std::move(object));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     setSubclassStructureIfNeeded<TextEncoder>(lexicalGlobalObject, callFrame, asObject(jsValue));
@@ -314,7 +314,7 @@ void JSTextEncoderPrototype::finishCreation(VM& vm)
 const ClassInfo JSTextEncoder::s_info = { "TextEncoder"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTextEncoder) };
 
 JSTextEncoder::JSTextEncoder(Structure* structure, JSDOMGlobalObject& globalObject, Ref<TextEncoder>&& impl)
-    : JSDOMWrapper<TextEncoder>(structure, globalObject, WTFMove(impl))
+    : JSDOMWrapper<TextEncoder>(structure, globalObject, std::move(impl))
 {
 }
 
@@ -527,7 +527,7 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
         // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
 #endif
     }
-    return createWrapper<TextEncoder>(globalObject, WTFMove(impl));
+    return createWrapper<TextEncoder>(globalObject, std::move(impl));
 }
 
 JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, TextEncoder& impl)

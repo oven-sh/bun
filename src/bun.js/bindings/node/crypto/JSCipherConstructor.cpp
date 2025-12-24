@@ -219,7 +219,7 @@ JSC_DEFINE_HOST_FUNCTION(constructCipher, (JSC::JSGlobalObject * globalObject, J
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
     JSC::Structure* structure = zigGlobalObject->m_JSCipherClassStructure.get(zigGlobalObject);
 
-    return JSC::JSValue::encode(JSCipher::create(vm, structure, globalObject, cipherKind, WTFMove(ctx), authTagLength, maxMessageSize));
+    return JSC::JSValue::encode(JSCipher::create(vm, structure, globalObject, cipherKind, std::move(ctx), authTagLength, maxMessageSize));
 }
 
 } // namespace Bun

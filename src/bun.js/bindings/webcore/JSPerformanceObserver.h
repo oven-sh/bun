@@ -32,7 +32,7 @@ public:
     using Base = JSDOMWrapper<PerformanceObserver>;
     static JSPerformanceObserver* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<PerformanceObserver>&& impl)
     {
-        JSPerformanceObserver* ptr = new (NotNull, JSC::allocateCell<JSPerformanceObserver>(globalObject->vm())) JSPerformanceObserver(structure, *globalObject, WTFMove(impl));
+        JSPerformanceObserver* ptr = new (NotNull, JSC::allocateCell<JSPerformanceObserver>(globalObject->vm())) JSPerformanceObserver(structure, *globalObject, std::move(impl));
         ptr->finishCreation(globalObject->vm());
         return ptr;
     }

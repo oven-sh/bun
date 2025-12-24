@@ -265,7 +265,7 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
                     errorValue = JSC::jsUndefined();
                 }
                 expcep.append(errorValue);
-                fireEventListeners(errorIdentifier, WTFMove(expcep));
+                fireEventListeners(errorIdentifier, std::move(expcep));
             }
         }
     }

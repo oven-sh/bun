@@ -158,11 +158,11 @@ static inline JSC::EncodedJSValue constructJSWebSocket1(JSGlobalObject* lexicalG
     EnsureStillAliveScope argument1 = callFrame->argument(1);
     auto protocols = argument1.value().isUndefined() ? Converter<IDLSequence<IDLDOMString>>::ReturnType {} : convert<IDLSequence<IDLDOMString>>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    auto object = WebSocket::create(*context, WTFMove(url), WTFMove(protocols));
+    auto object = WebSocket::create(*context, std::move(url), std::move(protocols));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
-    auto jsValue = toJSNewlyCreated<IDLInterface<WebSocket>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTFMove(object));
+    auto jsValue = toJSNewlyCreated<IDLInterface<WebSocket>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, std::move(object));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     setSubclassStructureIfNeeded<WebSocket>(lexicalGlobalObject, callFrame, asObject(jsValue));
@@ -185,11 +185,11 @@ static inline JSC::EncodedJSValue constructJSWebSocket2(JSGlobalObject* lexicalG
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
     auto protocol = convert<IDLDOMString>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    auto object = WebSocket::create(*context, WTFMove(url), WTFMove(protocol));
+    auto object = WebSocket::create(*context, std::move(url), std::move(protocol));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
-    auto jsValue = toJSNewlyCreated<IDLInterface<WebSocket>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTFMove(object));
+    auto jsValue = toJSNewlyCreated<IDLInterface<WebSocket>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, std::move(object));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     setSubclassStructureIfNeeded<WebSocket>(lexicalGlobalObject, callFrame, asObject(jsValue));
@@ -258,12 +258,12 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
         }
     }
 
-    auto object = (rejectUnauthorized == -1) ? WebSocket::create(*context, WTFMove(url), protocols, WTFMove(headersInit)) : WebSocket::create(*context, WTFMove(url), protocols, WTFMove(headersInit), rejectUnauthorized ? true : false);
+    auto object = (rejectUnauthorized == -1) ? WebSocket::create(*context, std::move(url), protocols, std::move(headersInit)) : WebSocket::create(*context, std::move(url), protocols, std::move(headersInit), rejectUnauthorized ? true : false);
 
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
-    auto jsValue = toJSNewlyCreated<IDLInterface<WebSocket>>(*lexicalGlobalObject, *globalObject, throwScope, WTFMove(object));
+    auto jsValue = toJSNewlyCreated<IDLInterface<WebSocket>>(*lexicalGlobalObject, *globalObject, throwScope, std::move(object));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     setSubclassStructureIfNeeded<WebSocket>(lexicalGlobalObject, callFrame, asObject(jsValue));
@@ -356,7 +356,7 @@ void JSWebSocketPrototype::finishCreation(VM& vm)
 const ClassInfo JSWebSocket::s_info = { "WebSocket"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWebSocket) };
 
 JSWebSocket::JSWebSocket(Structure* structure, JSDOMGlobalObject& globalObject, Ref<WebSocket>&& impl)
-    : JSEventTarget(structure, globalObject, WTFMove(impl))
+    : JSEventTarget(structure, globalObject, std::move(impl))
 {
 }
 
@@ -596,7 +596,7 @@ static inline bool setJSWebSocket_binaryTypeSetter(JSGlobalObject& lexicalGlobal
     auto nativeValue = convert<IDLDOMString>(lexicalGlobalObject, value);
     RETURN_IF_EXCEPTION(throwScope, false);
     invokeFunctorPropagatingExceptionIfNecessary(lexicalGlobalObject, throwScope, [&] {
-        return impl.setBinaryType(WTFMove(nativeValue));
+        return impl.setBinaryType(std::move(nativeValue));
     });
     return true;
 }
@@ -642,7 +642,7 @@ static inline JSC::EncodedJSValue jsWebSocketPrototypeFunction_send4Body(JSC::JS
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto data = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.send(WTFMove(data)); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.send(std::move(data)); })));
 }
 
 static inline JSC::EncodedJSValue jsWebSocketPrototypeFunction_sendOverloadDispatcher(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSWebSocket>::ClassParameter castedThis)
@@ -687,7 +687,7 @@ static inline JSC::EncodedJSValue jsWebSocketPrototypeFunction_closeBody(JSC::JS
     EnsureStillAliveScope argument1 = callFrame->argument(1);
     auto reason = argument1.value().isUndefined() ? String() : convert<IDLUSVString>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.close(WTFMove(code), WTFMove(reason)); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.close(std::move(code), std::move(reason)); })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWebSocketPrototypeFunction_close, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -741,7 +741,7 @@ static inline JSC::EncodedJSValue jsWebSocketPrototypeFunction_ping5Body(JSC::JS
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto data = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.ping(WTFMove(data)); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.ping(std::move(data)); })));
 }
 
 static inline JSC::EncodedJSValue jsWebSocketPrototypeFunction_pingOverloadDispatcher(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSWebSocket>::ClassParameter castedThis)
@@ -820,7 +820,7 @@ static inline JSC::EncodedJSValue jsWebSocketPrototypeFunction_pong5Body(JSC::JS
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto data = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.pong(WTFMove(data)); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.pong(std::move(data)); })));
 }
 
 static inline JSC::EncodedJSValue jsWebSocketPrototypeFunction_pongOverloadDispatcher(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSWebSocket>::ClassParameter castedThis)
@@ -951,7 +951,7 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
         // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
 #endif
     }
-    return createWrapper<WebSocket>(globalObject, WTFMove(impl));
+    return createWrapper<WebSocket>(globalObject, std::move(impl));
 }
 
 JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, WebSocket& impl)

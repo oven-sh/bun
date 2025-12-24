@@ -70,7 +70,7 @@ public:
     URLPatternParser(EncodingCallbackType, String&& segmentWildcardRegexp);
     ExceptionOr<void> performParse(const URLPatternStringOptions&);
 
-    void setTokenList(Vector<Token>&& tokenList) { m_tokenList = WTFMove(tokenList); }
+    void setTokenList(Vector<Token>&& tokenList) { m_tokenList = std::move(tokenList); }
     static ExceptionOr<Vector<Part>> parse(StringView, const URLPatternStringOptions&, EncodingCallbackType);
 
 private:

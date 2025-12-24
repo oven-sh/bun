@@ -110,7 +110,7 @@ Ref<SourceProvider> SourceProvider::create(
                 toSourceOrigin(sourceURLString, isBuiltin),
                 sourceURLString.impl(), TextPosition(),
                 sourceType));
-            provider->m_cachedBytecode = WTFMove(bytecode);
+            provider->m_cachedBytecode = std::move(bytecode);
             return provider;
         }
 
@@ -348,11 +348,11 @@ int SourceProvider::readCache(JSC::VM& vm, const JSC::SourceCode& sourceCode)
     // if (fileTotalSize == 0)
     //     return 0;
 
-    // Ref<JSC::CachedBytecode> cachedBytecode = JSC::CachedBytecode::create(WTFMove(mappedFile));
+    // Ref<JSC::CachedBytecode> cachedBytecode = JSC::CachedBytecode::create(std::move(mappedFile));
     // // auto key = JSC::sourceCodeKeyForSerializedModule(vm, sourceCode);
     // // if (isCachedBytecodeStillValid(vm, cachedBytecode.copyRef(), key,
     // //                                JSC::SourceCodeType::ModuleType)) {
-    // m_cachedBytecode = WTFMove(cachedBytecode);
+    // m_cachedBytecode = std::move(cachedBytecode);
     // return 1;
     // } else {
     //   FileSystem::truncateFile(fd, 0);

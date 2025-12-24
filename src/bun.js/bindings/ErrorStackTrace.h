@@ -169,7 +169,7 @@ public:
     }
 
     JSCStackTrace(WTF::Vector<JSCStackFrame>&& frames)
-        : m_frames(WTFMove(frames))
+        : m_frames(std::move(frames))
     {
     }
 
@@ -177,7 +177,7 @@ public:
     bool isEmpty() const { return m_frames.isEmpty(); }
     JSCStackFrame& at(size_t i) { return m_frames.at(i); }
 
-    WTF::Vector<JSCStackFrame>&& frames() { return WTFMove(m_frames); }
+    WTF::Vector<JSCStackFrame>&& frames() { return std::move(m_frames); }
 
     static JSCStackTrace fromExisting(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& existingFrames);
 
@@ -203,7 +203,7 @@ public:
 
 private:
     JSCStackTrace(WTF::Vector<JSCStackFrame>& frames)
-        : m_frames(WTFMove(frames))
+        : m_frames(std::move(frames))
     {
     }
 };

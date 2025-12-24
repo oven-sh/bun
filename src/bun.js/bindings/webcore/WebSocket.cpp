@@ -238,7 +238,7 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
     auto socket = adoptRef(*new WebSocket(context));
     // socket->suspendIfNeeded();
 
-    auto result = socket->connect(url, protocols, WTFMove(headers));
+    auto result = socket->connect(url, protocols, std::move(headers));
     // auto result = socket->connect(url, protocols);
 
     if (result.hasException())
@@ -255,7 +255,7 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
     socket->setRejectUnauthorized(rejectUnauthorized);
     // socket->suspendIfNeeded();
 
-    auto result = socket->connect(url, protocols, WTFMove(headers));
+    auto result = socket->connect(url, protocols, std::move(headers));
     // auto result = socket->connect(url, protocols);
 
     if (result.hasException())
@@ -437,7 +437,7 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
     Vector<ZigString, 8> headerNames;
     Vector<ZigString, 8> headerValues;
 
-    auto headersOrException = FetchHeaders::create(WTFMove(headersInit));
+    auto headersOrException = FetchHeaders::create(std::move(headersInit));
     if (headersOrException.hasException()) [[unlikely]] {
         m_state = CLOSED;
         updateHasPendingActivity();
@@ -479,8 +479,8 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
 
                 auto eventInit = createErrorEventInit(protectedThis, "Failed to connect"_s, globalObject);
                 auto message = eventInit.message;
-                protectedThis->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, WTFMove(eventInit), EventIsTrusted::Yes));
-                protectedThis->dispatchEvent(CloseEvent::create(false, 1006, WTFMove(message)));
+                protectedThis->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, std::move(eventInit), EventIsTrusted::Yes));
+                protectedThis->dispatchEvent(CloseEvent::create(false, 1006, std::move(message)));
 
                 protectedThis->decPendingActivityCount();
             });
@@ -493,12 +493,12 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
     // #if ENABLE(INTELLIGENT_TRACKING_PREVENTION)
     //     auto reportRegistrableDomain = [domain = RegistrableDomain(m_url).isolatedCopy()](auto& context) mutable {
     //         if (auto* frame = downcast<Document>(context).frame())
-    //             frame->loader().client().didLoadFromRegistrableDomain(WTFMove(domain));
+    //             frame->loader().client().didLoadFromRegistrableDomain(std::move(domain));
     //     };
     //     if (is<Document>(context))
     //         reportRegistrableDomain(context);
     //     else
-    //         downcast<WorkerGlobalScope>(context).thread().workerLoaderProxy().postTaskToLoader(WTFMove(reportRegistrableDomain));
+    //         downcast<WorkerGlobalScope>(context).thread().workerLoaderProxy().postTaskToLoader(std::move(reportRegistrableDomain));
     // #endif
 
     // m_pendingActivity = makePendingActivity(*this);
@@ -1069,7 +1069,7 @@ void WebSocket::didConnect()
 void WebSocket::didReceiveMessage(String&& message)
 {
     // LOG(Network, "WebSocket %p didReceiveMessage() Text message '%s'", this, message.utf8().data());
-    // queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [this, message = WTFMove(message)]() mutable {
+    // queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [this, message = std::move(message)]() mutable {
     if (m_state != OPEN)
         return;
 
@@ -1083,14 +1083,14 @@ void WebSocket::didReceiveMessage(String&& message)
     if (this->hasEventListeners("message"_s)) {
         // the main reason for dispatching on a separate tick is to handle when you haven't yet attached an event listener
         this->incPendingActivityCount();
-        dispatchEvent(MessageEvent::create(WTFMove(message), m_url.string()));
+        dispatchEvent(MessageEvent::create(std::move(message), m_url.string()));
         this->decPendingActivityCount();
         return;
     }
 
     if (auto* context = scriptExecutionContext()) {
         this->incPendingActivityCount();
-        context->postTask([this, message_ = WTFMove(message), protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+        context->postTask([this, message_ = std::move(message), protectedThis = Ref { *this }](ScriptExecutionContext& context) {
             ASSERT(scriptExecutionContext());
             protectedThis->dispatchEvent(MessageEvent::create(message_, protectedThis->m_url.string()));
             protectedThis->decPendingActivityCount();
@@ -1103,7 +1103,7 @@ void WebSocket::didReceiveMessage(String&& message)
 void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::span<const uint8_t> binaryData)
 {
     // LOG(Network, "WebSocket %p didReceiveBinaryData() %u byte binary message", this, static_cast<unsigned>(binaryData.size()));
-    // queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [this, binaryData = WTFMove(binaryData)]() mutable {
+    // queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [this, binaryData = std::move(binaryData)]() mutable {
     if (m_state != OPEN)
         return;
 
@@ -1144,7 +1144,7 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::spa
         if (auto* context = scriptExecutionContext()) {
             auto arrayBuffer = JSC::ArrayBuffer::create(binaryData);
             this->incPendingActivityCount();
-            context->postTask([this, name = eventName, buffer = WTFMove(arrayBuffer), protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+            context->postTask([this, name = eventName, buffer = std::move(arrayBuffer), protectedThis = Ref { *this }](ScriptExecutionContext& context) {
                 ASSERT(scriptExecutionContext());
                 protectedThis->dispatchEvent(MessageEvent::create(name, buffer, m_url.string()));
                 protectedThis->decPendingActivityCount();
@@ -1176,7 +1176,7 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::spa
             init.data = buffer;
             init.origin = this->m_url.string();
 
-            dispatchEvent(MessageEvent::create(eventName, WTFMove(init), EventIsTrusted::Yes));
+            dispatchEvent(MessageEvent::create(eventName, std::move(init), EventIsTrusted::Yes));
             this->decPendingActivityCount();
             return;
         }
@@ -1186,7 +1186,7 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::spa
 
             this->incPendingActivityCount();
 
-            context->postTask([name = eventName, buffer = WTFMove(arrayBuffer), protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+            context->postTask([name = eventName, buffer = std::move(arrayBuffer), protectedThis = Ref { *this }](ScriptExecutionContext& context) {
                 size_t length = buffer->byteLength();
                 auto* globalObject = context.jsGlobalObject();
                 auto* subclassStructure = static_cast<Zig::GlobalObject*>(globalObject)->JSBufferSubclassStructure();
@@ -1195,7 +1195,7 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::spa
                 MessageEvent::Init init;
                 init.data = uint8array;
                 init.origin = protectedThis->m_url.string();
-                protectedThis->dispatchEvent(MessageEvent::create(name, WTFMove(init), EventIsTrusted::Yes));
+                protectedThis->dispatchEvent(MessageEvent::create(name, std::move(init), EventIsTrusted::Yes));
                 protectedThis->decPendingActivityCount();
             });
         }
@@ -1209,7 +1209,7 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::spa
 void WebSocket::didReceiveClose(CleanStatus wasClean, unsigned short code, WTF::String reason, bool isConnectionError)
 {
     // LOG(Network, "WebSocket %p didReceiveErrorMessage()", this);
-    // queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [this, reason = WTFMove(reason)] {
+    // queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [this, reason = std::move(reason)] {
     if (m_state == CLOSED)
         return;
     const bool wasConnecting = m_state == CONNECTING;
@@ -1218,7 +1218,7 @@ void WebSocket::didReceiveClose(CleanStatus wasClean, unsigned short code, WTF::
         this->incPendingActivityCount();
         if (wasConnecting && isConnectionError) {
             auto eventInit = createErrorEventInit(*this, reason, context->jsGlobalObject());
-            dispatchEvent(ErrorEvent::create(eventNames().errorEvent, WTFMove(eventInit), EventIsTrusted::Yes));
+            dispatchEvent(ErrorEvent::create(eventNames().errorEvent, std::move(eventInit), EventIsTrusted::Yes));
         }
         // https://html.spec.whatwg.org/multipage/web-sockets.html#feedback-from-the-protocol:concept-websocket-closed, we should synchronously fire a close event.
         dispatchEvent(CloseEvent::create(wasClean == CleanStatus::Clean, code, reason));
@@ -1517,13 +1517,13 @@ extern "C" void WebSocket__didAbruptClose(WebCore::WebSocket* webSocket, Bun::We
 extern "C" void WebSocket__didClose(WebCore::WebSocket* webSocket, uint16_t errorCode, BunString* reason)
 {
     WTF::String wtf_reason = reason->transferToWTFString();
-    webSocket->didClose(0, errorCode, WTFMove(wtf_reason));
+    webSocket->didClose(0, errorCode, std::move(wtf_reason));
 }
 
 extern "C" void WebSocket__didReceiveText(WebCore::WebSocket* webSocket, bool clone, const ZigString* str)
 {
     WTF::String wtf_str = clone ? Zig::toStringCopy(*str) : Zig::toString(*str);
-    webSocket->didReceiveMessage(WTFMove(wtf_str));
+    webSocket->didReceiveMessage(std::move(wtf_str));
 }
 extern "C" void WebSocket__didReceiveBytes(WebCore::WebSocket* webSocket, const uint8_t* bytes, size_t len, const uint8_t op)
 {

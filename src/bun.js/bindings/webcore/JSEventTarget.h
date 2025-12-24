@@ -36,7 +36,7 @@ public:
     using Base = JSDOMWrapper<EventTarget>;
     static JSEventTarget* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<EventTarget>&& impl)
     {
-        JSEventTarget* ptr = new (NotNull, JSC::allocateCell<JSEventTarget>(globalObject->vm())) JSEventTarget(structure, *globalObject, WTFMove(impl));
+        JSEventTarget* ptr = new (NotNull, JSC::allocateCell<JSEventTarget>(globalObject->vm())) JSEventTarget(structure, *globalObject, std::move(impl));
         ptr->finishCreation(globalObject->vm());
         return ptr;
     }

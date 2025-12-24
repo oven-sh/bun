@@ -47,7 +47,7 @@ public:
 class SimpleWritableStreamSink : public WritableStreamSink {
 public:
     using WriteCallback = Function<ExceptionOr<void>(ScriptExecutionContext&, JSC::JSValue)>;
-    static Ref<SimpleWritableStreamSink> create(WriteCallback&& writeCallback) { return adoptRef(*new SimpleWritableStreamSink(WTFMove(writeCallback))); }
+    static Ref<SimpleWritableStreamSink> create(WriteCallback&& writeCallback) { return adoptRef(*new SimpleWritableStreamSink(std::move(writeCallback))); }
 
 private:
     explicit SimpleWritableStreamSink(WriteCallback&&);
@@ -60,7 +60,7 @@ private:
 };
 
 inline SimpleWritableStreamSink::SimpleWritableStreamSink(WriteCallback&& writeCallback)
-    : m_writeCallback(WTFMove(writeCallback))
+    : m_writeCallback(std::move(writeCallback))
 {
 }
 

@@ -13,15 +13,15 @@ struct DhJobCtx {
 
 public:
     DhJobCtx(RefPtr<KeyObjectData>&& privateKey, RefPtr<KeyObjectData>&& publicKey)
-        : m_privateKey(WTFMove(privateKey))
-        , m_publicKey(WTFMove(publicKey))
+        : m_privateKey(std::move(privateKey))
+        , m_publicKey(std::move(publicKey))
     {
     }
 
     DhJobCtx(DhJobCtx&& other)
-        : m_privateKey(WTFMove(other.m_privateKey))
-        , m_publicKey(WTFMove(other.m_publicKey))
-        , m_result(WTFMove(other.m_result))
+        : m_privateKey(std::move(other.m_privateKey))
+        , m_publicKey(std::move(other.m_publicKey))
+        , m_result(std::move(other.m_result))
     {
     }
 

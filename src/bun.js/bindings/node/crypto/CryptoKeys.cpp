@@ -23,7 +23,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCreateSecretKey, (JSC::JSGlobalObject * lexicalGlobal
     RETURN_IF_EXCEPTION(scope, {});
 
     Structure* structure = globalObject->m_JSSecretKeyObjectClassStructure.get(lexicalGlobalObject);
-    JSSecretKeyObject* secretKey = JSSecretKeyObject::create(vm, structure, lexicalGlobalObject, WTFMove(keyObject));
+    JSSecretKeyObject* secretKey = JSSecretKeyObject::create(vm, structure, lexicalGlobalObject, std::move(keyObject));
 
     return JSValue::encode(secretKey);
 }
@@ -43,7 +43,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCreatePublicKey, (JSC::JSGlobalObject * lexicalGlobal
 
     if (prepareResult.keyData) {
         RefPtr<KeyObjectData> keyData = *prepareResult.keyData;
-        keyObject = KeyObject::create(CryptoKeyType::Public, WTFMove(keyData));
+        keyObject = KeyObject::create(CryptoKeyType::Public, std::move(keyData));
     } else {
         keyObject = KeyObject::getPublicOrPrivateKey(
             globalObject,
@@ -53,12 +53,12 @@ JSC_DEFINE_HOST_FUNCTION(jsCreatePublicKey, (JSC::JSGlobalObject * lexicalGlobal
             prepareResult.formatType,
             prepareResult.encodingType,
             prepareResult.cipher,
-            WTFMove(prepareResult.passphrase));
+            std::move(prepareResult.passphrase));
         RETURN_IF_EXCEPTION(scope, {});
     }
 
     Structure* structure = globalObject->m_JSPublicKeyObjectClassStructure.get(lexicalGlobalObject);
-    JSPublicKeyObject* publicKey = JSPublicKeyObject::create(vm, structure, lexicalGlobalObject, WTFMove(keyObject));
+    JSPublicKeyObject* publicKey = JSPublicKeyObject::create(vm, structure, lexicalGlobalObject, std::move(keyObject));
 
     return JSValue::encode(publicKey);
 }
@@ -78,7 +78,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCreatePrivateKey, (JSGlobalObject * lexicalGlobalObje
 
     if (prepareResult.keyData) {
         auto keyData = *prepareResult.keyData;
-        keyObject = KeyObject::create(CryptoKeyType::Private, WTFMove(keyData));
+        keyObject = KeyObject::create(CryptoKeyType::Private, std::move(keyData));
     } else {
         keyObject = KeyObject::getPublicOrPrivateKey(
             globalObject,
@@ -88,12 +88,12 @@ JSC_DEFINE_HOST_FUNCTION(jsCreatePrivateKey, (JSGlobalObject * lexicalGlobalObje
             prepareResult.formatType,
             prepareResult.encodingType,
             prepareResult.cipher,
-            WTFMove(prepareResult.passphrase));
+            std::move(prepareResult.passphrase));
         RETURN_IF_EXCEPTION(scope, {});
     }
 
     Structure* structure = globalObject->m_JSPrivateKeyObjectClassStructure.get(lexicalGlobalObject);
-    JSPrivateKeyObject* privateKey = JSPrivateKeyObject::create(vm, structure, lexicalGlobalObject, WTFMove(keyObject));
+    JSPrivateKeyObject* privateKey = JSPrivateKeyObject::create(vm, structure, lexicalGlobalObject, std::move(keyObject));
 
     return JSValue::encode(privateKey);
 }

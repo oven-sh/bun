@@ -15,7 +15,7 @@ extern "C" void ConcurrentCppTask__createAndRun(EventLoopTaskNoContext* task);
 
 void PhonyWorkQueue::dispatch(JSC::JSGlobalObject* globalObject, WTF::Function<void()>&& function)
 {
-    ConcurrentCppTask__createAndRun(new EventLoopTaskNoContext(globalObject, WTFMove(function)));
+    ConcurrentCppTask__createAndRun(new EventLoopTaskNoContext(globalObject, std::move(function)));
 }
 
 } // namespace Bun

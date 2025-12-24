@@ -170,7 +170,7 @@ ALWAYS_INLINE JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm, GetClient
                 uniqueSubspace = makeUnique<JSC::IsoSubspace> ISO_SUBSPACE_INIT(heap, heap.cellHeapCellType, T);
         }
         space = uniqueSubspace.get();
-        setServer(subspaces, WTFMove(uniqueSubspace));
+        setServer(subspaces, std::move(uniqueSubspace));
 
         IGNORE_WARNINGS_BEGIN("unreachable-code")
         IGNORE_WARNINGS_BEGIN("tautological-compare")
@@ -184,7 +184,7 @@ ALWAYS_INLINE JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm, GetClient
 
     auto uniqueClientSubspace = makeUnique<JSC::GCClient::IsoSubspace>(*space);
     auto* clientSpace = uniqueClientSubspace.get();
-    setClient(clientSubspaces, WTFMove(uniqueClientSubspace));
+    setClient(clientSubspaces, std::move(uniqueClientSubspace));
     return clientSpace;
 }
 

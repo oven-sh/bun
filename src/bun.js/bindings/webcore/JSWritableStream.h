@@ -31,7 +31,7 @@ public:
     using Base = JSDOMWrapper<WritableStream>;
     static JSWritableStream* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<WritableStream>&& impl)
     {
-        JSWritableStream* ptr = new (NotNull, JSC::allocateCell<JSWritableStream>(globalObject->vm())) JSWritableStream(structure, *globalObject, WTFMove(impl));
+        JSWritableStream* ptr = new (NotNull, JSC::allocateCell<JSWritableStream>(globalObject->vm())) JSWritableStream(structure, *globalObject, std::move(impl));
         ptr->finishCreation(globalObject->vm());
         return ptr;
     }

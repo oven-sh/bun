@@ -33,7 +33,7 @@ extern "C" void Bun__DhKeyPairJobCtx__runFromJS(DhKeyPairJobCtx* ctx, JSGlobalOb
 extern "C" DhKeyPairJob* Bun__DhKeyPairJob__create(JSGlobalObject* globalObject, DhKeyPairJobCtx* ctx, EncodedJSValue callback);
 DhKeyPairJob* DhKeyPairJob::create(JSGlobalObject* globalObject, DhKeyPairJobCtx&& ctx, JSValue callback)
 {
-    DhKeyPairJobCtx* ctxCopy = new DhKeyPairJobCtx(WTFMove(ctx));
+    DhKeyPairJobCtx* ctxCopy = new DhKeyPairJobCtx(std::move(ctx));
     return Bun__DhKeyPairJob__create(globalObject, ctxCopy, JSValue::encode(callback));
 }
 
@@ -46,7 +46,7 @@ void DhKeyPairJob::schedule()
 extern "C" void Bun__DhKeyPairJob__createAndSchedule(JSGlobalObject* globalObject, DhKeyPairJobCtx* ctx, EncodedJSValue callback);
 void DhKeyPairJob::createAndSchedule(JSGlobalObject* globalObject, DhKeyPairJobCtx&& ctx, JSValue callback)
 {
-    DhKeyPairJobCtx* ctxCopy = new DhKeyPairJobCtx(WTFMove(ctx));
+    DhKeyPairJobCtx* ctxCopy = new DhKeyPairJobCtx(std::move(ctx));
     Bun__DhKeyPairJob__createAndSchedule(globalObject, ctxCopy, JSValue::encode(callback));
 }
 
@@ -61,13 +61,13 @@ ncrypto::EVPKeyCtxPointer DhKeyPairJobCtx::setup()
             m_opensslError = ERR_get_error();
             return {};
         }
-        auto dh = ncrypto::DHPointer::New(WTFMove(prime), WTFMove(bnG));
+        auto dh = ncrypto::DHPointer::New(std::move(prime), std::move(bnG));
         if (!dh) {
             m_opensslError = ERR_get_error();
             return {};
         }
 
-        keyParams = ncrypto::EVPKeyPointer::NewDH(WTFMove(dh));
+        keyParams = ncrypto::EVPKeyPointer::NewDH(std::move(dh));
     } else if (std::get_if<int>(&m_prime)) {
         auto paramCtx = ncrypto::EVPKeyCtxPointer::NewFromID(EVP_PKEY_DH);
 
@@ -139,7 +139,7 @@ std::optional<DhKeyPairJobCtx> DhKeyPairJobCtx::fromJS(JSGlobalObject* globalObj
         }
 
         return DhKeyPairJobCtx(
-            WTFMove(group),
+            std::move(group),
             config);
     }
 

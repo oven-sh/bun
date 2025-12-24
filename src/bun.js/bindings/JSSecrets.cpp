@@ -246,13 +246,13 @@ void Bun__SecretsJobOptions__runTask(SecretsJobOptions* opts, JSGlobalObject* gl
         auto result = Secrets::getPassword(opts->service, opts->name, opts->error);
         if (result.has_value()) {
             // Store as String for main thread (String is thread-safe to construct from CString)
-            opts->resultPassword = WTFMove(result.value());
+            opts->resultPassword = std::move(result.value());
         }
         break;
     }
 
     case SecretsJobOptions::SET:
-        opts->error = Secrets::setPassword(opts->service, opts->name, WTFMove(opts->password), opts->allowUnrestrictedAccess);
+        opts->error = Secrets::setPassword(opts->service, opts->name, std::move(opts->password), opts->allowUnrestrictedAccess);
         break;
 
     case SecretsJobOptions::DELETE_OP:
@@ -288,7 +288,7 @@ void Bun__SecretsJobOptions__runFromJS(SecretsJobOptions* opts, JSGlobalObject* 
         switch (opts->op) {
         case SecretsJobOptions::GET:
             if (opts->resultPassword.has_value()) {
-                auto resultPassword = WTFMove(opts->resultPassword.value());
+                auto resultPassword = std::move(opts->resultPassword.value());
                 result = jsString(vm, String::fromUTF8(resultPassword.span()));
                 RETURN_IF_EXCEPTION(scope, );
                 memsetSpan(resultPassword.mutableSpan(), 0);

@@ -5,27 +5,6 @@
 //! This is used for a permission system where users can inspect what a shell command
 //! would do before actually executing it.
 
-const TraceInterpreter = @This();
-
-const std = @import("std");
-const bun = @import("bun");
-const jsc = bun.jsc;
-const JSValue = jsc.JSValue;
-const JSGlobalObject = jsc.JSGlobalObject;
-const shell = bun.shell;
-const ast = shell.AST;
-const Allocator = std.mem.Allocator;
-const ResolvePath = bun.path;
-const which = bun.which;
-
-const EnvMap = shell.EnvMap;
-const EnvStr = shell.EnvStr;
-const Interpreter = shell.Interpreter;
-const ShellArgs = shell.interpret.ShellArgs;
-const Braces = shell.interpret.Braces;
-
-const log = bun.Output.scoped(.SHELL_TRACE, .hidden);
-
 /// Unix-style permission flags using standard octal values
 /// These mirror the constants used by open(2), chmod(2), and access(2)
 pub const Permission = struct {
@@ -1000,3 +979,23 @@ pub fn traceShellScript(globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) 
 
     return result.toJS(globalThis);
 }
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+const bun = @import("bun");
+const ResolvePath = bun.path;
+const which = bun.which;
+
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;
+
+const shell = bun.shell;
+const EnvMap = shell.EnvMap;
+const EnvStr = shell.EnvStr;
+const Interpreter = shell.Interpreter;
+const ast = shell.AST;
+
+const Braces = shell.interpret.Braces;
+const ShellArgs = shell.interpret.ShellArgs;

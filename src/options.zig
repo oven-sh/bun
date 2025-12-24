@@ -1781,6 +1781,7 @@ pub const BundleOptions = struct {
 
     macro_remap: MacroRemap = MacroRemap{},
     no_macros: bool = false,
+    nativefill: bool = false,
 
     conditions: ESMConditions = undefined,
     tree_shaking: bool = false,

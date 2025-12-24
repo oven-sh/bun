@@ -4,6 +4,8 @@ import { tempDir } from "harness";
 import { createTestBuilder } from "./test_builder";
 const TestBuilder = createTestBuilder(import.meta.path);
 
+const isWindows = process.platform === "win32";
+
 describe("IOWriter file output redirection", () => {
   describe("basic file redirection", () => {
     TestBuilder.command`echo "hello world" > output.txt`
@@ -156,9 +158,10 @@ describe("IOWriter file output redirection", () => {
 
     // Test redirect ordering: In POSIX shells, "2>&1 > file" should redirect stderr to the
     // ORIGINAL stdout (before stdout was redirected to the file), so only stdout goes to the file.
-    // TODO: Bun's shell currently applies all redirects simultaneously rather than left-to-right,
+    // Bun's shell currently applies all redirects simultaneously rather than left-to-right,
     // so both streams end up going to the file. This test documents current behavior.
-    test("2>&1 > file ordering (current behavior: both to file)", async () => {
+    // See: https://github.com/oven-sh/bun/issues/25669 (low priority)
+    test.skipIf(isWindows)("2>&1 > file ordering (current behavior: both to file)", async () => {
       using dir = tempDir("redir-order", {});
       const result = await $`/bin/sh -c "echo out; echo err >&2" 2>&1 > ${dir}/out.txt`.cwd(String(dir)).quiet();
       // Current behavior: both stdout and stderr go to the file
@@ -196,21 +199,21 @@ describe("IOWriter file output redirection", () => {
     });
 
     // Test 2>&1 (stderr to stdout)
-    test("2>&1 redirects stderr to stdout", async () => {
+    test.skipIf(isWindows)("2>&1 redirects stderr to stdout", async () => {
       const result = await $`/bin/sh -c "echo out; echo err >&2" 2>&1`.quiet();
       expect(result.stdout.toString()).toBe("out\nerr\n");
       expect(result.stderr.toString()).toBe("");
     });
 
     // Test with external command (not builtin)
-    test(">&2 with external command", async () => {
+    test.skipIf(isWindows)(">&2 with external command", async () => {
       const result = await $`/bin/echo test >&2`.quiet();
       expect(result.stdout.toString()).toBe("");
       expect(result.stderr.toString()).toBe("test\n");
     });
 
     // Combined file redirect and fd dup
-    test("> file 2>&1 redirects both to file", async () => {
+    test.skipIf(isWindows)("> file 2>&1 redirects both to file", async () => {
       using dir = tempDir("redir", {});
       const result = await $`/bin/sh -c "echo out; echo err >&2" > ${dir}/both.txt 2>&1`.cwd(String(dir));
       expect(result.stdout.toString()).toBe("");
@@ -226,7 +229,7 @@ describe("IOWriter file output redirection", () => {
     });
 
     // Test >&1 with external command
-    test(">&1 is a no-op (external)", async () => {
+    test.skipIf(isWindows)(">&1 is a no-op (external)", async () => {
       const result = await $`/bin/echo test >&1`.quiet();
       expect(result.stdout.toString()).toBe("test\n");
       expect(result.stderr.toString()).toBe("");

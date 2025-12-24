@@ -156,7 +156,7 @@ const BufferedIoClosed = struct {
                     const readable = io.stdout;
 
                     // If the shell state is piped (inside a cmd substitution) aggregate the output of this command
-                    if (cmd.io.stdout == .pipe and cmd.io.stdout == .pipe and !cmd.redirectsElsewhere(.stdout)) {
+                    if (cmd.io.stdout == .pipe and !cmd.redirectsElsewhere(.stdout)) {
                         const the_slice = readable.pipe.slice();
                         bun.handleOom(cmd.base.shell.buffered_stdout().appendSlice(bun.default_allocator, the_slice));
                     }
@@ -170,7 +170,7 @@ const BufferedIoClosed = struct {
                     const readable = io.stderr;
 
                     // If the shell state is piped (inside a cmd substitution) aggregate the output of this command
-                    if (cmd.io.stderr == .pipe and cmd.io.stderr == .pipe and !cmd.redirectsElsewhere(.stderr)) {
+                    if (cmd.io.stderr == .pipe and !cmd.redirectsElsewhere(.stderr)) {
                         const the_slice = readable.pipe.slice();
                         bun.handleOom(cmd.base.shell.buffered_stderr().appendSlice(bun.default_allocator, the_slice));
                     }
@@ -282,11 +282,12 @@ pub fn next(this: *Cmd) Yield {
                     const io_kind = this.state.expanding_redirect.which;
 
                     // Get the redirect target for current stream
-                    const maybe_target: ?*const ast.RedirectTarget = switch (io_kind) {
-                        .stdin => if (this.node.redirects.stdin) |*r| r else null,
-                        .stdout => if (this.node.redirects.stdout) |*r| r else null,
-                        .stderr => if (this.node.redirects.stderr) |*r| r else null,
+                    const redirect_field = switch (io_kind) {
+                        .stdin => &this.node.redirects.stdin,
+                        .stdout => &this.node.redirects.stdout,
+                        .stderr => &this.node.redirects.stderr,
                     };
+                    const maybe_target: ?*const ast.RedirectTarget = if (redirect_field.* != .none) redirect_field else null;
 
                     // Check if this redirect needs atom expansion (and hasn't been expanded yet)
                     const path_list = switch (io_kind) {
@@ -584,22 +585,22 @@ fn initRedirections(this: *Cmd, spawn_args: *Subprocess.SpawnArgs) bun.JSError!?
     const redirects = &this.node.redirects;
 
     // Handle stdin redirect
-    if (redirects.stdin) |target| {
-        if (try this.initSingleRedirect(spawn_args, target, .stdin, &this.redirect_stdin_path, &this.redirect_stdin_fd)) |yield| {
+    if (redirects.stdin != .none) {
+        if (try this.initSingleRedirect(spawn_args, redirects.stdin, .stdin, &this.redirect_stdin_path, &this.redirect_stdin_fd)) |yield| {
             return yield;
         }
     }
 
     // Handle stdout redirect
-    if (redirects.stdout) |target| {
-        if (try this.initSingleRedirect(spawn_args, target, .stdout, &this.redirect_stdout_path, &this.redirect_stdout_fd)) |yield| {
+    if (redirects.stdout != .none) {
+        if (try this.initSingleRedirect(spawn_args, redirects.stdout, .stdout, &this.redirect_stdout_path, &this.redirect_stdout_fd)) |yield| {
             return yield;
         }
     }
 
     // Handle stderr redirect
-    if (redirects.stderr) |target| {
-        if (try this.initSingleRedirect(spawn_args, target, .stderr, &this.redirect_stderr_path, &this.redirect_stderr_fd)) |yield| {
+    if (redirects.stderr != .none) {
+        if (try this.initSingleRedirect(spawn_args, redirects.stderr, .stderr, &this.redirect_stderr_path, &this.redirect_stderr_fd)) |yield| {
             return yield;
         }
     }
@@ -622,6 +623,7 @@ fn initSingleRedirect(
     };
 
     switch (target) {
+        .none => unreachable, // Caller checks for .none before calling
         .atom => |atom_info| {
             if (expanded_path.items.len == 0) {
                 return this.writeFailingError("bun: ambiguous redirect: at `{s}`\n", .{spawn_args.cmd_parent.args.items[0] orelse "<unknown>"});

@@ -202,5 +202,19 @@ describe("IOWriter file output redirection", () => {
       expect(result.stderr.toString()).toBe("");
       expect(await Bun.file(`${dir}/both.txt`).text()).toBe("out\nerr\n");
     });
+
+    // Test >&1 (no-op - stdout to stdout)
+    test(">&1 is a no-op (builtin)", async () => {
+      const result = await $`echo test >&1`.quiet();
+      expect(result.stdout.toString()).toBe("test\n");
+      expect(result.stderr.toString()).toBe("");
+    });
+
+    // Test >&1 with external command
+    test(">&1 is a no-op (external)", async () => {
+      const result = await $`/bin/echo test >&1`.quiet();
+      expect(result.stdout.toString()).toBe("test\n");
+      expect(result.stderr.toString()).toBe("");
+    });
   });
 });

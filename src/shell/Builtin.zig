@@ -417,22 +417,22 @@ fn initRedirections(
     const redirects = &node.redirects;
 
     // Handle stdin redirect
-    if (redirects.stdin) |target| {
-        if (initSingleRedirect(cmd, kind, target, .stdin, &cmd.redirect_stdin_path, interpreter)) |yield| {
+    if (redirects.stdin != .none) {
+        if (initSingleRedirect(cmd, kind, redirects.stdin, .stdin, &cmd.redirect_stdin_path, interpreter)) |yield| {
             return yield;
         }
     }
 
     // Handle stdout redirect
-    if (redirects.stdout) |target| {
-        if (initSingleRedirect(cmd, kind, target, .stdout, &cmd.redirect_stdout_path, interpreter)) |yield| {
+    if (redirects.stdout != .none) {
+        if (initSingleRedirect(cmd, kind, redirects.stdout, .stdout, &cmd.redirect_stdout_path, interpreter)) |yield| {
             return yield;
         }
     }
 
     // Handle stderr redirect
-    if (redirects.stderr) |target| {
-        if (initSingleRedirect(cmd, kind, target, .stderr, &cmd.redirect_stderr_path, interpreter)) |yield| {
+    if (redirects.stderr != .none) {
+        if (initSingleRedirect(cmd, kind, redirects.stderr, .stderr, &cmd.redirect_stderr_path, interpreter)) |yield| {
             return yield;
         }
     }
@@ -449,6 +449,7 @@ fn initSingleRedirect(
     interpreter: *Interpreter,
 ) ?Yield {
     switch (target) {
+        .none => unreachable, // Caller checks for .none before calling
         .atom => |atom_info| {
             if (expanded_path.items.len == 0) {
                 return cmd.writeFailingError("bun: ambiguous redirect: at `{s}`\n", .{@tagName(kind)});
@@ -691,10 +692,17 @@ pub fn done(this: *Builtin, exit_code: anytype) Yield {
     const stderr_ptr: ?*std.array_list.Managed(u8) = if (this.stderr == .buf) this.stderr.buf.get() else null;
     const same_buf = stdout_ptr != null and stderr_ptr != null and stdout_ptr == stderr_ptr;
 
-    if (cmd.io.stdout == .pipe and cmd.io.stdout == .pipe and this.stdout == .buf) {
-        // If stdout was redirected to stderr (same buffer), don't copy to buffered_stdout
-        // The output will be copied to stderr below
-        if (!same_buf) {
+    // When streams share the same buffer, we need to determine which aggregation to perform
+    // based on the redirect direction:
+    // - For `2>&1`: stderr goes to stdout, so aggregate only to buffered_stdout
+    // - For `1>&2`: stdout goes to stderr, so aggregate only to buffered_stderr
+    const stdout_duped_to_stderr = cmd.node.redirects.stdout == .dup and cmd.node.redirects.stdout.dup == .stderr;
+    const stderr_duped_to_stdout = cmd.node.redirects.stderr == .dup and cmd.node.redirects.stderr.dup == .stdout;
+
+    if (cmd.io.stdout == .pipe and this.stdout == .buf) {
+        // Skip stdout aggregation if stdout was redirected to stderr (1>&2)
+        // In that case, the output will be aggregated to stderr below
+        if (!same_buf or !stdout_duped_to_stderr) {
             bun.handleOom(cmd.base.shell.buffered_stdout().appendSlice(
                 bun.default_allocator,
                 this.stdout.buf.get().items[0..],
@@ -702,11 +710,15 @@ pub fn done(this: *Builtin, exit_code: anytype) Yield {
         }
     }
     // Aggregate output data if shell state is piped and this cmd is piped
-    if (cmd.io.stderr == .pipe and cmd.io.stderr == .pipe and this.stderr == .buf) {
-        bun.handleOom(cmd.base.shell.buffered_stderr().appendSlice(
-            bun.default_allocator,
-            this.stderr.buf.get().items[0..],
-        ));
+    if (cmd.io.stderr == .pipe and this.stderr == .buf) {
+        // Skip stderr aggregation if stderr was redirected to stdout (2>&1)
+        // In that case, the output was already aggregated to stdout above
+        if (!same_buf or !stderr_duped_to_stdout) {
+            bun.handleOom(cmd.base.shell.buffered_stderr().appendSlice(
+                bun.default_allocator,
+                this.stderr.buf.get().items[0..],
+            ));
+        }
     }
 
     return cmd.parent.childDone(cmd, this.exit_code.?);

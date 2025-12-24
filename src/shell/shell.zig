@@ -822,29 +822,31 @@ pub const AST = struct {
 
     /// Redirect destinations for stdin, stdout, and stderr
     pub const Redirects = struct {
-        stdin: ?RedirectTarget = null,
-        stdout: ?RedirectTarget = null,
-        stderr: ?RedirectTarget = null,
+        stdin: RedirectTarget = .none,
+        stdout: RedirectTarget = .none,
+        stderr: RedirectTarget = .none,
 
         /// Type for specifying which IO stream
         pub const IoKind = enum { stdin, stdout, stderr };
 
         pub fn memoryCost(this: *const @This()) usize {
             var cost: usize = @sizeOf(Redirects);
-            if (this.stdin) |*r| cost += r.memoryCost();
-            if (this.stdout) |*r| cost += r.memoryCost();
-            if (this.stderr) |*r| cost += r.memoryCost();
+            cost += this.stdin.memoryCost();
+            cost += this.stdout.memoryCost();
+            cost += this.stderr.memoryCost();
             return cost;
         }
 
         /// Check if a given io stream is redirected elsewhere
         pub fn redirectsElsewhere(this: *const Redirects, comptime io_kind: IoKind) bool {
-            return @field(this, @tagName(io_kind)) != null;
+            return @field(this, @tagName(io_kind)) != .none;
         }
     };
 
     /// Where a stream is redirected to
     pub const RedirectTarget = union(enum) {
+        /// No redirect - use the default for this stream
+        none: void,
         /// Redirect to a file path (from shell text)
         atom: struct {
             atom: Atom,
@@ -857,6 +859,7 @@ pub const AST = struct {
 
         pub fn memoryCost(this: *const @This()) usize {
             return switch (this.*) {
+                .none => 0,
                 .atom => |a| @sizeOf(RedirectTarget) + a.atom.memoryCost(),
                 .jsbuf => @sizeOf(RedirectTarget),
                 .dup => @sizeOf(RedirectTarget),
@@ -1694,14 +1697,23 @@ pub const Parser = struct {
         while (self.match(.Redirect)) {
             const flags = self.prev().Redirect;
 
-            // Handle fd duplication (2>&1, 1>&2)
+            // Empty flags means a no-op redirect (e.g., >&1 which redirects stdout to stdout)
+            if (flags.isEmpty()) {
+                continue;
+            }
+
+            // Handle fd duplication (2>&1, 1>&2, >&0, >&2)
             if (flags.duplicate_out) {
                 // For "2>&1": flags.stdout=true means stderr goes to stdout
                 // For "1>&2": flags.stderr=true means stdout goes to stderr
-                if (flags.stdout) {
+                // For ">&0": flags.stdin=true means stdout goes to stdin
+                // For ">&2": flags.stderr=true means stdout goes to stderr
+                if (flags.stdin) {
+                    // >&0 - redirect stdout to stdin
+                    redirects.stdout = .{ .dup = .stdin };
+                } else if (flags.stdout) {
                     redirects.stderr = .{ .dup = .stdout };
-                }
-                if (flags.stderr) {
+                } else if (flags.stderr) {
                     redirects.stdout = .{ .dup = .stderr };
                 }
                 continue;
@@ -3054,21 +3066,31 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                 };
             }
 
-            // Check for >&1 or >&2 (fd duplication without explicit source fd)
-            // >&2 means stdout goes to stderr, >&1 means stdout goes to stdout (no-op)
+            // Check for >&0, >&1, or >&2 (fd duplication without explicit source fd)
+            // >&0 means redirect stdout to stdin (unusual but valid in POSIX)
+            // >&1 means stdout goes to stdout (no-op)
+            // >&2 means stdout goes to stderr
             if (dir == .out) {
                 if (self.peek()) |peeked| {
                     if (!peeked.escaped and peeked.char == '&') {
                         _ = self.eat();
                         if (self.peek()) |peeked2| {
                             switch (peeked2.char) {
-                                '1' => {
-                                    // >&1 means stdout to stdout (no-op in practice, but valid syntax)
+                                '0' => {
+                                    // >&0 means redirect stdout to stdin (unusual but valid)
                                     _ = self.eat();
                                     return .{
-                                        .stdout = true,
+                                        .stdin = true,
                                         .duplicate_out = true,
                                     };
+                                },
+                                '1' => {
+                                    // >&1 means stdout to stdout (no-op)
+                                    // Just consume the token and return a plain > redirect
+                                    // with no effect - the parser will not set any redirect
+                                    _ = self.eat();
+                                    // Return empty flags - this is effectively a no-op
+                                    return .{};
                                 },
                                 '2' => {
                                     // >&2 means stdout goes to stderr

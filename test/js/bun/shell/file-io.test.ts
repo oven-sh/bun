@@ -184,7 +184,7 @@ describe("IOWriter file output redirection", () => {
       .runAsTest("redirect then append redirect");
   });
 
-  describe("fd duplication redirects", () => {
+  describe.concurrent("fd duplication redirects", () => {
     // Test >&2 (shorthand for 1>&2 - stdout to stderr)
     test(">&2 redirects stdout to stderr (builtin)", async () => {
       const result = await $`echo test >&2`.quiet();

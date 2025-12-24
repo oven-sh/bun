@@ -154,6 +154,21 @@ describe("IOWriter file output redirection", () => {
       .fileEquals("output2.txt", "world\n")
       .runAsTest("stderr to original stdout, then stdout to file");
 
+    // Test redirect ordering: In POSIX shells, "2>&1 > file" should redirect stderr to the
+    // ORIGINAL stdout (before stdout was redirected to the file), so only stdout goes to the file.
+    // TODO: Bun's shell currently applies all redirects simultaneously rather than left-to-right,
+    // so both streams end up going to the file. This test documents current behavior.
+    test("2>&1 > file ordering (current behavior: both to file)", async () => {
+      using dir = tempDir("redir-order", {});
+      const result = await $`/bin/sh -c "echo out; echo err >&2" 2>&1 > ${dir}/out.txt`.cwd(String(dir)).quiet();
+      // Current behavior: both stdout and stderr go to the file
+      expect(result.stdout.toString()).toBe("");
+      expect(await Bun.file(`${dir}/out.txt`).text()).toBe("out\nerr\n");
+      // POSIX behavior would be:
+      // expect(result.stdout.toString()).toBe("err\n");
+      // expect(await Bun.file(`${dir}/out.txt`).text()).toBe("out\n");
+    });
+
     TestBuilder.command`echo "multi" > first.txt > second.txt`
       .exitCode(0)
       .fileEquals("second.txt", "multi\n")

@@ -251,7 +251,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
                 RETURN_IF_EXCEPTION(throwScope, {});
             }
 
-            JSC::PropertyNameArray keys(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
+            JSC::PropertyNameArrayBuilder keys(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
             envObject->methodTable()->getOwnPropertyNames(envObject, lexicalGlobalObject, keys, JSC::DontEnumPropertiesMode::Exclude);
             RETURN_IF_EXCEPTION(throwScope, {});
 
@@ -680,7 +680,7 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapSnapshotBody(
 
     auto* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
     if (!worker.isOnline()) {
-        promise->reject(globalObject,
+        promise->reject(vm, globalObject,
             Bun::createError(globalObject,
                 Bun::ErrorCode::ERR_WORKER_NOT_RUNNING,
                 "Worker instance not running"_s));

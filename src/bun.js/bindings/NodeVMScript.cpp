@@ -283,6 +283,7 @@ void NodeVMScript::destroy(JSCell* cell)
 static bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, NodeVMScript* script, std::optional<double> timeout)
 {
     if (vm.hasTerminationRequest()) {
+        vm.drainMicrotasksForGlobalObject(globalObject);
         vm.clearHasTerminationRequest();
         if (script->getSigintReceived()) {
             script->setSigintReceived(false);

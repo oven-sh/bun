@@ -65,12 +65,18 @@ pub const TracedOperation = struct {
     env_var: ?[]const u8,
     /// Which standard stream is being redirected (if any)
     stream: Stream,
+    /// Command arguments (for execute operations, excluding the command name itself)
+    args: ?[]const []const u8,
 
     pub fn deinit(this: *TracedOperation, allocator: Allocator) void {
         if (this.path) |p| allocator.free(p);
         if (this.command) |c| allocator.free(c);
         allocator.free(this.cwd);
         if (this.env_var) |e| allocator.free(e);
+        if (this.args) |args| {
+            for (args) |arg| allocator.free(arg);
+            allocator.free(args);
+        }
     }
 
     pub fn toJS(this: *const TracedOperation, globalThis: *JSGlobalObject) bun.JSError!JSValue {
@@ -125,6 +131,17 @@ pub const TracedOperation = struct {
             bun.String.static("stream"),
             this.stream.toJS(globalThis),
         );
+
+        // Command arguments (for execute operations)
+        if (this.args) |args| {
+            const arr = try jsc.JSValue.createEmptyArray(globalThis, args.len);
+            for (args, 0..) |arg, i| {
+                try arr.putIndex(globalThis, @intCast(i), bun.String.init(arg).toJS(globalThis));
+            }
+            obj.put(globalThis, bun.String.static("args"), arr);
+        } else {
+            obj.put(globalThis, bun.String.static("args"), .null);
+        }
 
         return obj;
     }
@@ -269,11 +286,34 @@ pub const TraceContext = struct {
     }
 
     pub fn addOperation(this: *TraceContext, flags: u32, path: ?[]const u8, command: ?[]const u8, env_var: ?[]const u8) void {
-        this.addOperationWithStream(flags, path, command, env_var, .none);
+        this.addOperationFull(flags, path, command, env_var, .none, null);
     }
 
     pub fn addOperationWithStream(this: *TraceContext, flags: u32, path: ?[]const u8, command: ?[]const u8, env_var: ?[]const u8, stream: Stream) void {
+        this.addOperationFull(flags, path, command, env_var, stream, null);
+    }
+
+    pub fn addOperationWithArgs(this: *TraceContext, flags: u32, path: ?[]const u8, command: ?[]const u8, env_var: ?[]const u8, args: ?[]const []const u8) void {
+        this.addOperationFull(flags, path, command, env_var, .none, args);
+    }
+
+    pub fn addOperationFull(this: *TraceContext, flags: u32, path: ?[]const u8, command: ?[]const u8, env_var: ?[]const u8, stream: Stream, args: ?[]const []const u8) void {
         const resolved_path = if (path) |p| this.resolvePath(p) else null;
+
+        // Duplicate args array
+        const duped_args: ?[]const []const u8 = if (args) |a| blk: {
+            const arr = this.allocator.alloc([]const u8, a.len) catch break :blk null;
+            for (a, 0..) |arg, i| {
+                arr[i] = this.allocator.dupe(u8, arg) catch {
+                    // Free already allocated
+                    for (arr[0..i]) |prev| this.allocator.free(prev);
+                    this.allocator.free(arr);
+                    break :blk null;
+                };
+            }
+            break :blk arr;
+        } else null;
+
         this.result.addOperation(.{
             .flags = flags,
             .path = resolved_path,
@@ -281,6 +321,7 @@ pub const TraceContext = struct {
             .cwd = bun.handleOom(this.allocator.dupe(u8, this.cwdSlice())),
             .env_var = if (env_var) |e| bun.handleOom(this.allocator.dupe(u8, e)) else null,
             .stream = stream,
+            .args = duped_args,
         });
     }
 
@@ -635,19 +676,36 @@ fn traceBuiltin(ctx: *TraceContext, kind: Interpreter.Builtin.Kind, cmd: *const 
 }
 
 fn traceExternalCommand(ctx: *TraceContext, cmd_name: []const u8, cmd: *const ast.Cmd, redir: *const RedirectInfo) void {
-    _ = cmd;
     // Resolve the command path using which
     // Get PATH from environment
     const path_env = ctx.getVar("PATH") orelse "/usr/bin:/bin";
     var path_buf: bun.PathBuffer = undefined;
     const resolved = which(&path_buf, path_env, ctx.cwdSlice(), cmd_name);
 
-    // Record the command execution
+    // Collect arguments (skip the command name itself)
+    var args_list = std.array_list.Managed([]const u8).init(ctx.allocator);
+    defer args_list.deinit();
+
+    if (cmd.name_and_args.len > 1) {
+        for (cmd.name_and_args[1..]) |*arg| {
+            const expanded = expandAtom(ctx, arg);
+            args_list.append(expanded) catch {};
+        }
+    }
+
+    const args: ?[]const []const u8 = if (args_list.items.len > 0) args_list.items else null;
+
+    // Record the command execution with args
     if (resolved) |exe_path| {
-        ctx.addOperation(Permission.EXECUTE, exe_path, cmd_name, null);
+        ctx.addOperationWithArgs(Permission.EXECUTE, exe_path, cmd_name, null, args);
     } else {
         // Command not found, but still record the execute attempt
-        ctx.addOperation(Permission.EXECUTE, null, cmd_name, null);
+        ctx.addOperationWithArgs(Permission.EXECUTE, null, cmd_name, null, args);
+    }
+
+    // Free the expanded args (they were duped in addOperationWithArgs)
+    for (args_list.items) |arg| {
+        ctx.allocator.free(arg);
     }
 
     // Handle stdin redirection

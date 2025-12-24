@@ -36,6 +36,8 @@ interface ShellTraceOperation {
   command: string | null;
   cwd: string;
   envVar: string | null;
+  /** Command arguments (for execute operations, excluding command name) */
+  args: string[] | null;
 }
 
 interface ShellTraceResult {

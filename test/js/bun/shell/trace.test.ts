@@ -257,6 +257,41 @@ describe("Bun.$.trace", () => {
     expect(execOps[0].command).toBe("/bin/ls");
   });
 
+  test("external commands include args array", () => {
+    const result = $.trace`grep -r 'pattern' src/`;
+    expect(result.success).toBe(true);
+
+    const execOps = result.operations.filter(op => op.flags === EXECUTE);
+    expect(execOps.length).toBe(1);
+    expect(execOps[0].command).toBe("grep");
+    expect(execOps[0].args).toEqual(["-r", "pattern", "src/"]);
+  });
+
+  test("pipeline commands each have their own args", () => {
+    const result = $.trace`git diff HEAD^ -- src/ | head -100`;
+    expect(result.success).toBe(true);
+
+    const execOps = result.operations.filter(op => op.flags === EXECUTE);
+    expect(execOps.length).toBe(2);
+
+    expect(execOps[0].command).toBe("git");
+    expect(execOps[0].args).toEqual(["diff", "HEAD^", "--", "src/"]);
+
+    expect(execOps[1].command).toBe("head");
+    expect(execOps[1].args).toEqual(["-100"]);
+  });
+
+  test("builtins do not have args (tracked as file operations)", () => {
+    const result = $.trace`cat file1.txt file2.txt`;
+    expect(result.success).toBe(true);
+
+    // Builtins track files, not args
+    const readOps = result.operations.filter(op => op.flags === READ);
+    expect(readOps.length).toBe(2);
+    expect(readOps[0].args).toBeNull();
+    expect(readOps[1].args).toBeNull();
+  });
+
   test("traces && (and) operator", () => {
     const result = $.trace`cat /tmp/a.txt && cat /tmp/b.txt`;
     expect(result.success).toBe(true);

@@ -25,7 +25,7 @@ mode: center
 
     	```bash terminal icon="terminal"
     	bun add -d prisma
-    	bun add @prisma/client @prisma/extension-accelerate
+    	bun add @prisma/client @prisma/extension-accelerate @prisma/adapter-pg
     	```
     </Step>
 
@@ -48,7 +48,6 @@ mode: center
 
     	datasource db {
     		provider = "postgresql"
-    		url      = env("DATABASE_URL")
     	}
 
     	model User { // [!code ++]
@@ -107,10 +106,15 @@ mode: center
     	Now we need to create a Prisma client instance. Create a new file `prisma/db.ts` to initialize the PrismaClient with the Postgres adapter.
 
     	```ts prisma/db.ts icon="/icons/typescript.svg"
-    	import { PrismaClient } from "./generated/client";
-    	import { withAccelerate } from '@prisma/extension-accelerate'
-
-    	export const prisma = new PrismaClient().$extends(withAccelerate())
+		import { PrismaPg } from '@prisma/adapter-pg'
+		import { PrismaClient } from "../generated/prisma/client";
+		
+		const connectionString = `${process.env.DATABASE_URL}`
+		
+		const adapter = new PrismaPg({ connectionString })
+		const prisma = new PrismaClient({ adapter })
+		
+		export { prisma }
     	```
     </Step>
 

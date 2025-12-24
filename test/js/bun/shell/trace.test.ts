@@ -123,6 +123,16 @@ describe("Bun.$.trace", () => {
     expect(chdirOps[0].path).toBe("/tmp");
   });
 
+  test("traces environment variable assignments with names", () => {
+    const result = $.trace`FOO=1 BAR=2 echo test`;
+    expect(result.success).toBe(true);
+
+    const envOps = result.operations.filter(op => op.flags === Permission.ENV);
+    expect(envOps.length).toBe(2);
+    expect(envOps[0].envVar).toBe("FOO");
+    expect(envOps[1].envVar).toBe("BAR");
+  });
+
   test("traces output redirection combined with command", () => {
     const result = $.trace`echo hello > /tmp/output.txt`;
     expect(result.success).toBe(true);
@@ -288,8 +298,8 @@ describe("Bun.$.trace", () => {
     // Builtins track files, not args
     const readOps = result.operations.filter(op => op.flags === READ);
     expect(readOps.length).toBe(2);
-    expect(readOps[0].args).toBeNull();
-    expect(readOps[1].args).toBeNull();
+    expect(readOps[0].args).toBeUndefined();
+    expect(readOps[1].args).toBeUndefined();
   });
 
   test("traces && (and) operator", () => {

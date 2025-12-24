@@ -32,12 +32,18 @@ interface ShellTraceFlags {
 interface ShellTraceOperation {
   /** Permission flags (octal integer, can be combined with |) */
   flags: number;
-  path: string | null;
-  command: string | null;
+  /** Working directory at time of operation */
   cwd: string;
-  envVar: string | null;
-  /** Command arguments (for execute operations, excluding command name) */
-  args: string[] | null;
+  /** Absolute path that would be accessed (for file/execute operations) */
+  path?: string;
+  /** Command name (for execute operations) */
+  command?: string;
+  /** Environment variable name (for ENV operations) */
+  envVar?: string;
+  /** Which standard stream is being redirected: "stdin", "stdout", or "stderr" */
+  stream?: "stdin" | "stdout" | "stderr";
+  /** Command arguments for external commands (excluding command name) */
+  args?: string[];
 }
 
 interface ShellTraceResult {

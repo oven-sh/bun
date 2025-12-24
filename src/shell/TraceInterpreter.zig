@@ -89,14 +89,20 @@ pub const TracedOperation = struct {
             jsc.JSValue.jsNumber(@as(i32, @intCast(this.flags))),
         );
 
+        // cwd is always present
+        obj.put(
+            globalThis,
+            bun.String.static("cwd"),
+            bun.String.init(this.cwd).toJS(globalThis),
+        );
+
+        // Only set optional properties if they have values (otherwise undefined)
         if (this.path) |p| {
             obj.put(
                 globalThis,
                 bun.String.static("path"),
                 bun.String.init(p).toJS(globalThis),
             );
-        } else {
-            obj.put(globalThis, bun.String.static("path"), .null);
         }
 
         if (this.command) |c| {
@@ -105,15 +111,7 @@ pub const TracedOperation = struct {
                 bun.String.static("command"),
                 bun.String.init(c).toJS(globalThis),
             );
-        } else {
-            obj.put(globalThis, bun.String.static("command"), .null);
         }
-
-        obj.put(
-            globalThis,
-            bun.String.static("cwd"),
-            bun.String.init(this.cwd).toJS(globalThis),
-        );
 
         if (this.env_var) |e| {
             obj.put(
@@ -121,16 +119,16 @@ pub const TracedOperation = struct {
                 bun.String.static("envVar"),
                 bun.String.init(e).toJS(globalThis),
             );
-        } else {
-            obj.put(globalThis, bun.String.static("envVar"), .null);
         }
 
-        // Stream redirection (stdin, stdout, stderr, or null)
-        obj.put(
-            globalThis,
-            bun.String.static("stream"),
-            this.stream.toJS(globalThis),
-        );
+        // Stream redirection (stdin, stdout, stderr) - only set if not none
+        if (this.stream != .none) {
+            obj.put(
+                globalThis,
+                bun.String.static("stream"),
+                this.stream.toJS(globalThis),
+            );
+        }
 
         // Command arguments (for execute operations)
         if (this.args) |args| {
@@ -139,8 +137,6 @@ pub const TracedOperation = struct {
                 try arr.putIndex(globalThis, @intCast(i), bun.String.init(arg).toJS(globalThis));
             }
             obj.put(globalThis, bun.String.static("args"), arr);
-        } else {
-            obj.put(globalThis, bun.String.static("args"), .null);
         }
 
         return obj;
@@ -396,9 +392,8 @@ fn traceSubshell(ctx: *TraceContext, script: *const ast.Script) void {
 }
 
 fn traceAssign(ctx: *TraceContext, assign: *const ast.Assign) void {
-    _ = assign;
-    // Track that we're modifying environment
-    ctx.addOperation(Permission.ENV, null, null, null);
+    // Track that we're modifying environment, including the variable name
+    ctx.addOperation(Permission.ENV, null, null, assign.label);
 }
 
 fn traceBinary(ctx: *TraceContext, binary: *const ast.Binary) void {

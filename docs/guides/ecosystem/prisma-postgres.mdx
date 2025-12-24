@@ -21,11 +21,11 @@ mode: center
     </Step>
 
     <Step title="Install Prisma dependencies">
-    	Then install the Prisma CLI (`prisma`), Prisma Client (`@prisma/client`), and the accelerate extension as dependencies.
+    	Then install the Prisma CLI (`prisma`), Prisma Client (`@prisma/client`), and the adapter-pg extension as dependencies.
 
     	```bash terminal icon="terminal"
     	bun add -d prisma
-    	bun add @prisma/client @prisma/extension-accelerate @prisma/adapter-pg
+    	bun add @prisma/client @prisma/adapter-pg
     	```
     </Step>
 
@@ -102,7 +102,7 @@ mode: center
     	```
     </Step>
 
-    <Step title="Initialize Prisma Client with Accelerate">
+    <Step title="Initialize Prisma Client with the Postgres adapter">
     	Now we need to create a Prisma client instance. Create a new file `prisma/db.ts` to initialize the PrismaClient with the Postgres adapter.
 
     	```ts prisma/db.ts icon="/icons/typescript.svg"

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version: 24
+# Version: 25
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -1162,7 +1162,8 @@ install_llvm() {
 				"clang-$(llvm_version)" \
 				"lld-$(llvm_version)" \
 				"llvm-$(llvm_version)-dev" \
-				"llvm-$(llvm_version)-tools"
+				"llvm-$(llvm_version)-tools" \
+				"libclang-rt-$(llvm_version)-dev"
 		else
 			bash="$(require bash)"
 			llvm_script="$(download_file "https://apt.llvm.org/llvm.sh")"

@@ -1970,6 +1970,26 @@ declare module "bun" {
      * @default true
      */
     autoloadBunfig?: boolean;
+    /**
+     * Whether to autoload tsconfig.json when the standalone executable runs
+     *
+     * Standalone-only: applies only when building/running the standalone executable.
+     *
+     * Equivalent CLI flags: `--compile-autoload-tsconfig`, `--no-compile-autoload-tsconfig`
+     *
+     * @default false
+     */
+    autoloadTsconfig?: boolean;
+    /**
+     * Whether to autoload package.json when the standalone executable runs
+     *
+     * Standalone-only: applies only when building/running the standalone executable.
+     *
+     * Equivalent CLI flags: `--compile-autoload-package-json`, `--no-compile-autoload-package-json`
+     *
+     * @default false
+     */
+    autoloadPackageJson?: boolean;
     windows?: {
       hideConsole?: boolean;
       icon?: string;

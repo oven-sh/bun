@@ -188,7 +188,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBroadcastChannelPrototype_inspectCustom, (JSC::JSGlob
 
     JSObject* options = optionsValue.toObject(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
-    PropertyNameArray optionsArray(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+    PropertyNameArrayBuilder optionsArray(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
     options->getPropertyNames(lexicalGlobalObject, optionsArray, DontEnumPropertiesMode::Exclude);
     RETURN_IF_EXCEPTION(throwScope, {});
 

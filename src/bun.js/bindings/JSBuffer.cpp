@@ -1584,7 +1584,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_inspectBody(JSC::JSGlobalOb
     if (ctx.toBoolean(globalObject)) {
         auto showHidden = ctx.get(globalObject, Identifier::fromString(vm, "showHidden"_s));
         RETURN_IF_EXCEPTION(scope, {});
-        JSC::PropertyNameArray array(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+        JSC::PropertyNameArrayBuilder array(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
 
         auto filter = showHidden.toBoolean(globalObject) ? DontEnumPropertiesMode::Include : DontEnumPropertiesMode::Exclude;
 

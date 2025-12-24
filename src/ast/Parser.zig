@@ -134,17 +134,17 @@ pub const Parser = struct {
                 // - import 'foo';
                 // - import("foo")
                 // - require("foo")
-                import_record.is_unused = import_record.is_unused or
+                import_record.flags.is_unused = import_record.flags.is_unused or
                     (import_record.kind == .stmt and
-                        !import_record.was_originally_bare_import and
-                        !import_record.calls_runtime_re_export_fn);
+                        !import_record.flags.was_originally_bare_import and
+                        !import_record.flags.calls_runtime_re_export_fn);
             }
 
             var iter = scan_pass.used_symbols.iterator();
             while (iter.next()) |entry| {
                 const val = entry.value_ptr;
                 if (val.used) {
-                    scan_pass.import_records.items[val.import_record_index].is_unused = false;
+                    scan_pass.import_records.items[val.import_record_index].flags.is_unused = false;
                 }
             }
         }
@@ -1023,7 +1023,7 @@ pub const Parser = struct {
 
                 const import_record: ?*const ImportRecord = brk: {
                     for (p.import_records.items) |*import_record| {
-                        if (import_record.is_internal or import_record.is_unused) continue;
+                        if (import_record.flags.is_internal or import_record.flags.is_unused) continue;
                         if (import_record.kind == .stmt) break :brk import_record;
                     }
 
@@ -1094,7 +1094,7 @@ pub const Parser = struct {
                     // If they use an import statement, we say it's ESM because that's not allowed in CommonJS files.
                     const uses_any_import_statements = brk: {
                         for (p.import_records.items) |*import_record| {
-                            if (import_record.is_internal or import_record.is_unused) continue;
+                            if (import_record.flags.is_internal or import_record.flags.is_unused) continue;
                             if (import_record.kind == .stmt) break :brk true;
                         }
 

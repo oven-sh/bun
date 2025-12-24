@@ -74,7 +74,7 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
             else
                 .file;
 
-            if (import_record.is_external_without_side_effects) {
+            if (import_record.flags.is_external_without_side_effects) {
                 debug("Leaving external import: {s}", .{import_record.path.text});
                 return;
             }

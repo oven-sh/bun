@@ -78,12 +78,12 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSErr
 /// - An object { [path: string]: Blob | string | ArrayBufferView | ArrayBufferLike }
 /// - A Blob, ArrayBufferView, or ArrayBufferLike (assumes it's already a valid archive)
 pub fn from(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    const args = callframe.arguments_old(1);
-    if (args.len < 1) {
+    const args = callframe.argumentsAsArray(1);
+    if (args[0] == .zero) {
         return globalThis.throwInvalidArguments("Archive.from requires an argument", .{});
     }
 
-    return fromValue(globalThis, args.ptr[0]);
+    return fromValue(globalThis, args[0]);
 }
 
 /// Create archive from a value (helper for both from() and write())
@@ -132,7 +132,7 @@ fn buildTarballFromObject(globalThis: *jsc.JSGlobalObject, obj: jsc.JSValue) bun
     };
 
     // Collect entries first
-    var entries = std.StringArrayHashMap([]u8).init(allocator);
+    var entries = bun.StringArrayHashMap([]u8).init(allocator);
     defer {
         var iter = entries.iterator();
         while (iter.next()) |entry| {
@@ -198,14 +198,10 @@ fn getEntryDataCopy(globalThis: *jsc.JSGlobalObject, value: jsc.JSValue, allocat
 /// Static method: Archive.write(path, data, compress?)
 /// Creates and writes an archive to disk in one operation
 pub fn write(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    const args = callframe.arguments_old(3);
-    if (args.len < 2) {
+    const path_arg, const data_arg, const compress_arg = callframe.argumentsAsArray(3);
+    if (data_arg == .zero) {
         return globalThis.throwInvalidArguments("Archive.write requires at least 2 arguments (path, data)", .{});
     }
-
-    const path_arg = args.ptr[0];
-    const data_arg = args.ptr[1];
-    const compress_arg = if (args.len > 2) args.ptr[2] else jsc.JSValue.js_undefined;
 
     // Get the path
     if (!path_arg.isString()) {
@@ -278,14 +274,9 @@ fn parseCompressArg(globalThis: *jsc.JSGlobalObject, arg: jsc.JSValue) bun.JSErr
 /// Extracts the archive to the given path
 /// Returns Promise<number> with count of extracted files
 pub fn extract(this: *Archive, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    const args = callframe.arguments_old(1);
-    if (args.len < 1) {
+    const path_arg = callframe.argumentsAsArray(1)[0];
+    if (path_arg == .zero or !path_arg.isString()) {
         return globalThis.throwInvalidArguments("Archive.extract requires a path argument", .{});
-    }
-
-    const path_arg = args.ptr[0];
-    if (!path_arg.isString()) {
-        return globalThis.throwInvalidArguments("Archive.extract: first argument must be a string path", .{});
     }
 
     const path_slice = try path_arg.toSlice(globalThis, bun.default_allocator);
@@ -302,8 +293,7 @@ pub fn extract(this: *Archive, globalThis: *jsc.JSGlobalObject, callframe: *jsc.
 /// Instance method: archive.blob(compress?)
 /// Returns Promise<Blob> with the archive data
 pub fn blob(this: *Archive, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    const args = callframe.arguments_old(1);
-    const compress_arg = if (args.len > 0) args.ptr[0] else jsc.JSValue.js_undefined;
+    const compress_arg = callframe.argumentsAsArray(1)[0];
 
     const use_gzip = try parseCompressArg(globalThis, compress_arg);
 
@@ -318,8 +308,7 @@ pub fn blob(this: *Archive, globalThis: *jsc.JSGlobalObject, callframe: *jsc.Cal
 /// Instance method: archive.bytes(compress?)
 /// Returns Promise<Uint8Array> with the archive data
 pub fn bytes(this: *Archive, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    const args = callframe.arguments_old(1);
-    const compress_arg = if (args.len > 0) args.ptr[0] else jsc.JSValue.js_undefined;
+    const compress_arg = callframe.argumentsAsArray(1)[0];
 
     const use_gzip = try parseCompressArg(globalThis, compress_arg);
 
@@ -623,16 +612,22 @@ pub const WriteTask = struct {
         };
         defer bun.default_allocator.free(path_z);
 
-        const file = std.fs.cwd().createFile(path_z, .{}) catch |err| {
-            this.result = .{ .err = @errorName(err) };
-            return;
+        const file = switch (bun.sys.File.openat(.cwd(), path_z, bun.O.CREAT | bun.O.WRONLY | bun.O.TRUNC, 0o644)) {
+            .err => |err| {
+                this.result = .{ .err = err.name() };
+                return;
+            },
+            .result => |f| f,
         };
         defer file.close();
 
-        file.writeAll(data_to_write) catch |err| {
-            this.result = .{ .err = @errorName(err) };
-            return;
-        };
+        switch (file.writeAll(data_to_write)) {
+            .err => |err| {
+                this.result = .{ .err = err.name() };
+                return;
+            },
+            .result => {},
+        }
 
         this.result = .{ .success = {} };
     }
@@ -780,7 +775,7 @@ const GrowingBuffer = struct {
 };
 
 // Build a tarball from a hashmap of entries using a growing memory buffer
-fn buildTarballFromEntries(entries: std.StringArrayHashMap([]u8), use_gzip: bool, allocator: std.mem.Allocator) ![]u8 {
+fn buildTarballFromEntries(entries: bun.StringArrayHashMap([]u8), use_gzip: bool, allocator: std.mem.Allocator) ![]u8 {
     const lib = libarchive.lib;
 
     var growing_buffer = GrowingBuffer.init(allocator);

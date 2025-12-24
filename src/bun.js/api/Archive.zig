@@ -615,7 +615,8 @@ pub const WriteTask = struct {
 
         const file = switch (bun.sys.File.openat(.cwd(), path_z, bun.O.CREAT | bun.O.WRONLY | bun.O.TRUNC, 0o644)) {
             .err => |err| {
-                this.result = .{ .sys_err = err };
+                // Clone to avoid dangling pointers to stack/freed buffers
+                this.result = .{ .sys_err = err.clone(bun.default_allocator) };
                 return;
             },
             .result => |f| f,
@@ -624,7 +625,8 @@ pub const WriteTask = struct {
 
         switch (file.writeAll(data_to_write)) {
             .err => |err| {
-                this.result = .{ .sys_err = err };
+                // Clone to avoid dangling pointers to stack/freed buffers
+                this.result = .{ .sys_err = err.clone(bun.default_allocator) };
                 return;
             },
             .result => {},
@@ -643,6 +645,11 @@ pub const WriteTask = struct {
         defer {
             bun.default_allocator.free(this.archive_data);
             bun.default_allocator.free(this.path);
+            // Free cloned sys_err path/dest if present
+            if (this.result == .sys_err) {
+                var sys_err = this.result.sys_err;
+                sys_err.deinit();
+            }
             bun.destroy(this);
         }
 

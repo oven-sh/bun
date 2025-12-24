@@ -1088,6 +1088,7 @@ const Allocator = std.mem.Allocator;
 const bun = @import("bun");
 const ResolvePath = bun.path;
 const which = bun.which;
+const GlobWalker = bun.glob.BunGlobWalker;
 
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
@@ -1101,4 +1102,3 @@ const ast = shell.AST;
 
 const Braces = shell.interpret.Braces;
 const ShellArgs = shell.interpret.ShellArgs;
-const GlobWalker = bun.glob.BunGlobWalker;

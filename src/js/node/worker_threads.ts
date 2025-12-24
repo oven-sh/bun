@@ -73,6 +73,11 @@ function injectFakeEmitter(Class) {
   Class.prototype.on = function (event, listener) {
     this.addEventListener(event, functionForEventType(event, listener));
 
+    // Auto-start MessagePort when adding a 'message' listener (Node.js compatibility)
+    if (event === "message" && this.start) {
+      this.start();
+    }
+
     return this;
   };
 
@@ -88,6 +93,11 @@ function injectFakeEmitter(Class) {
 
   Class.prototype.once = function (event, listener) {
     this.addEventListener(event, functionForEventType(event, listener), { once: true });
+
+    // Auto-start MessagePort when adding a 'message' listener (Node.js compatibility)
+    if (event === "message" && this.start) {
+      this.start();
+    }
 
     return this;
   };

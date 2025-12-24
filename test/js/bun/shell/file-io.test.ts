@@ -215,7 +215,7 @@ describe("IOWriter file output redirection", () => {
     // Combined file redirect and fd dup
     test.skipIf(isWindows)("> file 2>&1 redirects both to file", async () => {
       using dir = tempDir("redir", {});
-      const result = await $`/bin/sh -c "echo out; echo err >&2" > ${dir}/both.txt 2>&1`.cwd(String(dir));
+      const result = await $`/bin/sh -c "echo out; echo err >&2" > ${dir}/both.txt 2>&1`.cwd(String(dir)).quiet();
       expect(result.stdout.toString()).toBe("");
       expect(result.stderr.toString()).toBe("");
       expect(await Bun.file(`${dir}/both.txt`).text()).toBe("out\nerr\n");

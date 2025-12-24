@@ -166,6 +166,7 @@ describe("IOWriter file output redirection", () => {
       const result = await $`/bin/sh -c "echo out; echo err >&2" 2>&1 > ${dir}/out.txt`.cwd(String(dir)).quiet();
       // Current behavior: both stdout and stderr go to the file
       expect(result.stdout.toString()).toBe("");
+      expect(result.stderr.toString()).toBe("");
       expect(await Bun.file(`${dir}/out.txt`).text()).toBe("out\nerr\n");
       // POSIX behavior would be:
       // expect(result.stdout.toString()).toBe("err\n");

@@ -325,12 +325,24 @@ describe("Bun.$.trace", () => {
     expect(readOps[0].path).toContain(".config/test.txt");
   });
 
-  test("keeps glob patterns literal (cannot expand without filesystem)", () => {
-    const result = $.trace`cat /tmp/*.txt`;
+  test("expands glob patterns to matching files", () => {
+    // Create test files for glob expansion
+    const fs = require("fs");
+    const testDir = "/tmp/trace-glob-test";
+    fs.mkdirSync(testDir, { recursive: true });
+    fs.writeFileSync(`${testDir}/a.txt`, "");
+    fs.writeFileSync(`${testDir}/b.txt`, "");
+    fs.writeFileSync(`${testDir}/c.txt`, "");
+
+    const result = $.trace`cat ${testDir}/*.txt`;
     expect(result.success).toBe(true);
 
     const readOps = result.operations.filter(op => op.flags === READ);
-    expect(readOps.length).toBe(1);
-    expect(readOps[0].path).toBe("/tmp/*.txt");
+    expect(readOps.length).toBe(3);
+    const paths = readOps.map(op => op.path).sort();
+    expect(paths).toEqual([`${testDir}/a.txt`, `${testDir}/b.txt`, `${testDir}/c.txt`]);
+
+    // Cleanup
+    fs.rmSync(testDir, { recursive: true });
   });
 });

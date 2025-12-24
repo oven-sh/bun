@@ -483,7 +483,7 @@ fn traceCmd(ctx: *TraceContext, cmd: *const ast.Cmd) void {
 
 /// Expand command arguments and extract file paths (skipping flags).
 /// Returns a list of expanded file paths. Caller owns the returned memory.
-/// Handles brace expansion, so {a,b}.txt becomes a.txt and b.txt.
+/// Handles brace expansion ({a,b}.txt) and glob expansion (*.txt).
 fn extractFileArgs(ctx: *TraceContext, cmd: *const ast.Cmd) std.array_list.Managed([]const u8) {
     var file_args = std.array_list.Managed([]const u8).init(ctx.allocator);
 
@@ -500,6 +500,9 @@ fn extractFileArgs(ctx: *TraceContext, cmd: *const ast.Cmd) std.array_list.Manag
             }
         }
     }
+
+    // Expand glob patterns (e.g., *.txt -> file1.txt, file2.txt)
+    expandGlobs(ctx, &file_args);
 
     return file_args;
 }
@@ -805,6 +808,105 @@ fn expandBraces(ctx: *TraceContext, input: []const u8) std.array_list.Managed([]
     return out;
 }
 
+/// Expand glob patterns like *.txt into matching file paths
+fn expandGlobs(ctx: *TraceContext, patterns: *std.array_list.Managed([]const u8)) void {
+    var i: usize = 0;
+    while (i < patterns.items.len) {
+        const pattern = patterns.items[i];
+
+        // Check if this pattern contains glob syntax
+        if (!bun.glob.detectGlobSyntax(pattern)) {
+            i += 1;
+            continue;
+        }
+
+        // This pattern has glob syntax - expand it
+        var arena = std.heap.ArenaAllocator.init(ctx.allocator);
+        defer arena.deinit();
+
+        var walker: GlobWalker = .{};
+        const init_result = walker.initWithCwd(
+            &arena,
+            pattern,
+            ctx.cwdSlice(),
+            false, // dot
+            true, // absolute (return absolute paths)
+            false, // follow_symlinks
+            false, // error_on_broken_symlinks
+            false, // only_files (include directories too)
+        ) catch {
+            i += 1;
+            continue;
+        };
+
+        switch (init_result) {
+            .err => {
+                i += 1;
+                continue;
+            },
+            .result => {},
+        }
+
+        var iter: GlobWalker.Iterator = .{ .walker = &walker };
+        const iter_init = iter.init() catch {
+            i += 1;
+            continue;
+        };
+        switch (iter_init) {
+            .err => {
+                i += 1;
+                continue;
+            },
+            .result => {},
+        }
+
+        // Collect all matched paths
+        var matched_paths = std.array_list.Managed([]const u8).init(ctx.allocator);
+        while (true) {
+            const next_result = iter.next() catch break;
+            switch (next_result) {
+                .err => break,
+                .result => |maybe_path| {
+                    if (maybe_path) |path| {
+                        // Dupe the path since it's owned by the arena
+                        const duped = ctx.allocator.dupe(u8, path) catch break;
+                        matched_paths.append(duped) catch {
+                            ctx.allocator.free(duped);
+                            break;
+                        };
+                    } else {
+                        // No more matches
+                        break;
+                    }
+                },
+            }
+        }
+
+        // If we found matches, replace the pattern with matched paths
+        if (matched_paths.items.len > 0) {
+            // Free the original pattern
+            ctx.allocator.free(pattern);
+
+            // Remove the pattern from the list
+            _ = patterns.orderedRemove(i);
+
+            // Insert all matched paths at position i
+            for (matched_paths.items) |matched_path| {
+                patterns.insert(i, matched_path) catch {
+                    ctx.allocator.free(matched_path);
+                    continue;
+                };
+                i += 1;
+            }
+            matched_paths.deinit();
+        } else {
+            // No matches - keep original pattern
+            matched_paths.deinit();
+            i += 1;
+        }
+    }
+}
+
 /// Expand an atom to a single string (for backward compatibility).
 /// For brace expansions, only returns the first result.
 fn expandAtom(ctx: *TraceContext, atom: *const ast.Atom) []const u8 {
@@ -999,3 +1101,4 @@ const ast = shell.AST;
 
 const Braces = shell.interpret.Braces;
 const ShellArgs = shell.interpret.ShellArgs;
+const GlobWalker = bun.glob.BunGlobWalker;

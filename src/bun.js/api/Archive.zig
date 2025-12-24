@@ -258,16 +258,20 @@ fn parseCompressArg(globalThis: *jsc.JSGlobalObject, arg: jsc.JSValue) bun.JSErr
         return false;
     }
 
+    if (arg.isBoolean()) {
+        return arg.toBoolean();
+    }
+
     if (arg.isString()) {
         const str = try arg.toSlice(globalThis, bun.default_allocator);
         defer str.deinit();
         if (std.mem.eql(u8, str.slice(), "gzip")) {
             return true;
         }
-        return globalThis.throwInvalidArguments("Archive: compress argument must be 'gzip' or undefined", .{});
+        return globalThis.throwInvalidArguments("Archive: compress argument must be 'gzip', a boolean, or undefined", .{});
     }
 
-    return globalThis.throwInvalidArguments("Archive: compress argument must be 'gzip' or undefined", .{});
+    return globalThis.throwInvalidArguments("Archive: compress argument must be 'gzip', a boolean, or undefined", .{});
 }
 
 /// Instance method: archive.extract(path)

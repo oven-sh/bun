@@ -38,12 +38,14 @@ interface ShellTraceOperation {
   path?: string;
   /** Command name (for execute operations) */
   command?: string;
-  /** Environment variable name (for ENV operations) */
-  envVar?: string;
+  /** Accumulated environment variables at this point in execution */
+  env?: Record<string, string>;
   /** Which standard stream is being redirected: "stdin", "stdout", or "stderr" */
   stream?: "stdin" | "stdout" | "stderr";
   /** Command arguments for external commands (excluding command name) */
   args?: string[];
+  /** True if operation contains non-statically-analyzable values (command substitution, $1, etc.) */
+  dynamic?: true;
 }
 
 interface ShellTraceResult {

@@ -123,14 +123,27 @@ describe("Bun.$.trace", () => {
     expect(chdirOps[0].path).toBe("/tmp");
   });
 
-  test("traces environment variable assignments with names", () => {
+  test("traces environment variable assignments with accumulated env", () => {
     const result = $.trace`FOO=1 BAR=2 echo test`;
     expect(result.success).toBe(true);
 
     const envOps = result.operations.filter(op => op.flags === Permission.ENV);
     expect(envOps.length).toBe(2);
-    expect(envOps[0].envVar).toBe("FOO");
-    expect(envOps[1].envVar).toBe("BAR");
+    // First op has FOO
+    expect(envOps[0].env).toEqual({ FOO: "1" });
+    // Second op has both FOO and BAR
+    expect(envOps[1].env?.FOO).toBe("1");
+    expect(envOps[1].env?.BAR).toBe("2");
+  });
+
+  test("traces export with env values", () => {
+    const result = $.trace`export FOO=hello BAR=world`;
+    expect(result.success).toBe(true);
+
+    const envOps = result.operations.filter(op => op.flags === Permission.ENV);
+    expect(envOps.length).toBe(1);
+    expect(envOps[0].env?.FOO).toBe("hello");
+    expect(envOps[0].env?.BAR).toBe("world");
   });
 
   test("traces output redirection combined with command", () => {

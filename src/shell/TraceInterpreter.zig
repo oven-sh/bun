@@ -51,6 +51,64 @@ pub const Stream = enum(u8) {
     }
 };
 
+/// A snapshot of environment variables at a point in execution
+pub const EnvSnapshot = struct {
+    /// Map of variable name -> value
+    vars: std.StringHashMapUnmanaged([]const u8),
+    /// Allocator used for this snapshot
+    allocator: Allocator,
+
+    pub fn init(allocator: Allocator) EnvSnapshot {
+        return .{
+            .vars = .{},
+            .allocator = allocator,
+        };
+    }
+
+    pub fn clone(this: *const EnvSnapshot, allocator: Allocator) EnvSnapshot {
+        var new_vars: std.StringHashMapUnmanaged([]const u8) = .{};
+        var iter = this.vars.iterator();
+        while (iter.next()) |entry| {
+            const key_copy = allocator.dupe(u8, entry.key_ptr.*) catch continue;
+            const val_copy = allocator.dupe(u8, entry.value_ptr.*) catch {
+                allocator.free(key_copy);
+                continue;
+            };
+            new_vars.put(allocator, key_copy, val_copy) catch {
+                allocator.free(key_copy);
+                allocator.free(val_copy);
+                continue;
+            };
+        }
+        return .{
+            .vars = new_vars,
+            .allocator = allocator,
+        };
+    }
+
+    pub fn deinit(this: *EnvSnapshot) void {
+        var iter = this.vars.iterator();
+        while (iter.next()) |entry| {
+            this.allocator.free(entry.key_ptr.*);
+            this.allocator.free(entry.value_ptr.*);
+        }
+        this.vars.deinit(this.allocator);
+    }
+
+    pub fn toJS(this: *const EnvSnapshot, globalThis: *JSGlobalObject) JSValue {
+        var obj = jsc.JSValue.createEmptyObject(globalThis, @intCast(this.vars.count()));
+        var iter = this.vars.iterator();
+        while (iter.next()) |entry| {
+            obj.put(
+                globalThis,
+                bun.String.init(entry.key_ptr.*),
+                bun.String.init(entry.value_ptr.*).toJS(globalThis),
+            );
+        }
+        return obj;
+    }
+};
+
 /// Represents a single traced operation
 pub const TracedOperation = struct {
     /// The permission flags required (octal, like open/chmod)
@@ -61,18 +119,20 @@ pub const TracedOperation = struct {
     command: ?[]const u8,
     /// Working directory at time of operation
     cwd: []const u8,
-    /// Environment variable name (for modify_env operations)
-    env_var: ?[]const u8,
+    /// Snapshot of environment variables at this point
+    env: EnvSnapshot,
     /// Which standard stream is being redirected (if any)
     stream: Stream,
     /// Command arguments (for execute operations, excluding the command name itself)
     args: ?[]const []const u8,
+    /// Whether this operation contains dynamic/non-statically-analyzable values
+    dynamic: bool,
 
     pub fn deinit(this: *TracedOperation, allocator: Allocator) void {
         if (this.path) |p| allocator.free(p);
         if (this.command) |c| allocator.free(c);
         allocator.free(this.cwd);
-        if (this.env_var) |e| allocator.free(e);
+        this.env.deinit();
         if (this.args) |args| {
             for (args) |arg| allocator.free(arg);
             allocator.free(args);
@@ -113,11 +173,12 @@ pub const TracedOperation = struct {
             );
         }
 
-        if (this.env_var) |e| {
+        // Environment snapshot - only include if there are env vars
+        if (this.env.vars.count() > 0) {
             obj.put(
                 globalThis,
-                bun.String.static("envVar"),
-                bun.String.init(e).toJS(globalThis),
+                bun.String.static("env"),
+                this.env.toJS(globalThis),
             );
         }
 
@@ -137,6 +198,15 @@ pub const TracedOperation = struct {
                 try arr.putIndex(globalThis, @intCast(i), bun.String.init(arg).toJS(globalThis));
             }
             obj.put(globalThis, bun.String.static("args"), arr);
+        }
+
+        // Dynamic flag - only set if true
+        if (this.dynamic) {
+            obj.put(
+                globalThis,
+                bun.String.static("dynamic"),
+                jsc.JSValue.jsBoolean(true),
+            );
         }
 
         return obj;
@@ -236,6 +306,10 @@ pub const TraceContext = struct {
     shell_env: EnvMap,
     /// Exported environment (for subprocess)
     export_env: EnvMap,
+    /// Accumulated traced environment variables (snapshot for each operation)
+    traced_env: std.StringHashMapUnmanaged([]const u8),
+    /// Whether the current operation has dynamic (non-statically-analyzable) values
+    current_dynamic: bool,
     /// JS objects from template
     jsobjs: []JSValue,
     globalThis: *JSGlobalObject,
@@ -254,6 +328,8 @@ pub const TraceContext = struct {
             .cwd = std.array_list.Managed(u8).init(allocator),
             .shell_env = EnvMap.init(allocator),
             .export_env = if (export_env) |e| e else EnvMap.init(allocator),
+            .traced_env = .{},
+            .current_dynamic = false,
             .jsobjs = jsobjs,
             .globalThis = globalThis,
         };
@@ -265,6 +341,55 @@ pub const TraceContext = struct {
         this.cwd.deinit();
         this.shell_env.deinit();
         this.export_env.deinit();
+        // Free traced_env
+        var iter = this.traced_env.iterator();
+        while (iter.next()) |entry| {
+            this.allocator.free(entry.key_ptr.*);
+            this.allocator.free(entry.value_ptr.*);
+        }
+        this.traced_env.deinit(this.allocator);
+    }
+
+    /// Set an environment variable in the traced env
+    pub fn setTracedEnv(this: *TraceContext, name: []const u8, value: []const u8) void {
+        // If key already exists, free the old value
+        if (this.traced_env.get(name)) |old_val| {
+            this.allocator.free(old_val);
+            // Update in place
+            const key = this.traced_env.getKey(name).?;
+            this.traced_env.put(this.allocator, key, this.allocator.dupe(u8, value) catch return) catch return;
+        } else {
+            // New key
+            const key_copy = this.allocator.dupe(u8, name) catch return;
+            const val_copy = this.allocator.dupe(u8, value) catch {
+                this.allocator.free(key_copy);
+                return;
+            };
+            this.traced_env.put(this.allocator, key_copy, val_copy) catch {
+                this.allocator.free(key_copy);
+                this.allocator.free(val_copy);
+                return;
+            };
+        }
+    }
+
+    /// Create a snapshot of the current traced environment
+    pub fn snapshotEnv(this: *TraceContext) EnvSnapshot {
+        var snapshot = EnvSnapshot.init(this.allocator);
+        var iter = this.traced_env.iterator();
+        while (iter.next()) |entry| {
+            const key_copy = this.allocator.dupe(u8, entry.key_ptr.*) catch continue;
+            const val_copy = this.allocator.dupe(u8, entry.value_ptr.*) catch {
+                this.allocator.free(key_copy);
+                continue;
+            };
+            snapshot.vars.put(this.allocator, key_copy, val_copy) catch {
+                this.allocator.free(key_copy);
+                this.allocator.free(val_copy);
+                continue;
+            };
+        }
+        return snapshot;
     }
 
     pub fn cwdSlice(this: *const TraceContext) []const u8 {
@@ -281,19 +406,19 @@ pub const TraceContext = struct {
         return bun.handleOom(this.allocator.dupe(u8, joined[0..joined.len]));
     }
 
-    pub fn addOperation(this: *TraceContext, flags: u32, path: ?[]const u8, command: ?[]const u8, env_var: ?[]const u8) void {
-        this.addOperationFull(flags, path, command, env_var, .none, null);
+    pub fn addOperation(this: *TraceContext, flags: u32, path: ?[]const u8, command: ?[]const u8) void {
+        this.addOperationFull(flags, path, command, .none, null);
     }
 
-    pub fn addOperationWithStream(this: *TraceContext, flags: u32, path: ?[]const u8, command: ?[]const u8, env_var: ?[]const u8, stream: Stream) void {
-        this.addOperationFull(flags, path, command, env_var, stream, null);
+    pub fn addOperationWithStream(this: *TraceContext, flags: u32, path: ?[]const u8, command: ?[]const u8, stream: Stream) void {
+        this.addOperationFull(flags, path, command, stream, null);
     }
 
-    pub fn addOperationWithArgs(this: *TraceContext, flags: u32, path: ?[]const u8, command: ?[]const u8, env_var: ?[]const u8, args: ?[]const []const u8) void {
-        this.addOperationFull(flags, path, command, env_var, .none, args);
+    pub fn addOperationWithArgs(this: *TraceContext, flags: u32, path: ?[]const u8, command: ?[]const u8, args: ?[]const []const u8) void {
+        this.addOperationFull(flags, path, command, .none, args);
     }
 
-    pub fn addOperationFull(this: *TraceContext, flags: u32, path: ?[]const u8, command: ?[]const u8, env_var: ?[]const u8, stream: Stream, args: ?[]const []const u8) void {
+    pub fn addOperationFull(this: *TraceContext, flags: u32, path: ?[]const u8, command: ?[]const u8, stream: Stream, args: ?[]const []const u8) void {
         const resolved_path = if (path) |p| this.resolvePath(p) else null;
 
         // Duplicate args array
@@ -310,14 +435,22 @@ pub const TraceContext = struct {
             break :blk arr;
         } else null;
 
+        // Snapshot the current environment
+        const env_snapshot = this.snapshotEnv();
+
+        // Capture dynamic flag and reset it
+        const is_dynamic = this.current_dynamic;
+        this.current_dynamic = false;
+
         this.result.addOperation(.{
             .flags = flags,
             .path = resolved_path,
             .command = if (command) |c| bun.handleOom(this.allocator.dupe(u8, c)) else null,
             .cwd = bun.handleOom(this.allocator.dupe(u8, this.cwdSlice())),
-            .env_var = if (env_var) |e| bun.handleOom(this.allocator.dupe(u8, e)) else null,
+            .env = env_snapshot,
             .stream = stream,
             .args = duped_args,
+            .dynamic = is_dynamic,
         });
     }
 
@@ -392,8 +525,15 @@ fn traceSubshell(ctx: *TraceContext, script: *const ast.Script) void {
 }
 
 fn traceAssign(ctx: *TraceContext, assign: *const ast.Assign) void {
-    // Track that we're modifying environment, including the variable name
-    ctx.addOperation(Permission.ENV, null, null, assign.label);
+    // Expand the value
+    const value = expandAtom(ctx, &assign.value);
+    defer ctx.allocator.free(value);
+
+    // Set the env var in traced env
+    ctx.setTracedEnv(assign.label, value);
+
+    // Add an ENV operation (the env snapshot will include this new var)
+    ctx.addOperation(Permission.ENV, null, null);
 }
 
 fn traceBinary(ctx: *TraceContext, binary: *const ast.Binary) void {
@@ -459,7 +599,7 @@ fn traceCondExpr(ctx: *TraceContext, cond: *const ast.CondExpr) void {
         for (cond.args.slice()) |*arg| {
             const path = expandAtom(ctx, arg);
             if (path.len > 0) {
-                ctx.addOperation(Permission.READ, path, null, null);
+                ctx.addOperation(Permission.READ, path, null);
             }
             ctx.allocator.free(path);
         }
@@ -554,13 +694,13 @@ fn freeFileArgs(ctx: *TraceContext, file_args: *std.array_list.Managed([]const u
 /// Add redirections as operations with stream info
 fn traceRedirections(ctx: *TraceContext, redir: *const RedirectInfo) void {
     if (redir.stdin_path) |stdin| {
-        ctx.addOperationWithStream(Permission.READ, stdin, null, null, .stdin);
+        ctx.addOperationWithStream(Permission.READ, stdin, null, .stdin);
     }
     if (redir.stdout_path) |out| {
-        ctx.addOperationWithStream(redir.stdout_flags, out, null, null, .stdout);
+        ctx.addOperationWithStream(redir.stdout_flags, out, null, .stdout);
     }
     if (redir.stderr_path) |err_path| {
-        ctx.addOperationWithStream(redir.stderr_flags, err_path, null, null, .stderr);
+        ctx.addOperationWithStream(redir.stderr_flags, err_path, null, .stderr);
     }
 }
 
@@ -575,7 +715,7 @@ fn traceBuiltin(ctx: *TraceContext, kind: Interpreter.Builtin.Kind, cmd: *const 
             defer freeFileArgs(ctx, &file_args);
 
             for (file_args.items) |path| {
-                ctx.addOperation(Permission.READ, path, null, null);
+                ctx.addOperation(Permission.READ, path, null);
             }
             traceRedirections(ctx, redir);
         },
@@ -585,7 +725,7 @@ fn traceBuiltin(ctx: *TraceContext, kind: Interpreter.Builtin.Kind, cmd: *const 
             defer freeFileArgs(ctx, &file_args);
 
             for (file_args.items) |path| {
-                ctx.addOperation(Permission.CREATE, path, null, null);
+                ctx.addOperation(Permission.CREATE, path, null);
             }
         },
         .mkdir => {
@@ -594,7 +734,7 @@ fn traceBuiltin(ctx: *TraceContext, kind: Interpreter.Builtin.Kind, cmd: *const 
             defer freeFileArgs(ctx, &file_args);
 
             for (file_args.items) |path| {
-                ctx.addOperation(Permission.MKDIR, path, null, null);
+                ctx.addOperation(Permission.MKDIR, path, null);
             }
         },
         .rm => {
@@ -603,7 +743,7 @@ fn traceBuiltin(ctx: *TraceContext, kind: Interpreter.Builtin.Kind, cmd: *const 
             defer freeFileArgs(ctx, &file_args);
 
             for (file_args.items) |path| {
-                ctx.addOperation(Permission.DELETE, path, null, null);
+                ctx.addOperation(Permission.DELETE, path, null);
             }
         },
         .mv => {
@@ -612,10 +752,10 @@ fn traceBuiltin(ctx: *TraceContext, kind: Interpreter.Builtin.Kind, cmd: *const 
             defer freeFileArgs(ctx, &file_args);
 
             if (file_args.items.len >= 1) {
-                ctx.addOperation(Permission.READ | Permission.DELETE, file_args.items[0], null, null);
+                ctx.addOperation(Permission.READ | Permission.DELETE, file_args.items[0], null);
             }
             if (file_args.items.len >= 2) {
-                ctx.addOperation(Permission.CREATE, file_args.items[1], null, null);
+                ctx.addOperation(Permission.CREATE, file_args.items[1], null);
             }
         },
         .cp => {
@@ -624,10 +764,10 @@ fn traceBuiltin(ctx: *TraceContext, kind: Interpreter.Builtin.Kind, cmd: *const 
             defer freeFileArgs(ctx, &file_args);
 
             if (file_args.items.len >= 1) {
-                ctx.addOperation(Permission.READ, file_args.items[0], null, null);
+                ctx.addOperation(Permission.READ, file_args.items[0], null);
             }
             if (file_args.items.len >= 2) {
-                ctx.addOperation(Permission.CREATE, file_args.items[1], null, null);
+                ctx.addOperation(Permission.CREATE, file_args.items[1], null);
             }
         },
         .ls => {
@@ -637,10 +777,10 @@ fn traceBuiltin(ctx: *TraceContext, kind: Interpreter.Builtin.Kind, cmd: *const 
 
             if (file_args.items.len == 0) {
                 // ls with no args reads current directory
-                ctx.addOperation(Permission.READ, ".", null, null);
+                ctx.addOperation(Permission.READ, ".", null);
             } else {
                 for (file_args.items) |path| {
-                    ctx.addOperation(Permission.READ, path, null, null);
+                    ctx.addOperation(Permission.READ, path, null);
                 }
             }
             traceRedirections(ctx, redir);
@@ -651,14 +791,34 @@ fn traceBuiltin(ctx: *TraceContext, kind: Interpreter.Builtin.Kind, cmd: *const 
             defer freeFileArgs(ctx, &file_args);
 
             if (file_args.items.len >= 1) {
-                ctx.addOperation(Permission.CHDIR, file_args.items[0], null, null);
+                ctx.addOperation(Permission.CHDIR, file_args.items[0], null);
                 // Actually update the context's cwd for subsequent commands
                 ctx.changeCwd(file_args.items[0]);
             }
         },
         .@"export" => {
-            // export modifies environment
-            ctx.addOperation(Permission.ENV, null, null, null);
+            // export sets environment variables
+            // Parse arguments like FOO=bar or just FOO
+            var file_args = extractFileArgs(ctx, cmd);
+            defer freeFileArgs(ctx, &file_args);
+
+            for (file_args.items) |arg| {
+                // Look for = sign
+                if (std.mem.indexOfScalar(u8, arg, '=')) |eq_idx| {
+                    const name = arg[0..eq_idx];
+                    const value = arg[eq_idx + 1 ..];
+                    ctx.setTracedEnv(name, value);
+                } else {
+                    // Just exporting existing var - set to empty if not already set
+                    if (ctx.traced_env.get(arg) == null) {
+                        ctx.setTracedEnv(arg, "");
+                    }
+                }
+            }
+            // Add ENV operation after setting all vars
+            if (file_args.items.len > 0) {
+                ctx.addOperation(Permission.ENV, null, null);
+            }
         },
         .echo, .pwd, .which, .yes, .seq, .dirname, .basename => {
             // These only write to stdout (or redirect) - no file reads
@@ -692,10 +852,10 @@ fn traceExternalCommand(ctx: *TraceContext, cmd_name: []const u8, cmd: *const as
 
     // Record the command execution with args
     if (resolved) |exe_path| {
-        ctx.addOperationWithArgs(Permission.EXECUTE, exe_path, cmd_name, null, args);
+        ctx.addOperationWithArgs(Permission.EXECUTE, exe_path, cmd_name, args);
     } else {
         // Command not found, but still record the execute attempt
-        ctx.addOperationWithArgs(Permission.EXECUTE, null, cmd_name, null, args);
+        ctx.addOperationWithArgs(Permission.EXECUTE, null, cmd_name, args);
     }
 
     // Free the expanded args (they were duped in addOperationWithArgs)
@@ -705,17 +865,17 @@ fn traceExternalCommand(ctx: *TraceContext, cmd_name: []const u8, cmd: *const as
 
     // Handle stdin redirection
     if (redir.stdin_path) |stdin| {
-        ctx.addOperationWithStream(Permission.READ, stdin, null, null, .stdin);
+        ctx.addOperationWithStream(Permission.READ, stdin, null, .stdin);
     }
 
     // Handle stdout redirection
     if (redir.stdout_path) |out| {
-        ctx.addOperationWithStream(redir.stdout_flags, out, null, null, .stdout);
+        ctx.addOperationWithStream(redir.stdout_flags, out, null, .stdout);
     }
 
     // Handle stderr redirection
     if (redir.stderr_path) |err_path| {
-        ctx.addOperationWithStream(redir.stderr_flags, err_path, null, null, .stderr);
+        ctx.addOperationWithStream(redir.stderr_flags, err_path, null, .stderr);
     }
 }
 
@@ -991,11 +1151,13 @@ fn expandSimple(ctx: *TraceContext, simple: *const ast.SimpleAtom, out: *std.arr
             }
         },
         .VarArgv => {
-            // Skip special variables like $1, $@, etc.
+            // Special variables like $1, $@, etc. depend on runtime args
+            ctx.current_dynamic = true;
         },
         .cmd_subst => {
-            // Can't actually run command substitutions in trace mode
-            // Just skip them
+            // Command substitutions can't be statically analyzed
+            // Mark as dynamic and skip the actual substitution
+            ctx.current_dynamic = true;
         },
         .asterisk => {
             // Glob pattern - output as literal for tracing

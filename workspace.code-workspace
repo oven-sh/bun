@@ -1,15 +1,16 @@
 {
   "folders": [
-	{
-		"path": "."
-	}
-],
+    {
+      "path": ".",
+    },
+  ],
   "settings": {
     "git.autoRepositoryDetection": "openEditors",
     "search.quickOpen.includeSymbols": false,
     "search.seedWithNearestWord": true,
     "search.smartCase": true,
     "search.followSymlinks": false,
+    "zig.buildOnSave": false,
     "files.associations": {
       "*.idl": "cpp",
       "memory": "cpp",
@@ -88,9 +89,8 @@
       "numeric": "cpp",
       "set": "cpp",
       "__memory": "cpp",
-      "memory_resource": "cpp"
+      "memory_resource": "cpp",
     },
     "git.ignoreLimitWarning": true,
-    "zig.buildOnSaveProvider": false
-  }
+  },
 }

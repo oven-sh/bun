@@ -15,6 +15,15 @@ pub const CppWebSocket = opaque {
         buffered_len: usize,
         deflate_params: ?*const WebSocketDeflate.Params,
     ) void;
+    extern fn WebSocket__didConnectWithSSLTunnel(
+        websocket_context: *CppWebSocket,
+        socket: *uws.Socket,
+        buffered_data: ?[*]u8,
+        buffered_len: usize,
+        deflate_params: ?*const WebSocketDeflate.Params,
+        ssl_ptr: *anyopaque,
+        ssl_ctx_ptr: *anyopaque,
+    ) void;
     extern fn WebSocket__didAbruptClose(websocket_context: *CppWebSocket, reason: ErrorCode) void;
     extern fn WebSocket__didClose(websocket_context: *CppWebSocket, code: u16, reason: *const bun.String) void;
     extern fn WebSocket__didReceiveText(websocket_context: *CppWebSocket, clone: bool, text: *const jsc.ZigString) void;
@@ -55,6 +64,20 @@ pub const CppWebSocket = opaque {
         loop.enter();
         defer loop.exit();
         WebSocket__didConnect(this, socket, buffered_data, buffered_len, deflate_params);
+    }
+    pub fn didConnectWithSSLTunnel(
+        this: *CppWebSocket,
+        socket: *uws.Socket,
+        buffered_data: ?[*]u8,
+        buffered_len: usize,
+        deflate_params: ?*const WebSocketDeflate.Params,
+        ssl_ptr: *anyopaque,
+        ssl_ctx_ptr: *anyopaque,
+    ) void {
+        const loop = jsc.VirtualMachine.get().eventLoop();
+        loop.enter();
+        defer loop.exit();
+        WebSocket__didConnectWithSSLTunnel(this, socket, buffered_data, buffered_len, deflate_params, ssl_ptr, ssl_ctx_ptr);
     }
     extern fn WebSocket__incrementPendingActivity(websocket_context: *CppWebSocket) void;
     extern fn WebSocket__decrementPendingActivity(websocket_context: *CppWebSocket) void;

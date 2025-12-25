@@ -42,11 +42,20 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         poll_ref: Async.KeepAlive = Async.KeepAlive.init(),
         state: State = .initializing,
         subprotocols: bun.StringSet,
+        proxy_connect_buf: []u8 = &[_]u8{},
+        using_proxy: bool = false,
+        target_host: []u8 = &[_]u8{},
+        target_port: u16 = 0,
+        // For wss:// through HTTP proxy: TLS tunnel via SSLWrapper
+        ssl_wrapper: ?SSLWrapper(*HTTPClient) = null,
+        ssl_write_buffer: bun.io.StreamBuffer = .{},
+        target_is_tls: bool = false,
 
-        const State = enum { initializing, reading, failed };
+        const State = enum { initializing, proxy_connect, proxy_tls_handshake, reading, failed };
 
         const HTTPClient = @This();
         pub fn register(_: *jsc.JSGlobalObject, _: *anyopaque, ctx: *uws.SocketContext) callconv(.c) void {
+            log("Registering WebSocketUpgradeClient", .{});
             Socket.configure(
                 ctx,
                 true,
@@ -84,7 +93,11 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             header_names: ?[*]const jsc.ZigString,
             header_values: ?[*]const jsc.ZigString,
             header_count: usize,
+            proxy_host: ?*const jsc.ZigString,
+            proxy_port: u16,
+            target_is_tls: bool,
         ) callconv(.c) ?*HTTPClient {
+            log("Connect from WebSocketUpgradeClient ssl: {}", .{ssl});
             const vm = global.bunVM();
 
             bun.assert(vm.event_loop_handle != null);
@@ -110,12 +123,17 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 extra_headers,
             ) catch return null;
 
+            // Determine if we're using a proxy
+            const using_proxy = proxy_host != null and proxy_host.?.len > 0;
+
             var client = bun.new(HTTPClient, .{
                 .ref_count = .init(),
                 .tcp = .{ .socket = .{ .detached = {} } },
                 .outgoing_websocket = websocket,
                 .input_body_buf = body,
                 .state = .initializing,
+                .using_proxy = using_proxy,
+                .target_is_tls = using_proxy and target_is_tls,
                 .subprotocols = brk: {
                     var subprotocols = bun.StringSet.init(bun.default_allocator);
                     var it = bun.http.HeaderValueIterator.init(protocol_for_subprotocols.slice());
@@ -129,16 +147,56 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             var host_ = host.toSlice(bun.default_allocator);
             defer host_.deinit();
 
+            // Must be declared outside the block so the defer runs at function end, not block end
+            var proxy_host_slice = if (proxy_host) |ph| ph.toSlice(bun.default_allocator) else jsc.ZigString.Slice.empty;
+            defer proxy_host_slice.deinit();
+
+            // If using proxy, build the CONNECT request and store target info
+            if (using_proxy) {
+                client.target_host = bun.default_allocator.dupe(u8, host_.slice()) catch {
+                    client.deref();
+                    return null;
+                };
+                client.target_port = port;
+
+                var connect_buf: std.ArrayListUnmanaged(u8) = .{};
+                client.proxy_connect_buf = proxy.buildConnectRequest(
+                    &connect_buf,
+                    bun.default_allocator,
+                    host_.slice(),
+                    port,
+                ) catch {
+                    bun.default_allocator.free(client.target_host);
+                    client.target_host = &[_]u8{};
+                    client.deref();
+                    return null;
+                };
+            }
+
+            log("proxy_host_slice: {s}", .{proxy_host_slice.slice()});
+            log("proxy_host_slice: {s}", .{proxy_host_slice.slice()});
             client.poll_ref.ref(vm);
-            const display_host_ = host_.slice();
-            const display_host = if (bun.FeatureFlags.hardcode_localhost_to_127_0_0_1 and strings.eqlComptime(display_host_, "localhost"))
-                "127.0.0.1"
-            else
-                display_host_;
+
+            log("proxy_host_slice: {s}", .{proxy_host_slice.slice()});
+            // Determine connection target: proxy or direct
+            const connect_host: []const u8 = if (using_proxy) blk: {
+                const h = proxy_host_slice.slice();
+                break :blk if (bun.FeatureFlags.hardcode_localhost_to_127_0_0_1 and strings.eqlComptime(h, "localhost"))
+                    "127.0.0.1"
+                else
+                    h;
+            } else blk: {
+                const display_host_ = host_.slice();
+                break :blk if (bun.FeatureFlags.hardcode_localhost_to_127_0_0_1 and strings.eqlComptime(display_host_, "localhost"))
+                    "127.0.0.1"
+                else
+                    display_host_;
+            };
+            const connect_port: u16 = if (using_proxy) proxy_port else port;
 
             if (Socket.connectPtr(
-                display_host,
-                port,
+                connect_host,
+                connect_port,
                 @as(*uws.SocketContext, @ptrCast(socket_ctx)),
                 HTTPClient,
                 client,
@@ -159,7 +217,8 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 }
 
                 out.tcp.timeout(120);
-                out.state = .reading;
+                // If using proxy, start in proxy_connect state; otherwise go straight to reading
+                out.state = if (using_proxy) .proxy_connect else .reading;
                 // +1 for cpp_websocket
                 out.ref();
                 return out;
@@ -180,6 +239,22 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             this.subprotocols.clearAndFree();
             this.clearInput();
             this.body.clearAndFree(bun.default_allocator);
+
+            // Clean up proxy-related allocations
+            if (this.proxy_connect_buf.len > 0) {
+                bun.default_allocator.free(this.proxy_connect_buf);
+                this.proxy_connect_buf = &[_]u8{};
+            }
+            if (this.target_host.len > 0) {
+                bun.default_allocator.free(this.target_host);
+                this.target_host = &[_]u8{};
+            }
+            // Clean up SSL wrapper for TLS-over-proxy
+            if (this.ssl_wrapper) |*wrapper| {
+                wrapper.deinit();
+                this.ssl_wrapper = null;
+            }
+            this.ssl_write_buffer.deinit();
         }
         pub fn cancel(this: *HTTPClient) callconv(.c) void {
             this.clearData();
@@ -279,9 +354,6 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             log("onOpen", .{});
             this.tcp = socket;
 
-            bun.assert(this.input_body_buf.len > 0);
-            bun.assert(this.to_send.len == 0);
-
             if (comptime ssl) {
                 if (this.hostname.len > 0) {
                     socket.getNativeHandle().?.configureHTTPClient(this.hostname);
@@ -289,6 +361,25 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                     this.hostname = "";
                 }
             }
+
+            // If using proxy, send CONNECT request first
+            if (this.using_proxy and this.state == .proxy_connect) {
+                bun.assert(this.proxy_connect_buf.len > 0);
+                log("sending CONNECT request to proxy", .{});
+
+                const wrote = socket.write(this.proxy_connect_buf);
+                if (wrote < 0) {
+                    this.terminate(ErrorCode.failed_to_write);
+                    return;
+                }
+
+                this.to_send = this.proxy_connect_buf[@as(usize, @intCast(wrote))..];
+                return;
+            }
+
+            // Direct connection or proxy already established - send WebSocket upgrade
+            bun.assert(this.input_body_buf.len > 0);
+            bun.assert(this.to_send.len == 0);
 
             // Do not set MSG_MORE, see https://github.com/oven-sh/bun/issues/4010
             const wrote = socket.write(this.input_body_buf);
@@ -318,6 +409,23 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
             if (comptime Environment.allow_assert)
                 bun.assert(!socket.isShutdown());
+
+            // Handle proxy CONNECT response
+            if (this.state == .proxy_connect) {
+                this.handleProxyConnectResponse(socket, data);
+                return;
+            }
+
+            // Handle TLS data when using SSL wrapper (wss:// through proxy)
+            if (this.state == .proxy_tls_handshake or (this.state == .reading and this.ssl_wrapper != null)) {
+                if (this.ssl_wrapper) |*wrapper| {
+                    // Pass encrypted data to SSL wrapper for decryption
+                    wrapper.receiveData(data);
+                    // Flush any pending writes
+                    _ = wrapper.flush();
+                }
+                return;
+            }
 
             var body = data;
             if (this.body.items.len > 0) {
@@ -351,6 +459,258 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             };
 
             this.processResponse(response, body[@as(usize, @intCast(response.bytes_read))..]);
+        }
+
+        /// Handle proxy CONNECT response
+        fn handleProxyConnectResponse(this: *HTTPClient, socket: Socket, data: []const u8) void {
+            log("handleProxyConnectResponse", .{});
+
+            var body = data;
+            if (this.body.items.len > 0) {
+                bun.handleOom(this.body.appendSlice(bun.default_allocator, data));
+                body = this.body.items;
+            }
+
+            // Parse the proxy response using shared helper
+            const result = proxy.parseConnectResponse(body, &this.headers_buf) catch |err| {
+                switch (err) {
+                    proxy.ProxyError.ProxyResponseMalformed => {
+                        log("proxy CONNECT response malformed", .{});
+                        this.terminate(ErrorCode.invalid_response);
+                        return;
+                    },
+                    proxy.ProxyError.ProxyResponseIncomplete => {
+                        // Need more data
+                        if (this.body.items.len == 0) {
+                            bun.handleOom(this.body.appendSlice(bun.default_allocator, data));
+                        }
+                        return;
+                    },
+                    else => {
+                        log("proxy CONNECT failed", .{});
+                        this.terminate(ErrorCode.proxy_connect_failed);
+                        return;
+                    },
+                }
+            };
+
+            if (!result.success) {
+                log("proxy CONNECT failed with status {d}", .{result.status_code});
+                this.terminate(ErrorCode.proxy_connect_failed);
+                return;
+            }
+
+            log("proxy CONNECT successful", .{});
+
+            // Clear body buffer for WebSocket response
+            this.body.clearRetainingCapacity();
+
+            // Free proxy connect buffer as we no longer need it
+            if (this.proxy_connect_buf.len > 0) {
+                bun.default_allocator.free(this.proxy_connect_buf);
+                this.proxy_connect_buf = &[_]u8{};
+            }
+
+            // If target is TLS (wss://), we need to do TLS handshake over the proxy tunnel
+            if (this.target_is_tls) {
+                log("starting TLS handshake over proxy tunnel", .{});
+                this.state = .proxy_tls_handshake;
+                this.to_send = "";
+
+                // Create SSL wrapper for TLS over the proxy tunnel
+                var ssl_options: jsc.API.ServerConfig.SSLConfig = .{};
+                // We always request the cert so we can verify it
+                ssl_options.reject_unauthorized = 0;
+                ssl_options.request_cert = 1;
+
+                this.ssl_wrapper = SSLWrapper(*HTTPClient).init(ssl_options, true, .{
+                    .onOpen = sslOnOpen,
+                    .onData = sslOnData,
+                    .onHandshake = sslOnHandshake,
+                    .onClose = sslOnClose,
+                    .write = sslWrite,
+                    .ctx = this,
+                }) catch |err| {
+                    if (err == error.OutOfMemory) {
+                        bun.outOfMemory();
+                    }
+                    this.terminate(ErrorCode.tls_handshake_failed);
+                    return;
+                };
+
+                // Configure SNI hostname for the target server
+                if (this.ssl_wrapper) |*wrapper| {
+                    if (wrapper.ssl) |ssl_ptr| {
+                        if (this.target_host.len > 0 and !strings.isIPAddress(this.target_host)) {
+                            const hostname_z = bun.default_allocator.dupeZ(u8, this.target_host) catch {
+                                this.terminate(ErrorCode.tls_handshake_failed);
+                                return;
+                            };
+                            defer bun.default_allocator.free(hostname_z);
+                            ssl_ptr.configureHTTPClient(hostname_z);
+                        }
+                    }
+                }
+
+                // Start TLS handshake, possibly with remaining data from proxy response
+                const remaining = body[result.bytes_read..];
+                if (remaining.len > 0) {
+                    this.ssl_wrapper.?.startWithPayload(remaining);
+                } else {
+                    this.ssl_wrapper.?.start();
+                }
+                return;
+            }
+
+            // No TLS needed (ws://), transition to reading state and send WebSocket upgrade
+            this.state = .reading;
+            this.to_send = "";
+
+            // Send the WebSocket upgrade request
+            bun.assert(this.input_body_buf.len > 0);
+            const wrote = socket.write(this.input_body_buf);
+            if (wrote < 0) {
+                this.terminate(ErrorCode.failed_to_write);
+                return;
+            }
+
+            this.to_send = this.input_body_buf[@as(usize, @intCast(wrote))..];
+
+            // If there's remaining data after proxy response, process it as WebSocket response
+            const remaining = body[result.bytes_read..];
+            if (remaining.len > 0) {
+                // Recursively handle the remaining data as WebSocket upgrade response
+                this.handleData(socket, remaining);
+            }
+        }
+
+        // --- SSLWrapper callbacks for TLS-over-proxy ---
+
+        fn sslOnOpen(this: *HTTPClient) void {
+            log("sslOnOpen: TLS tunnel starting", .{});
+            // Configure SSL for the target hostname (SNI)
+            if (this.ssl_wrapper) |*wrapper| {
+                if (wrapper.ssl) |ssl_ptr| {
+                    if (this.target_host.len > 0 and !strings.isIPAddress(this.target_host)) {
+                        const hostname_z = bun.default_allocator.dupeZ(u8, this.target_host) catch return;
+                        defer bun.default_allocator.free(hostname_z);
+                        ssl_ptr.configureHTTPClient(hostname_z);
+                    }
+                }
+            }
+        }
+
+        fn sslOnData(this: *HTTPClient, decrypted_data: []const u8) void {
+            log("sslOnData: received {d} decrypted bytes", .{decrypted_data.len});
+            if (decrypted_data.len == 0) return;
+
+            // Process decrypted data as WebSocket upgrade response
+            var body = decrypted_data;
+            if (this.body.items.len > 0) {
+                bun.handleOom(this.body.appendSlice(bun.default_allocator, decrypted_data));
+                body = this.body.items;
+            }
+
+            const is_first = this.body.items.len == 0;
+            const http_101 = "HTTP/1.1 101 ";
+            if (is_first and body.len > http_101.len) {
+                if (!strings.hasPrefixComptime(body, http_101)) {
+                    this.terminate(ErrorCode.expected_101_status_code);
+                    return;
+                }
+            }
+
+            const response = PicoHTTP.Response.parse(body, &this.headers_buf) catch |err| {
+                switch (err) {
+                    error.Malformed_HTTP_Response => {
+                        this.terminate(ErrorCode.invalid_response);
+                        return;
+                    },
+                    error.ShortRead => {
+                        if (this.body.items.len == 0) {
+                            bun.handleOom(this.body.appendSlice(bun.default_allocator, decrypted_data));
+                        }
+                        return;
+                    },
+                }
+            };
+
+            this.processResponse(response, body[@as(usize, @intCast(response.bytes_read))..]);
+        }
+
+        fn sslOnHandshake(this: *HTTPClient, handshake_success: bool, ssl_error: uws.us_bun_verify_error_t) void {
+            log("sslOnHandshake: success={}", .{handshake_success});
+
+            if (!handshake_success) {
+                this.terminate(ErrorCode.tls_handshake_failed);
+                return;
+            }
+
+            // Check certificate if reject_unauthorized
+            var reject_unauthorized = false;
+            if (this.outgoing_websocket) |ws| {
+                reject_unauthorized = ws.rejectUnauthorized();
+            }
+
+            if (reject_unauthorized) {
+                if (ssl_error.error_no != 0) {
+                    this.terminate(ErrorCode.tls_handshake_failed);
+                    return;
+                }
+
+                // Verify server identity
+                if (this.ssl_wrapper) |*wrapper| {
+                    if (wrapper.ssl) |ssl_ptr| {
+                        if (this.target_host.len > 0) {
+                            if (!BoringSSL.checkServerIdentity(ssl_ptr, this.target_host)) {
+                                this.terminate(ErrorCode.tls_handshake_failed);
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // TLS handshake successful, now send WebSocket upgrade through the TLS tunnel
+            log("TLS handshake complete, sending WebSocket upgrade", .{});
+            this.state = .reading;
+
+            // Send the WebSocket upgrade request through the SSL wrapper
+            bun.assert(this.input_body_buf.len > 0);
+            _ = this.ssl_wrapper.?.writeData(this.input_body_buf) catch |err| {
+                log("sslOnHandshake: failed to write upgrade request: {}", .{err});
+                this.terminate(ErrorCode.failed_to_write);
+                return;
+            };
+            // Flush any pending SSL data
+            _ = this.ssl_wrapper.?.flush();
+        }
+
+        fn sslOnClose(this: *HTTPClient) void {
+            log("sslOnClose: TLS tunnel closed", .{});
+            this.terminate(ErrorCode.ended);
+        }
+
+        fn sslWrite(this: *HTTPClient, encrypted_data: []const u8) void {
+            // Write encrypted data to the underlying TCP socket
+            log("sslWrite: sending {d} encrypted bytes", .{encrypted_data.len});
+
+            // Buffer if there's pending data
+            if (this.ssl_write_buffer.isNotEmpty()) {
+                bun.handleOom(this.ssl_write_buffer.write(encrypted_data));
+                return;
+            }
+
+            const written = this.tcp.write(encrypted_data);
+            if (written < 0) {
+                this.terminate(ErrorCode.failed_to_write);
+                return;
+            }
+
+            const pending = encrypted_data[@intCast(written)..];
+            if (pending.len > 0) {
+                bun.handleOom(this.ssl_write_buffer.write(pending));
+            }
         }
 
         pub fn handleEnd(this: *HTTPClient, _: Socket) void {
@@ -533,6 +893,17 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 @memcpy(overflow, remain_buf);
             }
 
+            // For TLS-over-proxy, extract SSL state before clearData destroys it
+            var ssl_ptr: ?*BoringSSL.c.SSL = null;
+            var ssl_ctx_ptr: ?*BoringSSL.c.SSL_CTX = null;
+            if (this.ssl_wrapper) |*wrapper| {
+                ssl_ptr = wrapper.ssl;
+                ssl_ctx_ptr = wrapper.ctx;
+                // Set to null to prevent double-free when clearData is called
+                wrapper.ssl = null;
+                wrapper.ctx = null;
+            }
+
             this.clearData();
             jsc.markBinding(@src());
             if (!this.tcp.isClosed() and this.outgoing_websocket != null) {
@@ -548,7 +919,19 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 // Once again for the TCP socket.
                 defer this.deref();
 
-                ws.didConnect(socket.socket.get().?, overflow.ptr, overflow.len, if (deflate_result.enabled) &deflate_result.params else null);
+                // For TLS-over-proxy, pass SSL state to WebSocket client
+                if (ssl_ptr != null and ssl_ctx_ptr != null) {
+                    ws.didConnectWithSSLTunnel(
+                        socket.socket.get().?,
+                        overflow.ptr,
+                        overflow.len,
+                        if (deflate_result.enabled) &deflate_result.params else null,
+                        ssl_ptr.?,
+                        ssl_ctx_ptr.?,
+                    );
+                } else {
+                    ws.didConnect(socket.socket.get().?, overflow.ptr, overflow.len, if (deflate_result.enabled) &deflate_result.params else null);
+                }
             } else if (this.tcp.isClosed()) {
                 this.terminate(ErrorCode.cancel);
             } else if (this.outgoing_websocket == null) {
@@ -569,11 +952,33 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         ) void {
             bun.assert(this.isSameSocket(socket));
 
-            if (this.to_send.len == 0)
-                return;
-
             this.ref();
             defer this.deref();
+
+            // Handle SSL write buffer for TLS-over-proxy
+            if (this.ssl_wrapper != null) {
+                const ssl_pending = this.ssl_write_buffer.slice();
+                if (ssl_pending.len > 0) {
+                    const wrote = socket.write(ssl_pending);
+                    if (wrote < 0) {
+                        this.terminate(ErrorCode.failed_to_write);
+                        return;
+                    }
+                    if (wrote == ssl_pending.len) {
+                        this.ssl_write_buffer.reset();
+                    } else {
+                        this.ssl_write_buffer.cursor += @intCast(wrote);
+                    }
+                }
+                // Flush SSL wrapper
+                if (this.ssl_wrapper) |*wrapper| {
+                    _ = wrapper.flush();
+                }
+                return;
+            }
+
+            if (this.to_send.len == 0)
+                return;
 
             // Do not set MSG_MORE, see https://github.com/oven-sh/bun/issues/4010
             const wrote = socket.write(this.to_send);
@@ -598,7 +1003,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             // For the TCP socket.
             defer this.deref();
 
-            if (this.state == .reading) {
+            if (this.state == .reading or this.state == .proxy_connect or this.state == .proxy_tls_handshake) {
                 this.terminate(ErrorCode.failed_to_connect);
             } else {
                 this.state = .failed;
@@ -787,6 +1192,8 @@ const CppWebSocket = @import("./CppWebSocket.zig").CppWebSocket;
 
 const websocket_client = @import("../websocket_client.zig");
 const ErrorCode = websocket_client.ErrorCode;
+const proxy = @import("../proxy.zig");
+const SSLWrapper = @import("../../bun.js/api/bun/ssl_wrapper.zig").SSLWrapper;
 
 const bun = @import("bun");
 const Async = bun.Async;

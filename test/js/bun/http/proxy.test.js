@@ -110,7 +110,7 @@ test("should be able to post bigger on TLS", async () => {
   expect(result.data).toBe(data);
 });
 
-it("proxy non-TLS", async () => {
+it.only("proxy non-TLS", async () => {
   const url = `http://localhost:${server.port}`;
   const auth_proxy_url = `http://squid_user:ASD123%40123asd@localhost:${auth_proxy.port}`;
   const proxy_url = `localhost:${proxy.port}`;

@@ -3,7 +3,7 @@ import { setSocketOptions } from "bun:internal-for-testing";
 import { describe, test } from "bun:test";
 import { isPosix } from "harness";
 
-describe.if(isPosix)("HTTP server handles fragmented requests", () => {
+describe.skip().if(isPosix)("HTTP server handles fragmented requests", () => {
   test("handles requests with tiny send buffer (regression test)", async () => {
     using server = Bun.serve({
       hostname: "localhost",

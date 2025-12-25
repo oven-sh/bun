@@ -535,6 +535,15 @@ pub const SideEffects = enum(u1) {
                 return shouldKeepStmtInDeadControlFlow(label.stmt, allocator);
             },
 
+            .s_switch => |switch_stmt| {
+                for (switch_stmt.cases) |case| {
+                    if (shouldKeepStmtsInDeadControlFlow(case.body, allocator)) {
+                        return true;
+                    }
+                }
+                return false;
+            },
+
             else => return true,
         }
     }

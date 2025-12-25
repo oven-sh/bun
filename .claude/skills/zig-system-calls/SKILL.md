@@ -188,6 +188,27 @@ const cwdZ = try sys.getcwdZ(&buf).unwrap();  // Zero-terminated
 sys.chdir(path, destination)
 ```
 
+### Directory Iteration
+
+Use `bun.DirIterator` instead of `std.fs.Dir.Iterator`:
+
+```zig
+var iter = bun.iterateDir(dir_fd);
+while (true) {
+    switch (iter.next()) {
+        .result => |entry| {
+            if (entry) |e| {
+                const name = e.name.slice();
+                const kind = e.kind;  // .file, .directory, .sym_link, etc.
+            } else {
+                break;  // End of directory
+            }
+        },
+        .err => |err| return .{ .err = err },
+    }
+}
+```
+
 ## Other Operations
 
 ```zig

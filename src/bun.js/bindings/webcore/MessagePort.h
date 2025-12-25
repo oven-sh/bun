@@ -75,6 +75,7 @@ public:
     bool isDetached() const { return m_isDetached; }
 
     void dispatchMessages();
+    void dispatchCloseEvent();
 
     // Returns null if there is no entangled port, or if the entangled port is run by a different thread.
     // This is used solely to enable a GC optimization. Some platforms may not be able to determine ownership
@@ -149,6 +150,11 @@ private:
 
     uint32_t m_messageEventCount { 0 };
     static void onDidChangeListenerImpl(EventTarget& self, const AtomString& eventType, OnDidChangeListenerKind kind);
+    // keeps MessagePort alive until we close()
+    RefPtr<MessagePort> m_strongRef = nullptr;
+    unsigned m_messagesInFlight = 0;
+    bool shouldClose = false;
+    void tryClose();
 };
 
 WebCoreOpaqueRoot root(MessagePort*);

@@ -7,6 +7,51 @@ description: Guides using bun.sys for system calls and file I/O in Zig. Use when
 
 Use `bun.sys` instead of `std.fs` or `std.posix` for cross-platform syscalls with proper error handling.
 
+## bun.sys.File (Preferred)
+
+For most file operations, use the `bun.sys.File` wrapper:
+
+```zig
+const File = bun.sys.File;
+
+const file = switch (File.open(path, bun.O.RDWR, 0o644)) {
+    .result => |f| f,
+    .err => |err| return .{ .err = err },
+};
+defer file.close();
+
+// Read/write
+_ = try file.read(buffer).unwrap();
+_ = try file.writeAll(data).unwrap();
+
+// Get file info
+const stat = try file.stat().unwrap();
+const size = try file.getEndPos().unwrap();
+
+// std.io compatible
+const reader = file.reader();
+const writer = file.writer();
+```
+
+### Complete Example
+
+```zig
+const File = bun.sys.File;
+
+pub fn writeFile(path: [:0]const u8, data: []const u8) File.WriteError!void {
+    const file = switch (File.open(path, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o664)) {
+        .result => |f| f,
+        .err => |err| return err.toError(),
+    };
+    defer file.close();
+
+    _ = switch (file.writeAll(data)) {
+        .result => {},
+        .err => |err| return err.toError(),
+    };
+}
+```
+
 ## Why bun.sys?
 
 | Aspect      | bun.sys                          | std.fs/std.posix    |
@@ -43,7 +88,9 @@ const bytes = try sys.read(fd, buffer).unwrap();
 const value = sys.stat(path).unwrapOr(default_stat);
 ```
 
-## File Operations
+## Low-Level File Operations
+
+Only use these when `bun.sys.File` doesn't meet your needs.
 
 ### Opening Files
 
@@ -82,32 +129,6 @@ sys.pwrite(fd, data, offset)
 // Vector I/O
 sys.readv(fd, iovecs)
 sys.writev(fd, iovecs)
-```
-
-### bun.sys.File Wrapper
-
-Higher-level file abstraction (preferred for most use cases):
-
-```zig
-const File = bun.sys.File;
-
-const file = switch (File.open(path, bun.O.RDWR, 0o644)) {
-    .result => |f| f,
-    .err => |err| return .{ .err = err },
-};
-defer file.close();
-
-// Read/write
-_ = try file.read(buffer).unwrap();
-_ = try file.writeAll(data).unwrap();
-
-// Get file info
-const stat = try file.stat().unwrap();
-const size = try file.getEndPos().unwrap();
-
-// std.io compatible
-const reader = file.reader();
-const writer = file.writer();
 ```
 
 ### File Info
@@ -150,7 +171,7 @@ sys.chown(path, uid, gid)
 sys.fchown(fd, uid, gid)
 ```
 
-## Closing File Descriptors
+### Closing File Descriptors
 
 Close is on `bun.FD`:
 
@@ -162,22 +183,6 @@ if (fd.closeAllowingBadFileDescriptor(null)) |err| {
     // handle error
 }
 ```
-
-## Socket Operations
-
-**Important**: `bun.sys` has limited socket support. For network I/O:
-
-- **Non-blocking sockets**: Use `uws.Socket` (libuwebsockets) exclusively
-- **Pipes/blocking I/O**: Use `PipeReader.zig` and `PipeWriter.zig`
-
-Available in bun.sys:
-
-```zig
-sys.setsockopt(fd, level, optname, value)
-sys.socketpair(domain, socktype, protocol, nonblocking_status)
-```
-
-Do NOT use `bun.sys` for socket read/write - use `uws.Socket` instead.
 
 ## Directory Operations
 
@@ -209,6 +214,22 @@ while (true) {
 }
 ```
 
+## Socket Operations
+
+**Important**: `bun.sys` has limited socket support. For network I/O:
+
+- **Non-blocking sockets**: Use `uws.Socket` (libuwebsockets) exclusively
+- **Pipes/blocking I/O**: Use `PipeReader.zig` and `PipeWriter.zig`
+
+Available in bun.sys:
+
+```zig
+sys.setsockopt(fd, level, optname, value)
+sys.socketpair(domain, socktype, protocol, nonblocking_status)
+```
+
+Do NOT use `bun.sys` for socket read/write - use `uws.Socket` instead.
+
 ## Other Operations
 
 ```zig
@@ -225,25 +246,6 @@ sys.futimens(fd, atime, mtime)
 sys.utimens(path, atime, mtime)
 ```
 
-## Complete Example
-
-```zig
-const File = bun.sys.File;
-
-pub fn writeFile(path: [:0]const u8, data: []const u8) File.WriteError!void {
-    const file = switch (File.open(path, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o664)) {
-        .result => |f| f,
-        .err => |err| return err.toError(),
-    };
-    defer file.close();
-
-    _ = switch (file.writeAll(data)) {
-        .result => {},
-        .err => |err| return err.toError(),
-    };
-}
-```
-
 ## Error Type
 
 ```zig
@@ -257,9 +259,9 @@ err.path       // Optional: path string
 
 ## Key Points
 
-- Always use `bun.sys` over `std.fs`/`std.posix` for cross-platform code
+- Prefer `bun.sys.File` wrapper for most file operations
+- Use low-level `bun.sys` functions only when needed
 - Use `bun.O.*` flags instead of `std.os.O.*`
-- Prefer `bun.sys.File` wrapper for file operations
 - Handle `Maybe(T)` with switch or `.unwrap()`
 - Use `defer fd.close()` for cleanup
 - EINTR is handled automatically in most functions

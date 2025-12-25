@@ -2288,7 +2288,9 @@ pub fn Parser(comptime enc: Encoding) type {
                 },
 
                 '-' => {
-                    if (self.line_indent == .none and self.remainStartsWith("---") and self.isAnyOrEofAt(" \t\n\r", 3)) {
+                    // Document separator `---` is only valid at the start of a line
+                    // and only if we haven't scanned any content yet (i.e., we're at the beginning of a value)
+                    if (ctx.str_builder.len() == 0 and self.line_indent == .none and self.remainStartsWith("---") and self.isAnyOrEofAt(" \t\n\r", 3)) {
                         return ctx.done();
                     }
 
@@ -2305,7 +2307,9 @@ pub fn Parser(comptime enc: Encoding) type {
                 },
 
                 '.' => {
-                    if (self.line_indent == .none and self.remainStartsWith("...") and self.isAnyOrEofAt(" \t\n\r", 3)) {
+                    // Document end marker `...` is only valid at the start of a line
+                    // and only if we haven't scanned any content yet
+                    if (ctx.str_builder.len() == 0 and self.line_indent == .none and self.remainStartsWith("...") and self.isAnyOrEofAt(" \t\n\r", 3)) {
                         return ctx.done();
                     }
 

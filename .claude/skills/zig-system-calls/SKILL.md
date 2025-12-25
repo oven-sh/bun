@@ -1,6 +1,6 @@
 ---
 name: zig-system-calls
-description: Guides using bun.sys for system calls and file I/O in Zig. Use when implementing file operations, sockets, or process management instead of std.fs or std.posix.
+description: Guides using bun.sys for system calls and file I/O in Zig. Use when implementing file operations instead of std.fs or std.posix.
 ---
 
 # System Calls & File I/O in Zig
@@ -86,7 +86,7 @@ sys.writev(fd, iovecs)
 
 ### bun.sys.File Wrapper
 
-Higher-level file abstraction:
+Higher-level file abstraction (preferred for most use cases):
 
 ```zig
 const File = bun.sys.File;
@@ -116,6 +116,7 @@ const writer = file.writer();
 sys.stat(path)      // Follow symlinks
 sys.lstat(path)     // Don't follow symlinks
 sys.fstat(fd)       // From file descriptor
+sys.fstatat(fd, path)
 
 // Linux-only: faster selective stat
 sys.statx(path, &.{ .size, .mtime })
@@ -125,16 +126,18 @@ sys.statx(path, &.{ .size, .mtime })
 
 ```zig
 sys.unlink(path)
-sys.rename(from, to)
-sys.readlink(path, buf)
-sys.link(src, dest)
-sys.mkdir(path, mode)
-sys.rmdir(path)
-
-// *at variants (relative to directory fd)
-sys.openat(dir_fd, path, flags, mode)
 sys.unlinkat(dir_fd, path)
+sys.rename(from, to)
 sys.renameat(from_dir, from, to_dir, to)
+sys.readlink(path, buf)
+sys.readlinkat(fd, path, buf)
+sys.link(T, src, dest)
+sys.linkat(src_fd, src, dest_fd, dest)
+sys.symlink(target, dest)
+sys.symlinkat(target, dirfd, dest)
+sys.mkdir(path, mode)
+sys.mkdirat(dir_fd, path, mode)
+sys.rmdir(path)
 ```
 
 ### Permissions
@@ -142,6 +145,7 @@ sys.renameat(from_dir, from, to_dir, to)
 ```zig
 sys.chmod(path, mode)
 sys.fchmod(fd, mode)
+sys.fchmodat(fd, path, mode, flags)
 sys.chown(path, uid, gid)
 sys.fchown(fd, uid, gid)
 ```
@@ -175,42 +179,47 @@ sys.socketpair(domain, socktype, protocol, nonblocking_status)
 
 Do NOT use `bun.sys` for socket read/write - use `uws.Socket` instead.
 
-## Process Operations
-
-```zig
-sys.posix_spawn(...)
-sys.waitpid(pid, options)
-sys.kill(pid, sig)
-```
-
 ## Directory Operations
 
 ```zig
 var buf: bun.PathBuffer = undefined;
 const cwd = try sys.getcwd(&buf).unwrap();
-sys.chdir(path)
+const cwdZ = try sys.getcwdZ(&buf).unwrap();  // Zero-terminated
+sys.chdir(path, destination)
+```
+
+## Other Operations
+
+```zig
+sys.ftruncate(fd, size)
+sys.lseek(fd, offset, whence)
+sys.dup(fd)
+sys.dupWithFlags(fd, flags)
+sys.fcntl(fd, cmd, arg)
+sys.pipe()
+sys.mmap(...)
+sys.munmap(memory)
+sys.access(path, mode)
+sys.futimens(fd, atime, mtime)
+sys.utimens(path, atime, mtime)
 ```
 
 ## Complete Example
 
 ```zig
-pub fn writeFile(path: [:0]const u8, data: []const u8) bun.sys.Maybe(void) {
-    const file = switch (bun.sys.File.open(
-        path,
-        bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC,
-        0o664,
-    )) {
+const File = bun.sys.File;
+
+pub fn writeFile(path: [:0]const u8, data: []const u8) File.WriteError!void {
+    const file = switch (File.open(path, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o664)) {
         .result => |f| f,
-        .err => |err| return .{ .err = err },
+        .err => |err| return err.toError(),
     };
     defer file.close();
 
-    switch (file.writeAll(data)) {
+    _ = switch (file.writeAll(data)) {
         .result => {},
-        .err => |err| return .{ .err = err },
-    }
-
-    return .success;
+        .err => |err| return err.toError(),
+    };
 }
 ```
 
@@ -229,6 +238,8 @@ err.path       // Optional: path string
 
 - Always use `bun.sys` over `std.fs`/`std.posix` for cross-platform code
 - Use `bun.O.*` flags instead of `std.os.O.*`
+- Prefer `bun.sys.File` wrapper for file operations
 - Handle `Maybe(T)` with switch or `.unwrap()`
 - Use `defer fd.close()` for cleanup
 - EINTR is handled automatically in most functions
+- For sockets, use `uws.Socket` not `bun.sys`

@@ -34,7 +34,7 @@ namespace WebCore {
 
 CryptoKeyRaw::CryptoKeyRaw(CryptoAlgorithmIdentifier identifier, Vector<uint8_t>&& keyData, CryptoKeyUsageBitmap usages)
     : CryptoKey(identifier, CryptoKeyType::Secret, false, usages)
-    , m_key(WTFMove(keyData))
+    , m_key(WTF::move(keyData))
 {
 }
 

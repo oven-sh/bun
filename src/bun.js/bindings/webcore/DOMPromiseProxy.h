@@ -206,7 +206,7 @@ inline void DOMPromiseProxy<IDLType>::reject(Exception exception, RejectAsHandle
 {
     ASSERT(!m_valueOrException);
 
-    m_valueOrException = ExceptionOr<Value> { WTFMove(exception) };
+    m_valueOrException = ExceptionOr<Value> { WTF::move(exception) };
     for (auto& deferredPromise : m_deferredPromises)
         deferredPromise->reject(m_valueOrException->exception(), rejectAsHandled);
 }
@@ -260,7 +260,7 @@ inline void DOMPromiseProxy<IDLUndefined>::resolve()
 inline void DOMPromiseProxy<IDLUndefined>::reject(Exception exception, RejectAsHandled rejectAsHandled)
 {
     ASSERT(!m_valueOrException);
-    m_valueOrException = ExceptionOr<void> { WTFMove(exception) };
+    m_valueOrException = ExceptionOr<void> { WTF::move(exception) };
     for (auto& deferredPromise : m_deferredPromises)
         deferredPromise->reject(m_valueOrException->exception(), rejectAsHandled);
 }
@@ -276,7 +276,7 @@ inline DOMPromiseProxyWithResolveCallback<IDLType>::DOMPromiseProxyWithResolveCa
 
 template<typename IDLType>
 inline DOMPromiseProxyWithResolveCallback<IDLType>::DOMPromiseProxyWithResolveCallback(ResolveCallback&& function)
-    : m_resolveCallback(WTFMove(function))
+    : m_resolveCallback(WTF::move(function))
 {
 }
 
@@ -344,7 +344,7 @@ inline void DOMPromiseProxyWithResolveCallback<IDLType>::reject(Exception except
 {
     ASSERT(!m_valueOrException);
 
-    m_valueOrException = ExceptionOr<void> { WTFMove(exception) };
+    m_valueOrException = ExceptionOr<void> { WTF::move(exception) };
     for (auto& deferredPromise : m_deferredPromises)
         deferredPromise->reject(m_valueOrException->exception(), rejectAsHandled);
 }

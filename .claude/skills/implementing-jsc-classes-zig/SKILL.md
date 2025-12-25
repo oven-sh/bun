@@ -61,8 +61,8 @@ pub const TextDecoder = struct {
         globalObject: *JSGlobalObject,
         callFrame: *JSC.CallFrame,
     ) bun.JSError!JSC.JSValue {
-        const input = callFrame.argument(0);
-        if (input.isUndefinedOrNull()) {
+        const args = callFrame.arguments();
+        if (args.len < 1 or args.ptr[0].isUndefinedOrNull()) {
             return globalObject.throw("Input cannot be null", .{});
         }
         return JSC.JSValue.jsString(globalObject, "result");
@@ -92,8 +92,9 @@ pub const TextDecoder = struct {
 ## CallFrame Access
 
 ```zig
-const input = callFrame.argument(0);
-const argCount = callFrame.argumentCount();
+const args = callFrame.arguments();
+const first_arg = args.ptr[0];  // Access as slice
+const argCount = args.len;
 const thisValue = callFrame.thisValue();
 ```
 
@@ -119,7 +120,8 @@ pub fn encodingSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObje
 
 ```zig
 pub fn method(this: *MyClass, globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    if (callFrame.argumentCount() < 1) {
+    const args = callFrame.arguments();
+    if (args.len < 1) {
         return globalObject.throw("Missing required argument", .{});
     }
     return JSC.JSValue.jsString(globalObject, "Success!");
@@ -146,6 +148,7 @@ pub fn finalize(this: *TextDecoder) void {
 ## Creating a New Binding
 
 1. Define interface in `.classes.ts`:
+
 ```typescript
 define({
   name: "MyClass",
@@ -159,6 +162,7 @@ define({
 ```
 
 2. Implement in `.zig`:
+
 ```zig
 pub const MyClass = struct {
     pub const js = JSC.Codegen.JSMyClass;

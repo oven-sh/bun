@@ -148,11 +148,13 @@ private:
 ## Structure Caching
 
 Add to `ZigGlobalObject.h`:
+
 ```cpp
 JSC::LazyClassStructure m_JSFooClassStructure;
 ```
 
 Initialize in `ZigGlobalObject.cpp`:
+
 ```cpp
 m_JSFooClassStructure.initLater([](LazyClassStructure::Initializer& init) {
     Bun::initJSFooClassStructure(init);
@@ -160,6 +162,7 @@ m_JSFooClassStructure.initLater([](LazyClassStructure::Initializer& init) {
 ```
 
 Visit in `visitChildrenImpl`:
+
 ```cpp
 m_JSFooClassStructure.visit(visitor);
 ```

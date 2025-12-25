@@ -106,6 +106,7 @@ Test ID format: `category/TestName` (e.g., `banner/CommentBanner`, `minify/Empty
 ## Dead Code Elimination (DCE)
 
 Add markers in source code:
+
 ```javascript
 // KEEP - this should survive
 const used = 1;
@@ -155,6 +156,7 @@ itBundled("string/Folding", {
 ## Common Patterns
 
 **Simple output verification:**
+
 ```typescript
 itBundled("banner/Comment", {
   banner: "// copyright",
@@ -166,6 +168,7 @@ itBundled("banner/Comment", {
 ```
 
 **Multi-file CJS/ESM interop:**
+
 ```typescript
 itBundled("cjs/ImportSyntax", {
   files: {
@@ -177,6 +180,7 @@ itBundled("cjs/ImportSyntax", {
 ```
 
 **Error handling:**
+
 ```typescript
 itBundled("edgecase/InvalidLoader", {
   files: { "index.js": `...` },
@@ -188,7 +192,7 @@ itBundled("edgecase/InvalidLoader", {
 
 ## Test Organization
 
-```
+```text
 test/bundler/
 ├── bundler_banner.test.ts
 ├── bundler_string.test.ts

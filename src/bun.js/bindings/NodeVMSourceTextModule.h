@@ -58,9 +58,9 @@ private:
     SourceCode m_sourceCode;
 
     NodeVMSourceTextModule(JSC::VM& vm, JSC::Structure* structure, WTF::String identifier, JSValue context, SourceCode sourceCode, JSValue moduleWrapper, JSValue initializeImportMeta)
-        : Base(vm, structure, std::move(identifier), context, moduleWrapper)
+        : Base(vm, structure, WTF::move(identifier), context, moduleWrapper)
         , m_initializeImportMeta(initializeImportMeta && !initializeImportMeta.isUndefined() ? initializeImportMeta : JSValue(), JSC::WriteBarrierEarlyInit)
-        , m_sourceCode(std::move(sourceCode))
+        , m_sourceCode(WTF::move(sourceCode))
     {
     }
 

@@ -32,8 +32,8 @@ ReadableStreamSource::~ReadableStreamSource() = default;
 void ReadableStreamSource::start(ReadableStreamDefaultController&& controller, DOMPromiseDeferred<void>&& promise)
 {
     ASSERT(!m_promise);
-    m_promise = makeUnique<DOMPromiseDeferred<void>>(std::move(promise));
-    m_controller = std::move(controller);
+    m_promise = makeUnique<DOMPromiseDeferred<void>>(WTF::move(promise));
+    m_controller = WTF::move(controller);
 
     setActive();
     doStart();
@@ -44,7 +44,7 @@ void ReadableStreamSource::pull(DOMPromiseDeferred<void>&& promise)
     ASSERT(!m_promise);
     ASSERT(m_controller);
 
-    m_promise = makeUnique<DOMPromiseDeferred<void>>(std::move(promise));
+    m_promise = makeUnique<DOMPromiseDeferred<void>>(WTF::move(promise));
 
     setActive();
     doPull();

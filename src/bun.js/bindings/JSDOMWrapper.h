@@ -91,7 +91,7 @@ public:
 protected:
     JSDOMWrapper(JSC::Structure* structure, JSC::JSGlobalObject& globalObject, Ref<ImplementationClass>&& impl)
         : Base(structure, globalObject)
-        , m_wrapped(std::move(impl))
+        , m_wrapped(WTF::move(impl))
     {
     }
 

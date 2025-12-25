@@ -34,7 +34,7 @@ public:
     static JSAbortSignal* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<AbortSignal>&& impl)
     {
         auto& vm = JSC::getVM(globalObject);
-        JSAbortSignal* ptr = new (NotNull, JSC::allocateCell<JSAbortSignal>(vm)) JSAbortSignal(structure, *globalObject, std::move(impl));
+        JSAbortSignal* ptr = new (NotNull, JSC::allocateCell<JSAbortSignal>(vm)) JSAbortSignal(structure, *globalObject, WTF::move(impl));
         ptr->finishCreation(vm);
         return ptr;
     }

@@ -50,7 +50,7 @@ public:
     }
     static std::unique_ptr<CryptoKeyRSAComponents> createPublic(Vector<uint8_t>&& modulus, Vector<uint8_t>&& exponent)
     {
-        return std::unique_ptr<CryptoKeyRSAComponents>(new CryptoKeyRSAComponents(std::move(modulus), std::move(exponent)));
+        return std::unique_ptr<CryptoKeyRSAComponents>(new CryptoKeyRSAComponents(WTF::move(modulus), WTF::move(exponent)));
     }
 
     static std::unique_ptr<CryptoKeyRSAComponents> createPrivate(const Vector<uint8_t>& modulus, const Vector<uint8_t>& exponent, const Vector<uint8_t>& privateExponent)
@@ -59,7 +59,7 @@ public:
     }
     static std::unique_ptr<CryptoKeyRSAComponents> createPrivate(Vector<uint8_t>&& modulus, Vector<uint8_t>&& exponent, Vector<uint8_t>&& privateExponent)
     {
-        return std::unique_ptr<CryptoKeyRSAComponents>(new CryptoKeyRSAComponents(std::move(modulus), std::move(exponent), std::move(privateExponent)));
+        return std::unique_ptr<CryptoKeyRSAComponents>(new CryptoKeyRSAComponents(WTF::move(modulus), WTF::move(exponent), WTF::move(privateExponent)));
     }
 
     static std::unique_ptr<CryptoKeyRSAComponents> createPrivateWithAdditionalData(const Vector<uint8_t>& modulus, const Vector<uint8_t>& exponent, const Vector<uint8_t>& privateExponent, const PrimeInfo& firstPrimeInfo, const PrimeInfo& secondPrimeInfo, const Vector<PrimeInfo>& otherPrimeInfos)
@@ -68,7 +68,7 @@ public:
     }
     static std::unique_ptr<CryptoKeyRSAComponents> createPrivateWithAdditionalData(Vector<uint8_t>&& modulus, Vector<uint8_t>&& exponent, Vector<uint8_t>&& privateExponent, PrimeInfo&& firstPrimeInfo, PrimeInfo&& secondPrimeInfo, Vector<PrimeInfo>&& otherPrimeInfos)
     {
-        return std::unique_ptr<CryptoKeyRSAComponents>(new CryptoKeyRSAComponents(std::move(modulus), std::move(exponent), std::move(privateExponent), std::move(firstPrimeInfo), std::move(secondPrimeInfo), std::move(otherPrimeInfos)));
+        return std::unique_ptr<CryptoKeyRSAComponents>(new CryptoKeyRSAComponents(WTF::move(modulus), WTF::move(exponent), WTF::move(privateExponent), WTF::move(firstPrimeInfo), WTF::move(secondPrimeInfo), WTF::move(otherPrimeInfos)));
     }
 
     virtual ~CryptoKeyRSAComponents();

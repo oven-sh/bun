@@ -106,7 +106,7 @@ void JSReadableStreamSinkPrototype::finishCreation(VM& vm)
 const ClassInfo JSReadableStreamSink::s_info = { "ReadableStreamSink"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStreamSink) };
 
 JSReadableStreamSink::JSReadableStreamSink(Structure* structure, JSDOMGlobalObject& globalObject, Ref<ReadableStreamSink>&& impl)
-    : JSDOMWrapper<ReadableStreamSink>(structure, globalObject, std::move(impl))
+    : JSDOMWrapper<ReadableStreamSink>(structure, globalObject, WTF::move(impl))
 {
 }
 
@@ -148,7 +148,7 @@ static inline JSC::EncodedJSValue jsReadableStreamSinkPrototypeFunction_enqueueB
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto chunk = convert<IDLUnion<IDLArrayBufferView, IDLArrayBuffer>>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.enqueue(std::move(chunk)); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.enqueue(WTF::move(chunk)); })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsReadableStreamSinkPrototypeFunction_enqueue, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -183,7 +183,7 @@ static inline JSC::EncodedJSValue jsReadableStreamSinkPrototypeFunction_errorBod
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto message = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.error(std::move(message)); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.error(WTF::move(message)); })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsReadableStreamSinkPrototypeFunction_error, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -227,7 +227,7 @@ void JSReadableStreamSinkOwner::finalize(JSC::Handle<JSC::Unknown> handle, void*
 
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<ReadableStreamSink>&& impl)
 {
-    return createWrapper<ReadableStreamSink>(globalObject, std::move(impl));
+    return createWrapper<ReadableStreamSink>(globalObject, WTF::move(impl));
 }
 
 JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, ReadableStreamSink& impl)

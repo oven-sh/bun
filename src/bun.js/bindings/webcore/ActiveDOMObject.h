@@ -106,7 +106,7 @@
 //     template<typename T>
 //     static void queueTaskKeepingObjectAlive(T& object, TaskSource source, Function<void ()>&& task)
 //     {
-//         object.queueTaskInEventLoop(source, [protectedObject = Ref { object }, activity = object.ActiveDOMObject::makePendingActivity(object), task = std::move(task)] () {
+//         object.queueTaskInEventLoop(source, [protectedObject = Ref { object }, activity = object.ActiveDOMObject::makePendingActivity(object), task = WTF::move(task)] () {
 //             task();
 //         });
 //     }
@@ -114,8 +114,8 @@
 //     template<typename T>
 //     static void queueCancellableTaskKeepingObjectAlive(T& object, TaskSource source, TaskCancellationGroup& cancellationGroup, Function<void()>&& task)
 //     {
-//         CancellableTask cancellableTask(cancellationGroup, std::move(task));
-//         object.queueTaskInEventLoop(source, [protectedObject = Ref { object }, activity = object.ActiveDOMObject::makePendingActivity(object), cancellableTask = std::move(cancellableTask)]() mutable {
+//         CancellableTask cancellableTask(cancellationGroup, WTF::move(task));
+//         object.queueTaskInEventLoop(source, [protectedObject = Ref { object }, activity = object.ActiveDOMObject::makePendingActivity(object), cancellableTask = WTF::move(cancellableTask)]() mutable {
 //             cancellableTask();
 //         });
 //     }
@@ -123,13 +123,13 @@
 //     template<typename EventTargetType>
 //     static void queueTaskToDispatchEvent(EventTargetType& target, TaskSource source, Ref<Event>&& event)
 //     {
-//         target.queueTaskToDispatchEventInternal(target, source, std::move(event));
+//         target.queueTaskToDispatchEventInternal(target, source, WTF::move(event));
 //     }
 
 //     template<typename EventTargetType>
 //     static void queueCancellableTaskToDispatchEvent(EventTargetType& target, TaskSource source, TaskCancellationGroup& cancellationGroup, Ref<Event>&& event)
 //     {
-//         target.queueCancellableTaskToDispatchEventInternal(target, source, cancellationGroup, std::move(event));
+//         target.queueCancellableTaskToDispatchEventInternal(target, source, cancellationGroup, WTF::move(event));
 //     }
 
 // protected:

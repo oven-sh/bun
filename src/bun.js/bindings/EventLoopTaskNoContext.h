@@ -12,7 +12,7 @@ class EventLoopTaskNoContext {
 public:
     EventLoopTaskNoContext(JSC::JSGlobalObject* globalObject, Function<void()>&& task)
         : m_createdInBunVm(defaultGlobalObject(globalObject)->bunVM())
-        , m_task(std::move(task))
+        , m_task(WTF::move(task))
     {
     }
 

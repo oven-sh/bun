@@ -326,7 +326,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieDOMConstructor::
         auto cookie = cookie_exception.releaseReturnValue();
 
         auto* globalObject = castedThis->globalObject();
-        RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS(lexicalGlobalObject, globalObject, std::move(cookie))));
+        RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS(lexicalGlobalObject, globalObject, WTF::move(cookie))));
     } else if (callFrame->argumentCount() == 1 && callFrame->argument(0).isObject()) {
         // new Bun.Cooke({
         //     name: "name",
@@ -347,7 +347,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieDOMConstructor::
         }
         auto cookie = cookie_exception.releaseReturnValue();
         auto* globalObject = castedThis->globalObject();
-        RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS(lexicalGlobalObject, globalObject, std::move(cookie))));
+        RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS(lexicalGlobalObject, globalObject, WTF::move(cookie))));
     } else if (callFrame->argumentCount() >= 2) {
         // new Bun.Cookie("name", "value", {
         //     domain: "domain",
@@ -383,7 +383,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieDOMConstructor::
         auto cookie = cookie_exception.releaseReturnValue();
 
         auto* globalObject = castedThis->globalObject();
-        RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS(lexicalGlobalObject, globalObject, std::move(cookie))));
+        RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS(lexicalGlobalObject, globalObject, WTF::move(cookie))));
     }
 
     return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
@@ -445,7 +445,7 @@ void JSCookiePrototype::finishCreation(VM& vm)
 const ClassInfo JSCookie::s_info = { "Cookie"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCookie) };
 
 JSCookie::JSCookie(Structure* structure, JSDOMGlobalObject& globalObject, Ref<Cookie>&& impl)
-    : JSDOMWrapper<Cookie>(structure, globalObject, std::move(impl))
+    : JSDOMWrapper<Cookie>(structure, globalObject, WTF::move(impl))
 {
 }
 
@@ -547,7 +547,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCookieStaticFunctionParse, (JSGlobalObject * lexicalG
             RELEASE_AND_RETURN(throwScope, {});
         }
         auto cookie = cookie_exception.releaseReturnValue();
-        return JSValue::encode(toJSNewlyCreated(lexicalGlobalObject, defaultGlobalObject(lexicalGlobalObject), std::move(cookie)));
+        return JSValue::encode(toJSNewlyCreated(lexicalGlobalObject, defaultGlobalObject(lexicalGlobalObject), WTF::move(cookie)));
     }
 
     if (!WebCore::isValidHTTPHeaderValue(cookieString)) [[unlikely]] {
@@ -563,7 +563,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCookieStaticFunctionParse, (JSGlobalObject * lexicalG
     auto cookie = cookie_exception.releaseReturnValue();
 
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJSNewlyCreated(lexicalGlobalObject, globalObject, std::move(cookie))));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJSNewlyCreated(lexicalGlobalObject, globalObject, WTF::move(cookie))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsCookieStaticFunctionFrom, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -602,7 +602,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCookieStaticFunctionFrom, (JSGlobalObject * lexicalGl
     }
     auto cookie = cookie_exception.releaseReturnValue();
     auto* globalObject = jsCast<JSDOMGlobalObject*>(lexicalGlobalObject);
-    return JSValue::encode(toJSNewlyCreated(lexicalGlobalObject, globalObject, std::move(cookie)));
+    return JSValue::encode(toJSNewlyCreated(lexicalGlobalObject, globalObject, WTF::move(cookie)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsCookieStaticFunctionSerialize, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -968,7 +968,7 @@ void JSCookieOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
 
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<Cookie>&& impl)
 {
-    return createWrapper<Cookie>(globalObject, std::move(impl));
+    return createWrapper<Cookie>(globalObject, WTF::move(impl));
 }
 
 JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, Cookie& impl)

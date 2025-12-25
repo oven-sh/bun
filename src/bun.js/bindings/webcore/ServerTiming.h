@@ -47,21 +47,21 @@ struct ServerTiming {
 };
 
 inline ServerTiming::ServerTiming(String&& name)
-    : name(std::move(name))
+    : name(WTF::move(name))
 {
 }
 
 inline ServerTiming::ServerTiming(String&& name, double duration, String&& description)
-    : name(std::move(name))
+    : name(WTF::move(name))
     , duration(duration)
-    , description(std::move(description))
+    , description(WTF::move(description))
 {
 }
 
 inline ServerTiming::ServerTiming(String&& name, double duration, String&& description, bool durationSet, bool descriptionSet)
-    : name(std::move(name))
+    : name(WTF::move(name))
     , duration(duration)
-    , description(std::move(description))
+    , description(WTF::move(description))
     , durationSet(durationSet)
     , descriptionSet(descriptionSet)
 {

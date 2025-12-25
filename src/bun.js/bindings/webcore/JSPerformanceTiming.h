@@ -31,7 +31,7 @@ public:
     using Base = JSDOMWrapper<PerformanceTiming>;
     static JSPerformanceTiming* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<PerformanceTiming>&& impl)
     {
-        JSPerformanceTiming* ptr = new (NotNull, JSC::allocateCell<JSPerformanceTiming>(globalObject->vm())) JSPerformanceTiming(structure, *globalObject, std::move(impl));
+        JSPerformanceTiming* ptr = new (NotNull, JSC::allocateCell<JSPerformanceTiming>(globalObject->vm())) JSPerformanceTiming(structure, *globalObject, WTF::move(impl));
         ptr->finishCreation(globalObject->vm());
         return ptr;
     }

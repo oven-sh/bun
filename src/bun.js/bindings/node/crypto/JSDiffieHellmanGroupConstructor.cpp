@@ -61,7 +61,7 @@ JSC_DEFINE_HOST_FUNCTION(constructDiffieHellmanGroup, (JSC::JSGlobalObject * glo
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    return JSC::JSValue::encode(JSDiffieHellmanGroup::create(vm, structure, globalObject, std::move(dh)));
+    return JSC::JSValue::encode(JSDiffieHellmanGroup::create(vm, structure, globalObject, WTF::move(dh)));
 }
 
 } // namespace Bun

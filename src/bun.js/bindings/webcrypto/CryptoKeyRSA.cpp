@@ -57,7 +57,7 @@ RefPtr<CryptoKeyRSA> CryptoKeyRSA::importJwk(CryptoAlgorithmIdentifier algorithm
         return nullptr;
     if (keyData.d.isNull()) {
         // import public key
-        auto publicKeyComponents = CryptoKeyRSAComponents::createPublic(std::move(*modulus), std::move(*exponent));
+        auto publicKeyComponents = CryptoKeyRSAComponents::createPublic(WTF::move(*modulus), WTF::move(*exponent));
         // Notice: CryptoAlgorithmIdentifier::SHA_1 is just a placeholder. It should not have any effect if hash is std::nullopt.
         return CryptoKeyRSA::create(algorithm, hash.value_or(CryptoAlgorithmIdentifier::SHA_1), !!hash, *publicKeyComponents, extractable, usages);
     }
@@ -67,7 +67,7 @@ RefPtr<CryptoKeyRSA> CryptoKeyRSA::importJwk(CryptoAlgorithmIdentifier algorithm
     if (!privateExponent)
         return nullptr;
     if (keyData.p.isNull() && keyData.q.isNull() && keyData.dp.isNull() && keyData.dp.isNull() && keyData.qi.isNull()) {
-        auto privateKeyComponents = CryptoKeyRSAComponents::createPrivate(std::move(*modulus), std::move(*exponent), std::move(*privateExponent));
+        auto privateKeyComponents = CryptoKeyRSAComponents::createPrivate(WTF::move(*modulus), WTF::move(*exponent), WTF::move(*privateExponent));
         // Notice: CryptoAlgorithmIdentifier::SHA_1 is just a placeholder. It should not have any effect if hash is std::nullopt.
         return CryptoKeyRSA::create(algorithm, hash.value_or(CryptoAlgorithmIdentifier::SHA_1), !!hash, *privateKeyComponents, extractable, usages);
     }
@@ -92,16 +92,16 @@ RefPtr<CryptoKeyRSA> CryptoKeyRSA::importJwk(CryptoAlgorithmIdentifier algorithm
         return nullptr;
 
     CryptoKeyRSAComponents::PrimeInfo firstPrimeInfo;
-    firstPrimeInfo.primeFactor = std::move(*firstPrimeFactor);
-    firstPrimeInfo.factorCRTExponent = std::move(*firstFactorCRTExponent);
+    firstPrimeInfo.primeFactor = WTF::move(*firstPrimeFactor);
+    firstPrimeInfo.factorCRTExponent = WTF::move(*firstFactorCRTExponent);
 
     CryptoKeyRSAComponents::PrimeInfo secondPrimeInfo;
-    secondPrimeInfo.primeFactor = std::move(*secondPrimeFactor);
-    secondPrimeInfo.factorCRTExponent = std::move(*secondFactorCRTExponent);
-    secondPrimeInfo.factorCRTCoefficient = std::move(*secondFactorCRTCoefficient);
+    secondPrimeInfo.primeFactor = WTF::move(*secondPrimeFactor);
+    secondPrimeInfo.factorCRTExponent = WTF::move(*secondFactorCRTExponent);
+    secondPrimeInfo.factorCRTCoefficient = WTF::move(*secondFactorCRTCoefficient);
 
     if (!keyData.oth) {
-        auto privateKeyComponents = CryptoKeyRSAComponents::createPrivateWithAdditionalData(std::move(*modulus), std::move(*exponent), std::move(*privateExponent), std::move(firstPrimeInfo), std::move(secondPrimeInfo), {});
+        auto privateKeyComponents = CryptoKeyRSAComponents::createPrivateWithAdditionalData(WTF::move(*modulus), WTF::move(*exponent), WTF::move(*privateExponent), WTF::move(firstPrimeInfo), WTF::move(secondPrimeInfo), {});
         // Notice: CryptoAlgorithmIdentifier::SHA_1 is just a placeholder. It should not have any effect if hash is std::nullopt.
         return CryptoKeyRSA::create(algorithm, hash.value_or(CryptoAlgorithmIdentifier::SHA_1), !!hash, *privateKeyComponents, extractable, usages);
     }
@@ -119,14 +119,14 @@ RefPtr<CryptoKeyRSA> CryptoKeyRSA::importJwk(CryptoAlgorithmIdentifier algorithm
             return nullptr;
 
         CryptoKeyRSAComponents::PrimeInfo info;
-        info.primeFactor = std::move(*primeFactor);
-        info.factorCRTExponent = std::move(*factorCRTExponent);
-        info.factorCRTCoefficient = std::move(*factorCRTCoefficient);
+        info.primeFactor = WTF::move(*primeFactor);
+        info.factorCRTExponent = WTF::move(*factorCRTExponent);
+        info.factorCRTCoefficient = WTF::move(*factorCRTCoefficient);
 
-        otherPrimeInfos.append(std::move(info));
+        otherPrimeInfos.append(WTF::move(info));
     }
 
-    auto privateKeyComponents = CryptoKeyRSAComponents::createPrivateWithAdditionalData(std::move(*modulus), std::move(*exponent), std::move(*privateExponent), std::move(firstPrimeInfo), std::move(secondPrimeInfo), std::move(otherPrimeInfos));
+    auto privateKeyComponents = CryptoKeyRSAComponents::createPrivateWithAdditionalData(WTF::move(*modulus), WTF::move(*exponent), WTF::move(*privateExponent), WTF::move(firstPrimeInfo), WTF::move(secondPrimeInfo), WTF::move(otherPrimeInfos));
     // Notice: CryptoAlgorithmIdentifier::SHA_1 is just a placeholder. It should not have any effect if hash is std::nullopt.
     return CryptoKeyRSA::create(algorithm, hash.value_or(CryptoAlgorithmIdentifier::SHA_1), !!hash, *privateKeyComponents, extractable, usages);
 }
@@ -168,9 +168,9 @@ JsonWebKey CryptoKeyRSA::exportJwk() const
         otherInfo.r = Bun::base64URLEncodeToString(info.primeFactor);
         otherInfo.d = Bun::base64URLEncodeToString(info.factorCRTExponent);
         otherInfo.t = Bun::base64URLEncodeToString(info.factorCRTCoefficient);
-        oth.append(std::move(otherInfo));
+        oth.append(WTF::move(otherInfo));
     }
-    result.oth = std::move(oth);
+    result.oth = WTF::move(oth);
     return result;
 }
 

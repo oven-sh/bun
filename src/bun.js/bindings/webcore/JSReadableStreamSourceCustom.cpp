@@ -45,14 +45,14 @@ JSValue JSReadableStreamSource::start(JSGlobalObject& lexicalGlobalObject, CallF
 
     m_controller.set(vm, this, controller);
 
-    wrapped().start(ReadableStreamDefaultController(controller), std::move(promise));
+    wrapped().start(ReadableStreamDefaultController(controller), WTF::move(promise));
 
     return jsUndefined();
 }
 
 JSValue JSReadableStreamSource::pull(JSGlobalObject&, CallFrame&, Ref<DeferredPromise>&& promise)
 {
-    wrapped().pull(std::move(promise));
+    wrapped().pull(WTF::move(promise));
     return jsUndefined();
 }
 

@@ -31,13 +31,13 @@ namespace WebCore {
 
 Ref<PerformanceServerTiming> PerformanceServerTiming::create(String&& name, double duration, String&& description)
 {
-    return adoptRef(*new PerformanceServerTiming(std::move(name), duration, std::move(description)));
+    return adoptRef(*new PerformanceServerTiming(WTF::move(name), duration, WTF::move(description)));
 }
 
 PerformanceServerTiming::PerformanceServerTiming(String&& name, double duration, String&& description)
-    : m_name(std::move(name))
+    : m_name(WTF::move(name))
     , m_duration(duration)
-    , m_description(std::move(description))
+    , m_description(WTF::move(description))
 {
 }
 

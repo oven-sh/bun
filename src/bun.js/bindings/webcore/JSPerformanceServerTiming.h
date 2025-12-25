@@ -32,7 +32,7 @@ public:
     static JSPerformanceServerTiming* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<PerformanceServerTiming>&& impl)
     {
         auto& vm = JSC::getVM(globalObject);
-        JSPerformanceServerTiming* ptr = new (NotNull, JSC::allocateCell<JSPerformanceServerTiming>(vm)) JSPerformanceServerTiming(structure, *globalObject, std::move(impl));
+        JSPerformanceServerTiming* ptr = new (NotNull, JSC::allocateCell<JSPerformanceServerTiming>(vm)) JSPerformanceServerTiming(structure, *globalObject, WTF::move(impl));
         ptr->finishCreation(vm);
         return ptr;
     }

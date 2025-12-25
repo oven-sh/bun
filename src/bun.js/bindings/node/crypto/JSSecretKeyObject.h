@@ -24,7 +24,7 @@ public:
 
     static JSSecretKeyObject* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* globalObject, KeyObject&& keyObject)
     {
-        JSSecretKeyObject* instance = new (NotNull, JSC::allocateCell<JSSecretKeyObject>(vm)) JSSecretKeyObject(vm, structure, std::move(keyObject));
+        JSSecretKeyObject* instance = new (NotNull, JSC::allocateCell<JSSecretKeyObject>(vm)) JSSecretKeyObject(vm, structure, WTF::move(keyObject));
         instance->finishCreation(vm, globalObject);
         return instance;
     }
@@ -48,7 +48,7 @@ public:
     void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
 
     JSSecretKeyObject(JSC::VM& vm, JSC::Structure* structure, KeyObject&& keyObject)
-        : Base(vm, structure, std::move(keyObject))
+        : Base(vm, structure, WTF::move(keyObject))
     {
     }
 };

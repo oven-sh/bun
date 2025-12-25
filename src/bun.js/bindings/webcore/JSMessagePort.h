@@ -33,7 +33,7 @@ public:
     using DOMWrapped = MessagePort;
     static JSMessagePort* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<MessagePort>&& impl)
     {
-        JSMessagePort* ptr = new (NotNull, JSC::allocateCell<JSMessagePort>(globalObject->vm())) JSMessagePort(structure, *globalObject, std::move(impl));
+        JSMessagePort* ptr = new (NotNull, JSC::allocateCell<JSMessagePort>(globalObject->vm())) JSMessagePort(structure, *globalObject, WTF::move(impl));
         ptr->finishCreation(globalObject->vm());
         return ptr;
     }

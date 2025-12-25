@@ -80,7 +80,7 @@ NodeVMSyntheticModule* NodeVMSyntheticModule::create(VM& vm, JSGlobalObject* glo
     auto* structure = zigGlobalObject->NodeVMSyntheticModuleStructure();
     WTF::String identifier = identifierValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    auto* ptr = new (NotNull, allocateCell<NodeVMSyntheticModule>(vm)) NodeVMSyntheticModule(vm, structure, std::move(identifier), contextValue, moduleWrapperValue, std::move(exportNames), syntheticEvaluationStepsValue);
+    auto* ptr = new (NotNull, allocateCell<NodeVMSyntheticModule>(vm)) NodeVMSyntheticModule(vm, structure, WTF::move(identifier), contextValue, moduleWrapperValue, WTF::move(exportNames), syntheticEvaluationStepsValue);
     ptr->finishCreation(vm);
     return ptr;
 }

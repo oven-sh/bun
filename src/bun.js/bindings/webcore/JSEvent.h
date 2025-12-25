@@ -32,7 +32,7 @@ public:
     using Base = JSDOMWrapper<Event>;
     static JSEvent* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<Event>&& impl)
     {
-        JSEvent* ptr = new (NotNull, JSC::allocateCell<JSEvent>(globalObject->vm())) JSEvent(structure, *globalObject, std::move(impl));
+        JSEvent* ptr = new (NotNull, JSC::allocateCell<JSEvent>(globalObject->vm())) JSEvent(structure, *globalObject, WTF::move(impl));
         ptr->finishCreation(globalObject->vm());
         return ptr;
     }

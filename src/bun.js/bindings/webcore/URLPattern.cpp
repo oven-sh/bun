@@ -72,7 +72,7 @@ URLPattern::URLPattern() = default;
 // https://urlpattern.spec.whatwg.org/#process-a-urlpatterninit
 static ExceptionOr<URLPatternInit> processInit(URLPatternInit&& init, BaseURLStringType type, String&& protocol = {}, String&& username = {}, String&& password = {}, String&& hostname = {}, String&& port = {}, String&& pathname = {}, String&& search = {}, String&& hash = {})
 {
-    URLPatternInit result { std::move(protocol), std::move(username), std::move(password), std::move(hostname), std::move(port), std::move(pathname), std::move(search), std::move(hash), {} };
+    URLPatternInit result { WTF::move(protocol), WTF::move(username), WTF::move(password), WTF::move(hostname), WTF::move(port), WTF::move(pathname), WTF::move(search), WTF::move(hash), {} };
 
     URL baseURL;
 
@@ -215,21 +215,21 @@ ExceptionOr<Ref<URLPattern>> URLPattern::create(ScriptExecutionContext& context,
     URLPatternInit init;
 
     if (std::holds_alternative<String>(input) && !std::get<String>(input).isNull()) {
-        auto maybeInit = URLPatternConstructorStringParser(std::move(std::get<String>(input))).parse(context);
+        auto maybeInit = URLPatternConstructorStringParser(WTF::move(std::get<String>(input))).parse(context);
         if (maybeInit.hasException())
             return maybeInit.releaseException();
         init = maybeInit.releaseReturnValue();
 
         if (baseURL.isNull() && init.protocol.isEmpty())
             return Exception { ExceptionCode::TypeError, "Relative constructor string must have additional baseURL argument."_s };
-        init.baseURL = std::move(baseURL);
+        init.baseURL = WTF::move(baseURL);
     } else if (std::holds_alternative<URLPatternInit>(input)) {
         if (!baseURL.isNull())
             return Exception { ExceptionCode::TypeError, "Constructor with a URLPatternInit should have a null baseURL argument."_s };
         init = std::get<URLPatternInit>(input);
     }
 
-    auto maybeProcessedInit = processInit(std::move(init), BaseURLStringType::Pattern);
+    auto maybeProcessedInit = processInit(WTF::move(init), BaseURLStringType::Pattern);
 
     if (maybeProcessedInit.hasException())
         return maybeProcessedInit.releaseException();
@@ -259,7 +259,7 @@ ExceptionOr<Ref<URLPattern>> URLPattern::create(ScriptExecutionContext& context,
 
     Ref result = adoptRef(*new URLPattern);
 
-    auto maybeCompileException = result->compileAllComponents(context, std::move(processedInit), options);
+    auto maybeCompileException = result->compileAllComponents(context, WTF::move(processedInit), options);
     if (maybeCompileException.hasException())
         return maybeCompileException.releaseException();
 
@@ -272,13 +272,13 @@ ExceptionOr<Ref<URLPattern>> URLPattern::create(ScriptExecutionContext& context,
     if (!input)
         input = URLPatternInit {};
 
-    return create(context, std::move(*input), String {}, std::move(options));
+    return create(context, WTF::move(*input), String {}, WTF::move(options));
 }
 
 // https://urlpattern.spec.whatwg.org/#build-a-url-pattern-from-a-web-idl-value
 ExceptionOr<Ref<URLPattern>> URLPattern::create(ScriptExecutionContext& context, Compatible&& value, const String& baseURL)
 {
-    return switchOn(std::move(value), [&](RefPtr<URLPattern>&& pattern) -> ExceptionOr<Ref<URLPattern>> { return pattern.releaseNonNull(); }, [&](URLPatternInit&& init) -> ExceptionOr<Ref<URLPattern>> { return URLPattern::create(context, std::move(init), {}, {}); }, [&](String&& string) -> ExceptionOr<Ref<URLPattern>> { return URLPattern::create(context, std::move(string), String { baseURL }, {}); });
+    return switchOn(WTF::move(value), [&](RefPtr<URLPattern>&& pattern) -> ExceptionOr<Ref<URLPattern>> { return pattern.releaseNonNull(); }, [&](URLPatternInit&& init) -> ExceptionOr<Ref<URLPattern>> { return URLPattern::create(context, WTF::move(init), {}, {}); }, [&](String&& string) -> ExceptionOr<Ref<URLPattern>> { return URLPattern::create(context, WTF::move(string), String { baseURL }, {}); });
 }
 
 URLPattern::~URLPattern() = default;
@@ -289,7 +289,7 @@ ExceptionOr<bool> URLPattern::test(ScriptExecutionContext& context, std::optiona
     if (!input)
         input = URLPatternInit {};
 
-    auto maybeResult = match(context, std::move(*input), std::move(baseURL));
+    auto maybeResult = match(context, WTF::move(*input), WTF::move(baseURL));
     if (maybeResult.hasException())
         return maybeResult.releaseException();
 
@@ -302,7 +302,7 @@ ExceptionOr<std::optional<URLPatternResult>> URLPattern::exec(ScriptExecutionCon
     if (!input)
         input = URLPatternInit {};
 
-    return match(context, std::move(*input), std::move(baseURL));
+    return match(context, WTF::move(*input), WTF::move(baseURL));
 }
 
 ExceptionOr<void> URLPattern::compileAllComponents(ScriptExecutionContext& context, URLPatternInit&& processedInit, const URLPatternOptions& options)
@@ -401,7 +401,7 @@ ExceptionOr<std::optional<URLPatternResult>> URLPattern::match(ScriptExecutionCo
                 return Exception { ExceptionCode::TypeError, "Base URL string is provided with a URLPatternInit. If URLPatternInit is provided, please use URLPatternInit.baseURL property instead"_s };
 
             URLPatternInit initCopy = value;
-            auto maybeResult = processInit(std::move(initCopy), BaseURLStringType::URL);
+            auto maybeResult = processInit(WTF::move(initCopy), BaseURLStringType::URL);
             if (maybeResult.hasException())
                 return true;
 
@@ -434,42 +434,42 @@ ExceptionOr<std::optional<URLPatternResult>> URLPattern::match(ScriptExecutionCo
     auto* globalObject = context.globalObject();
     if (!globalObject)
         return { std::nullopt };
-    result.protocol = m_protocolComponent.createComponentMatchResult(globalObject, std::move(protocol), protocolExecResult);
+    result.protocol = m_protocolComponent.createComponentMatchResult(globalObject, WTF::move(protocol), protocolExecResult);
 
     auto usernameExecResult = m_usernameComponent.componentExec(context, username);
     if (usernameExecResult.isNull() || usernameExecResult.isUndefined())
         return { std::nullopt };
-    result.username = m_usernameComponent.createComponentMatchResult(globalObject, std::move(username), usernameExecResult);
+    result.username = m_usernameComponent.createComponentMatchResult(globalObject, WTF::move(username), usernameExecResult);
 
     auto passwordExecResult = m_passwordComponent.componentExec(context, password);
     if (passwordExecResult.isNull() || passwordExecResult.isUndefined())
         return { std::nullopt };
-    result.password = m_passwordComponent.createComponentMatchResult(globalObject, std::move(password), passwordExecResult);
+    result.password = m_passwordComponent.createComponentMatchResult(globalObject, WTF::move(password), passwordExecResult);
 
     auto hostnameExecResult = m_hostnameComponent.componentExec(context, hostname);
     if (hostnameExecResult.isNull() || hostnameExecResult.isUndefined())
         return { std::nullopt };
-    result.hostname = m_hostnameComponent.createComponentMatchResult(globalObject, std::move(hostname), hostnameExecResult);
+    result.hostname = m_hostnameComponent.createComponentMatchResult(globalObject, WTF::move(hostname), hostnameExecResult);
 
     auto pathnameExecResult = m_pathnameComponent.componentExec(context, pathname);
     if (pathnameExecResult.isNull() || pathnameExecResult.isUndefined())
         return { std::nullopt };
-    result.pathname = m_pathnameComponent.createComponentMatchResult(globalObject, std::move(pathname), pathnameExecResult);
+    result.pathname = m_pathnameComponent.createComponentMatchResult(globalObject, WTF::move(pathname), pathnameExecResult);
 
     auto portExecResult = m_portComponent.componentExec(context, port);
     if (portExecResult.isNull() || portExecResult.isUndefined())
         return { std::nullopt };
-    result.port = m_portComponent.createComponentMatchResult(globalObject, std::move(port), portExecResult);
+    result.port = m_portComponent.createComponentMatchResult(globalObject, WTF::move(port), portExecResult);
 
     auto searchExecResult = m_searchComponent.componentExec(context, search);
     if (searchExecResult.isNull() || searchExecResult.isUndefined())
         return { std::nullopt };
-    result.search = m_searchComponent.createComponentMatchResult(globalObject, std::move(search), searchExecResult);
+    result.search = m_searchComponent.createComponentMatchResult(globalObject, WTF::move(search), searchExecResult);
 
     auto hashExecResult = m_hashComponent.componentExec(context, hash);
     if (hashExecResult.isNull() || hashExecResult.isUndefined())
         return { std::nullopt };
-    result.hash = m_hashComponent.createComponentMatchResult(globalObject, std::move(hash), hashExecResult);
+    result.hash = m_hashComponent.createComponentMatchResult(globalObject, WTF::move(hash), hashExecResult);
 
     return { result };
 }

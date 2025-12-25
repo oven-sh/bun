@@ -31,7 +31,7 @@ public:
     using Base = JSDOMWrapper<FetchHeaders>;
     static JSFetchHeaders* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<FetchHeaders>&& impl)
     {
-        JSFetchHeaders* ptr = new (NotNull, JSC::allocateCell<JSFetchHeaders>(globalObject->vm())) JSFetchHeaders(structure, *globalObject, std::move(impl));
+        JSFetchHeaders* ptr = new (NotNull, JSC::allocateCell<JSFetchHeaders>(globalObject->vm())) JSFetchHeaders(structure, *globalObject, WTF::move(impl));
         ptr->finishCreation(globalObject->vm());
         return ptr;
     }

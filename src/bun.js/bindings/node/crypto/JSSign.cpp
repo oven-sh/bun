@@ -194,7 +194,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncInit, (JSC::JSGlobalObject * globalObjec
     }
 
     // Store the initialized context in the JSSign object
-    thisObject->m_mdCtx = std::move(mdCtx);
+    thisObject->m_mdCtx = WTF::move(mdCtx);
 
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
@@ -303,7 +303,7 @@ JSUint8Array* signWithKey(JSC::JSGlobalObject* lexicalGlobalObject, JSSign* this
     }
 
     // Move mdCtx out of JSSign object
-    ncrypto::EVPMDCtxPointer mdCtx = std::move(thisObject->m_mdCtx);
+    ncrypto::EVPMDCtxPointer mdCtx = WTF::move(thisObject->m_mdCtx);
 
     // Validate DSA parameters
     if (!pkey.validateDsaParameters()) {
@@ -394,7 +394,7 @@ JSUint8Array* signWithKey(JSC::JSGlobalObject* lexicalGlobalObject, JSSign* this
 
     // Create and return JSUint8Array
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    RELEASE_AND_RETURN(scope, JSC::JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), std::move(sigBuffer), 0, finalSignatureLength));
+    RELEASE_AND_RETURN(scope, JSC::JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTF::move(sigBuffer), 0, finalSignatureLength));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncSign, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -446,7 +446,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncSign, (JSC::JSGlobalObject * lexicalGlob
 
     KeyObject keyObject;
     if (prepareResult.keyData) {
-        keyObject = KeyObject::create(CryptoKeyType::Private, std::move(*prepareResult.keyData));
+        keyObject = KeyObject::create(CryptoKeyType::Private, WTF::move(*prepareResult.keyData));
     } else {
         keyObject = KeyObject::getPublicOrPrivateKey(
             lexicalGlobalObject,
@@ -456,7 +456,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncSign, (JSC::JSGlobalObject * lexicalGlob
             prepareResult.formatType,
             prepareResult.encodingType,
             prepareResult.cipher,
-            std::move(prepareResult.passphrase));
+            WTF::move(prepareResult.passphrase));
         RETURN_IF_EXCEPTION(scope, {});
     }
 

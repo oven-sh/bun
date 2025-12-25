@@ -55,7 +55,7 @@ public:
     using Init = std::variant<Vector<Vector<String>>, Vector<KeyValuePair<String, String>>>;
     static ExceptionOr<Ref<FetchHeaders>> create(std::optional<Init>&&);
 
-    static Ref<FetchHeaders> create(Guard guard = Guard::None, HTTPHeaderMap&& headers = {}) { return adoptRef(*new FetchHeaders { guard, std::move(headers) }); }
+    static Ref<FetchHeaders> create(Guard guard = Guard::None, HTTPHeaderMap&& headers = {}) { return adoptRef(*new FetchHeaders { guard, WTF::move(headers) }); }
     static Ref<FetchHeaders> create(const FetchHeaders& headers) { return adoptRef(*new FetchHeaders { headers }); }
 
     ExceptionOr<void> append(const String& name, const String& value);
@@ -112,7 +112,7 @@ public:
         return Iterator(*this, true);
     }
 
-    void setInternalHeaders(HTTPHeaderMap&& headers) { m_headers = std::move(headers); }
+    void setInternalHeaders(HTTPHeaderMap&& headers) { m_headers = WTF::move(headers); }
     const HTTPHeaderMap& internalHeaders() const { return m_headers; }
 
     void setGuard(Guard);
@@ -130,7 +130,7 @@ private:
 
 inline FetchHeaders::FetchHeaders(Guard guard, HTTPHeaderMap&& headers)
     : m_guard(guard)
-    , m_headers(std::move(headers))
+    , m_headers(WTF::move(headers))
 {
 }
 

@@ -103,7 +103,7 @@ String valueToUSVString(JSGlobalObject& lexicalGlobalObject, JSValue value)
     auto string = value.toWTFString(&lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    return replaceUnpairedSurrogatesWithReplacementCharacter(std::move(string));
+    return replaceUnpairedSurrogatesWithReplacementCharacter(WTF::move(string));
 }
 
 AtomString valueToUSVAtomString(JSGlobalObject& lexicalGlobalObject, JSValue value)

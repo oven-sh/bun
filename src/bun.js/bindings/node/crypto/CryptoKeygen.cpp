@@ -32,7 +32,7 @@ void SecretKeyJobCtx::runTask(JSGlobalObject* lexicalGlobalObject)
         return;
     }
 
-    m_result = std::move(key);
+    m_result = WTF::move(key);
 }
 
 extern "C" void Bun__SecretKeyJobCtx__runFromJS(SecretKeyJobCtx* ctx, JSGlobalObject* lexicalGlobalObject, JSC::JSValue callback)
@@ -51,10 +51,10 @@ void SecretKeyJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSC::JSValu
         return;
     }
 
-    KeyObject keyObject = KeyObject::create(std::move(*m_result));
+    KeyObject keyObject = KeyObject::create(WTF::move(*m_result));
 
     Structure* structure = globalObject->m_JSSecretKeyObjectClassStructure.get(lexicalGlobalObject);
-    JSSecretKeyObject* secretKey = JSSecretKeyObject::create(vm, structure, lexicalGlobalObject, std::move(keyObject));
+    JSSecretKeyObject* secretKey = JSSecretKeyObject::create(vm, structure, lexicalGlobalObject, WTF::move(keyObject));
 
     Bun__EventLoop__runCallback2(lexicalGlobalObject,
         JSValue::encode(callback),
@@ -88,7 +88,7 @@ void SecretKeyJob::schedule()
 extern "C" void Bun__SecretKeyJob__createAndSchedule(JSC::JSGlobalObject*, SecretKeyJobCtx*, EncodedJSValue callback);
 void SecretKeyJob::createAndSchedule(JSC::JSGlobalObject* lexicalGlobalObject, SecretKeyJobCtx&& ctx, JSC::JSValue callback)
 {
-    SecretKeyJobCtx* ctxCopy = new SecretKeyJobCtx(std::move(ctx));
+    SecretKeyJobCtx* ctxCopy = new SecretKeyJobCtx(WTF::move(ctx));
     return Bun__SecretKeyJob__createAndSchedule(lexicalGlobalObject, ctxCopy, JSValue::encode(callback));
 }
 
@@ -150,7 +150,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGenerateKey, (JSC::JSGlobalObject * lexicalGlobalObje
     EXCEPTION_ASSERT(ctx.has_value() == !scope.exception());
     RETURN_IF_EXCEPTION(scope, {});
 
-    SecretKeyJob::createAndSchedule(lexicalGlobalObject, std::move(ctx.value()), callbackValue);
+    SecretKeyJob::createAndSchedule(lexicalGlobalObject, WTF::move(ctx.value()), callbackValue);
 
     return JSValue::encode(jsUndefined());
 }
@@ -176,9 +176,9 @@ JSC_DEFINE_HOST_FUNCTION(jsGenerateKeySync, (JSC::JSGlobalObject * lexicalGlobal
     auto& result = ctx->m_result.value();
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
-    KeyObject keyObject = KeyObject::create(std::move(result));
+    KeyObject keyObject = KeyObject::create(WTF::move(result));
     Structure* structure = globalObject->m_JSSecretKeyObjectClassStructure.get(lexicalGlobalObject);
-    JSSecretKeyObject* secretKey = JSSecretKeyObject::create(vm, structure, lexicalGlobalObject, std::move(keyObject));
+    JSSecretKeyObject* secretKey = JSSecretKeyObject::create(vm, structure, lexicalGlobalObject, WTF::move(keyObject));
 
     return JSValue::encode(secretKey);
 }

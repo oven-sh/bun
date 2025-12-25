@@ -32,7 +32,7 @@ public:
     static JSAbortController* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<AbortController>&& impl)
     {
         auto& vm = JSC::getVM(globalObject);
-        JSAbortController* ptr = new (NotNull, JSC::allocateCell<JSAbortController>(vm)) JSAbortController(structure, *globalObject, std::move(impl));
+        JSAbortController* ptr = new (NotNull, JSC::allocateCell<JSAbortController>(vm)) JSAbortController(structure, *globalObject, WTF::move(impl));
         ptr->finishCreation(vm);
         return ptr;
     }

@@ -371,7 +371,7 @@ void BunPlugin::Base::append(JSC::VM& vm, JSC::RegExp* filter, JSC::JSObject* fu
     } else {
         Group newGroup;
         newGroup.append(vm, filter, func);
-        this->groups.append(std::move(newGroup));
+        this->groups.append(WTF::move(newGroup));
         this->namespaces.append(namespaceString);
     }
 }

@@ -37,7 +37,7 @@ namespace WebCore {
 using namespace JSC;
 
 URLPatternConstructorStringParser::URLPatternConstructorStringParser(String&& input)
-    : m_input(std::move(input))
+    : m_input(WTF::move(input))
 {
 }
 
@@ -116,28 +116,28 @@ static inline void setInitComponentFromState(URLPatternInit& init, URLPatternCon
 {
     switch (state) {
     case URLPatternConstructorStringParserState::Protocol:
-        init.protocol = std::move(componentString);
+        init.protocol = WTF::move(componentString);
         break;
     case URLPatternConstructorStringParserState::Username:
-        init.username = std::move(componentString);
+        init.username = WTF::move(componentString);
         break;
     case URLPatternConstructorStringParserState::Password:
-        init.password = std::move(componentString);
+        init.password = WTF::move(componentString);
         break;
     case URLPatternConstructorStringParserState::Hostname:
-        init.hostname = std::move(componentString);
+        init.hostname = WTF::move(componentString);
         break;
     case URLPatternConstructorStringParserState::Port:
-        init.port = std::move(componentString);
+        init.port = WTF::move(componentString);
         break;
     case URLPatternConstructorStringParserState::Pathname:
-        init.pathname = std::move(componentString);
+        init.pathname = WTF::move(componentString);
         break;
     case URLPatternConstructorStringParserState::Search:
-        init.search = std::move(componentString);
+        init.search = WTF::move(componentString);
         break;
     case URLPatternConstructorStringParserState::Hash:
-        init.hash = std::move(componentString);
+        init.hash = WTF::move(componentString);
         break;
     default:
         break;

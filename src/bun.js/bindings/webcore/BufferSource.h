@@ -39,7 +39,7 @@ public:
 
     BufferSource() {}
     BufferSource(VariantType&& variant)
-        : m_variant(std::move(variant))
+        : m_variant(WTF::move(variant))
     {
     }
 

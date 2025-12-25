@@ -78,17 +78,17 @@ RefPtr<CryptoKeyOKP> CryptoKeyOKP::create(CryptoAlgorithmIdentifier identifier, 
         // Import format only consists of 32 bytes of private key
         // Internal format is private key + public key suffix
         if (platformKey.size() == bytesExpectedExternal) {
-            auto&& privateKey = ed25519PrivateFromSeed(std::move(platformKey));
+            auto&& privateKey = ed25519PrivateFromSeed(WTF::move(platformKey));
             if (privateKey.size() == 0)
                 return nullptr;
 
-            return adoptRef(*new CryptoKeyOKP(identifier, curve, type, std::move(privateKey), extractable, usages));
+            return adoptRef(*new CryptoKeyOKP(identifier, curve, type, WTF::move(privateKey), extractable, usages));
         }
 
         return nullptr;
     }
 
-    return adoptRef(*new CryptoKeyOKP(identifier, curve, type, std::move(platformKey), extractable, usages));
+    return adoptRef(*new CryptoKeyOKP(identifier, curve, type, WTF::move(platformKey), extractable, usages));
 }
 
 CryptoKeyOKP::CryptoKeyOKP(CryptoAlgorithmIdentifier identifier, NamedCurve curve, CryptoKeyType type, KeyMaterial&& data, bool extractable, CryptoKeyUsageBitmap usages)
@@ -108,7 +108,7 @@ ExceptionOr<CryptoKeyPair> CryptoKeyOKP::generatePair(CryptoAlgorithmIdentifier 
     if (!result)
         return Exception { OperationError };
 
-    return std::move(*result);
+    return WTF::move(*result);
 }
 
 RefPtr<CryptoKeyOKP> CryptoKeyOKP::importRaw(CryptoAlgorithmIdentifier identifier, NamedCurve namedCurve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap usages)
@@ -116,7 +116,7 @@ RefPtr<CryptoKeyOKP> CryptoKeyOKP::importRaw(CryptoAlgorithmIdentifier identifie
     if (!isPlatformSupportedCurve(namedCurve))
         return nullptr;
 
-    return create(identifier, namedCurve, usages & CryptoKeyUsageSign ? CryptoKeyType::Private : CryptoKeyType::Public, std::move(keyData), extractable, usages);
+    return create(identifier, namedCurve, usages & CryptoKeyUsageSign ? CryptoKeyType::Private : CryptoKeyType::Public, WTF::move(keyData), extractable, usages);
 }
 
 RefPtr<CryptoKeyOKP> CryptoKeyOKP::importJwkInternal(CryptoAlgorithmIdentifier identifier, NamedCurve namedCurve, JsonWebKey&& keyData, bool extractable, CryptoKeyUsageBitmap usages, bool onlyPublic)
@@ -157,7 +157,7 @@ RefPtr<CryptoKeyOKP> CryptoKeyOKP::importJwkInternal(CryptoAlgorithmIdentifier i
             auto d = base64URLDecode(keyData.d);
             if (!d)
                 return nullptr;
-            return create(identifier, namedCurve, CryptoKeyType::Private, std::move(*d), extractable, usages);
+            return create(identifier, namedCurve, CryptoKeyType::Private, WTF::move(*d), extractable, usages);
         }
     }
 
@@ -167,16 +167,16 @@ RefPtr<CryptoKeyOKP> CryptoKeyOKP::importJwkInternal(CryptoAlgorithmIdentifier i
     auto x = base64URLDecode(keyData.x);
     if (!x)
         return nullptr;
-    return create(identifier, namedCurve, CryptoKeyType::Public, std::move(*x), extractable, usages);
+    return create(identifier, namedCurve, CryptoKeyType::Public, WTF::move(*x), extractable, usages);
 }
 
 RefPtr<CryptoKeyOKP> CryptoKeyOKP::importPublicJwk(CryptoAlgorithmIdentifier identifier, NamedCurve namedCurve, JsonWebKey&& keyData, bool extractable, CryptoKeyUsageBitmap usages)
 {
-    return importJwkInternal(identifier, namedCurve, std::move(keyData), extractable, usages, true);
+    return importJwkInternal(identifier, namedCurve, WTF::move(keyData), extractable, usages, true);
 }
 RefPtr<CryptoKeyOKP> CryptoKeyOKP::importJwk(CryptoAlgorithmIdentifier identifier, NamedCurve namedCurve, JsonWebKey&& keyData, bool extractable, CryptoKeyUsageBitmap usages)
 {
-    return importJwkInternal(identifier, namedCurve, std::move(keyData), extractable, usages, false);
+    return importJwkInternal(identifier, namedCurve, WTF::move(keyData), extractable, usages, false);
 }
 
 ExceptionOr<Vector<uint8_t>> CryptoKeyOKP::exportRaw() const
@@ -187,7 +187,7 @@ ExceptionOr<Vector<uint8_t>> CryptoKeyOKP::exportRaw() const
     auto&& result = platformExportRaw();
     if (result.isEmpty())
         return Exception { OperationError };
-    return std::move(result);
+    return WTF::move(result);
 }
 
 ExceptionOr<JsonWebKey> CryptoKeyOKP::exportJwk() const

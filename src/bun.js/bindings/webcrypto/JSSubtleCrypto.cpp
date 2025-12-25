@@ -212,7 +212,7 @@ void JSSubtleCryptoPrototype::finishCreation(VM& vm)
 const ClassInfo JSSubtleCrypto::s_info = { "SubtleCrypto"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSSubtleCrypto) };
 
 JSSubtleCrypto::JSSubtleCrypto(Structure* structure, JSDOMGlobalObject& globalObject, Ref<SubtleCrypto>&& impl)
-    : JSDOMWrapper<SubtleCrypto>(structure, globalObject, std::move(impl))
+    : JSDOMWrapper<SubtleCrypto>(structure, globalObject, WTF::move(impl))
 {
 }
 
@@ -275,7 +275,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_encryptBody(JS
     EnsureStillAliveScope argument2 = callFrame->uncheckedArgument(2);
     auto data = convert<IDLUnion<IDLArrayBufferView, IDLArrayBuffer>>(*lexicalGlobalObject, argument2.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLAny>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) { return impl.encrypt(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), std::move(algorithm), *key, std::move(data), std::move(promise)); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLAny>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) { return impl.encrypt(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), WTF::move(algorithm), *key, WTF::move(data), WTF::move(promise)); })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_encrypt, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -301,7 +301,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_decryptBody(JS
     EnsureStillAliveScope argument2 = callFrame->uncheckedArgument(2);
     auto data = convert<IDLUnion<IDLArrayBufferView, IDLArrayBuffer>>(*lexicalGlobalObject, argument2.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLAny>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) { return impl.decrypt(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), std::move(algorithm), *key, std::move(data), std::move(promise)); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLAny>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) { return impl.decrypt(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), WTF::move(algorithm), *key, WTF::move(data), WTF::move(promise)); })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_decrypt, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -327,7 +327,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_signBody(JSC::
     EnsureStillAliveScope argument2 = callFrame->uncheckedArgument(2);
     auto data = convert<IDLUnion<IDLArrayBufferView, IDLArrayBuffer>>(*lexicalGlobalObject, argument2.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLAny>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) { return impl.sign(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), std::move(algorithm), *key, std::move(data), std::move(promise)); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLAny>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) { return impl.sign(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), WTF::move(algorithm), *key, WTF::move(data), WTF::move(promise)); })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_sign, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -356,7 +356,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_verifyBody(JSC
     EnsureStillAliveScope argument3 = callFrame->uncheckedArgument(3);
     auto data = convert<IDLUnion<IDLArrayBufferView, IDLArrayBuffer>>(*lexicalGlobalObject, argument3.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLAny>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) { return impl.verify(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), std::move(algorithm), *key, std::move(signature), std::move(data), std::move(promise)); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLAny>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) { return impl.verify(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), WTF::move(algorithm), *key, WTF::move(signature), WTF::move(data), WTF::move(promise)); })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_verify, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -382,7 +382,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_digestBody(JSC
         throwScope.clearException();
         return Bun::ERR::INVALID_ARG_TYPE(throwScope, lexicalGlobalObject, "data"_s, "ArrayBuffer, Buffer, TypedArray, or DataView"_s, argument1.value());
     }
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLAny>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) { return impl.digest(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), std::move(algorithm), std::move(data), std::move(promise)); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLAny>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) { return impl.digest(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), WTF::move(algorithm), WTF::move(data), WTF::move(promise)); })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_digest, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -408,7 +408,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_generateKeyBod
     EnsureStillAliveScope argument2 = callFrame->uncheckedArgument(2);
     auto keyUsages = convert<IDLSequence<IDLEnumeration<CryptoKeyUsage>>>(*lexicalGlobalObject, argument2.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLAny>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) { return impl.generateKey(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), std::move(algorithm), std::move(extractable), std::move(keyUsages), std::move(promise)); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLAny>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) { return impl.generateKey(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), WTF::move(algorithm), WTF::move(extractable), WTF::move(keyUsages), WTF::move(promise)); })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_generateKey, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -440,7 +440,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_deriveKeyBody(
     EnsureStillAliveScope argument4 = callFrame->uncheckedArgument(4);
     auto keyUsages = convert<IDLSequence<IDLEnumeration<CryptoKeyUsage>>>(*lexicalGlobalObject, argument4.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLAny>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) { return impl.deriveKey(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), std::move(algorithm), *baseKey, std::move(derivedKeyType), std::move(extractable), std::move(keyUsages), std::move(promise)); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLAny>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) { return impl.deriveKey(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), WTF::move(algorithm), *baseKey, WTF::move(derivedKeyType), WTF::move(extractable), WTF::move(keyUsages), WTF::move(promise)); })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_deriveKey, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -466,7 +466,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_deriveBitsBody
     EnsureStillAliveScope argument2 = callFrame->uncheckedArgument(2);
     auto length = convert<IDLUnsignedLong>(*lexicalGlobalObject, argument2.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLArrayBuffer>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) { return impl.deriveBits(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), std::move(algorithm), *baseKey, std::move(length), std::move(promise)); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLArrayBuffer>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) { return impl.deriveBits(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), WTF::move(algorithm), *baseKey, WTF::move(length), WTF::move(promise)); })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_deriveBits, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -498,7 +498,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_importKeyBody(
     EnsureStillAliveScope argument4 = callFrame->uncheckedArgument(4);
     auto keyUsages = convert<IDLSequence<IDLEnumeration<CryptoKeyUsage>>>(*lexicalGlobalObject, argument4.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLInterface<CryptoKey>>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) { return impl.importKey(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), std::move(format), std::move(keyData), std::move(algorithm), std::move(extractable), std::move(keyUsages), std::move(promise)); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLInterface<CryptoKey>>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) { return impl.importKey(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), WTF::move(format), WTF::move(keyData), WTF::move(algorithm), WTF::move(extractable), WTF::move(keyUsages), WTF::move(promise)); })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_importKey, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -522,7 +522,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_exportKeyBody(
     auto key = convert<IDLInterface<CryptoKey>>(*lexicalGlobalObject, argument1.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 1, "key"_s, "SubtleCrypto"_s, "exportKey"_s, "CryptoKey"_s); });
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLAny>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) {
-        return impl.exportKey(std::move(format), *key, std::move(promise));
+        return impl.exportKey(WTF::move(format), *key, WTF::move(promise));
     })));
 }
 
@@ -552,7 +552,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_wrapKeyBody(JS
     EnsureStillAliveScope argument3 = callFrame->uncheckedArgument(3);
     auto wrapAlgorithm = convert<IDLUnion<IDLObject, IDLDOMString>>(*lexicalGlobalObject, argument3.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLAny>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) { return impl.wrapKey(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), std::move(format), *key, *wrappingKey, std::move(wrapAlgorithm), std::move(promise)); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLAny>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) { return impl.wrapKey(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), WTF::move(format), *key, *wrappingKey, WTF::move(wrapAlgorithm), WTF::move(promise)); })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_wrapKey, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -590,7 +590,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_unwrapKeyBody(
     EnsureStillAliveScope argument6 = callFrame->uncheckedArgument(6);
     auto keyUsages = convert<IDLSequence<IDLEnumeration<CryptoKeyUsage>>>(*lexicalGlobalObject, argument6.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLInterface<CryptoKey>>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) { return impl.unwrapKey(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), std::move(format), std::move(wrappedKey), *unwrappingKey, std::move(unwrapAlgorithm), std::move(unwrappedKeyAlgorithm), std::move(extractable), std::move(keyUsages), std::move(promise)); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLInterface<CryptoKey>>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) { return impl.unwrapKey(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), WTF::move(format), WTF::move(wrappedKey), *unwrappingKey, WTF::move(unwrapAlgorithm), WTF::move(unwrappedKeyAlgorithm), WTF::move(extractable), WTF::move(keyUsages), WTF::move(promise)); })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_unwrapKey, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -667,7 +667,7 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
         // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
 #endif
     }
-    return createWrapper<SubtleCrypto>(globalObject, std::move(impl));
+    return createWrapper<SubtleCrypto>(globalObject, WTF::move(impl));
 }
 
 JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, SubtleCrypto& impl)

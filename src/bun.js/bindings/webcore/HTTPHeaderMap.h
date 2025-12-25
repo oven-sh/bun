@@ -41,7 +41,7 @@ public:
         String value;
 
         CommonHeader isolatedCopy() const & { return { key, value.isolatedCopy() }; }
-        CommonHeader isolatedCopy() && { return { key, std::move(value).isolatedCopy() }; }
+        CommonHeader isolatedCopy() && { return { key, WTF::move(value).isolatedCopy() }; }
         template<class Encoder> void encode(Encoder &) const;
         template<class Decoder> static std::optional<CommonHeader> decode(Decoder &);
 
@@ -60,7 +60,7 @@ public:
         String value;
 
         UncommonHeader isolatedCopy() const & { return { key.isolatedCopy(), value.isolatedCopy() }; }
-        UncommonHeader isolatedCopy() && { return { std::move(key).isolatedCopy(), std::move(value).isolatedCopy() }; }
+        UncommonHeader isolatedCopy() && { return { WTF::move(key).isolatedCopy(), WTF::move(value).isolatedCopy() }; }
         template<class Encoder> void encode(Encoder &) const;
         template<class Decoder> static std::optional<UncommonHeader> decode(Decoder &);
 
@@ -290,7 +290,7 @@ auto HTTPHeaderMap::CommonHeader::decode(Decoder &decoder) -> std::optional<Comm
     if (!decoder.decode(value))
         return std::nullopt;
 
-    return CommonHeader { name, std::move(value) };
+    return CommonHeader { name, WTF::move(value) };
 }
 
 template<class Encoder>
@@ -310,7 +310,7 @@ auto HTTPHeaderMap::UncommonHeader::decode(Decoder &decoder) -> std::optional<Un
     if (!decoder.decode(value))
         return std::nullopt;
 
-    return UncommonHeader { std::move(name), std::move(value) };
+    return UncommonHeader { WTF::move(name), WTF::move(value) };
 }
 
 template<class Encoder>

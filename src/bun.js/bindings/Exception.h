@@ -39,7 +39,7 @@ public:
 
     ExceptionCode code() const { return m_code; }
     const String& message() const { return m_message; }
-    String&& releaseMessage() { return std::move(m_message); }
+    String&& releaseMessage() { return WTF::move(m_message); }
 
     Exception isolatedCopy() const
     {
@@ -55,7 +55,7 @@ Exception isolatedCopy(Exception&&);
 
 inline Exception::Exception(ExceptionCode code, String message)
     : m_code { code }
-    , m_message { std::move(message) }
+    , m_message { WTF::move(message) }
 {
 }
 

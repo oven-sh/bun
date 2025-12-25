@@ -125,11 +125,11 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSURLSearchParamsDOMCons
     EnsureStillAliveScope argument0 = callFrame->argument(0);
     auto init = argument0.value().isUndefined() ? emptyString() : convert<IDLUnion<IDLSequence<IDLSequence<IDLUSVString>>, IDLRecord<IDLUSVString, IDLUSVString>, IDLUSVString>>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    auto object = URLSearchParams::create(std::move(init));
+    auto object = URLSearchParams::create(WTF::move(init));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
-    auto jsValue = toJSNewlyCreated<IDLInterface<URLSearchParams>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, std::move(object));
+    auto jsValue = toJSNewlyCreated<IDLInterface<URLSearchParams>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTF::move(object));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     setSubclassStructureIfNeeded<URLSearchParams>(lexicalGlobalObject, callFrame, asObject(jsValue));
@@ -199,7 +199,7 @@ void JSURLSearchParamsPrototype::finishCreation(VM& vm)
 const ClassInfo JSURLSearchParams::s_info = { "URLSearchParams"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSURLSearchParams) };
 
 JSURLSearchParams::JSURLSearchParams(Structure* structure, JSDOMGlobalObject& globalObject, Ref<URLSearchParams>&& impl)
-    : JSDOMWrapper<URLSearchParams>(structure, globalObject, std::move(impl))
+    : JSDOMWrapper<URLSearchParams>(structure, globalObject, WTF::move(impl))
 {
 }
 
@@ -259,7 +259,7 @@ static inline JSC::EncodedJSValue jsURLSearchParamsPrototypeFunction_appendBody(
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
     auto value = convert<IDLUSVString>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.append(std::move(name), std::move(value)); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.append(WTF::move(name), WTF::move(value)); })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsURLSearchParamsPrototypeFunction_append, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -287,7 +287,7 @@ static inline JSC::EncodedJSValue jsURLSearchParamsPrototypeFunction_deleteBody(
         RETURN_IF_EXCEPTION(throwScope, {});
     }
 
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.remove(std::move(name), std::move(value)); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.remove(WTF::move(name), WTF::move(value)); })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsURLSearchParamsPrototypeFunction_delete, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -361,7 +361,7 @@ static inline JSC::EncodedJSValue jsURLSearchParamsPrototypeFunction_hasBody(JSC
         RETURN_IF_EXCEPTION(throwScope, {});
     }
 
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLBoolean>(*lexicalGlobalObject, throwScope, impl.has(name, std::move(value)))));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLBoolean>(*lexicalGlobalObject, throwScope, impl.has(name, WTF::move(value)))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsURLSearchParamsPrototypeFunction_has, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -384,7 +384,7 @@ static inline JSC::EncodedJSValue jsURLSearchParamsPrototypeFunction_setBody(JSC
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
     auto value = convert<IDLUSVString>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.set(std::move(name), std::move(value)); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.set(WTF::move(name), WTF::move(value)); })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsURLSearchParamsPrototypeFunction_set, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -687,7 +687,7 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
     //         // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
     // #endif
     // }
-    return createWrapper<URLSearchParams>(globalObject, std::move(impl));
+    return createWrapper<URLSearchParams>(globalObject, WTF::move(impl));
 }
 
 JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, URLSearchParams& impl)

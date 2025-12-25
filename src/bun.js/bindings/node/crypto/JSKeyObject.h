@@ -26,7 +26,7 @@ public:
 
     static JSKeyObject* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* globalObject, KeyObject&& keyObject)
     {
-        JSKeyObject* instance = new (NotNull, JSC::allocateCell<JSKeyObject>(vm)) JSKeyObject(vm, structure, std::move(keyObject));
+        JSKeyObject* instance = new (NotNull, JSC::allocateCell<JSKeyObject>(vm)) JSKeyObject(vm, structure, WTF::move(keyObject));
         instance->finishCreation(vm, globalObject);
         return instance;
     }
@@ -46,7 +46,7 @@ public:
 
     JSKeyObject(JSC::VM& vm, JSC::Structure* structure, KeyObject&& keyObject)
         : Base(vm, structure)
-        , m_handle(std::move(keyObject))
+        , m_handle(WTF::move(keyObject))
     {
     }
 

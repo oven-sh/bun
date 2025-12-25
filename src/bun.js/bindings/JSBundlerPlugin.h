@@ -29,8 +29,8 @@ public:
         WTF::Lock lock {};
 
         FilterRegExp(FilterRegExp&& other)
-            : m_pattern(std::move(other.m_pattern))
-            , regex(std::move(other.regex))
+            : m_pattern(WTF::move(other.m_pattern))
+            , regex(WTF::move(other.regex))
         {
         }
 

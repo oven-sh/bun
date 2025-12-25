@@ -85,10 +85,10 @@ void JSVMClientData::create(VM* vm, void* bunVM)
     JSVMClientData* clientData = new JSVMClientData(*vm, provider);
     clientData->bunVM = bunVM;
     vm->deferredWorkTimer->onAddPendingWork = [clientData](Ref<JSC::DeferredWorkTimer::TicketData>&& ticket, JSC::DeferredWorkTimer::WorkType kind) -> void {
-        Bun::JSCTaskScheduler::onAddPendingWork(clientData, std::move(ticket), kind);
+        Bun::JSCTaskScheduler::onAddPendingWork(clientData, WTF::move(ticket), kind);
     };
     vm->deferredWorkTimer->onScheduleWorkSoon = [clientData](JSC::DeferredWorkTimer::Ticket ticket, JSC::DeferredWorkTimer::Task&& task) -> void {
-        Bun::JSCTaskScheduler::onScheduleWorkSoon(clientData, ticket, std::move(task));
+        Bun::JSCTaskScheduler::onScheduleWorkSoon(clientData, ticket, WTF::move(task));
     };
     vm->deferredWorkTimer->onCancelPendingWork = [clientData](JSC::DeferredWorkTimer::Ticket ticket) -> void {
         Bun::JSCTaskScheduler::onCancelPendingWork(clientData, ticket);

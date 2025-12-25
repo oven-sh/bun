@@ -212,7 +212,7 @@ JSValue createDOMException(JSGlobalObject& lexicalGlobalObject, Exception&& exce
 void propagateExceptionSlowPath(JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& throwScope, Exception&& exception)
 {
     throwScope.assertNoExceptionExceptTermination();
-    auto jsException = createDOMException(lexicalGlobalObject, std::move(exception));
+    auto jsException = createDOMException(lexicalGlobalObject, WTF::move(exception));
     RETURN_IF_EXCEPTION(throwScope, );
     throwException(&lexicalGlobalObject, throwScope, jsException);
 }

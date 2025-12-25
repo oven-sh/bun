@@ -146,7 +146,7 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
     EXCEPTION_ASSERT(!!throwScope.exception() == code.isNull());
 
     SourceCode sourceCode(
-        JSC::StringSourceProvider::create(code, sourceOrigin, std::move(options.filename), sourceTaintOrigin, position, SourceProviderSourceType::Program),
+        JSC::StringSourceProvider::create(code, sourceOrigin, WTF::move(options.filename), sourceTaintOrigin, position, SourceProviderSourceType::Program),
         position.m_line.oneBasedInt(), position.m_column.oneBasedInt());
 
     CodeCache* cache = vm.codeCache();
@@ -1276,7 +1276,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
     options.parsingContext->setGlobalScopeExtension(functionScope);
 
     // Create the function using constructAnonymousFunction with the appropriate scope chain
-    JSFunction* function = constructAnonymousFunction(globalObject, ArgList(constructFunctionArgs), sourceOrigin, std::move(options), JSC::SourceTaintedOrigin::Untainted, functionScope);
+    JSFunction* function = constructAnonymousFunction(globalObject, ArgList(constructFunctionArgs), sourceOrigin, WTF::move(options), JSC::SourceTaintedOrigin::Untainted, functionScope);
     RETURN_IF_EXCEPTION(scope, {});
 
     if (!function) {
@@ -1573,12 +1573,12 @@ void configureNodeVM(JSC::VM& vm, Zig::GlobalObject* globalObject)
 }
 
 BaseVMOptions::BaseVMOptions(String filename)
-    : filename(std::move(filename))
+    : filename(WTF::move(filename))
 {
 }
 
 BaseVMOptions::BaseVMOptions(String filename, OrdinalNumber lineOffset, OrdinalNumber columnOffset)
-    : filename(std::move(filename))
+    : filename(WTF::move(filename))
     , lineOffset(lineOffset)
     , columnOffset(columnOffset)
 {

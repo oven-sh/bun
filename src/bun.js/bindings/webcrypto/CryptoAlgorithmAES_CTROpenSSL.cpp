@@ -129,7 +129,7 @@ ExceptionOr<Vector<uint8_t>> CryptoAlgorithmAES_CTR::platformEncrypt(const Crypt
     auto output = crypt(1, key.key(), parameters.counterVector(), parameters.length, plainText);
     if (!output)
         return Exception { OperationError };
-    return std::move(*output);
+    return WTF::move(*output);
 }
 
 ExceptionOr<Vector<uint8_t>> CryptoAlgorithmAES_CTR::platformDecrypt(const CryptoAlgorithmAesCtrParams& parameters, const CryptoKeyAES& key, const Vector<uint8_t>& cipherText)
@@ -137,7 +137,7 @@ ExceptionOr<Vector<uint8_t>> CryptoAlgorithmAES_CTR::platformDecrypt(const Crypt
     auto output = crypt(0, key.key(), parameters.counterVector(), parameters.length, cipherText);
     if (!output)
         return Exception { OperationError };
-    return std::move(*output);
+    return WTF::move(*output);
 }
 
 } // namespace WebCore

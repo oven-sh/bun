@@ -39,8 +39,8 @@ CryptoKeyRSAComponents::CryptoKeyRSAComponents(const Vector<uint8_t>& modulus, c
 
 CryptoKeyRSAComponents::CryptoKeyRSAComponents(Vector<uint8_t>&& modulus, Vector<uint8_t>&& exponent)
     : m_type(Type::Public)
-    , m_modulus(std::move(modulus))
-    , m_exponent(std::move(exponent))
+    , m_modulus(WTF::move(modulus))
+    , m_exponent(WTF::move(exponent))
 {
 }
 
@@ -55,9 +55,9 @@ CryptoKeyRSAComponents::CryptoKeyRSAComponents(const Vector<uint8_t>& modulus, c
 
 CryptoKeyRSAComponents::CryptoKeyRSAComponents(Vector<uint8_t>&& modulus, Vector<uint8_t>&& exponent, Vector<uint8_t>&& privateExponent)
     : m_type(Type::Private)
-    , m_modulus(std::move(modulus))
-    , m_exponent(std::move(exponent))
-    , m_privateExponent(std::move(privateExponent))
+    , m_modulus(WTF::move(modulus))
+    , m_exponent(WTF::move(exponent))
+    , m_privateExponent(WTF::move(privateExponent))
     , m_hasAdditionalPrivateKeyParameters(false)
 {
 }
@@ -76,13 +76,13 @@ CryptoKeyRSAComponents::CryptoKeyRSAComponents(const Vector<uint8_t>& modulus, c
 
 CryptoKeyRSAComponents::CryptoKeyRSAComponents(Vector<uint8_t>&& modulus, Vector<uint8_t>&& exponent, Vector<uint8_t>&& privateExponent, PrimeInfo&& firstPrimeInfo, PrimeInfo&& secondPrimeInfo, Vector<PrimeInfo>&& otherPrimeInfos)
     : m_type(Type::Private)
-    , m_modulus(std::move(modulus))
-    , m_exponent(std::move(exponent))
-    , m_privateExponent(std::move(privateExponent))
+    , m_modulus(WTF::move(modulus))
+    , m_exponent(WTF::move(exponent))
+    , m_privateExponent(WTF::move(privateExponent))
     , m_hasAdditionalPrivateKeyParameters(true)
-    , m_firstPrimeInfo(std::move(firstPrimeInfo))
-    , m_secondPrimeInfo(std::move(secondPrimeInfo))
-    , m_otherPrimeInfos(std::move(otherPrimeInfos))
+    , m_firstPrimeInfo(WTF::move(firstPrimeInfo))
+    , m_secondPrimeInfo(WTF::move(secondPrimeInfo))
+    , m_otherPrimeInfos(WTF::move(otherPrimeInfos))
 {
 }
 

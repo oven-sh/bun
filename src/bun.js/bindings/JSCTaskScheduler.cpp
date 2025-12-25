@@ -16,8 +16,8 @@ extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta)
 class JSCDeferredWorkTask {
 public:
     JSCDeferredWorkTask(Ref<TicketData> ticket, Task&& task)
-        : ticket(std::move(ticket))
-        , task(std::move(task))
+        : ticket(WTF::move(ticket))
+        , task(WTF::move(task))
     {
     }
 
@@ -43,14 +43,14 @@ void JSCTaskScheduler::onAddPendingWork(WebCore::JSVMClientData* clientData, Ref
     Locker<Lock> holder { scheduler.m_lock };
     if (kind == DeferredWorkTimer::WorkType::ImminentlyScheduled) {
         Bun__eventLoop__incrementRefConcurrently(clientData->bunVM, 1);
-        scheduler.m_pendingTicketsKeepingEventLoopAlive.add(std::move(ticket));
+        scheduler.m_pendingTicketsKeepingEventLoopAlive.add(WTF::move(ticket));
     } else {
-        scheduler.m_pendingTicketsOther.add(std::move(ticket));
+        scheduler.m_pendingTicketsOther.add(WTF::move(ticket));
     }
 }
 void JSCTaskScheduler::onScheduleWorkSoon(WebCore::JSVMClientData* clientData, Ticket ticket, Task&& task)
 {
-    auto* job = new JSCDeferredWorkTask(*ticket, std::move(task));
+    auto* job = new JSCDeferredWorkTask(*ticket, WTF::move(task));
     Bun__queueJSCDeferredWorkTaskConcurrently(clientData->bunVM, job);
 }
 

@@ -53,7 +53,7 @@ ServerTiming ServerTiming::isolatedCopy() const&
 
 ServerTiming ServerTiming::isolatedCopy() &&
 {
-    return ServerTiming { std::move(name).isolatedCopy(), duration, std::move(description).isolatedCopy(), durationSet, descriptionSet };
+    return ServerTiming { WTF::move(name).isolatedCopy(), duration, WTF::move(description).isolatedCopy(), durationSet, descriptionSet };
 }
 
 } // namespace WebCore

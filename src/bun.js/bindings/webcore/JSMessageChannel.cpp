@@ -102,7 +102,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSMessageChannelDOMConst
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
-    auto jsValue = toJSNewlyCreated<IDLInterface<MessageChannel>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, std::move(object));
+    auto jsValue = toJSNewlyCreated<IDLInterface<MessageChannel>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTF::move(object));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     setSubclassStructureIfNeeded<MessageChannel>(lexicalGlobalObject, callFrame, asObject(jsValue));
@@ -148,7 +148,7 @@ void JSMessageChannelPrototype::finishCreation(VM& vm)
 const ClassInfo JSMessageChannel::s_info = { "MessageChannel"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSMessageChannel) };
 
 JSMessageChannel::JSMessageChannel(Structure* structure, JSDOMGlobalObject& globalObject, Ref<MessageChannel>&& impl)
-    : JSDOMWrapper<MessageChannel>(structure, globalObject, std::move(impl))
+    : JSDOMWrapper<MessageChannel>(structure, globalObject, WTF::move(impl))
 {
 }
 
@@ -301,7 +301,7 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
         // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
 #endif
     }
-    return createWrapper<MessageChannel>(globalObject, std::move(impl));
+    return createWrapper<MessageChannel>(globalObject, WTF::move(impl));
 }
 
 JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, MessageChannel& impl)

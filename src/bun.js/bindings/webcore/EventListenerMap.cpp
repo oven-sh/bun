@@ -110,7 +110,7 @@ void EventListenerMap::replace(const AtomString& eventType, EventListener& oldLi
     ASSERT(index != notFound);
     auto& registeredListener = listeners->at(index);
     registeredListener->markAsRemoved();
-    registeredListener = RegisteredEventListener::create(std::move(newListener), options);
+    registeredListener = RegisteredEventListener::create(WTF::move(newListener), options);
 }
 
 bool EventListenerMap::add(const AtomString& eventType, Ref<EventListener>&& listener, const RegisteredEventListener::Options& options)
@@ -120,11 +120,11 @@ bool EventListenerMap::add(const AtomString& eventType, Ref<EventListener>&& lis
     if (auto* listeners = find(eventType)) {
         if (findListener(*listeners, listener, options.capture) != notFound)
             return false; // Duplicate listener.
-        listeners->append(RegisteredEventListener::create(std::move(listener), options));
+        listeners->append(RegisteredEventListener::create(WTF::move(listener), options));
         return true;
     }
 
-    m_entries.append({ eventType, EventListenerVector { RegisteredEventListener::create(std::move(listener), options) } });
+    m_entries.append({ eventType, EventListenerVector { RegisteredEventListener::create(WTF::move(listener), options) } });
     return true;
 }
 

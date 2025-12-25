@@ -36,7 +36,7 @@
 namespace WebCore {
 
 PerformanceObserver::PerformanceObserver(ScriptExecutionContext& scriptExecutionContext, Ref<PerformanceObserverCallback>&& callback)
-    : m_callback(std::move(callback))
+    : m_callback(WTF::move(callback))
 {
     // if (is<Document>(scriptExecutionContext)) {
     //     auto& document = downcast<Document>(scriptExecutionContext);
@@ -138,7 +138,7 @@ void PerformanceObserver::deliver()
         return;
 
     Vector<RefPtr<PerformanceEntry>> entries = std::exchange(m_entriesToDeliver, {});
-    auto list = PerformanceObserverEntryList::create(std::move(entries));
+    auto list = PerformanceObserverEntryList::create(WTF::move(entries));
 
     // InspectorInstrumentation::willFireObserverCallback(*context, "PerformanceObserver"_s);
     m_callback->handleEvent(*this, list, *this);

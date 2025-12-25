@@ -49,7 +49,7 @@ Vector<ServerTiming> parseServerTiming(const String& headerValue)
         if (name.isNull())
             break;
 
-        ServerTiming entry(std::move(name));
+        ServerTiming entry(WTF::move(name));
 
         while (tokenizer.consume(';')) {
             String parameterName = tokenizer.consumeToken();
@@ -64,7 +64,7 @@ Vector<ServerTiming> parseServerTiming(const String& headerValue)
             entry.setParameter(parameterName, value);
         }
 
-        entries.append(std::move(entry));
+        entries.append(WTF::move(entry));
 
         if (!tokenizer.consume(','))
             break;

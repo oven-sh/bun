@@ -70,7 +70,7 @@ public:
 
     static Ref<CryptoKeyEC> create(CryptoAlgorithmIdentifier identifier, NamedCurve curve, CryptoKeyType type, PlatformECKeyContainer&& platformKey, bool extractable, CryptoKeyUsageBitmap usages)
     {
-        return adoptRef(*new CryptoKeyEC(identifier, curve, type, std::move(platformKey), extractable, usages));
+        return adoptRef(*new CryptoKeyEC(identifier, curve, type, WTF::move(platformKey), extractable, usages));
     }
     virtual ~CryptoKeyEC() = default;
 

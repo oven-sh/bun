@@ -26,7 +26,7 @@ void KeyPairJobCtx::runTask(JSGlobalObject* globalObject, ncrypto::EVPKeyCtxPoin
     }
 
     ncrypto::EVPKeyPointer key = ncrypto::EVPKeyPointer(pkey);
-    m_keyObj = KeyObject::create(CryptoKeyType::Private, std::move(key));
+    m_keyObj = KeyObject::create(CryptoKeyType::Private, WTF::move(key));
 }
 
 void KeyPairJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSValue callback)
@@ -150,21 +150,21 @@ JSC_DEFINE_HOST_FUNCTION(jsGenerateKeyPair, (JSC::JSGlobalObject * globalObject,
         std::optional<RsaKeyPairJobCtx> ctx = RsaKeyPairJobCtx::fromJS(globalObject, scope, typeView, optionsValue, config);
         EXCEPTION_ASSERT(ctx.has_value() == !scope.exception());
         RETURN_IF_EXCEPTION(scope, {});
-        RsaKeyPairJob::createAndSchedule(globalObject, std::move(*ctx), callbackValue);
+        RsaKeyPairJob::createAndSchedule(globalObject, WTF::move(*ctx), callbackValue);
         return JSValue::encode(jsUndefined());
     }
     if (typeView == "dsa"_s) {
         std::optional<DsaKeyPairJobCtx> ctx = DsaKeyPairJobCtx::fromJS(globalObject, scope, typeView, optionsValue, config);
         EXCEPTION_ASSERT(ctx.has_value() == !scope.exception());
         RETURN_IF_EXCEPTION(scope, {});
-        DsaKeyPairJob::createAndSchedule(globalObject, std::move(*ctx), callbackValue);
+        DsaKeyPairJob::createAndSchedule(globalObject, WTF::move(*ctx), callbackValue);
         return JSValue::encode(jsUndefined());
     }
     if (typeView == "ec"_s) {
         std::optional<EcKeyPairJobCtx> ctx = EcKeyPairJobCtx::fromJS(globalObject, scope, typeView, optionsValue, config);
         EXCEPTION_ASSERT(ctx.has_value() == !scope.exception());
         RETURN_IF_EXCEPTION(scope, {});
-        EcKeyPairJob::createAndSchedule(globalObject, std::move(*ctx), callbackValue);
+        EcKeyPairJob::createAndSchedule(globalObject, WTF::move(*ctx), callbackValue);
         return JSValue::encode(jsUndefined());
     }
     // TODO: should just get `id` here
@@ -172,14 +172,14 @@ JSC_DEFINE_HOST_FUNCTION(jsGenerateKeyPair, (JSC::JSGlobalObject * globalObject,
         std::optional<NidKeyPairJobCtx> ctx = NidKeyPairJobCtx::fromJS(globalObject, scope, typeView, optionsValue, config);
         EXCEPTION_ASSERT(ctx.has_value() == !scope.exception());
         RETURN_IF_EXCEPTION(scope, {});
-        NidKeyPairJob::createAndSchedule(globalObject, std::move(*ctx), callbackValue);
+        NidKeyPairJob::createAndSchedule(globalObject, WTF::move(*ctx), callbackValue);
         return JSValue::encode(jsUndefined());
     }
     if (typeView == "dh"_s) {
         std::optional<DhKeyPairJobCtx> ctx = DhKeyPairJobCtx::fromJS(globalObject, scope, typeView, optionsValue, config);
         EXCEPTION_ASSERT(ctx.has_value() == !scope.exception());
         RETURN_IF_EXCEPTION(scope, {});
-        DhKeyPairJob::createAndSchedule(globalObject, std::move(*ctx), callbackValue);
+        DhKeyPairJob::createAndSchedule(globalObject, WTF::move(*ctx), callbackValue);
         return JSValue::encode(jsUndefined());
     }
 

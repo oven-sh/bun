@@ -22,7 +22,7 @@ using namespace JSC;
 
 JSValue toJSNewlyCreated(JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<EventEmitter>&& value)
 {
-    return createWrapper<EventEmitter>(globalObject, std::move(value));
+    return createWrapper<EventEmitter>(globalObject, WTF::move(value));
 }
 
 EventEmitter* JSEventEmitter::toWrapped(VM& vm, JSValue value)
@@ -72,7 +72,7 @@ JSEventEmitter* jsEventEmitterCastFast(VM& vm, JSC::JSGlobalObject* lexicalGloba
     impl->setThisObject(thisObject);
 
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto result = toJSNewlyCreated<IDLInterface<EventEmitter>>(*lexicalGlobalObject, *globalObject, throwScope, std::move(impl));
+    auto result = toJSNewlyCreated<IDLInterface<EventEmitter>>(*lexicalGlobalObject, *globalObject, throwScope, WTF::move(impl));
 
     thisObject->putDirect(vm, name, result, 0);
 

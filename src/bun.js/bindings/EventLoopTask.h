@@ -11,20 +11,20 @@ public:
 
     template<typename T, typename = typename std::enable_if<!std::is_base_of<EventLoopTask, T>::value && std::is_convertible<T, Function<void(ScriptExecutionContext&)>>::value>::type>
     EventLoopTask(T task)
-        : m_task(std::move(task))
+        : m_task(WTF::move(task))
         , m_isCleanupTask(false)
     {
     }
 
     EventLoopTask(Function<void()>&& task)
-        : m_task([task = std::move(task)](ScriptExecutionContext&) { task(); })
+        : m_task([task = WTF::move(task)](ScriptExecutionContext&) { task(); })
         , m_isCleanupTask(false)
     {
     }
 
     template<typename T, typename = typename std::enable_if<std::is_convertible<T, Function<void(ScriptExecutionContext&)>>::value>::type>
     EventLoopTask(CleanupTaskTag, T task)
-        : m_task(std::move(task))
+        : m_task(WTF::move(task))
         , m_isCleanupTask(true)
     {
     }

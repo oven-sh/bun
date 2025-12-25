@@ -146,7 +146,7 @@ inline bool isHTTPSpace(char16_t character)
 //     if (!isValidHTTPToken(token))
 //         return false;
 
-//     set.add(std::move(token));
+//     set.add(WTF::move(token));
 //     return true;
 // }
 

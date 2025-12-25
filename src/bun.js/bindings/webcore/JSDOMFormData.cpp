@@ -167,7 +167,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDOMFormDataDOMConstruc
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
-    auto jsValue = toJSNewlyCreated<IDLInterface<DOMFormData>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, std::move(object));
+    auto jsValue = toJSNewlyCreated<IDLInterface<DOMFormData>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTF::move(object));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     setSubclassStructureIfNeeded<DOMFormData>(lexicalGlobalObject, callFrame, asObject(jsValue));
@@ -227,7 +227,7 @@ void JSDOMFormDataPrototype::finishCreation(VM& vm)
 const ClassInfo JSDOMFormData::s_info = { "FormData"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDOMFormData) };
 
 JSDOMFormData::JSDOMFormData(Structure* structure, JSDOMGlobalObject& globalObject, Ref<DOMFormData>&& impl)
-    : JSDOMWrapper<DOMFormData>(structure, globalObject, std::move(impl))
+    : JSDOMWrapper<DOMFormData>(structure, globalObject, WTF::move(impl))
 {
 }
 
@@ -285,7 +285,7 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_append1Body(JSC
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
     auto value = convert<IDLUSVString>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.append(std::move(name), std::move(value)); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.append(WTF::move(name), WTF::move(value)); })));
 }
 
 extern "C" BunString Blob__getFileNameString(void* impl);
@@ -316,7 +316,7 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_append2Body(JSC
     auto filename = argument2.value().isUndefined() ? Blob__getFileNameString(blobValue->impl()).toWTFString(BunString::ZeroCopy) : convert<IDLUSVString>(*lexicalGlobalObject, argument2.value());
     RETURN_IF_EXCEPTION(throwScope, {});
 
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.append(std::move(name), std::move(blobValue), std::move(filename)); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.append(WTF::move(name), WTF::move(blobValue), WTF::move(filename)); })));
 }
 
 static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_appendOverloadDispatcher(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSDOMFormData>::ClassParameter castedThis)
@@ -355,7 +355,7 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_deleteBody(JSC:
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto name = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.remove(std::move(name)); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.remove(WTF::move(name)); })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsDOMFormDataPrototypeFunction_delete, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -433,7 +433,7 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_hasBody(JSC::JS
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto name = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLBoolean>(*lexicalGlobalObject, throwScope, impl.has(std::move(name)))));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLBoolean>(*lexicalGlobalObject, throwScope, impl.has(WTF::move(name)))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsDOMFormDataPrototypeFunction_has, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -454,7 +454,7 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_set1Body(JSC::J
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
     auto value = convert<IDLUSVString>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.set(std::move(name), std::move(value)); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.set(WTF::move(name), WTF::move(value)); })));
 }
 
 static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_set2Body(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSDOMFormData>::ClassParameter castedThis)
@@ -483,7 +483,7 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_set2Body(JSC::J
     auto filename = argument2.value().isUndefined() ? Blob__getFileNameString(blobValue->impl()).toWTFString(BunString::ZeroCopy) : convert<IDLUSVString>(*lexicalGlobalObject, argument2.value());
     RETURN_IF_EXCEPTION(throwScope, {});
 
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.set(std::move(name), std::move(blobValue), std::move(filename)); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.set(WTF::move(name), WTF::move(blobValue), WTF::move(filename)); })));
 }
 
 static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_setOverloadDispatcher(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSDOMFormData>::ClassParameter castedThis)
@@ -759,7 +759,7 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
         // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
 #endif
     }
-    return createWrapper<DOMFormData>(globalObject, std::move(impl));
+    return createWrapper<DOMFormData>(globalObject, WTF::move(impl));
 }
 
 JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, DOMFormData& impl)

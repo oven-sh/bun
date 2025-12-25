@@ -56,7 +56,7 @@ public:
         if (!m_additionalDataVector.isEmpty() || !additionalData)
             return m_additionalDataVector;
 
-        BufferSource additionalDataBuffer = std::move(*additionalData);
+        BufferSource additionalDataBuffer = WTF::move(*additionalData);
         additionalData = std::nullopt;
         if (!additionalDataBuffer.length())
             return m_additionalDataVector;

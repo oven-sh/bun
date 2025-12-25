@@ -112,7 +112,7 @@ extern "C" void Bun__VM__setEntryPointEvalResultCJS(void*, EncodedJSValue);
 static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObject, JSCommonJSModule* moduleObject, JSString* dirname, JSValue filename)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    SourceCode code = std::move(moduleObject->sourceCode);
+    SourceCode code = WTF::move(moduleObject->sourceCode);
 
     // If an exception occurred somewhere else, we might have cleared the source code.
     if (code.isNull()) [[unlikely]] {
@@ -715,7 +715,7 @@ JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * glo
     }
 
     moduleObject->sourceCode = makeSource(
-        std::move(wrappedString),
+        WTF::move(wrappedString),
         SourceOrigin(URL::fileURLWithFileSystemPath(filenameString)),
         JSC::SourceTaintedOrigin::Untainted,
         filenameString,
@@ -1365,7 +1365,7 @@ void JSCommonJSModule::evaluate(
     if (this->hasEvaluated)
         return;
 
-    this->sourceCode = JSC::SourceCode(std::move(sourceProvider));
+    this->sourceCode = JSC::SourceCode(WTF::move(sourceProvider));
 
     evaluateCommonJSModuleOnce(vm, globalObject, this, this->m_dirname.get(), this->m_filename.get());
 }
@@ -1466,7 +1466,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
         moduleObject = JSCommonJSModule::create(
             vm,
             globalObject->CommonJSModuleObjectStructure(),
-            requireMapKey, filename, dirname, std::move(JSC::SourceCode(std::move(sourceProvider))));
+            requireMapKey, filename, dirname, JSC::SourceCode(WTF::move(sourceProvider)));
 
         moduleObject->putDirect(vm,
             WebCore::clientData(vm)->builtinNames().exportsPublicName(),

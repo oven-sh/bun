@@ -64,7 +64,7 @@ template<typename IDLType> FixedVector<typename VariadicConverter<IDLType>::Item
         ASSERT_UNUSED(scope, !!scope.exception() == !value);
         if (!value)
             return {};
-        result[resultIndex] = std::move(*value);
+        result[resultIndex] = WTF::move(*value);
         resultIndex++;
     }
 

@@ -102,7 +102,7 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__createUT
         return {};
     }
     scope.assertNoException();
-    return JSValue::encode(jsString(vm, std::move(str)));
+    return JSValue::encode(jsString(vm, WTF::move(str)));
 }
 
 extern "C" JSC::EncodedJSValue BunString__transferToJS(BunString* bunString, JSC::JSGlobalObject* globalObject)
@@ -125,12 +125,12 @@ extern "C" JSC::EncodedJSValue BunString__transferToJS(BunString* bunString, JSC
 #endif
         bunString->impl.wtf->deref();
         *bunString = { .tag = BunStringTag::Dead };
-        return JSValue::encode(jsString(vm, std::move(str)));
+        return JSValue::encode(jsString(vm, WTF::move(str)));
     }
 
     WTF::String str = bunString->toWTFString();
     *bunString = { .tag = BunStringTag::Dead };
-    return JSValue::encode(jsString(vm, std::move(str)));
+    return JSValue::encode(jsString(vm, WTF::move(str)));
 }
 
 // int64_t max to say "not a number"
@@ -553,7 +553,7 @@ extern "C" JSC::EncodedJSValue BunString__toJSDOMURL(JSC::JSGlobalObject* lexica
     auto str = bunString->toWTFString(BunString::ZeroCopy);
 
     auto object = WebCore::DOMURL::create(str, String());
-    auto jsValue = WebCore::toJSNewlyCreated<WebCore::IDLInterface<WebCore::DOMURL>>(*lexicalGlobalObject, globalObject, throwScope, std::move(object));
+    auto jsValue = WebCore::toJSNewlyCreated<WebCore::IDLInterface<WebCore::DOMURL>>(*lexicalGlobalObject, globalObject, throwScope, WTF::move(object));
     auto* jsDOMURL = jsCast<WebCore::JSDOMURL*>(jsValue.asCell());
     vm.heap.reportExtraMemoryAllocated(jsDOMURL, jsDOMURL->wrapped().memoryCostForGC());
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(jsValue));
@@ -573,7 +573,7 @@ extern "C" WTF::URL* URL__fromJS(EncodedJSValue encodedValue, JSC::JSGlobalObjec
     if (!url.isValid() || url.isNull())
         return nullptr;
 
-    return new WTF::URL(std::move(url));
+    return new WTF::URL(WTF::move(url));
 }
 
 extern "C" BunString URL__getHrefFromJS(EncodedJSValue encodedValue, JSC::JSGlobalObject* globalObject)
@@ -647,7 +647,7 @@ extern "C" WTF::URL* URL__fromString(BunString* input)
     if (!url.isValid())
         return nullptr;
 
-    return new WTF::URL(std::move(url));
+    return new WTF::URL(WTF::move(url));
 }
 
 extern "C" BunString URL__protocol(WTF::URL* url)

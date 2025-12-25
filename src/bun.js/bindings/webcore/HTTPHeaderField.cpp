@@ -218,9 +218,9 @@ std::optional<HTTPHeaderField> HTTPHeaderField::create(String&& unparsedName, St
     if (!RFC7230::isValidName(trimmedName) || !RFC7230::isValidValue(trimmedValue))
         return std::nullopt;
 
-    auto name = trimmedName.length() == unparsedName.length() ? std::move(unparsedName) : trimmedName.toString();
-    auto value = trimmedValue.length() == unparsedValue.length() ? std::move(unparsedValue) : trimmedValue.toString();
-    return { { std::move(name), std::move(value) } };
+    auto name = trimmedName.length() == unparsedName.length() ? WTF::move(unparsedName) : trimmedName.toString();
+    auto value = trimmedValue.length() == unparsedValue.length() ? WTF::move(unparsedValue) : trimmedValue.toString();
+    return { { WTF::move(name), WTF::move(value) } };
 }
 
 }

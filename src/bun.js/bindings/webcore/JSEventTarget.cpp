@@ -114,7 +114,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSEventTargetDOMConstruc
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
-    auto jsValue = toJSNewlyCreated<IDLInterface<EventTarget>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, std::move(object));
+    auto jsValue = toJSNewlyCreated<IDLInterface<EventTarget>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTF::move(object));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     setSubclassStructureIfNeeded<EventTarget>(lexicalGlobalObject, callFrame, asObject(jsValue));
@@ -161,7 +161,7 @@ void JSEventTargetPrototype::finishCreation(VM& vm)
 const ClassInfo JSEventTarget::s_info = { "EventTarget"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSEventTarget) };
 
 JSEventTarget::JSEventTarget(Structure* structure, JSDOMGlobalObject& globalObject, Ref<EventTarget>&& impl)
-    : JSDOMWrapper<EventTarget>(structure, globalObject, std::move(impl))
+    : JSDOMWrapper<EventTarget>(structure, globalObject, WTF::move(impl))
 {
 }
 
@@ -238,12 +238,12 @@ static inline JSC::EncodedJSValue jsEventTargetPrototypeFunction_addEventListene
         JSObject& target = *castedThis;
         errorInstance->putDirect(vm, vm.propertyNames->target, &target);
         RETURN_IF_EXCEPTION(throwScope, {});
-        errorInstance->putDirect(vm, vm.propertyNames->type, jsString(vm, std::move(type)));
+        errorInstance->putDirect(vm, vm.propertyNames->type, jsString(vm, WTF::move(type)));
         Bun::Process::emitWarningErrorInstance(lexicalGlobalObject, errorInstance);
         if (throwScope.exception()) [[unlikely]]
             throwScope.clearException();
     }
-    auto result = JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.addEventListenerForBindings(std::move(type), std::move(listener), std::move(options)); }));
+    auto result = JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.addEventListenerForBindings(WTF::move(type), WTF::move(listener), WTF::move(options)); }));
     RETURN_IF_EXCEPTION(throwScope, {});
     vm.writeBarrier(&static_cast<JSObject&>(*castedThis), argument1.value());
     return result;
@@ -272,7 +272,7 @@ static inline JSC::EncodedJSValue jsEventTargetPrototypeFunction_removeEventList
     EnsureStillAliveScope argument2 = callFrame->argument(2);
     auto options = argument2.value().isUndefined() ? false : convert<IDLUnion<IDLDictionary<EventListenerOptions>, IDLBoolean>>(*lexicalGlobalObject, argument2.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    auto result = JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.removeEventListenerForBindings(std::move(type), std::move(listener), std::move(options)); }));
+    auto result = JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.removeEventListenerForBindings(WTF::move(type), WTF::move(listener), WTF::move(options)); }));
     RETURN_IF_EXCEPTION(throwScope, {});
     vm.writeBarrier(&static_cast<JSObject&>(*castedThis), argument1.value());
     return result;

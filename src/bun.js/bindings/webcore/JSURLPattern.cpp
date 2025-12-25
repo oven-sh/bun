@@ -63,15 +63,15 @@ using namespace JSC;
 static URLPattern::URLPatternInput convertToWTFVariant(std::variant<String, URLPatternInit>&& input)
 {
     if (std::holds_alternative<String>(input))
-        return URLPattern::URLPatternInput(std::get<String>(std::move(input)));
-    return URLPattern::URLPatternInput(std::get<URLPatternInit>(std::move(input)));
+        return URLPattern::URLPatternInput(std::get<String>(WTF::move(input)));
+    return URLPattern::URLPatternInput(std::get<URLPatternInit>(WTF::move(input)));
 }
 
 static std::optional<URLPattern::URLPatternInput> convertToOptionalWTFVariant(std::optional<std::variant<String, URLPatternInit>>&& input)
 {
     if (!input)
         return std::nullopt;
-    return convertToWTFVariant(std::move(*input));
+    return convertToWTFVariant(WTF::move(*input));
 }
 
 // Functions
@@ -144,11 +144,11 @@ static inline EncodedJSValue constructJSURLPattern1(JSGlobalObject* lexicalGloba
     EnsureStillAliveScope argument2 = callFrame->argument(2);
     auto options = convert<IDLDictionary<URLPatternOptions>>(*lexicalGlobalObject, argument2.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-    auto object = URLPattern::create(*context, convertToWTFVariant(std::move(input)), std::move(baseURL), std::move(options));
+    auto object = URLPattern::create(*context, convertToWTFVariant(WTF::move(input)), WTF::move(baseURL), WTF::move(options));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
-    auto jsValue = toJSNewlyCreated<IDLInterface<URLPattern>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, std::move(object));
+    auto jsValue = toJSNewlyCreated<IDLInterface<URLPattern>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTF::move(object));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     setSubclassStructureIfNeeded<URLPattern>(lexicalGlobalObject, callFrame, asObject(jsValue));
@@ -171,11 +171,11 @@ static inline EncodedJSValue constructJSURLPattern2(JSGlobalObject* lexicalGloba
     EnsureStillAliveScope argument1 = callFrame->argument(1);
     auto options = convert<IDLDictionary<URLPatternOptions>>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-    auto object = URLPattern::create(*context, convertToOptionalWTFVariant(std::move(input)), std::move(options));
+    auto object = URLPattern::create(*context, convertToOptionalWTFVariant(WTF::move(input)), WTF::move(options));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
-    auto jsValue = toJSNewlyCreated<IDLInterface<URLPattern>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, std::move(object));
+    auto jsValue = toJSNewlyCreated<IDLInterface<URLPattern>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTF::move(object));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     setSubclassStructureIfNeeded<URLPattern>(lexicalGlobalObject, callFrame, asObject(jsValue));
@@ -258,7 +258,7 @@ void JSURLPatternPrototype::finishCreation(VM& vm)
 const ClassInfo JSURLPattern::s_info = { "URLPattern"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSURLPattern) };
 
 JSURLPattern::JSURLPattern(Structure* structure, JSDOMGlobalObject& globalObject, Ref<URLPattern>&& impl)
-    : JSDOMWrapper<URLPattern>(structure, globalObject, std::move(impl))
+    : JSDOMWrapper<URLPattern>(structure, globalObject, WTF::move(impl))
 {
 }
 
@@ -428,7 +428,7 @@ static inline JSC::EncodedJSValue jsURLPatternPrototypeFunction_testBody(JSC::JS
     EnsureStillAliveScope argument1 = callFrame->argument(1);
     auto baseURL = argument1.value().isUndefined() ? String() : convert<IDLUSVString>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLBoolean>(*lexicalGlobalObject, throwScope, impl.test(*context, convertToOptionalWTFVariant(std::move(input)), std::move(baseURL)))));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLBoolean>(*lexicalGlobalObject, throwScope, impl.test(*context, convertToOptionalWTFVariant(WTF::move(input)), WTF::move(baseURL)))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsURLPatternPrototypeFunction_test, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -452,7 +452,7 @@ static inline JSC::EncodedJSValue jsURLPatternPrototypeFunction_execBody(JSC::JS
     EnsureStillAliveScope argument1 = callFrame->argument(1);
     auto baseURL = argument1.value().isUndefined() ? String() : convert<IDLUSVString>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLNullable<IDLDictionary<URLPatternResult>>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, impl.exec(*context, convertToOptionalWTFVariant(std::move(input)), std::move(baseURL)))));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLNullable<IDLDictionary<URLPatternResult>>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, impl.exec(*context, convertToOptionalWTFVariant(WTF::move(input)), WTF::move(baseURL)))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsURLPatternPrototypeFunction_exec, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -527,7 +527,7 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
 #if ENABLE(BINDING_INTEGRITY)
     verifyVTable<URLPattern>(impl.ptr());
 #endif
-    return createWrapper<URLPattern>(globalObject, std::move(impl));
+    return createWrapper<URLPattern>(globalObject, WTF::move(impl));
 }
 
 JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, URLPattern& impl)

@@ -47,7 +47,7 @@ using namespace JSC;
 
 JSValue toJSNewlyCreated(JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<EventTarget>&& value)
 {
-    return createWrapper<EventTarget>(globalObject, std::move(value));
+    return createWrapper<EventTarget>(globalObject, WTF::move(value));
 }
 
 EventTarget* JSEventTarget::toWrapped(VM& vm, JSValue value)

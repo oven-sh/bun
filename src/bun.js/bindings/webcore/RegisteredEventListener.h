@@ -46,7 +46,7 @@ public:
 
     static Ref<RegisteredEventListener> create(Ref<EventListener>&& listener, const Options& options)
     {
-        return adoptRef(*new RegisteredEventListener(std::move(listener), options));
+        return adoptRef(*new RegisteredEventListener(WTF::move(listener), options));
     }
 
     EventListener& callback() const { return m_callback; }
@@ -63,7 +63,7 @@ private:
         , m_isPassive(options.passive)
         , m_isOnce(options.once)
         , m_wasRemoved(false)
-        , m_callback(std::move(listener))
+        , m_callback(WTF::move(listener))
     {
     }
 

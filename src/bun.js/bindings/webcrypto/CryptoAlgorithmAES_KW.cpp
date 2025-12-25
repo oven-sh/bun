@@ -68,7 +68,7 @@ void CryptoAlgorithmAES_KW::generateKey(const CryptoAlgorithmParameters& paramet
         return;
     }
 
-    callback(std::move(result));
+    callback(WTF::move(result));
 }
 
 void CryptoAlgorithmAES_KW::importKey(CryptoKeyFormat format, KeyData&& data, const CryptoAlgorithmParameters& parameters, bool extractable, CryptoKeyUsageBitmap usages, KeyCallback&& callback, ExceptionCallback&& exceptionCallback)
@@ -83,10 +83,10 @@ void CryptoAlgorithmAES_KW::importKey(CryptoKeyFormat format, KeyData&& data, co
     RefPtr<CryptoKeyAES> result;
     switch (format) {
     case CryptoKeyFormat::Raw:
-        result = CryptoKeyAES::importRaw(parameters.identifier, std::move(std::get<Vector<uint8_t>>(data)), extractable, usages);
+        result = CryptoKeyAES::importRaw(parameters.identifier, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages);
         break;
     case CryptoKeyFormat::Jwk: {
-        result = CryptoKeyAES::importJwk(parameters.identifier, std::move(std::get<JsonWebKey>(data)), extractable, usages, [](size_t length, const String& alg) -> bool {
+        result = CryptoKeyAES::importJwk(parameters.identifier, WTF::move(std::get<JsonWebKey>(data)), extractable, usages, [](size_t length, const String& alg) -> bool {
             switch (length) {
             case CryptoKeyAES::s_length128:
                 return alg.isNull() || alg == ALG128;
@@ -141,7 +141,7 @@ void CryptoAlgorithmAES_KW::exportKey(CryptoKeyFormat format, Ref<CryptoKey>&& k
         default:
             ASSERT_NOT_REACHED();
         }
-        result = std::move(jwk);
+        result = WTF::move(jwk);
         break;
     }
     default:
@@ -149,7 +149,7 @@ void CryptoAlgorithmAES_KW::exportKey(CryptoKeyFormat format, Ref<CryptoKey>&& k
         return;
     }
 
-    callback(format, std::move(result));
+    callback(format, WTF::move(result));
 }
 
 void CryptoAlgorithmAES_KW::wrapKey(Ref<CryptoKey>&& key, Vector<uint8_t>&& data, VectorCallback&& callback, ExceptionCallback&& exceptionCallback)
@@ -159,7 +159,7 @@ void CryptoAlgorithmAES_KW::wrapKey(Ref<CryptoKey>&& key, Vector<uint8_t>&& data
         return;
     }
 
-    auto result = platformWrapKey(downcast<CryptoKeyAES>(key.get()), std::move(data));
+    auto result = platformWrapKey(downcast<CryptoKeyAES>(key.get()), WTF::move(data));
     if (result.hasException()) {
         exceptionCallback(result.releaseException().code(), ""_s);
         return;
@@ -170,7 +170,7 @@ void CryptoAlgorithmAES_KW::wrapKey(Ref<CryptoKey>&& key, Vector<uint8_t>&& data
 
 void CryptoAlgorithmAES_KW::unwrapKey(Ref<CryptoKey>&& key, Vector<uint8_t>&& data, VectorCallback&& callback, ExceptionCallback&& exceptionCallback)
 {
-    auto result = platformUnwrapKey(downcast<CryptoKeyAES>(key.get()), std::move(data));
+    auto result = platformUnwrapKey(downcast<CryptoKeyAES>(key.get()), WTF::move(data));
     if (result.hasException()) {
         exceptionCallback(result.releaseException().code(), ""_s);
         return;

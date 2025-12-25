@@ -346,7 +346,7 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHProtoFuncSetPrivateKey, (JSC::JSGlobalObject * gl
     }
 
     // Replace the old key with the new one
-    ecdh->m_key = std::move(newKey);
+    ecdh->m_key = WTF::move(newKey);
     ecdh->m_group = ecdh->m_key.getGroup();
 
     // Return this for chaining

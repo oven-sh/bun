@@ -59,16 +59,16 @@ CryptoAlgorithmIdentifier CryptoAlgorithmHMAC::identifier() const
 
 void CryptoAlgorithmHMAC::sign(const CryptoAlgorithmParameters&, Ref<CryptoKey>&& key, Vector<uint8_t>&& data, VectorCallback&& callback, ExceptionCallback&& exceptionCallback, ScriptExecutionContext& context, WorkQueue& workQueue)
 {
-    dispatchOperationInWorkQueue(workQueue, context, std::move(callback), std::move(exceptionCallback),
-        [key = std::move(key), data = std::move(data)] {
+    dispatchOperationInWorkQueue(workQueue, context, WTF::move(callback), WTF::move(exceptionCallback),
+        [key = WTF::move(key), data = WTF::move(data)] {
             return platformSign(downcast<CryptoKeyHMAC>(key.get()), data);
         });
 }
 
 void CryptoAlgorithmHMAC::verify(const CryptoAlgorithmParameters&, Ref<CryptoKey>&& key, Vector<uint8_t>&& signature, Vector<uint8_t>&& data, BoolCallback&& callback, ExceptionCallback&& exceptionCallback, ScriptExecutionContext& context, WorkQueue& workQueue)
 {
-    dispatchOperationInWorkQueue(workQueue, context, std::move(callback), std::move(exceptionCallback),
-        [key = std::move(key), signature = std::move(signature), data = std::move(data)] {
+    dispatchOperationInWorkQueue(workQueue, context, WTF::move(callback), WTF::move(exceptionCallback),
+        [key = WTF::move(key), signature = WTF::move(signature), data = WTF::move(data)] {
             return platformVerify(downcast<CryptoKeyHMAC>(key.get()), signature, data);
         });
 }
@@ -93,7 +93,7 @@ void CryptoAlgorithmHMAC::generateKey(const CryptoAlgorithmParameters& parameter
         return;
     }
 
-    callback(std::move(result));
+    callback(WTF::move(result));
 }
 
 void CryptoAlgorithmHMAC::importKey(CryptoKeyFormat format, KeyData&& data, const CryptoAlgorithmParameters& parameters, bool extractable, CryptoKeyUsageBitmap usages, KeyCallback&& callback, ExceptionCallback&& exceptionCallback)
@@ -110,7 +110,7 @@ void CryptoAlgorithmHMAC::importKey(CryptoKeyFormat format, KeyData&& data, cons
     RefPtr<CryptoKeyHMAC> result;
     switch (format) {
     case CryptoKeyFormat::Raw:
-        result = CryptoKeyHMAC::importRaw(hmacParameters.length.value_or(0), hmacParameters.hashIdentifier, std::move(std::get<Vector<uint8_t>>(data)), extractable, usages);
+        result = CryptoKeyHMAC::importRaw(hmacParameters.length.value_or(0), hmacParameters.hashIdentifier, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages);
         break;
     case CryptoKeyFormat::Jwk: {
         auto checkAlgCallback = [](CryptoAlgorithmIdentifier hash, const String& alg) -> bool {
@@ -130,7 +130,7 @@ void CryptoAlgorithmHMAC::importKey(CryptoKeyFormat format, KeyData&& data, cons
             }
             return false;
         };
-        result = CryptoKeyHMAC::importJwk(hmacParameters.length.value_or(0), hmacParameters.hashIdentifier, std::move(std::get<JsonWebKey>(data)), extractable, usages, std::move(checkAlgCallback));
+        result = CryptoKeyHMAC::importJwk(hmacParameters.length.value_or(0), hmacParameters.hashIdentifier, WTF::move(std::get<JsonWebKey>(data)), extractable, usages, WTF::move(checkAlgCallback));
         break;
     }
     default:
@@ -181,7 +181,7 @@ void CryptoAlgorithmHMAC::exportKey(CryptoKeyFormat format, Ref<CryptoKey>&& key
         default:
             ASSERT_NOT_REACHED();
         }
-        result = std::move(jwk);
+        result = WTF::move(jwk);
         break;
     }
     default:
@@ -189,7 +189,7 @@ void CryptoAlgorithmHMAC::exportKey(CryptoKeyFormat format, Ref<CryptoKey>&& key
         return;
     }
 
-    callback(format, std::move(result));
+    callback(format, WTF::move(result));
 }
 
 ExceptionOr<size_t> CryptoAlgorithmHMAC::getKeyLength(const CryptoAlgorithmParameters& parameters)

@@ -32,7 +32,7 @@ public:
     using DOMWrapped = PerformanceMeasure;
     static JSPerformanceMeasure* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<PerformanceMeasure>&& impl)
     {
-        JSPerformanceMeasure* ptr = new (NotNull, JSC::allocateCell<JSPerformanceMeasure>(globalObject->vm())) JSPerformanceMeasure(structure, *globalObject, std::move(impl));
+        JSPerformanceMeasure* ptr = new (NotNull, JSC::allocateCell<JSPerformanceMeasure>(globalObject->vm())) JSPerformanceMeasure(structure, *globalObject, WTF::move(impl));
         ptr->finishCreation(globalObject->vm());
         return ptr;
     }

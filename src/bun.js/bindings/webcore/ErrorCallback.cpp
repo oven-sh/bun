@@ -33,7 +33,7 @@ namespace WebCore {
 
 void ErrorCallback::scheduleCallback(ScriptExecutionContext& context, Ref<DOMException>&& exception)
 {
-    context.postTask([protectedThis = Ref { *this }, exception = std::move(exception)](ScriptExecutionContext&) {
+    context.postTask([protectedThis = Ref { *this }, exception = WTF::move(exception)](ScriptExecutionContext&) {
         protectedThis->handleEvent(exception);
     });
 }

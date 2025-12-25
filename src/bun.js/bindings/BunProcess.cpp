@@ -3740,7 +3740,7 @@ JSC_DEFINE_CUSTOM_GETTER(processTitle, (JSC::JSGlobalObject * globalObject, JSC:
     BunString str;
     Bun__Process__getTitle(globalObject, &str);
     auto value = str.transferToWTFString();
-    auto* result = jsString(globalObject->vm(), std::move(value));
+    auto* result = jsString(globalObject->vm(), WTF::move(value));
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, JSValue::encode(result));
 #else

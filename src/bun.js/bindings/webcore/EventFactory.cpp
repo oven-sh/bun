@@ -37,277 +37,277 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
 {
     switch (impl->eventInterface()) {
         //     case AnimationEventInterfaceType:
-        //         return createWrapper<AnimationEvent>(globalObject, std::move(impl));
+        //         return createWrapper<AnimationEvent>(globalObject, WTF::move(impl));
         //     case AnimationPlaybackEventInterfaceType:
-        //         return createWrapper<AnimationPlaybackEvent>(globalObject, std::move(impl));
+        //         return createWrapper<AnimationPlaybackEvent>(globalObject, WTF::move(impl));
         // #if ENABLE(APPLE_PAY)
         //     case ApplePayCancelEventInterfaceType:
-        //         return createWrapper<ApplePayCancelEvent>(globalObject, std::move(impl));
+        //         return createWrapper<ApplePayCancelEvent>(globalObject, WTF::move(impl));
         // #endif
         // #if ENABLE(APPLE_PAY_COUPON_CODE)
         //     case ApplePayCouponCodeChangedEventInterfaceType:
-        //         return createWrapper<ApplePayCouponCodeChangedEvent>(globalObject, std::move(impl));
+        //         return createWrapper<ApplePayCouponCodeChangedEvent>(globalObject, WTF::move(impl));
         // #endif
         // #if ENABLE(APPLE_PAY)
         //     case ApplePayPaymentAuthorizedEventInterfaceType:
-        //         return createWrapper<ApplePayPaymentAuthorizedEvent>(globalObject, std::move(impl));
+        //         return createWrapper<ApplePayPaymentAuthorizedEvent>(globalObject, WTF::move(impl));
         // #endif
         // #if ENABLE(APPLE_PAY)
         //     case ApplePayPaymentMethodSelectedEventInterfaceType:
-        //         return createWrapper<ApplePayPaymentMethodSelectedEvent>(globalObject, std::move(impl));
+        //         return createWrapper<ApplePayPaymentMethodSelectedEvent>(globalObject, WTF::move(impl));
         // #endif
         // #if ENABLE(APPLE_PAY)
         //     case ApplePayShippingContactSelectedEventInterfaceType:
-        //         return createWrapper<ApplePayShippingContactSelectedEvent>(globalObject, std::move(impl));
+        //         return createWrapper<ApplePayShippingContactSelectedEvent>(globalObject, WTF::move(impl));
         // #endif
         // #if ENABLE(APPLE_PAY)
         //     case ApplePayShippingMethodSelectedEventInterfaceType:
-        //         return createWrapper<ApplePayShippingMethodSelectedEvent>(globalObject, std::move(impl));
+        //         return createWrapper<ApplePayShippingMethodSelectedEvent>(globalObject, WTF::move(impl));
         // #endif
         // #if ENABLE(APPLE_PAY)
         //     case ApplePayValidateMerchantEventInterfaceType:
-        //         return createWrapper<ApplePayValidateMerchantEvent>(globalObject, std::move(impl));
+        //         return createWrapper<ApplePayValidateMerchantEvent>(globalObject, WTF::move(impl));
         // #endif
         // #if ENABLE(WEB_AUDIO)
         //     case AudioProcessingEventInterfaceType:
-        //         return createWrapper<AudioProcessingEvent>(globalObject, std::move(impl));
+        //         return createWrapper<AudioProcessingEvent>(globalObject, WTF::move(impl));
         // #endif
     case EventInterfaceType: {
-        return createWrapper<Event>(globalObject, std::move(impl));
+        return createWrapper<Event>(globalObject, WTF::move(impl));
     }
         //     case BeforeUnloadEventInterfaceType:
-        //         return createWrapper<BeforeUnloadEvent>(globalObject, std::move(impl));
+        //         return createWrapper<BeforeUnloadEvent>(globalObject, WTF::move(impl));
         // #if ENABLE(MEDIA_RECORDER)
         //     case BlobEventInterfaceType:
-        //         return createWrapper<BlobEvent>(globalObject, std::move(impl));
+        //         return createWrapper<BlobEvent>(globalObject, WTF::move(impl));
         // #endif
         //     case ClipboardEventInterfaceType:
-        //         return createWrapper<ClipboardEvent>(globalObject, std::move(impl));
+        //         return createWrapper<ClipboardEvent>(globalObject, WTF::move(impl));
     case CloseEventInterfaceType: {
-        return createWrapper<CloseEvent>(globalObject, std::move(impl));
+        return createWrapper<CloseEvent>(globalObject, WTF::move(impl));
     }
     //     case CompositionEventInterfaceType:
-    //         return createWrapper<CompositionEvent>(globalObject, std::move(impl));
+    //         return createWrapper<CompositionEvent>(globalObject, WTF::move(impl));
     //     case CustomEventInterfaceType:
-    //         return createWrapper<CustomEvent>(globalObject, std::move(impl));
+    //         return createWrapper<CustomEvent>(globalObject, WTF::move(impl));
     // #if ENABLE(DEVICE_ORIENTATION)
     //     case DeviceMotionEventInterfaceType:
-    //         return createWrapper<DeviceMotionEvent>(globalObject, std::move(impl));
+    //         return createWrapper<DeviceMotionEvent>(globalObject, WTF::move(impl));
     // #endif
     // #if ENABLE(DEVICE_ORIENTATION)
     //     case DeviceOrientationEventInterfaceType:
-    //         return createWrapper<DeviceOrientationEvent>(globalObject, std::move(impl));
+    //         return createWrapper<DeviceOrientationEvent>(globalObject, WTF::move(impl));
     // #endif
     //     case DragEventInterfaceType:
-    //         return createWrapper<DragEvent>(globalObject, std::move(impl));
+    //         return createWrapper<DragEvent>(globalObject, WTF::move(impl));
     case ErrorEventInterfaceType: {
-        return createWrapper<ErrorEvent>(globalObject, std::move(impl));
+        return createWrapper<ErrorEvent>(globalObject, WTF::move(impl));
     }
         // #if ENABLE(SERVICE_WORKER)
         //     case ExtendableEventInterfaceType:
-        //         return createWrapper<ExtendableEvent>(globalObject, std::move(impl));
+        //         return createWrapper<ExtendableEvent>(globalObject, WTF::move(impl));
         // #endif
         // #if ENABLE(SERVICE_WORKER)
         //     case ExtendableMessageEventInterfaceType:
-        //         return createWrapper<ExtendableMessageEvent>(globalObject, std::move(impl));
+        //         return createWrapper<ExtendableMessageEvent>(globalObject, WTF::move(impl));
         // #endif
         // #if ENABLE(SERVICE_WORKER)
         //     case FetchEventInterfaceType:
-        //         return createWrapper<FetchEvent>(globalObject, std::move(impl));
+        //         return createWrapper<FetchEvent>(globalObject, WTF::move(impl));
         // #endif
         //     case FocusEventInterfaceType:
-        //         return createWrapper<FocusEvent>(globalObject, std::move(impl));
+        //         return createWrapper<FocusEvent>(globalObject, WTF::move(impl));
         //     case FormDataEventInterfaceType:
-        //         return createWrapper<FormDataEvent>(globalObject, std::move(impl));
+        //         return createWrapper<FormDataEvent>(globalObject, WTF::move(impl));
         // #if ENABLE(GAMEPAD)
         //     case GamepadEventInterfaceType:
-        //         return createWrapper<GamepadEvent>(globalObject, std::move(impl));
+        //         return createWrapper<GamepadEvent>(globalObject, WTF::move(impl));
         // #endif
         // #if ENABLE(IOS_GESTURE_EVENTS) || ENABLE(MAC_GESTURE_EVENTS)
         //     case GestureEventInterfaceType:
-        //         return createWrapper<GestureEvent>(globalObject, std::move(impl));
+        //         return createWrapper<GestureEvent>(globalObject, WTF::move(impl));
         // #endif
         //     case HashChangeEventInterfaceType:
-        //         return createWrapper<HashChangeEvent>(globalObject, std::move(impl));
+        //         return createWrapper<HashChangeEvent>(globalObject, WTF::move(impl));
         //     case IDBVersionChangeEventInterfaceType:
-        //         return createWrapper<IDBVersionChangeEvent>(globalObject, std::move(impl));
+        //         return createWrapper<IDBVersionChangeEvent>(globalObject, WTF::move(impl));
         //     case InputEventInterfaceType:
-        //         return createWrapper<InputEvent>(globalObject, std::move(impl));
+        //         return createWrapper<InputEvent>(globalObject, WTF::move(impl));
         //     case KeyboardEventInterfaceType:
-        //         return createWrapper<KeyboardEvent>(globalObject, std::move(impl));
+        //         return createWrapper<KeyboardEvent>(globalObject, WTF::move(impl));
         // #if ENABLE(ENCRYPTED_MEDIA)
         //     case MediaEncryptedEventInterfaceType:
-        //         return createWrapper<MediaEncryptedEvent>(globalObject, std::move(impl));
+        //         return createWrapper<MediaEncryptedEvent>(globalObject, WTF::move(impl));
         // #endif
         // #if ENABLE(ENCRYPTED_MEDIA)
         //     case MediaKeyMessageEventInterfaceType:
-        //         return createWrapper<MediaKeyMessageEvent>(globalObject, std::move(impl));
+        //         return createWrapper<MediaKeyMessageEvent>(globalObject, WTF::move(impl));
         // #endif
         //     case MediaQueryListEventInterfaceType:
-        //         return createWrapper<MediaQueryListEvent>(globalObject, std::move(impl));
+        //         return createWrapper<MediaQueryListEvent>(globalObject, WTF::move(impl));
         // #if ENABLE(MEDIA_RECORDER)
         //     case MediaRecorderErrorEventInterfaceType:
-        //         return createWrapper<MediaRecorderErrorEvent>(globalObject, std::move(impl));
+        //         return createWrapper<MediaRecorderErrorEvent>(globalObject, WTF::move(impl));
         // #endif
         // #if ENABLE(MEDIA_STREAM)
         //     case MediaStreamTrackEventInterfaceType:
-        //         return createWrapper<MediaStreamTrackEvent>(globalObject, std::move(impl));
+        //         return createWrapper<MediaStreamTrackEvent>(globalObject, WTF::move(impl));
         // #endif
         // #if ENABLE(PAYMENT_REQUEST)
         //     case MerchantValidationEventInterfaceType:
-        //         return createWrapper<MerchantValidationEvent>(globalObject, std::move(impl));
+        //         return createWrapper<MerchantValidationEvent>(globalObject, WTF::move(impl));
         // #endif
     case MessageEventInterfaceType:
-        return createWrapper<MessageEvent>(globalObject, std::move(impl));
+        return createWrapper<MessageEvent>(globalObject, WTF::move(impl));
     //     case MouseEventInterfaceType:
-    //         return createWrapper<MouseEvent>(globalObject, std::move(impl));
+    //         return createWrapper<MouseEvent>(globalObject, WTF::move(impl));
     //     case MutationEventInterfaceType:
-    //         return createWrapper<MutationEvent>(globalObject, std::move(impl));
+    //         return createWrapper<MutationEvent>(globalObject, WTF::move(impl));
     // #if ENABLE(NOTIFICATION_EVENT)
     //     case NotificationEventInterfaceType:
-    //         return createWrapper<NotificationEvent>(globalObject, std::move(impl));
+    //         return createWrapper<NotificationEvent>(globalObject, WTF::move(impl));
     // #endif
     // #if ENABLE(WEB_AUDIO)
     //     case OfflineAudioCompletionEventInterfaceType:
-    //         return createWrapper<OfflineAudioCompletionEvent>(globalObject, std::move(impl));
+    //         return createWrapper<OfflineAudioCompletionEvent>(globalObject, WTF::move(impl));
     // #endif
     // #if ENABLE(MEDIA_STREAM)
     //     case OverconstrainedErrorEventInterfaceType:
-    //         return createWrapper<OverconstrainedErrorEvent>(globalObject, std::move(impl));
+    //         return createWrapper<OverconstrainedErrorEvent>(globalObject, WTF::move(impl));
     // #endif
     //     case OverflowEventInterfaceType:
-    //         return createWrapper<OverflowEvent>(globalObject, std::move(impl));
+    //         return createWrapper<OverflowEvent>(globalObject, WTF::move(impl));
     //     case PageTransitionEventInterfaceType:
-    //         return createWrapper<PageTransitionEvent>(globalObject, std::move(impl));
+    //         return createWrapper<PageTransitionEvent>(globalObject, WTF::move(impl));
     // #if ENABLE(PAYMENT_REQUEST)
     //     case PaymentMethodChangeEventInterfaceType:
-    //         return createWrapper<PaymentMethodChangeEvent>(globalObject, std::move(impl));
+    //         return createWrapper<PaymentMethodChangeEvent>(globalObject, WTF::move(impl));
     // #endif
     // #if ENABLE(PAYMENT_REQUEST)
     //     case PaymentRequestUpdateEventInterfaceType:
-    //         return createWrapper<PaymentRequestUpdateEvent>(globalObject, std::move(impl));
+    //         return createWrapper<PaymentRequestUpdateEvent>(globalObject, WTF::move(impl));
     // #endif
     // #if ENABLE(PICTURE_IN_PICTURE_API)
     //     case PictureInPictureEventInterfaceType:
-    //         return createWrapper<PictureInPictureEvent>(globalObject, std::move(impl));
+    //         return createWrapper<PictureInPictureEvent>(globalObject, WTF::move(impl));
     // #endif
     //     case PointerEventInterfaceType:
-    //         return createWrapper<PointerEvent>(globalObject, std::move(impl));
+    //         return createWrapper<PointerEvent>(globalObject, WTF::move(impl));
     //     case PopStateEventInterfaceType:
-    //         return createWrapper<PopStateEvent>(globalObject, std::move(impl));
+    //         return createWrapper<PopStateEvent>(globalObject, WTF::move(impl));
     //     case ProgressEventInterfaceType:
-    //         return createWrapper<ProgressEvent>(globalObject, std::move(impl));
+    //         return createWrapper<ProgressEvent>(globalObject, WTF::move(impl));
     //     case PromiseRejectionEventInterfaceType:
-    //         return createWrapper<PromiseRejectionEvent>(globalObject, std::move(impl));
+    //         return createWrapper<PromiseRejectionEvent>(globalObject, WTF::move(impl));
     // #if ENABLE(SERVICE_WORKER)
     //     case PushEventInterfaceType:
-    //         return createWrapper<PushEvent>(globalObject, std::move(impl));
+    //         return createWrapper<PushEvent>(globalObject, WTF::move(impl));
     // #endif
     // #if ENABLE(SERVICE_WORKER)
     //     case PushSubscriptionChangeEventInterfaceType:
-    //         return createWrapper<PushSubscriptionChangeEvent>(globalObject, std::move(impl));
+    //         return createWrapper<PushSubscriptionChangeEvent>(globalObject, WTF::move(impl));
     // #endif
     // #if ENABLE(WEB_RTC)
     //     case RTCDTMFToneChangeEventInterfaceType:
-    //         return createWrapper<RTCDTMFToneChangeEvent>(globalObject, std::move(impl));
+    //         return createWrapper<RTCDTMFToneChangeEvent>(globalObject, WTF::move(impl));
     // #endif
     // #if ENABLE(WEB_RTC)
     //     case RTCDataChannelEventInterfaceType:
-    //         return createWrapper<RTCDataChannelEvent>(globalObject, std::move(impl));
+    //         return createWrapper<RTCDataChannelEvent>(globalObject, WTF::move(impl));
     // #endif
     // #if ENABLE(WEB_RTC)
     //     case RTCErrorEventInterfaceType:
-    //         return createWrapper<RTCErrorEvent>(globalObject, std::move(impl));
+    //         return createWrapper<RTCErrorEvent>(globalObject, WTF::move(impl));
     // #endif
     // #if ENABLE(WEB_RTC)
     //     case RTCPeerConnectionIceErrorEventInterfaceType:
-    //         return createWrapper<RTCPeerConnectionIceErrorEvent>(globalObject, std::move(impl));
+    //         return createWrapper<RTCPeerConnectionIceErrorEvent>(globalObject, WTF::move(impl));
     // #endif
     // #if ENABLE(WEB_RTC)
     //     case RTCPeerConnectionIceEventInterfaceType:
-    //         return createWrapper<RTCPeerConnectionIceEvent>(globalObject, std::move(impl));
+    //         return createWrapper<RTCPeerConnectionIceEvent>(globalObject, WTF::move(impl));
     // #endif
     // #if ENABLE(WEB_RTC)
     //     case RTCRtpSFrameTransformErrorEventInterfaceType:
-    //         return createWrapper<RTCRtpSFrameTransformErrorEvent>(globalObject, std::move(impl));
+    //         return createWrapper<RTCRtpSFrameTransformErrorEvent>(globalObject, WTF::move(impl));
     // #endif
     // #if ENABLE(WEB_RTC)
     //     case RTCTrackEventInterfaceType:
-    //         return createWrapper<RTCTrackEvent>(globalObject, std::move(impl));
+    //         return createWrapper<RTCTrackEvent>(globalObject, WTF::move(impl));
     // #endif
     // #if ENABLE(WEB_RTC)
     //     case RTCTransformEventInterfaceType:
-    //         return createWrapper<RTCTransformEvent>(globalObject, std::move(impl));
+    //         return createWrapper<RTCTransformEvent>(globalObject, WTF::move(impl));
     // #endif
     //     case SVGZoomEventInterfaceType:
-    //         return createWrapper<SVGZoomEvent>(globalObject, std::move(impl));
+    //         return createWrapper<SVGZoomEvent>(globalObject, WTF::move(impl));
     //     case SecurityPolicyViolationEventInterfaceType:
-    //         return createWrapper<SecurityPolicyViolationEvent>(globalObject, std::move(impl));
+    //         return createWrapper<SecurityPolicyViolationEvent>(globalObject, WTF::move(impl));
     //     case SpeechRecognitionErrorEventInterfaceType:
-    //         return createWrapper<SpeechRecognitionErrorEvent>(globalObject, std::move(impl));
+    //         return createWrapper<SpeechRecognitionErrorEvent>(globalObject, WTF::move(impl));
     //     case SpeechRecognitionEventInterfaceType:
-    //         return createWrapper<SpeechRecognitionEvent>(globalObject, std::move(impl));
+    //         return createWrapper<SpeechRecognitionEvent>(globalObject, WTF::move(impl));
     // #if ENABLE(SPEECH_SYNTHESIS)
     //     case SpeechSynthesisErrorEventInterfaceType:
-    //         return createWrapper<SpeechSynthesisErrorEvent>(globalObject, std::move(impl));
+    //         return createWrapper<SpeechSynthesisErrorEvent>(globalObject, WTF::move(impl));
     // #endif
     // #if ENABLE(SPEECH_SYNTHESIS)
     //     case SpeechSynthesisEventInterfaceType:
-    //         return createWrapper<SpeechSynthesisEvent>(globalObject, std::move(impl));
+    //         return createWrapper<SpeechSynthesisEvent>(globalObject, WTF::move(impl));
     // #endif
     //     case StorageEventInterfaceType:
-    //         return createWrapper<StorageEvent>(globalObject, std::move(impl));
+    //         return createWrapper<StorageEvent>(globalObject, WTF::move(impl));
     //     case SubmitEventInterfaceType:
-    //         return createWrapper<SubmitEvent>(globalObject, std::move(impl));
+    //         return createWrapper<SubmitEvent>(globalObject, WTF::move(impl));
     //     case TextEventInterfaceType:
-    //         return createWrapper<TextEvent>(globalObject, std::move(impl));
+    //         return createWrapper<TextEvent>(globalObject, WTF::move(impl));
     // #if ENABLE(TOUCH_EVENTS)
     //     case TouchEventInterfaceType:
-    //         return createWrapper<TouchEvent>(globalObject, std::move(impl));
+    //         return createWrapper<TouchEvent>(globalObject, WTF::move(impl));
     // #endif
     // #if ENABLE(VIDEO)
     //     case TrackEventInterfaceType:
-    //         return createWrapper<TrackEvent>(globalObject, std::move(impl));
+    //         return createWrapper<TrackEvent>(globalObject, WTF::move(impl));
     // #endif
     //     case TransitionEventInterfaceType:
-    //         return createWrapper<TransitionEvent>(globalObject, std::move(impl));
+    //         return createWrapper<TransitionEvent>(globalObject, WTF::move(impl));
     //     case UIEventInterfaceType:
-    //         return createWrapper<UIEvent>(globalObject, std::move(impl));
+    //         return createWrapper<UIEvent>(globalObject, WTF::move(impl));
     // #if ENABLE(WEBGL)
     //     case WebGLContextEventInterfaceType:
-    //         return createWrapper<WebGLContextEvent>(globalObject, std::move(impl));
+    //         return createWrapper<WebGLContextEvent>(globalObject, WTF::move(impl));
     // #endif
     // #if ENABLE(LEGACY_ENCRYPTED_MEDIA)
     //     case WebKitMediaKeyMessageEventInterfaceType:
-    //         return createWrapper<WebKitMediaKeyMessageEvent>(globalObject, std::move(impl));
+    //         return createWrapper<WebKitMediaKeyMessageEvent>(globalObject, WTF::move(impl));
     // #endif
     // #if ENABLE(LEGACY_ENCRYPTED_MEDIA)
     //     case WebKitMediaKeyNeededEventInterfaceType:
-    //         return createWrapper<WebKitMediaKeyNeededEvent>(globalObject, std::move(impl));
+    //         return createWrapper<WebKitMediaKeyNeededEvent>(globalObject, WTF::move(impl));
     // #endif
     // #if ENABLE(WIRELESS_PLAYBACK_TARGET)
     //     case WebKitPlaybackTargetAvailabilityEventInterfaceType:
-    //         return createWrapper<WebKitPlaybackTargetAvailabilityEvent>(globalObject, std::move(impl));
+    //         return createWrapper<WebKitPlaybackTargetAvailabilityEvent>(globalObject, WTF::move(impl));
     // #endif
     //     case WheelEventInterfaceType:
-    //         return createWrapper<WheelEvent>(globalObject, std::move(impl));
+    //         return createWrapper<WheelEvent>(globalObject, WTF::move(impl));
     //     case XMLHttpRequestProgressEventInterfaceType:
-    //         return createWrapper<XMLHttpRequestProgressEvent>(globalObject, std::move(impl));
+    //         return createWrapper<XMLHttpRequestProgressEvent>(globalObject, WTF::move(impl));
     // #if ENABLE(WEBXR)
     //     case XRInputSourceEventInterfaceType:
-    //         return createWrapper<XRInputSourceEvent>(globalObject, std::move(impl));
+    //         return createWrapper<XRInputSourceEvent>(globalObject, WTF::move(impl));
     // #endif
     // #if ENABLE(WEBXR)
     //     case XRInputSourcesChangeEventInterfaceType:
-    //         return createWrapper<XRInputSourcesChangeEvent>(globalObject, std::move(impl));
+    //         return createWrapper<XRInputSourcesChangeEvent>(globalObject, WTF::move(impl));
     // #endif
     // #if ENABLE(WEBXR)
     //     case XRReferenceSpaceEventInterfaceType:
-    //         return createWrapper<XRReferenceSpaceEvent>(globalObject, std::move(impl));
+    //         return createWrapper<XRReferenceSpaceEvent>(globalObject, WTF::move(impl));
     // #endif
     // #if ENABLE(WEBXR)
     //     case XRSessionEventInterfaceType:
-    //         return createWrapper<XRSessionEvent>(globalObject, std::move(impl));
+    //         return createWrapper<XRSessionEvent>(globalObject, WTF::move(impl));
     // #endif
     //     }
     default: {
@@ -315,7 +315,7 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
     }
     }
 
-    return createWrapper<Event>(globalObject, std::move(impl));
+    return createWrapper<Event>(globalObject, WTF::move(impl));
 }
 
 } // namespace WebCore

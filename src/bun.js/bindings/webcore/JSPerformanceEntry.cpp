@@ -135,7 +135,7 @@ void JSPerformanceEntryPrototype::finishCreation(VM& vm)
 const ClassInfo JSPerformanceEntry::s_info = { "PerformanceEntry"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPerformanceEntry) };
 
 JSPerformanceEntry::JSPerformanceEntry(Structure* structure, JSDOMGlobalObject& globalObject, Ref<PerformanceEntry>&& impl)
-    : JSDOMWrapper<PerformanceEntry>(structure, globalObject, std::move(impl))
+    : JSDOMWrapper<PerformanceEntry>(structure, globalObject, WTF::move(impl))
 {
 }
 

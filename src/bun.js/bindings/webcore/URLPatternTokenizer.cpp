@@ -266,7 +266,7 @@ ExceptionOr<Vector<Token>> Tokenizer::tokenize()
     }
 
     addToken(TokenType::End, m_index, m_index);
-    return std::move(m_tokenList);
+    return WTF::move(m_tokenList);
 }
 
 } // namespace URLPatternUtilities

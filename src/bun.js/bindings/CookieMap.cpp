@@ -47,12 +47,12 @@ CookieMap::CookieMap()
 }
 
 CookieMap::CookieMap(Vector<Ref<Cookie>>&& cookies)
-    : m_modifiedCookies(std::move(cookies))
+    : m_modifiedCookies(WTF::move(cookies))
 {
 }
 
 CookieMap::CookieMap(Vector<KeyValuePair<String, String>>&& cookies)
-    : m_originalCookies(std::move(cookies))
+    : m_originalCookies(WTF::move(cookies))
 {
 }
 
@@ -68,7 +68,7 @@ ExceptionOr<Ref<CookieMap>> CookieMap::create(std::variant<Vector<Vector<String>
                     return Exception { TypeError, "Invalid cookie string: expected name=value pair"_s };
                 }
             }
-            return adoptRef(*new CookieMap(std::move(cookies)));
+            return adoptRef(*new CookieMap(WTF::move(cookies)));
         },
         [&](const HashMap<String, String>& pairs) -> ExceptionOr<Ref<CookieMap>> {
             Vector<KeyValuePair<String, String>> cookies;
@@ -76,7 +76,7 @@ ExceptionOr<Ref<CookieMap>> CookieMap::create(std::variant<Vector<Vector<String>
                 cookies.append(KeyValuePair<String, String>(entry.key, entry.value));
             }
 
-            return adoptRef(*new CookieMap(std::move(cookies)));
+            return adoptRef(*new CookieMap(WTF::move(cookies)));
         },
         [&](const String& cookieString) -> ExceptionOr<Ref<CookieMap>> {
             StringView forCookieHeader = cookieString;
@@ -121,7 +121,7 @@ ExceptionOr<Ref<CookieMap>> CookieMap::create(std::variant<Vector<Vector<String>
                 cookies.append(KeyValuePair<String, String>(name, value));
             }
 
-            return adoptRef(*new CookieMap(std::move(cookies)));
+            return adoptRef(*new CookieMap(WTF::move(cookies)));
         });
 
     return std::visit(visitor, variant);
@@ -181,7 +181,7 @@ void CookieMap::set(Ref<Cookie> cookie)
 {
     removeInternal(cookie->name());
     // Add the new cookie
-    m_modifiedCookies.append(std::move(cookie));
+    m_modifiedCookies.append(WTF::move(cookie));
 }
 
 ExceptionOr<void> CookieMap::remove(const CookieStoreDeleteOptions& options)
@@ -198,7 +198,7 @@ ExceptionOr<void> CookieMap::remove(const CookieStoreDeleteOptions& options)
         return cookie_exception.releaseException();
     }
     auto cookie = cookie_exception.releaseReturnValue();
-    m_modifiedCookies.append(std::move(cookie));
+    m_modifiedCookies.append(WTF::move(cookie));
     return {};
 }
 

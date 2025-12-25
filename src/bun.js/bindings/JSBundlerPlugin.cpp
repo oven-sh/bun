@@ -71,7 +71,7 @@ void BundlerPlugin::NamespaceList::append(JSC::VM& vm, JSC::RegExp* filter, Stri
 
     auto pattern = filter->pattern();
     auto filter_regexp = FilterRegExp(pattern, filter->flags());
-    nsGroup->append(std::move(filter_regexp));
+    nsGroup->append(WTF::move(filter_regexp));
 }
 
 static bool anyMatchesForNamespace(JSC::VM& vm, BundlerPlugin::NamespaceList& list, const BunString* namespaceStr, const BunString* path)
@@ -260,7 +260,7 @@ void BundlerPlugin::NativePluginList::append(JSC::VM& vm, JSC::RegExp* filter, S
 
         auto pattern = filter->pattern();
         auto filter_regexp = FilterRegExp(pattern, filter->flags());
-        nsGroup->append(std::move(filter_regexp));
+        nsGroup->append(WTF::move(filter_regexp));
     }
 
     if (index == std::numeric_limits<unsigned>::max()) {

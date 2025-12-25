@@ -237,12 +237,12 @@ class DOMPromiseDeferredBase {
 
 public:
     DOMPromiseDeferredBase(Ref<DeferredPromise>&& genericPromise)
-        : m_promise(std::move(genericPromise))
+        : m_promise(WTF::move(genericPromise))
     {
     }
 
     DOMPromiseDeferredBase(DOMPromiseDeferredBase&& promise)
-        : m_promise(std::move(promise.m_promise))
+        : m_promise(WTF::move(promise.m_promise))
     {
     }
 
@@ -259,7 +259,7 @@ public:
 
     DOMPromiseDeferredBase& operator=(DOMPromiseDeferredBase&& other)
     {
-        m_promise = std::move(other.m_promise);
+        m_promise = WTF::move(other.m_promise);
         return *this;
     }
 
@@ -284,7 +284,7 @@ public:
 
     void whenSettled(Function<void()>&& function)
     {
-        m_promise->whenSettled(std::move(function));
+        m_promise->whenSettled(WTF::move(function));
     }
 
 protected:
@@ -390,7 +390,7 @@ using BindingPromiseFunction = JSC::EncodedJSValue(JSC::JSGlobalObject*, JSC::Ca
 template<BindingPromiseFunction bindingFunction>
 inline void bindingPromiseFunctionAdapter(JSC::JSGlobalObject& lexicalGlobalObject, JSC::CallFrame& callFrame, Ref<DeferredPromise>&& promise)
 {
-    bindingFunction(&lexicalGlobalObject, &callFrame, std::move(promise));
+    bindingFunction(&lexicalGlobalObject, &callFrame, WTF::move(promise));
 }
 
 template<BindingPromiseFunction bindingPromiseFunction>

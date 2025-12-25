@@ -31,7 +31,7 @@ public:
     using Base = JSDOMWrapper<DOMFormData>;
     static JSDOMFormData* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<DOMFormData>&& impl)
     {
-        JSDOMFormData* ptr = new (NotNull, JSC::allocateCell<JSDOMFormData>(globalObject->vm())) JSDOMFormData(structure, *globalObject, std::move(impl));
+        JSDOMFormData* ptr = new (NotNull, JSC::allocateCell<JSDOMFormData>(globalObject->vm())) JSDOMFormData(structure, *globalObject, WTF::move(impl));
         ptr->finishCreation(globalObject->vm());
         return ptr;
     }

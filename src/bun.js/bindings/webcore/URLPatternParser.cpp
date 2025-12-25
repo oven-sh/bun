@@ -37,7 +37,7 @@ namespace URLPatternUtilities {
 
 URLPatternParser::URLPatternParser(EncodingCallbackType type, String&& segmentWildcardRegexp)
     : m_callbackType(type)
-    , m_segmentWildcardRegexp(std::move(segmentWildcardRegexp))
+    , m_segmentWildcardRegexp(WTF::move(segmentWildcardRegexp))
 {
 }
 
@@ -65,7 +65,7 @@ ExceptionOr<void> URLPatternParser::performParse(const URLPatternStringOptions& 
 
             auto modifierToken = tryToConsumeModifierToken();
 
-            maybeFunctionException = addPart(std::move(prefix), nameToken, regexOrWildcardToken, {}, modifierToken);
+            maybeFunctionException = addPart(WTF::move(prefix), nameToken, regexOrWildcardToken, {}, modifierToken);
             if (maybeFunctionException.hasException())
                 return maybeFunctionException.releaseException();
 
@@ -78,7 +78,7 @@ ExceptionOr<void> URLPatternParser::performParse(const URLPatternStringOptions& 
             fixedToken = tryToConsumeToken(TokenType::EscapedChar);
 
         if (!fixedToken.isNull()) {
-            m_pendingFixedValue.append(std::move(fixedToken.value));
+            m_pendingFixedValue.append(WTF::move(fixedToken.value));
 
             continue;
         }
@@ -94,7 +94,7 @@ ExceptionOr<void> URLPatternParser::performParse(const URLPatternStringOptions& 
                 return maybeCloseError.releaseException();
             auto modifierToken = tryToConsumeModifierToken();
 
-            maybeFunctionException = addPart(std::move(prefix), nameToken, regexOrWildcardToken, std::move(suffix), modifierToken);
+            maybeFunctionException = addPart(WTF::move(prefix), nameToken, regexOrWildcardToken, WTF::move(suffix), modifierToken);
             if (maybeFunctionException.hasException())
                 return maybeFunctionException.releaseException();
 
@@ -213,7 +213,7 @@ ExceptionOr<void> URLPatternParser::addPart(String&& prefix, const Token& nameTo
     }
 
     if (nameToken.isNull() && regexpOrWildcardToken.isNull() && modifier == Modifier::None) {
-        m_pendingFixedValue.append(std::move(prefix));
+        m_pendingFixedValue.append(WTF::move(prefix));
 
         return {};
     }
@@ -228,7 +228,7 @@ ExceptionOr<void> URLPatternParser::addPart(String&& prefix, const Token& nameTo
         if (prefix.isEmpty())
             return {};
 
-        auto encodedValue = callEncodingCallback(m_callbackType, std::move(prefix));
+        auto encodedValue = callEncodingCallback(m_callbackType, WTF::move(prefix));
         if (encodedValue.hasException())
             return encodedValue.releaseException();
 
@@ -268,15 +268,15 @@ ExceptionOr<void> URLPatternParser::addPart(String&& prefix, const Token& nameTo
     if (isDuplicateName(name))
         return Exception { ExceptionCode::TypeError, "Duplicate name token produced when adding to parser part list."_s };
 
-    auto encodedPrefix = callEncodingCallback(m_callbackType, std::move(prefix));
+    auto encodedPrefix = callEncodingCallback(m_callbackType, WTF::move(prefix));
     if (encodedPrefix.hasException())
         return encodedPrefix.releaseException();
 
-    auto encodedSuffix = callEncodingCallback(m_callbackType, std::move(suffix));
+    auto encodedSuffix = callEncodingCallback(m_callbackType, WTF::move(suffix));
     if (encodedSuffix.hasException())
         return encodedSuffix.releaseException();
 
-    m_partList.append(Part { type, std::move(regexValue), modifier, std::move(name), encodedPrefix.releaseReturnValue(), encodedSuffix.releaseReturnValue() });
+    m_partList.append(Part { type, WTF::move(regexValue), modifier, WTF::move(name), encodedPrefix.releaseReturnValue(), encodedSuffix.releaseReturnValue() });
 
     return {};
 }
@@ -424,7 +424,7 @@ std::pair<String, Vector<String>> generateRegexAndNameList(const Vector<Part>& p
 
     result.append('$');
 
-    return { result.toString(), std::move(nameList) };
+    return { result.toString(), WTF::move(nameList) };
 }
 
 // https://urlpattern.spec.whatwg.org/#generate-a-pattern-string

@@ -34,7 +34,7 @@ public:
     using Base = JSDOMWrapper<SubtleCrypto>;
     static JSSubtleCrypto* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<SubtleCrypto>&& impl)
     {
-        JSSubtleCrypto* ptr = new (NotNull, JSC::allocateCell<JSSubtleCrypto>(globalObject->vm())) JSSubtleCrypto(structure, *globalObject, std::move(impl));
+        JSSubtleCrypto* ptr = new (NotNull, JSC::allocateCell<JSSubtleCrypto>(globalObject->vm())) JSSubtleCrypto(structure, *globalObject, WTF::move(impl));
         ptr->finishCreation(globalObject->vm());
         return ptr;
     }

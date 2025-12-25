@@ -52,8 +52,8 @@ void CryptoAlgorithmHKDF::deriveBits(const CryptoAlgorithmParameters& parameters
         return;
     }
 
-    dispatchOperationInWorkQueue(workQueue, context, std::move(callback), std::move(exceptionCallback),
-        [parameters = crossThreadCopy(downcast<CryptoAlgorithmHkdfParams>(parameters)), baseKey = std::move(baseKey), length] {
+    dispatchOperationInWorkQueue(workQueue, context, WTF::move(callback), WTF::move(exceptionCallback),
+        [parameters = crossThreadCopy(downcast<CryptoAlgorithmHkdfParams>(parameters)), baseKey = WTF::move(baseKey), length] {
             return platformDeriveBits(parameters, downcast<CryptoKeyRaw>(baseKey.get()), length);
         });
 }
@@ -73,7 +73,7 @@ void CryptoAlgorithmHKDF::importKey(CryptoKeyFormat format, KeyData&& data, cons
         return;
     }
 
-    callback(CryptoKeyRaw::create(parameters.identifier, std::move(std::get<Vector<uint8_t>>(data)), usages));
+    callback(CryptoKeyRaw::create(parameters.identifier, WTF::move(std::get<Vector<uint8_t>>(data)), usages));
 }
 
 ExceptionOr<size_t> CryptoAlgorithmHKDF::getKeyLength(const CryptoAlgorithmParameters&)

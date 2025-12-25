@@ -132,7 +132,7 @@ void InspectorHTTPServerAgent::serverRoutesUpdated(int serverId, int hotReloadId
         return;
     }
 
-    this->m_frontendDispatcher->serverRoutesUpdated(serverId, hotReloadId, std::move(routes));
+    this->m_frontendDispatcher->serverRoutesUpdated(serverId, hotReloadId, WTF::move(routes));
 }
 void InspectorHTTPServerAgent::requestWillBeSent(Ref<Protocol::HTTPServer::Request>&& request)
 {
@@ -140,7 +140,7 @@ void InspectorHTTPServerAgent::requestWillBeSent(Ref<Protocol::HTTPServer::Reque
         return;
     }
 
-    this->m_frontendDispatcher->requestWillBeSent(std::move(request));
+    this->m_frontendDispatcher->requestWillBeSent(WTF::move(request));
 }
 void InspectorHTTPServerAgent::responseReceived(Ref<Protocol::HTTPServer::Response>&& response)
 {
@@ -148,7 +148,7 @@ void InspectorHTTPServerAgent::responseReceived(Ref<Protocol::HTTPServer::Respon
         return;
     }
 
-    this->m_frontendDispatcher->responseReceived(std::move(response));
+    this->m_frontendDispatcher->responseReceived(WTF::move(response));
 }
 void InspectorHTTPServerAgent::bodyChunkReceived(Ref<Protocol::HTTPServer::BodyChunk>&& chunk)
 {
@@ -156,7 +156,7 @@ void InspectorHTTPServerAgent::bodyChunkReceived(Ref<Protocol::HTTPServer::BodyC
         return;
     }
 
-    this->m_frontendDispatcher->bodyChunkReceived(std::move(chunk));
+    this->m_frontendDispatcher->bodyChunkReceived(WTF::move(chunk));
 }
 void InspectorHTTPServerAgent::requestFinished(int requestId, int serverId, double timestamp, std::optional<double>&& opt_duration)
 {
@@ -164,7 +164,7 @@ void InspectorHTTPServerAgent::requestFinished(int requestId, int serverId, doub
         return;
     }
 
-    this->m_frontendDispatcher->requestFinished(requestId, serverId, timestamp, std::move(opt_duration));
+    this->m_frontendDispatcher->requestFinished(requestId, serverId, timestamp, WTF::move(opt_duration));
 }
 void InspectorHTTPServerAgent::requestHandlerException(Ref<Protocol::HTTPServer::RequestHandlerError>&& error)
 {
@@ -172,7 +172,7 @@ void InspectorHTTPServerAgent::requestHandlerException(Ref<Protocol::HTTPServer:
         return;
     }
 
-    this->m_frontendDispatcher->requestHandlerException(std::move(error));
+    this->m_frontendDispatcher->requestHandlerException(WTF::move(error));
 }
 
 }
@@ -258,9 +258,9 @@ struct Route {
             object->setScriptUrl(route.script_url.toWTFString());
         }
 
-        routes->addItem(std::move(object));
+        routes->addItem(WTF::move(object));
     }
 
-    agent->serverRoutesUpdated(serverId, hotReloadId, std::move(routes));
+    agent->serverRoutesUpdated(serverId, hotReloadId, WTF::move(routes));
 }
 }

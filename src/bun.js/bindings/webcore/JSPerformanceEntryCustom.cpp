@@ -51,21 +51,21 @@ JSValue toJSNewlyCreated(JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<P
 {
     switch (entry->performanceEntryType()) {
     // case PerformanceEntry::Type::Navigation:
-    //     return createWrapper<PerformanceNavigationTiming>(globalObject, std::move(entry));
+    //     return createWrapper<PerformanceNavigationTiming>(globalObject, WTF::move(entry));
     case PerformanceEntry::Type::Mark:
-        return createWrapper<PerformanceMark>(globalObject, std::move(entry));
+        return createWrapper<PerformanceMark>(globalObject, WTF::move(entry));
     case PerformanceEntry::Type::Measure:
-        return createWrapper<PerformanceMeasure>(globalObject, std::move(entry));
+        return createWrapper<PerformanceMeasure>(globalObject, WTF::move(entry));
     // case PerformanceEntry::Type::Resource:
-    //     return createWrapper<PerformanceResourceTiming>(globalObject, std::move(entry));
+    //     return createWrapper<PerformanceResourceTiming>(globalObject, WTF::move(entry));
     // case PerformanceEntry::Type::Paint:
-    //     return createWrapper<PerformancePaintTiming>(globalObject, std::move(entry));
+    //     return createWrapper<PerformancePaintTiming>(globalObject, WTF::move(entry));
     default: {
     }
     }
 
     ASSERT_NOT_REACHED();
-    return createWrapper<PerformanceEntry>(globalObject, std::move(entry));
+    return createWrapper<PerformanceEntry>(globalObject, WTF::move(entry));
 }
 
 JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, PerformanceEntry& entry)

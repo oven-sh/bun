@@ -31,7 +31,7 @@ public:
     using Base = JSDOMWrapper<MessageChannel>;
     static JSMessageChannel* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<MessageChannel>&& impl)
     {
-        JSMessageChannel* ptr = new (NotNull, JSC::allocateCell<JSMessageChannel>(globalObject->vm())) JSMessageChannel(structure, *globalObject, std::move(impl));
+        JSMessageChannel* ptr = new (NotNull, JSC::allocateCell<JSMessageChannel>(globalObject->vm())) JSMessageChannel(structure, *globalObject, WTF::move(impl));
         ptr->finishCreation(globalObject->vm());
         return ptr;
     }

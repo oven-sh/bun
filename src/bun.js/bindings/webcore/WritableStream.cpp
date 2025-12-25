@@ -55,16 +55,16 @@ ExceptionOr<Ref<WritableStream>> WritableStream::create(JSC::JSGlobalObject& glo
 
 ExceptionOr<Ref<WritableStream>> WritableStream::create(JSDOMGlobalObject& globalObject, Ref<WritableStreamSink>&& sink)
 {
-    return create(globalObject, toJSNewlyCreated(&globalObject, &globalObject, std::move(sink)), JSC::jsUndefined());
+    return create(globalObject, toJSNewlyCreated(&globalObject, &globalObject, WTF::move(sink)), JSC::jsUndefined());
 }
 
 Ref<WritableStream> WritableStream::create(Ref<InternalWritableStream>&& internalWritableStream)
 {
-    return adoptRef(*new WritableStream(std::move(internalWritableStream)));
+    return adoptRef(*new WritableStream(WTF::move(internalWritableStream)));
 }
 
 WritableStream::WritableStream(Ref<InternalWritableStream>&& internalWritableStream)
-    : m_internalWritableStream(std::move(internalWritableStream))
+    : m_internalWritableStream(WTF::move(internalWritableStream))
 {
 }
 

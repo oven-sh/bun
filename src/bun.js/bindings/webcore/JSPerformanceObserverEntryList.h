@@ -31,7 +31,7 @@ public:
     using Base = JSDOMWrapper<PerformanceObserverEntryList>;
     static JSPerformanceObserverEntryList* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<PerformanceObserverEntryList>&& impl)
     {
-        JSPerformanceObserverEntryList* ptr = new (NotNull, JSC::allocateCell<JSPerformanceObserverEntryList>(globalObject->vm())) JSPerformanceObserverEntryList(structure, *globalObject, std::move(impl));
+        JSPerformanceObserverEntryList* ptr = new (NotNull, JSC::allocateCell<JSPerformanceObserverEntryList>(globalObject->vm())) JSPerformanceObserverEntryList(structure, *globalObject, WTF::move(impl));
         ptr->finishCreation(globalObject->vm());
         return ptr;
     }

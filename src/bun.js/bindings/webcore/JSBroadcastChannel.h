@@ -33,7 +33,7 @@ public:
     using DOMWrapped = BroadcastChannel;
     static JSBroadcastChannel* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<BroadcastChannel>&& impl)
     {
-        JSBroadcastChannel* ptr = new (NotNull, JSC::allocateCell<JSBroadcastChannel>(globalObject->vm())) JSBroadcastChannel(structure, *globalObject, std::move(impl));
+        JSBroadcastChannel* ptr = new (NotNull, JSC::allocateCell<JSBroadcastChannel>(globalObject->vm())) JSBroadcastChannel(structure, *globalObject, WTF::move(impl));
         ptr->finishCreation(globalObject->vm());
         return ptr;
     }

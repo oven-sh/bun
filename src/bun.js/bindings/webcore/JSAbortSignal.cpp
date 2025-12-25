@@ -166,7 +166,7 @@ void JSAbortSignalPrototype::finishCreation(VM& vm)
 const ClassInfo JSAbortSignal::s_info = { "AbortSignal"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSAbortSignal) };
 
 JSAbortSignal::JSAbortSignal(Structure* structure, JSDOMGlobalObject& globalObject, Ref<AbortSignal>&& impl)
-    : JSEventTarget(structure, globalObject, std::move(impl))
+    : JSEventTarget(structure, globalObject, WTF::move(impl))
 {
 }
 
@@ -273,7 +273,7 @@ static inline JSC::EncodedJSValue jsAbortSignalConstructorFunction_abortBody(JSC
     EnsureStillAliveScope argument0 = callFrame->argument(0);
     auto reason = convert<IDLAny>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJSNewlyCreated<IDLInterface<AbortSignal>>(*lexicalGlobalObject, *jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), throwScope, AbortSignal::abort(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), *context, std::move(reason)))));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJSNewlyCreated<IDLInterface<AbortSignal>>(*lexicalGlobalObject, *jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), throwScope, AbortSignal::abort(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), *context, WTF::move(reason)))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsAbortSignalConstructorFunction_abort, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -295,7 +295,7 @@ static inline JSC::EncodedJSValue jsAbortSignalConstructorFunction_timeoutBody(J
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto milliseconds = convert<IDLEnforceRangeAdaptor<IDLUnsignedLongLong>>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJSNewlyCreated<IDLInterface<AbortSignal>>(*lexicalGlobalObject, *jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), throwScope, AbortSignal::timeout(*context, std::move(milliseconds)))));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJSNewlyCreated<IDLInterface<AbortSignal>>(*lexicalGlobalObject, *jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), throwScope, AbortSignal::timeout(*context, WTF::move(milliseconds)))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsAbortSignalConstructorFunction_timeout, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -331,7 +331,7 @@ static inline JSC::EncodedJSValue jsAbortSignalConstructorFunction_anyBody(JSC::
         i++;
     });
 
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJSNewlyCreated<IDLInterface<AbortSignal>>(*lexicalGlobalObject, *jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), throwScope, AbortSignal::any(*context, std::move(signals)))));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJSNewlyCreated<IDLInterface<AbortSignal>>(*lexicalGlobalObject, *jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), throwScope, AbortSignal::any(*context, WTF::move(signals)))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsAbortSignalConstructorFunction_any, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -441,7 +441,7 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
         // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
 #endif
     }
-    return createWrapper<AbortSignal>(globalObject, std::move(impl));
+    return createWrapper<AbortSignal>(globalObject, WTF::move(impl));
 }
 
 JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, AbortSignal& impl)

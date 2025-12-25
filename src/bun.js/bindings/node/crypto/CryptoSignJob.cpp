@@ -25,7 +25,7 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyOneShot, (JSGlobalObject * lexicalGlobalObject,
     RETURN_IF_EXCEPTION(scope, {});
 
     if (!callbackValue.isUndefined()) {
-        SignJob::createAndSchedule(lexicalGlobalObject, std::move(*ctx), callbackValue);
+        SignJob::createAndSchedule(lexicalGlobalObject, WTF::move(*ctx), callbackValue);
         return JSValue::encode(jsUndefined());
     }
 
@@ -53,7 +53,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSignOneShot, (JSGlobalObject * lexicalGlobalObject, C
     RETURN_IF_EXCEPTION(scope, {});
 
     if (!callbackValue.isUndefined()) {
-        SignJob::createAndSchedule(lexicalGlobalObject, std::move(*ctx), callbackValue);
+        SignJob::createAndSchedule(lexicalGlobalObject, WTF::move(*ctx), callbackValue);
         return JSValue::encode(jsUndefined());
     }
 
@@ -69,7 +69,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSignOneShot, (JSGlobalObject * lexicalGlobalObject, C
 
     auto sigBuf = ArrayBuffer::createUninitialized(result.size(), 1);
     memcpy(sigBuf->data(), result.data(), result.size());
-    auto* signature = JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), std::move(sigBuf), 0, result.size());
+    auto* signature = JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTF::move(sigBuf), 0, result.size());
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(signature);
 }
@@ -182,7 +182,7 @@ void SignJobCtx::runTask(JSGlobalObject* globalObject)
 
                 m_signResult = ByteSource::allocated(p1363Buffer.release());
             } else {
-                m_signResult = std::move(bs);
+                m_signResult = WTF::move(bs);
             }
         }
         break;
@@ -226,7 +226,7 @@ void SignJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSValue callback
 
         auto sigBuf = ArrayBuffer::createUninitialized(m_signResult->size(), 1);
         memcpy(sigBuf->data(), m_signResult->data(), m_signResult->size());
-        auto* signature = JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), std::move(sigBuf), 0, m_signResult->size());
+        auto* signature = JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTF::move(sigBuf), 0, m_signResult->size());
         RETURN_IF_EXCEPTION(scope, );
 
         Bun__EventLoop__runCallback2(
@@ -259,7 +259,7 @@ void SignJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSValue callback
 extern "C" SignJob* Bun__SignJob__create(JSGlobalObject* globalObject, SignJobCtx* ctx, EncodedJSValue callback);
 SignJob* SignJob::create(JSGlobalObject* globalObject, SignJobCtx&& ctx, JSValue callback)
 {
-    SignJobCtx* ctxCopy = new SignJobCtx(std::move(ctx));
+    SignJobCtx* ctxCopy = new SignJobCtx(WTF::move(ctx));
     return Bun__SignJob__create(globalObject, ctxCopy, JSValue::encode(callback));
 }
 
@@ -272,7 +272,7 @@ void SignJob::schedule()
 extern "C" void Bun__SignJob__createAndSchedule(JSGlobalObject* globalObject, SignJobCtx* ctx, EncodedJSValue callback);
 void SignJob::createAndSchedule(JSGlobalObject* globalObject, SignJobCtx&& ctx, JSValue callback)
 {
-    SignJobCtx* ctxCopy = new SignJobCtx(std::move(ctx));
+    SignJobCtx* ctxCopy = new SignJobCtx(WTF::move(ctx));
     Bun__SignJob__createAndSchedule(globalObject, ctxCopy, JSValue::encode(callback));
 }
 
@@ -333,7 +333,7 @@ std::optional<SignJobCtx> SignJobCtx::fromJS(JSGlobalObject* globalObject, Throw
     KeyObject keyObject;
 
     if (prepareResult.keyData) {
-        keyObject = KeyObject::create(keyType, std::move(*prepareResult.keyData));
+        keyObject = KeyObject::create(keyType, WTF::move(*prepareResult.keyData));
     } else {
 
         keyObject = KeyObject::getPublicOrPrivateKey(
@@ -344,7 +344,7 @@ std::optional<SignJobCtx> SignJobCtx::fromJS(JSGlobalObject* globalObject, Throw
             prepareResult.formatType,
             prepareResult.encodingType,
             prepareResult.cipher,
-            std::move(prepareResult.passphrase));
+            WTF::move(prepareResult.passphrase));
         RETURN_IF_EXCEPTION(scope, {});
     }
 
@@ -424,18 +424,18 @@ std::optional<SignJobCtx> SignJobCtx::fromJS(JSGlobalObject* globalObject, Throw
         return SignJobCtx(
             mode,
             keyObject.data(),
-            std::move(data),
+            WTF::move(data),
             digest,
             padding,
             pssSaltLength,
             dsaSigEnc,
-            std::move(signature));
+            WTF::move(signature));
     }
 
     return SignJobCtx(
         mode,
         keyObject.data(),
-        std::move(data),
+        WTF::move(data),
         digest,
         padding,
         pssSaltLength,

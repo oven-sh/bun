@@ -244,11 +244,11 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSMessageEventDOMConstru
     EnsureStillAliveScope argument1 = callFrame->argument(1);
     auto eventInitDict = convert<IDLDictionary<MessageEvent::Init>>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    auto object = MessageEvent::create(std::move(type), std::move(eventInitDict));
+    auto object = MessageEvent::create(WTF::move(type), WTF::move(eventInitDict));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
-    auto jsValue = toJSNewlyCreated<IDLInterface<MessageEvent>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, std::move(object));
+    auto jsValue = toJSNewlyCreated<IDLInterface<MessageEvent>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTF::move(object));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     setSubclassStructureIfNeeded<MessageEvent>(lexicalGlobalObject, callFrame, asObject(jsValue));
@@ -297,7 +297,7 @@ void JSMessageEventPrototype::finishCreation(VM& vm)
 const ClassInfo JSMessageEvent::s_info = { "MessageEvent"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSMessageEvent) };
 
 JSMessageEvent::JSMessageEvent(Structure* structure, JSDOMGlobalObject& globalObject, Ref<MessageEvent>&& impl)
-    : JSEvent(structure, globalObject, std::move(impl))
+    : JSEvent(structure, globalObject, WTF::move(impl))
 {
 }
 
@@ -430,7 +430,7 @@ static inline JSC::EncodedJSValue jsMessageEventPrototypeFunction_initMessageEve
     EnsureStillAliveScope argument7 = callFrame->argument(7);
     auto messagePorts = argument7.value().isUndefined() ? Converter<IDLSequence<IDLInterface<MessagePort>>>::ReturnType {} : convert<IDLSequence<IDLInterface<MessagePort>>>(*lexicalGlobalObject, argument7.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.initMessageEvent(std::move(type), std::move(bubbles), std::move(cancelable), std::move(data), std::move(originArg), std::move(lastEventId), std::move(source), std::move(messagePorts)); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.initMessageEvent(WTF::move(type), WTF::move(bubbles), WTF::move(cancelable), WTF::move(data), WTF::move(originArg), WTF::move(lastEventId), WTF::move(source), WTF::move(messagePorts)); })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsMessageEventPrototypeFunction_initMessageEvent, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -518,7 +518,7 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
         // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
 #endif
     }
-    return createWrapper<MessageEvent>(globalObject, std::move(impl));
+    return createWrapper<MessageEvent>(globalObject, WTF::move(impl));
 }
 
 JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, MessageEvent& impl)

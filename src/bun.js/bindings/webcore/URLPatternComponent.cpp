@@ -41,9 +41,9 @@ using namespace JSC;
 namespace URLPatternUtilities {
 
 URLPatternComponent::URLPatternComponent(String&& patternString, JSC::Strong<JSC::RegExp>&& regex, Vector<String>&& groupNameList, bool hasRegexpGroupsFromPartsList)
-    : m_patternString(std::move(patternString))
-    , m_regularExpression(std::move(regex))
-    , m_groupNameList(std::move(groupNameList))
+    : m_patternString(WTF::move(patternString))
+    , m_regularExpression(WTF::move(regex))
+    , m_groupNameList(WTF::move(groupNameList))
     , m_hasRegexGroupsFromPartList(hasRegexpGroupsFromPartsList)
 {
 }
@@ -72,7 +72,7 @@ ExceptionOr<URLPatternComponent> URLPatternComponent::compile(Ref<JSC::VM> vm, S
         return part.type == PartType::Regexp;
     });
 
-    return URLPatternComponent { std::move(patternString), JSC::Strong<JSC::RegExp> { vm, regularExpression }, std::move(nameList), hasRegexGroups };
+    return URLPatternComponent { WTF::move(patternString), JSC::Strong<JSC::RegExp> { vm, regularExpression }, WTF::move(nameList), hasRegexGroups };
 }
 
 // https://urlpattern.spec.whatwg.org/#protocol-component-matches-a-special-scheme
@@ -136,10 +136,10 @@ URLPatternComponentResult URLPatternComponent::createComponentMatchResult(JSC::J
 
         size_t groupIndex = index - 1;
         String groupName = groupIndex < m_groupNameList.size() ? m_groupNameList[groupIndex] : emptyString();
-        groups.append(URLPatternComponentResult::NameMatchPair { std::move(groupName), std::move(value) });
+        groups.append(URLPatternComponentResult::NameMatchPair { WTF::move(groupName), WTF::move(value) });
     }
 
-    return URLPatternComponentResult { !input.isEmpty() ? std::move(input) : emptyString(), std::move(groups) };
+    return URLPatternComponentResult { !input.isEmpty() ? WTF::move(input) : emptyString(), WTF::move(groups) };
 }
 
 }

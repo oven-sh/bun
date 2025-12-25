@@ -166,7 +166,7 @@ void JSPerformanceResourceTimingPrototype::finishCreation(VM& vm)
 const ClassInfo JSPerformanceResourceTiming::s_info = { "PerformanceResourceTiming"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPerformanceResourceTiming) };
 
 JSPerformanceResourceTiming::JSPerformanceResourceTiming(Structure* structure, JSDOMGlobalObject& globalObject, Ref<PerformanceResourceTiming>&& impl)
-    : JSPerformanceEntry(structure, globalObject, std::move(impl))
+    : JSPerformanceEntry(structure, globalObject, WTF::move(impl))
 {
 }
 

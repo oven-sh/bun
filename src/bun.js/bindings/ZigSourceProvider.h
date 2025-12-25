@@ -64,7 +64,7 @@ private:
         JSC::SourceTaintedOrigin taintedness,
         const SourceOrigin& sourceOrigin, WTF::String&& sourceURL,
         const TextPosition& startPosition, JSC::SourceProviderSourceType sourceType)
-        : Base(sourceOrigin, std::move(sourceURL), String(), taintedness, startPosition, sourceType)
+        : Base(sourceOrigin, WTF::move(sourceURL), String(), taintedness, startPosition, sourceType)
         , m_globalObject(globalObject)
         , m_source(sourceImpl)
     {

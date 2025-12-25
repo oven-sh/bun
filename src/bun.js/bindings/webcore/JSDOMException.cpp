@@ -153,11 +153,11 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDOMExceptionDOMConstru
         RETURN_IF_EXCEPTION(throwScope, {});
     }
 
-    auto object = DOMException::create(std::move(message), std::move(name));
+    auto object = DOMException::create(WTF::move(message), WTF::move(name));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
-    auto jsValue = toJSNewlyCreated<IDLInterface<DOMException>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, std::move(object));
+    auto jsValue = toJSNewlyCreated<IDLInterface<DOMException>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTF::move(object));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     setSubclassStructureIfNeeded<DOMException>(lexicalGlobalObject, callFrame, asObject(jsValue));
@@ -233,7 +233,7 @@ void JSDOMExceptionPrototype::finishCreation(VM& vm)
 const ClassInfo JSDOMException::s_info = { "DOMException"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDOMException) };
 
 JSDOMException::JSDOMException(Structure* structure, JSDOMGlobalObject& globalObject, Ref<DOMException>&& impl)
-    : JSDOMWrapper<DOMException>(structure, globalObject, std::move(impl))
+    : JSDOMWrapper<DOMException>(structure, globalObject, WTF::move(impl))
 {
 }
 
@@ -381,7 +381,7 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
     //         // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
     // #endif
     // }
-    return createWrapper<DOMException>(globalObject, std::move(impl));
+    return createWrapper<DOMException>(globalObject, WTF::move(impl));
 }
 
 JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, DOMException& impl)

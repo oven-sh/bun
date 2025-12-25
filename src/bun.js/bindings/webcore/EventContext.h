@@ -106,7 +106,7 @@ private:
 
 inline EventContext::EventContext(Type type, Node* node, RefPtr<EventTarget>&& currentTarget, EventTarget* origin, int closedShadowDepth, bool currentTargetIsInShadowTree)
     : m_node { node }
-    , m_currentTarget { std::move(currentTarget) }
+    , m_currentTarget { WTF::move(currentTarget) }
     , m_target { origin }
     , m_closedShadowDepth { closedShadowDepth }
     , m_currentTargetIsInShadowTree { currentTargetIsInShadowTree }

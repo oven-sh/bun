@@ -36,7 +36,7 @@ struct AddEventListenerOptions : EventListenerOptions {
         : EventListenerOptions(capture)
         , passive(passive)
         , once(once)
-        , signal(std::move(signal))
+        , signal(WTF::move(signal))
     {
     }
 

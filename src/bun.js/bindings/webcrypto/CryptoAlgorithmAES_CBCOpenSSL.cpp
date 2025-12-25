@@ -122,7 +122,7 @@ ExceptionOr<Vector<uint8_t>> CryptoAlgorithmAES_CBC::platformEncrypt(const Crypt
     auto output = cryptEncrypt(key.key(), parameters.ivVector(), Vector<uint8_t>(plainText));
     if (!output)
         return Exception { OperationError };
-    return std::move(*output);
+    return WTF::move(*output);
 }
 
 ExceptionOr<Vector<uint8_t>> CryptoAlgorithmAES_CBC::platformDecrypt(const CryptoAlgorithmAesCbcCfbParams& parameters, const CryptoKeyAES& key, const Vector<uint8_t>& cipherText, Padding)
@@ -130,7 +130,7 @@ ExceptionOr<Vector<uint8_t>> CryptoAlgorithmAES_CBC::platformDecrypt(const Crypt
     auto output = cryptDecrypt(key.key(), parameters.ivVector(), cipherText);
     if (!output)
         return Exception { OperationError };
-    return std::move(*output);
+    return WTF::move(*output);
 }
 
 } // namespace WebCore

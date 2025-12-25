@@ -22,7 +22,7 @@ extern "C" SYSV_ABI EncodedJSValue Bun__createShellInterpreter(Zig::GlobalObject
     auto* structure = globalObject->JSShellInterpreterStructure();
     ASSERT(structure);
 
-    auto* result = WebCore::JSShellInterpreter::create(vm, globalObject, structure, ptr, std::move(args), resolveFn, rejectFn);
+    auto* result = WebCore::JSShellInterpreter::create(vm, globalObject, structure, ptr, WTF::move(args), resolveFn, rejectFn);
 
     size_t size = ShellInterpreter__estimatedSize(ptr);
     vm.heap.reportExtraMemoryAllocated(result, size);

@@ -92,7 +92,7 @@ void reportException(JSGlobalObject* lexicalGlobalObject, JSValue exceptionValue
     if (!exception) {
         exception = vm.lastException();
         if (!exception)
-            exception = JSC::Exception::create(lexicalGlobalObject->vm(), exceptionValue, JSC::Exception::DoNotCaptureStack);
+            exception = JSC::Exception::create(lexicalGlobalObject->vm(), exceptionValue, JSC::Exception::StackCaptureAction::DoNotCaptureStack);
     }
 
     reportException(lexicalGlobalObject, exception, cachedScript, fromModule);

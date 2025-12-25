@@ -281,7 +281,7 @@ void Bun__SecretsJobOptions__runFromJS(SecretsJobOptions* opts, JSGlobalObject* 
         }
         JSValue error = opts->error.toJS(vm, global);
         RETURN_IF_EXCEPTION(scope, );
-        RELEASE_AND_RETURN(scope, promise->reject(global, error));
+        RELEASE_AND_RETURN(scope, promise->reject(vm, global, error));
     } else {
         // Success cases
         JSValue result;

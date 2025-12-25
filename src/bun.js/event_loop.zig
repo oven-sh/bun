@@ -523,12 +523,17 @@ pub fn tickWithoutJS(this: *EventLoop) void {
 
 pub fn waitForPromise(this: *EventLoop, promise: jsc.AnyPromise) void {
     const jsc_vm = this.virtual_machine.jsc_vm;
-    switch (promise.status(jsc_vm)) {
+    switch (promise.status()) {
         .pending => {
-            while (promise.status(jsc_vm) == .pending) {
+            while (promise.status() == .pending) {
+                // If execution is forbidden (e.g. due to a timeout in vm.SourceTextModule.evaluate),
+                // the Promise callbacks can never run, so we must exit to avoid an infinite loop.
+                if (jsc_vm.executionForbidden()) {
+                    break;
+                }
                 this.tick();
 
-                if (promise.status(jsc_vm) == .pending) {
+                if (promise.status() == .pending) {
                     this.autoTick();
                 }
             }
@@ -539,13 +544,12 @@ pub fn waitForPromise(this: *EventLoop, promise: jsc.AnyPromise) void {
 
 pub fn waitForPromiseWithTermination(this: *EventLoop, promise: jsc.AnyPromise) void {
     const worker = this.virtual_machine.worker orelse @panic("EventLoop.waitForPromiseWithTermination: worker is not initialized");
-    const jsc_vm = this.virtual_machine.jsc_vm;
-    switch (promise.status(jsc_vm)) {
+    switch (promise.status()) {
         .pending => {
-            while (!worker.hasRequestedTerminate() and promise.status(jsc_vm) == .pending) {
+            while (!worker.hasRequestedTerminate() and promise.status() == .pending) {
                 this.tick();
 
-                if (!worker.hasRequestedTerminate() and promise.status(jsc_vm) == .pending) {
+                if (!worker.hasRequestedTerminate() and promise.status() == .pending) {
                     this.autoTick();
                 }
             }

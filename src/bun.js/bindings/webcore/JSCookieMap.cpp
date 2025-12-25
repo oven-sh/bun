@@ -153,7 +153,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieMapDOMConstructo
             // Handle as record<USVString, USVString>
             HashMap<String, String> record;
 
-            PropertyNameArray propertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+            PropertyNameArrayBuilder propertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
             JSObject::getOwnPropertyNames(object, lexicalGlobalObject, propertyNames, DontEnumPropertiesMode::Include);
             RETURN_IF_EXCEPTION(throwScope, {});
 

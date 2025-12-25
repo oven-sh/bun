@@ -1020,7 +1020,7 @@ void populateESMExports(
                     return true;
                 });
             } else {
-                JSC::PropertyNameArray properties(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
+                JSC::PropertyNameArrayBuilder properties(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
                 exports->methodTable()->getOwnPropertyNames(exports, globalObject, properties, DontEnumPropertiesMode::Exclude);
                 if (scope.exception()) [[unlikely]] {
                     if (!vm.hasPendingTerminationException()) scope.clearException();
@@ -1078,7 +1078,7 @@ void populateESMExports(
                 return true;
             });
         } else {
-            JSC::PropertyNameArray properties(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
+            JSC::PropertyNameArrayBuilder properties(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
             exports->methodTable()->getOwnPropertyNames(exports, globalObject, properties, DontEnumPropertiesMode::Include);
             if (scope.exception()) [[unlikely]] {
                 if (!vm.hasPendingTerminationException()) scope.clearException();

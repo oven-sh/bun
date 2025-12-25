@@ -149,7 +149,7 @@ pub const CheckedAllocator = struct {
     /// * `MimallocArena.Borrowed`
     ///
     /// If you only have an `std.mem.Allocator`, see `MimallocArena.Borrowed.downcast`.
-    pub inline fn transferOwnership(self: *Self, new_allocator: anytype) void {
+    pub fn transferOwnership(self: *Self, new_allocator: anytype) void {
         if (comptime !enabled) return;
         const ArgType = @TypeOf(new_allocator);
         const new_std = switch (comptime ArgType) {
@@ -163,6 +163,7 @@ pub const CheckedAllocator = struct {
         defer self.* = .init(new_std);
         const old_allocator = self.#allocator.get() orelse return;
         if (MimallocArena.isInstance(old_allocator)) return;
+        if (!bun.use_mimalloc) return;
 
         if (comptime traces_enabled) {
             bun.Output.errGeneric("collection first used here:", .{});

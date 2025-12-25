@@ -282,7 +282,7 @@ pub fn ResolveInfoRequest(comptime cares_type: type, comptime type_name: []const
             globalThis: *jsc.JSGlobalObject,
             comptime cache_field: []const u8,
         ) !*@This() {
-            var request = try globalThis.allocator().create(@This());
+            var request = try bun.default_allocator.create(@This());
             var hasher = std.hash.Wyhash.init(0);
             hasher.update(name);
             const hash = hasher.final();
@@ -388,7 +388,7 @@ pub const GetHostByAddrInfoRequest = struct {
         globalThis: *jsc.JSGlobalObject,
         comptime cache_field: []const u8,
     ) !*@This() {
-        var request = try globalThis.allocator().create(@This());
+        var request = try bun.default_allocator.create(@This());
         var hasher = std.hash.Wyhash.init(0);
         hasher.update(name);
         const hash = hasher.final();
@@ -549,7 +549,7 @@ pub const GetNameInfoRequest = struct {
         globalThis: *jsc.JSGlobalObject,
         comptime cache_field: []const u8,
     ) !*@This() {
-        var request = try globalThis.allocator().create(@This());
+        var request = try bun.default_allocator.create(@This());
         var hasher = std.hash.Wyhash.init(0);
         hasher.update(name);
         const hash = hasher.final();
@@ -645,7 +645,7 @@ pub const GetAddrInfoRequest = struct {
         comptime cache_field: []const u8,
     ) !*GetAddrInfoRequest {
         log("init", .{});
-        var request = try globalThis.allocator().create(GetAddrInfoRequest);
+        var request = try bun.default_allocator.create(GetAddrInfoRequest);
         var poll_ref = Async.KeepAlive.init();
         poll_ref.ref(globalThis.bunVM());
         if (resolver) |resolver_| resolver_.ref();

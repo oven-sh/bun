@@ -24,6 +24,7 @@ comptime {
 }
 
 global: *JSGlobalObject,
+// TODO: initialized to bun.default_allocator now. delete this later.
 allocator: std.mem.Allocator,
 has_loaded_constructors: bool = false,
 transpiler: Transpiler,

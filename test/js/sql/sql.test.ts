@@ -1,6 +1,6 @@
 import { $, randomUUIDv7, sql, SQL } from "bun";
 import { afterAll, describe, expect, mock, test } from "bun:test";
-import { bunEnv, bunExe, isCI, isDockerEnabled, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isCI, isDockerEnabled, tempDirWithFiles } from "harness";
 import * as net from "node:net";
 import path from "path";
 const postgres = (...args) => new SQL(...args);
@@ -842,7 +842,7 @@ if (isDockerEnabled()) {
       Bun.inspect(result);
     });
 
-    test("query string memory leak test", async () => {
+    test.todoIf(isASAN)("query string memory leak test", async () => {
       await using sql = postgres(options);
       Bun.gc(true);
       const rss = process.memoryUsage.rss();

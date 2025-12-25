@@ -56,7 +56,7 @@ const constructorArgs = [
 ];
 for (let i = 0; i < constructorArgs.length; i++) {
   const args = constructorArgs[i];
-  test("new Request(test #" + i + ")", () => {
+  test.todoIf(isASAN)("new Request(test #" + i + ")", () => {
     Bun.gc(true);
 
     for (let i = 0; i < 1000 * ASAN_MULTIPLIER; i++) {
@@ -79,7 +79,7 @@ for (let i = 0; i < constructorArgs.length; i++) {
     expect(delta).toBeLessThan(30);
   });
 
-  test("request.clone(test #" + i + ")", () => {
+  test.todoIf(isASAN)("request.clone(test #" + i + ")", () => {
     Bun.gc(true);
 
     for (let i = 0; i < 1000 * ASAN_MULTIPLIER; i++) {

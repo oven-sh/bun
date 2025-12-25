@@ -978,8 +978,8 @@ static JSValue fetchESMSourceCode(
             RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, JSC::SourceCode(provider))));
         }
 
-#define CASE(str, name)                                                                                                                            \
-    case (SyntheticModuleType::name): {                                                                                                            \
+#define CASE(str, name)                                                                                                                              \
+    case (SyntheticModuleType::name): {                                                                                                              \
         auto source = JSC::SourceCode(JSC::SyntheticSourceProvider::create(generateNativeModule_##name, JSC::SourceOrigin(), WTF::move(moduleKey))); \
         RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, WTF::move(source))));                                                     \
     }

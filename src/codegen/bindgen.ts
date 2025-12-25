@@ -754,7 +754,9 @@ function emitConvertEnumFunction(w: CodeWriter, type: TypeImpl) {
   w.line();
   w.line(`template<> std::optional<${name}> parseEnumerationFromString<${name}>(const String& stringValue)`);
   w.line(`{`);
-  w.line(`    static constexpr std::array<std::pair<ComparableASCIILiteral, ${name}>, ${type.data.length}> mappings { {`);
+  w.line(
+    `    static constexpr std::array<std::pair<ComparableASCIILiteral, ${name}>, ${type.data.length}> mappings { {`,
+  );
   for (const value of type.data) {
     w.line(`        { ${str(value)}_s, ${name}::${pascal(value)} },`);
   }

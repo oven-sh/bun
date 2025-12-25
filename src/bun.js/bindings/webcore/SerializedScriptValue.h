@@ -359,7 +359,7 @@ RefPtr<SerializedScriptValue> SerializedScriptValue::decode(Decoder& decoder)
 
     return adoptRef(*new SerializedScriptValue(WTF::move(data), WTF::move(arrayBufferContentsArray)
 #if ENABLE(WEB_RTC)
-                                                                  ,
+                                                                    ,
         WTF::move(detachedRTCDataChannels)
 #endif
 #if ENABLE(WEB_CODECS)

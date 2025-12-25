@@ -96,14 +96,15 @@ template<> JSString* convertEnumerationToJS(JSGlobalObject& lexicalGlobalObject,
 template<> std::optional<SubtleCrypto::KeyFormat> parseEnumeration<SubtleCrypto::KeyFormat>(JSGlobalObject& lexicalGlobalObject, JSValue value)
 {
     auto stringValue = value.toWTFString(&lexicalGlobalObject);
-    if (stringValue == "jwk"_s)
-        return SubtleCrypto::KeyFormat::Jwk;
-    if (stringValue == "pkcs8"_s)
-        return SubtleCrypto::KeyFormat::Pkcs8;
-    if (stringValue == "raw"_s)
-        return SubtleCrypto::KeyFormat::Raw;
-    if (stringValue == "spki"_s)
-        return SubtleCrypto::KeyFormat::Spki;
+    static constexpr std::array<std::pair<ComparableASCIILiteral, SubtleCrypto::KeyFormat>, 4> mappings { {
+        { "jwk"_s, SubtleCrypto::KeyFormat::Jwk },
+        { "pkcs8"_s, SubtleCrypto::KeyFormat::Pkcs8 },
+        { "raw"_s, SubtleCrypto::KeyFormat::Raw },
+        { "spki"_s, SubtleCrypto::KeyFormat::Spki },
+    } };
+    static constexpr SortedArrayMap enumerationMapping { mappings };
+    if (auto* enumerationValue = enumerationMapping.tryGet(stringValue); enumerationValue) [[likely]]
+        return *enumerationValue;
     return std::nullopt;
 }
 

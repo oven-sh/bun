@@ -161,21 +161,19 @@ if (fd.closeAllowingBadFileDescriptor(null)) |err| {
 
 ## Socket Operations
 
-**Important**: `bun.sys` socket functions are only for configuration (bind, listen, setsockopt). For actual socket I/O:
+**Important**: `bun.sys` has limited socket support. For network I/O:
 
 - **Non-blocking sockets**: Use `uws.Socket` (libuwebsockets) exclusively
 - **Pipes/blocking I/O**: Use `PipeReader.zig` and `PipeWriter.zig`
 
-Configuration only:
+Available in bun.sys:
 
 ```zig
-sys.bind(fd, addr, addrlen)
-sys.listen(fd, backlog)
-sys.setsockopt(fd, level, optname, optval)
-sys.socketpair(domain, type, protocol, fds)
+sys.setsockopt(fd, level, optname, value)
+sys.socketpair(domain, socktype, protocol, nonblocking_status)
 ```
 
-Do NOT use for socket read/write - use `uws.Socket` instead.
+Do NOT use `bun.sys` for socket read/write - use `uws.Socket` instead.
 
 ## Process Operations
 

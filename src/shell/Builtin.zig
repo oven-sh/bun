@@ -436,9 +436,27 @@ fn initRedirections(
     }
 
     // Handle stderr redirect
+    // Check if stderr points to the same file as stdout (e.g., &> redirect)
+    // In that case, share the same IO writer instead of opening the file again
     if (redirects.stderr != .none) {
-        if (initSingleRedirect(cmd, kind, redirects.stderr, .stderr, &cmd.redirect_stderr_path, interpreter)) |yield| {
-            return yield;
+        const same_file = blk: {
+            if (redirects.stdout == .atom and redirects.stderr == .atom) {
+                // Both redirect to files - check if paths are the same
+                if (cmd.redirect_stdout_path.items.len > 0 and cmd.redirect_stderr_path.items.len > 0) {
+                    break :blk std.mem.eql(u8, cmd.redirect_stdout_path.items, cmd.redirect_stderr_path.items);
+                }
+            }
+            break :blk false;
+        };
+
+        if (same_file) {
+            // Share stdout's IO writer with stderr instead of opening file again
+            cmd.exec.bltn.stderr.deref();
+            cmd.exec.bltn.stderr = cmd.exec.bltn.stdout.ref().*;
+        } else {
+            if (initSingleRedirect(cmd, kind, redirects.stderr, .stderr, &cmd.redirect_stderr_path, interpreter)) |yield| {
+                return yield;
+            }
         }
     }
 

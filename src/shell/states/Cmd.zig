@@ -599,9 +599,29 @@ fn initRedirections(this: *Cmd, spawn_args: *Subprocess.SpawnArgs) bun.JSError!?
     }
 
     // Handle stderr redirect
+    // Check if stderr points to the same file as stdout (e.g., &> redirect)
+    // In that case, share the same fd instead of opening the file again
     if (redirects.stderr != .none) {
-        if (try this.initSingleRedirect(spawn_args, redirects.stderr, .stderr, &this.redirect_stderr_path, &this.redirect_stderr_fd)) |yield| {
-            return yield;
+        const same_file = blk: {
+            if (redirects.stdout == .atom and redirects.stderr == .atom) {
+                // Both redirect to files - check if paths are the same
+                if (this.redirect_stdout_path.items.len > 0 and this.redirect_stderr_path.items.len > 0) {
+                    break :blk std.mem.eql(u8, this.redirect_stdout_path.items, this.redirect_stderr_path.items);
+                }
+            }
+            break :blk false;
+        };
+
+        if (same_file) {
+            // Share stdout's fd with stderr instead of opening file again
+            if (this.redirect_stdout_fd) |stdout_fd| {
+                this.redirect_stderr_fd = stdout_fd.dupeRef();
+                spawn_args.stdio[stderr_no] = spawn_args.stdio[stdout_no];
+            }
+        } else {
+            if (try this.initSingleRedirect(spawn_args, redirects.stderr, .stderr, &this.redirect_stderr_path, &this.redirect_stderr_fd)) |yield| {
+                return yield;
+            }
         }
     }
 

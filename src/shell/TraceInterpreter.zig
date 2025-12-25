@@ -36,25 +36,20 @@ pub const Permission = struct {
 
 /// Standard stream identifiers for redirections
 pub const Stream = enum(u8) {
-    none = 0, // Not a stream redirection (e.g., file read, execute)
+    none = 0,
     stdin = 1,
     stdout = 2,
     stderr = 3,
 
     pub fn toJS(this: Stream, globalThis: *JSGlobalObject) JSValue {
-        return switch (this) {
-            .none => .null,
-            .stdin => bun.String.static("stdin").toJS(globalThis),
-            .stdout => bun.String.static("stdout").toJS(globalThis),
-            .stderr => bun.String.static("stderr").toJS(globalThis),
-        };
+        return if (this == .none) .null else bun.String.static(@tagName(this)).toJS(globalThis);
     }
 };
 
 /// A snapshot of environment variables at a point in execution
 pub const EnvSnapshot = struct {
     /// Map of variable name -> value
-    vars: std.StringHashMapUnmanaged([]const u8),
+    vars: bun.StringHashMapUnmanaged([]const u8),
     /// Allocator used for this snapshot
     allocator: Allocator,
 
@@ -66,7 +61,7 @@ pub const EnvSnapshot = struct {
     }
 
     pub fn clone(this: *const EnvSnapshot, allocator: Allocator) EnvSnapshot {
-        var new_vars: std.StringHashMapUnmanaged([]const u8) = .{};
+        var new_vars: bun.StringHashMapUnmanaged([]const u8) = .{};
         var iter = this.vars.iterator();
         while (iter.next()) |entry| {
             const key_copy = allocator.dupe(u8, entry.key_ptr.*) catch continue;
@@ -205,7 +200,7 @@ pub const TracedOperation = struct {
             obj.put(
                 globalThis,
                 bun.String.static("dynamic"),
-                jsc.JSValue.jsBoolean(true),
+                .true,
             );
         }
 
@@ -296,21 +291,28 @@ pub const TraceResult = struct {
     }
 };
 
-/// TraceContext holds state during trace interpretation
+/// TraceContext holds state during trace interpretation.
+/// Note: The allocator is stored because it's needed throughout traversal for allocating
+/// strings, paths, etc. The result is a pointer because it's created before the context
+/// and operations are added to it during traversal.
 pub const TraceContext = struct {
+    /// Allocator used for all allocations during tracing
     allocator: Allocator,
+    /// Output: traced operations are added here during traversal
     result: *TraceResult,
-    /// Current working directory during trace
-    cwd: std.array_list.Managed(u8),
+    /// Current working directory during trace (unmanaged, uses this.allocator)
+    cwd: std.ArrayListUnmanaged(u8),
     /// Shell environment for variable expansion
     shell_env: EnvMap,
-    /// Exported environment (for subprocess)
-    export_env: EnvMap,
+    /// Exported environment (for subprocess) - borrowed pointer, not owned (do not deinit)
+    export_env: ?*EnvMap,
+    /// Whether export_env is owned by us (should be freed on deinit)
+    owns_export_env: bool,
     /// Accumulated traced environment variables (snapshot for each operation)
-    traced_env: std.StringHashMapUnmanaged([]const u8),
+    traced_env: bun.StringHashMapUnmanaged([]const u8),
     /// Whether the current operation has dynamic (non-statically-analyzable) values
     current_dynamic: bool,
-    /// JS objects from template
+    /// JS objects from template literal interpolation, indexed by position
     jsobjs: []JSValue,
     globalThis: *JSGlobalObject,
 
@@ -318,29 +320,30 @@ pub const TraceContext = struct {
         allocator: Allocator,
         result: *TraceResult,
         cwd: []const u8,
-        export_env: ?EnvMap,
+        export_env: ?*EnvMap,
         jsobjs: []JSValue,
         globalThis: *JSGlobalObject,
     ) TraceContext {
         var ctx = TraceContext{
             .allocator = allocator,
             .result = result,
-            .cwd = std.array_list.Managed(u8).init(allocator),
+            .cwd = .{},
             .shell_env = EnvMap.init(allocator),
-            .export_env = if (export_env) |e| e else EnvMap.init(allocator),
+            .export_env = export_env,
+            .owns_export_env = false, // We borrow it, don't own it
             .traced_env = .{},
             .current_dynamic = false,
             .jsobjs = jsobjs,
             .globalThis = globalThis,
         };
-        bun.handleOom(ctx.cwd.appendSlice(cwd));
+        bun.handleOom(ctx.cwd.appendSlice(allocator, cwd));
         return ctx;
     }
 
     pub fn deinit(this: *TraceContext) void {
-        this.cwd.deinit();
+        this.cwd.deinit(this.allocator);
         this.shell_env.deinit();
-        this.export_env.deinit();
+        // export_env is borrowed, not owned - never free it
         // Free traced_env
         var iter = this.traced_env.iterator();
         while (iter.next()) |entry| {
@@ -459,8 +462,10 @@ pub const TraceContext = struct {
         if (this.shell_env.get(key)) |v| {
             return v.slice();
         }
-        if (this.export_env.get(key)) |v| {
-            return v.slice();
+        if (this.export_env) |env| {
+            if (env.get(key)) |v| {
+                return v.slice();
+            }
         }
         return null;
     }
@@ -470,10 +475,13 @@ pub const TraceContext = struct {
         // (the caller is responsible for adding the CHDIR operation if needed)
         if (ResolvePath.Platform.auto.isAbsolute(new_cwd)) {
             this.cwd.clearRetainingCapacity();
-            bun.handleOom(this.cwd.appendSlice(new_cwd));
+            bun.handleOom(this.cwd.appendSlice(this.allocator, new_cwd));
         } else {
-            bun.handleOom(this.cwd.append('/'));
-            bun.handleOom(this.cwd.appendSlice(new_cwd));
+            // Join with current cwd and normalize (handles .. and .)
+            const parts: []const []const u8 = &.{ this.cwdSlice(), new_cwd };
+            const joined = ResolvePath.joinZ(parts, .auto);
+            this.cwd.clearRetainingCapacity();
+            bun.handleOom(this.cwd.appendSlice(this.allocator, joined[0..joined.len]));
         }
     }
 };
@@ -521,7 +529,7 @@ fn traceSubshell(ctx: *TraceContext, script: *const ast.Script) void {
 
     // Restore cwd after subshell
     ctx.cwd.clearRetainingCapacity();
-    bun.handleOom(ctx.cwd.appendSlice(saved_cwd));
+    bun.handleOom(ctx.cwd.appendSlice(ctx.allocator, saved_cwd));
 }
 
 fn traceAssign(ctx: *TraceContext, assign: *const ast.Assign) void {
@@ -748,26 +756,38 @@ fn traceBuiltin(ctx: *TraceContext, kind: Interpreter.Builtin.Kind, cmd: *const 
         },
         .mv => {
             // mv moves files (read+delete source, create dest)
+            // Handles: mv src dest OR mv src1 src2 ... dest_dir/
             var file_args = extractFileArgs(ctx, cmd);
             defer freeFileArgs(ctx, &file_args);
 
-            if (file_args.items.len >= 1) {
-                ctx.addOperation(Permission.READ | Permission.DELETE, file_args.items[0], null);
-            }
             if (file_args.items.len >= 2) {
-                ctx.addOperation(Permission.CREATE, file_args.items[1], null);
+                const dest = file_args.items[file_args.items.len - 1];
+                // All but the last arg are sources
+                for (file_args.items[0 .. file_args.items.len - 1]) |src| {
+                    ctx.addOperation(Permission.READ | Permission.DELETE, src, null);
+                }
+                ctx.addOperation(Permission.CREATE, dest, null);
+            } else if (file_args.items.len == 1) {
+                // Just one arg - read it (mv will fail but we trace the access)
+                ctx.addOperation(Permission.READ | Permission.DELETE, file_args.items[0], null);
             }
         },
         .cp => {
             // cp copies files (read source, create dest)
+            // Handles: cp src dest OR cp src1 src2 ... dest_dir/
             var file_args = extractFileArgs(ctx, cmd);
             defer freeFileArgs(ctx, &file_args);
 
-            if (file_args.items.len >= 1) {
-                ctx.addOperation(Permission.READ, file_args.items[0], null);
-            }
             if (file_args.items.len >= 2) {
-                ctx.addOperation(Permission.CREATE, file_args.items[1], null);
+                const dest = file_args.items[file_args.items.len - 1];
+                // All but the last arg are sources
+                for (file_args.items[0 .. file_args.items.len - 1]) |src| {
+                    ctx.addOperation(Permission.READ, src, null);
+                }
+                ctx.addOperation(Permission.CREATE, dest, null);
+            } else if (file_args.items.len == 1) {
+                // Just one arg - read it (cp will fail but we trace the access)
+                ctx.addOperation(Permission.READ, file_args.items[0], null);
             }
         },
         .ls => {
@@ -966,65 +986,9 @@ fn expandAtomMultiple(ctx: *TraceContext, atom: *const ast.Atom) std.array_list.
 
 /// Expand brace patterns like {a,b,c} into multiple strings
 fn expandBraces(ctx: *TraceContext, input: []const u8) std.array_list.Managed([]const u8) {
-    var out = std.array_list.Managed([]const u8).init(ctx.allocator);
-
-    // Use arena for temporary allocations
-    var arena = std.heap.ArenaAllocator.init(ctx.allocator);
-    defer arena.deinit();
-    const arena_alloc = arena.allocator();
-
-    // Tokenize the brace pattern - use appropriate lexer based on content
-    const lexer_output = if (bun.strings.isAllASCII(input))
-        Braces.Lexer.tokenize(arena_alloc, input) catch {
-            // On error, return input as-is
-            bun.handleOom(out.append(bun.handleOom(ctx.allocator.dupe(u8, input))));
-            return out;
-        }
-    else
-        Braces.NewLexer(.wtf8).tokenize(arena_alloc, input) catch {
-            bun.handleOom(out.append(bun.handleOom(ctx.allocator.dupe(u8, input))));
-            return out;
-        };
-
-    const expansion_count = Braces.calculateExpandedAmount(lexer_output.tokens.items[0..]);
-    if (expansion_count == 0) {
-        // No expansion needed
-        bun.handleOom(out.append(bun.handleOom(ctx.allocator.dupe(u8, input))));
-        return out;
-    }
-
-    // Allocate expanded strings
-    const expanded_strings = arena_alloc.alloc(std.array_list.Managed(u8), expansion_count) catch {
-        bun.handleOom(out.append(bun.handleOom(ctx.allocator.dupe(u8, input))));
-        return out;
-    };
-
-    for (0..expansion_count) |i| {
-        expanded_strings[i] = std.array_list.Managed(u8).init(ctx.allocator);
-    }
-
-    // Perform brace expansion
-    Braces.expand(
-        arena_alloc,
-        lexer_output.tokens.items[0..],
-        expanded_strings,
-        lexer_output.contains_nested,
-    ) catch {
-        // On error, return input as-is
-        for (expanded_strings) |*s| s.deinit();
-        bun.handleOom(out.append(bun.handleOom(ctx.allocator.dupe(u8, input))));
-        return out;
-    };
-
-    // Collect results
-    for (expanded_strings) |*s| {
-        const slice = s.toOwnedSlice() catch "";
-        if (slice.len > 0) {
-            bun.handleOom(out.append(slice));
-        }
-    }
-
-    return out;
+    // Use the shared brace expansion helper
+    const unmanaged = Braces.expandBracesAlloc(input, ctx.allocator);
+    return .{ .items = unmanaged.items, .capacity = unmanaged.capacity, .allocator = ctx.allocator };
 }
 
 /// Expand glob patterns like *.txt into matching file paths
@@ -1202,7 +1166,7 @@ pub fn trace(
     allocator: Allocator,
     shargs: *ShellArgs,
     jsobjs: []JSValue,
-    export_env: ?EnvMap,
+    export_env: ?*EnvMap,
     cwd: ?[]const u8,
     globalThis: *JSGlobalObject,
 ) TraceResult {
@@ -1228,12 +1192,10 @@ pub fn trace(
 /// JavaScript-callable function to trace a shell script
 pub fn traceShellScript(globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     const allocator = bun.default_allocator;
-    const arguments_ = callframe.arguments_old(3);
-    var arguments = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
-
-    const parsed_shell_script_js = arguments.nextEat() orelse {
+    const parsed_shell_script_js = callframe.argumentsAsArray(1)[0];
+    if (parsed_shell_script_js.isUndefined()) {
         return globalThis.throw("trace: expected a ParsedShellScript", .{});
-    };
+    }
 
     const parsed_shell_script = jsc.Codegen.JSParsedShellScript.fromJS(parsed_shell_script_js) orelse {
         return globalThis.throw("trace: expected a ParsedShellScript", .{});
@@ -1247,17 +1209,19 @@ pub fn traceShellScript(globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) 
     const jsobjs = parsed_shell_script.jsobjs.items;
 
     // Get cwd from parsed script if set
-    const cwd_slice: ?[]const u8 = if (parsed_shell_script.cwd) |c| brk: {
-        const slice = c.toUTF8(bun.default_allocator);
-        defer slice.deinit();
-        break :brk slice.slice();
+    var cwd_utf8: ?bun.ZigString.Slice = null;
+    defer if (cwd_utf8) |*utf8| utf8.deinit();
+
+    const cwd_slice: ?[]const u8 = if (parsed_shell_script.cwd) |c| blk: {
+        cwd_utf8 = c.toUTF8(bun.default_allocator);
+        break :blk cwd_utf8.?.slice();
     } else null;
 
     var result = trace(
         allocator,
         shargs,
         jsobjs,
-        parsed_shell_script.export_env,
+        if (parsed_shell_script.export_env != null) &parsed_shell_script.export_env.? else null,
         cwd_slice,
         globalThis,
     );

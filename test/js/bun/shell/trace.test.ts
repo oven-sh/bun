@@ -1,5 +1,6 @@
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
+import { tempDir } from "harness";
 
 // Permission flags (octal) - mirrors the Zig constants
 const Permission = {
@@ -271,13 +272,15 @@ describe("Bun.$.trace", () => {
   });
 
   test("external command resolves path when available", () => {
-    const result = $.trace`/bin/ls /tmp`;
+    // Use a cross-platform external command
+    const cmd = process.platform === "win32" ? "cmd" : "/bin/ls";
+    const result = $.trace`${cmd} --version`;
     expect(result.success).toBe(true);
 
     const execOps = result.operations.filter(op => op.flags === EXECUTE);
     expect(execOps.length).toBeGreaterThan(0);
     // Command name should be captured
-    expect(execOps[0].command).toBe("/bin/ls");
+    expect(execOps[0].command).toBe(cmd);
   });
 
   test("external commands include args array", () => {
@@ -380,17 +383,24 @@ describe("Bun.$.trace", () => {
     const readOps = result.operations.filter(op => op.flags === READ);
     expect(readOps.length).toBe(1);
     expect(readOps[0].path).not.toContain("~");
-    expect(readOps[0].path).toContain(".config/test.txt");
+    // Home directory path varies by platform
+    if (process.platform === "win32") {
+      // Windows uses USERPROFILE which expands to something like C:\Users\username
+      expect(readOps[0].path).toMatch(/\.config[/\\]test\.txt$/);
+    } else {
+      expect(readOps[0].path).toContain(".config/test.txt");
+    }
   });
 
   test("expands glob patterns to matching files", () => {
-    // Create test files for glob expansion
-    const fs = require("fs");
-    const testDir = "/tmp/trace-glob-test";
-    fs.mkdirSync(testDir, { recursive: true });
-    fs.writeFileSync(`${testDir}/a.txt`, "");
-    fs.writeFileSync(`${testDir}/b.txt`, "");
-    fs.writeFileSync(`${testDir}/c.txt`, "");
+    // Create test files for glob expansion using tempDir helper
+    const { join } = require("path");
+    using dir = tempDir("trace-glob-test", {
+      "a.txt": "",
+      "b.txt": "",
+      "c.txt": "",
+    });
+    const testDir = String(dir);
 
     const result = $.trace`cat ${testDir}/*.txt`;
     expect(result.success).toBe(true);
@@ -398,9 +408,6 @@ describe("Bun.$.trace", () => {
     const readOps = result.operations.filter(op => op.flags === READ);
     expect(readOps.length).toBe(3);
     const paths = readOps.map(op => op.path).sort();
-    expect(paths).toEqual([`${testDir}/a.txt`, `${testDir}/b.txt`, `${testDir}/c.txt`]);
-
-    // Cleanup
-    fs.rmSync(testDir, { recursive: true });
+    expect(paths).toEqual([join(testDir, "a.txt"), join(testDir, "b.txt"), join(testDir, "c.txt")]);
   });
 });

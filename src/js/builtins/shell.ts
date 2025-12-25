@@ -1,33 +1,7 @@
-/**
- * Unix-style permission flags (octal) used by trace operations.
- * These mirror standard open(2) and access(2) flags.
- */
-interface ShellTraceFlags {
-  /** Read only (O_RDONLY) */
-  O_RDONLY: 0o0;
-  /** Write only (O_WRONLY) */
-  O_WRONLY: 0o1;
-  /** Read and write (O_RDWR) */
-  O_RDWR: 0o2;
-  /** Create file if doesn't exist (O_CREAT) */
-  O_CREAT: 0o100;
-  /** Fail if file exists with O_CREAT (O_EXCL) */
-  O_EXCL: 0o200;
-  /** Truncate file to zero length (O_TRUNC) */
-  O_TRUNC: 0o1000;
-  /** Append to file (O_APPEND) */
-  O_APPEND: 0o2000;
-  /** Execute permission / run command */
-  X_OK: 0o100000;
-  /** Delete file or directory */
-  DELETE: 0o200000;
-  /** Create directory */
-  MKDIR: 0o400000;
-  /** Change directory */
-  CHDIR: 0o1000000;
-  /** Modify environment */
-  ENV: 0o2000000;
-}
+// Note: ShellTraceFlags interface documents the permission flag values returned
+// by $.trace operations. These are intentionally not exported as runtime values
+// to keep the trace API simple - users compare against numeric constants directly.
+// The values mirror standard Unix open(2) and access(2) flags.
 
 interface ShellTraceOperation {
   /** Permission flags (octal integer, can be combined with |) */

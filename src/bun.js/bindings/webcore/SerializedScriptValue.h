@@ -359,7 +359,7 @@ RefPtr<SerializedScriptValue> SerializedScriptValue::decode(Decoder& decoder)
 
     return adoptRef(*new SerializedScriptValue(std::move(data), std::move(arrayBufferContentsArray)
 #if ENABLE(WEB_RTC)
-                                                                  ,
+                                                                    ,
         std::move(detachedRTCDataChannels)
 #endif
 #if ENABLE(WEB_CODECS)

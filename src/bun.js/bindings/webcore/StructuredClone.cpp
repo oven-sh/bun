@@ -98,9 +98,9 @@ JSC_DEFINE_HOST_FUNCTION(structuredCloneForStream, (JSGlobalObject * globalObjec
         auto bufferClone = buffer->slice(0);
         Structure* structure = bufferView->structure();
 
-#define CLONE_TYPED_ARRAY(name)                                                                                                                                                 \
-    do {                                                                                                                                                                        \
-        if (bufferView->inherits<JS##name##Array>())                                                                                                                            \
+#define CLONE_TYPED_ARRAY(name)                                                                                                                                                   \
+    do {                                                                                                                                                                          \
+        if (bufferView->inherits<JS##name##Array>())                                                                                                                              \
             RELEASE_AND_RETURN(scope, JSValue::encode(JS##name##Array::create(globalObject, structure, std::move(bufferClone), bufferView->byteOffset(), bufferView->length()))); \
     } while (0);
 

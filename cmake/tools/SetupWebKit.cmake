@@ -28,6 +28,7 @@ if(WEBKIT_LOCAL)
     # make jsc-compile-debug jsc-copy-headers
     include_directories(
       ${WEBKIT_PATH}
+      ${WEBKIT_PATH}/JavaScriptCore/Headers
       ${WEBKIT_PATH}/JavaScriptCore/Headers/JavaScriptCore
       ${WEBKIT_PATH}/JavaScriptCore/PrivateHeaders
       ${WEBKIT_PATH}/bmalloc/Headers

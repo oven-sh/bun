@@ -18,6 +18,7 @@ No public constructor? Only Prototype and class needed.
 ## Iso Subspaces
 
 Classes with C++ fields need subspaces in:
+
 - `src/bun.js/bindings/webcore/DOMClientIsoSubspaces.h`
 - `src/bun.js/bindings/webcore/DOMIsoSubspaces.h`
 

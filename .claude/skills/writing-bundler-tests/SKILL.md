@@ -131,7 +131,7 @@ itBundled("string/Folding", {
   files: {
     "index.ts": `capture(\`\${1 + 1}\`);`,
   },
-  capture: ['"2"'],  // expected captured value
+  capture: ['"2"'], // expected captured value
   minifySyntax: true,
 });
 ```

@@ -9,12 +9,12 @@ Use `bun.sys` instead of `std.fs` or `std.posix` for cross-platform syscalls wit
 
 ## Why bun.sys?
 
-| Aspect | bun.sys | std.fs/std.posix |
-|--------|---------|------------------|
-| Return Type | `Maybe(T)` with detailed Error | Generic error union |
-| Windows | Full support with libuv fallback | Limited/POSIX-only |
-| Error Info | errno, syscall tag, path, fd | errno only |
-| EINTR | Automatic retry | Manual handling |
+| Aspect      | bun.sys                          | std.fs/std.posix    |
+| ----------- | -------------------------------- | ------------------- |
+| Return Type | `Maybe(T)` with detailed Error   | Generic error union |
+| Windows     | Full support with libuv fallback | Limited/POSIX-only  |
+| Error Info  | errno, syscall tag, path, fd     | errno only          |
+| EINTR       | Automatic retry                  | Manual handling     |
 
 ## Error Handling with Maybe(T)
 

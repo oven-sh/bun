@@ -30,6 +30,7 @@ define({
 ```
 
 Options:
+
 - `name`: Class name
 - `constructor`: Has public constructor
 - `JSType`: "object", "function", etc.
@@ -84,6 +85,7 @@ pub const TextDecoder = struct {
 ```
 
 **Key patterns:**
+
 - Use `bun.JSError!JSValue` return type for error handling
 - Use `globalObject` not `ctx`
 - `deinit()` for cleanup, `finalize()` called by GC

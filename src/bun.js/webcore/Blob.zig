@@ -3102,6 +3102,9 @@ pub fn getSize(this: *Blob, _: *jsc.JSGlobalObject) JSValue {
         }
         this.resolveSize();
         if (this.size == Blob.max_size and this.store != null) {
+            if (this.store.?.data == .file and this.store.?.data.file.seekable == null) {
+                return .jsNumber(0);
+            }
             return .jsNumber(std.math.inf(f64));
         } else if (this.size == 0 and this.store != null) {
             if (this.store.?.data == .file and
@@ -3130,9 +3133,12 @@ pub fn resolveSize(this: *Blob) void {
         } else if (store.data == .file) {
             if (store.data.file.seekable == null) {
                 resolveFileStat(store);
+                if (store.data.file.seekable == null) {
+                    return;
+                }
             }
 
-            if (store.data.file.seekable != null and store.data.file.max_size != Blob.max_size) {
+            if (store.data.file.max_size != Blob.max_size) {
                 const store_size = store.data.file.max_size;
                 const offset = this.offset;
 

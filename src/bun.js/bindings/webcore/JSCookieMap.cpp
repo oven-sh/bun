@@ -146,9 +146,9 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieMapDOMConstructo
                 Vector<String> pair;
                 pair.append(firstStr);
                 pair.append(secondStr);
-                seqSeq.append(WTFMove(pair));
+                seqSeq.append(WTF::move(pair));
             }
-            init = WTFMove(seqSeq);
+            init = WTF::move(seqSeq);
         } else {
             // Handle as record<USVString, USVString>
             HashMap<String, String> record;
@@ -166,21 +166,21 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieMapDOMConstructo
 
                 record.set(propertyName.string(), valueStr);
             }
-            init = WTFMove(record);
+            init = WTF::move(record);
         }
     } else {
         throwTypeError(lexicalGlobalObject, throwScope, "Invalid initializer type"_s);
         return {};
     }
 
-    auto result_exception = CookieMap::create(WTFMove(init));
+    auto result_exception = CookieMap::create(WTF::move(init));
     if (result_exception.hasException()) {
         WebCore::propagateException(lexicalGlobalObject, throwScope, result_exception.releaseException());
         RELEASE_AND_RETURN(throwScope, {});
     }
     auto result = result_exception.releaseReturnValue();
 
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJSNewlyCreated(lexicalGlobalObject, castedThis->globalObject(), WTFMove(result))));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJSNewlyCreated(lexicalGlobalObject, castedThis->globalObject(), WTF::move(result))));
 }
 
 JSC_ANNOTATE_HOST_FUNCTION(JSCookieMapDOMConstructorConstruct, JSCookieMapDOMConstructor::construct);
@@ -229,7 +229,7 @@ void JSCookieMapPrototype::finishCreation(VM& vm)
 const ClassInfo JSCookieMap::s_info = { "CookieMap"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCookieMap) };
 
 JSCookieMap::JSCookieMap(Structure* structure, JSDOMGlobalObject& globalObject, Ref<CookieMap>&& impl)
-    : JSDOMWrapper<CookieMap>(structure, globalObject, WTFMove(impl))
+    : JSDOMWrapper<CookieMap>(structure, globalObject, WTF::move(impl))
 {
 }
 
@@ -411,7 +411,7 @@ static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_setBody(JSC::JSGl
     }
     auto cookie = cookie_exception.releaseReturnValue();
 
-    impl.set(WTFMove(cookie));
+    impl.set(WTF::move(cookie));
 
     return JSValue::encode(jsUndefined());
 }
@@ -655,7 +655,7 @@ void JSCookieMapOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
 
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<CookieMap>&& impl)
 {
-    return createWrapper<CookieMap>(globalObject, WTFMove(impl));
+    return createWrapper<CookieMap>(globalObject, WTF::move(impl));
 }
 
 JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, CookieMap& impl)

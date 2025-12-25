@@ -141,10 +141,10 @@ JSC::JSInternalPromise* bakeModuleLoaderFetch(JSC::JSGlobalObject* globalObject,
                     globalObject,
                     source.toWTFString(),
                     origin,
-                    WTFMove(moduleKey),
+                    WTF::move(moduleKey),
                     WTF::TextPosition(),
                     JSC::SourceProviderSourceType::Module));
-                return resolvedInternalPromise(globalObject, JSC::JSSourceCode::create(vm, WTFMove(sourceCode)));
+                return resolvedInternalPromise(globalObject, JSC::JSSourceCode::create(vm, WTF::move(sourceCode)));
             }
 
             // We unconditionally prefix the key with "bake:" inside

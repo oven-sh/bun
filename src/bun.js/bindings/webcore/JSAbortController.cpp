@@ -109,7 +109,7 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSAbortControllerDOMConstruct
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
-    auto jsValue = toJSNewlyCreated<IDLInterface<AbortController>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTFMove(object));
+    auto jsValue = toJSNewlyCreated<IDLInterface<AbortController>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTF::move(object));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     setSubclassStructureIfNeeded<AbortController>(lexicalGlobalObject, callFrame, asObject(jsValue));
@@ -155,7 +155,7 @@ void JSAbortControllerPrototype::finishCreation(VM& vm)
 const ClassInfo JSAbortController::s_info = { "AbortController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSAbortController) };
 
 JSAbortController::JSAbortController(Structure* structure, JSDOMGlobalObject& globalObject, Ref<AbortController>&& impl)
-    : JSDOMWrapper<AbortController>(structure, globalObject, WTFMove(impl))
+    : JSDOMWrapper<AbortController>(structure, globalObject, WTF::move(impl))
 {
 }
 
@@ -217,7 +217,7 @@ static inline JSC::EncodedJSValue jsAbortControllerPrototypeFunction_abortBody(J
     EnsureStillAliveScope argument0 = callFrame->argument(0);
     auto reason = convert<IDLAny>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.abort(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), WTFMove(reason)); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.abort(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), WTF::move(reason)); })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsAbortControllerPrototypeFunction_abort, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -308,7 +308,7 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
         // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
 #endif
     }
-    return createWrapper<AbortController>(globalObject, WTFMove(impl));
+    return createWrapper<AbortController>(globalObject, WTF::move(impl));
 }
 
 JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, AbortController& impl)

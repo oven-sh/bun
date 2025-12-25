@@ -107,11 +107,11 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWritableStreamDOMConst
     EnsureStillAliveScope argument1 = callFrame->argument(1);
     auto strategy = argument1.value().isUndefined() ? std::optional<Converter<IDLObject>::ReturnType>() : std::optional<Converter<IDLObject>::ReturnType>(convert<IDLObject>(*lexicalGlobalObject, argument1.value()));
     RETURN_IF_EXCEPTION(throwScope, {});
-    auto object = WritableStream::create(*castedThis->globalObject(), WTFMove(underlyingSink), WTFMove(strategy));
+    auto object = WritableStream::create(*castedThis->globalObject(), WTF::move(underlyingSink), WTF::move(strategy));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
-    auto jsValue = toJSNewlyCreated<IDLInterface<WritableStream>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTFMove(object));
+    auto jsValue = toJSNewlyCreated<IDLInterface<WritableStream>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTF::move(object));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     setSubclassStructureIfNeeded<WritableStream>(lexicalGlobalObject, callFrame, asObject(jsValue));
@@ -159,7 +159,7 @@ void JSWritableStreamPrototype::finishCreation(VM& vm)
 const ClassInfo JSWritableStream::s_info = { "WritableStream"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWritableStream) };
 
 JSWritableStream::JSWritableStream(Structure* structure, JSDOMGlobalObject& globalObject, Ref<WritableStream>&& impl)
-    : JSDOMWrapper<WritableStream>(structure, globalObject, WTFMove(impl))
+    : JSDOMWrapper<WritableStream>(structure, globalObject, WTF::move(impl))
 {
 }
 
@@ -295,7 +295,7 @@ void JSWritableStreamOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* con
 
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<WritableStream>&& impl)
 {
-    return createWrapper<WritableStream>(globalObject, WTFMove(impl));
+    return createWrapper<WritableStream>(globalObject, WTF::move(impl));
 }
 
 JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, WritableStream& impl)

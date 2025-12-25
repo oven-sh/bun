@@ -352,7 +352,7 @@ JSC::EncodedJSValue JSBuffer__bufferFromPointerAndLengthAndDeinit(JSC::JSGlobalO
             bytesDeallocator(p, ctx);
         }));
 
-        uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTFMove(buffer), 0, length);
+        uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTF::move(buffer), 0, length);
     } else {
         uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, 0);
     }
@@ -409,7 +409,7 @@ static JSC::EncodedJSValue writeToBuffer(JSC::JSGlobalObject* lexicalGlobalObjec
 JSC::JSUint8Array* createBuffer(JSC::JSGlobalObject* lexicalGlobalObject, Ref<JSC::ArrayBuffer>&& backingStore)
 {
     size_t length = backingStore->byteLength();
-    return JSC::JSUint8Array::create(lexicalGlobalObject, defaultGlobalObject(lexicalGlobalObject)->JSBufferSubclassStructure(), WTFMove(backingStore), 0, length);
+    return JSC::JSUint8Array::create(lexicalGlobalObject, defaultGlobalObject(lexicalGlobalObject)->JSBufferSubclassStructure(), WTF::move(backingStore), 0, length);
 }
 
 JSC::JSUint8Array* createBuffer(JSC::JSGlobalObject* lexicalGlobalObject, const uint8_t* ptr, size_t length)
@@ -1771,7 +1771,7 @@ JSC::EncodedJSValue jsBufferToStringFromBytes(JSGlobalObject* lexicalGlobalObjec
         }
 
         memcpy(data.data(), bytes.data(), bytes.size());
-        return JSValue::encode(jsString(vm, WTFMove(str)));
+        return JSValue::encode(jsString(vm, WTF::move(str)));
     }
     case BufferEncodingType::ucs2:
     case BufferEncodingType::utf16le: {
@@ -1786,7 +1786,7 @@ JSC::EncodedJSValue jsBufferToStringFromBytes(JSGlobalObject* lexicalGlobalObjec
             return {};
         }
         memcpy(reinterpret_cast<void*>(data.data()), bytes.data(), u16length * 2);
-        return JSValue::encode(jsString(vm, WTFMove(str)));
+        return JSValue::encode(jsString(vm, WTF::move(str)));
     }
     case BufferEncodingType::ascii: {
         std::span<Latin1Character> data;
@@ -1796,7 +1796,7 @@ JSC::EncodedJSValue jsBufferToStringFromBytes(JSGlobalObject* lexicalGlobalObjec
             return {};
         }
         Bun__encoding__writeLatin1(bytes.data(), bytes.size(), data.data(), data.size(), static_cast<uint8_t>(encoding));
-        return JSValue::encode(jsString(vm, WTFMove(str)));
+        return JSValue::encode(jsString(vm, WTF::move(str)));
     }
 
     case WebCore::BufferEncodingType::utf8:
@@ -2167,7 +2167,7 @@ extern "C" JSC::EncodedJSValue JSBuffer__fromMmap(Zig::GlobalObject* globalObjec
 #endif
     }));
 
-    auto* view = JSC::JSUint8Array::create(globalObject, structure, WTFMove(buffer), 0, length);
+    auto* view = JSC::JSUint8Array::create(globalObject, structure, WTF::move(buffer), 0, length);
     RETURN_IF_EXCEPTION(scope, {});
 
     if (!view) [[unlikely]] {
@@ -2889,7 +2889,7 @@ EncodedJSValue constructBufferFromArrayBuffer(JSC::ThrowScope& throwScope, JSGlo
     auto isResizableOrGrowableShared = jsBuffer->isResizableOrGrowableShared();
     if (isResizableOrGrowableShared) {
         auto* subclassStructure = globalObject->JSResizableOrGrowableSharedBufferSubclassStructure();
-        auto* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTFMove(buffer), offset, std::nullopt);
+        auto* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTF::move(buffer), offset, std::nullopt);
         RETURN_IF_EXCEPTION(throwScope, {});
         if (!uint8Array) [[unlikely]] {
             throwOutOfMemoryError(globalObject, throwScope);
@@ -2898,7 +2898,7 @@ EncodedJSValue constructBufferFromArrayBuffer(JSC::ThrowScope& throwScope, JSGlo
         RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(uint8Array));
     }
     auto* subclassStructure = globalObject->JSBufferSubclassStructure();
-    auto* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTFMove(buffer), offset, length);
+    auto* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTF::move(buffer), offset, length);
     RETURN_IF_EXCEPTION(throwScope, {});
     if (!uint8Array) [[unlikely]] {
         throwOutOfMemoryError(globalObject, throwScope);

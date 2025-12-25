@@ -925,7 +925,7 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
             // When an import record is duplicated, it gets marked unused.
             // This happens in `ConvertESMExportsForHmr.deduplicatedImport`
             // There is still a case where deduplication must happen.
-            if (import_record.is_unused) return .stop;
+            if (import_record.flags.is_unused) return .stop;
             if (import_record.source_index.isRuntime()) return .stop;
 
             const key = import_record.path.keyForIncrementalGraph();
@@ -1044,7 +1044,7 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
                 // When an import record is duplicated, it gets marked unused.
                 // This happens in `ConvertESMExportsForHmr.deduplicatedImport`
                 // There is still a case where deduplication must happen.
-                if (import_record.is_unused) continue;
+                if (import_record.flags.is_unused) continue;
 
                 if (!import_record.source_index.isRuntime()) try_index_record: {
                     // TODO: move this block into a function

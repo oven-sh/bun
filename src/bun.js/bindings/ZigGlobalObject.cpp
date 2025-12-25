@@ -853,6 +853,13 @@ void GlobalObject::promiseRejectionTracker(JSGlobalObject* obj, JSC::JSPromise* 
 
     // Do this in C++ for now
     auto* globalObj = static_cast<GlobalObject*>(obj);
+
+    // JSInternalPromise should not be tracked through the normal promise rejection mechanism
+    // as they are internal to the engine and should not be exposed to user space.
+    // See: JSInternalPromise.h - "CAUTION: Must not leak the JSInternalPromise to the user space"
+    if (jsDynamicCast<JSC::JSInternalPromise*>(promise))
+        return;
+
     switch (operation) {
     case JSPromiseRejectionOperation::Reject:
         globalObj->m_aboutToBeNotifiedRejectedPromises.append(obj->vm(), globalObj, promise);
@@ -1062,9 +1069,11 @@ JSC_DEFINE_HOST_FUNCTION(functionQueueMicrotask,
         asyncContext = JSC::jsUndefined();
     }
 
-    // This is a JSC builtin function
-    lexicalGlobalObject->queueMicrotask(function, callback, asyncContext,
-        JSC::JSValue {}, JSC::JSValue {});
+    // BunPerformMicrotaskJob accepts a variable number of arguments (up to: performMicrotask, job, asyncContext, arg0, arg1).
+    // The runtime inspects argumentCount to determine which arguments are present, so callers may pass only the subset they need.
+    // Here we pass: function, callback, asyncContext.
+    JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::BunPerformMicrotaskJob, globalObject, function, callback, asyncContext };
+    globalObject->vm().queueMicrotask(WTFMove(task));
 
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
@@ -2984,7 +2993,7 @@ void GlobalObject::handleRejectedPromises()
     JSC::VM& virtual_machine = vm();
     auto scope = DECLARE_CATCH_SCOPE(virtual_machine);
     while (auto* promise = m_aboutToBeNotifiedRejectedPromises.takeFirst(this)) {
-        if (promise->isHandled(virtual_machine))
+        if (promise->isHandled())
             continue;
 
         Bun__handleRejectedPromise(this, promise);
@@ -3093,7 +3102,9 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskCallback(Zig::GlobalObject* g
 #endif
 
     // Do not use JSCell* here because the GC will try to visit it.
-    globalObject->queueMicrotask(function, JSValue(std::bit_cast<double>(reinterpret_cast<uintptr_t>(ptr))), JSValue(std::bit_cast<double>(reinterpret_cast<uintptr_t>(callback))), jsUndefined(), jsUndefined());
+    // Use BunInvokeJobWithArguments to pass the two arguments (ptr and callback) to the trampoline function
+    JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::BunInvokeJobWithArguments, globalObject, function, JSValue(std::bit_cast<double>(reinterpret_cast<uintptr_t>(ptr))), JSValue(std::bit_cast<double>(reinterpret_cast<uintptr_t>(callback))) };
+    globalObject->vm().queueMicrotask(WTFMove(task));
 }
 
 JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject,

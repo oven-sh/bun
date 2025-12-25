@@ -557,7 +557,8 @@ ExceptionOr<void> WebSocket::send(ArrayBufferView& arrayBufferView)
         return {};
     }
 
-    auto buffer = arrayBufferView.unsharedBuffer().get();
+    auto bufferRef = arrayBufferView.unsharedBuffer();
+    auto* buffer = bufferRef.get();
     char* baseAddress = reinterpret_cast<char*>(buffer->data()) + arrayBufferView.byteOffset();
     size_t length = arrayBufferView.byteLength();
     this->sendWebSocketData(baseAddress, length, Opcode::Binary);
@@ -831,7 +832,8 @@ ExceptionOr<void> WebSocket::ping(ArrayBufferView& arrayBufferView)
         return {};
     }
 
-    auto buffer = arrayBufferView.unsharedBuffer().get();
+    auto bufferRef = arrayBufferView.unsharedBuffer();
+    auto* buffer = bufferRef.get();
     char* baseAddress = reinterpret_cast<char*>(buffer->data()) + arrayBufferView.byteOffset();
     size_t length = arrayBufferView.byteLength();
     this->sendWebSocketData(baseAddress, length, Opcode::Ping);
@@ -913,7 +915,8 @@ ExceptionOr<void> WebSocket::pong(ArrayBufferView& arrayBufferView)
         return {};
     }
 
-    auto buffer = arrayBufferView.unsharedBuffer().get();
+    auto bufferRef = arrayBufferView.unsharedBuffer();
+    auto* buffer = bufferRef.get();
     char* baseAddress = reinterpret_cast<char*>(buffer->data()) + arrayBufferView.byteOffset();
     size_t length = arrayBufferView.byteLength();
     this->sendWebSocketData(baseAddress, length, Opcode::Pong);

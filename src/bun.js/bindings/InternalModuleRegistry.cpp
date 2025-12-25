@@ -83,7 +83,7 @@ ALWAYS_INLINE JSC::JSValue generateNativeModule(
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     generator(
         globalObject,
-        JSC::Identifier::EmptyIdentifier, // Our generators do not do anything with the key
+        vm.propertyNames->emptyIdentifier, // Our generators do not do anything with the key
         propertyNames,
         arguments);
     RETURN_IF_EXCEPTION(throwScope, {});

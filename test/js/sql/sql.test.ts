@@ -12342,5 +12342,25 @@ CREATE TABLE ${table_name} (
         });
       });
     }); // Close "Misc" describe
+    test("Handles empty integer array stored as {}", async () => {
+      await using db = postgres(options);
+      const tableName = `test_${randomUUIDv7("hex").replaceAll("-", "")}`;
+
+      await db`CREATE TEMPORARY TABLE ${db(tableName)} (id SERIAL PRIMARY KEY, numbers INTEGER[])`;
+
+      // Inserting using the SQL array constructor triggers the "Failed to read data" error on SELECT.
+      await db`INSERT INTO ${db(tableName)} (numbers) VALUES (ARRAY[]::integer[])`;
+
+      // Read back - this succeeds on the first try
+      const result1 = await db`SELECT * FROM ${db(tableName)}`;
+      expect(result1).toBeArray();
+      expect(Array.from(result1[0].numbers)).toEqual([]);
+
+      // Second read to trigger connection reuse issue
+      // This is where it fails with ERR_POSTGRES_INVALID_BINARY_DATA in bun 1.3.5
+      const result2 = await db`SELECT * FROM ${db(tableName)}`;
+      expect(result2).toBeArray();
+      expect(Array.from(result2[0].numbers)).toEqual([]);
+    });
   }); // Close "PostgreSQL tests" describe
 } // Close if (isDockerEnabled())

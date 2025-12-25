@@ -998,7 +998,7 @@ pub fn WindowsBufferedWriter(Parent: type, function_table: anytype) type {
                 return;
             }
             const pending = this.getBufferInternal();
-            const has_pending_data = (pending.len - written) == 0;
+            const has_pending_data = (pending.len - written) != 0;
             onWrite(this.parent, @intCast(written), if (this.is_done and !has_pending_data) .drained else .pending);
             // is_done can be changed inside onWrite
             if (this.is_done and !has_pending_data) {

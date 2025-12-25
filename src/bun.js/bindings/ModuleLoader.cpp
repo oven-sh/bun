@@ -102,7 +102,7 @@ static JSC::SyntheticSourceProvider::SyntheticSourceGenerator generateInternalMo
 
         JSC::EnsureStillAliveScope stillAlive(object);
 
-        PropertyNameArray properties(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+        PropertyNameArrayBuilder properties(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
         object->getOwnPropertyNames(object, globalObject, properties, DontEnumPropertiesMode::Exclude);
         RETURN_IF_EXCEPTION(throwScope, void());
 
@@ -467,7 +467,7 @@ extern "C" void Bun__onFulfillAsyncModule(
     JSC::JSInternalPromise* promise = jsCast<JSC::JSInternalPromise*>(JSC::JSValue::decode(encodedPromiseValue));
 
     if (!res->success) {
-        RELEASE_AND_RETURN(scope, promise->reject(globalObject, JSValue::decode(res->result.err.value)));
+        RELEASE_AND_RETURN(scope, promise->reject(vm, globalObject, JSValue::decode(res->result.err.value)));
     }
 
     auto specifierValue = Bun::toJS(globalObject, *specifier);
@@ -503,7 +503,7 @@ extern "C" void Bun__onFulfillAsyncModule(
                 auto* exception = scope.exception();
                 if (!vm.isTerminationException(exception)) {
                     scope.clearException();
-                    promise->reject(globalObject, exception);
+                    promise->reject(vm, globalObject, exception);
                     scope.assertNoExceptionExceptTermination();
                 }
             }
@@ -676,11 +676,11 @@ JSValue fetchCommonJSModule(
                 RELEASE_AND_RETURN(scope, target);
             }
             JSPromise* promise = jsCast<JSPromise*>(promiseOrCommonJSModule);
-            switch (promise->status(vm)) {
+            switch (promise->status()) {
             case JSPromise::Status::Rejected: {
                 uint32_t promiseFlags = promise->internalField(JSPromise::Field::Flags).get().asUInt32AsAnyInt();
                 promise->internalField(JSPromise::Field::Flags).set(vm, promise, jsNumber(promiseFlags | JSPromise::isHandledFlag));
-                JSC::throwException(globalObject, scope, promise->result(vm));
+                JSC::throwException(globalObject, scope, promise->result());
                 RELEASE_AND_RETURN(scope, JSValue {});
             }
             case JSPromise::Status::Pending: {
@@ -693,7 +693,7 @@ JSValue fetchCommonJSModule(
                     RELEASE_AND_RETURN(scope, {});
                 }
                 if (!wasModuleMock) {
-                    auto* jsSourceCode = jsCast<JSSourceCode*>(promise->result(vm));
+                    auto* jsSourceCode = jsCast<JSSourceCode*>(promise->result());
                     globalObject->moduleLoader()->provideFetch(globalObject, specifierValue, jsSourceCode->sourceCode());
                     RETURN_IF_EXCEPTION(scope, {});
                 }
@@ -727,11 +727,11 @@ JSValue fetchCommonJSModule(
                 RELEASE_AND_RETURN(scope, target);
             }
             JSPromise* promise = jsCast<JSPromise*>(promiseOrCommonJSModule);
-            switch (promise->status(vm)) {
+            switch (promise->status()) {
             case JSPromise::Status::Rejected: {
                 uint32_t promiseFlags = promise->internalField(JSPromise::Field::Flags).get().asUInt32AsAnyInt();
                 promise->internalField(JSPromise::Field::Flags).set(vm, promise, jsNumber(promiseFlags | JSPromise::isHandledFlag));
-                JSC::throwException(globalObject, scope, promise->result(vm));
+                JSC::throwException(globalObject, scope, promise->result());
                 RELEASE_AND_RETURN(scope, JSValue {});
             }
             case JSPromise::Status::Pending: {
@@ -744,7 +744,7 @@ JSValue fetchCommonJSModule(
                     RELEASE_AND_RETURN(scope, {});
                 }
                 if (!wasModuleMock) {
-                    auto* jsSourceCode = jsCast<JSSourceCode*>(promise->result(vm));
+                    auto* jsSourceCode = jsCast<JSSourceCode*>(promise->result());
                     globalObject->moduleLoader()->provideFetch(globalObject, specifierValue, jsSourceCode->sourceCode());
                     RETURN_IF_EXCEPTION(scope, {});
                 }
@@ -1178,7 +1178,7 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultReject, (JSC::JSGlobalObjec
     JSC::JSInternalPromise* promise = pendingModule->internalPromise();
 
     pendingModule->internalField(2).set(vm, pendingModule, JSC::jsUndefined());
-    promise->reject(globalObject, reason);
+    promise->reject(vm, globalObject, reason);
 
     return JSValue::encode(reason);
 }

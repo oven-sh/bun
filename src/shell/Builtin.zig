@@ -265,6 +265,11 @@ pub const BuiltinIO = struct {
         ref_count: RefCount,
         blob: bun.webcore.Blob,
 
+        fn dupeRef(this: *Blob) *Blob {
+            this.ref();
+            return this;
+        }
+
         fn deinit(this: *Blob) void {
             this.blob.deinit();
             bun.destroy(this);
@@ -341,16 +346,16 @@ pub fn init(
     io: *IO,
 ) ?Yield {
     const stdin: BuiltinIO.Input = switch (io.stdin) {
-        .fd => |fd| .{ .fd = fd.refSelf() },
+        .fd => |fd| .{ .fd = fd.dupeRef() },
         .ignore => .ignore,
     };
     const stdout: BuiltinIO.Output = switch (io.stdout) {
-        .fd => |val| .{ .fd = .{ .writer = val.writer.refSelf(), .captured = val.captured } },
+        .fd => |val| .{ .fd = .{ .writer = val.writer.dupeRef(), .captured = val.captured } },
         .pipe => .{ .buf = BuiltinIO.Output.SharedBuf.new(std.array_list.Managed(u8).init(cmd.base.allocator())) },
         .ignore => .ignore,
     };
     const stderr: BuiltinIO.Output = switch (io.stderr) {
-        .fd => |val| .{ .fd = .{ .writer = val.writer.refSelf(), .captured = val.captured } },
+        .fd => |val| .{ .fd = .{ .writer = val.writer.dupeRef(), .captured = val.captured } },
         .pipe => .{ .buf = BuiltinIO.Output.SharedBuf.new(std.array_list.Managed(u8).init(cmd.base.allocator())) },
         .ignore => .ignore,
     };

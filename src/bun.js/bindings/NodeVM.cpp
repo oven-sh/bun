@@ -316,10 +316,10 @@ static JSInternalPromise* importModuleInner(JSGlobalObject* globalObject, JSStri
 
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    promise->fulfill(globalObject, result);
+    promise->fulfill(vm, globalObject, result);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    promise = promise->then(globalObject, transformer, nullptr);
+    promise = promise->then(globalObject, transformer, globalObject->promiseEmptyOnRejectedFunction());
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     RELEASE_AND_RETURN(scope, promise);
@@ -738,6 +738,14 @@ Structure* NodeVMGlobalObject::createStructure(JSC::VM& vm, JSC::JSValue prototy
 
 void unsafeEvalNoop(JSGlobalObject*, const WTF::String&) {}
 
+static void promiseRejectionTrackerForNodeVM(JSGlobalObject* globalObject, JSC::JSPromise* promise, JSC::JSPromiseRejectionOperation operation)
+{
+    // Delegate to the parent Zig::GlobalObject so that unhandled rejections
+    // in VM contexts are reported to the main process (matching Node.js behavior)
+    auto* zigGlobalObject = defaultGlobalObject(globalObject);
+    Zig::GlobalObject::promiseRejectionTracker(zigGlobalObject, promise, operation);
+}
+
 const JSC::GlobalObjectMethodTable& NodeVMGlobalObject::globalObjectMethodTable()
 {
     static const JSC::GlobalObjectMethodTable table {
@@ -751,7 +759,7 @@ const JSC::GlobalObjectMethodTable& NodeVMGlobalObject::globalObjectMethodTable(
         nullptr, // moduleLoaderFetch
         nullptr, // moduleLoaderCreateImportMetaProperties
         nullptr, // moduleLoaderEvaluate
-        nullptr, // promiseRejectionTracker
+        &promiseRejectionTrackerForNodeVM,
         &reportUncaughtExceptionAtEventLoop,
         &currentScriptExecutionOwner,
         &scriptExecutionStatus,
@@ -772,7 +780,26 @@ void NodeVMGlobalObject::finishCreation(JSC::VM& vm)
     Base::finishCreation(vm);
     setEvalEnabled(m_contextOptions.allowStrings, "Code generation from strings disallowed for this context"_s);
     setWebAssemblyEnabled(m_contextOptions.allowWasm, "Wasm code generation disallowed by embedder"_s);
+
+    // Delete the internal Loader property from the VM global object.
+    // This is exposed by JSC when exposeInternalModuleLoader() is true,
+    // but it should not be visible in node:vm contexts.
+    JSC::DeletePropertySlot slot;
+    JSC::JSObject::deleteProperty(this, this, vm.propertyNames->Loader, slot);
+
     vm.ensureTerminationException();
+
+    // Share the async context data with the parent Zig::GlobalObject.
+    // This is necessary because AsyncLocalStorage methods (run, getStore, etc.) are defined
+    // in the parent realm and reference the parent's $asyncContext. However, microtask
+    // processing (JSMicrotask.cpp) operates on this NodeVMGlobalObject's m_asyncContextData.
+    // By sharing the same InternalFieldTuple, both the JS code and C++ microtask handling
+    // will operate on the same async context, ensuring proper AsyncLocalStorage behavior
+    // across await boundaries in VM contexts.
+    auto* parentGlobalObject = defaultGlobalObject(this);
+    if (parentGlobalObject && parentGlobalObject->m_asyncContextData) {
+        m_asyncContextData.set(vm, this, parentGlobalObject->m_asyncContextData.get());
+    }
 }
 
 void NodeVMGlobalObject::destroy(JSCell* cell)
@@ -1382,7 +1409,7 @@ static JSInternalPromise* moduleLoaderImportModuleInner(NodeVMGlobalObject* glob
             return NodeVM::importModuleInner(globalObject, moduleName, parameters, sourceOrigin, globalObject->dynamicImportCallback(), JSValue {});
         }
 
-        promise->reject(globalObject, createError(globalObject, ErrorCode::ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING, "A dynamic import callback was not specified."_s));
+        promise->reject(vm, globalObject, createError(globalObject, ErrorCode::ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING, "A dynamic import callback was not specified."_s));
         return promise;
     }
 
@@ -1391,7 +1418,7 @@ static JSInternalPromise* moduleLoaderImportModuleInner(NodeVMGlobalObject* glob
     RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
 
     scope.release();
-    promise->reject(globalObject, createError(globalObject, makeString("Could not import the module '"_s, moduleNameString.data, "'."_s)));
+    promise->reject(vm, globalObject, createError(globalObject, makeString("Could not import the module '"_s, moduleNameString.data, "'."_s)));
     return promise;
 }
 
@@ -1406,7 +1433,7 @@ JSInternalPromise* NodeVMGlobalObject::moduleLoaderImportModule(JSGlobalObject* 
     return moduleLoaderImportModuleInner(nodeVmGlobalObject, moduleLoader, moduleName, parameters, sourceOrigin);
 }
 
-void NodeVMGlobalObject::getOwnPropertyNames(JSObject* cell, JSGlobalObject* globalObject, JSC::PropertyNameArray& propertyNames, JSC::DontEnumPropertiesMode mode)
+void NodeVMGlobalObject::getOwnPropertyNames(JSObject* cell, JSGlobalObject* globalObject, JSC::PropertyNameArrayBuilder& propertyNames, JSC::DontEnumPropertiesMode mode)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);

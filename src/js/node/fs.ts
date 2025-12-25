@@ -423,9 +423,14 @@ var access = function access(path, mode, callback) {
     callback ||= options;
     ensureCallback(callback);
 
-    fs.readFile(path, options).then(function (data) {
-      callback(null, data);
-    }, callback);
+    try {
+      fs.readFile(path, options).then(function (data) {
+        callback(null, data);
+      }, callback);
+    } catch (err) {
+      // Handle synchronous errors (e.g., path too long) by passing them to the callback
+      process.nextTick(callback, err);
+    }
   },
   writeFile = function writeFile(path, data, options, callback) {
     callback ||= options;

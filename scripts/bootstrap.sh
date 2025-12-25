@@ -281,9 +281,6 @@ check_operating_system() {
 	Darwin)
 		os="darwin"
 		;;
-	FreeBSD)
-		os="freebsd"
-		;;
 	*)
 		error "Unsupported operating system: $os"
 		;;
@@ -345,11 +342,6 @@ check_operating_system() {
 			fi
 			;;
 		esac
-		;;
-	freebsd)
-		. /etc/os-release
-		distro="$ID"
-		release="$VERSION_ID"
 		;;
 	esac
 
@@ -434,9 +426,6 @@ check_package_manager() {
 			error "No package manager found. (apt, dnf, yum, apk)"
 		fi
 		;;
-	freebsd)
-		pm="pkg"
-		;;
 	esac
 	print "Package manager: $pm"
 
@@ -448,13 +437,6 @@ check_package_manager() {
 		;;
 	apk)
 		package_manager update
-		;;
-	pkg)
-		# may need to switch betwen 'latest' and 'quarterly' depending on which repo www/chromium is in. check https://www.freshports.org/www/chromium/.
-		# mkdir -p /usr/local/etc/pkg/repos
-		# echo 'FreeBSD: { url: "pkg+http://pkg.FreeBSD.org/${ABI}/quarterly" }' > /usr/local/etc/pkg/repos/FreeBSD.conf
-		export ASSUME_ALWAYS_YES=yes
-		package_manager update -f
 		;;
 	esac
 }
@@ -816,9 +798,6 @@ install_nodejs() {
 	linux)
 		nodejs_platform="linux"
 		;;
-	freebsd)
-		nodejs_platform="freebsd"
-		;;
 	*)
 		error "Unsupported OS for Node.js download: $os"
 		;;
@@ -836,12 +815,6 @@ install_nodejs() {
 		error "Unsupported architecture for Node.js download: $arch"
 		;;
 	esac
-
-	if [ "$os" = "freebsd" ]; then
-		# TODO: use nodejs_version_exact
-		install_packages "www/node$(nodejs_version)" "www/npm-node$(nodejs_version)"
-		return
-	fi
 
 	case "$abi" in
 	musl)
@@ -932,10 +905,6 @@ install_nodejs() {
 }
 
 install_nodejs_headers() {
-	if [ "$os" = "freebsd" ]; then
-		return
-	fi
-
 	nodejs_version="$(nodejs_version_exact)"
 	nodejs_headers_tar="$(download_file "https://nodejs.org/download/release/v$nodejs_version/node-v$nodejs_version-headers.tar.gz")"
 	nodejs_headers_dir="$(dirname "$nodejs_headers_tar")"
@@ -950,10 +919,6 @@ install_nodejs_headers() {
 }
 
 setup_node_gyp_cache() {
-	if [ "$os" = "freebsd" ]; then
-		return
-	fi
-
 	nodejs_version="$1"
 	headers_source="$2"
 
@@ -992,11 +957,6 @@ bun_version_exact() {
 }
 
 install_bun() {
-	if [ "$os" = "freebsd" ]; then
-		# TODO: need to complete bun bootstrap for for this work
-		return
-	fi
-
 	install_packages unzip
 
 	case "$pm" in
@@ -1047,9 +1007,6 @@ install_cmake() {
 		execute_sudo "$sh" "$cmake_script" \
 			--skip-license \
 			--prefix=/usr
-		;;
-	freebsd-pkg)
-		install_packages devel/cmake
 		;;
 	esac
 }
@@ -1122,17 +1079,6 @@ install_build_essentials() {
 				ruby \
 				perl \
 			;;
-		freebsd)
-			install_packages \
-				devel/ninja \
-				devel/pkgconf \
-				lang/go \
-				devel/gmake \
-				lang/python3 \
-				devel/libtool \
-				lang/ruby33 \
-				perl5 \
-			;;
 	esac
 
 	install_cmake
@@ -1183,13 +1129,6 @@ install_llvm() {
 			"scudo-malloc" \
 			"lld$(llvm_version)" \
 			"llvm$(llvm_version)-dev" # Ensures llvm-symbolizer is installed
-		;;
-	esac
-
-	case "$os" in
-		freebsd)
-			# TODO: use llvm_version_exact
-			install_packages "devel/llvm$(llvm_version)"
 		;;
 	esac
 }
@@ -1268,17 +1207,9 @@ install_gcc() {
 }
 
 install_sccache() {
-	case "$os" in
-		linux)
-			;;
-		freebsd)
-			cargo install sccache --locked --version 0.12.0
-			return
-			;;
-		*)
-			error "Unsupported platform: $os"
-			;;
-	esac
+	if [ "$os" != "linux" ]; then
+		error "Unsupported platform: $os"
+	fi
 
 	# Alright, look, this function is cobbled together but it's only as cobbled
 	# together as this whole script is.
@@ -1307,27 +1238,18 @@ install_sccache() {
 }
 
 install_rust() {
-	case "$distro" in
-	freebsd)
-		install_packages lang/rust
-		create_directory "$HOME/.cargo/bin"
-		append_to_path "$HOME/.cargo/bin"
-		;;
-	*)
-		rust_home="/opt/rust"
-		create_directory "$rust_home"
-		append_to_profile "export RUSTUP_HOME=$rust_home"
-		append_to_profile "export CARGO_HOME=$rust_home"
+	rust_home="/opt/rust"
+	create_directory "$rust_home"
+	append_to_profile "export RUSTUP_HOME=$rust_home"
+	append_to_profile "export CARGO_HOME=$rust_home"
 
-		sh="$(require sh)"
-		rustup_script=$(download_file "https://sh.rustup.rs")
-		execute "$sh" -lc "$rustup_script -y --no-modify-path"
-		append_to_path "$rust_home/bin"
+	sh="$(require sh)"
+	rustup_script=$(download_file "https://sh.rustup.rs")
+	execute "$sh" -lc "$rustup_script -y --no-modify-path"
+	append_to_path "$rust_home/bin"
 
-		# Ensure all rustup files are accessible (for CI builds where different users run builds)
-		grant_to_user "$rust_home"
-		;;
-	esac
+	# Ensure all rustup files are accessible (for CI builds where different users run builds)
+	grant_to_user "$rust_home"
 
 	case "$osxcross" in
 	1)
@@ -1444,9 +1366,6 @@ install_tailscale() {
 		execute_as_user go install tailscale.com/cmd/tailscale{,d}@latest
 		append_to_path "$home/go/bin"
 		;;
-	freebsd)
-		install_packages security/tailscale
-		;;
 	esac
 }
 
@@ -1512,14 +1431,6 @@ create_buildkite_user() {
 				--shell "$(require sh)" \
 				--home "$home" \
 				--disabled-password
-			;;
-		freebsd)
-			execute_sudo pw group add -n "$group"
-			execute_sudo pw user add \
-				-n "$user" \
-				-g "$group" \
-				-s "$(require sh)" \
-				-d "$home" \
 			;;
 		*)
 			execute_sudo useradd "$user" \
@@ -1697,17 +1608,6 @@ install_age() {
 		aarch64)
 			age_arch="arm64"
 			age_hash="57fd79a7ece5fe501f351b9dd51a82fbee1ea8db65a8839db17f5c080245e99f"
-			;;
-		*)
-			error "Unsupported platform: $os-$arch"
-			;;
-		esac
-		;;
-	freebsd)
-		case "$arch" in
-		x64)
-			age_arch="amd64"
-			age_hash="943a7510a9973a1e589b913a70228aa1361a63cde39e3ed581435a4d4802df29"
 			;;
 		*)
 			error "Unsupported platform: $os-$arch"

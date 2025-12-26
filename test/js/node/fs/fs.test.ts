@@ -1012,6 +1012,55 @@ it("statSync throwIfNoEntry: true", () => {
   expect(() => lstatSync(path)).toThrow("no such file or directory");
 });
 
+it("statSync throws ENAMETOOLONG for path exceeding PATH_MAX", () => {
+  // Create a path that exceeds PATH_MAX (4096 on most systems)
+  const longPath = "/" + Buffer.alloc(4097, "a").toString();
+  expect(() => statSync(longPath)).toThrow("name too long");
+});
+
+it("lstatSync throws ENAMETOOLONG for path exceeding PATH_MAX", () => {
+  // Create a path that exceeds PATH_MAX (4096 on most systems)
+  const longPath = "/" + Buffer.alloc(4097, "a").toString();
+  expect(() => lstatSync(longPath)).toThrow("name too long");
+});
+
+it("promises.stat throws ENAMETOOLONG for path exceeding PATH_MAX", async () => {
+  // Create a path that exceeds PATH_MAX (4096 on most systems)
+  const longPath = "/" + Buffer.alloc(4097, "a").toString();
+  await expect(promises.stat(longPath)).rejects.toThrow("name too long");
+});
+
+it("promises.lstat throws ENAMETOOLONG for path exceeding PATH_MAX", async () => {
+  // Create a path that exceeds PATH_MAX (4096 on most systems)
+  const longPath = "/" + Buffer.alloc(4097, "a").toString();
+  await expect(promises.lstat(longPath)).rejects.toThrow("name too long");
+});
+
+it("readFileSync throws ENAMETOOLONG for path exceeding PATH_MAX", () => {
+  // Create a path that exceeds PATH_MAX (4096 on most systems)
+  const longPath = "/" + Buffer.alloc(4097, "a").toString();
+  expect(() => readFileSync(longPath)).toThrow("name too long");
+});
+
+// TODO: This test requires fixing the callback-based fs.readFile to properly
+// pass ENAMETOOLONG to the callback instead of throwing synchronously.
+// See https://github.com/oven-sh/bun/issues/25659
+it.skip("readFile passes ENAMETOOLONG to callback for path exceeding PATH_MAX", (done) => {
+  // Create a path that exceeds PATH_MAX (4096 on most systems)
+  const longPath = "/" + Buffer.alloc(4097, "a").toString();
+  readFile(longPath, (err) => {
+    expect(err).not.toBeNull();
+    expect(err!.message).toContain("name too long");
+    done();
+  });
+});
+
+it("promises.readFile throws ENAMETOOLONG for path exceeding PATH_MAX", async () => {
+  // Create a path that exceeds PATH_MAX (4096 on most systems)
+  const longPath = "/" + Buffer.alloc(4097, "a").toString();
+  await expect(promises.readFile(longPath)).rejects.toThrow("name too long");
+});
+
 it("stat == statSync", async () => {
   const sync = statSync(import.meta.path);
   const async = await promises.stat(import.meta.path);

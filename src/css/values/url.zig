@@ -92,7 +92,7 @@ pub const Url = struct {
         const import_record = try dest.importRecord(this.import_record_idx);
         const url = try dest.getImportRecordUrl(this.import_record_idx);
 
-        if (dest.minify and !import_record.is_internal) {
+        if (dest.minify and !import_record.flags.is_internal) {
             var buf = std.Io.Writer.Allocating.init(dest.allocator);
             defer buf.deinit();
             // PERF(alloc) we could use stack fallback here?

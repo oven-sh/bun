@@ -82,7 +82,7 @@ void InspectorBunFrontendDevServerAgent::bundleStart(int devServerId, Ref<JSON::
     if (!m_enabled || !m_frontendDispatcher)
         return;
 
-    m_frontendDispatcher->bundleStart(devServerId, WTFMove(triggerFiles));
+    m_frontendDispatcher->bundleStart(devServerId, WTF::move(triggerFiles));
 }
 
 void InspectorBunFrontendDevServerAgent::bundleComplete(int devServerId, double durationMs)
@@ -106,7 +106,7 @@ void InspectorBunFrontendDevServerAgent::clientNavigated(int devServerId, int co
     if (!m_enabled || !m_frontendDispatcher)
         return;
 
-    m_frontendDispatcher->clientNavigated(devServerId, connectionId, url, WTFMove(routeBundleId));
+    m_frontendDispatcher->clientNavigated(devServerId, connectionId, url, WTF::move(routeBundleId));
 }
 
 void InspectorBunFrontendDevServerAgent::clientErrorReported(int devServerId, const String& clientErrorPayloadBase64)
@@ -154,7 +154,7 @@ void InspectorBunFrontendDevServerAgent__notifyBundleStart(InspectorBunFrontendD
         files->addItem(triggerFiles[i].transferToWTFString());
     }
 
-    agent->bundleStart(devServerId, WTFMove(files));
+    agent->bundleStart(devServerId, WTF::move(files));
 }
 
 void InspectorBunFrontendDevServerAgent__notifyBundleComplete(InspectorBunFrontendDevServerAgent* agent, int devServerId, double durationMs)

@@ -87,7 +87,7 @@ pub fn onMessage(s: *HmrSocket, ws: AnyWebSocket, msg: []const u8, opcode: uws.O
                                 bun.assert(s.dev.memory_visualizer_timer.state != .ACTIVE);
                                 s.dev.vm.timer.update(
                                     &s.dev.memory_visualizer_timer,
-                                    &bun.timespec.msFromNow(1000),
+                                    &bun.timespec.msFromNow(.allow_mocked_time, 1000),
                                 );
                             }
                         },

@@ -60,7 +60,7 @@ pub fn writeOutputFilesToDisk(
             }
         }
         var display_size: usize = 0;
-        const public_path = if (chunk.is_browser_chunk_from_server_build)
+        const public_path = if (chunk.flags.is_browser_chunk_from_server_build)
             bv2.transpilerForTarget(.browser).options.public_path
         else
             c.resolver.opts.public_path;
@@ -73,7 +73,7 @@ pub fn writeOutputFilesToDisk(
             chunk,
             chunks,
             &display_size,
-            c.resolver.opts.compile and !chunk.is_browser_chunk_from_server_build,
+            c.resolver.opts.compile and !chunk.flags.is_browser_chunk_from_server_build,
             chunk.content.sourcemap(c.options.source_maps) != .none,
         ) catch |err| bun.Output.panic("Failed to create output chunk: {s}", .{@errorName(err)});
 
@@ -216,7 +216,7 @@ pub fn writeOutputFilesToDisk(
                                     },
                                 },
                                 .encoding = .buffer,
-                                .mode = if (chunk.is_executable) 0o755 else 0o644,
+                                .mode = if (chunk.flags.is_executable) 0o755 else 0o644,
 
                                 .dirfd = .fromStdDir(root_dir),
                                 .file = .{
@@ -273,7 +273,7 @@ pub fn writeOutputFilesToDisk(
                     },
                 },
                 .encoding = .buffer,
-                .mode = if (chunk.is_executable) 0o755 else 0o644,
+                .mode = if (chunk.flags.is_executable) 0o755 else 0o644,
 
                 .dirfd = .fromStdDir(root_dir),
                 .file = .{
@@ -323,7 +323,7 @@ pub fn writeOutputFilesToDisk(
             .bytecode_index = bytecode_index,
             .size = @as(u32, @truncate(code_result.buffer.len)),
             .display_size = @as(u32, @truncate(display_size)),
-            .is_executable = chunk.is_executable,
+            .is_executable = chunk.flags.is_executable,
             .data = .{
                 .saved = 0,
             },

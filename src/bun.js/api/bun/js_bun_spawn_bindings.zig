@@ -6,6 +6,11 @@ fn getArgv0(globalThis: *jsc.JSGlobalObject, PATH: []const u8, cwd: []const u8, 
 } {
     var arg0 = try first_cmd.toSliceOrNullWithAllocator(globalThis, allocator);
     defer arg0.deinit();
+
+    // Check for null bytes in command (security: prevent null byte injection)
+    if (strings.indexOfChar(arg0.slice(), 0) != null) {
+        return globalThis.ERR(.INVALID_ARG_VALUE, "The argument 'args[0]' must be a string without null bytes. Received {f}", .{bun.fmt.quote(arg0.slice())}).throw();
+    }
     // Heap allocate it to ensure we don't run out of stack space.
     const path_buf: *bun.PathBuffer = try bun.default_allocator.create(bun.PathBuffer);
     defer bun.default_allocator.destroy(path_buf);
@@ -63,11 +68,18 @@ fn getArgv(globalThis: *jsc.JSGlobalObject, args: JSValue, PATH: []const u8, cwd
     argv0.* = argv0_result.argv0.ptr;
     argv.appendAssumeCapacity(argv0_result.arg0.ptr);
 
+    var arg_index: usize = 1;
     while (try cmds_array.next()) |value| {
         const arg = try value.toBunString(globalThis);
         defer arg.deref();
 
+        // Check for null bytes in argument (security: prevent null byte injection)
+        if (arg.indexOfAsciiChar(0) != null) {
+            return globalThis.ERR(.INVALID_ARG_VALUE, "The argument 'args[{d}]' must be a string without null bytes. Received \"{f}\"", .{ arg_index, arg.toZigString() }).throw();
+        }
+
         argv.appendAssumeCapacity(try arg.toOwnedSliceZ(allocator));
+        arg_index += 1;
     }
 
     if (argv.items.len == 0) {
@@ -987,7 +999,18 @@ pub fn appendEnvpFromJS(globalThis: *jsc.JSGlobalObject, object: *jsc.JSObject, 
         var value = object_iter.value;
         if (value.isUndefined()) continue;
 
-        const line = try std.fmt.allocPrintSentinel(envp.allocator, "{f}={f}", .{ key, try value.getZigString(globalThis) }, 0);
+        const value_bunstr = try value.toBunString(globalThis);
+        defer value_bunstr.deref();
+
+        // Check for null bytes in env key and value (security: prevent null byte injection)
+        if (key.indexOfAsciiChar(0) != null) {
+            return globalThis.ERR(.INVALID_ARG_VALUE, "The property 'options.env['{f}']' must be a string without null bytes. Received \"{f}\"", .{ key.toZigString(), key.toZigString() }).throw();
+        }
+        if (value_bunstr.indexOfAsciiChar(0) != null) {
+            return globalThis.ERR(.INVALID_ARG_VALUE, "The property 'options.env['{f}']' must be a string without null bytes. Received \"{f}\"", .{ key.toZigString(), value_bunstr.toZigString() }).throw();
+        }
+
+        const line = try std.fmt.allocPrintSentinel(envp.allocator, "{f}={f}", .{ key, value_bunstr.toZigString() }, 0);
 
         if (key.eqlComptime("PATH")) {
             PATH.* = bun.asByteSlice(line["PATH=".len..]);

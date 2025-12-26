@@ -39,6 +39,8 @@ charset: strings.AsciiStatus = .unknown,
 /// Was it created via file constructor?
 is_jsdom_file: bool = false,
 
+is_slice: bool = false,
+
 /// Reference count, for use with `bun.ptr.ExternalShared`. If the reference count is 0, that means
 /// this blob is *not* heap-allocated, and will not be freed in `deinit`.
 #ref_count: bun.ptr.RawRefCount(u32, .single_threaded) = .init(0),
@@ -1053,15 +1055,15 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
                 source_store,
                 ctx.bunVM().eventLoop(),
                 options.mkdirp_if_not_exists orelse true,
-                destination_blob.size,
+                if (destination_blob.is_slice) @min(source_blob.size, destination_blob.size) else source_blob.size,
             );
         }
         var file_copier = copy_file.CopyFile.create(
             bun.default_allocator,
             destination_store,
             source_store,
-            destination_blob.offset,
-            destination_blob.size,
+            source_blob.offset,
+            if (destination_blob.is_slice) @min(source_blob.size, destination_blob.size) else source_blob.size,
             ctx,
             options.mkdirp_if_not_exists orelse true,
         );
@@ -1225,6 +1227,12 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
         if (blob_store.data == .file) {
             // reset last_modified to force getLastModified() to reload after writing.
             blob_store.data.file.last_modified = jsc.init_timestamp;
+            blob_store.data.file.max_size = Blob.max_size;
+            blob_store.data.file.seekable = null;
+        }
+
+        if (!path_or_blob.blob.is_slice) {
+            path_or_blob.blob.size = Blob.max_size;
         }
     }
 
@@ -1523,7 +1531,7 @@ pub fn writeFile(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun
     }
     // "Blob" must actually be a BunFile, not a webcore blob.
     if (path_or_blob == .blob) {
-        try validateWritableBlob(globalThis, &path_or_blob.blob);
+        try validateWritableBlob(globalThis, path_or_blob.blob);
     }
 
     const data = args.nextEat() orelse {
@@ -2299,7 +2307,7 @@ pub fn doWrite(this: *Blob, globalThis: *jsc.JSGlobalObject, callframe: *jsc.Cal
             return globalThis.throwInvalidArgumentType("write", "options", "object");
         }
     }
-    var blob_internal: PathOrBlob = .{ .blob = this.* };
+    var blob_internal: PathOrBlob = .{ .blob = this };
     return writeFileInternal(globalThis, &blob_internal, data, .{ .mkdirp_if_not_exists = mkdirp_if_not_exists, .extra_options = options });
 }
 
@@ -2780,6 +2788,7 @@ pub fn getSliceFrom(this: *Blob, globalThis: *jsc.JSGlobalObject, relativeStart:
     var blob = this.dupe();
     blob.offset = offset;
     blob.size = len;
+    blob.is_slice = true;
 
     // infer the content type if it was not specified
     if (content_type.len == 0 and this.content_type.len > 0 and !this.content_type_allocated) {

@@ -87,7 +87,7 @@ pub fn presign(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.J
             defer blob.deinit();
             return try getPresignUrlFrom(&blob, globalThis, options);
         },
-        .blob => return try getPresignUrlFrom(&path_or_blob.blob, globalThis, args.nextEat()),
+        .blob => return try getPresignUrlFrom(path_or_blob.blob, globalThis, args.nextEat()),
     }
 }
 
@@ -153,7 +153,7 @@ pub fn write(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
             var blob = try constructS3FileInternalStore(globalThis, path.path, options);
             defer blob.deinit();
 
-            var blob_internal: PathOrBlob = .{ .blob = blob };
+            var blob_internal: PathOrBlob = .{ .blob = &blob };
             return try Blob.writeFileInternal(globalThis, &blob_internal, data, .{
                 .mkdirp_if_not_exists = false,
                 .extra_options = options,
@@ -194,7 +194,7 @@ pub fn size(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSEr
 
             return S3BlobStatTask.size(globalThis, &blob);
         },
-        .blob => |*blob| {
+        .blob => |blob| {
             return Blob.getSize(blob, globalThis);
         },
     }
@@ -227,7 +227,7 @@ pub fn exists(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
 
             return S3BlobStatTask.exists(globalThis, &blob);
         },
-        .blob => |*blob| {
+        .blob => |blob| {
             return Blob.getExists(blob, globalThis, callframe);
         },
     }
@@ -568,7 +568,7 @@ pub fn stat(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSEr
 
             return S3BlobStatTask.stat(globalThis, &blob);
         },
-        .blob => |*blob| {
+        .blob => |blob| {
             return S3BlobStatTask.stat(globalThis, blob);
         },
     }

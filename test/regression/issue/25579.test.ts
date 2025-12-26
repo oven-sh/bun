@@ -4,7 +4,7 @@
  *
  * @see https://github.com/oven-sh/bun/issues/25579
  */
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
 describe("Shell cwd with dot", () => {
   test("$.cwd('.') should work and use current directory", async () => {

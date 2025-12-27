@@ -5,6 +5,7 @@
 #define FOR_EACH_GETTER(macro) \
     macro(CSRF) \
     macro(CryptoHasher) \
+    macro(Directory) \
     macro(FFI) \
     macro(FileSystemRouter) \
     macro(Glob) \
@@ -44,6 +45,7 @@
     macro(createParsedShellScript) \
     macro(createShellInterpreter) \
     macro(deflateSync) \
+    macro(dir) \
     macro(file) \
     macro(fs) \
     macro(gc) \

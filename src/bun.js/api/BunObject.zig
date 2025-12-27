@@ -17,6 +17,7 @@ pub const BunObject = struct {
     pub const createParsedShellScript = toJSCallback(bun.shell.ParsedShellScript.createParsedShellScript);
     pub const createShellInterpreter = toJSCallback(bun.shell.Interpreter.createShellInterpreter);
     pub const deflateSync = toJSCallback(JSZlib.deflateSync);
+    pub const dir = toJSCallback(Bun.constructDirectory);
     pub const file = toJSCallback(WebCore.Blob.constructBunFile);
     pub const gunzipSync = toJSCallback(JSZlib.gunzipSync);
     pub const gzipSync = toJSCallback(JSZlib.gzipSync);
@@ -50,6 +51,7 @@ pub const BunObject = struct {
     // --- Lazy property callbacks ---
     pub const CryptoHasher = toJSLazyPropertyCallback(Crypto.CryptoHasher.getter);
     pub const CSRF = toJSLazyPropertyCallback(Bun.getCSRFObject);
+    pub const Directory = toJSLazyPropertyCallback(Bun.getDirectoryConstructor);
     pub const FFI = toJSLazyPropertyCallback(Bun.FFIObject.getter);
     pub const FileSystemRouter = toJSLazyPropertyCallback(Bun.getFileSystemRouter);
     pub const Glob = toJSLazyPropertyCallback(Bun.getGlobConstructor);
@@ -115,6 +117,7 @@ pub const BunObject = struct {
         // --- Lazy property callbacks ---
         @export(&BunObject.CryptoHasher, .{ .name = lazyPropertyCallbackName("CryptoHasher") });
         @export(&BunObject.CSRF, .{ .name = lazyPropertyCallbackName("CSRF") });
+        @export(&BunObject.Directory, .{ .name = lazyPropertyCallbackName("Directory") });
         @export(&BunObject.FFI, .{ .name = lazyPropertyCallbackName("FFI") });
         @export(&BunObject.FileSystemRouter, .{ .name = lazyPropertyCallbackName("FileSystemRouter") });
         @export(&BunObject.MD4, .{ .name = lazyPropertyCallbackName("MD4") });
@@ -153,6 +156,7 @@ pub const BunObject = struct {
         @export(&BunObject.createParsedShellScript, .{ .name = callbackName("createParsedShellScript") });
         @export(&BunObject.createShellInterpreter, .{ .name = callbackName("createShellInterpreter") });
         @export(&BunObject.deflateSync, .{ .name = callbackName("deflateSync") });
+        @export(&BunObject.dir, .{ .name = callbackName("dir") });
         @export(&BunObject.file, .{ .name = callbackName("file") });
         @export(&BunObject.gunzipSync, .{ .name = callbackName("gunzipSync") });
         @export(&BunObject.gzipSync, .{ .name = callbackName("gzipSync") });
@@ -1267,6 +1271,16 @@ pub fn getYAMLObject(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSVa
 
 pub fn getGlobConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
     return jsc.API.Glob.js.getConstructor(globalThis);
+}
+
+pub fn getDirectoryConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
+    return api.Directory.js.getConstructor(globalThis);
+}
+
+/// Bun.dir(path) - creates a lazy Directory handle
+pub fn constructDirectory(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    const dir = try api.Directory.constructor(globalObject, callframe);
+    return dir.toJS(globalObject);
 }
 
 pub fn getS3ClientConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {

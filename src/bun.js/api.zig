@@ -36,6 +36,7 @@ pub const dns = @import("./api/bun/dns.zig");
 pub const FFI = @import("./api/ffi.zig").FFI;
 pub const HTMLRewriter = @import("./api/html_rewriter.zig");
 pub const FileSystemRouter = @import("./api/filesystem_router.zig").FileSystemRouter;
+pub const Directory = @import("./api/Directory.zig");
 pub const Glob = @import("./api/glob.zig");
 pub const H2FrameParser = @import("./api/bun/h2_frame_parser.zig").H2FrameParser;
 pub const JSBundler = @import("./api/JSBundler.zig").JSBundler;

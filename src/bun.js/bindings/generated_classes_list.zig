@@ -24,6 +24,7 @@ pub const Classes = struct {
     pub const ExpectTypeOf = jsc.Expect.ExpectTypeOf;
     pub const ScopeFunctions = jsc.Jest.bun_test.ScopeFunctions;
     pub const DoneCallback = jsc.Jest.bun_test.DoneCallback;
+    pub const Directory = api.Directory;
     pub const FileSystemRouter = api.FileSystemRouter;
     pub const Glob = api.Glob;
     pub const ShellInterpreter = api.Shell.Interpreter;

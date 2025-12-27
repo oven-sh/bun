@@ -2552,6 +2552,22 @@ void JSC__JSValue__jsonStringify(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObje
     RETURN_IF_EXCEPTION(scope, );
     *arg3 = Bun::toStringRef(str);
 }
+
+// Fast version of JSON.stringify that uses JSC's FastStringifier optimization.
+// When space is undefined, JSC uses FastStringifier which is significantly faster
+// than the general Stringifier used when space is a number (even 0).
+void JSC__JSValue__jsonStringifyFast(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1,
+    BunString* arg3)
+{
+    ASSERT_NO_PENDING_EXCEPTION(arg1);
+    auto& vm = JSC::getVM(arg1);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSValue value = JSC::JSValue::decode(JSValue0);
+    // Passing jsUndefined() for space triggers JSC's FastStringifier optimization
+    WTF::String str = JSC::JSONStringify(arg1, value, JSC::jsUndefined());
+    RETURN_IF_EXCEPTION(scope, );
+    *arg3 = Bun::toStringRef(str);
+}
 unsigned char JSC__JSValue__jsType(JSC::EncodedJSValue JSValue0)
 {
     JSC::JSValue jsValue = JSC::JSValue::decode(JSValue0);

@@ -54,7 +54,9 @@ extern "C" SerializedValueSlice Bun__serializeJSValue(JSGlobalObject* globalObje
 
 extern "C" void Bun__SerializedScriptSlice__free(SerializedScriptValue* value)
 {
-    delete value;
+    // Use deref() instead of delete to properly handle CHECK_REF_COUNTED_LIFECYCLE.
+    // The value was leaked via leakRef() which leaves refcount at 1, so deref() will delete it.
+    value->deref();
 }
 
 extern "C" EncodedJSValue Bun__JSValue__deserialize(JSGlobalObject* globalObject, const uint8_t* bytes, size_t size)

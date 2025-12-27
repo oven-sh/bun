@@ -442,6 +442,12 @@ pub const RuntimeTranspilerStore = struct {
                 return;
             };
 
+            // Check for errors logged during parsing (e.g., mixed ESM imports with CJS exports)
+            if (log.errors > 0) {
+                this.parse_error = error.ParseError;
+                return;
+            }
+
             if (vm.isWatcherEnabled()) {
                 if (input_file_fd.isValid()) {
                     if (!is_node_override and

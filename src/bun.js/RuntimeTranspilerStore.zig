@@ -442,6 +442,13 @@ pub const RuntimeTranspilerStore = struct {
                 return;
             };
 
+            // Check for errors logged during parsing (e.g., mixed ESM imports with CJS exports)
+            // These errors don't cause parsing to fail but should prevent module loading
+            if (log.hasErrors()) {
+                this.parse_error = error.ParseError;
+                return;
+            }
+
             if (vm.isWatcherEnabled()) {
                 if (input_file_fd.isValid()) {
                     if (!is_node_override and

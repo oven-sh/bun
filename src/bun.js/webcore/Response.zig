@@ -529,10 +529,12 @@ pub fn constructJSON(
             const err = globalThis.createTypeErrorInstance("Do not know how to serialize a BigInt", .{});
             return globalThis.throwValue(err);
         }
+
         var str = bun.String.empty;
-        // calling JSON.stringify on an empty string adds extra quotes
-        // so this is correct
-        try json_value.jsonStringify(globalThis, 0, &str);
+        // Use jsonStringifyFast which passes undefined for the space parameter,
+        // triggering JSC's FastStringifier optimization. This is significantly faster
+        // than jsonStringify which passes 0 for space and uses the slower Stringifier.
+        try json_value.jsonStringifyFast(globalThis, &str);
 
         if (globalThis.hasException()) {
             return .zero;

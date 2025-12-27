@@ -208,7 +208,7 @@ template<typename... T> struct Converter<IDLUnion<T...>> : DefaultConverter<IDLU
             });
 
             if (returnValue)
-                return WTFMove(returnValue.value());
+                return WTF::move(returnValue.value());
         }
 
         // FIXME: Add support for steps 5 & 6.
@@ -229,7 +229,7 @@ template<typename... T> struct Converter<IDLUnion<T...>> : DefaultConverter<IDLU
             auto arrayBuffer = (brigand::any<TypeList, IsIDLArrayBufferAllowShared<brigand::_1>>::value) ? JSC::JSArrayBuffer::toWrappedAllowShared(vm, value) : JSC::JSArrayBuffer::toWrapped(vm, value);
             if (arrayBuffer) {
                 if (hasArrayBufferType)
-                    return ConditionalReturner<ReturnType, hasArrayBufferType>::get(WTFMove(arrayBuffer)).value();
+                    return ConditionalReturner<ReturnType, hasArrayBufferType>::get(WTF::move(arrayBuffer)).value();
                 RELEASE_AND_RETURN(scope, (ConditionalConverter<ReturnType, ObjectType, hasObjectType>::convert(lexicalGlobalObject, value).value()));
             }
         }
@@ -239,7 +239,7 @@ template<typename... T> struct Converter<IDLUnion<T...>> : DefaultConverter<IDLU
             auto arrayBufferView = (brigand::any<TypeList, IsIDLArrayBufferViewAllowShared<brigand::_1>>::value) ? JSC::JSArrayBufferView::toWrappedAllowShared(vm, value) : JSC::JSArrayBufferView::toWrapped(vm, value);
             if (arrayBufferView) {
                 if (hasArrayBufferViewType)
-                    return ConditionalReturner<ReturnType, hasArrayBufferViewType>::get(WTFMove(arrayBufferView)).value();
+                    return ConditionalReturner<ReturnType, hasArrayBufferViewType>::get(WTF::move(arrayBufferView)).value();
                 RELEASE_AND_RETURN(scope, (ConditionalConverter<ReturnType, ObjectType, hasObjectType>::convert(lexicalGlobalObject, value).value()));
             }
         }
@@ -252,7 +252,7 @@ template<typename... T> struct Converter<IDLUnion<T...>> : DefaultConverter<IDLU
             auto dataView = JSC::JSDataView::toWrapped(vm, value);
             if (dataView) {
                 if (hasDataViewType)
-                    return ConditionalReturner<ReturnType, hasDataViewType>::get(WTFMove(dataView)).value();
+                    return ConditionalReturner<ReturnType, hasDataViewType>::get(WTF::move(dataView)).value();
                 RELEASE_AND_RETURN(scope, (ConditionalConverter<ReturnType, ObjectType, hasObjectType>::convert(lexicalGlobalObject, value).value()));
             }
         }
@@ -280,7 +280,7 @@ template<typename... T> struct Converter<IDLUnion<T...>> : DefaultConverter<IDLU
             });
 
             if (returnValue)
-                return WTFMove(returnValue.value());
+                return WTF::move(returnValue.value());
         }
 
         // FIXME: Add support for step 10.

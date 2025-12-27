@@ -32,7 +32,7 @@ public:
     static JSURLPattern* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<URLPattern>&& impl)
     {
         SUPPRESS_UNCOUNTED_LOCAL auto& vm = globalObject->vm();
-        JSURLPattern* ptr = new (NotNull, JSC::allocateCell<JSURLPattern>(vm)) JSURLPattern(structure, *globalObject, WTFMove(impl));
+        JSURLPattern* ptr = new (NotNull, JSC::allocateCell<JSURLPattern>(vm)) JSURLPattern(structure, *globalObject, WTF::move(impl));
         ptr->finishCreation(vm);
         return ptr;
     }

@@ -133,7 +133,7 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
     const bool produceCachedData = options.produceCachedData;
     auto filename = options.filename;
 
-    NodeVMScript* script = NodeVMScript::create(vm, globalObject, structure, WTFMove(source), WTFMove(options));
+    NodeVMScript* script = NodeVMScript::create(vm, globalObject, structure, WTF::move(source), WTF::move(options));
     RETURN_IF_EXCEPTION(scope, {});
 
     fetcher->owner(vm, script);
@@ -150,7 +150,7 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
         JSC::LexicallyScopedFeatures lexicallyScopedFeatures = globalObject->globalScopeExtension() ? JSC::TaintedByWithScopeLexicallyScopedFeature : JSC::NoLexicallyScopedFeatures;
         JSC::SourceCodeKey key(script->source(), {}, JSC::SourceCodeType::ProgramType, lexicallyScopedFeatures, JSC::JSParserScriptMode::Classic, JSC::DerivedContextType::None, JSC::EvalContextType::None, false, {}, std::nullopt);
         Ref<JSC::CachedBytecode> cachedBytecode = JSC::CachedBytecode::create(std::span(cachedData), nullptr, {});
-        JSC::UnlinkedProgramCodeBlock* unlinkedBlock = JSC::decodeCodeBlock<UnlinkedProgramCodeBlock>(vm, key, WTFMove(cachedBytecode));
+        JSC::UnlinkedProgramCodeBlock* unlinkedBlock = JSC::decodeCodeBlock<UnlinkedProgramCodeBlock>(vm, key, WTF::move(cachedBytecode));
 
         if (!unlinkedBlock) {
             script->cachedDataRejected(TriState::True);
@@ -264,7 +264,7 @@ void NodeVMScriptConstructor::finishCreation(VM& vm, JSObject* prototype)
 
 NodeVMScript* NodeVMScript::create(VM& vm, JSGlobalObject* globalObject, Structure* structure, SourceCode source, ScriptOptions options)
 {
-    NodeVMScript* ptr = new (NotNull, allocateCell<NodeVMScript>(vm)) NodeVMScript(vm, structure, WTFMove(source), WTFMove(options));
+    NodeVMScript* ptr = new (NotNull, allocateCell<NodeVMScript>(vm)) NodeVMScript(vm, structure, WTF::move(source), WTF::move(options));
     ptr->finishCreation(vm);
     return ptr;
 }
@@ -283,6 +283,7 @@ void NodeVMScript::destroy(JSCell* cell)
 static bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, NodeVMScript* script, std::optional<double> timeout)
 {
     if (vm.hasTerminationRequest()) {
+        vm.drainMicrotasksForGlobalObject(globalObject);
         vm.clearHasTerminationRequest();
         if (script->getSigintReceived()) {
             script->setSigintReceived(false);

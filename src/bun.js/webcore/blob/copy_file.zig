@@ -31,7 +31,7 @@ pub const CopyFile = struct {
         max_len: SizeType,
         globalThis: *JSGlobalObject,
         mkdirp_if_not_exists: bool,
-    ) !*CopyFilePromiseTask {
+    ) *CopyFilePromiseTask {
         const read_file = bun.new(CopyFile, CopyFile{
             .store = store,
             .source_store = source_store,
@@ -44,7 +44,7 @@ pub const CopyFile = struct {
         });
         store.ref();
         source_store.ref();
-        return bun.handleOom(CopyFilePromiseTask.createOnJSThread(allocator, globalThis, read_file));
+        return CopyFilePromiseTask.createOnJSThread(allocator, globalThis, read_file);
     }
 
     const linux = std.os.linux;

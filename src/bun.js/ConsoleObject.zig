@@ -2703,7 +2703,7 @@ pub const Formatter = struct {
 
                 writer.writeAll("Promise { " ++ comptime Output.prettyFmt("<r><cyan>", enable_ansi_colors));
 
-                switch (JSPromise.status(@as(*JSPromise, @ptrCast(value.asObjectRef().?)), this.globalThis.vm())) {
+                switch (JSPromise.status(@as(*JSPromise, @ptrCast(value.asObjectRef().?)))) {
                     .pending => writer.writeAll("<pending>"),
                     .fulfilled => writer.writeAll("<resolved>"),
                     .rejected => writer.writeAll("<rejected>"),

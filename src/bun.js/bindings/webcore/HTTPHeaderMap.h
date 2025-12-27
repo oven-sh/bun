@@ -41,7 +41,7 @@ public:
         String value;
 
         CommonHeader isolatedCopy() const & { return { key, value.isolatedCopy() }; }
-        CommonHeader isolatedCopy() && { return { key, WTFMove(value).isolatedCopy() }; }
+        CommonHeader isolatedCopy() && { return { key, WTF::move(value).isolatedCopy() }; }
         template<class Encoder> void encode(Encoder &) const;
         template<class Decoder> static std::optional<CommonHeader> decode(Decoder &);
 
@@ -60,7 +60,7 @@ public:
         String value;
 
         UncommonHeader isolatedCopy() const & { return { key.isolatedCopy(), value.isolatedCopy() }; }
-        UncommonHeader isolatedCopy() && { return { WTFMove(key).isolatedCopy(), WTFMove(value).isolatedCopy() }; }
+        UncommonHeader isolatedCopy() && { return { WTF::move(key).isolatedCopy(), WTF::move(value).isolatedCopy() }; }
         template<class Encoder> void encode(Encoder &) const;
         template<class Decoder> static std::optional<UncommonHeader> decode(Decoder &);
 
@@ -261,7 +261,7 @@ public:
     }
 
     template<class Encoder> void encode(Encoder &) const;
-    template<class Decoder> static WARN_UNUSED_RETURN bool decode(Decoder &, HTTPHeaderMap &);
+    template<class Decoder> WARN_UNUSED_RETURN static bool decode(Decoder &, HTTPHeaderMap &);
     void setUncommonHeader(const String &name, const String &value);
     void setUncommonHeaderCloneName(const StringView name, const String &value);
 
@@ -290,7 +290,7 @@ auto HTTPHeaderMap::CommonHeader::decode(Decoder &decoder) -> std::optional<Comm
     if (!decoder.decode(value))
         return std::nullopt;
 
-    return CommonHeader { name, WTFMove(value) };
+    return CommonHeader { name, WTF::move(value) };
 }
 
 template<class Encoder>
@@ -310,7 +310,7 @@ auto HTTPHeaderMap::UncommonHeader::decode(Decoder &decoder) -> std::optional<Un
     if (!decoder.decode(value))
         return std::nullopt;
 
-    return UncommonHeader { WTFMove(name), WTFMove(value) };
+    return UncommonHeader { WTF::move(name), WTF::move(value) };
 }
 
 template<class Encoder>

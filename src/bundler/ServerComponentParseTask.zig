@@ -107,7 +107,7 @@ fn generateClientEntryWrapper(_: *ServerComponentParseTask, data: Data.ClientEnt
         .items = &.{},
         .is_single_line = true,
     });
-    b.import_records.items[record].was_originally_bare_import = true;
+    b.import_records.items[record].flags.was_originally_bare_import = true;
 }
 
 fn generateClientReferenceProxy(task: *ServerComponentParseTask, data: Data.ReferenceProxy, b: *AstBuilder) !void {

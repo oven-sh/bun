@@ -129,6 +129,7 @@ pub const BundleV2 = struct {
     /// See the comment in `Chunk.OutputPiece`
     unique_key: u64 = 0,
     dynamic_import_entry_points: std.AutoArrayHashMap(Index.Int, void) = undefined,
+    new_worker_entry_points: std.AutoArrayHashMap(Index.Int, void) = undefined,
     has_on_parse_plugins: bool = false,
 
     finalizers: std.ArrayListUnmanaged(CacheEntry.ExternalFreeFunction) = .{},
@@ -272,6 +273,8 @@ pub const BundleV2 = struct {
         redirects: []u32,
         redirect_map: PathToSourceIndexMap,
         dynamic_import_entry_points: *std.AutoArrayHashMap(Index.Int, void),
+        /// Files which are imported via `new Worker()`
+        new_worker_entry_points: *std.AutoArrayHashMap(Index.Int, void),
         /// Files which are Server Component Boundaries
         scb_bitset: ?bun.bit_set.DynamicBitSetUnmanaged,
         scb_list: ServerComponentBoundary.List.Slice,
@@ -346,6 +349,11 @@ pub const BundleV2 = struct {
                             v.additional_files_imported_by_css_and_inlined.set(import_record.source_index.get());
                         }
 
+                        // Worker files are treated as separate entry points (like dynamic imports with code splitting)
+                        if (import_record.kind == .new_worker and import_record.source_index.isValid()) {
+                            v.new_worker_entry_points.put(import_record.source_index.get(), {}) catch unreachable;
+                        }
+
                         v.visit(import_record.source_index, check_dynamic_imports and import_record.kind == .dynamic, check_dynamic_imports);
                     }
                 }
@@ -390,6 +398,7 @@ pub const BundleV2 = struct {
         }
 
         this.dynamic_import_entry_points = std.AutoArrayHashMap(Index.Int, void).init(this.allocator());
+        this.new_worker_entry_points = std.AutoArrayHashMap(Index.Int, void).init(this.allocator());
 
         const all_urls_for_css = this.graph.ast.items(.url_for_css);
 
@@ -402,6 +411,7 @@ pub const BundleV2 = struct {
             .all_urls_for_css = all_urls_for_css,
             .redirect_map = this.pathToSourceIndexMap(this.transpiler.options.target).*,
             .dynamic_import_entry_points = &this.dynamic_import_entry_points,
+            .new_worker_entry_points = &this.new_worker_entry_points,
             .scb_bitset = scb_bitset,
             .scb_list = if (scb_bitset != null)
                 this.graph.server_component_boundaries.slice()
@@ -4102,10 +4112,13 @@ pub const EntryPoint = struct {
         user_specified,
         dynamic_import,
         html,
+        /// A file imported via `new Worker(path)`
+        new_worker_import,
 
         pub fn outputKind(this: Kind) jsc.API.BuildArtifact.OutputKind {
             return switch (this) {
                 .user_specified => .@"entry-point",
+                .new_worker_import => .@"entry-point",
                 else => .chunk,
             };
         }

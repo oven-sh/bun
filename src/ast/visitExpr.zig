@@ -1519,6 +1519,48 @@ pub fn VisitExpr(
                     arg.* = p.visitExpr(arg.*);
                 }
 
+                // Detect `new Worker(string_literal)` pattern and create import record
+                // This allows bundler to automatically include worker files in standalone binaries
+                // Only detect Worker when:
+                // 1. It's imported from 'node:worker_threads' or 'worker_threads' module, OR
+                // 2. It's the global unbound Worker (Bun's Web Worker API)
+                // We do NOT detect user-defined classes named Worker
+                if (p.options.bundle) {
+                    // After visiting, import identifiers are converted to e_import_identifier
+                    const target_ref: ?Ref = switch (e_.target.data) {
+                        .e_identifier => |ident| ident.ref,
+                        .e_import_identifier => |ident| ident.ref,
+                        else => null,
+                    };
+                    if (target_ref) |ref| {
+                        // Check if this identifier is a Worker that should be bundled:
+                        // - Imported from worker_threads module (set populated in processImportStatement)
+                        // - OR the global unbound Worker (Bun's Web Worker API)
+                        const is_worker_threads_import = p.worker_threads_worker_refs.contains(ref);
+                        const is_global_worker = blk: {
+                            const symbol = p.symbols.items[ref.innerIndex()];
+                            break :blk symbol.kind == .unbound and strings.eqlComptime(symbol.original_name, "Worker");
+                        };
+
+                        if (is_worker_threads_import or is_global_worker) {
+                            // Check if first argument is a string literal
+                            const args = e_.args.slice();
+                            if (args.len >= 1) {
+                                if (args[0].data.as(.e_string)) |str| {
+                                    // Ignore calls if control flow is provably dead
+                                    if (!p.is_control_flow_dead) {
+                                        const path_str = str.slice(p.allocator);
+                                        const import_record_index = p.addImportRecord(.new_worker, args[0].loc, path_str);
+                                        p.import_records.items[import_record_index].flags.handles_import_errors = p.fn_or_arrow_data_visit.try_body_count != 0;
+                                        p.import_records_for_current_part.append(p.allocator, import_record_index) catch unreachable;
+                                        e_.worker_import_record_index = import_record_index;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 if (p.options.features.minify_syntax) {
                     if (KnownGlobal.minifyGlobalConstructor(p.allocator, e_, p.symbols.items, expr.loc, p.options.features.minify_whitespace)) |minified| {
                         return minified;

@@ -311,6 +311,9 @@ pub fn NewParser_(
         enclosing_class_keyword: logger.Range = logger.Range.None,
         import_items_for_namespace: std.AutoHashMapUnmanaged(Ref, ImportItemForNamespaceMap) = .{},
         is_import_item: RefMap = .{},
+        /// Tracks refs that are Worker imported from 'node:worker_threads' or 'worker_threads'.
+        /// Used by visitExpr to detect `new Worker(string_literal)` patterns for standalone binary bundling.
+        worker_threads_worker_refs: RefMap = .{},
         named_imports: NamedImportsType,
         named_exports: js_ast.Ast.NamedExports,
         import_namespace_cc_map: Map(ImportNamespaceCallOrConstruct, bool) = .{},
@@ -2794,6 +2797,16 @@ pub fn NewParser_(
 
                 try p.is_import_item.put(p.allocator, ref, {});
                 p.checkForNonBMPCodePoint(item.alias_loc, item.alias);
+
+                // Track Worker imports from node:worker_threads or worker_threads
+                // This is used by visitExpr to detect new Worker(string_literal) patterns
+                if (p.options.bundle and strings.eqlComptime(item.alias, "Worker")) {
+                    if (strings.eqlComptime(path.text, "node:worker_threads") or
+                        strings.eqlComptime(path.text, "worker_threads"))
+                    {
+                        try p.worker_threads_worker_refs.put(p.allocator, ref, {});
+                    }
+                }
 
                 // ensure every e_import_identifier holds the namespace
                 if (p.options.features.hot_module_reloading) {

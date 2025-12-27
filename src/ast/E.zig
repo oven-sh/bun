@@ -164,6 +164,11 @@ pub const New = struct {
     can_be_unwrapped_if_unused: CallUnwrap = .never,
 
     close_parens_loc: logger.Loc,
+
+    /// If this is a `new Worker(path)` call and the path is a string literal,
+    /// this contains the import record index for the worker file.
+    /// Used to bundle workers into standalone executables.
+    worker_import_record_index: ?u32 = null,
 };
 pub const NewTarget = struct {
     range: logger.Range,

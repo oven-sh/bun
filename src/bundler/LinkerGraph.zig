@@ -226,6 +226,7 @@ pub fn load(
     sources: []const Logger.Source,
     server_component_boundaries: ServerComponentBoundary.List,
     dynamic_import_entry_points: []const Index.Int,
+    new_worker_entry_points: []const Index.Int,
     entry_point_original_names: *const IndexStringMap,
 ) !void {
     const scb = server_component_boundaries.slice();
@@ -246,7 +247,7 @@ pub fn load(
 
     // Setup entry points
     {
-        try this.entry_points.setCapacity(this.allocator, entry_points.len + server_component_boundaries.list.len + dynamic_import_entry_points.len);
+        try this.entry_points.setCapacity(this.allocator, entry_points.len + server_component_boundaries.list.len + dynamic_import_entry_points.len + new_worker_entry_points.len);
         this.entry_points.len = entry_points.len;
         const source_indices = this.entry_points.items(.source_index);
 
@@ -283,6 +284,23 @@ pub fn load(
 
             const source = &sources[id];
             entry_point_kinds[id] = EntryPoint.Kind.dynamic_import;
+
+            this.entry_points.appendAssumeCapacity(.{
+                .source_index = id,
+                .output_path = bun.PathString.init(source.path.text),
+                .output_path_was_auto_generated = true,
+            });
+        }
+
+        // Worker files are always separate entry points (bundled separately)
+        for (new_worker_entry_points) |id| {
+            if (entry_point_kinds[id] != .none) {
+                // Worker could reference a file that is already an entry point
+                continue;
+            }
+
+            const source = &sources[id];
+            entry_point_kinds[id] = EntryPoint.Kind.new_worker_import;
 
             this.entry_points.appendAssumeCapacity(.{
                 .source_index = id,
@@ -509,6 +527,8 @@ pub fn propagateAsyncDependencies(this: *LinkerGraph) !void {
                     .at, .at_conditional, .url, .composes => continue,
                     // Other non-JS imports
                     .html_manifest, .internal => continue,
+                    // Worker files are bundled separately
+                    .new_worker => continue,
                 }
 
                 const import_index: usize = import_record.source_index.get();

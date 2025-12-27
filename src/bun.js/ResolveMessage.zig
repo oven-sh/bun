@@ -41,6 +41,7 @@ pub const ResolveMessage = struct {
                         .url,
                         .internal,
                         .composes,
+                        .new_worker,
                         => "RESOLVE_ERROR",
                     };
                 };

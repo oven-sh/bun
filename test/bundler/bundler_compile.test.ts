@@ -105,6 +105,34 @@ describe("bundler", () => {
     outfile: "dist/out",
     run: { stdout: "Hello, world!" },
   });
+  // Test that workers are automatically bundled without explicit entryPointsRaw
+  itBundled("compile/WorkerAutoBundle", {
+    backend: "cli",
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import {rmSync} from 'fs';
+        // Verify we're not just importing from the filesystem
+        rmSync("./worker.ts", {force: true});
+
+        const worker = new Worker("./worker.ts");
+        // Wait for worker to signal completion
+        await new Promise((resolve) => {
+          worker.onmessage = (event) => {
+            console.log("Main: " + event.data);
+            resolve();
+          };
+        });
+      `,
+      "/worker.ts": /* js */ `
+        console.log("Worker loaded!");
+        postMessage("done");
+    `.trim(),
+    },
+    // No entryPointsRaw - worker should be auto-detected
+    outfile: "dist/out",
+    run: { stdout: "Worker loaded!\nMain: done\n", file: "dist/out", setCwd: true },
+  });
   itBundled("compile/WorkerRelativePathNoExtension", {
     backend: "cli",
     compile: true,

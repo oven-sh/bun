@@ -24,6 +24,9 @@ pub const ImportKind = enum(u8) {
 
     internal = 11,
 
+    /// A `new Worker(...)` expression with a string argument
+    new_worker = 12,
+
     pub const Label = std.EnumArray(ImportKind, []const u8);
     pub const all_labels: Label = brk: {
         // If these are changed, make sure to update
@@ -41,6 +44,7 @@ pub const ImportKind = enum(u8) {
         labels.set(ImportKind.composes, "composes");
         labels.set(ImportKind.internal, "internal");
         labels.set(ImportKind.html_manifest, "html_manifest");
+        labels.set(ImportKind.new_worker, "new-worker");
         break :brk labels;
     };
 
@@ -57,6 +61,7 @@ pub const ImportKind = enum(u8) {
         labels.set(ImportKind.internal, "<bun internal>");
         labels.set(ImportKind.composes, "composes");
         labels.set(ImportKind.html_manifest, "HTML import");
+        labels.set(ImportKind.new_worker, "new Worker()");
         break :brk labels;
     };
 

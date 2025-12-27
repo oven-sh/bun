@@ -2150,7 +2150,13 @@ fn NewPrinter(
                         p.print("(");
 
                         if (args.len > 0) {
-                            p.printExpr(args[0], .comma, ExprFlag.None());
+                            // For new Worker() calls, use the bundled path from the import record
+                            if (e.worker_import_record_index) |import_record_index| {
+                                const record = p.importRecord(import_record_index);
+                                p.printImportRecordPath(record);
+                            } else {
+                                p.printExpr(args[0], .comma, ExprFlag.None());
+                            }
 
                             for (args[1..]) |arg| {
                                 p.print(",");

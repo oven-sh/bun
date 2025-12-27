@@ -1,6 +1,8 @@
 pub fn computeCrossChunkDependencies(c: *LinkerContext, chunks: []Chunk) bun.OOM!void {
+    // Even without code_splitting, we need to rewrite worker import paths
+    // because workers are always separate entry points
     if (!c.graph.code_splitting) {
-        // No need to compute cross-chunk dependencies if there can't be any
+        try rewriteWorkerImportPaths(c, chunks);
         return;
     }
 
@@ -92,10 +94,13 @@ const CrossChunkDependencies = struct {
                 if (!part.is_live)
                     continue;
 
-                // Rewrite external dynamic imports to point to the chunk for that entry point
+                // Rewrite external dynamic imports and worker imports to point to the chunk for that entry point
                 for (part.import_record_indices.slice()) |import_record_id| {
                     var import_record = &import_records[import_record_id];
-                    if (import_record.source_index.isValid() and deps.ctx.isExternalDynamicImport(import_record, source_index)) {
+                    const is_external_dynamic = import_record.source_index.isValid() and deps.ctx.isExternalDynamicImport(import_record, source_index);
+                    const is_worker_import = import_record.source_index.isValid() and import_record.kind == .new_worker and
+                        deps.ctx.graph.files.items(.entry_point_kind)[import_record.source_index.get()].isEntryPoint();
+                    if (is_external_dynamic or is_worker_import) {
                         const other_chunk_index = entry_point_chunk_indices[import_record.source_index.get()];
                         import_record.path.text = _chunks[other_chunk_index].unique_key;
                         import_record.source_index = Index.invalid;
@@ -452,3 +457,42 @@ const debug = LinkerContext.debug;
 
 const Logger = bun.logger;
 const Loc = Logger.Loc;
+
+/// Rewrite worker import record paths to point to the correct chunk.
+/// This is used when code_splitting is false, but we still have worker entry points.
+fn rewriteWorkerImportPaths(c: *LinkerContext, chunks: []Chunk) bun.OOM!void {
+    const entry_point_chunk_indices = c.graph.files.items(.entry_point_chunk_index);
+    const entry_point_kinds = c.graph.files.items(.entry_point_kind);
+    const parts_list = c.graph.ast.items(.parts);
+    const import_records_list = c.graph.ast.items(.import_records);
+
+    // Iterate through all chunks and their files to find worker imports
+    for (chunks) |*chunk| {
+        if (chunk.content != .javascript) continue;
+
+        for (chunk.files_with_parts_in_chunk.keys()) |source_index| {
+            const parts = parts_list[source_index].slice();
+            var import_records = import_records_list[source_index].slice();
+
+            for (parts) |*part| {
+                if (!part.is_live) continue;
+
+                for (part.import_record_indices.slice()) |import_record_id| {
+                    var import_record = &import_records[import_record_id];
+
+                    // Check if this is a worker import with a valid entry point
+                    if (import_record.kind == .new_worker and
+                        import_record.source_index.isValid() and
+                        entry_point_kinds[import_record.source_index.get()].isEntryPoint())
+                    {
+                        const other_chunk_index = entry_point_chunk_indices[import_record.source_index.get()];
+                        if (other_chunk_index < chunks.len) {
+                            import_record.path.text = chunks[other_chunk_index].unique_key;
+                            import_record.source_index = Index.invalid;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

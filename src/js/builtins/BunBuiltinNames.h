@@ -126,6 +126,7 @@ using namespace JSC;
     macro(flushAlgorithm) \
     macro(format) \
     macro(fulfillModuleSync) \
+    macro(getAsyncContext) \
     macro(getInternalWritableStream) \
     macro(handleEvent) \
     macro(hash) \
@@ -230,6 +231,7 @@ using namespace JSC;
     macro(secure) \
     macro(self) \
     macro(sep) \
+    macro(setAsyncContext) \
     macro(setBody) \
     macro(setStatus) \
     macro(setup) \

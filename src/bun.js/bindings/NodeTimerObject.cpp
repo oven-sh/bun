@@ -22,13 +22,13 @@ static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue call
     auto scope = DECLARE_CATCH_SCOPE(vm);
 
     JSValue restoreAsyncContext {};
-    JSC::InternalFieldTuple* asyncContextData = nullptr;
+    bool hasAsyncContext = false;
 
     if (auto* wrapper = jsDynamicCast<AsyncContextFrame*>(callbackValue)) {
         callbackValue = wrapper->callback.get();
-        asyncContextData = globalObject->m_asyncContextData.get();
-        restoreAsyncContext = asyncContextData->getInternalField(0);
-        asyncContextData->putInternalField(vm, 0, wrapper->context.get());
+        restoreAsyncContext = globalObject->asyncContext();
+        globalObject->setAsyncContext(vm, wrapper->context.get());
+        hasAsyncContext = true;
     }
 
     if (auto* promise = jsDynamicCast<JSPromise*>(callbackValue)) {
@@ -66,8 +66,8 @@ static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue call
         hadException = true;
     }
 
-    if (asyncContextData) {
-        asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
+    if (hasAsyncContext) {
+        globalObject->setAsyncContext(vm, restoreAsyncContext);
     }
 
     return hadException;

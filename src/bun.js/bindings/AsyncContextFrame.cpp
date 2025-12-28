@@ -36,7 +36,7 @@ JSC::Structure* AsyncContextFrame::createStructure(JSC::VM& vm, JSC::JSGlobalObj
 
 JSValue AsyncContextFrame::withAsyncContextIfNeeded(JSGlobalObject* globalObject, JSValue callback)
 {
-    JSValue context = globalObject->m_asyncContextData.get()->getInternalField(0);
+    JSValue context = globalObject->asyncContext();
 
     // If there is no async context, do not snapshot the callback.
     if (context.isUndefined()) {
@@ -96,16 +96,16 @@ extern "C" JSC::EncodedJSValue AsyncContextFrame__withAsyncContextIfNeeded(JSGlo
         return jsUndefined();                                                \
     auto& vm = global->vm();                                                 \
     JSValue restoreAsyncContext;                                             \
-    InternalFieldTuple* asyncContextData = nullptr;                          \
+    bool hasAsyncContext = false;                                            \
     if (auto* wrapper = jsDynamicCast<AsyncContextFrame*>(functionObject)) { \
         functionObject = jsCast<JSC::JSObject*>(wrapper->callback.get());    \
-        asyncContextData = global->m_asyncContextData.get();                 \
-        restoreAsyncContext = asyncContextData->getInternalField(0);         \
-        asyncContextData->putInternalField(vm, 0, wrapper->context.get());   \
+        restoreAsyncContext = global->asyncContext();                        \
+        global->setAsyncContext(vm, wrapper->context.get());                 \
+        hasAsyncContext = true;                                              \
     }                                                                        \
     auto result = JSC::profiledCall(__VA_ARGS__);                            \
-    if (asyncContextData) {                                                  \
-        asyncContextData->putInternalField(vm, 0, restoreAsyncContext);      \
+    if (hasAsyncContext) {                                                   \
+        global->setAsyncContext(vm, restoreAsyncContext);                    \
     }                                                                        \
     return result;
 

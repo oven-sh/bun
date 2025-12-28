@@ -143,11 +143,11 @@ export function setupReadableStreamDefaultController(
   const pullAlgorithm = () => $promiseInvokeOrNoopMethod(underlyingSource, pullMethod, [controller]);
   const cancelAlgorithm = asyncContext
     ? reason => {
-        var prev = $getInternalField($asyncContext, 0);
-        $putInternalField($asyncContext, 0, asyncContext);
+        var prev = $getAsyncContext();
+        $setAsyncContext(asyncContext);
         // this does not throw, but can returns a rejected promise
         var result = $promiseInvokeOrNoopMethod(underlyingSource, cancelMethod, [reason]);
-        $putInternalField($asyncContext, 0, prev);
+        $setAsyncContext(prev);
         return result;
       }
     : reason => $promiseInvokeOrNoopMethod(underlyingSource, cancelMethod, [reason]);
@@ -1035,8 +1035,8 @@ export function onPullDirectStream(controller: ReadableStreamDirectController) {
 
   var asyncContext = stream.$asyncContext;
   if (asyncContext) {
-    var prev = $getInternalField($asyncContext, 0);
-    $putInternalField($asyncContext, 0, asyncContext);
+    var prev = $getAsyncContext();
+    $setAsyncContext(asyncContext);
   }
 
   // Direct streams allow $pull to be called multiple times, unlike the spec.
@@ -1063,7 +1063,7 @@ export function onPullDirectStream(controller: ReadableStreamDirectController) {
     controller._deferFlush = controller._deferClose = 0;
 
     if (asyncContext) {
-      $putInternalField($asyncContext, 0, prev);
+      $setAsyncContext(prev);
     }
   }
 

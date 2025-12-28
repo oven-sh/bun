@@ -2734,12 +2734,12 @@ extern "C" JSC::EncodedJSValue Bun__JSValue__call(JSC::JSGlobalObject* globalObj
     JSC::JSValue jsThisObject = JSValue::decode(thisObject);
 
     JSValue restoreAsyncContext;
-    InternalFieldTuple* asyncContextData = nullptr;
+    bool hasAsyncContext = false;
     if (auto* wrapper = jsDynamicCast<AsyncContextFrame*>(jsObject)) {
         jsObject = jsCast<JSC::JSFunction*>(wrapper->callback.get());
-        asyncContextData = globalObject->m_asyncContextData.get();
-        restoreAsyncContext = asyncContextData->getInternalField(0);
-        asyncContextData->putInternalField(vm, 0, wrapper->context.get());
+        restoreAsyncContext = globalObject->asyncContext();
+        globalObject->setAsyncContext(vm, wrapper->context.get());
+        hasAsyncContext = true;
     }
 
     if (!jsThisObject)
@@ -2771,8 +2771,8 @@ extern "C" JSC::EncodedJSValue Bun__JSValue__call(JSC::JSGlobalObject* globalObj
 
     auto result = JSC::profiledCall(globalObject, ProfilingReason::API, jsObject, callData, jsThisObject, argList);
 
-    if (asyncContextData) {
-        asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
+    if (hasAsyncContext) {
+        globalObject->setAsyncContext(vm, restoreAsyncContext);
     }
 
     RETURN_IF_EXCEPTION(scope, {});
@@ -3524,7 +3524,7 @@ void JSC__JSPromise__rejectOnNextTickWithHandled(JSC::JSPromise* promise, JSC::J
         auto microtaskFunction = globalObject->performMicrotaskFunction();
         auto rejectPromiseFunction = globalObject->rejectPromiseFunction();
 
-        auto asyncContext = globalObject->m_asyncContextData.get()->getInternalField(0);
+        auto asyncContext = globalObject->asyncContext();
 
 #if ASSERT_ENABLED
         ASSERT_WITH_MESSAGE(microtaskFunction, "Invalid microtask function");
@@ -3540,7 +3540,7 @@ void JSC__JSPromise__rejectOnNextTickWithHandled(JSC::JSPromise* promise, JSC::J
             value = jsUndefined();
         }
 
-        JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::BunPerformMicrotaskJob, globalObject, microtaskFunction, rejectPromiseFunction, globalObject->m_asyncContextData.get()->getInternalField(0), promise, value };
+        JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::BunPerformMicrotaskJob, globalObject, microtaskFunction, rejectPromiseFunction, asyncContext, promise, value };
         globalObject->vm().queueMicrotask(WTF::move(task));
         RETURN_IF_EXCEPTION(scope, );
     }
@@ -5390,7 +5390,7 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskJob(JSC::JSGlobalObject* arg0
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(arg0);
     JSValue microtaskArgs[] = {
         JSValue::decode(JSValue1),
-        globalObject->m_asyncContextData.get()->getInternalField(0),
+        globalObject->asyncContext(),
         JSValue::decode(JSValue3),
         JSValue::decode(JSValue4)
     };

@@ -299,8 +299,8 @@ export function initializeNextTickQueue(
           var callback = tock.callback;
           var args = tock.args;
           var frame = tock.frame;
-          var restore = $getInternalField($asyncContext, 0);
-          $putInternalField($asyncContext, 0, frame);
+          var restore = $getAsyncContext();
+          $setAsyncContext(frame);
           try {
             if (args === undefined) {
               callback();
@@ -326,7 +326,7 @@ export function initializeNextTickQueue(
           } catch (e) {
             reportUncaughtException(e);
           } finally {
-            $putInternalField($asyncContext, 0, restore);
+            $setAsyncContext(restore);
           }
         }
 
@@ -353,7 +353,7 @@ export function initializeNextTickQueue(
       // We want to avoid materializing the args if there are none because it's
       // a waste of memory and Array.prototype.slice shows up in profiling.
       args: $argumentCount() > 1 ? args : undefined,
-      frame: $getInternalField($asyncContext, 0),
+      frame: $getAsyncContext(),
     });
     $putInternalField(nextTickQueue, 0, 1);
   }

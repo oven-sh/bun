@@ -789,16 +789,16 @@ void NodeVMGlobalObject::finishCreation(JSC::VM& vm)
 
     vm.ensureTerminationException();
 
-    // Share the async context data with the parent Zig::GlobalObject.
+    // Delegate async context to the parent Zig::GlobalObject.
     // This is necessary because AsyncLocalStorage methods (run, getStore, etc.) are defined
-    // in the parent realm and reference the parent's $asyncContext. However, microtask
-    // processing (JSMicrotask.cpp) operates on this NodeVMGlobalObject's m_asyncContextData.
-    // By sharing the same InternalFieldTuple, both the JS code and C++ microtask handling
+    // in the parent realm and reference the parent's $asyncContext. However, C++ code
+    // (JSMicrotask.cpp, etc.) uses this NodeVMGlobalObject's asyncContext() accessor.
+    // By delegating to the parent, both the JS code and C++ async context handling
     // will operate on the same async context, ensuring proper AsyncLocalStorage behavior
     // across await boundaries in VM contexts.
     auto* parentGlobalObject = defaultGlobalObject(this);
-    if (parentGlobalObject && parentGlobalObject->m_asyncContextData) {
-        m_asyncContextData.set(vm, this, parentGlobalObject->m_asyncContextData.get());
+    if (parentGlobalObject) {
+        setAsyncContextDelegateParent(parentGlobalObject);
     }
 }
 

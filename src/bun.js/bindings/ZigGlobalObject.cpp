@@ -358,7 +358,7 @@ static void checkIfNextTickWasCalledDuringMicrotask(JSC::VM& vm)
 static void cleanupAsyncHooksData(JSC::VM& vm)
 {
     auto* globalObject = defaultGlobalObject();
-    globalObject->m_asyncContextData.get()->putInternalField(vm, 0, jsUndefined());
+    globalObject->setAsyncContext(vm, jsUndefined());
     globalObject->asyncHooksNeedsCleanup = false;
     if (!globalObject->m_nextTickQueue) {
         vm.setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
@@ -1058,7 +1058,7 @@ JSC_DEFINE_HOST_FUNCTION(functionQueueMicrotask,
     RETURN_IF_EXCEPTION(scope, {});
 
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    JSC::JSValue asyncContext = globalObject->m_asyncContextData.get()->getInternalField(0);
+    JSC::JSValue asyncContext = globalObject->asyncContext();
     auto function = globalObject->performMicrotaskFunction();
 #if ASSERT_ENABLED
     ASSERT_WITH_MESSAGE(function, "Invalid microtask function");
@@ -1340,6 +1340,23 @@ JSC_DEFINE_HOST_FUNCTION(functionCreateUninitializedArrayBuffer,
     RELEASE_AND_RETURN(scope, JSValue::encode(JSC::JSArrayBuffer::create(globalObject->vm(), globalObject->arrayBufferStructure(JSC::ArrayBufferSharingMode::Default), WTF::move(arrayBuffer))));
 }
 
+JSC_DECLARE_HOST_FUNCTION(functionGetAsyncContext);
+JSC_DEFINE_HOST_FUNCTION(functionGetAsyncContext,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
+{
+    return JSValue::encode(globalObject->asyncContext());
+}
+
+JSC_DECLARE_HOST_FUNCTION(functionSetAsyncContext);
+JSC_DEFINE_HOST_FUNCTION(functionSetAsyncContext,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    JSValue value = callFrame->argument(0);
+    globalObject->setAsyncContext(vm, value);
+    return JSValue::encode(value);
+}
+
 static inline JSC::EncodedJSValue jsFunctionAddEventListenerBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, Zig::GlobalObject* castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -1573,12 +1590,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPerformMicrotask, (JSGlobalObject * globalObj
     WTF::NakedPtr<JSC::Exception> exceptionPtr;
 
     JSValue restoreAsyncContext = {};
-    InternalFieldTuple* asyncContextData = nullptr;
-    auto setAsyncContext = callframe->argument(1);
-    if (!setAsyncContext.isUndefined()) {
-        asyncContextData = globalObject->m_asyncContextData.get();
-        restoreAsyncContext = asyncContextData->getInternalField(0);
-        asyncContextData->putInternalField(vm, 0, setAsyncContext);
+    bool hasAsyncContext = false;
+    auto setAsyncContextArg = callframe->argument(1);
+    if (!setAsyncContextArg.isUndefined()) {
+        restoreAsyncContext = globalObject->asyncContext();
+        globalObject->setAsyncContext(vm, setAsyncContextArg);
+        hasAsyncContext = true;
     }
 
     size_t argCount = callframe->argumentCount();
@@ -1598,8 +1615,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPerformMicrotask, (JSGlobalObject * globalObj
 
     JSC::profiledCall(globalObject, ProfilingReason::API, job, callData, jsUndefined(), arguments, exceptionPtr);
 
-    if (asyncContextData) {
-        asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
+    if (hasAsyncContext) {
+        globalObject->setAsyncContext(vm, restoreAsyncContext);
     }
 
     if (auto* exception = exceptionPtr.get()) {
@@ -1640,18 +1657,18 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPerformMicrotaskVariadic, (JSGlobalObject * g
     }
 
     JSValue restoreAsyncContext = {};
-    InternalFieldTuple* asyncContextData = nullptr;
-    auto setAsyncContext = callframe->argument(2);
-    if (!setAsyncContext.isUndefined()) {
-        asyncContextData = globalObject->m_asyncContextData.get();
-        restoreAsyncContext = asyncContextData->getInternalField(0);
-        asyncContextData->putInternalField(vm, 0, setAsyncContext);
+    bool hasAsyncContext = false;
+    auto setAsyncContextArg = callframe->argument(2);
+    if (!setAsyncContextArg.isUndefined()) {
+        restoreAsyncContext = globalObject->asyncContext();
+        globalObject->setAsyncContext(vm, setAsyncContextArg);
+        hasAsyncContext = true;
     }
 
     JSC::profiledCall(globalObject, ProfilingReason::API, job, callData, thisValue, arguments, exceptionPtr);
 
-    if (asyncContextData) {
-        asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
+    if (hasAsyncContext) {
+        globalObject->setAsyncContext(vm, restoreAsyncContext);
     }
 
     if (auto* exception = exceptionPtr.get()) {
@@ -2723,6 +2740,8 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     putDirectBuiltinFunction(vm, this, builtinNames.overridableRequirePrivateName(), commonJSOverridableRequireCodeGenerator(vm), 0);
 
     putDirectNativeFunction(vm, this, builtinNames.createUninitializedArrayBufferPrivateName(), 1, functionCreateUninitializedArrayBuffer, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    putDirectNativeFunction(vm, this, builtinNames.getAsyncContextPrivateName(), 0, functionGetAsyncContext, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    putDirectNativeFunction(vm, this, builtinNames.setAsyncContextPrivateName(), 1, functionSetAsyncContext, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectNativeFunction(vm, this, builtinNames.resolveSyncPrivateName(), 1, functionImportMeta__resolveSyncPrivate, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectNativeFunction(vm, this, builtinNames.createInternalModuleByIdPrivateName(), 1, InternalModuleRegistry::jsCreateInternalModuleById, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
 

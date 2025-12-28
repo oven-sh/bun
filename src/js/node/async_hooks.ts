@@ -63,14 +63,14 @@ function debugFormatContextValue(value: ReadonlyArray<any> | undefined) {
 }
 
 function get(): ReadonlyArray<any> | undefined {
-  $debug("get", debugFormatContextValue($getInternalField($asyncContext, 0)));
-  return $getInternalField($asyncContext, 0);
+  $debug("get", debugFormatContextValue($getAsyncContext()));
+  return $getAsyncContext();
 }
 
 function set(contextValue: ReadonlyArray<any> | undefined) {
   $assert(assertValidAsyncContextArray(contextValue));
   $debug("set", debugFormatContextValue(contextValue));
-  return $putInternalField($asyncContext, 0, contextValue);
+  return $setAsyncContext(contextValue);
 }
 
 class AsyncLocalStorage {

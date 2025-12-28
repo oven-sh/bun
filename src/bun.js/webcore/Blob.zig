@@ -1227,12 +1227,6 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
         if (blob_store.data == .file) {
             // reset last_modified to force getLastModified() to reload after writing.
             blob_store.data.file.last_modified = jsc.init_timestamp;
-            blob_store.data.file.max_size = Blob.max_size;
-            blob_store.data.file.seekable = null;
-        }
-
-        if (!path_or_blob.blob.is_slice) {
-            path_or_blob.blob.size = Blob.max_size;
         }
     }
 
@@ -1531,7 +1525,7 @@ pub fn writeFile(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun
     }
     // "Blob" must actually be a BunFile, not a webcore blob.
     if (path_or_blob == .blob) {
-        try validateWritableBlob(globalThis, path_or_blob.blob);
+        try validateWritableBlob(globalThis, &path_or_blob.blob);
     }
 
     const data = args.nextEat() orelse {
@@ -2307,7 +2301,7 @@ pub fn doWrite(this: *Blob, globalThis: *jsc.JSGlobalObject, callframe: *jsc.Cal
             return globalThis.throwInvalidArgumentType("write", "options", "object");
         }
     }
-    var blob_internal: PathOrBlob = .{ .blob = this };
+    var blob_internal: PathOrBlob = .{ .blob = this.* };
     return writeFileInternal(globalThis, &blob_internal, data, .{ .mkdirp_if_not_exists = mkdirp_if_not_exists, .extra_options = options });
 }
 

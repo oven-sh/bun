@@ -1172,7 +1172,7 @@ pub const Dirent = struct {
 
 pub const PathOrBlob = union(enum) {
     path: jsc.Node.PathOrFileDescriptor,
-    blob: *Blob,
+    blob: Blob,
 
     const Blob = jsc.WebCore.Blob;
 
@@ -1188,7 +1188,7 @@ pub const PathOrBlob = union(enum) {
         };
         if (arg.as(Blob)) |blob| {
             return PathOrBlob{
-                .blob = blob,
+                .blob = blob.*,
             };
         }
         return ctx.throwInvalidArgumentTypeValue("destination", "path, file descriptor, or Blob", arg);

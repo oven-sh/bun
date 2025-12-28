@@ -223,7 +223,7 @@ pub const S3Client = struct {
         const options = args.nextEat();
         var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl, ptr.storage_class);
         defer blob.detach();
-        var blob_internal: PathOrBlob = .{ .blob = &blob };
+        var blob_internal: PathOrBlob = .{ .blob = blob };
         return Blob.writeFileInternal(globalThis, &blob_internal, data, .{
             .mkdirp_if_not_exists = false,
             .extra_options = options,

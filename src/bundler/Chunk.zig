@@ -53,7 +53,7 @@ pub const Chunk = struct {
         const entry_point_id = this.entry_point.entry_point_id;
         for (chunks) |*other| {
             if (other.content == .javascript) {
-                if (other.entry_point.entry_point_id == entry_point_id) {
+                if (other.entry_point.entry_point_id == entry_point_id and other.isEntryPoint()) {
                     return other;
                 }
             }

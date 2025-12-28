@@ -39,8 +39,6 @@ charset: strings.AsciiStatus = .unknown,
 /// Was it created via file constructor?
 is_jsdom_file: bool = false,
 
-is_slice: bool = false,
-
 /// Reference count, for use with `bun.ptr.ExternalShared`. If the reference count is 0, that means
 /// this blob is *not* heap-allocated, and will not be freed in `deinit`.
 #ref_count: bun.ptr.RawRefCount(u32, .single_threaded) = .init(0),
@@ -1055,7 +1053,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
                 source_store,
                 ctx.bunVM().eventLoop(),
                 options.mkdirp_if_not_exists orelse true,
-                if (destination_blob.is_slice) @min(source_blob.size, destination_blob.size) else source_blob.size,
+                source_blob.size,
             );
         }
         var file_copier = copy_file.CopyFile.create(
@@ -1063,7 +1061,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
             destination_store,
             source_store,
             source_blob.offset,
-            if (destination_blob.is_slice) @min(source_blob.size, destination_blob.size) else source_blob.size,
+            source_blob.size,
             ctx,
             options.mkdirp_if_not_exists orelse true,
         );
@@ -2782,7 +2780,6 @@ pub fn getSliceFrom(this: *Blob, globalThis: *jsc.JSGlobalObject, relativeStart:
     var blob = this.dupe();
     blob.offset = offset;
     blob.size = len;
-    blob.is_slice = true;
 
     // infer the content type if it was not specified
     if (content_type.len == 0 and this.content_type.len > 0 and !this.content_type_allocated) {

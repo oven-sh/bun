@@ -3623,12 +3623,16 @@ static JSValue constructMainModuleProperty(VM& vm, JSObject* processObject)
 
 JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObject)
 {
+    // ShadowRealm should share process.nextTick queue with the default global object.
+    // This matches Node.js behavior where nextTick is per-isolate/event-loop.
+    auto* defaultGlobal = defaultGlobalObject();
+
     JSNextTickQueue* nextTickQueueObject;
-    if (!globalObject->m_nextTickQueue) {
-        nextTickQueueObject = JSNextTickQueue::create(globalObject);
-        globalObject->m_nextTickQueue.set(vm, globalObject, nextTickQueueObject);
+    if (!defaultGlobal->m_nextTickQueue) {
+        nextTickQueueObject = JSNextTickQueue::create(defaultGlobal);
+        defaultGlobal->m_nextTickQueue.set(vm, defaultGlobal, nextTickQueueObject);
     } else {
-        nextTickQueueObject = globalObject->m_nextTickQueue.get();
+        nextTickQueueObject = defaultGlobal->m_nextTickQueue.get();
     }
 
     JSC::JSFunction* initializer = JSC::JSFunction::create(vm, globalObject, processObjectInternalsInitializeNextTickQueueCodeGenerator(vm), globalObject);

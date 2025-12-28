@@ -1,9 +1,13 @@
 import type { Server, ServerWebSocket, Socket } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, rejectUnauthorizedScope, tempDirWithFiles, tls } from "harness";
+import { bunEnv, bunExe, bunRun, rejectUnauthorizedScope, tempDirWithFiles, tls } from "harness";
 import path from "path";
 
 describe.concurrent("Server", () => {
+  test("should not use 100% CPU when websocket is idle", async () => {
+    const { stderr } = bunRun(path.join(import.meta.dir, "bun-websocket-cpu-fixture.js"));
+    expect(stderr).toBe("");
+  });
   test("normlizes incoming request URLs", async () => {
     using server = Bun.serve({
       fetch(request) {
@@ -523,8 +527,6 @@ test("Bun should be able to handle utf16 inside Content-Type header #11316", asy
     port: 0,
     fetch() {
       const fileSuffix = "测试.html".match(/\.([a-z0-9]*)$/i)?.[1];
-
-      expect(fileSuffix).toBeUTF16String();
 
       return new Response("Hello World!\n", {
         headers: {

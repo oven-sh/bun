@@ -137,7 +137,7 @@ ScriptExecutionContext::~ScriptExecutionContext()
     m_inScriptExecutionContextDestructor = true;
 #endif // ASSERT_ENABLED
 
-    auto postMessageCompletionHandlers = WTFMove(m_processMessageWithMessagePortsSoonHandlers);
+    auto postMessageCompletionHandlers = WTF::move(m_processMessageWithMessagePortsSoonHandlers);
     for (auto& completionHandler : postMessageCompletionHandlers)
         completionHandler();
 
@@ -157,7 +157,7 @@ bool ScriptExecutionContext::postTaskTo(ScriptExecutionContextIdentifier identif
     if (!context)
         return false;
 
-    context->postTaskConcurrently(WTFMove(task));
+    context->postTaskConcurrently(WTF::move(task));
     return true;
 }
 
@@ -201,7 +201,7 @@ bool ScriptExecutionContext::ensureOnContextThread(ScriptExecutionContextIdentif
             return false;
 
         if (!context->isContextThread()) {
-            context->postTaskConcurrently(WTFMove(task));
+            context->postTaskConcurrently(WTF::move(task));
             return true;
         }
     }
@@ -218,7 +218,7 @@ bool ScriptExecutionContext::ensureOnMainThread(Function<void(ScriptExecutionCon
         return false;
     }
 
-    context->postTaskConcurrently(WTFMove(task));
+    context->postTaskConcurrently(WTF::move(task));
     return true;
 }
 
@@ -231,7 +231,7 @@ ScriptExecutionContext* ScriptExecutionContext::getMainThreadScriptExecutionCont
 void ScriptExecutionContext::processMessageWithMessagePortsSoon(CompletionHandler<void()>&& completionHandler)
 {
     ASSERT(isContextThread());
-    m_processMessageWithMessagePortsSoonHandlers.append(WTFMove(completionHandler));
+    m_processMessageWithMessagePortsSoonHandlers.append(WTF::move(completionHandler));
 
     if (m_willProcessMessageWithMessagePortsSoon) {
         return;
@@ -368,13 +368,13 @@ ScriptExecutionContext* executionContext(JSC::JSGlobalObject* globalObject)
 
 void ScriptExecutionContext::postTaskConcurrently(Function<void(ScriptExecutionContext&)>&& lambda)
 {
-    auto* task = new EventLoopTask(WTFMove(lambda));
+    auto* task = new EventLoopTask(WTF::move(lambda));
     static_cast<Zig::GlobalObject*>(m_globalObject)->queueTaskConcurrently(task);
 }
 // Executes the task on context's thread asynchronously.
 void ScriptExecutionContext::postTask(Function<void(ScriptExecutionContext&)>&& lambda)
 {
-    auto* task = new EventLoopTask(WTFMove(lambda));
+    auto* task = new EventLoopTask(WTF::move(lambda));
     static_cast<Zig::GlobalObject*>(m_globalObject)->queueTask(task);
 }
 // Executes the task on context's thread asynchronously.

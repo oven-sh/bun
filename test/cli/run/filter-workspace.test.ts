@@ -275,7 +275,10 @@ describe("bun", () => {
   test("respect dependency order", () => {
     const dir = tempDirWithFiles("testworkspace", {
       dep0: {
-        "index.js": "Bun.write('out.txt', 'success')",
+        "index.js": [
+          "await new Promise((resolve) => setTimeout(resolve, 100))",
+          "Bun.write('out.txt', 'success')",
+        ].join(";"),
         "package.json": JSON.stringify({
           name: "dep0",
           scripts: {
@@ -301,6 +304,44 @@ describe("bun", () => {
       pattern: "*",
       target_pattern: [/success/],
       antipattern: [/not found/],
+      command: ["script"],
+    });
+  });
+
+  test("respect dependency order when dependency name is larger than 8 characters", () => {
+    const largeNamePkgName = "larger-than-8-char";
+    const fileContent = `${largeNamePkgName} - ${new Date().getTime()}`;
+    const largeNamePkg = {
+      "index.js": [
+        "await new Promise((resolve) => setTimeout(resolve, 100))",
+        `Bun.write('out.txt', '${fileContent}')`,
+      ].join(";"),
+      "package.json": JSON.stringify({
+        name: largeNamePkgName,
+        scripts: {
+          script: `${bunExe()} run index.js`,
+        },
+      }),
+    };
+    const dir = tempDirWithFiles("testworkspace", {
+      main: {
+        "index.js": `console.log(await Bun.file("../${largeNamePkgName}/out.txt").text())`,
+        "package.json": JSON.stringify({
+          name: "main",
+          dependencies: {
+            [largeNamePkgName]: "*",
+          },
+          scripts: {
+            script: `${bunExe()} run index.js`,
+          },
+        }),
+      },
+      [largeNamePkgName]: largeNamePkg,
+    });
+    runInCwdSuccess({
+      cwd: dir,
+      pattern: "*",
+      target_pattern: [new RegExp(fileContent)],
       command: ["script"],
     });
   });

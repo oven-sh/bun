@@ -570,7 +570,7 @@ pub const BundleV2 = struct {
 
             var record: *ImportRecord = &this.graph.ast.items(.import_records)[import_record.importer_source_index].slice()[import_record.import_record_index];
             source = &this.graph.input_files.items(.source)[import_record.importer_source_index];
-            handles_import_errors = record.handles_import_errors;
+            handles_import_errors = record.flags.handles_import_errors;
 
             // Disable failing packages from being printed.
             // This may cause broken code to write.
@@ -641,7 +641,7 @@ pub const BundleV2 = struct {
             return;
         };
 
-        if (resolve_result.is_external) {
+        if (resolve_result.flags.is_external) {
             return;
         }
 
@@ -1836,6 +1836,8 @@ pub const BundleV2 = struct {
             );
             transpiler.options.env.behavior = config.env_behavior;
             transpiler.options.env.prefix = config.env_prefix.slice();
+            // Use the StringSet directly instead of the slice passed through TransformOptions
+            transpiler.options.bundler_feature_flags = &config.features;
             if (config.force_node_env != .unspecified) {
                 transpiler.options.force_node_env = config.force_node_env;
             }
@@ -3081,16 +3083,16 @@ pub const BundleV2 = struct {
         const source_dir = source.path.sourceDir();
         var estimated_resolve_queue_count: usize = 0;
         for (ast.import_records.slice()) |*import_record| {
-            if (import_record.is_internal) {
+            if (import_record.flags.is_internal) {
                 import_record.tag = .runtime;
                 import_record.source_index = Index.runtime;
             }
 
-            if (import_record.is_unused) {
+            if (import_record.flags.is_unused) {
                 import_record.source_index = Index.invalid;
             }
 
-            estimated_resolve_queue_count += @as(usize, @intFromBool(!(import_record.is_internal or import_record.is_unused or import_record.source_index.isValid())));
+            estimated_resolve_queue_count += @as(usize, @intFromBool(!(import_record.flags.is_internal or import_record.flags.is_unused or import_record.source_index.isValid())));
         }
         var resolve_queue = ResolveQueue.init(this.allocator());
         bun.handleOom(resolve_queue.ensureTotalCapacity(@intCast(estimated_resolve_queue_count)));
@@ -3100,10 +3102,10 @@ pub const BundleV2 = struct {
         outer: for (ast.import_records.slice(), 0..) |*import_record, i| {
             if (
             // Don't resolve TypeScript types
-            import_record.is_unused or
+            import_record.flags.is_unused or
 
                 // Don't resolve the runtime
-                import_record.is_internal or
+                import_record.flags.is_internal or
 
                 // Don't resolve pre-resolved imports
                 import_record.source_index.isValid())
@@ -3117,7 +3119,7 @@ pub const BundleV2 = struct {
                         const src = if (is_server) bake.server_virtual_source else bake.client_virtual_source;
                         if (strings.eqlComptime(import_record.path.text, src.path.pretty)) {
                             if (this.transpiler.options.dev_server != null) {
-                                import_record.is_external_without_side_effects = true;
+                                import_record.flags.is_external_without_side_effects = true;
                                 import_record.source_index = Index.invalid;
                             } else {
                                 if (is_server) {
@@ -3154,7 +3156,7 @@ pub const BundleV2 = struct {
                         replacement.path;
                     import_record.tag = replacement.tag;
                     import_record.source_index = Index.invalid;
-                    import_record.is_external_without_side_effects = true;
+                    import_record.flags.is_external_without_side_effects = true;
                     continue;
                 }
 
@@ -3162,7 +3164,7 @@ pub const BundleV2 = struct {
                     import_record.path = Fs.Path.init(import_record.path.text["bun:".len..]);
                     import_record.path.namespace = "bun";
                     import_record.source_index = Index.invalid;
-                    import_record.is_external_without_side_effects = true;
+                    import_record.flags.is_external_without_side_effects = true;
 
                     // don't link bun
                     continue;
@@ -3171,12 +3173,12 @@ pub const BundleV2 = struct {
 
             // By default, we treat .sqlite files as external.
             if (import_record.loader != null and import_record.loader.? == .sqlite) {
-                import_record.is_external_without_side_effects = true;
+                import_record.flags.is_external_without_side_effects = true;
                 continue;
             }
 
             if (import_record.loader != null and import_record.loader.? == .sqlite_embedded) {
-                import_record.is_external_without_side_effects = true;
+                import_record.flags.is_external_without_side_effects = true;
             }
 
             if (this.enqueueOnResolvePluginIfNeeded(source.index.get(), import_record, source.path.text, @as(u32, @truncate(i)), ast.target)) {
@@ -3264,7 +3266,7 @@ pub const BundleV2 = struct {
                     error.ModuleNotFound => {
                         const addError = Logger.Log.addResolveErrorWithTextDupe;
 
-                        if (!import_record.handles_import_errors and !this.transpiler.options.ignore_module_resolution_errors) {
+                        if (!import_record.flags.handles_import_errors and !this.transpiler.options.ignore_module_resolution_errors) {
                             last_error = err;
                             if (isPackagePath(import_record.path.text)) {
                                 if (ast.target == .browser and options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
@@ -3368,11 +3370,11 @@ pub const BundleV2 = struct {
                 continue;
             };
 
-            if (resolve_result.is_external) {
-                if (resolve_result.is_external_and_rewrite_import_path and !strings.eqlLong(resolve_result.path_pair.primary.text, import_record.path.text, true)) {
+            if (resolve_result.flags.is_external) {
+                if (resolve_result.flags.is_external_and_rewrite_import_path and !strings.eqlLong(resolve_result.path_pair.primary.text, import_record.path.text, true)) {
                     import_record.path = resolve_result.path_pair.primary;
                 }
-                import_record.is_external_without_side_effects = resolve_result.primary_side_effects_data != .has_side_effects;
+                import_record.flags.is_external_without_side_effects = resolve_result.primary_side_effects_data != .has_side_effects;
                 continue;
             }
 

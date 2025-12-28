@@ -71,8 +71,22 @@ pub const Loc = struct {
 };
 
 pub const Location = struct {
+    // Field ordering optimized to reduce padding:
+    // - 16-byte fields first: string (ptr+len), ?string (ptr+len+null flag)
+    // - 8-byte fields next: usize
+    // - 4-byte fields last: i32
+    // This eliminates padding between differently-sized fields.
+
     file: string,
     namespace: string = "file",
+    /// Text on the line, avoiding the need to refetch the source code
+    line_text: ?string = null,
+    /// Number of bytes this location should highlight.
+    /// 0 to just point at a single character
+    length: usize = 0,
+    // TODO: document or remove
+    offset: usize = 0,
+
     /// 1-based line number.
     /// Line <= 0 means there is no line and column information.
     // TODO: move to `bun.Ordinal`
@@ -81,13 +95,6 @@ pub const Location = struct {
     // original docs: 0-based, in bytes.
     // but there is a place where this is emitted in output, implying one based character offset
     column: i32,
-    /// Number of bytes this location should highlight.
-    /// 0 to just point at a single character
-    length: usize = 0,
-    /// Text on the line, avoiding the need to refetch the source code
-    line_text: ?string = null,
-    // TODO: document or remove
-    offset: usize = 0,
 
     pub fn memoryCost(this: *const Location) usize {
         var cost: usize = 0;

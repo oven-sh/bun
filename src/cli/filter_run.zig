@@ -615,13 +615,10 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
     }
     // compute dependencies (TODO: maybe we should do this only in a workspace?)
     for (state.handles) |*handle| {
+        const source_buf = handle.config.deps.source_buf;
         var iter = handle.config.deps.map.iterator();
         while (iter.next()) |entry| {
-            var sfa = std.heap.stackFallback(256, ctx.allocator);
-            const alloc = sfa.get();
-            const buf = try alloc.alloc(u8, entry.key_ptr.len());
-            defer alloc.free(buf);
-            const name = entry.key_ptr.slice(buf);
+            const name = entry.key_ptr.slice(source_buf);
             // is it a workspace dependency?
             if (map.get(name)) |pkgs| {
                 for (pkgs.items) |dep| {

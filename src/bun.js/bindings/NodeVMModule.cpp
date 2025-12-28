@@ -12,14 +12,14 @@
 namespace Bun {
 
 NodeVMModuleRequest::NodeVMModuleRequest(WTF::String specifier, WTF::HashMap<WTF::String, WTF::String> importAttributes)
-    : m_specifier(WTFMove(specifier))
-    , m_importAttributes(WTFMove(importAttributes))
+    : m_specifier(WTF::move(specifier))
+    , m_importAttributes(WTF::move(importAttributes))
 {
 }
 
 void NodeVMModuleRequest::addImportAttribute(WTF::String key, WTF::String value)
 {
-    m_importAttributes.set(WTFMove(key), WTFMove(value));
+    m_importAttributes.set(WTF::move(key), WTF::move(value));
 }
 
 JSArray* NodeVMModuleRequest::toJS(JSGlobalObject* globalObject) const
@@ -127,6 +127,7 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
     }
 
     if (vm.hasPendingTerminationException()) {
+        vm.drainMicrotasksForGlobalObject(nodeVmGlobalObject);
         scope.clearException();
         vm.clearHasTerminationRequest();
         if (getSigintReceived()) {
@@ -151,7 +152,7 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
 
 NodeVMModule::NodeVMModule(JSC::VM& vm, JSC::Structure* structure, WTF::String identifier, JSValue context, JSValue moduleWrapper)
     : Base(vm, structure)
-    , m_identifier(WTFMove(identifier))
+    , m_identifier(WTF::move(identifier))
     , m_context(context && context.isObject() ? asObject(context) : nullptr, JSC::WriteBarrierEarlyInit)
     , m_moduleWrapper(vm, this, moduleWrapper)
 {

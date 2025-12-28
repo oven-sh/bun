@@ -1021,6 +1021,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
                 write_file_promise,
                 &WriteFilePromise.run,
                 options.mkdirp_if_not_exists orelse true,
+                options.append orelse false,
             ) catch |e| switch (e) {
                 error.WriteFileWindowsDeinitialized => {},
                 error.JSTerminated => |ex| return ex,
@@ -1035,6 +1036,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
             write_file_promise,
             WriteFilePromise.run,
             options.mkdirp_if_not_exists orelse true,
+            options.append orelse false,
         ) catch unreachable;
         var task = write_file.WriteFileTask.createOnJSThread(bun.default_allocator, ctx, file_copier);
         // Defer promise creation until we're just about to schedule the task
@@ -1204,6 +1206,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
 const WriteFileOptions = struct {
     mkdirp_if_not_exists: ?bool = null,
     extra_options: ?JSValue = null,
+    append: ?bool = null,
 };
 
 /// ## Errors
@@ -1250,14 +1253,16 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
     //
     // except if you're on Windows. Windows I/O is slower. Let's not even try.
     if (comptime !Environment.isWindows) {
-        if (path_or_blob == .path or
+        // Skip fast path when appending
+        if ((options.append orelse false) == false and
+            (path_or_blob == .path or
             // If they try to set an offset, its a little more complicated so let's avoid that
             (path_or_blob.blob.offset == 0 and !path_or_blob.blob.isS3() and
                 // Is this a file that is known to be a pipe? Let's avoid blocking the main thread on it.
                 !(path_or_blob.blob.store != null and
                     path_or_blob.blob.store.?.data == .file and
                     path_or_blob.blob.store.?.data.file.mode != 0 and
-                    bun.isRegularFile(path_or_blob.blob.store.?.data.file.mode))))
+                    bun.isRegularFile(path_or_blob.blob.store.?.data.file.mode)))))
         {
             if (data.isString()) {
                 const len = try data.getLength(globalThis);
@@ -1530,6 +1535,7 @@ pub fn writeFile(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun
         return globalThis.throwInvalidArguments("Bun.write(pathOrFdOrBlob, blob) expects a Blob-y thing to write", .{});
     };
     var mkdirp_if_not_exists: ?bool = null;
+    var append: ?bool = null;
     const options = args.nextEat();
     if (options) |options_object| {
         if (options_object.isObject()) {
@@ -1539,6 +1545,12 @@ pub fn writeFile(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun
                 }
                 mkdirp_if_not_exists = create_directory.toBoolean();
             }
+            if (try options_object.getTruthy(globalThis, "append")) |append_value| {
+                if (!append_value.isBoolean()) {
+                    return globalThis.throwInvalidArgumentType("write", "options.append", "boolean");
+                }
+                append = append_value.toBoolean();
+            }
         } else if (!options_object.isEmptyOrUndefinedOrNull()) {
             return globalThis.throwInvalidArgumentType("write", "options", "object");
         }
@@ -1546,6 +1558,7 @@ pub fn writeFile(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun
     return writeFileInternal(globalThis, &path_or_blob, data, .{
         .mkdirp_if_not_exists = mkdirp_if_not_exists,
         .extra_options = options,
+        .append = append,
     });
 }
 
@@ -2263,6 +2276,7 @@ pub fn doWrite(this: *Blob, globalThis: *jsc.JSGlobalObject, callframe: *jsc.Cal
         return globalThis.throwInvalidArguments("blob.write(pathOrFdOrBlob, blob) expects a Blob-y thing to write", .{});
     }
     var mkdirp_if_not_exists: ?bool = null;
+    var append: ?bool = null;
     const options = args.nextEat();
     if (options) |options_object| {
         if (options_object.isObject()) {
@@ -2295,12 +2309,22 @@ pub fn doWrite(this: *Blob, globalThis: *jsc.JSGlobalObject, callframe: *jsc.Cal
                     }
                 }
             }
+            if (try options_object.getTruthy(globalThis, "append")) |append_value| {
+                if (!append_value.isBoolean()) {
+                    return globalThis.throwInvalidArgumentType("write", "options.append", "boolean");
+                }
+                append = append_value.toBoolean();
+            }
         } else if (!options_object.isEmptyOrUndefinedOrNull()) {
             return globalThis.throwInvalidArgumentType("write", "options", "object");
         }
     }
     var blob_internal: PathOrBlob = .{ .blob = this.* };
-    return writeFileInternal(globalThis, &blob_internal, data, .{ .mkdirp_if_not_exists = mkdirp_if_not_exists, .extra_options = options });
+    return writeFileInternal(globalThis, &blob_internal, data, .{
+      .mkdirp_if_not_exists = mkdirp_if_not_exists,
+      .extra_options = options,
+      .append = append,
+    });
 }
 
 pub fn doUnlink(this: *Blob, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
@@ -4582,10 +4606,15 @@ pub fn FileOpener(comptime This: type) type {
 
         const __opener_flags = bun.O.NONBLOCK | bun.O.CLOEXEC;
 
-        const open_flags_ = if (@hasDecl(This, "open_flags"))
-            This.open_flags | __opener_flags
-        else
-            bun.O.RDONLY | __opener_flags;
+        fn getOpenFlagsForContext(context: *This) c_int {
+            if (@hasDecl(This, "getOpenFlags")) {
+                return context.getOpenFlags() | __opener_flags;
+            } else if (@hasDecl(This, "open_flags")) {
+                return This.open_flags | __opener_flags;
+            } else {
+                return bun.O.RDONLY | __opener_flags;
+            }
+        }
 
         fn getFdByOpening(this: *This, comptime Callback: OpenCallback) void {
             var buf: bun.PathBuffer = undefined;
@@ -4624,7 +4653,7 @@ pub fn FileOpener(comptime This: type) type {
                     this.loop,
                     &this.req,
                     path,
-                    open_flags_,
+                    getOpenFlagsForContext(this),
                     jsc.Node.fs.default_permission,
                     &WrappedCallback.callback,
                 );
@@ -4639,7 +4668,7 @@ pub fn FileOpener(comptime This: type) type {
             }
 
             while (true) {
-                this.opened_fd = switch (bun.sys.open(path, open_flags_, jsc.Node.fs.default_permission)) {
+                this.opened_fd = switch (bun.sys.open(path, getOpenFlagsForContext(this), jsc.Node.fs.default_permission)) {
                     .result => |fd| fd,
                     .err => |err| {
                         if (comptime @hasField(This, "mkdirp_if_not_exists")) {

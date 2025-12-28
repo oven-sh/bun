@@ -22,13 +22,19 @@ pub const WriteFile = struct {
     could_block: bool = false,
     close_after_io: bool = false,
     mkdirp_if_not_exists: bool = false,
+    append: bool = false,
 
     pub const io_tag = io.Poll.Tag.WriteFile;
 
     pub const getFd = FileOpener(@This()).getFd;
     pub const doClose = FileCloser(WriteFile).doClose;
 
-    pub const open_flags = bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC | bun.O.NONBLOCK;
+    pub fn getOpenFlags(this: *const WriteFile) c_int {
+        return if (this.append)
+            bun.O.WRONLY | bun.O.CREAT | bun.O.APPEND | bun.O.NONBLOCK
+        else
+            bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC | bun.O.NONBLOCK;
+    }
 
     pub fn onWritable(request: *io.Request) void {
         var this: *WriteFile = @fieldParentPtr("io_request", request);
@@ -77,6 +83,7 @@ pub const WriteFile = struct {
         onWriteFileContext: *anyopaque,
         onCompleteCallback: WriteFileOnWriteFileCallback,
         mkdirp_if_not_exists: bool,
+        append: bool,
     ) !*WriteFile {
         const write_file = bun.new(WriteFile, WriteFile{
             .file_blob = file_blob,
@@ -85,6 +92,7 @@ pub const WriteFile = struct {
             .onCompleteCallback = onCompleteCallback,
             .task = .{ .callback = &doWriteLoopTask },
             .mkdirp_if_not_exists = mkdirp_if_not_exists,
+            .append = append,
         });
         file_blob.store.?.ref();
         bytes_blob.store.?.ref();
@@ -98,6 +106,7 @@ pub const WriteFile = struct {
         context: Context,
         comptime callback: fn (ctx: Context, bytes: WriteFileResultType) bun.JSTerminated!void,
         mkdirp_if_not_exists: bool,
+        append: bool,
     ) !*WriteFile {
         const Handler = struct {
             pub fn run(ptr: *anyopaque, bytes: WriteFileResultType) bun.JSTerminated!void {
@@ -111,6 +120,7 @@ pub const WriteFile = struct {
             @as(*anyopaque, @ptrCast(context)),
             Handler.run,
             mkdirp_if_not_exists,
+            append,
         );
     }
 
@@ -350,6 +360,7 @@ pub const WriteFileWindows = struct {
     poll_ref: bun.Async.KeepAlive = .{},
 
     owned_fd: bool = false,
+    append: bool = false,
 
     const log = bun.Output.scoped(.WriteFile, .hidden);
 
@@ -362,6 +373,7 @@ pub const WriteFileWindows = struct {
         onWriteFileContext: *anyopaque,
         onCompleteCallback: WriteFileOnWriteFileCallback,
         mkdirp_if_not_exists: bool,
+        append: bool,
     ) WriteFileWindowsError!*WriteFileWindows {
         const write_file = WriteFileWindows.new(.{
             .file_blob = file_blob,
@@ -372,6 +384,7 @@ pub const WriteFileWindows = struct {
             .io_request = std.mem.zeroes(uv.fs_t),
             .uv_bufs = .{.{ .base = undefined, .len = 0 }},
             .event_loop = event_loop,
+            .append = append,
         });
         file_blob.store.?.ref();
         bytes_blob.store.?.ref();
@@ -413,6 +426,10 @@ pub const WriteFileWindows = struct {
     pub fn open(this: *WriteFileWindows) WriteFileWindowsError!void {
         const path = this.file_blob.store.?.data.file.pathlike.path.slice();
         this.io_request.data = this;
+        const flags = if (this.append)
+            uv.O.CREAT | uv.O.WRONLY | uv.O.NOCTTY | uv.O.NONBLOCK | uv.O.SEQUENTIAL | uv.O.APPEND
+        else
+            uv.O.CREAT | uv.O.WRONLY | uv.O.NOCTTY | uv.O.NONBLOCK | uv.O.SEQUENTIAL | uv.O.TRUNC;
         const rc = uv.uv_fs_open(
             this.loop(),
             &this.io_request,
@@ -422,7 +439,7 @@ pub const WriteFileWindows = struct {
                     .syscall = .open,
                 });
             }),
-            uv.O.CREAT | uv.O.WRONLY | uv.O.NOCTTY | uv.O.NONBLOCK | uv.O.SEQUENTIAL | uv.O.TRUNC,
+            flags,
             0o644,
             @ptrCast(&onOpen),
         );
@@ -634,6 +651,7 @@ pub const WriteFileWindows = struct {
         context: Context,
         comptime callback: *const fn (ctx: Context, bytes: WriteFileResultType) bun.JSTerminated!void,
         mkdirp_if_not_exists: bool,
+        append: bool,
     ) WriteFileWindowsError!*WriteFileWindows {
         return try WriteFileWindows.createWithCtx(
             file_blob,
@@ -642,6 +660,7 @@ pub const WriteFileWindows = struct {
             @as(*anyopaque, @ptrCast(context)),
             @ptrCast(callback),
             mkdirp_if_not_exists,
+            append,
         );
     }
 };

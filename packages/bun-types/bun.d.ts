@@ -737,6 +737,16 @@ declare module "bun" {
        * @default true
        */
       createPath?: boolean;
+      /**
+       * If `true`, append to the end of the file instead of overwriting it.
+       *
+       * If `false` or omitted, the file will be truncated (overwritten).
+       *
+       * Note: appending a BunFile is not supported.
+       *
+       * @default false
+       */
+      append?: boolean;
     },
   ): Promise<number>;
 
@@ -764,6 +774,16 @@ declare module "bun" {
        * @default true
        */
       createPath?: boolean;
+      /**
+       * If `true`, append to the end of the file instead of overwriting it.
+       *
+       * If `false` or omitted, the file will be truncated (overwritten).
+       *
+       * Note: appending a BunFile is not supported.
+       *
+       * @default false
+       */
+      append?: boolean;
     },
   ): Promise<number>;
 
@@ -789,6 +809,16 @@ declare module "bun" {
        * @default true
        */
       createPath?: boolean;
+      /**
+       * If `true`, append to the end of the file instead of overwriting it.
+       *
+       * If `false` or omitted, the file will be truncated (overwritten).
+       *
+       * Note: appending a BunFile is not supported.
+       *
+       * @default false
+       */
+      append?: boolean;
     },
   ): Promise<number>;
 
@@ -1321,7 +1351,19 @@ declare module "bun" {
      */
     write(
       data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer | Request | Response | BunFile,
-      options?: { highWaterMark?: number },
+      options?: {
+        highWaterMark?: number;
+        /**
+         * If `true`, append to the end of the file instead of overwriting it.
+         *
+         * If `false` or omitted, the file will be truncated (overwritten).
+         *
+         * Note: appending a BunFile is not supported.
+         *
+         * @default false
+         */
+        append?: boolean;
+      },
     ): Promise<number>;
 
     /**

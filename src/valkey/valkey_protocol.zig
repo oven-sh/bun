@@ -1,3 +1,7 @@
+/// Maximum nesting depth for RESP3 structures to prevent stack overflow
+/// from malicious deeply nested responses.
+const max_resp_depth: usize = 512;
+
 pub const RedisError = error{
     AuthenticationFailed,
     ConnectionClosed,
@@ -26,6 +30,7 @@ pub const RedisError = error{
     UnsupportedProtocol,
     ConnectionTimeout,
     IdleTimeout,
+    RecursionLimitExceeded,
 };
 
 pub fn valkeyErrorToJS(globalObject: *jsc.JSGlobalObject, message: ?[]const u8, err: RedisError) jsc.JSValue {
@@ -55,6 +60,7 @@ pub fn valkeyErrorToJS(globalObject: *jsc.JSGlobalObject, message: ?[]const u8, 
         error.InvalidResponseType => .REDIS_INVALID_RESPONSE_TYPE,
         error.ConnectionTimeout => .REDIS_CONNECTION_TIMEOUT,
         error.IdleTimeout => .REDIS_IDLE_TIMEOUT,
+        error.RecursionLimitExceeded => .REDIS_INVALID_RESPONSE,
         error.JSError => return globalObject.takeException(error.JSError),
         error.OutOfMemory => globalObject.throwOutOfMemory() catch return globalObject.takeException(error.JSError),
         error.JSTerminated => return globalObject.takeException(error.JSTerminated),
@@ -421,6 +427,14 @@ pub const ValkeyReader = struct {
     }
 
     pub fn readValue(self: *ValkeyReader, allocator: std.mem.Allocator) RedisError!RESPValue {
+        return self.readValueWithDepth(allocator, 0);
+    }
+
+    fn readValueWithDepth(self: *ValkeyReader, allocator: std.mem.Allocator, depth: usize) RedisError!RESPValue {
+        if (depth >= max_resp_depth) {
+            return error.RecursionLimitExceeded;
+        }
+
         const type_byte = try self.readByte();
 
         return switch (RESPType.fromByte(type_byte) orelse return error.InvalidResponseType) {
@@ -462,7 +476,7 @@ pub const ValkeyReader = struct {
                     }
                 }
                 while (i < len) : (i += 1) {
-                    array[i] = try self.readValue(allocator);
+                    array[i] = try self.readValueWithDepth(allocator, depth + 1);
                 }
                 return RESPValue{ .Array = array };
             },
@@ -508,7 +522,7 @@ pub const ValkeyReader = struct {
                 }
 
                 while (i < len) : (i += 1) {
-                    entries[i] = .{ .key = try self.readValue(allocator), .value = try self.readValue(allocator) };
+                    entries[i] = .{ .key = try self.readValueWithDepth(allocator, depth + 1), .value = try self.readValueWithDepth(allocator, depth + 1) };
                 }
                 return RESPValue{ .Map = entries };
             },
@@ -525,7 +539,7 @@ pub const ValkeyReader = struct {
                     }
                 }
                 while (i < len) : (i += 1) {
-                    set[i] = try self.readValue(allocator);
+                    set[i] = try self.readValueWithDepth(allocator, depth + 1);
                 }
                 return RESPValue{ .Set = set };
             },
@@ -542,9 +556,9 @@ pub const ValkeyReader = struct {
                     }
                 }
                 while (i < len) : (i += 1) {
-                    var key = try self.readValue(allocator);
+                    var key = try self.readValueWithDepth(allocator, depth + 1);
                     errdefer key.deinit(allocator);
-                    const value = try self.readValue(allocator);
+                    const value = try self.readValueWithDepth(allocator, depth + 1);
                     attrs[i] = .{ .key = key, .value = value };
                 }
 
@@ -553,7 +567,7 @@ pub const ValkeyReader = struct {
                 errdefer {
                     allocator.destroy(value_ptr);
                 }
-                value_ptr.* = try self.readValue(allocator);
+                value_ptr.* = try self.readValueWithDepth(allocator, depth + 1);
 
                 return RESPValue{ .Attribute = .{
                     .attributes = attrs,
@@ -565,7 +579,7 @@ pub const ValkeyReader = struct {
                 if (len < 0 or len == 0) return error.InvalidPush;
 
                 // First element is the push type
-                const push_type = try self.readValue(allocator);
+                const push_type = try self.readValueWithDepth(allocator, depth + 1);
                 var push_type_str: []const u8 = "";
 
                 switch (push_type) {
@@ -594,7 +608,7 @@ pub const ValkeyReader = struct {
                     }
                 }
                 while (i < len - 1) : (i += 1) {
-                    data[i] = try self.readValue(allocator);
+                    data[i] = try self.readValueWithDepth(allocator, depth + 1);
                 }
 
                 return RESPValue{ .Push = .{
@@ -674,3 +688,103 @@ const std = @import("std");
 const bun = @import("bun");
 const String = bun.String;
 const jsc = bun.jsc;
+
+test "ValkeyReader rejects deeply nested arrays" {
+    // Build a deeply nested array payload that exceeds max_resp_depth
+    // Format: "*1\r\n" repeated (max_resp_depth + 10) times, followed by "+OK\r\n"
+    const nesting_depth = max_resp_depth + 10;
+    const header = "*1\r\n";
+    const terminator = "+OK\r\n";
+
+    var buffer: [header.len * (max_resp_depth + 10) + terminator.len]u8 = undefined;
+    var pos: usize = 0;
+
+    for (0..nesting_depth) |_| {
+        @memcpy(buffer[pos..][0..header.len], header);
+        pos += header.len;
+    }
+    @memcpy(buffer[pos..][0..terminator.len], terminator);
+    pos += terminator.len;
+
+    var reader = ValkeyReader.init(buffer[0..pos]);
+    const result = reader.readValue(std.testing.allocator);
+
+    try std.testing.expectError(error.RecursionLimitExceeded, result);
+}
+
+test "ValkeyReader accepts valid nested arrays within limit" {
+    // Test with a nesting depth just under the limit (depth 10)
+    // Nested structure: [[[[[[[[[[42]]]]]]]]]]
+    const payload = "*1\r\n" ++ // depth 0
+        "*1\r\n" ++ // depth 1
+        "*1\r\n" ++ // depth 2
+        "*1\r\n" ++ // depth 3
+        "*1\r\n" ++ // depth 4
+        "*1\r\n" ++ // depth 5
+        "*1\r\n" ++ // depth 6
+        "*1\r\n" ++ // depth 7
+        "*1\r\n" ++ // depth 8
+        "*1\r\n" ++ // depth 9
+        ":42\r\n"; // innermost integer
+
+    var reader = ValkeyReader.init(payload);
+    var result = try reader.readValue(std.testing.allocator);
+    defer result.deinit(std.testing.allocator);
+
+    // Traverse the nested arrays to get to the integer
+    var current = &result;
+    for (0..10) |_| {
+        try std.testing.expect(current.* == .Array);
+        try std.testing.expectEqual(@as(usize, 1), current.Array.len);
+        current = &current.Array[0];
+    }
+
+    try std.testing.expect(current.* == .Integer);
+    try std.testing.expectEqual(@as(i64, 42), current.Integer);
+}
+
+test "ValkeyReader rejects deeply nested maps" {
+    // Build a deeply nested map payload that exceeds max_resp_depth
+    // Format: "%1\r\n+key\r\n" repeated (max_resp_depth + 10) times, followed by "+val\r\n"
+    const nesting_depth = max_resp_depth + 10;
+
+    var buffer: [16 * (max_resp_depth + 20)]u8 = undefined;
+    var pos: usize = 0;
+
+    for (0..nesting_depth) |_| {
+        const header = "%1\r\n+k\r\n";
+        @memcpy(buffer[pos..][0..header.len], header);
+        pos += header.len;
+    }
+    const terminator = "+v\r\n";
+    @memcpy(buffer[pos..][0..terminator.len], terminator);
+    pos += terminator.len;
+
+    var reader = ValkeyReader.init(buffer[0..pos]);
+    const result = reader.readValue(std.testing.allocator);
+
+    try std.testing.expectError(error.RecursionLimitExceeded, result);
+}
+
+test "ValkeyReader rejects deeply nested sets" {
+    // Build a deeply nested set payload that exceeds max_resp_depth
+    // Format: "~1\r\n" repeated (max_resp_depth + 10) times, followed by "+OK\r\n"
+    const nesting_depth = max_resp_depth + 10;
+    const header = "~1\r\n";
+    const terminator = "+OK\r\n";
+
+    var buffer: [header.len * (max_resp_depth + 10) + terminator.len]u8 = undefined;
+    var pos: usize = 0;
+
+    for (0..nesting_depth) |_| {
+        @memcpy(buffer[pos..][0..header.len], header);
+        pos += header.len;
+    }
+    @memcpy(buffer[pos..][0..terminator.len], terminator);
+    pos += terminator.len;
+
+    var reader = ValkeyReader.init(buffer[0..pos]);
+    const result = reader.readValue(std.testing.allocator);
+
+    try std.testing.expectError(error.RecursionLimitExceeded, result);
+}

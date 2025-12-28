@@ -48,6 +48,9 @@ state: union(enum) {
     expanding_redirect: struct {
         /// Which redirect are we expanding: stdin, stdout, or stderr
         which: ast.Redirects.IoKind = .stdin,
+        /// Set to true when we start expansion, reset when moving to next redirect.
+        /// This prevents infinite loops when expansion produces empty results.
+        expansion_started: bool = false,
         expansion: Expansion,
     },
     expanding_args: struct {
@@ -295,11 +298,17 @@ pub fn next(this: *Cmd) Yield {
                         .stdout => &this.redirect_stdout_path,
                         .stderr => &this.redirect_stderr_path,
                     };
-                    const already_expanded = path_list.items.len > 0;
+                    // Check if expansion has already been done for this redirect
+                    // Use expansion_started flag to handle cases where expansion produces empty results
+                    const already_expanded = path_list.items.len > 0 or this.state.expanding_redirect.expansion_started;
                     const needs_expansion = if (maybe_target) |target| target.* == .atom and !already_expanded else false;
 
                     if (needs_expansion) {
                         const target = maybe_target.?;
+
+                        // Mark expansion as started before returning
+                        // This prevents infinite loops when expansion produces empty results
+                        this.state.expanding_redirect.expansion_started = true;
 
                         Expansion.init(
                             this.base.interpreter,
@@ -319,6 +328,8 @@ pub fn next(this: *Cmd) Yield {
                     }
 
                     // Move to next redirect or to expanding_args
+                    // Reset expansion_started for the next redirect
+                    this.state.expanding_redirect.expansion_started = false;
                     switch (io_kind) {
                         .stdin => {
                             this.state.expanding_redirect.which = .stdout;

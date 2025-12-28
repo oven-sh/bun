@@ -1333,10 +1333,9 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
 
   if (!handle) {
     // Per Node.js spec, writableEnded should be true after end() is called
+    // Note: callback is intentionally not called here to match Node.js behavior
+    // (Node.js does not invoke the callback when there's no underlying socket)
     this.finished = true;
-    if ($isCallable(callback)) {
-      process.nextTick(callback);
-    }
     return this;
   }
 

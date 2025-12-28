@@ -27,17 +27,14 @@ describe("ServerResponse.writableEnded", () => {
     const req = new http.IncomingMessage(null as any);
     const res = new ServerResponse(req);
 
-    let callbackCalled = false;
     res.end(() => {
-      callbackCalled = true;
+      // Note: In Node.js, callback is NOT invoked when there's no socket
+      // This matches Node.js behavior where the 'finish' event never fires without a socket
     });
 
+    // Per Node.js spec, writableEnded should be true after end() is called
     expect(res.writableEnded).toBe(true);
     expect(res.finished).toBe(true);
-
-    // Wait for callback to be called via nextTick
-    await new Promise(resolve => process.nextTick(resolve));
-    expect(callbackCalled).toBe(true);
   });
 
   test("should be true after end() with chunk but without socket", async () => {
@@ -64,7 +61,7 @@ describe("ServerResponse.writableEnded", () => {
       const response = await fetch(`http://localhost:${port}`);
       expect(await response.text()).toBe("Hello");
     } finally {
-      server.close();
+      await new Promise(resolve => server.close(resolve));
     }
   });
 });

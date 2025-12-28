@@ -1,3 +1,4 @@
+import { RedisClient } from "bun";
 import { describe, expect, test } from "bun:test";
 
 describe("Valkey RESP parser hardening", () => {
@@ -26,8 +27,6 @@ describe("Valkey RESP parser hardening", () => {
         error() {},
       },
     });
-
-    const { RedisClient } = await import("bun");
 
     const client = new RedisClient(`redis://127.0.0.1:${server.port}`, {
       connectionTimeout: 2000,
@@ -98,8 +97,6 @@ describe("Valkey RESP parser hardening", () => {
         error() {},
       },
     });
-
-    const { RedisClient } = await import("bun");
 
     const client = new RedisClient(`redis://127.0.0.1:${server.port}`, {
       connectionTimeout: 2000,

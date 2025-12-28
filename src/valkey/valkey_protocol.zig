@@ -683,12 +683,6 @@ pub const SubscriptionPushMessage = enum(u2) {
     });
 };
 
-const std = @import("std");
-
-const bun = @import("bun");
-const String = bun.String;
-const jsc = bun.jsc;
-
 test "ValkeyReader rejects deeply nested arrays" {
     // Build a deeply nested array payload that exceeds max_resp_depth
     // Format: "*1\r\n" repeated (max_resp_depth + 10) times, followed by "+OK\r\n"
@@ -788,3 +782,9 @@ test "ValkeyReader rejects deeply nested sets" {
 
     try std.testing.expectError(error.RecursionLimitExceeded, result);
 }
+
+const std = @import("std");
+
+const bun = @import("bun");
+const String = bun.String;
+const jsc = bun.jsc;

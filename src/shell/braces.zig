@@ -723,6 +723,68 @@ test Lexer {
     }
 }
 
+/// High-level helper that expands brace patterns in a string.
+/// Returns a list of expanded strings. Caller owns the returned memory.
+/// On error or if no expansion is needed, returns the input as a single-element list.
+pub fn expandBracesAlloc(input: []const u8, allocator: Allocator) std.ArrayListUnmanaged([]const u8) {
+    var out: std.ArrayListUnmanaged([]const u8) = .{};
+
+    // Use arena for temporary tokenization
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const arena_alloc = arena.allocator();
+
+    // Tokenize - use appropriate lexer based on content
+    const lexer_output = if (bun.strings.isAllASCII(input))
+        Lexer.tokenize(arena_alloc, input) catch {
+            out.append(allocator, allocator.dupe(u8, input) catch return out) catch {};
+            return out;
+        }
+    else
+        NewLexer(.wtf8).tokenize(arena_alloc, input) catch {
+            out.append(allocator, allocator.dupe(u8, input) catch return out) catch {};
+            return out;
+        };
+
+    const expansion_count = calculateExpandedAmount(lexer_output.tokens.items[0..]);
+    if (expansion_count == 0) {
+        out.append(allocator, allocator.dupe(u8, input) catch return out) catch {};
+        return out;
+    }
+
+    // Allocate expanded strings
+    const expanded_strings = arena_alloc.alloc(std.array_list.Managed(u8), expansion_count) catch {
+        out.append(allocator, allocator.dupe(u8, input) catch return out) catch {};
+        return out;
+    };
+
+    for (0..expansion_count) |i| {
+        expanded_strings[i] = std.array_list.Managed(u8).init(allocator);
+    }
+
+    // Perform brace expansion
+    expand(
+        arena_alloc,
+        lexer_output.tokens.items[0..],
+        expanded_strings,
+        lexer_output.contains_nested,
+    ) catch {
+        for (expanded_strings) |*s| s.deinit();
+        out.append(allocator, allocator.dupe(u8, input) catch return out) catch {};
+        return out;
+    };
+
+    // Collect results
+    for (expanded_strings) |*s| {
+        const slice = s.toOwnedSlice() catch "";
+        if (slice.len > 0) {
+            out.append(allocator, slice) catch {};
+        }
+    }
+
+    return out;
+}
+
 const SmolStr = @import("../string.zig").SmolStr;
 
 const Encoding = @import("./shell.zig").StringEncoding;

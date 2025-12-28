@@ -234,6 +234,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             deflate.decompress(data_, &decompressed) catch |err| {
                 const error_code = switch (err) {
                     error.InflateFailed => ErrorCode.invalid_compressed_data,
+                    error.TooLarge => ErrorCode.message_too_big,
                     error.OutOfMemory => ErrorCode.failed_to_allocate_memory,
                 };
                 this.terminate(error_code);

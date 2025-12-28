@@ -1223,8 +1223,9 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
         // TODO only reset last_modified on success paths instead of
         // resetting last_modified at the beginning for better performance.
         if (blob_store.data == .file) {
-            // reset last_modified to force getLastModified() to reload after writing.
+            // reset last_modified and max_size to force getLastModified() and getActualSize() to reload after writing.
             blob_store.data.file.last_modified = jsc.init_timestamp;
+            blob_store.data.file.max_size = Blob.max_size;
         }
     }
 

@@ -39,10 +39,9 @@ describe("Valkey RESP parser hardening", () => {
       await client.send("PING", []);
       expect.unreachable("Expected an error for deeply nested response");
     } catch (error: any) {
-      // We expect an error to be thrown, indicating the parser rejected the payload
-      // The exact error may vary, but it should NOT be a stack overflow crash
+      // Verify the parser rejected the payload with the specific recursion limit error
       expect(error).toBeDefined();
-      expect(error.message).toBeDefined();
+      expect(error.code).toBe("ERR_REDIS_RECURSION_LIMIT");
     } finally {
       client.close();
     }

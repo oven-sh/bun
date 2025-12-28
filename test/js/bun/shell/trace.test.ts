@@ -2,6 +2,9 @@ import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
 import { tempDir } from "harness";
 
+// Normalize path separators for cross-platform tests
+const normalizePath = (p: string) => p.replaceAll("\\", "/");
+
 // Permission flags (octal) - mirrors the Zig constants
 const Permission = {
   O_RDONLY: 0o0,
@@ -54,7 +57,7 @@ describe("Bun.$.trace", () => {
     // cat is a builtin - it reads files but runs in-process (no EXECUTE)
     const readOps = result.operations.filter(op => op.flags === READ && op.path?.endsWith("test.txt"));
     expect(readOps.length).toBe(1);
-    expect(readOps[0].path).toBe("/tmp/test.txt");
+    expect(normalizePath(readOps[0].path!)).toBe("/tmp/test.txt");
   });
 
   test("traces rm command with delete permission", () => {
@@ -64,7 +67,7 @@ describe("Bun.$.trace", () => {
     // Should have delete for the file
     const deleteOps = result.operations.filter(op => op.flags === Permission.DELETE);
     expect(deleteOps.length).toBe(1);
-    expect(deleteOps[0].path).toBe("/tmp/to-delete.txt");
+    expect(normalizePath(deleteOps[0].path!)).toBe("/tmp/to-delete.txt");
   });
 
   test("traces mkdir command", () => {
@@ -74,7 +77,7 @@ describe("Bun.$.trace", () => {
     // Should have mkdir permission
     const mkdirOps = result.operations.filter(op => op.flags === Permission.MKDIR);
     expect(mkdirOps.length).toBe(1);
-    expect(mkdirOps[0].path).toBe("/tmp/newdir");
+    expect(normalizePath(mkdirOps[0].path!)).toBe("/tmp/newdir");
   });
 
   test("traces touch command with create permission", () => {
@@ -84,7 +87,7 @@ describe("Bun.$.trace", () => {
     // Should have create permission
     const createOps = result.operations.filter(op => op.flags === CREATE);
     expect(createOps.length).toBe(1);
-    expect(createOps[0].path).toBe("/tmp/newfile.txt");
+    expect(normalizePath(createOps[0].path!)).toBe("/tmp/newfile.txt");
   });
 
   test("traces cp command with read and write", () => {
@@ -121,7 +124,7 @@ describe("Bun.$.trace", () => {
 
     const chdirOps = result.operations.filter(op => op.flags === Permission.CHDIR);
     expect(chdirOps.length).toBe(1);
-    expect(chdirOps[0].path).toBe("/tmp");
+    expect(normalizePath(chdirOps[0].path!)).toBe("/tmp");
   });
 
   test("traces environment variable assignments with accumulated env", () => {
@@ -192,7 +195,7 @@ describe("Bun.$.trace", () => {
 
     const stdoutOps = result.operations.filter(op => op.stream === "stdout");
     expect(stdoutOps.length).toBe(1);
-    expect(stdoutOps[0].path).toBe("/tmp/out.txt");
+    expect(normalizePath(stdoutOps[0].path!)).toBe("/tmp/out.txt");
   });
 
   test("traces export command with env permission", () => {
@@ -228,7 +231,7 @@ describe("Bun.$.trace", () => {
     const result = $.trace`ls /tmp`;
     expect(result.success).toBe(true);
 
-    const readOps = result.operations.filter(op => op.flags === READ && op.path === "/tmp");
+    const readOps = result.operations.filter(op => op.flags === READ && normalizePath(op.path || "") === "/tmp");
     expect(readOps.length).toBe(1);
   });
 
@@ -325,8 +328,8 @@ describe("Bun.$.trace", () => {
     // Both commands should be traced
     const readOps = result.operations.filter(op => op.flags === READ);
     expect(readOps.length).toBe(2);
-    expect(readOps[0].path).toBe("/tmp/a.txt");
-    expect(readOps[1].path).toBe("/tmp/b.txt");
+    expect(normalizePath(readOps[0].path!)).toBe("/tmp/a.txt");
+    expect(normalizePath(readOps[1].path!)).toBe("/tmp/b.txt");
   });
 
   test("traces || (or) operator", () => {
@@ -345,14 +348,14 @@ describe("Bun.$.trace", () => {
     // Should have: CHDIR /tmp, READ /tmp (inside subshell), READ . (outside subshell)
     const chdirOps = result.operations.filter(op => op.flags === Permission.CHDIR);
     expect(chdirOps.length).toBe(1);
-    expect(chdirOps[0].path).toBe("/tmp");
+    expect(normalizePath(chdirOps[0].path!)).toBe("/tmp");
 
     const readOps = result.operations.filter(op => op.flags === READ);
     expect(readOps.length).toBe(2);
     // First ls inside subshell should see /tmp
-    expect(readOps[0].cwd).toBe("/tmp");
+    expect(normalizePath(readOps[0].cwd!)).toBe("/tmp");
     // Second ls outside subshell should see original cwd (subshell cwd is restored)
-    expect(readOps[1].cwd).not.toBe("/tmp");
+    expect(normalizePath(readOps[1].cwd!)).not.toBe("/tmp");
   });
 
   test("cd updates cwd for subsequent commands", () => {
@@ -361,8 +364,8 @@ describe("Bun.$.trace", () => {
 
     const readOps = result.operations.filter(op => op.flags === READ);
     expect(readOps.length).toBe(1);
-    expect(readOps[0].cwd).toBe("/tmp");
-    expect(readOps[0].path).toBe("/tmp"); // ls reads cwd
+    expect(normalizePath(readOps[0].cwd!)).toBe("/tmp");
+    expect(normalizePath(readOps[0].path!)).toBe("/tmp"); // ls reads cwd
   });
 
   test("expands brace patterns", () => {
@@ -371,9 +374,9 @@ describe("Bun.$.trace", () => {
 
     const readOps = result.operations.filter(op => op.flags === READ);
     expect(readOps.length).toBe(3);
-    expect(readOps[0].path).toBe("/tmp/a.txt");
-    expect(readOps[1].path).toBe("/tmp/b.txt");
-    expect(readOps[2].path).toBe("/tmp/c.txt");
+    expect(normalizePath(readOps[0].path!)).toBe("/tmp/a.txt");
+    expect(normalizePath(readOps[1].path!)).toBe("/tmp/b.txt");
+    expect(normalizePath(readOps[2].path!)).toBe("/tmp/c.txt");
   });
 
   test("expands tilde to home directory", () => {
@@ -407,7 +410,8 @@ describe("Bun.$.trace", () => {
 
     const readOps = result.operations.filter(op => op.flags === READ);
     expect(readOps.length).toBe(3);
-    const paths = readOps.map(op => op.path).sort();
-    expect(paths).toEqual([join(testDir, "a.txt"), join(testDir, "b.txt"), join(testDir, "c.txt")]);
+    const paths = readOps.map(op => normalizePath(op.path!)).sort();
+    const expected = [join(testDir, "a.txt"), join(testDir, "b.txt"), join(testDir, "c.txt")].map(normalizePath);
+    expect(paths).toEqual(expected);
   });
 });

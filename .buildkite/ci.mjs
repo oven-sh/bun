@@ -124,16 +124,13 @@ const testPlatforms = [
   { os: "darwin", arch: "aarch64", release: "13", tier: "previous" },
   { os: "darwin", arch: "x64", release: "14", tier: "latest" },
   { os: "darwin", arch: "x64", release: "13", tier: "previous" },
-  { os: "linux", arch: "aarch64", distro: "debian", release: "12", tier: "latest" },
-  { os: "linux", arch: "x64", distro: "debian", release: "12", tier: "latest" },
-  { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "12", tier: "latest" },
-  { os: "linux", arch: "x64", profile: "asan", distro: "debian", release: "12", tier: "latest" },
+  { os: "linux", arch: "aarch64", distro: "debian", release: "13", tier: "latest" },
+  { os: "linux", arch: "x64", distro: "debian", release: "13", tier: "latest" },
+  { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "13", tier: "latest" },
+  { os: "linux", arch: "x64", profile: "asan", distro: "debian", release: "13", tier: "latest" },
   { os: "linux", arch: "aarch64", distro: "ubuntu", release: "25.04", tier: "latest" },
-  { os: "linux", arch: "aarch64", distro: "ubuntu", release: "24.04", tier: "latest" },
   { os: "linux", arch: "x64", distro: "ubuntu", release: "25.04", tier: "latest" },
-  { os: "linux", arch: "x64", distro: "ubuntu", release: "24.04", tier: "latest" },
   { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "25.04", tier: "latest" },
-  { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "24.04", tier: "latest" },
   { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.22", tier: "latest" },
   { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.22", tier: "latest" },
   { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.22", tier: "latest" },
@@ -574,6 +571,7 @@ function getTestBunStep(platform, options, testOptions = {}) {
   if (buildId) {
     args.push(`--build-id=${buildId}`);
   }
+
   if (testFiles) {
     args.push(...testFiles.map(testFile => `--include=${testFile}`));
   }
@@ -1072,7 +1070,7 @@ async function getPipeline(options = {}) {
   const imagePlatforms = new Map(
     buildImages || publishImages
       ? [...buildPlatforms, ...testPlatforms]
-          .filter(({ os }) => os === "linux" || os === "windows")
+          .filter(({ os }) => os !== "darwin")
           .map(platform => [getImageKey(platform), platform])
       : [],
   );
@@ -1106,7 +1104,7 @@ async function getPipeline(options = {}) {
   const includeASAN = !isMainBranch();
 
   if (!buildId) {
-    const relevantBuildPlatforms = includeASAN
+    let relevantBuildPlatforms = includeASAN
       ? buildPlatforms
       : buildPlatforms.filter(({ profile }) => profile !== "asan");
 

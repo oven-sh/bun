@@ -7,6 +7,7 @@ pub const StandaloneModuleGraph = struct {
     files: bun.StringArrayHashMap(File),
     entry_point_id: u32 = 0,
     compile_exec_argv: []const u8 = "",
+    flags: Flags = .{},
 
     // We never want to hit the filesystem for these files
     // We use the `/$bunfs/` prefix to indicate that it's a virtual path
@@ -118,7 +119,7 @@ pub const StandaloneModuleGraph = struct {
     };
 
     const Macho = struct {
-        pub extern "C" fn Bun__getStandaloneModuleGraphMachoLength() ?*align(1) u32;
+        pub extern "C" fn Bun__getStandaloneModuleGraphMachoLength() ?*align(1) u64;
 
         pub fn getData() ?[]const u8 {
             if (Bun__getStandaloneModuleGraphMachoLength()) |length| {
@@ -126,8 +127,10 @@ pub const StandaloneModuleGraph = struct {
                     return null;
                 }
 
+                // BlobHeader has 8 bytes size (u64), so data starts at offset 8.
+                const data_offset = @sizeOf(u64);
                 const slice_ptr: [*]const u8 = @ptrCast(length);
-                return slice_ptr[4..][0..length.*];
+                return slice_ptr[data_offset..][0..length.*];
             }
 
             return null;
@@ -135,7 +138,7 @@ pub const StandaloneModuleGraph = struct {
     };
 
     const PE = struct {
-        pub extern "C" fn Bun__getStandaloneModuleGraphPELength() u32;
+        pub extern "C" fn Bun__getStandaloneModuleGraphPELength() u64;
         pub extern "C" fn Bun__getStandaloneModuleGraphPEData() ?[*]u8;
 
         pub fn getData() ?[]const u8 {
@@ -289,6 +292,15 @@ pub const StandaloneModuleGraph = struct {
         modules_ptr: bun.StringPointer = .{},
         entry_point_id: u32 = 0,
         compile_exec_argv_ptr: bun.StringPointer = .{},
+        flags: Flags = .{},
+    };
+
+    pub const Flags = packed struct(u32) {
+        disable_default_env_files: bool = false,
+        disable_autoload_bunfig: bool = false,
+        disable_autoload_tsconfig: bool = false,
+        disable_autoload_package_json: bool = false,
+        _padding: u28 = 0,
     };
 
     const trailer = "\n---- Bun! ----\n";
@@ -334,6 +346,7 @@ pub const StandaloneModuleGraph = struct {
             .files = modules,
             .entry_point_id = offsets.entry_point_id,
             .compile_exec_argv = sliceToZ(raw_bytes, offsets.compile_exec_argv_ptr),
+            .flags = offsets.flags,
         };
     }
 
@@ -349,7 +362,7 @@ pub const StandaloneModuleGraph = struct {
         return bytes[ptr.offset..][0..ptr.length :0];
     }
 
-    pub fn toBytes(allocator: std.mem.Allocator, prefix: []const u8, output_files: []const bun.options.OutputFile, output_format: bun.options.Format, compile_exec_argv: []const u8) ![]u8 {
+    pub fn toBytes(allocator: std.mem.Allocator, prefix: []const u8, output_files: []const bun.options.OutputFile, output_format: bun.options.Format, compile_exec_argv: []const u8, flags: Flags) ![]u8 {
         var serialize_trace = bun.perf.trace("StandaloneModuleGraph.serialize");
         defer serialize_trace.end();
 
@@ -498,6 +511,7 @@ pub const StandaloneModuleGraph = struct {
             .modules_ptr = string_builder.appendCount(std.mem.sliceAsBytes(modules.items)),
             .compile_exec_argv_ptr = string_builder.appendCountZ(compile_exec_argv),
             .byte_count = string_builder.len,
+            .flags = flags,
         };
 
         _ = string_builder.append(std.mem.asBytes(&offsets));
@@ -979,8 +993,9 @@ pub const StandaloneModuleGraph = struct {
         windows_options: bun.options.WindowsOptions,
         compile_exec_argv: []const u8,
         self_exe_path: ?[]const u8,
+        flags: Flags,
     ) !CompileResult {
-        const bytes = toBytes(allocator, module_prefix, output_files, output_format, compile_exec_argv) catch |err| {
+        const bytes = toBytes(allocator, module_prefix, output_files, output_format, compile_exec_argv, flags) catch |err| {
             return CompileResult.failFmt("failed to generate module graph bytes: {s}", .{@errorName(err)});
         };
         if (bytes.len == 0) return CompileResult.fail(.no_output_files);
@@ -1369,7 +1384,7 @@ pub const StandaloneModuleGraph = struct {
                     return error.FileNotFound;
                 };
             },
-            else => @compileError("TODO"),
+            .wasm => @compileError("TODO"),
         }
     }
 

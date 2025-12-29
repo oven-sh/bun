@@ -7,6 +7,7 @@ pub const JSBundler = struct {
         target: Target = Target.browser,
         entry_points: bun.StringSet = bun.StringSet.init(bun.default_allocator),
         hot: bool = false,
+        react_fast_refresh: bool = false,
         define: bun.StringMap = bun.StringMap.init(bun.default_allocator, false),
         loaders: ?api.LoaderMap = null,
         dir: OwnedString = OwnedString.initEmpty(bun.default_allocator),
@@ -38,6 +39,7 @@ pub const JSBundler = struct {
         footer: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         css_chunking: bool = false,
         drop: bun.StringSet = bun.StringSet.init(bun.default_allocator),
+        features: bun.StringSet = bun.StringSet.init(bun.default_allocator),
         has_any_on_before_parse: bool = false,
         throw_on_error: bool = true,
         env_behavior: api.DotEnvBehavior = .disable,
@@ -57,6 +59,10 @@ pub const JSBundler = struct {
             windows_description: OwnedString = OwnedString.initEmpty(bun.default_allocator),
             windows_copyright: OwnedString = OwnedString.initEmpty(bun.default_allocator),
             outfile: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+            autoload_dotenv: bool = true,
+            autoload_bunfig: bool = true,
+            autoload_tsconfig: bool = false,
+            autoload_package_json: bool = false,
 
             pub fn fromJS(globalThis: *jsc.JSGlobalObject, config: jsc.JSValue, allocator: std.mem.Allocator, compile_target: ?CompileTarget) JSError!?CompileOptions {
                 var this = CompileOptions{
@@ -175,6 +181,22 @@ pub const JSBundler = struct {
                     var slice = try outfile.toSlice(globalThis, bun.default_allocator);
                     defer slice.deinit();
                     try this.outfile.appendSliceExact(slice.slice());
+                }
+
+                if (try object.getBooleanLoose(globalThis, "autoloadDotenv")) |autoload_dotenv| {
+                    this.autoload_dotenv = autoload_dotenv;
+                }
+
+                if (try object.getBooleanLoose(globalThis, "autoloadBunfig")) |autoload_bunfig| {
+                    this.autoload_bunfig = autoload_bunfig;
+                }
+
+                if (try object.getBooleanLoose(globalThis, "autoloadTsconfig")) |autoload_tsconfig| {
+                    this.autoload_tsconfig = autoload_tsconfig;
+                }
+
+                if (try object.getBooleanLoose(globalThis, "autoloadPackageJson")) |autoload_package_json| {
+                    this.autoload_package_json = autoload_package_json;
                 }
 
                 return this;
@@ -318,6 +340,10 @@ pub const JSBundler = struct {
                     }
                     this.target = .bun;
                 }
+            }
+
+            if (try config.getBooleanLoose(globalThis, "reactFastRefresh")) |react_fast_refresh| {
+                this.react_fast_refresh = react_fast_refresh;
             }
 
             var has_out_dir = false;
@@ -548,6 +574,15 @@ pub const JSBundler = struct {
                     var slice = try entry.toSliceOrNull(globalThis);
                     defer slice.deinit();
                     try this.drop.insert(slice.slice());
+                }
+            }
+
+            if (try config.getOwnArray(globalThis, "features")) |features| {
+                var iter = try features.arrayIterator(globalThis);
+                while (try iter.next()) |entry| {
+                    var slice = try entry.toSliceOrNull(globalThis);
+                    defer slice.deinit();
+                    try this.features.insert(slice.slice());
                 }
             }
 
@@ -794,6 +829,7 @@ pub const JSBundler = struct {
             self.public_path.deinit();
             self.conditions.deinit();
             self.drop.deinit();
+            self.features.deinit();
             self.banner.deinit();
             if (self.compile) |*compile| {
                 compile.deinit();
@@ -936,8 +972,8 @@ pub const JSBundler = struct {
                 resolve.value = .{ .no_match = {} };
             } else {
                 const global = resolve.bv2.plugins.?.globalObject();
-                const path = path_value.toSliceCloneWithAllocator(global, bun.default_allocator) orelse @panic("Unexpected: path is not a string");
-                const namespace = namespace_value.toSliceCloneWithAllocator(global, bun.default_allocator) orelse @panic("Unexpected: namespace is not a string");
+                const path = path_value.toSliceCloneWithAllocator(global, bun.default_allocator) catch @panic("Unexpected: path is not a string");
+                const namespace = namespace_value.toSliceCloneWithAllocator(global, bun.default_allocator) catch @panic("Unexpected: namespace is not a string");
                 resolve.value = .{
                     .success = .{
                         .path = path.slice(),
@@ -1161,8 +1197,14 @@ pub const JSBundler = struct {
         extern fn JSBundlerPlugin__tombstone(*Plugin) void;
         extern fn JSBundlerPlugin__runOnEndCallbacks(*Plugin, jsc.JSValue, jsc.JSValue, jsc.JSValue) jsc.JSValue;
 
-        pub fn runOnEndCallbacks(this: *Plugin, globalThis: *jsc.JSGlobalObject, build_promise: *jsc.JSPromise, build_result: jsc.JSValue, rejection: jsc.JSValue) JSError!jsc.JSValue {
+        pub fn runOnEndCallbacks(this: *Plugin, globalThis: *jsc.JSGlobalObject, build_promise: *jsc.JSPromise, build_result: jsc.JSValue, rejection: bun.JSError!jsc.JSValue) bun.JSError!jsc.JSValue {
             jsc.markBinding(@src());
+
+            const rejection_value = rejection catch |err| switch (err) {
+                error.OutOfMemory => globalThis.createOutOfMemoryError(),
+                error.JSError => globalThis.takeError(err),
+                error.JSTerminated => return error.JSTerminated,
+            };
 
             var scope: jsc.CatchScope = undefined;
             scope.init(globalThis, @src());
@@ -1172,7 +1214,7 @@ pub const JSBundler = struct {
                 this,
                 build_promise.asValue(globalThis),
                 build_result,
-                rejection,
+                rejection_value,
             );
 
             try scope.returnIfException();

@@ -40,7 +40,7 @@ namespace WebCore {
 
 auto DOMPromise::whenSettled(std::function<void()>&& callback) -> IsCallbackRegistered
 {
-    return whenPromiseIsSettled(globalObject(), promise(), WTFMove(callback));
+    return whenPromiseIsSettled(globalObject(), promise(), WTF::move(callback));
 }
 
 auto DOMPromise::whenPromiseIsSettled(JSDOMGlobalObject* globalObject, JSC::JSObject* promise, Function<void()>&& callback) -> IsCallbackRegistered
@@ -48,7 +48,7 @@ auto DOMPromise::whenPromiseIsSettled(JSDOMGlobalObject* globalObject, JSC::JSOb
     auto& lexicalGlobalObject = *globalObject;
     auto& vm = lexicalGlobalObject.vm();
     JSLockHolder lock(vm);
-    auto* handler = JSC::JSNativeStdFunction::create(vm, globalObject, 1, String {}, [callback = WTFMove(callback)](JSGlobalObject*, CallFrame*) mutable {
+    auto* handler = JSC::JSNativeStdFunction::create(vm, globalObject, 1, String {}, [callback = WTF::move(callback)](JSGlobalObject*, CallFrame*) mutable {
         callback();
         return JSC::JSValue::encode(JSC::jsUndefined());
     });
@@ -76,12 +76,12 @@ auto DOMPromise::whenPromiseIsSettled(JSDOMGlobalObject* globalObject, JSC::JSOb
 
 JSC::JSValue DOMPromise::result() const
 {
-    return promise()->result(m_globalObject->vm());
+    return promise()->result();
 }
 
 DOMPromise::Status DOMPromise::status() const
 {
-    switch (promise()->status(m_globalObject->vm())) {
+    switch (promise()->status()) {
     case JSC::JSPromise::Status::Pending:
         return Status::Pending;
     case JSC::JSPromise::Status::Fulfilled:

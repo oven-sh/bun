@@ -183,7 +183,7 @@ pub const Expect = struct {
                     globalThis.bunVM().waitForPromise(promise);
 
                     const newValue = promise.result(vm);
-                    switch (promise.status(vm)) {
+                    switch (promise.status()) {
                         .fulfilled => switch (resolution) {
                             .resolves => {},
                             .rejects => {
@@ -1055,7 +1055,7 @@ pub const Expect = struct {
             result = promise.result(vm);
             result.ensureStillAlive();
             assert(result != .zero);
-            switch (promise.status(vm)) {
+            switch (promise.status()) {
                 .pending => unreachable,
                 .fulfilled => {},
                 .rejected => {

@@ -38,7 +38,7 @@ pub fn cpus(global: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
         .linux => cpusImplLinux,
         .mac => cpusImplDarwin,
         .windows => cpusImplWindows,
-        else => @compileError("Unsupported OS"),
+        .wasm => @compileError("Unsupported OS"),
     };
 
     return cpusImpl(global) catch {
@@ -452,7 +452,7 @@ pub fn loadavg(global: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
 pub const networkInterfaces = switch (Environment.os) {
     .linux, .mac => networkInterfacesPosix,
     .windows => networkInterfacesWindows,
-    else => @compileError("Unsupported OS"),
+    .wasm => @compileError("Unsupported OS"),
 };
 
 fn networkInterfacesPosix(globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
@@ -787,7 +787,7 @@ pub fn release() bun.String {
             @memcpy(name_buffer[0..value.len], value);
             break :slice name_buffer[0..value.len];
         },
-        else => @compileError("unsupported os"),
+        .wasm => @compileError("unsupported os"),
     };
 
     return bun.String.cloneUTF8(value);
@@ -881,7 +881,7 @@ pub fn totalmem() u64 {
         .windows => {
             return libuv.uv_get_total_memory();
         },
-        else => @compileError("unsupported os"),
+        .wasm => @compileError("unsupported os"),
     }
 }
 
@@ -923,7 +923,7 @@ pub fn uptime(global: *jsc.JSGlobalObject) bun.JSError!f64 {
                 return @floatFromInt(info.uptime);
             return 0;
         },
-        else => @compileError("unsupported os"),
+        .wasm => @compileError("unsupported os"),
     }
 }
 
@@ -990,7 +990,7 @@ pub fn version() bun.JSError!bun.String {
             @memcpy(name_buffer[0..slice.len], slice);
             break :slice name_buffer[0..slice.len];
         },
-        else => @compileError("unsupported os"),
+        .wasm => @compileError("unsupported os"),
     };
 
     return bun.String.cloneUTF8(slice);

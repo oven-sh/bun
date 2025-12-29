@@ -1425,6 +1425,7 @@ pub const Formatter = struct {
         o, // o
         O, // O
         c, // c
+        j, // j
     };
 
     fn writeWithFormatting(
@@ -1466,6 +1467,7 @@ pub const Formatter = struct {
                         'O' => .O,
                         'd', 'i' => .i,
                         'c' => .c,
+                        'j' => .j,
                         '%' => {
                             // print up to and including the first %
                             const end = slice[0..i];
@@ -1624,6 +1626,16 @@ pub const Formatter = struct {
 
                         .c => {
                             // TODO: Implement %c
+                        },
+
+                        .j => {
+                            // JSON.stringify the value using FastStringifier for SIMD optimization
+                            var str = bun.String.empty;
+                            defer str.deref();
+
+                            try next_value.jsonStringifyFast(global, &str);
+                            this.addForNewLine(str.length());
+                            writer.print("{f}", .{str});
                         },
                     }
                     if (this.remaining_values.len == 0) break;
@@ -2691,7 +2703,7 @@ pub const Formatter = struct {
 
                 writer.writeAll("Promise { " ++ comptime Output.prettyFmt("<r><cyan>", enable_ansi_colors));
 
-                switch (JSPromise.status(@as(*JSPromise, @ptrCast(value.asObjectRef().?)), this.globalThis.vm())) {
+                switch (JSPromise.status(@as(*JSPromise, @ptrCast(value.asObjectRef().?)))) {
                     .pending => writer.writeAll("<pending>"),
                     .fulfilled => writer.writeAll("<resolved>"),
                     .rejected => writer.writeAll("<rejected>"),

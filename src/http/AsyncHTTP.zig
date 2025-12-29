@@ -93,6 +93,7 @@ const AtomicState = std.atomic.Value(State);
 
 pub const Options = struct {
     http_proxy: ?URL = null,
+    proxy_headers: ?Headers = null,
     hostname: ?[]u8 = null,
     signals: ?Signals = null,
     unix_socket_path: ?jsc.ZigString.Slice = null,
@@ -185,6 +186,7 @@ pub fn init(
         .signals = options.signals orelse this.signals,
         .async_http_id = this.async_http_id,
         .http_proxy = this.http_proxy,
+        .proxy_headers = options.proxy_headers,
         .redirect_type = redirect_type,
     };
     if (options.unix_socket_path) |val| {
@@ -211,31 +213,24 @@ pub fn init(
     }
 
     if (options.http_proxy) |proxy| {
-        // Username between 0 and 4096 chars
-        if (proxy.username.len > 0 and proxy.username.len < 4096) {
-            // Password between 0 and 4096 chars
-            if (proxy.password.len > 0 and proxy.password.len < 4096) {
-                // decode password
-                var password_buffer = std.mem.zeroes([4096]u8);
-                var password_stream = std.io.fixedBufferStream(&password_buffer);
-                const password_writer = password_stream.writer();
-                const PassWriter = @TypeOf(password_writer);
-                const password_len = PercentEncoding.decode(PassWriter, password_writer, proxy.password) catch {
-                    // Invalid proxy authorization
-                    return this;
-                };
-                const password = password_buffer[0..password_len];
+        if (proxy.username.len > 0) {
+            // Use stack fallback allocator - stack for small credentials, heap for large ones
+            var username_sfb = std.heap.stackFallback(4096, allocator);
+            const username_alloc = username_sfb.get();
+            const username = PercentEncoding.decodeAlloc(username_alloc, proxy.username) catch |err| {
+                log("failed to decode proxy username: {}", .{err});
+                return this;
+            };
+            defer username_alloc.free(username);
 
-                // Decode username
-                var username_buffer = std.mem.zeroes([4096]u8);
-                var username_stream = std.io.fixedBufferStream(&username_buffer);
-                const username_writer = username_stream.writer();
-                const UserWriter = @TypeOf(username_writer);
-                const username_len = PercentEncoding.decode(UserWriter, username_writer, proxy.username) catch {
-                    // Invalid proxy authorization
+            if (proxy.password.len > 0) {
+                var password_sfb = std.heap.stackFallback(4096, allocator);
+                const password_alloc = password_sfb.get();
+                const password = PercentEncoding.decodeAlloc(password_alloc, proxy.password) catch |err| {
+                    log("failed to decode proxy password: {}", .{err});
                     return this;
                 };
-                const username = username_buffer[0..username_len];
+                defer password_alloc.free(password);
 
                 // concat user and password
                 const auth = std.fmt.allocPrint(allocator, "{s}:{s}", .{ username, password }) catch unreachable;
@@ -246,19 +241,8 @@ pub fn init(
                 buf[0.."Basic ".len].* = "Basic ".*;
                 this.client.proxy_authorization = buf[0 .. "Basic ".len + encoded.len];
             } else {
-                //Decode username
-                var username_buffer = std.mem.zeroes([4096]u8);
-                var username_stream = std.io.fixedBufferStream(&username_buffer);
-                const username_writer = username_stream.writer();
-                const UserWriter = @TypeOf(username_writer);
-                const username_len = PercentEncoding.decode(UserWriter, username_writer, proxy.username) catch {
-                    // Invalid proxy authorization
-                    return this;
-                };
-                const username = username_buffer[0..username_len];
-
                 // only use user
-                const size = std.base64.standard.Encoder.calcSize(username_len);
+                const size = std.base64.standard.Encoder.calcSize(username.len);
                 var buf = allocator.alloc(u8, size + "Basic ".len) catch unreachable;
                 const encoded = std.base64.url_safe.Encoder.encode(buf["Basic ".len..], username);
                 buf[0.."Basic ".len].* = "Basic ".*;
@@ -306,32 +290,24 @@ fn reset(this: *AsyncHTTP) !void {
     if (this.http_proxy) |proxy| {
         //TODO: need to understand how is possible to reuse Proxy with TSL, so disable keepalive if url is HTTPS
         this.client.flags.disable_keepalive = this.url.isHTTPS();
-        // Username between 0 and 4096 chars
-        if (proxy.username.len > 0 and proxy.username.len < 4096) {
-            // Password between 0 and 4096 chars
-            if (proxy.password.len > 0 and proxy.password.len < 4096) {
-                // decode password
-                var password_buffer = std.mem.zeroes([4096]u8);
-                var password_stream = std.io.fixedBufferStream(&password_buffer);
-                const password_writer = password_stream.writer();
-                const PassWriter = @TypeOf(password_writer);
-                const password_len = PercentEncoding.decode(PassWriter, password_writer, proxy.password) catch {
-                    // Invalid proxy authorization
-                    return this;
-                };
-                const password = password_buffer[0..password_len];
+        if (proxy.username.len > 0) {
+            // Use stack fallback allocator - stack for small credentials, heap for large ones
+            var username_sfb = std.heap.stackFallback(4096, this.allocator);
+            const username_alloc = username_sfb.get();
+            const username = PercentEncoding.decodeAlloc(username_alloc, proxy.username) catch |err| {
+                log("failed to decode proxy username: {}", .{err});
+                return;
+            };
+            defer username_alloc.free(username);
 
-                // Decode username
-                var username_buffer = std.mem.zeroes([4096]u8);
-                var username_stream = std.io.fixedBufferStream(&username_buffer);
-                const username_writer = username_stream.writer();
-                const UserWriter = @TypeOf(username_writer);
-                const username_len = PercentEncoding.decode(UserWriter, username_writer, proxy.username) catch {
-                    // Invalid proxy authorization
-                    return this;
+            if (proxy.password.len > 0) {
+                var password_sfb = std.heap.stackFallback(4096, this.allocator);
+                const password_alloc = password_sfb.get();
+                const password = PercentEncoding.decodeAlloc(password_alloc, proxy.password) catch |err| {
+                    log("failed to decode proxy password: {}", .{err});
+                    return;
                 };
-
-                const username = username_buffer[0..username_len];
+                defer password_alloc.free(password);
 
                 // concat user and password
                 const auth = std.fmt.allocPrint(this.allocator, "{s}:{s}", .{ username, password }) catch unreachable;
@@ -342,19 +318,8 @@ fn reset(this: *AsyncHTTP) !void {
                 buf[0.."Basic ".len].* = "Basic ".*;
                 this.client.proxy_authorization = buf[0 .. "Basic ".len + encoded.len];
             } else {
-                //Decode username
-                var username_buffer = std.mem.zeroes([4096]u8);
-                var username_stream = std.io.fixedBufferStream(&username_buffer);
-                const username_writer = username_stream.writer();
-                const UserWriter = @TypeOf(username_writer);
-                const username_len = PercentEncoding.decode(UserWriter, username_writer, proxy.username) catch {
-                    // Invalid proxy authorization
-                    return this;
-                };
-                const username = username_buffer[0..username_len];
-
                 // only use user
-                const size = std.base64.standard.Encoder.calcSize(username_len);
+                const size = std.base64.standard.Encoder.calcSize(username.len);
                 var buf = this.allocator.alloc(u8, size + "Basic ".len) catch unreachable;
                 const encoded = std.base64.url_safe.Encoder.encode(buf["Basic ".len..], username);
                 buf[0.."Basic ".len].* = "Basic ".*;

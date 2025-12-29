@@ -34,7 +34,7 @@ fn dangerouslyRunWithoutJitProtections(R: type, func: anytype, args: anytype) R 
     const has_protection = (Environment.isAarch64 and Environment.isMac);
     if (comptime has_protection) pthread_jit_write_protect_np(@intFromBool(false));
     defer if (comptime has_protection) pthread_jit_write_protect_np(@intFromBool(true));
-    return @call(.always_inline, func, args);
+    return @call(bun.callmod_inline, func, args);
 }
 
 const Offsets = extern struct {
@@ -780,7 +780,6 @@ pub const FFI = struct {
                         &str,
                         @as(u32, @intCast(function.arg_types.items.len)),
                         bun.cast(*const jsc.JSHostFn, compiled.ptr),
-                        false,
                         true,
                         function.symbol_from_dynamic_library,
                     );
@@ -1002,19 +1001,31 @@ pub const FFI = struct {
         if (object_value.isEmptyOrUndefinedOrNull()) return invalidOptionsArg(global);
         const object = object_value.getObject() orelse return invalidOptionsArg(global);
 
-        var filepath_buf: bun.PathBuffer = undefined;
+        var filepath_buf = bun.path_buffer_pool.get();
+        defer bun.path_buffer_pool.put(filepath_buf);
+        var linux_memfd_to_close: i32 = -1;
+        defer {
+            if (Environment.isLinux) {
+                if (linux_memfd_to_close != -1) {
+                    _ = bun.FD.fromSystem(linux_memfd_to_close).close();
+                }
+            } else {
+                bun.debugAssert(linux_memfd_to_close == -1);
+            }
+        }
         const name = brk: {
             if (jsc.ModuleLoader.resolveEmbeddedFile(
                 vm,
+                filepath_buf,
+                &linux_memfd_to_close,
                 name_slice.slice(),
                 switch (Environment.os) {
                     .linux => "so",
                     .mac => "dylib",
                     .windows => "dll",
-                    else => @compileError("TODO"),
+                    .wasm => @compileError("TODO"),
                 },
             )) |resolved| {
-                @memcpy(filepath_buf[0..resolved.len], resolved);
                 filepath_buf[resolved.len] = 0;
                 break :brk filepath_buf[0..resolved.len];
             }
@@ -1134,7 +1145,6 @@ pub const FFI = struct {
                         &str,
                         @as(u32, @intCast(function.arg_types.items.len)),
                         bun.cast(*const jsc.JSHostFn, compiled.ptr),
-                        false,
                         true,
                         function.symbol_from_dynamic_library,
                     );
@@ -1237,7 +1247,6 @@ pub const FFI = struct {
                         name,
                         @as(u32, @intCast(function.arg_types.items.len)),
                         bun.cast(*jsc.JSHostFn, compiled.ptr),
-                        false,
                         true,
                         function.symbol_from_dynamic_library,
                     );
@@ -1363,7 +1372,7 @@ pub const FFI = struct {
                 const num = ptr.asPtrAddress();
                 if (num > 0)
                     function.symbol_from_dynamic_library = @as(*anyopaque, @ptrFromInt(num));
-            } else {
+            } else if (ptr.isHeapBigInt()) {
                 const num = ptr.toUInt64NoTruncate();
                 if (num > 0) {
                     function.symbol_from_dynamic_library = @as(*anyopaque, @ptrFromInt(num));
@@ -1449,7 +1458,6 @@ pub const FFI = struct {
                 // val.allocator.free(val.step.compiled.buf);
                 if (val.step.compiled.js_function != .zero) {
                     _ = globalThis;
-                    // _ = jsc.untrackFunction(globalThis, val.step.compiled.js_function);
                     val.step.compiled.js_function = .zero;
                 }
 

@@ -654,19 +654,28 @@ pub const Loop = extern struct {
         return null;
     }
 
-    pub fn close(ptr: *Loop) void {
-        _ = uv_loop_close(ptr);
+    fn closeWalkCb(handle: ?*uv_handle_t, data: ?*anyopaque) callconv(.c) void {
+        _ = data;
+        const h = handle.?;
+        if (uv_is_closing(h) == 0) {
+            uv_close(h, null);
+        }
     }
 
-    pub fn new() ?*Loop {
-        const ptr = bun.default_allocator.create(Loop) catch return null;
-        if (init(ptr) != null) return null;
-        return ptr;
-    }
+    pub fn shutdown() void {
+        const loop = threadlocal_loop orelse {
+            return;
+        };
 
-    pub fn delete(ptr: *Loop) void {
-        close(ptr);
-        bun.default_allocator.destroy(ptr);
+        if (uv_loop_close(loop).errEnum()) |err| {
+            if (err == .BUSY) {
+                uv_walk(loop, &closeWalkCb, null);
+                _ = uv_run(loop, .default);
+                bun.debugAssert(uv_loop_close(loop) == .zero);
+            }
+        }
+
+        threadlocal_loop = null;
     }
 
     threadlocal var threadlocal_loop_data: Loop = undefined;
@@ -2120,7 +2129,7 @@ pub const uv_free_func = ?*const fn (?*anyopaque) callconv(.c) void;
 pub extern fn uv_library_shutdown() void;
 pub extern fn uv_replace_allocator(malloc_func: uv_malloc_func, realloc_func: uv_realloc_func, calloc_func: uv_calloc_func, free_func: uv_free_func) c_int;
 pub extern fn uv_loop_init(loop: *uv_loop_t) ReturnCode;
-pub extern fn uv_loop_close(loop: *uv_loop_t) c_int;
+pub extern fn uv_loop_close(loop: *uv_loop_t) ReturnCode;
 pub extern fn uv_loop_new() *uv_loop_t;
 pub extern fn uv_loop_delete(*uv_loop_t) void;
 pub extern fn uv_loop_size() usize;
@@ -2871,6 +2880,21 @@ pub const ReturnCode = enum(c_int) {
                 UV_ECANCELED => @intFromEnum(bun.sys.E.CANCELED),
                 UV_ECHARSET => @intFromEnum(bun.sys.E.CHARSET),
                 UV_EOF => @intFromEnum(bun.sys.E.EOF),
+                UV_UNKNOWN => @intFromEnum(bun.sys.E.UNKNOWN),
+                UV_EAI_ADDRFAMILY => @intFromEnum(bun.sys.E.UV_EAI_ADDRFAMILY),
+                UV_EAI_AGAIN => @intFromEnum(bun.sys.E.UV_EAI_AGAIN),
+                UV_EAI_BADFLAGS => @intFromEnum(bun.sys.E.UV_EAI_BADFLAGS),
+                UV_EAI_BADHINTS => @intFromEnum(bun.sys.E.UV_EAI_BADHINTS),
+                UV_EAI_CANCELED => @intFromEnum(bun.sys.E.UV_EAI_CANCELED),
+                UV_EAI_FAIL => @intFromEnum(bun.sys.E.UV_EAI_FAIL),
+                UV_EAI_FAMILY => @intFromEnum(bun.sys.E.UV_EAI_FAMILY),
+                UV_EAI_MEMORY => @intFromEnum(bun.sys.E.UV_EAI_MEMORY),
+                UV_EAI_NODATA => @intFromEnum(bun.sys.E.UV_EAI_NODATA),
+                UV_EAI_NONAME => @intFromEnum(bun.sys.E.UV_EAI_NONAME),
+                UV_EAI_OVERFLOW => @intFromEnum(bun.sys.E.UV_EAI_OVERFLOW),
+                UV_EAI_PROTOCOL => @intFromEnum(bun.sys.E.UV_EAI_PROTOCOL),
+                UV_EAI_SERVICE => @intFromEnum(bun.sys.E.UV_EAI_SERVICE),
+                UV_EAI_SOCKTYPE => @intFromEnum(bun.sys.E.UV_EAI_SOCKTYPE),
                 else => null,
             }
         else

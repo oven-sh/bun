@@ -52,19 +52,19 @@ void CryptoAlgorithmSHA256::digest(Vector<uint8_t>&& message, VectorCallback&& c
     }
 
     if (message.size() < 64) {
-        auto moved = WTFMove(message);
+        auto moved = WTF::move(message);
         digest->addBytes(moved.begin(), moved.size());
         auto result = digest->computeHash();
-        ScriptExecutionContext::postTaskTo(context.identifier(), [callback = WTFMove(callback), result = WTFMove(result)](auto&) {
+        ScriptExecutionContext::postTaskTo(context.identifier(), [callback = WTF::move(callback), result = WTF::move(result)](auto&) {
             callback(result);
         });
         return;
     }
 
-    workQueue.dispatch(context.globalObject(), [digest = WTFMove(digest), message = WTFMove(message), callback = WTFMove(callback), contextIdentifier = context.identifier()]() mutable {
+    workQueue.dispatch(context.globalObject(), [digest = WTF::move(digest), message = WTF::move(message), callback = WTF::move(callback), contextIdentifier = context.identifier()]() mutable {
         digest->addBytes(message.begin(), message.size());
         auto result = digest->computeHash();
-        ScriptExecutionContext::postTaskTo(contextIdentifier, [callback = WTFMove(callback), result = WTFMove(result)](auto&) {
+        ScriptExecutionContext::postTaskTo(contextIdentifier, [callback = WTF::move(callback), result = WTF::move(result)](auto&) {
             callback(result);
         });
     });

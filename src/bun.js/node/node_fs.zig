@@ -2829,7 +2829,9 @@ pub const Arguments = struct {
             // String objects not allowed (typeof new String("hi") === "object")
             // https://github.com/nodejs/node/blob/6f946c95b9da75c70e868637de8161bc8d048379/lib/internal/fs/utils.js#L916
             const allow_string_object = false;
-            const data = try StringOrBuffer.fromJSWithEncodingMaybeAsync(ctx, bun.default_allocator, data_value, encoding, arguments.will_be_async, allow_string_object) orelse {
+            // the pattern in node_fs.zig is to call toThreadSafe after Arguments.*.fromJS
+            const is_async = false;
+            const data = try StringOrBuffer.fromJSWithEncodingMaybeAsync(ctx, bun.default_allocator, data_value, encoding, is_async, allow_string_object) orelse {
                 return ctx.ERR(.INVALID_ARG_TYPE, "The \"data\" argument must be of type string or an instance of Buffer, TypedArray, or DataView", .{}).throw();
             };
 
@@ -3678,8 +3680,12 @@ pub const NodeFS = struct {
                     if (ret.errnoSysP(written, .copy_file_range, dest)) |err| {
                         return switch (err.getErrno()) {
                             .INTR => continue,
-                            inline .XDEV, .NOSYS => |errno| brk: {
-                                if (comptime errno == .NOSYS) {
+                            // EINVAL: eCryptfs and other filesystems may not support copy_file_range
+                            // XDEV: cross-device copy not supported
+                            // NOSYS: syscall not available
+                            // OPNOTSUPP: filesystem doesn't support this operation
+                            inline .XDEV, .NOSYS, .INVAL, .OPNOTSUPP => |errno| brk: {
+                                if (comptime errno == .NOSYS or errno == .OPNOTSUPP) {
                                     bun.disableCopyFileRangeSyscall();
                                 }
                                 break :brk copyFileUsingSendfileOnLinuxWithReadWriteFallback(src, dest, src_fd, dest_fd, size, &wrote);
@@ -3699,8 +3705,12 @@ pub const NodeFS = struct {
                     if (ret.errnoSysP(written, .copy_file_range, dest)) |err| {
                         return switch (err.getErrno()) {
                             .INTR => continue,
-                            inline .XDEV, .NOSYS => |errno| brk: {
-                                if (comptime errno == .NOSYS) {
+                            // EINVAL: eCryptfs and other filesystems may not support copy_file_range
+                            // XDEV: cross-device copy not supported
+                            // NOSYS: syscall not available
+                            // OPNOTSUPP: filesystem doesn't support this operation
+                            inline .XDEV, .NOSYS, .INVAL, .OPNOTSUPP => |errno| brk: {
+                                if (comptime errno == .NOSYS or errno == .OPNOTSUPP) {
                                     bun.disableCopyFileRangeSyscall();
                                 }
                                 break :brk copyFileUsingSendfileOnLinuxWithReadWriteFallback(src, dest, src_fd, dest_fd, size, &wrote);
@@ -3733,7 +3743,7 @@ pub const NodeFS = struct {
             return ret.success;
         }
 
-        @compileError(unreachable);
+        @compileError("unreachable");
     }
 
     pub fn exists(this: *NodeFS, args: Arguments.Exists, _: Flavor) Maybe(Return.Exists) {
@@ -4800,7 +4810,7 @@ pub const NodeFS = struct {
                     bun.String => {
                         bun.handleOom(entries.append(jsc.WebCore.encoding.toBunString(strings.withoutNTPrefix(std.meta.Child(@TypeOf(name_to_copy)), name_to_copy), args.encoding)));
                     },
-                    else => @compileError(unreachable),
+                    else => @compileError("unreachable"),
                 }
             }
         }
@@ -6431,8 +6441,12 @@ pub const NodeFS = struct {
                     const written = linux.copy_file_range(src_fd.cast(), &off_in_copy, dest_fd.cast(), &off_out_copy, std.heap.pageSize(), 0);
                     if (ret.errnoSysP(written, .copy_file_range, dest)) |err| {
                         return switch (err.getErrno()) {
-                            inline .XDEV, .NOSYS => |errno| brk: {
-                                if (comptime errno == .NOSYS) {
+                            // EINVAL: eCryptfs and other filesystems may not support copy_file_range
+                            // XDEV: cross-device copy not supported
+                            // NOSYS: syscall not available
+                            // OPNOTSUPP: filesystem doesn't support this operation
+                            inline .XDEV, .NOSYS, .INVAL, .OPNOTSUPP => |errno| brk: {
+                                if (comptime errno == .NOSYS or errno == .OPNOTSUPP) {
                                     bun.disableCopyFileRangeSyscall();
                                 }
                                 break :brk copyFileUsingSendfileOnLinuxWithReadWriteFallback(src, dest, src_fd, dest_fd, size, &wrote);
@@ -6451,8 +6465,12 @@ pub const NodeFS = struct {
                     const written = linux.copy_file_range(src_fd.cast(), &off_in_copy, dest_fd.cast(), &off_out_copy, size, 0);
                     if (ret.errnoSysP(written, .copy_file_range, dest)) |err| {
                         return switch (err.getErrno()) {
-                            inline .XDEV, .NOSYS => |errno| brk: {
-                                if (comptime errno == .NOSYS) {
+                            // EINVAL: eCryptfs and other filesystems may not support copy_file_range
+                            // XDEV: cross-device copy not supported
+                            // NOSYS: syscall not available
+                            // OPNOTSUPP: filesystem doesn't support this operation
+                            inline .XDEV, .NOSYS, .INVAL, .OPNOTSUPP => |errno| brk: {
+                                if (comptime errno == .NOSYS or errno == .OPNOTSUPP) {
                                     bun.disableCopyFileRangeSyscall();
                                 }
                                 break :brk copyFileUsingSendfileOnLinuxWithReadWriteFallback(src, dest, src_fd, dest_fd, size, &wrote);

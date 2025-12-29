@@ -99,6 +99,7 @@ function normalizeOutput(stdout: string) {
       .replaceAll("\ncounter a", "")
       .split("\n")
       .map(x => x.trim())
+      .filter(x => x.length > 0)
       .join("\n")
   );
 }

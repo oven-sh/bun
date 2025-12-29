@@ -918,7 +918,7 @@ pub const Installer = struct {
                         if (installer.trusted_dependencies_from_update_requests.contains(truncated_dep_name_hash)) {
                             break :brk .{ true, true };
                         }
-                        if (installer.lockfile.hasTrustedDependency(dep.name.slice(string_buf))) {
+                        if (installer.lockfile.hasTrustedDependency(dep.name.slice(string_buf), &pkg_res)) {
                             break :brk .{ true, false };
                         }
                         break :brk .{ false, false };
@@ -932,7 +932,11 @@ pub const Installer = struct {
                     if (pkg_res.tag != .root and (pkg_res.tag == .workspace or is_trusted)) enqueue_lifecycle_scripts: {
                         var pkg_scripts: Package.Scripts = pkg_script_lists[pkg_id];
                         if (is_trusted and manager.postinstall_optimizer.shouldIgnoreLifecycleScripts(
-                            pkg_name_hashes[pkg_id],
+                            .{
+                                .name_hash = pkg_name_hash,
+                                .version = if (pkg_res.tag == .npm) pkg_res.value.npm.version else null,
+                                .version_buf = lockfile.buffers.string_bytes.items,
+                            },
                             installer.lockfile.buffers.resolutions.items,
                             pkg_metas,
                             manager.options.cpu,
@@ -1316,7 +1320,7 @@ pub const Installer = struct {
         }
         const name_hash = name_hashes[pkg_id];
 
-        if (postinstall_optimizer.get(name_hash)) |optimizer| {
+        if (postinstall_optimizer.get(.{ .name_hash = name_hash })) |optimizer| {
             switch (optimizer) {
                 .native_binlink => {
                     const manager = this.manager;

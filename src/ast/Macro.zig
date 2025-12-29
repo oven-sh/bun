@@ -480,7 +480,7 @@ pub const Runner = struct {
                     this.macro.vm.waitForPromise(promise);
 
                     const promise_result = promise.result(this.macro.vm.jsc_vm);
-                    const rejected = promise.status(this.macro.vm.jsc_vm) == .rejected;
+                    const rejected = promise.status() == .rejected;
 
                     if (promise_result.isUndefined() and this.is_top_level) {
                         this.is_top_level = false;

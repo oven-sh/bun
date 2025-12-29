@@ -101,7 +101,8 @@ pub fn writeBind(
             .jsonb, .json => {
                 var str = bun.String.empty;
                 defer str.deref();
-                try value.jsonStringify(globalObject, 0, &str);
+                // Use jsonStringifyFast for SIMD-optimized serialization
+                try value.jsonStringifyFast(globalObject, &str);
                 const slice = str.toUTF8WithoutRef(bun.default_allocator);
                 defer slice.deinit();
                 const l = try writer.length();

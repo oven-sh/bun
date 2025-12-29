@@ -165,7 +165,8 @@ pub const Config = struct {
                 }
 
                 if (!kind.isStringLike()) {
-                    try tsconfig.jsonStringify(globalThis, 0, &out);
+                    // Use jsonStringifyFast for SIMD-optimized serialization
+                    try tsconfig.jsonStringifyFast(globalThis, &out);
                 } else {
                     out = try tsconfig.toBunString(globalThis);
                 }
@@ -204,7 +205,8 @@ pub const Config = struct {
                 defer out.deref();
                 // TODO: write a converter between JSC types and Bun AST types
                 if (is_object) {
-                    try macros.jsonStringify(globalThis, 0, &out);
+                    // Use jsonStringifyFast for SIMD-optimized serialization
+                    try macros.jsonStringifyFast(globalThis, &out);
                 } else {
                     out = try macros.toBunString(globalThis);
                 }
@@ -1018,7 +1020,7 @@ fn namedImportsToJS(global: *JSGlobalObject, import_records: []const ImportRecor
     array.ensureStillAlive();
 
     for (import_records, 0..) |record, i| {
-        if (record.is_internal) continue;
+        if (record.flags.is_internal) continue;
 
         array.ensureStillAlive();
         const path = jsc.ZigString.init(record.path.text).toJS(global);

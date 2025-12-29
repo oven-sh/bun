@@ -7,6 +7,7 @@ pub const JSBundler = struct {
         target: Target = Target.browser,
         entry_points: bun.StringSet = bun.StringSet.init(bun.default_allocator),
         hot: bool = false,
+        react_fast_refresh: bool = false,
         define: bun.StringMap = bun.StringMap.init(bun.default_allocator, false),
         loaders: ?api.LoaderMap = null,
         dir: OwnedString = OwnedString.initEmpty(bun.default_allocator),
@@ -339,6 +340,10 @@ pub const JSBundler = struct {
                     }
                     this.target = .bun;
                 }
+            }
+
+            if (try config.getBooleanLoose(globalThis, "reactFastRefresh")) |react_fast_refresh| {
+                this.react_fast_refresh = react_fast_refresh;
             }
 
             var has_out_dir = false;

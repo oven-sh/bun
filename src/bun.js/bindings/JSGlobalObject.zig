@@ -913,7 +913,7 @@ pub const JSGlobalObject = opaque {
                 defer blob.detach();
 
                 blob.resolveSize();
-                return jsc.WebCore.ReadableStream.fromBlobCopyRef(this, &blob, blob.size);
+                return jsc.WebCore.ReadableStream.fromBlobCopyRef(this, &blob, blob.getSize());
             }
         }
 

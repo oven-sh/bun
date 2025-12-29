@@ -1513,7 +1513,7 @@ pub const BuildArtifact = struct {
     }
 
     pub fn getSize(this: *BuildArtifact, globalObject: *jsc.JSGlobalObject) JSValue {
-        return @call(bun.callmod_inline, Blob.getSize, .{ &this.blob, globalObject });
+        return @call(bun.callmod_inline, Blob.getSizeForJS, .{ &this.blob, globalObject });
     }
 
     pub fn getMimeType(this: *BuildArtifact, globalObject: *jsc.JSGlobalObject) JSValue {

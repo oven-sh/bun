@@ -185,7 +185,7 @@ export default [
       delete: { fn: "doUnlink", length: 0 },
       write: { fn: "doWrite", length: 2 },
       size: {
-        getter: "getSize",
+        getter: "getSizeForJS",
       },
       stat: { fn: "getStat", length: 0 },
 

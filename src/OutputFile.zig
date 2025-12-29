@@ -174,7 +174,7 @@ pub const SavedFile = struct {
         if (mime_type) |mime| {
             blob.content_type = mime.value;
         }
-        blob.size = @as(jsc.WebCore.Blob.SizeType, @truncate(byte_size));
+        blob.setSize(@as(jsc.WebCore.Blob.SizeType, @truncate(byte_size)));
         blob.allocator = bun.default_allocator;
         return blob.toJS(globalThis);
     }
@@ -422,7 +422,7 @@ pub fn toJS(
                 blob.content_type = this.loader.toMimeType(&.{owned_pathname orelse ""}).value;
             }
 
-            blob.size = @as(jsc.WebCore.Blob.SizeType, @truncate(buffer.bytes.len));
+            blob.setSize(@as(jsc.WebCore.Blob.SizeType, @truncate(buffer.bytes.len)));
 
             var build_output = bun.default_allocator.create(jsc.API.BuildArtifact) catch @panic("Unable to allocate Artifact");
             build_output.* = jsc.API.BuildArtifact{
@@ -510,7 +510,7 @@ pub fn toBlob(
                 },
             };
 
-            blob.size = @as(jsc.WebCore.Blob.SizeType, @truncate(buffer.bytes.len));
+            blob.setSize(@as(jsc.WebCore.Blob.SizeType, @truncate(buffer.bytes.len)));
             break :brk blob;
         },
     };

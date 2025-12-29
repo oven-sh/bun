@@ -266,7 +266,7 @@ pub const Value = union(Tag) {
             .Null => true,
             .Used, .Empty => true,
             .InternalBlob => this.InternalBlob.slice().len == 0,
-            .Blob => this.Blob.size == 0,
+            .Blob => this.Blob.getSize() == 0,
             .WTFStringImpl => this.WTFStringImpl.length() == 0,
             .Error, .Locked => false,
         };
@@ -458,7 +458,7 @@ pub const Value = union(Tag) {
                 var blob = this.use();
                 defer blob.detach();
                 blob.resolveSize();
-                const value = try jsc.WebCore.ReadableStream.fromBlobCopyRef(globalThis, &blob, blob.size);
+                const value = try jsc.WebCore.ReadableStream.fromBlobCopyRef(globalThis, &blob, blob.getSize());
 
                 this.* = .{
                     .Locked = .{

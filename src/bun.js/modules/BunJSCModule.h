@@ -115,7 +115,7 @@ JSC_DEFINE_HOST_FUNCTION(functionStartRemoteDebugger,
             globalObject, scope,
             createError(globalObject,
                 makeString("Failed to start server \""_s,
-                    reinterpret_cast<const unsigned char*>(host),
+                    String::fromLatin1(host),
                     ":"_s, port, "\". Is port already in use?"_s)));
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
@@ -797,7 +797,7 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
                 throwException(globalObject, scope, error.value());
                 return JSValue::encode({});
             });
-        promise->performPromiseThen(globalObject, resolve, reject, afterOngoingPromiseCapability);
+        promise->performPromiseThen(vm, globalObject, resolve, reject, afterOngoingPromiseCapability);
         RETURN_IF_EXCEPTION(throwScope, {});
         return JSValue::encode(afterOngoingPromiseCapability);
     }
@@ -830,7 +830,7 @@ JSC_DEFINE_HOST_FUNCTION(functionGenerateHeapSnapshotForDebugging,
     }
     scope.releaseAssertNoException();
 
-    return JSValue::encode(JSONParse(globalObject, WTFMove(jsonString)));
+    return JSValue::encode(JSONParse(globalObject, WTF::move(jsonString)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionSerialize,
@@ -861,7 +861,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSerialize,
 
     Vector<JSC::Strong<JSC::JSObject>> transferList;
     Vector<RefPtr<MessagePort>> dummyPorts;
-    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTFMove(transferList), dummyPorts, SerializationForStorage::Yes);
+    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTF::move(transferList), dummyPorts, SerializationForStorage::Yes);
     EXCEPTION_ASSERT(serialized.hasException() == !!throwScope.exception());
     if (serialized.hasException()) {
         WebCore::propagateException(*globalObject, throwScope, serialized.releaseException());
@@ -874,16 +874,16 @@ JSC_DEFINE_HOST_FUNCTION(functionSerialize,
     if (asNodeBuffer) {
         size_t byteLength = arrayBuffer->byteLength();
         auto* subclassStructure = globalObject->JSBufferSubclassStructure();
-        JSC::JSUint8Array* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTFMove(arrayBuffer), 0, byteLength);
+        JSC::JSUint8Array* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTF::move(arrayBuffer), 0, byteLength);
         RETURN_IF_EXCEPTION(throwScope, {});
         return JSValue::encode(uint8Array);
     }
 
     if (arrayBuffer->isShared()) {
-        return JSValue::encode(JSArrayBuffer::create(vm, globalObject->arrayBufferStructureWithSharingMode<ArrayBufferSharingMode::Shared>(), WTFMove(arrayBuffer)));
+        return JSValue::encode(JSArrayBuffer::create(vm, globalObject->arrayBufferStructureWithSharingMode<ArrayBufferSharingMode::Shared>(), WTF::move(arrayBuffer)));
     }
 
-    return JSValue::encode(JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(), WTFMove(arrayBuffer)));
+    return JSValue::encode(JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(), WTF::move(arrayBuffer)));
 }
 JSC_DEFINE_HOST_FUNCTION(functionDeserialize, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {

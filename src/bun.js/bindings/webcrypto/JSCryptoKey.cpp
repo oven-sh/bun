@@ -87,11 +87,11 @@ template<> JSString* convertEnumerationToJS(JSGlobalObject& lexicalGlobalObject,
 template<> std::optional<CryptoKey::Type> parseEnumeration<CryptoKey::Type>(JSGlobalObject& lexicalGlobalObject, JSValue value)
 {
     auto stringValue = value.toWTFString(&lexicalGlobalObject);
-    static constexpr std::pair<ComparableASCIILiteral, CryptoKey::Type> mappings[] = {
+    static constexpr std::array<std::pair<ComparableASCIILiteral, CryptoKey::Type>, 3> mappings { {
         { "private"_s, CryptoKey::Type::Private },
         { "public"_s, CryptoKey::Type::Public },
         { "secret"_s, CryptoKey::Type::Secret },
-    };
+    } };
     static constexpr SortedArrayMap enumerationMapping { mappings };
     if (auto* enumerationValue = enumerationMapping.tryGet(stringValue); enumerationValue) [[likely]]
         return *enumerationValue;
@@ -184,7 +184,7 @@ void JSCryptoKeyPrototype::finishCreation(VM& vm)
 const ClassInfo JSCryptoKey::s_info = { "CryptoKey"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCryptoKey) };
 
 JSCryptoKey::JSCryptoKey(Structure* structure, JSDOMGlobalObject& globalObject, Ref<CryptoKey>&& impl)
-    : JSDOMWrapper<CryptoKey>(structure, globalObject, WTFMove(impl))
+    : JSDOMWrapper<CryptoKey>(structure, globalObject, WTF::move(impl))
 {
 }
 
@@ -338,7 +338,7 @@ void JSCryptoKeyOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
 
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<CryptoKey>&& impl)
 {
-    return createWrapper<CryptoKey>(globalObject, WTFMove(impl));
+    return createWrapper<CryptoKey>(globalObject, WTF::move(impl));
 }
 
 JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, CryptoKey& impl)

@@ -1201,7 +1201,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     streamLog("returned a promise", .{});
                     this.drainMicrotasks();
 
-                    switch (promise.status(globalThis.vm())) {
+                    switch (promise.status()) {
                         .pending => {
                             streamLog("promise still Pending", .{});
                             if (!this.flags.has_written_status) {

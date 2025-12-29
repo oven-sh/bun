@@ -350,8 +350,8 @@ pub const Run = struct {
         var printed_sourcemap_warning_and_version = false;
 
         if (vm.loadEntryPoint(this.entry_path)) |promise| {
-            if (promise.status(vm.global.vm()) == .rejected) {
-                const handled = vm.uncaughtException(vm.global, promise.result(vm.global.vm()), true);
+            if (promise.status() == .rejected) {
+                const handled = vm.uncaughtException(vm.global, promise.result(), true);
                 promise.setHandled(vm.global.vm());
 
                 if (vm.hot_reload != .none or handled) {
@@ -375,7 +375,7 @@ pub const Run = struct {
                 }
             }
 
-            _ = promise.result(vm.global.vm());
+            _ = promise.result();
 
             if (vm.log.msgs.items.len > 0) {
                 dumpBuildError(vm);
@@ -445,7 +445,7 @@ pub const Run = struct {
                     const to_print = brk: {
                         const result: jsc.JSValue = vm.entry_point_result.value.get() orelse .js_undefined;
                         if (result.asAnyPromise()) |promise| {
-                            switch (promise.status(vm.jsc_vm)) {
+                            switch (promise.status()) {
                                 .pending => {
                                     result.then2(vm.global, .js_undefined, Bun__onResolveEntryPointResult, Bun__onRejectEntryPointResult) catch {}; // TODO: properly propagate exception upwards
 

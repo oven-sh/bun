@@ -313,7 +313,7 @@ function Install-Build-Essentials {
     strawberryperl `
     mingw
   Install-Rust
-  Install-Sccache
+  Install-Ccache
   # Needed to remap stack traces
   Install-PdbAddr2line
   Install-Llvm
@@ -376,8 +376,8 @@ function Install-Rust {
   Add-To-Path "$rustPath\cargo\bin"
 }
 
-function Install-Sccache {
-  Install-Package sccache -Version "0.12.0"
+function Install-Ccache {
+  Install-Package ccache
 }
 
 function Install-PdbAddr2line {

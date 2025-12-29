@@ -173,7 +173,7 @@ void DOMFormData::set(const String& name, Item&& item)
     }
 
     if (initialMatchLocation) {
-        m_items[*initialMatchLocation] = WTFMove(item);
+        m_items[*initialMatchLocation] = WTF::move(item);
 
         m_items.removeAllMatching([&name](const auto& item) {
             return item.name == name;
@@ -182,7 +182,7 @@ void DOMFormData::set(const String& name, Item&& item)
         return;
     }
 
-    m_items.append(WTFMove(item));
+    m_items.append(WTF::move(item));
 }
 
 DOMFormData::Iterator::Iterator(DOMFormData& target)

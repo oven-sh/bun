@@ -256,7 +256,9 @@ const json = struct {
 
     pub fn serialize(writer: *bun.io.StreamBuffer, global: *jsc.JSGlobalObject, value: JSValue, is_internal: IsInternal) !usize {
         var out: bun.String = undefined;
-        try value.jsonStringify(global, 0, &out);
+        // Use jsonStringifyFast which passes undefined for the space parameter,
+        // triggering JSC's SIMD-optimized FastStringifier code path.
+        try value.jsonStringifyFast(global, &out);
         defer out.deref();
 
         if (out.tag == .Dead) return IPCSerializationError.SerializationFailed;

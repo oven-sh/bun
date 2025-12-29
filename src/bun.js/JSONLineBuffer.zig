@@ -17,7 +17,7 @@ pub const JSONLineBuffer = struct {
     scanned_pos: u32 = 0,
 
     /// Compact the buffer when head exceeds this threshold.
-    const compaction_threshold = 2 * 1024 * 1024; // 2 MB
+    const compaction_threshold = 16 * 1024 * 1024; // 16 MB
 
     /// Get the active (unconsumed) portion of the buffer.
     fn activeSlice(self: *const @This()) []const u8 {
@@ -47,6 +47,7 @@ pub const JSONLineBuffer = struct {
         if (self.head == 0) return;
         const slice = self.activeSlice();
         bun.copy(u8, self.data.ptr[0..slice.len], slice);
+        bun.debugAssert(slice.len <= std.math.maxInt(u32));
         self.data.len = @intCast(slice.len);
         self.head = 0;
     }
@@ -85,10 +86,16 @@ pub const JSONLineBuffer = struct {
             }
         }
 
-        // Check if we've consumed everything - reset to reclaim memory
+        // Check if we've consumed everything
         if (self.head >= self.data.len) {
+            // Free memory if capacity exceeds threshold, otherwise just reset
+            if (self.data.cap >= compaction_threshold) {
+                self.data.deinit(bun.default_allocator);
+                self.data = .{};
+            } else {
+                self.data.len = 0;
+            }
             self.head = 0;
-            self.data.len = 0;
             self.scanned_pos = 0;
             self.newline_pos = null;
             return;

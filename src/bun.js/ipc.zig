@@ -190,8 +190,8 @@ const json = struct {
         const idx: u32 = known_newline orelse idx: {
             const found = bun.strings.indexOfChar(data, '\n') orelse
                 return IPCDecodeError.NotEnoughBytes;
-            // Individual IPC messages should not exceed 4GB
-            if (found > std.math.maxInt(u32)) return IPCDecodeError.InvalidFormat;
+            // Individual IPC messages should not exceed 4GB, and idx+1 must not overflow
+            if (found >= std.math.maxInt(u32)) return IPCDecodeError.InvalidFormat;
             break :idx @intCast(found);
         };
 

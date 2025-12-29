@@ -165,7 +165,8 @@ pub const Config = struct {
                 }
 
                 if (!kind.isStringLike()) {
-                    try tsconfig.jsonStringify(globalThis, 0, &out);
+                    // Use jsonStringifyFast for SIMD-optimized serialization
+                    try tsconfig.jsonStringifyFast(globalThis, &out);
                 } else {
                     out = try tsconfig.toBunString(globalThis);
                 }
@@ -204,7 +205,8 @@ pub const Config = struct {
                 defer out.deref();
                 // TODO: write a converter between JSC types and Bun AST types
                 if (is_object) {
-                    try macros.jsonStringify(globalThis, 0, &out);
+                    // Use jsonStringifyFast for SIMD-optimized serialization
+                    try macros.jsonStringifyFast(globalThis, &out);
                 } else {
                     out = try macros.toBunString(globalThis);
                 }

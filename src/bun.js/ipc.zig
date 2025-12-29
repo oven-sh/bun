@@ -187,8 +187,13 @@ const json = struct {
 
     pub fn decodeIPCMessage(data: []const u8, globalThis: *jsc.JSGlobalObject, known_newline: ?u32) IPCDecodeError!DecodeIPCMessageResult {
         // <tag>{ "foo": "bar"} // tag is 1 or 2
-        const idx = known_newline orelse bun.strings.indexOfChar(data, '\n') orelse
-            return IPCDecodeError.NotEnoughBytes;
+        const idx: u32 = known_newline orelse idx: {
+            const found = bun.strings.indexOfChar(data, '\n') orelse
+                return IPCDecodeError.NotEnoughBytes;
+            // Individual IPC messages should not exceed 4GB
+            if (found > std.math.maxInt(u32)) return IPCDecodeError.InvalidFormat;
+            break :idx @intCast(found);
+        };
 
         var json_data = data[0..idx];
         // An empty payload (newline with no preceding data) is invalid JSON.

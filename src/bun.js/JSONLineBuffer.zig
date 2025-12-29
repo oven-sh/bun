@@ -21,10 +21,12 @@ pub const JSONLineBuffer = struct {
 
         const unscanned = slice[self.scanned_pos..];
         if (bun.strings.indexOfChar(unscanned, '\n')) |local_idx| {
+            bun.debugAssert(local_idx <= std.math.maxInt(u32));
             const pos = self.scanned_pos +| @as(u32, @intCast(local_idx));
             self.newline_pos = pos;
             self.scanned_pos = pos +| 1; // Only scanned up to (and including) the newline
         } else {
+            bun.debugAssert(slice.len <= std.math.maxInt(u32));
             self.scanned_pos = @intCast(slice.len); // No newline, scanned everything
         }
     }
@@ -81,6 +83,7 @@ pub const JSONLineBuffer = struct {
 
     /// Notify the buffer that data was written directly (e.g., via pre-allocated slice).
     pub fn notifyWritten(self: *@This(), new_data: []const u8) void {
+        bun.debugAssert(new_data.len <= std.math.maxInt(u32));
         self.data.len +|= @as(u32, @intCast(new_data.len));
         self.scanForNewline();
     }

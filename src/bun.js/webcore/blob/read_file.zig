@@ -16,8 +16,9 @@ pub fn NewReadFileHandler(comptime Function: anytype) type {
             switch (maybe_bytes) {
                 .result => |result| {
                     const bytes = result.buf;
-                    if (blob.getSize() > 0)
-                        blob.setSize(@min(@as(SizeType, @truncate(bytes.len)), blob.getSize()));
+                    const current_size = blob.getSize();
+                    if (current_size > 0)
+                        blob.setSize(@min(@as(SizeType, @truncate(bytes.len)), current_size));
                     const WrappedFn = struct {
                         pub fn wrapped(b: *Blob, g: *JSGlobalObject, by: []u8) jsc.JSValue {
                             return jsc.toJSHostCall(g, @src(), Function, .{ b, g, by, .temporary });

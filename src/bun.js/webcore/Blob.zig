@@ -2204,7 +2204,7 @@ const S3BlobDownloadTask = struct {
             .success => |response| {
                 const bytes = response.body.list.items;
                 if (this.blob.getSize() == Blob.max_size) {
-                    this.blob._size = @truncate(bytes.len);
+                    this.blob.setSize(@truncate(bytes.len));
                 }
                 try jsc.AnyPromise.wrap(.{ .normal = this.promise.get() }, this.globalThis, S3BlobDownloadTask.callHandler, .{ this, bytes });
             },

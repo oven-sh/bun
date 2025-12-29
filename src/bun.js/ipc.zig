@@ -27,11 +27,15 @@ const JsonIncomingBuffer = struct {
         _ = bun.handleOom(self.data.write(bun.default_allocator, bytes));
     }
 
-    /// Notify the buffer that data was written directly (e.g., via pre-allocated slice).
-    /// This updates the length and scans the new data for newlines.
-    pub fn notifyWritten(self: *@This(), old_len: u32, new_data: []const u8) void {
-        self.data.len +|= @as(u32, @intCast(new_data.len));
-        self.scanForNewline(old_len, new_data);
+    /// Returns the next complete message (up to and including newline) if available.
+    /// Returns null if no complete message is buffered yet.
+    /// The returned slice includes the newline character.
+    pub fn next(self: *const @This()) ?struct { data: []const u8, newline_pos: u32 } {
+        const pos = self.newline_pos orelse return null;
+        return .{
+            .data = self.data.slice()[0 .. pos + 1],
+            .newline_pos = pos,
+        };
     }
 
     /// Consume bytes from the front of the buffer after processing a message.
@@ -55,20 +59,8 @@ const JsonIncomingBuffer = struct {
         }
     }
 
-    pub fn hasCompleteMessage(self: *const @This()) bool {
-        return self.newline_pos != null;
-    }
-
-    pub fn getNewlinePos(self: *const @This()) ?u32 {
-        return self.newline_pos;
-    }
-
-    pub fn slice(self: *const @This()) []const u8 {
-        return self.data.slice();
-    }
-
-    pub fn len(self: *const @This()) u32 {
-        return self.data.len;
+    pub fn isEmpty(self: *const @This()) bool {
+        return self.data.len == 0;
     }
 
     pub fn unusedCapacitySlice(self: *@This()) []u8 {
@@ -77,6 +69,13 @@ const JsonIncomingBuffer = struct {
 
     pub fn ensureUnusedCapacity(self: *@This(), additional: usize) void {
         bun.handleOom(self.data.ensureUnusedCapacity(bun.default_allocator, additional));
+    }
+
+    /// Notify the buffer that data was written directly (e.g., via pre-allocated slice).
+    /// This updates the length and scans the new data for newlines.
+    pub fn notifyWritten(self: *@This(), old_len: u32, new_data: []const u8) void {
+        self.data.len +|= @as(u32, @intCast(new_data.len));
+        self.scanForNewline(old_len, new_data);
     }
 
     pub fn deinit(self: *@This()) void {
@@ -96,27 +95,6 @@ const IncomingBuffer = union(enum) {
         return switch (mode) {
             .advanced => .{ .advanced = .{} },
             .json => .{ .json = .{} },
-        };
-    }
-
-    pub fn append(self: *@This(), bytes: []const u8) void {
-        switch (self.*) {
-            .advanced => |*b| _ = bun.handleOom(b.write(bun.default_allocator, bytes)),
-            .json => |*b| b.append(bytes),
-        }
-    }
-
-    pub fn slice(self: *const @This()) []const u8 {
-        return switch (self.*) {
-            .advanced => |*b| b.slice(),
-            .json => |*b| b.slice(),
-        };
-    }
-
-    pub fn len(self: *const @This()) u32 {
-        return switch (self.*) {
-            .advanced => |*b| b.len,
-            .json => |*b| b.len(),
         };
     }
 
@@ -1269,51 +1247,16 @@ fn onData2(send_queue: *SendQueue, all_data: []const u8) void {
 
     // Decode the message with just the temporary buffer, and if that
     // fails (not enough bytes) then we allocate to .ipc_buffer
-    if (send_queue.incoming.len() == 0) {
-        while (true) {
-            // For JSON mode on fresh data, scan for newline in the incoming chunk
-            const known_newline: ?u32 = switch (send_queue.incoming) {
-                .json => if (bun.strings.indexOfChar(data, '\n')) |idx| @as(u32, @intCast(idx)) else null,
-                .advanced => null,
-            };
-            const result = decodeIPCMessage(send_queue.mode, data, globalThis, known_newline) catch |e| switch (e) {
-                error.NotEnoughBytes => {
-                    send_queue.incoming.append(data);
-                    log("hit NotEnoughBytes", .{});
-                    return;
-                },
-                error.InvalidFormat, error.JSError, error.JSTerminated => {
-                    send_queue.closeSocket(.failure, .user);
-                    return;
-                },
-                error.OutOfMemory => {
-                    Output.printErrorln("IPC message is too long.", .{});
-                    send_queue.closeSocket(.failure, .user);
-                    return;
-                },
-            };
-
-            handleIPCMessage(send_queue, result.message, globalThis);
-
-            if (result.bytes_consumed < data.len) {
-                data = data[result.bytes_consumed..];
-            } else {
-                return;
-            }
-        }
-    }
-
-    send_queue.incoming.append(data);
-
     switch (send_queue.incoming) {
         .json => |*json_buf| {
-            // JSON mode: use optimized newline tracking
-            while (true) {
-                const known_newline = json_buf.getNewlinePos();
-                const slice = json_buf.slice();
-                const result = decodeIPCMessage(.json, slice, globalThis, known_newline) catch |e| switch (e) {
+            // JSON mode: append to buffer (scans only new data for newline),
+            // then process complete messages using next().
+            json_buf.append(data);
+
+            while (json_buf.next()) |msg| {
+                const result = decodeIPCMessage(.json, msg.data, globalThis, msg.newline_pos) catch |e| switch (e) {
                     error.NotEnoughBytes => {
-                        log("hit NotEnoughBytes2", .{});
+                        log("hit NotEnoughBytes", .{});
                         return;
                     },
                     error.InvalidFormat, error.JSError, error.JSTerminated => {
@@ -1329,21 +1272,48 @@ fn onData2(send_queue: *SendQueue, all_data: []const u8) void {
 
                 handleIPCMessage(send_queue, result.message, globalThis);
                 json_buf.consume(result.bytes_consumed);
-
-                if (json_buf.len() == 0) {
-                    return;
-                }
             }
         },
         .advanced => |*adv_buf| {
-            // Advanced mode: use length-prefix, no newline scanning needed
+            // Advanced mode: uses length-prefix, no newline scanning needed.
+            // Try to decode directly first, only buffer if needed.
+            if (adv_buf.len == 0) {
+                while (true) {
+                    const result = decodeIPCMessage(.advanced, data, globalThis, null) catch |e| switch (e) {
+                        error.NotEnoughBytes => {
+                            _ = bun.handleOom(adv_buf.write(bun.default_allocator, data));
+                            log("hit NotEnoughBytes", .{});
+                            return;
+                        },
+                        error.InvalidFormat, error.JSError, error.JSTerminated => {
+                            send_queue.closeSocket(.failure, .user);
+                            return;
+                        },
+                        error.OutOfMemory => {
+                            Output.printErrorln("IPC message is too long.", .{});
+                            send_queue.closeSocket(.failure, .user);
+                            return;
+                        },
+                    };
+
+                    handleIPCMessage(send_queue, result.message, globalThis);
+
+                    if (result.bytes_consumed < data.len) {
+                        data = data[result.bytes_consumed..];
+                    } else {
+                        return;
+                    }
+                }
+            }
+
+            // Buffer has existing data, append and process
+            _ = bun.handleOom(adv_buf.write(bun.default_allocator, data));
             var slice = adv_buf.slice();
             while (true) {
                 const result = decodeIPCMessage(.advanced, slice, globalThis, null) catch |e| switch (e) {
                     error.NotEnoughBytes => {
                         // copy the remaining bytes to the start of the buffer
                         bun.copy(u8, adv_buf.ptr[0..slice.len], slice);
-                        // slice.len is guaranteed <= adv_buf.len (u32) since it's derived from adv_buf.slice()
                         bun.debugAssert(slice.len <= std.math.maxInt(u32));
                         adv_buf.len = @intCast(slice.len);
                         log("hit NotEnoughBytes2", .{});
@@ -1365,7 +1335,6 @@ fn onData2(send_queue: *SendQueue, all_data: []const u8) void {
                 if (result.bytes_consumed < slice.len) {
                     slice = slice[result.bytes_consumed..];
                 } else {
-                    // clear the buffer
                     adv_buf.len = 0;
                     return;
                 }
@@ -1521,10 +1490,9 @@ pub const IPCHandlers = struct {
 
                     json_buf.notifyWritten(old_len, buffer);
 
-                    while (true) {
-                        const known_newline = json_buf.getNewlinePos();
-                        const slice = json_buf.slice();
-                        const result = decodeIPCMessage(.json, slice, globalThis, known_newline) catch |e| switch (e) {
+                    // Process complete messages using next() - avoids O(n²) re-scanning
+                    while (json_buf.next()) |msg| {
+                        const result = decodeIPCMessage(.json, msg.data, globalThis, msg.newline_pos) catch |e| switch (e) {
                             error.NotEnoughBytes => {
                                 log("hit NotEnoughBytes3", .{});
                                 return;
@@ -1542,10 +1510,6 @@ pub const IPCHandlers = struct {
 
                         handleIPCMessage(send_queue, result.message, globalThis);
                         json_buf.consume(result.bytes_consumed);
-
-                        if (json_buf.len() == 0) {
-                            return;
-                        }
                     }
                 },
                 .advanced => |*adv_buf| {

@@ -1059,9 +1059,7 @@ JSC_DEFINE_HOST_FUNCTION(functionQueueMicrotask,
 
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     JSC::JSValue asyncContext = globalObject->m_asyncContextData.get()->getInternalField(0);
-    auto function = globalObject->performMicrotaskFunction();
 #if ASSERT_ENABLED
-    ASSERT_WITH_MESSAGE(function, "Invalid microtask function");
     ASSERT_WITH_MESSAGE(!callback.isEmpty(), "Invalid microtask callback");
 #endif
 
@@ -1069,10 +1067,9 @@ JSC_DEFINE_HOST_FUNCTION(functionQueueMicrotask,
         asyncContext = JSC::jsUndefined();
     }
 
-    // BunPerformMicrotaskJob accepts a variable number of arguments (up to: performMicrotask, job, asyncContext, arg0, arg1).
-    // The runtime inspects argumentCount to determine which arguments are present, so callers may pass only the subset they need.
-    // Here we pass: function, callback, asyncContext.
-    JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::BunPerformMicrotaskJob, globalObject, function, callback, asyncContext };
+    // BunPerformMicrotaskJob arguments: job, asyncContext, arg0 (optional), arg1 (optional)
+    // Here we pass: callback (job), asyncContext
+    JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::BunPerformMicrotaskJob, globalObject, callback, asyncContext };
     globalObject->vm().queueMicrotask(WTF::move(task));
 
     return JSC::JSValue::encode(JSC::jsUndefined());

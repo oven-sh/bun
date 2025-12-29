@@ -66,7 +66,8 @@ pub const max_size = std.math.maxInt(SizeType);
 ///    and f64 for `last_modified`. Removed reserved bytes, it's handled by version
 ///    number.
 /// 3: Added File name serialization for File objects (when is_jsdom_file is true)
-const serialization_version: u8 = 3;
+/// 4: Added is_slice
+const serialization_version: u8 = 4;
 
 comptime {
     _ = Bun__Blob__getSizeForBindings;
@@ -341,6 +342,11 @@ fn _onStructuredCloneSerialize(
             try writer.writeInt(u32, 0, .little);
         }
     }
+
+    if (serialization_version >= 4) {
+        try writer.writeInt(u8, @intFromBool(this.is_slice), .little);
+    }
+
 }
 
 pub fn onStructuredCloneSerialize(
@@ -511,6 +517,10 @@ fn _onStructuredCloneDeserialize(
         }
 
         if (version == 3) break :versions;
+
+        if (version >= 4) {
+            blob.is_slice = try reader.readInt(u8, .little) != 0;
+        }
     }
 
     bun.assertf(blob.isHeapAllocated(), "expected blob to be heap-allocated", .{});

@@ -1,5 +1,3 @@
-const bun = @import("bun");
-
 /// Buffer for newline-delimited data that tracks scan positions to avoid O(n²) scanning.
 /// Each byte is scanned exactly once. We track:
 /// - newline_pos: position of first known newline (if any)
@@ -92,4 +90,5 @@ pub const JSONLineBuffer = struct {
     }
 };
 
+const bun = @import("bun");
 const std = @import("std");

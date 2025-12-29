@@ -1,7 +1,5 @@
 pub const log = Output.scoped(.IPC, .visible);
 
-const JSONLineBuffer = @import("./JSONLineBuffer.zig").JSONLineBuffer;
-
 /// Union type that switches between simple ByteList (for advanced mode)
 /// and JSONLineBuffer (for JSON mode with optimized newline tracking).
 const IncomingBuffer = union(enum) {
@@ -1491,6 +1489,7 @@ const string = []const u8;
 
 const node_cluster_binding = @import("./node/node_cluster_binding.zig");
 const std = @import("std");
+const JSONLineBuffer = @import("./JSONLineBuffer.zig").JSONLineBuffer;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

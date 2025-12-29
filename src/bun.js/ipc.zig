@@ -1,35 +1,40 @@
 pub const log = Output.scoped(.IPC, .visible);
 
 /// Buffer for JSON mode IPC that tracks newline positions to avoid O(n²) scanning.
-/// When data arrives in chunks, each byte is scanned exactly once - either on arrival
-/// (if we don't yet know where the newline is) or when the preceding message is consumed.
-/// Note: Individual IPC messages are assumed to be well under 4GB; the u32 position
-/// tracking is sufficient for all practical use cases.
+/// Each byte is scanned exactly once. We track:
+/// - newline_pos: position of first known newline (if any)
+/// - scanned_pos: how far we've scanned (all data up to this point has been checked)
+///
+/// When data arrives, we only scan the NEW bytes.
+/// When we consume a message, we adjust positions without re-scanning.
 const JsonIncomingBuffer = struct {
     data: bun.ByteList = .{},
-    /// Position of a known upcoming newline, if any. This allows us to skip
-    /// re-scanning the entire buffer when new data arrives.
+    /// Position of a known upcoming newline, if any.
     newline_pos: ?u32 = null,
+    /// How far we've scanned for newlines. All data before this position
+    /// has been checked - no need to re-scan after consume().
+    scanned_pos: u32 = 0,
 
-    /// Scan a data slice for newline starting at the given buffer offset.
-    /// If newline_pos is already set, does nothing. Otherwise, scans the slice
-    /// and updates newline_pos if a newline is found.
-    fn scanForNewline(self: *@This(), start_offset: u32, data_slice: []const u8) void {
+    /// Scan for newline in unscanned portion of the buffer.
+    fn scanForNewline(self: *@This()) void {
         if (self.newline_pos != null) return;
-        if (bun.strings.indexOfChar(data_slice, '\n')) |local_idx| {
-            self.newline_pos = start_offset +| @as(u32, @intCast(local_idx));
+        const slice = self.data.slice();
+        if (self.scanned_pos >= slice.len) return;
+
+        const unscanned = slice[self.scanned_pos..];
+        if (bun.strings.indexOfChar(unscanned, '\n')) |local_idx| {
+            self.newline_pos = self.scanned_pos +| @as(u32, @intCast(local_idx));
         }
+        self.scanned_pos = @intCast(slice.len);
     }
 
-    /// Append bytes to the buffer, scanning for newline only if we don't already know one.
+    /// Append bytes to the buffer, scanning only new data for newline.
     pub fn append(self: *@This(), bytes: []const u8) void {
-        self.scanForNewline(self.data.len, bytes);
         _ = bun.handleOom(self.data.write(bun.default_allocator, bytes));
+        self.scanForNewline();
     }
 
     /// Returns the next complete message (up to and including newline) if available.
-    /// Returns null if no complete message is buffered yet.
-    /// The returned slice includes the newline character.
     pub fn next(self: *const @This()) ?struct { data: []const u8, newline_pos: u32 } {
         const pos = self.newline_pos orelse return null;
         return .{
@@ -39,20 +44,22 @@ const JsonIncomingBuffer = struct {
     }
 
     /// Consume bytes from the front of the buffer after processing a message.
+    /// Adjusts positions without re-scanning - all remaining data was already scanned.
     pub fn consume(self: *@This(), bytes: u32) void {
         const remaining = self.data.slice()[bytes..];
         bun.copy(u8, self.data.ptr[0..remaining.len], remaining);
-        // remaining.len is guaranteed <= self.data.len (u32) since it's a suffix of the slice
         bun.debugAssert(remaining.len <= std.math.maxInt(u32));
         self.data.len = @intCast(remaining.len);
 
+        // Adjust scanned_pos (subtract consumed bytes, but don't go negative)
+        self.scanned_pos = if (bytes >= self.scanned_pos) 0 else self.scanned_pos - bytes;
+
+        // Adjust newline_pos
         if (self.newline_pos) |pos| {
             if (bytes > pos) {
-                // We consumed past the known newline, need to find the next one
-                self.newline_pos = if (self.data.len > 0)
-                    if (bun.strings.indexOfChar(self.data.slice(), '\n')) |p| @as(u32, @intCast(p)) else null
-                else
-                    null;
+                // Consumed past the known newline - clear it and scan for next
+                self.newline_pos = null;
+                self.scanForNewline();
             } else {
                 self.newline_pos = pos - bytes;
             }
@@ -72,10 +79,9 @@ const JsonIncomingBuffer = struct {
     }
 
     /// Notify the buffer that data was written directly (e.g., via pre-allocated slice).
-    /// This updates the length and scans the new data for newlines.
-    pub fn notifyWritten(self: *@This(), old_len: u32, new_data: []const u8) void {
+    pub fn notifyWritten(self: *@This(), new_data: []const u8) void {
         self.data.len +|= @as(u32, @intCast(new_data.len));
-        self.scanForNewline(old_len, new_data);
+        self.scanForNewline();
     }
 
     pub fn deinit(self: *@This()) void {
@@ -1483,12 +1489,10 @@ pub const IPCHandlers = struct {
             switch (send_queue.incoming) {
                 .json => |*json_buf| {
                     // For JSON mode on Windows, use notifyWritten to update length and scan for newlines
-                    const old_len = json_buf.data.len;
-
-                    bun.assert(old_len + buffer.len <= json_buf.data.cap);
+                    bun.assert(json_buf.data.len + buffer.len <= json_buf.data.cap);
                     bun.assert(bun.isSliceInBuffer(buffer, json_buf.data.allocatedSlice()));
 
-                    json_buf.notifyWritten(old_len, buffer);
+                    json_buf.notifyWritten(buffer);
 
                     // Process complete messages using next() - avoids O(n²) re-scanning
                     while (json_buf.next()) |msg| {

@@ -2372,7 +2372,7 @@ extern "C" JSC::EncodedJSValue Bun__parseJSONLFromBlob(
         }
     }
 
-    if (UNLIKELY(args.hasOverflowed())) {
+    if (args.hasOverflowed()) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         return {};
     }

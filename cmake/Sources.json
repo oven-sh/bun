@@ -75,6 +75,7 @@
       "src/buntime/api/test/*.cpp",
       "src/buntime/api/server/*.cpp",
       "src/buntime/api/plugin/*.cpp",
+      "src/buntime/api/process/*.cpp",
       "src/bake/*.cpp",
       "src/deps/*.cpp",
       "src/vm/*.cpp",

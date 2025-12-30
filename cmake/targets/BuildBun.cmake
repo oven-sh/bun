@@ -522,12 +522,12 @@ set(BUN_OBJECT_LUT_SOURCES
   ${CWD}/src/buntime/bindings/BunObject.cpp
   ${CWD}/src/buntime/bindings/ZigGlobalObject.lut.txt
   ${CWD}/src/buntime/bindings/JSBuffer.cpp
-  ${CWD}/src/buntime/bindings/BunProcess.cpp
-  ${CWD}/src/buntime/bindings/ProcessBindingBuffer.cpp
-  ${CWD}/src/buntime/bindings/ProcessBindingConstants.cpp
-  ${CWD}/src/buntime/bindings/ProcessBindingFs.cpp
-  ${CWD}/src/buntime/bindings/ProcessBindingNatives.cpp
-  ${CWD}/src/buntime/bindings/ProcessBindingHTTPParser.cpp
+  ${CWD}/src/buntime/api/process/BunProcess.cpp
+  ${CWD}/src/buntime/api/process/ProcessBindingBuffer.cpp
+  ${CWD}/src/buntime/api/process/ProcessBindingConstants.cpp
+  ${CWD}/src/buntime/api/process/ProcessBindingFs.cpp
+  ${CWD}/src/buntime/api/process/ProcessBindingNatives.cpp
+  ${CWD}/src/buntime/api/process/ProcessBindingHTTPParser.cpp
   ${CWD}/src/buntime/modules/NodeModuleModule.cpp
   ${CODEGEN_PATH}/ZigGeneratedClasses.lut.txt
 )
@@ -887,6 +887,7 @@ target_include_directories(${bun} PRIVATE
   ${CWD}/src/buntime/api/test
   ${CWD}/src/buntime/api/server
   ${CWD}/src/buntime/api/plugin
+  ${CWD}/src/buntime/api/process
   ${CWD}/src/buntime/modules
   ${CWD}/src/js/builtins
   ${CWD}/src/napi

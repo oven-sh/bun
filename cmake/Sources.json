@@ -83,6 +83,7 @@
       "src/buntime/web/blob/*.cpp",
       "src/buntime/web/encoding/*.cpp",
       "src/buntime/web/compression/*.cpp",
+      "src/buntime/web/events/*.cpp",
       "src/bake/*.cpp",
       "src/deps/*.cpp",
       "src/vm/*.cpp",

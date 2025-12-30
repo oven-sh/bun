@@ -46,7 +46,7 @@ pub const MarkedArrayBuffer = array_buffer.MarkedArrayBuffer;
 pub const JSCArrayBuffer = array_buffer.JSCArrayBuffer;
 pub const CachedBytecode = @import("./bindings/CachedBytecode.zig").CachedBytecode;
 pub const CallFrame = @import("./bindings/CallFrame.zig").CallFrame;
-pub const CommonAbortReason = @import("./bindings/CommonAbortReason.zig").CommonAbortReason;
+pub const CommonAbortReason = @import("./web/events/CommonAbortReason.zig").CommonAbortReason;
 pub const CommonStrings = @import("./bindings/CommonStrings.zig").CommonStrings;
 pub const CustomGetterSetter = @import("./bindings/CustomGetterSetter.zig").CustomGetterSetter;
 pub const DOMFormData = @import("./web/blob/DOMFormData.zig").DOMFormData;
@@ -97,7 +97,7 @@ pub const SavedSourceMap = @import("./SavedSourceMap.zig");
 pub const VirtualMachine = @import("./VirtualMachine.zig");
 pub const ModuleLoader = @import("./ModuleLoader.zig");
 pub const RareData = @import("./rare_data.zig");
-pub const EventType = @import("./bindings/EventType.zig").EventType;
+pub const EventType = @import("./web/events/EventType.zig").EventType;
 pub const JSRuntimeType = @import("./bindings/JSRuntimeType.zig").JSRuntimeType;
 pub const ZigStackFrameCode = @import("./bindings/ZigStackFrameCode.zig").ZigStackFrameCode;
 

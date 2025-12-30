@@ -3712,7 +3712,7 @@ const PackageManager = @import("../install/install.zig").PackageManager;
 const URL = @import("../url.zig").URL;
 const Allocator = std.mem.Allocator;
 
-const CPUProfiler = @import("./bindings/BunCPUProfiler.zig");
+const CPUProfiler = @import("./api/inspector/BunCPUProfiler.zig");
 const CPUProfilerConfig = CPUProfiler.CPUProfilerConfig;
 
 const bun = @import("bun");

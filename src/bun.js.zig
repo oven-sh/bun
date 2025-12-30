@@ -551,7 +551,7 @@ const VirtualMachine = jsc.VirtualMachine;
 
 const string = []const u8;
 
-const CPUProfiler = @import("./buntime/bindings/BunCPUProfiler.zig");
+const CPUProfiler = @import("./buntime/api/inspector/BunCPUProfiler.zig");
 const options = @import("./options.zig");
 const std = @import("std");
 const Command = @import("./cli.zig").Command;

@@ -80,6 +80,10 @@
 
 extern "C" bool Bun__Node__ZeroFillBuffers;
 
+// SIMD-optimized search functions from highway_strings.cpp
+extern "C" void* highway_memmem(const uint8_t* haystack, size_t haystack_len, const uint8_t* needle, size_t needle_len);
+extern "C" size_t highway_index_of_char(const uint8_t* haystack, size_t haystack_len, uint8_t needle);
+
 // export fn Bun__inspect_singleline(globalThis: *JSGlobalObject, value: JSValue) bun.String
 extern "C" BunString Bun__inspect_singleline(JSC::JSGlobalObject* globalObject, JSC::JSValue value);
 
@@ -1377,11 +1381,20 @@ static ssize_t indexOfOffset(size_t length, ssize_t offset_i64, ssize_t needle_l
 
 static int64_t indexOf(const uint8_t* thisPtr, int64_t thisLength, const uint8_t* valuePtr, int64_t valueLength, int64_t byteOffset)
 {
-    auto haystack = std::span<const uint8_t>(thisPtr, thisLength).subspan(byteOffset);
-    auto needle = std::span<const uint8_t>(valuePtr, valueLength);
-    auto it = std::search(haystack.begin(), haystack.end(), needle.begin(), needle.end());
-    if (it == haystack.end()) return -1;
-    return byteOffset + std::distance(haystack.begin(), it);
+    const size_t haystackLen = static_cast<size_t>(thisLength - byteOffset);
+    const uint8_t* haystackPtr = thisPtr + byteOffset;
+
+    if (valueLength == 1) {
+        // Use SIMD-optimized single-byte search
+        size_t result = highway_index_of_char(haystackPtr, haystackLen, valuePtr[0]);
+        if (result == haystackLen) return -1;
+        return byteOffset + static_cast<int64_t>(result);
+    }
+
+    // Use SIMD-optimized multi-byte search
+    void* result = highway_memmem(haystackPtr, haystackLen, valuePtr, static_cast<size_t>(valueLength));
+    if (result == nullptr) return -1;
+    return byteOffset + static_cast<int64_t>(static_cast<const uint8_t*>(result) - haystackPtr);
 }
 
 static int64_t indexOf16(const uint8_t* thisPtr, int64_t thisLength, const uint8_t* valuePtr, int64_t valueLength, int64_t byteOffset)

@@ -519,7 +519,7 @@ register_command(
 set(BUN_OBJECT_LUT_SCRIPT ${CWD}/src/codegen/create-hash-table.ts)
 
 set(BUN_OBJECT_LUT_SOURCES
-  ${CWD}/src/buntime/bindings/BunObject.cpp
+  ${CWD}/src/buntime/core/BunObject.cpp
   ${CWD}/src/buntime/bindings/ZigGlobalObject.lut.txt
   ${CWD}/src/buntime/bindings/JSBuffer.cpp
   ${CWD}/src/buntime/api/process/BunProcess.cpp
@@ -888,6 +888,7 @@ target_include_directories(${bun} PRIVATE
   ${CWD}/src/buntime/api/server
   ${CWD}/src/buntime/api/plugin
   ${CWD}/src/buntime/api/process
+  ${CWD}/src/buntime/core
   ${CWD}/src/buntime/modules
   ${CWD}/src/js/builtins
   ${CWD}/src/napi

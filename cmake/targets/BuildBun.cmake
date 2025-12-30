@@ -521,7 +521,7 @@ set(BUN_OBJECT_LUT_SCRIPT ${CWD}/src/codegen/create-hash-table.ts)
 set(BUN_OBJECT_LUT_SOURCES
   ${CWD}/src/buntime/core/BunObject.cpp
   ${CWD}/src/buntime/bindings/ZigGlobalObject.lut.txt
-  ${CWD}/src/buntime/bindings/JSBuffer.cpp
+  ${CWD}/src/buntime/node/JSBuffer.cpp
   ${CWD}/src/buntime/api/process/BunProcess.cpp
   ${CWD}/src/buntime/api/process/ProcessBindingBuffer.cpp
   ${CWD}/src/buntime/api/process/ProcessBindingConstants.cpp

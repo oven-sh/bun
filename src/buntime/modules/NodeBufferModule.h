@@ -2,7 +2,7 @@
 
 #include "root.h"
 
-#include "../bindings/JSBuffer.h"
+#include "../node/JSBuffer.h"
 #include "ErrorCode.h"
 #include "JavaScriptCore/PageCount.h"
 #include "NodeValidator.h"

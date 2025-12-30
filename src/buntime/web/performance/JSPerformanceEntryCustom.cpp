@@ -33,6 +33,7 @@
 #include "JSPerformanceEntry.h"
 
 #include "JSDOMBinding.h"
+#include "JSDOMWrapperCache.h"
 #include "JSPerformanceMark.h"
 #include "JSPerformanceMeasure.h"
 // #include "JSPerformanceNavigationTiming.h"

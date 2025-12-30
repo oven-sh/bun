@@ -3649,8 +3649,13 @@ pub fn toJSONLWithBytes(_: *Blob, global: *JSGlobalObject, raw_bytes: []const u8
     // Add 1 for potential last line without newline
     if (buf.len > 0 and buf[buf.len - 1] != '\n') line_count += 1;
 
-    var results = std.ArrayListUnmanaged(JSValue){};
-    defer results.deinit(bun.default_allocator);
+    var results = std.ArrayListUnmanaged(jsc.Strong.Optional){};
+    defer {
+        for (results.items) |*item| {
+            item.deinit();
+        }
+        results.deinit(bun.default_allocator);
+    }
     results.ensureTotalCapacity(bun.default_allocator, line_count) catch return global.throwOutOfMemory();
 
     var remaining = buf;
@@ -3680,10 +3685,18 @@ pub fn toJSONLWithBytes(_: *Blob, global: *JSGlobalObject, raw_bytes: []const u8
             continue;
         }
 
-        results.append(bun.default_allocator, json_value) catch return global.throwOutOfMemory();
+        // Wrap in Strong.Optional to protect from GC during parsing
+        results.append(bun.default_allocator, jsc.Strong.Optional.create(json_value, global)) catch return global.throwOutOfMemory();
     }
 
-    return jsc.JSArray.create(global, results.items);
+    // Convert Strong.Optional items back to JSValue for array creation
+    const js_values = bun.default_allocator.alloc(JSValue, results.items.len) catch return global.throwOutOfMemory();
+    defer bun.default_allocator.free(js_values);
+    for (results.items, 0..) |item, i| {
+        js_values[i] = item.get() orelse .js_undefined;
+    }
+
+    return jsc.JSArray.create(global, js_values);
 }
 
 pub fn toFormDataWithBytes(this: *Blob, global: *JSGlobalObject, buf: []u8, comptime _: Lifetime) JSValue {

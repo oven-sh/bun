@@ -731,7 +731,7 @@ pub const LOLHTML = @import("./deps/lol-html.zig");
 pub const clap = @import("./deps/zig-clap/clap.zig");
 pub const analytics = @import("./analytics.zig");
 pub const zlib = @import("./zlib.zig");
-pub const simdutf = @import("./buntime/bindings/bun-simdutf.zig");
+pub const simdutf = @import("./buntime/core/bun-simdutf.zig");
 
 pub var start_time: i128 = 0;
 

@@ -231,7 +231,7 @@ pub const ResolveMessage = struct {
 
 const string = []const u8;
 
-const Resolver = @import("../resolver//resolver.zig");
+const Resolver = @import("../../../resolver/resolver.zig");
 const std = @import("std");
 
 const bun = @import("bun");

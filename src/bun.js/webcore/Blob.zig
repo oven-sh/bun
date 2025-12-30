@@ -3602,6 +3602,90 @@ pub fn toJSONWithBytes(this: *Blob, global: *JSGlobalObject, raw_bytes: []const 
     return ZigString.init(buf).toJSONObject(global);
 }
 
+// ===== JSONL Support =====
+
+pub fn getJSONL(
+    this: *Blob,
+    globalThis: *jsc.JSGlobalObject,
+    _: *jsc.CallFrame,
+) bun.JSError!jsc.JSValue {
+    return this.getJSONLShare(globalThis);
+}
+
+pub fn getJSONLShare(
+    this: *Blob,
+    globalObject: *jsc.JSGlobalObject,
+) bun.JSTerminated!jsc.JSValue {
+    const store = this.store;
+    if (store) |st| st.ref();
+    defer if (store) |st| st.deref();
+    return jsc.JSPromise.wrap(globalObject, lifetimeWrap(toJSONL, .share), .{ this, globalObject });
+}
+
+pub fn toJSONL(this: *Blob, global: *JSGlobalObject, comptime lifetime: Lifetime) bun.JSError!JSValue {
+    if (this.needsToReadFile()) {
+        return this.doReadFile(toJSONLWithBytes, global);
+    }
+    if (this.isS3()) {
+        return this.doReadFromS3(toJSONLWithBytes, global);
+    }
+    const view_ = this.sharedView();
+    return toJSONLWithBytes(this, global, view_, lifetime);
+}
+
+pub fn toJSONLWithBytes(_: *Blob, global: *JSGlobalObject, raw_bytes: []const u8, comptime lifetime: Lifetime) bun.JSError!JSValue {
+    _, const buf = strings.BOM.detectAndSplit(raw_bytes);
+    defer if (comptime lifetime == .temporary) bun.default_allocator.free(@constCast(raw_bytes));
+
+    if (buf.len == 0) {
+        return try jsc.JSArray.createEmpty(global, 0);
+    }
+
+    // Count newlines to estimate capacity
+    var line_count: usize = 0;
+    for (buf) |c| {
+        if (c == '\n') line_count += 1;
+    }
+    // Add 1 for potential last line without newline
+    if (buf.len > 0 and buf[buf.len - 1] != '\n') line_count += 1;
+
+    var results = std.ArrayListUnmanaged(JSValue){};
+    defer results.deinit(bun.default_allocator);
+    results.ensureTotalCapacity(bun.default_allocator, line_count) catch return global.throwOutOfMemory();
+
+    var remaining = buf;
+    while (remaining.len > 0) {
+        const line_end = strings.indexOfCharUsize(remaining, '\n') orelse remaining.len;
+        var line = remaining[0..line_end];
+
+        // Move past the newline for next iteration
+        remaining = if (line_end < remaining.len) remaining[line_end + 1 ..] else remaining[remaining.len..];
+
+        // Handle CRLF
+        if (line.len > 0 and line[line.len - 1] == '\r') {
+            line = line[0 .. line.len - 1];
+        }
+
+        // Skip empty lines
+        if (line.len == 0) continue;
+
+        // Skip whitespace-only lines
+        const trimmed = std.mem.trim(u8, line, " \t");
+        if (trimmed.len == 0) continue;
+
+        // Try to parse JSON, skip on error
+        const json_value = ZigString.init(line).toJSONObject(global);
+        if (json_value.isAnyError()) {
+            // Skip lines with parse errors
+            continue;
+        }
+
+        results.append(bun.default_allocator, json_value) catch return global.throwOutOfMemory();
+    }
+
+    return jsc.JSArray.create(global, results.items);
+}
+
 pub fn toFormDataWithBytes(this: *Blob, global: *JSGlobalObject, buf: []u8, comptime _: Lifetime) JSValue {
     var encoder = this.getFormDataEncoding() orelse return {
         return ZigString.init("Invalid encoding").toErrorInstance(global);

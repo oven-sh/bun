@@ -152,6 +152,7 @@ export default [
     proto: {
       text: { fn: "getText", async: true },
       json: { fn: "getJSON", async: true },
+      jsonl: { fn: "getJSONL", async: true },
       arrayBuffer: { fn: "getArrayBuffer", async: true },
       slice: { fn: "getSlice", length: 2 },
       stream: { fn: "getStream", length: 1 },

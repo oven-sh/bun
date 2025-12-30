@@ -1021,7 +1021,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
                 write_file_promise,
                 &WriteFilePromise.run,
                 options.mkdirp_if_not_exists orelse true,
-                options.append orelse false,
+                options.append,
             ) catch |e| switch (e) {
                 error.WriteFileWindowsDeinitialized => {},
                 error.JSTerminated => |ex| return ex,
@@ -1036,7 +1036,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
             write_file_promise,
             WriteFilePromise.run,
             options.mkdirp_if_not_exists orelse true,
-            options.append orelse false,
+            options.append,
         ) catch unreachable;
         var task = write_file.WriteFileTask.createOnJSThread(bun.default_allocator, ctx, file_copier);
         // Defer promise creation until we're just about to schedule the task
@@ -1206,7 +1206,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
 const WriteFileOptions = struct {
     mkdirp_if_not_exists: ?bool = null,
     extra_options: ?JSValue = null,
-    append: ?bool = null,
+    append: bool,
 };
 
 /// ## Errors
@@ -1254,7 +1254,7 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
     // except if you're on Windows. Windows I/O is slower. Let's not even try.
     if (comptime !Environment.isWindows) {
         // Skip fast path when appending
-        if ((options.append orelse false) == false and
+        if (options.append == false and
             (path_or_blob == .path or
                 // If they try to set an offset, its a little more complicated so let's avoid that
                 (path_or_blob.blob.offset == 0 and !path_or_blob.blob.isS3() and
@@ -1535,7 +1535,7 @@ pub fn writeFile(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun
         return globalThis.throwInvalidArguments("Bun.write(pathOrFdOrBlob, blob) expects a Blob-y thing to write", .{});
     };
     var mkdirp_if_not_exists: ?bool = null;
-    var append: ?bool = null;
+    var append: bool = false;
     const options = args.nextEat();
     if (options) |options_object| {
         if (options_object.isObject()) {
@@ -1545,11 +1545,8 @@ pub fn writeFile(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun
                 }
                 mkdirp_if_not_exists = create_directory.toBoolean();
             }
-            if (try options_object.getTruthy(globalThis, "append")) |append_value| {
-                if (!append_value.isBoolean()) {
-                    return globalThis.throwInvalidArgumentType("write", "options.append", "boolean");
-                }
-                append = append_value.toBoolean();
+            if (try options_object.getBooleanLoose(globalThis, "append")) |value| {
+                append = value;
             }
         } else if (!options_object.isEmptyOrUndefinedOrNull()) {
             return globalThis.throwInvalidArgumentType("write", "options", "object");
@@ -2276,7 +2273,7 @@ pub fn doWrite(this: *Blob, globalThis: *jsc.JSGlobalObject, callframe: *jsc.Cal
         return globalThis.throwInvalidArguments("blob.write(pathOrFdOrBlob, blob) expects a Blob-y thing to write", .{});
     }
     var mkdirp_if_not_exists: ?bool = null;
-    var append: ?bool = null;
+    var append: bool = false;
     const options = args.nextEat();
     if (options) |options_object| {
         if (options_object.isObject()) {
@@ -2309,11 +2306,8 @@ pub fn doWrite(this: *Blob, globalThis: *jsc.JSGlobalObject, callframe: *jsc.Cal
                     }
                 }
             }
-            if (try options_object.getTruthy(globalThis, "append")) |append_value| {
-                if (!append_value.isBoolean()) {
-                    return globalThis.throwInvalidArgumentType("write", "options.append", "boolean");
-                }
-                append = append_value.toBoolean();
+            if (try options_object.getBooleanLoose(globalThis, "append")) |value| {
+                append = value;
             }
         } else if (!options_object.isEmptyOrUndefinedOrNull()) {
             return globalThis.throwInvalidArgumentType("write", "options", "object");

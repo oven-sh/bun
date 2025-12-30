@@ -3,7 +3,7 @@ const ModuleLoader = @This();
 pub const node_fallbacks = @import("../node_fallbacks.zig");
 pub const AsyncModule = @import("./AsyncModule.zig").AsyncModule;
 pub const RuntimeTranspilerStore = @import("./RuntimeTranspilerStore.zig").RuntimeTranspilerStore;
-pub const HardcodedModule = @import("./HardcodedModule.zig").HardcodedModule;
+pub const HardcodedModule = @import("./module/HardcodedModule.zig").HardcodedModule;
 
 transpile_source_code_arena: ?*bun.ArenaAllocator = null,
 eval_source: ?*logger.Source = null,

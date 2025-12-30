@@ -424,8 +424,8 @@ pub const HardcodedModule = enum {
 };
 
 const bun = @import("bun");
-const options = @import("../options.zig");
+const options = @import("../../options.zig");
 const std = @import("std");
 
-const ast = @import("../import_record.zig");
+const ast = @import("../../import_record.zig");
 const ImportRecord = ast.ImportRecord;

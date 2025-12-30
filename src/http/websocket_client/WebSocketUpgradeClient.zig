@@ -548,7 +548,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 // Once again for the TCP socket.
                 defer this.deref();
 
-                ws.didConnect(socket.socket.get().?, overflow.ptr, overflow.len, if (deflate_result.enabled) &deflate_result.params else null);
+                ws.didConnect(socket.socket.get().?, overflow.ptr, overflow.len, if (deflate_result.enabled) &deflate_result.params else null, @intCast(response.status_code));
             } else if (this.tcp.isClosed()) {
                 this.terminate(ErrorCode.cancel);
             } else if (this.outgoing_websocket == null) {

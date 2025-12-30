@@ -1,5 +1,5 @@
 import { LoaderKeys } from "../api/schema";
-import NodeErrors from "../buntime/bindings/ErrorCode.ts";
+import NodeErrors from "../buntime/api/error/ErrorCode.ts";
 import jsclasses from "./../buntime/bindings/js_classes";
 import { sliceSourceCode } from "./builtin-parser";
 import { registerNativeCall } from "./generate-js2native";

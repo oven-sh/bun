@@ -58,6 +58,7 @@
       "src/buntime/api/console/*.cpp",
       "src/buntime/api/inspector/*.cpp",
       "src/buntime/api/error/*.cpp",
+      "src/buntime/api/cookie/*.cpp",
       "src/bake/*.cpp",
       "src/deps/*.cpp",
       "src/vm/*.cpp",

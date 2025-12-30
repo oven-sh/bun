@@ -62,4 +62,24 @@ subtitle: Another---Value---
     const parsed = Bun.YAML.parse(text);
     expect(parsed).toEqual({ message: "Hello..." });
   });
+
+  test("should recognize ... as document end marker for top-level plain scalar", () => {
+    // This is the case Dylan pointed out: a top-level plain scalar followed by
+    // document end marker should correctly recognize ... as document end
+    const text = `hello
+...`;
+    const parsed = Bun.YAML.parse(text);
+    expect(parsed).toBe("hello");
+  });
+
+  test("should recognize --- as document separator for top-level plain scalar", () => {
+    const text = `first
+---
+second`;
+    const parsed = Bun.YAML.parse(text);
+    expect(Array.isArray(parsed)).toBe(true);
+    expect(parsed).toHaveLength(2);
+    expect(parsed[0]).toBe("first");
+    expect(parsed[1]).toBe("second");
+  });
 });

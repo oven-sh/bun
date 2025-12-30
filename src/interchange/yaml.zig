@@ -2282,18 +2282,21 @@ pub fn Parser(comptime enc: Encoding) type {
                 .line_indent = self.line_indent,
             };
 
+            // Track whether we're at the start of a new line.
+            // Document markers (--- and ...) are only valid at line start.
+            var nl = true;
+
             next: switch (self.next()) {
                 0 => {
                     return ctx.done();
                 },
 
                 '-' => {
-                    // Document separator `---` is only valid at the start of a line
-                    // and only if we haven't scanned any content yet (i.e., we're at the beginning of a value)
-                    if (ctx.str_builder.len() == 0 and self.line_indent == .none and self.remainStartsWith("---") and self.isAnyOrEofAt(" \t\n\r", 3)) {
+                    if (nl and self.line_indent == .none and self.remainStartsWith("---") and self.isAnyOrEofAt(" \t\n\r", 3)) {
                         return ctx.done();
                     }
 
+                    nl = false;
                     if (!ctx.resolved and ctx.str_builder.len() == 0) {
                         try ctx.appendSource('-', self.pos);
                         self.inc(1);
@@ -2307,12 +2310,11 @@ pub fn Parser(comptime enc: Encoding) type {
                 },
 
                 '.' => {
-                    // Document end marker `...` is only valid at the start of a line
-                    // and only if we haven't scanned any content yet
-                    if (ctx.str_builder.len() == 0 and self.line_indent == .none and self.remainStartsWith("...") and self.isAnyOrEofAt(" \t\n\r", 3)) {
+                    if (nl and self.line_indent == .none and self.remainStartsWith("...") and self.isAnyOrEofAt(" \t\n\r", 3)) {
                         return ctx.done();
                     }
 
+                    nl = false;
                     if (!ctx.resolved and ctx.str_builder.len() == 0) {
                         switch (self.peek(1)) {
                             'n',
@@ -2452,10 +2454,12 @@ pub fn Parser(comptime enc: Encoding) type {
 
                     try ctx.appendWhitespaceNTimes('\n', lines);
 
+                    nl = true;
                     continue :next self.next();
                 },
 
                 else => |c| {
+                    nl = false;
                     if (ctx.resolved or ctx.str_builder.len() != 0) {
                         const start = self.pos;
                         self.inc(1);

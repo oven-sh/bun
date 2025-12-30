@@ -201,7 +201,7 @@ pub fn getDevServerAsyncLocalStorage(this: *VirtualMachine) !?jsc.JSValue {
     return jsvalue;
 }
 
-pub const ProcessAutoKiller = @import("./ProcessAutoKiller.zig");
+pub const ProcessAutoKiller = @import("./api/process/ProcessAutoKiller.zig");
 pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSGlobalObject, JSValue) void;
 
 pub const OnException = fn (*ZigException) void;

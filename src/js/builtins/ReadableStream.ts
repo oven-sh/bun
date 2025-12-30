@@ -331,6 +331,54 @@ export function readableStreamToJSON(stream: ReadableStream): unknown {
 }
 
 $linkTimeConstant;
+export function readableStreamToJSONL(stream: ReadableStream): AsyncIterable<unknown> {
+  if (!$isReadableStream(stream)) throw $ERR_INVALID_ARG_TYPE("stream", "ReadableStream", typeof stream);
+  if ($isReadableStreamLocked(stream)) throw $ERR_INVALID_STATE_TypeError("ReadableStream is locked");
+
+  var JSONLIterator = async function* JSONLIterator(stream) {
+    const reader = stream.getReader();
+    const decoder = new TextDecoder("utf-8");
+    let buffer = "";
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+
+        if (done) {
+          // Process any remaining content in the buffer
+          if (buffer.length > 0) {
+            const trimmed = buffer.trim();
+            if (trimmed.length > 0) {
+              yield globalThis.JSON.parse(trimmed);
+            }
+          }
+          return;
+        }
+
+        // Decode the chunk and append to buffer
+        buffer += typeof value === "string" ? value : decoder.decode(value, { stream: true });
+
+        // Process complete lines
+        let newlineIndex;
+        while ((newlineIndex = buffer.indexOf("\n")) !== -1) {
+          const line = buffer.slice(0, newlineIndex);
+          buffer = buffer.slice(newlineIndex + 1);
+
+          const trimmed = line.trim();
+          if (trimmed.length > 0) {
+            yield globalThis.JSON.parse(trimmed);
+          }
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  };
+
+  return JSONLIterator(stream);
+}
+
+$linkTimeConstant;
 export function readableStreamToBlob(stream: ReadableStream): Promise<Blob> {
   if (!$isReadableStream(stream)) throw $ERR_INVALID_ARG_TYPE("stream", "ReadableStream", typeof stream);
   if ($isReadableStreamLocked(stream)) return Promise.$reject($ERR_INVALID_STATE_TypeError("ReadableStream is locked"));

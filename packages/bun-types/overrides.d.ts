@@ -31,6 +31,20 @@ declare module "stream/web" {
      * Consume as a Blob
      */
     blob(): Promise<Blob>;
+
+    /**
+     * Consume as newline-delimited JSON (JSONL/NDJSON).
+     *
+     * Returns an async iterable that yields parsed JSON objects for each line.
+     *
+     * @example
+     * ```ts
+     * for await (const obj of response.body.jsonl()) {
+     *   console.log(obj);
+     * }
+     * ```
+     */
+    jsonl(): AsyncIterable<unknown>;
   }
 }
 

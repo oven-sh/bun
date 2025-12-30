@@ -3304,7 +3304,7 @@ pub const timespec = extern struct {
     }
 };
 
-pub const UUID = @import("./buntime/uuid.zig");
+pub const UUID = @import("./buntime/webcore/webcrypto/uuid.zig");
 
 /// An abstract number of element in a sequence. The sequence has a first element.
 /// This type should be used instead of integer because 2 contradicting traditions can

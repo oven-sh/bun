@@ -279,9 +279,9 @@ pub export fn CryptoObject__create(globalThis: *jsc.JSGlobalObject) jsc.JSValue 
 
 const std = @import("std");
 
-const UUID = @import("../../uuid.zig");
-const UUID5 = @import("../../uuid.zig").UUID5;
-const UUID7 = @import("../../uuid.zig").UUID7;
+const UUID = @import("./uuid.zig");
+const UUID5 = @import("./uuid.zig").UUID5;
+const UUID7 = @import("./uuid.zig").UUID7;
 
 const bun = @import("bun");
 const jsc = bun.jsc;

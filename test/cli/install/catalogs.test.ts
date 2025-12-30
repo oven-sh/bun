@@ -240,12 +240,10 @@ describe("file: protocol in catalogs", () => {
   test("catalog with file: tarball referenced from workspace package resolves relative to root", async () => {
     const { packageDir } = await registry.createTestDir();
 
-    // Copy the test tarball to a vendored directory in root
     const vendoredDir = join(packageDir, "vendored");
     await Bun.write(join(vendoredDir, ".keep"), "");
     await copyFile(join(__dirname, "bar-0.0.2.tgz"), join(vendoredDir, "bar-0.0.2.tgz"));
 
-    // Create root package.json with catalog containing file: path
     await write(
       join(packageDir, "package.json"),
       JSON.stringify({
@@ -254,14 +252,13 @@ describe("file: protocol in catalogs", () => {
           packages: ["packages/*"],
           catalogs: {
             vendored: {
-              "bar": "file:./vendored/bar-0.0.2.tgz",
+              bar: "file:./vendored/bar-0.0.2.tgz",
             },
           },
         },
       }),
     );
 
-    // Create workspace package that references the catalog
     await write(
       join(packageDir, "packages", "my-app", "package.json"),
       JSON.stringify({
@@ -272,15 +269,12 @@ describe("file: protocol in catalogs", () => {
       }),
     );
 
-    // Run bun install
-    const { err } = await runBunInstall(bunEnv, packageDir);
+    await runBunInstall(bunEnv, packageDir);
 
-    // The package should be installed correctly - the file: path in the catalog
-    // should resolve relative to root, not relative to the workspace package
     expect(await exists(join(packageDir, "node_modules", "bar", "package.json"))).toBeTrue();
-
-    const installedPkg = await file(join(packageDir, "node_modules", "bar", "package.json")).json();
-    expect(installedPkg.name).toBe("bar");
-    expect(installedPkg.version).toBe("0.0.2");
+    expect(await file(join(packageDir, "node_modules", "bar", "package.json")).json()).toEqual({
+      name: "bar",
+      version: "0.0.2",
+    });
   });
 });

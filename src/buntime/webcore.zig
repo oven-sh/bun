@@ -4,7 +4,7 @@ comptime {
     if (bun.Environment.export_cpp_apis) {
         _ = &@import("./webcore/prompt.zig");
     }
-    _ = &@import("./webcore/TextEncoder.zig");
+    _ = &@import("./web/encoding/TextEncoder.zig");
 }
 
 pub const DOMExceptionCode = @import("./api/error/JSErrorCode.zig").DOMExceptionCode;
@@ -16,14 +16,14 @@ pub const Crypto = @import("./webcore/Crypto.zig");
 pub const AbortSignal = @import("./bindings/AbortSignal.zig").AbortSignal;
 pub const WebWorker = @import("./web_worker.zig");
 pub const AutoFlusher = @import("./webcore/AutoFlusher.zig");
-pub const EncodingLabel = @import("./webcore/EncodingLabel.zig").EncodingLabel;
+pub const EncodingLabel = @import("./web/encoding/EncodingLabel.zig").EncodingLabel;
 pub const Fetch = @import("./web/fetch/fetch.zig");
 pub const Response = @import("./webcore/Response.zig");
 pub const BakeResponse = @import("./webcore/BakeResponse.zig");
-pub const TextDecoder = @import("./webcore/TextDecoder.zig");
-pub const TextEncoder = @import("./webcore/TextEncoder.zig");
-pub const TextEncoderStreamEncoder = @import("./webcore/TextEncoderStreamEncoder.zig");
-pub const encoding = @import("./webcore/encoding.zig");
+pub const TextDecoder = @import("./web/encoding/TextDecoder.zig");
+pub const TextEncoder = @import("./web/encoding/TextEncoder.zig");
+pub const TextEncoderStreamEncoder = @import("./web/encoding/TextEncoderStreamEncoder.zig");
+pub const encoding = @import("./web/encoding/encoding.zig");
 pub const ReadableStream = @import("./webcore/ReadableStream.zig");
 pub const Blob = @import("./webcore/Blob.zig");
 pub const S3Stat = @import("./webcore/S3Stat.zig").S3Stat;

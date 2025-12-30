@@ -11,7 +11,8 @@
     "output": "ZigGeneratedClassesSources.txt",
     "paths": [
       "src/buntime/*.classes.ts",
-      "src/buntime/{api,node,webcore}/*.classes.ts",
+      "src/buntime/{api,node,webcore,web}/*.classes.ts",
+      "src/buntime/web/*/*.classes.ts",
       "src/buntime/api/*/*.classes.ts",
       "src/test_runner/*.classes.ts"
     ]
@@ -80,6 +81,7 @@
       "src/buntime/web/fetch/*.cpp",
       "src/buntime/web/url/*.cpp",
       "src/buntime/web/blob/*.cpp",
+      "src/buntime/web/encoding/*.cpp",
       "src/bake/*.cpp",
       "src/deps/*.cpp",
       "src/vm/*.cpp",

@@ -86,6 +86,7 @@
       "src/buntime/web/events/*.cpp",
       "src/buntime/web/streams/*.cpp",
       "src/buntime/web/performance/*.cpp",
+      "src/buntime/web/websocket/*.cpp",
       "src/bake/*.cpp",
       "src/deps/*.cpp",
       "src/vm/*.cpp",

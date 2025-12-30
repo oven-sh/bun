@@ -897,6 +897,7 @@ target_include_directories(${bun} PRIVATE
   ${CWD}/src/buntime/web/events
   ${CWD}/src/buntime/web/streams
   ${CWD}/src/buntime/web/performance
+  ${CWD}/src/buntime/web/websocket
   ${CWD}/src/buntime/modules
   ${CWD}/src/js/builtins
   ${CWD}/src/napi

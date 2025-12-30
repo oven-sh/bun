@@ -2202,7 +2202,8 @@ extern "C" JSC::EncodedJSValue ZigString__toJSONObject(const ZigString* strPtr, 
 extern "C" JSC::EncodedJSValue Bun__encoding__toStringUTF8(const uint8_t* input, size_t len, JSC::JSGlobalObject* globalObject);
 
 // Helper to find newline in byte array using memchr (SIMD-optimized)
-static inline size_t findNewline(const uint8_t* data, size_t start, size_t end) {
+static inline size_t findNewline(const uint8_t* data, size_t start, size_t end)
+{
     if (start >= end) return notFound;
     const void* result = memchr(data + start, '\n', end - start);
     if (result) {
@@ -2212,7 +2213,8 @@ static inline size_t findNewline(const uint8_t* data, size_t start, size_t end) 
 }
 
 // Check if a line is whitespace-only (for 8-bit data)
-static inline bool isWhitespaceOnlyLine8(const Latin1Character* data, size_t start, size_t len) {
+static inline bool isWhitespaceOnlyLine8(const Latin1Character* data, size_t start, size_t len)
+{
     Latin1Character firstChar = data[start];
     if (firstChar != ' ' && firstChar != '\t') return false;
     for (size_t i = start; i < start + len; i++) {

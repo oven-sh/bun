@@ -237,7 +237,7 @@ describe("errors", () => {
 });
 
 describe("file: protocol in catalogs", () => {
-  test("catalog with file: tarball referenced from workspace package resolves relative to root", async () => {
+  test.concurrent("catalog with file: tarball referenced from workspace package resolves relative to root", async () => {
     const { packageDir } = await registry.createTestDir();
 
     const vendoredDir = join(packageDir, "vendored");

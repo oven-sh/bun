@@ -55,9 +55,9 @@
       "src/buntime/api/sqlite/*.cpp",
       "src/buntime/webcore/webcrypto/*.cpp",
       "src/buntime/webcore/webcrypto/*/*.cpp",
-      "src/buntime/bindings/node/*.cpp",
-      "src/buntime/bindings/node/crypto/*.cpp",
-      "src/buntime/bindings/node/http/*.cpp",
+      "src/buntime/node/*.cpp",
+      "src/buntime/node/crypto_bindings/*.cpp",
+      "src/buntime/node/http/*.cpp",
       "src/buntime/compat/v8/*.cpp",
       "src/buntime/compat/v8/shim/*.cpp",
       "src/buntime/api/console/*.cpp",
@@ -89,7 +89,7 @@
       "src/buntime/bindings/uv-posix-polyfills.c",
       "src/buntime/bindings/uv-posix-stubs.c",
       "src/*.c",
-      "src/buntime/bindings/node/http/llhttp/*.c"
+      "src/buntime/node/http/llhttp/*.c"
     ]
   }
 ]

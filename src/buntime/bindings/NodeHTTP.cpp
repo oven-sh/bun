@@ -21,8 +21,8 @@
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include "JSSocketAddressDTO.h"
-#include "node/JSNodeHTTPServerSocket.h"
-#include "node/JSNodeHTTPServerSocketPrototype.h"
+#include "JSNodeHTTPServerSocket.h"
+#include "JSNodeHTTPServerSocketPrototype.h"
 namespace Bun {
 
 using namespace JSC;

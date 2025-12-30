@@ -167,7 +167,7 @@ pub const ZigException = extern struct {
 const string = []const u8;
 
 const std = @import("std");
-const ZigURL = @import("../../url.zig").URL;
+const ZigURL = @import("../../../url.zig").URL;
 
 const bun = @import("bun");
 const String = bun.String;

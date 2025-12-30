@@ -139,7 +139,7 @@ pub const ZigStackTrace = extern struct {
 };
 
 const std = @import("std");
-const ZigURL = @import("../../url.zig").URL;
+const ZigURL = @import("../../../url.zig").URL;
 
 const bun = @import("bun");
 const api = bun.schema.api;

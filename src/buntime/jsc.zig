@@ -99,17 +99,17 @@ pub const ModuleLoader = @import("./ModuleLoader.zig");
 pub const RareData = @import("./rare_data.zig");
 pub const EventType = @import("./web/events/EventType.zig").EventType;
 pub const JSRuntimeType = @import("./bindings/JSRuntimeType.zig").JSRuntimeType;
-pub const ZigStackFrameCode = @import("./bindings/ZigStackFrameCode.zig").ZigStackFrameCode;
+pub const ZigStackFrameCode = @import("./api/error/ZigStackFrameCode.zig").ZigStackFrameCode;
 
 pub const ErrorableResolvedSource = Errorable(ResolvedSource);
 pub const ErrorableZigString = Errorable(ZigString);
 pub const ErrorableJSValue = Errorable(JSValue);
 pub const ErrorableString = Errorable(bun.String);
 
-pub const ZigStackTrace = @import("./bindings/ZigStackTrace.zig").ZigStackTrace;
-pub const ZigStackFrame = @import("./bindings/ZigStackFrame.zig").ZigStackFrame;
-pub const ZigStackFramePosition = @import("./bindings/ZigStackFramePosition.zig").ZigStackFramePosition;
-pub const ZigException = @import("./bindings/ZigException.zig").ZigException;
+pub const ZigStackTrace = @import("./api/error/ZigStackTrace.zig").ZigStackTrace;
+pub const ZigStackFrame = @import("./api/error/ZigStackFrame.zig").ZigStackFrame;
+pub const ZigStackFramePosition = @import("./api/error/ZigStackFramePosition.zig").ZigStackFramePosition;
+pub const ZigException = @import("./api/error/ZigException.zig").ZigException;
 
 pub const ConsoleObject = @import("./api/console/ConsoleObject.zig");
 pub const Formatter = ConsoleObject.Formatter;

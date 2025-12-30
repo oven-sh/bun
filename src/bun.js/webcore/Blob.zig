@@ -1256,13 +1256,13 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
         // Skip fast path when appending
         if ((options.append orelse false) == false and
             (path_or_blob == .path or
-            // If they try to set an offset, its a little more complicated so let's avoid that
-            (path_or_blob.blob.offset == 0 and !path_or_blob.blob.isS3() and
-                // Is this a file that is known to be a pipe? Let's avoid blocking the main thread on it.
-                !(path_or_blob.blob.store != null and
-                    path_or_blob.blob.store.?.data == .file and
-                    path_or_blob.blob.store.?.data.file.mode != 0 and
-                    bun.isRegularFile(path_or_blob.blob.store.?.data.file.mode)))))
+                // If they try to set an offset, its a little more complicated so let's avoid that
+                (path_or_blob.blob.offset == 0 and !path_or_blob.blob.isS3() and
+                    // Is this a file that is known to be a pipe? Let's avoid blocking the main thread on it.
+                    !(path_or_blob.blob.store != null and
+                        path_or_blob.blob.store.?.data == .file and
+                        path_or_blob.blob.store.?.data.file.mode != 0 and
+                        bun.isRegularFile(path_or_blob.blob.store.?.data.file.mode)))))
         {
             if (data.isString()) {
                 const len = try data.getLength(globalThis);
@@ -2321,9 +2321,9 @@ pub fn doWrite(this: *Blob, globalThis: *jsc.JSGlobalObject, callframe: *jsc.Cal
     }
     var blob_internal: PathOrBlob = .{ .blob = this.* };
     return writeFileInternal(globalThis, &blob_internal, data, .{
-      .mkdirp_if_not_exists = mkdirp_if_not_exists,
-      .extra_options = options,
-      .append = append,
+        .mkdirp_if_not_exists = mkdirp_if_not_exists,
+        .extra_options = options,
+        .append = append,
     });
 }
 

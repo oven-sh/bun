@@ -1099,12 +1099,12 @@ pub const PackageManager = install.PackageManager;
 pub const RunCommand = @import("./cli/run_command.zig").RunCommand;
 
 pub const fs = @import("./fs.zig");
-pub const transpiler = @import("./transpiler.zig");
+pub const transpiler = @import("./transpiler/transpiler.zig");
 pub const Transpiler = transpiler.Transpiler;
 pub const which = @import("./which.zig").which;
-pub const js_parser = @import("./js_parser.zig");
-pub const js_printer = @import("./js_printer.zig");
-pub const js_lexer = @import("./js_lexer.zig");
+pub const js_parser = @import("./transpiler/parser.zig");
+pub const js_printer = @import("./transpiler/printer.zig");
+pub const js_lexer = @import("./transpiler/lexer.zig");
 pub const ast = @import("./ast.zig");
 
 pub const interchange = @import("./interchange.zig");

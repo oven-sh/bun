@@ -1,8 +1,8 @@
-pub const options = @import("./options.zig");
+pub const options = @import("../options.zig");
 
 pub const MacroJSValueType = jsc.JSValue;
 
-pub const EntryPoints = @import("./bundler/entry_points.zig");
+pub const EntryPoints = @import("../bundler/entry_points.zig");
 
 pub const ParseResult = struct {
     source: logger.Source,
@@ -1572,23 +1572,23 @@ pub const ResolveQueue = bun.LinearFifo(
 
 const string = []const u8;
 
-const DotEnv = @import("./env_loader.zig");
-const Fs = @import("./fs.zig");
-const MimeType = @import("./http/MimeType.zig");
-const NodeFallbackModules = @import("./node_fallbacks.zig");
-const Router = @import("./router.zig");
-const runtime = @import("./runtime.zig");
+const DotEnv = @import("../env_loader.zig");
+const Fs = @import("../fs.zig");
+const MimeType = @import("../http/MimeType.zig");
+const NodeFallbackModules = @import("../node_fallbacks.zig");
+const Router = @import("../router.zig");
+const runtime = @import("../runtime.zig");
 const std = @import("std");
-const DataURL = @import("./resolver/data_url.zig").DataURL;
-const MacroRemap = @import("./resolver/package_json.zig").MacroMap;
-const PackageManager = @import("./install/install.zig").PackageManager;
-const SystemTimer = @import("./system_timer.zig").Timer;
-const URL = @import("./url.zig").URL;
+const DataURL = @import("../resolver/data_url.zig").DataURL;
+const MacroRemap = @import("../resolver/package_json.zig").MacroMap;
+const PackageManager = @import("../install/install.zig").PackageManager;
+const SystemTimer = @import("../system_timer.zig").Timer;
+const URL = @import("../url.zig").URL;
 
-const linker = @import("./linker.zig");
+const linker = @import("../linker.zig");
 const Linker = linker.Linker;
 
-const _resolver = @import("./resolver/resolver.zig");
+const _resolver = @import("../resolver/resolver.zig");
 const DebugLogs = _resolver.DebugLogs;
 const Resolver = _resolver.Resolver;
 

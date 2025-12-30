@@ -6082,12 +6082,12 @@ pub fn printCommonJS(
 
 const string = []const u8;
 
-const SourceMap = @import("./sourcemap/sourcemap.zig");
-const fs = @import("./fs.zig");
-const importRecord = @import("./import_record.zig");
-const options = @import("./options.zig");
-const rename = @import("./renamer.zig");
-const runtime = @import("./runtime.zig");
+const SourceMap = @import("../sourcemap/sourcemap.zig");
+const fs = @import("../fs.zig");
+const importRecord = @import("../import_record.zig");
+const options = @import("../options.zig");
+const rename = @import("../renamer.zig");
+const runtime = @import("../runtime.zig");
 const std = @import("std");
 
 const bun = @import("bun");

@@ -4501,10 +4501,10 @@ pub fn allocatorHasPointer(allocator: std.mem.Allocator) bool {
 }
 
 pub const std = @import("std");
-pub const lex = @import("../js_lexer.zig");
+pub const lex = @import("../transpiler/lexer.zig");
 pub const Logger = @import("../logger.zig");
 pub const Part = js_ast.Part;
-pub const js_printer = @import("../js_printer.zig");
+pub const js_printer = @import("../transpiler/printer.zig");
 pub const js_ast = bun.ast;
 pub const linker = @import("../linker.zig");
 pub const SourceMap = bun.SourceMap;

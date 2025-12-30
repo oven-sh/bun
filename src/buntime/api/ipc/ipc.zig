@@ -1494,7 +1494,7 @@ pub fn ipcParse(globalObject: *jsc.JSGlobalObject, target: jsc.JSValue, serializ
 
 const string = []const u8;
 
-const node_cluster_binding = @import("./node/node_cluster_binding.zig");
+const node_cluster_binding = @import("../../node/node_cluster_binding.zig");
 const std = @import("std");
 const JSONLineBuffer = @import("./JSONLineBuffer.zig").JSONLineBuffer;
 

@@ -1099,7 +1099,7 @@ pub fn appendEnvpFromJS(globalThis: *jsc.JSGlobalObject, object: *jsc.JSObject, 
 const log = Output.scoped(.Subprocess, .hidden);
 extern "C" const BUN_DEFAULT_PATH_FOR_SPAWN: [*:0]const u8;
 
-const IPC = @import("../../ipc.zig");
+const IPC = @import("../ipc/ipc.zig");
 const Terminal = @import("./Terminal.zig");
 const std = @import("std");
 const Allocator = std.mem.Allocator;

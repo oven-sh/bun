@@ -227,6 +227,7 @@ pub const S3Client = struct {
         return Blob.writeFileInternal(globalThis, &blob_internal, data, .{
             .mkdirp_if_not_exists = false,
             .extra_options = options,
+            .append = false,
         });
     }
 

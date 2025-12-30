@@ -120,6 +120,13 @@ pub const Start = union(Tag) {
                         chunk_size = @as(Blob.SizeType, @intCast(@max(0, @as(i51, @truncate(chunkSize.toInt64())))));
                 }
 
+                var append = false;
+                if (try value.getTruthy(globalThis, "append")) |val| {
+                    if (val.isBoolean()) {
+                        append = val.toBoolean();
+                    }
+                }
+
                 if (try value.fastGet(globalThis, .path)) |path| {
                     if (!path.isString()) {
                         return .{
@@ -133,6 +140,7 @@ pub const Start = union(Tag) {
                     return .{
                         .FileSink = .{
                             .chunk_size = chunk_size,
+                            .append = append,
                             .input_path = .{
                                 .path = try path.toSlice(globalThis, globalThis.bunVM().allocator),
                             },
@@ -152,6 +160,7 @@ pub const Start = union(Tag) {
                         return .{
                             .FileSink = .{
                                 .chunk_size = chunk_size,
+                                .append = append,
                                 .input_path = .{ .fd = fd },
                             },
                         };
@@ -167,6 +176,7 @@ pub const Start = union(Tag) {
                     .FileSink = .{
                         .input_path = .{ .fd = bun.invalid_fd },
                         .chunk_size = chunk_size,
+                        .append = append,
                     },
                 };
             },

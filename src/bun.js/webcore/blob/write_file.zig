@@ -29,11 +29,9 @@ pub const WriteFile = struct {
     pub const getFd = FileOpener(@This()).getFd;
     pub const doClose = FileCloser(WriteFile).doClose;
 
-    pub fn getOpenFlags(this: *const WriteFile) c_int {
-        return if (this.append)
-            bun.O.WRONLY | bun.O.CREAT | bun.O.APPEND | bun.O.NONBLOCK
-        else
-            bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC | bun.O.NONBLOCK;
+    pub fn getOpenFlags(this: *const WriteFile) i32 {
+        const mode: i32 = if (this.append) bun.O.APPEND else bun.O.TRUNC;
+        return bun.O.NONBLOCK | bun.O.CREAT | bun.O.WRONLY | mode;
     }
 
     pub fn onWritable(request: *io.Request) void {
@@ -426,10 +424,7 @@ pub const WriteFileWindows = struct {
     pub fn open(this: *WriteFileWindows) WriteFileWindowsError!void {
         const path = this.file_blob.store.?.data.file.pathlike.path.slice();
         this.io_request.data = this;
-        const flags = if (this.append)
-            uv.O.CREAT | uv.O.WRONLY | uv.O.NOCTTY | uv.O.NONBLOCK | uv.O.SEQUENTIAL | uv.O.APPEND
-        else
-            uv.O.CREAT | uv.O.WRONLY | uv.O.NOCTTY | uv.O.NONBLOCK | uv.O.SEQUENTIAL | uv.O.TRUNC;
+        const flags: i32 = uv.O.CREAT | uv.O.WRONLY | uv.O.NOCTTY | uv.O.NONBLOCK | uv.O.SEQUENTIAL | (if (this.append) uv.O.APPEND else uv.O.TRUNC);
         const rc = uv.uv_fs_open(
             this.loop(),
             &this.io_request,
@@ -690,6 +685,7 @@ pub const WriteFileWaitFromLockedValueTask = struct {
     globalThis: *JSGlobalObject,
     promise: jsc.JSPromise.Strong,
     mkdirp_if_not_exists: bool = false,
+    append: bool = false,
 
     pub fn thenWrap(this: *anyopaque, value: *Body.Value) void {
         then(bun.cast(*WriteFileWaitFromLockedValueTask, this), value) catch {}; // TODO: properly propagate exception upwards
@@ -722,7 +718,7 @@ pub const WriteFileWaitFromLockedValueTask = struct {
             => {
                 var blob = value.use();
                 // TODO: this should be one promise not two!
-                const new_promise = Blob.writeFileWithSourceDestination(globalThis, &blob, &file_blob, .{ .mkdirp_if_not_exists = this.mkdirp_if_not_exists }) catch |err| {
+                const new_promise = Blob.writeFileWithSourceDestination(globalThis, &blob, &file_blob, .{ .mkdirp_if_not_exists = this.mkdirp_if_not_exists, .append = this.append }) catch |err| {
                     file_blob.detach();
                     this.promise.deinit();
                     bun.destroy(this);

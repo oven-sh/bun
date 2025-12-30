@@ -4249,6 +4249,11 @@ declare module "bun" {
     readonly bufferedAmount: number;
 
     /**
+     * The HTTP status code from the WebSocket upgrade handshake (typically 101)
+     */
+    readonly upgradeStatusCode: number;
+
+    /**
      * The protocol selected by the server
      */
     readonly protocol: string;

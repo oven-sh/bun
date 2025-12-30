@@ -80,6 +80,13 @@ const eventIds = {
   error: 4,
   ping: 5,
   pong: 6,
+  upgrade: 7,
+  "unexpected-response": 8,
+};
+
+const nativeBridgeIds = {
+  openUpgrade: 1,
+  unexpectedResponse: 2,
 };
 
 const emittedWarnings = new Set();
@@ -126,6 +133,9 @@ class BunWebSocket extends EventEmitter {
   #binaryType = "nodebuffer";
   // Bitset to track whether event handlers are set.
   #eventId = 0;
+  #nativeEventId = 0;
+  #requestHeaders = {};
+  #requestMethod = "GET";
 
   constructor(url, protocols, options) {
     super();
@@ -244,6 +254,9 @@ class BunWebSocket extends EventEmitter {
   }
 
   #createWebSocket(url, protocols, headers, method, proxy, tls) {
+    this.#requestHeaders = headers || {};
+    this.#requestMethod = method;
+
     let wsOptions;
     if (headers || proxy || tls) {
       wsOptions = { protocols };
@@ -260,11 +273,71 @@ class BunWebSocket extends EventEmitter {
     return ws;
   }
 
+  #createUpgradeResponse(defaultStatusCode) {
+    const statusCode = this.#ws.upgradeStatusCode || defaultStatusCode;
+    return {
+      statusCode,
+      statusMessage: http.STATUS_CODES[statusCode] || "",
+      headers: {},
+    };
+  }
+
+  #createUnexpectedResponseRequest() {
+    return {
+      method: this.#requestMethod,
+      url: this.#ws.url,
+      headers: this.#requestHeaders,
+    };
+  }
+
+  #ensureOpenUpgradeBridge() {
+    const mask = 1 << nativeBridgeIds.openUpgrade;
+    if ((this.#nativeEventId & mask) === mask) return;
+
+    this.#nativeEventId |= mask;
+    this.#ws.addEventListener("open", event => {
+      if (this.listenerCount("upgrade") > 0) {
+        this.emit("upgrade", this.#createUpgradeResponse(101));
+      }
+      this.emit("open", event);
+    });
+  }
+
+  #ensureUnexpectedResponseBridge() {
+    const mask = 1 << nativeBridgeIds.unexpectedResponse;
+    if ((this.#nativeEventId & mask) === mask) return;
+
+    this.#nativeEventId |= mask;
+    this.#ws.addEventListener("error", () => {
+      const statusCode = this.#ws.upgradeStatusCode;
+      if (statusCode && statusCode !== 101) {
+        this.emit(
+          "unexpected-response",
+          this.#createUnexpectedResponseRequest(),
+          this.#createUpgradeResponse(statusCode),
+        );
+      }
+    });
+  }
+
   #onOrOnce(event, listener, once) {
-    if (event === "unexpected-response" || event === "upgrade" || event === "redirect") {
+    if (event === "redirect") {
       emitWarning(event, "ws.WebSocket '" + event + "' event is not implemented in bun");
     }
+
     const mask = 1 << eventIds[event];
+    if ((event === "open" || event === "upgrade" || event === "unexpected-response") && mask) {
+      if (!once) {
+        this.#eventId |= mask;
+      }
+      if (event === "unexpected-response") {
+        this.#ensureUnexpectedResponseBridge();
+      } else {
+        this.#ensureOpenUpgradeBridge();
+      }
+      return once ? super.once(event, listener) : super.on(event, listener);
+    }
+
     const hasPersistentListener = mask && (this.#eventId & mask) === mask;
     // Add a native listener if:
     // 1. For `on()`: no native listener exists yet (will be persistent)

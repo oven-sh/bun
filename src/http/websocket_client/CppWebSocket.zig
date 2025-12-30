@@ -23,6 +23,7 @@ pub const CppWebSocket = opaque {
         buffered_len: usize,
         deflate_params: ?*const WebSocketDeflate.Params,
     ) void;
+    extern fn WebSocket__setUpgradeStatusCode(websocket_context: *CppWebSocket, upgrade_status_code: u16) void;
     extern fn WebSocket__didAbruptClose(websocket_context: *CppWebSocket, reason: ErrorCode) void;
     extern fn WebSocket__didClose(websocket_context: *CppWebSocket, code: u16, reason: *const bun.String) void;
     extern fn WebSocket__didReceiveText(websocket_context: *CppWebSocket, clone: bool, text: *const jsc.ZigString) void;
@@ -69,6 +70,12 @@ pub const CppWebSocket = opaque {
         loop.enter();
         defer loop.exit();
         WebSocket__didConnectWithTunnel(this, tunnel, buffered_data, buffered_len, deflate_params);
+    }
+    pub fn setUpgradeStatusCode(this: *CppWebSocket, upgrade_status_code: u16) void {
+        const loop = jsc.VirtualMachine.get().eventLoop();
+        loop.enter();
+        defer loop.exit();
+        WebSocket__setUpgradeStatusCode(this, upgrade_status_code);
     }
     extern fn WebSocket__incrementPendingActivity(websocket_context: *CppWebSocket) void;
     extern fn WebSocket__decrementPendingActivity(websocket_context: *CppWebSocket) void;

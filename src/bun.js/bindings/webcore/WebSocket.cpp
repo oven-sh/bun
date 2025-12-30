@@ -1744,6 +1744,11 @@ extern "C" void WebSocket__didConnect(WebCore::WebSocket* webSocket, us_socket_t
     webSocket->didConnect(socket, bufferedData, len, deflate_params, customSSLCtx);
 }
 
+extern "C" void WebSocket__setUpgradeStatusCode(WebCore::WebSocket* webSocket, uint16_t upgradeStatusCode)
+{
+    webSocket->setUpgradeStatusCode(upgradeStatusCode);
+}
+
 extern "C" void WebSocket__didConnectWithTunnel(WebCore::WebSocket* webSocket, void* tunnel, char* bufferedData, size_t len, const PerMessageDeflateParams* deflate_params)
 {
     webSocket->didConnectWithTunnel(tunnel, bufferedData, len, deflate_params);

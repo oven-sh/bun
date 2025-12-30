@@ -142,6 +142,9 @@ public:
     String binaryType() const;
     ExceptionOr<void> setBinaryType(const String&);
 
+    uint16_t upgradeStatusCode() const { return m_upgradeStatusCode; }
+    void setUpgradeStatusCode(uint16_t upgradeStatusCode) { m_upgradeStatusCode = upgradeStatusCode; }
+
     ScriptExecutionContext* scriptExecutionContext() const final;
 
     using RefCounted::deref;
@@ -249,6 +252,7 @@ private:
     String m_extensions;
     void* m_upgradeClient { nullptr };
     ConnectionType m_connectionType { ConnectionType::Plain };
+    uint16_t m_upgradeStatusCode { 0 };
     bool m_rejectUnauthorized { false };
     AnyWebSocket m_connectedWebSocket { nullptr };
     ConnectedWebSocketKind m_connectedWebSocketKind { ConnectedWebSocketKind::None };

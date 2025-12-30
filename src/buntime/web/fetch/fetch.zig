@@ -58,7 +58,7 @@ pub const fetch_type_error_strings: JSTypeErrorEnum = brk: {
     break :brk errors;
 };
 
-pub const FetchTasklet = @import("./fetch/FetchTasklet.zig").FetchTasklet;
+pub const FetchTasklet = @import("./FetchTasklet.zig").FetchTasklet;
 
 fn dataURLResponse(
     _data_url: DataURL,
@@ -965,7 +965,7 @@ pub fn Bun__fetch_(
     if (url_type != .remote) {
         defer unix_socket_path.deinit();
         var path_buf: bun.PathBuffer = undefined;
-        const PercentEncoding = @import("../../url.zig").PercentEncoding;
+        const PercentEncoding = @import("../../../url.zig").PercentEncoding;
         var path_buf2: bun.PathBuffer = undefined;
         var stream = std.io.fixedBufferStream(&path_buf2);
         var url_path_decoded = path_buf2[0 .. PercentEncoding.decode(
@@ -1448,9 +1448,9 @@ fn setHeaders(headers: *?Headers, new_headers: []const picohttp.Header, allocato
 const string = []const u8;
 
 const std = @import("std");
-const DataURL = @import("../../resolver/data_url.zig").DataURL;
-const Method = @import("../../http/Method.zig").Method;
-const ZigURL = @import("../../url.zig").URL;
+const DataURL = @import("../../../resolver/data_url.zig").DataURL;
+const Method = @import("../../../http/Method.zig").Method;
+const ZigURL = @import("../../../url.zig").URL;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

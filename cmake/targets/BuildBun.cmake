@@ -889,6 +889,7 @@ target_include_directories(${bun} PRIVATE
   ${CWD}/src/buntime/api/plugin
   ${CWD}/src/buntime/api/process
   ${CWD}/src/buntime/core
+  ${CWD}/src/buntime/web/fetch
   ${CWD}/src/buntime/modules
   ${CWD}/src/js/builtins
   ${CWD}/src/napi

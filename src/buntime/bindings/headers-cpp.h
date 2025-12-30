@@ -64,7 +64,7 @@ extern "C" const size_t JSC__JSModuleLoader_object_align_ = alignof(JSC::JSModul
 
 #ifndef INCLUDED_webcore_AbortSignal_h
 #define INCLUDED_webcore_AbortSignal_h
-#include "webcore/AbortSignal.h"
+#include "AbortSignal.h"
 #endif
 
 extern "C" const size_t WebCore__AbortSignal_object_size_ = sizeof(WebCore::AbortSignal);

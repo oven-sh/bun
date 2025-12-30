@@ -28,7 +28,7 @@
 
 #include "CryptoKeyRSAComponents.h"
 #include "JsonWebKey.h"
-#include "../wtf-bindings.h"
+#include "wtf-bindings.h"
 #include <wtf/text/Base64.h>
 
 #if ENABLE(WEB_CRYPTO)

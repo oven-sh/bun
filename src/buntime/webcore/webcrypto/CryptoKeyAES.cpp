@@ -25,7 +25,7 @@
 
 #include "config.h"
 #include "CryptoKeyAES.h"
-#include "../wtf-bindings.h"
+#include "wtf-bindings.h"
 #if ENABLE(WEB_CRYPTO)
 
 #include "CryptoAesKeyAlgorithm.h"

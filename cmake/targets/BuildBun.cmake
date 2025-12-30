@@ -864,9 +864,8 @@ target_include_directories(${bun} PRIVATE
   ${CWD}/packages/bun-usockets
   ${CWD}/packages/bun-usockets/src
   ${CWD}/src/buntime/bindings
-  ${CWD}/src/buntime/bindings/webcore
-  ${CWD}/src/buntime/webcore/webcrypto
   ${CWD}/src/buntime/webcore
+  ${CWD}/src/buntime/webcore/webcrypto
   ${CWD}/src/buntime/node
   ${CWD}/src/buntime/node/crypto_bindings
   ${CWD}/src/buntime/node/http
@@ -899,7 +898,7 @@ target_include_directories(${bun} PRIVATE
 )
 
 if(NOT WIN32)
-  target_include_directories(${bun} PRIVATE ${CWD}/src/buntime/bindings/libuv)
+  target_include_directories(${bun} PRIVATE ${CWD}/src/buntime/compat/libuv)
 endif()
 
 if(LINUX)

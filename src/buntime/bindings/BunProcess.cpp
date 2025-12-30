@@ -49,7 +49,7 @@
 #include "EventLoopTask.h"
 #include <JavaScriptCore/StructureCache.h>
 
-#include <webcore/SerializedScriptValue.h>
+#include "SerializedScriptValue.h"
 #include "ProcessBindingTTYWrap.h"
 #include "wtf/text/ASCIILiteral.h"
 #include "wtf/text/StringToIntegerConversion.h"

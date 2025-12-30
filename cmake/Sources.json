@@ -51,7 +51,7 @@
       "src/io/*.cpp",
       "src/buntime/modules/*.cpp",
       "src/buntime/bindings/*.cpp",
-      "src/buntime/bindings/webcore/*.cpp",
+      "src/buntime/webcore/*.cpp",
       "src/buntime/api/sqlite/*.cpp",
       "src/buntime/webcore/webcrypto/*.cpp",
       "src/buntime/webcore/webcrypto/*/*.cpp",

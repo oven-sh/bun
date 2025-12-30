@@ -124,7 +124,7 @@
 #include "JavaScriptCore/DateInstance.h"
 #include "JavaScriptCore/RegExpObject.h"
 #include "JavaScriptCore/PropertyNameArray.h"
-#include "webcore/JSAbortSignal.h"
+#include "JSAbortSignal.h"
 #include "JSAbortAlgorithm.h"
 
 #include "DOMFormData.h"

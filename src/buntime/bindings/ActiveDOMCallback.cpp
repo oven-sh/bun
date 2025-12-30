@@ -28,7 +28,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "webcore/config.h"
+#include "config.h"
 #include "ActiveDOMCallback.h"
 
 #include "ScriptExecutionContext.h"

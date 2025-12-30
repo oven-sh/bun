@@ -20,7 +20,7 @@
 #include "root.h"
 #include <JavaScriptCore/JSClassRef.h>
 #include "headers-handwritten.h"
-#include "webcore/WebSocketDeflate.h"
+#include "WebSocketDeflate.h"
 
 namespace JSC {
 class JSGlobalObject;

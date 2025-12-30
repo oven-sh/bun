@@ -61,6 +61,7 @@ CPP_DECL JSC::EncodedJSValue ZigString__toRangeErrorInstance(const ZigString* ar
 CPP_DECL JSC::EncodedJSValue ZigString__toSyntaxErrorInstance(const ZigString* arg0, JSC::JSGlobalObject* arg1);
 CPP_DECL JSC::EncodedJSValue ZigString__toTypeErrorInstance(const ZigString* arg0, JSC::JSGlobalObject* arg1);
 CPP_DECL JSC::EncodedJSValue ZigString__toValueGC(const ZigString* arg0, JSC::JSGlobalObject* arg1);
+CPP_DECL JSC::EncodedJSValue Bun__parseJSONLines(JSC::JSGlobalObject* arg0, const uint8_t* arg1, const uint32_t* arg2, const uint32_t* arg3, uint32_t arg4);
 CPP_DECL WebCore::DOMURL* WebCore__DOMURL__cast_(JSC::EncodedJSValue JSValue0, JSC::VM* arg1);
 CPP_DECL BunString WebCore__DOMURL__fileSystemPath(WebCore::DOMURL* arg0, int* errorCode);
 CPP_DECL void WebCore__DOMURL__href_(WebCore::DOMURL* arg0, ZigString* arg1);

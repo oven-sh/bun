@@ -2195,6 +2195,58 @@ extern "C" JSC::EncodedJSValue ZigString__toJSONObject(const ZigString* strPtr, 
     return JSValue::encode(result);
 }
 
+// Batch parse multiple JSON lines into a JSArray.
+// This reduces Zig<->C++ boundary crossings from N to 1 for N lines.
+extern "C" JSC::EncodedJSValue Bun__parseJSONLines(
+    JSC::JSGlobalObject* globalObject,
+    const uint8_t* data,
+    const uint32_t* lineOffsets,
+    const uint32_t* lineLengths,
+    uint32_t lineCount)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Pre-allocate array with known size
+    JSC::JSArray* array = JSC::constructEmptyArray(globalObject, nullptr, lineCount);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    uint32_t resultIndex = 0;
+    for (uint32_t i = 0; i < lineCount; ++i) {
+        const uint8_t* lineStart = data + lineOffsets[i];
+        uint32_t lineLen = lineLengths[i];
+
+        // Create String directly from UTF-8 data
+        auto jsonStr = WTF::String::fromUTF8(std::span { lineStart, lineLen });
+
+        // Parse JSON
+        JSValue parsed = JSONParse(globalObject, jsonStr);
+
+        if (scope.exception()) {
+            // Clear exception and skip this line (like the original Zig implementation)
+            scope.clearException();
+            continue;
+        }
+
+        if (!parsed) {
+            // Parse failed without exception, skip this line
+            continue;
+        }
+
+        // Add to array (GC safe: array is on stack)
+        array->putDirectIndex(globalObject, resultIndex++, parsed);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    // If we skipped some lines, we need to adjust the array length
+    if (resultIndex < lineCount) {
+        array->setLength(globalObject, resultIndex);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    return JSValue::encode(array);
+}
+
 // We used to just throw "Out of memory" as a regular Error with that string.
 //
 // But JSC has some different handling for out of memory errors. So we should

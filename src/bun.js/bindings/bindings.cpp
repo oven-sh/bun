@@ -2377,8 +2377,7 @@ extern "C" JSC::EncodedJSValue Bun__parseJSONLFromBlob(
         return {};
     }
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(
-        constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), args)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), args)));
 }
 
 // We used to just throw "Out of memory" as a regular Error with that string.

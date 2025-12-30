@@ -12,7 +12,7 @@ pub const DOMExceptionCode = @import("./api/error/JSErrorCode.zig").DOMException
 // TODO: make this JSGlobalObject local for better security
 pub const ByteListPool = bun.ObjectPool(bun.ByteList, null, true, 8);
 
-pub const Crypto = @import("./webcore/Crypto.zig");
+pub const Crypto = @import("./webcore/webcrypto/Crypto.zig");
 pub const AbortSignal = @import("./web/events/AbortSignal.zig").AbortSignal;
 pub const WebWorker = @import("./web_worker.zig");
 pub const AutoFlusher = @import("./webcore/AutoFlusher.zig");

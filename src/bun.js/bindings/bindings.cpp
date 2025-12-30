@@ -60,7 +60,9 @@
 #include "JavaScriptCore/JSModuleRecord.h"
 #include "JavaScriptCore/JSNativeStdFunction.h"
 #include "JavaScriptCore/JSONObject.h"
+#include "JavaScriptCore/LiteralParser.h"
 #include "JavaScriptCore/JSObject.h"
+#include <wtf/text/ASCIIFastPath.h>
 #include "JavaScriptCore/JSSet.h"
 #include "JavaScriptCore/Strong.h"
 #include "JavaScriptCore/JSSetIterator.h"
@@ -2199,8 +2201,30 @@ extern "C" JSC::EncodedJSValue ZigString__toJSONObject(const ZigString* strPtr, 
 // Forward declaration for Bun's optimized UTF-8 to string conversion
 extern "C" JSC::EncodedJSValue Bun__encoding__toStringUTF8(const uint8_t* input, size_t len, JSC::JSGlobalObject* globalObject);
 
+// Helper to find newline in byte array using memchr (SIMD-optimized)
+static inline size_t findNewline(const uint8_t* data, size_t start, size_t end) {
+    if (start >= end) return notFound;
+    const void* result = memchr(data + start, '\n', end - start);
+    if (result) {
+        return static_cast<const uint8_t*>(result) - data;
+    }
+    return notFound;
+}
+
+// Check if a line is whitespace-only (for 8-bit data)
+static inline bool isWhitespaceOnlyLine8(const Latin1Character* data, size_t start, size_t len) {
+    Latin1Character firstChar = data[start];
+    if (firstChar != ' ' && firstChar != '\t') return false;
+    for (size_t i = start; i < start + len; i++) {
+        Latin1Character c = data[i];
+        if (c != ' ' && c != '\t') return false;
+    }
+    return true;
+}
+
 // Uses MarkedArgumentBuffer for GC-safe value collection.
-// Uses Bun's SIMD-accelerated UTF-8 to UTF-16 conversion.
+// Optimized: For ASCII-only data, parses directly from UTF-8 using LiteralParser<Latin1Character>
+// to avoid UTF-16 conversion overhead.
 extern "C" JSC::EncodedJSValue Bun__parseJSONLFromBlob(
     JSC::JSGlobalObject* globalObject,
     const uint8_t* data,
@@ -2219,69 +2243,131 @@ extern "C" JSC::EncodedJSValue Bun__parseJSONLFromBlob(
         return JSValue::encode(constructEmptyArray(globalObject, nullptr));
     }
 
-    // Use Bun's optimized UTF-8 to string conversion (SIMD-accelerated)
-    JSValue jsStringValue = JSValue::decode(Bun__encoding__toStringUTF8(data + offset, size - offset, globalObject));
-
-    if (!jsStringValue || !jsStringValue.isString()) {
-        return JSValue::encode(constructEmptyArray(globalObject, nullptr));
-    }
-
-    // Get the underlying WTF::String from JSString
-    JSString* jsString = jsCast<JSString*>(jsStringValue);
-    auto fullString = jsString->value(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
+    const uint8_t* contentStart = data + offset;
+    size_t contentSize = size - offset;
 
     // Use MarkedArgumentBuffer for GC-safe collection of parsed values
     MarkedArgumentBuffer args;
 
-    // Create a StringView for efficient substring operations
-    StringView fullView = fullString;
-    size_t pos = 0;
-    size_t length = fullView.length();
+    // Check if content is ASCII-only (fast SIMD check)
+    std::span<const uint8_t> contentSpan(contentStart, contentSize);
+    bool isAllASCII = charactersAreAllASCII(contentSpan);
 
-    while (pos < length) {
-        // Find newline
-        size_t newlinePos = fullView.find('\n', pos);
-        size_t lineEnd = (newlinePos == notFound) ? length : newlinePos;
+    if (isAllASCII) {
+        // Fast path: ASCII-only data can be parsed directly as Latin1
+        // UTF-8 ASCII bytes are identical to Latin1 encoding
+        const Latin1Character* latin1Data = reinterpret_cast<const Latin1Character*>(contentStart);
+        size_t pos = 0;
 
-        // Handle CRLF
-        if (lineEnd > pos && fullView[lineEnd - 1] == '\r') {
-            lineEnd--;
-        }
+        while (pos < contentSize) {
+            // Find newline
+            size_t newlinePos = findNewline(contentStart, pos, contentSize);
+            size_t lineEnd = (newlinePos == notFound) ? contentSize : newlinePos;
 
-        size_t lineLen = lineEnd - pos;
-
-        // Skip empty/whitespace-only lines
-        if (lineLen > 0) {
-            // Quick check: first char is space/tab?
-            bool isWhitespaceOnly = false;
-            UChar firstChar = fullView[pos];
-            if (firstChar == ' ' || firstChar == '\t') {
-                isWhitespaceOnly = true;
-                for (size_t i = pos; i < pos + lineLen; i++) {
-                    UChar c = fullView[i];
-                    if (c != ' ' && c != '\t') {
-                        isWhitespaceOnly = false;
-                        break;
-                    }
-                }
+            // Handle CRLF
+            if (lineEnd > pos && latin1Data[lineEnd - 1] == '\r') {
+                lineEnd--;
             }
 
-            if (!isWhitespaceOnly) {
-                // Create substring view (zero-copy)
-                StringView lineView = fullView.substring(pos, lineLen);
-                JSValue parsed = JSONParse(globalObject, lineView);
+            size_t lineLen = lineEnd - pos;
+
+            if (lineLen > 0 && !isWhitespaceOnlyLine8(latin1Data, pos, lineLen)) {
+                // Use LiteralParser directly with Latin1 data (8-bit fast path)
+                std::span<const Latin1Character> lineSpan(latin1Data + pos, lineLen);
+                LiteralParser<Latin1Character, JSONReviverMode::Disabled> parser(globalObject, lineSpan, StrictJSON);
+                JSValue parsed = parser.tryLiteralParse();
 
                 if (scope.exception()) {
-                    scope.clearException(); // Skip invalid JSON lines
+                    scope.clearException();
                 } else if (parsed) {
                     args.append(parsed);
                 }
             }
+
+            pos = (newlinePos == notFound) ? contentSize : newlinePos + 1;
+        }
+    } else {
+        // Slow path: Contains non-ASCII, need UTF-16 conversion
+        JSValue jsStringValue = JSValue::decode(Bun__encoding__toStringUTF8(contentStart, contentSize, globalObject));
+
+        if (!jsStringValue || !jsStringValue.isString()) {
+            return JSValue::encode(constructEmptyArray(globalObject, nullptr));
         }
 
-        // Move to next line
-        pos = (newlinePos == notFound) ? length : newlinePos + 1;
+        JSString* jsString = jsCast<JSString*>(jsStringValue);
+        auto fullString = jsString->value(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        StringView fullView = fullString;
+        size_t pos = 0;
+        size_t length = fullView.length();
+
+        // Check if the converted string is 8-bit (Latin1)
+        // Even with non-ASCII UTF-8, if all chars fit in Latin1, we can use 8-bit path
+        bool use8BitPath = fullView.is8Bit();
+
+        while (pos < length) {
+            size_t newlinePos = fullView.find('\n', pos);
+            size_t lineEnd = (newlinePos == notFound) ? length : newlinePos;
+
+            if (lineEnd > pos && fullView[lineEnd - 1] == '\r') {
+                lineEnd--;
+            }
+
+            size_t lineLen = lineEnd - pos;
+
+            if (lineLen > 0) {
+                bool isWhitespaceOnly = false;
+                if (use8BitPath) {
+                    Latin1Character firstChar = fullView.span8()[pos];
+                    if (firstChar == ' ' || firstChar == '\t') {
+                        isWhitespaceOnly = true;
+                        for (size_t i = pos; i < pos + lineLen; i++) {
+                            Latin1Character c = fullView.span8()[i];
+                            if (c != ' ' && c != '\t') {
+                                isWhitespaceOnly = false;
+                                break;
+                            }
+                        }
+                    }
+                } else {
+                    UChar firstChar = fullView[pos];
+                    if (firstChar == ' ' || firstChar == '\t') {
+                        isWhitespaceOnly = true;
+                        for (size_t i = pos; i < pos + lineLen; i++) {
+                            UChar c = fullView[i];
+                            if (c != ' ' && c != '\t') {
+                                isWhitespaceOnly = false;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (!isWhitespaceOnly) {
+                    JSValue parsed;
+                    if (use8BitPath) {
+                        // Use LiteralParser directly with 8-bit data
+                        std::span<const Latin1Character> lineSpan(fullView.span8().data() + pos, lineLen);
+                        LiteralParser<Latin1Character, JSONReviverMode::Disabled> parser(globalObject, lineSpan, StrictJSON);
+                        parsed = parser.tryLiteralParse();
+                    } else {
+                        // Use LiteralParser with 16-bit data
+                        std::span<const char16_t> lineSpan(fullView.span16().data() + pos, lineLen);
+                        LiteralParser<char16_t, JSONReviverMode::Disabled> parser(globalObject, lineSpan, StrictJSON);
+                        parsed = parser.tryLiteralParse();
+                    }
+
+                    if (scope.exception()) {
+                        scope.clearException();
+                    } else if (parsed) {
+                        args.append(parsed);
+                    }
+                }
+            }
+
+            pos = (newlinePos == notFound) ? length : newlinePos + 1;
+        }
     }
 
     if (UNLIKELY(args.hasOverflowed())) {
@@ -2289,7 +2375,6 @@ extern "C" JSC::EncodedJSValue Bun__parseJSONLFromBlob(
         return {};
     }
 
-    // Construct array from MarkedArgumentBuffer
     return JSValue::encode(
         constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), args));
 }

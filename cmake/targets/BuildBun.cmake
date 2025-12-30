@@ -892,6 +892,7 @@ target_include_directories(${bun} PRIVATE
   ${CWD}/src/buntime/web/fetch
   ${CWD}/src/buntime/web/url
   ${CWD}/src/buntime/web/blob
+  ${CWD}/src/buntime/web/http
   ${CWD}/src/buntime/web/encoding
   ${CWD}/src/buntime/web/compression
   ${CWD}/src/buntime/web/events

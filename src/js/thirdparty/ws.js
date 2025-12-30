@@ -176,7 +176,7 @@ class BunWebSocket extends EventEmitter {
   }
 
   #onOrOnce(event, listener, once) {
-    if (event === "unexpected-response" || event === "upgrade" || event === "redirect") {
+    if (event === "redirect") {
       emitWarning(event, "ws.WebSocket '" + event + "' event is not implemented in bun");
     }
     const mask = 1 << eventIds[event];
@@ -187,6 +187,48 @@ class BunWebSocket extends EventEmitter {
           "open",
           () => {
             this.emit("open");
+          },
+          once,
+        );
+      } else if (event === "upgrade") {
+        // The 'upgrade' event should be emitted after the WebSocket handshake completes
+        // but before the 'open' event. Since Bun's native WebSocket doesn't expose this,
+        // we emit it right after 'open' as a best-effort approximation.
+        this.#ws.addEventListener(
+          "open",
+          (event) => {
+            // Emit upgrade event with a simulated response object
+            // Note: We don't have access to the actual HTTP response, so we provide
+            // a minimal mock that indicates the upgrade was successful
+            const mockResponse = {
+              statusCode: 101,
+              statusMessage: "Switching Protocols",
+              headers: {},
+            };
+            this.emit("upgrade", mockResponse);
+          },
+          once,
+        );
+      } else if (event === "unexpected-response") {
+        // The 'unexpected-response' event is emitted when the server responds with
+        // a non-101 status code. Since we can't intercept the HTTP response directly,
+        // we listen for 'error' events that might indicate a failed upgrade.
+        this.#ws.addEventListener(
+          "error",
+          (err) => {
+            // Emit unexpected-response event with mock objects
+            // Note: We don't have access to the actual request/response objects
+            const mockRequest = {
+              method: "GET",
+              url: this.#ws.url,
+              headers: {},
+            };
+            const mockResponse = {
+              statusCode: 0,
+              statusMessage: err?.message || "Connection failed",
+              headers: {},
+            };
+            this.emit("unexpected-response", mockRequest, mockResponse);
           },
           once,
         );

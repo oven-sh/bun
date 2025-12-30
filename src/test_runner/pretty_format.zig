@@ -265,7 +265,7 @@ pub const JestPrettyFormat = struct {
 
         // For detecting circular references
         pub const Visited = struct {
-            const ObjectPool = @import("../../pool.zig").ObjectPool;
+            const ObjectPool = @import("../pool.zig").ObjectPool;
             pub const Map = std.AutoHashMap(JSValue, void);
             pub const Pool = ObjectPool(
                 Map,

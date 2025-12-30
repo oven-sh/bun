@@ -3799,7 +3799,7 @@ const string = []const u8;
 
 const std = @import("std");
 const CLI = @import("../cli.zig").Command;
-const JestPrettyFormat = @import("./test/pretty_format.zig").JestPrettyFormat;
+const JestPrettyFormat = @import("../test_runner/pretty_format.zig").JestPrettyFormat;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

@@ -1999,7 +1999,7 @@ const string = []const u8;
 
 const DotEnv = @import("../env_loader.zig");
 const Scanner = @import("./test/Scanner.zig");
-const bun_test = @import("../buntime/test/bun_test.zig");
+const bun_test = @import("../test_runner/bun_test.zig");
 const options = @import("../options.zig");
 const resolve_path = @import("../resolver/resolve_path.zig");
 const std = @import("std");

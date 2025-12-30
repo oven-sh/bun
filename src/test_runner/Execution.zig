@@ -647,7 +647,7 @@ pub fn handleUncaughtException(this: *Execution, user_data: bun_test.BunTest.Ref
 const log = bun.Output.scoped(.jest, .visible);
 
 const std = @import("std");
-const test_command = @import("../../cli/test_command.zig");
+const test_command = @import("../cli/test_command.zig");
 
 const bun = @import("bun");
 const jsc = bun.jsc;

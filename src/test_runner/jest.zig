@@ -487,7 +487,7 @@ const string = []const u8;
 pub const bun_test = @import("./bun_test.zig");
 
 const std = @import("std");
-const CommandLineReporter = @import("../../cli/test_command.zig").CommandLineReporter;
+const CommandLineReporter = @import("../cli/test_command.zig").CommandLineReporter;
 const Snapshots = @import("./snapshot.zig").Snapshots;
 
 const expect = @import("./expect.zig");

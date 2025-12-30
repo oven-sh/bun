@@ -116,11 +116,11 @@ pub const Formatter = ConsoleObject.Formatter;
 
 pub const hot_reloader = @import("./hot_reloader.zig");
 
-// TODO: move into bun.api
-pub const Jest = @import("./test/jest.zig");
-pub const TestScope = @import("./test/jest.zig").TestScope;
-pub const Expect = @import("./test/expect.zig");
-pub const Snapshot = @import("./test/snapshot.zig");
+// Test runner (moved to src/test_runner/)
+pub const Jest = @import("../test_runner/jest.zig");
+pub const TestScope = @import("../test_runner/jest.zig").TestScope;
+pub const Expect = @import("../test_runner/expect.zig");
+pub const Snapshot = @import("../test_runner/snapshot.zig");
 
 pub const js_property_iterator = @import("./bindings/JSPropertyIterator.zig");
 pub const JSPropertyIterator = js_property_iterator.JSPropertyIterator;

@@ -9,14 +9,11 @@
   },
   {
     "output": "ZigGeneratedClassesSources.txt",
-    "paths": ["src/buntime/*.classes.ts", "src/buntime/{api,node,test,webcore}/*.classes.ts"]
+    "paths": ["src/buntime/*.classes.ts", "src/buntime/{api,node,webcore}/*.classes.ts", "src/test_runner/*.classes.ts"]
   },
   {
     "output": "JavaScriptSources.txt",
-    "paths": [
-      "src/js/**/*.{js,ts}",
-      "src/install/PackageManager/scanner-entry.ts"
-    ]
+    "paths": ["src/js/**/*.{js,ts}", "src/install/PackageManager/scanner-entry.ts"]
   },
   {
     "output": "JavaScriptCodegenSources.txt",

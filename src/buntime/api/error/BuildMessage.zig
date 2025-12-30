@@ -190,7 +190,7 @@ pub const BuildMessage = struct {
 const string = []const u8;
 
 const std = @import("std");
-const Resolver = @import("../resolver//resolver.zig").Resolver;
+const Resolver = @import("../../../resolver/resolver.zig").Resolver;
 
 const bun = @import("bun");
 const default_allocator = bun.default_allocator;

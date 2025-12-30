@@ -526,6 +526,7 @@ pub const CopyFile = struct {
                 switch (jsc.Node.fs.NodeFS.copyFileUsingReadWriteLoop("", "", this.source_fd, this.destination_fd, if (this.max_length == Blob.max_size) 0 else this.max_length, &total_written)) {
                     .err => |err| {
                         this.system_error = err.toSystemError();
+                        this.doClose();
                         return;
                     },
                     .result => {
@@ -583,6 +584,7 @@ pub const CopyFile = struct {
                 switch (jsc.Node.fs.NodeFS.copyFileUsingReadWriteLoop("", "", this.source_fd, this.destination_fd, if (this.max_length == Blob.max_size) 0 else this.max_length, &total_written)) {
                     .err => |err| {
                         this.system_error = err.toSystemError();
+                        this.doClose();
                         return;
                     },
                     .result => {

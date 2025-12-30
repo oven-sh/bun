@@ -2,7 +2,7 @@
 
 comptime {
     if (bun.Environment.export_cpp_apis) {
-        _ = &@import("./webcore/prompt.zig");
+        _ = &@import("./api/console/prompt.zig");
     }
     _ = &@import("./web/encoding/TextEncoder.zig");
 }

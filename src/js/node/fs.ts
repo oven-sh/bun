@@ -732,7 +732,7 @@ const realpathSync: typeof import("node:fs").realpathSync =
           if (typeof options === "string") encoding = options;
           else encoding = options?.encoding;
           if (encoding) {
-            (assertEncodingForWindows ?? $newZigFunction("bun.js/node/types.zig", "jsAssertEncodingValid", 1))(
+            (assertEncodingForWindows ?? $newZigFunction("buntime/node/types.zig", "jsAssertEncodingValid", 1))(
               encoding,
             );
           }
@@ -854,7 +854,7 @@ const realpath: typeof import("node:fs").realpath =
           if (typeof options === "string") encoding = options;
           else encoding = options?.encoding;
           if (encoding) {
-            (assertEncodingForWindows ?? $newZigFunction("bun.js/node/types.zig", "jsAssertEncodingValid", 1))(
+            (assertEncodingForWindows ?? $newZigFunction("buntime/node/types.zig", "jsAssertEncodingValid", 1))(
               encoding,
             );
           }

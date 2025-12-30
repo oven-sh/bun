@@ -22,7 +22,7 @@ Bun reports a Node.js version for compatibility with the Node.js ecosystem. This
   - `NODEJS_ABI_VERSION` - The ABI version number (find using command below)
 
 ### 3. Version Strings
-- `src/bun.js/bindings/BunProcess.cpp`
+- `src/buntime/bindings/BunProcess.cpp`
   - Update `Bun__versions_node` with the Node.js version
   - Update `Bun__versions_v8` with the V8 version (find using command below)
 
@@ -33,7 +33,7 @@ Bun reports a Node.js version for compatibility with the Node.js ecosystem. This
 ## Files That May Need Updates
 
 Only check these if the build fails or tests crash after updating version numbers:
-- V8 compatibility files in `src/bun.js/bindings/v8/` (if V8 API changed)
+- V8 compatibility files in `src/buntime/bindings/v8/` (if V8 API changed)
 - Test files (if Node.js requires newer C++ standard)
 
 ## Quick Commands to Find Version Info

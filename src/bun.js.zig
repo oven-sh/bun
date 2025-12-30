@@ -1,7 +1,7 @@
-pub const jsc = @import("./bun.js/jsc.zig");
-pub const webcore = @import("./bun.js/webcore.zig");
-pub const api = @import("./bun.js/api.zig");
-pub const bindgen = @import("./bun.js/bindgen.zig");
+pub const jsc = @import("./buntime/jsc.zig");
+pub const webcore = @import("./buntime/webcore.zig");
+pub const api = @import("./buntime/api.zig");
+pub const bindgen = @import("./buntime/bindgen.zig");
 
 pub const Run = struct {
     ctx: Command.Context,
@@ -147,7 +147,7 @@ pub const Run = struct {
         var bundle = try bun.Transpiler.init(
             ctx.allocator,
             ctx.log,
-            try @import("./bun.js/config.zig").configureTransformOptionsForBunVM(ctx.allocator, ctx.args),
+            try @import("./buntime/config.zig").configureTransformOptionsForBunVM(ctx.allocator, ctx.args),
             null,
         );
         try bundle.runEnvLoader(bundle.options.env.disable_default_env_files);
@@ -496,7 +496,7 @@ pub const Run = struct {
         bun.api.napi.fixDeadCodeElimination();
         bun.webcore.BakeResponse.fixDeadCodeElimination();
         bun.crash_handler.fixDeadCodeElimination();
-        @import("./bun.js/bindings/JSSecrets.zig").fixDeadCodeElimination();
+        @import("./buntime/bindings/JSSecrets.zig").fixDeadCodeElimination();
         vm.globalExit();
     }
 
@@ -551,7 +551,7 @@ const VirtualMachine = jsc.VirtualMachine;
 
 const string = []const u8;
 
-const CPUProfiler = @import("./bun.js/bindings/BunCPUProfiler.zig");
+const CPUProfiler = @import("./buntime/bindings/BunCPUProfiler.zig");
 const options = @import("./options.zig");
 const std = @import("std");
 const Command = @import("./cli.zig").Command;

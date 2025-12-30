@@ -89,7 +89,7 @@ pub const TextDecoder = struct {
 - Use `bun.JSError!JSValue` return type for error handling
 - Use `globalObject` not `ctx`
 - `deinit()` for cleanup, `finalize()` called by GC
-- Update `src/bun.js/bindings/generated_classes_list.zig`
+- Update `src/buntime/bindings/generated_classes_list.zig`
 
 ## CallFrame Access
 
@@ -196,7 +196,7 @@ pub const MyClass = struct {
 };
 ```
 
-3. Add to `src/bun.js/bindings/generated_classes_list.zig`
+3. Add to `src/buntime/bindings/generated_classes_list.zig`
 
 ## Generated Components
 

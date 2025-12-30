@@ -578,7 +578,7 @@ const WrapperType = SSLWrapper(*WindowsNamedPipe);
 const log = bun.Output.scoped(.WindowsNamedPipe, .visible);
 
 const std = @import("std");
-const SSLWrapper = @import("../../bun.js/api/bun/ssl_wrapper.zig").SSLWrapper;
+const SSLWrapper = @import("../../buntime/api/bun/ssl_wrapper.zig").SSLWrapper;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

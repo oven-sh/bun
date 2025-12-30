@@ -1,7 +1,7 @@
 import { afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, makeTree, tempDirWithFiles } from "harness";
 import path from "node:path";
-import { symbols, test_skipped } from "../../src/bun.js/bindings/libuv/generate_uv_posix_stubs_constants";
+import { symbols, test_skipped } from "../../src/buntime/bindings/libuv/generate_uv_posix_stubs_constants";
 import goodSource from "./uv-stub-stuff/good_plugin.c";
 import source from "./uv-stub-stuff/plugin.c";
 
@@ -64,7 +64,7 @@ describe.if(!isWindows)("uv stubs", () => {
 
     process.chdir(tempdir);
 
-    const libuvDir = path.join(__dirname, "../../src/bun.js/bindings/libuv");
+    const libuvDir = path.join(__dirname, "../../src/buntime/bindings/libuv");
     await Bun.$`cp -R ${libuvDir} ${path.join(tempdir, "libuv")}`;
     await Bun.$`${bunExe()} i && ${bunExe()} build:napi`.env(bunEnv).cwd(tempdir);
     console.log("tempdir:", tempdir);

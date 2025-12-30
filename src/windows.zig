@@ -3784,7 +3784,7 @@ const watcherChildEnv: [:0]const u16 = bun.strings.toUTF16Literal("_BUN_WATCHER_
 // this was randomly generated - we need to avoid using a common exit code that might be used by the script itself
 pub const watcher_reload_exit: DWORD = 3224497970;
 
-pub const spawn = @import("./bun.js/api/bun/spawn.zig").PosixSpawn;
+pub const spawn = @import("./buntime/api/bun/spawn.zig").PosixSpawn;
 
 pub fn isWatcherChild() bool {
     var buf: [1]u16 = undefined;

@@ -19,8 +19,8 @@ No public constructor? Only Prototype and class needed.
 
 Classes with C++ fields need subspaces in:
 
-- `src/bun.js/bindings/webcore/DOMClientIsoSubspaces.h`
-- `src/bun.js/bindings/webcore/DOMIsoSubspaces.h`
+- `src/buntime/bindings/webcore/DOMClientIsoSubspaces.h`
+- `src/buntime/bindings/webcore/DOMIsoSubspaces.h`
 
 ```cpp
 template<typename MyClassT, JSC::SubspaceAccess mode>

@@ -35,7 +35,7 @@ export function createInternalModuleRegistry(basedir: string) {
   const nativeModuleEnumToId: Record<string, number> = {};
 
   // Native Module registry
-  const nativeModuleH = fs.readFileSync(path.join(basedir, "../bun.js/modules/_NativeModule.h"), "utf8");
+  const nativeModuleH = fs.readFileSync(path.join(basedir, "../buntime/modules/_NativeModule.h"), "utf8");
   for (const [_, idString, enumValue] of nativeModuleH.matchAll(/macro\((.*?),(.*?)\)/g)) {
     const processedIdString = JSON.parse(idString.trim().replace(/_s$/, ""));
     const processedEnumValue = enumValue.trim();

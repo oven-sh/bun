@@ -66,14 +66,14 @@ function setServers(servers) {
 }
 
 const getRuntimeDefaultResultOrderOption = $newZigFunction(
-  "bun.js/api/bun/dns.zig",
+  "buntime/api/bun/dns.zig",
   "Resolver.getRuntimeDefaultResultOrderOption",
   0,
 );
 
 function newResolver(options) {
   if (!newResolver.zig) {
-    newResolver.zig = $newZigFunction("bun.js/api/bun/dns.zig", "Resolver.newResolver", 1);
+    newResolver.zig = $newZigFunction("buntime/api/bun/dns.zig", "Resolver.newResolver", 1);
   }
   return newResolver.zig(options);
 }

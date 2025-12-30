@@ -145,7 +145,7 @@ describe("banned words", () => {
 });
 
 describe("required words", () => {
-  const expectDir = "src/bun.js/test/expect";
+  const expectDir = "src/buntime/test/expect";
   const files = readdirSync(expectDir);
   for (const file of files) {
     if (!file.endsWith(".zig") || file.startsWith(".") || file === "toHaveReturnedTimes.zig") continue;

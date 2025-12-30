@@ -102,7 +102,7 @@ describe("Zstandard compression", async () => {
                 "run:linux":
                   'docker run --rm  -v "$PWD:/root/bun/" -w /root/bun ghcr.io/oven-sh/bun-development-docker-image',
                 "css-properties": "bun run src/css/properties/generate_properties.ts",
-                "uv-posix-stubs": "bun run src/bun.js/bindings/libuv/generate_uv_posix_stubs.ts",
+                "uv-posix-stubs": "bun run src/buntime/bindings/libuv/generate_uv_posix_stubs.ts",
                 "bump": "bun ./scripts/bump.ts",
                 "typecheck": "tsc --noEmit && cd test && bun run typecheck",
                 "fmt": "bun run prettier",

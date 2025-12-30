@@ -9,7 +9,7 @@
   },
   {
     "output": "ZigGeneratedClassesSources.txt",
-    "paths": ["src/bun.js/*.classes.ts", "src/bun.js/{api,node,test,webcore}/*.classes.ts"]
+    "paths": ["src/buntime/*.classes.ts", "src/buntime/{api,node,test,webcore}/*.classes.ts"]
   },
   {
     "output": "JavaScriptSources.txt",
@@ -47,17 +47,17 @@
     "output": "CxxSources.txt",
     "paths": [
       "src/io/*.cpp",
-      "src/bun.js/modules/*.cpp",
-      "src/bun.js/bindings/*.cpp",
-      "src/bun.js/bindings/webcore/*.cpp",
-      "src/bun.js/bindings/sqlite/*.cpp",
-      "src/bun.js/bindings/webcrypto/*.cpp",
-      "src/bun.js/bindings/webcrypto/*/*.cpp",
-      "src/bun.js/bindings/node/*.cpp",
-      "src/bun.js/bindings/node/crypto/*.cpp",
-      "src/bun.js/bindings/node/http/*.cpp",
-      "src/bun.js/bindings/v8/*.cpp",
-      "src/bun.js/bindings/v8/shim/*.cpp",
+      "src/buntime/modules/*.cpp",
+      "src/buntime/bindings/*.cpp",
+      "src/buntime/bindings/webcore/*.cpp",
+      "src/buntime/bindings/sqlite/*.cpp",
+      "src/buntime/bindings/webcrypto/*.cpp",
+      "src/buntime/bindings/webcrypto/*/*.cpp",
+      "src/buntime/bindings/node/*.cpp",
+      "src/buntime/bindings/node/crypto/*.cpp",
+      "src/buntime/bindings/node/http/*.cpp",
+      "src/buntime/bindings/v8/*.cpp",
+      "src/buntime/bindings/v8/shim/*.cpp",
       "src/bake/*.cpp",
       "src/deps/*.cpp",
       "src/vm/*.cpp",
@@ -71,10 +71,10 @@
       "packages/bun-usockets/src/eventing/*.c",
       "packages/bun-usockets/src/internal/*.c",
       "packages/bun-usockets/src/crypto/*.c",
-      "src/bun.js/bindings/uv-posix-polyfills.c",
-      "src/bun.js/bindings/uv-posix-stubs.c",
+      "src/buntime/bindings/uv-posix-polyfills.c",
+      "src/buntime/bindings/uv-posix-stubs.c",
       "src/*.c",
-      "src/bun.js/bindings/node/http/llhttp/*.c"
+      "src/buntime/bindings/node/http/llhttp/*.c"
     ]
   }
 ]

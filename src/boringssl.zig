@@ -219,7 +219,7 @@ pub fn ERR_toJS(globalThis: *jsc.JSGlobalObject, err_code: u32) jsc.JSValue {
     return globalThis.ERR(.BORINGSSL, "{s}", .{error_message}).toJS();
 }
 
-const X509 = @import("./bun.js/api/bun/x509.zig");
+const X509 = @import("./buntime/api/bun/x509.zig");
 const boring = @import("./deps/boringssl.translated.zig");
 const builtin = @import("builtin");
 const c_ares = @import("./deps/c_ares.zig");

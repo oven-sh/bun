@@ -42,7 +42,7 @@ const BunBuildOptions = struct {
     /// is set (to allow CI to build a portable executable). Affected files:
     ///
     /// - src/bake/runtime.ts (bundled)
-    /// - src/bun.js/api/FFI.h
+    /// - src/buntime/api/FFI.h
     ///
     /// A similar technique is used in C++ code for JavaScript builtins
     codegen_embed: bool = false,

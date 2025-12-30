@@ -9,7 +9,12 @@
   },
   {
     "output": "ZigGeneratedClassesSources.txt",
-    "paths": ["src/buntime/*.classes.ts", "src/buntime/{api,node,webcore}/*.classes.ts", "src/test_runner/*.classes.ts"]
+    "paths": [
+      "src/buntime/*.classes.ts",
+      "src/buntime/{api,node,webcore}/*.classes.ts",
+      "src/buntime/api/*/*.classes.ts",
+      "src/test_runner/*.classes.ts"
+    ]
   },
   {
     "output": "JavaScriptSources.txt",
@@ -47,7 +52,7 @@
       "src/buntime/modules/*.cpp",
       "src/buntime/bindings/*.cpp",
       "src/buntime/bindings/webcore/*.cpp",
-      "src/buntime/bindings/sqlite/*.cpp",
+      "src/buntime/api/sqlite/*.cpp",
       "src/buntime/bindings/webcrypto/*.cpp",
       "src/buntime/bindings/webcrypto/*/*.cpp",
       "src/buntime/bindings/node/*.cpp",
@@ -59,6 +64,15 @@
       "src/buntime/api/inspector/*.cpp",
       "src/buntime/api/error/*.cpp",
       "src/buntime/api/cookie/*.cpp",
+      "src/buntime/api/s3/*.cpp",
+      "src/buntime/api/secrets/*.cpp",
+      "src/buntime/api/ffi/*.cpp",
+      "src/buntime/api/sql/*.cpp",
+      "src/buntime/api/shell/*.cpp",
+      "src/buntime/api/ipc/*.cpp",
+      "src/buntime/api/test/*.cpp",
+      "src/buntime/api/server/*.cpp",
+      "src/buntime/api/plugin/*.cpp",
       "src/bake/*.cpp",
       "src/deps/*.cpp",
       "src/vm/*.cpp",

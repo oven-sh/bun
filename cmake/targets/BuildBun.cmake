@@ -868,12 +868,21 @@ target_include_directories(${bun} PRIVATE
   ${CWD}/src/buntime/bindings/webcrypto
   ${CWD}/src/buntime/bindings/node/crypto
   ${CWD}/src/buntime/bindings/node/http
-  ${CWD}/src/buntime/bindings/sqlite
+  ${CWD}/src/buntime/api/sqlite
   ${CWD}/src/buntime/bindings/v8
   ${CWD}/src/buntime/api/console
   ${CWD}/src/buntime/api/inspector
   ${CWD}/src/buntime/api/error
   ${CWD}/src/buntime/api/cookie
+  ${CWD}/src/buntime/api/s3
+  ${CWD}/src/buntime/api/secrets
+  ${CWD}/src/buntime/api/ffi
+  ${CWD}/src/buntime/api/sql
+  ${CWD}/src/buntime/api/shell
+  ${CWD}/src/buntime/api/ipc
+  ${CWD}/src/buntime/api/test
+  ${CWD}/src/buntime/api/server
+  ${CWD}/src/buntime/api/plugin
   ${CWD}/src/buntime/modules
   ${CWD}/src/js/builtins
   ${CWD}/src/napi

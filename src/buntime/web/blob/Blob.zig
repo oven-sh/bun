@@ -8,10 +8,10 @@ const Blob = @This();
 
 const debug = Output.scoped(.Blob, .visible);
 
-pub const Store = @import("./blob/Store.zig");
-pub const read_file = @import("./blob/read_file.zig");
-pub const write_file = @import("./blob/write_file.zig");
-pub const copy_file = @import("./blob/copy_file.zig");
+pub const Store = @import("./Store.zig");
+pub const read_file = @import("./read_file.zig");
+pub const write_file = @import("./write_file.zig");
+pub const copy_file = @import("./copy_file.zig");
 
 pub fn new(blob: Blob) *Blob {
     const result = bun.new(Blob, blob);
@@ -4802,8 +4802,8 @@ const NewReadFileHandler = read_file.NewReadFileHandler;
 
 const string = []const u8;
 
-const Environment = @import("../../env.zig");
-const S3File = @import("./S3File.zig");
+const Environment = @import("../../../env.zig");
+const S3File = @import("../../webcore/S3File.zig");
 const std = @import("std");
 
 const bun = @import("bun");

@@ -298,7 +298,7 @@ absolute_sources(BUN_JAVASCRIPT_SOURCES ${CWD}/cmake/sources/JavaScriptSources.t
 absolute_sources(BUN_JAVASCRIPT_CODEGEN_SOURCES ${CWD}/cmake/sources/JavaScriptCodegenSources.txt)
 
 list(APPEND BUN_JAVASCRIPT_CODEGEN_SOURCES
-  ${CWD}/src/buntime/bindings/InternalModuleRegistry.cpp
+  ${CWD}/src/buntime/module/InternalModuleRegistry.cpp
 )
 
 set(BUN_JAVASCRIPT_OUTPUTS
@@ -380,7 +380,7 @@ set(BUN_BAKE_RUNTIME_CODEGEN_SCRIPT ${CWD}/src/codegen/bake-codegen.ts)
 absolute_sources(BUN_BAKE_RUNTIME_SOURCES ${CWD}/cmake/sources/BakeRuntimeSources.txt)
 
 list(APPEND BUN_BAKE_RUNTIME_CODEGEN_SOURCES
-  ${CWD}/src/buntime/bindings/InternalModuleRegistry.cpp
+  ${CWD}/src/buntime/module/InternalModuleRegistry.cpp
 )
 
 set(BUN_BAKE_RUNTIME_OUTPUTS
@@ -613,7 +613,7 @@ WEBKIT_ADD_SOURCE_DEPENDENCIES(
 
 
 WEBKIT_ADD_SOURCE_DEPENDENCIES(
-  ${CWD}/src/buntime/bindings/InternalModuleRegistry.cpp
+  ${CWD}/src/buntime/module/InternalModuleRegistry.cpp
   ${CODEGEN_PATH}/InternalModuleRegistryConstants.h
 )
 
@@ -871,7 +871,9 @@ target_include_directories(${bun} PRIVATE
   ${CWD}/src/buntime/node/http
   ${CWD}/src/buntime/api/sqlite
   ${CWD}/src/buntime/compat/v8
+  ${CWD}/src/buntime/compat/napi
   ${CWD}/src/buntime/compat
+  ${CWD}/src/buntime/module
   ${CWD}/src/buntime/api/console
   ${CWD}/src/buntime/api/inspector
   ${CWD}/src/buntime/api/error

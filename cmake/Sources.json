@@ -60,6 +60,8 @@
       "src/buntime/node/http/*.cpp",
       "src/buntime/compat/v8/*.cpp",
       "src/buntime/compat/v8/shim/*.cpp",
+      "src/buntime/compat/napi/*.cpp",
+      "src/buntime/module/*.cpp",
       "src/buntime/api/console/*.cpp",
       "src/buntime/api/inspector/*.cpp",
       "src/buntime/api/error/*.cpp",

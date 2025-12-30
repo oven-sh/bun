@@ -54,7 +54,7 @@ pub const bindgen_test = struct {
     }
 };
 
-/// Generated for "src/buntime/bindings/NodeModuleModule.zig"
+/// Generated for "src/buntime/module/NodeModuleModule.zig"
 pub const NodeModuleModule = struct {
     pub const js_stat = @extern(*const JSHostFunctionType, .{ .name = "bindgen_NodeModuleModule_js_stat" });
     
@@ -224,7 +224,7 @@ const binding_internals = struct {
         };
         return true;
     }
-    const import_NodeModuleModule = @import("../../buntime/bindings/NodeModuleModule.zig");
+    const import_NodeModuleModule = @import("../../buntime/module/NodeModuleModule.zig");
     export fn bindgen_NodeModuleModule_dispatch_stat1(global: *jsc.JSGlobalObject, arg_str: *const bun.String, out: *i32) bool {
         if (!@hasDecl(import_NodeModuleModule, "_stat"))
             @compileError("Missing binding declaration \"_stat\" in \"NodeModuleModule.zig\"");

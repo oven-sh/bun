@@ -45,7 +45,7 @@ pub const JSModuleLoader = opaque {
     }
 };
 
-const JSInternalPromise = @import("./JSInternalPromise.zig").JSInternalPromise;
+const JSInternalPromise = @import("../bindings/JSInternalPromise.zig").JSInternalPromise;
 
 const bun = @import("bun");
 const String = bun.String;

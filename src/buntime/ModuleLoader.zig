@@ -1350,7 +1350,7 @@ const string = []const u8;
 const Fs = @import("../fs.zig");
 const Runtime = @import("../runtime.zig");
 const ast = @import("../import_record.zig");
-const node_module_module = @import("./bindings/NodeModuleModule.zig");
+const node_module_module = @import("./module/NodeModuleModule.zig");
 const std = @import("std");
 const panic = std.debug.panic;
 

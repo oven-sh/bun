@@ -8,7 +8,7 @@
 #include "JSEventTarget.h"
 #include "JavaScriptCore/JSArray.h"
 #include "wtf/text/MakeString.h"
-#include "../ErrorCode.h"
+#include "ErrorCode.h"
 
 namespace Bun {
 

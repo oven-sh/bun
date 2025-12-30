@@ -57,6 +57,7 @@
       "src/buntime/bindings/v8/shim/*.cpp",
       "src/buntime/api/console/*.cpp",
       "src/buntime/api/inspector/*.cpp",
+      "src/buntime/api/error/*.cpp",
       "src/bake/*.cpp",
       "src/deps/*.cpp",
       "src/vm/*.cpp",

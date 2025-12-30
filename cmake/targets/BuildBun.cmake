@@ -225,9 +225,9 @@ set(BUN_ERROR_CODE_SCRIPT ${CWD}/src/codegen/generate-node-errors.ts)
 
 set(BUN_ERROR_CODE_SOURCES
   ${BUN_ERROR_CODE_SCRIPT}
-  ${CWD}/src/buntime/bindings/ErrorCode.ts
-  ${CWD}/src/buntime/bindings/ErrorCode.cpp
-  ${CWD}/src/buntime/bindings/ErrorCode.h
+  ${CWD}/src/buntime/api/error/ErrorCode.ts
+  ${CWD}/src/buntime/api/error/ErrorCode.cpp
+  ${CWD}/src/buntime/api/error/ErrorCode.h
 )
 
 set(BUN_ERROR_CODE_OUTPUTS
@@ -591,12 +591,12 @@ foreach(i RANGE 0 ${BUN_OBJECT_LUT_SOURCES_MAX_INDEX})
 endforeach()
 
 WEBKIT_ADD_SOURCE_DEPENDENCIES(
-  ${CWD}/src/buntime/bindings/ErrorCode.cpp
+  ${CWD}/src/buntime/api/error/ErrorCode.cpp
   ${CODEGEN_PATH}/ErrorCode+List.h
 )
 
 WEBKIT_ADD_SOURCE_DEPENDENCIES(
-  ${CWD}/src/buntime/bindings/ErrorCode.h
+  ${CWD}/src/buntime/api/error/ErrorCode.h
   ${CODEGEN_PATH}/ErrorCode+Data.h
 )
 
@@ -867,6 +867,7 @@ target_include_directories(${bun} PRIVATE
   ${CWD}/src/buntime/bindings/v8
   ${CWD}/src/buntime/api/console
   ${CWD}/src/buntime/api/inspector
+  ${CWD}/src/buntime/api/error
   ${CWD}/src/buntime/modules
   ${CWD}/src/js/builtins
   ${CWD}/src/napi

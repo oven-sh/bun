@@ -27,7 +27,7 @@ pub const DeferredError = struct {
 };
 
 const bun = @import("bun");
-const ZigString = @import("./ZigString.zig").ZigString;
+const ZigString = @import("../../bindings/ZigString.zig").ZigString;
 
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;

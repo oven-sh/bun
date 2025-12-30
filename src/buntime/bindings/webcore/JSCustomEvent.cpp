@@ -47,7 +47,7 @@
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
 #include <wtf/URL.h>
-#include "../ErrorCode.h"
+#include "ErrorCode.h"
 
 namespace WebCore {
 using namespace JSC;

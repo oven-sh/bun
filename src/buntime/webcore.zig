@@ -7,7 +7,7 @@ comptime {
     _ = &@import("./webcore/TextEncoder.zig");
 }
 
-pub const DOMExceptionCode = @import("./bindings/JSErrorCode.zig").DOMExceptionCode;
+pub const DOMExceptionCode = @import("./api/error/JSErrorCode.zig").DOMExceptionCode;
 
 // TODO: make this JSGlobalObject local for better security
 pub const ByteListPool = bun.ObjectPool(bun.ByteList, null, true, 8);

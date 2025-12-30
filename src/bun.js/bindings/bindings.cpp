@@ -2195,56 +2195,85 @@ extern "C" JSC::EncodedJSValue ZigString__toJSONObject(const ZigString* strPtr, 
     return JSValue::encode(result);
 }
 
-// Batch parse multiple JSON lines into a JSArray.
-// This reduces Zig<->C++ boundary crossings from N to 1 for N lines.
-extern "C" JSC::EncodedJSValue Bun__parseJSONLines(
+// Parse JSONL content entirely in C++ - no Zig offset/length arrays needed.
+// Uses MarkedArgumentBuffer for GC-safe value collection.
+extern "C" JSC::EncodedJSValue Bun__parseJSONLFromBlob(
     JSC::JSGlobalObject* globalObject,
     const uint8_t* data,
-    const uint32_t* lineOffsets,
-    const uint32_t* lineLengths,
-    uint32_t lineCount)
+    size_t size)
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // Pre-allocate array with known size
-    JSC::JSArray* array = JSC::constructEmptyArray(globalObject, nullptr, lineCount);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    uint32_t resultIndex = 0;
-    for (uint32_t i = 0; i < lineCount; ++i) {
-        const uint8_t* lineStart = data + lineOffsets[i];
-        uint32_t lineLen = lineLengths[i];
-
-        // Create String directly from UTF-8 data
-        auto jsonStr = WTF::String::fromUTF8(std::span { lineStart, lineLen });
-
-        // Parse JSON
-        JSValue parsed = JSONParse(globalObject, jsonStr);
-
-        if (scope.exception()) {
-            // Clear exception and skip this line (like the original Zig implementation)
-            scope.clearException();
-            continue;
-        }
-
-        if (!parsed) {
-            // Parse failed without exception, skip this line
-            continue;
-        }
-
-        // Add to array (GC safe: array is on stack)
-        array->putDirectIndex(globalObject, resultIndex++, parsed);
-        RETURN_IF_EXCEPTION(scope, {});
+    // Handle BOM (Byte Order Mark)
+    size_t offset = 0;
+    if (size >= 3 && data[0] == 0xEF && data[1] == 0xBB && data[2] == 0xBF) {
+        offset = 3; // UTF-8 BOM
     }
 
-    // If we skipped some lines, we need to adjust the array length
-    if (resultIndex < lineCount) {
-        array->setLength(globalObject, resultIndex);
-        RETURN_IF_EXCEPTION(scope, {});
+    if (size <= offset) {
+        return JSValue::encode(constructEmptyArray(globalObject, nullptr));
     }
 
-    return JSValue::encode(array);
+    // Use MarkedArgumentBuffer for GC-safe collection of parsed values
+    MarkedArgumentBuffer args;
+
+    const uint8_t* ptr = data + offset;
+    const uint8_t* end = data + size;
+
+    while (ptr < end) {
+        // Find newline using memchr (highly optimized, often SIMD)
+        const uint8_t* newline = static_cast<const uint8_t*>(
+            memchr(ptr, '\n', end - ptr));
+
+        const uint8_t* lineEnd = newline ? newline : end;
+
+        // Handle CRLF
+        if (lineEnd > ptr && *(lineEnd - 1) == '\r') {
+            lineEnd--;
+        }
+
+        size_t lineLen = lineEnd - ptr;
+
+        // Skip empty lines
+        if (lineLen > 0) {
+            // Quick whitespace-only check: only if first char is space/tab
+            bool isWhitespaceOnly = false;
+            if (*ptr == ' ' || *ptr == '\t') {
+                isWhitespaceOnly = true;
+                for (size_t i = 0; i < lineLen; i++) {
+                    if (ptr[i] != ' ' && ptr[i] != '\t') {
+                        isWhitespaceOnly = false;
+                        break;
+                    }
+                }
+            }
+
+            if (!isWhitespaceOnly) {
+                // Convert to WTF::String and parse JSON
+                auto jsonStr = WTF::String::fromUTF8(std::span { ptr, lineLen });
+                JSValue parsed = JSONParse(globalObject, jsonStr);
+
+                if (scope.exception()) {
+                    scope.clearException(); // Skip invalid JSON lines
+                } else if (parsed) {
+                    args.append(parsed);
+                }
+            }
+        }
+
+        // Move to next line
+        ptr = newline ? newline + 1 : end;
+    }
+
+    if (UNLIKELY(args.hasOverflowed())) {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+
+    // Construct array from MarkedArgumentBuffer
+    return JSValue::encode(
+        constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), args));
 }
 
 // We used to just throw "Out of memory" as a regular Error with that string.

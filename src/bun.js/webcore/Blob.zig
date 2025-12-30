@@ -3633,84 +3633,22 @@ pub fn toJSONL(this: *Blob, global: *JSGlobalObject, comptime lifetime: Lifetime
     return toJSONLWithBytes(this, global, view_, lifetime);
 }
 
-// C++ batch JSON parsing function - reduces Zig<->C++ boundary crossings from N to 1
-extern fn Bun__parseJSONLines(
+// Pure C++ JSONL parsing - all processing happens in C++ for efficiency
+extern fn Bun__parseJSONLFromBlob(
     globalObject: *JSGlobalObject,
     data: [*]const u8,
-    lineOffsets: [*]const u32,
-    lineLengths: [*]const u32,
-    lineCount: u32,
+    size: usize,
 ) JSValue;
 
 pub fn toJSONLWithBytes(_: *Blob, global: *JSGlobalObject, raw_bytes: []const u8, comptime lifetime: Lifetime) bun.JSError!JSValue {
-    _, const buf = strings.BOM.detectAndSplit(raw_bytes);
     defer if (comptime lifetime == .temporary) bun.default_allocator.free(@constCast(raw_bytes));
 
-    if (buf.len == 0) {
+    if (raw_bytes.len == 0) {
         return jsc.JSArray.createEmpty(global, 0);
     }
 
-    // Pass 1: Scan line positions and collect valid (non-empty) lines
-    var line_offsets = std.ArrayListUnmanaged(u32){};
-    defer line_offsets.deinit(bun.default_allocator);
-    var line_lengths = std.ArrayListUnmanaged(u32){};
-    defer line_lengths.deinit(bun.default_allocator);
-
-    // Estimate capacity based on average line length assumption
-    const estimated_lines = @max(1, buf.len / 64);
-    line_offsets.ensureTotalCapacity(bun.default_allocator, estimated_lines) catch return global.throwOutOfMemory();
-    line_lengths.ensureTotalCapacity(bun.default_allocator, estimated_lines) catch return global.throwOutOfMemory();
-
-    var pos: u32 = 0;
-    while (pos < buf.len) {
-        const start = pos;
-
-        // Find next newline using SIMD-optimized search
-        const newline_pos = strings.indexOfCharUsize(buf[pos..], '\n');
-        if (newline_pos) |rel_pos| {
-            pos += @intCast(rel_pos);
-        } else {
-            pos = @intCast(buf.len);
-        }
-
-        var end = pos;
-
-        // Handle CRLF
-        if (end > start and buf[end - 1] == '\r') {
-            end -= 1;
-        }
-
-        // Skip empty lines
-        if (end > start) {
-            const line = buf[start..end];
-
-            // Skip whitespace-only lines (optimized: check first char first)
-            const should_skip = if (line[0] == ' ' or line[0] == '\t')
-                std.mem.trimLeft(u8, line, " \t").len == 0
-            else
-                false;
-
-            if (!should_skip) {
-                line_offsets.append(bun.default_allocator, start) catch return global.throwOutOfMemory();
-                line_lengths.append(bun.default_allocator, end - start) catch return global.throwOutOfMemory();
-            }
-        }
-
-        pos += 1; // Skip newline character
-    }
-
-    if (line_offsets.items.len == 0) {
-        return jsc.JSArray.createEmpty(global, 0);
-    }
-
-    // Pass 2: Batch parse all lines in C++ (single boundary crossing)
-    const result = Bun__parseJSONLines(
-        global,
-        buf.ptr,
-        line_offsets.items.ptr,
-        line_lengths.items.ptr,
-        @intCast(line_offsets.items.len),
-    );
+    // All processing (BOM handling, line scanning, JSON parsing) happens in C++
+    const result = Bun__parseJSONLFromBlob(global, raw_bytes.ptr, raw_bytes.len);
 
     // C++ returns .zero on exception
     if (result == .zero) {

@@ -497,7 +497,7 @@ function ClientRequest(input, options, cb) {
           return;
         }
 
-        let candidates = results.sort((a, b) => b.family - a.family); // prefer IPv6
+        let candidates = !Array.isArray(results) ? [results] : results.sort((a, b) => b.family - a.family); // prefer IPv6
 
         const fail = (message, name, code, syscall) => {
           const error = new Error(message);

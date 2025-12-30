@@ -1050,10 +1050,10 @@ pub fn setTimeout(
 
 const string = []const u8;
 
-const Environment = @import("../../env.zig");
+const Environment = @import("../../../env.zig");
 const std = @import("std");
-const FetchRedirect = @import("../../http/FetchRedirect.zig").FetchRedirect;
-const Method = @import("../../http/Method.zig").Method;
+const FetchRedirect = @import("../../../http/FetchRedirect.zig").FetchRedirect;
+const Method = @import("../../../http/Method.zig").Method;
 
 const bun = @import("bun");
 const Output = bun.Output;

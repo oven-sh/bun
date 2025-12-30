@@ -899,7 +899,7 @@ inline fn emptyWithStatus(_: *jsc.JSGlobalObject, status: u16) Response {
 // TODO: move to http.zig. this has nothing to do with jsc or WebCore
 
 const std = @import("std");
-const Method = @import("../../http/Method.zig").Method;
+const Method = @import("../../../http/Method.zig").Method;
 
 const bun = @import("bun");
 const Output = bun.Output;

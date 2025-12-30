@@ -865,6 +865,7 @@ target_include_directories(${bun} PRIVATE
   ${CWD}/src/buntime/bindings/node/http
   ${CWD}/src/buntime/bindings/sqlite
   ${CWD}/src/buntime/bindings/v8
+  ${CWD}/src/buntime/api/console
   ${CWD}/src/buntime/modules
   ${CWD}/src/js/builtins
   ${CWD}/src/napi

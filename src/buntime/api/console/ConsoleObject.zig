@@ -1064,7 +1064,7 @@ pub const Formatter = struct {
 
     // For detecting circular references
     pub const Visited = struct {
-        const ObjectPool = @import("../pool.zig").ObjectPool;
+        const ObjectPool = @import("../../../pool.zig").ObjectPool;
         pub const Map = std.AutoHashMap(JSValue, void);
         pub const Pool = ObjectPool(
             Map,
@@ -3798,8 +3798,8 @@ comptime {
 const string = []const u8;
 
 const std = @import("std");
-const CLI = @import("../cli.zig").Command;
-const JestPrettyFormat = @import("../test_runner/pretty_format.zig").JestPrettyFormat;
+const CLI = @import("../../../cli.zig").Command;
+const JestPrettyFormat = @import("../../../test_runner/pretty_format.zig").JestPrettyFormat;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

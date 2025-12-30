@@ -55,6 +55,7 @@
       "src/buntime/bindings/node/http/*.cpp",
       "src/buntime/bindings/v8/*.cpp",
       "src/buntime/bindings/v8/shim/*.cpp",
+      "src/buntime/api/console/*.cpp",
       "src/bake/*.cpp",
       "src/deps/*.cpp",
       "src/vm/*.cpp",

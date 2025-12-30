@@ -111,7 +111,7 @@ pub const ZigStackFrame = @import("./bindings/ZigStackFrame.zig").ZigStackFrame;
 pub const ZigStackFramePosition = @import("./bindings/ZigStackFramePosition.zig").ZigStackFramePosition;
 pub const ZigException = @import("./bindings/ZigException.zig").ZigException;
 
-pub const ConsoleObject = @import("./ConsoleObject.zig");
+pub const ConsoleObject = @import("./api/console/ConsoleObject.zig");
 pub const Formatter = ConsoleObject.Formatter;
 
 pub const hot_reloader = @import("./hot_reloader.zig");

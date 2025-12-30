@@ -1,6 +1,6 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { exists } from "fs/promises";
+import { copyFile, exists } from "fs/promises";
 import { VerdaccioRegistry, bunEnv, bunExe, runBunInstall, stderrForInstall } from "harness";
 import { join } from "path";
 
@@ -233,5 +233,54 @@ describe("errors", () => {
     const err = stderrForInstall(await stderr.text());
 
     expect(err).toContain("no-deps@catalog: failed to resolve");
+  });
+});
+
+describe("file: protocol in catalogs", () => {
+  test("catalog with file: tarball referenced from workspace package resolves relative to root", async () => {
+    const { packageDir } = await registry.createTestDir();
+
+    // Copy the test tarball to a vendored directory in root
+    const vendoredDir = join(packageDir, "vendored");
+    await Bun.write(join(vendoredDir, ".keep"), "");
+    await copyFile(join(__dirname, "bar-0.0.2.tgz"), join(vendoredDir, "bar-0.0.2.tgz"));
+
+    // Create root package.json with catalog containing file: path
+    await write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "catalog-file-tarball",
+        workspaces: {
+          packages: ["packages/*"],
+          catalogs: {
+            vendored: {
+              "bar": "file:./vendored/bar-0.0.2.tgz",
+            },
+          },
+        },
+      }),
+    );
+
+    // Create workspace package that references the catalog
+    await write(
+      join(packageDir, "packages", "my-app", "package.json"),
+      JSON.stringify({
+        name: "my-app",
+        dependencies: {
+          bar: "catalog:vendored",
+        },
+      }),
+    );
+
+    // Run bun install
+    const { err } = await runBunInstall(bunEnv, packageDir);
+
+    // The package should be installed correctly - the file: path in the catalog
+    // should resolve relative to root, not relative to the workspace package
+    expect(await exists(join(packageDir, "node_modules", "bar", "package.json"))).toBeTrue();
+
+    const installedPkg = await file(join(packageDir, "node_modules", "bar", "package.json")).json();
+    expect(installedPkg.name).toBe("bar");
+    expect(installedPkg.version).toBe("0.0.2");
   });
 });

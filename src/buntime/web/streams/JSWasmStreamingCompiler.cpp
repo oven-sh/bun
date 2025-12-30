@@ -5,6 +5,7 @@
 #include "DOMIsoSubspaces.h"
 #include "JSDOMBinding.h"
 #include "JSDOMOperation.h"
+#include "JSDOMWrapperCache.h"
 #include <JavaScriptCore/HeapAnalyzer.h>
 
 #include "ErrorCode.h"

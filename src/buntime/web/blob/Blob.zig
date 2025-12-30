@@ -4803,7 +4803,7 @@ const NewReadFileHandler = read_file.NewReadFileHandler;
 const string = []const u8;
 
 const Environment = @import("../../../env.zig");
-const S3File = @import("../../webcore/S3File.zig");
+const S3File = @import("../../api/s3/S3File.zig");
 const std = @import("std");
 
 const bun = @import("bun");

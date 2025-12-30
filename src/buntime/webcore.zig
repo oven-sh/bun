@@ -40,7 +40,7 @@ pub const FileSink = @import("./web/streams/FileSink.zig");
 pub const FetchHeaders = @import("./web/fetch/FetchHeaders.zig").FetchHeaders;
 pub const ByteBlobLoader = @import("./web/blob/ByteBlobLoader.zig");
 pub const ByteStream = @import("./web/streams/ByteStream.zig");
-pub const FileReader = @import("./webcore/FileReader.zig");
+pub const FileReader = @import("./web/blob/FileReader.zig");
 pub const ScriptExecutionContext = @import("./webcore/ScriptExecutionContext.zig");
 
 pub const streams = @import("./web/streams/streams.zig");

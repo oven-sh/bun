@@ -869,7 +869,8 @@ target_include_directories(${bun} PRIVATE
   ${CWD}/src/buntime/bindings/node/crypto
   ${CWD}/src/buntime/bindings/node/http
   ${CWD}/src/buntime/api/sqlite
-  ${CWD}/src/buntime/bindings/v8
+  ${CWD}/src/buntime/compat/v8
+  ${CWD}/src/buntime/compat
   ${CWD}/src/buntime/api/console
   ${CWD}/src/buntime/api/inspector
   ${CWD}/src/buntime/api/error

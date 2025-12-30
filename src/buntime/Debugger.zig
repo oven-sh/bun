@@ -433,7 +433,7 @@ pub const LifecycleAgent = struct {
 
 pub const DebuggerId = bun.GenericIndex(i32, Debugger);
 pub const BunFrontendDevServerAgent = @import("./api/server/InspectorBunFrontendDevServerAgent.zig").BunFrontendDevServerAgent;
-pub const HTTPServerAgent = @import("./bindings/HTTPServerAgent.zig");
+pub const HTTPServerAgent = @import("./api/server/HTTPServerAgent.zig");
 
 const DotEnv = @import("../env_loader.zig");
 const std = @import("std");

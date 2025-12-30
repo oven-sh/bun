@@ -766,6 +766,43 @@ describe("S3 - List Objects", () => {
     });
   });
 
+  it("Should return parsed response with ChecksumAlgorithm (issue #19142)", async () => {
+    using server = createBunServer(async => {
+      return new Response(
+        `<?xml version="1.0" encoding="UTF-8"?><ListBucketResult>
+    <Contents>
+        <Key>file-with-checksum.txt</Key>
+        <ChecksumAlgorithm>SHA256</ChecksumAlgorithm>
+        <Size>1024</Size>
+    </Contents>
+        </ListBucketResult>`,
+        {
+          headers: {
+            "Content-Type": "application/xml",
+          },
+          status: 200,
+        },
+      );
+    });
+
+    const client = new S3Client({
+      ...options,
+      endpoint: server.url.href,
+    });
+
+    const res = await client.list();
+
+    expect(res).toEqual({
+      contents: [
+        {
+          key: "file-with-checksum.txt",
+          checksumAlgorithm: "SHA256",
+          size: 1024,
+        },
+      ],
+    });
+  });
+
   it("Should return parsed response with all fields", async () => {
     using server = createBunServer(async => {
       return new Response(

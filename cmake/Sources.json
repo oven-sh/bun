@@ -90,6 +90,7 @@
       "src/buntime/web/workers/*.cpp",
       "src/buntime/web/messaging/*.cpp",
       "src/buntime/web/mime/*.cpp",
+      "src/buntime/web/serialization/*.cpp",
       "src/bake/*.cpp",
       "src/deps/*.cpp",
       "src/vm/*.cpp",

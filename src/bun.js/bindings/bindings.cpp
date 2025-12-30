@@ -2222,7 +2222,7 @@ extern "C" JSC::EncodedJSValue Bun__parseJSONLFromBlob(
     const uint8_t* end = data + size;
 
     while (ptr < end) {
-        // Find newline using memchr (highly optimized, often SIMD)
+        // Use memchr to find newline (SIMD optimized)
         const uint8_t* newline = static_cast<const uint8_t*>(
             memchr(ptr, '\n', end - ptr));
 
@@ -2235,9 +2235,9 @@ extern "C" JSC::EncodedJSValue Bun__parseJSONLFromBlob(
 
         size_t lineLen = lineEnd - ptr;
 
-        // Skip empty lines
+        // Skip empty/whitespace-only lines
         if (lineLen > 0) {
-            // Quick whitespace-only check: only if first char is space/tab
+            // Quick check: first char is space/tab?
             bool isWhitespaceOnly = false;
             if (*ptr == ' ' || *ptr == '\t') {
                 isWhitespaceOnly = true;
@@ -2250,9 +2250,45 @@ extern "C" JSC::EncodedJSValue Bun__parseJSONLFromBlob(
             }
 
             if (!isWhitespaceOnly) {
-                // Convert to WTF::String and parse JSON
-                auto jsonStr = WTF::String::fromUTF8(std::span { ptr, lineLen });
-                JSValue parsed = JSONParse(globalObject, jsonStr);
+                JSValue parsed;
+
+                // Fast ASCII check using word-sized operations
+                // Check 8 bytes at a time by OR-ing and checking high bits
+                bool isAscii = true;
+                size_t i = 0;
+
+                // Process 8 bytes at a time
+                const size_t wordSize = sizeof(uint64_t);
+                const uint64_t highBitMask = 0x8080808080808080ULL;
+                for (; i + wordSize <= lineLen; i += wordSize) {
+                    uint64_t word;
+                    memcpy(&word, ptr + i, wordSize);
+                    if (word & highBitMask) {
+                        isAscii = false;
+                        break;
+                    }
+                }
+
+                // Check remaining bytes if still ASCII
+                if (isAscii) {
+                    for (; i < lineLen; i++) {
+                        if (ptr[i] >= 0x80) {
+                            isAscii = false;
+                            break;
+                        }
+                    }
+                }
+
+                if (isAscii) {
+                    // Fast path: create StringView directly from raw bytes as Latin1
+                    // No UTF-8 validation or String allocation needed
+                    StringView lineView(std::span { reinterpret_cast<const Latin1Character*>(ptr), lineLen });
+                    parsed = JSONParse(globalObject, lineView);
+                } else {
+                    // Slow path: convert UTF-8 to WTF::String
+                    auto jsonStr = WTF::String::fromUTF8(std::span { ptr, lineLen });
+                    parsed = JSONParse(globalObject, jsonStr);
+                }
 
                 if (scope.exception()) {
                     scope.clearException(); // Skip invalid JSON lines

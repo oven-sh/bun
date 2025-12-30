@@ -151,7 +151,7 @@ pub fn enqueueTarballForReading(
         alias,
         path,
         resolution.*,
-        false, // Already resolved, not from catalog
+        false,
     )));
 }
 

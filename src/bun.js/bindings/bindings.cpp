@@ -2196,7 +2196,11 @@ extern "C" JSC::EncodedJSValue ZigString__toJSONObject(const ZigString* strPtr, 
 }
 
 // Parse JSONL content entirely in C++ - no Zig offset/length arrays needed.
+// Forward declaration for Bun's optimized UTF-8 to string conversion
+extern "C" JSC::EncodedJSValue Bun__encoding__toStringUTF8(const uint8_t* input, size_t len, JSC::JSGlobalObject* globalObject);
+
 // Uses MarkedArgumentBuffer for GC-safe value collection.
+// Uses Bun's SIMD-accelerated UTF-8 to UTF-16 conversion.
 extern "C" JSC::EncodedJSValue Bun__parseJSONLFromBlob(
     JSC::JSGlobalObject* globalObject,
     const uint8_t* data,
@@ -2215,34 +2219,48 @@ extern "C" JSC::EncodedJSValue Bun__parseJSONLFromBlob(
         return JSValue::encode(constructEmptyArray(globalObject, nullptr));
     }
 
+    // Use Bun's optimized UTF-8 to string conversion (SIMD-accelerated)
+    JSValue jsStringValue = JSValue::decode(Bun__encoding__toStringUTF8(data + offset, size - offset, globalObject));
+
+    if (!jsStringValue || !jsStringValue.isString()) {
+        return JSValue::encode(constructEmptyArray(globalObject, nullptr));
+    }
+
+    // Get the underlying WTF::String from JSString
+    JSString* jsString = jsCast<JSString*>(jsStringValue);
+    auto fullString = jsString->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
     // Use MarkedArgumentBuffer for GC-safe collection of parsed values
     MarkedArgumentBuffer args;
 
-    const uint8_t* ptr = data + offset;
-    const uint8_t* end = data + size;
+    // Create a StringView for efficient substring operations
+    StringView fullView = fullString;
+    size_t pos = 0;
+    size_t length = fullView.length();
 
-    while (ptr < end) {
-        // Use memchr to find newline (SIMD optimized)
-        const uint8_t* newline = static_cast<const uint8_t*>(
-            memchr(ptr, '\n', end - ptr));
-
-        const uint8_t* lineEnd = newline ? newline : end;
+    while (pos < length) {
+        // Find newline
+        size_t newlinePos = fullView.find('\n', pos);
+        size_t lineEnd = (newlinePos == notFound) ? length : newlinePos;
 
         // Handle CRLF
-        if (lineEnd > ptr && *(lineEnd - 1) == '\r') {
+        if (lineEnd > pos && fullView[lineEnd - 1] == '\r') {
             lineEnd--;
         }
 
-        size_t lineLen = lineEnd - ptr;
+        size_t lineLen = lineEnd - pos;
 
         // Skip empty/whitespace-only lines
         if (lineLen > 0) {
             // Quick check: first char is space/tab?
             bool isWhitespaceOnly = false;
-            if (*ptr == ' ' || *ptr == '\t') {
+            UChar firstChar = fullView[pos];
+            if (firstChar == ' ' || firstChar == '\t') {
                 isWhitespaceOnly = true;
-                for (size_t i = 0; i < lineLen; i++) {
-                    if (ptr[i] != ' ' && ptr[i] != '\t') {
+                for (size_t i = pos; i < pos + lineLen; i++) {
+                    UChar c = fullView[i];
+                    if (c != ' ' && c != '\t') {
                         isWhitespaceOnly = false;
                         break;
                     }
@@ -2250,45 +2268,9 @@ extern "C" JSC::EncodedJSValue Bun__parseJSONLFromBlob(
             }
 
             if (!isWhitespaceOnly) {
-                JSValue parsed;
-
-                // Fast ASCII check using word-sized operations
-                // Check 8 bytes at a time by OR-ing and checking high bits
-                bool isAscii = true;
-                size_t i = 0;
-
-                // Process 8 bytes at a time
-                const size_t wordSize = sizeof(uint64_t);
-                const uint64_t highBitMask = 0x8080808080808080ULL;
-                for (; i + wordSize <= lineLen; i += wordSize) {
-                    uint64_t word;
-                    memcpy(&word, ptr + i, wordSize);
-                    if (word & highBitMask) {
-                        isAscii = false;
-                        break;
-                    }
-                }
-
-                // Check remaining bytes if still ASCII
-                if (isAscii) {
-                    for (; i < lineLen; i++) {
-                        if (ptr[i] >= 0x80) {
-                            isAscii = false;
-                            break;
-                        }
-                    }
-                }
-
-                if (isAscii) {
-                    // Fast path: create StringView directly from raw bytes as Latin1
-                    // No UTF-8 validation or String allocation needed
-                    StringView lineView(std::span { reinterpret_cast<const Latin1Character*>(ptr), lineLen });
-                    parsed = JSONParse(globalObject, lineView);
-                } else {
-                    // Slow path: convert UTF-8 to WTF::String
-                    auto jsonStr = WTF::String::fromUTF8(std::span { ptr, lineLen });
-                    parsed = JSONParse(globalObject, jsonStr);
-                }
+                // Create substring view (zero-copy)
+                StringView lineView = fullView.substring(pos, lineLen);
+                JSValue parsed = JSONParse(globalObject, lineView);
 
                 if (scope.exception()) {
                     scope.clearException(); // Skip invalid JSON lines
@@ -2299,7 +2281,7 @@ extern "C" JSC::EncodedJSValue Bun__parseJSONLFromBlob(
         }
 
         // Move to next line
-        ptr = newline ? newline + 1 : end;
+        pos = (newlinePos == notFound) ? length : newlinePos + 1;
     }
 
     if (UNLIKELY(args.hasOverflowed())) {

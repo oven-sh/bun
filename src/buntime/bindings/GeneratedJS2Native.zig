@@ -308,7 +308,7 @@ export fn JS2Zig___src_buntime_api_Timer_zig__internal_bindings_timerClockMs(glo
     return @call(bun.callmod_inline, jsc.toJSHostFn(function.internal_bindings.timerClockMs), .{ global, call_frame });
 }
 export fn JS2Zig___src_buntime_Counters_zig__createCountersObject(global: *jsc.JSGlobalObject, call_frame: *jsc.CallFrame) callconv(jsc.conv) jsc.JSValue {
-    const function = @import("../Counters.zig");
+    const function = @import("../core/Counters.zig");
     return @call(bun.callmod_inline, jsc.toJSHostFn(function.createCountersObject), .{ global, call_frame });
 }
 export fn JS2Zig___src_buntime_api_bun_socket_zig__jsSetSocketOptions(global: *jsc.JSGlobalObject, call_frame: *jsc.CallFrame) callconv(jsc.conv) jsc.JSValue {

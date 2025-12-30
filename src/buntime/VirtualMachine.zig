@@ -3701,7 +3701,7 @@ pub const ExitHandler = struct {
 const string = []const u8;
 
 const Config = @import("./config.zig");
-const Counters = @import("./Counters.zig");
+const Counters = @import("./core/Counters.zig");
 const Fs = @import("../fs.zig");
 const IPC = @import("./api/ipc/ipc.zig");
 const Resolver = @import("../resolver/resolver.zig");

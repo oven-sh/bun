@@ -1,6 +1,6 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { copyFile, exists } from "fs/promises";
+import { copyFile, exists, mkdir } from "fs/promises";
 import { VerdaccioRegistry, bunEnv, bunExe, runBunInstall, stderrForInstall } from "harness";
 import { join } from "path";
 
@@ -240,9 +240,8 @@ describe("file: protocol in catalogs", () => {
   test.concurrent("catalog with file: tarball referenced from workspace package resolves relative to root", async () => {
     const { packageDir } = await registry.createTestDir();
 
-    const vendoredDir = join(packageDir, "vendored");
-    await Bun.write(join(vendoredDir, ".keep"), "");
-    await copyFile(join(__dirname, "bar-0.0.2.tgz"), join(vendoredDir, "bar-0.0.2.tgz"));
+    await mkdir(join(packageDir, "vendored"));
+    await copyFile(join(__dirname, "bar-0.0.2.tgz"), join(packageDir, "vendored", "bar-0.0.2.tgz"));
 
     await write(
       join(packageDir, "package.json"),

@@ -236,6 +236,7 @@ publicPath = "/assets/"
 #### `serve.static.env`
 
 Configure environment variable handling for the dev server. Values can be:
+
 - `true` or `"inline"` - Load all environment variables
 - `false`, `null`, or `"disable"` - Disable environment variable loading
 - A prefix pattern with `*` (e.g., `"PUBLIC_*"`) - Only load variables matching the prefix
@@ -589,11 +590,11 @@ prefer = "online"
 
 Valid values are:
 
-| Value      | Description                                                           |
-| ---------- | --------------------------------------------------------------------- |
-| `"online"` | Always fetch the latest versions from the registry.                   |
-| `"offline"`| Use cached versions when available, without network requests.         |
-| `"latest"` | Prefer the latest versions, updating the lockfile as needed.          |
+| Value       | Description                                                   |
+| ----------- | ------------------------------------------------------------- |
+| `"online"`  | Always fetch the latest versions from the registry.           |
+| `"offline"` | Use cached versions when available, without network requests. |
+| `"latest"`  | Prefer the latest versions, updating the lockfile as needed.  |
 
 ### `install.logLevel`
 

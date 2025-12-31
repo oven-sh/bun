@@ -2403,7 +2403,7 @@ const CompilerRT = struct {
             };
         }
 
-        const Sizes = @import("../bindings/sizes.zig");
+        const Sizes = @import("../jsc/interop/sizes.zig");
         const offsets = Offsets.get();
         state.defineSymbolsComptime(.{
             .Bun_FFI_PointerOffsetToArgumentsList = Sizes.Bun_FFI_PointerOffsetToArgumentsList,

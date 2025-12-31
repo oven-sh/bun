@@ -1,5 +1,5 @@
 #include "../node/JSStringDecoder.h"
-#include "../bindings/ZigGlobalObject.h"
+#include "ZigGlobalObject.h"
 #include <JavaScriptCore/JSGlobalObject.h>
 
 namespace Zig {

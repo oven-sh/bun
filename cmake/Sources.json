@@ -51,7 +51,11 @@
     "paths": [
       "src/io/*.cpp",
       "src/buntime/modules/*.cpp",
-      "src/buntime/bindings/*.cpp",
+      "src/buntime/jsc/types/*.cpp",
+      "src/buntime/jsc/global/*.cpp",
+      "src/buntime/jsc/gc/*.cpp",
+      "src/buntime/jsc/interop/*.cpp",
+      "src/buntime/jsc/generated/*.cpp",
       "src/buntime/webcore/*.cpp",
       "src/buntime/api/sqlite/*.cpp",
       "src/buntime/web/webcrypto/*.cpp",
@@ -107,8 +111,8 @@
       "packages/bun-usockets/src/eventing/*.c",
       "packages/bun-usockets/src/internal/*.c",
       "packages/bun-usockets/src/crypto/*.c",
-      "src/buntime/bindings/uv-posix-polyfills.c",
-      "src/buntime/bindings/uv-posix-stubs.c",
+      "src/buntime/compat/libuv/uv-posix-polyfills.c",
+      "src/buntime/compat/libuv/uv-posix-stubs.c",
       "src/*.c",
       "src/buntime/node/http/llhttp/*.c"
     ]

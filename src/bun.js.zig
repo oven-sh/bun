@@ -1,7 +1,7 @@
 pub const jsc = @import("./buntime/jsc.zig");
 pub const webcore = @import("./buntime/webcore.zig");
 pub const api = @import("./buntime/api.zig");
-pub const bindgen = @import("./buntime/bindings/bindgen.zig");
+pub const bindgen = @import("./buntime/jsc/interop/bindgen.zig");
 
 pub const Run = struct {
     ctx: Command.Context,

@@ -313,7 +313,7 @@ set(BUN_JAVASCRIPT_OUTPUTS
   ${CODEGEN_PATH}/SyntheticModuleType.h
   ${CODEGEN_PATH}/GeneratedJS2Native.h
   # Zig will complain if files are outside of the source directory
-  ${CWD}/src/buntime/bindings/GeneratedJS2Native.zig
+  ${CWD}/src/buntime/jsc/generated/GeneratedJS2Native.zig
 )
 
 set(BUN_CPP_OUTPUTS
@@ -465,7 +465,7 @@ set(BUN_BINDGEN_CPP_OUTPUTS
 )
 
 set(BUN_BINDGEN_ZIG_OUTPUTS
-  ${CWD}/src/buntime/bindings/GeneratedBindings.zig
+  ${CWD}/src/buntime/jsc/generated/GeneratedBindings.zig
 )
 
 register_command(
@@ -520,7 +520,7 @@ set(BUN_OBJECT_LUT_SCRIPT ${CWD}/src/codegen/create-hash-table.ts)
 
 set(BUN_OBJECT_LUT_SOURCES
   ${CWD}/src/buntime/core/BunObject.cpp
-  ${CWD}/src/buntime/bindings/ZigGlobalObject.lut.txt
+  ${CWD}/src/buntime/jsc/global/ZigGlobalObject.lut.txt
   ${CWD}/src/buntime/node/JSBuffer.cpp
   ${CWD}/src/buntime/api/process/BunProcess.cpp
   ${CWD}/src/buntime/api/process/ProcessBindingBuffer.cpp
@@ -606,7 +606,7 @@ WEBKIT_ADD_SOURCE_DEPENDENCIES(
 )
 
 WEBKIT_ADD_SOURCE_DEPENDENCIES(
-  ${CWD}/src/buntime/bindings/ZigGlobalObject.cpp
+  ${CWD}/src/buntime/jsc/global/ZigGlobalObject.cpp
   ${CODEGEN_PATH}/ZigGlobalObject.lut.h
 )
 
@@ -732,8 +732,8 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "build.zig")
 set(BUN_USOCKETS_SOURCE ${CWD}/packages/bun-usockets)
 
 if(WIN32)
-  list(APPEND BUN_CXX_SOURCES ${CWD}/src/buntime/bindings/windows/rescle.cpp)
-  list(APPEND BUN_CXX_SOURCES ${CWD}/src/buntime/bindings/windows/rescle-binding.cpp)
+  list(APPEND BUN_CXX_SOURCES ${CWD}/src/buntime/compat/windows/rescle.cpp)
+  list(APPEND BUN_CXX_SOURCES ${CWD}/src/buntime/compat/windows/rescle-binding.cpp)
 endif()
 
 register_repository(
@@ -848,7 +848,7 @@ if (NOT WIN32)
   # 2. In CI AND BUN_CPP_ONLY is enabled
   if(NOT CI OR (CI AND BUN_CPP_ONLY))
     target_precompile_headers(${bun} PRIVATE
-      "$<$<COMPILE_LANGUAGE:CXX>:${CWD}/src/buntime/bindings/root.h>"
+      "$<$<COMPILE_LANGUAGE:CXX>:${CWD}/src/buntime/jsc/interop/root.h>"
     )
   endif()
 endif()
@@ -856,14 +856,18 @@ endif()
 # --- C/C++ Includes ---
 
 if(WIN32)
-  target_include_directories(${bun} PRIVATE ${CWD}/src/buntime/bindings/windows)
+  target_include_directories(${bun} PRIVATE ${CWD}/src/buntime/compat/windows)
 endif()
 
 target_include_directories(${bun} PRIVATE
   ${CWD}/packages
   ${CWD}/packages/bun-usockets
   ${CWD}/packages/bun-usockets/src
-  ${CWD}/src/buntime/bindings
+  ${CWD}/src/buntime/jsc/interop
+  ${CWD}/src/buntime/jsc/global
+  ${CWD}/src/buntime/jsc/gc
+  ${CWD}/src/buntime/jsc/types
+  ${CWD}/src/buntime/jsc/generated
   ${CWD}/src/bake
   ${CWD}/src/string
   ${CWD}/src/buntime/webcore

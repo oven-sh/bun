@@ -205,12 +205,12 @@ pub const fmt = @import("./fmt.zig");
 // This file is gennerated, but cant be placed in the build/debug/codegen
 // folder because zig will complain about outside-of-module stuff
 /// All functions and interfaces provided from Bun's `bindgen` utility.
-pub const gen = @import("./buntime/bindings/GeneratedBindings.zig");
+pub const gen = @import("./buntime/jsc/generated/GeneratedBindings.zig");
 
 comptime {
     // This file is gennerated, but cant be placed in the build/debug/codegen
     // folder because zig will complain about outside-of-module stuff
-    _ = &@import("./buntime/bindings/GeneratedJS2Native.zig");
+    _ = &@import("./buntime/jsc/generated/GeneratedJS2Native.zig");
     _ = &gen; // reference bindings
 }
 

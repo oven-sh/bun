@@ -2399,9 +2399,9 @@ extern "c" fn Bun__JSValue__isAsyncContextFrame(value: JSValue) bool;
 
 const string = []const u8;
 
-const FFI = @import("../api/ffi/FFI.zig");
+const FFI = @import("../../api/ffi/FFI.zig");
 const std = @import("std");
-const JestPrettyFormat = @import("../../test_runner/pretty_format.zig").JestPrettyFormat;
+const JestPrettyFormat = @import("../../../test_runner/pretty_format.zig").JestPrettyFormat;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

@@ -1,6 +1,6 @@
 // @ts-nocheck
 import path from "path";
-import jsclasses from "./../buntime/bindings/js_classes";
+import jsclasses from "./../buntime/jsc/generated/js_classes";
 import { InvalidThisBehavior, type ClassDefinition, type Field } from "./class-definitions";
 import { camelCase, pascalCase, writeIfNotChanged } from "./helpers";
 

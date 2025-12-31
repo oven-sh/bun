@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../bindings/ZigGlobalObject.h"
+#include "ZigGlobalObject.h"
 #include <JavaScriptCore/JSGlobalObject.h>
 
 namespace Zig {

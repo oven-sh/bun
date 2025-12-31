@@ -93,7 +93,7 @@ pub const JSString = opaque {
 
 const std = @import("std");
 const JSObject = @import("./JSObject.zig").JSObject;
-const ZigString = @import("./ZigString.zig").ZigString;
+const ZigString = @import("../interop/ZigString.zig").ZigString;
 
 const bun = @import("bun");
 const JSError = bun.JSError;

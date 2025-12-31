@@ -115,6 +115,15 @@ Currently we do not collect telemetry and this setting is only used for enabling
 telemetry = false
 ```
 
+### `macros`
+
+Configure Bun's macro behavior. Macros allow compile-time code execution. Set to `false` to disable macros entirely, or configure specific macro mappings.
+
+```toml title="bunfig.toml" icon="settings"
+# Disable macros
+macros = false
+```
+
 ### `env`
 
 Configure automatic `.env` file loading. By default, Bun automatically loads `.env` files. To disable this behavior:
@@ -149,6 +158,93 @@ depth = 3
 ```
 
 This controls how deeply nested objects are displayed in console output. Higher values show more nested properties but may produce verbose output for complex objects. This setting can be overridden by the `--console-depth` CLI flag.
+
+## Serve
+
+Configure the behavior of `bun --serve` under the `[serve]` section.
+
+```toml title="bunfig.toml" icon="settings"
+[serve]
+# configuration goes here
+```
+
+### `serve.port`
+
+Set the port number for the dev server. Default `3000`.
+
+```toml title="bunfig.toml" icon="settings"
+[serve]
+port = 8080
+```
+
+### `serve.static`
+
+Configure settings for static file serving and the dev server.
+
+#### `serve.static.plugins`
+
+Specify plugins to load for the dev server.
+
+```toml title="bunfig.toml" icon="settings"
+[serve.static]
+plugins = ["./my-plugin.ts"]
+```
+
+#### `serve.static.hmr`
+
+Enable or disable Hot Module Replacement. Default `true`.
+
+```toml title="bunfig.toml" icon="settings"
+[serve.static]
+hmr = true
+```
+
+#### `serve.static.minify`
+
+Configure minification settings. Can be a boolean to enable/disable all minification, or an object for fine-grained control.
+
+```toml title="bunfig.toml" icon="settings"
+[serve.static]
+# Enable all minification
+minify = true
+
+# Or configure specific types
+[serve.static.minify]
+syntax = true
+whitespace = true
+identifiers = false
+```
+
+#### `serve.static.define`
+
+Define constants for the dev server bundling.
+
+```toml title="bunfig.toml" icon="settings"
+[serve.static.define]
+"process.env.API_URL" = "'https://api.example.com'"
+```
+
+#### `serve.static.publicPath`
+
+Set the public path for assets.
+
+```toml title="bunfig.toml" icon="settings"
+[serve.static]
+publicPath = "/assets/"
+```
+
+#### `serve.static.env`
+
+Configure environment variable handling for the dev server. Values can be:
+- `true` or `"inline"` - Load all environment variables
+- `false`, `null`, or `"disable"` - Disable environment variable loading
+- A prefix pattern with `*` (e.g., `"PUBLIC_*"`) - Only load variables matching the prefix
+
+```toml title="bunfig.toml" icon="settings"
+[serve.static]
+# Only expose env vars starting with PUBLIC_
+env = "PUBLIC_*"
+```
 
 ## Test runner
 
@@ -256,6 +352,15 @@ Set path where coverage reports will be saved. Please notice, that it works only
 ```toml title="bunfig.toml" icon="settings"
 [test]
 coverageDir = "path/to/somewhere"  # default "coverage"
+```
+
+### `test.coverageIgnoreSourcemaps`
+
+Ignore sourcemaps when computing coverage statistics. This is primarily useful for debugging coverage issues. Default `false`.
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+coverageIgnoreSourcemaps = true
 ```
 
 ### `test.randomize`
@@ -455,6 +560,50 @@ Whether `bun install` will actually install dependencies. Default `false`. When 
 dryRun = false
 ```
 
+### `install.concurrentScripts`
+
+Set the number of lifecycle scripts that can run concurrently during installation. This controls parallelism for `postinstall`, `preinstall`, and other scripts.
+
+```toml title="bunfig.toml" icon="settings"
+[install]
+concurrentScripts = 4
+```
+
+### `install.ignoreScripts`
+
+When `true`, skip running lifecycle scripts (`preinstall`, `postinstall`, etc.) during installation. Default `false`.
+
+```toml title="bunfig.toml" icon="settings"
+[install]
+ignoreScripts = true
+```
+
+### `install.prefer`
+
+Configure how Bun resolves package versions. Default behavior depends on network availability.
+
+```toml title="bunfig.toml" icon="settings"
+[install]
+prefer = "online"
+```
+
+Valid values are:
+
+| Value      | Description                                                           |
+| ---------- | --------------------------------------------------------------------- |
+| `"online"` | Always fetch the latest versions from the registry.                   |
+| `"offline"`| Use cached versions when available, without network requests.         |
+| `"latest"` | Prefer the latest versions, updating the lockfile as needed.          |
+
+### `install.logLevel`
+
+Set the log level for package installation. This can be one of `"debug"`, `"warn"`, or `"error"`.
+
+```toml title="bunfig.toml" icon="settings"
+[install]
+logLevel = "warn"
+```
+
 ### `install.globalDir`
 
 To configure the directory where Bun puts globally installed packages.
@@ -570,6 +719,20 @@ Whether to generate a non-Bun lockfile alongside `bun.lock`. (A `bun.lock` will 
 print = "yarn"
 ```
 
+Specify a custom path to read the lockfile from:
+
+```toml title="bunfig.toml" icon="settings"
+[install.lockfile]
+path = "./custom/bun.lock"
+```
+
+Specify a custom path to save the lockfile to:
+
+```toml title="bunfig.toml" icon="settings"
+[install.lockfile]
+savePath = "./custom/bun.lock"
+```
+
 ### `install.linker`
 
 Configure the linker strategy for installing dependencies. Defaults to `"isolated"` for new workspaces, `"hoisted"` for new single-package projects and existing projects (made pre-v1.3.2).
@@ -587,6 +750,28 @@ Valid values are:
 | ------------ | ------------------------------------------------------- |
 | `"hoisted"`  | Link dependencies in a shared `node_modules` directory. |
 | `"isolated"` | Link dependencies inside each package installation.     |
+
+### `install.hoistPattern`
+
+Specify glob patterns for packages that should be hoisted to the root `node_modules`. This is similar to pnpm's `hoist-pattern` option. Only applies when using `linker = "isolated"`.
+
+```toml title="bunfig.toml" icon="settings"
+[install]
+hoistPattern = ["*"]
+```
+
+### `install.publicHoistPattern`
+
+Specify glob patterns for packages that should be publicly hoisted (accessible to all packages). This is similar to pnpm's `public-hoist-pattern` option. Only applies when using `linker = "isolated"`.
+
+```toml title="bunfig.toml" icon="settings"
+[install]
+publicHoistPattern = ["*eslint*", "*prettier*"]
+```
+
+## Debug
+
+Configure debugging options under the `[debug]` section.
 
 ```toml title="bunfig.toml" icon="settings"
 [debug]
@@ -740,4 +925,61 @@ This is equivalent to passing `--silent` to all `bun run` commands:
 bun --silent run dev
 bun --silent dev
 bun run --silent dev
+```
+
+### `run.elide-lines`
+
+Set the number of lines to elide (hide) in error output. This can help reduce noise in stack traces by truncating very long output.
+
+```toml title="bunfig.toml" icon="settings"
+[run]
+elide-lines = 10
+```
+
+## Bundle
+
+Configure bundler settings under the `[bundle]` section. These options apply to `bun build`.
+
+```toml title="bunfig.toml" icon="settings"
+[bundle]
+# configuration goes here
+```
+
+### `bundle.entryPoints`
+
+Specify entry points for the bundler.
+
+```toml title="bunfig.toml" icon="settings"
+[bundle]
+entryPoints = ["./src/index.ts", "./src/worker.ts"]
+```
+
+### `bundle.outdir`
+
+Set the output directory for bundled files.
+
+```toml title="bunfig.toml" icon="settings"
+[bundle]
+outdir = "./dist"
+```
+
+### `bundle.logLevel`
+
+Set the log level for the bundler. This can be one of `"debug"`, `"warn"`, or `"error"`.
+
+```toml title="bunfig.toml" icon="settings"
+[bundle]
+logLevel = "warn"
+```
+
+### `bundle.packages`
+
+Configure how specific packages should be handled during bundling. Set a package to `true` to always bundle it, or `false` to always mark it as external.
+
+```toml title="bunfig.toml" icon="settings"
+[bundle.packages]
+# Always bundle lodash, even if it's in node_modules
+lodash = true
+# Never bundle aws-sdk, always treat as external
+aws-sdk = false
 ```

@@ -26,7 +26,7 @@ pub const JSValue = @import("./bindings/JSValue.zig").JSValue;
 // Host functions are the native function pointer type that can be used by a
 // JSC::JSFunction to call native code from JavaScript. To allow usage of `try`
 // for error handling, Bun provides toJSHostFn to wrap JSHostFnZig into JSHostFn.
-pub const host_fn = @import("./jsc/host_fn.zig");
+pub const host_fn = @import("./bindings/host_fn.zig");
 pub const JSHostFn = host_fn.JSHostFn;
 pub const JSHostFnZig = host_fn.JSHostFnZig;
 pub const JSHostFnZigWithContext = host_fn.JSHostFnZigWithContext;
@@ -40,7 +40,7 @@ pub const fromJSHostCallGeneric = host_fn.fromJSHostCallGeneric;
 
 // JSC Classes Bindings
 pub const AnyPromise = @import("./bindings/AnyPromise.zig").AnyPromise;
-pub const array_buffer = @import("./jsc/array_buffer.zig");
+pub const array_buffer = @import("./bindings/array_buffer.zig");
 pub const ArrayBuffer = array_buffer.ArrayBuffer;
 pub const MarkedArrayBuffer = array_buffer.MarkedArrayBuffer;
 pub const JSCArrayBuffer = array_buffer.JSCArrayBuffer;
@@ -69,7 +69,7 @@ pub const JSRef = @import("./bindings/JSRef.zig").JSRef;
 pub const JSString = @import("./bindings/JSString.zig").JSString;
 pub const JSUint8Array = @import("./bindings/JSUint8Array.zig").JSUint8Array;
 pub const JSBigInt = @import("./bindings/JSBigInt.zig").JSBigInt;
-pub const RefString = @import("./jsc/RefString.zig");
+pub const RefString = @import("./bindings/RefString.zig");
 pub const ScriptExecutionStatus = @import("./bindings/ScriptExecutionStatus.zig").ScriptExecutionStatus;
 pub const SourceType = @import("./bindings/SourceType.zig").SourceType;
 pub const Strong = @import("./bindings/Strong.zig");

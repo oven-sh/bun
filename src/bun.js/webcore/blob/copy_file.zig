@@ -1102,7 +1102,8 @@ pub const CopyFileWindows = struct {
 
     pub fn onComplete(this: *CopyFileWindows, written_actual: usize) void {
         var written = written_actual;
-        if (written != @as(@TypeOf(written), @intCast(this.size)) and this.size != Blob.max_size) {
+        // do not truncate when appending
+        if (!this.append and written != @as(@TypeOf(written), @intCast(this.size)) and this.size != Blob.max_size) {
             this.truncate();
             written = @intCast(this.size);
         }

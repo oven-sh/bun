@@ -752,9 +752,9 @@ declare module "bun" {
    * Persist a {@link Response} body to disk.
    *
    * @param destination The file to write to. If the file doesn't exist,
-   * it will be created and if the file does exist, it will be
-   * overwritten. If `input`'s size is less than `destination`'s size,
-   * `destination` will be truncated.
+   * it will be created. If `append` is not set or false, the file will be
+   * overwritten and truncated. If `append: true`, data is appended to the
+   * end of the file.
    * @param input - `Response` object
    * @param options Options for the write
    *
@@ -787,9 +787,9 @@ declare module "bun" {
    * Persist a {@link Response} body to disk.
    *
    * @param destinationPath The file path to write to. If the file doesn't
-   * exist, it will be created and if the file does exist, it will be
-   * overwritten. If `input`'s size is less than `destination`'s size,
-   * `destination` will be truncated.
+   * exist, it will be created. If `append` is not set or false, the file
+   * will be overwritten and truncated. If `append: true`, data is appended
+   * to the end of the file.
    * @param input - `Response` object
    * @returns A promise that resolves with the number of bytes written.
    */
@@ -830,9 +830,9 @@ declare module "bun" {
    * **Note**: When `append: true`, the optimized copy is not used.
    *
    * @param destination The file to write to. If the file doesn't exist,
-   * it will be created and if the file does exist, it will be
-   * overwritten. If `input`'s size is less than `destination`'s size,
-   * `destination` will be truncated.
+   * it will be created. If `append` is not set or false, the file will be
+   * overwritten and truncated. If `append: true`, data is appended to the
+   * end of the file.
    * @param input The file to copy from.
    * @returns A promise that resolves with the number of bytes written.
    */
@@ -874,9 +874,9 @@ declare module "bun" {
    * **Note**: When `append: true`, the optimized copy is not used.
    *
    * @param destinationPath The file path to write to. If the file doesn't
-   * exist, it will be created and if the file does exist, it will be
-   * overwritten. If `input`'s size is less than `destination`'s size,
-   * `destination` will be truncated.
+   * exist, it will be created. If `append` is not set or false, the file
+   * will be overwritten and truncated. If `append: true`, data is appended
+   * to the end of the file.
    * @param input The file to copy from.
    * @returns A promise that resolves with the number of bytes written.
    */

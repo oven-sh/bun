@@ -1324,10 +1324,7 @@ declare module "bun" {
     writer(options?: {
       highWaterMark?: number;
       /**
-       * If `true`, append to the end of the file instead of overwriting it.
-       *
-       * If `false` or omitted, the file will be truncated (overwritten).
-       *
+       * If `true`, append to the end of the file.
        * @default false
        */
       append?: boolean;

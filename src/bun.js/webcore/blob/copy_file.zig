@@ -866,7 +866,7 @@ pub const CopyFileWindows = struct {
                 else if (append)
                     bun.O.WRONLY | bun.O.CREAT | bun.O.APPEND
                 else
-                    bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC,
+                    bun.O.WRONLY | bun.O.CREAT,
                 0,
             )) {
                 .result => |result| result.makeLibUVOwned() catch {

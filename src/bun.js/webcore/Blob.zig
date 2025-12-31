@@ -2461,7 +2461,7 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, re
                 const path = pathlike.path.sliceZ(&file_path);
                 switch (bun.sys.open(
                     path,
-                    bun.O.WRONLY | bun.O.CREAT | bun.O.NONBLOCK | (if (append) bun.O.APPEND else bun.O.TRUNC),
+                    bun.O.WRONLY | bun.O.CREAT | bun.O.NONBLOCK | (if (append) bun.O.APPEND else 0),
                     write_permissions,
                 )) {
                     .result => |result| {
@@ -2719,7 +2719,7 @@ pub fn getWriter(
             var file_path: bun.PathBuffer = undefined;
             switch (bun.sys.open(
                 pathlike.path.sliceZ(&file_path),
-                bun.O.WRONLY | bun.O.CREAT | bun.O.NONBLOCK | (if (append) bun.O.APPEND else bun.O.TRUNC),
+                bun.O.WRONLY | bun.O.CREAT | bun.O.NONBLOCK | (if (append) bun.O.APPEND else 0),
                 write_permissions,
             )) {
                 .result => |result| {

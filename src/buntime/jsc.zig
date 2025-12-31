@@ -95,7 +95,7 @@ pub const ZigErrorType = @import("./api/error/ZigErrorType.zig").ZigErrorType;
 pub const Debugger = @import("./api/inspector/Debugger.zig");
 pub const SavedSourceMap = @import("./SavedSourceMap.zig");
 pub const VirtualMachine = @import("./VirtualMachine.zig");
-pub const ModuleLoader = @import("./ModuleLoader.zig");
+pub const ModuleLoader = @import("./module/ModuleLoader.zig");
 pub const RareData = @import("./rare_data.zig");
 pub const EventType = @import("./web/events/EventType.zig").EventType;
 pub const JSRuntimeType = @import("./bindings/JSRuntimeType.zig").JSRuntimeType;
@@ -201,7 +201,7 @@ pub const Subprocess = bun.api.Subprocess;
 pub const Codegen = @import("ZigGeneratedClasses");
 pub const GeneratedClassesList = @import("./bindings/generated_classes_list.zig").Classes;
 
-pub const RuntimeTranspilerCache = @import("./RuntimeTranspilerCache.zig").RuntimeTranspilerCache;
+pub const RuntimeTranspilerCache = @import("./module/RuntimeTranspilerCache.zig").RuntimeTranspilerCache;
 
 /// Track whether an object should keep the event loop alive
 pub const Ref = struct {

@@ -310,7 +310,7 @@ pub const AsyncModule = struct {
         comptime {
             // Ensure VirtualMachine has a field named "modules" of the correct type
             // If this fails, the @fieldParentPtr in vm() above needs to be updated
-            const VM = @import("./VirtualMachine.zig");
+            const VM = @import("../VirtualMachine.zig");
             if (!@hasField(VM, "modules")) {
                 @compileError("VirtualMachine must have a 'modules' field for AsyncModule.Queue.vm() to work");
             }
@@ -752,15 +752,15 @@ pub const AsyncModule = struct {
     ) void;
 };
 
-const Dependency = @import("../install/dependency.zig");
-const Fs = @import("../fs.zig");
-const options = @import("../options.zig");
+const Dependency = @import("../../install/dependency.zig");
+const Fs = @import("../../fs.zig");
+const options = @import("../../options.zig");
 const std = @import("std");
-const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
+const PackageJSON = @import("../../resolver/package_json.zig").PackageJSON;
 const dumpSource = @import("./RuntimeTranspilerStore.zig").dumpSource;
 
-const Install = @import("../install/install.zig");
-const PackageManager = @import("../install/install.zig").PackageManager;
+const Install = @import("../../install/install.zig");
+const PackageManager = @import("../../install/install.zig").PackageManager;
 
 const bun = @import("bun");
 const Async = bun.Async;

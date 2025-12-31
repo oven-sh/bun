@@ -1,9 +1,9 @@
 const ModuleLoader = @This();
 
-pub const node_fallbacks = @import("../node_fallbacks.zig");
+pub const node_fallbacks = @import("../../node_fallbacks.zig");
 pub const AsyncModule = @import("./AsyncModule.zig").AsyncModule;
 pub const RuntimeTranspilerStore = @import("./RuntimeTranspilerStore.zig").RuntimeTranspilerStore;
-pub const HardcodedModule = @import("./module/HardcodedModule.zig").HardcodedModule;
+pub const HardcodedModule = @import("./HardcodedModule.zig").HardcodedModule;
 
 transpile_source_code_arena: ?*bun.ArenaAllocator = null,
 eval_source: ?*logger.Source = null,
@@ -653,7 +653,7 @@ pub fn transpileSourceCode(
                 }
                 return ResolvedSource{
                     .allocator = null,
-                    .source_code = bun.String.static(@embedFile("../js/wasi-runner.js")),
+                    .source_code = bun.String.static(@embedFile("../../js/wasi-runner.js")),
                     .specifier = input_specifier,
                     .source_url = input_specifier.createIfDifferent(path.text),
                     .tag = .esm,
@@ -1347,18 +1347,18 @@ const debug = Output.scoped(.ModuleLoader, .hidden);
 
 const string = []const u8;
 
-const Fs = @import("../fs.zig");
-const Runtime = @import("../runtime.zig");
-const ast = @import("../import_record.zig");
-const node_module_module = @import("./module/NodeModuleModule.zig");
+const Fs = @import("../../fs.zig");
+const Runtime = @import("../../runtime.zig");
+const ast = @import("../../import_record.zig");
+const node_module_module = @import("./NodeModuleModule.zig");
 const std = @import("std");
 const panic = std.debug.panic;
 
-const options = @import("../options.zig");
+const options = @import("../../options.zig");
 const ModuleType = options.ModuleType;
 
-const MacroRemap = @import("../resolver/package_json.zig").MacroMap;
-const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
+const MacroRemap = @import("../../resolver/package_json.zig").MacroMap;
+const PackageJSON = @import("../../resolver/package_json.zig").PackageJSON;
 
 const dumpSource = @import("./RuntimeTranspilerStore.zig").dumpSource;
 const dumpSourceString = @import("./RuntimeTranspilerStore.zig").dumpSourceString;

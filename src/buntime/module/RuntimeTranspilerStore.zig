@@ -596,17 +596,17 @@ pub const RuntimeTranspilerStore = struct {
     };
 };
 
-const Fs = @import("../fs.zig");
-const node_fallbacks = @import("../node_fallbacks.zig");
+const Fs = @import("../../fs.zig");
+const node_fallbacks = @import("../../node_fallbacks.zig");
 const std = @import("std");
 const AsyncModule = @import("./AsyncModule.zig").AsyncModule;
-const HardcodedModule = @import("./module/HardcodedModule.zig").HardcodedModule;
+const HardcodedModule = @import("./HardcodedModule.zig").HardcodedModule;
 
-const options = @import("../options.zig");
+const options = @import("../../options.zig");
 const ModuleType = options.ModuleType;
 
-const MacroRemap = @import("../resolver/package_json.zig").MacroMap;
-const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
+const MacroRemap = @import("../../resolver/package_json.zig").MacroMap;
+const PackageJSON = @import("../../resolver/package_json.zig").PackageJSON;
 
 const bun = @import("bun");
 const Async = bun.Async;

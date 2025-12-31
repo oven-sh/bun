@@ -154,7 +154,7 @@ pub const WorkPoolTask = EventLoop.WorkPoolTask;
 pub const WorkTask = EventLoop.WorkTask;
 
 /// Deprecated: Avoid using this in new code.
-pub const C = @import("./javascript_core_c_api.zig");
+pub const C = @import("./bindings/javascript_core_c_api.zig");
 /// Deprecated: Remove all of these please.
 pub const Sizes = @import("./bindings/sizes.zig");
 /// Deprecated: Use `bun.String`

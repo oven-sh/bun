@@ -65,7 +65,7 @@ export fn JS2Zig___src_bake_FrameworkRouter_zig__JSFrameworkRouter_getBindings_w
     return jsc.toJSHostCall(global, @src(), @import("../../bake/FrameworkRouter.zig").JSFrameworkRouter.getBindings, .{global});
 }
 export fn JS2Zig___src_buntime_bindgen_test_zig__getBindgenTestFunctions_workaround(global: *jsc.JSGlobalObject) callconv(jsc.conv) jsc.JSValue {
-    return jsc.toJSHostCall(global, @src(), @import("../bindgen_test.zig").getBindgenTestFunctions, .{global});
+    return jsc.toJSHostCall(global, @src(), @import("./bindgen_test.zig").getBindgenTestFunctions, .{global});
 }
 export fn JS2Zig___src_buntime_api_ffi_zig__Bun__FFI__cc(global: *jsc.JSGlobalObject, call_frame: *jsc.CallFrame) callconv(jsc.conv) jsc.JSValue {
     const function = @import("../api/ffi.zig");

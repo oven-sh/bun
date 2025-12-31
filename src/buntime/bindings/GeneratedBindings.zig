@@ -3,13 +3,12 @@ const jsc = bun.jsc;
 const JSHostFunctionType = jsc.JSHostFn;
 
 /// Generated for "src/bake.zig"
-pub const bake = struct {
-};
+pub const bake = struct {};
 
 /// Generated for "src/bake/DevServer.zig"
 pub const DevServer = struct {
     pub const jsGetDeinitCountForTesting = @extern(*const JSHostFunctionType, .{ .name = "bindgen_DevServer_jsGetDeinitCountForTesting" });
-    
+
     pub fn createGetDeinitCountForTestingCallback(global: *jsc.JSGlobalObject) callconv(jsc.conv) jsc.JSValue {
         return jsc.host_fn.NewRuntimeFunction(global, jsc.ZigString.static("getDeinitCountForTesting"), 0, jsGetDeinitCountForTesting, false, null);
     }
@@ -20,7 +19,7 @@ pub const BunObject = struct {
     pub const jsBraces = @extern(*const JSHostFunctionType, .{ .name = "bindgen_BunObject_jsBraces" });
     pub const jsGc = @extern(*const JSHostFunctionType, .{ .name = "bindgen_BunObject_jsGc" });
     pub const jsStringWidth = @extern(*const JSHostFunctionType, .{ .name = "bindgen_BunObject_jsStringWidth" });
-    
+
     pub fn createBracesCallback(global: *jsc.JSGlobalObject) callconv(jsc.conv) jsc.JSValue {
         return jsc.host_fn.NewRuntimeFunction(global, jsc.ZigString.static("braces"), 3, jsBraces, false, null);
     }
@@ -30,7 +29,7 @@ pub const BunObject = struct {
     pub fn createStringWidthCallback(global: *jsc.JSGlobalObject) callconv(jsc.conv) jsc.JSValue {
         return jsc.host_fn.NewRuntimeFunction(global, jsc.ZigString.static("stringWidth"), 2, jsStringWidth, false, null);
     }
-    
+
     pub const BracesOptions = extern struct {
         parse: bool,
         tokenize: bool,
@@ -45,7 +44,7 @@ pub const BunObject = struct {
 pub const bindgen_test = struct {
     pub const jsAdd = @extern(*const JSHostFunctionType, .{ .name = "bindgen_Bindgen_test_jsAdd" });
     pub const jsRequiredAndOptionalArg = @extern(*const JSHostFunctionType, .{ .name = "bindgen_Bindgen_test_jsRequiredAndOptionalArg" });
-    
+
     pub fn createAddCallback(global: *jsc.JSGlobalObject) callconv(jsc.conv) jsc.JSValue {
         return jsc.host_fn.NewRuntimeFunction(global, jsc.ZigString.static("add"), 3, jsAdd, false, null);
     }
@@ -57,7 +56,7 @@ pub const bindgen_test = struct {
 /// Generated for "src/buntime/module/NodeModuleModule.zig"
 pub const NodeModuleModule = struct {
     pub const js_stat = @extern(*const JSHostFunctionType, .{ .name = "bindgen_NodeModuleModule_js_stat" });
-    
+
     pub fn create_statCallback(global: *jsc.JSGlobalObject) callconv(jsc.conv) jsc.JSValue {
         return jsc.host_fn.NewRuntimeFunction(global, jsc.ZigString.static("_stat"), 1, js_stat, false, null);
     }
@@ -78,7 +77,7 @@ pub const node_os = struct {
     pub const jsUserInfo = @extern(*const JSHostFunctionType, .{ .name = "bindgen_Node_os_jsUserInfo" });
     pub const jsVersion = @extern(*const JSHostFunctionType, .{ .name = "bindgen_Node_os_jsVersion" });
     pub const jsSetPriority = @extern(*const JSHostFunctionType, .{ .name = "bindgen_Node_os_jsSetPriority" });
-    
+
     pub fn createCpusCallback(global: *jsc.JSGlobalObject) callconv(jsc.conv) jsc.JSValue {
         return jsc.host_fn.NewRuntimeFunction(global, jsc.ZigString.static("cpus"), 1, jsCpus, false, null);
     }
@@ -118,7 +117,7 @@ pub const node_os = struct {
     pub fn createSetPriorityCallback(global: *jsc.JSGlobalObject) callconv(jsc.conv) jsc.JSValue {
         return jsc.host_fn.NewRuntimeFunction(global, jsc.ZigString.static("setPriority"), 2, jsSetPriority, false, null);
     }
-    
+
     pub const UserInfoOptions = extern struct {
         encoding: bun.String,
     };
@@ -127,11 +126,11 @@ pub const node_os = struct {
 /// Generated for "src/fmt.zig"
 pub const fmt = struct {
     pub const jsFmtString = @extern(*const JSHostFunctionType, .{ .name = "bindgen_Fmt_jsFmtString" });
-    
+
     pub fn createFmtStringCallback(global: *jsc.JSGlobalObject) callconv(jsc.conv) jsc.JSValue {
         return jsc.host_fn.NewRuntimeFunction(global, jsc.ZigString.static("fmtString"), 3, jsFmtString, false, null);
     }
-    
+
     pub const Formatter = enum(u8) {
         escape_powershell,
         highlight_javascript,
@@ -144,8 +143,7 @@ const binding_internals = struct {
     export fn bindgen_DevServer_dispatchGetDeinitCountForTesting1(global: *jsc.JSGlobalObject, out: *usize) bool {
         if (!@hasDecl(import_DevServer, "getDeinitCountForTesting"))
             @compileError("Missing binding declaration \"getDeinitCountForTesting\" in \"DevServer.zig\"");
-        out.* = @as(bun.JSError!usize, import_DevServer.getDeinitCountForTesting(
-        )) catch |err| switch (err) {
+        out.* = @as(bun.JSError!usize, import_DevServer.getDeinitCountForTesting()) catch |err| switch (err) {
             error.JSError => return false,
             error.OutOfMemory => global.throwOutOfMemory() catch return false,
             error.JSTerminated => return false,
@@ -188,7 +186,7 @@ const binding_internals = struct {
         };
         return true;
     }
-    const import_bindgen_test = @import("../../buntime/bindgen_test.zig");
+    const import_bindgen_test = @import("./bindgen_test.zig");
     export fn bindgen_Bindgen_test_dispatchAdd1(arg_global: *jsc.JSGlobalObject, arg_a: *const i32, arg_b: *const i32, out: *i32) bool {
         if (!@hasDecl(import_bindgen_test, "add"))
             @compileError("Missing binding declaration \"add\" in \"bindgen_test.zig\"");
@@ -250,8 +248,7 @@ const binding_internals = struct {
     export fn bindgen_Node_os_dispatchFreemem1(global: *jsc.JSGlobalObject, out: *u64) bool {
         if (!@hasDecl(import_node_os, "freemem"))
             @compileError("Missing binding declaration \"freemem\" in \"node_os.zig\"");
-        out.* = @as(bun.JSError!u64, import_node_os.freemem(
-        )) catch |err| switch (err) {
+        out.* = @as(bun.JSError!u64, import_node_os.freemem()) catch |err| switch (err) {
             error.JSError => return false,
             error.OutOfMemory => global.throwOutOfMemory() catch return false,
             error.JSTerminated => return false,
@@ -307,8 +304,7 @@ const binding_internals = struct {
     export fn bindgen_Node_os_dispatchRelease1(global: *jsc.JSGlobalObject, out: *bun.String) bool {
         if (!@hasDecl(import_node_os, "release"))
             @compileError("Missing binding declaration \"release\" in \"node_os.zig\"");
-        out.* = @as(bun.JSError!bun.String, import_node_os.release(
-        )) catch |err| switch (err) {
+        out.* = @as(bun.JSError!bun.String, import_node_os.release()) catch |err| switch (err) {
             error.JSError => return false,
             error.OutOfMemory => global.throwOutOfMemory() catch return false,
             error.JSTerminated => return false,
@@ -318,8 +314,7 @@ const binding_internals = struct {
     export fn bindgen_Node_os_dispatchTotalmem1(global: *jsc.JSGlobalObject, out: *u64) bool {
         if (!@hasDecl(import_node_os, "totalmem"))
             @compileError("Missing binding declaration \"totalmem\" in \"node_os.zig\"");
-        out.* = @as(bun.JSError!u64, import_node_os.totalmem(
-        )) catch |err| switch (err) {
+        out.* = @as(bun.JSError!u64, import_node_os.totalmem()) catch |err| switch (err) {
             error.JSError => return false,
             error.OutOfMemory => global.throwOutOfMemory() catch return false,
             error.JSTerminated => return false,
@@ -349,8 +344,7 @@ const binding_internals = struct {
     export fn bindgen_Node_os_dispatchVersion1(global: *jsc.JSGlobalObject, out: *bun.String) bool {
         if (!@hasDecl(import_node_os, "version"))
             @compileError("Missing binding declaration \"version\" in \"node_os.zig\"");
-        out.* = @as(bun.JSError!bun.String, import_node_os.version(
-        )) catch |err| switch (err) {
+        out.* = @as(bun.JSError!bun.String, import_node_os.version()) catch |err| switch (err) {
             error.JSError => return false,
             error.OutOfMemory => global.throwOutOfMemory() catch return false,
             error.JSTerminated => return false,

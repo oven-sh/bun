@@ -1,11 +1,12 @@
-import { test, expect } from "bun:test";
+import { test, expect, describe } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { WebSocketServer } from "ws";
 
 // These tests verify that upgrade and unexpected-response events work correctly
-// Tests that need to verify "no warnings" use Bun.spawn to capture stderr
+// Tests run concurrently since they use unique ports (port: 0)
 
-test("ws WebSocket should not emit warnings for upgrade event", async () => {
+describe.concurrent("ws upgrade and unexpected-response events", () => {
+  test("ws WebSocket should not emit warnings for upgrade event", async () => {
   const server = new WebSocketServer({ port: 0 });
   const port = (server.address() as any).port;
 
@@ -23,14 +24,15 @@ test("ws WebSocket should not emit warnings for upgrade event", async () => {
       stderr: "pipe",
     });
 
-    const stderr = await proc.stderr.text();
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
     expect(stderr).not.toContain("'upgrade' event is not implemented");
+    expect(exitCode).toBe(0);
   } finally {
     server.close();
   }
-});
+  });
 
-test("ws WebSocket should not emit warnings for unexpected-response event", async () => {
+  test("ws WebSocket should not emit warnings for unexpected-response event", async () => {
   const server = new WebSocketServer({ port: 0 });
   const port = (server.address() as any).port;
 
@@ -48,14 +50,15 @@ test("ws WebSocket should not emit warnings for unexpected-response event", asyn
       stderr: "pipe",
     });
 
-    const stderr = await proc.stderr.text();
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
     expect(stderr).not.toContain("'unexpected-response' event is not implemented");
+    expect(exitCode).toBe(0);
   } finally {
     server.close();
   }
-});
+  });
 
-test("ws WebSocket should emit upgrade event before open event", async () => {
+  test("ws WebSocket should emit upgrade event before open event", async () => {
   const server = new WebSocketServer({ port: 0 });
   const port = (server.address() as any).port;
 
@@ -83,9 +86,9 @@ test("ws WebSocket should emit upgrade event before open event", async () => {
   } finally {
     server.close();
   }
-});
+  });
 
-test("ws WebSocket upgrade event should provide response object with status code", async () => {
+  test("ws WebSocket upgrade event should provide response object with status code", async () => {
   const server = new WebSocketServer({ port: 0 });
   const port = (server.address() as any).port;
 
@@ -108,9 +111,9 @@ test("ws WebSocket upgrade event should provide response object with status code
   } finally {
     server.close();
   }
-});
+  });
 
-test("ws WebSocket should work without upgrade listener", async () => {
+  test("ws WebSocket should work without upgrade listener", async () => {
   const server = new WebSocketServer({ port: 0 });
   const port = (server.address() as any).port;
 
@@ -128,9 +131,10 @@ test("ws WebSocket should work without upgrade listener", async () => {
   } finally {
     server.close();
   }
+  });
 });
 
-test("native WebSocket should expose upgradeStatusCode property", async () => {
+  test("native WebSocket should expose upgradeStatusCode property", async () => {
   const server = new WebSocketServer({ port: 0 });
   const port = (server.address() as any).port;
 

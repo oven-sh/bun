@@ -584,7 +584,7 @@ pub fn spawnSyncEventLoop(this: *RareData, vm: *jsc.VirtualMachine) *SpawnSyncEv
 }
 
 const IPC = @import("../api/ipc/ipc.zig");
-const UUID = @import("../webcore/webcrypto/uuid.zig");
+const UUID = @import("../web/webcrypto/uuid.zig");
 const WebSocketDeflate = @import("../../http/websocket_client/WebSocketDeflate.zig");
 const std = @import("std");
 const EditorContext = @import("../../open.zig").EditorContext;

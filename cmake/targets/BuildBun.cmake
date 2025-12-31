@@ -867,7 +867,8 @@ target_include_directories(${bun} PRIVATE
   ${CWD}/src/bake
   ${CWD}/src/string
   ${CWD}/src/buntime/webcore
-  ${CWD}/src/buntime/webcore/webcrypto
+  ${CWD}/src/buntime/web
+  ${CWD}/src/buntime/web/webcrypto
   ${CWD}/src/buntime/node
   ${CWD}/src/buntime/node/crypto_bindings
   ${CWD}/src/buntime/node/http

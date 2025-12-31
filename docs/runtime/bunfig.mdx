@@ -122,6 +122,11 @@ Configure Bun's macro behavior. Macros allow compile-time code execution. Set to
 ```toml title="bunfig.toml" icon="settings"
 # Disable macros
 macros = false
+
+# Or configure macro mappings
+[macros]
+# Map imports from a package to replacement paths
+"react-relay" = { "graphql" = "./my-graphql-macro.ts" }
 ```
 
 ### `env`
@@ -201,7 +206,7 @@ hmr = true
 
 #### `serve.static.minify`
 
-Configure minification settings. Can be a boolean to enable/disable all minification, or an object for fine-grained control.
+Configure minification settings. This can be a boolean to enable or disable all minification, or an object for fine-grained control.
 
 ```toml title="bunfig.toml" icon="settings"
 [serve.static]

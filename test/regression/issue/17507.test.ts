@@ -68,11 +68,12 @@ userCode();
     const userCodeLine = lines.find(
       (l) => stripAnsi(l).trim().startsWith("at ") && l.includes("userCode")
     );
-    // Find node_modules frame (contains "/node_modules/" path in stack trace)
+    // Find node_modules frame (contains "/node_modules/" or "\\node_modules\\" path in stack trace)
+    // Handle both Unix and Windows path separators
     const nodeModulesLine = lines.find(
       (l) =>
         stripAnsi(l).trim().startsWith("at ") &&
-        l.includes("/node_modules/")
+        (l.includes("/node_modules/") || l.includes("\\node_modules\\"))
     );
 
     expect(userCodeLine).toBeDefined();

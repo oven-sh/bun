@@ -65,16 +65,20 @@ userCode();
     const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
 
     // Find user code frame (contains "userCode" and starts with whitespace + "at ")
-    const userCodeLine = lines.find(
-      (l) => stripAnsi(l).trim().startsWith("at ") && l.includes("userCode")
-    );
+    const userCodeLine = lines.find((l) => {
+      const stripped = stripAnsi(l);
+      return stripped.trim().startsWith("at ") && stripped.includes("userCode");
+    });
     // Find node_modules frame (contains "/node_modules/" or "\\node_modules\\" path in stack trace)
     // Handle both Unix and Windows path separators
-    const nodeModulesLine = lines.find(
-      (l) =>
-        stripAnsi(l).trim().startsWith("at ") &&
-        (l.includes("/node_modules/") || l.includes("\\node_modules\\"))
-    );
+    // Use stripAnsi for path matching too, in case ANSI codes get inserted around path segments
+    const nodeModulesLine = lines.find((l) => {
+      const stripped = stripAnsi(l);
+      return (
+        stripped.trim().startsWith("at ") &&
+        (stripped.includes("/node_modules/") || stripped.includes("\\node_modules\\"))
+      );
+    });
 
     expect(userCodeLine).toBeDefined();
     expect(nodeModulesLine).toBeDefined();

@@ -39,7 +39,8 @@ pub const URLSearchParams = opaque {
 };
 
 const bun = @import("bun");
+
 const jsc = bun.jsc;
-const ZigString = jsc.ZigString;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
+const ZigString = jsc.ZigString;

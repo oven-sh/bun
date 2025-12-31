@@ -10,20 +10,20 @@ typedef __SIZE_TYPE__ uintptr_t;
 
 #if __STDC_VERSION__ >= 201112L
 typedef union {
-  long long __ll;
-  long double __ld;
+    long long __ll;
+    long double __ld;
 } max_align_t;
 #endif
 
 #ifndef NULL
-#define NULL ((void *)0)
+#define NULL ((void*)0)
 #endif
 
 #undef offsetof
-#define offsetof(type, field) ((size_t) & ((type *)0)->field)
+#define offsetof(type, field) ((size_t)&((type*)0)->field)
 
 #if defined __i386__ || defined __x86_64__
-void *alloca(size_t size);
+void* alloca(size_t size);
 #endif
 
 #endif

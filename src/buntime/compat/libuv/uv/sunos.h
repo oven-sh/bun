@@ -29,15 +29,15 @@
  * add the fs_event fields even when this version of SunOS doesn't support
  * file watching.
  */
-#define UV_PLATFORM_LOOP_FIELDS                                               \
-  uv__io_t fs_event_watcher;                                                  \
-  int fs_fd;                                                                  \
+#define UV_PLATFORM_LOOP_FIELDS \
+    uv__io_t fs_event_watcher;  \
+    int fs_fd;
 
 #if defined(PORT_SOURCE_FILE)
 
-# define UV_PLATFORM_FS_EVENT_FIELDS                                          \
-  file_obj_t fo;                                                              \
-  int fd;                                                                     \
+#define UV_PLATFORM_FS_EVENT_FIELDS \
+    file_obj_t fo;                  \
+    int fd;
 
 #endif /* defined(PORT_SOURCE_FILE) */
 

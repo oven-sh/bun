@@ -3254,7 +3254,7 @@ fn stringToEquivalentNumberValue(str: []const u8) f64 {
 const string = []const u8;
 const stringZ = [:0]const u8;
 
-const JSPrinter = @import("../transpiler/printer.zig");
+const JSPrinter = @import("../transpiler/js_printer.zig");
 const std = @import("std");
 
 const bun = @import("bun");

@@ -951,7 +951,7 @@ pub fn computeReservedNamesForScope(
 
 const string = []const u8;
 
-const JSLexer = @import("./transpiler/lexer.zig");
+const JSLexer = @import("./transpiler/js_lexer.zig");
 const std = @import("std");
 
 const bun = @import("bun");

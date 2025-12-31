@@ -702,7 +702,7 @@ pub const BabyList = bun.BabyList;
 const string = []const u8;
 
 const std = @import("std");
-const TypeScript = @import("./transpiler/parser.zig").TypeScript;
+const TypeScript = @import("./transpiler/js_parser.zig").TypeScript;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

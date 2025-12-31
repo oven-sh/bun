@@ -3385,7 +3385,7 @@ const string = []const u8;
 
 const FeatureFlags = @import("../feature_flags.zig");
 const JSIdentifier = @import("js_lexer/identifier.zig");
-const tables = @import("lexer_tables.zig");
+const tables = @import("js_lexer_tables.zig");
 
 const bun = @import("bun");
 const CodePoint = bun.CodePoint;

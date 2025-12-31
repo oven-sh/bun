@@ -1,4 +1,4 @@
-#include "../node/JSStringDecoder.h"
+#include "JSStringDecoder.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/JSGlobalObject.h>
 

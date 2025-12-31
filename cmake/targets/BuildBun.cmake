@@ -519,9 +519,9 @@ register_command(
 set(BUN_OBJECT_LUT_SCRIPT ${CWD}/src/codegen/create-hash-table.ts)
 
 set(BUN_OBJECT_LUT_SOURCES
-  ${CWD}/src/buntime/core/BunObject.cpp
+  ${CWD}/src/buntime/jsc/global/BunObject.cpp
   ${CWD}/src/buntime/jsc/global/ZigGlobalObject.lut.txt
-  ${CWD}/src/buntime/node/JSBuffer.cpp
+  ${CWD}/src/buntime/node/buffer/JSBuffer.cpp
   ${CWD}/src/buntime/api/process/BunProcess.cpp
   ${CWD}/src/buntime/api/process/ProcessBindingBuffer.cpp
   ${CWD}/src/buntime/api/process/ProcessBindingConstants.cpp
@@ -873,8 +873,19 @@ target_include_directories(${bun} PRIVATE
   ${CWD}/src/buntime/web
   ${CWD}/src/buntime/web/webcrypto
   ${CWD}/src/buntime/node
-  ${CWD}/src/buntime/node/crypto_bindings
+  ${CWD}/src/buntime/node/buffer
+  ${CWD}/src/buntime/node/process
+  ${CWD}/src/buntime/node/vm
+  ${CWD}/src/buntime/node/crypto
   ${CWD}/src/buntime/node/http
+  ${CWD}/src/buntime/node/fs
+  ${CWD}/src/buntime/node/os
+  ${CWD}/src/buntime/node/path
+  ${CWD}/src/buntime/node/util
+  ${CWD}/src/buntime/node/timers
+  ${CWD}/src/buntime/node/async_hooks
+  ${CWD}/src/buntime/node/perf_hooks
+  ${CWD}/src/buntime/node/constants
   ${CWD}/src/buntime/api/sqlite
   ${CWD}/src/buntime/compat/v8
   ${CWD}/src/buntime/compat/napi

@@ -201,7 +201,7 @@ pub fn getDevServerAsyncLocalStorage(this: *VirtualMachine) !?jsc.JSValue {
     return jsvalue;
 }
 
-pub const ProcessAutoKiller = @import("./api/process/ProcessAutoKiller.zig");
+pub const ProcessAutoKiller = @import("../api/process/ProcessAutoKiller.zig");
 pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSGlobalObject, JSValue) void;
 
 pub const OnException = fn (*ZigException) void;
@@ -3532,7 +3532,7 @@ pub const IPCInstance = struct {
     data: IPC.SendQueue,
     has_disconnect_called: bool = false,
 
-    const node_cluster_binding = @import("./node/node_cluster_binding.zig");
+    const node_cluster_binding = @import("../node/node_cluster_binding.zig");
 
     pub fn ipc(this: *IPCInstance) ?*IPC.SendQueue {
         return &this.data;
@@ -3700,19 +3700,19 @@ pub const ExitHandler = struct {
 
 const string = []const u8;
 
-const Config = @import("./core/config.zig");
-const Counters = @import("./core/Counters.zig");
-const Fs = @import("../fs.zig");
-const IPC = @import("./api/ipc/ipc.zig");
-const Resolver = @import("../resolver/resolver.zig");
-const Runtime = @import("../runtime.zig");
-const node_module_module = @import("./module/NodeModuleModule.zig");
+const Config = @import("./config.zig");
+const Counters = @import("./Counters.zig");
+const Fs = @import("../../fs.zig");
+const IPC = @import("../api/ipc/ipc.zig");
+const Resolver = @import("../../resolver/resolver.zig");
+const Runtime = @import("../../runtime.zig");
+const node_module_module = @import("../module/NodeModuleModule.zig");
 const std = @import("std");
-const PackageManager = @import("../install/install.zig").PackageManager;
-const URL = @import("../url.zig").URL;
+const PackageManager = @import("../../install/install.zig").PackageManager;
+const URL = @import("../../url.zig").URL;
 const Allocator = std.mem.Allocator;
 
-const CPUProfiler = @import("./api/inspector/BunCPUProfiler.zig");
+const CPUProfiler = @import("../api/inspector/BunCPUProfiler.zig");
 const CPUProfilerConfig = CPUProfiler.CPUProfilerConfig;
 
 const bun = @import("bun");

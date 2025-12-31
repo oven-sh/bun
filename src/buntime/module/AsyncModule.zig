@@ -310,7 +310,7 @@ pub const AsyncModule = struct {
         comptime {
             // Ensure VirtualMachine has a field named "modules" of the correct type
             // If this fails, the @fieldParentPtr in vm() above needs to be updated
-            const VM = @import("../VirtualMachine.zig");
+            const VM = @import("../core/VirtualMachine.zig");
             if (!@hasField(VM, "modules")) {
                 @compileError("VirtualMachine must have a 'modules' field for AsyncModule.Queue.vm() to work");
             }

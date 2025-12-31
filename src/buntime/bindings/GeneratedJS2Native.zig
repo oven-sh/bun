@@ -276,7 +276,7 @@ export fn JS2Zig___src_buntime_node_node_fs_binding_zig__createMemfdForTesting(g
     return @call(bun.callmod_inline, jsc.toJSHostFn(function.createMemfdForTesting), .{ global, call_frame });
 }
 export fn JS2Zig___src_buntime_virtual_machine_exports_zig__Bun__setSyntheticAllocationLimitForTesting(global: *jsc.JSGlobalObject, call_frame: *jsc.CallFrame) callconv(jsc.conv) jsc.JSValue {
-    const function = @import("../virtual_machine_exports.zig");
+    const function = @import("../core/virtual_machine_exports.zig");
     return @call(bun.callmod_inline, jsc.toJSHostFn(function.Bun__setSyntheticAllocationLimitForTesting), .{ global, call_frame });
 }
 export fn JS2Zig___src_install_dependency_zig__fromJS(global: *jsc.JSGlobalObject, call_frame: *jsc.CallFrame) callconv(jsc.conv) jsc.JSValue {

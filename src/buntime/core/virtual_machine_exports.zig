@@ -222,7 +222,7 @@ pub fn Bun__setSyntheticAllocationLimitForTesting(globalObject: *JSGlobalObject,
     return JSValue.jsNumber(prev);
 }
 
-const IPC = @import("./api/ipc/ipc.zig");
+const IPC = @import("../api/ipc/ipc.zig");
 const std = @import("std");
 
 const bun = @import("bun");

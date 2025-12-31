@@ -572,7 +572,7 @@ pub fn websocketDeflate(this: *RareData) *WebSocketDeflate.RareData {
     };
 }
 
-pub const SpawnSyncEventLoop = @import("./event_loop/SpawnSyncEventLoop.zig");
+pub const SpawnSyncEventLoop = @import("./core/event_loop/SpawnSyncEventLoop.zig");
 
 pub fn spawnSyncEventLoop(this: *RareData, vm: *jsc.VirtualMachine) *SpawnSyncEventLoop {
     return this.#spawn_sync_event_loop.get() orelse brk: {

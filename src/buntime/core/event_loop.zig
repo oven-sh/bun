@@ -697,8 +697,8 @@ pub const EventLoopHandle = @import("./event_loop/EventLoopHandle.zig").EventLoo
 pub const EventLoopTask = @import("./event_loop/EventLoopHandle.zig").EventLoopTask;
 pub const EventLoopTaskPtr = @import("./event_loop/EventLoopHandle.zig").EventLoopTaskPtr;
 
-pub const WorkPool = @import("../work_pool.zig").WorkPool;
-pub const WorkPoolTask = @import("../work_pool.zig").Task;
+pub const WorkPool = @import("../../work_pool.zig").WorkPool;
+pub const WorkPoolTask = @import("../../work_pool.zig").Task;
 
 const std = @import("std");
 const tickQueueWithCount = @import("./event_loop/Task.zig").tickQueueWithCount;

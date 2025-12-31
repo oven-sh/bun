@@ -126,7 +126,7 @@ pub const js_property_iterator = @import("./bindings/JSPropertyIterator.zig");
 pub const JSPropertyIterator = js_property_iterator.JSPropertyIterator;
 pub const JSPropertyIteratorOptions = js_property_iterator.JSPropertyIteratorOptions;
 
-pub const EventLoop = @import("./event_loop.zig");
+pub const EventLoop = @import("./core/event_loop.zig");
 pub const AbstractVM = EventLoop.AbstractVM;
 pub const AnyEventLoop = EventLoop.AnyEventLoop;
 pub const AnyTask = EventLoop.AnyTask;

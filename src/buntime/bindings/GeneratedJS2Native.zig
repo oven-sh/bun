@@ -316,7 +316,7 @@ export fn JS2Zig___src_buntime_api_bun_socket_zig__jsSetSocketOptions(global: *j
     return @call(bun.callmod_inline, jsc.toJSHostFn(function.jsSetSocketOptions), .{ global, call_frame });
 }
 export fn JS2Zig___src_buntime_event_loop_zig__getActiveTasks(global: *jsc.JSGlobalObject, call_frame: *jsc.CallFrame) callconv(jsc.conv) jsc.JSValue {
-    const function = @import("../event_loop.zig");
+    const function = @import("../core/event_loop.zig");
     return @call(bun.callmod_inline, jsc.toJSHostFn(function.getActiveTasks), .{ global, call_frame });
 }
 export fn JS2Zig___src_install_hosted_git_info_zig__TestingAPIs_jsParseUrl(global: *jsc.JSGlobalObject, call_frame: *jsc.CallFrame) callconv(jsc.conv) jsc.JSValue {

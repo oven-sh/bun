@@ -671,37 +671,37 @@ pub fn deinit(this: *EventLoop) void {
     this.next_immediate_tasks.clearAndFree(bun.default_allocator);
 }
 
-pub const AnyEventLoop = @import("./event_loop/AnyEventLoop.zig").AnyEventLoop;
-pub const ConcurrentPromiseTask = @import("./event_loop/ConcurrentPromiseTask.zig").ConcurrentPromiseTask;
-pub const WorkTask = @import("./event_loop/WorkTask.zig").WorkTask;
-pub const AnyTask = @import("./event_loop/AnyTask.zig");
-pub const ManagedTask = @import("./event_loop/ManagedTask.zig");
-pub const AnyTaskWithExtraContext = @import("./event_loop/AnyTaskWithExtraContext.zig");
-pub const CppTask = @import("./event_loop/CppTask.zig").CppTask;
-pub const ConcurrentCppTask = @import("./event_loop/CppTask.zig").ConcurrentCppTask;
-pub const JSCScheduler = @import("./event_loop/JSCScheduler.zig");
-pub const Task = @import("./event_loop/Task.zig").Task;
-pub const ConcurrentTask = @import("./event_loop/ConcurrentTask.zig");
-pub const GarbageCollectionController = @import("./event_loop/GarbageCollectionController.zig");
-pub const DeferredTaskQueue = @import("./event_loop/DeferredTaskQueue.zig");
+pub const AnyEventLoop = @import("./AnyEventLoop.zig").AnyEventLoop;
+pub const ConcurrentPromiseTask = @import("./ConcurrentPromiseTask.zig").ConcurrentPromiseTask;
+pub const WorkTask = @import("./WorkTask.zig").WorkTask;
+pub const AnyTask = @import("./AnyTask.zig");
+pub const ManagedTask = @import("./ManagedTask.zig");
+pub const AnyTaskWithExtraContext = @import("./AnyTaskWithExtraContext.zig");
+pub const CppTask = @import("./CppTask.zig").CppTask;
+pub const ConcurrentCppTask = @import("./CppTask.zig").ConcurrentCppTask;
+pub const JSCScheduler = @import("./JSCScheduler.zig");
+pub const Task = @import("./Task.zig").Task;
+pub const ConcurrentTask = @import("./ConcurrentTask.zig");
+pub const GarbageCollectionController = @import("./GarbageCollectionController.zig");
+pub const DeferredTaskQueue = @import("./DeferredTaskQueue.zig");
 pub const DeferredRepeatingTask = DeferredTaskQueue.DeferredRepeatingTask;
-pub const PosixSignalHandle = @import("./event_loop/PosixSignalHandle.zig");
+pub const PosixSignalHandle = @import("./PosixSignalHandle.zig");
 pub const PosixSignalTask = PosixSignalHandle.PosixSignalTask;
-pub const MiniEventLoop = @import("./event_loop/MiniEventLoop.zig");
+pub const MiniEventLoop = @import("./MiniEventLoop.zig");
 pub const MiniVM = MiniEventLoop.MiniVM;
 pub const JsVM = MiniEventLoop.JsVM;
 pub const EventLoopKind = MiniEventLoop.EventLoopKind;
 pub const AbstractVM = MiniEventLoop.AbstractVM;
 
-pub const EventLoopHandle = @import("./event_loop/EventLoopHandle.zig").EventLoopHandle;
-pub const EventLoopTask = @import("./event_loop/EventLoopHandle.zig").EventLoopTask;
-pub const EventLoopTaskPtr = @import("./event_loop/EventLoopHandle.zig").EventLoopTaskPtr;
+pub const EventLoopHandle = @import("./EventLoopHandle.zig").EventLoopHandle;
+pub const EventLoopTask = @import("./EventLoopHandle.zig").EventLoopTask;
+pub const EventLoopTaskPtr = @import("./EventLoopHandle.zig").EventLoopTaskPtr;
 
 pub const WorkPool = @import("../../work_pool.zig").WorkPool;
 pub const WorkPoolTask = @import("../../work_pool.zig").Task;
 
 const std = @import("std");
-const tickQueueWithCount = @import("./event_loop/Task.zig").tickQueueWithCount;
+const tickQueueWithCount = @import("./Task.zig").tickQueueWithCount;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

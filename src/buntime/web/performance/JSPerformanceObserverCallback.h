@@ -22,6 +22,7 @@
 
 #include "IDLTypes.h"
 #include "JSCallbackData.h"
+#include "JSDOMGlobalObject.h"
 #include "PerformanceObserverCallback.h"
 #include <wtf/Forward.h>
 

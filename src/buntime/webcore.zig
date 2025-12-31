@@ -15,7 +15,7 @@ pub const ByteListPool = bun.ObjectPool(bun.ByteList, null, true, 8);
 pub const Crypto = @import("./web/webcrypto/Crypto.zig");
 pub const AbortSignal = @import("./web/events/AbortSignal.zig").AbortSignal;
 pub const WebWorker = @import("./web/workers/web_worker.zig");
-pub const AutoFlusher = @import("./webcore/AutoFlusher.zig");
+pub const AutoFlusher = @import("./jsc/interop/AutoFlusher.zig");
 pub const EncodingLabel = @import("./web/encoding/EncodingLabel.zig").EncodingLabel;
 pub const Fetch = @import("./web/fetch/fetch.zig");
 pub const Response = @import("./web/http/Response.zig");
@@ -41,7 +41,7 @@ pub const FetchHeaders = @import("./web/fetch/FetchHeaders.zig").FetchHeaders;
 pub const ByteBlobLoader = @import("./web/blob/ByteBlobLoader.zig");
 pub const ByteStream = @import("./web/streams/ByteStream.zig");
 pub const FileReader = @import("./web/blob/FileReader.zig");
-pub const ScriptExecutionContext = @import("./webcore/ScriptExecutionContext.zig");
+pub const ScriptExecutionContext = @import("./jsc/global/ScriptExecutionContext.zig");
 
 pub const streams = @import("./web/streams/streams.zig");
 pub const NetworkSink = streams.NetworkSink;

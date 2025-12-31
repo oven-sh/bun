@@ -870,7 +870,6 @@ target_include_directories(${bun} PRIVATE
   ${CWD}/src/buntime/jsc/generated
   ${CWD}/src/bake
   ${CWD}/src/string
-  ${CWD}/src/buntime/webcore
   ${CWD}/src/buntime/web
   ${CWD}/src/buntime/web/webcrypto
   ${CWD}/src/buntime/node

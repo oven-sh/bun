@@ -209,12 +209,12 @@ install-strategy=linked
 
 The `node-linker` option controls the installation mode. Bun supports values from both pnpm and yarn:
 
-| Value | Description | Accepted by |
-|-------|-------------|-------------|
-| `isolated` | Symlinked structure with isolated dependencies | pnpm |
-| `hoisted` | Flat node_modules structure | pnpm |
-| `pnpm` | Symlinked structure (same as `isolated`) | yarn |
-| `node-modules` | Flat node_modules structure (same as `hoisted`) | yarn |
+| Value          | Description                                     | Accepted by |
+| -------------- | ----------------------------------------------- | ----------- |
+| `isolated`     | Symlinked structure with isolated dependencies  | pnpm        |
+| `hoisted`      | Flat node_modules structure                     | pnpm        |
+| `pnpm`         | Symlinked structure (same as `isolated`)        | yarn        |
+| `node-modules` | Flat node_modules structure (same as `hoisted`) | yarn        |
 
 ```ini .npmrc icon="npm"
 # symlinked/isolated mode

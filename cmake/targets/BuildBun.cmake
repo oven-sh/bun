@@ -865,6 +865,7 @@ target_include_directories(${bun} PRIVATE
   ${CWD}/packages/bun-usockets/src
   ${CWD}/src/buntime/bindings
   ${CWD}/src/bake
+  ${CWD}/src/string
   ${CWD}/src/buntime/webcore
   ${CWD}/src/buntime/webcore/webcrypto
   ${CWD}/src/buntime/node

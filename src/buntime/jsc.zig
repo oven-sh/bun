@@ -96,7 +96,7 @@ pub const Debugger = @import("./api/inspector/Debugger.zig");
 pub const SavedSourceMap = @import("./module/SavedSourceMap.zig");
 pub const VirtualMachine = @import("./VirtualMachine.zig");
 pub const ModuleLoader = @import("./module/ModuleLoader.zig");
-pub const RareData = @import("./rare_data.zig");
+pub const RareData = @import("./core/rare_data.zig");
 pub const EventType = @import("./web/events/EventType.zig").EventType;
 pub const JSRuntimeType = @import("./bindings/JSRuntimeType.zig").JSRuntimeType;
 pub const ZigStackFrameCode = @import("./api/error/ZigStackFrameCode.zig").ZigStackFrameCode;
@@ -114,7 +114,7 @@ pub const ZigException = @import("./api/error/ZigException.zig").ZigException;
 pub const ConsoleObject = @import("./api/console/ConsoleObject.zig");
 pub const Formatter = ConsoleObject.Formatter;
 
-pub const hot_reloader = @import("./hot_reloader.zig");
+pub const hot_reloader = @import("./core/hot_reloader.zig");
 
 // Test runner (moved to src/test_runner/)
 pub const Jest = @import("../test_runner/jest.zig");

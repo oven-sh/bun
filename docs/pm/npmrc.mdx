@@ -119,12 +119,7 @@ Prevents running lifecycle scripts during installation:
 ignore-scripts=true
 ```
 
-The equivalent `bunfig.toml` option is [`install.lifecycle`](/runtime/bunfig#install-lifecycle):
-
-```toml bunfig.toml icon="settings"
-[install.lifecycle]
-ignore = true
-```
+This is equivalent to using the `--ignore-scripts` flag with `bun install`.
 
 ### `dry-run`: Preview changes without installing
 
@@ -198,25 +193,36 @@ Valid values: `dev`, `peer`, `optional`
 
 ### `install-strategy` and `node-linker`: Installation strategy
 
-Control how packages are installed in `node_modules`:
+Control how packages are installed in `node_modules`. Bun supports two different configuration options for compatibility with different package managers.
+
+**npm's `install-strategy`:**
 
 ```ini .npmrc icon="npm"
-# npm style (hoisted is the default)
+# flat node_modules structure (default)
 install-strategy=hoisted
 
-# pnpm style (symlinked)
+# symlinked structure
 install-strategy=linked
 ```
 
-Bun also supports the yarn/pnpm `node-linker` option:
+**pnpm/yarn's `node-linker`:**
+
+The `node-linker` option controls the installation mode. Bun supports values from both pnpm and yarn:
+
+| Value | Description | Accepted by |
+|-------|-------------|-------------|
+| `isolated` | Symlinked structure with isolated dependencies | pnpm |
+| `hoisted` | Flat node_modules structure | pnpm |
+| `pnpm` | Symlinked structure (same as `isolated`) | yarn |
+| `node-modules` | Flat node_modules structure (same as `hoisted`) | yarn |
 
 ```ini .npmrc icon="npm"
-# pnpm-style options
+# symlinked/isolated mode
 node-linker=isolated
-node-linker=hoisted
-
-# yarn-style options
 node-linker=pnpm
+
+# flat/hoisted mode
+node-linker=hoisted
 node-linker=node-modules
 ```
 

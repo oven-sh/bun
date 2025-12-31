@@ -2542,67 +2542,119 @@ pub fn printStackTrace(comptime Writer: type, writer: Writer, trace: ZigStackTra
             if (file.len == 0 and func.len == 0) continue;
 
             const has_name = std.fmt.count("{f}", .{frame.nameFormatter(false)}) > 0;
+            // De-emphasize frames from node_modules
+            const is_library_frame = std.mem.indexOf(u8, file, "node_modules") != null;
 
             if (has_name and !frame.position.isInvalid()) {
-                try writer.print(
-                    comptime Output.prettyFmt(
-                        "<r>      <d>at <r>{f}<d> (<r>{f}<d>)<r>\n",
-                        allow_ansi_colors,
-                    ),
-                    .{
-                        frame.nameFormatter(
+                if (is_library_frame) {
+                    // Library frame: entire line is dim
+                    try writer.print(
+                        comptime Output.prettyFmt(
+                            "<r>      <d>at {f} ({f})<r>\n",
                             allow_ansi_colors,
                         ),
-                        frame.sourceURLFormatter(
-                            dir,
-                            origin,
-                            false,
+                        .{
+                            frame.nameFormatter(false),
+                            frame.sourceURLFormatter(dir, origin, false, false),
+                        },
+                    );
+                } else {
+                    try writer.print(
+                        comptime Output.prettyFmt(
+                            "<r>      <d>at <r>{f}<d> (<r>{f}<d>)<r>\n",
                             allow_ansi_colors,
                         ),
-                    },
-                );
+                        .{
+                            frame.nameFormatter(
+                                allow_ansi_colors,
+                            ),
+                            frame.sourceURLFormatter(
+                                dir,
+                                origin,
+                                false,
+                                allow_ansi_colors,
+                            ),
+                        },
+                    );
+                }
             } else if (!frame.position.isInvalid()) {
-                try writer.print(
-                    comptime Output.prettyFmt(
-                        "<r>      <d>at <r>{f}\n",
-                        allow_ansi_colors,
-                    ),
-                    .{
-                        frame.sourceURLFormatter(
-                            dir,
-                            origin,
-                            false,
+                if (is_library_frame) {
+                    try writer.print(
+                        comptime Output.prettyFmt(
+                            "<r>      <d>at {f}<r>\n",
                             allow_ansi_colors,
                         ),
-                    },
-                );
+                        .{
+                            frame.sourceURLFormatter(dir, origin, false, false),
+                        },
+                    );
+                } else {
+                    try writer.print(
+                        comptime Output.prettyFmt(
+                            "<r>      <d>at <r>{f}\n",
+                            allow_ansi_colors,
+                        ),
+                        .{
+                            frame.sourceURLFormatter(
+                                dir,
+                                origin,
+                                false,
+                                allow_ansi_colors,
+                            ),
+                        },
+                    );
+                }
             } else if (has_name) {
-                try writer.print(
-                    comptime Output.prettyFmt(
-                        "<r>      <d>at <r>{f}<d>\n",
-                        allow_ansi_colors,
-                    ),
-                    .{
-                        frame.nameFormatter(
+                if (is_library_frame) {
+                    try writer.print(
+                        comptime Output.prettyFmt(
+                            "<r>      <d>at {f}<r>\n",
                             allow_ansi_colors,
                         ),
-                    },
-                );
+                        .{
+                            frame.nameFormatter(false),
+                        },
+                    );
+                } else {
+                    try writer.print(
+                        comptime Output.prettyFmt(
+                            "<r>      <d>at <r>{f}<d>\n",
+                            allow_ansi_colors,
+                        ),
+                        .{
+                            frame.nameFormatter(
+                                allow_ansi_colors,
+                            ),
+                        },
+                    );
+                }
             } else {
-                try writer.print(
-                    comptime Output.prettyFmt(
-                        "<r>      <d>at <r>{f}<d>\n",
-                        allow_ansi_colors,
-                    ),
-                    .{
-                        frame.sourceURLFormatter(
-                            dir,
-                            origin,
-                            false,
+                if (is_library_frame) {
+                    try writer.print(
+                        comptime Output.prettyFmt(
+                            "<r>      <d>at {f}<r>\n",
                             allow_ansi_colors,
                         ),
-                    },
-                );
+                        .{
+                            frame.sourceURLFormatter(dir, origin, false, false),
+                        },
+                    );
+                } else {
+                    try writer.print(
+                        comptime Output.prettyFmt(
+                            "<r>      <d>at <r>{f}<d>\n",
+                            allow_ansi_colors,
+                        ),
+                        .{
+                            frame.sourceURLFormatter(
+                                dir,
+                                origin,
+                                false,
+                                allow_ansi_colors,
+                            ),
+                        },
+                    );
+                }
             }
         }
     }

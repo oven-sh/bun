@@ -240,6 +240,18 @@ header {
   font-style: italic;
 }
 
+/* De-emphasize library frames (node_modules) */
+.library-frame {
+  opacity: 0.5;
+}
+.library-frame .function-name {
+  color: var(--modal-text-faded);
+}
+.library-frame .file-name {
+  color: var(--modal-text-faded);
+  font-weight: normal;
+}
+
 /* Code View + Message Highlighting (Underline) */
 .code {
   display: flex;

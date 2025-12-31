@@ -587,9 +587,16 @@ function renderBundlerMessage(msg: BundlerMessage) {
   );
 }
 
+function isNodeModulesFrame(file: string | undefined): boolean {
+  if (!file) return false;
+  return file.includes("node_modules");
+}
+
 function renderTraceFrame(frame: Frame, className: string) {
   const hasFn = !!frame.fn;
-  return elem("div", { class: className }, [
+  const isLibrary = isNodeModulesFrame(frame.file);
+  const frameClass = isLibrary ? className + " library-frame" : className;
+  return elem("div", { class: frameClass }, [
     elemText("span", { class: "muted" }, "at "),
     ...(hasFn
       ? [

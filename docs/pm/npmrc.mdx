@@ -151,10 +151,12 @@ cache=false
 The equivalent `bunfig.toml` option is [`install.cache`](/runtime/bunfig#install-cache):
 
 ```toml bunfig.toml icon="settings"
-[install]
-cache = "/path/to/cache"
-# or
-cache = false
+[install.cache]
+# set a custom cache directory
+dir = "/path/to/cache"
+
+# or disable caching
+disable = true
 ```
 
 ### `ca` and `cafile`: Configure CA certificates

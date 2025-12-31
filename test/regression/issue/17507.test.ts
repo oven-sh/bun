@@ -100,9 +100,12 @@ userCode();
     // Library frame should NOT have a reset after "at " - it stays dim
     // The entire line after "at " should be in dim mode
     const libraryFrameStaysDim = !nodeModulesLine!.includes("at \x1b[0m");
+    // Also verify library frame actually has dim mode enabled
+    const libraryFrameHasDim = nodeModulesLine!.includes("\x1b[2m");
 
     expect(userFrameHasHighlight).toBe(true);
     expect(libraryFrameStaysDim).toBe(true);
+    expect(libraryFrameHasDim).toBe(true);
   });
 
   test("web overlay CSS includes library-frame class with opacity", async () => {

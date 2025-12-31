@@ -72,6 +72,7 @@ The following options are supported:
 - `username`
 - `_password` (base64 encoded password)
 - `_auth` (base64 encoded username:password, e.g. `btoa(username + ":" + password)`)
+- `email`
 
 The equivalent `bunfig.toml` option is to add a key in [`install.scopes`](/runtime/bunfig#install-registry):
 
@@ -108,4 +109,129 @@ The equivalent `bunfig.toml` option is [`install.exact`](/runtime/bunfig#install
 ```toml bunfig.toml icon="settings"
 [install]
 exact = true
+```
+
+### `ignore-scripts`: Skip lifecycle scripts
+
+Prevents running lifecycle scripts during installation:
+
+```ini .npmrc icon="npm"
+ignore-scripts=true
+```
+
+The equivalent `bunfig.toml` option is [`install.lifecycle`](/runtime/bunfig#install-lifecycle):
+
+```toml bunfig.toml icon="settings"
+[install.lifecycle]
+ignore = true
+```
+
+### `dry-run`: Preview changes without installing
+
+Shows what would be installed without actually installing:
+
+```ini .npmrc icon="npm"
+dry-run=true
+```
+
+The equivalent `bunfig.toml` option is [`install.dryRun`](/runtime/bunfig#install-dryrun):
+
+```toml bunfig.toml icon="settings"
+[install]
+dryRun = true
+```
+
+### `cache`: Configure cache directory
+
+Set the cache directory path, or disable caching:
+
+```ini .npmrc icon="npm"
+# set a custom cache directory
+cache=/path/to/cache
+
+# or disable caching
+cache=false
+```
+
+The equivalent `bunfig.toml` option is [`install.cache`](/runtime/bunfig#install-cache):
+
+```toml bunfig.toml icon="settings"
+[install]
+cache = "/path/to/cache"
+# or
+cache = false
+```
+
+### `ca` and `cafile`: Configure CA certificates
+
+Configure custom CA certificates for registry connections:
+
+```ini .npmrc icon="npm"
+# single CA certificate
+ca="-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----"
+
+# multiple CA certificates
+ca[]="-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----"
+ca[]="-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----"
+
+# or specify a path to a CA file
+cafile=/path/to/ca-bundle.crt
+```
+
+### `omit` and `include`: Control dependency types
+
+Control which dependency types are installed:
+
+```ini .npmrc icon="npm"
+# omit dev dependencies
+omit=dev
+
+# omit multiple types
+omit[]=dev
+omit[]=optional
+
+# include specific types (overrides omit)
+include=dev
+```
+
+Valid values: `dev`, `peer`, `optional`
+
+### `install-strategy` and `node-linker`: Installation strategy
+
+Control how packages are installed in `node_modules`:
+
+```ini .npmrc icon="npm"
+# npm style (hoisted is the default)
+install-strategy=hoisted
+
+# pnpm style (symlinked)
+install-strategy=linked
+```
+
+Bun also supports the yarn/pnpm `node-linker` option:
+
+```ini .npmrc icon="npm"
+# pnpm-style options
+node-linker=isolated
+node-linker=hoisted
+
+# yarn-style options
+node-linker=pnpm
+node-linker=node-modules
+```
+
+### `public-hoist-pattern` and `hoist-pattern`: Control hoisting
+
+Control which packages are hoisted to the root `node_modules`:
+
+```ini .npmrc icon="npm"
+# packages matching this pattern will be hoisted to the root
+public-hoist-pattern=*eslint*
+
+# multiple patterns
+public-hoist-pattern[]=*eslint*
+public-hoist-pattern[]=*prettier*
+
+# control general hoisting behavior
+hoist-pattern=*
 ```

@@ -2542,8 +2542,11 @@ pub fn printStackTrace(comptime Writer: type, writer: Writer, trace: ZigStackTra
             if (file.len == 0 and func.len == 0) continue;
 
             const has_name = std.fmt.count("{f}", .{frame.nameFormatter(false)}) > 0;
-            // De-emphasize frames from node_modules
-            const is_library_frame = std.mem.indexOf(u8, file, "node_modules") != null;
+            // De-emphasize frames from node_modules (check path separator boundaries)
+            const is_library_frame = std.mem.indexOf(u8, file, "/node_modules/") != null or
+                std.mem.indexOf(u8, file, "\\node_modules\\") != null or
+                std.mem.startsWith(u8, file, "node_modules/") or
+                std.mem.startsWith(u8, file, "node_modules\\");
 
             if (has_name and !frame.position.isInvalid()) {
                 if (is_library_frame) {

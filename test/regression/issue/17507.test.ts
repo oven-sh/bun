@@ -1,29 +1,44 @@
 import { describe, test, expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "path";
 
 describe("DevServer: de-emphasize node_modules frames in stack traces", () => {
-  test("console output de-emphasizes node_modules frames", async () => {
+  test("console output dims node_modules frames differently than user frames", () => {
     // Create a test project with a node_modules dependency that throws an error
     using dir = tempDir("devserver-deemphasize", {
+      "node_modules/my-lib/package.json": JSON.stringify({
+        name: "my-lib",
+        type: "module",
+        main: "index.js",
+      }),
       "node_modules/my-lib/index.js": `
-        export function throwError() {
-          throw new Error("Error from node_modules");
-        }
+export function throwError() {
+  innerThrow();
+}
+function innerThrow() {
+  throw new Error("Error from node_modules");
+}
       `,
       "index.ts": `
-        import { throwError } from "my-lib";
-        throwError();
+import { throwError } from "my-lib";
+
+function userCode() {
+  throwError();
+}
+
+userCode();
       `,
       "package.json": JSON.stringify({
         name: "test-app",
+        type: "module",
         dependencies: {
           "my-lib": "*",
         },
       }),
     });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "run", "index.ts"],
+    const { stdout, stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), join(dir, "index.ts")],
       env: {
         ...bunEnv,
         FORCE_COLOR: "1", // Enable ANSI colors
@@ -33,66 +48,78 @@ describe("DevServer: de-emphasize node_modules frames in stack traces", () => {
       stdout: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
+    const stderrStr = stderr.toString();
 
     // The process should fail with an error
     expect(exitCode).not.toBe(0);
 
-    // Check that the error message contains the node_modules path
-    expect(stderr).toContain("node_modules");
-    expect(stderr).toContain("Error from node_modules");
+    // Check that we have both user code and node_modules frames in the stack trace
+    expect(stderrStr).toContain("userCode");
+    expect(stderrStr).toContain("node_modules");
 
-    // The node_modules frame should be dimmed (ANSI escape code \x1b[2m is dim)
-    // When colors are enabled, node_modules frames should use dim styling
-    // The format for library frames is: "<r>      <d>at {f} ({f})<r>\n"
-    // which means the entire line after "at " is dim
+    // Split into lines to analyze ANSI formatting per frame
+    const lines = stderrStr.split("\n");
 
-    // Regular frames have the pattern: "at <r>functionName<d> (<r>file<d>)"
-    // Library frames have: "at functionName (file)" all in dim
+    // Find stack trace lines (start with "at ")
+    // Use regex to strip ANSI codes for matching, but keep original for assertion
+    const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
 
-    // Check that we have a stack trace
-    expect(stderr).toContain("at ");
+    // Find user code frame (contains "userCode" and starts with whitespace + "at ")
+    const userCodeLine = lines.find(
+      (l) => stripAnsi(l).trim().startsWith("at ") && l.includes("userCode")
+    );
+    // Find node_modules frame (contains "/node_modules/" path in stack trace)
+    const nodeModulesLine = lines.find(
+      (l) =>
+        stripAnsi(l).trim().startsWith("at ") &&
+        l.includes("/node_modules/")
+    );
+
+    expect(userCodeLine).toBeDefined();
+    expect(nodeModulesLine).toBeDefined();
+
+    // ANSI escape codes:
+    // \x1b[0m = reset
+    // \x1b[2m = dim
+    //
+    // User code frames should have reset after "at " to highlight function name:
+    //   "at \x1b[0m<functionName>\x1b[2m"
+    //
+    // Library frames should stay dim after "at " (no reset):
+    //   "at <functionName> (<file>)" all in dim mode
+
+    // User frame pattern: "at " followed by reset (\x1b[0m) before function name
+    // This indicates the function name is highlighted (not dim)
+    const userFrameHasHighlight = userCodeLine!.includes("at \x1b[0m");
+
+    // Library frame should NOT have a reset after "at " - it stays dim
+    // The entire line after "at " should be in dim mode
+    const libraryFrameStaysDim = !nodeModulesLine!.includes("at \x1b[0m");
+
+    expect(userFrameHasHighlight).toBe(true);
+    expect(libraryFrameStaysDim).toBe(true);
   });
 
-  test("web overlay CSS includes library-frame class", async () => {
-    // Read the overlay.css file and verify the library-frame styles exist
+  test("web overlay CSS includes library-frame class with opacity", async () => {
     const cssFile = Bun.file(
-      new URL(
-        "../../../src/bake/client/overlay.css",
-        import.meta.url,
-      ).pathname,
+      new URL("../../../src/bake/client/overlay.css", import.meta.url).pathname
     );
     const css = await cssFile.text();
 
-    // Check for library-frame class
+    // Check for library-frame class with opacity (not color override)
     expect(css).toContain(".library-frame");
     expect(css).toContain("opacity: 0.5");
-
-    // Check for de-emphasized function and file name colors
-    expect(css).toContain(".library-frame .function-name");
-    expect(css).toContain(".library-frame .file-name");
-    expect(css).toContain("--modal-text-faded");
   });
 
-  test("overlay.ts includes node_modules detection logic", async () => {
-    // Read the overlay.ts file and verify the node_modules detection exists
+  test("overlay.ts uses path separator boundaries for node_modules detection", async () => {
     const tsFile = Bun.file(
-      new URL(
-        "../../../src/bake/client/overlay.ts",
-        import.meta.url,
-      ).pathname,
+      new URL("../../../src/bake/client/overlay.ts", import.meta.url).pathname
     );
     const ts = await tsFile.text();
 
-    // Check for node_modules detection function
-    expect(ts).toContain("isNodeModulesFrame");
-    expect(ts).toContain("node_modules");
-
-    // Check for library-frame class application
-    expect(ts).toContain("library-frame");
+    // Check for proper path boundary detection (not just substring match)
+    expect(ts).toContain("/node_modules/");
+    expect(ts).toContain("\\\\node_modules\\\\");
+    expect(ts).toContain('startsWith("node_modules/")');
   });
 });

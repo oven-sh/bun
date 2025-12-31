@@ -29,7 +29,7 @@ Thread-safe queue for tasks enqueued from worker threads or async operations. Th
 
 For operations that should be batched and deferred until after microtasks drain (e.g., buffered HTTP response writes, file sink flushes). This avoids excessive system calls while maintaining responsiveness.
 
-### 5. Process.nextTick Queue (`src/buntime/bindings/JSNextTickQueue.cpp`)
+### 5. Process.nextTick Queue (`src/buntime/node/process/JSNextTickQueue.cpp`)
 
 Node.js-compatible implementation of `process.nextTick()`, which runs before microtasks but after each task.
 

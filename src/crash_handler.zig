@@ -2288,7 +2288,7 @@ comptime {
     }
 }
 
-const CPUFeatures = @import("./buntime/core/CPUFeatures.zig");
+const CPUFeatures = @import("./buntime/jsc/interop/CPUFeatures.zig");
 const builtin = @import("builtin");
 const std = @import("std");
 const windows = std.os.windows;

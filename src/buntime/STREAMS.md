@@ -40,7 +40,7 @@ Identifying the _source_ of a `ReadableStream` at the native level unlocks many 
 - **Identification:** A C++ binding, `ReadableStreamTag__tagged` (from `ReadableStream.zig`), is the primary entry point for this identification. When native code needs to consume a stream (e.g., when sending a `Response` body), it calls this function on the JS `ReadableStream` object to determine its origin.
 
 ```zig
-// src/buntime/webcore/ReadableStream.zig
+// src/buntime/web/streams/ReadableStream.zig
 pub const Tag = enum(i32) {
     JavaScript = 0, // A generic, user-defined stream. This is the "slow path".
     Blob = 1,       // An in-memory blob. Fast path available.

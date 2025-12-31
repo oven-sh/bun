@@ -20,7 +20,7 @@ For detailed background, see the blog series:
 ## Directory Structure
 
 ```
-src/buntime/bindings/v8/
+src/buntime/compat/v8/
 ├── v8.h                    # Main header with V8_UNIMPLEMENTED macro
 ├── v8_*.h                  # V8 compatibility headers
 ├── V8*.h                   # V8 class headers (Number, String, Object, etc.)
@@ -126,14 +126,14 @@ For **GCC/Clang** (Unix):
 bun bd --help  # This compiles your code
 
 # Extract symbols
-nm build/CMakeFiles/bun-debug.dir/src/buntime/bindings/v8/V8NewClass.cpp.o | grep "T _ZN2v8"
+nm build/CMakeFiles/bun-debug.dir/src/buntime/compat/v8/V8NewClass.cpp.o | grep "T _ZN2v8"
 ```
 
 For **MSVC** (Windows):
 
 ```powershell
 # Use the provided PowerShell script in the comments:
-dumpbin .\build\CMakeFiles\bun-debug.dir\src\bun.js\bindings\v8\V8NewClass.cpp.obj /symbols | where-object { $_.Contains(' v8::') } | foreach-object { (($_ -split "\|")[1] -split " ")[1] } | ForEach-Object { "extern fn @`"${_}`"() *anyopaque;" }
+dumpbin .\build\CMakeFiles\bun-debug.dir\src\buntime\compat\v8\V8NewClass.cpp.obj /symbols | where-object { $_.Contains(' v8::') } | foreach-object { (($_ -split "\|")[1] -split " ")[1] } | ForEach-Object { "extern fn @`"${_}`"() *anyopaque;" }
 ```
 
 #### b. Add to Symbol Files

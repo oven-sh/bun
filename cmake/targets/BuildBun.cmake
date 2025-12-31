@@ -225,11 +225,8 @@ set(BUN_ERROR_CODE_SCRIPT ${CWD}/src/codegen/generate-node-errors.ts)
 
 set(BUN_ERROR_CODE_SOURCES
   ${BUN_ERROR_CODE_SCRIPT}
-  ${CWD}/src/buntime/api/error
   ${CWD}/src/buntime/api/error/ErrorCode.ts
-  ${CWD}/src/buntime/api/error
   ${CWD}/src/buntime/api/error/ErrorCode.cpp
-  ${CWD}/src/buntime/api/error
   ${CWD}/src/buntime/api/error/ErrorCode.h
 )
 
@@ -594,13 +591,11 @@ foreach(i RANGE 0 ${BUN_OBJECT_LUT_SOURCES_MAX_INDEX})
 endforeach()
 
 WEBKIT_ADD_SOURCE_DEPENDENCIES(
-  ${CWD}/src/buntime/api/error
   ${CWD}/src/buntime/api/error/ErrorCode.cpp
   ${CODEGEN_PATH}/ErrorCode+List.h
 )
 
 WEBKIT_ADD_SOURCE_DEPENDENCIES(
-  ${CWD}/src/buntime/api/error
   ${CWD}/src/buntime/api/error/ErrorCode.h
   ${CODEGEN_PATH}/ErrorCode+Data.h
 )

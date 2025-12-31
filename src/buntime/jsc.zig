@@ -84,7 +84,7 @@ pub const SourceProvider = @import("./jsc/types/SourceProvider.zig").SourceProvi
 pub const CatchScope = @import("./jsc/types/CatchScope.zig").CatchScope;
 pub const ExceptionValidationScope = @import("./jsc/types/CatchScope.zig").ExceptionValidationScope;
 pub const MarkedArgumentBuffer = @import("./jsc/types/MarkedArgumentBuffer.zig").MarkedArgumentBuffer;
-pub const RegularExpression = @import("./core/RegularExpression.zig").RegularExpression;
+pub const RegularExpression = @import("./jsc/types/RegularExpression.zig").RegularExpression;
 
 // JavaScript-related
 pub const Errorable = @import("./api/error/Errorable.zig").Errorable;

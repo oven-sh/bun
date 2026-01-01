@@ -179,3 +179,18 @@ it("console.log with SharedArrayBuffer", () => {
     "
   `);
 });
+
+it("console.trace() outputs to stderr", () => {
+  // https://github.com/oven-sh/bun/issues/19952
+  const proc = Bun.spawnSync({
+    cmd: [bunExe(), join(import.meta.dir, "console-trace.fixture.js")],
+    env: bunEnv,
+    stdio: ["inherit", "pipe", "pipe"],
+  });
+  expect(proc.exitCode).toBe(0);
+  // stdout should be empty since trace goes to stderr
+  expect(proc.stdout.toString("utf8")).toBeEmpty();
+  // stderr should contain the trace output
+  const stderr = proc.stderr.toString("utf8");
+  expect(stderr).toContain("Trace: hello");
+});

@@ -11,9 +11,30 @@ extern "C" void Bun__ensureSignalHandler();
 namespace Bun {
 
 #if OS(WINDOWS)
+// Defined in c-bindings.cpp - non-zero when we're waiting for a sync child process
+extern "C" int64_t Bun__currentSyncPID;
+// Defined in c-bindings.cpp - for async subprocess Ctrl+C handling
+extern "C" int64_t Bun__getActiveSubprocessCount();
+extern "C" void Bun__setPendingCtrlC();
+
 static BOOL WindowsCtrlHandler(DWORD signal)
 {
     if (signal == CTRL_C_EVENT) {
+        // If we're waiting for a sync child process, don't terminate the parent.
+        // The child will receive CTRL_C_EVENT directly from Windows and handle it.
+        // This matches POSIX behavior where the parent forwards the signal to the child
+        // and waits for the child to exit.
+        if (Bun__currentSyncPID != 0) {
+            return true; // Absorb the event, don't terminate parent
+        }
+        
+        // If we have active async subprocesses, let them handle Ctrl+C.
+        // Mark pending so parent can exit after child exits.
+        if (Bun__getActiveSubprocessCount() > 0) {
+            Bun__setPendingCtrlC();
+            return true; // Absorb the event, don't terminate parent
+        }
+        
         SigintWatcher::get().signalReceived();
         return true;
     }

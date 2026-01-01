@@ -867,6 +867,11 @@ pub const ShellSubprocess = struct {
         };
         subprocess.process.setExitHandler(subprocess);
 
+        // Track active subprocess for Windows Ctrl+C handling
+        if (Environment.isWindows) {
+            Bun__incrementActiveSubprocess();
+        }
+
         if (subprocess.stdin == .pipe) {
             subprocess.stdin.pipe.signal = bun.webcore.streams.Signal.init(&subprocess.stdin);
         }
@@ -920,6 +925,7 @@ pub const ShellSubprocess = struct {
 
     pub fn onProcessExit(this: *@This(), _: *Process, status: bun.spawn.Status, _: *const bun.spawn.Rusage) void {
         log("onProcessExit({x}, {f})", .{ @intFromPtr(this), status });
+
         const exit_code: ?u8 = brk: {
             if (status == .exited) {
                 break :brk status.exited.code;
@@ -937,6 +943,18 @@ pub const ShellSubprocess = struct {
 
             break :brk null;
         };
+
+        // On Windows, handle Ctrl+C that was absorbed while subprocess was running.
+        // If we absorbed a Ctrl+C to let the child handle it, exit the parent now
+        // that the child has exited.
+        if (Environment.isWindows) {
+            Bun__decrementActiveSubprocess();
+            if (Bun__hasPendingCtrlC()) {
+                Bun__clearPendingCtrlC();
+                // Exit with child's exit code (which reflects the signal)
+                bun.Global.exit(exit_code orelse 1);
+            }
+        }
 
         if (exit_code) |code| {
             const cmd = this.cmd_parent;
@@ -1418,3 +1436,9 @@ const FileSink = jsc.WebCore.FileSink;
 
 const sh = bun.shell;
 const Yield = bun.shell.Yield;
+
+// Windows subprocess tracking for Ctrl+C handling
+extern "c" fn Bun__incrementActiveSubprocess() void;
+extern "c" fn Bun__decrementActiveSubprocess() void;
+extern "c" fn Bun__hasPendingCtrlC() bool;
+extern "c" fn Bun__clearPendingCtrlC() void;

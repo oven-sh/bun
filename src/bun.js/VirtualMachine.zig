@@ -265,10 +265,8 @@ pub fn getTLSRejectUnauthorized(this: *const VirtualMachine) bool {
 
 pub fn onSubprocessSpawn(this: *VirtualMachine, process: *bun.spawn.Process) void {
     this.auto_killer.onSubprocessSpawn(process);
-    // Track active subprocess for Windows Ctrl+C handling
-    if (Environment.isWindows) {
-        Bun__incrementActiveSubprocess();
-    }
+    // Note: Subprocess counter increment is done BEFORE spawn in js_bun_spawn_bindings.zig
+    // to avoid race condition with Ctrl+C handling
 }
 
 pub fn onSubprocessExit(this: *VirtualMachine, process: *bun.spawn.Process) void {

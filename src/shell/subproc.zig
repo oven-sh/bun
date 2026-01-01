@@ -826,14 +826,27 @@ pub const ShellSubprocess = struct {
             return .{ .err = .{ .custom = bun.handleOom(bun.default_allocator.dupe(u8, "out of memory")) } };
         };
 
+        // Track active subprocess BEFORE spawning to avoid race condition with Ctrl+C
+        if (Environment.isWindows) {
+            Bun__incrementActiveSubprocess();
+        }
+
         var spawn_result = switch (bun.spawn.spawnProcess(
             &spawn_options,
             @ptrCast(spawn_args.cmd_parent.args.items.ptr),
             @ptrCast(spawn_args.env_array.items.ptr),
         ) catch |err| {
+            if (Environment.isWindows) {
+                Bun__decrementActiveSubprocess();
+            }
             return .{ .err = .{ .custom = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "Failed to spawn process: {s}", .{@errorName(err)})) } };
         }) {
-            .err => |err| return .{ .err = .{ .sys = err.toShellSystemError() } },
+            .err => |err| {
+                if (Environment.isWindows) {
+                    Bun__decrementActiveSubprocess();
+                }
+                return .{ .err = .{ .sys = err.toShellSystemError() } };
+            },
             .result => |result| result,
         };
 
@@ -866,11 +879,6 @@ pub const ShellSubprocess = struct {
             .cmd_parent = spawn_args.cmd_parent,
         };
         subprocess.process.setExitHandler(subprocess);
-
-        // Track active subprocess for Windows Ctrl+C handling
-        if (Environment.isWindows) {
-            Bun__incrementActiveSubprocess();
-        }
 
         if (subprocess.stdin == .pipe) {
             subprocess.stdin.pipe.signal = bun.webcore.streams.Signal.init(&subprocess.stdin);

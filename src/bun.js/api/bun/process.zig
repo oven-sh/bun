@@ -1875,6 +1875,10 @@ pub const sync = struct {
     // We need to make sure to send it after the process is spawned.
     extern "c" fn Bun__sendPendingSignalIfNecessary() void;
 
+    // Windows subprocess tracking for Ctrl+C handling
+    extern "c" fn Bun__incrementActiveSubprocess() void;
+    extern "c" fn Bun__decrementActiveSubprocess() void;
+
     const SyncWindowsPipeReader = struct {
         chunks: std.array_list.Managed([]u8) = .{ .items = &.{}, .allocator = bun.default_allocator, .capacity = 0 },
         pipe: *uv.Pipe,
@@ -1982,6 +1986,10 @@ pub const sync = struct {
             Bun__unregisterSignalsForForwarding();
         }
 
+        // Track active subprocess BEFORE spawning to avoid race condition with Ctrl+C
+        Bun__incrementActiveSubprocess();
+        defer Bun__decrementActiveSubprocess();
+
         var loop = options.windows.loop.platformEventLoop();
         var spawned = switch (try spawnProcessWindows(&options.toSpawnOptions(), argv, envp)) {
             .err => |err| return .{ .err = err },
@@ -2017,6 +2025,10 @@ pub const sync = struct {
         defer {
             Bun__unregisterSignalsForForwarding();
         }
+
+        // Track active subprocess BEFORE spawning to avoid race condition with Ctrl+C
+        Bun__incrementActiveSubprocess();
+        defer Bun__decrementActiveSubprocess();
 
         var loop: jsc.EventLoopHandle = options.windows.loop;
         var spawned = switch (try spawnProcessWindows(&options.toSpawnOptions(), argv, envp)) {

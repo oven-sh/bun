@@ -307,6 +307,11 @@ pub fn GlobWalker_(
         /// not owned by this struct
         pattern: []const u8 = "",
 
+        /// expanded patterns when braces contain path separators
+        /// e.g., "{a/b,c/d}/**" -> ["a/b/**", "c/d/**"]
+        /// null if no expansion was needed
+        expanded_patterns: ?std.ArrayListUnmanaged([]const u8) = null,
+
         /// If the pattern contains "./" or "../"
         has_relative_components: bool = false,
 
@@ -337,12 +342,10 @@ pub fn GlobWalker_(
         ///
         /// The only type of string impl we use is ZigString since
         /// all matched paths are UTF-8 (DirIterator converts them on
-        /// windows) and allocated on the arnea
+        /// windows) and allocated on the arena
         ///
-        /// Multiple patterns are not supported so right now this is
-        /// only possible when running a pattern like:
-        ///
-        /// `foo/**/*`
+        /// duplicates are automatically filtered (e.g. from brace expansion
+        /// or patterns like `foo/**/*`)
         ///
         /// Use `.keys()` to get the matched paths
         const MatchedMap = std.ArrayHashMapUnmanaged(BunString, void, struct {
@@ -1056,22 +1059,38 @@ pub fn GlobWalker_(
                 .end_byte_of_basename_excluding_special_syntax = 0,
             };
 
+            // check if pattern needs brace expansion (has braces in path segments)
+            const effective_pattern = blk: {
+                if (needsBraceExpansionForWalk(pattern)) {
+                    log("pattern needs brace expansion: {s}", .{pattern});
+                    const expanded = Braces.expandBracesAlloc(pattern, arena.allocator());
+                    if (expanded.items.len > 0) {
+                        if (expanded.items.len > 1) {
+                            this.expanded_patterns = expanded;
+                        }
+                        const first_expanded = expanded.items[0];
+                        log("first expanded pattern: {s}", .{first_expanded});
+                        // update pattern to expanded variant (iterator uses this.pattern)
+                        this.pattern = first_expanded;
+                        break :blk first_expanded;
+                    }
+                }
+                break :blk pattern;
+            };
+
             try GlobWalker.buildPatternComponents(
                 arena,
                 &this.patternComponents,
-                pattern,
+                effective_pattern,
                 &this.has_relative_components,
                 &this.end_byte_of_basename_excluding_special_syntax,
                 &this.basename_excluding_special_syntax_component_idx,
             );
 
-            // copy arena after all allocations are successful
             this.arena = arena.*;
-
             if (bun.Environment.allow_assert) {
                 this.debugPatternComopnents();
             }
-
             return .success;
         }
 
@@ -1093,6 +1112,54 @@ pub fn GlobWalker_(
         }
 
         pub fn walk(this: *GlobWalker) !Maybe(void) {
+            if (this.patternComponents.items.len == 0) return .success;
+
+            // walk the first pattern (set up in init)
+            switch (try this.walkSinglePattern()) {
+                .err => |err| return .{ .err = err },
+                .result => {},
+            }
+
+            // if we have expanded patterns, walk the remaining ones
+            const expanded = this.expanded_patterns orelse return .success;
+            if (expanded.items.len <= 1) return .success;
+
+            for (expanded.items[1..]) |pat| {
+                log("walking expanded pattern: {s}", .{pat});
+
+                // rebuild pattern components for this pattern
+                this.pattern = pat;
+                this.patternComponents.clearRetainingCapacity();
+                this.has_relative_components = false;
+                this.end_byte_of_basename_excluding_special_syntax = 0;
+                this.basename_excluding_special_syntax_component_idx = 0;
+
+                try GlobWalker.buildPatternComponents(
+                    &this.arena,
+                    &this.patternComponents,
+                    pat,
+                    &this.has_relative_components,
+                    &this.end_byte_of_basename_excluding_special_syntax,
+                    &this.basename_excluding_special_syntax_component_idx,
+                );
+
+                if (bun.Environment.allow_assert) {
+                    this.debugPatternComopnents();
+                }
+
+                this.workbuf.clearRetainingCapacity();
+
+                switch (try this.walkSinglePattern()) {
+                    .err => |err| return .{ .err = err },
+                    .result => {},
+                }
+            }
+
+            return .success;
+        }
+
+        /// walks a single pattern (used internally by walk)
+        fn walkSinglePattern(this: *GlobWalker) !Maybe(void) {
             if (this.patternComponents.items.len == 0) return .success;
 
             var iter = GlobWalker.Iterator{ .walker = this };
@@ -1511,6 +1578,54 @@ pub fn GlobWalker_(
             return component;
         }
 
+        /// checks if brace alternation spans multiple path components (contains `/` inside braces).
+        /// multi-component alternation like `{a/b,c/d}` can't be resolved during traversal since
+        /// the walker needs to know which directories to descend into upfront.
+        /// single-component alternation like `{a,b}` is handled by normal pattern matching.
+        fn needsBraceExpansionForWalk(pattern: []const u8) bool {
+            var brace_depth: u32 = 0;
+            var in_brackets = false;
+            var i: usize = 0;
+
+            while (i < pattern.len) : (i += 1) {
+                const c = pattern[i];
+                switch (c) {
+                    '\\' => {
+                        if (comptime !isWindows) {
+                            // skip escaped character on non-windows
+                            i += 1;
+                        } else {
+                            // on windows, backslash is a path separator
+                            if (brace_depth > 0 and !in_brackets) return true;
+                        }
+                    },
+                    '[' => {
+                        if (!in_brackets) in_brackets = true;
+                    },
+                    ']' => {
+                        in_brackets = false;
+                    },
+                    '{' => {
+                        if (!in_brackets) {
+                            brace_depth += 1;
+                        }
+                    },
+                    '}' => {
+                        if (!in_brackets and brace_depth > 0) {
+                            brace_depth -= 1;
+                        }
+                    },
+                    '/' => {
+                        // path separator inside braces means we need expansion
+                        if (brace_depth > 0 and !in_brackets) return true;
+                    },
+                    else => {},
+                }
+            }
+            // only expand if we saw a path separator inside braces
+            return false;
+        }
+
         /// Build an ad-hoc glob pattern. Useful when you don't need to traverse
         /// a directory.
         pub fn buildPattern(
@@ -1685,6 +1800,7 @@ pub fn matchWildcardLiteral(literal: []const u8, path: []const u8) bool {
 
 const DirIterator = @import("../bun.js/node/dir_iterator.zig");
 const ResolvePath = @import("../resolver/resolve_path.zig");
+const Braces = @import("../shell/braces.zig");
 
 const bun = @import("bun");
 const BunString = bun.String;

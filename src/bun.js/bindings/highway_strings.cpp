@@ -81,10 +81,12 @@ size_t IndexOfAnyCharImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, con
     } else {
         ASSERT(chars_len <= 16);
         constexpr size_t kMaxPreloadedChars = 16;
-        hn::Vec<D8> char_vecs[kMaxPreloadedChars];
+        // Use aligned storage instead of C array to support SVE's sizeless vectors
+        alignas(HWY_ALIGNMENT) uint8_t char_vecs_storage[kMaxPreloadedChars * HWY_MAX_BYTES];
+        auto* char_vecs = reinterpret_cast<hn::Vec<D8>*>(char_vecs_storage);
         const size_t num_chars_to_preload = std::min(chars_len, kMaxPreloadedChars);
         for (size_t c = 0; c < num_chars_to_preload; ++c) {
-            char_vecs[c] = hn::Set(d, chars[c]);
+            hn::Store(hn::Set(d, chars[c]), d, reinterpret_cast<uint8_t*>(char_vecs) + c * hn::Lanes(d));
         }
 
         const size_t simd_text_len = text_len - (text_len % N);
@@ -95,7 +97,8 @@ size_t IndexOfAnyCharImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, con
             auto found_mask = hn::MaskFalse(d);
 
             for (size_t c = 0; c < num_chars_to_preload; ++c) {
-                found_mask = hn::Or(found_mask, hn::Eq(text_vec, char_vecs[c]));
+                const auto char_vec = hn::Load(d, reinterpret_cast<uint8_t*>(char_vecs) + c * hn::Lanes(d));
+                found_mask = hn::Or(found_mask, hn::Eq(text_vec, char_vec));
             }
             if (chars_len > num_chars_to_preload) {
                 for (size_t c = num_chars_to_preload; c < chars_len; ++c) {

@@ -387,7 +387,7 @@ function Install-PdbAddr2line {
 function Install-Llvm {
   Install-Package llvm `
     -Command clang-cl `
-    -Version "19.1.7"
+    -Version "20.1.8"
   Add-To-Path "$env:ProgramFiles\LLVM\bin"
 }
 

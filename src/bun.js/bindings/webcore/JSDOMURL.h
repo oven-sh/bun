@@ -31,7 +31,7 @@ public:
     using Base = JSDOMWrapper<DOMURL>;
     static JSDOMURL* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<DOMURL>&& impl)
     {
-        JSDOMURL* ptr = new (NotNull, JSC::allocateCell<JSDOMURL>(globalObject->vm())) JSDOMURL(structure, *globalObject, WTFMove(impl));
+        JSDOMURL* ptr = new (NotNull, JSC::allocateCell<JSDOMURL>(globalObject->vm())) JSDOMURL(structure, *globalObject, WTF::move(impl));
         ptr->finishCreation(globalObject->vm());
         return ptr;
     }

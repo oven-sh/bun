@@ -166,11 +166,11 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSEventDOMConstructor::c
     RETURN_IF_EXCEPTION(throwScope, {});
     auto eventInitDict = convert<IDLDictionary<EventInit>>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    auto object = Event::create(WTFMove(type), WTFMove(eventInitDict));
+    auto object = Event::create(WTF::move(type), WTF::move(eventInitDict));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
-    auto jsValue = toJSNewlyCreated<IDLInterface<Event>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTFMove(object));
+    auto jsValue = toJSNewlyCreated<IDLInterface<Event>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTF::move(object));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     setSubclassStructureIfNeeded<Event>(lexicalGlobalObject, callFrame, asObject(jsValue));
@@ -247,7 +247,7 @@ const ClassInfo JSEvent::s_info = { "Event"_s, &Base::s_info, &JSEventTable
     CREATE_METHOD_TABLE(JSEvent) };
 
 JSEvent::JSEvent(Structure* structure, JSDOMGlobalObject& globalObject, Ref<Event>&& impl)
-    : JSDOMWrapper<Event>(structure, globalObject, WTFMove(impl))
+    : JSDOMWrapper<Event>(structure, globalObject, WTF::move(impl))
 {
 }
 
@@ -365,7 +365,7 @@ static inline bool setJSEvent_cancelBubbleSetter(JSGlobalObject& lexicalGlobalOb
     auto nativeValue = convert<IDLBoolean>(lexicalGlobalObject, value);
     RETURN_IF_EXCEPTION(throwScope, false);
     invokeFunctorPropagatingExceptionIfNecessary(lexicalGlobalObject, throwScope, [&] {
-        return impl.setCancelBubble(WTFMove(nativeValue));
+        return impl.setCancelBubble(WTF::move(nativeValue));
     });
     return true;
 }
@@ -490,7 +490,7 @@ static inline bool setJSEvent_returnValueSetter(JSGlobalObject& lexicalGlobalObj
     auto nativeValue = convert<IDLBoolean>(lexicalGlobalObject, value);
     RETURN_IF_EXCEPTION(throwScope, false);
     invokeFunctorPropagatingExceptionIfNecessary(lexicalGlobalObject, throwScope, [&] {
-        return impl.setLegacyReturnValue(WTFMove(nativeValue));
+        return impl.setLegacyReturnValue(WTF::move(nativeValue));
     });
     return true;
 }
@@ -578,7 +578,7 @@ static inline JSC::EncodedJSValue jsEventPrototypeFunction_initEventBody(JSC::JS
     EnsureStillAliveScope argument2 = callFrame->argument(2);
     auto cancelable = convert<IDLBoolean>(*lexicalGlobalObject, argument2.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.initEvent(WTFMove(type), WTFMove(bubbles), WTFMove(cancelable)); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.initEvent(WTF::move(type), WTF::move(bubbles), WTF::move(cancelable)); })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsEventPrototypeFunction_initEvent, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))

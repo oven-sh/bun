@@ -1904,6 +1904,7 @@ pub const BundleV2 = struct {
             transpiler.options.css_chunking = config.css_chunking;
             transpiler.options.banner = config.banner.slice();
             transpiler.options.footer = config.footer.slice();
+            transpiler.options.react_fast_refresh = config.react_fast_refresh;
 
             if (transpiler.options.compile) {
                 // Emitting DCE annotations is nonsensical in --compile.

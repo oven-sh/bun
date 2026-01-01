@@ -2547,7 +2547,7 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, re
         assignment_result.ensureStillAlive();
         // it returns a Promise when it goes through ReadableStreamDefaultReader
         if (assignment_result.asAnyPromise()) |promise| {
-            switch (promise.status(globalThis.vm())) {
+            switch (promise.status()) {
                 .pending => {
                     const wrapper = FileStreamWrapper.new(.{
                         .promise = jsc.JSPromise.Strong.init(globalThis),

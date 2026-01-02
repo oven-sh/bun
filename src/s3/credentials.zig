@@ -931,16 +931,6 @@ pub const S3CredentialsWithOptions = struct {
     }
 };
 
-const std = @import("std");
-const ACL = @import("./acl.zig").ACL;
-const MultiPartUploadOptions = @import("./multipart_options.zig").MultiPartUploadOptions;
-const StorageClass = @import("./storage_class.zig").StorageClass;
-
-const bun = @import("bun");
-const jsc = bun.jsc;
-const picohttp = bun.picohttp;
-const strings = bun.strings;
-
 /// Comptime-generated lookup table for signed headers strings.
 /// Headers must be in alphabetical order per AWS Signature V4 spec.
 const SignedHeaders = struct {
@@ -1057,3 +1047,13 @@ const CanonicalRequest = struct {
         };
     }
 };
+
+const std = @import("std");
+const ACL = @import("./acl.zig").ACL;
+const MultiPartUploadOptions = @import("./multipart_options.zig").MultiPartUploadOptions;
+const StorageClass = @import("./storage_class.zig").StorageClass;
+
+const bun = @import("bun");
+const jsc = bun.jsc;
+const picohttp = bun.picohttp;
+const strings = bun.strings;

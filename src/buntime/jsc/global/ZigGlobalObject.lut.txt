@@ -1,0 +1,95 @@
+// In a separate file because processing ZigGlobalObject.cpp takes 15+ seconds
+
+/* Source for ZigGlobalObject.lut.h
+@begin bunGlobalObjectTable
+  addEventListener                jsFunctionAddEventListener                           Function 2
+  alert                           WebCore__alert                                       Function 1
+  atob                            functionATOB                                         Function 1
+  btoa                            functionBTOA                                         Function 1
+  clearImmediate                  functionClearImmediate                               Function 1
+  clearInterval                   functionClearInterval                                Function 1
+  clearTimeout                    functionClearTimeout                                 Function 1
+  confirm                         WebCore__confirm                                     Function 1
+  dispatchEvent                   jsFunctionDispatchEvent                              Function 1
+  fetch                           constructBunFetchObject                              PropertyCallback
+  postMessage                     jsFunctionPostMessage                                Function 1
+  prompt                          WebCore__prompt                                      Function 1
+  queueMicrotask                  functionQueueMicrotask                               Function 2
+  removeEventListener             jsFunctionRemoveEventListener                        Function 2
+  reportError                     functionReportError                                  Function 1
+  setImmediate                    functionSetImmediate                                 Function 1
+  setInterval                     functionSetInterval                                  Function 1
+  setTimeout                      functionSetTimeout                                   Function 1
+  structuredClone                 WebCore::jsFunctionStructuredClone                    Function 2
+
+  global                          GlobalObject_getGlobalThis                           PropertyCallback
+
+  Bun                             GlobalObject::m_bunObject                            CellProperty|DontDelete|ReadOnly
+  File                            GlobalObject::m_JSDOMFileConstructor                 CellProperty
+  crypto                          GlobalObject::m_cryptoObject                         CellProperty
+  navigator                       GlobalObject::m_navigatorObject                      CellProperty
+  performance                     GlobalObject::m_performanceObject                    CellProperty
+  process                         GlobalObject::m_processObject                        CellProperty
+
+  Blob                            GlobalObject::m_JSBlob                               ClassStructure
+  Buffer                          GlobalObject::m_JSBufferClassStructure               ClassStructure
+  BuildError                      GlobalObject::m_JSBuildMessage                       ClassStructure
+  BuildMessage                    GlobalObject::m_JSBuildMessage                       ClassStructure
+  Crypto                          GlobalObject::m_JSCrypto                             ClassStructure
+  HTMLRewriter                    GlobalObject::m_JSHTMLRewriter                       ClassStructure
+  Request                         GlobalObject::m_JSRequest                            ClassStructure
+  ResolveError                    GlobalObject::m_JSResolveMessage                     ClassStructure
+  ResolveMessage                  GlobalObject::m_JSResolveMessage                     ClassStructure
+  Response                        GlobalObject::m_JSResponse                           ClassStructure
+  TextDecoder                     GlobalObject::m_JSTextDecoder                        ClassStructure
+
+  AbortController                 AbortControllerConstructorCallback                   PropertyCallback
+  AbortSignal                     AbortSignalConstructorCallback                       PropertyCallback
+  BroadcastChannel                BroadcastChannelConstructorCallback                  PropertyCallback
+  ByteLengthQueuingStrategy       ByteLengthQueuingStrategyConstructorCallback         PropertyCallback
+  CloseEvent                      CloseEventConstructorCallback                        PropertyCallback
+  CompressionStream               CompressionStreamConstructorCallback                 PropertyCallback
+  CountQueuingStrategy            CountQueuingStrategyConstructorCallback              PropertyCallback
+  CryptoKey                       CryptoKeyConstructorCallback                         PropertyCallback
+  CustomEvent                     CustomEventConstructorCallback                       PropertyCallback
+  DecompressionStream             DecompressionStreamConstructorCallback               PropertyCallback
+  DOMException                    DOMExceptionConstructorCallback                      PropertyCallback
+  ErrorEvent                      ErrorEventConstructorCallback                        PropertyCallback
+  Event                           EventConstructorCallback                             PropertyCallback
+  EventTarget                     EventTargetConstructorCallback                       PropertyCallback
+  FormData                        DOMFormDataConstructorCallback                       PropertyCallback
+  Headers                         FetchHeadersConstructorCallback                      PropertyCallback
+  MessageChannel                  MessageChannelConstructorCallback                    PropertyCallback
+  MessageEvent                    MessageEventConstructorCallback                      PropertyCallback
+  MessagePort                     MessagePortConstructorCallback                       PropertyCallback
+  Performance                     PerformanceConstructorCallback                       PropertyCallback
+  PerformanceEntry                PerformanceEntryConstructorCallback                  PropertyCallback
+  PerformanceMark                 PerformanceMarkConstructorCallback                   PropertyCallback
+  PerformanceMeasure              PerformanceMeasureConstructorCallback                PropertyCallback
+  PerformanceObserver             PerformanceObserverConstructorCallback               PropertyCallback
+  PerformanceObserverEntryList    PerformanceObserverEntryListConstructorCallback      PropertyCallback
+  PerformanceResourceTiming       PerformanceResourceTimingConstructorCallback         PropertyCallback
+  PerformanceServerTiming         PerformanceServerTimingConstructorCallback           PropertyCallback
+  PerformanceTiming               PerformanceTimingConstructorCallback                 PropertyCallback
+  ReadableByteStreamController    ReadableByteStreamControllerConstructorCallback      PropertyCallback
+  ReadableStream                  ReadableStreamConstructorCallback                    PropertyCallback
+  ReadableStreamBYOBReader        ReadableStreamBYOBReaderConstructorCallback          PropertyCallback
+  ReadableStreamBYOBRequest       ReadableStreamBYOBRequestConstructorCallback         PropertyCallback
+  ReadableStreamDefaultController ReadableStreamDefaultControllerConstructorCallback   PropertyCallback
+  ReadableStreamDefaultReader     ReadableStreamDefaultReaderConstructorCallback       PropertyCallback
+  SubtleCrypto                    SubtleCryptoConstructorCallback                      PropertyCallback
+  TextDecoderStream               TextDecoderStreamConstructorCallback                 PropertyCallback
+  TextEncoder                     TextEncoderConstructorCallback                       PropertyCallback
+  TextEncoderStream               TextEncoderStreamConstructorCallback                 PropertyCallback
+  TransformStream                 TransformStreamConstructorCallback                   PropertyCallback
+  TransformStreamDefaultController TransformStreamDefaultControllerConstructorCallback PropertyCallback
+  URL                             DOMURLConstructorCallback                            DontEnum|PropertyCallback
+  URLPattern                      URLPatternConstructorCallback                        PropertyCallback
+  URLSearchParams                 URLSearchParamsConstructorCallback                   DontEnum|PropertyCallback
+  WebSocket                       WebSocketConstructorCallback                         PropertyCallback
+  Worker                          WorkerConstructorCallback                            PropertyCallback
+  WritableStream                  WritableStreamConstructorCallback                    PropertyCallback
+  WritableStreamDefaultController WritableStreamDefaultControllerConstructorCallback   PropertyCallback
+  WritableStreamDefaultWriter     WritableStreamDefaultWriterConstructorCallback       PropertyCallback
+@end
+*/

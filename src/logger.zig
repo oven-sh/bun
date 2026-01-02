@@ -1368,7 +1368,7 @@ pub const Source = struct {
     }
 
     pub fn rangeOfIdentifier(this: *const Source, loc: Loc) Range {
-        const js_lexer = @import("./js_lexer.zig");
+        const js_lexer = @import("./transpiler/js_lexer.zig");
         return js_lexer.rangeOfIdentifier(this, loc);
     }
 

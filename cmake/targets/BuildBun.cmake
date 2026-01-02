@@ -225,9 +225,9 @@ set(BUN_ERROR_CODE_SCRIPT ${CWD}/src/codegen/generate-node-errors.ts)
 
 set(BUN_ERROR_CODE_SOURCES
   ${BUN_ERROR_CODE_SCRIPT}
-  ${CWD}/src/bun.js/bindings/ErrorCode.ts
-  ${CWD}/src/bun.js/bindings/ErrorCode.cpp
-  ${CWD}/src/bun.js/bindings/ErrorCode.h
+  ${CWD}/src/buntime/api/error/ErrorCode.ts
+  ${CWD}/src/buntime/api/error/ErrorCode.cpp
+  ${CWD}/src/buntime/api/error/ErrorCode.h
 )
 
 set(BUN_ERROR_CODE_OUTPUTS
@@ -295,7 +295,7 @@ absolute_sources(BUN_JAVASCRIPT_SOURCES ${CWD}/cmake/sources/JavaScriptSources.t
 absolute_sources(BUN_JAVASCRIPT_CODEGEN_SOURCES ${CWD}/cmake/sources/JavaScriptCodegenSources.txt)
 
 list(APPEND BUN_JAVASCRIPT_CODEGEN_SOURCES
-  ${CWD}/src/bun.js/bindings/InternalModuleRegistry.cpp
+  ${CWD}/src/buntime/module/InternalModuleRegistry.cpp
 )
 
 set(BUN_JAVASCRIPT_OUTPUTS
@@ -310,7 +310,7 @@ set(BUN_JAVASCRIPT_OUTPUTS
   ${CODEGEN_PATH}/SyntheticModuleType.h
   ${CODEGEN_PATH}/GeneratedJS2Native.h
   # Zig will complain if files are outside of the source directory
-  ${CWD}/src/bun.js/bindings/GeneratedJS2Native.zig
+  ${CWD}/src/buntime/jsc/generated/GeneratedJS2Native.zig
 )
 
 set(BUN_CPP_OUTPUTS
@@ -377,7 +377,7 @@ set(BUN_BAKE_RUNTIME_CODEGEN_SCRIPT ${CWD}/src/codegen/bake-codegen.ts)
 absolute_sources(BUN_BAKE_RUNTIME_SOURCES ${CWD}/cmake/sources/BakeRuntimeSources.txt)
 
 list(APPEND BUN_BAKE_RUNTIME_CODEGEN_SOURCES
-  ${CWD}/src/bun.js/bindings/InternalModuleRegistry.cpp
+  ${CWD}/src/buntime/module/InternalModuleRegistry.cpp
 )
 
 set(BUN_BAKE_RUNTIME_OUTPUTS
@@ -462,7 +462,7 @@ set(BUN_BINDGEN_CPP_OUTPUTS
 )
 
 set(BUN_BINDGEN_ZIG_OUTPUTS
-  ${CWD}/src/bun.js/bindings/GeneratedBindings.zig
+  ${CWD}/src/buntime/jsc/generated/GeneratedBindings.zig
 )
 
 register_command(
@@ -516,16 +516,16 @@ register_command(
 set(BUN_OBJECT_LUT_SCRIPT ${CWD}/src/codegen/create-hash-table.ts)
 
 set(BUN_OBJECT_LUT_SOURCES
-  ${CWD}/src/bun.js/bindings/BunObject.cpp
-  ${CWD}/src/bun.js/bindings/ZigGlobalObject.lut.txt
-  ${CWD}/src/bun.js/bindings/JSBuffer.cpp
-  ${CWD}/src/bun.js/bindings/BunProcess.cpp
-  ${CWD}/src/bun.js/bindings/ProcessBindingBuffer.cpp
-  ${CWD}/src/bun.js/bindings/ProcessBindingConstants.cpp
-  ${CWD}/src/bun.js/bindings/ProcessBindingFs.cpp
-  ${CWD}/src/bun.js/bindings/ProcessBindingNatives.cpp
-  ${CWD}/src/bun.js/bindings/ProcessBindingHTTPParser.cpp
-  ${CWD}/src/bun.js/modules/NodeModuleModule.cpp
+  ${CWD}/src/buntime/jsc/global/BunObject.cpp
+  ${CWD}/src/buntime/jsc/global/ZigGlobalObject.lut.txt
+  ${CWD}/src/buntime/node/buffer/JSBuffer.cpp
+  ${CWD}/src/buntime/api/process/BunProcess.cpp
+  ${CWD}/src/buntime/api/process/ProcessBindingBuffer.cpp
+  ${CWD}/src/buntime/api/process/ProcessBindingConstants.cpp
+  ${CWD}/src/buntime/api/process/ProcessBindingFs.cpp
+  ${CWD}/src/buntime/api/process/ProcessBindingNatives.cpp
+  ${CWD}/src/buntime/api/process/ProcessBindingHTTPParser.cpp
+  ${CWD}/src/buntime/modules/NodeModuleModule.cpp
   ${CODEGEN_PATH}/ZigGeneratedClasses.lut.txt
 )
 
@@ -591,24 +591,24 @@ foreach(i RANGE 0 ${BUN_OBJECT_LUT_SOURCES_MAX_INDEX})
 endforeach()
 
 WEBKIT_ADD_SOURCE_DEPENDENCIES(
-  ${CWD}/src/bun.js/bindings/ErrorCode.cpp
+  ${CWD}/src/buntime/api/error/ErrorCode.cpp
   ${CODEGEN_PATH}/ErrorCode+List.h
 )
 
 WEBKIT_ADD_SOURCE_DEPENDENCIES(
-  ${CWD}/src/bun.js/bindings/ErrorCode.h
+  ${CWD}/src/buntime/api/error/ErrorCode.h
   ${CODEGEN_PATH}/ErrorCode+Data.h
 )
 
 WEBKIT_ADD_SOURCE_DEPENDENCIES(
-  ${CWD}/src/bun.js/bindings/ZigGlobalObject.cpp
+  ${CWD}/src/buntime/jsc/global/ZigGlobalObject.cpp
   ${CODEGEN_PATH}/ZigGlobalObject.lut.h
 )
 
 
 
 WEBKIT_ADD_SOURCE_DEPENDENCIES(
-  ${CWD}/src/bun.js/bindings/InternalModuleRegistry.cpp
+  ${CWD}/src/buntime/module/InternalModuleRegistry.cpp
   ${CODEGEN_PATH}/InternalModuleRegistryConstants.h
 )
 
@@ -727,8 +727,8 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "build.zig")
 set(BUN_USOCKETS_SOURCE ${CWD}/packages/bun-usockets)
 
 if(WIN32)
-  list(APPEND BUN_CXX_SOURCES ${CWD}/src/bun.js/bindings/windows/rescle.cpp)
-  list(APPEND BUN_CXX_SOURCES ${CWD}/src/bun.js/bindings/windows/rescle-binding.cpp)
+  list(APPEND BUN_CXX_SOURCES ${CWD}/src/buntime/compat/windows/rescle.cpp)
+  list(APPEND BUN_CXX_SOURCES ${CWD}/src/buntime/compat/windows/rescle-binding.cpp)
 endif()
 
 register_repository(
@@ -843,7 +843,7 @@ if (NOT WIN32)
   # 2. In CI AND BUN_CPP_ONLY is enabled
   if(NOT CI OR (CI AND BUN_CPP_ONLY))
     target_precompile_headers(${bun} PRIVATE
-      "$<$<COMPILE_LANGUAGE:CXX>:${CWD}/src/bun.js/bindings/root.h>"
+      "$<$<COMPILE_LANGUAGE:CXX>:${CWD}/src/buntime/jsc/interop/root.h>"
     )
   endif()
 endif()
@@ -851,21 +851,72 @@ endif()
 # --- C/C++ Includes ---
 
 if(WIN32)
-  target_include_directories(${bun} PRIVATE ${CWD}/src/bun.js/bindings/windows)
+  target_include_directories(${bun} PRIVATE ${CWD}/src/buntime/compat/windows)
 endif()
 
 target_include_directories(${bun} PRIVATE
   ${CWD}/packages
   ${CWD}/packages/bun-usockets
   ${CWD}/packages/bun-usockets/src
-  ${CWD}/src/bun.js/bindings
-  ${CWD}/src/bun.js/bindings/webcore
-  ${CWD}/src/bun.js/bindings/webcrypto
-  ${CWD}/src/bun.js/bindings/node/crypto
-  ${CWD}/src/bun.js/bindings/node/http
-  ${CWD}/src/bun.js/bindings/sqlite
-  ${CWD}/src/bun.js/bindings/v8
-  ${CWD}/src/bun.js/modules
+  ${CWD}/src/buntime/jsc/interop
+  ${CWD}/src/buntime/jsc/global
+  ${CWD}/src/buntime/jsc/gc
+  ${CWD}/src/buntime/jsc/types
+  ${CWD}/src/buntime/jsc/generated
+  ${CWD}/src/bake
+  ${CWD}/src/string
+  ${CWD}/src/buntime/web
+  ${CWD}/src/buntime/web/webcrypto
+  ${CWD}/src/buntime/node
+  ${CWD}/src/buntime/node/buffer
+  ${CWD}/src/buntime/node/process
+  ${CWD}/src/buntime/node/vm
+  ${CWD}/src/buntime/node/crypto
+  ${CWD}/src/buntime/node/http
+  ${CWD}/src/buntime/node/fs
+  ${CWD}/src/buntime/node/os
+  ${CWD}/src/buntime/node/path
+  ${CWD}/src/buntime/node/util
+  ${CWD}/src/buntime/node/timers
+  ${CWD}/src/buntime/node/async_hooks
+  ${CWD}/src/buntime/node/perf_hooks
+  ${CWD}/src/buntime/node/constants
+  ${CWD}/src/buntime/api/sqlite
+  ${CWD}/src/buntime/compat/v8
+  ${CWD}/src/buntime/compat/napi
+  ${CWD}/src/buntime/compat
+  ${CWD}/src/buntime/module
+  ${CWD}/src/buntime/api/console
+  ${CWD}/src/buntime/api/inspector
+  ${CWD}/src/buntime/api/error
+  ${CWD}/src/buntime/api/cookie
+  ${CWD}/src/buntime/api/s3
+  ${CWD}/src/buntime/api/secrets
+  ${CWD}/src/buntime/api/ffi
+  ${CWD}/src/buntime/api/sql
+  ${CWD}/src/buntime/api/shell
+  ${CWD}/src/buntime/api/ipc
+  ${CWD}/src/buntime/api/test
+  ${CWD}/src/buntime/api/server
+  ${CWD}/src/buntime/api/plugin
+  ${CWD}/src/buntime/api/process
+  ${CWD}/src/buntime/core
+  ${CWD}/src/buntime/event_loop
+  ${CWD}/src/buntime/web/fetch
+  ${CWD}/src/buntime/web/url
+  ${CWD}/src/buntime/web/blob
+  ${CWD}/src/buntime/web/http
+  ${CWD}/src/buntime/web/encoding
+  ${CWD}/src/buntime/web/compression
+  ${CWD}/src/buntime/web/events
+  ${CWD}/src/buntime/web/streams
+  ${CWD}/src/buntime/web/performance
+  ${CWD}/src/buntime/web/websocket
+  ${CWD}/src/buntime/web/workers
+  ${CWD}/src/buntime/web/messaging
+  ${CWD}/src/buntime/web/mime
+  ${CWD}/src/buntime/web/serialization
+  ${CWD}/src/buntime/modules
   ${CWD}/src/js/builtins
   ${CWD}/src/napi
   ${CWD}/src/deps
@@ -878,7 +929,7 @@ target_include_directories(${bun} PRIVATE
 )
 
 if(NOT WIN32)
-  target_include_directories(${bun} PRIVATE ${CWD}/src/bun.js/bindings/libuv)
+  target_include_directories(${bun} PRIVATE ${CWD}/src/buntime/compat/libuv)
 endif()
 
 if(LINUX)

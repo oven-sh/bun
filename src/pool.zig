@@ -247,7 +247,7 @@ pub fn ObjectPool(
 
         fn destroyNode(node: *LinkedList.Node) void {
             // TODO: Once a generic-allocator version of `BabyList` is added, change
-            // `ByteListPool` in `bun.js/webcore.zig` to use a managed default-allocator
+            // `ByteListPool` in `buntime/webcore.zig` to use a managed default-allocator
             // `ByteList` instead, and then get rid of the special-casing for `ByteList`
             // here. This will fix a memory leak.
             if (comptime Type != bun.ByteList) {

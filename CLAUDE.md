@@ -102,84 +102,129 @@ test("(multi-file test) my feature", async () => {
 
 ## Code Architecture
 
+### Directory Structure Overview
+
+The codebase is organized so you can **guess where code lives**:
+
+| Task                  | Location                            |
+| --------------------- | ----------------------------------- |
+| Fix the transpiler    | `src/transpiler/`                   |
+| Fix the test runner   | `src/test_runner/`                  |
+| Fix the bundler       | `src/bundler/`                      |
+| Fix bun install       | `src/install/`                      |
+| Fix CSS parsing       | `src/css/`                          |
+| Fix the shell         | `src/shell/`                        |
+| Fix Postgres          | `src/sql/postgres/`                 |
+| Fix MySQL             | `src/sql/mysql/`                    |
+| Fix Valkey/Redis      | `src/valkey/`                       |
+| Fix S3                | `src/s3/` or `src/buntime/api/s3/`  |
+| Fix Bake              | `src/bake/`                         |
+| Fix Bun.serve()       | `src/buntime/api/server/`           |
+| Fix fetch()           | `src/buntime/web/fetch/`            |
+| Fix WebSocket         | `src/buntime/web/websocket/`        |
+| Fix node:fs           | `src/buntime/node/fs/`              |
+| Fix node:crypto       | `src/buntime/node/crypto/`          |
+| Fix crypto.subtle     | `src/buntime/web/webcrypto/`        |
+| Fix N-API             | `src/buntime/compat/napi/`          |
+| Fix V8 compat         | `src/buntime/compat/v8/`            |
+
 ### Language Structure
 
 - **Zig code** (`src/*.zig`): Core runtime, JavaScript bindings, package manager
-- **C++ code** (`src/bun.js/bindings/*.cpp`): JavaScriptCore bindings, Web APIs
-- **TypeScript** (`src/js/`): Built-in JavaScript modules with special syntax (see JavaScript Modules section)
-- **Generated code**: Many files are auto-generated from `.classes.ts` and other sources. Bun will automatically rebuild these files when you make changes to them.
+- **C++ code** (`src/buntime/**/*.cpp`): JavaScriptCore bindings, Web APIs
+- **TypeScript** (`src/js/`): Built-in JavaScript modules with special syntax
+- **Generated code**: Auto-generated from `.classes.ts` files during build
 
-### Core Source Organization
+### Top-Level Source Organization
 
-#### Runtime Core (`src/`)
-
-- `bun.zig` - Main entry point
-- `cli.zig` - CLI command orchestration
-- `js_parser.zig`, `js_lexer.zig`, `js_printer.zig` - JavaScript parsing/printing
-- `transpiler.zig` - Wrapper around js_parser with sourcemap support
-- `resolver/` - Module resolution system
-- `allocators/` - Custom memory allocators for performance
-
-#### JavaScript Runtime (`src/bun.js/`)
-
-- `bindings/` - C++ JavaScriptCore bindings
-  - Generated classes from `.classes.ts` files
-  - Manual bindings for complex APIs
-- `api/` - Bun-specific APIs
-  - `server.zig` - HTTP server implementation
-  - `FFI.zig` - Foreign Function Interface
-  - `crypto.zig` - Cryptographic operations
-  - `glob.zig` - File pattern matching
-- `node/` - Node.js compatibility layer
-  - Module implementations (fs, path, crypto, etc.)
-  - Process and Buffer APIs
-- `webcore/` - Web API implementations
-  - `fetch.zig` - Fetch API
-  - `streams.zig` - Web Streams
-  - `Blob.zig`, `Response.zig`, `Request.zig`
-- `event_loop/` - Event loop and task management
-
-#### Build Tools & Package Manager
-
-- `src/bundler/` - JavaScript bundler
-  - Advanced tree-shaking
-  - CSS processing
-  - HTML handling
-- `src/install/` - Package manager
-  - `lockfile/` - Lockfile handling
-  - `npm.zig` - npm registry client
-  - `lifecycle_script_runner.zig` - Package scripts
-
-#### Other Key Components
-
-- `src/shell/` - Cross-platform shell implementation
-- `src/css/` - CSS parser and processor
-- `src/http/` - HTTP client implementation
-  - `websocket_client/` - WebSocket client (including deflate support)
-- `src/sql/` - SQL database integrations
-- `src/bake/` - Server-side rendering framework
-
-### JavaScript Class Implementation (C++)
-
-When implementing JavaScript classes in C++:
-
-1. Create three classes if there's a public constructor:
-   - `class Foo : public JSC::JSDestructibleObject` (if has C++ fields)
-   - `class FooPrototype : public JSC::JSNonFinalObject`
-   - `class FooConstructor : public JSC::InternalFunction`
-
-2. Define properties using HashTableValue arrays
-3. Add iso subspaces for classes with C++ fields
-4. Cache structures in ZigGlobalObject
+```
+src/
+├── transpiler/           # JS/TS transpiler (js_parser, js_lexer, js_printer)
+├── test_runner/          # bun:test implementation
+├── bundler/              # bun build
+├── resolver/             # Module resolution
+├── install/              # Package manager (bun install)
+├── css/                  # CSS parser
+├── shell/                # Bun.$ shell
+├── bake/                 # Bake framework
+├── sql/                  # SQL clients (postgres/, mysql/)
+├── s3/                   # S3 core
+├── valkey/               # Valkey/Redis
+├── http/                 # HTTP client
+├── string/               # String utilities
+├── ast/                  # AST types
+├── js/                   # TypeScript built-in modules
+│
+└── buntime/              # JavaScript runtime
+    ├── api/              # Bun.* APIs
+    │   ├── server/       # Bun.serve()
+    │   ├── console/      # console.*
+    │   ├── inspector/    # Debugger, profiler
+    │   ├── error/        # Error handling, stack traces
+    │   ├── cookie/       # Cookie parsing
+    │   ├── s3/           # S3 JS bindings
+    │   ├── ffi/          # Bun.FFI
+    │   ├── sqlite/       # bun:sqlite
+    │   ├── sql/          # SQL bindings
+    │   ├── shell/        # Shell bindings
+    │   ├── ipc/          # IPC
+    │   ├── plugin/       # Bundler plugins
+    │   ├── secrets/      # Secrets API
+    │   └── test/         # Test helpers
+    │
+    ├── web/              # Web Standards
+    │   ├── fetch/        # Fetch API
+    │   ├── url/          # URL, URLSearchParams
+    │   ├── blob/         # Blob, File, FormData
+    │   ├── encoding/     # TextEncoder/Decoder
+    │   ├── compression/  # CompressionStream
+    │   ├── events/       # EventTarget, CustomEvent
+    │   ├── streams/      # ReadableStream, WritableStream
+    │   ├── performance/  # Performance API
+    │   ├── websocket/    # WebSocket
+    │   └── webcrypto/    # crypto.subtle
+    │
+    ├── node/             # Node.js Compatibility
+    │   ├── buffer/       # Buffer
+    │   ├── process/      # process.*
+    │   ├── vm/           # node:vm
+    │   ├── crypto/       # node:crypto
+    │   ├── http/         # node:http
+    │   ├── fs/           # node:fs helpers
+    │   ├── os/           # node:os
+    │   ├── path/         # node:path
+    │   ├── util/         # node:util
+    │   ├── timers/       # Timers
+    │   ├── async_hooks/  # AsyncLocalStorage
+    │   ├── perf_hooks/   # Performance hooks
+    │   └── constants/    # Constants
+    │
+    ├── compat/           # Native Addon Compatibility
+    │   ├── napi/         # N-API
+    │   ├── v8/           # V8 C++ API
+    │   ├── libuv/        # libuv polyfills
+    │   └── windows/      # Windows-specific
+    │
+    ├── jsc/              # JavaScriptCore Integration
+    │   ├── types/        # JSValue, JSString, JSArray, etc.
+    │   ├── global/       # ZigGlobalObject, BunGlobalScope
+    │   ├── gc/           # GC helpers, weak refs
+    │   ├── interop/      # C++/Zig bindings, IDL
+    │   └── generated/    # Generated bindings
+    │
+    ├── module/           # Module system (CommonJS, ESM)
+    ├── event_loop/       # Event loop, tasks, timers
+    └── core/             # VirtualMachine, config
+```
 
 ### Code Generation
 
-Code generation happens automatically as part of the build process. The main scripts are:
+Code generation happens automatically during build. Main scripts:
 
-- `src/codegen/generate-classes.ts` - Generates Zig & C++ bindings from `*.classes.ts` files
-- `src/codegen/generate-jssink.ts` - Generates stream-related classes
-- `src/codegen/bundle-modules.ts` - Bundles built-in modules like `node:fs`
-- `src/codegen/bundle-functions.ts` - Bundles global functions like `ReadableStream`
+- `src/codegen/generate-classes.ts` - Generates Zig & C++ from `*.classes.ts`
+- `src/codegen/generate-jssink.ts` - Stream-related classes
+- `src/codegen/bundle-modules.ts` - Built-in modules like `node:fs`
+- `src/codegen/bundle-functions.ts` - Global functions like `ReadableStream`
 
 In development, bundled modules can be reloaded without rebuilding Zig by running `bun run build`.
 

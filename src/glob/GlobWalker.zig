@@ -1235,8 +1235,8 @@ pub fn GlobWalker_(
             if (pattern.syntax_hint == .Double) {
                 // Stop the double wildcard if it matches the pattern afer it
                 // Example: src/**/*.js
-                // - Matches: src/bun.js/
-                //            src/bun.js/foo/bar/baz.js
+                // - Matches: src/buntime/
+                //            src/buntime/foo/bar/baz.js
                 if (!is_last and this.matchPatternImpl(next_pattern.?, entry_name)) {
                     // But if the next pattern is the last
                     // component, it should match and propagate the
@@ -1683,7 +1683,7 @@ pub fn matchWildcardLiteral(literal: []const u8, path: []const u8) bool {
     return std.mem.eql(u8, literal, path);
 }
 
-const DirIterator = @import("../bun.js/node/dir_iterator.zig");
+const DirIterator = @import("../buntime/node/dir_iterator.zig");
 const ResolvePath = @import("../resolver/resolve_path.zig");
 
 const bun = @import("bun");

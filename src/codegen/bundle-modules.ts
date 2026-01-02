@@ -12,7 +12,7 @@ import fs from "fs";
 import { mkdir, writeFile } from "fs/promises";
 import { builtinModules } from "node:module";
 import path from "path";
-import jsclasses from "./../bun.js/bindings/js_classes";
+import jsclasses from "./../buntime/jsc/generated/js_classes";
 import { sliceSourceCode } from "./builtin-parser";
 import { createAssertClientJS, createLogClientJS } from "./client-js";
 import { getJS2NativeCPP, getJS2NativeZig } from "./generate-js2native";
@@ -474,14 +474,14 @@ ${Object.entries(nativeModuleEnumToId)
 writeIfNotChanged(
   path.join(CODEGEN_DIR, "NativeModuleImpl.h"),
   Object.values(nativeModuleEnums)
-    .map(value => `#include "../../bun.js/modules/${value}Module.h"`)
+    .map(value => `#include "../../buntime/modules/${value}Module.h"`)
     .join("\n") + "\n",
 );
 
 writeIfNotChanged(path.join(CODEGEN_DIR, "GeneratedJS2Native.h"), getJS2NativeCPP());
 
 // zig will complain if this file is outside of the module
-const js2nativeZigPath = path.join(import.meta.dir, "../bun.js/bindings/GeneratedJS2Native.zig");
+const js2nativeZigPath = path.join(import.meta.dir, "../buntime/jsc/generated/GeneratedJS2Native.zig");
 writeIfNotChanged(js2nativeZigPath, getJS2NativeZig(js2nativeZigPath));
 
 const generatedDTSPath = path.join(CODEGEN_DIR, "generated.d.ts");

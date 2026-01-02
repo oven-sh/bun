@@ -474,7 +474,7 @@ pub fn deinit(this: *UpgradedDuplex) void {
 
 const log = bun.Output.scoped(.UpgradedDuplex, .visible);
 
-const SSLWrapper = @import("../../bun.js/api/bun/ssl_wrapper.zig").SSLWrapper;
+const SSLWrapper = @import("../../buntime/api/bun/ssl_wrapper.zig").SSLWrapper;
 
 const bun = @import("bun");
 const jsc = bun.jsc;

@@ -194,7 +194,7 @@ comptime {
 
     _ = bun.bun_js.Bun__onRejectEntryPointResult;
     _ = bun.bun_js.Bun__onResolveEntryPointResult;
-    _ = &@import("./bun.js/node/buffer.zig").BufferVectorized;
+    _ = &@import("./buntime/node/buffer.zig").BufferVectorized;
     @import("./cli/upgrade_command.zig").@"export"();
     @import("./cli/test_command.zig").@"export"();
 }

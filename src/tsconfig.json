@@ -10,5 +10,5 @@
   },
   "include": ["**/*.ts", "**/*.tsx"],
   // separate projects have extra settings that only apply in those scopes
-  "exclude": ["js", "bake", "init", "create", "bun.js/bindings/libuv"]
+  "exclude": ["js", "bake", "init", "create", "buntime/compat/libuv"]
 }

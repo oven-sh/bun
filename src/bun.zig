@@ -198,19 +198,19 @@ pub const meta = @import("./meta.zig");
 pub const base64 = @import("./base64/base64.zig");
 pub const path = @import("./resolver/resolve_path.zig");
 pub const resolver = @import("./resolver/resolver.zig");
-pub const DirIterator = @import("./bun.js/node/dir_iterator.zig");
+pub const DirIterator = @import("./buntime/node/dir_iterator.zig");
 pub const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 pub const fmt = @import("./fmt.zig");
 
 // This file is gennerated, but cant be placed in the build/debug/codegen
 // folder because zig will complain about outside-of-module stuff
 /// All functions and interfaces provided from Bun's `bindgen` utility.
-pub const gen = @import("./bun.js/bindings/GeneratedBindings.zig");
+pub const gen = @import("./buntime/jsc/generated/GeneratedBindings.zig");
 
 comptime {
     // This file is gennerated, but cant be placed in the build/debug/codegen
     // folder because zig will complain about outside-of-module stuff
-    _ = &@import("./bun.js/bindings/GeneratedJS2Native.zig");
+    _ = &@import("./buntime/jsc/generated/GeneratedJS2Native.zig");
     _ = &gen; // reference bindings
 }
 
@@ -231,7 +231,7 @@ pub const bits = @import("./bits.zig");
 pub const css = @import("./css/css_parser.zig");
 pub const SmallList = css.SmallList;
 pub const csrf = @import("./csrf.zig");
-pub const validators = @import("./bun.js/node/util/validators.zig");
+pub const validators = @import("./buntime/node/util/validators.zig");
 
 pub const shell = @import("./shell/shell.zig");
 
@@ -731,7 +731,7 @@ pub const LOLHTML = @import("./deps/lol-html.zig");
 pub const clap = @import("./deps/zig-clap/clap.zig");
 pub const analytics = @import("./analytics.zig");
 pub const zlib = @import("./zlib.zig");
-pub const simdutf = @import("./bun.js/bindings/bun-simdutf.zig");
+pub const simdutf = @import("./string/bun-simdutf.zig");
 
 pub var start_time: i128 = 0;
 
@@ -1099,12 +1099,12 @@ pub const PackageManager = install.PackageManager;
 pub const RunCommand = @import("./cli/run_command.zig").RunCommand;
 
 pub const fs = @import("./fs.zig");
-pub const transpiler = @import("./transpiler.zig");
+pub const transpiler = @import("./transpiler/transpiler.zig");
 pub const Transpiler = transpiler.Transpiler;
 pub const which = @import("./which.zig").which;
-pub const js_parser = @import("./js_parser.zig");
-pub const js_printer = @import("./js_printer.zig");
-pub const js_lexer = @import("./js_lexer.zig");
+pub const js_parser = @import("./transpiler/js_parser.zig");
+pub const js_printer = @import("./transpiler/js_printer.zig");
+pub const js_lexer = @import("./transpiler/js_lexer.zig");
 pub const ast = @import("./ast.zig");
 
 pub const interchange = @import("./interchange.zig");
@@ -1380,7 +1380,7 @@ pub fn asByteSlice(buffer: anytype) []const u8 {
 }
 
 comptime {
-    _ = @import("./bun.js/node/buffer.zig").BufferVectorized.fill;
+    _ = @import("./buntime/node/buffer.zig").BufferVectorized.fill;
     _ = @import("./cli/upgrade_command.zig").Version;
 }
 
@@ -2102,7 +2102,7 @@ pub fn initArgv(allocator: std.mem.Allocator) !void {
     }
 }
 
-pub const spawn = @import("./bun.js/api/bun/spawn.zig").PosixSpawn;
+pub const spawn = @import("./buntime/api/bun/spawn.zig").PosixSpawn;
 
 pub fn isRegularFile(mode: anytype) bool {
     return S.ISREG(@intCast(mode));
@@ -3304,7 +3304,7 @@ pub const timespec = extern struct {
     }
 };
 
-pub const UUID = @import("./bun.js/uuid.zig");
+pub const UUID = @import("./buntime/web/webcrypto/uuid.zig");
 
 /// An abstract number of element in a sequence. The sequence has a first element.
 /// This type should be used instead of integer because 2 contradicting traditions can

@@ -2661,8 +2661,8 @@ pub const ParseTask = bun.bundle_v2.ParseTask;
 const string = []const u8;
 
 const NodeFallbackModules = @import("../node_fallbacks.zig");
-const js_printer = @import("../js_printer.zig");
-const lex = @import("../js_lexer.zig");
+const js_printer = @import("../transpiler/js_printer.zig");
+const lex = @import("../transpiler/js_lexer.zig");
 const linker = @import("../linker.zig");
 const runtime = @import("../runtime.zig");
 const std = @import("std");

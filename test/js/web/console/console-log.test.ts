@@ -187,10 +187,11 @@ it("console.trace() outputs to stderr", () => {
     env: bunEnv,
     stdio: ["inherit", "pipe", "pipe"],
   });
-  expect(proc.exitCode).toBe(0);
+  // Check stdout/stderr before exit code for better debugging on failure
   // stdout should be empty since trace goes to stderr
   expect(proc.stdout.toString("utf8")).toBeEmpty();
   // stderr should contain the trace output
   const stderr = proc.stderr.toString("utf8");
   expect(stderr).toContain("Trace: hello");
+  expect(proc.exitCode).toBe(0);
 });

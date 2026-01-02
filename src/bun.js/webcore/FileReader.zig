@@ -320,14 +320,18 @@ pub fn onReadChunk(this: *@This(), init_buf: []const u8, state: bun.io.ReadState
 
     if (buf.len > 0) {
         if (this.max_size) |max_size| {
-            if (this.total_readed >= max_size) return false;
+            if (this.total_readed >= max_size) {
+                close = true;
+                hasMore = false;
+                return false;
+            }
             const len = @min(max_size - this.total_readed, buf.len);
             if (buf.len > len) {
                 buf = buf[0..len];
             }
             this.total_readed += len;
 
-            if (buf.len == 0) {
+            if (this.total_readed >= max_size) {
                 close = true;
                 hasMore = false;
             }

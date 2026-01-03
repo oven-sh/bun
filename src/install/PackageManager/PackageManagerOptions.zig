@@ -20,6 +20,7 @@ positionals: []const string = &[_]string{},
 update: Update = .{},
 dry_run: bool = false,
 link_workspace_packages: bool = true,
+follow_workspace_symlinks: bool = true,
 remote_package_features: Features = .{
     .optional_dependencies = true,
 },
@@ -255,6 +256,9 @@ pub fn load(
         }
         if (config.link_workspace_packages) |link_workspace_packages| {
             this.link_workspace_packages = link_workspace_packages;
+        }
+        if (config.follow_workspace_symlinks) |follow_workspace_symlinks| {
+            this.follow_workspace_symlinks = follow_workspace_symlinks;
         }
     }
 

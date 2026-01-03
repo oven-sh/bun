@@ -3073,6 +3073,8 @@ pub const api = struct {
 
         public_hoist_pattern: ?install.PnpmMatcher = null,
         hoist_pattern: ?install.PnpmMatcher = null,
+
+        follow_workspace_symlinks: ?bool = null,
     };
 
     pub const ClientServerModule = struct {

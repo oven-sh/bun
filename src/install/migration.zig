@@ -245,6 +245,7 @@ pub fn migrateNPMLockfile(
                 &json_src,
                 wksp.loc,
                 null,
+                manager.options.follow_workspace_symlinks,
             );
             debug("found {d} workspace packages", .{workspace_packages_count});
             num_deps += workspace_packages_count;

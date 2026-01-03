@@ -59,6 +59,19 @@ void MessagePortChannelRegistry::messagePortChannelCreated(MessagePortChannel& c
     // ASSERT(isMainThread());
 
     Locker locker { m_lock };
+
+    // Remove any existing entries with null WeakRefs before adding new channel
+    // This can happen if a channel was destroyed but the map entry wasn't cleaned up
+    auto existingPort1 = m_openChannels.get(channel.port1());
+    if (existingPort1 && !existingPort1.get()) {
+        m_openChannels.remove(channel.port1());
+    }
+
+    auto existingPort2 = m_openChannels.get(channel.port2());
+    if (existingPort2 && !existingPort2.get()) {
+        m_openChannels.remove(channel.port2());
+    }
+
     auto result = m_openChannels.add(channel.port1(), channel);
     ASSERT_UNUSED(result, result.isNewEntry);
 
@@ -71,11 +84,15 @@ void MessagePortChannelRegistry::messagePortChannelDestroyed(MessagePortChannel&
     // ASSERT(isMainThread());
 
     Locker locker { m_lock };
-    ASSERT(m_openChannels.get(channel.port1()) == &channel);
-    ASSERT(m_openChannels.get(channel.port2()) == &channel);
 
-    m_openChannels.remove(channel.port1());
-    m_openChannels.remove(channel.port2());
+    // The channel might have already been removed if it was closed before destruction
+    if (m_openChannels.get(channel.port1()) == &channel) {
+        m_openChannels.remove(channel.port1());
+    }
+
+    if (m_openChannels.get(channel.port2()) == &channel) {
+        m_openChannels.remove(channel.port2());
+    }
 
     // LOG(MessagePorts, "Registry: After removing channel %s there are %u channels left in the registry:", channel.logString().utf8().data(), m_openChannels.size());
 }

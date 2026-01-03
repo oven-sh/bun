@@ -58,6 +58,7 @@ void MessagePortChannelRegistry::messagePortChannelCreated(MessagePortChannel& c
 {
     // ASSERT(isMainThread());
 
+    Locker locker { m_lock };
     auto result = m_openChannels.add(channel.port1(), channel);
     ASSERT_UNUSED(result, result.isNewEntry);
 
@@ -69,6 +70,7 @@ void MessagePortChannelRegistry::messagePortChannelDestroyed(MessagePortChannel&
 {
     // ASSERT(isMainThread());
 
+    Locker locker { m_lock };
     ASSERT(m_openChannels.get(channel.port1()) == &channel);
     ASSERT(m_openChannels.get(channel.port2()) == &channel);
 
@@ -83,7 +85,12 @@ void MessagePortChannelRegistry::didEntangleLocalToRemote(const MessagePortIdent
     // ASSERT(isMainThread());
 
     // The channel might be gone if the remote side was closed.
-    RefPtr channel = m_openChannels.get(local);
+    RefPtr<MessagePortChannel> channel;
+    {
+        Locker locker { m_lock };
+        channel = m_openChannels.get(local);
+    }
+
     if (!channel)
         return;
 
@@ -97,7 +104,13 @@ void MessagePortChannelRegistry::didDisentangleMessagePort(const MessagePortIden
     // ASSERT(isMainThread());
 
     // The channel might be gone if the remote side was closed.
-    if (RefPtr channel = m_openChannels.get(port))
+    RefPtr<MessagePortChannel> channel;
+    {
+        Locker locker { m_lock };
+        channel = m_openChannels.get(port);
+    }
+
+    if (channel)
         channel->disentanglePort(port);
 }
 
@@ -107,7 +120,12 @@ void MessagePortChannelRegistry::didCloseMessagePort(const MessagePortIdentifier
 
     // LOG(MessagePorts, "Registry: MessagePort %s closed in registry", port.logString().utf8().data());
 
-    RefPtr channel = m_openChannels.get(port);
+    RefPtr<MessagePortChannel> channel;
+    {
+        Locker locker { m_lock };
+        channel = m_openChannels.get(port);
+    }
+
     if (!channel)
         return;
 
@@ -129,7 +147,12 @@ bool MessagePortChannelRegistry::didPostMessageToRemote(MessageWithMessagePorts&
     // LOG(MessagePorts, "Registry: Posting message to MessagePort %s in registry", remoteTarget.logString().utf8().data());
 
     // The channel might be gone if the remote side was closed.
-    RefPtr channel = m_openChannels.get(remoteTarget);
+    RefPtr<MessagePortChannel> channel;
+    {
+        Locker locker { m_lock };
+        channel = m_openChannels.get(remoteTarget);
+    }
+
     if (!channel) {
         // LOG(MessagePorts, "Registry: Could not find MessagePortChannel for port %s; It was probably closed. Message will be dropped.", remoteTarget.logString().utf8().data());
         return false;
@@ -143,7 +166,12 @@ void MessagePortChannelRegistry::takeAllMessagesForPort(const MessagePortIdentif
     // ASSERT(isMainThread());
 
     // The channel might be gone if the remote side was closed.
-    RefPtr channel = m_openChannels.get(port);
+    RefPtr<MessagePortChannel> channel;
+    {
+        Locker locker { m_lock };
+        channel = m_openChannels.get(port);
+    }
+
     if (!channel) {
         callback({}, [] {});
         return;
@@ -159,7 +187,12 @@ std::optional<MessageWithMessagePorts> MessagePortChannelRegistry::tryTakeMessag
     // LOG(MessagePorts, "Registry: Trying to take a message for MessagePort %s", port.logString().utf8().data());
 
     // The channel might be gone if the remote side was closed.
-    auto* channel = m_openChannels.get(port);
+    RefPtr<MessagePortChannel> channel;
+    {
+        Locker locker { m_lock };
+        channel = m_openChannels.get(port);
+    }
+
     if (!channel)
         return std::nullopt;
 
@@ -170,6 +203,7 @@ MessagePortChannel* MessagePortChannelRegistry::existingChannelContainingPort(co
 {
     // ASSERT(isMainThread());
 
+    Locker locker { m_lock };
     return m_openChannels.get(port);
 }
 

@@ -504,53 +504,49 @@ pub const Repository = extern struct {
             bun.fmt.hexIntLower(task_id.get()),
         });
 
-        return if (cache_dir.openDirZ(folder_name, .{})) |dir| fetch: {
+        if (cache_dir.openDirZ(folder_name, .{})) |d| {
+            var dir = d;
             const path = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{folder_name}, .auto);
 
-            _ = exec(
+            if (exec(
                 allocator,
                 env,
-                &[_]string{ "git", "-C", path, "fetch", "--quiet" },
-            ) catch |err| {
+                &[_]string{ "git", "-C", path, "fetch", "--force", "--quiet" },
+            )) |_| {
+                return dir;
+            } else |_| {
+                dir.close();
+                cache_dir.deleteTree(folder_name) catch {};
+            }
+        } else |not_found| {
+            if (not_found != error.FileNotFound) return not_found;
+        }
+
+        const target = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{folder_name}, .auto);
+
+        _ = exec(allocator, env, &[_]string{
+            "git",
+            "clone",
+            "-c",
+            "core.longpaths=true",
+            "--quiet",
+            "--bare",
+            url,
+            target,
+        }) catch |err| {
+            if (err == error.RepositoryNotFound or attempt > 1) {
                 log.addErrorFmt(
                     null,
                     logger.Loc.Empty,
                     allocator,
-                    "\"git fetch\" for \"{s}\" failed",
+                    "\"git clone\" for \"{s}\" failed",
                     .{name},
                 ) catch unreachable;
-                return err;
-            };
-            break :fetch dir;
-        } else |not_found| clone: {
-            if (not_found != error.FileNotFound) return not_found;
-
-            const target = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{folder_name}, .auto);
-
-            _ = exec(allocator, env, &[_]string{
-                "git",
-                "clone",
-                "-c",
-                "core.longpaths=true",
-                "--quiet",
-                "--bare",
-                url,
-                target,
-            }) catch |err| {
-                if (err == error.RepositoryNotFound or attempt > 1) {
-                    log.addErrorFmt(
-                        null,
-                        logger.Loc.Empty,
-                        allocator,
-                        "\"git clone\" for \"{s}\" failed",
-                        .{name},
-                    ) catch unreachable;
-                }
-                return err;
-            };
-
-            break :clone try cache_dir.openDirZ(folder_name, .{});
+            }
+            return err;
         };
+
+        return try cache_dir.openDirZ(folder_name, .{});
     }
 
     pub fn findCommit(
@@ -572,10 +568,27 @@ pub const Repository = extern struct {
             allocator,
             shared_env.get(allocator, env),
             if (committish.len > 0)
-                &[_]string{ "git", "-C", path, "log", "--format=%H", "-1", committish }
+                &[_]string{ "git", "-C", path, "rev-parse", committish }
             else
-                &[_]string{ "git", "-C", path, "log", "--format=%H", "-1" },
+                &[_]string{ "git", "-C", path, "rev-parse", "FETCH_HEAD" },
         ) catch |err| {
+            if (committish.len == 0) {
+                return std.mem.trim(u8, exec(
+                    allocator,
+                    shared_env.get(allocator, env),
+                    &[_]string{ "git", "-C", path, "rev-parse", "HEAD" },
+                ) catch |err2| {
+                    log.addErrorFmt(
+                        null,
+                        logger.Loc.Empty,
+                        allocator,
+                        "no commit matching \"{s}\" found for \"{s}\" (but repository exists)",
+                        .{ committish, name },
+                    ) catch unreachable;
+                    return err2;
+                }, " \n\r\t");
+            }
+
             log.addErrorFmt(
                 null,
                 logger.Loc.Empty,

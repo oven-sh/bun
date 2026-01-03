@@ -157,7 +157,7 @@ pub fn callback(task: *ThreadPool.Task) void {
             const url = this.request.git_clone.url.slice();
             var attempt: u8 = 1;
             const dir = brk: {
-                if (Repository.tryHTTPS(url)) |https| break :brk Repository.download(
+                if (Repository.tryHTTPS(url) orelse if (strings.hasPrefix(url, "file:") or strings.hasPrefix(url, "git+file:")) (if (strings.hasPrefix(url, "git+file:")) url["git+".len..] else url) else null) |https| break :brk Repository.download(
                     manager.allocator,
                     this.request.git_clone.env,
                     &this.log,

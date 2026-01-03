@@ -582,8 +582,8 @@ pub const Repository = extern struct {
                         null,
                         logger.Loc.Empty,
                         allocator,
-                        "no commit matching \"{s}\" found for \"{s}\" (but repository exists)",
-                        .{ committish, name },
+                        "no resolvable commit (FETCH_HEAD or HEAD) found for \"{s}\" (but repository exists)",
+                        .{name},
                     ) catch unreachable;
                     return err2;
                 }, " \n\r\t");

@@ -156,8 +156,26 @@ pub fn callback(task: *ThreadPool.Task) void {
             const name = this.request.git_clone.name.slice();
             const url = this.request.git_clone.url.slice();
             var attempt: u8 = 1;
+            
+            // Normalize the repository URL
+            const normalized_url = blk: {
+                // Try HTTPS first
+                if (Repository.tryHTTPS(url)) |https| break :blk https;
+                
+                // Handle file: and git+file: URLs
+                if (strings.hasPrefix(url, "git+file:")) {
+                    break :blk url["git+".len..];
+                }
+                if (strings.hasPrefix(url, "file:")) {
+                    break :blk url;
+                }
+                
+                // Fall back to null (will try SSH)
+                break :blk null;
+            };
+            
             const dir = brk: {
-                if (Repository.tryHTTPS(url) orelse if (strings.hasPrefix(url, "file:") or strings.hasPrefix(url, "git+file:")) (if (strings.hasPrefix(url, "git+file:")) url["git+".len..] else url) else null) |https| break :brk Repository.download(
+                if (normalized_url) |https| break :brk Repository.download(
                     manager.allocator,
                     this.request.git_clone.env,
                     &this.log,

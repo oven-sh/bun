@@ -4,7 +4,7 @@
 bun publish dist
 ```
 
-### Publishing Options
+### Access & Tagging
 
 <ParamField path="--access" type="string">
   The `--access` flag can be used to set the access level of the package being published. The access level can be one of `public` or `restricted`. Unscoped packages are always public, and attempting to publish an unscoped package with `--access restricted` will result in an error.
@@ -44,6 +44,8 @@ bun publish --tag alpha
 
 </ParamField>
 
+### Publish Control
+
 <ParamField path="--dry-run=<val>" type="string">
 The `--dry-run` flag can be used to simulate the publish process without actually publishing the package. This is useful for verifying the contents of the published package without actually publishing the package.
 
@@ -57,6 +59,8 @@ bun publish --dry-run
   Specify the level of gzip compression to use when packing the package. Only applies to `bun publish` without a tarball
   path argument. Values range from `0` to `9` (default is `9`).
 </ParamField>
+
+### Authentication
 
 <ParamField path="--auth-type" type="string" default="web">
 
@@ -89,8 +93,6 @@ bun publish --otp 123456
 
 ### Registry Configuration
 
-#### Custom Registry
-
 <ParamField path="--registry" type="string">
   Specify registry URL, overriding .npmrc and bunfig.toml
 </ParamField>
@@ -98,8 +100,6 @@ bun publish --otp 123456
 ```bash
 bun publish --registry https://my-private-registry.com
 ```
-
-#### SSL Certificates
 
 <ParamField path="--ca" type="string">
   Provide Certificate Authority signing certificate
@@ -120,9 +120,7 @@ bun publish --cafile ./ca-cert.pem
 
 </CodeGroup>
 
-### Publishing Options
-
-#### Dependency Management
+### Dependency Management
 
 <ParamField path="-p, --production" type="boolean">
   Don't install devDependencies
@@ -136,7 +134,7 @@ bun publish --cafile ./ca-cert.pem
   Always request the latest versions from the registry & reinstall all dependencies
 </ParamField>
 
-#### Script Control
+### Script Control
 
 <ParamField path="--ignore-scripts" type="boolean">
   Skip lifecycle scripts during packing and publishing
@@ -151,7 +149,7 @@ bun publish --cafile ./ca-cert.pem
   executed. Scripts only run when Bun packs the package itself.
 </Note>
 
-#### File Management
+### File Management
 
 <ParamField path="--no-save" type="boolean">
   Don't update package.json or lockfile
@@ -165,7 +163,7 @@ bun publish --cafile ./ca-cert.pem
   Generate yarn.lock file (yarn v1 compatible)
 </ParamField>
 
-#### Performance
+### Performance
 
 <ParamField path="--backend" type="string">
   Platform optimizations: `clonefile` (default), `hardlink`, `symlink`, or `copyfile`
@@ -179,7 +177,7 @@ bun publish --cafile ./ca-cert.pem
   Maximum concurrent lifecycle scripts
 </ParamField>
 
-#### Output Control
+### Output Control
 
 <ParamField path="--silent" type="boolean">
   Suppress all output

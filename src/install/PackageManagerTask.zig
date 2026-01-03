@@ -175,14 +175,14 @@ pub fn callback(task: *ThreadPool.Task) void {
             };
             
             const dir = brk: {
-                if (normalized_url) |https| break :brk Repository.download(
+                if (normalized_url) |effective_url| break :brk Repository.download(
                     manager.allocator,
                     this.request.git_clone.env,
                     &this.log,
                     manager.getCacheDirectory(),
                     this.id,
                     name,
-                    https,
+                    effective_url,
                     attempt,
                 ) catch |err| {
                     // Exit early if git checked and could

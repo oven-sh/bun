@@ -134,32 +134,20 @@ export function enumeration(
     }
     get cppSource() {
       const qualifiedName = "Bun::Bindgen::Generated::" + name;
-      const pairType = `::std::pair<::WTF::ComparableASCIILiteral, ::${qualifiedName}>`;
       return reindent(`
         #include "root.h"
         #include "Generated${name}.h"
-        #include <wtf/SortedArrayMap.h>
 
         template<> std::optional<${qualifiedName}>
         WebCore::parseEnumerationFromString<${qualifiedName}>(const WTF::String& stringVal)
         {
-          static constexpr ::std::array<${pairType}, ${valueMap.size}> mappings {
-            ${joinIndented(
-              12,
-              Array.from(valueMap.entries())
-                .sort(([v1], [v2]) => (v1 < v2 ? -1 : 1))
-                .map(([value, i]) => {
-                  return `${pairType} {
-                    ${toASCIILiteral(value)},
-                    ::${qualifiedName}::${cppMembers[i]},
-                  },`;
-                }),
-            )}
-          };
-          static constexpr ::WTF::SortedArrayMap enumerationMapping { mappings };
-          if (auto* enumerationValue = enumerationMapping.tryGet(stringVal)) [[likely]] {
-            return *enumerationValue;
-          }
+          ${joinIndented(
+            10,
+            Array.from(valueMap.entries()).map(([value, i]) => {
+              return `if (stringVal == ${toASCIILiteral(value)})
+            return ::${qualifiedName}::${cppMembers[i]};`;
+            }),
+          )}
           return std::nullopt;
         }
 

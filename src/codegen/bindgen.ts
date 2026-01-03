@@ -733,7 +733,6 @@ function emitConvertEnumFunction(w: CodeWriter, type: TypeImpl) {
   headers.add("JavaScriptCore/JSCInlines.h");
   headers.add("JavaScriptCore/JSString.h");
   headers.add("wtf/NeverDestroyed.h");
-  headers.add("wtf/SortedArrayMap.h");
 
   w.line(`String convertEnumerationToString(${name} enumerationValue) {`);
   w.indent();
@@ -754,16 +753,10 @@ function emitConvertEnumFunction(w: CodeWriter, type: TypeImpl) {
   w.line();
   w.line(`template<> std::optional<${name}> parseEnumerationFromString<${name}>(const String& stringValue)`);
   w.line(`{`);
-  w.line(
-    `    static constexpr std::array<std::pair<ComparableASCIILiteral, ${name}>, ${type.data.length}> mappings { {`,
-  );
   for (const value of type.data) {
-    w.line(`        { ${str(value)}_s, ${name}::${pascal(value)} },`);
+    w.line(`    if (stringValue == ${str(value)}_s)`);
+    w.line(`        return ${name}::${pascal(value)};`);
   }
-  w.line(`    } };`);
-  w.line(`    static constexpr SortedArrayMap enumerationMapping { mappings };`);
-  w.line(`    if (auto* enumerationValue = enumerationMapping.tryGet(stringValue); enumerationValue) [[likely]]`);
-  w.line(`        return *enumerationValue;`);
   w.line(`    return std::nullopt;`);
   w.line(`}`);
   w.line();

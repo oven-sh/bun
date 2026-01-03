@@ -342,9 +342,10 @@ describe("util", () => {
   });
 
   it("multiplecolors", () => {
-    expect(util.styleText(["bold", "red"], "test")).toBe("\u001b[1m\u001b[31mtest\u001b[39m\u001b[22m");
-    expect(util.styleText("bold", "test")).toBe("\u001b[1mtest\u001b[22m");
-    expect(util.styleText("red", "test")).toBe("\u001b[31mtest\u001b[39m");
+    const forceColor = { validateStream: false };
+    expect(util.styleText(["bold", "red"], "test", forceColor)).toBe("\u001b[1m\u001b[31mtest\u001b[39m\u001b[22m");
+    expect(util.styleText("bold", "test", forceColor)).toBe("\u001b[1mtest\u001b[22m");
+    expect(util.styleText("red", "test", forceColor)).toBe("\u001b[31mtest\u001b[39m");
   });
 
   it("styleText", () => {
@@ -376,7 +377,35 @@ describe("util", () => {
       },
     );
 
-    assert.strictEqual(util.styleText("red", "test"), "\u001b[31mtest\u001b[39m");
+    const forceColor = { validateStream: false };
+    assert.strictEqual(util.styleText("red", "test", forceColor), "\u001b[31mtest\u001b[39m");
+  });
+
+  it("styleText respects stream.isTTY option", () => {
+    const { Writable } = require("node:stream");
+
+    const streamTTY = new (class extends Writable {
+      isTTY = true;
+    })();
+    expect(util.styleText("red", "test", { stream: streamTTY })).toBe("\u001b[31mtest\u001b[39m");
+
+    const streamNoTTY = new (class extends Writable {
+      isTTY = false;
+    })();
+    expect(util.styleText("red", "test", { stream: streamNoTTY })).toBe("test");
+
+    expect(util.styleText("none", "test", { stream: streamTTY })).toBe("test");
+
+    expect(util.styleText("red", "test", { validateStream: false })).toBe("\u001b[31mtest\u001b[39m");
+
+    expect(util.styleText(["bold", "red"], "test", { stream: streamNoTTY })).toBe("test");
+  });
+
+  it("styleText throws on invalid stream type", () => {
+    expect(() => util.styleText("red", "test", { stream: "not a stream" })).toThrowWithCode(
+      TypeError,
+      "ERR_INVALID_ARG_TYPE"
+    );
   });
 
   describe("getSystemErrorName", () => {

@@ -1614,6 +1614,40 @@ describe("Helper argument validation", () => {
     await sqlSafe.close();
   });
 
+  test("insert helper filters out undefined values", async () => {
+    await sql`CREATE TABLE insert_undefined_test (id INTEGER PRIMARY KEY, name TEXT NOT NULL, optional TEXT)`;
+
+    // Insert with undefined value - should only include defined columns
+    await sql`INSERT INTO insert_undefined_test ${sql({ id: 1, name: "test", optional: undefined })}`;
+
+    const result = await sql`SELECT * FROM insert_undefined_test WHERE id = 1`;
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe(1);
+    expect(result[0].name).toBe("test");
+    expect(result[0].optional).toBe(null); // SQLite default
+
+    // Insert with all defined values - should work normally
+    await sql`INSERT INTO insert_undefined_test ${sql({ id: 2, name: "test2", optional: "value" })}`;
+    const result2 = await sql`SELECT * FROM insert_undefined_test WHERE id = 2`;
+    expect(result2[0].optional).toBe("value");
+
+    // Bulk insert with undefined values
+    await sql`INSERT INTO insert_undefined_test ${sql([
+      { id: 3, name: "bulk1", optional: undefined },
+      { id: 4, name: "bulk2", optional: undefined },
+    ])}`;
+    const result3 = await sql`SELECT * FROM insert_undefined_test WHERE id IN (3, 4) ORDER BY id`;
+    expect(result3).toHaveLength(2);
+    expect(result3[0].name).toBe("bulk1");
+    expect(result3[1].name).toBe("bulk2");
+
+    // Insert with all undefined except one column should throw
+    expect(
+      async () =>
+        await sql`INSERT INTO insert_undefined_test ${sql({ id: undefined, name: undefined, optional: undefined })}`.execute(),
+    ).toThrow("Insert needs to have at least one column with a defined value");
+  });
+
   test("invalid keys for helper throw immediately", () => {
     const obj = { id: 1, text_val: "x" };
     expect(() => sql`INSERT INTO helper_invalid ${sql(obj, Symbol("k") as any)}`).toThrowErrorMatchingInlineSnapshot(

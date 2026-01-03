@@ -455,11 +455,10 @@ class PooledMySQLConnection {
   }
 }
 
-class MySQLAdapter implements DatabaseAdapter<
-  PooledMySQLConnection,
-  $ZigGeneratedClasses.MySQLConnection,
-  $ZigGeneratedClasses.MySQLQuery
-> {
+class MySQLAdapter
+  implements
+    DatabaseAdapter<PooledMySQLConnection, $ZigGeneratedClasses.MySQLConnection, $ZigGeneratedClasses.MySQLQuery>
+{
   public readonly connectionInfo: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions;
 
   public readonly connections: PooledMySQLConnection[];
@@ -1020,10 +1019,25 @@ class MySQLAdapter implements DatabaseAdapter<
               // insert into users ${sql(users)} or insert into users ${sql(user)}
               //
 
-              query += "(";
+              // Filter out columns with undefined values (use first item to determine columns)
+              const firstItem = $isArray(items) ? items[0] : items;
+              const definedColumns: string[] = [];
               for (let j = 0; j < columnCount; j++) {
-                query += this.escapeIdentifier(columns[j]);
-                if (j < lastColumnIndex) {
+                const column = columns[j];
+                if (typeof firstItem[column] !== "undefined") {
+                  definedColumns.push(column);
+                }
+              }
+              const definedColumnCount = definedColumns.length;
+              if (definedColumnCount === 0) {
+                throw new SyntaxError("Insert needs to have at least one column with a defined value");
+              }
+              const lastDefinedColumnIndex = definedColumnCount - 1;
+
+              query += "(";
+              for (let j = 0; j < definedColumnCount; j++) {
+                query += this.escapeIdentifier(definedColumns[j]);
+                if (j < lastDefinedColumnIndex) {
                   query += ", ";
                 }
               }
@@ -1034,15 +1048,11 @@ class MySQLAdapter implements DatabaseAdapter<
                 for (let j = 0; j < itemsCount; j++) {
                   query += "(";
                   const item = items[j];
-                  for (let k = 0; k < columnCount; k++) {
-                    const column = columns[k];
+                  for (let k = 0; k < definedColumnCount; k++) {
+                    const column = definedColumns[k];
                     const columnValue = item[column];
-                    query += `?${k < lastColumnIndex ? ", " : ""}`;
-                    if (typeof columnValue === "undefined") {
-                      binding_values.push(null);
-                    } else {
-                      binding_values.push(columnValue);
-                    }
+                    query += `?${k < lastDefinedColumnIndex ? ", " : ""}`;
+                    binding_values.push(columnValue);
                   }
                   if (j < lastItemIndex) {
                     query += "),";
@@ -1053,15 +1063,11 @@ class MySQLAdapter implements DatabaseAdapter<
               } else {
                 query += "(";
                 const item = items;
-                for (let j = 0; j < columnCount; j++) {
-                  const column = columns[j];
+                for (let j = 0; j < definedColumnCount; j++) {
+                  const column = definedColumns[j];
                   const columnValue = item[column];
-                  query += `?${j < lastColumnIndex ? ", " : ""}`;
-                  if (typeof columnValue === "undefined") {
-                    binding_values.push(null);
-                  } else {
-                    binding_values.push(columnValue);
-                  }
+                  query += `?${j < lastDefinedColumnIndex ? ", " : ""}`;
+                  binding_values.push(columnValue);
                 }
                 query += ") "; // the user can add RETURNING * or RETURNING id
               }

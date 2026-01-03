@@ -1915,6 +1915,9 @@ function internalConnectMultiple(context, canceled?) {
 }
 
 function internalConnectMultipleTimeout(context, req, handle) {
+  // Guard against timeout firing after socket cleanup/destruction
+  if (!context || !context.socket) return;
+
   $debug("connect/multiple: connection to %s:%s timed out", req.address, req.port);
   context.socket.emit("connectionAttemptTimeout", req.address, req.port, req.addressType);
 

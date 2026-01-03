@@ -419,3 +419,19 @@ test("log case 2", async () => {
     "
   `);
 });
+
+test("cannot use both --outdir and --outfile", async () => {
+  using dir = tempDir("outdir-outfile-test", {
+    "input.js": 'console.log("Hello, world!");',
+  });
+
+  await using subprocess = Bun.spawn({
+    cmd: [bunExe(), "build", "--outdir=" + dir + "/out", "--outfile=" + dir + "/out.js", dir + "/input.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+
+  expect(await subprocess.stderr.text()).toContain("cannot use both --outdir and --outfile");
+  expect(await subprocess.exited).not.toBe(0);
+});

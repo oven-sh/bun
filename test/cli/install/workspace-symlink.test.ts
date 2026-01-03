@@ -5,7 +5,7 @@ import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 
 describe("workspace symlinks", () => {
-  test("should follow symlinked workspace packages by default", async () => {
+  test.concurrent("should follow symlinked workspace packages by default", async () => {
     using rootDir = tempDir("workspace-symlink-test", {});
     using externalDir = tempDir("workspace-external", {
       "package.json": JSON.stringify({
@@ -61,16 +61,14 @@ describe("workspace symlinks", () => {
       // Verify the workspace was linked
       const nodeModulesBackend = join(rootPath, "node_modules", "backend");
       expect(existsSync(nodeModulesBackend)).toBe(true);
-    } catch (err) {
-      // Cleanup symlink on error
+    } finally {
       if (existsSync(symlinkPath)) {
         rmSync(symlinkPath, { recursive: true, force: true });
       }
-      throw err;
     }
   });
 
-  test("should not follow symlinked workspaces when followWorkspaceSymlinks is false", async () => {
+  test.concurrent("should not follow symlinked workspaces when followWorkspaceSymlinks is false", async () => {
     using rootDir = tempDir("workspace-symlink-disabled", {});
     using externalDir = tempDir("workspace-external-disabled", {
       "package.json": JSON.stringify({
@@ -129,12 +127,10 @@ followWorkspaceSymlinks = false
       // The installation should fail with the workspace not found error
       expect(stderr).toContain('Workspace dependency "backend" not found');
       expect(exitCode).not.toBe(0);
-    } catch (err) {
-      // Cleanup symlink on error
+    } finally {
       if (existsSync(symlinkPath)) {
         rmSync(symlinkPath, { recursive: true, force: true });
       }
-      throw err;
     }
   });
 });

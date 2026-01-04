@@ -1,0 +1,141 @@
+name: Update CMake Dependency
+description: Checks for updates to a GitHub-hosted dependency and creates a PR to update the cmake file
+
+inputs:
+  repo:
+    description: 'GitHub repository (owner/repo format, e.g., "c-ares/c-ares")'
+    required: true
+  cmake-file:
+    description: 'Path to the cmake file to update (e.g., "cmake/targets/BuildCares.cmake")'
+    required: true
+  dep-name:
+    description: 'Dependency name for commit messages (e.g., "c-ares")'
+    required: true
+  workflow-file:
+    description: 'Name of the workflow file for the PR body link'
+    required: true
+
+outputs:
+  current:
+    description: 'Current commit SHA'
+    value: ${{ steps.check-version.outputs.current }}
+  latest:
+    description: 'Latest commit SHA'
+    value: ${{ steps.check-version.outputs.latest }}
+  tag:
+    description: 'Latest release tag'
+    value: ${{ steps.check-version.outputs.tag }}
+  updated:
+    description: 'Whether an update was made'
+    value: ${{ steps.check-version.outputs.current != steps.check-version.outputs.latest }}
+
+runs:
+  using: composite
+  steps:
+    - name: Check version
+      id: check-version
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        # Extract the commit hash from the line after COMMIT
+        CURRENT_VERSION=$(awk '/[[:space:]]*COMMIT[[:space:]]*$/{getline; gsub(/^[[:space:]]+|[[:space:]]+$/,"",$0); print}' "${{ inputs.cmake-file }}")
+
+        if [ -z "$CURRENT_VERSION" ]; then
+          echo "Error: Could not find COMMIT line in ${{ inputs.cmake-file }}"
+          exit 1
+        fi
+
+        # Validate that it looks like a git hash
+        if ! [[ $CURRENT_VERSION =~ ^[0-9a-f]{40}$ ]]; then
+          echo "Error: Invalid git hash format in ${{ inputs.cmake-file }}"
+          echo "Found: $CURRENT_VERSION"
+          echo "Expected: 40 character hexadecimal string"
+          exit 1
+        fi
+
+        echo "current=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+
+        LATEST_RELEASE=$(curl -sL "https://api.github.com/repos/${{ inputs.repo }}/releases/latest")
+        if [ -z "$LATEST_RELEASE" ]; then
+          echo "Error: Failed to fetch latest release from GitHub API"
+          exit 1
+        fi
+
+        LATEST_TAG=$(echo "$LATEST_RELEASE" | jq -r '.tag_name')
+        if [ -z "$LATEST_TAG" ] || [ "$LATEST_TAG" = "null" ]; then
+          echo "Error: Could not extract tag name from GitHub API response"
+          exit 1
+        fi
+
+        # Get the tag reference to determine if it's annotated or lightweight
+        TAG_REF=$(curl -sL "https://api.github.com/repos/${{ inputs.repo }}/git/refs/tags/$LATEST_TAG")
+        if [ -z "$TAG_REF" ]; then
+          echo "Error: Could not fetch tag reference for $LATEST_TAG"
+          exit 1
+        fi
+
+        TAG_OBJECT_SHA=$(echo "$TAG_REF" | jq -r '.object.sha')
+        TAG_OBJECT_TYPE=$(echo "$TAG_REF" | jq -r '.object.type')
+
+        if [ -z "$TAG_OBJECT_SHA" ] || [ "$TAG_OBJECT_SHA" = "null" ]; then
+          echo "Error: Could not fetch SHA for tag $LATEST_TAG"
+          exit 1
+        fi
+
+        # Handle both lightweight tags (type: commit) and annotated tags (type: tag)
+        if [ "$TAG_OBJECT_TYPE" = "commit" ]; then
+          # Lightweight tag - object.sha is already the commit SHA
+          LATEST_SHA="$TAG_OBJECT_SHA"
+        elif [ "$TAG_OBJECT_TYPE" = "tag" ]; then
+          # Annotated tag - need to fetch the tag object to get the commit SHA
+          LATEST_SHA=$(curl -sL "https://api.github.com/repos/${{ inputs.repo }}/git/tags/$TAG_OBJECT_SHA" | jq -r '.object.sha')
+          if [ -z "$LATEST_SHA" ] || [ "$LATEST_SHA" = "null" ]; then
+            echo "Error: Could not fetch commit SHA for annotated tag $LATEST_TAG @ $TAG_OBJECT_SHA"
+            exit 1
+          fi
+        else
+          echo "Error: Unexpected tag object type: $TAG_OBJECT_TYPE"
+          exit 1
+        fi
+
+        if ! [[ $LATEST_SHA =~ ^[0-9a-f]{40}$ ]]; then
+          echo "Error: Invalid SHA format received from GitHub"
+          echo "Found: $LATEST_SHA"
+          echo "Expected: 40 character hexadecimal string"
+          exit 1
+        fi
+
+        echo "latest=$LATEST_SHA" >> $GITHUB_OUTPUT
+        echo "tag=$LATEST_TAG" >> $GITHUB_OUTPUT
+
+        echo "Current: $CURRENT_VERSION"
+        echo "Latest:  $LATEST_SHA ($LATEST_TAG)"
+
+    - name: Update version if needed
+      if: steps.check-version.outputs.current != steps.check-version.outputs.latest
+      shell: bash
+      run: |
+        set -euo pipefail
+        # Handle multi-line format where COMMIT and its value are on separate lines
+        sed -i -E '/[[:space:]]*COMMIT[[:space:]]*$/{n;s/[[:space:]]*([0-9a-f]+)[[:space:]]*$/    ${{ steps.check-version.outputs.latest }}/}' "${{ inputs.cmake-file }}"
+
+    - name: Create Pull Request
+      if: steps.check-version.outputs.current != steps.check-version.outputs.latest
+      uses: peter-evans/create-pull-request@v7
+      with:
+        token: ${{ github.token }}
+        add-paths: |
+          ${{ inputs.cmake-file }}
+        commit-message: "deps: update ${{ inputs.dep-name }} to ${{ steps.check-version.outputs.tag }} (${{ steps.check-version.outputs.latest }})"
+        title: "deps: update ${{ inputs.dep-name }} to ${{ steps.check-version.outputs.tag }}"
+        delete-branch: true
+        branch: deps/update-${{ inputs.dep-name }}-${{ github.run_number }}
+        body: |
+          ## What does this PR do?
+
+          Updates ${{ inputs.dep-name }} to version ${{ steps.check-version.outputs.tag }}
+
+          Compare: https://github.com/${{ inputs.repo }}/compare/${{ steps.check-version.outputs.current }}...${{ steps.check-version.outputs.latest }}
+
+          Auto-updated by [this workflow](https://github.com/oven-sh/bun/actions/workflows/${{ inputs.workflow-file }})

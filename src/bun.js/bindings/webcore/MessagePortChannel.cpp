@@ -150,20 +150,26 @@ void MessagePortChannel::takeAllMessagesForPort(const MessagePortIdentifier& por
 
     Vector<MessageWithMessagePorts> result;
     RefPtr<MessagePortChannel> protectedThis;
+    bool isEmpty = false;
 
     {
         Locker locker { m_lock };
 
         if (m_pendingMessages[i].isEmpty()) {
-            callback({}, [] {});
-            return;
+            isEmpty = true;
+        } else {
+            ASSERT(m_pendingMessageProtectors[i]);
+
+            result.swap(m_pendingMessages[i]);
+            ++m_messageBatchesInFlight;
+            protectedThis = WTF::move(m_pendingMessageProtectors[i]);
         }
+    }
 
-        ASSERT(m_pendingMessageProtectors[i]);
-
-        result.swap(m_pendingMessages[i]);
-        ++m_messageBatchesInFlight;
-        protectedThis = WTF::move(m_pendingMessageProtectors[i]);
+    // Invoke callback outside the lock to avoid potential deadlocks
+    if (isEmpty) {
+        callback({}, [] {});
+        return;
     }
 
     // LOG(MessagePorts, "There are %zu messages to take for port %s. Taking them now, messages in flight is now %" PRIu64, result.size(), port.logString().utf8().data(), m_messageBatchesInFlight);

@@ -325,7 +325,9 @@ $$capture_start$$(${fn.async ? "async " : ""}${
       directives: fn.directives,
       source: finalReplacement,
       params: fn.params,
-      visibility: fn.directives.visibility ?? (fn.directives.linkTimeConstant ? "Private" : "Public"),
+      // JSC parser sets visibility to Private for async functions that use await
+      // (see Parser.cpp line ~2281), so we match that behavior here
+      visibility: fn.directives.visibility ?? (fn.directives.linkTimeConstant || fn.async ? "Private" : "Public"),
       isGetter: !!fn.directives.getter,
       constructAbility: fn.directives.ConstructAbility ?? "CannotConstruct",
       constructKind: fn.directives.ConstructKind ?? "None",

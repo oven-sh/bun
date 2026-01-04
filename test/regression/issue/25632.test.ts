@@ -5,12 +5,12 @@
  * @see https://github.com/oven-sh/bun/issues/25632
  */
 import { test, expect, describe } from "bun:test";
-import http, { createServer, ServerResponse, IncomingMessage } from "node:http";
+import { createServer, ServerResponse, IncomingMessage } from "node:http";
 
 describe("ServerResponse.writableEnded", () => {
   test("should be true after end() is called without a socket", async () => {
     // Create a ServerResponse without a valid socket/handle
-    const req = new http.IncomingMessage(null as any);
+    const req = new IncomingMessage(null as any);
     const res = new ServerResponse(req);
 
     expect(res.writableEnded).toBe(false);
@@ -24,21 +24,26 @@ describe("ServerResponse.writableEnded", () => {
   });
 
   test("should be true after end() is called with callback but without socket", async () => {
-    const req = new http.IncomingMessage(null as any);
+    const req = new IncomingMessage(null as any);
     const res = new ServerResponse(req);
 
+    let called = false;
     res.end(() => {
       // Note: In Node.js, callback is NOT invoked when there's no socket
       // This matches Node.js behavior where the 'finish' event never fires without a socket
+      called = true;
     });
 
     // Per Node.js spec, writableEnded should be true after end() is called
     expect(res.writableEnded).toBe(true);
     expect(res.finished).toBe(true);
+
+    await new Promise(resolve => process.nextTick(resolve));
+    expect(called).toBe(false);
   });
 
   test("should be true after end() with chunk but without socket", async () => {
-    const req = new http.IncomingMessage(null as any);
+    const req = new IncomingMessage(null as any);
     const res = new ServerResponse(req);
 
     res.end("test data");
@@ -54,7 +59,7 @@ describe("ServerResponse.writableEnded", () => {
       expect(res.writableEnded).toBe(true);
     });
 
-    server.listen({ port: 0 });
+    await new Promise(resolve => server.listen({ port: 0 }, resolve));
     const { port } = server.address() as { port: number };
 
     try {

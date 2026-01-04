@@ -650,6 +650,9 @@ fn updatePackageJSONAndInstallAndCLI(
                                     // Regular quotes will do here.
                                     try writer.print("fish_add_path {f}", .{bun.fmt.quote(instructions.folder)});
                                 },
+                                .nu => {
+                                    try writer.print("$env.PATH = ($env.PATH | split row (char esep) | prepend {})", .{bun.fmt.quote(instructions.folder)});
+                                },
                                 .pwsh => {
                                     try writer.print("$env:PATH += \";{f}\"", .{path});
                                 },

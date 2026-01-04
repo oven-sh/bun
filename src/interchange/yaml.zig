@@ -726,7 +726,7 @@ pub fn Parser(comptime enc: Encoding) type {
                         try self.scan(.{});
                     }
 
-                    if (self.token.line == document_end_line) {
+                    if (self.token.data != .eof and self.token.line == document_end_line) {
                         return unexpectedToken();
                     }
                 },
@@ -2284,7 +2284,11 @@ pub fn Parser(comptime enc: Encoding) type {
 
             // Track whether we're at the start of a new line.
             // Document markers (--- and ...) are only valid at line start.
-            var nl = true;
+            var nl = self.pos == .zero;
+            if (!nl) {
+                const prev = self.input[self.pos.sub(1).cast()];
+                nl = prev == '\n' or prev == '\r';
+            }
 
             next: switch (self.next()) {
                 0 => {
@@ -2341,6 +2345,7 @@ pub fn Parser(comptime enc: Encoding) type {
                 },
 
                 ':' => {
+                    nl = false;
                     if (self.isSWhiteOrBCharOrEofAt(1)) {
                         return ctx.done();
                     }
@@ -2371,6 +2376,7 @@ pub fn Parser(comptime enc: Encoding) type {
                 },
 
                 '#' => {
+                    nl = false;
                     const prev = self.input[self.pos.sub(1).cast()];
                     if (self.pos == .zero or switch (prev) {
                         ' ',
@@ -2394,6 +2400,7 @@ pub fn Parser(comptime enc: Encoding) type {
                 '{',
                 '}',
                 => |c| {
+                    nl = false;
                     switch (self.context.get()) {
                         .block_in,
                         .block_out,
@@ -2414,6 +2421,7 @@ pub fn Parser(comptime enc: Encoding) type {
                 ' ',
                 '\t',
                 => |c| {
+                    nl = false;
                     try ctx.appendSourceWhitespace(c, self.pos);
                     self.inc(1);
                     continue :next self.next();
@@ -2929,7 +2937,11 @@ pub fn Parser(comptime enc: Encoding) type {
                 },
 
                 '-' => {
-                    if (self.line_indent == .none and self.remainStartsWith("---") and self.isAnyOrEofAt(" \t\n\r", 3)) {
+                    const line_start = self.pos == .zero or switch (self.input[self.pos.sub(1).cast()]) {
+                        '\n', '\r' => true,
+                        else => false,
+                    };
+                    if (line_start and self.line_indent == .none and self.remainStartsWith("---") and self.isAnyOrEofAt(" \t\n\r", 3)) {
                         return ctx.done(false);
                     }
 
@@ -2948,7 +2960,11 @@ pub fn Parser(comptime enc: Encoding) type {
                 },
 
                 '.' => {
-                    if (self.line_indent == .none and self.remainStartsWith("...") and self.isAnyOrEofAt(" \t\n\r", 3)) {
+                    const line_start = self.pos == .zero or switch (self.input[self.pos.sub(1).cast()]) {
+                        '\n', '\r' => true,
+                        else => false,
+                    };
+                    if (line_start and self.line_indent == .none and self.remainStartsWith("...") and self.isAnyOrEofAt(" \t\n\r", 3)) {
                         return ctx.done(false);
                     }
 
@@ -3652,7 +3668,11 @@ pub fn Parser(comptime enc: Encoding) type {
                 '-' => {
                     const start = self.pos;
 
-                    if (self.line_indent == .none and self.remainStartsWith(enc.literal("---")) and self.isSWhiteOrBCharOrEofAt(3)) {
+                    const line_start = self.pos == .zero or switch (self.input[self.pos.sub(1).cast()]) {
+                        '\n', '\r' => true,
+                        else => false,
+                    };
+                    if (line_start and self.line_indent == .none and self.remainStartsWith(enc.literal("---")) and self.isSWhiteOrBCharOrEofAt(3)) {
                         self.inc(3);
                         break :next .documentStart(.{
                             .start = start,
@@ -3732,7 +3752,11 @@ pub fn Parser(comptime enc: Encoding) type {
                 '.' => {
                     const start = self.pos;
 
-                    if (self.line_indent == .none and self.remainStartsWith(enc.literal("...")) and self.isSWhiteOrBCharOrEofAt(3)) {
+                    const line_start = self.pos == .zero or switch (self.input[self.pos.sub(1).cast()]) {
+                        '\n', '\r' => true,
+                        else => false,
+                    };
+                    if (line_start and self.line_indent == .none and self.remainStartsWith(enc.literal("...")) and self.isSWhiteOrBCharOrEofAt(3)) {
                         self.inc(3);
                         break :next .documentEnd(.{
                             .start = start,
@@ -4284,7 +4308,7 @@ pub fn Parser(comptime enc: Encoding) type {
             if (pos.isLessThan(self.input.len)) {
                 return std.mem.indexOfScalar(enc.unit(), values, self.input[pos.cast()]) != null;
             }
-            return false;
+            return true;
         }
 
         fn isEof(self: *const @This()) bool {

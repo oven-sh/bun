@@ -31,6 +31,27 @@ description: Lorem ipsum dolor sit amet, consectetur adipiscing elit.
     expect(parsed).toEqual({ key: "hello...world" });
   });
 
+  test("should not treat document markers as values after ':'", () => {
+    const text = `
+key1: ---
+key2: ...
+`;
+    const parsed = Bun.YAML.parse(text);
+    expect(parsed).toEqual({ key1: "---", key2: "..." });
+  });
+
+  test("should not treat --- at line start in multiline plain scalar as a document separator", () => {
+    const text = `
+message: first line
+  --- still part of the value
+  last line
+`;
+    const parsed = Bun.YAML.parse(text);
+    expect(parsed).toEqual({
+      message: "first line --- still part of the value last line",
+    });
+  });
+
   test("should correctly handle actual document separator at line start", () => {
     const text = `
 doc1: value1

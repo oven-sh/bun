@@ -81,7 +81,7 @@ private:
     RefPtr<MessagePortChannel> m_pendingMessageProtectors[2] WTF_GUARDED_BY_LOCK(m_lock);
     uint64_t m_messageBatchesInFlight WTF_GUARDED_BY_LOCK(m_lock) { 0 };
 
-    Lock m_lock;
+    mutable Lock m_lock;
     MessagePortChannelRegistry& m_registry;
 };
 

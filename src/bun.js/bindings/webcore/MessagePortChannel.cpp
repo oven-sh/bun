@@ -190,4 +190,16 @@ std::optional<MessageWithMessagePorts> MessagePortChannel::tryTakeMessageForPort
     return WTF::move(message);
 }
 
+bool MessagePortChannel::hasAnyMessagesPendingOrInFlight() const
+{
+    Locker locker { m_lock };
+    return !m_pendingMessages[0].isEmpty() || !m_pendingMessages[1].isEmpty() || m_messageBatchesInFlight > 0;
+}
+
+uint64_t MessagePortChannel::beingTransferredCount() const
+{
+    Locker locker { m_lock };
+    return m_pendingMessagePortTransfers[0].size() + m_pendingMessagePortTransfers[1].size();
+}
+
 } // namespace WebCore

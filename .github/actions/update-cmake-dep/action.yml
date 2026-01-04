@@ -35,8 +35,15 @@ runs:
     - name: Check version
       id: check-version
       shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
       run: |
         set -euo pipefail
+
+        # Helper function for authenticated GitHub API calls
+        gh_api() {
+          curl -sL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$1"
+        }
 
         # Extract the commit hash from the line after COMMIT
         CURRENT_VERSION=$(awk '/[[:space:]]*COMMIT[[:space:]]*$/{getline; gsub(/^[[:space:]]+|[[:space:]]+$/,"",$0); print}' "${{ inputs.cmake-file }}")
@@ -56,7 +63,7 @@ runs:
 
         echo "current=$CURRENT_VERSION" >> $GITHUB_OUTPUT
 
-        LATEST_RELEASE=$(curl -sL "https://api.github.com/repos/${{ inputs.repo }}/releases/latest")
+        LATEST_RELEASE=$(gh_api "https://api.github.com/repos/${{ inputs.repo }}/releases/latest")
         if [ -z "$LATEST_RELEASE" ]; then
           echo "Error: Failed to fetch latest release from GitHub API"
           exit 1
@@ -68,8 +75,11 @@ runs:
           exit 1
         fi
 
+        # URL-encode the tag name for API requests
+        ENCODED_TAG=$(printf '%s' "$LATEST_TAG" | jq -sRr @uri)
+
         # Get the tag reference to determine if it's annotated or lightweight
-        TAG_REF=$(curl -sL "https://api.github.com/repos/${{ inputs.repo }}/git/refs/tags/$LATEST_TAG")
+        TAG_REF=$(gh_api "https://api.github.com/repos/${{ inputs.repo }}/git/refs/tags/$ENCODED_TAG")
         if [ -z "$TAG_REF" ]; then
           echo "Error: Could not fetch tag reference for $LATEST_TAG"
           exit 1
@@ -89,7 +99,7 @@ runs:
           LATEST_SHA="$TAG_OBJECT_SHA"
         elif [ "$TAG_OBJECT_TYPE" = "tag" ]; then
           # Annotated tag - need to fetch the tag object to get the commit SHA
-          LATEST_SHA=$(curl -sL "https://api.github.com/repos/${{ inputs.repo }}/git/tags/$TAG_OBJECT_SHA" | jq -r '.object.sha')
+          LATEST_SHA=$(gh_api "https://api.github.com/repos/${{ inputs.repo }}/git/tags/$TAG_OBJECT_SHA" | jq -r '.object.sha')
           if [ -z "$LATEST_SHA" ] || [ "$LATEST_SHA" = "null" ]; then
             echo "Error: Could not fetch commit SHA for annotated tag $LATEST_TAG @ $TAG_OBJECT_SHA"
             exit 1
@@ -118,7 +128,8 @@ runs:
       run: |
         set -euo pipefail
         # Handle multi-line format where COMMIT and its value are on separate lines
-        sed -i -E '/[[:space:]]*COMMIT[[:space:]]*$/{n;s/[[:space:]]*([0-9a-f]+)[[:space:]]*$/    ${{ steps.check-version.outputs.latest }}/}' "${{ inputs.cmake-file }}"
+        # Preserve original indentation by capturing and reusing it
+        sed -i -E '/[[:space:]]*COMMIT[[:space:]]*$/{n;s/^([[:space:]]*)[0-9a-f]+[[:space:]]*$/\1${{ steps.check-version.outputs.latest }}/}' "${{ inputs.cmake-file }}"
 
     - name: Create Pull Request
       if: steps.check-version.outputs.current != steps.check-version.outputs.latest

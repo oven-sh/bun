@@ -2,7 +2,7 @@ import type * as BunSQLiteModule from "bun:sqlite";
 import type { BaseQueryHandle, Query, SQLQueryResultMode } from "./query";
 import type { ArrayType, DatabaseAdapter, OnConnected, SQLArrayParameter, SQLHelper, SQLResultArray } from "./shared";
 
-const { SQLHelper, SQLResultArray, getDefinedColumns } = require("internal/sql/shared");
+const { SQLHelper, SQLResultArray, buildDefinedColumnsAndQuery } = require("internal/sql/shared");
 const {
   Query,
   SQLQueryResultMode,
@@ -433,23 +433,20 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
               // insert into users ${sql(users)} or insert into users ${sql(user)}
               //
 
-              // Filter out columns with undefined values
-              // Check ALL items to build union of defined columns (any item having a value means include the column)
-              const definedColumns = getDefinedColumns(columns, items);
+              // Build column list while determining which columns have at least one defined value
+              const { definedColumns, columnsSql } = buildDefinedColumnsAndQuery(
+                columns,
+                items,
+                this.escapeIdentifier.bind(this),
+              );
+
               const definedColumnCount = definedColumns.length;
               if (definedColumnCount === 0) {
                 throw new SyntaxError("Insert needs to have at least one column with a defined value");
               }
               const lastDefinedColumnIndex = definedColumnCount - 1;
 
-              query += "(";
-              for (let j = 0; j < definedColumnCount; j++) {
-                query += this.escapeIdentifier(definedColumns[j]);
-                if (j < lastDefinedColumnIndex) {
-                  query += ", ";
-                }
-              }
-              query += ") VALUES";
+              query += columnsSql;
               if ($isArray(items)) {
                 const itemsCount = items.length;
                 const lastItemIndex = itemsCount - 1;

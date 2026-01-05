@@ -178,21 +178,27 @@ class SQLHelper<T> {
 }
 
 /**
- * Get columns that have at least one defined value across all items.
- * Used by INSERT to filter out columns where ALL items have undefined.
- * If any item has a value for a column, that column is included.
+ * Build the column list for INSERT statements while determining which columns have defined values.
+ * This combines column name generation with defined column detection in a single pass.
+ * Returns the defined columns array and the SQL fragment for the column names.
  */
-function getDefinedColumns<T>(columns: (keyof T)[], items: T | T[]): (keyof T)[] {
+function buildDefinedColumnsAndQuery<T>(
+  columns: (keyof T)[],
+  items: T | T[],
+  escapeIdentifier: (name: string) => string,
+): { definedColumns: (keyof T)[]; columnsSql: string } {
   const definedColumns: (keyof T)[] = [];
+  let columnsSql = "(";
   const columnCount = columns.length;
 
-  for (let j = 0; j < columnCount; j++) {
-    const column = columns[j];
-    let hasDefinedValue = false;
+  for (let k = 0; k < columnCount; k++) {
+    const column = columns[k];
 
+    // Check if any item has this column defined
+    let hasDefinedValue = false;
     if ($isArray(items)) {
-      for (let k = 0; k < items.length; k++) {
-        if (typeof items[k][column] !== "undefined") {
+      for (let j = 0; j < items.length; j++) {
+        if (typeof items[j][column] !== "undefined") {
           hasDefinedValue = true;
           break;
         }
@@ -202,11 +208,14 @@ function getDefinedColumns<T>(columns: (keyof T)[], items: T | T[]): (keyof T)[]
     }
 
     if (hasDefinedValue) {
+      if (definedColumns.length > 0) columnsSql += ", ";
+      columnsSql += escapeIdentifier(column as string);
       definedColumns.push(column);
     }
   }
 
-  return definedColumns;
+  columnsSql += ") VALUES";
+  return { definedColumns, columnsSql };
 }
 
 const SQLITE_MEMORY = ":memory:";
@@ -943,7 +952,7 @@ export default {
   assertIsOptionsOfAdapter,
   parseOptions,
   SQLHelper,
-  getDefinedColumns,
+  buildDefinedColumnsAndQuery,
   normalizeSSLMode,
   SQLResultArray,
   SQLArrayParameter,

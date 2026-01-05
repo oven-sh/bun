@@ -124,6 +124,8 @@ interface CppSQL {
   fcntl(handle: any, ...args: any[]): any;
   close(handle: any, throwOnError: boolean): void;
   setCustomSQLite(path: string): void;
+  run(handle: any, flags: number, internalFieldTuple: any, query: string, ...params: any[]): void;
+  prepare(handle: any, query: string, params: any, flags: number, internalFlags: number): CppSQLStatement;
 }
 
 let SQL: CppSQL;

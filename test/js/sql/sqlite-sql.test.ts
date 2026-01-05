@@ -1,4 +1,4 @@
-import { SQL } from "bun";
+import { randomUUIDv7, SQL } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { tempDirWithFiles } from "harness";
 import { existsSync } from "node:fs";
@@ -226,46 +226,62 @@ describe("Connection & Initialization", () => {
 
       await sql.close();
     });
+  });
 
-    test("should NOT use PG_URL for SQLite", async () => {
-      Bun.env.PG_URL = "postgres://user:pass@localhost:5432/mydb";
+  describe("options.url overrides first argument", () => {
+    test("should use options.url for postgres when it overrides first argument", () => {
+      const sql = new SQL("http://wrong-host/db", {
+        adapter: "postgres",
+        url: "postgres://correct-host:5432/mydb",
+      });
 
-      const sql = new SQL({ adapter: "sqlite", filename: ":memory:" });
-      expect(sql.options.adapter).toBe("sqlite");
-      expect(sql.options.filename).toBe(":memory:");
-
-      await sql.close();
-    });
-
-    test("should throw error when POSTGRES_URL is used without adapter specification", () => {
-      Bun.env.POSTGRES_URL = "postgres://user:pass@localhost:5432/mydb";
-      Bun.env.DATABASE_URL = undefined;
-
-      // This should create a postgres connection, not sqlite
-      const sql = new SQL();
       expect(sql.options.adapter).toBe("postgres");
+      expect(sql.options.hostname).toBe("correct-host");
+      expect(sql.options.port).toBe(5432);
+      expect(sql.options.database).toBe("mydb");
+
       sql.close();
     });
 
-    test("should handle multiple env vars with precedence", async () => {
-      // Test precedence: POSTGRES_URL > DATABASE_URL > PGURL > PG_URL
-      Bun.env.PG_URL = "postgres://pg_url@localhost:5432/pg_db";
-      Bun.env.PGURL = "postgres://pgurl@localhost:5432/pgurl_db";
-      Bun.env.DATABASE_URL = "sqlite://:memory:";
-      Bun.env.POSTGRES_URL = "postgres://postgres@localhost:5432/postgres_db";
+    test("should use options.url for mysql when it overrides first argument", () => {
+      const sql = new SQL("http://wrong-host/wrongdb", {
+        adapter: "mysql",
+        url: "mysql://user:pass@mysql-host:3306/correctdb",
+      });
 
-      const sql = new SQL();
-      // POSTGRES_URL takes precedence
+      expect(sql.options.adapter).toBe("mysql");
+      expect(sql.options.hostname).toBe("mysql-host");
+      expect(sql.options.port).toBe(3306);
+      expect(sql.options.database).toBe("correctdb");
+
+      sql.close();
+    });
+
+    test("should use options.url for mariadb when it overrides first argument", () => {
+      const sql = new SQL("http://wrong-host:1234/wrongdb", {
+        adapter: "mariadb",
+        url: "mariadb://maria-host:3307/mariadb",
+      });
+
+      expect(sql.options.adapter).toBe("mariadb");
+      expect(sql.options.hostname).toBe("maria-host");
+      expect(sql.options.port).toBe(3307);
+      expect(sql.options.database).toBe("mariadb");
+
+      sql.close();
+    });
+
+    test("should use first argument when options.url is not provided", () => {
+      const sql = new SQL("postgres://first-arg-host:5432/firstdb", {
+        adapter: "postgres",
+      });
+
       expect(sql.options.adapter).toBe("postgres");
-      await sql.close();
+      expect(sql.options.hostname).toBe("first-arg-host");
+      expect(sql.options.port).toBe(5432);
+      expect(sql.options.database).toBe("firstdb");
 
-      // Remove POSTGRES_URL
-      delete Bun.env.POSTGRES_URL;
-      const sql2 = new SQL();
-      // DATABASE_URL takes next precedence and it's SQLite (detected via :memory:)
-      expect(sql2.options.adapter).toBe("sqlite");
-      expect(sql2.options.filename).toBe(":memory:");
-      await sql2.close();
+      sql.close();
     });
   });
 
@@ -330,7 +346,7 @@ describe("Connection & Initialization", () => {
       const result = await sql`SELECT * FROM test`;
       expect(result).toHaveLength(1);
 
-      expect(sql`INSERT INTO test VALUES (2)`.execute()).rejects.toThrowErrorMatchingInlineSnapshot(
+      expect(async () => await sql`INSERT INTO test VALUES (2)`.execute()).toThrowErrorMatchingInlineSnapshot(
         `"attempt to write a readonly database"`,
       );
 
@@ -579,14 +595,14 @@ describe("Connection & Initialization", () => {
     test("should handle sqlite: without path", () => {
       const sql = new SQL("sqlite:");
       expect(sql.options.adapter).toBe("sqlite");
-      expect(sql.options.filename).toBe("");
+      expect(sql.options.filename).toBe(":memory:");
       sql.close();
     });
 
     test("should handle sqlite:// without path", () => {
       const sql = new SQL("sqlite://");
       expect(sql.options.adapter).toBe("sqlite");
-      expect(sql.options.filename).toBe("");
+      expect(sql.options.filename).toBe(":memory:");
       sql.close();
     });
 
@@ -671,7 +687,7 @@ describe("Connection & Initialization", () => {
   describe("Error Cases", () => {
     test("should throw for unsupported adapter", () => {
       expect(() => new SQL({ adapter: "mssql" as any })).toThrowErrorMatchingInlineSnapshot(
-        `"Unsupported adapter: mssql. Supported adapters: "postgres", "sqlite", "mysql""`,
+        `"Unsupported adapter: mssql. Supported adapters: "postgres", "sqlite", "mysql", "mariadb""`,
       );
     });
 
@@ -691,7 +707,9 @@ describe("Connection & Initialization", () => {
       expect(sql.options.readonly).toBe(true);
       expect(sql.options.filename).toBe(dbPath);
 
-      expect(sql`SELECT 1`.execute()).rejects.toThrowErrorMatchingInlineSnapshot(`"unable to open database file"`);
+      expect(async () => await sql`SELECT 1`.execute()).toThrowErrorMatchingInlineSnapshot(
+        `"unable to open database file"`,
+      );
 
       await sql.close();
       await rm(dir, { recursive: true });
@@ -964,7 +982,7 @@ describe("Template Literal Security", () => {
   test("dynamic table names are not allowed in template literals", async () => {
     const tableName = "users";
 
-    expect(sql`CREATE TABLE ${tableName} (id INTEGER)`.execute()).rejects.toThrowErrorMatchingInlineSnapshot(
+    expect(async () => await sql`CREATE TABLE ${tableName} (id INTEGER)`.execute()).toThrowErrorMatchingInlineSnapshot(
       `"near "?": syntax error"`,
     );
 
@@ -989,9 +1007,9 @@ describe("Template Literal Security", () => {
   test("dynamic SQL structure is not allowed in template literals", async () => {
     const columns = "id INTEGER, name TEXT";
 
-    expect(sql`CREATE TABLE dynamic_structure (${columns})`.execute()).rejects.toThrowErrorMatchingInlineSnapshot(
-      `"near "?": syntax error"`,
-    );
+    expect(
+      async () => await sql`CREATE TABLE dynamic_structure (${columns})`.execute(),
+    ).toThrowErrorMatchingInlineSnapshot(`"near "?": syntax error"`);
 
     await sql.unsafe(`CREATE TABLE dynamic_structure (${columns})`);
     const tables = await sql`SELECT name FROM sqlite_master WHERE type='table' AND name='dynamic_structure'`;
@@ -1024,7 +1042,7 @@ describe("Template Literal Security", () => {
     expect(result[0].name).toBe("Alice");
 
     const table = "identifier_test";
-    expect(sql`SELECT * FROM ${table}`.execute()).rejects.toThrowErrorMatchingInlineSnapshot(
+    expect(async () => await sql`SELECT * FROM ${table}`.execute()).toThrowErrorMatchingInlineSnapshot(
       `"near "?": syntax error"`,
     );
   });
@@ -1032,12 +1050,11 @@ describe("Template Literal Security", () => {
   test("sql([...]) helper not allowed when 'where in' appears only in string literal", async () => {
     const sql = new SQL("sqlite://:memory:");
     expect(
-      sql`SELECT 'this has where in inside a string' ${sql([1, 2])}`.execute(),
-    ).rejects.toThrowErrorMatchingInlineSnapshot(`"Helpers are only allowed for INSERT, UPDATE and WHERE IN commands"`);
+      async () => await sql`SELECT 'this has where in inside a string' ${sql([1, 2])}`.execute(),
+    ).toThrowErrorMatchingInlineSnapshot(`"Helpers are only allowed for INSERT, UPDATE and WHERE IN commands"`);
     await sql.close();
   });
 });
-
 describe("Transactions", () => {
   let sql: SQL;
 
@@ -1089,7 +1106,7 @@ describe("Transactions", () => {
       try {
         await tx.savepoint(async sp => {
           await sp`UPDATE accounts SET balance = balance - 200 WHERE id = 1`;
-          throw new Error("Inner transaction failed");
+          throw new Error("Inner! transaction failed");
         });
       } catch (err) {}
 
@@ -1105,10 +1122,11 @@ describe("Transactions", () => {
   // It only supports DEFERRED (default), IMMEDIATE, and EXCLUSIVE
   test("read-only transactions throw appropriate error", async () => {
     expect(
-      sql.begin("readonly", async tx => {
-        return await tx`SELECT * FROM accounts`;
-      }),
-    ).rejects.toThrowErrorMatchingInlineSnapshot(
+      async () =>
+        await sql.begin("readonly", async tx => {
+          return await tx`SELECT * FROM accounts`;
+        }),
+    ).toThrowErrorMatchingInlineSnapshot(
       `"SQLite doesn't support 'readonly' transaction mode. Use DEFERRED, IMMEDIATE, or EXCLUSIVE."`,
     );
   });
@@ -1166,7 +1184,53 @@ describe("SQLite-specific features", () => {
     expect(results[0].id).toBe(1);
     expect(results[1].id).toBe(3);
   });
+  test("returning clause on insert statements", async () => {
+    await using sql = new SQL("sqlite://:memory:");
+    await sql`
+        create table users (
+            id integer primary key,
+            name text not null,
+            verified integer not null default 0,
+            created_at integer not null default (strftime('%s', 'now'))
+        )`;
 
+    const result =
+      await sql`insert into "users" ("id", "name", "verified", "created_at") values (null, ${"John"}, ${0}, strftime('%s', 'now')), (null, ${"Bruce"}, ${0}, strftime('%s', 'now')), (null, ${"Jane"}, ${0}, strftime('%s', 'now')), (null, ${"Austin"}, ${0},  strftime('%s', 'now')) returning "id", "name", "verified"`;
+
+    expect(result[0].id).toBe(1);
+    expect(result[0].name).toBe("John");
+    expect(result[0].verified).toBe(0);
+    expect(result[1].id).toBe(2);
+    expect(result[1].name).toBe("Bruce");
+    expect(result[1].verified).toBe(0);
+    expect(result[2].id).toBe(3);
+    expect(result[2].name).toBe("Jane");
+    expect(result[2].verified).toBe(0);
+    expect(result[3].id).toBe(4);
+    expect(result[3].name).toBe("Austin");
+    expect(result[3].verified).toBe(0);
+
+    const [{ 'upper("name")': upperName }] =
+      await sql`insert into "users" ("id", "name", "verified", "created_at") values (null, ${"John"}, ${0}, strftime('%s', 'now')) returning upper("name")`;
+    expect(upperName).toBe("JOHN");
+  });
+  test("order by and limit in delete statements", async () => {
+    await using sql = new SQL("sqlite://:memory:");
+    await sql`CREATE TABLE users (id INTEGER, name TEXT)`;
+    await sql`INSERT INTO users VALUES (1, 'John'), (2, 'Jane'), (3, 'Austin')`;
+    const result = await sql`delete from "users" where "users"."id" = ${1} order by "users"."name" asc limit ${1}`;
+    expect(result.count).toBe(1);
+    expect(result.command).toBe("DELETE");
+  });
+  test("order by and limit in update statements", async () => {
+    await using sql = new SQL("sqlite://:memory:");
+    await sql`CREATE TABLE users (id INTEGER, name TEXT)`;
+    await sql`INSERT INTO users VALUES (1, 'John'), (2, 'Jane'), (3, 'Austin')`;
+    const result =
+      await sql`update "users" set "name" = 'John' where "users"."id" = ${1} order by "users"."name" asc limit ${1}`;
+    expect(result.count).toBe(1);
+    expect(result.command).toBe("UPDATE");
+  });
   test("last_insert_rowid()", async () => {
     await sql`CREATE TABLE rowid_test (id INTEGER PRIMARY KEY, value TEXT)`;
     await sql`INSERT INTO rowid_test (value) VALUES ('test')`;
@@ -1292,6 +1356,130 @@ describe("SQL helpers", () => {
     expect(results[0].value).toBe("test");
   });
 
+  test("insert into with select helper using where IN", async () => {
+    const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+    await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id int, name text, age int)`;
+    {
+      await sql`INSERT INTO ${sql(random_name)} ${sql({ id: 1, name: "John", age: 30 })}`;
+      const result = await sql`SELECT * FROM ${sql(random_name)}`;
+      expect(result[0].id).toBe(1);
+      expect(result[0].name).toBe("John");
+      expect(result[0].age).toBe(30);
+    }
+    await sql`CREATE TEMPORARY TABLE ${sql(random_name + "2")} (id int, name text, age int)`;
+    {
+      await sql`INSERT INTO ${sql(random_name + "2")} (id, name, age) SELECT id, name, age FROM ${sql(random_name)} WHERE id IN ${sql([1, 2])}`;
+      const result = await sql`SELECT * FROM ${sql(random_name + "2")}`;
+      expect(result[0].id).toBe(1);
+      expect(result[0].name).toBe("John");
+      expect(result[0].age).toBe(30);
+    }
+  });
+
+  test("update helper with undefined values", async () => {
+    const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+    await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id int, name text, age int)`;
+    const users = [
+      { id: 1, name: "John", age: 30 },
+      { id: 2, name: "Jane", age: 25 },
+    ];
+    await sql`INSERT INTO ${sql(random_name)} ${sql(users)}`;
+
+    await sql`UPDATE ${sql(random_name)} SET ${sql({ name: "Mary", age: undefined })} WHERE id IN ${sql([1, 2])}`;
+    const result = await sql`SELECT * FROM ${sql(random_name)}`;
+    expect(result[0].id).toBe(1);
+    expect(result[0].name).toBe("Mary");
+    expect(result[0].age).toBe(30);
+    expect(result[1].id).toBe(2);
+    expect(result[1].name).toBe("Mary");
+    expect(result[1].age).toBe(25);
+  });
+  test("update helper that starts with undefined values", async () => {
+    const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+    await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id int, name text, age int)`;
+    const users = [
+      { id: 1, name: "John", age: 30 },
+      { id: 2, name: "Jane", age: 25 },
+    ];
+    await sql`INSERT INTO ${sql(random_name)} ${sql(users)}`;
+
+    await sql`UPDATE ${sql(random_name)} SET ${sql({ name: undefined, age: 19 })} WHERE id IN ${sql([1, 2])}`;
+    const result = await sql`SELECT * FROM ${sql(random_name)}`;
+    expect(result[0].id).toBe(1);
+    expect(result[0].name).toBe("John");
+    expect(result[0].age).toBe(19);
+    expect(result[1].id).toBe(2);
+    expect(result[1].name).toBe("Jane");
+    expect(result[1].age).toBe(19);
+  });
+
+  test("update helper with undefined values and no columns", async () => {
+    const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+    await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id int, name text, age int)`;
+    const users = [
+      { id: 1, name: "John", age: 30 },
+      { id: 2, name: "Jane", age: 25 },
+    ];
+    await sql`INSERT INTO ${sql(random_name)} ${sql(users)}`;
+
+    try {
+      await sql`UPDATE ${sql(random_name)} SET ${sql({ name: undefined, age: undefined })} WHERE id IN ${sql([1, 2])}`;
+      expect.unreachable();
+    } catch (e) {
+      expect(e).toBeInstanceOf(SyntaxError);
+      expect(e.message).toBe("Update needs to have at least one column");
+    }
+  });
+
+  test("update helper with IN and column name", async () => {
+    const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+    await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id int, name text, age int)`;
+    const users = [
+      { id: 1, name: "John", age: 30 },
+      { id: 2, name: "Jane", age: 25 },
+    ];
+    await sql`INSERT INTO ${sql(random_name)} ${sql(users)}`;
+
+    await sql`UPDATE ${sql(random_name)} SET ${sql({ name: "Mary", age: 18 })} WHERE id IN ${sql(users, "id")}`;
+    const result = await sql`SELECT * FROM ${sql(random_name)}`;
+    expect(result[0].id).toBe(1);
+    expect(result[0].name).toBe("Mary");
+    expect(result[0].age).toBe(18);
+    expect(result[1].id).toBe(2);
+    expect(result[1].name).toBe("Mary");
+    expect(result[1].age).toBe(18);
+  });
+
+  test("select helper with IN using fragment", async () => {
+    const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+    await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id int, name text, age int)`;
+    await sql`INSERT INTO ${sql(random_name)} ${sql({ id: 1, name: "John", age: 30 })}`;
+    const fragment = sql`id IN ${sql([1, 2])}`;
+    const result = await sql`SELECT * FROM ${sql(random_name)} WHERE ${fragment}`;
+    expect(result[0].id).toBe(1);
+    expect(result[0].name).toBe("John");
+    expect(result[0].age).toBe(30);
+  });
+
+  test("update helper with AND IN", async () => {
+    const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+    await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id int, name text, age int)`;
+    const users = [
+      { id: 1, name: "John", age: 30 },
+      { id: 2, name: "Jane", age: 25 },
+    ];
+    await sql`INSERT INTO ${sql(random_name)} ${sql(users)}`;
+
+    await sql`UPDATE ${sql(random_name)} SET ${sql({ name: "Mary", age: 18 })} WHERE 1=1 AND id IN ${sql([1, 2])}`;
+    const result = await sql`SELECT * FROM ${sql(random_name)}`;
+    expect(result[0].id).toBe(1);
+    expect(result[0].name).toBe("Mary");
+    expect(result[0].age).toBe(18);
+    expect(result[1].id).toBe(2);
+    expect(result[1].name).toBe("Mary");
+    expect(result[1].age).toBe(18);
+  });
+
   test("file execution", async () => {
     const dir = tempDirWithFiles("sql-files", {
       "schema.sql": `
@@ -1341,88 +1529,71 @@ describe("Helper argument validation", () => {
   test("functions are invalid values in helper", async () => {
     const fn = () => 123;
     expect(
-      sql`INSERT INTO helper_invalid ${sql({ id: 1, text_val: fn })}`.execute(),
-    ).rejects.toThrowErrorMatchingInlineSnapshot(
-      `"Binding expected string, TypedArray, boolean, number, bigint or null"`,
-    );
+      async () => await sql`INSERT INTO helper_invalid ${sql({ id: 1, text_val: fn })}`.execute(),
+    ).toThrowErrorMatchingInlineSnapshot(`"Binding expected string, TypedArray, boolean, number, bigint or null"`);
   });
 
   test("plain objects (JSON) are invalid values in helper", async () => {
     const obj = { a: 1, b: "two" };
     expect(
-      sql`INSERT INTO helper_invalid ${sql({ id: 2, text_val: obj as any })}`.execute(),
-    ).rejects.toThrowErrorMatchingInlineSnapshot(
-      `"Binding expected string, TypedArray, boolean, number, bigint or null"`,
-    );
+      async () => await sql`INSERT INTO helper_invalid ${sql({ id: 2, text_val: obj as any })}`.execute(),
+    ).toThrowErrorMatchingInlineSnapshot(`"Binding expected string, TypedArray, boolean, number, bigint or null"`);
   });
 
   test("Map and Set are invalid values in helper", async () => {
     expect(
-      sql`INSERT INTO helper_invalid ${sql({ id: 3, text_val: new Map([["k", "v"]]) as any })}`.execute(),
-    ).rejects.toThrowErrorMatchingInlineSnapshot(
-      `"Binding expected string, TypedArray, boolean, number, bigint or null"`,
-    );
+      async () =>
+        await sql`INSERT INTO helper_invalid ${sql({ id: 3, text_val: new Map([["k", "v"]]) as any })}`.execute(),
+    ).toThrowErrorMatchingInlineSnapshot(`"Binding expected string, TypedArray, boolean, number, bigint or null"`);
 
     expect(
-      sql`INSERT INTO helper_invalid ${sql({ id: 4, text_val: new Set([1, 2, 3]) as any })}`.execute(),
-    ).rejects.toThrowErrorMatchingInlineSnapshot(
-      `"Binding expected string, TypedArray, boolean, number, bigint or null"`,
-    );
+      async () =>
+        await sql`INSERT INTO helper_invalid ${sql({ id: 4, text_val: new Set([1, 2, 3]) as any })}`.execute(),
+    ).toThrowErrorMatchingInlineSnapshot(`"Binding expected string, TypedArray, boolean, number, bigint or null"`);
   });
 
   test("Response, Request, Blob, File are invalid values in helper", async () => {
     expect(
-      sql`INSERT INTO helper_invalid ${sql({ id: 5, text_val: new Response("ok") as any })}`.execute(),
-    ).rejects.toThrowErrorMatchingInlineSnapshot(
-      `"Binding expected string, TypedArray, boolean, number, bigint or null"`,
-    );
+      async () =>
+        await sql`INSERT INTO helper_invalid ${sql({ id: 5, text_val: new Response("ok") as any })}`.execute(),
+    ).toThrowErrorMatchingInlineSnapshot(`"Binding expected string, TypedArray, boolean, number, bigint or null"`);
 
     expect(
-      sql`INSERT INTO helper_invalid ${sql({ id: 6, text_val: new Request("https://example.com") as any })}`.execute(),
-    ).rejects.toThrowErrorMatchingInlineSnapshot(
-      `"Binding expected string, TypedArray, boolean, number, bigint or null"`,
-    );
+      async () =>
+        await sql`INSERT INTO helper_invalid ${sql({ id: 6, text_val: new Request("https://example.com") as any })}`.execute(),
+    ).toThrowErrorMatchingInlineSnapshot(`"Binding expected string, TypedArray, boolean, number, bigint or null"`);
 
     expect(
-      sql`INSERT INTO helper_invalid ${sql({ id: 7, blob_val: new Blob(["hello"]) as any })}`.execute(),
-    ).rejects.toThrowErrorMatchingInlineSnapshot(
-      `"Binding expected string, TypedArray, boolean, number, bigint or null"`,
-    );
+      async () =>
+        await sql`INSERT INTO helper_invalid ${sql({ id: 7, blob_val: new Blob(["hello"]) as any })}`.execute(),
+    ).toThrowErrorMatchingInlineSnapshot(`"Binding expected string, TypedArray, boolean, number, bigint or null"`);
 
     expect(
-      sql`INSERT INTO helper_invalid ${sql({ id: 8, blob_val: new File(["body"], "a.txt") as any })}`.execute(),
-    ).rejects.toThrowErrorMatchingInlineSnapshot(
-      `"Binding expected string, TypedArray, boolean, number, bigint or null"`,
-    );
+      async () =>
+        await sql`INSERT INTO helper_invalid ${sql({ id: 8, blob_val: new File(["body"], "a.txt") as any })}`.execute(),
+    ).toThrowErrorMatchingInlineSnapshot(`"Binding expected string, TypedArray, boolean, number, bigint or null"`);
   });
 
   test("ArrayBuffer (not a view) is invalid in helper", async () => {
     const ab = new ArrayBuffer(8);
     expect(
-      sql`INSERT INTO helper_invalid ${sql({ id: 9, blob_val: ab as any })}`.execute(),
-    ).rejects.toThrowErrorMatchingInlineSnapshot(
-      `"Binding expected string, TypedArray, boolean, number, bigint or null"`,
-    );
+      async () => await sql`INSERT INTO helper_invalid ${sql({ id: 9, blob_val: ab as any })}`.execute(),
+    ).toThrowErrorMatchingInlineSnapshot(`"Binding expected string, TypedArray, boolean, number, bigint or null"`);
   });
 
   test("Promise, Date, RegExp are invalid in helper", async () => {
     expect(
-      sql`INSERT INTO helper_invalid ${sql({ id: 10, text_val: Promise.resolve("x") as any })}`.execute(),
-    ).rejects.toThrowErrorMatchingInlineSnapshot(
-      `"Binding expected string, TypedArray, boolean, number, bigint or null"`,
-    );
+      async () =>
+        await sql`INSERT INTO helper_invalid ${sql({ id: 10, text_val: Promise.resolve("x") as any })}`.execute(),
+    ).toThrowErrorMatchingInlineSnapshot(`"Binding expected string, TypedArray, boolean, number, bigint or null"`);
 
     expect(
-      sql`INSERT INTO helper_invalid ${sql({ id: 11, text_val: new Date() as any })}`.execute(),
-    ).rejects.toThrowErrorMatchingInlineSnapshot(
-      `"Binding expected string, TypedArray, boolean, number, bigint or null"`,
-    );
+      async () => await sql`INSERT INTO helper_invalid ${sql({ id: 11, text_val: new Date() as any })}`.execute(),
+    ).toThrowErrorMatchingInlineSnapshot(`"Binding expected string, TypedArray, boolean, number, bigint or null"`);
 
     expect(
-      sql`INSERT INTO helper_invalid ${sql({ id: 12, text_val: /abc/ as any })}`.execute(),
-    ).rejects.toThrowErrorMatchingInlineSnapshot(
-      `"Binding expected string, TypedArray, boolean, number, bigint or null"`,
-    );
+      async () => await sql`INSERT INTO helper_invalid ${sql({ id: 12, text_val: /abc/ as any })}`.execute(),
+    ).toThrowErrorMatchingInlineSnapshot(`"Binding expected string, TypedArray, boolean, number, bigint or null"`);
   });
 
   test("BigInt values are accepted when in range", async () => {
@@ -1437,9 +1608,9 @@ describe("Helper argument validation", () => {
     await sqlSafe`CREATE TABLE t (id INTEGER PRIMARY KEY, n INTEGER)`;
 
     const big = BigInt("9223372036854775808"); // 2^63, just out of int64 range
-    expect(sqlSafe`INSERT INTO t ${sql({ id: 1, n: big })}`.execute()).rejects.toThrowErrorMatchingInlineSnapshot(
-      `"BigInt value '9223372036854775808' is out of range"`,
-    );
+    expect(
+      async () => await sqlSafe`INSERT INTO t ${sql({ id: 1, n: big })}`.execute(),
+    ).toThrowErrorMatchingInlineSnapshot(`"BigInt value '9223372036854775808' is out of range"`);
     await sqlSafe.close();
   });
 
@@ -1476,20 +1647,20 @@ describe("Helper argument validation", () => {
 
   test("WHERE IN helper rejects multiple columns", async () => {
     const items = [{ a: 1, b: 2 }];
-    expect(sql`SELECT 1 WHERE 1 IN ${sql(items, "a", "b")}`.execute()).rejects.toThrowErrorMatchingInlineSnapshot(
-      `"Cannot use WHERE IN helper with multiple columns"`,
-    );
+    expect(
+      async () => await sql`SELECT 1 WHERE 1 IN ${sql(items, "a", "b")}`.execute(),
+    ).toThrowErrorMatchingInlineSnapshot(`"Cannot use WHERE IN helper with multiple columns"`);
   });
 
   test("UPDATE helper rejects array of objects", async () => {
     const items = [{ text_val: "a" }, { text_val: "b" }];
     expect(
-      sql`UPDATE helper_invalid SET ${sql(items)} WHERE id = 1`.execute(),
-    ).rejects.toThrowErrorMatchingInlineSnapshot(`"Cannot use array of objects for UPDATE"`);
+      async () => await sql`UPDATE helper_invalid SET ${sql(items)} WHERE id = 1`.execute(),
+    ).toThrowErrorMatchingInlineSnapshot(`"Cannot use array of objects for UPDATE"`);
   });
 
   test("invalid values in WHERE IN helper are rejected", async () => {
-    expect(sql`SELECT 1 WHERE 1 IN ${sql([() => {}])}`.execute()).rejects.toThrowErrorMatchingInlineSnapshot(
+    expect(async () => await sql`SELECT 1 WHERE 1 IN ${sql([() => {}])}`.execute()).toThrowErrorMatchingInlineSnapshot(
       `"Binding expected string, TypedArray, boolean, number, bigint or null"`,
     );
   });
@@ -1582,7 +1753,7 @@ describe("Connection management", () => {
   test("reserve throws for SQLite", async () => {
     const sql = new SQL("sqlite://:memory:");
 
-    expect(sql.reserve()).rejects.toThrowErrorMatchingInlineSnapshot(
+    expect(async () => await sql.reserve()).toThrowErrorMatchingInlineSnapshot(
       `"This adapter doesn't support connection reservation"`,
     );
 

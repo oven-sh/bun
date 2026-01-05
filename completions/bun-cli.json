@@ -122,7 +122,7 @@
         },
         {
           "name": "reporter",
-          "description": "Specify the test reporter. Currently --reporter=junit is the only supported format.",
+          "description": "Test output reporter format. Available: 'junit' (requires --reporter-outfile). Default: console output.",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -130,7 +130,7 @@
         },
         {
           "name": "reporter-outfile",
-          "description": "The output file used for the format from --reporter.",
+          "description": "Output file path for the reporter format (required with --reporter).",
           "hasValue": true,
           "valueType": "val",
           "required": false,

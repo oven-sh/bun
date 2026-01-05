@@ -301,7 +301,7 @@ pub const Define = struct {
                 initial_values = gpe_entry.value_ptr.*;
             }
 
-            var list = try std.ArrayList(DotDefine).initCapacity(allocator, initial_values.len + 1);
+            var list = try std.array_list.Managed(DotDefine).initCapacity(allocator, initial_values.len + 1);
             if (initial_values.len > 0) {
                 list.appendSliceAssumeCapacity(initial_values);
             }
@@ -322,16 +322,17 @@ pub const Define = struct {
         const key = global[global.len - 1];
         const gpe = try define.dots.getOrPut(key);
         if (gpe.found_existing) {
-            var list = try std.ArrayList(DotDefine).initCapacity(allocator, gpe.value_ptr.*.len + 1);
+            var list = try std.array_list.Managed(DotDefine).initCapacity(allocator, gpe.value_ptr.*.len + 1);
             list.appendSliceAssumeCapacity(gpe.value_ptr.*);
             list.appendAssumeCapacity(DotDefine{
                 .parts = global[0..global.len],
                 .data = value_define.*,
             });
 
+            define.allocator.free(gpe.value_ptr.*);
             gpe.value_ptr.* = try list.toOwnedSlice();
         } else {
-            var list = try std.ArrayList(DotDefine).initCapacity(allocator, 1);
+            var list = try std.array_list.Managed(DotDefine).initCapacity(allocator, 1);
             list.appendAssumeCapacity(DotDefine{
                 .parts = global[0..global.len],
                 .data = value_define.*,
@@ -398,6 +399,14 @@ pub const Define = struct {
         }
 
         return define;
+    }
+
+    pub fn deinit(this: *Define) void {
+        var diter = this.dots.valueIterator();
+        while (diter.next()) |key| this.allocator.free(key.*);
+        this.dots.clearAndFree();
+        this.identifiers.clearAndFree();
+        this.allocator.destroy(this);
     }
 };
 

@@ -80,7 +80,7 @@ fn execTask(allocator: std.mem.Allocator, task_: string, cwd: string, _: string,
         }
     }
 
-    if (strings.startsWith(task, "bun ")) {
+    if (npm_client != null and strings.startsWith(task, "bun ")) {
         argv = argv[2..];
     }
 
@@ -109,7 +109,7 @@ fn execTask(allocator: std.mem.Allocator, task_: string, cwd: string, _: string,
         .stdin = .inherit,
 
         .windows = if (Environment.isWindows) .{
-            .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(null)),
+            .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(null, null)),
         },
     }) catch return;
 }
@@ -131,7 +131,7 @@ pub const ProgressBuf = struct {
     }
 
     pub fn pretty(comptime fmt: string, args: anytype) !string {
-        if (Output.enable_ansi_colors) {
+        if (Output.enable_ansi_colors_stdout) {
             return ProgressBuf.print(comptime Output.prettyFmt(fmt, true), args);
         } else {
             return ProgressBuf.print(comptime Output.prettyFmt(fmt, false), args);
@@ -327,8 +327,8 @@ pub const CreateCommand = struct {
 
                 var tarball_buf_list = std.ArrayListUnmanaged(u8){ .capacity = file_buf.len, .items = file_buf };
                 var gunzip = try Zlib.ZlibReaderArrayList.init(tarball_bytes.list.items, &tarball_buf_list, ctx.allocator);
-                try gunzip.readAll();
-                gunzip.deinit();
+                defer gunzip.deinit();
+                try gunzip.readAll(true);
 
                 node.name = try ProgressBuf.print("Extracting {s}", .{template});
                 node.setCompletedItems(0);
@@ -493,11 +493,11 @@ pub const CreateCommand = struct {
                                             }
 
                                             if (bun.windows.Win32Error.get().toSystemErrno()) |err| {
-                                                Output.err(err, "failed to copy file {}", .{
+                                                Output.err(err, "failed to copy file {f}", .{
                                                     bun.fmt.fmtOSPath(entry.path, .{}),
                                                 });
                                             } else {
-                                                Output.errGeneric("failed to copy file {}", .{
+                                                Output.errGeneric("failed to copy file {f}", .{
                                                     bun.fmt.fmtOSPath(entry.path, .{}),
                                                 });
                                             }
@@ -520,7 +520,7 @@ pub const CreateCommand = struct {
                                 break :brk destination_dir_.createFile(entry.path, .{}) catch |err| {
                                     node_.end();
                                     progress_.refresh();
-                                    Output.err(err, "failed to copy file {}", .{bun.fmt.fmtOSPath(entry.path, .{})});
+                                    Output.err(err, "failed to copy file {f}", .{bun.fmt.fmtOSPath(entry.path, .{})});
                                     Global.crash();
                                 };
                             });
@@ -541,7 +541,7 @@ pub const CreateCommand = struct {
                             CopyFile.copyFile(infile, outfile).unwrap() catch |err| {
                                 node_.end();
                                 progress_.refresh();
-                                Output.err(err, "failed to copy file {}", .{bun.fmt.fmtOSPath(entry.path, .{})});
+                                Output.err(err, "failed to copy file {f}", .{bun.fmt.fmtOSPath(entry.path, .{})});
                                 Global.crash();
                             };
                         }
@@ -666,7 +666,7 @@ pub const CreateCommand = struct {
                     break :process_package_json;
                 }
 
-                const properties_list = std.ArrayList(js_ast.G.Property).fromOwnedSlice(default_allocator, package_json_expr.data.e_object.properties.slice());
+                var properties_list = std.array_list.Managed(js_ast.G.Property).fromOwnedSlice(default_allocator, package_json_expr.data.e_object.properties.slice());
 
                 if (ctx.log.errors > 0) {
                     try ctx.log.print(Output.errorWriter());
@@ -744,7 +744,7 @@ pub const CreateCommand = struct {
                         // has_react_scripts = has_react_scripts or property.hasAnyPropertyNamed(&.{"react-scripts"});
                         // has_relay = has_relay or property.hasAnyPropertyNamed(&.{ "react-relay", "relay-runtime", "babel-plugin-relay" });
 
-                        // property.data.e_object.properties = js_ast.G.Property.List.init(Prune.prune(property.data.e_object.properties.slice()));
+                        // property.data.e_object.properties = js_ast.G.Property.List.fromBorrowedSliceDangerous(Prune.prune(property.data.e_object.properties.slice()));
                         if (property.data.e_object.properties.len > 0) {
                             has_dependencies = true;
                             dev_dependencies = q.expr;
@@ -765,8 +765,7 @@ pub const CreateCommand = struct {
 
                         // has_react_scripts = has_react_scripts or property.hasAnyPropertyNamed(&.{"react-scripts"});
                         // has_relay = has_relay or property.hasAnyPropertyNamed(&.{ "react-relay", "relay-runtime", "babel-plugin-relay" });
-                        // property.data.e_object.properties = js_ast.G.Property.List.init(Prune.prune(property.data.e_object.properties.slice()));
-                        property.data.e_object.properties = js_ast.G.Property.List.init(property.data.e_object.properties.slice());
+                        // property.data.e_object.properties = js_ast.G.Property.List.fromBorrowedSliceDangerous(Prune.prune(property.data.e_object.properties.slice()));
 
                         if (property.data.e_object.properties.len > 0) {
                             has_dependencies = true;
@@ -1052,9 +1051,12 @@ pub const CreateCommand = struct {
                     pub const bun_bun_for_nextjs_task: string = "bun bun --use next";
                 };
 
-                InjectionPrefill.bun_macro_relay_object.properties = js_ast.G.Property.List.init(InjectionPrefill.bun_macro_relay_properties[0..]);
-                InjectionPrefill.bun_macros_relay_object.properties = js_ast.G.Property.List.init(&InjectionPrefill.bun_macros_relay_object_properties);
-                InjectionPrefill.bun_macros_relay_only_object.properties = js_ast.G.Property.List.init(&InjectionPrefill.bun_macros_relay_only_object_properties);
+                InjectionPrefill.bun_macro_relay_object.properties = js_ast.G.Property.List
+                    .fromBorrowedSliceDangerous(InjectionPrefill.bun_macro_relay_properties[0..]);
+                InjectionPrefill.bun_macros_relay_object.properties = js_ast.G.Property.List
+                    .fromBorrowedSliceDangerous(&InjectionPrefill.bun_macros_relay_object_properties);
+                InjectionPrefill.bun_macros_relay_only_object.properties = js_ast.G.Property.List
+                    .fromBorrowedSliceDangerous(&InjectionPrefill.bun_macros_relay_only_object_properties);
 
                 // if (needs_to_inject_dev_dependency and dev_dependencies == null) {
                 //     var e_object = try ctx.allocator.create(E.Object);
@@ -1107,7 +1109,7 @@ pub const CreateCommand = struct {
                 // "bun.macros"
                 // if (needs_bun_macros_prop and !needs_bun_prop) {
                 //     var obj = bun_prop.?.data.e_object;
-                //     var properties = try std.ArrayList(js_ast.G.Property).initCapacity(
+                //     var properties = try std.array_list.Managed(js_ast.G.Property).initCapacity(
                 //         ctx.allocator,
                 //         obj.properties.len + InjectionPrefill.bun_macros_relay_object.properties.len,
                 //     );
@@ -1135,7 +1137,7 @@ pub const CreateCommand = struct {
                 // if (needs_to_inject_dependency) {
                 //     defer needs_to_inject_dependency = false;
                 //     var obj = dependencies.?.data.e_object;
-                //     var properties = try std.ArrayList(js_ast.G.Property).initCapacity(
+                //     var properties = try std.array_list.Managed(js_ast.G.Property).initCapacity(
                 //         ctx.allocator,
                 //         obj.properties.len + dependencies_to_inject_count,
                 //     );
@@ -1150,7 +1152,7 @@ pub const CreateCommand = struct {
                 // if (needs_to_inject_dev_dependency) {
                 //     defer needs_to_inject_dev_dependency = false;
                 //     var obj = dev_dependencies.?.data.e_object;
-                //     var properties = try std.ArrayList(js_ast.G.Property).initCapacity(
+                //     var properties = try std.array_list.Managed(js_ast.G.Property).initCapacity(
                 //         ctx.allocator,
                 //         obj.properties.len + dev_dependencies_to_inject_count,
                 //     );
@@ -1183,7 +1185,7 @@ pub const CreateCommand = struct {
                 //         var public_index_html_parts = [_]string{ destination, "public/index.html" };
                 //         var public_index_html_path = filesystem.absBuf(&public_index_html_parts, &bun_path_buf);
 
-                //         const public_index_html_file = std.fs.openFileAbsolute(public_index_html_path, .{ .mode = .read_write }) catch break :bail;
+                //         const public_index_html_file = std.fs.cwd().openFile(public_index_html_path, .{ .mode = .read_write }) catch break :bail;
                 //         defer public_index_html_file.close();
 
                 //         const file_extensions_to_try = [_]string{ ".tsx", ".ts", ".jsx", ".js", ".mts", ".mcjs" };
@@ -1210,7 +1212,7 @@ pub const CreateCommand = struct {
 
                 //         var body_closing_tag: usize = std.mem.lastIndexOf(u8, public_index_file_contents, "</body>") orelse break :bail;
 
-                //         var public_index_file_out = std.ArrayList(u8).initCapacity(ctx.allocator, public_index_file_contents.len) catch break :bail;
+                //         var public_index_file_out = std.array_list.Managed(u8).initCapacity(ctx.allocator, public_index_file_contents.len) catch break :bail;
                 //         var html_writer = public_index_file_out.writer();
 
                 //         _ = html_writer.writeAll(public_index_file_contents[0..body_closing_tag]) catch break :bail;
@@ -1249,7 +1251,7 @@ pub const CreateCommand = struct {
                 //         //     bun.copy(u8, bun_path_buf[destination.len + "/src/index".len ..], ".css");
                 //         //     var index_css_file_path = bun_path_buf[0 .. destination.len + "/src/index.css".len];
                 //         //     std.fs.accessAbsolute(index_css_file_path, .{}) catch break :inject_css;
-                //         //     var list = std.ArrayList(u8).fromOwnedSlice(ctx.allocator, outfile);
+                //         //     var list = std.array_list.Managed(u8).fromOwnedSlice(ctx.allocator, outfile);
                 //         //     list.insertSlice(head_i + "<head>".len, "<link rel=\"stylesheet\" href=\"/src/index.css\">\n") catch break :inject_css;
                 //         //     outfile =try list.toOwnedSlice();
                 //         // }
@@ -1264,7 +1266,7 @@ pub const CreateCommand = struct {
 
                 package_json_expr.data.e_object.is_single_line = false;
 
-                package_json_expr.data.e_object.properties = js_ast.G.Property.List.fromList(properties_list);
+                package_json_expr.data.e_object.properties = js_ast.G.Property.List.moveFromList(&properties_list);
                 {
                     var i: usize = 0;
                     var property_i: usize = 0;
@@ -1303,7 +1305,9 @@ pub const CreateCommand = struct {
                                     script_property_out_i += 1;
                                 }
 
-                                property.value.?.data.e_object.properties = js_ast.G.Property.List.init(scripts_properties[0..script_property_out_i]);
+                                property.value.?.data.e_object.properties = js_ast.G.Property.List.fromBorrowedSliceDangerous(
+                                    scripts_properties[0..script_property_out_i],
+                                );
                             }
                         }
 
@@ -1382,7 +1386,7 @@ pub const CreateCommand = struct {
                             }
                         }
                     }
-                    package_json_expr.data.e_object.properties = js_ast.G.Property.List.init(package_json_expr.data.e_object.properties.ptr[0..property_i]);
+                    package_json_expr.data.e_object.properties.shrinkRetainingCapacity(property_i);
                 }
 
                 const file: bun.FD = .fromStdFile(package_json_file.?);
@@ -1483,7 +1487,7 @@ pub const CreateCommand = struct {
                 .stdin = .inherit,
 
                 .windows = if (Environment.isWindows) .{
-                    .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(null)),
+                    .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(null, null)),
                 },
             });
             _ = try process.unwrap();
@@ -1858,11 +1862,11 @@ pub const Example = struct {
         }
     }
 
-    pub fn fetchAllLocalAndRemote(ctx: Command.Context, node: ?*Progress.Node, env_loader: *DotEnv.Loader, filesystem: *fs.FileSystem) !std.ArrayList(Example) {
+    pub fn fetchAllLocalAndRemote(ctx: Command.Context, node: ?*Progress.Node, env_loader: *DotEnv.Loader, filesystem: *fs.FileSystem) !std.array_list.Managed(Example) {
         const remote_examples = try Example.fetchAll(ctx, env_loader, node);
         if (node) |node_| node_.end();
 
-        var examples = std.ArrayList(Example).fromOwnedSlice(ctx.allocator, remote_examples);
+        var examples = std.array_list.Managed(Example).fromOwnedSlice(ctx.allocator, remote_examples);
         {
             var folders = [3]std.fs.Dir{
                 bun.invalid_fd.stdDir(),
@@ -1881,7 +1885,7 @@ pub const Example = struct {
                 folders[1] = std.fs.cwd().openDir(outdir_path, .{}) catch bun.invalid_fd.stdDir();
             }
 
-            if (env_loader.map.get(bun.DotEnv.home_env)) |home_dir| {
+            if (env_loader.map.get(bun.env_var.HOME.key())) |home_dir| {
                 var parts = [_]string{ home_dir, BUN_CREATE_DIR };
                 const outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
                 folders[2] = std.fs.cwd().openDir(outdir_path, .{}) catch bun.invalid_fd.stdDir();
@@ -2208,7 +2212,7 @@ pub const Example = struct {
         );
         async_http.client.flags.reject_unauthorized = env_loader.getTLSRejectUnauthorized();
 
-        if (Output.enable_ansi_colors) {
+        if (Output.enable_ansi_colors_stdout) {
             async_http.client.progress_node = progress_node;
         }
 
@@ -2297,7 +2301,7 @@ pub const CreateListExamplesCommand = struct {
 
         Output.prettyln("<r><d>#<r> You can also paste a GitHub repository:\n\n  <b>bun create <cyan>ahfarmer/calculator calc<r>\n\n", .{});
 
-        if (env_loader.map.get(bun.DotEnv.home_env)) |homedir| {
+        if (env_loader.map.get(bun.env_var.HOME.key())) |homedir| {
             Output.prettyln(
                 "<d>This command is completely optional. To add a new local template, create a folder in {s}/.bun-create/. To publish a new template, git clone https://github.com/oven-sh/bun, add a new folder to the \"examples\" folder, and submit a PR.<r>",
                 .{homedir},

@@ -83,6 +83,8 @@ struct AsyncSocketData {
 
     /* Or empty */
     AsyncSocketData() = default;
+    bool isIdle = false;
+    bool isAuthorized = false; // per-socket TLS authorization status
 };
 
 }

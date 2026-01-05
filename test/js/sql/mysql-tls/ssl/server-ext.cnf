@@ -1,0 +1,4 @@
+subjectAltName = DNS:mysql, DNS:localhost, IP:127.0.0.1
+basicConstraints = CA:FALSE
+keyUsage = digitalSignature, keyEncipherment
+extendedKeyUsage = serverAuth

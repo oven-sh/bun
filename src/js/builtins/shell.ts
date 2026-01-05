@@ -1,4 +1,35 @@
-export function createBunShellTemplateFunction(createShellInterpreter_, createParsedShellScript_) {
+// Note: ShellTraceFlags interface documents the permission flag values returned
+// by $.trace operations. These are intentionally not exported as runtime values
+// to keep the trace API simple - users compare against numeric constants directly.
+// The values mirror standard Unix open(2) and access(2) flags.
+
+interface ShellTraceOperation {
+  /** Permission flags (octal integer, can be combined with |) */
+  flags: number;
+  /** Working directory at time of operation */
+  cwd: string;
+  /** Absolute path that would be accessed (for file/execute operations) */
+  path?: string;
+  /** Command name (for execute operations) */
+  command?: string;
+  /** Accumulated environment variables at this point in execution */
+  env?: Record<string, string>;
+  /** Which standard stream is being redirected: "stdin", "stdout", or "stderr" */
+  stream?: "stdin" | "stdout" | "stderr";
+  /** Command arguments for external commands (excluding command name) */
+  args?: string[];
+  /** True if operation contains non-statically-analyzable values (command substitution, $1, etc.) */
+  dynamic?: true;
+}
+
+interface ShellTraceResult {
+  operations: ShellTraceOperation[];
+  cwd: string;
+  success: boolean;
+  error: string | null;
+}
+
+export function createBunShellTemplateFunction(createShellInterpreter_, createParsedShellScript_, traceShellScript_) {
   const createShellInterpreter = createShellInterpreter_ as (
     resolve: (code: number, stdout: Buffer, stderr: Buffer) => void,
     reject: (code: number, stdout: Buffer, stderr: Buffer) => void,
@@ -8,6 +39,7 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
     raw: string,
     args: string[],
   ) => $ZigGeneratedClasses.ParsedShellScript;
+  const traceShellScript = traceShellScript_ as (args: $ZigGeneratedClasses.ParsedShellScript) => ShellTraceResult;
 
   function lazyBufferToHumanReadableString(this: Buffer) {
     return this.toString();
@@ -175,14 +207,14 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
       }
     }
 
-    #quiet(): this {
+    #quiet(isQuiet: boolean = true): this {
       this.#throwIfRunning();
-      this.#args!.setQuiet();
+      this.#args!.setQuiet(isQuiet);
       return this;
     }
 
-    quiet(): this {
-      return this.#quiet();
+    quiet(isQuiet: boolean | undefined): this {
+      return this.#quiet(isQuiet ?? true);
     }
 
     nothrow(): this {
@@ -196,17 +228,17 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
     }
 
     async text(encoding) {
-      const { stdout } = (await this.#quiet()) as ShellOutput;
+      const { stdout } = (await this.#quiet(true)) as ShellOutput;
       return stdout.toString(encoding);
     }
 
     async json() {
-      const { stdout } = (await this.#quiet()) as ShellOutput;
+      const { stdout } = (await this.#quiet(true)) as ShellOutput;
       return JSON.parse(stdout.toString());
     }
 
     async *lines() {
-      const { stdout } = (await this.#quiet()) as ShellOutput;
+      const { stdout } = (await this.#quiet(true)) as ShellOutput;
 
       if (process.platform === "win32") {
         yield* stdout.toString().split(/\r?\n/);
@@ -216,7 +248,7 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
     }
 
     async arrayBuffer() {
-      const { stdout } = (await this.#quiet()) as ShellOutput;
+      const { stdout } = (await this.#quiet(true)) as ShellOutput;
       return stdout.buffer;
     }
 
@@ -225,7 +257,7 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
     }
 
     async blob() {
-      const { stdout } = (await this.#quiet()) as ShellOutput;
+      const { stdout } = (await this.#quiet(true)) as ShellOutput;
       return new Blob([stdout]);
     }
 
@@ -348,6 +380,22 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
   BunShell[envSymbol] = defaultEnv;
   BunShell[throwsSymbol] = true;
 
+  // Trace function - analyzes shell script without running it
+  function trace(first, ...rest): ShellTraceResult {
+    if (first?.raw === undefined)
+      throw new Error("Please use '$.trace' as a tagged template function: $.trace`cmd arg1 arg2`");
+    const parsed_shell_script = createParsedShellScript(first.raw, rest);
+
+    const cwd = BunShell[cwdSymbol];
+    const env = BunShell[envSymbol];
+
+    // cwd must be set before env or else it will be injected into env as "PWD=/"
+    if (cwd) parsed_shell_script.setCwd(cwd);
+    if (env) parsed_shell_script.setEnv(env);
+
+    return traceShellScript(parsed_shell_script);
+  }
+
   Object.defineProperties(BunShell, {
     Shell: {
       value: Shell,
@@ -359,6 +407,10 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
     },
     ShellError: {
       value: ShellError,
+      enumerable: true,
+    },
+    trace: {
+      value: trace,
       enumerable: true,
     },
   });

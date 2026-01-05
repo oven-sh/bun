@@ -1,6 +1,7 @@
 import { file, Glob } from "bun";
 import { readdirSync } from "fs";
 import path from "path";
+import "../../scripts/glob-sources.mjs";
 
 // prettier-ignore
 const words: Record<string, { reason: string; regex?: boolean }> = {
@@ -42,6 +43,7 @@ const words: Record<string, { reason: string; regex?: boolean }> = {
   "std.fs.Dir": { reason: "Prefer bun.sys + bun.FD instead of std.fs" },
   "std.fs.cwd": { reason: "Prefer bun.FD.cwd()" },
   "std.fs.File": { reason: "Prefer bun.sys + bun.FD instead of std.fs" },
+  "std.fs.openFileAbsolute": { reason: "Prefer bun.sys + bun.FD instead of std.fs" },
   ".stdFile()": { reason: "Prefer bun.sys + bun.FD instead of std.fs.File. Zig hides 'errno' when Bun wants to match libuv" },
   ".stdDir()": { reason: "Prefer bun.sys + bun.FD instead of std.fs.File. Zig hides 'errno' when Bun wants to match libuv" },
   ".arguments_old(": { reason: "Please migrate to .argumentsAsArray() or another argument API" },
@@ -52,6 +54,7 @@ const words: Record<string, { reason: string; regex?: boolean }> = {
   "globalThis.hasException": { reason: "Incompatible with strict exception checks. Use a CatchScope instead." },
   "EXCEPTION_ASSERT(!scope.exception())": { reason: "Use scope.assertNoException() instead" },
   " catch bun.outOfMemory()": { reason: "Use bun.handleOom to avoid catching unrelated errors" },
+  "TODO: properly propagate exception upwards": { reason: "This entry is here for tracking" },
 };
 const words_keys = [...Object.keys(words)];
 

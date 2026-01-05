@@ -122,7 +122,7 @@ void InspectorLifecycleAgent::reportError(ZigException& exception)
     }
 
     // error(const String& message, const String& name, Ref<JSON::ArrayOf<String>>&& urls, Ref<JSON::ArrayOf<int>>&& lineColumns, Ref<JSON::ArrayOf<String>>&& sourceLines);
-    m_frontendDispatcher->error(WTFMove(message), WTFMove(name), WTFMove(urls), WTFMove(lineColumns), WTFMove(sourceLines));
+    m_frontendDispatcher->error(WTF::move(message), WTF::move(name), WTF::move(urls), WTF::move(lineColumns), WTF::move(sourceLines));
 }
 
 Protocol::ErrorStringOr<void> InspectorLifecycleAgent::preventExit()
@@ -151,24 +151,26 @@ Protocol::ErrorStringOr<ModuleGraph> InspectorLifecycleAgent::getModuleGraph()
 
     Ref<JSON::ArrayOf<String>> esm = JSON::ArrayOf<String>::create();
     {
-        auto iter1 = JSC::JSMapIterator::create(global, global->mapIteratorStructure(), esmMap, JSC::IterationKind::Keys);
+        auto iter1 = JSC::JSMapIterator::create(vm, global->mapIteratorStructure(), esmMap, JSC::IterationKind::Keys);
         RETURN_IF_EXCEPTION(scope, makeUnexpected(ErrorString("Failed to create iterator"_s)));
         JSC::JSValue value;
         while (iter1->next(global, value)) {
             esm->addItem(value.toWTFString(global));
             RETURN_IF_EXCEPTION(scope, makeUnexpected(ErrorString("Failed to add item to esm array"_s)));
         }
+        RETURN_IF_EXCEPTION(scope, makeUnexpected(ErrorString("Failed to iterate over esm map"_s)));
     }
 
     Ref<JSON::ArrayOf<String>> cjs = JSON::ArrayOf<String>::create();
     {
-        auto iter2 = JSC::JSMapIterator::create(global, global->mapIteratorStructure(), cjsMap, JSC::IterationKind::Keys);
+        auto iter2 = JSC::JSMapIterator::create(vm, global->mapIteratorStructure(), cjsMap, JSC::IterationKind::Keys);
         RETURN_IF_EXCEPTION(scope, makeUnexpected(ErrorString("Failed to create iterator"_s)));
         JSC::JSValue value;
         while (iter2->next(global, value)) {
             cjs->addItem(value.toWTFString(global));
             RETURN_IF_EXCEPTION(scope, makeUnexpected(ErrorString("Failed to add item to cjs array"_s)));
         }
+        RETURN_IF_EXCEPTION(scope, makeUnexpected(ErrorString("Failed to iterate over cjs map"_s)));
     }
 
     auto* process = global->processObject();
@@ -204,7 +206,7 @@ Protocol::ErrorStringOr<ModuleGraph> InspectorLifecycleAgent::getModuleGraph()
         RETURN_IF_EXCEPTION(scope, makeUnexpected(ErrorString("Failed to convert value to string"_s)));
     }
 
-    return ModuleGraph { WTFMove(esm), WTFMove(cjs), WTFMove(cwd), WTFMove(main), WTFMove(argv) };
+    return ModuleGraph { WTF::move(esm), WTF::move(cjs), WTF::move(cwd), WTF::move(main), WTF::move(argv) };
 }
 
 }

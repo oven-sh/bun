@@ -49,7 +49,7 @@ describe("2-arg form", () => {
 test("print size", () => {
   expect(normalizeBunSnapshot(Bun.inspect(new Response(Bun.file(import.meta.filename)))), import.meta.dir)
     .toMatchInlineSnapshot(`
-    "Response (3.82 KB) {
+    "Response (5.83 KB) {
       ok: true,
       url: "",
       status: 200,
@@ -108,4 +108,71 @@ test("new Response(123, { statusText: 123 }) does not throw", () => {
 test("new Response(123, { method: 456 }) does not throw", () => {
   // @ts-expect-error
   expect(() => new Response("123", { method: 456 })).not.toThrow();
+});
+
+test("handle stack overflow", () => {
+  function f0(a1, a2) {
+    const v4 = new Response();
+    // @ts-ignore
+    const v5 = v4.text(a2, a2, v4, f0, f0);
+    a1(a1); // Recursive call causes stack overflow
+    return v5;
+  }
+  expect(() => {
+    // @ts-ignore
+    f0(f0);
+  }).toThrow("Maximum call stack size exceeded.");
+});
+
+describe("clone()", () => {
+  test("does not lock original body when body was accessed before clone", async () => {
+    const readableStream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("Hello, world!"));
+        controller.close();
+      },
+    });
+
+    const response = new Response(readableStream);
+
+    // Access body before clone (this triggers the bug in the unfixed version)
+    const bodyBeforeClone = response.body;
+    expect(bodyBeforeClone?.locked).toBe(false);
+
+    const cloned = response.clone();
+
+    // Both should be unlocked after clone
+    expect(response.body?.locked).toBe(false);
+    expect(cloned.body?.locked).toBe(false);
+
+    // Both should be readable
+    const [originalText, clonedText] = await Promise.all([response.text(), cloned.text()]);
+
+    expect(originalText).toBe("Hello, world!");
+    expect(clonedText).toBe("Hello, world!");
+  });
+
+  test("works when body is not accessed before clone", async () => {
+    const readableStream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("Hello, world!"));
+        controller.close();
+      },
+    });
+
+    const response = new Response(readableStream);
+
+    // Do NOT access body before clone
+    const cloned = response.clone();
+
+    // Both should be unlocked after clone
+    expect(response.body?.locked).toBe(false);
+    expect(cloned.body?.locked).toBe(false);
+
+    // Both should be readable
+    const [originalText, clonedText] = await Promise.all([response.text(), cloned.text()]);
+
+    expect(originalText).toBe("Hello, world!");
+    expect(clonedText).toBe("Hello, world!");
+  });
 });

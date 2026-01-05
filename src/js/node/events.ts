@@ -392,7 +392,9 @@ EventEmitterPrototype.removeAllListeners = function removeAllListeners(type) {
 
   // emit in LIFO order
   const listeners = events[type];
-  for (let i = listeners.length - 1; i >= 0; i--) this.removeListener(type, listeners[i]);
+  if (listeners !== undefined) {
+    for (let i = listeners.length - 1; i >= 0; i--) this.removeListener(type, listeners[i]);
+  }
   return this;
 };
 
@@ -514,14 +516,14 @@ function on(emitter, event, options = kEmptyObject) {
             emitter.resume();
             paused = false;
           }
-          return Promise.resolve(createIterResult(value, false));
+          return Promise.$resolve(createIterResult(value, false));
         }
 
         // Then we error, if an error happened
         // This happens one time if at all, because after 'error'
         // we stop listening
         if (error) {
-          const p = Promise.reject(error);
+          const p = Promise.$reject(error);
           // Only the first element errors
           error = null;
           return p;
@@ -623,7 +625,7 @@ function on(emitter, event, options = kEmptyObject) {
       unconsumedPromises.shift().resolve(doneResult);
     }
 
-    return Promise.resolve(doneResult);
+    return Promise.$resolve(doneResult);
   }
 }
 Object.defineProperty(on, "name", { value: "on" });

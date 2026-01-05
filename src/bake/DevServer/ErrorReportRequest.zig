@@ -69,8 +69,8 @@ pub fn runWithBody(ctx: *ErrorReportRequest, body: []const u8, r: AnyResponse) !
             .function_name = .init(function_name),
             .source_url = .init(file_name),
             .position = if (line > 0) .{
-                .line = .fromOneBased(line + 1),
-                .column = .fromOneBased(@max(1, column)),
+                .line = .fromOneBased(line),
+                .column = if (column < 1) .invalid else .fromOneBased(column),
                 .line_start_byte = 0,
             } else .{
                 .line = .invalid,
@@ -78,6 +78,7 @@ pub fn runWithBody(ctx: *ErrorReportRequest, body: []const u8, r: AnyResponse) !
                 .line_start_byte = 0,
             },
             .code_type = .None,
+            .is_async = false,
             .remapped = false,
         });
     }
@@ -146,10 +147,10 @@ pub fn runWithBody(ctx: *ErrorReportRequest, body: []const u8, r: AnyResponse) !
 
         // Remap the frame
         const remapped = result.mappings.find(
-            frame.position.line.oneBased(),
-            frame.position.column.zeroBased(),
+            frame.position.line,
+            frame.position.column,
         );
-        if (remapped) |remapped_position| {
+        if (remapped) |*remapped_position| {
             frame.position = .{
                 .line = .fromZeroBased(remapped_position.originalLine()),
                 .column = .fromZeroBased(remapped_position.originalColumn()),
@@ -238,7 +239,7 @@ pub fn runWithBody(ctx: *ErrorReportRequest, body: []const u8, r: AnyResponse) !
         ) catch {},
     }
 
-    var out: std.ArrayList(u8) = .init(ctx.dev.allocator());
+    var out: std.array_list.Managed(u8) = .init(ctx.dev.allocator());
     errdefer out.deinit();
     const w = out.writer();
 
@@ -367,8 +368,8 @@ fn extractJsonEncodedSourceCode(contents: []const u8, target_line: u32, comptime
 
         // Decode it
         if (has_extra_escapes) {
-            var bytes: std.ArrayList(u8) = try .initCapacity(arena, encoded_line.len);
-            try l.decodeEscapeSequences(0, encoded_line, false, std.ArrayList(u8), &bytes);
+            var bytes: std.array_list.Managed(u8) = try .initCapacity(arena, encoded_line.len);
+            try l.decodeEscapeSequences(0, encoded_line, false, std.array_list.Managed(u8), &bytes);
             decoded_line.* = bytes.items;
         } else {
             decoded_line.* = encoded_line;

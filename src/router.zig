@@ -601,7 +601,7 @@ pub const Route = struct {
                 .eq => switch (a.kind) {
                     // static + dynamic are sorted alphabetically
                     .static, .dynamic => @call(
-                        .always_inline,
+                        bun.callmod_inline,
                         sortByNameString,
                         .{
                             ctx,
@@ -612,7 +612,7 @@ pub const Route = struct {
                     // catch all and optional catch all must appear below dynamic
                     .catch_all, .optional_catch_all => switch (std.math.order(a.param_count, b.param_count)) {
                         .eq => @call(
-                            .always_inline,
+                            bun.callmod_inline,
                             sortByNameString,
                             .{
                                 ctx,

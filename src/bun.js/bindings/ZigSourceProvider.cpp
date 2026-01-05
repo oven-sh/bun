@@ -110,7 +110,7 @@ Ref<SourceProvider> SourceProvider::create(
                 toSourceOrigin(sourceURLString, isBuiltin),
                 sourceURLString.impl(), TextPosition(),
                 sourceType));
-            provider->m_cachedBytecode = WTFMove(bytecode);
+            provider->m_cachedBytecode = WTF::move(bytecode);
             return provider;
         }
 
@@ -168,9 +168,9 @@ static JSC::VM& getVMForBytecodeCache()
     return *vmForBytecodeCache;
 }
 
-extern "C" bool generateCachedModuleByteCodeFromSourceCode(BunString* sourceProviderURL, const LChar* inputSourceCode, size_t inputSourceCodeSize, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr)
+extern "C" bool generateCachedModuleByteCodeFromSourceCode(BunString* sourceProviderURL, const Latin1Character* inputSourceCode, size_t inputSourceCodeSize, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr)
 {
-    std::span<const LChar> sourceCodeSpan(inputSourceCode, inputSourceCodeSize);
+    std::span<const Latin1Character> sourceCodeSpan(inputSourceCode, inputSourceCodeSize);
     JSC::SourceCode sourceCode = JSC::makeSource(WTF::String(sourceCodeSpan), toSourceOrigin(sourceProviderURL->toWTFString(), false), JSC::SourceTaintedOrigin::Untainted);
 
     JSC::VM& vm = getVMForBytecodeCache();
@@ -201,9 +201,9 @@ extern "C" bool generateCachedModuleByteCodeFromSourceCode(BunString* sourceProv
     return true;
 }
 
-extern "C" bool generateCachedCommonJSProgramByteCodeFromSourceCode(BunString* sourceProviderURL, const LChar* inputSourceCode, size_t inputSourceCodeSize, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr)
+extern "C" bool generateCachedCommonJSProgramByteCodeFromSourceCode(BunString* sourceProviderURL, const Latin1Character* inputSourceCode, size_t inputSourceCodeSize, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr)
 {
-    std::span<const LChar> sourceCodeSpan(inputSourceCode, inputSourceCodeSize);
+    std::span<const Latin1Character> sourceCodeSpan(inputSourceCode, inputSourceCodeSize);
 
     JSC::SourceCode sourceCode = JSC::makeSource(WTF::String(sourceCodeSpan), toSourceOrigin(sourceProviderURL->toWTFString(), false), JSC::SourceTaintedOrigin::Untainted);
     JSC::VM& vm = getVMForBytecodeCache();
@@ -348,11 +348,11 @@ int SourceProvider::readCache(JSC::VM& vm, const JSC::SourceCode& sourceCode)
     // if (fileTotalSize == 0)
     //     return 0;
 
-    // Ref<JSC::CachedBytecode> cachedBytecode = JSC::CachedBytecode::create(WTFMove(mappedFile));
+    // Ref<JSC::CachedBytecode> cachedBytecode = JSC::CachedBytecode::create(WTF::move(mappedFile));
     // // auto key = JSC::sourceCodeKeyForSerializedModule(vm, sourceCode);
     // // if (isCachedBytecodeStillValid(vm, cachedBytecode.copyRef(), key,
     // //                                JSC::SourceCodeType::ModuleType)) {
-    // m_cachedBytecode = WTFMove(cachedBytecode);
+    // m_cachedBytecode = WTF::move(cachedBytecode);
     // return 1;
     // } else {
     //   FileSystem::truncateFile(fd, 0);

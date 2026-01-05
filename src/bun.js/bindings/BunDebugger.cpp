@@ -99,7 +99,7 @@ public:
         this->status = ConnectionStatus::Connected;
         auto* globalObject = context.jsGlobalObject();
         if (this->unrefOnDisconnect) {
-            Bun__eventLoop__incrementRefConcurrently(reinterpret_cast<Zig::GlobalObject*>(globalObject)->bunVM(), 1);
+            Bun__eventLoop__incrementRefConcurrently(static_cast<Zig::GlobalObject*>(globalObject)->bunVM(), 1);
         }
         globalObject->setInspectable(true);
         auto& inspector = globalObject->inspectorDebuggable();
@@ -110,13 +110,13 @@ public:
         if (!hasConnected) {
             hasConnected = true;
             globalObject->inspectorController().registerAlternateAgent(
-                WTF::makeUnique<Inspector::InspectorLifecycleAgent>(*globalObject));
+                WTF::makeUniqueRef<Inspector::InspectorLifecycleAgent>(*globalObject));
             globalObject->inspectorController().registerAlternateAgent(
-                WTF::makeUnique<Inspector::InspectorTestReporterAgent>(*globalObject));
+                WTF::makeUniqueRef<Inspector::InspectorTestReporterAgent>(*globalObject));
             globalObject->inspectorController().registerAlternateAgent(
-                WTF::makeUnique<Inspector::InspectorBunFrontendDevServerAgent>(*globalObject));
+                WTF::makeUniqueRef<Inspector::InspectorBunFrontendDevServerAgent>(*globalObject));
             globalObject->inspectorController().registerAlternateAgent(
-                WTF::makeUnique<Inspector::InspectorHTTPServerAgent>(*globalObject));
+                WTF::makeUniqueRef<Inspector::InspectorHTTPServerAgent>(*globalObject));
         }
 
         this->hasEverConnected = true;
@@ -129,7 +129,7 @@ public:
             };
         }
 
-        this->receiveMessagesOnInspectorThread(context, reinterpret_cast<Zig::GlobalObject*>(globalObject), false);
+        this->receiveMessagesOnInspectorThread(context, static_cast<Zig::GlobalObject*>(globalObject), false);
     }
 
     void connect()
@@ -187,7 +187,7 @@ public:
 
             if (connection->unrefOnDisconnect) {
                 connection->unrefOnDisconnect = false;
-                Bun__eventLoop__incrementRefConcurrently(reinterpret_cast<Zig::GlobalObject*>(context.jsGlobalObject())->bunVM(), -1);
+                Bun__eventLoop__incrementRefConcurrently(static_cast<Zig::GlobalObject*>(context.jsGlobalObject())->bunVM(), -1);
             }
         });
     }
@@ -207,7 +207,7 @@ public:
 
     static void runWhilePaused(JSGlobalObject& globalObject, bool& isDoneProcessingEvents)
     {
-        Zig::GlobalObject* global = reinterpret_cast<Zig::GlobalObject*>(&globalObject);
+        Zig::GlobalObject* global = static_cast<Zig::GlobalObject*>(&globalObject);
         Vector<BunInspectorConnection*, 8> connections;
         {
             Locker<Lock> locker(inspectorConnectionsLock);
@@ -280,7 +280,7 @@ public:
             }
 
             for (auto message : messages) {
-                dispatcher.dispatchMessageFromRemote(WTFMove(message));
+                dispatcher.dispatchMessageFromRemote(WTF::move(message));
 
                 if (!debugger) {
                     debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(globalObject->debugger());
@@ -293,7 +293,7 @@ public:
             }
         } else {
             for (auto message : messages) {
-                dispatcher.dispatchMessageFromRemote(WTFMove(message));
+                dispatcher.dispatchMessageFromRemote(WTF::move(message));
             }
         }
 
@@ -333,7 +333,7 @@ public:
 
         if (this->debuggerThreadMessageScheduledCount++ == 0) {
             debuggerScriptExecutionContext->postTaskConcurrently([connection = this](ScriptExecutionContext& context) {
-                connection->receiveMessagesOnDebuggerThread(context, reinterpret_cast<Zig::GlobalObject*>(context.jsGlobalObject()));
+                connection->receiveMessagesOnDebuggerThread(context, static_cast<Zig::GlobalObject*>(context.jsGlobalObject()));
             });
         }
     }
@@ -349,7 +349,7 @@ public:
             this->jsWaitForMessageFromInspectorLock.unlock();
         } else if (this->jsThreadMessageScheduledCount++ == 0) {
             ScriptExecutionContext::postTaskTo(scriptExecutionContextIdentifier, [connection = this](ScriptExecutionContext& context) {
-                connection->receiveMessagesOnInspectorThread(context, reinterpret_cast<Zig::GlobalObject*>(context.jsGlobalObject()), true);
+                connection->receiveMessagesOnInspectorThread(context, static_cast<Zig::GlobalObject*>(context.jsGlobalObject()), true);
             });
         }
     }
@@ -365,7 +365,7 @@ public:
             this->jsWaitForMessageFromInspectorLock.unlock();
         } else if (this->jsThreadMessageScheduledCount++ == 0) {
             ScriptExecutionContext::postTaskTo(scriptExecutionContextIdentifier, [connection = this](ScriptExecutionContext& context) {
-                connection->receiveMessagesOnInspectorThread(context, reinterpret_cast<Zig::GlobalObject*>(context.jsGlobalObject()), true);
+                connection->receiveMessagesOnInspectorThread(context, static_cast<Zig::GlobalObject*>(context.jsGlobalObject()), true);
             });
         }
     }
@@ -461,7 +461,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSend, (JSC::JSGlobalObject * globalObject, JS
             messages.append(value.toWTFString(globalObject).isolatedCopy());
             return true;
         });
-        jsConnection->connection()->sendMessageToInspectorFromDebuggerThread(WTFMove(messages));
+        jsConnection->connection()->sendMessageToInspectorFromDebuggerThread(WTF::move(messages));
     }
 
     return JSValue::encode(jsUndefined());

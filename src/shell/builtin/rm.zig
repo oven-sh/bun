@@ -425,7 +425,7 @@ pub fn onShellRmTaskDone(this: *Rm, task: *ShellRmTask) void {
         },
     };
 
-    log("ShellRmTask(0x{x}, task={s})", .{ @intFromPtr(task), task.root_path });
+    log("ShellRmTask(0x{x}, task={f})", .{ @intFromPtr(task), task.root_path });
     // Wait until all tasks done and all output is written
     if (tasks_done >= this.state.exec.total_tasks and
         exec.getOutputCount(.output_done) >= exec.getOutputCount(.output_count))
@@ -468,9 +468,7 @@ pub const ShellRmTask = struct {
 
     event_loop: jsc.EventLoopHandle,
     concurrent_task: jsc.EventLoopTask,
-    task: jsc.WorkPoolTask = .{
-        .callback = workPoolCallback,
-    },
+    task: jsc.WorkPoolTask = .{ .callback = workPoolCallback },
     join_style: JoinStyle,
 
     /// On Windows we allow posix path separators
@@ -507,15 +505,15 @@ pub const ShellRmTask = struct {
         deleting_after_waiting_for_children: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
         kind_hint: EntryKindHint,
         task: jsc.WorkPoolTask = .{ .callback = runFromThreadPool },
-        deleted_entries: std.ArrayList(u8),
+        deleted_entries: std.array_list.Managed(u8),
         concurrent_task: jsc.EventLoopTask,
 
         const EntryKindHint = enum { idk, dir, file };
 
-        pub fn takeDeletedEntries(this: *DirTask) std.ArrayList(u8) {
+        pub fn takeDeletedEntries(this: *DirTask) std.array_list.Managed(u8) {
             debug("DirTask(0x{x} path={s}) takeDeletedEntries", .{ @intFromPtr(this), this.path });
             const ret = this.deleted_entries;
-            this.deleted_entries = std.ArrayList(u8).init(ret.allocator);
+            this.deleted_entries = std.array_list.Managed(u8).init(ret.allocator);
             return ret;
         }
 
@@ -692,10 +690,10 @@ pub const ShellRmTask = struct {
                 .path = root_path.sliceAssumeZ(),
                 .subtask_count = std.atomic.Value(usize).init(1),
                 .kind_hint = .idk,
-                .deleted_entries = std.ArrayList(u8).init(bun.default_allocator),
+                .deleted_entries = std.array_list.Managed(u8).init(bun.default_allocator),
                 .concurrent_task = jsc.EventLoopTask.fromEventLoop(rm.bltn().eventLoop()),
             },
-            .event_loop = rm.bltn().parentCmd().base.eventLoop(),
+            .event_loop = rm.bltn().eventLoop(),
             .concurrent_task = jsc.EventLoopTask.fromEventLoop(rm.bltn().eventLoop()),
             .error_signal = error_signal,
             .root_is_absolute = is_absolute,
@@ -730,14 +728,14 @@ pub const ShellRmTask = struct {
             return;
         }
 
-        var subtask = bun.handleOom(bun.default_allocator.create(DirTask));
+        var subtask: *DirTask = bun.handleOom(bun.default_allocator.create(DirTask));
         subtask.* = DirTask{
             .task_manager = this,
             .path = path,
             .parent_task = parent_task,
             .subtask_count = std.atomic.Value(usize).init(1),
             .kind_hint = kind_hint,
-            .deleted_entries = std.ArrayList(u8).init(bun.default_allocator),
+            .deleted_entries = std.array_list.Managed(u8).init(bun.default_allocator),
             .concurrent_task = jsc.EventLoopTask.fromEventLoop(this.event_loop),
         };
 
@@ -1030,7 +1028,7 @@ pub const ShellRmTask = struct {
         };
         while (true) {
             if (state.treat_as_dir) {
-                log("rmdirat({}, {s})", .{ dirfd, dir_task.path });
+                log("rmdirat({f}, {s})", .{ dirfd, dir_task.path });
                 switch (ShellSyscall.rmdirat(dirfd, dir_task.path)) {
                     .result => {
                         _ = this.verboseDeleted(dir_task, dir_task.path);

@@ -8,10 +8,8 @@ pub const ExecCommand = struct {
             try @import("../bun.js/config.zig").configureTransformOptionsForBunVM(ctx.allocator, ctx.args),
             null,
         );
-        try bundle.runEnvLoader(false);
-        const mini = bun.jsc.MiniEventLoop.initGlobal(bundle.env);
+        try bundle.runEnvLoader(bundle.options.env.disable_default_env_files);
         var buf: bun.PathBuffer = undefined;
-
         const cwd = switch (bun.sys.getcwd(&buf)) {
             .result => |p| p,
             .err => |e| {
@@ -19,6 +17,7 @@ pub const ExecCommand = struct {
                 Global.exit(1);
             },
         };
+        const mini = bun.jsc.MiniEventLoop.initGlobal(bundle.env, cwd);
         const parts: []const []const u8 = &[_][]const u8{
             cwd,
             "[eval]",

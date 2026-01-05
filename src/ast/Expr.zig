@@ -132,14 +132,14 @@ pub fn isEmpty(expr: Expr) bool {
 pub const Query = struct { expr: Expr, loc: logger.Loc, i: u32 = 0 };
 
 pub fn hasAnyPropertyNamed(expr: *const Expr, comptime names: []const string) bool {
-    if (std.meta.activeTag(expr.data) != .e_object) return false;
+    if (expr.data != .e_object) return false;
     const obj = expr.data.e_object;
     if (obj.properties.len == 0) return false;
 
     for (obj.properties.slice()) |prop| {
         if (prop.value == null) continue;
         const key = prop.key orelse continue;
-        if (std.meta.activeTag(key.data) != .e_string) continue;
+        if (key.data != .e_string) continue;
         const key_str = key.data.e_string;
         if (strings.eqlAnyComptime(key_str.data, names)) return true;
     }
@@ -266,20 +266,17 @@ pub fn set(expr: *Expr, allocator: std.mem.Allocator, name: string, value: Expr)
     for (0..expr.data.e_object.properties.len) |i| {
         const prop = &expr.data.e_object.properties.ptr[i];
         const key = prop.key orelse continue;
-        if (std.meta.activeTag(key.data) != .e_string) continue;
+        if (key.data != .e_string) continue;
         if (key.data.e_string.eql(string, name)) {
             prop.value = value;
             return;
         }
     }
 
-    var new_props = expr.data.e_object.properties.listManaged(allocator);
-    try new_props.append(.{
+    try expr.data.e_object.properties.append(allocator, .{
         .key = Expr.init(E.String, .{ .data = name }, logger.Loc.Empty),
         .value = value,
     });
-
-    expr.data.e_object.properties = BabyList(G.Property).fromList(new_props);
 }
 
 /// Don't use this if you care about performance.
@@ -291,26 +288,33 @@ pub fn setString(expr: *Expr, allocator: std.mem.Allocator, name: string, value:
     for (0..expr.data.e_object.properties.len) |i| {
         const prop = &expr.data.e_object.properties.ptr[i];
         const key = prop.key orelse continue;
-        if (std.meta.activeTag(key.data) != .e_string) continue;
+        if (key.data != .e_string) continue;
         if (key.data.e_string.eql(string, name)) {
             prop.value = Expr.init(E.String, .{ .data = value }, logger.Loc.Empty);
             return;
         }
     }
 
-    var new_props = expr.data.e_object.properties.listManaged(allocator);
-    try new_props.append(.{
+    try expr.data.e_object.properties.append(allocator, .{
         .key = Expr.init(E.String, .{ .data = name }, logger.Loc.Empty),
         .value = Expr.init(E.String, .{ .data = value }, logger.Loc.Empty),
     });
-
-    expr.data.e_object.properties = BabyList(G.Property).fromList(new_props);
 }
 
 pub fn getObject(expr: *const Expr, name: string) ?Expr {
     if (expr.asProperty(name)) |query| {
         if (query.expr.isObject()) {
             return query.expr;
+        }
+    }
+    return null;
+}
+
+pub fn getBoolean(expr: *const Expr, name: string) ?bool {
+    if (expr.asProperty(name)) |query| {
+        switch (query.expr.data) {
+            .e_boolean, .e_branch_boolean => |b| return b.value,
+            else => {},
         }
     }
     return null;
@@ -391,7 +395,7 @@ pub fn getRope(self: *const Expr, rope: *const E.Object.Rope) ?E.Object.RopeQuer
 
 // Making this comptime bloats the binary and doesn't seem to impact runtime performance.
 pub fn asProperty(expr: *const Expr, name: string) ?Query {
-    if (std.meta.activeTag(expr.data) != .e_object) return null;
+    if (expr.data != .e_object) return null;
     const obj = expr.data.e_object;
     if (obj.properties.len == 0) return null;
 
@@ -399,7 +403,7 @@ pub fn asProperty(expr: *const Expr, name: string) ?Query {
 }
 
 pub fn asPropertyStringMap(expr: *const Expr, name: string, allocator: std.mem.Allocator) ?*bun.StringArrayHashMap(string) {
-    if (std.meta.activeTag(expr.data) != .e_object) return null;
+    if (expr.data != .e_object) return null;
     const obj_ = expr.data.e_object;
     if (obj_.properties.len == 0) return null;
     const query = obj_.asProperty(name) orelse return null;
@@ -445,7 +449,7 @@ pub const ArrayIterator = struct {
 };
 
 pub fn asArray(expr: *const Expr) ?ArrayIterator {
-    if (std.meta.activeTag(expr.data) != .e_array) return null;
+    if (expr.data != .e_array) return null;
     const array = expr.data.e_array;
     if (array.items.len == 0) return null;
 
@@ -461,7 +465,7 @@ pub inline fn asUtf8StringLiteral(expr: *const Expr) ?string {
 }
 
 pub inline fn asStringLiteral(expr: *const Expr, allocator: std.mem.Allocator) ?string {
-    if (std.meta.activeTag(expr.data) != .e_string) return null;
+    if (expr.data != .e_string) return null;
     return expr.data.e_string.string(allocator) catch null;
 }
 
@@ -478,7 +482,7 @@ pub inline fn asString(expr: *const Expr, allocator: std.mem.Allocator) ?string 
         else => return null,
     }
 }
-pub inline fn asStringHash(expr: *const Expr, allocator: std.mem.Allocator, comptime hash_fn: *const fn (buf: []const u8) callconv(.Inline) u64) OOM!?u64 {
+pub inline fn asStringHash(expr: *const Expr, allocator: std.mem.Allocator, comptime hash_fn: *const fn (buf: []const u8) callconv(.@"inline") u64) OOM!?u64 {
     switch (expr.data) {
         .e_string => |str| {
             if (str.isUTF8()) return hash_fn(str.data);
@@ -507,9 +511,10 @@ pub inline fn asStringZ(expr: *const Expr, allocator: std.mem.Allocator) OOM!?st
 pub fn asBool(
     expr: *const Expr,
 ) ?bool {
-    if (std.meta.activeTag(expr.data) != .e_boolean) return null;
-
-    return expr.data.e_boolean.value;
+    return switch (expr.data) {
+        .e_boolean, .e_branch_boolean => |b| b.value,
+        else => null,
+    };
 }
 
 pub fn asNumber(expr: *const Expr) ?f64 {
@@ -528,7 +533,7 @@ const Serializable = struct {
 };
 
 pub fn isMissing(a: *const Expr) bool {
-    return std.meta.activeTag(a.data) == Expr.Tag.e_missing;
+    return a.data == Expr.Tag.e_missing;
 }
 
 // The goal of this function is to "rotate" the AST if it's possible to use the
@@ -612,7 +617,7 @@ pub fn joinAllWithCommaCallback(all: []Expr, comptime Context: type, ctx: Contex
             return callback(ctx, all[0]);
         },
         2 => {
-            return Expr.joinWithComma(
+            const result = Expr.joinWithComma(
                 callback(ctx, all[0]) orelse Expr{
                     .data = .{ .e_missing = .{} },
                     .loc = all[0].loc,
@@ -623,6 +628,10 @@ pub fn joinAllWithCommaCallback(all: []Expr, comptime Context: type, ctx: Contex
                 },
                 allocator,
             );
+            if (result.isMissing()) {
+                return null;
+            }
+            return result;
         },
         else => {
             var i: usize = 1;
@@ -638,6 +647,9 @@ pub fn joinAllWithCommaCallback(all: []Expr, comptime Context: type, ctx: Contex
                 }, allocator);
             }
 
+            if (expr.isMissing()) {
+                return null;
+            }
             return expr;
         },
     }
@@ -647,10 +659,47 @@ pub fn jsonStringify(self: *const @This(), writer: anytype) !void {
     return try writer.write(Serializable{ .type = std.meta.activeTag(self.data), .object = "expr", .value = self.data, .loc = self.loc });
 }
 
+pub fn extractNumericValuesInSafeRange(left: Expr.Data, right: Expr.Data) ?[2]f64 {
+    const l_value = left.extractNumericValue() orelse return null;
+    const r_value = right.extractNumericValue() orelse return null;
+
+    // Check for NaN and return null if either value is NaN
+    if (std.math.isNan(l_value) or std.math.isNan(r_value)) {
+        return null;
+    }
+
+    if (std.math.isInf(l_value) or std.math.isInf(r_value)) {
+        return .{ l_value, r_value };
+    }
+
+    if (l_value > bun.jsc.MAX_SAFE_INTEGER or r_value > bun.jsc.MAX_SAFE_INTEGER) {
+        return null;
+    }
+    if (l_value < bun.jsc.MIN_SAFE_INTEGER or r_value < bun.jsc.MIN_SAFE_INTEGER) {
+        return null;
+    }
+
+    return .{ l_value, r_value };
+}
+
 pub fn extractNumericValues(left: Expr.Data, right: Expr.Data) ?[2]f64 {
     return .{
         left.extractNumericValue() orelse return null,
         right.extractNumericValue() orelse return null,
+    };
+}
+
+pub fn extractStringValues(left: Expr.Data, right: Expr.Data, allocator: std.mem.Allocator) ?[2]*E.String {
+    const l_string = left.extractStringValue() orelse return null;
+    const r_string = right.extractStringValue() orelse return null;
+    l_string.resolveRopeIfNeeded(allocator);
+    r_string.resolveRopeIfNeeded(allocator);
+
+    if (l_string.isUTF8() != r_string.isUTF8()) return null;
+
+    return .{
+        l_string,
+        r_string,
     };
 }
 
@@ -1407,11 +1456,17 @@ pub fn init(comptime Type: type, st: Type, loc: logger.Loc) Expr {
     }
 }
 
-pub fn isPrimitiveLiteral(this: Expr) bool {
+/// If this returns true, then calling this expression captures the target of
+/// the property access as "this" when calling the function in the property.
+pub inline fn isPropertyAccess(this: *const Expr) bool {
+    return this.hasValueForThisInCall();
+}
+
+pub inline fn isPrimitiveLiteral(this: *const Expr) bool {
     return @as(Tag, this.data).isPrimitiveLiteral();
 }
 
-pub fn isRef(this: Expr, ref: Ref) bool {
+pub inline fn isRef(this: *const Expr, ref: Ref) bool {
     return switch (this.data) {
         .e_import_identifier => |import_identifier| import_identifier.ref.eql(ref),
         .e_identifier => |ident| ident.ref.eql(ref),
@@ -1444,6 +1499,11 @@ pub const Tag = enum {
     e_private_identifier,
     e_commonjs_export_identifier,
     e_boolean,
+    /// Like e_boolean, but produced by `feature()` from `bun:bundle`.
+    /// This tag ensures feature() can only be used directly in conditional
+    /// contexts (if statements, ternaries). Invalid usage is caught during
+    /// the visit phase when this expression appears outside a branch condition.
+    e_branch_boolean,
     e_number,
     e_big_int,
     e_string,
@@ -1467,7 +1527,7 @@ pub const Tag = enum {
     // object, regex and array may have had side effects
     pub fn isPrimitiveLiteral(tag: Tag) bool {
         return switch (tag) {
-            .e_null, .e_undefined, .e_string, .e_boolean, .e_number, .e_big_int => true,
+            .e_null, .e_undefined, .e_string, .e_boolean, .e_branch_boolean, .e_number, .e_big_int => true,
             else => false,
         };
     }
@@ -1476,7 +1536,7 @@ pub const Tag = enum {
         return switch (tag) {
             .e_array, .e_object, .e_null, .e_reg_exp => "object",
             .e_undefined => "undefined",
-            .e_boolean => "boolean",
+            .e_boolean, .e_branch_boolean => "boolean",
             .e_number => "number",
             .e_big_int => "bigint",
             .e_string => "string",
@@ -1485,13 +1545,13 @@ pub const Tag = enum {
         };
     }
 
-    pub fn format(tag: Tag, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(tag: Tag, writer: *std.Io.Writer) !void {
         try switch (tag) {
             .e_string => writer.writeAll("string"),
             .e_array => writer.writeAll("array"),
             .e_unary => writer.writeAll("unary"),
             .e_binary => writer.writeAll("binary"),
-            .e_boolean => writer.writeAll("boolean"),
+            .e_boolean, .e_branch_boolean => writer.writeAll("boolean"),
             .e_super => writer.writeAll("super"),
             .e_null => writer.writeAll("null"),
             .e_undefined => writer.writeAll("undefined"),
@@ -1581,14 +1641,7 @@ pub const Tag = enum {
         }
     }
     pub fn isBoolean(self: Tag) bool {
-        switch (self) {
-            .e_boolean => {
-                return true;
-            },
-            else => {
-                return false;
-            },
-        }
+        return self == .e_boolean or self == .e_branch_boolean;
     }
     pub fn isSuper(self: Tag) bool {
         switch (self) {
@@ -1873,36 +1926,19 @@ pub const Tag = enum {
     }
 };
 
-pub fn isBoolean(a: Expr) bool {
-    switch (a.data) {
-        .e_boolean => {
-            return true;
+pub fn isBoolean(a: *const Expr) bool {
+    return switch (a.data) {
+        .e_boolean, .e_branch_boolean => true,
+        .e_if => |ex| ex.yes.isBoolean() and ex.no.isBoolean(),
+        .e_unary => |ex| ex.op == .un_not or ex.op == .un_delete,
+        .e_binary => |ex| switch (ex.op) {
+            .bin_strict_eq, .bin_strict_ne, .bin_loose_eq, .bin_loose_ne, .bin_lt, .bin_gt, .bin_le, .bin_ge, .bin_instanceof, .bin_in => true,
+            .bin_logical_or => ex.left.isBoolean() and ex.right.isBoolean(),
+            .bin_logical_and => ex.left.isBoolean() and ex.right.isBoolean(),
+            else => false,
         },
-
-        .e_if => |ex| {
-            return isBoolean(ex.yes) and isBoolean(ex.no);
-        },
-        .e_unary => |ex| {
-            return ex.op == .un_not or ex.op == .un_delete;
-        },
-        .e_binary => |ex| {
-            switch (ex.op) {
-                .bin_strict_eq, .bin_strict_ne, .bin_loose_eq, .bin_loose_ne, .bin_lt, .bin_gt, .bin_le, .bin_ge, .bin_instanceof, .bin_in => {
-                    return true;
-                },
-                .bin_logical_or => {
-                    return isBoolean(ex.left) and isBoolean(ex.right);
-                },
-                .bin_logical_and => {
-                    return isBoolean(ex.left) and isBoolean(ex.right);
-                },
-                else => {},
-            }
-        },
-        else => {},
-    }
-
-    return false;
+        else => false,
+    };
 }
 
 pub fn assign(a: Expr, b: Expr) Expr {
@@ -1912,7 +1948,7 @@ pub fn assign(a: Expr, b: Expr) Expr {
         .right = b,
     }, a.loc);
 }
-pub inline fn at(expr: Expr, comptime Type: type, t: Type, _: std.mem.Allocator) Expr {
+pub inline fn at(expr: *const Expr, comptime Type: type, t: Type, _: std.mem.Allocator) Expr {
     return init(Type, t, expr.loc);
 }
 
@@ -1920,21 +1956,19 @@ pub inline fn at(expr: Expr, comptime Type: type, t: Type, _: std.mem.Allocator)
 // will potentially be simplified to avoid generating unnecessary extra "!"
 // operators. For example, calling this with "!!x" will return "!x" instead
 // of returning "!!!x".
-pub fn not(expr: Expr, allocator: std.mem.Allocator) Expr {
-    return maybeSimplifyNot(
-        expr,
-        allocator,
-    ) orelse Expr.init(
-        E.Unary,
-        E.Unary{
-            .op = .un_not,
-            .value = expr,
-        },
-        expr.loc,
-    );
+pub fn not(expr: *const Expr, allocator: std.mem.Allocator) Expr {
+    return expr.maybeSimplifyNot(allocator) orelse
+        Expr.init(
+            E.Unary,
+            E.Unary{
+                .op = .un_not,
+                .value = expr.*,
+            },
+            expr.loc,
+        );
 }
 
-pub fn hasValueForThisInCall(expr: Expr) bool {
+pub inline fn hasValueForThisInCall(expr: *const Expr) bool {
     return switch (expr.data) {
         .e_dot, .e_index => true,
         else => false,
@@ -1946,13 +1980,13 @@ pub fn hasValueForThisInCall(expr: Expr) bool {
 /// whole operator (i.e. the "!x") if it can be simplified, or false if not.
 /// It's separate from "Not()" above to avoid allocation on failure in case
 /// that is undesired.
-pub fn maybeSimplifyNot(expr: Expr, allocator: std.mem.Allocator) ?Expr {
+pub fn maybeSimplifyNot(expr: *const Expr, allocator: std.mem.Allocator) ?Expr {
     switch (expr.data) {
         .e_null, .e_undefined => {
             return expr.at(E.Boolean, E.Boolean{ .value = true }, allocator);
         },
-        .e_boolean => |b| {
-            return expr.at(E.Boolean, E.Boolean{ .value = b.value }, allocator);
+        .e_boolean, .e_branch_boolean => |b| {
+            return expr.at(E.Boolean, E.Boolean{ .value = !b.value }, allocator);
         },
         .e_number => |n| {
             return expr.at(E.Boolean, E.Boolean{ .value = (n.value == 0 or std.math.isNan(n.value)) }, allocator);
@@ -1968,7 +2002,7 @@ pub fn maybeSimplifyNot(expr: Expr, allocator: std.mem.Allocator) ?Expr {
         },
         // "!!!a" => "!a"
         .e_unary => |un| {
-            if (un.op == Op.Code.un_not and knownPrimitive(un.value) == .boolean) {
+            if (un.op == Op.Code.un_not and un.value.knownPrimitive() == .boolean) {
                 return un.value;
             }
         },
@@ -1981,33 +2015,33 @@ pub fn maybeSimplifyNot(expr: Expr, allocator: std.mem.Allocator) ?Expr {
                 Op.Code.bin_loose_eq => {
                     // "!(a == b)" => "a != b"
                     ex.op = .bin_loose_ne;
-                    return expr;
+                    return expr.*;
                 },
                 Op.Code.bin_loose_ne => {
                     // "!(a != b)" => "a == b"
                     ex.op = .bin_loose_eq;
-                    return expr;
+                    return expr.*;
                 },
                 Op.Code.bin_strict_eq => {
                     // "!(a === b)" => "a !== b"
                     ex.op = .bin_strict_ne;
-                    return expr;
+                    return expr.*;
                 },
                 Op.Code.bin_strict_ne => {
                     // "!(a !== b)" => "a === b"
                     ex.op = .bin_strict_eq;
-                    return expr;
+                    return expr.*;
                 },
                 Op.Code.bin_comma => {
                     // "!(a, b)" => "a, !b"
                     ex.right = ex.right.not(allocator);
-                    return expr;
+                    return expr.*;
                 },
                 else => {},
             }
         },
         .e_inlined_enum => |inlined| {
-            return maybeSimplifyNot(inlined.value, allocator);
+            return inlined.value.maybeSimplifyNot(allocator);
         },
 
         else => {},
@@ -2016,13 +2050,13 @@ pub fn maybeSimplifyNot(expr: Expr, allocator: std.mem.Allocator) ?Expr {
     return null;
 }
 
-pub fn toStringExprWithoutSideEffects(expr: Expr, allocator: std.mem.Allocator) ?Expr {
+pub fn toStringExprWithoutSideEffects(expr: *const Expr, allocator: std.mem.Allocator) ?Expr {
     const unwrapped = expr.unwrapInlined();
     const slice = switch (unwrapped.data) {
         .e_null => "null",
-        .e_string => return expr,
+        .e_string => return expr.*,
         .e_undefined => "undefined",
-        .e_boolean => |data| if (data.value) "true" else "false",
+        .e_boolean, .e_branch_boolean => |data| if (data.value) "true" else "false",
         .e_big_int => |bigint| bigint.value,
         .e_number => |num| if (num.toString(allocator)) |str|
             str
@@ -2054,7 +2088,7 @@ pub fn isOptionalChain(self: *const @This()) bool {
     };
 }
 
-pub inline fn knownPrimitive(self: @This()) PrimitiveType {
+pub inline fn knownPrimitive(self: *const @This()) PrimitiveType {
     return self.data.knownPrimitive();
 }
 
@@ -2124,6 +2158,7 @@ pub const Data = union(Tag) {
     e_commonjs_export_identifier: E.CommonJSExportIdentifier,
 
     e_boolean: E.Boolean,
+    e_branch_boolean: E.Boolean,
     e_number: E.Number,
     e_big_int: *E.BigInt,
     e_string: *E.String,
@@ -2294,6 +2329,7 @@ pub const Data = union(Tag) {
                 const item = bun.create(allocator, E.Unary, .{
                     .op = el.op,
                     .value = try el.value.deepClone(allocator),
+                    .flags = el.flags,
                 });
                 return .{ .e_unary = item };
             },
@@ -2506,6 +2542,7 @@ pub const Data = union(Tag) {
                 }
             },
             .e_unary => |e| {
+                writeAnyToHasher(hasher, @as(u8, @bitCast(e.flags)));
                 writeAnyToHasher(hasher, .{e.op});
                 e.value.data.writeToHasher(hasher, symbol_table);
             },
@@ -2537,7 +2574,7 @@ pub const Data = union(Tag) {
             inline .e_spread, .e_await => |e| {
                 e.value.data.writeToHasher(hasher, symbol_table);
             },
-            inline .e_yield => |e| {
+            .e_yield => |e| {
                 writeAnyToHasher(hasher, .{ e.is_star, e.value });
                 if (e.value) |value|
                     value.data.writeToHasher(hasher, symbol_table);
@@ -2560,7 +2597,7 @@ pub const Data = union(Tag) {
                 const symbol = e.ref.getSymbol(symbol_table);
                 hasher.update(symbol.original_name);
             },
-            inline .e_boolean, .e_number => |e| {
+            inline .e_boolean, .e_branch_boolean, .e_number => |e| {
                 writeAnyToHasher(hasher, e.value);
             },
             inline .e_big_int, .e_reg_exp => |e| {
@@ -2614,6 +2651,7 @@ pub const Data = union(Tag) {
         return switch (this) {
             .e_number,
             .e_boolean,
+            .e_branch_boolean,
             .e_null,
             .e_undefined,
             .e_inlined_enum,
@@ -2642,6 +2680,7 @@ pub const Data = union(Tag) {
 
             .e_number,
             .e_boolean,
+            .e_branch_boolean,
             .e_null,
             .e_undefined,
             // .e_reg_exp,
@@ -2667,7 +2706,7 @@ pub const Data = union(Tag) {
             // rope strings can throw when toString is called.
             .e_string => |str| str.next == null,
 
-            .e_number, .e_boolean, .e_undefined, .e_null => true,
+            .e_number, .e_boolean, .e_branch_boolean, .e_undefined, .e_null => true,
             // BigInt is deliberately excluded as a large enough BigInt could throw an out of memory error.
             //
 
@@ -2678,7 +2717,7 @@ pub const Data = union(Tag) {
     pub fn knownPrimitive(data: Expr.Data) PrimitiveType {
         return switch (data) {
             .e_big_int => .bigint,
-            .e_boolean => .boolean,
+            .e_boolean, .e_branch_boolean => .boolean,
             .e_null => .null,
             .e_number => .number,
             .e_string => .string,
@@ -2814,7 +2853,7 @@ pub const Data = union(Tag) {
                 // +'1' => 1
                 return stringToEquivalentNumberValue(str.slice8());
             },
-            .e_boolean => @as(f64, if (data.e_boolean.value) 1.0 else 0.0),
+            .e_boolean, .e_branch_boolean => |b| @as(f64, if (b.value) 1.0 else 0.0),
             .e_number => data.e_number.value,
             .e_inlined_enum => |inlined| switch (inlined.value.data) {
                 .e_number => |num| num.value,
@@ -2833,7 +2872,7 @@ pub const Data = union(Tag) {
 
     pub fn toFiniteNumber(data: Expr.Data) ?f64 {
         return switch (data) {
-            .e_boolean => @as(f64, if (data.e_boolean.value) 1.0 else 0.0),
+            .e_boolean, .e_branch_boolean => |b| @as(f64, if (b.value) 1.0 else 0.0),
             .e_number => if (std.math.isFinite(data.e_number.value))
                 data.e_number.value
             else
@@ -2854,6 +2893,17 @@ pub const Data = union(Tag) {
             .e_number => data.e_number.value,
             .e_inlined_enum => |inlined| switch (inlined.value.data) {
                 .e_number => |num| num.value,
+                else => null,
+            },
+            else => null,
+        };
+    }
+
+    pub fn extractStringValue(data: Expr.Data) ?*E.String {
+        return switch (data) {
+            .e_string => data.e_string,
+            .e_inlined_enum => |inlined| switch (inlined.value.data) {
+                .e_string => |str| str,
                 else => null,
             },
             else => null,
@@ -2913,12 +2963,12 @@ pub const Data = union(Tag) {
                     .ok = ok,
                 };
             },
-            .e_boolean => |l| {
+            .e_boolean, .e_branch_boolean => |l| {
                 switch (right) {
-                    .e_boolean => {
+                    .e_boolean, .e_branch_boolean => |r| {
                         return .{
                             .ok = true,
-                            .equal = l.value == right.e_boolean.value,
+                            .equal = l.value == r.value,
                         };
                     },
                     .e_number => |num| {
@@ -2956,7 +3006,7 @@ pub const Data = union(Tag) {
                             .equal = l.value == r.value.data.e_number.value,
                         };
                     },
-                    .e_boolean => |r| {
+                    .e_boolean, .e_branch_boolean => |r| {
                         if (comptime kind == .loose) {
                             return .{
                                 .ok = true,
@@ -3071,7 +3121,7 @@ pub const Data = union(Tag) {
             .e_string => |e| e.toJS(allocator, globalObject),
             .e_null => jsc.JSValue.null,
             .e_undefined => .js_undefined,
-            .e_boolean => |boolean| if (boolean.value)
+            .e_boolean, .e_branch_boolean => |boolean| if (boolean.value)
                 .true
             else
                 .false,
@@ -3208,7 +3258,6 @@ const JSPrinter = @import("../js_printer.zig");
 const std = @import("std");
 
 const bun = @import("bun");
-const BabyList = bun.BabyList;
 const Environment = bun.Environment;
 const JSONParser = bun.json;
 const MutableString = bun.MutableString;

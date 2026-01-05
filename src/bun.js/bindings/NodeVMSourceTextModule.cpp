@@ -97,21 +97,19 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
     WTF::String sourceText = sourceTextValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    Ref<StringSourceProvider> sourceProvider = StringSourceProvider::create(WTFMove(sourceText), sourceOrigin, String {}, SourceTaintedOrigin::Untainted,
+    Ref<StringSourceProvider> sourceProvider = StringSourceProvider::create(WTF::move(sourceText), sourceOrigin, String {}, SourceTaintedOrigin::Untainted,
         TextPosition { OrdinalNumber::fromZeroBasedInt(lineOffset), OrdinalNumber::fromZeroBasedInt(columnOffset) }, SourceProviderSourceType::Module);
 
-    SourceCode sourceCode(WTFMove(sourceProvider), lineOffset, columnOffset);
+    SourceCode sourceCode(WTF::move(sourceProvider), lineOffset, columnOffset);
 
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
     WTF::String identifier = identifierValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    NodeVMSourceTextModule* ptr = new (NotNull, allocateCell<NodeVMSourceTextModule>(vm)) NodeVMSourceTextModule(vm, zigGlobalObject->NodeVMSourceTextModuleStructure(), WTFMove(identifier), contextValue, WTFMove(sourceCode), moduleWrapper);
+    NodeVMSourceTextModule* ptr = new (NotNull, allocateCell<NodeVMSourceTextModule>(vm)) NodeVMSourceTextModule(
+        vm, zigGlobalObject->NodeVMSourceTextModuleStructure(), WTF::move(identifier), contextValue,
+        WTF::move(sourceCode), moduleWrapper, initializeImportMeta);
     RETURN_IF_EXCEPTION(scope, nullptr);
     ptr->finishCreation(vm);
-
-    if (!initializeImportMeta.isUndefined()) {
-        ptr->m_initializeImportMeta.set(vm, ptr, initializeImportMeta);
-    }
 
     if (cachedData.isEmpty()) {
         return ptr;
@@ -129,7 +127,7 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
     SourceCodeKey key(ptr->sourceCode(), {}, SourceCodeType::ProgramType, lexicallyScopedFeatures, JSParserScriptMode::Classic, DerivedContextType::None, EvalContextType::None, false, {}, std::nullopt);
     Ref<CachedBytecode> cachedBytecode = CachedBytecode::create(std::span(cachedData), nullptr, {});
     RETURN_IF_EXCEPTION(scope, nullptr);
-    UnlinkedModuleProgramCodeBlock* unlinkedBlock = decodeCodeBlock<UnlinkedModuleProgramCodeBlock>(vm, key, WTFMove(cachedBytecode));
+    UnlinkedModuleProgramCodeBlock* unlinkedBlock = decodeCodeBlock<UnlinkedModuleProgramCodeBlock>(vm, key, WTF::move(cachedBytecode));
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     if (unlinkedBlock) {
@@ -276,7 +274,7 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
                 break;
             }
 
-            attributeMap.set("type"_s, WTFMove(attributesTypeString));
+            attributeMap.set("type"_s, WTF::move(attributesTypeString));
             attributesObject->putDirect(vm, JSC::Identifier::fromString(vm, "type"_s), attributesType);
 
             if (const String& hostDefinedImportType = request.m_attributes->hostDefinedImportType(); !hostDefinedImportType.isEmpty()) {
@@ -293,7 +291,7 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
         }
 
         requestObject->putDirect(vm, attributesIdentifier, attributesObject);
-        addModuleRequest({ WTF::String(*request.m_specifier), WTFMove(attributeMap) });
+        addModuleRequest({ WTF::String(*request.m_specifier), WTF::move(attributeMap) });
         requestsArray->putDirectIndex(globalObject, i, requestObject);
     }
 
@@ -349,7 +347,7 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
 
             record->setImportedModule(globalObject, Identifier::fromString(vm, specifier), resolvedRecord);
             RETURN_IF_EXCEPTION(scope, {});
-            m_resolveCache.set(WTFMove(specifier), WriteBarrier<JSObject> { vm, this, moduleNative });
+            m_resolveCache.set(WTF::move(specifier), WriteBarrier<JSObject> { vm, this, moduleNative });
             RETURN_IF_EXCEPTION(scope, {});
         }
     }
@@ -417,7 +415,7 @@ JSUint8Array* NodeVMSourceTextModule::cachedData(JSGlobalObject* globalObject)
 
 void NodeVMSourceTextModule::initializeImportMeta(JSGlobalObject* globalObject)
 {
-    if (!m_initializeImportMeta) {
+    if (!m_initializeImportMeta || !m_initializeImportMeta.get().isCallable()) {
         return;
     }
 
@@ -429,8 +427,9 @@ void NodeVMSourceTextModule::initializeImportMeta(JSGlobalObject* globalObject)
     JSValue metaValue = moduleEnvironment->get(globalObject, globalObject->vm().propertyNames->builtinNames().metaPrivateName());
     scope.assertNoExceptionExceptTermination();
     RETURN_IF_EXCEPTION(scope, );
-    ASSERT(metaValue);
-    ASSERT(metaValue.isObject());
+    if (!metaValue || !metaValue.isObject()) {
+        return;
+    }
 
     CallData callData = JSC::getCallData(m_initializeImportMeta.get());
 

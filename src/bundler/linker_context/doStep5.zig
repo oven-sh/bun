@@ -7,7 +7,7 @@ pub fn doStep5(c: *LinkerContext, source_index_: Index, _: usize) void {
     defer trace.end();
 
     const id = source_index;
-    if (id > c.graph.meta.len) return;
+    if (id >= c.graph.meta.len) return;
 
     const worker: *ThreadPool.Worker = ThreadPool.Worker.get(@fieldParentPtr("linker", c));
     defer worker.unget();
@@ -19,7 +19,7 @@ pub fn doStep5(c: *LinkerContext, source_index_: Index, _: usize) void {
 
     // Now that all exports have been resolved, sort and filter them to create
     // something we can iterate over later.
-    var aliases = std.ArrayList(string).initCapacity(allocator, resolved_exports.count()) catch unreachable;
+    var aliases = std.array_list.Managed(string).initCapacity(allocator, resolved_exports.count()) catch unreachable;
     var alias_iter = resolved_exports.iterator();
     const imports_to_bind = c.graph.meta.items(.imports_to_bind);
     const probably_typescript_type = c.graph.meta.items(.probably_typescript_type);
@@ -86,6 +86,10 @@ pub fn doStep5(c: *LinkerContext, source_index_: Index, _: usize) void {
 
     const our_imports_to_bind = imports_to_bind[id];
     outer: for (parts_slice, 0..) |*part, part_index| {
+        // Previously owned by `c.allocator()`, which is a `MimallocArena` (from
+        // `BundleV2.graph.heap`).
+        part.dependencies.transferOwnership(&worker.heap);
+
         // Now that all files have been parsed, determine which property
         // accesses off of imported symbols are inlined enum values and
         // which ones aren't
@@ -188,7 +192,7 @@ pub fn doStep5(c: *LinkerContext, source_index_: Index, _: usize) void {
                 if (!local.found_existing or local.value_ptr.* != part_index) {
                     local.value_ptr.* = @as(u32, @intCast(part_index));
                     // note: if we crash on append, it is due to threadlocal heaps in mimalloc
-                    part.dependencies.push(
+                    part.dependencies.append(
                         allocator,
                         .{
                             .source_index = Index.source(source_index),
@@ -200,7 +204,7 @@ pub fn doStep5(c: *LinkerContext, source_index_: Index, _: usize) void {
 
             // Also map from imports to parts that use them
             if (named_imports.getPtr(ref)) |existing| {
-                existing.local_parts_with_uses.push(allocator, @intCast(part_index)) catch unreachable;
+                bun.handleOom(existing.local_parts_with_uses.append(allocator, @intCast(part_index)));
             }
         }
     }
@@ -226,7 +230,7 @@ pub fn createExportsForFile(
     defer Expr.Disabler.enable();
 
     // 1 property per export
-    var properties = bun.handleOom(std.ArrayList(js_ast.G.Property)
+    var properties = bun.handleOom(std.array_list.Managed(js_ast.G.Property)
         .initCapacity(allocator, export_aliases.len));
 
     var ns_export_symbol_uses = Part.SymbolUseMap{};
@@ -250,7 +254,7 @@ pub fn createExportsForFile(
     defer stmts.done();
     const loc = Logger.Loc.Empty;
     // todo: investigate if preallocating this array is faster
-    var ns_export_dependencies = bun.handleOom(std.ArrayList(js_ast.Dependency).initCapacity(allocator, re_exports_count));
+    var ns_export_dependencies = bun.handleOom(std.array_list.Managed(js_ast.Dependency).initCapacity(allocator, re_exports_count));
     for (export_aliases) |alias| {
         var exp = resolved_exports.getPtr(alias).?.*;
 
@@ -360,7 +364,7 @@ pub fn createExportsForFile(
             allocator,
             js_ast.S.Local,
             .{
-                .decls = G.Decl.List.init(decls),
+                .decls = G.Decl.List.fromOwnedSlice(decls),
             },
             loc,
         );
@@ -375,7 +379,12 @@ pub fn createExportsForFile(
         var args = allocator.alloc(js_ast.Expr, 2) catch unreachable;
         args[0..2].* = [_]js_ast.Expr{
             js_ast.Expr.initIdentifier(exports_ref, loc),
-            js_ast.Expr.allocate(allocator, js_ast.E.Object, .{ .properties = js_ast.G.Property.List.fromList(properties) }, loc),
+            js_ast.Expr.allocate(
+                allocator,
+                js_ast.E.Object,
+                .{ .properties = .moveFromList(&properties) },
+                loc,
+            ),
         };
         remaining_stmts[0] = js_ast.Stmt.allocate(
             allocator,
@@ -386,7 +395,7 @@ pub fn createExportsForFile(
                     js_ast.E.Call,
                     .{
                         .target = js_ast.Expr.initIdentifier(export_ref, loc),
-                        .args = js_ast.ExprNodeList.init(args),
+                        .args = js_ast.ExprNodeList.fromOwnedSlice(args),
                     },
                     loc,
                 ),
@@ -433,7 +442,7 @@ pub fn createExportsForFile(
                 E.Call,
                 E.Call{
                     .target = Expr.initIdentifier(toCommonJSRef, Loc.Empty),
-                    .args = js_ast.ExprNodeList.init(call_args),
+                    .args = js_ast.ExprNodeList.fromOwnedSlice(call_args),
                 },
                 Loc.Empty,
             ),
@@ -451,7 +460,7 @@ pub fn createExportsForFile(
         c.graph.ast.items(.parts)[id].slice()[js_ast.namespace_export_part_index] = .{
             .stmts = if (c.options.output_format != .internal_bake_dev) all_export_stmts else &.{},
             .symbol_uses = ns_export_symbol_uses,
-            .dependencies = js_ast.Dependency.List.fromList(ns_export_dependencies),
+            .dependencies = js_ast.Dependency.List.moveFromList(&ns_export_dependencies),
             .declared_symbols = declared_symbols,
 
             // This can be removed if nothing uses it

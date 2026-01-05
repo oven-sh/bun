@@ -26,10 +26,11 @@ pub const log = Output.scoped(.debugger, .visible);
 extern "c" fn Bun__createJSDebugger(*JSGlobalObject) u32;
 extern "c" fn Bun__ensureDebugger(u32, bool) void;
 extern "c" fn Bun__startJSDebuggerThread(*JSGlobalObject, u32, *bun.String, c_int, bool) void;
-var futex_atomic: std.atomic.Value(u32) = undefined;
+var futex_atomic: std.atomic.Value(u32) = .init(0);
 
 pub fn waitForDebuggerIfNecessary(this: *VirtualMachine) void {
     const debugger = &(this.debugger orelse return);
+    bun.analytics.Features.debugger += 1;
     if (!debugger.must_block_until_connected) {
         return;
     }
@@ -40,7 +41,7 @@ pub fn waitForDebuggerIfNecessary(this: *VirtualMachine) void {
         bun.Futex.waitForever(&futex_atomic, 1);
     }
     if (comptime Environment.enable_logs)
-        Debugger.log("waitForDebugger: {}", .{Output.ElapsedFormatter{
+        Debugger.log("waitForDebugger: {f}", .{Output.ElapsedFormatter{
             .colors = Output.enable_ansi_colors_stderr,
             .duration_ns = @truncate(@as(u128, @intCast(std.time.nanoTimestamp() - bun.cli.start_time))),
         }});
@@ -50,7 +51,7 @@ pub fn waitForDebuggerIfNecessary(this: *VirtualMachine) void {
     // Sleep up to 30ms for automatic inspection.
     const wait_for_connection_delay_ms = 30;
 
-    var deadline: bun.timespec = if (debugger.wait_for_connection == .shortly) bun.timespec.now().addMs(wait_for_connection_delay_ms) else undefined;
+    var deadline: bun.timespec = if (debugger.wait_for_connection == .shortly) bun.timespec.now(.force_real_time).addMs(wait_for_connection_delay_ms) else undefined;
 
     if (comptime Environment.isWindows) {
         // TODO: remove this when tickWithTimeout actually works properly on Windows.
@@ -60,14 +61,14 @@ pub fn waitForDebuggerIfNecessary(this: *VirtualMachine) void {
             timer.* = std.mem.zeroes(uv.Timer);
             timer.init(this.uvLoop());
             const onDebuggerTimer = struct {
-                fn call(handle: *uv.Timer) callconv(.C) void {
+                fn call(handle: *uv.Timer) callconv(.c) void {
                     const vm = VirtualMachine.get();
                     vm.debugger.?.poll_ref.unref(vm);
                     uv.uv_close(@ptrCast(handle), deinitTimer);
                 }
 
-                fn deinitTimer(handle: *anyopaque) callconv(.C) void {
-                    bun.default_allocator.destroy(@as(*uv.Timer, @alignCast(@ptrCast(handle))));
+                fn deinitTimer(handle: *anyopaque) callconv(.c) void {
+                    bun.default_allocator.destroy(@as(*uv.Timer, @ptrCast(@alignCast(handle))));
                 }
             }.call;
             timer.start(wait_for_connection_delay_ms, 0, &onDebuggerTimer);
@@ -82,7 +83,7 @@ pub fn waitForDebuggerIfNecessary(this: *VirtualMachine) void {
                 this.eventLoop().autoTickActive();
 
                 if (comptime Environment.enable_logs)
-                    log("waited: {}", .{std.fmt.fmtDuration(@intCast(@as(i64, @truncate(std.time.nanoTimestamp() - bun.cli.start_time))))});
+                    log("waited: {D}", .{@as(i64, @truncate(std.time.nanoTimestamp() - bun.cli.start_time))});
             },
             .shortly => {
                 // Handle .incrementRefConcurrently
@@ -97,9 +98,9 @@ pub fn waitForDebuggerIfNecessary(this: *VirtualMachine) void {
                 this.uwsLoop().tickWithTimeout(&deadline);
 
                 if (comptime Environment.enable_logs)
-                    log("waited: {}", .{std.fmt.fmtDuration(@intCast(@as(i64, @truncate(std.time.nanoTimestamp() - bun.cli.start_time))))});
+                    log("waited: {D}", .{@as(i64, @truncate(std.time.nanoTimestamp() - bun.cli.start_time))});
 
-                const elapsed = bun.timespec.now();
+                const elapsed = bun.timespec.now(.force_real_time);
                 if (elapsed.order(&deadline) != .lt) {
                     debugger.poll_ref.unref(this);
                     log("Timed out waiting for the debugger", .{});
@@ -127,7 +128,6 @@ pub fn create(this: *VirtualMachine, globalObject: *JSGlobalObject) !void {
         debugger.script_execution_context_id = Bun__createJSDebugger(globalObject);
         if (!this.has_started_debugger) {
             this.has_started_debugger = true;
-            futex_atomic = std.atomic.Value(u32).init(0);
             var thread = try std.Thread.spawn(.{}, startJSDebuggerThread, .{this});
             thread.detach();
         }
@@ -146,10 +146,18 @@ pub fn startJSDebuggerThread(other_vm: *VirtualMachine) void {
     log("startJSDebuggerThread", .{});
     jsc.markBinding(@src());
 
+    // Create a thread-local env_loader to avoid allocator threading violations
+    const thread_allocator = arena.allocator();
+    const env_map = thread_allocator.create(DotEnv.Map) catch @panic("Failed to create debugger env map");
+    env_map.* = DotEnv.Map.init(thread_allocator);
+    const env_loader = thread_allocator.create(DotEnv.Loader) catch @panic("Failed to create debugger env loader");
+    env_loader.* = DotEnv.Loader.init(env_map, thread_allocator);
+
     var vm = VirtualMachine.init(.{
-        .allocator = arena.allocator(),
+        .allocator = thread_allocator,
         .args = std.mem.zeroes(bun.schema.api.TransformOptions),
         .store_fd = false,
+        .env_loader = env_loader,
     }) catch @panic("Failed to create Debugger VM");
     vm.allocator = arena.allocator();
     vm.arena = &arena;
@@ -291,6 +299,7 @@ pub const TestReporterAgent = struct {
     handle: ?*Handle = null,
     const debug = Output.scoped(.TestReporterAgent, .visible);
 
+    /// this enum is kept in sync with c++ InspectorTestReporterAgent.cpp `enum class BunTestStatus`
     pub const TestStatus = enum(u8) {
         pass,
         fail,
@@ -426,6 +435,7 @@ pub const DebuggerId = bun.GenericIndex(i32, Debugger);
 pub const BunFrontendDevServerAgent = @import("./api/server/InspectorBunFrontendDevServerAgent.zig").BunFrontendDevServerAgent;
 pub const HTTPServerAgent = @import("./bindings/HTTPServerAgent.zig");
 
+const DotEnv = @import("../env_loader.zig");
 const std = @import("std");
 
 const bun = @import("bun");

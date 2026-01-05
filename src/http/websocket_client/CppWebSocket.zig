@@ -58,6 +58,7 @@ pub const CppWebSocket = opaque {
     }
     extern fn WebSocket__incrementPendingActivity(websocket_context: *CppWebSocket) void;
     extern fn WebSocket__decrementPendingActivity(websocket_context: *CppWebSocket) void;
+    extern fn WebSocket__setProtocol(websocket_context: *CppWebSocket, protocol: *bun.String) void;
     pub fn ref(this: *CppWebSocket) void {
         jsc.markBinding(@src());
         WebSocket__incrementPendingActivity(this);
@@ -66,6 +67,10 @@ pub const CppWebSocket = opaque {
     pub fn unref(this: *CppWebSocket) void {
         jsc.markBinding(@src());
         WebSocket__decrementPendingActivity(this);
+    }
+    pub fn setProtocol(this: *CppWebSocket, protocol: *bun.String) void {
+        jsc.markBinding(@src());
+        WebSocket__setProtocol(this, protocol);
     }
 };
 

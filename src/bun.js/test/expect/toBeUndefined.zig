@@ -3,7 +3,7 @@ pub fn toBeUndefined(this: *Expect, globalThis: *JSGlobalObject, callFrame: *Cal
     const thisValue = callFrame.this();
     const value: JSValue = try this.getValue(globalThis, thisValue, "toBeUndefined", "");
 
-    incrementExpectCallCounter();
+    this.incrementExpectCallCounter();
 
     const not = this.flags.not;
     var pass = false;
@@ -17,12 +17,12 @@ pub fn toBeUndefined(this: *Expect, globalThis: *JSGlobalObject, callFrame: *Cal
     defer formatter.deinit();
     const value_fmt = value.toFmt(&formatter);
     if (not) {
-        const received_line = "Received: <red>{any}<r>\n";
+        const received_line = "Received: <red>{f}<r>\n";
         const signature = comptime getSignature("toBeUndefined", "", true);
         return this.throw(globalThis, signature, "\n\n" ++ received_line, .{value_fmt});
     }
 
-    const received_line = "Received: <red>{any}<r>\n";
+    const received_line = "Received: <red>{f}<r>\n";
     const signature = comptime getSignature("toBeUndefined", "", false);
     return this.throw(globalThis, signature, "\n\n" ++ received_line, .{value_fmt});
 }
@@ -33,7 +33,6 @@ const jsc = bun.jsc;
 const CallFrame = bun.jsc.CallFrame;
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
-const incrementExpectCallCounter = bun.jsc.Expect.incrementExpectCallCounter;
 
 const Expect = bun.jsc.Expect.Expect;
 const getSignature = Expect.getSignature;

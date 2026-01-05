@@ -12,7 +12,7 @@ pub const JSPromise = opaque {
     extern fn JSC__JSPromise__rejectedPromiseValue(arg0: *JSGlobalObject, JSValue1: JSValue) JSValue;
     extern fn JSC__JSPromise__resolvedPromise(arg0: *JSGlobalObject, JSValue1: JSValue) *JSPromise;
     extern fn JSC__JSPromise__resolvedPromiseValue(arg0: *JSGlobalObject, JSValue1: JSValue) JSValue;
-    extern fn JSC__JSPromise__wrap(*jsc.JSGlobalObject, *anyopaque, *const fn (*anyopaque, *jsc.JSGlobalObject) callconv(.C) jsc.JSValue) jsc.JSValue;
+    extern fn JSC__JSPromise__wrap(*jsc.JSGlobalObject, *anyopaque, *const fn (*anyopaque, *jsc.JSGlobalObject) callconv(.c) jsc.JSValue) jsc.JSValue;
 
     pub fn Weak(comptime T: type) type {
         return struct {
@@ -95,31 +95,38 @@ pub const JSPromise = opaque {
 
         pub const empty: Strong = .{ .strong = .empty };
 
-        pub fn reject(this: *Strong, globalThis: *jsc.JSGlobalObject, val: JSError!jsc.JSValue) void {
-            this.swap().reject(globalThis, val catch globalThis.tryTakeException().?);
+        pub fn rejectWithoutSwap(this: *Strong, globalThis: *jsc.JSGlobalObject, val: JSError!jsc.JSValue) void {
+            (this.strong.get() orelse return).asPromise().?.reject(globalThis, val catch globalThis.tryTakeException().?);
+        }
+
+        pub fn resolveWithoutSwap(this: *Strong, globalThis: *jsc.JSGlobalObject, val: jsc.JSValue) void {
+            (this.strong.get() orelse return).asPromise().?.resolve(globalThis, val);
+        }
+
+        pub fn reject(this: *Strong, globalThis: *jsc.JSGlobalObject, val: JSError!jsc.JSValue) bun.JSTerminated!void {
+            try this.swap().reject(globalThis, val catch globalThis.tryTakeException().?);
         }
 
         /// Like `reject`, except it drains microtasks at the end of the current event loop iteration.
-        pub fn rejectTask(this: *Strong, globalThis: *jsc.JSGlobalObject, val: jsc.JSValue) void {
+        pub fn rejectTask(this: *Strong, globalThis: *jsc.JSGlobalObject, val: jsc.JSValue) bun.JSTerminated!void {
             const loop = jsc.VirtualMachine.get().eventLoop();
             loop.enter();
             defer loop.exit();
-
-            this.reject(globalThis, val);
+            try this.reject(globalThis, val);
         }
 
         pub const rejectOnNextTick = @compileError("Either use an event loop task, or you're draining microtasks when you shouldn't be.");
 
-        pub fn resolve(this: *Strong, globalThis: *jsc.JSGlobalObject, val: jsc.JSValue) void {
-            this.swap().resolve(globalThis, val);
+        pub fn resolve(this: *Strong, globalThis: *jsc.JSGlobalObject, val: jsc.JSValue) bun.JSTerminated!void {
+            try this.swap().resolve(globalThis, val);
         }
 
         /// Like `resolve`, except it drains microtasks at the end of the current event loop iteration.
-        pub fn resolveTask(this: *Strong, globalThis: *jsc.JSGlobalObject, val: jsc.JSValue) void {
+        pub fn resolveTask(this: *Strong, globalThis: *jsc.JSGlobalObject, val: jsc.JSValue) bun.JSTerminated!void {
             const loop = jsc.VirtualMachine.get().eventLoop();
             loop.enter();
             defer loop.exit();
-            this.resolve(globalThis, val);
+            try this.resolve(globalThis, val);
         }
 
         pub fn init(globalThis: *jsc.JSGlobalObject) Strong {
@@ -153,6 +160,12 @@ pub const JSPromise = opaque {
             return prom;
         }
 
+        pub fn take(this: *Strong) Strong {
+            const ret = this.*;
+            this.* = .empty;
+            return ret;
+        }
+
         pub fn deinit(this: *Strong) void {
             this.strong.deinit();
         }
@@ -166,7 +179,7 @@ pub const JSPromise = opaque {
         globalObject: *JSGlobalObject,
         comptime Function: anytype,
         args: std.meta.ArgsTuple(@TypeOf(Function)),
-    ) JSValue {
+    ) bun.JSTerminated!JSValue {
         const Args = std.meta.ArgsTuple(@TypeOf(Function));
         const Fn = Function;
         const Wrapper = struct {
@@ -182,7 +195,7 @@ pub const JSPromise = opaque {
         defer scope.deinit();
         var ctx = Wrapper{ .args = args };
         const promise = JSC__JSPromise__wrap(globalObject, &ctx, @ptrCast(&Wrapper.call));
-        bun.debugAssert(!scope.hasException()); // TODO: properly propagate exception upwards
+        try scope.assertNoExceptionExceptTermination();
         return promise;
     }
 
@@ -204,22 +217,25 @@ pub const JSPromise = opaque {
         return resolvedPromiseValue(globalObject, value);
     }
 
-    pub fn status(this: *const JSPromise, vm: *VM) Status {
-        return @enumFromInt(bun.cpp.JSC__JSPromise__status(this, vm));
+    pub fn status(this: *const JSPromise) Status {
+        return @enumFromInt(bun.cpp.JSC__JSPromise__status(this));
     }
 
     pub fn result(this: *JSPromise, vm: *VM) JSValue {
         return bun.cpp.JSC__JSPromise__result(this, vm);
     }
 
-    pub fn isHandled(this: *const JSPromise, vm: *VM) bool {
-        return bun.cpp.JSC__JSPromise__isHandled(this, vm);
+    pub fn isHandled(this: *const JSPromise) bool {
+        return bun.cpp.JSC__JSPromise__isHandled(this);
     }
 
-    pub fn setHandled(this: *JSPromise, vm: *VM) void {
-        bun.cpp.JSC__JSPromise__setHandled(this, vm);
+    pub fn setHandled(this: *JSPromise) void {
+        bun.cpp.JSC__JSPromise__setHandled(this);
     }
 
+    /// Create a new resolved promise resolving to a given value.
+    ///
+    /// Note: If you want the result as a JSValue, use `JSPromise.resolvedPromiseValue` instead.
     pub fn resolvedPromise(globalThis: *JSGlobalObject, value: JSValue) *JSPromise {
         return JSC__JSPromise__resolvedPromise(globalThis, value);
     }
@@ -230,6 +246,9 @@ pub const JSPromise = opaque {
         return JSC__JSPromise__resolvedPromiseValue(globalThis, value);
     }
 
+    /// Create a new rejected promise rejecting to a given value.
+    ///
+    /// Note: If you want the result as a JSValue, use `JSPromise.rejectedPromiseValue` instead.
     pub fn rejectedPromise(globalThis: *JSGlobalObject, value: JSValue) *JSPromise {
         return JSC__JSPromise__rejectedPromise(globalThis, value);
     }
@@ -245,7 +264,7 @@ pub const JSPromise = opaque {
     /// Fulfill an existing promise with the value
     /// The value can be another Promise
     /// If you want to create a new Promise that is already resolved, see JSPromise.resolvedPromiseValue
-    pub fn resolve(this: *JSPromise, globalThis: *JSGlobalObject, value: JSValue) void {
+    pub fn resolve(this: *JSPromise, globalThis: *JSGlobalObject, value: JSValue) bun.JSTerminated!void {
         if (comptime bun.Environment.isDebug) {
             const loop = jsc.VirtualMachine.get().eventLoop();
             loop.debug.js_call_count_outside_tick_queue += @as(usize, @intFromBool(!loop.debug.is_inside_tick_queue));
@@ -254,10 +273,10 @@ pub const JSPromise = opaque {
             }
         }
 
-        bun.cpp.JSC__JSPromise__resolve(this, globalThis, value) catch return bun.debugAssert(false); // TODO: properly propagate exception upwards
+        bun.cpp.JSC__JSPromise__resolve(this, globalThis, value) catch return error.JSTerminated;
     }
 
-    pub fn reject(this: *JSPromise, globalThis: *JSGlobalObject, value: JSError!JSValue) void {
+    pub fn reject(this: *JSPromise, globalThis: *JSGlobalObject, value: JSError!JSValue) bun.JSTerminated!void {
         if (comptime bun.Environment.isDebug) {
             const loop = jsc.VirtualMachine.get().eventLoop();
             loop.debug.js_call_count_outside_tick_queue += @as(usize, @intFromBool(!loop.debug.is_inside_tick_queue));
@@ -266,15 +285,32 @@ pub const JSPromise = opaque {
             }
         }
 
-        const err = value catch |err| globalThis.takeException(err);
+        const err = value catch |err| switch (err) {
+            // We can't use globalThis.takeException() because it throws out of
+            // memory error when we instead need to take the exception.
+            error.OutOfMemory => globalThis.createOutOfMemoryError(),
 
-        bun.cpp.JSC__JSPromise__reject(this, globalThis, err) catch return bun.debugAssert(false); // TODO: properly propagate exception upwards
+            error.JSTerminated => return,
+            else => err: {
+                const exception = globalThis.tryTakeException() orelse {
+                    @panic("A JavaScript exception was thrown, but it was cleared before it could be read.");
+                };
+                break :err exception.toError() orelse exception;
+            },
+        };
+
+        bun.cpp.JSC__JSPromise__reject(this, globalThis, err) catch return error.JSTerminated;
     }
 
-    pub fn rejectAsHandled(this: *JSPromise, globalThis: *JSGlobalObject, value: JSValue) void {
-        bun.cpp.JSC__JSPromise__rejectAsHandled(this, globalThis, value) catch return bun.debugAssert(false); // TODO: properly propagate exception upwards
+    pub fn rejectAsHandled(this: *JSPromise, globalThis: *JSGlobalObject, value: JSValue) bun.JSTerminated!void {
+        bun.cpp.JSC__JSPromise__rejectAsHandled(this, globalThis, value) catch return error.JSTerminated;
     }
 
+    /// Create a new pending promise.
+    ///
+    /// Note: You should use `JSPromise.resolvedPromise` or
+    ///       `JSPromise.rejectedPromise` if you want to create a promise that
+    ///       is already resolved or rejected.
     pub fn create(globalThis: *JSGlobalObject) *JSPromise {
         return JSC__JSPromise__create(globalThis);
     }
@@ -294,11 +330,11 @@ pub const JSPromise = opaque {
     pub const UnwrapMode = enum { mark_handled, leave_unhandled };
 
     pub fn unwrap(promise: *JSPromise, vm: *VM, mode: UnwrapMode) Unwrapped {
-        return switch (promise.status(vm)) {
+        return switch (promise.status()) {
             .pending => .pending,
             .fulfilled => .{ .fulfilled = promise.result(vm) },
             .rejected => {
-                if (mode == .mark_handled) promise.setHandled(vm);
+                if (mode == .mark_handled) promise.setHandled();
                 return .{ .rejected = promise.result(vm) };
             },
         };

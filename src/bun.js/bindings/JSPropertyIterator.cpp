@@ -19,16 +19,16 @@ using namespace JSC;
 
 class JSPropertyIterator {
 public:
-    JSPropertyIterator(JSC::VM& m_vm, RefPtr<JSC::PropertyNameArrayData> m_properties)
+    JSPropertyIterator(JSC::VM& m_vm, RefPtr<JSC::PropertyNameArray> m_properties)
         : vm(m_vm)
         , properties(m_properties)
     {
     }
 
-    RefPtr<JSC::PropertyNameArrayData> properties;
+    RefPtr<JSC::PropertyNameArray> properties;
     Ref<JSC::VM> vm;
     bool isSpecialProxy = false;
-    static JSPropertyIterator* create(JSC::VM& vm, RefPtr<JSC::PropertyNameArrayData> data)
+    static JSPropertyIterator* create(JSC::VM& vm, RefPtr<JSC::PropertyNameArray> data)
     {
         return new JSPropertyIterator(vm, data);
     }
@@ -45,7 +45,7 @@ extern "C" JSPropertyIterator* Bun__JSPropertyIterator__create(JSC::JSGlobalObje
     ASSERT(count);
 
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSC::PropertyNameArray array(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+    JSC::PropertyNameArrayBuilder array(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
 
     if (object->hasNonReifiedStaticProperties()) [[unlikely]] {
         object->reifyAllStaticProperties(globalObject);
@@ -130,18 +130,19 @@ static EncodedJSValue getOwnProxyObject(JSPropertyIterator* iter, JSObject* obje
 
 extern "C" EncodedJSValue Bun__JSPropertyIterator__getNameAndValue(JSPropertyIterator* iter, JSC::JSGlobalObject* globalObject, JSC::JSObject* object, BunString* propertyName, size_t i)
 {
-    const auto& prop = iter->properties->propertyNameVector()[i];
-    if (iter->isSpecialProxy) [[unlikely]] {
-        return getOwnProxyObject(iter, object, prop, propertyName);
-    }
-
     auto& vm = iter->vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    const auto& prop = iter->properties->propertyNameVector()[i];
+    if (iter->isSpecialProxy) [[unlikely]] {
+        RELEASE_AND_RETURN(scope, getOwnProxyObject(iter, object, prop, propertyName));
+    }
+
     // This has to be get because we may need to call on prototypes
     // If we meant for this to only run for own keys, the property name would not be included in the array.
     PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
     if (!object->getPropertySlot(globalObject, prop, slot)) {
-        return {};
+        RELEASE_AND_RETURN(scope, {});
     }
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -154,12 +155,13 @@ extern "C" EncodedJSValue Bun__JSPropertyIterator__getNameAndValue(JSPropertyIte
 
 extern "C" EncodedJSValue Bun__JSPropertyIterator__getNameAndValueNonObservable(JSPropertyIterator* iter, JSC::JSGlobalObject* globalObject, JSC::JSObject* object, BunString* propertyName, size_t i)
 {
-    const auto& prop = iter->properties->propertyNameVector()[i];
-    if (iter->isSpecialProxy) [[unlikely]] {
-        return getOwnProxyObject(iter, object, prop, propertyName);
-    }
     auto& vm = iter->vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    const auto& prop = iter->properties->propertyNameVector()[i];
+    if (iter->isSpecialProxy) [[unlikely]] {
+        RELEASE_AND_RETURN(scope, getOwnProxyObject(iter, object, prop, propertyName));
+    }
 
     PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, vm.ptr());
     auto has = object->getNonIndexPropertySlot(globalObject, prop, slot);

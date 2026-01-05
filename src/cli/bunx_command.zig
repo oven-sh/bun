@@ -477,7 +477,7 @@ pub const BunxCommand = struct {
             if (ignore_cwd.len == 0) break :brk PATH;
 
             // Remove the cwd passed through BUN_WHICH_IGNORE_CWD from path. This prevents temp node-gyp script from finding and running itself
-            var new_path = try std.ArrayList(u8).initCapacity(ctx.allocator, PATH.len);
+            var new_path = try std.array_list.Managed(u8).initCapacity(ctx.allocator, PATH.len);
             var path_iter = std.mem.tokenizeScalar(u8, PATH, std.fs.path.delimiter);
             if (path_iter.next()) |segment| {
                 if (!strings.eqlLong(strings.withoutTrailingSlash(segment), strings.withoutTrailingSlash(ignore_cwd), true)) {
@@ -711,7 +711,7 @@ pub const BunxCommand = struct {
             package_json.writeAll("{}\n") catch {};
         }
 
-        var args = std.BoundedArray([]const u8, 8).fromSlice(&.{
+        var args = bun.BoundedArray([]const u8, 8).fromSlice(&.{
             try bun.selfExePath(),
             "add",
             install_param,
@@ -742,7 +742,7 @@ pub const BunxCommand = struct {
 
         const argv_to_use = args.slice();
 
-        debug("installing package: {s}", .{bun.fmt.fmtSlice(argv_to_use, " ")});
+        debug("installing package: {f}", .{bun.fmt.fmtSlice(argv_to_use, " ")});
         bun.handleOom(this_transpiler.env.map.put("BUN_INTERNAL_BUNX_INSTALL", "true"));
 
         const spawn_result = switch ((bun.spawnSync(&.{
@@ -756,7 +756,7 @@ pub const BunxCommand = struct {
             .stdin = .inherit,
 
             .windows = if (Environment.isWindows) .{
-                .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(this_transpiler.env)),
+                .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(this_transpiler.env, null)),
             },
         }) catch |err| {
             Output.prettyErrorln("<r><red>error<r>: bunx failed to install <b>{s}<r> due to error <b>{s}<r>", .{ install_param, @errorName(err) });
@@ -772,6 +772,10 @@ pub const BunxCommand = struct {
         switch (spawn_result.status) {
             .exited => |exit| {
                 if (exit.signal.valid()) {
+                    if (bun.feature_flag.BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get()) {
+                        bun.crash_handler.suppressReporting();
+                    }
+
                     Global.raiseIgnoringPanicHandler(exit.signal);
                 }
 
@@ -780,10 +784,14 @@ pub const BunxCommand = struct {
                 }
             },
             .signaled => |signal| {
+                if (bun.feature_flag.BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get()) {
+                    bun.crash_handler.suppressReporting();
+                }
+
                 Global.raiseIgnoringPanicHandler(signal);
             },
             .err => |err| {
-                Output.prettyErrorln("<r><red>error<r>: bunx failed to install <b>{s}<r> due to error:\n{}", .{ install_param, err });
+                Output.prettyErrorln("<r><red>error<r>: bunx failed to install <b>{s}<r> due to error:\n{f}", .{ install_param, err });
                 Global.exit(1);
             },
             else => {},

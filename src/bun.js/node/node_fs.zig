@@ -20,7 +20,7 @@ else
 // All async FS functions are run in a thread pool, but some implementations may
 // decide to do something slightly different. For example, reading a file has
 // an extra stack buffer in the async case.
-pub const Flavor = enum { sync, @"async" };
+pub const Flavor = enum { sync, async };
 
 pub const Async = struct {
     pub const access = NewAsyncFSTask(Return.Access, Arguments.Access, NodeFS.access);
@@ -259,7 +259,7 @@ pub const Async = struct {
                 return task.promise.value();
             }
 
-            fn uv_callback(req: *uv.fs_t) callconv(.C) void {
+            fn uv_callback(req: *uv.fs_t) callconv(.c) void {
                 defer uv.uv_fs_req_cleanup(req);
                 const this: *Task = @ptrCast(@alignCast(req.data.?));
                 var node_fs = NodeFS{};
@@ -273,7 +273,7 @@ pub const Async = struct {
                 this.globalObject.bunVM().eventLoop().enqueueTask(jsc.Task.init(this));
             }
 
-            fn uv_callbackreq(req: *uv.fs_t) callconv(.C) void {
+            fn uv_callbackreq(req: *uv.fs_t) callconv(.c) void {
                 defer uv.uv_fs_req_cleanup(req);
                 const this: *Task = @ptrCast(@alignCast(req.data.?));
                 var node_fs = NodeFS{};
@@ -287,7 +287,7 @@ pub const Async = struct {
                 this.globalObject.bunVM().eventLoop().enqueueTask(jsc.Task.init(this));
             }
 
-            pub fn runFromJSThread(this: *Task) void {
+            pub fn runFromJSThread(this: *Task) bun.JSTerminated!void {
                 defer this.deinit();
 
                 const globalObject = this.globalObject;
@@ -308,10 +308,10 @@ pub const Async = struct {
 
                 switch (success) {
                     false => {
-                        promise.reject(globalObject, result);
+                        try promise.reject(globalObject, result);
                     },
                     true => {
-                        promise.resolve(globalObject, result);
+                        try promise.resolve(globalObject, result);
                     },
                 }
             }
@@ -377,7 +377,7 @@ pub const Async = struct {
                 var this: *Task = @alignCast(@fieldParentPtr("task", task));
 
                 var node_fs = NodeFS{};
-                this.result = function(&node_fs, this.args, .@"async");
+                this.result = function(&node_fs, this.args, .async);
 
                 if (this.result == .err) {
                     this.result.err = this.result.err.clone(bun.default_allocator);
@@ -387,7 +387,7 @@ pub const Async = struct {
                 this.globalObject.bunVMConcurrently().eventLoop().enqueueTaskConcurrent(jsc.ConcurrentTask.createFrom(this));
             }
 
-            pub fn runFromJSThread(this: *Task) void {
+            pub fn runFromJSThread(this: *Task) bun.JSTerminated!void {
                 defer this.deinit();
                 const globalObject = this.globalObject;
 
@@ -409,17 +409,17 @@ pub const Async = struct {
                 if (have_abort_signal) check_abort: {
                     const signal = this.args.signal orelse break :check_abort;
                     if (signal.reasonIfAborted(globalObject)) |reason| {
-                        promise.reject(globalObject, reason.toJS(globalObject));
+                        try promise.reject(globalObject, reason.toJS(globalObject));
                         return;
                     }
                 }
 
                 switch (success) {
                     false => {
-                        promise.reject(globalObject, result);
+                        try promise.reject(globalObject, result);
                     },
                     true => {
-                        promise.resolve(globalObject, result);
+                        try promise.resolve(globalObject, result);
                     },
                 }
             }
@@ -651,10 +651,10 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
         }
 
         pub fn runFromJSThreadMini(this: *ThisAsyncCpTask, _: *anyopaque) void {
-            this.runFromJSThread();
+            this.runFromJSThread() catch {}; // TODO: properly propagate exception upwards
         }
 
-        fn runFromJSThread(this: *ThisAsyncCpTask) void {
+        fn runFromJSThread(this: *ThisAsyncCpTask) bun.JSTerminated!void {
             if (comptime is_shell) {
                 this.shelltask.cpOnFinish(this.result);
                 this.deinit();
@@ -681,10 +681,10 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             this.deinit();
             switch (success) {
                 false => {
-                    promise.reject(globalObject, result);
+                    try promise.reject(globalObject, result);
                 },
                 true => {
-                    promise.resolve(globalObject, result);
+                    try promise.resolve(globalObject, result);
                 },
             }
         }
@@ -961,9 +961,9 @@ pub const AsyncReaddirRecursiveTask = struct {
 
     pub const ResultListEntry = struct {
         pub const Value = union(Return.Readdir.Tag) {
-            with_file_types: std.ArrayList(bun.jsc.Node.Dirent),
-            buffers: std.ArrayList(Buffer),
-            files: std.ArrayList(bun.String),
+            with_file_types: std.array_list.Managed(bun.jsc.Node.Dirent),
+            buffers: std.array_list.Managed(Buffer),
+            files: std.array_list.Managed(bun.String),
 
             pub fn deinit(this: *@This()) void {
                 switch (this.*) {
@@ -1041,9 +1041,9 @@ pub const AsyncReaddirRecursiveTask = struct {
             .subtask_count = .{ .raw = 1 },
             .root_path = PathString.init(bun.handleOom(bun.default_allocator.dupeZ(u8, args.path.slice()))),
             .result_list = switch (args.tag()) {
-                .files => .{ .files = std.ArrayList(bun.String).init(bun.default_allocator) },
+                .files => .{ .files = std.array_list.Managed(bun.String).init(bun.default_allocator) },
                 .with_file_types => .{ .with_file_types = .init(bun.default_allocator) },
-                .buffers => .{ .buffers = std.ArrayList(Buffer).init(bun.default_allocator) },
+                .buffers => .{ .buffers = std.array_list.Managed(Buffer).init(bun.default_allocator) },
             },
         });
         task.ref.ref(vm);
@@ -1066,7 +1066,7 @@ pub const AsyncReaddirRecursiveTask = struct {
                 var stack = std.heap.stackFallback(8192, bun.default_allocator);
 
                 // This is a stack-local copy to avoid resizing heap-allocated arrays in the common case of a small directory
-                var entries = std.ArrayList(ResultType).init(stack.get());
+                var entries = std.array_list.Managed(ResultType).init(stack.get());
 
                 defer entries.deinit();
 
@@ -1116,7 +1116,7 @@ pub const AsyncReaddirRecursiveTask = struct {
         this.performWork(this.root_path.sliceAssumeZ(), &buf, true);
     }
 
-    pub fn writeResults(this: *AsyncReaddirRecursiveTask, comptime ResultType: type, result: *std.ArrayList(ResultType)) void {
+    pub fn writeResults(this: *AsyncReaddirRecursiveTask, comptime ResultType: type, result: *std.array_list.Managed(ResultType)) void {
         if (result.items.len > 0) {
             const Field = switch (ResultType) {
                 bun.String => .files,
@@ -1128,7 +1128,7 @@ pub const AsyncReaddirRecursiveTask = struct {
             errdefer {
                 bun.default_allocator.destroy(list);
             }
-            var clone = bun.handleOom(std.ArrayList(ResultType).initCapacity(bun.default_allocator, result.items.len));
+            var clone = bun.handleOom(std.array_list.Managed(ResultType).initCapacity(bun.default_allocator, result.items.len));
             clone.appendSliceAssumeCapacity(result.items);
             _ = this.result_list_count.fetchAdd(clone.items.len, .monotonic);
             list.* = ResultListEntry{ .next = null, .value = @unionInit(ResultListEntry.Value, @tagName(Field), clone) };
@@ -1212,7 +1212,7 @@ pub const AsyncReaddirRecursiveTask = struct {
         this.result_list_count.store(0, .monotonic);
     }
 
-    pub fn runFromJSThread(this: *AsyncReaddirRecursiveTask) void {
+    pub fn runFromJSThread(this: *AsyncReaddirRecursiveTask) bun.JSTerminated!void {
         const globalObject = this.globalObject;
         const success = this.pending_err == null;
         var promise_value = this.promise.value();
@@ -1234,10 +1234,10 @@ pub const AsyncReaddirRecursiveTask = struct {
         this.deinit();
         switch (success) {
             false => {
-                promise.reject(globalObject, result);
+                try promise.reject(globalObject, result);
             },
             true => {
-                promise.resolve(globalObject, result);
+                try promise.resolve(globalObject, result);
             },
         }
     }
@@ -1866,7 +1866,7 @@ pub const Arguments = struct {
                         if (str.eqlComptime("dir")) break :link_type .dir;
                         if (str.eqlComptime("file")) break :link_type .file;
                         if (str.eqlComptime("junction")) break :link_type .junction;
-                        return ctx.ERR(.INVALID_ARG_VALUE, "Symlink type must be one of \"dir\", \"file\", or \"junction\". Received \"{}\"", .{str}).throw();
+                        return ctx.ERR(.INVALID_ARG_VALUE, "Symlink type must be one of \"dir\", \"file\", or \"junction\". Received \"{f}\"", .{str}).throw();
                     }
                     // not a string. fallthrough to auto detect.
                     return ctx.ERR(.INVALID_ARG_VALUE, "Symlink type must be one of \"dir\", \"file\", or \"junction\".", .{}).throw();
@@ -2829,7 +2829,9 @@ pub const Arguments = struct {
             // String objects not allowed (typeof new String("hi") === "object")
             // https://github.com/nodejs/node/blob/6f946c95b9da75c70e868637de8161bc8d048379/lib/internal/fs/utils.js#L916
             const allow_string_object = false;
-            const data = try StringOrBuffer.fromJSWithEncodingMaybeAsync(ctx, bun.default_allocator, data_value, encoding, arguments.will_be_async, allow_string_object) orelse {
+            // the pattern in node_fs.zig is to call toThreadSafe after Arguments.*.fromJS
+            const is_async = false;
+            const data = try StringOrBuffer.fromJSWithEncodingMaybeAsync(ctx, bun.default_allocator, data_value, encoding, is_async, allow_string_object) orelse {
                 return ctx.ERR(.INVALID_ARG_TYPE, "The \"data\" argument must be of type string or an instance of Buffer, TypedArray, or DataView", .{}).throw();
             };
 
@@ -3678,8 +3680,12 @@ pub const NodeFS = struct {
                     if (ret.errnoSysP(written, .copy_file_range, dest)) |err| {
                         return switch (err.getErrno()) {
                             .INTR => continue,
-                            inline .XDEV, .NOSYS => |errno| brk: {
-                                if (comptime errno == .NOSYS) {
+                            // EINVAL: eCryptfs and other filesystems may not support copy_file_range
+                            // XDEV: cross-device copy not supported
+                            // NOSYS: syscall not available
+                            // OPNOTSUPP: filesystem doesn't support this operation
+                            inline .XDEV, .NOSYS, .INVAL, .OPNOTSUPP => |errno| brk: {
+                                if (comptime errno == .NOSYS or errno == .OPNOTSUPP) {
                                     bun.disableCopyFileRangeSyscall();
                                 }
                                 break :brk copyFileUsingSendfileOnLinuxWithReadWriteFallback(src, dest, src_fd, dest_fd, size, &wrote);
@@ -3699,8 +3705,12 @@ pub const NodeFS = struct {
                     if (ret.errnoSysP(written, .copy_file_range, dest)) |err| {
                         return switch (err.getErrno()) {
                             .INTR => continue,
-                            inline .XDEV, .NOSYS => |errno| brk: {
-                                if (comptime errno == .NOSYS) {
+                            // EINVAL: eCryptfs and other filesystems may not support copy_file_range
+                            // XDEV: cross-device copy not supported
+                            // NOSYS: syscall not available
+                            // OPNOTSUPP: filesystem doesn't support this operation
+                            inline .XDEV, .NOSYS, .INVAL, .OPNOTSUPP => |errno| brk: {
+                                if (comptime errno == .NOSYS or errno == .OPNOTSUPP) {
                                     bun.disableCopyFileRangeSyscall();
                                 }
                                 break :brk copyFileUsingSendfileOnLinuxWithReadWriteFallback(src, dest, src_fd, dest_fd, size, &wrote);
@@ -3733,7 +3743,7 @@ pub const NodeFS = struct {
             return ret.success;
         }
 
-        @compileError(unreachable);
+        @compileError("unreachable");
     }
 
     pub fn exists(this: *NodeFS, args: Arguments.Exists, _: Flavor) Maybe(Return.Exists) {
@@ -3799,10 +3809,17 @@ pub const NodeFS = struct {
     }
 
     pub fn fstat(_: *NodeFS, args: Arguments.Fstat, _: Flavor) Maybe(Return.Fstat) {
-        return switch (Syscall.fstat(args.fd)) {
-            .result => |*result| .{ .result = .init(result, args.big_int) },
-            .err => |err| .{ .err = err },
-        };
+        if (Environment.isLinux and Syscall.supports_statx_on_linux.load(.monotonic)) {
+            return switch (Syscall.fstatx(args.fd, &.{ .type, .mode, .nlink, .uid, .gid, .atime, .mtime, .ctime, .btime, .ino, .size, .blocks })) {
+                .result => |result| .{ .result = .init(&result, args.big_int) },
+                .err => |err| .{ .err = err },
+            };
+        } else {
+            return switch (Syscall.fstat(args.fd)) {
+                .result => |result| .{ .result = .init(&Syscall.PosixStat.init(&result), args.big_int) },
+                .err => |err| .{ .err = err },
+            };
+        }
     }
 
     pub fn fsync(_: *NodeFS, args: Arguments.Fsync, _: Flavor) Maybe(Return.Fsync) {
@@ -3876,15 +3893,27 @@ pub const NodeFS = struct {
     }
 
     pub fn lstat(this: *NodeFS, args: Arguments.Lstat, _: Flavor) Maybe(Return.Lstat) {
-        return switch (Syscall.lstat(args.path.sliceZ(&this.sync_error_buf))) {
-            .result => |*result| Maybe(Return.Lstat){ .result = .{ .stats = .init(result, args.big_int) } },
-            .err => |err| brk: {
-                if (!args.throw_if_no_entry and err.getErrno() == .NOENT) {
-                    return Maybe(Return.Lstat){ .result = .{ .not_found = {} } };
-                }
-                break :brk Maybe(Return.Lstat){ .err = err.withPath(args.path.slice()) };
-            },
-        };
+        if (Environment.isLinux and Syscall.supports_statx_on_linux.load(.monotonic)) {
+            return switch (Syscall.lstatx(args.path.sliceZ(&this.sync_error_buf), &.{ .type, .mode, .nlink, .uid, .gid, .atime, .mtime, .ctime, .btime, .ino, .size, .blocks })) {
+                .result => |result| Maybe(Return.Lstat){ .result = .{ .stats = .init(&result, args.big_int) } },
+                .err => |err| brk: {
+                    if (!args.throw_if_no_entry and err.getErrno() == .NOENT) {
+                        return Maybe(Return.Lstat){ .result = .{ .not_found = {} } };
+                    }
+                    break :brk Maybe(Return.Lstat){ .err = err.withPath(args.path.slice()) };
+                },
+            };
+        } else {
+            return switch (Syscall.lstat(args.path.sliceZ(&this.sync_error_buf))) {
+                .result => |result| Maybe(Return.Lstat){ .result = .{ .stats = .init(&Syscall.PosixStat.init(&result), args.big_int) } },
+                .err => |err| brk: {
+                    if (!args.throw_if_no_entry and err.getErrno() == .NOENT) {
+                        return Maybe(Return.Lstat){ .result = .{ .not_found = {} } };
+                    }
+                    break :brk Maybe(Return.Lstat){ .err = err.withPath(args.path.slice()) };
+                },
+            };
+        }
     }
 
     pub fn mkdir(this: *NodeFS, args: Arguments.Mkdir, _: Flavor) Maybe(Return.Mkdir) {
@@ -3991,7 +4020,7 @@ pub const NodeFS = struct {
             },
         }
 
-        var working_mem: *bun.OSPathBuffer = @alignCast(@ptrCast(&this.sync_error_buf));
+        var working_mem: *bun.OSPathBuffer = @ptrCast(@alignCast(&this.sync_error_buf));
 
         @memcpy(working_mem[0..len], path[0..len]);
 
@@ -4128,16 +4157,12 @@ pub const NodeFS = struct {
                     .path = prefix_buf[0 .. len + 6],
                 } };
             }
-            return .{
-                .result = bun.handleOom(jsc.ZigString.dupeForJS(bun.sliceTo(req.path, 0), bun.default_allocator)),
-            };
+            return .initResult(bun.handleOom(jsc.ZigString.dupeForJS(bun.sliceTo(req.path, 0), bun.default_allocator)));
         }
 
         const rc = c.mkdtemp(prefix_buf);
         if (rc) |ptr| {
-            return .{
-                .result = bun.handleOom(jsc.ZigString.dupeForJS(bun.sliceTo(ptr, 0), bun.default_allocator)),
-            };
+            return .initResult(bun.handleOom(jsc.ZigString.dupeForJS(bun.sliceTo(ptr, 0), bun.default_allocator)));
         }
 
         // c.getErrno(rc) returns SUCCESS if rc is -1 so we call std.c._errno() directly
@@ -4420,7 +4445,7 @@ pub const NodeFS = struct {
         fd: bun.FileDescriptor,
         basename: [:0]const u8,
         comptime ExpectedType: type,
-        entries: *std.ArrayList(ExpectedType),
+        entries: *std.array_list.Managed(ExpectedType),
     ) Maybe(void) {
         const is_u16 = comptime Environment.isWindows and (ExpectedType == bun.String or ExpectedType == bun.jsc.Node.Dirent);
 
@@ -4523,7 +4548,7 @@ pub const NodeFS = struct {
         async_task: *AsyncReaddirRecursiveTask,
         basename: [:0]const u8,
         comptime ExpectedType: type,
-        entries: *std.ArrayList(ExpectedType),
+        entries: *std.array_list.Managed(ExpectedType),
         comptime is_root: bool,
     ) Maybe(void) {
         const root_basename = async_task.root_path.slice();
@@ -4658,10 +4683,10 @@ pub const NodeFS = struct {
         args: Arguments.Readdir,
         root_basename: [:0]const u8,
         comptime ExpectedType: type,
-        entries: *std.ArrayList(ExpectedType),
+        entries: *std.array_list.Managed(ExpectedType),
     ) Maybe(void) {
         var iterator_stack = std.heap.stackFallback(128, bun.default_allocator);
-        var stack = std.fifo.LinearFifo([:0]const u8, .{ .Dynamic = {} }).init(iterator_stack.get());
+        var stack = bun.LinearFifo([:0]const u8, .{ .Dynamic = {} }).init(iterator_stack.get());
         var basename_stack = std.heap.stackFallback(8192 * 2, bun.default_allocator);
         const basename_allocator = basename_stack.get();
         defer {
@@ -4785,7 +4810,7 @@ pub const NodeFS = struct {
                     bun.String => {
                         bun.handleOom(entries.append(jsc.WebCore.encoding.toBunString(strings.withoutNTPrefix(std.meta.Child(@TypeOf(name_to_copy)), name_to_copy), args.encoding)));
                     },
-                    else => @compileError(unreachable),
+                    else => @compileError("unreachable"),
                 }
             }
         }
@@ -4835,7 +4860,7 @@ pub const NodeFS = struct {
         if (comptime recursive and flavor == .sync) {
             var buf_to_pass: bun.PathBuffer = undefined;
 
-            var entries = std.ArrayList(ExpectedType).init(bun.default_allocator);
+            var entries = std.array_list.Managed(ExpectedType).init(bun.default_allocator);
             return switch (readdirWithEntriesRecursiveSync(&buf_to_pass, args, path, ExpectedType, &entries)) {
                 .err => |err| {
                     for (entries.items) |*result| {
@@ -4881,7 +4906,7 @@ pub const NodeFS = struct {
 
         defer fd.close();
 
-        var entries = std.ArrayList(ExpectedType).init(bun.default_allocator);
+        var entries = std.array_list.Managed(ExpectedType).init(bun.default_allocator);
         return switch (readdirWithEntries(args, fd, path, ExpectedType, &entries)) {
             .err => |err| return .{
                 .err = err,
@@ -5124,7 +5149,7 @@ pub const NodeFS = struct {
             }
         }
 
-        var buf = std.ArrayList(u8).init(bun.default_allocator);
+        var buf = std.array_list.Managed(u8).init(bun.default_allocator);
         defer if (!did_succeed) buf.clearAndFree();
         buf.ensureTotalCapacityPrecise(
             @min(
@@ -5705,21 +5730,35 @@ pub const NodeFS = struct {
         const path = args.path.sliceZ(&this.sync_error_buf);
         if (bun.StandaloneModuleGraph.get()) |graph| {
             if (graph.stat(path)) |*result| {
-                return .{ .result = .{ .stats = .init(result, args.big_int) } };
+                return .{ .result = .{ .stats = .init(&Syscall.PosixStat.init(result), args.big_int) } };
             }
         }
 
-        return switch (Syscall.stat(path)) {
-            .result => |*result| .{
-                .result = .{ .stats = .init(result, args.big_int) },
-            },
-            .err => |err| brk: {
-                if (!args.throw_if_no_entry and err.getErrno() == .NOENT) {
-                    return .{ .result = .{ .not_found = {} } };
-                }
-                break :brk .{ .err = err.withPath(args.path.slice()) };
-            },
-        };
+        if (Environment.isLinux and Syscall.supports_statx_on_linux.load(.monotonic)) {
+            return switch (Syscall.statx(path, &.{ .type, .mode, .nlink, .uid, .gid, .atime, .mtime, .ctime, .btime, .ino, .size, .blocks })) {
+                .result => |result| .{
+                    .result = .{ .stats = .init(&result, args.big_int) },
+                },
+                .err => |err| brk: {
+                    if (!args.throw_if_no_entry and err.getErrno() == .NOENT) {
+                        return .{ .result = .{ .not_found = {} } };
+                    }
+                    break :brk .{ .err = err.withPath(args.path.slice()) };
+                },
+            };
+        } else {
+            return switch (Syscall.stat(path)) {
+                .result => |result| .{
+                    .result = .{ .stats = .init(&Syscall.PosixStat.init(&result), args.big_int) },
+                },
+                .err => |err| brk: {
+                    if (!args.throw_if_no_entry and err.getErrno() == .NOENT) {
+                        return .{ .result = .{ .not_found = {} } };
+                    }
+                    break :brk .{ .err = err.withPath(args.path.slice()) };
+                },
+            };
+        }
     }
 
     pub fn symlink(this: *NodeFS, args: Arguments.Symlink, _: Flavor) Maybe(Return.Symlink) {
@@ -5860,7 +5899,7 @@ pub const NodeFS = struct {
         bun.assert(flavor == .sync);
 
         const watcher = args.createStatWatcher() catch |err| {
-            const buf = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "Failed to watch file {}", .{bun.fmt.QuotedFormatter{ .text = args.path.slice() }}));
+            const buf = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "Failed to watch file {f}", .{bun.fmt.QuotedFormatter{ .text = args.path.slice() }}));
             defer bun.default_allocator.free(buf);
             args.global_this.throwValue((jsc.SystemError{
                 .message = bun.String.init(buf),
@@ -5929,9 +5968,6 @@ pub const NodeFS = struct {
             else
                 .success;
         }
-
-        bun.assert(args.mtime.nsec <= 1e9);
-        bun.assert(args.atime.nsec <= 1e9);
 
         return switch (Syscall.lutimes(args.path.sliceZ(&this.sync_error_buf), args.atime, args.mtime)) {
             .err => |err| .{ .err = err.withPath(args.path.slice()) },
@@ -6405,8 +6441,12 @@ pub const NodeFS = struct {
                     const written = linux.copy_file_range(src_fd.cast(), &off_in_copy, dest_fd.cast(), &off_out_copy, std.heap.pageSize(), 0);
                     if (ret.errnoSysP(written, .copy_file_range, dest)) |err| {
                         return switch (err.getErrno()) {
-                            inline .XDEV, .NOSYS => |errno| brk: {
-                                if (comptime errno == .NOSYS) {
+                            // EINVAL: eCryptfs and other filesystems may not support copy_file_range
+                            // XDEV: cross-device copy not supported
+                            // NOSYS: syscall not available
+                            // OPNOTSUPP: filesystem doesn't support this operation
+                            inline .XDEV, .NOSYS, .INVAL, .OPNOTSUPP => |errno| brk: {
+                                if (comptime errno == .NOSYS or errno == .OPNOTSUPP) {
                                     bun.disableCopyFileRangeSyscall();
                                 }
                                 break :brk copyFileUsingSendfileOnLinuxWithReadWriteFallback(src, dest, src_fd, dest_fd, size, &wrote);
@@ -6425,8 +6465,12 @@ pub const NodeFS = struct {
                     const written = linux.copy_file_range(src_fd.cast(), &off_in_copy, dest_fd.cast(), &off_out_copy, size, 0);
                     if (ret.errnoSysP(written, .copy_file_range, dest)) |err| {
                         return switch (err.getErrno()) {
-                            inline .XDEV, .NOSYS => |errno| brk: {
-                                if (comptime errno == .NOSYS) {
+                            // EINVAL: eCryptfs and other filesystems may not support copy_file_range
+                            // XDEV: cross-device copy not supported
+                            // NOSYS: syscall not available
+                            // OPNOTSUPP: filesystem doesn't support this operation
+                            inline .XDEV, .NOSYS, .INVAL, .OPNOTSUPP => |errno| brk: {
+                                if (comptime errno == .NOSYS or errno == .OPNOTSUPP) {
                                     bun.disableCopyFileRangeSyscall();
                                 }
                                 break :brk copyFileUsingSendfileOnLinuxWithReadWriteFallback(src, dest, src_fd, dest_fd, size, &wrote);
@@ -6518,7 +6562,7 @@ pub const NodeFS = struct {
 
 fn throwInvalidFdError(global: *jsc.JSGlobalObject, value: jsc.JSValue) bun.JSError {
     if (value.isNumber()) {
-        return global.ERR(.OUT_OF_RANGE, "The value of \"fd\" is out of range. It must be an integer. Received {d}", .{bun.fmt.double(value.asNumber())}).throw();
+        return global.ERR(.OUT_OF_RANGE, "The value of \"fd\" is out of range. It must be an integer. Received {f}", .{bun.fmt.double(value.asNumber())}).throw();
     }
     return global.throwInvalidArgumentTypeValue("fd", "number", value);
 }
@@ -6578,6 +6622,8 @@ pub fn zigDeleteTree(self: std.fs.Dir, sub_path: []const u8, kind_hint: std.fs.F
                             },
                             error.FileNotFound,
                             error.AccessDenied,
+                            error.PermissionDenied,
+                            error.ProcessNotFound,
                             error.SymLinkLoop,
                             error.ProcessFdQuotaExceeded,
                             error.NameTooLong,
@@ -6614,6 +6660,7 @@ pub fn zigDeleteTree(self: std.fs.Dir, sub_path: []const u8, kind_hint: std.fs.F
                         error.FileNotFound,
                         error.NotDir,
                         error.AccessDenied,
+                        error.PermissionDenied,
                         error.InvalidUtf8,
                         error.InvalidWtf8,
                         error.SymLinkLoop,
@@ -6670,6 +6717,8 @@ pub fn zigDeleteTree(self: std.fs.Dir, sub_path: []const u8, kind_hint: std.fs.F
                             },
 
                             error.AccessDenied,
+                            error.PermissionDenied,
+                            error.ProcessNotFound,
                             error.SymLinkLoop,
                             error.ProcessFdQuotaExceeded,
                             error.NameTooLong,
@@ -6696,6 +6745,7 @@ pub fn zigDeleteTree(self: std.fs.Dir, sub_path: []const u8, kind_hint: std.fs.F
                             },
 
                             error.AccessDenied,
+                            error.PermissionDenied,
                             error.InvalidUtf8,
                             error.InvalidWtf8,
                             error.SymLinkLoop,
@@ -6738,6 +6788,8 @@ fn zigDeleteTreeOpenInitialSubpath(self: std.fs.Dir, sub_path: []const u8, kind_
                     error.NotDir,
                     error.FileNotFound,
                     error.AccessDenied,
+                    error.PermissionDenied,
+                    error.ProcessNotFound,
                     error.SymLinkLoop,
                     error.ProcessFdQuotaExceeded,
                     error.NameTooLong,
@@ -6763,6 +6815,7 @@ fn zigDeleteTreeOpenInitialSubpath(self: std.fs.Dir, sub_path: []const u8, kind_
 
                     error.FileNotFound,
                     error.AccessDenied,
+                    error.PermissionDenied,
                     error.InvalidUtf8,
                     error.InvalidWtf8,
                     error.SymLinkLoop,
@@ -6821,6 +6874,8 @@ fn zigDeleteTreeMinStackSizeWithKindHint(self: std.fs.Dir, sub_path: []const u8,
                             },
 
                             error.AccessDenied,
+                            error.PermissionDenied,
+                            error.ProcessNotFound,
                             error.SymLinkLoop,
                             error.ProcessFdQuotaExceeded,
                             error.NameTooLong,
@@ -6855,6 +6910,7 @@ fn zigDeleteTreeMinStackSizeWithKindHint(self: std.fs.Dir, sub_path: []const u8,
                             },
 
                             error.AccessDenied,
+                            error.PermissionDenied,
                             error.InvalidUtf8,
                             error.InvalidWtf8,
                             error.SymLinkLoop,

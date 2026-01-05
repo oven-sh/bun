@@ -165,9 +165,10 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                                 // If the dependencies list is now empty, remove it from the package.json
                                 // since we're swapRemove, we have to re-sort it
                                 if (query.expr.data.e_object.properties.len == 0) {
-                                    var arraylist = current_package_json.root.data.e_object.properties.list();
-                                    _ = arraylist.swapRemove(query.i);
-                                    current_package_json.root.data.e_object.properties.update(arraylist);
+                                    // TODO: Theoretically we could change these two lines to
+                                    // `.orderedRemove(query.i)`, but would that change user-facing
+                                    // behavior?
+                                    _ = current_package_json.root.data.e_object.properties.swapRemove(query.i);
                                     current_package_json.root.data.e_object.packageJSONSort();
                                 } else {
                                     var obj = query.expr.data.e_object;
@@ -271,7 +272,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
     const top_level_dir_without_trailing_slash = strings.withoutTrailingSlash(FileSystem.instance.top_level_dir);
 
     var root_package_json_path_buf: bun.PathBuffer = undefined;
-    const root_package_json_source, const root_package_json_path = brk: {
+    const root_package_json_path = root_package_json_path: {
         @memcpy(root_package_json_path_buf[0..top_level_dir_without_trailing_slash.len], top_level_dir_without_trailing_slash);
         @memcpy(root_package_json_path_buf[top_level_dir_without_trailing_slash.len..][0.."/package.json".len], "/package.json");
         const root_package_json_path = root_package_json_path_buf[0 .. top_level_dir_without_trailing_slash.len + "/package.json".len];
@@ -333,10 +334,10 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
             root_package_json.source.contents = try manager.allocator.dupe(u8, package_json_writer2.ctx.writtenWithoutTrailingZero());
         }
 
-        break :brk .{ root_package_json.source.contents, root_package_json_path_buf[0..root_package_json_path.len :0] };
+        break :root_package_json_path root_package_json_path_buf[0..root_package_json_path.len :0];
     };
 
-    try manager.installWithManager(ctx, root_package_json_source, original_cwd);
+    try manager.installWithManager(ctx, root_package_json_path, original_cwd);
 
     if (subcommand == .update or subcommand == .add or subcommand == .link) {
         for (updates.*) |request| {
@@ -399,10 +400,19 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
     }
 
     if (manager.options.do.write_package_json) {
-        const source, const path = if (manager.options.patch_features == .commit)
-            .{ root_package_json_source, root_package_json_path }
-        else
-            .{ new_package_json_source, manager.original_package_json_path };
+        const source, const path = if (manager.options.patch_features == .commit) source_and_path: {
+            const root_package_json_entry = manager.workspace_package_json_cache.getWithPath(
+                manager.allocator,
+                manager.log,
+                root_package_json_path,
+                .{},
+            ).unwrap() catch |err| {
+                Output.err(err, "failed to read/parse package.json at '{s}'", .{root_package_json_path});
+                Global.exit(1);
+            };
+
+            break :source_and_path .{ root_package_json_entry.source.contents, root_package_json_path };
+        } else .{ new_package_json_source, manager.original_package_json_path };
 
         // Now that we've run the install step
         // We can save our in-memory package.json to disk
@@ -558,7 +568,8 @@ fn updatePackageJSONAndInstallAndCLI(
     if (subcommand.canGloballyInstallPackages()) {
         if (manager.options.global) {
             if (manager.options.bin_path.len > 0 and manager.track_installed_bin == .basename) {
-                const needs_to_print = if (bun.getenvZ("PATH")) |PATH|
+                var path_buf: bun.PathBuffer = undefined;
+                const needs_to_print = if (bun.env_var.PATH.get()) |PATH|
                     // This is not perfect
                     //
                     // If you already have a different binary of the same
@@ -581,7 +592,7 @@ fn updatePackageJSONAndInstallAndCLI(
                     // install esbuild, it will not detect that case if we naively
                     // just checked for "esbuild" in $PATH where "$PATH" is /tmp/test
                     bun.which(
-                        &PackageManager.package_json_cwd_buf,
+                        &path_buf,
                         PATH,
                         bun.fs.FileSystem.instance.top_level_dir,
                         manager.track_installed_bin.basename,
@@ -598,11 +609,11 @@ fn updatePackageJSONAndInstallAndCLI(
                         const ShellPathFormatter = struct {
                             folder: []const u8,
 
-                            pub fn format(instructions: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+                            pub fn format(instructions: @This(), writer: *std.Io.Writer) !void {
                                 var remaining = instructions.folder;
                                 while (bun.strings.indexOfChar(remaining, ' ')) |space| {
                                     try writer.print(
-                                        "{}",
+                                        "{f}",
                                         .{bun.fmt.fmtPath(u8, remaining[0..space], .{
                                             .escape_backslashes = true,
                                             .path_sep = if (Environment.isWindows) .windows else .posix,
@@ -613,7 +624,7 @@ fn updatePackageJSONAndInstallAndCLI(
                                 }
 
                                 try writer.print(
-                                    "{}",
+                                    "{f}",
                                     .{bun.fmt.fmtPath(u8, remaining, .{
                                         .escape_backslashes = true,
                                         .path_sep = if (Environment.isWindows) .windows else .posix,
@@ -622,25 +633,25 @@ fn updatePackageJSONAndInstallAndCLI(
                             }
                         };
 
-                        pub fn format(instructions: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+                        pub fn format(instructions: @This(), writer: *std.Io.Writer) !void {
                             const path = ShellPathFormatter{ .folder = instructions.folder };
                             switch (instructions.shell) {
                                 .unknown => {
                                     // Unfortunately really difficult to do this in one line on PowerShell.
-                                    try writer.print("{}", .{path});
+                                    try writer.print("{f}", .{path});
                                 },
                                 .bash => {
-                                    try writer.print("export PATH=\"{}:$PATH\"", .{path});
+                                    try writer.print("export PATH=\"{f}:$PATH\"", .{path});
                                 },
                                 .zsh => {
-                                    try writer.print("export PATH=\"{}:$PATH\"", .{path});
+                                    try writer.print("export PATH=\"{f}:$PATH\"", .{path});
                                 },
                                 .fish => {
                                     // Regular quotes will do here.
-                                    try writer.print("fish_add_path {}", .{bun.fmt.quote(instructions.folder)});
+                                    try writer.print("fish_add_path {f}", .{bun.fmt.quote(instructions.folder)});
                                 },
                                 .pwsh => {
-                                    try writer.print("$env:PATH += \";{}\"", .{path});
+                                    try writer.print("$env:PATH += \";{f}\"", .{path});
                                 },
                             }
                         }
@@ -649,14 +660,14 @@ fn updatePackageJSONAndInstallAndCLI(
                     Output.prettyError("\n", .{});
 
                     Output.warn(
-                        \\To run {}, add the global bin folder to $PATH:
+                        \\To run {f}, add the global bin folder to $PATH:
                         \\
-                        \\<cyan>{}<r>
+                        \\<cyan>{f}<r>
                         \\
                     ,
                         .{
                             bun.fmt.quote(manager.track_installed_bin.basename),
-                            MoreInstructions{ .shell = bun.cli.ShellCompletions.Shell.fromEnv([]const u8, bun.getenvZ("SHELL") orelse ""), .folder = manager.options.bin_path },
+                            MoreInstructions{ .shell = bun.cli.ShellCompletions.Shell.fromEnv([]const u8, bun.env_var.SHELL.platformGet() orelse ""), .folder = manager.options.bin_path },
                         },
                     );
                     Output.flush();

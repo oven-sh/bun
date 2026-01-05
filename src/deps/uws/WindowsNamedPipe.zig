@@ -79,10 +79,10 @@ fn onPipeClose(this: *WindowsNamedPipe) void {
 }
 
 fn onReadAlloc(this: *WindowsNamedPipe, suggested_size: usize) []u8 {
-    var available = this.incoming.available();
+    var available = this.incoming.unusedCapacitySlice();
     if (available.len < suggested_size) {
         bun.handleOom(this.incoming.ensureUnusedCapacity(bun.default_allocator, suggested_size));
-        available = this.incoming.available();
+        available = this.incoming.unusedCapacitySlice();
     }
     return available.ptr[0..suggested_size];
 }
@@ -241,7 +241,7 @@ fn onInternalReceiveData(this: *WindowsNamedPipe, data: []const u8) void {
     }
 }
 
-pub fn onTimeout(this: *WindowsNamedPipe) EventLoopTimer.Arm {
+pub fn onTimeout(this: *WindowsNamedPipe) void {
     log("onTimeout", .{});
 
     const has_been_cleared = this.event_loop_timer.state == .CANCELLED or this.vm.scriptExecutionStatus() != .running;
@@ -250,12 +250,10 @@ pub fn onTimeout(this: *WindowsNamedPipe) EventLoopTimer.Arm {
     this.event_loop_timer.heap = .{};
 
     if (has_been_cleared) {
-        return .disarm;
+        return;
     }
 
     this.handlers.onTimeout(this.handlers.ctx);
-
-    return .disarm;
 }
 
 pub fn from(
@@ -459,6 +457,10 @@ pub fn isTLS(this: *WindowsNamedPipe) bool {
     return this.flags.is_ssl;
 }
 
+pub fn loop(this: *WindowsNamedPipe) *bun.Async.Loop {
+    return this.vm.uvLoop();
+}
+
 pub fn encodeAndWrite(this: *WindowsNamedPipe, data: []const u8) i32 {
     log("encodeAndWrite (len: {})", .{data.len});
     if (this.wrapper) |*wrapper| {
@@ -546,7 +548,7 @@ pub fn setTimeoutInMilliseconds(this: *WindowsNamedPipe, ms: c_uint) void {
     }
 
     // reschedule the timer
-    this.event_loop_timer.next = bun.timespec.msFromNow(ms);
+    this.event_loop_timer.next = bun.timespec.msFromNow(.allow_mocked_time, ms);
     this.vm.timer.insert(&this.event_loop_timer);
 }
 pub fn setTimeout(this: *WindowsNamedPipe, seconds: c_uint) void {

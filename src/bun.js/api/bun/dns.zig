@@ -1,6 +1,6 @@
 const dns = @This();
 
-const GetAddrInfoAsyncCallback = fn (i32, ?*std.c.addrinfo, ?*anyopaque) callconv(.C) void;
+const GetAddrInfoAsyncCallback = fn (i32, ?*std.c.addrinfo, ?*anyopaque) callconv(.c) void;
 const INET6_ADDRSTRLEN = if (bun.Environment.isWindows) 65 else 46;
 const IANA_DNS_PORT = 53;
 
@@ -14,9 +14,9 @@ const LibInfo = struct {
     // static int32_t (*getaddrinfo_async_handle_reply)(void*);
     // static void (*getaddrinfo_async_cancel)(mach_port_t);
     // typedef void getaddrinfo_async_callback(int32_t, struct addrinfo*, void*)
-    const GetaddrinfoAsyncStart = fn (*bun.mach_port, noalias node: ?[*:0]const u8, noalias service: ?[*:0]const u8, noalias hints: ?*const std.c.addrinfo, callback: *const GetAddrInfoAsyncCallback, noalias context: ?*anyopaque) callconv(.C) i32;
-    const GetaddrinfoAsyncHandleReply = fn (?*bun.mach_port) callconv(.C) i32;
-    const GetaddrinfoAsyncCancel = fn (?*bun.mach_port) callconv(.C) void;
+    const GetaddrinfoAsyncStart = fn (*bun.mach_port, noalias node: ?[*:0]const u8, noalias service: ?[*:0]const u8, noalias hints: ?*const std.c.addrinfo, callback: *const GetAddrInfoAsyncCallback, noalias context: ?*anyopaque) callconv(.c) i32;
+    const GetaddrinfoAsyncHandleReply = fn (?*bun.mach_port) callconv(.c) i32;
+    const GetaddrinfoAsyncCancel = fn (?*bun.mach_port) callconv(.c) void;
 
     var handle: ?*anyopaque = null;
     var loaded = false;
@@ -95,7 +95,7 @@ const LibInfo = struct {
         );
 
         if (errno != 0) {
-            request.head.promise.rejectTask(globalThis, globalThis.createErrorInstance("getaddrinfo_async_start error: {s}", .{@tagName(bun.sys.getErrno(errno))}));
+            request.head.promise.rejectTask(globalThis, globalThis.createErrorInstance("getaddrinfo_async_start error: {s}", .{@tagName(bun.sys.getErrno(errno))})) catch {}; // TODO: properly propagate exception upwards
             if (request.cache.pending_cache) this.pending_host_cache_native.used.set(request.cache.pos_in_pending);
             this.vm.allocator.destroy(request);
 
@@ -155,7 +155,7 @@ const LibC = struct {
         ) catch |err| bun.handleOom(err);
         const promise_value = request.head.promise.value();
 
-        var io = bun.handleOom(GetAddrInfoRequest.Task.createOnJSThread(this.vm.allocator, globalThis, request));
+        var io = GetAddrInfoRequest.Task.createOnJSThread(this.vm.allocator, globalThis, request);
 
         io.schedule();
         this.requestSent(globalThis.bunVM());
@@ -168,9 +168,9 @@ const LibC = struct {
 const LibUVBackend = struct {
     const log = Output.scoped(.LibUVBackend, .visible);
 
-    fn onRawLibUVComplete(uv_info: *libuv.uv_getaddrinfo_t, _: c_int, _: ?*libuv.addrinfo) callconv(.C) void {
+    fn onRawLibUVComplete(uv_info: *libuv.uv_getaddrinfo_t, _: c_int, _: ?*libuv.addrinfo) callconv(.c) void {
         //TODO: We schedule a task to run because otherwise the promise will not be solved, we need to investigate this
-        const this: *GetAddrInfoRequest = @alignCast(@ptrCast(uv_info.data));
+        const this: *GetAddrInfoRequest = @ptrCast(@alignCast(uv_info.data));
         const Holder = struct {
             uv_info: *libuv.uv_getaddrinfo_t,
             task: jsc.AnyTask,
@@ -218,9 +218,9 @@ const LibUVBackend = struct {
 
         var hints = query.options.toLibC();
         var port_buf: [128]u8 = undefined;
-        const port = std.fmt.bufPrintIntToSlice(&port_buf, query.port, 10, .lower, .{});
-        port_buf[port.len] = 0;
-        const portZ = port_buf[0..port.len :0];
+        const port_len = std.fmt.printInt(&port_buf, query.port, 10, .lower, .{});
+        port_buf[port_len] = 0;
+        const portZ = port_buf[0..port_len :0];
         var hostname: bun.PathBuffer = undefined;
         _ = strings.copy(hostname[0..], query.name);
         hostname[query.name.len] = 0;
@@ -516,7 +516,7 @@ pub const CAresNameInfo = struct {
         var promise = this.promise;
         const globalThis = this.globalThis;
         this.promise = .{};
-        promise.resolveTask(globalThis, result);
+        promise.resolveTask(globalThis, result) catch {}; // TODO: properly propagate exception upwards
         this.deinit();
     }
 
@@ -708,7 +708,7 @@ pub const GetAddrInfoRequest = struct {
         status: i32,
         addr_info: ?*std.c.addrinfo,
         arg: ?*anyopaque,
-    ) callconv(.C) void {
+    ) callconv(.c) void {
         const this = @as(*GetAddrInfoRequest, @ptrCast(@alignCast(arg)));
         log("getAddrInfoAsyncCallback: status={d}", .{status});
 
@@ -750,9 +750,9 @@ pub const GetAddrInfoRequest = struct {
                     defer bun.default_allocator.free(@constCast(query.name));
                     var hints = query.options.toLibC();
                     var port_buf: [128]u8 = undefined;
-                    const port = std.fmt.bufPrintIntToSlice(&port_buf, query.port, 10, .lower, .{});
-                    port_buf[port.len] = 0;
-                    const portZ = port_buf[0..port.len :0];
+                    const port_len = std.fmt.printInt(&port_buf, query.port, 10, .lower, .{});
+                    port_buf[port_len] = 0;
+                    const portZ = port_buf[0..port_len :0];
                     var hostname: bun.PathBuffer = undefined;
                     _ = strings.copy(hostname[0..], query.name);
                     hostname[query.name.len] = 0;
@@ -761,13 +761,13 @@ pub const GetAddrInfoRequest = struct {
                     const debug_timer = bun.Output.DebugTimer.start();
                     const err = std.c.getaddrinfo(
                         host.ptr,
-                        if (port.len > 0) portZ.ptr else null,
+                        if (port_len > 0) portZ.ptr else null,
                         if (hints) |*hint| hint else null,
                         &addrinfo,
                     );
-                    bun.sys.syslog("getaddrinfo({s}, {d}) = {d} ({any})", .{
+                    bun.sys.syslog("getaddrinfo({s}, {s}) = {d} ({f})", .{
                         query.name,
-                        port,
+                        portZ,
                         err,
                         debug_timer,
                     });
@@ -862,7 +862,7 @@ pub const GetAddrInfoRequest = struct {
 
     pub fn onLibUVComplete(uv_info: *libuv.uv_getaddrinfo_t) void {
         log("onLibUVComplete: status={d}", .{uv_info.retcode.int()});
-        const this: *GetAddrInfoRequest = @alignCast(@ptrCast(uv_info.data));
+        const this: *GetAddrInfoRequest = @ptrCast(@alignCast(uv_info.data));
         bun.assert(uv_info == &this.backend.libc.uv);
         if (this.backend == .libinfo) {
             if (this.backend.libinfo.file_poll) |poll| poll.deinit();
@@ -932,7 +932,7 @@ pub const CAresReverse = struct {
         var promise = this.promise;
         const globalThis = this.globalThis;
         this.promise = .{};
-        promise.resolveTask(globalThis, result);
+        promise.resolveTask(globalThis, result) catch {}; // TODO: properly propagate exception upwards
         if (this.resolver) |resolver| {
             resolver.requestCompleted();
         }
@@ -1013,7 +1013,7 @@ pub fn CAresLookup(comptime cares_type: type, comptime type_name: []const u8) ty
             var promise = this.promise;
             const globalThis = this.globalThis;
             this.promise = .{};
-            promise.resolveTask(globalThis, result);
+            promise.resolveTask(globalThis, result) catch {}; // TODO: properly propagate exception upwards
             if (this.resolver) |resolver| {
                 resolver.requestCompleted();
             }
@@ -1108,7 +1108,7 @@ pub const DNSLookup = struct {
         var promise = this.promise;
         this.promise = .{};
         const globalThis = this.globalThis;
-        promise.resolveTask(globalThis, result);
+        promise.resolveTask(globalThis, result) catch {}; // TODO: properly propagate exception upwards
         if (this.resolver) |resolver| {
             resolver.requestCompleted();
         }
@@ -1147,26 +1147,11 @@ pub const internal = struct {
 
     var __max_dns_time_to_live_seconds: ?u32 = null;
     pub fn getMaxDNSTimeToLiveSeconds() u32 {
-        // Amazon Web Services recommends 5 seconds: https://docs.aws.amazon.com/sdk-for-java/v1/developer-guide/jvm-ttl-dns.html
-        const default_max_dns_time_to_live_seconds = 30;
-
         // This is racy, but it's okay because the number won't be invalid, just stale.
         return __max_dns_time_to_live_seconds orelse {
-            if (bun.getenvZ("BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS")) |string_value| {
-                const value = std.fmt.parseInt(i64, string_value, 10) catch {
-                    __max_dns_time_to_live_seconds = default_max_dns_time_to_live_seconds;
-                    return default_max_dns_time_to_live_seconds;
-                };
-                if (value < 0) {
-                    __max_dns_time_to_live_seconds = std.math.maxInt(u32);
-                } else {
-                    __max_dns_time_to_live_seconds = @truncate(@as(u64, @intCast(value)));
-                }
-                return __max_dns_time_to_live_seconds.?;
-            }
-
-            __max_dns_time_to_live_seconds = default_max_dns_time_to_live_seconds;
-            return default_max_dns_time_to_live_seconds;
+            const value = bun.env_var.BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS.get();
+            __max_dns_time_to_live_seconds = @truncate(@as(u64, @intCast(value)));
+            return __max_dns_time_to_live_seconds.?;
         };
     }
 
@@ -1318,7 +1303,7 @@ pub const internal = struct {
         // However, we're almost out of time to use 32 bit timestamps for anything
         // So we set the epoch to January 1st, 2024 instead.
         pub fn getCacheTimestamp() u32 {
-            return @truncate(bun.getRoughTickCountMs() / 1000);
+            return @truncate(bun.getRoughTickCountMs(.allow_mocked_time) / 1000);
         }
 
         fn isNearlyFull(this: *This) bool {
@@ -1393,12 +1378,12 @@ pub const internal = struct {
     };
     pub fn getHints() std.c.addrinfo {
         var hints_copy = default_hints;
-        if (bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG)) {
+        if (bun.feature_flag.BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG.get()) {
             hints_copy.flags.ADDRCONFIG = false;
         }
-        if (bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_IPV6)) {
+        if (bun.feature_flag.BUN_FEATURE_FLAG_DISABLE_IPV6.get()) {
             hints_copy.family = std.c.AF.INET;
-        } else if (bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_IPV4)) {
+        } else if (bun.feature_flag.BUN_FEATURE_FLAG_DISABLE_IPV4.get()) {
             hints_copy.family = std.c.AF.INET6;
         }
 
@@ -1458,10 +1443,10 @@ pub const internal = struct {
             if (ai.addr) |addr| {
                 if (ai.family == std.c.AF.INET) {
                     const addr_in: *std.c.sockaddr.in = @ptrCast(&results[i].addr);
-                    addr_in.* = @as(*std.c.sockaddr.in, @alignCast(@ptrCast(addr))).*;
+                    addr_in.* = @as(*std.c.sockaddr.in, @ptrCast(@alignCast(addr))).*;
                 } else if (ai.family == std.c.AF.INET6) {
                     const addr_in: *std.c.sockaddr.in6 = @ptrCast(&results[i].addr);
-                    addr_in.* = @as(*std.c.sockaddr.in6, @alignCast(@ptrCast(addr))).*;
+                    addr_in.* = @as(*std.c.sockaddr.in6, @ptrCast(@alignCast(addr))).*;
                 }
             } else {
                 results[i].addr = std.mem.zeroes(std.c.sockaddr.storage);
@@ -1494,7 +1479,7 @@ pub const internal = struct {
                 entry.info.next = null;
             }
             if (entry.info.addr != null) {
-                entry.info.addr = @alignCast(@ptrCast(&entry.addr));
+                entry.info.addr = @ptrCast(@alignCast(&entry.addr));
             }
         }
 
@@ -1626,7 +1611,7 @@ pub const internal = struct {
         status: i32,
         addr_info: ?*std.c.addrinfo,
         arg: ?*anyopaque,
-    ) callconv(.C) void {
+    ) callconv(.c) void {
         const req: *Request = bun.cast(*Request, arg);
         const status_int: c_int = @intCast(status);
         if (status == @intFromEnum(std.c.EAI.NONAME) and req.can_retry_for_addrconfig) {
@@ -1685,7 +1670,7 @@ pub const internal = struct {
         getaddrinfo_calls += 1;
         var timestamp_to_store: u32 = 0;
         // is there a cache hit?
-        if (!bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_DNS_CACHE)) {
+        if (!bun.feature_flag.BUN_FEATURE_FLAG_DISABLE_DNS_CACHE.get()) {
             if (global_cache.get(key, &timestamp_to_store)) |entry| {
                 if (preload) {
                     global_cache.lock.unlock();
@@ -1724,7 +1709,7 @@ pub const internal = struct {
         global_cache.lock.unlock();
 
         if (comptime Environment.isMac) {
-            if (!bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_DNS_CACHE_LIBINFO)) {
+            if (!bun.feature_flag.BUN_FEATURE_FLAG_DISABLE_DNS_CACHE_LIBINFO.get()) {
                 const res = lookupLibinfo(req, loop.internal_loop_data.getParent());
                 log("getaddrinfo({s}) = cache miss (libinfo)", .{host orelse ""});
                 if (res) return req;
@@ -1775,7 +1760,7 @@ pub const internal = struct {
         _ = getaddrinfo(loop, hostname, port, null);
     }
 
-    fn us_getaddrinfo(loop: *bun.uws.Loop, _host: ?[*:0]const u8, port: u16, socket: *?*anyopaque) callconv(.C) c_int {
+    fn us_getaddrinfo(loop: *bun.uws.Loop, _host: ?[*:0]const u8, port: u16, socket: *?*anyopaque) callconv(.c) c_int {
         const host: ?[:0]const u8 = std.mem.span(_host);
         var is_cache_hit: bool = false;
         const req = getaddrinfo(loop, host, port, &is_cache_hit).?;
@@ -1786,7 +1771,7 @@ pub const internal = struct {
     fn us_getaddrinfo_set(
         request: *Request,
         socket: *bun.uws.ConnectingSocket,
-    ) callconv(.C) void {
+    ) callconv(.c) void {
         global_cache.lock.lock();
         defer global_cache.lock.unlock();
         const query = DNSRequestOwner{
@@ -1800,7 +1785,7 @@ pub const internal = struct {
         bun.handleOom(request.notify.append(bun.default_allocator, .{ .socket = socket }));
     }
 
-    fn freeaddrinfo(req: *Request, err: c_int) callconv(.C) void {
+    fn freeaddrinfo(req: *Request, err: c_int) callconv(.c) void {
         global_cache.lock.lock();
         defer global_cache.lock.unlock();
 
@@ -1816,7 +1801,7 @@ pub const internal = struct {
         }
     }
 
-    fn getRequestResult(req: *Request) callconv(.C) *Request.Result {
+    fn getRequestResult(req: *Request) callconv(.c) *Request.Result {
         return &req.result.?;
     }
 };
@@ -1987,7 +1972,7 @@ pub const Resolver = struct {
     const AddrPendingCache = bun.HiveArray(GetHostByAddrInfoRequest.PendingCacheKey, 32);
     const NameInfoPendingCache = bun.HiveArray(GetNameInfoRequest.PendingCacheKey, 32);
 
-    pub fn checkTimeouts(this: *Resolver, now: *const timespec, vm: *jsc.VirtualMachine) EventLoopTimer.Arm {
+    pub fn checkTimeouts(this: *Resolver, now: *const timespec, vm: *jsc.VirtualMachine) void {
         defer {
             vm.timer.incrementTimerRef(-1);
             this.deref();
@@ -1998,13 +1983,9 @@ pub const Resolver = struct {
         if (this.getChannelOrError(vm.global)) |channel| {
             if (this.anyRequestsPending()) {
                 c_ares.ares_process_fd(channel, c_ares.ARES_SOCKET_BAD, c_ares.ARES_SOCKET_BAD);
-                if (this.addTimer(now)) {
-                    return .{ .rearm = this.event_loop_timer.next };
-                }
+                _ = this.addTimer(now);
             }
         } else |_| {}
-
-        return .disarm;
     }
 
     fn anyRequestsPending(this: *Resolver) bool {
@@ -2037,7 +2018,7 @@ pub const Resolver = struct {
         }
 
         this.ref();
-        this.event_loop_timer.next = (now orelse &timespec.now()).addMs(1000);
+        this.event_loop_timer.next = (now orelse &timespec.now(.allow_mocked_time)).addMs(1000);
         this.vm.timer.incrementTimerRef(1);
         this.vm.timer.insert(&this.event_loop_timer);
         return true;
@@ -2405,7 +2386,7 @@ pub const Resolver = struct {
         }
     }
 
-    pub fn onDNSPollUv(watcher: [*c]bun.windows.libuv.uv_poll_t, status: c_int, events: c_int) callconv(.C) void {
+    pub fn onDNSPollUv(watcher: [*c]bun.windows.libuv.uv_poll_t, status: c_int, events: c_int) callconv(.c) void {
         const poll = UvDnsPoll.fromPoll(watcher);
         const vm = poll.parent.vm;
         vm.eventLoop().enter();
@@ -2427,8 +2408,8 @@ pub const Resolver = struct {
         );
     }
 
-    pub fn onCloseUv(watcher: *anyopaque) callconv(.C) void {
-        const poll = UvDnsPoll.fromPoll(@alignCast(@ptrCast(watcher)));
+    pub fn onCloseUv(watcher: *anyopaque) callconv(.c) void {
+        const poll = UvDnsPoll.fromPoll(@ptrCast(@alignCast(watcher)));
         poll.destroy();
     }
 
@@ -2746,6 +2727,7 @@ pub const Resolver = struct {
                     error.InvalidFlags => globalThis.throwInvalidArgumentValue("flags", try optionsObject.getTruthy(globalThis, "flags") orelse .js_undefined),
                     error.JSError => |exception| exception,
                     error.OutOfMemory => |oom| oom,
+                    error.JSTerminated => |e| e,
 
                     // more information with these errors
                     error.InvalidOptions,
@@ -3243,24 +3225,21 @@ pub const Resolver = struct {
     }
 
     fn setChannelLocalAddress(channel: *c_ares.Channel, globalThis: *jsc.JSGlobalObject, value: jsc.JSValue) bun.JSError!c_int {
-        const str = try value.toBunString(globalThis);
-        defer str.deref();
+        var str = try value.toSlice(globalThis, bun.default_allocator);
+        defer str.deinit();
 
-        const slice = str.toSlice(bun.default_allocator).slice();
-        var buffer = bun.handleOom(bun.default_allocator.alloc(u8, slice.len + 1));
-        defer bun.default_allocator.free(buffer);
-        _ = strings.copy(buffer[0..], slice);
-        buffer[slice.len] = 0;
+        const slice = try str.intoOwnedSliceZ(bun.default_allocator);
+        defer bun.default_allocator.free(slice);
 
         var addr: [16]u8 = undefined;
 
-        if (c_ares.ares_inet_pton(c_ares.AF.INET, buffer.ptr, &addr) == 1) {
+        if (c_ares.ares_inet_pton(c_ares.AF.INET, slice.ptr, &addr) == 1) {
             const ip = std.mem.readInt(u32, addr[0..4], .big);
             c_ares.ares_set_local_ip4(channel, ip);
             return c_ares.AF.INET;
         }
 
-        if (c_ares.ares_inet_pton(c_ares.AF.INET6, buffer.ptr, &addr) == 1) {
+        if (c_ares.ares_inet_pton(c_ares.AF.INET6, slice.ptr, &addr) == 1) {
             c_ares.ares_set_local_ip6(channel, &addr);
             return c_ares.AF.INET6;
         }

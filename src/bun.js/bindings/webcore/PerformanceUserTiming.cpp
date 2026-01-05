@@ -43,7 +43,7 @@ namespace WebCore {
 
 using NavigationTimingFunction = unsigned long long (PerformanceTiming::*)() const;
 
-static constexpr std::pair<ComparableASCIILiteral, NavigationTimingFunction> restrictedMarkMappings[] = {
+static constexpr std::array<std::pair<ComparableASCIILiteral, NavigationTimingFunction>, 21> restrictedMarkMappings { {
     { "connectEnd"_s, &PerformanceTiming::connectEnd },
     { "connectStart"_s, &PerformanceTiming::connectStart },
     { "domComplete"_s, &PerformanceTiming::domComplete },
@@ -65,7 +65,7 @@ static constexpr std::pair<ComparableASCIILiteral, NavigationTimingFunction> res
     { "secureConnectionStart"_s, &PerformanceTiming::secureConnectionStart },
     { "unloadEventEnd"_s, &PerformanceTiming::unloadEventEnd },
     { "unloadEventStart"_s, &PerformanceTiming::unloadEventStart },
-};
+} };
 static constexpr SortedArrayMap restrictedMarkFunctions { restrictedMarkMappings };
 
 bool PerformanceUserTiming::isRestrictedMarkName(const String& markName)
@@ -125,7 +125,7 @@ ExceptionOr<Ref<PerformanceMark>> PerformanceUserTiming::mark(JSC::JSGlobalObjec
 
     // InspectorInstrumentation::performanceMark(context.get(), markName, timestamp, nullptr);
 
-    auto mark = PerformanceMark::create(globalObject, context, markName, WTFMove(markOptions));
+    auto mark = PerformanceMark::create(globalObject, context, markName, WTF::move(markOptions));
     if (mark.hasException())
         return mark.releaseException();
 
@@ -142,9 +142,10 @@ void PerformanceUserTiming::clearMarks(const String& markName)
 
 ExceptionOr<double> PerformanceUserTiming::convertMarkToTimestamp(const std::variant<String, double>& mark) const
 {
-    return WTF::switchOn(mark, [&](auto& value) {
+    return std::visit([&](auto& value) {
         return convertMarkToTimestamp(value);
-    });
+    },
+        mark);
 }
 
 ExceptionOr<double> PerformanceUserTiming::convertMarkToTimestamp(const String& mark) const
@@ -283,23 +284,24 @@ static bool isNonEmptyDictionary(const PerformanceMeasureOptions& measureOptions
 ExceptionOr<Ref<PerformanceMeasure>> PerformanceUserTiming::measure(JSC::JSGlobalObject& globalObject, const String& measureName, std::optional<StartOrMeasureOptions>&& startOrMeasureOptions, const String& endMark)
 {
     if (startOrMeasureOptions) {
-        return WTF::switchOn(
-            *startOrMeasureOptions,
-            [&](const PerformanceMeasureOptions& measureOptions) -> ExceptionOr<Ref<PerformanceMeasure>> {
-                if (isNonEmptyDictionary(measureOptions)) {
-                    if (!endMark.isNull())
-                        return Exception { TypeError };
-                    if (!measureOptions.start && !measureOptions.end)
-                        return Exception { TypeError };
-                    if (measureOptions.start && measureOptions.duration && measureOptions.end)
-                        return Exception { TypeError };
-                }
+        return std::visit(
+            WTF::makeVisitor(
+                [&](const PerformanceMeasureOptions& measureOptions) -> ExceptionOr<Ref<PerformanceMeasure>> {
+                    if (isNonEmptyDictionary(measureOptions)) {
+                        if (!endMark.isNull())
+                            return Exception { TypeError };
+                        if (!measureOptions.start && !measureOptions.end)
+                            return Exception { TypeError };
+                        if (measureOptions.start && measureOptions.duration && measureOptions.end)
+                            return Exception { TypeError };
+                    }
 
-                return measure(globalObject, measureName, measureOptions);
-            },
-            [&](const String& startMark) {
-                return measure(measureName, startMark, endMark);
-            });
+                    return measure(globalObject, measureName, measureOptions);
+                },
+                [&](const String& startMark) -> ExceptionOr<Ref<PerformanceMeasure>> {
+                    return measure(measureName, startMark, endMark);
+                }),
+            *startOrMeasureOptions);
     }
 
     return measure(measureName, {}, endMark);

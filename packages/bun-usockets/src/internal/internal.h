@@ -150,16 +150,12 @@ void us_internal_init_loop_ssl_data(us_loop_r loop);
 void us_internal_free_loop_ssl_data(us_loop_r loop);
 
 /* Socket context related */
-void us_internal_socket_context_link_socket(us_socket_context_r context,
-                                            us_socket_r s);
-void us_internal_socket_context_unlink_socket(int ssl,
-    us_socket_context_r context, us_socket_r s);
+void us_internal_socket_context_link_socket(int ssl, us_socket_context_r context, us_socket_r s);
+void us_internal_socket_context_unlink_socket(int ssl, us_socket_context_r context, us_socket_r s);
 
 void us_internal_socket_after_resolve(struct us_connecting_socket_t *s);
 void us_internal_socket_after_open(us_socket_r s, int error);
-struct us_internal_ssl_socket_t *
-us_internal_ssl_socket_close(us_internal_ssl_socket_r s, int code,
-                             void *reason);
+struct us_internal_ssl_socket_t *us_internal_ssl_socket_close(us_internal_ssl_socket_r s, int code, void *reason);
 
 int us_internal_handle_dns_results(us_loop_r loop);
 
@@ -174,6 +170,14 @@ struct us_socket_flags {
     unsigned char low_prio_state: 2;
     /* If true, the socket should be read using readmsg to support receiving file descriptors */
     bool is_ipc: 1;
+    /* If true, the socket has been closed */
+    bool is_closed: 1;
+    /* If true, the socket was reallocated during adoption */
+    bool adopted: 1;
+    /* If true, the socket is a TLS socket */
+    bool is_tls: 1;
+    /* If true, the last write to this socket failed (would block) */
+    bool last_write_failed: 1;
 
 } __attribute__((packed));
 
@@ -271,7 +275,7 @@ struct us_listen_socket_t {
 };
 
 /* Listen sockets are keps in their own list */
-void us_internal_socket_context_link_listen_socket(
+void us_internal_socket_context_link_listen_socket(int ssl,
     us_socket_context_r context, struct us_listen_socket_t *s);
 void us_internal_socket_context_unlink_listen_socket(int ssl,
     us_socket_context_r context, struct us_listen_socket_t *s);
@@ -288,8 +292,7 @@ struct us_socket_context_t {
   struct us_socket_t *iterator;
   struct us_socket_context_t *prev, *next;
 
-  struct us_socket_t *(*on_open)(struct us_socket_t *, int is_client, char *ip,
-                                 int ip_length);
+  struct us_socket_t *(*on_open)(struct us_socket_t *, int is_client, char *ip, int ip_length);
   struct us_socket_t *(*on_data)(struct us_socket_t *, char *data, int length);
   struct us_socket_t *(*on_fd)(struct us_socket_t *, int fd);
   struct us_socket_t *(*on_writable)(struct us_socket_t *);
@@ -301,7 +304,6 @@ struct us_socket_context_t {
   struct us_connecting_socket_t *(*on_connect_error)(struct us_connecting_socket_t *, int code);
   struct us_socket_t *(*on_socket_connect_error)(struct us_socket_t *, int code);
   int (*is_low_prio)(struct us_socket_t *);
-
 };
 
 /* Internal SSL interface */
@@ -441,11 +443,11 @@ void us_internal_ssl_socket_shutdown(us_internal_ssl_socket_r s);
 
 struct us_internal_ssl_socket_t *us_internal_ssl_socket_context_adopt_socket(
     us_internal_ssl_socket_context_r context,
-    us_internal_ssl_socket_r s, int ext_size);
+    us_internal_ssl_socket_r s, int old_ext_size, int ext_size);
 
 struct us_internal_ssl_socket_t *us_internal_ssl_socket_wrap_with_tls(
     us_socket_r s, struct us_bun_socket_context_options_t options,
-    struct us_socket_events_t events, int socket_ext_size);
+    struct us_socket_events_t events, int old_socket_ext_size, int socket_ext_size);
 struct us_internal_ssl_socket_context_t *
 us_internal_create_child_ssl_socket_context(
     us_internal_ssl_socket_context_r context, int context_ext_size);

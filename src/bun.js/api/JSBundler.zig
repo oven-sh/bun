@@ -7,13 +7,20 @@ pub const JSBundler = struct {
         target: Target = Target.browser,
         entry_points: bun.StringSet = bun.StringSet.init(bun.default_allocator),
         hot: bool = false,
+        react_fast_refresh: bool = false,
         define: bun.StringMap = bun.StringMap.init(bun.default_allocator, false),
         loaders: ?api.LoaderMap = null,
         dir: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         outdir: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         rootdir: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         serve: Serve = .{},
-        jsx: options.JSX.Pragma = .{},
+        jsx: api.Jsx = .{
+            .factory = "",
+            .fragment = "",
+            .runtime = .automatic,
+            .import_source = "",
+            .development = true, // Default to development mode like old Pragma
+        },
         force_node_env: options.BundleOptions.ForceNodeEnv = .unspecified,
         code_splitting: bool = false,
         minify: Minify = .{},
@@ -32,6 +39,7 @@ pub const JSBundler = struct {
         footer: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         css_chunking: bool = false,
         drop: bun.StringSet = bun.StringSet.init(bun.default_allocator),
+        features: bun.StringSet = bun.StringSet.init(bun.default_allocator),
         has_any_on_before_parse: bool = false,
         throw_on_error: bool = true,
         env_behavior: api.DotEnvBehavior = .disable,
@@ -51,6 +59,10 @@ pub const JSBundler = struct {
             windows_description: OwnedString = OwnedString.initEmpty(bun.default_allocator),
             windows_copyright: OwnedString = OwnedString.initEmpty(bun.default_allocator),
             outfile: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+            autoload_dotenv: bool = true,
+            autoload_bunfig: bool = true,
+            autoload_tsconfig: bool = false,
+            autoload_package_json: bool = false,
 
             pub fn fromJS(globalThis: *jsc.JSGlobalObject, config: jsc.JSValue, allocator: std.mem.Allocator, compile_target: ?CompileTarget) JSError!?CompileOptions {
                 var this = CompileOptions{
@@ -169,6 +181,22 @@ pub const JSBundler = struct {
                     var slice = try outfile.toSlice(globalThis, bun.default_allocator);
                     defer slice.deinit();
                     try this.outfile.appendSliceExact(slice.slice());
+                }
+
+                if (try object.getBooleanLoose(globalThis, "autoloadDotenv")) |autoload_dotenv| {
+                    this.autoload_dotenv = autoload_dotenv;
+                }
+
+                if (try object.getBooleanLoose(globalThis, "autoloadBunfig")) |autoload_bunfig| {
+                    this.autoload_bunfig = autoload_bunfig;
+                }
+
+                if (try object.getBooleanLoose(globalThis, "autoloadTsconfig")) |autoload_tsconfig| {
+                    this.autoload_tsconfig = autoload_tsconfig;
+                }
+
+                if (try object.getBooleanLoose(globalThis, "autoloadPackageJson")) |autoload_package_json| {
+                    this.autoload_package_json = autoload_package_json;
                 }
 
                 return this;
@@ -314,6 +342,10 @@ pub const JSBundler = struct {
                 }
             }
 
+            if (try config.getBooleanLoose(globalThis, "reactFastRefresh")) |react_fast_refresh| {
+                this.react_fast_refresh = react_fast_refresh;
+            }
+
             var has_out_dir = false;
             if (try config.getOptional(globalThis, "outdir", ZigString.Slice)) |slice| {
                 defer slice.deinit();
@@ -381,6 +413,51 @@ pub const JSBundler = struct {
                 this.packages = packages;
             }
 
+            // Parse JSX configuration
+            if (try config.getTruthy(globalThis, "jsx")) |jsx_value| {
+                if (!jsx_value.isObject()) {
+                    return globalThis.throwInvalidArguments("jsx must be an object", .{});
+                }
+
+                if (try jsx_value.getOptional(globalThis, "runtime", ZigString.Slice)) |slice| {
+                    defer slice.deinit();
+                    var str_lower: [128]u8 = undefined;
+                    const len = @min(slice.len, str_lower.len);
+                    _ = strings.copyLowercase(slice.slice()[0..len], str_lower[0..len]);
+                    if (options.JSX.RuntimeMap.get(str_lower[0..len])) |runtime| {
+                        this.jsx.runtime = runtime.runtime;
+                        if (runtime.development) |dev| {
+                            this.jsx.development = dev;
+                        }
+                    } else {
+                        return globalThis.throwInvalidArguments("Invalid jsx.runtime: '{s}'. Must be one of: 'classic', 'automatic', 'react', 'react-jsx', or 'react-jsxdev'", .{slice.slice()});
+                    }
+                }
+
+                if (try jsx_value.getOptional(globalThis, "factory", ZigString.Slice)) |slice| {
+                    defer slice.deinit();
+                    this.jsx.factory = try allocator.dupe(u8, slice.slice());
+                }
+
+                if (try jsx_value.getOptional(globalThis, "fragment", ZigString.Slice)) |slice| {
+                    defer slice.deinit();
+                    this.jsx.fragment = try allocator.dupe(u8, slice.slice());
+                }
+
+                if (try jsx_value.getOptional(globalThis, "importSource", ZigString.Slice)) |slice| {
+                    defer slice.deinit();
+                    this.jsx.import_source = try allocator.dupe(u8, slice.slice());
+                }
+
+                if (try jsx_value.getBooleanLoose(globalThis, "development")) |dev| {
+                    this.jsx.development = dev;
+                }
+
+                if (try jsx_value.getBooleanLoose(globalThis, "sideEffects")) |val| {
+                    this.jsx.side_effects = val;
+                }
+            }
+
             if (try config.getOptionalEnum(globalThis, "format", options.Format)) |format| {
                 this.format = format;
 
@@ -408,6 +485,9 @@ pub const JSBundler = struct {
                     }
                     if (try minify.getBooleanLoose(globalThis, "identifiers")) |syntax| {
                         this.minify.identifiers = syntax;
+                    }
+                    if (try minify.getBooleanLoose(globalThis, "keepNames")) |keep_names| {
+                        this.minify.keep_names = keep_names;
                     }
                 } else {
                     return globalThis.throwInvalidArguments("Expected minify to be a boolean or an object", .{});
@@ -497,6 +577,15 @@ pub const JSBundler = struct {
                 }
             }
 
+            if (try config.getOwnArray(globalThis, "features")) |features| {
+                var iter = try features.arrayIterator(globalThis);
+                while (try iter.next()) |entry| {
+                    var slice = try entry.toSliceOrNull(globalThis);
+                    defer slice.deinit();
+                    try this.features.insert(slice.slice());
+                }
+            }
+
             // if (try config.getOptional(globalThis, "dir", ZigString.Slice)) |slice| {
             //     defer slice.deinit();
             //     this.appendSliceExact(slice.slice()) catch unreachable;
@@ -563,7 +652,7 @@ pub const JSBundler = struct {
                     const value_type = property_value.jsType();
 
                     if (!value_type.isStringLike()) {
-                        return globalThis.throwInvalidArguments("define \"{s}\" must be a JSON string", .{prop});
+                        return globalThis.throwInvalidArguments("define \"{f}\" must be a JSON string", .{prop});
                     }
 
                     var val = jsc.ZigString.init("");
@@ -640,6 +729,12 @@ pub const JSBundler = struct {
                 const base_public_path = bun.StandaloneModuleGraph.targetBasePublicPath(this.compile.?.compile_target.os, "root/");
                 try this.public_path.append(base_public_path);
 
+                // When using --compile, only `external` sourcemaps work, as we do not
+                // look at the source map comment. Override any other sourcemap type.
+                if (this.source_map != .none) {
+                    this.source_map = .external;
+                }
+
                 if (compile.outfile.isEmpty()) {
                     const entry_point = this.entry_points.keys()[0];
                     var outfile = std.fs.path.basename(entry_point);
@@ -688,6 +783,7 @@ pub const JSBundler = struct {
             whitespace: bool = false,
             identifiers: bool = false,
             syntax: bool = false,
+            keep_names: bool = false,
         };
 
         pub const Serve = struct {
@@ -714,12 +810,26 @@ pub const JSBundler = struct {
                 bun.default_allocator.free(loaders.loaders);
                 bun.default_allocator.free(loaders.extensions);
             }
+            // Free JSX allocated strings
+            if (self.jsx.factory.len > 0) {
+                allocator.free(self.jsx.factory);
+                self.jsx.factory = "";
+            }
+            if (self.jsx.fragment.len > 0) {
+                allocator.free(self.jsx.fragment);
+                self.jsx.fragment = "";
+            }
+            if (self.jsx.import_source.len > 0) {
+                allocator.free(self.jsx.import_source);
+                self.jsx.import_source = "";
+            }
             self.names.deinit();
             self.outdir.deinit();
             self.rootdir.deinit();
             self.public_path.deinit();
             self.conditions.deinit();
             self.drop.deinit();
+            self.features.deinit();
             self.banner.deinit();
             if (self.compile) |*compile| {
                 compile.deinit();
@@ -862,8 +972,8 @@ pub const JSBundler = struct {
                 resolve.value = .{ .no_match = {} };
             } else {
                 const global = resolve.bv2.plugins.?.globalObject();
-                const path = path_value.toSliceCloneWithAllocator(global, bun.default_allocator) orelse @panic("Unexpected: path is not a string");
-                const namespace = namespace_value.toSliceCloneWithAllocator(global, bun.default_allocator) orelse @panic("Unexpected: namespace is not a string");
+                const path = path_value.toSliceCloneWithAllocator(global, bun.default_allocator) catch @panic("Unexpected: path is not a string");
+                const namespace = namespace_value.toSliceCloneWithAllocator(global, bun.default_allocator) catch @panic("Unexpected: namespace is not a string");
                 resolve.value = .{
                     .success = .{
                         .path = path.slice(),
@@ -1035,6 +1145,7 @@ pub const JSBundler = struct {
                             bun.outOfMemory();
                         },
                         error.JSError => {},
+                        error.JSTerminated => {},
                     }
 
                     @panic("Unexpected: source_code is not a string");
@@ -1086,8 +1197,14 @@ pub const JSBundler = struct {
         extern fn JSBundlerPlugin__tombstone(*Plugin) void;
         extern fn JSBundlerPlugin__runOnEndCallbacks(*Plugin, jsc.JSValue, jsc.JSValue, jsc.JSValue) jsc.JSValue;
 
-        pub fn runOnEndCallbacks(this: *Plugin, globalThis: *jsc.JSGlobalObject, build_promise: *jsc.JSPromise, build_result: jsc.JSValue, rejection: jsc.JSValue) JSError!jsc.JSValue {
+        pub fn runOnEndCallbacks(this: *Plugin, globalThis: *jsc.JSGlobalObject, build_promise: *jsc.JSPromise, build_result: jsc.JSValue, rejection: bun.JSError!jsc.JSValue) bun.JSError!jsc.JSValue {
             jsc.markBinding(@src());
+
+            const rejection_value = rejection catch |err| switch (err) {
+                error.OutOfMemory => globalThis.createOutOfMemoryError(),
+                error.JSError => globalThis.takeError(err),
+                error.JSTerminated => return error.JSTerminated,
+            };
 
             var scope: jsc.CatchScope = undefined;
             scope.init(globalThis, @src());
@@ -1097,7 +1214,7 @@ pub const JSBundler = struct {
                 this,
                 build_promise.asValue(globalThis),
                 build_result,
-                rejection,
+                rejection_value,
             );
 
             try scope.returnIfException();
@@ -1265,7 +1382,7 @@ pub const JSBundler = struct {
                             exception,
                         ) catch |err| switch (err) {
                             error.OutOfMemory => bun.outOfMemory(),
-                            error.JSError => {
+                            error.JSError, error.JSTerminated => {
                                 plugin.globalObject().reportActiveExceptionAsUnhandled(err);
                                 return;
                             },
@@ -1283,7 +1400,7 @@ pub const JSBundler = struct {
                             exception,
                         ) catch |err| switch (err) {
                             error.OutOfMemory => bun.outOfMemory(),
-                            error.JSError => {
+                            error.JSError, error.JSTerminated => {
                                 plugin.globalObject().reportActiveExceptionAsUnhandled(err);
                                 return;
                             },
@@ -1396,7 +1513,7 @@ pub const BuildArtifact = struct {
         globalThis: *jsc.JSGlobalObject,
     ) JSValue {
         var buf: [512]u8 = undefined;
-        const out = std.fmt.bufPrint(&buf, "{any}", .{bun.fmt.truncatedHash32(this.hash)}) catch @panic("Unexpected");
+        const out = std.fmt.bufPrint(&buf, "{f}", .{bun.fmt.truncatedHash32(this.hash)}) catch @panic("Unexpected");
         return ZigString.init(out).toJS(globalThis);
     }
 
@@ -1420,7 +1537,7 @@ pub const BuildArtifact = struct {
         return jsc.JSValue.jsNull();
     }
 
-    pub fn finalize(this: *BuildArtifact) callconv(.C) void {
+    pub fn finalize(this: *BuildArtifact) callconv(.c) void {
         this.deinit();
 
         bun.default_allocator.destroy(this);
@@ -1477,7 +1594,7 @@ pub const BuildArtifact = struct {
                 try formatter.writeIndent(Writer, writer);
                 try writer.print(
                     comptime Output.prettyFmt(
-                        "<r>hash<r>: <green>\"{any}\"<r>",
+                        "<r>hash<r>: <green>\"{f}\"<r>",
                         enable_ansi_colors,
                     ),
                     .{bun.fmt.truncatedHash32(this.hash)},

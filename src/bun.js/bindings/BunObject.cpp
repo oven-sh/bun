@@ -48,6 +48,8 @@
 #include <netdb.h>
 #endif
 
+extern "C" size_t Bun__Feature__heap_snapshot;
+
 BUN_DECLARE_HOST_FUNCTION(Bun__DNS__lookup);
 BUN_DECLARE_HOST_FUNCTION(Bun__DNS__resolve);
 BUN_DECLARE_HOST_FUNCTION(Bun__DNS__resolveSrv);
@@ -230,12 +232,12 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Arr
     }
 
     if (asUint8Array) {
-        auto uint8array = JSC::JSUint8Array::create(lexicalGlobalObject, lexicalGlobalObject->m_typedArrayUint8.get(lexicalGlobalObject), WTFMove(buffer), 0, byteLength);
+        auto uint8array = JSC::JSUint8Array::create(lexicalGlobalObject, lexicalGlobalObject->m_typedArrayUint8.get(lexicalGlobalObject), WTF::move(buffer), 0, byteLength);
         RETURN_IF_EXCEPTION(throwScope, {});
         return JSValue::encode(uint8array);
     }
 
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(JSC::JSArrayBuffer::create(vm, lexicalGlobalObject->arrayBufferStructure(), WTFMove(buffer))));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(JSC::JSArrayBuffer::create(vm, lexicalGlobalObject->arrayBufferStructure(), WTF::move(buffer))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionConcatTypedArrays, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -352,12 +354,14 @@ static JSValue constructBunShell(VM& vm, JSObject* bunObject)
     auto* globalObject = jsCast<Zig::GlobalObject*>(bunObject->globalObject());
     JSFunction* createParsedShellScript = JSFunction::create(vm, bunObject->globalObject(), 2, "createParsedShellScript"_s, BunObject_callback_createParsedShellScript, ImplementationVisibility::Private, NoIntrinsic);
     JSFunction* createShellInterpreterFunction = JSFunction::create(vm, bunObject->globalObject(), 1, "createShellInterpreter"_s, BunObject_callback_createShellInterpreter, ImplementationVisibility::Private, NoIntrinsic);
+    JSFunction* traceShellScriptFunction = JSFunction::create(vm, bunObject->globalObject(), 1, "traceShellScript"_s, BunObject_callback_traceShellScript, ImplementationVisibility::Private, NoIntrinsic);
     JSC::JSFunction* createShellFn = JSC::JSFunction::create(vm, globalObject, shellCreateBunShellTemplateFunctionCodeGenerator(vm), globalObject);
 
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto args = JSC::MarkedArgumentBuffer();
     args.append(createShellInterpreterFunction);
     args.append(createParsedShellScript);
+    args.append(traceShellScriptFunction);
     JSC::JSValue shell = JSC::call(globalObject, createShellFn, args, "BunShell"_s);
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -470,7 +474,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBunSleep,
     return JSC::JSValue::encode(promise);
 }
 
-extern "C" JSC::EncodedJSValue Bun__escapeHTML8(JSGlobalObject* globalObject, JSC::EncodedJSValue input, const LChar* ptr, size_t length);
+extern "C" JSC::EncodedJSValue Bun__escapeHTML8(JSGlobalObject* globalObject, JSC::EncodedJSValue input, const Latin1Character* ptr, size_t length);
 extern "C" JSC::EncodedJSValue Bun__escapeHTML16(JSGlobalObject* globalObject, JSC::EncodedJSValue input, const char16_t* ptr, size_t length);
 
 JSC_DEFINE_HOST_FUNCTION(functionBunEscapeHTML, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -583,7 +587,7 @@ JSC_DEFINE_HOST_FUNCTION(functionPathToFileURL, (JSC::JSGlobalObject * lexicalGl
 
         auto fileURL = WTF::URL::fileURLWithFileSystemPath(pathString);
         auto object = WebCore::DOMURL::create(fileURL.string(), String());
-        jsValue = WebCore::toJSNewlyCreated<IDLInterface<DOMURL>>(*lexicalGlobalObject, globalObject, throwScope, WTFMove(object));
+        jsValue = WebCore::toJSNewlyCreated<IDLInterface<DOMURL>>(*lexicalGlobalObject, globalObject, throwScope, WTF::move(object));
     }
 
     auto* jsDOMURL = jsCast<JSDOMURL*>(jsValue.asCell());
@@ -597,6 +601,8 @@ JSC_DEFINE_HOST_FUNCTION(functionGenerateHeapSnapshot, (JSC::JSGlobalObject * gl
     vm.ensureHeapProfiler();
     auto& heapProfiler = *vm.heapProfiler();
     heapProfiler.clearSnapshots();
+
+    Bun__Feature__heap_snapshot += 1;
 
     JSValue arg0 = callFrame->argument(0);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -796,6 +802,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     stdout                                         BunObject_lazyPropCb_wrap_stdout                                    DontDelete|PropertyCallback
     stringWidth                                    Generated::BunObject::jsStringWidth                                 DontDelete|Function 2
     stripANSI                                      jsFunctionBunStripANSI                                              DontDelete|Function 1
+    Terminal                                       BunObject_lazyPropCb_wrap_Terminal                                  DontDelete|PropertyCallback
     unsafe                                         BunObject_lazyPropCb_wrap_unsafe                                    DontDelete|PropertyCallback
     version                                        constructBunVersion                                                 ReadOnly|DontDelete|PropertyCallback
     which                                          BunObject_callback_which                                            DontDelete|Function 1
@@ -875,6 +882,25 @@ static JSC_DEFINE_CUSTOM_SETTER(setBunObjectMain, (JSC::JSGlobalObject * globalO
 #define bunObjectReadableStreamToJSONCodeGenerator WebCore::readableStreamReadableStreamToJSONCodeGenerator
 #define bunObjectReadableStreamToTextCodeGenerator WebCore::readableStreamReadableStreamToTextCodeGenerator
 
+// LazyProperty wrappers for stdin/stderr/stdout
+static JSValue BunObject_lazyPropCb_wrap_stdin(VM& vm, JSObject* bunObject)
+{
+    auto* zigGlobalObject = jsCast<Zig::GlobalObject*>(bunObject->globalObject());
+    return zigGlobalObject->m_bunStdin.getInitializedOnMainThread(zigGlobalObject);
+}
+
+static JSValue BunObject_lazyPropCb_wrap_stderr(VM& vm, JSObject* bunObject)
+{
+    auto* zigGlobalObject = jsCast<Zig::GlobalObject*>(bunObject->globalObject());
+    return zigGlobalObject->m_bunStderr.getInitializedOnMainThread(zigGlobalObject);
+}
+
+static JSValue BunObject_lazyPropCb_wrap_stdout(VM& vm, JSObject* bunObject)
+{
+    auto* zigGlobalObject = jsCast<Zig::GlobalObject*>(bunObject->globalObject());
+    return zigGlobalObject->m_bunStdout.getInitializedOnMainThread(zigGlobalObject);
+}
+
 #include "BunObject.lut.h"
 
 #undef bunObjectReadableStreamToArrayCodeGenerator
@@ -915,7 +941,7 @@ static void exportBunObject(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC:
     exportNames.reserveCapacity(std::size(bunObjectTableValues) + 1);
     exportValues.ensureCapacity(std::size(bunObjectTableValues) + 1);
 
-    PropertyNameArray propertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+    PropertyNameArrayBuilder propertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
     auto scope = DECLARE_THROW_SCOPE(vm);
     object->getOwnNonIndexPropertyNames(globalObject, propertyNames, DontEnumPropertiesMode::Exclude);
     RETURN_IF_EXCEPTION(scope, void());

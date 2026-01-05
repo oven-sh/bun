@@ -391,13 +391,12 @@ pub fn fromPipe(
 
 pub fn empty(globalThis: *JSGlobalObject) bun.JSError!jsc.JSValue {
     jsc.markBinding(@src());
-    return bun.jsc.fromJSHostCall(globalThis, @src(), ReadableStream__empty, .{globalThis});
+    return bun.cpp.ReadableStream__empty(globalThis);
 }
 
-pub fn used(globalThis: *JSGlobalObject) jsc.JSValue {
+pub fn used(globalThis: *JSGlobalObject) bun.JSError!jsc.JSValue {
     jsc.markBinding(@src());
-
-    return ReadableStream__used(globalThis);
+    return bun.cpp.ReadableStream__used(globalThis);
 }
 
 pub const StreamTag = enum(usize) {
@@ -575,6 +574,19 @@ pub fn NewSource(
             }
 
             @compileError("setRawMode is not implemented on " ++ @typeName(Context));
+        }
+
+        pub fn setFlowingFromJS(this: *ReadableStreamSourceType, _: *jsc.JSGlobalObject, call_frame: *jsc.CallFrame) bun.JSError!JSValue {
+            if (@hasDecl(Context, "setFlowing")) {
+                const flag = call_frame.argument(0);
+                if (Environment.allow_assert) {
+                    bun.assert(flag.isBoolean());
+                }
+                this.context.setFlowing(flag == .true);
+                return .js_undefined;
+            }
+
+            return .js_undefined;
         }
 
         const supports_ref = setRefUnrefFn != null;

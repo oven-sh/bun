@@ -141,36 +141,38 @@ pub const Result = struct {
 
     package_json: ?*PackageJSON = null,
 
-    is_external: bool = false,
-
-    is_external_and_rewrite_import_path: bool = false,
-
-    is_standalone_module: bool = false,
-
-    // This is true when the package was loaded from within the node_modules directory.
-    is_from_node_modules: bool = false,
-
     diff_case: ?Fs.FileSystem.Entry.Lookup.DifferentCase = null,
 
     // If present, any ES6 imports to this file can be considered to have no side
     // effects. This means they should be removed if unused.
     primary_side_effects_data: SideEffects = SideEffects.has_side_effects,
 
-    // If true, unused imports are retained in TypeScript code. This matches the
-    // behavior of the "importsNotUsedAsValues" field in "tsconfig.json" when the
-    // value is not "remove".
-    preserve_unused_imports_ts: bool = false,
-
     // This is the "type" field from "package.json"
     module_type: options.ModuleType = options.ModuleType.unknown,
-
-    emit_decorator_metadata: bool = false,
 
     debug_meta: ?DebugMeta = null,
 
     dirname_fd: FD = .invalid,
     file_fd: FD = .invalid,
     import_kind: ast.ImportKind = undefined,
+
+    /// Pack boolean flags to reduce padding overhead.
+    /// Previously 6 separate bool fields caused ~42+ bytes of padding waste.
+    flags: Flags = .{},
+
+    pub const Flags = packed struct(u8) {
+        is_external: bool = false,
+        is_external_and_rewrite_import_path: bool = false,
+        is_standalone_module: bool = false,
+        // This is true when the package was loaded from within the node_modules directory.
+        is_from_node_modules: bool = false,
+        // If true, unused imports are retained in TypeScript code. This matches the
+        // behavior of the "importsNotUsedAsValues" field in "tsconfig.json" when the
+        // value is not "remove".
+        preserve_unused_imports_ts: bool = false,
+        emit_decorator_metadata: bool = false,
+        _padding: u2 = 0,
+    };
 
     pub const Union = union(enum) {
         success: Result,
@@ -205,7 +207,7 @@ pub const Result = struct {
     // checking package.json may not be relevant
     pub fn isLikelyNodeModule(this: *const Result) bool {
         const path_ = this.pathConst() orelse return false;
-        return this.is_from_node_modules or strings.indexOf(path_.text, "/node_modules/") != null;
+        return this.flags.is_from_node_modules or strings.indexOf(path_.text, "/node_modules/") != null;
     }
 
     // Most NPM modules are CommonJS
@@ -227,7 +229,7 @@ pub const Result = struct {
     }
 
     pub const DebugMeta = struct {
-        notes: std.ArrayList(logger.Data),
+        notes: std.array_list.Managed(logger.Data),
         suggestion_text: string = "",
         suggestion_message: string = "",
         suggestion_range: SuggestionRange,
@@ -235,7 +237,7 @@ pub const Result = struct {
         pub const SuggestionRange = enum { full, end };
 
         pub fn init(allocator: std.mem.Allocator) DebugMeta {
-            return DebugMeta{ .notes = std.ArrayList(logger.Data).init(allocator) };
+            return DebugMeta{ .notes = std.array_list.Managed(logger.Data).init(allocator) };
         }
 
         pub fn logErrorMsg(m: *DebugMeta, log: *logger.Log, _source: ?*const logger.Source, r: logger.Range, comptime fmt: string, args: anytype) !void {
@@ -280,7 +282,7 @@ pub const DirEntryResolveQueueItem = struct {
 pub const DebugLogs = struct {
     what: string = "",
     indent: MutableString,
-    notes: std.ArrayList(logger.Data),
+    notes: std.array_list.Managed(logger.Data),
 
     pub const FlushMode = enum { fail, success };
 
@@ -288,7 +290,7 @@ pub const DebugLogs = struct {
         const mutable = try MutableString.init(allocator, 0);
         return DebugLogs{
             .indent = mutable,
-            .notes = std.ArrayList(logger.Data).init(allocator),
+            .notes = std.array_list.Managed(logger.Data).init(allocator),
         };
     }
 
@@ -408,7 +410,7 @@ pub const LoadResult = struct {
 var resolver_Mutex: Mutex = undefined;
 var resolver_Mutex_loaded: bool = false;
 
-const BinFolderArray = std.BoundedArray(string, 128);
+const BinFolderArray = bun.BoundedArray(string, 128);
 var bin_folders: BinFolderArray = undefined;
 var bin_folders_lock: Mutex = .{};
 var bin_folders_loaded: bool = false;
@@ -586,6 +588,11 @@ pub const Resolver = struct {
         };
     }
 
+    pub fn deinit(r: *ThisResolver) void {
+        for (r.dir_cache.values()) |*di| di.deinit();
+        r.dir_cache.deinit();
+    }
+
     pub fn isExternalPattern(r: *ThisResolver, import_path: string) bool {
         if (r.opts.packages == .external and isPackagePath(import_path)) {
             return true;
@@ -675,7 +682,7 @@ pub const Resolver = struct {
         if (r.opts.mark_builtins_as_external) {
             if (strings.hasPrefixComptime(import_path, "node:") or
                 strings.hasPrefixComptime(import_path, "bun:") or
-                bun.jsc.ModuleLoader.HardcodedModule.Alias.has(import_path, r.opts.target))
+                bun.jsc.ModuleLoader.HardcodedModule.Alias.has(import_path, r.opts.target, .{ .rewrite_jest_for_tests = r.opts.rewrite_jest_for_tests }))
             {
                 return .{
                     .success = Result{
@@ -683,9 +690,9 @@ pub const Resolver = struct {
                         .path_pair = PathPair{
                             .primary = Path.init(import_path),
                         },
-                        .is_external = true,
                         .module_type = .cjs,
                         .primary_side_effects_data = .no_side_effects__pure_data,
+                        .flags = .{ .is_external = true },
                     },
                 };
             }
@@ -718,8 +725,8 @@ pub const Resolver = struct {
                     .path_pair = PathPair{
                         .primary = Path.init(import_path),
                     },
-                    .is_external = true,
                     .module_type = if (!kind.isFromCSS()) .esm else .unknown,
+                    .flags = .{ .is_external = true },
                 },
             };
         }
@@ -750,7 +757,7 @@ pub const Resolver = struct {
             return .{
                 .success = Result{
                     .path_pair = PathPair{ .primary = Path.initWithNamespace(import_path, "dataurl") },
-                    .is_external = true,
+                    .flags = .{ .is_external = true },
                 },
             };
         }
@@ -772,8 +779,8 @@ pub const Resolver = struct {
                                 .path_pair = PathPair{
                                     .primary = Path.init(import_path),
                                 },
-                                .is_standalone_module = true,
                                 .module_type = .esm,
+                                .flags = .{ .is_standalone_module = true },
                             },
                         };
                     }
@@ -792,8 +799,8 @@ pub const Resolver = struct {
                                     .path_pair = PathPair{
                                         .primary = Path.init(file.name),
                                     },
-                                    .is_standalone_module = true,
                                     .module_type = .esm,
+                                    .flags = .{ .is_standalone_module = true },
                                 },
                             };
                         }
@@ -866,11 +873,35 @@ pub const Resolver = struct {
 
         switch (tmp) {
             .success => |*result| {
-                if (!strings.eqlComptime(result.path_pair.primary.namespace, "node") and !result.is_standalone_module)
+                if (!strings.eqlComptime(result.path_pair.primary.namespace, "node") and !result.flags.is_standalone_module)
                     r.finalizeResult(result, kind) catch |err| return .{ .failure = err };
 
                 r.flushDebugLogs(.success) catch {};
                 result.import_kind = kind;
+                if (comptime Environment.enable_logs) {
+                    if (result.path_pair.secondary) |secondary| {
+                        debuglog(
+                            "resolve({f}, from: {f}, {s}) = {f} (secondary: {f})",
+                            .{
+                                bun.fmt.fmtPath(u8, import_path, .{}),
+                                bun.fmt.fmtPath(u8, source_dir, .{}),
+                                kind.label(),
+                                bun.fmt.fmtPath(u8, if (result.path()) |path| path.text else "<NULL>", .{}),
+                                bun.fmt.fmtPath(u8, secondary.text, .{}),
+                            },
+                        );
+                    } else {
+                        debuglog(
+                            "resolve({f}, from: {f}, {s}) = {f}",
+                            .{
+                                bun.fmt.fmtPath(u8, import_path, .{}),
+                                bun.fmt.fmtPath(u8, source_dir, .{}),
+                                kind.label(),
+                                bun.fmt.fmtPath(u8, if (result.path()) |path| path.text else "<NULL>", .{}),
+                            },
+                        );
+                    }
+                }
                 return .{ .success = result.* };
             },
             .failure => |e| {
@@ -907,9 +938,9 @@ pub const Resolver = struct {
                         return .{
                             .import_kind = kind,
                             .path_pair = .{ .primary = Fs.Path.initWithNamespace(import_path, "node") },
-                            .is_external = false,
                             .module_type = .esm,
                             .primary_side_effects_data = .no_side_effects__pure_data,
+                            .flags = .{ .is_external = false },
                         };
                     },
                     .import => |path| return r.resolve(r.fs.top_level_dir, path, .entry_point_build),
@@ -928,7 +959,7 @@ pub const Resolver = struct {
     });
 
     pub fn finalizeResult(r: *ThisResolver, result: *Result, kind: ast.ImportKind) !void {
-        if (result.is_external) return;
+        if (result.flags.is_external) return;
 
         var iter = result.path_pair.iter();
         var module_type = result.module_type;
@@ -968,7 +999,7 @@ pub const Resolver = struct {
 
             if (dir.enclosing_tsconfig_json) |tsconfig| {
                 result.jsx = tsconfig.mergeJSX(result.jsx);
-                result.emit_decorator_metadata = result.emit_decorator_metadata or tsconfig.emit_decorator_metadata;
+                result.flags.emit_decorator_metadata = result.flags.emit_decorator_metadata or tsconfig.emit_decorator_metadata;
             }
 
             // If you use mjs or mts, then you're using esm
@@ -989,30 +1020,20 @@ pub const Resolver = struct {
                             debug.addNoteFmt("Resolved symlink \"{s}\" to \"{s}\"", .{ path.text, symlink_path });
                         }
                     } else if (dir.abs_real_path.len > 0) {
+                        // When the directory is a symlink, we don't need to call getFdPath.
                         var parts = [_]string{ dir.abs_real_path, query.entry.base() };
                         var buf: bun.PathBuffer = undefined;
 
-                        var out = r.fs.absBuf(&parts, &buf);
+                        const out = r.fs.absBuf(&parts, &buf);
 
                         const store_fd = r.store_fd;
 
-                        if (!query.entry.cache.fd.isValid()) {
+                        if (!query.entry.cache.fd.isValid() and store_fd) {
                             buf[out.len] = 0;
                             const span = buf[0..out.len :0];
-                            var file: bun.FD = if (store_fd)
-                                .fromStdFile(try std.fs.openFileAbsoluteZ(span, .{ .mode = .read_only }))
-                            else
-                                .fromStdFile(try bun.openFileForPath(span));
-
-                            if (!store_fd) {
-                                assert(file.stdioTag() == null);
-                                out = try file.getFdPath(&buf);
-                                file.close();
-                                query.entry.cache.fd = .invalid;
-                            } else {
-                                query.entry.cache.fd = file;
-                                Fs.FileSystem.setMaxFd(file.native());
-                            }
+                            var file: bun.FD = .fromStdFile(try std.fs.openFileAbsoluteZ(span, .{ .mode = .read_only }));
+                            query.entry.cache.fd = file;
+                            Fs.FileSystem.setMaxFd(file.native());
                         }
 
                         defer {
@@ -1023,10 +1044,6 @@ pub const Resolver = struct {
                                     query.entry.cache.fd = .invalid;
                                 }
                             }
-                        }
-
-                        if (store_fd) {
-                            out = try bun.getFdPath(query.entry.cache.fd, &buf);
                         }
 
                         const symlink = try Fs.FileSystem.FilenameStore.instance.append(@TypeOf(out), out);
@@ -1138,7 +1155,7 @@ pub const Resolver = struct {
                 return .{
                     .success = Result{
                         .path_pair = .{ .primary = Path.init(import_path) },
-                        .is_external = true,
+                        .flags = .{ .is_external = true },
                     },
                 };
             }
@@ -1201,13 +1218,13 @@ pub const Resolver = struct {
                     result.path_pair.primary = fallback_module.path;
                     result.module_type = .cjs;
                     result.package_json = @as(*PackageJSON, @ptrFromInt(@intFromPtr(fallback_module.package_json)));
-                    result.is_from_node_modules = true;
+                    result.flags.is_from_node_modules = true;
                     return .{ .success = result };
                 }
 
                 if (had_node_prefix) {
                     // Module resolution fails automatically for unknown node builtins
-                    if (!bun.jsc.ModuleLoader.HardcodedModule.Alias.has(import_path_without_node_prefix, .node)) {
+                    if (!bun.jsc.ModuleLoader.HardcodedModule.Alias.has(import_path_without_node_prefix, .node, .{})) {
                         return .{ .not_found = {} };
                     }
 
@@ -1217,7 +1234,7 @@ pub const Resolver = struct {
                     result.path_pair.primary.name = Fs.PathName.init(import_path_without_node_prefix);
                     result.module_type = .cjs;
                     result.path_pair.primary.is_disabled = true;
-                    result.is_from_node_modules = true;
+                    result.flags.is_from_node_modules = true;
                     result.primary_side_effects_data = .no_side_effects__pure_data;
                     return .{ .success = result };
                 }
@@ -1232,7 +1249,7 @@ pub const Resolver = struct {
                     result.path_pair.primary.name = Fs.PathName.init(import_path_without_node_prefix);
                     result.module_type = .cjs;
                     result.path_pair.primary.is_disabled = true;
-                    result.is_from_node_modules = true;
+                    result.flags.is_from_node_modules = true;
                     result.primary_side_effects_data = .no_side_effects__pure_data;
                     return .{ .success = result };
                 }
@@ -1252,7 +1269,7 @@ pub const Resolver = struct {
                         return .{
                             .success = Result{
                                 .path_pair = .{ .primary = Path.init(query) },
-                                .is_external = true,
+                                .flags = .{ .is_external = true },
                             },
                         };
                     }
@@ -1304,7 +1321,7 @@ pub const Resolver = struct {
 
             return .{ .success = .{
                 .path_pair = .{ .primary = Path.init(bun.handleOom(r.fs.dirname_store.append(@TypeOf(abs_path), abs_path))) },
-                .is_external = true,
+                .flags = .{ .is_external = true },
             } };
         }
 
@@ -1332,16 +1349,18 @@ pub const Resolver = struct {
                         }
 
                         switch (r.resolveWithoutRemapping(import_dir_info, remap, kind, global_cache)) {
-                            .success => |result| {
+                            .success => |match_result| {
                                 return .{ .success = .{
-                                    .path_pair = result.path_pair,
-                                    .diff_case = result.diff_case,
-                                    .dirname_fd = result.dirname_fd,
+                                    .path_pair = match_result.path_pair,
+                                    .diff_case = match_result.diff_case,
+                                    .dirname_fd = match_result.dirname_fd,
                                     .package_json = pkg,
                                     .jsx = r.opts.jsx,
-                                    .module_type = result.module_type,
-                                    .is_external = result.is_external,
-                                    .is_external_and_rewrite_import_path = result.is_external,
+                                    .module_type = match_result.module_type,
+                                    .flags = .{
+                                        .is_external = match_result.is_external,
+                                        .is_external_and_rewrite_import_path = match_result.is_external,
+                                    },
                                 } };
                             },
                             else => {},
@@ -1474,13 +1493,13 @@ pub const Resolver = struct {
                 result.file_fd = res.file_fd;
                 result.package_json = res.package_json;
                 result.diff_case = res.diff_case;
-                result.is_from_node_modules = result.is_from_node_modules or res.is_node_module;
+                result.flags.is_from_node_modules = result.flags.is_from_node_modules or res.is_node_module;
                 result.jsx = r.opts.jsx;
                 result.module_type = res.module_type;
-                result.is_external = res.is_external;
+                result.flags.is_external = res.is_external;
                 // Potentially rewrite the import path if it's external that
                 // was remapped to a different path
-                result.is_external_and_rewrite_import_path = result.is_external;
+                result.flags.is_external_and_rewrite_import_path = result.flags.is_external;
 
                 if (res.path_pair.primary.is_disabled and res.path_pair.secondary == null) {
                     return .{ .success = result };
@@ -1506,13 +1525,13 @@ pub const Resolver = struct {
                                         result.package_json = remapped.package_json;
                                         result.diff_case = remapped.diff_case;
                                         result.module_type = remapped.module_type;
-                                        result.is_external = remapped.is_external;
+                                        result.flags.is_external = remapped.is_external;
 
                                         // Potentially rewrite the import path if it's external that
                                         // was remapped to a different path
-                                        result.is_external_and_rewrite_import_path = result.is_external;
+                                        result.flags.is_external_and_rewrite_import_path = result.flags.is_external;
 
-                                        result.is_from_node_modules = result.is_from_node_modules or remapped.is_node_module;
+                                        result.flags.is_from_node_modules = result.flags.is_from_node_modules or remapped.is_node_module;
                                         return .{ .success = result };
                                     },
                                     else => {},
@@ -2204,7 +2223,7 @@ pub const Resolver = struct {
         }
 
         if (needs_iter) {
-            const allocator = bun.fs_allocator;
+            const allocator = bun.default_allocator;
             var new_entry = Fs.FileSystem.DirEntry.init(
                 if (in_place) |existing| existing.dir else Fs.FileSystem.DirnameStore.instance.append(string, dir_path) catch unreachable,
                 r.generation,
@@ -2231,7 +2250,7 @@ pub const Resolver = struct {
                 dir_entries_ptr.fd = open_dir;
             }
 
-            bun.fs.debug("readdir({}, {s}) = {d}", .{ open_dir, dir_path, dir_entries_ptr.data.count() });
+            bun.fs.debug("readdir({f}, {s}) = {d}", .{ open_dir, dir_path, dir_entries_ptr.data.count() });
 
             dir_entries_option = rfs.entries.put(&cached_dir_entry_result, .{
                 .entries = dir_entries_ptr,
@@ -2524,7 +2543,7 @@ pub const Resolver = struct {
         // Since tsconfig.json is cached permanently, in our DirEntries cache
         // we must use the global allocator
         var entry = try r.caches.fs.readFileWithAllocator(
-            bun.fs_allocator,
+            bun.default_allocator,
             r.fs,
             file,
             dirname_fd,
@@ -2803,7 +2822,7 @@ pub const Resolver = struct {
                     }
                 };
 
-                bun.fs.debug("open({s}) = {any}", .{ sentinel, open_req });
+                bun.fs.debug("open({s})", .{sentinel});
 
                 break :open_dir open_req catch |err| switch (@as(anyerror, err)) {
                     // Ignore "ENOTDIR" here so that calling "ReadDirectory" on a file behaves
@@ -2813,31 +2832,38 @@ pub const Resolver = struct {
                     // directory. The "pnpm" package manager generates a faulty "NODE_PATH"
                     // list which contains such paths and treating them as missing means we just
                     // ignore them during path resolution.
-                    error.ENOENT,
-                    error.ENOTDIR,
-                    error.IsDir,
-                    error.NotDir,
-                    error.FileNotFound,
-                    => return null,
-
+                    error.ENOTDIR, error.IsDir, error.NotDir => return null,
                     else => {
                         const cached_dir_entry_result = rfs.entries.getOrPut(queue_top.unsafe_path) catch unreachable;
+                        // If we don't properly cache not found, then we repeatedly attempt to open the same directories, which causes a perf trace that looks like this stupidity;
+                        //
+                        //   openat(dfd: CWD, filename: "node_modules/react", flags: RDONLY|DIRECTORY) = -1 ENOENT (No such file or directory)
+                        //   openat(dfd: CWD, filename: "node_modules/react/", flags: RDONLY|CLOEXEC|DIRECTORY) = -1 ENOENT (No such file or directory)
+                        //   openat(dfd: CWD, filename: "node_modules/react", flags: RDONLY|CLOEXEC|DIRECTORY) = -1 ENOENT (No such file or directory)
+                        //   openat(dfd: CWD, filename: "node_modules/react", flags: RDONLY|CLOEXEC|DIRECTORY) = -1 ENOENT (No such file or directory)
+                        //
                         r.dir_cache.markNotFound(queue_top.result);
                         rfs.entries.markNotFound(cached_dir_entry_result);
-                        if (comptime enable_logging) {
-                            const pretty = queue_top.unsafe_path;
+                        switch (@as(anyerror, err)) {
+                            error.ENOENT, error.FileNotFound => {},
+                            else => {
+                                if (comptime enable_logging) {
+                                    const pretty = queue_top.unsafe_path;
 
-                            r.log.addErrorFmt(
-                                null,
-                                logger.Loc{},
-                                r.allocator,
-                                "Cannot read directory \"{s}\": {s}",
-                                .{
-                                    pretty,
-                                    @errorName(err),
-                                },
-                            ) catch {};
+                                    r.log.addErrorFmt(
+                                        null,
+                                        logger.Loc{},
+                                        r.allocator,
+                                        "Cannot read directory \"{s}\": {s}",
+                                        .{
+                                            pretty,
+                                            @errorName(err),
+                                        },
+                                    ) catch {};
+                                }
+                            },
                         }
+
                         return null;
                     },
                 };
@@ -2891,7 +2917,7 @@ pub const Resolver = struct {
             }
 
             if (needs_iter) {
-                const allocator = bun.fs_allocator;
+                const allocator = bun.default_allocator;
                 var new_entry = Fs.FileSystem.DirEntry.init(
                     if (in_place) |existing| existing.dir else Fs.FileSystem.DirnameStore.instance.append(string, dir_path) catch unreachable,
                     r.generation,
@@ -2916,7 +2942,7 @@ pub const Resolver = struct {
                 dir_entries_option = try rfs.entries.put(&cached_dir_entry_result, .{
                     .entries = dir_entries_ptr,
                 });
-                bun.fs.debug("readdir({}, {s}) = {d}", .{ open_dir, dir_path, dir_entries_ptr.data.count() });
+                bun.fs.debug("readdir({f}, {s}) = {d}", .{ open_dir, dir_path, dir_entries_ptr.data.count() });
             }
 
             // We must initialize it as empty so that the result index is correct.
@@ -3125,7 +3151,7 @@ pub const Resolver = struct {
             //     }
             //
             if (r.opts.mark_builtins_as_external or r.opts.target.isBun()) {
-                if (jsc.ModuleLoader.HardcodedModule.Alias.get(esm_resolution.path, r.opts.target)) |alias| {
+                if (jsc.ModuleLoader.HardcodedModule.Alias.get(esm_resolution.path, r.opts.target, .{})) |alias| {
                     return .{
                         .success = .{
                             .path_pair = .{ .primary = bun.fs.Path.init(alias.path) },
@@ -3399,20 +3425,20 @@ pub const Resolver = struct {
         return nodeModulePathsJSValue(in_str, globalThis, false);
     }
 
-    pub export fn Resolver__propForRequireMainPaths(globalThis: *bun.jsc.JSGlobalObject) callconv(.C) jsc.JSValue {
+    pub export fn Resolver__propForRequireMainPaths(globalThis: *bun.jsc.JSGlobalObject) callconv(.c) jsc.JSValue {
         bun.jsc.markBinding(@src());
 
         const in_str = bun.String.init(".");
         return nodeModulePathsJSValue(in_str, globalThis, false);
     }
 
-    pub fn nodeModulePathsJSValue(in_str: bun.String, globalObject: *bun.jsc.JSGlobalObject, use_dirname: bool) callconv(.C) bun.jsc.JSValue {
+    pub fn nodeModulePathsJSValue(in_str: bun.String, globalObject: *bun.jsc.JSGlobalObject, use_dirname: bool) callconv(.c) bun.jsc.JSValue {
         var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
         var stack_fallback_allocator = std.heap.stackFallback(1024, arena.allocator());
         const alloc = stack_fallback_allocator.get();
 
-        var list = std.ArrayList(bun.String).init(alloc);
+        var list = std.array_list.Managed(bun.String).init(alloc);
         defer list.deinit();
 
         const sliced = in_str.toUTF8(bun.default_allocator);
@@ -3769,17 +3795,20 @@ pub const Resolver = struct {
         };
 
         if (@as(Fs.FileSystem.RealFS.EntriesOption.Tag, dir_entry.*) == .err) {
-            if (dir_entry.err.original_err != error.ENOENT) {
-                r.log.addErrorFmt(
-                    null,
-                    logger.Loc.Empty,
-                    r.allocator,
-                    "Cannot read directory \"{s}\": {s}",
-                    .{
-                        dir_path,
-                        @errorName(dir_entry.err.original_err),
-                    },
-                ) catch {};
+            switch (dir_entry.err.original_err) {
+                error.ENOENT, error.FileNotFound, error.ENOTDIR, error.NotDir => {},
+                else => {
+                    r.log.addErrorFmt(
+                        null,
+                        logger.Loc.Empty,
+                        r.allocator,
+                        "Cannot read directory \"{s}\": {s}",
+                        .{
+                            dir_path,
+                            @errorName(dir_entry.err.original_err),
+                        },
+                    ) catch {};
+                },
             }
             return null;
         }
@@ -4097,30 +4126,32 @@ pub const Resolver = struct {
         }
 
         // Record if this directory has a package.json file
-        if (entries.getComptimeQuery("package.json")) |lookup| {
-            const entry = lookup.entry;
-            if (entry.kind(rfs, r.store_fd) == .file) {
-                info.package_json = if (r.usePackageManager() and !info.hasNodeModules() and !info.isNodeModules())
-                    r.parsePackageJSON(path, if (FeatureFlags.store_file_descriptors) fd else .invalid, package_id, true) catch null
-                else
-                    r.parsePackageJSON(path, if (FeatureFlags.store_file_descriptors) fd else .invalid, null, false) catch null;
+        if (r.opts.load_package_json) {
+            if (entries.getComptimeQuery("package.json")) |lookup| {
+                const entry = lookup.entry;
+                if (entry.kind(rfs, r.store_fd) == .file) {
+                    info.package_json = if (r.usePackageManager() and !info.hasNodeModules() and !info.isNodeModules())
+                        r.parsePackageJSON(path, if (FeatureFlags.store_file_descriptors) fd else .invalid, package_id, true) catch null
+                    else
+                        r.parsePackageJSON(path, if (FeatureFlags.store_file_descriptors) fd else .invalid, null, false) catch null;
 
-                if (info.package_json) |pkg| {
-                    if (pkg.browser_map.count() > 0) {
-                        info.enclosing_browser_scope = result.index;
-                        info.package_json_for_browser_field = pkg;
-                    }
+                    if (info.package_json) |pkg| {
+                        if (pkg.browser_map.count() > 0) {
+                            info.enclosing_browser_scope = result.index;
+                            info.package_json_for_browser_field = pkg;
+                        }
 
-                    if (pkg.name.len > 0 or r.care_about_bin_folder)
-                        info.enclosing_package_json = pkg;
+                        if (pkg.name.len > 0 or r.care_about_bin_folder)
+                            info.enclosing_package_json = pkg;
 
-                    if (pkg.dependencies.map.count() > 0 or pkg.package_manager_package_id != Install.invalid_package_id)
-                        info.package_json_for_dependencies = pkg;
+                        if (pkg.dependencies.map.count() > 0 or pkg.package_manager_package_id != Install.invalid_package_id)
+                            info.package_json_for_dependencies = pkg;
 
-                    if (r.debug_logs) |*logs| {
-                        logs.addNoteFmt("Resolved package.json in \"{s}\"", .{
-                            path,
-                        });
+                        if (r.debug_logs) |*logs| {
+                            logs.addNoteFmt("Resolved package.json in \"{s}\"", .{
+                                path,
+                            });
+                        }
                     }
                 }
             }
@@ -4158,21 +4189,21 @@ pub const Resolver = struct {
                 ) catch |err| brk: {
                     const pretty = tsconfigpath;
                     if (err == error.ENOENT or err == error.FileNotFound) {
-                        r.log.addErrorFmt(null, logger.Loc.Empty, r.allocator, "Cannot find tsconfig file {}", .{bun.fmt.QuotedFormatter{ .text = pretty }}) catch {};
+                        r.log.addErrorFmt(null, logger.Loc.Empty, r.allocator, "Cannot find tsconfig file {f}", .{bun.fmt.QuotedFormatter{ .text = pretty }}) catch {};
                     } else if (err != error.ParseErrorAlreadyLogged and err != error.IsDir and err != error.EISDIR) {
-                        r.log.addErrorFmt(null, logger.Loc.Empty, r.allocator, "Cannot read file {}: {s}", .{ bun.fmt.QuotedFormatter{ .text = pretty }, @errorName(err) }) catch {};
+                        r.log.addErrorFmt(null, logger.Loc.Empty, r.allocator, "Cannot read file {f}: {s}", .{ bun.fmt.QuotedFormatter{ .text = pretty }, @errorName(err) }) catch {};
                     }
                     break :brk null;
                 };
                 if (info.tsconfig_json) |tsconfig_json| {
-                    var parent_configs = try std.BoundedArray(*TSConfigJSON, 64).init(0);
+                    var parent_configs = try bun.BoundedArray(*TSConfigJSON, 64).init(0);
                     try parent_configs.append(tsconfig_json);
                     var current = tsconfig_json;
                     while (current.extends.len > 0) {
                         const ts_dir_name = Dirname.dirname(current.abs_path);
                         const abs_path = ResolvePath.joinAbsStringBuf(ts_dir_name, bufs(.tsconfig_path_abs), &[_]string{ ts_dir_name, current.extends }, .auto);
                         const parent_config_maybe = r.parseTSConfig(abs_path, bun.invalid_fd) catch |err| {
-                            r.log.addDebugFmt(null, logger.Loc.Empty, r.allocator, "{s} loading tsconfig.json extends {}", .{
+                            r.log.addDebugFmt(null, logger.Loc.Empty, r.allocator, "{s} loading tsconfig.json extends {f}", .{
                                 @errorName(err),
                                 bun.fmt.QuotedFormatter{
                                     .text = abs_path,

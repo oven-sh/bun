@@ -16,12 +16,12 @@ pub fn toHaveNthReturnedWith(this: *Expect, globalThis: *JSGlobalObject, callfra
         return globalThis.throwInvalidArguments("toHaveNthReturnedWith() n must be greater than 0", .{});
     }
 
-    incrementExpectCallCounter();
+    this.incrementExpectCallCounter();
     const returns = try bun.cpp.JSMockFunction__getReturns(globalThis, value);
     if (!returns.jsType().isArray()) {
         var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
         defer formatter.deinit();
-        return globalThis.throw("Expected value must be a mock function: {any}", .{value.toFmt(&formatter)});
+        return globalThis.throw("Expected value must be a mock function: {f}", .{value.toFmt(&formatter)});
     }
 
     const calls_count = @as(u32, @intCast(try returns.getLength(globalThis)));
@@ -65,7 +65,7 @@ pub fn toHaveNthReturnedWith(this: *Expect, globalThis: *JSGlobalObject, callfra
     const signature = comptime getSignature("toHaveNthReturnedWith", "<green>n<r>, <green>expected<r>", false);
 
     if (this.flags.not) {
-        return this.throw(globalThis, comptime getSignature("toHaveNthReturnedWith", "<green>n<r>, <green>expected<r>", true), "\n\n" ++ "Expected mock function not to have returned on call {d}: <green>{any}<r>\n" ++ "But it did.\n", .{ n, expected.toFmt(&formatter) });
+        return this.throw(globalThis, comptime getSignature("toHaveNthReturnedWith", "<green>n<r>, <green>expected<r>", true), "\n\n" ++ "Expected mock function not to have returned on call {d}: <green>{f}<r>\n" ++ "But it did.\n", .{ n, expected.toFmt(&formatter) });
     }
 
     if (!nth_call_exists) {
@@ -73,16 +73,16 @@ pub fn toHaveNthReturnedWith(this: *Expect, globalThis: *JSGlobalObject, callfra
     }
 
     if (nth_call_threw) {
-        return this.throw(globalThis, signature, "\n\n" ++ "Call {d} threw an error: <red>{any}<r>\n", .{ n, nth_error_value.toFmt(&formatter) });
+        return this.throw(globalThis, signature, "\n\n" ++ "Call {d} threw an error: <red>{f}<r>\n", .{ n, nth_error_value.toFmt(&formatter) });
     }
 
     // Diff if possible
     if (expected.isString() and nth_return_value.isString()) {
         const diff_format = DiffFormatter{ .expected = expected, .received = nth_return_value, .globalThis = globalThis, .not = false };
-        return this.throw(globalThis, signature, "\n\nCall {d}:\n{any}\n", .{ n, diff_format });
+        return this.throw(globalThis, signature, "\n\nCall {d}:\n{f}\n", .{ n, diff_format });
     }
 
-    return this.throw(globalThis, signature, "\n\nCall {d}:\nExpected: <green>{any}<r>\nReceived: <red>{any}<r>", .{ n, expected.toFmt(&formatter), nth_return_value.toFmt(&formatter) });
+    return this.throw(globalThis, signature, "\n\nCall {d}:\nExpected: <green>{f}<r>\nReceived: <red>{f}<r>", .{ n, expected.toFmt(&formatter), nth_return_value.toFmt(&formatter) });
 }
 
 const bun = @import("bun");
@@ -92,8 +92,6 @@ const jsc = bun.jsc;
 const CallFrame = bun.jsc.CallFrame;
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
-
-const incrementExpectCallCounter = bun.jsc.Expect.incrementExpectCallCounter;
 const mock = bun.jsc.Expect.mock;
 
 const Expect = bun.jsc.Expect.Expect;

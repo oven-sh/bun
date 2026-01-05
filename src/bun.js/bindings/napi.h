@@ -168,9 +168,11 @@ static bool equal(napi_async_cleanup_hook_handle one, napi_async_cleanup_hook_ha
     } while (0)
 
 // Named this way so we can manipulate napi_env values directly (since napi_env is defined as a pointer to struct napi_env__)
-struct napi_env__ {
+struct NapiEnv : public WTF::RefCounted<NapiEnv> {
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(NapiEnv);
+
 public:
-    napi_env__(Zig::GlobalObject* globalObject, const napi_module& napiModule)
+    NapiEnv(Zig::GlobalObject* globalObject, const napi_module& napiModule)
         : m_globalObject(globalObject)
         , m_napiModule(napiModule)
         , m_vm(JSC::getVM(globalObject))
@@ -178,7 +180,12 @@ public:
         napi_internal_register_cleanup_zig(this);
     }
 
-    ~napi_env__()
+    static Ref<NapiEnv> create(Zig::GlobalObject* globalObject, const napi_module& napiModule)
+    {
+        return adoptRef(*new NapiEnv(globalObject, napiModule));
+    }
+
+    ~NapiEnv()
     {
         delete[] filename;
     }
@@ -303,11 +310,18 @@ public:
 
     void checkGC() const
     {
-        NAPI_RELEASE_ASSERT(!inGC(),
-            "Attempted to call a non-GC-safe function inside a NAPI finalizer from a NAPI module with version %d.\n"
-            "Finalizers must not create new objects during garbage collection. Use the `node_api_post_finalizer` function\n"
-            "inside the finalizer to defer the code to the next event loop tick.\n",
-            m_napiModule.nm_version);
+        // Only enforce GC checks for experimental NAPI versions, matching Node.js behavior
+        // See: https://github.com/nodejs/node/blob/main/src/js_native_api_v8.h#L132-L143
+        if (m_napiModule.nm_version == NAPI_VERSION_EXPERIMENTAL) {
+            if (inGC()) {
+                fprintf(stderr, "FATAL ERROR: Finalizer is calling a function that may affect GC state.\n");
+                fprintf(stderr, "The finalizers are run directly from GC and must not affect GC state.\n");
+                fprintf(stderr, "Use `node_api_post_finalizer` from inside of the finalizer to work around this issue.\n");
+                fprintf(stderr, "It schedules the call as a new task in the event loop.\n");
+                fflush(stderr);
+                NAPI_ABORT("napi_reference_unref");
+            }
+        }
     }
 
     bool isVMTerminating() const
@@ -427,12 +441,12 @@ public:
             }
         }
 
-        void deactivate(napi_env env) const
+        void deactivate(NapiEnv& env) const
         {
-            if (env->isFinishingFinalizers()) {
+            if (env.isFinishingFinalizers()) {
                 active = false;
             } else {
-                env->removeFinalizer(*this);
+                env.removeFinalizer(*this);
                 // At this point the BoundFinalizer has been destroyed, but because we're not doing anything else here it's safe.
                 // https://isocpp.org/wiki/faq/freestore-mgmt#delete-this
             }
@@ -444,7 +458,7 @@ public:
         }
 
         struct Hash {
-            std::size_t operator()(const napi_env__::BoundFinalizer& bound) const
+            std::size_t operator()(const NapiEnv::BoundFinalizer& bound) const
             {
                 constexpr std::hash<void*> hasher;
                 constexpr std::ptrdiff_t magic = 0x9e3779b9;
@@ -652,10 +666,10 @@ public:
     void unref();
     void clear();
 
-    NapiRef(napi_env env, uint32_t count, Bun::NapiFinalizer finalizer)
+    NapiRef(Ref<NapiEnv>&& env, uint32_t count, Bun::NapiFinalizer finalizer)
         : env(env)
         , globalObject(JSC::Weak<JSC::JSGlobalObject>(env->globalObject()))
-        , finalizer(WTFMove(finalizer))
+        , finalizer(WTF::move(finalizer))
         , refCount(count)
     {
     }
@@ -701,7 +715,7 @@ public:
         // calling the finalizer
         Bun::NapiFinalizer saved_finalizer = this->finalizer;
         this->finalizer.clear();
-        saved_finalizer.call(env, nativeObject, !env->mustDeferFinalizers() || !env->inGC());
+        saved_finalizer.call(env.ptr(), nativeObject, !env->mustDeferFinalizers() || !env->inGC());
     }
 
     ~NapiRef()
@@ -721,12 +735,12 @@ public:
         weakValueRef.clear();
     }
 
-    napi_env env = nullptr;
+    WTF::Ref<NapiEnv> env;
     JSC::Weak<JSC::JSGlobalObject> globalObject;
     NapiWeakValue weakValueRef;
     JSC::Strong<JSC::Unknown> strongRef;
     Bun::NapiFinalizer finalizer;
-    const napi_env__::BoundFinalizer* boundCleanup = nullptr;
+    const NapiEnv::BoundFinalizer* boundCleanup = nullptr;
     void* nativeObject = nullptr;
     uint32_t refCount = 0;
     bool releaseOnWeaken = false;

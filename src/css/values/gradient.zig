@@ -188,7 +188,7 @@ pub const Gradient = union(enum) {
         }.parse);
     }
 
-    pub fn toCss(this: *const Gradient, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const Gradient, dest: *Printer) PrintErr!void {
         const f: []const u8, const prefix: ?css.VendorPrefix = switch (this.*) {
             .linear => |g| .{ "linear-gradient(", g.vendor_prefix },
             .repeating_linear => |g| .{ "repeating-linear-gradient(", g.vendor_prefix },
@@ -200,23 +200,23 @@ pub const Gradient = union(enum) {
         };
 
         if (prefix) |p| {
-            try p.toCss(W, dest);
+            try p.toCss(dest);
         }
 
         try dest.writeStr(f);
 
         switch (this.*) {
             .linear, .repeating_linear => |*linear| {
-                try linear.toCss(W, dest, linear.vendor_prefix != css.VendorPrefix{ .none = true });
+                try linear.toCss(dest, linear.vendor_prefix != css.VendorPrefix{ .none = true });
             },
             .radial, .repeating_radial => |*radial| {
-                try radial.toCss(W, dest);
+                try radial.toCss(dest);
             },
             .conic, .repeating_conic => |*conic| {
-                try conic.toCss(W, dest);
+                try conic.toCss(dest);
             },
             .@"webkit-gradient" => |*g| {
-                try g.toCss(W, dest);
+                try g.toCss(dest);
             },
         }
 
@@ -369,7 +369,7 @@ pub const LinearGradient = struct {
         return .{ .result = LinearGradient{ .direction = direction, .items = items, .vendor_prefix = vendor_prefix } };
     }
 
-    pub fn toCss(this: *const LinearGradient, comptime W: type, dest: *Printer(W), is_prefixed: bool) PrintErr!void {
+    pub fn toCss(this: *const LinearGradient, dest: *Printer, is_prefixed: bool) PrintErr!void {
         const angle: f32 = switch (this.direction) {
             .vertical => |v| switch (v) {
                 .bottom => 180.0,
@@ -382,7 +382,7 @@ pub const LinearGradient = struct {
         // We can omit `to bottom` or `180deg` because it is the default.
         if (angle == 180.0) {
             // todo_stuff.depth
-            try serializeItems(LengthPercentage, &this.items, W, dest);
+            try serializeItems(LengthPercentage, &this.items, dest);
         }
         // If we have `to top` or `0deg`, and all of the positions and hints are percentages,
         // we can flip the gradient the other direction and omit the direction.
@@ -420,16 +420,16 @@ pub const LinearGradient = struct {
                 }
             }
 
-            serializeItems(LengthPercentage, &flipped_items, W, dest) catch return dest.addFmtError();
+            serializeItems(LengthPercentage, &flipped_items, dest) catch return dest.addFmtError();
         } else {
-            if ((this.direction != .vertical or this.direction.vertical != .bottom) and
-                (this.direction != .angle or this.direction.angle.deg != 180.0))
+            if (!this.direction.eql(&LineDirection{ .vertical = .bottom }) and
+                !this.direction.eql(&LineDirection{ .angle = Angle{ .deg = 180.0 } }))
             {
-                try this.direction.toCss(W, dest, is_prefixed);
+                try this.direction.toCss(dest, is_prefixed);
                 try dest.delim(',', false);
             }
 
-            serializeItems(LengthPercentage, &this.items, W, dest) catch return dest.addFmtError();
+            serializeItems(LengthPercentage, &this.items, dest) catch return dest.addFmtError();
         }
     }
 
@@ -510,9 +510,9 @@ pub const RadialGradient = struct {
         };
     }
 
-    pub fn toCss(this: *const RadialGradient, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const RadialGradient, dest: *Printer) PrintErr!void {
         if (!std.meta.eql(this.shape, EndingShape.default())) {
-            try this.shape.toCss(W, dest);
+            try this.shape.toCss(dest);
             if (this.position.isCenter()) {
                 try dest.delim(',', false);
             } else {
@@ -522,11 +522,11 @@ pub const RadialGradient = struct {
 
         if (!this.position.isCenter()) {
             try dest.writeStr("at ");
-            try this.position.toCss(W, dest);
+            try this.position.toCss(dest);
             try dest.delim(',', false);
         }
 
-        try serializeItems(LengthPercentage, &this.items, W, dest);
+        try serializeItems(LengthPercentage, &this.items, dest);
     }
 
     pub fn isCompatible(this: *const @This(), browsers: css.targets.Browsers) bool {
@@ -601,10 +601,10 @@ pub const ConicGradient = struct {
         } };
     }
 
-    pub fn toCss(this: *const ConicGradient, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const ConicGradient, dest: *Printer) PrintErr!void {
         if (!this.angle.isZero()) {
             try dest.writeStr("from ");
-            try this.angle.toCss(W, dest);
+            try this.angle.toCss(dest);
 
             if (this.position.isCenter()) {
                 try dest.delim(',', false);
@@ -615,11 +615,11 @@ pub const ConicGradient = struct {
 
         if (!this.position.isCenter()) {
             try dest.writeStr("at ");
-            try this.position.toCss(W, dest);
+            try this.position.toCss(dest);
             try dest.delim(',', false);
         }
 
-        return try serializeItems(AnglePercentage, &this.items, W, dest);
+        return try serializeItems(AnglePercentage, &this.items, dest);
     }
 
     pub fn isCompatible(this: *const @This(), browsers: css.targets.Browsers) bool {
@@ -763,32 +763,32 @@ pub const WebKitGradient = union(enum) {
         }
     }
 
-    pub fn toCss(this: *const WebKitGradient, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const WebKitGradient, dest: *Printer) PrintErr!void {
         switch (this.*) {
             .linear => |*linear| {
                 try dest.writeStr("linear");
                 try dest.delim(',', false);
-                try linear.from.toCss(W, dest);
+                try linear.from.toCss(dest);
                 try dest.delim(',', false);
-                try linear.to.toCss(W, dest);
+                try linear.to.toCss(dest);
                 for (linear.stops.items) |*stop| {
                     try dest.delim(',', false);
-                    try stop.toCss(W, dest);
+                    try stop.toCss(dest);
                 }
             },
             .radial => |*radial| {
                 try dest.writeStr("radial");
                 try dest.delim(',', false);
-                try radial.from.toCss(W, dest);
+                try radial.from.toCss(dest);
                 try dest.delim(',', false);
-                try CSSNumberFns.toCss(&radial.r0, W, dest);
+                try CSSNumberFns.toCss(&radial.r0, dest);
                 try dest.delim(',', false);
-                try radial.to.toCss(W, dest);
+                try radial.to.toCss(dest);
                 try dest.delim(',', false);
-                try CSSNumberFns.toCss(&radial.r1, W, dest);
+                try CSSNumberFns.toCss(&radial.r1, dest);
                 for (radial.stops.items) |*stop| {
                     try dest.delim(',', false);
-                    try stop.toCss(W, dest);
+                    try stop.toCss(dest);
                 }
             },
         }
@@ -987,9 +987,9 @@ pub const LineDirection = union(enum) {
         return .{ .result = LineDirection{ .vertical = y } };
     }
 
-    pub fn toCss(this: *const LineDirection, comptime W: type, dest: *Printer(W), is_prefixed: bool) PrintErr!void {
+    pub fn toCss(this: *const LineDirection, dest: *Printer, is_prefixed: bool) PrintErr!void {
         switch (this.*) {
-            .angle => |*angle| try angle.toCss(W, dest),
+            .angle => |*angle| try angle.toCss(dest),
             .horizontal => |*k| {
                 if (dest.minify) {
                     try dest.writeStr(switch (k.*) {
@@ -1000,7 +1000,7 @@ pub const LineDirection = union(enum) {
                     if (!is_prefixed) {
                         try dest.writeStr("to ");
                     }
-                    try k.toCss(W, dest);
+                    try k.toCss(dest);
                 }
             },
             .vertical => |*k| {
@@ -1013,16 +1013,16 @@ pub const LineDirection = union(enum) {
                     if (!is_prefixed) {
                         try dest.writeStr("to ");
                     }
-                    try k.toCss(W, dest);
+                    try k.toCss(dest);
                 }
             },
             .corner => |*c| {
                 if (!is_prefixed) {
                     try dest.writeStr("to ");
                 }
-                try c.vertical.toCss(W, dest);
+                try c.vertical.toCss(dest);
                 try dest.writeChar(' ');
-                try c.horizontal.toCss(W, dest);
+                try c.horizontal.toCss(dest);
             },
         }
     }
@@ -1039,10 +1039,10 @@ pub fn GradientItem(comptime D: type) type {
         /// A color interpolation hint.
         hint: D,
 
-        pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
+        pub fn toCss(this: *const @This(), dest: *Printer) PrintErr!void {
             return switch (this.*) {
-                .color_stop => |*c| try c.toCss(W, dest),
-                .hint => |*h| try css.generic.toCss(D, h, W, dest),
+                .color_stop => |*c| try c.toCss(dest),
+                .hint => |*h| try css.generic.toCss(D, h, dest),
             };
         }
 
@@ -1128,10 +1128,10 @@ pub const WebKitGradientPoint = struct {
         return .{ .result = .{ .x = x, .y = y } };
     }
 
-    pub fn toCss(this: *const WebKitGradientPoint, comptime W: type, dest: *Printer(W)) PrintErr!void {
-        try this.x.toCss(W, dest);
+    pub fn toCss(this: *const WebKitGradientPoint, dest: *Printer) PrintErr!void {
+        try this.x.toCss(dest);
         try dest.writeChar(' ');
-        return try this.y.toCss(W, dest);
+        return try this.y.toCss(dest);
     }
 
     pub fn eql(this: *const WebKitGradientPoint, other: *const WebKitGradientPoint) bool {
@@ -1171,7 +1171,7 @@ pub fn WebKitGradientPointComponent(comptime S: type) type {
             return .{ .result = .{ .side = keyword } };
         }
 
-        pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
+        pub fn toCss(this: *const This, dest: *Printer) PrintErr!void {
             switch (this.*) {
                 .center => {
                     if (dest.minify) {
@@ -1184,15 +1184,15 @@ pub fn WebKitGradientPointComponent(comptime S: type) type {
                     if (lp.* == .percentage and lp.percentage.v == 0.0) {
                         try dest.writeChar('0');
                     } else {
-                        try lp.toCss(W, dest);
+                        try lp.toCss(dest);
                     }
                 },
                 .side => |*s| {
                     if (dest.minify) {
                         const lp: LengthPercentage = s.intoLengthPercentage();
-                        try lp.toCss(W, dest);
+                        try lp.toCss(dest);
                     } else {
-                        try s.toCss(W, dest);
+                        try s.toCss(dest);
                     }
                 },
             }
@@ -1272,18 +1272,18 @@ pub const WebKitColorStop = struct {
         );
     }
 
-    pub fn toCss(this: *const WebKitColorStop, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const WebKitColorStop, dest: *Printer) PrintErr!void {
         if (this.position == 0.0) {
             try dest.writeStr("from(");
-            try this.color.toCss(W, dest);
+            try this.color.toCss(dest);
         } else if (this.position == 1.0) {
             try dest.writeStr("to(");
-            try this.color.toCss(W, dest);
+            try this.color.toCss(dest);
         } else {
             try dest.writeStr("color-stop(");
-            try css.generic.toCss(CSSNumber, &this.position, W, dest);
+            try css.generic.toCss(CSSNumber, &this.position, dest);
             try dest.delim(',', false);
-            try this.color.toCss(W, dest);
+            try this.color.toCss(dest);
         }
         try dest.writeChar(')');
     }
@@ -1329,11 +1329,11 @@ pub fn ColorStop(comptime D: type) type {
             return .{ .result = .{ .color = color, .position = position } };
         }
 
-        pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
-            try this.color.toCss(W, dest);
+        pub fn toCss(this: *const This, dest: *Printer) PrintErr!void {
+            try this.color.toCss(dest);
             if (this.position) |*position| {
                 try dest.writeChar(' ');
-                try css.generic.toCss(D, position, W, dest);
+                try css.generic.toCss(D, position, dest);
             }
             return;
         }
@@ -1411,15 +1411,15 @@ pub const Ellipse = union(enum) {
         return .{ .err = input.newErrorForNextToken() };
     }
 
-    pub fn toCss(this: *const Ellipse, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const Ellipse, dest: *Printer) PrintErr!void {
         // The `ellipse` keyword is optional, so we don't emit it.
         return switch (this.*) {
             .size => |*s| {
-                try s.x.toCss(W, dest);
+                try s.x.toCss(dest);
                 try dest.writeChar(' ');
-                return try s.y.toCss(W, dest);
+                return try s.y.toCss(dest);
             },
-            .extent => |*e| try e.toCss(W, dest),
+            .extent => |*e| try e.toCss(dest),
         };
     }
 
@@ -1458,8 +1458,8 @@ pub const ShapeExtent = enum {
         return css.implementDeepClone(@This(), this, allocator);
     }
 
-    pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
-        return css.enum_property_util.toCss(@This(), this, W, dest);
+    pub fn toCss(this: *const @This(), dest: *Printer) PrintErr!void {
+        return css.enum_property_util.toCss(@This(), this, dest);
     }
 };
 
@@ -1502,14 +1502,14 @@ pub const Circle = union(enum) {
         return .{ .err = input.newErrorForNextToken() };
     }
 
-    pub fn toCss(this: *const Circle, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const Circle, dest: *Printer) PrintErr!void {
         return switch (this.*) {
-            .radius => |r| try r.toCss(W, dest),
+            .radius => |r| try r.toCss(dest),
             .extent => |extent| {
                 try dest.writeStr("circle");
                 if (extent != .@"farthest-corner") {
                     try dest.writeChar(' ');
-                    try extent.toCss(W, dest);
+                    try extent.toCss(dest);
                 }
             },
         };
@@ -1580,8 +1580,7 @@ pub fn parseItems(comptime D: type, input: *css.Parser) Result(ArrayList(Gradien
 pub fn serializeItems(
     comptime D: type,
     items: *const ArrayList(GradientItem(D)),
-    comptime W: type,
-    dest: *Printer(W),
+    dest: *Printer,
 ) PrintErr!void {
     var first = true;
     var last: ?*const GradientItem(D) = null;
@@ -1599,7 +1598,7 @@ pub fn serializeItems(
                     prev.color_stop.color.eql(&item.color_stop.color))
                 {
                     try dest.writeChar(' ');
-                    try item.color_stop.position.?.toCss(W, dest);
+                    try item.color_stop.position.?.toCss(dest);
                     last = null;
                     continue;
                 }
@@ -1611,7 +1610,7 @@ pub fn serializeItems(
         } else {
             try dest.delim(',', false);
         }
-        try item.toCss(W, dest);
+        try item.toCss(dest);
         last = item;
     }
 }

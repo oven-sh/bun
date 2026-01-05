@@ -490,7 +490,7 @@ pub fn toAST(
     value: Type,
 ) anyerror!js_ast.Expr {
     const type_info: std.builtin.Type = @typeInfo(Type);
-    
+
     // Check if type has custom toExprForJSON method (only for structs, unions, and enums)
     switch (type_info) {
         .@"struct", .@"union", .@"enum" => {
@@ -548,7 +548,7 @@ pub fn toAST(
                 const exprs = try allocator.alloc(Expr, value.len);
                 for (exprs, 0..) |*ex, i| ex.* = try toAST(allocator, @TypeOf(value[i]), value[i]);
 
-                return Expr.init(js_ast.E.Array, js_ast.E.Array{ .items = .init(exprs) }, logger.Loc.Empty);
+                return Expr.init(js_ast.E.Array, js_ast.E.Array{ .items = js_ast.ExprNodeList.fromOwnedSlice(exprs) }, logger.Loc.Empty);
             },
             else => @compileError("Unable to stringify type '" ++ @typeName(T) ++ "'"),
         },
@@ -570,10 +570,10 @@ pub fn toAST(
                     const slice = value.slice();
                     const exprs = try allocator.alloc(Expr, slice.len);
                     for (exprs, 0..) |*ex, i| ex.* = try toAST(allocator, @TypeOf(slice[i]), slice[i]);
-                    return Expr.init(js_ast.E.Array, js_ast.E.Array{ .items = .init(exprs) }, logger.Loc.Empty);
+                    return Expr.init(js_ast.E.Array, js_ast.E.Array{ .items = js_ast.ExprNodeList.fromOwnedSlice(exprs) }, logger.Loc.Empty);
                 }
             }
-            
+
             const fields: []const std.builtin.Type.StructField = Struct.fields;
             var properties = try BabyList(js_ast.G.Property).initCapacity(allocator, fields.len);
 

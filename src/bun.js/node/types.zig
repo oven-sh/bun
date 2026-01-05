@@ -68,14 +68,10 @@ pub const BlobOrStringOrBuffer = union(enum) {
     }
 
     pub fn fromJSWithEncodingValue(global: *jsc.JSGlobalObject, allocator: std.mem.Allocator, value: jsc.JSValue, encoding_value: jsc.JSValue) bun.JSError!?BlobOrStringOrBuffer {
-        return fromJSWithEncodingValueMaybeAsync(global, allocator, value, encoding_value, false);
+        return fromJSWithEncodingValueAllowRequestResponse(global, allocator, value, encoding_value, false);
     }
 
-    pub fn fromJSWithEncodingValueMaybeAsync(global: *jsc.JSGlobalObject, allocator: std.mem.Allocator, value: jsc.JSValue, encoding_value: jsc.JSValue, is_async: bool) bun.JSError!?BlobOrStringOrBuffer {
-        return fromJSWithEncodingValueMaybeAsyncAllowRequestResponse(global, allocator, value, encoding_value, is_async, false);
-    }
-
-    pub fn fromJSWithEncodingValueMaybeAsyncAllowRequestResponse(global: *jsc.JSGlobalObject, allocator: std.mem.Allocator, value: jsc.JSValue, encoding_value: jsc.JSValue, is_async: bool, allow_request_response: bool) bun.JSError!?BlobOrStringOrBuffer {
+    pub fn fromJSWithEncodingValueAllowRequestResponse(global: *jsc.JSGlobalObject, allocator: std.mem.Allocator, value: jsc.JSValue, encoding_value: jsc.JSValue, allow_request_response: bool) bun.JSError!?BlobOrStringOrBuffer {
         switch (value.jsType()) {
             .DOMWrapper => {
                 if (value.as(jsc.WebCore.Blob)) |blob| {
@@ -116,7 +112,7 @@ pub const BlobOrStringOrBuffer = union(enum) {
         }
 
         const allow_string_object = true;
-        return .{ .string_or_buffer = try StringOrBuffer.fromJSWithEncodingValueMaybeAsync(global, allocator, value, encoding_value, is_async, allow_string_object) orelse return null };
+        return .{ .string_or_buffer = try StringOrBuffer.fromJSWithEncodingValueAllowStringObject(global, allocator, value, encoding_value, allow_string_object) orelse return null };
     }
 };
 
@@ -255,7 +251,15 @@ pub const StringOrBuffer = union(enum) {
             .BigInt64Array,
             .BigUint64Array,
             .DataView,
-            => .{ .buffer = Buffer.fromArrayBuffer(global, value) },
+            => {
+                const buffer = Buffer.fromArrayBuffer(global, value);
+
+                if (is_async) {
+                    buffer.buffer.value.protect();
+                }
+
+                return .{ .buffer = buffer };
+            },
             else => null,
         };
     }
@@ -270,7 +274,11 @@ pub const StringOrBuffer = union(enum) {
 
     pub fn fromJSWithEncodingMaybeAsync(global: *jsc.JSGlobalObject, allocator: std.mem.Allocator, value: jsc.JSValue, encoding: Encoding, is_async: bool, allow_string_object: bool) bun.JSError!?StringOrBuffer {
         if (value.isCell() and value.jsType().isArrayBufferLike()) {
-            return .{ .buffer = Buffer.fromTypedArray(global, value) };
+            const buffer = Buffer.fromArrayBuffer(global, value);
+            if (is_async) {
+                buffer.buffer.value.protect();
+            }
+            return .{ .buffer = buffer };
         }
 
         if (encoding == .utf8) {
@@ -303,13 +311,14 @@ pub const StringOrBuffer = union(enum) {
         return fromJSWithEncoding(global, allocator, value, encoding);
     }
 
-    pub fn fromJSWithEncodingValueMaybeAsync(global: *jsc.JSGlobalObject, allocator: std.mem.Allocator, value: jsc.JSValue, encoding_value: jsc.JSValue, maybe_async: bool, allow_string_object: bool) bun.JSError!?StringOrBuffer {
+    pub fn fromJSWithEncodingValueAllowStringObject(global: *jsc.JSGlobalObject, allocator: std.mem.Allocator, value: jsc.JSValue, encoding_value: jsc.JSValue, allow_string_object: bool) bun.JSError!?StringOrBuffer {
         const encoding: Encoding = brk: {
             if (!encoding_value.isCell())
                 break :brk .utf8;
             break :brk try Encoding.fromJS(encoding_value, global) orelse .utf8;
         };
-        return fromJSWithEncodingMaybeAsync(global, allocator, value, encoding, maybe_async, allow_string_object);
+        const is_async = false;
+        return fromJSWithEncodingMaybeAsync(global, allocator, value, encoding, is_async, allow_string_object);
     }
 };
 

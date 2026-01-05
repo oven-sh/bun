@@ -680,11 +680,19 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
             const length_of_filename_u8 = @intFromPtr(read_ptr) -
                 @intFromPtr(buf1_u8) - 2 * (nt_object_prefix.len + "\x00".len);
             const filename = buf1_u8[2 * nt_object_prefix.len ..][0..length_of_filename_u8];
+            const filename_u16 = std.mem.bytesAsSlice(u16, filename);
             if (dbg) {
-                const sliced = std.mem.bytesAsSlice(u16, filename);
-                debug("filename and quote: '{f}'", .{fmt16(@alignCast(sliced))});
-                debug("last char of above is '{}'", .{sliced[sliced.len - 1]});
-                assert(sliced[sliced.len - 1] == '\"');
+                debug("filename and quote: '{f}'", .{fmt16(@alignCast(filename_u16))});
+                if (filename_u16.len > 0) {
+                    debug("last char of above is '{}'", .{filename_u16[filename_u16.len - 1]});
+                }
+            }
+            // The filename must end with a quote character as per the bunx file format.
+            // If it doesn't, the file is corrupt - fall back to the slow path in non-standalone mode.
+            if (filename_u16.len == 0 or filename_u16[filename_u16.len - 1] != '"') {
+                if (!is_standalone and mode == .launch)
+                    return;
+                return mode.fail(.InvalidShimValidation);
             }
 
             @memcpy(
@@ -700,7 +708,8 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
             }
             const advance = shebang_arg_len_u8 + 2 * "\"".len + length_of_filename_u8;
             var write_ptr: [*]u16 = @ptrFromInt(@intFromPtr(buf2_u8) + advance);
-            assert((write_ptr - 1)[0] == '"');
+            // The quote was already validated above, this is just a sanity check in debug mode
+            if (dbg) assert((write_ptr - 1)[0] == '"');
 
             if (user_arguments_u8.len > 0) {
                 // Copy the user arguments in:

@@ -16,11 +16,22 @@ pub const dom_call = DOMCall("FFI", @This(), "ptr", DOMEffect.forRead(.TypedArra
 pub fn toJS(globalObject: *jsc.JSGlobalObject) jsc.JSValue {
     const object = jsc.JSValue.createEmptyObject(globalObject, comptime std.meta.fieldNames(@TypeOf(fields)).len + 2);
     inline for (comptime std.meta.fieldNames(@TypeOf(fields))) |field| {
-        object.put(
-            globalObject,
-            comptime ZigString.static(field),
-            jsc.JSFunction.create(globalObject, field, @field(fields, field), 1, .{}),
-        );
+        if (comptime bun.strings.eqlComptime(field, "CString")) {
+            // CString needs to be callable as a constructor for backward compatibility.
+            // Pass the same function as the constructor so `new CString(ptr)` works.
+            const func = jsc.toJSHostFn(@field(fields, field));
+            object.put(
+                globalObject,
+                comptime ZigString.static(field),
+                jsc.JSFunction.create(globalObject, field, func, 1, .{ .constructor = func }),
+            );
+        } else {
+            object.put(
+                globalObject,
+                comptime ZigString.static(field),
+                jsc.JSFunction.create(globalObject, field, @field(fields, field), 1, .{}),
+            );
+        }
     }
 
     dom_call.put(globalObject, object);

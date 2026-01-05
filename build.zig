@@ -607,7 +607,7 @@ fn configureObj(b: *Build, opts: *BunBuildOptions, obj: *Compile) void {
             obj.llvm_codegen_threads = opts.llvm_codegen_threads orelse 0;
     }
 
-    obj.no_link_obj = opts.os != .windows;
+    obj.no_link_obj = opts.os != .windows and !opts.no_llvm;
 
 
     if (opts.enable_asan and !enableFastBuild(b)) {

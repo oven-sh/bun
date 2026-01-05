@@ -1176,8 +1176,8 @@ describe.todoIf(isWindows)("Bun.spawn with terminal option", () => {
     // Spawn sleep which will run until interrupted
     await using proc = Bun.spawn(["sleep", "100"], { terminal, timeout: 2000 });
 
-    // Wait for process to start
-    await Bun.sleep(100);
+    // Wait for process to start - use longer delay for CI reliability
+    await Bun.sleep(300);
 
     // Send Ctrl+C - should send SIGINT and interrupt sleep
     terminal.write("\x03");
@@ -1218,7 +1218,7 @@ describe.todoIf(isWindows)("Bun.spawn with terminal option", () => {
 
     // Second spawn - interrupt with Ctrl+C
     await using proc2 = Bun.spawn(["sleep", "100"], { terminal, timeout: 2000 });
-    await Bun.sleep(100);
+    await Bun.sleep(300);
     terminal.write("\x03");
 
     await proc2.exited;

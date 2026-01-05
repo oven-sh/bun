@@ -315,6 +315,10 @@ pub const SideEffects = enum(u1) {
                     );
                 }
 
+                if (result.isMissing()) {
+                    return null;
+                }
+
                 return result;
             },
             .e_array => {

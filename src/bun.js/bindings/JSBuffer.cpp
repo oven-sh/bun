@@ -80,6 +80,10 @@
 
 extern "C" bool Bun__Node__ZeroFillBuffers;
 
+// SIMD-optimized search functions from highway_strings.cpp
+extern "C" void* highway_memmem(const uint8_t* haystack, size_t haystack_len, const uint8_t* needle, size_t needle_len);
+extern "C" size_t highway_index_of_char(const uint8_t* haystack, size_t haystack_len, uint8_t needle);
+
 // export fn Bun__inspect_singleline(globalThis: *JSGlobalObject, value: JSValue) bun.String
 extern "C" BunString Bun__inspect_singleline(JSC::JSGlobalObject* globalObject, JSC::JSValue value);
 
@@ -352,7 +356,7 @@ JSC::EncodedJSValue JSBuffer__bufferFromPointerAndLengthAndDeinit(JSC::JSGlobalO
             bytesDeallocator(p, ctx);
         }));
 
-        uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTFMove(buffer), 0, length);
+        uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTF::move(buffer), 0, length);
     } else {
         uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, 0);
     }
@@ -409,7 +413,7 @@ static JSC::EncodedJSValue writeToBuffer(JSC::JSGlobalObject* lexicalGlobalObjec
 JSC::JSUint8Array* createBuffer(JSC::JSGlobalObject* lexicalGlobalObject, Ref<JSC::ArrayBuffer>&& backingStore)
 {
     size_t length = backingStore->byteLength();
-    return JSC::JSUint8Array::create(lexicalGlobalObject, defaultGlobalObject(lexicalGlobalObject)->JSBufferSubclassStructure(), WTFMove(backingStore), 0, length);
+    return JSC::JSUint8Array::create(lexicalGlobalObject, defaultGlobalObject(lexicalGlobalObject)->JSBufferSubclassStructure(), WTF::move(backingStore), 0, length);
 }
 
 JSC::JSUint8Array* createBuffer(JSC::JSGlobalObject* lexicalGlobalObject, const uint8_t* ptr, size_t length)
@@ -1377,11 +1381,20 @@ static ssize_t indexOfOffset(size_t length, ssize_t offset_i64, ssize_t needle_l
 
 static int64_t indexOf(const uint8_t* thisPtr, int64_t thisLength, const uint8_t* valuePtr, int64_t valueLength, int64_t byteOffset)
 {
-    auto haystack = std::span<const uint8_t>(thisPtr, thisLength).subspan(byteOffset);
-    auto needle = std::span<const uint8_t>(valuePtr, valueLength);
-    auto it = std::search(haystack.begin(), haystack.end(), needle.begin(), needle.end());
-    if (it == haystack.end()) return -1;
-    return byteOffset + std::distance(haystack.begin(), it);
+    const size_t haystackLen = static_cast<size_t>(thisLength - byteOffset);
+    const uint8_t* haystackPtr = thisPtr + byteOffset;
+
+    if (valueLength == 1) {
+        // Use SIMD-optimized single-byte search
+        size_t result = highway_index_of_char(haystackPtr, haystackLen, valuePtr[0]);
+        if (result == haystackLen) return -1;
+        return byteOffset + static_cast<int64_t>(result);
+    }
+
+    // Use SIMD-optimized multi-byte search
+    void* result = highway_memmem(haystackPtr, haystackLen, valuePtr, static_cast<size_t>(valueLength));
+    if (result == nullptr) return -1;
+    return byteOffset + static_cast<int64_t>(static_cast<const uint8_t*>(result) - haystackPtr);
 }
 
 static int64_t indexOf16(const uint8_t* thisPtr, int64_t thisLength, const uint8_t* valuePtr, int64_t valueLength, int64_t byteOffset)
@@ -1771,7 +1784,7 @@ JSC::EncodedJSValue jsBufferToStringFromBytes(JSGlobalObject* lexicalGlobalObjec
         }
 
         memcpy(data.data(), bytes.data(), bytes.size());
-        return JSValue::encode(jsString(vm, WTFMove(str)));
+        return JSValue::encode(jsString(vm, WTF::move(str)));
     }
     case BufferEncodingType::ucs2:
     case BufferEncodingType::utf16le: {
@@ -1786,7 +1799,7 @@ JSC::EncodedJSValue jsBufferToStringFromBytes(JSGlobalObject* lexicalGlobalObjec
             return {};
         }
         memcpy(reinterpret_cast<void*>(data.data()), bytes.data(), u16length * 2);
-        return JSValue::encode(jsString(vm, WTFMove(str)));
+        return JSValue::encode(jsString(vm, WTF::move(str)));
     }
     case BufferEncodingType::ascii: {
         std::span<Latin1Character> data;
@@ -1796,7 +1809,7 @@ JSC::EncodedJSValue jsBufferToStringFromBytes(JSGlobalObject* lexicalGlobalObjec
             return {};
         }
         Bun__encoding__writeLatin1(bytes.data(), bytes.size(), data.data(), data.size(), static_cast<uint8_t>(encoding));
-        return JSValue::encode(jsString(vm, WTFMove(str)));
+        return JSValue::encode(jsString(vm, WTF::move(str)));
     }
 
     case WebCore::BufferEncodingType::utf8:
@@ -2167,7 +2180,7 @@ extern "C" JSC::EncodedJSValue JSBuffer__fromMmap(Zig::GlobalObject* globalObjec
 #endif
     }));
 
-    auto* view = JSC::JSUint8Array::create(globalObject, structure, WTFMove(buffer), 0, length);
+    auto* view = JSC::JSUint8Array::create(globalObject, structure, WTF::move(buffer), 0, length);
     RETURN_IF_EXCEPTION(scope, {});
 
     if (!view) [[unlikely]] {
@@ -2889,7 +2902,7 @@ EncodedJSValue constructBufferFromArrayBuffer(JSC::ThrowScope& throwScope, JSGlo
     auto isResizableOrGrowableShared = jsBuffer->isResizableOrGrowableShared();
     if (isResizableOrGrowableShared) {
         auto* subclassStructure = globalObject->JSResizableOrGrowableSharedBufferSubclassStructure();
-        auto* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTFMove(buffer), offset, std::nullopt);
+        auto* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTF::move(buffer), offset, std::nullopt);
         RETURN_IF_EXCEPTION(throwScope, {});
         if (!uint8Array) [[unlikely]] {
             throwOutOfMemoryError(globalObject, throwScope);
@@ -2898,7 +2911,7 @@ EncodedJSValue constructBufferFromArrayBuffer(JSC::ThrowScope& throwScope, JSGlo
         RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(uint8Array));
     }
     auto* subclassStructure = globalObject->JSBufferSubclassStructure();
-    auto* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTFMove(buffer), offset, length);
+    auto* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTF::move(buffer), offset, length);
     RETURN_IF_EXCEPTION(throwScope, {});
     if (!uint8Array) [[unlikely]] {
         throwOutOfMemoryError(globalObject, throwScope);

@@ -69,6 +69,7 @@
     macro(spawn) \
     macro(spawnSync) \
     macro(stringWidth) \
+    macro(traceShellScript) \
     macro(udpSocket) \
     macro(which) \
     macro(write) \

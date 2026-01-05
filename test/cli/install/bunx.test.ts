@@ -793,6 +793,77 @@ console.log("EXECUTED: multi-tool-alt (alternate binary)");
   });
 });
 
+describe("bunx caching behavior", () => {
+  const run = async (...args: string[]): Promise<{ err: string; out: string; exited: number }> => {
+    const subprocess = spawn({
+      cmd: [bunExe(), "x", ...args],
+      cwd: x_dir,
+      stdout: "pipe",
+      stdin: "inherit",
+      stderr: "pipe",
+      env,
+    });
+
+    const [err, out, exited] = await Promise.all([
+      subprocess.stderr.text(),
+      subprocess.stdout.text(),
+      subprocess.exited,
+    ]);
+
+    return { err, out, exited };
+  };
+
+  it("should use cached binary on second run without version specified", async () => {
+    // First run - should install
+    const first = await run("uglify-js", "-v");
+    expect(first.err).not.toContain("error:");
+    expect(first.out).toContain("uglify-js");
+    expect(first.exited).toBe(0);
+    // First run should show install progress
+    expect(first.err).toContain("Saved lockfile");
+
+    // Second run - should use cache, no install messages
+    const second = await run("uglify-js", "-v");
+    expect(second.err).not.toContain("error:");
+    expect(second.out).toContain("uglify-js");
+    expect(second.exited).toBe(0);
+    // Second run should NOT show install progress
+    expect(second.err).not.toContain("Resolving");
+    expect(second.err).not.toContain("Saved lockfile");
+  });
+
+  it("should suppress progress messages when explicitly specifying @latest for already installed package", async () => {
+    // First run without version - should install and show progress
+    const first = await run("uglify-js", "-v");
+    expect(first.err).not.toContain("error:");
+    expect(first.out).toContain("uglify-js");
+    expect(first.exited).toBe(0);
+
+    // Second run with @latest - should be silent (no progress messages)
+    const second = await run("uglify-js@latest", "-v");
+    expect(second.err).not.toContain("error:");
+    expect(second.out).toContain("uglify-js");
+    expect(second.exited).toBe(0);
+    // Explicit @latest should suppress progress messages
+    expect(second.err).not.toContain("Resolving");
+    expect(second.err).not.toContain("Saved lockfile");
+  });
+
+  it("should show progress when --verbose is passed with @latest", async () => {
+    // First install
+    const first = await run("uglify-js", "-v");
+    expect(first.exited).toBe(0);
+
+    // With --verbose, progress should be shown even with @latest
+    const verbose = await run("--verbose", "uglify-js@latest", "-v");
+    expect(verbose.err).not.toContain("error:");
+    expect(verbose.out).toContain("uglify-js");
+    expect(verbose.exited).toBe(0);
+    // --verbose should override silent behavior
+    expect(verbose.err).toContain("Resolving");
+  });
+});
+
 // Regression test: bunx should not crash on corrupted .bunx files (Windows only)
 // When the .bunx metadata file is corrupted (e.g., missing quote terminator in bin_path),
 // bunx should gracefully fall back to the slow path instead of panicking.

@@ -544,7 +544,10 @@ pub const BunxCommand = struct {
 
         const passthrough = opts.passthrough_list.items;
 
-        var do_cache_bust = update_request.version.tag == .dist_tag;
+        // Only cache-bust when the user explicitly specifies a dist tag like @latest or @beta.
+        // When no version is specified (version.literal.isEmpty()), we should use the cached
+        // version if it's fresh, not force a re-fetch every time.
+        var do_cache_bust = update_request.version.tag == .dist_tag and !update_request.version.literal.isEmpty();
         const look_for_existing_bin = update_request.version.literal.isEmpty() or update_request.version.tag != .dist_tag;
 
         debug("try run existing? {}", .{look_for_existing_bin});
@@ -711,7 +714,7 @@ pub const BunxCommand = struct {
             package_json.writeAll("{}\n") catch {};
         }
 
-        var args = bun.BoundedArray([]const u8, 8).fromSlice(&.{
+        var args = bun.BoundedArray([]const u8, 9).fromSlice(&.{
             try bun.selfExePath(),
             "add",
             install_param,
@@ -728,6 +731,14 @@ pub const BunxCommand = struct {
             // forcefully re-install packages in this mode too
             args.append("--force") catch
                 unreachable; // upper bound is known
+
+            // When explicitly specifying a dist tag like @latest, the package is likely
+            // already installed at the correct version. Use --silent to suppress progress
+            // messages in this case. Errors will still be shown.
+            if (!opts.verbose_install and !opts.silent_install) {
+                args.append("--silent") catch
+                    unreachable; // upper bound is known
+            }
         }
 
         if (opts.verbose_install) {

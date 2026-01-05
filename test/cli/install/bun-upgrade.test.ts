@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from "bun";
 import { upgrade_test_helpers } from "bun:internal-for-testing";
 import { beforeAll, beforeEach, expect, it, setDefaultTimeout } from "bun:test";
-import { bunExe, bunEnv as env, tls, tmpdirSync } from "harness";
+import { bunEnv, bunExe, tls, tmpdirSync } from "harness";
 import { copyFileSync } from "node:fs";
 import { basename, join } from "path";
 const { openTempDirWithoutSharingDelete, closeTempDirHandle } = upgrade_test_helpers;
@@ -19,52 +19,66 @@ beforeEach(async () => {
   copyFileSync(bunExe(), execPath);
 });
 
-it("two invalid arguments, should display error message and suggest command", async () => {
+// just a useless one to see that it bypassed the `bun upgrade <...>` -> `bun update <...>` check
+using server = Bun.serve({
+  tls: tls,
+  port: 0,
+  async fetch() {
+    return Response.json({});
+  },
+});
+
+const env = {
+  ...bunEnv,
+  NODE_TLS_REJECT_UNAUTHORIZED: "0",
+  GITHUB_API_DOMAIN: `${server.hostname}:${server.port}`,
+};
+
+const invalid_tests = [
+  [["upgrade", "bun-types", "--dev"], "bun update bun-types --dev"],
+  [["upgrade", "bun-types"], "bun update bun-types"],
+  [["upgrade", "--dev", "bun-types"], "bun update --dev bun-types"],
+  [["--dev", "upgrade", "bun-types", "--stable"], "bun update --dev bun-types --stable"],
+  [["upgrade", "upgrade"], "bun update upgrade"],
+  [["upgrade", "--latest"], "bun update --latest"],
+];
+for (const [args, expected] of invalid_tests) {
+  it(`"${args.join(" ")}": should display error message and suggest command`, async () => {
+    const { stderr } = spawn({
+      cmd: [execPath, ...args],
+      cwd,
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    const err = await new Response(stderr).text();
+    expect(err.split(/\r?\n/)).toContain("error: This command updates Bun itself, and does not take package names.");
+    expect(err.split(/\r?\n/)).toContain(`note: Use \`${expected}\` instead.`);
+  });
+}
+
+it("one flag with BUN_OPTIONS, should succeed", async () => {
   const { stderr } = spawn({
-    cmd: [execPath, "upgrade", "bun-types", "--dev"],
+    cmd: [execPath, "upgrade"],
     cwd,
     stdout: null,
     stdin: "pipe",
     stderr: "pipe",
-    env,
+    env: {
+      ...env,
+      BUN_OPTIONS: "--bun",
+    },
   });
 
-  const err = await stderr.text();
-  expect(err.split(/\r?\n/)).toContain("error: This command updates Bun itself, and does not take package names.");
-  expect(err.split(/\r?\n/)).toContain("note: Use `bun update bun-types --dev` instead.");
+  const err = await new Response(stderr).text();
+  // Should not contain error message
+  expect(err.split(/\r?\n/)).not.toContain("error: This command updates Bun itself, and does not take package names.");
+  expect(err.split(/\r?\n/)).not.toContain("note: Use `bun update` instead.");
 });
 
-it("two invalid arguments flipped, should display error message and suggest command", async () => {
-  const { stderr } = spawn({
-    cmd: [execPath, "upgrade", "--dev", "bun-types"],
-    cwd,
-    stdout: null,
-    stdin: "pipe",
-    stderr: "pipe",
-    env,
-  });
-
-  const err = await stderr.text();
-  expect(err.split(/\r?\n/)).toContain("error: This command updates Bun itself, and does not take package names.");
-  expect(err.split(/\r?\n/)).toContain("note: Use `bun update --dev bun-types` instead.");
-});
-
-it("one invalid argument, should display error message and suggest command", async () => {
-  const { stderr } = spawn({
-    cmd: [execPath, "upgrade", "bun-types"],
-    cwd,
-    stdout: null,
-    stdin: "pipe",
-    stderr: "pipe",
-    env,
-  });
-
-  const err = await stderr.text();
-  expect(err.split(/\r?\n/)).toContain("error: This command updates Bun itself, and does not take package names.");
-  expect(err.split(/\r?\n/)).toContain("note: Use `bun update bun-types` instead.");
-});
-
-it("one valid argument, should succeed", async () => {
+it("one valid flag, should succeed", async () => {
   const { stderr } = spawn({
     cmd: [execPath, "upgrade", "--help"],
     cwd,

@@ -3870,7 +3870,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDebugProcess, (JSC::JSGlobalObject * gl
 
     HANDLE hMapping = OpenFileMappingW(FILE_MAP_READ, FALSE, mappingName);
     if (!hMapping) {
-        throwVMError(globalObject, scope, makeString("Failed to open debug handler for process "_s, pid, ": process may not have inspector support enabled"_s));
+        // Match Node.js error message for compatibility
+        throwVMError(globalObject, scope, "The system cannot find the file specified."_s);
         return {};
     }
 

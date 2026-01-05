@@ -341,7 +341,7 @@ describe.skipIf(isWindows)("--disable-sigusr1", () => {
     // Should NOT see debugger listening message
     expect(stderr).not.toContain("Debugger listening");
     // Process should be terminated by SIGUSR1
-    // Exit code = 128 + signal number (macOS: 30, Linux: 10)
-    expect(exitCode === 158 || exitCode === 138).toBe(true);
+    // Exit code = 128 + signal number (macOS: SIGUSR1=30 -> 158, Linux: SIGUSR1=10 -> 138)
+    expect(exitCode).toBeOneOf([158, 138]);
   });
 });

@@ -3,6 +3,26 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 
+/**
+ * Reads from a stderr stream until "Debugger listening" appears.
+ * Returns the accumulated stderr output.
+ */
+async function waitForDebuggerListening(
+  stderrStream: ReadableStream<Uint8Array>,
+): Promise<{ stderr: string; reader: ReadableStreamDefaultReader<Uint8Array> }> {
+  const reader = stderrStream.getReader();
+  const decoder = new TextDecoder();
+  let stderr = "";
+
+  while (!stderr.includes("Debugger listening")) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    stderr += decoder.decode(value, { stream: true });
+  }
+
+  return { stderr, reader };
+}
+
 // Cross-platform tests - run on ALL platforms (Windows, macOS, Linux)
 // Windows uses file mapping mechanism, POSIX uses SIGUSR1
 describe("Runtime inspector activation", () => {
@@ -57,12 +77,13 @@ describe("Runtime inspector activation", () => {
       expect(debugStderr).toBe("");
       expect(debugExitCode).toBe(0);
 
-      // Give inspector time to activate and check stderr
-      await Bun.sleep(100);
+      // Wait for inspector to activate by reading stderr until we see the message
+      const { stderr: targetStderr, reader: stderrReader } = await waitForDebuggerListening(targetProc.stderr);
+      stderrReader.releaseLock();
 
-      // Kill target and collect its stderr
+      // Kill target
       targetProc.kill();
-      const [targetStderr] = await Promise.all([targetProc.stderr.text(), targetProc.exited]);
+      await targetProc.exited;
 
       expect(targetStderr).toContain("Debugger listening on ws://127.0.0.1:6499/");
     });
@@ -119,7 +140,12 @@ describe("Runtime inspector activation", () => {
 
       const pid = parseInt(await Bun.file(join(String(dir), "pid")).text(), 10);
 
-      // Call _debugProcess twice - inspector should only activate once
+      // Start reading stderr before triggering debugger
+      const stderrReader = targetProc.stderr.getReader();
+      const stderrDecoder = new TextDecoder();
+      let stderr = "";
+
+      // Call _debugProcess the first time
       await using debug1 = spawn({
         cmd: [bunExe(), "-e", `process._debugProcess(${pid})`],
         env: bunEnv,
@@ -128,8 +154,14 @@ describe("Runtime inspector activation", () => {
       });
       await debug1.exited;
 
-      await Bun.sleep(50);
+      // Wait for the first debugger activation message
+      while (!stderr.includes("Debugger listening")) {
+        const { value, done } = await stderrReader.read();
+        if (done) break;
+        stderr += stderrDecoder.decode(value, { stream: true });
+      }
 
+      // Call _debugProcess again - inspector should not activate twice
       await using debug2 = spawn({
         cmd: [bunExe(), "-e", `process._debugProcess(${pid})`],
         env: bunEnv,
@@ -138,9 +170,10 @@ describe("Runtime inspector activation", () => {
       });
       await debug2.exited;
 
-      // Kill the target and collect stderr
+      // Release the reader and kill the target
+      stderrReader.releaseLock();
       targetProc.kill();
-      const [stderr, exitCode] = await Promise.all([targetProc.stderr.text(), targetProc.exited]);
+      await targetProc.exited;
 
       // Should only see one "Debugger listening" message
       const matches = stderr.match(/Debugger listening/g);
@@ -221,15 +254,23 @@ describe("Runtime inspector activation", () => {
 
       await Promise.all([debug1.exited, debug2.exited]);
 
-      // Kill both targets and collect stderr
+      // Wait for both inspectors to activate by reading stderr
+      const [result1, result2] = await Promise.all([
+        waitForDebuggerListening(target1.stderr),
+        waitForDebuggerListening(target2.stderr),
+      ]);
+
+      result1.reader.releaseLock();
+      result2.reader.releaseLock();
+
+      // Kill both targets
       target1.kill();
       target2.kill();
-      const [stderr1] = await Promise.all([target1.stderr.text(), target1.exited]);
-      const [stderr2] = await Promise.all([target2.stderr.text(), target2.exited]);
+      await Promise.all([target1.exited, target2.exited]);
 
       // Both should have activated their inspector
-      expect(stderr1).toContain("Debugger listening");
-      expect(stderr2).toContain("Debugger listening");
+      expect(result1.stderr).toContain("Debugger listening");
+      expect(result2.stderr).toContain("Debugger listening");
     });
 
     test("throws when called with no arguments", async () => {

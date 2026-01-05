@@ -29,10 +29,9 @@ var installed: std.atomic.Value(bool) = std.atomic.Value(bool).init(false);
 var inspector_activation_requested: std.atomic.Value(bool) = std.atomic.Value(bool).init(false);
 
 fn requestInspectorActivation() void {
-    const vm = VirtualMachine.getMainThreadVM() orelse {
-        log("No main thread VM available", .{});
-        return;
-    };
+    // Note: This function may be called from signal handler context on POSIX,
+    // so we must only use async-signal-safe operations here.
+    const vm = VirtualMachine.getMainThreadVM() orelse return;
 
     inspector_activation_requested.store(true, .release);
     vm.eventLoop().wakeup();
@@ -94,8 +93,6 @@ pub fn isInstalled() bool {
 }
 
 const posix = if (Environment.isPosix) struct {
-    var previous_action: std.posix.Sigaction = undefined;
-
     fn signalHandler(_: c_int) callconv(.c) void {
         // This handler runs in signal context, so we can only do async-signal-safe operations.
         // Set the atomic flag and wake the event loop.
@@ -112,7 +109,7 @@ const posix = if (Environment.isPosix) struct {
             .flags = std.posix.SA.RESTART,
         };
 
-        std.posix.sigaction(std.posix.SIG.USR1, &act, &previous_action);
+        std.posix.sigaction(std.posix.SIG.USR1, &act, null);
         return true;
     }
 
@@ -211,11 +208,13 @@ const windows = if (Environment.isWindows) struct {
                 _ = UnmapViewOfFile(ptr);
                 return true;
             } else {
+                log("MapViewOfFile failed", .{});
                 _ = bun.windows.CloseHandle(handle);
                 mapping_handle = null;
                 return false;
             }
         } else {
+            log("CreateFileMappingW failed for bun-debug-handler-{d}", .{pid});
             return false;
         }
     }

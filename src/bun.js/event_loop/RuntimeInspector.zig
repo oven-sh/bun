@@ -204,6 +204,8 @@ const windows = if (Environment.isWindows) struct {
             );
 
             if (handler_ptr) |ptr| {
+                // MapViewOfFile returns page-aligned memory, which satisfies
+                // the alignment requirements for function pointers.
                 const typed_ptr: *LPTHREAD_START_ROUTINE = @ptrCast(@alignCast(ptr));
                 typed_ptr.* = &startDebugThreadProc;
                 _ = UnmapViewOfFile(ptr);

@@ -18,6 +18,11 @@ const RuntimeInspector = @This();
 
 const log = Output.scoped(.RuntimeInspector, .hidden);
 
+/// Default port for runtime-activated inspector (via SIGUSR1/process._debugProcess).
+/// Note: If this port is already in use, activation will fail with an error message.
+/// This matches Node.js behavior where SIGUSR1-activated inspectors also use a fixed
+/// port (9229). Users can pre-configure a different port using --inspect-port=<port>
+/// or --inspect=0 for automatic port selection when starting the process.
 const inspector_port = "6499";
 
 var installed: std.atomic.Value(bool) = std.atomic.Value(bool).init(false);

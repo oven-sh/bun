@@ -39,6 +39,7 @@ describe.skipIf(!isWindows)("Runtime inspector Windows file mapping", () => {
     reader.releaseLock();
 
     const pid = parseInt(await Bun.file(join(String(dir), "pid")).text(), 10);
+    expect(pid).toBeGreaterThan(0);
 
     // Use _debugProcess which uses file mapping on Windows
     await using debugProc = spawn({
@@ -130,6 +131,7 @@ describe.skipIf(!isWindows)("Runtime inspector Windows file mapping", () => {
     reader.releaseLock();
 
     const pid = parseInt(await Bun.file(join(String(dir), "pid")).text(), 10);
+    expect(pid).toBeGreaterThan(0);
 
     // Set up stderr reader to wait for debugger to start
     const stderrReader = targetProc.stderr.getReader();
@@ -225,6 +227,8 @@ describe.skipIf(!isWindows)("Runtime inspector Windows file mapping", () => {
 
     const pid1 = parseInt(await Bun.file(join(String(dir), "pid-1")).text(), 10);
     const pid2 = parseInt(await Bun.file(join(String(dir), "pid-2")).text(), 10);
+    expect(pid1).toBeGreaterThan(0);
+    expect(pid2).toBeGreaterThan(0);
 
     // Activate inspector in both
     await using debug1 = spawn({

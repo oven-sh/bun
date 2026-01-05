@@ -177,6 +177,38 @@ class SQLHelper<T> {
   }
 }
 
+/**
+ * Get columns that have at least one defined value across all items.
+ * Used by INSERT to filter out columns where ALL items have undefined.
+ * If any item has a value for a column, that column is included.
+ */
+function getDefinedColumns<T>(columns: (keyof T)[], items: T | T[]): (keyof T)[] {
+  const definedColumns: (keyof T)[] = [];
+  const columnCount = columns.length;
+
+  for (let j = 0; j < columnCount; j++) {
+    const column = columns[j];
+    let hasDefinedValue = false;
+
+    if ($isArray(items)) {
+      for (let k = 0; k < items.length; k++) {
+        if (typeof items[k][column] !== "undefined") {
+          hasDefinedValue = true;
+          break;
+        }
+      }
+    } else {
+      hasDefinedValue = typeof items[column] !== "undefined";
+    }
+
+    if (hasDefinedValue) {
+      definedColumns.push(column);
+    }
+  }
+
+  return definedColumns;
+}
+
 const SQLITE_MEMORY = ":memory:";
 const SQLITE_MEMORY_VARIANTS: string[] = [":memory:", "sqlite://:memory:", "sqlite:memory"];
 
@@ -911,6 +943,7 @@ export default {
   assertIsOptionsOfAdapter,
   parseOptions,
   SQLHelper,
+  getDefinedColumns,
   normalizeSSLMode,
   SQLResultArray,
   SQLArrayParameter,

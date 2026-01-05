@@ -1,7 +1,7 @@
 import type { PostgresErrorOptions } from "internal/sql/errors";
 import type { Query } from "./query";
 import type { ArrayType, DatabaseAdapter, SQLArrayParameter, SQLHelper, SQLResultArray, SSLMode } from "./shared";
-const { SQLHelper, SSLMode, SQLResultArray, SQLArrayParameter } = require("internal/sql/shared");
+const { SQLHelper, SSLMode, SQLResultArray, SQLArrayParameter, getDefinedColumns } = require("internal/sql/shared");
 const {
   Query,
   SQLQueryFlags,
@@ -672,11 +672,14 @@ class PooledPostgresConnection {
   }
 }
 
-class PostgresAdapter implements DatabaseAdapter<
-  PooledPostgresConnection,
-  $ZigGeneratedClasses.PostgresSQLConnection,
-  $ZigGeneratedClasses.PostgresSQLQuery
-> {
+class PostgresAdapter
+  implements
+    DatabaseAdapter<
+      PooledPostgresConnection,
+      $ZigGeneratedClasses.PostgresSQLConnection,
+      $ZigGeneratedClasses.PostgresSQLQuery
+    >
+{
   public readonly connectionInfo: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions;
 
   public readonly connections: PooledPostgresConnection[];
@@ -1249,10 +1252,19 @@ class PostgresAdapter implements DatabaseAdapter<
               // insert into users ${sql(users)} or insert into users ${sql(user)}
               //
 
+              // Filter out columns with undefined values
+              // Check ALL items to build union of defined columns (any item having a value means include the column)
+              const definedColumns = getDefinedColumns(columns, items);
+              const definedColumnCount = definedColumns.length;
+              if (definedColumnCount === 0) {
+                throw new SyntaxError("Insert needs to have at least one column with a defined value");
+              }
+              const lastDefinedColumnIndex = definedColumnCount - 1;
+
               query += "(";
-              for (let j = 0; j < columnCount; j++) {
-                query += this.escapeIdentifier(columns[j]);
-                if (j < lastColumnIndex) {
+              for (let j = 0; j < definedColumnCount; j++) {
+                query += this.escapeIdentifier(definedColumns[j]);
+                if (j < lastDefinedColumnIndex) {
                   query += ", ";
                 }
               }
@@ -1263,15 +1275,12 @@ class PostgresAdapter implements DatabaseAdapter<
                 for (let j = 0; j < itemsCount; j++) {
                   query += "(";
                   const item = items[j];
-                  for (let k = 0; k < columnCount; k++) {
-                    const column = columns[k];
+                  for (let k = 0; k < definedColumnCount; k++) {
+                    const column = definedColumns[k];
                     const columnValue = item[column];
-                    query += `$${binding_idx++}${k < lastColumnIndex ? ", " : ""}`;
-                    if (typeof columnValue === "undefined") {
-                      binding_values.push(null);
-                    } else {
-                      binding_values.push(columnValue);
-                    }
+                    query += `$${binding_idx++}${k < lastDefinedColumnIndex ? ", " : ""}`;
+                    // If this item has undefined for a column that other items defined, use null
+                    binding_values.push(typeof columnValue === "undefined" ? null : columnValue);
                   }
                   if (j < lastItemIndex) {
                     query += "),";
@@ -1282,15 +1291,11 @@ class PostgresAdapter implements DatabaseAdapter<
               } else {
                 query += "(";
                 const item = items;
-                for (let j = 0; j < columnCount; j++) {
-                  const column = columns[j];
+                for (let j = 0; j < definedColumnCount; j++) {
+                  const column = definedColumns[j];
                   const columnValue = item[column];
-                  query += `$${binding_idx++}${j < lastColumnIndex ? ", " : ""}`;
-                  if (typeof columnValue === "undefined") {
-                    binding_values.push(null);
-                  } else {
-                    binding_values.push(columnValue);
-                  }
+                  query += `$${binding_idx++}${j < lastDefinedColumnIndex ? ", " : ""}`;
+                  binding_values.push(columnValue);
                 }
                 query += ") "; // the user can add RETURNING * or RETURNING id
               }

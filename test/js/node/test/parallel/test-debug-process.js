@@ -16,6 +16,7 @@ cp.on('exit', common.mustCall(function() {
   try {
     process._debugProcess(cp.pid);
   } catch (error) {
-    assert.strictEqual(error.message, 'The system cannot find the file specified.');
+    // Bun uses a file mapping mechanism for _debugProcess, so the error message differs from Node.js
+    assert.match(error.message, /Failed to open debug handler for process \d+/);
   }
 }));

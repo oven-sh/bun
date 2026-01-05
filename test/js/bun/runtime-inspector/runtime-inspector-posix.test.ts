@@ -44,12 +44,21 @@ describe.skipIf(isWindows)("Runtime inspector SIGUSR1 activation", () => {
     // Send SIGUSR1
     process.kill(pid, "SIGUSR1");
 
-    // Give inspector time to activate
-    await Bun.sleep(100);
+    // Wait for inspector to activate by reading stderr until "Debugger listening" appears
+    const stderrReader = proc.stderr.getReader();
+    const stderrDecoder = new TextDecoder();
+    let stderr = "";
 
-    // Kill process and check stderr
+    while (!stderr.includes("Debugger listening")) {
+      const { value, done } = await stderrReader.read();
+      if (done) break;
+      stderr += stderrDecoder.decode(value, { stream: true });
+    }
+    stderrReader.releaseLock();
+
+    // Kill process
     proc.kill();
-    const [stderr] = await Promise.all([proc.stderr.text(), proc.exited]);
+    await proc.exited;
 
     expect(stderr).toContain("Debugger listening on ws://127.0.0.1:6499/");
   });
@@ -144,12 +153,27 @@ describe.skipIf(isWindows)("Runtime inspector SIGUSR1 activation", () => {
 
     const pid = parseInt(await Bun.file(join(String(dir), "pid")).text(), 10);
 
-    // Send SIGUSR1 twice - inspector should only activate once
-    process.kill(pid, "SIGUSR1");
-    await Bun.sleep(50);
+    // Send first SIGUSR1 and wait for inspector to activate
     process.kill(pid, "SIGUSR1");
 
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const stderrReader = proc.stderr.getReader();
+    const stderrDecoder = new TextDecoder();
+    let stderr = "";
+
+    // Wait until we see "Debugger listening" before sending second signal
+    while (!stderr.includes("Debugger listening")) {
+      const { value, done } = await stderrReader.read();
+      if (done) break;
+      stderr += stderrDecoder.decode(value, { stream: true });
+    }
+
+    // Send second SIGUSR1 - inspector should not activate again
+    process.kill(pid, "SIGUSR1");
+
+    // Read any remaining stderr until process exits
+    stderrReader.releaseLock();
+    const [remainingStderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    stderr += remainingStderr;
 
     // Should only see one "Debugger listening" message
     const matches = stderr.match(/Debugger listening/g);
@@ -256,10 +280,8 @@ describe.skipIf(isWindows)("Runtime inspector SIGUSR1 activation", () => {
     // Send SIGUSR1 - should be ignored since debugger is already active
     process.kill(proc.pid, "SIGUSR1");
 
-    // Wait a bit for the signal to be processed
-    await Bun.sleep(100);
-
     // Kill process since --inspect-wait would wait for connection
+    // Signal processing is synchronous, so no sleep needed
     proc.kill();
 
     // Read any remaining stderr
@@ -305,10 +327,8 @@ describe.skipIf(isWindows)("Runtime inspector SIGUSR1 activation", () => {
     // Send SIGUSR1 - should be ignored since debugger is already active
     process.kill(proc.pid, "SIGUSR1");
 
-    // Wait a bit for the signal to be processed
-    await Bun.sleep(100);
-
     // Kill process since --inspect-brk would wait for connection
+    // Signal processing is synchronous, so no sleep needed
     proc.kill();
 
     // Read any remaining stderr

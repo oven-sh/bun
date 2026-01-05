@@ -486,7 +486,8 @@ pub const Value = union(enum) {
 
             .MYSQL_TYPE_JSON => {
                 var str: bun.String = bun.String.empty;
-                try value.jsonStringify(globalObject, 0, &str);
+                // Use jsonStringifyFast for SIMD-optimized serialization
+                try value.jsonStringifyFast(globalObject, &str);
                 defer str.deref();
                 return Value{ .string = str.toUTF8(bun.default_allocator) };
             },

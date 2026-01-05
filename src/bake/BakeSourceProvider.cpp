@@ -33,7 +33,7 @@ extern "C" JSC::EncodedJSValue BakeLoadInitialServerCode(JSC::JSGlobalObject* gl
     global,
     source.toWTFString(),
     origin,
-    WTFMove(string),
+    WTF::move(string),
     WTF::TextPosition(),
     JSC::SourceProviderSourceType::Program
   ));
@@ -67,7 +67,7 @@ extern "C" JSC::EncodedJSValue BakeLoadServerHmrPatch(GlobalObject* global, BunS
     global,
     source.toWTFString(),
     origin,
-    WTFMove(string),
+    WTF::move(string),
     WTF::TextPosition(),
     JSC::SourceProviderSourceType::Program
   ));
@@ -93,7 +93,7 @@ extern "C" JSC::EncodedJSValue BakeLoadServerHmrPatchWithSourceMap(GlobalObject*
     sourceMapJSONPtr,
     sourceMapJSONLength,
     origin,
-    WTFMove(string),
+    WTF::move(string),
     WTF::TextPosition(),
     JSC::SourceProviderSourceType::Program
   );
@@ -159,7 +159,7 @@ extern "C" JSC::EncodedJSValue BakeRegisterProductionChunk(JSC::JSGlobalObject* 
     global,
     source.toWTFString(),
     origin,
-    WTFMove(string),
+    WTF::move(string),
     WTF::TextPosition(),
     JSC::SourceProviderSourceType::Module
   ));

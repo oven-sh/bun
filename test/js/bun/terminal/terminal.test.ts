@@ -1169,4 +1169,59 @@ describe.todoIf(isWindows)("Bun.spawn with terminal option", () => {
     const output = Buffer.concat(dataChunks).toString();
     expect(output).toContain("hello");
   });
+
+  test("existing terminal sends SIGINT on Ctrl+C", async () => {
+    await using terminal = new Bun.Terminal({});
+
+    // Spawn sleep which will run until interrupted
+    await using proc = Bun.spawn(["sleep", "100"], { terminal, timeout: 2000 });
+
+    // Wait for process to start
+    await Bun.sleep(100);
+
+    // Send Ctrl+C - should send SIGINT and interrupt sleep
+    terminal.write("\x03");
+
+    await proc.exited;
+    // SIGINT causes null exitCode with signalCode
+    expect(proc.signalCode).toBe("SIGINT");
+  });
+
+  test("existing terminal can be reused across multiple spawns", async () => {
+    await using terminal = new Bun.Terminal({});
+
+    // First spawn
+    await using proc1 = Bun.spawn(["echo", "first"], { terminal });
+    await proc1.exited;
+    expect(proc1.exitCode).toBe(0);
+
+    // Terminal should still be usable
+    expect(terminal.closed).toBe(false);
+
+    // Second spawn with same terminal
+    await using proc2 = Bun.spawn(["echo", "second"], { terminal });
+    await proc2.exited;
+    expect(proc2.exitCode).toBe(0);
+
+    // Both should have used the same terminal
+    expect(proc1.terminal).toBe(terminal);
+    expect(proc2.terminal).toBe(terminal);
+  });
+
+  test("existing terminal SIGINT works after reuse", async () => {
+    await using terminal = new Bun.Terminal({});
+
+    // First spawn - normal exit
+    await using proc1 = Bun.spawn(["echo", "first"], { terminal });
+    await proc1.exited;
+    expect(proc1.exitCode).toBe(0);
+
+    // Second spawn - interrupt with Ctrl+C
+    await using proc2 = Bun.spawn(["sleep", "100"], { terminal, timeout: 2000 });
+    await Bun.sleep(100);
+    terminal.write("\x03");
+
+    await proc2.exited;
+    expect(proc2.signalCode).toBe("SIGINT");
+  });
 });

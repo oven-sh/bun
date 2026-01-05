@@ -700,6 +700,119 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
     return JSValue::encode(jsUndefined());
 }
 
+// Helper function to restore a single module mock
+static void restoreSingleModuleMock(Zig::GlobalObject* globalObject, const WTF::String& specifier)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Remove from virtualModules map
+    if (globalObject->onLoadPlugins.virtualModules) {
+        globalObject->onLoadPlugins.virtualModules->remove(specifier);
+    }
+
+    // Remove from ESM registry to force reload
+    auto* esm = globalObject->esmRegistryMap();
+    RETURN_IF_EXCEPTION(scope, void());
+
+    auto* specifierString = jsString(vm, specifier);
+    esm->remove(globalObject, specifierString);
+    RETURN_IF_EXCEPTION(scope, void());
+
+    // Remove from CJS require cache to force reload
+    globalObject->requireMap()->remove(globalObject, specifierString);
+    RETURN_IF_EXCEPTION(scope, void());
+}
+
+BUN_DECLARE_HOST_FUNCTION(JSMock__jsRestoreModuleMock);
+extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsRestoreModuleMock, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (!globalObject) [[unlikely]] {
+        scope.throwException(lexicalGlobalObject, JSC::createTypeError(lexicalGlobalObject, "Cannot restore mock from a different global context"_s));
+        return {};
+    }
+
+    // If no arguments, restore all module mocks
+    if (callframe->argumentCount() == 0) {
+        if (!globalObject->onLoadPlugins.virtualModules) {
+            return JSValue::encode(jsUndefined());
+        }
+
+        // Collect all module paths to restore
+        Vector<WTF::String> modulePaths;
+        for (auto& entry : *globalObject->onLoadPlugins.virtualModules) {
+            modulePaths.append(entry.key);
+        }
+
+        // Restore each module
+        for (auto& path : modulePaths) {
+            restoreSingleModuleMock(globalObject, path);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+
+        return JSValue::encode(jsUndefined());
+    }
+
+    // Restore specific module
+    JSC::JSString* specifierString = callframe->argument(0).toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    WTF::String specifier = specifierString->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (specifier.isEmpty()) {
+        scope.throwException(lexicalGlobalObject, JSC::createTypeError(lexicalGlobalObject, "mock.restore(modulePath) requires a valid module path"_s));
+        return {};
+    }
+
+    // Resolve the specifier (same logic as in JSMock__jsModuleMock)
+    JSC::SourceOrigin sourceOrigin = callframe->callerSourceOrigin(vm);
+    if (!sourceOrigin.isNull()) {
+        const URL& url = sourceOrigin.url();
+
+        if (specifier.startsWith("file:"_s)) {
+            URL fileURL = URL(url, specifier);
+            if (fileURL.isValid()) {
+                specifier = fileURL.fileSystemPath();
+            } else {
+                scope.throwException(lexicalGlobalObject, JSC::createTypeError(lexicalGlobalObject, "Invalid \"file:\" URL"_s));
+                return {};
+            }
+        } else if (url.isValid() && url.protocolIsFile()) {
+            auto fromString = url.fileSystemPath();
+            BunString from = Bun::toString(fromString);
+            auto catchScope = DECLARE_CATCH_SCOPE(vm);
+            auto result = JSValue::decode(Bun__resolveSyncWithSource(globalObject, JSValue::encode(specifierString), &from, true, false));
+            if (catchScope.exception()) {
+                catchScope.clearException();
+            }
+
+            if (result && result.isString()) {
+                auto* specifierStr = result.toString(globalObject);
+                if (specifierStr->length() > 0) {
+                    specifier = specifierStr->value(globalObject);
+                }
+            } else if (specifier.startsWith("./"_s) || specifier.startsWith(".."_s)) {
+                auto relativeURL = URL(url, specifier);
+                if (relativeURL.isValid()) {
+                    if (relativeURL.protocolIsFile())
+                        specifier = relativeURL.fileSystemPath();
+                    else
+                        specifier = relativeURL.string();
+                }
+            }
+        }
+    }
+
+    restoreSingleModuleMock(globalObject, specifier);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    return JSValue::encode(jsUndefined());
+}
+
 template<typename Visitor>
 void JSModuleMock::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {

@@ -53,10 +53,19 @@ describe.skipIf(!isWindows)("Runtime inspector Windows file mapping", () => {
     expect(debugStderr).toBe("");
     expect(debugExitCode).toBe(0);
 
-    await Bun.sleep(100);
+    // Wait for the debugger to start by reading stderr until we see the message
+    const stderrReader = targetProc.stderr.getReader();
+    const stderrDecoder = new TextDecoder();
+    let targetStderr = "";
+    while (!targetStderr.includes("Debugger listening")) {
+      const { value, done } = await stderrReader.read();
+      if (done) break;
+      targetStderr += stderrDecoder.decode(value, { stream: true });
+    }
+    stderrReader.releaseLock();
 
     targetProc.kill();
-    const [targetStderr] = await Promise.all([targetProc.stderr.text(), targetProc.exited]);
+    await targetProc.exited;
 
     // Verify inspector actually started
     expect(targetStderr).toContain("Debugger listening on ws://127.0.0.1:6499/");
@@ -122,6 +131,11 @@ describe.skipIf(!isWindows)("Runtime inspector Windows file mapping", () => {
 
     const pid = parseInt(await Bun.file(join(String(dir), "pid")).text(), 10);
 
+    // Set up stderr reader to wait for debugger to start
+    const stderrReader = targetProc.stderr.getReader();
+    const stderrDecoder = new TextDecoder();
+    let stderr = "";
+
     // Call _debugProcess twice
     await using debug1 = spawn({
       cmd: [bunExe(), "-e", `process._debugProcess(${pid})`],
@@ -131,7 +145,12 @@ describe.skipIf(!isWindows)("Runtime inspector Windows file mapping", () => {
     });
     await debug1.exited;
 
-    await Bun.sleep(50);
+    // Wait for debugger to actually start by reading stderr
+    while (!stderr.includes("Debugger listening")) {
+      const { value, done } = await stderrReader.read();
+      if (done) break;
+      stderr += stderrDecoder.decode(value, { stream: true });
+    }
 
     await using debug2 = spawn({
       cmd: [bunExe(), "-e", `process._debugProcess(${pid})`],
@@ -141,7 +160,11 @@ describe.skipIf(!isWindows)("Runtime inspector Windows file mapping", () => {
     });
     await debug2.exited;
 
-    const [stderr, exitCode] = await Promise.all([targetProc.stderr.text(), targetProc.exited]);
+    // Collect any remaining stderr and wait for process to exit
+    stderrReader.releaseLock();
+    const remainingStderr = await targetProc.stderr.text();
+    stderr += remainingStderr;
+    const exitCode = await targetProc.exited;
 
     // Should only see one "Debugger listening" message
     const matches = stderr.match(/Debugger listening/g);

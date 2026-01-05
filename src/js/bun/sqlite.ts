@@ -116,13 +116,13 @@ interface CppSQLStatement {
 }
 
 interface CppSQL {
-  open(filename: string, flags: number, db: Database): TODO;
-  isInTransaction(handle: TODO): boolean;
-  loadExtension(handle: TODO, name: string, entryPoint: string): void;
-  serialize(handle: TODO, name: string): Buffer;
-  deserialize(serialized: NodeJS.TypedArray | ArrayBufferLike, openFlags: number, deserializeFlags: number): TODO;
-  fcntl(handle: TODO, ...args: TODO[]): TODO;
-  close(handle: TODO, throwOnError: boolean): void;
+  open(filename: string, flags: number, db: Database): void;
+  isInTransaction(handle: any): boolean;
+  loadExtension(handle: any, name: string, entryPoint: string): void;
+  serialize(handle: any, name: string): Buffer;
+  deserialize(serialized: NodeJS.TypedArray | ArrayBufferLike, openFlags: number, deserializeFlags: number): any;
+  fcntl(handle: any, ...args: any[]): any;
+  close(handle: any, throwOnError: boolean): void;
   setCustomSQLite(path: string): void;
 }
 

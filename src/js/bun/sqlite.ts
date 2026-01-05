@@ -98,15 +98,15 @@ const constants = {
 
 // This is interface is the JS equivalent of what JSSQLStatement.cpp defines
 interface CppSQLStatement {
-  run: (...args: TODO[]) => TODO;
-  get: (...args: TODO[]) => TODO;
-  all: (...args: TODO[]) => TODO;
-  iterate: (...args: TODO[]) => TODO;
-  as: (...args: TODO[]) => TODO;
-  values: (...args: TODO[]) => TODO;
-  raw: (...args: TODO[]) => TODO;
-  finalize: (...args: TODO[]) => TODO;
-  toString: (...args: TODO[]) => TODO;
+  run: (...args: SQLBindable[]) => any;
+  get: (...args: SQLBindable[]) => any;
+  all: (...args: SQLBindable[]) => any[];
+  iterate: (...args: SQLBindable[]) => any;
+  as: (ClassType: new () => any) => any;
+  values: (...args: SQLBindable[]) => any[];
+  raw: (...args: SQLBindable[]) => any[];
+  finalize: (...args: any[]) => any;
+  toString: () => string;
   columns: string[];
   columnsCount: number;
   paramsCount: number;

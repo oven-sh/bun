@@ -152,7 +152,7 @@ describe("Runtime inspector activation", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      await debug1.exited;
+      expect(await debug1.exited).toBe(0);
 
       // Wait for the first debugger activation message
       while (!stderr.includes("Debugger listening")) {
@@ -168,7 +168,7 @@ describe("Runtime inspector activation", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      await debug2.exited;
+      expect(await debug2.exited).toBe(0);
 
       // Release the reader and kill the target
       stderrReader.releaseLock();
@@ -252,7 +252,9 @@ describe("Runtime inspector activation", () => {
         stderr: "pipe",
       });
 
-      await Promise.all([debug1.exited, debug2.exited]);
+      const [exitCode1, exitCode2] = await Promise.all([debug1.exited, debug2.exited]);
+      expect(exitCode1).toBe(0);
+      expect(exitCode2).toBe(0);
 
       // Wait for both inspectors to activate by reading stderr
       const [result1, result2] = await Promise.all([

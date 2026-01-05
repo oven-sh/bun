@@ -513,3 +513,117 @@ export function lazyAsyncIterator(this) {
   $readableStreamDefineLazyIterators(prototype);
   return prototype[globalThis.Symbol.asyncIterator].$call(this);
 }
+
+// ReadableStream.from() static method per WHATWG Streams spec
+// https://streams.spec.whatwg.org/#rs-from
+export function readableStreamFrom(asyncIterable) {
+  // 1. If asyncIterable is a ReadableStream, return asyncIterable
+  if ($isReadableStream(asyncIterable)) {
+    return asyncIterable;
+  }
+
+  let iteratorRecord;
+  let stream;
+
+  // 2. Let iteratorRecord be ? GetIterator(asyncIterable, async).
+  // This handles both async iterables and sync iterables (converted to async)
+  const asyncIteratorMethod = asyncIterable?.[globalThis.Symbol.asyncIterator];
+  if (asyncIteratorMethod !== undefined) {
+    // Async iterable path
+    if (!$isCallable(asyncIteratorMethod)) {
+      throw new TypeError("asyncIterable[Symbol.asyncIterator] is not a function");
+    }
+    iteratorRecord = asyncIteratorMethod.$call(asyncIterable);
+    if (!$isObject(iteratorRecord)) {
+      throw new TypeError("asyncIterable[Symbol.asyncIterator]() did not return an object");
+    }
+  } else {
+    // Try sync iterable path - the spec says GetIterator will convert sync to async
+    const syncIteratorMethod = asyncIterable?.[globalThis.Symbol.iterator];
+    if (syncIteratorMethod === undefined) {
+      throw new TypeError("The object is not iterable");
+    }
+    if (!$isCallable(syncIteratorMethod)) {
+      throw new TypeError("asyncIterable[Symbol.iterator] is not a function");
+    }
+    const syncIterator = syncIteratorMethod.$call(asyncIterable);
+    if (!$isObject(syncIterator)) {
+      throw new TypeError("asyncIterable[Symbol.iterator]() did not return an object");
+    }
+    // Wrap sync iterator as async iterator
+    iteratorRecord = {
+      next() {
+        try {
+          const result = syncIterator.next();
+          return Promise.$resolve(result);
+        } catch (e) {
+          return Promise.$reject(e);
+        }
+      },
+      return(value) {
+        const returnMethod = syncIterator.return;
+        if (returnMethod === undefined) {
+          return Promise.$resolve({ value, done: true });
+        }
+        try {
+          const result = returnMethod.$call(syncIterator, value);
+          return Promise.$resolve(result);
+        } catch (e) {
+          return Promise.$reject(e);
+        }
+      },
+    };
+  }
+
+  // 3. Let stream be a new ReadableStream.
+  // 4. Let startAlgorithm be an algorithm that returns undefined.
+  // 5. Let pullAlgorithm be the following steps...
+  // 6. Let cancelAlgorithm be the following steps...
+  // 7. Perform ! SetUpReadableStreamDefaultControllerFromUnderlyingSource(stream, {}, {}, pullAlgorithm, cancelAlgorithm, 0).
+
+  const iterator = iteratorRecord;
+
+  stream = new ReadableStream({
+    async pull(controller) {
+      let nextResult;
+      try {
+        nextResult = await iterator.next();
+      } catch (e) {
+        controller.error(e);
+        return;
+      }
+
+      if (!$isObject(nextResult)) {
+        controller.error(new TypeError("Iterator result is not an object"));
+        return;
+      }
+
+      if (nextResult.done) {
+        controller.close();
+        return;
+      }
+
+      controller.enqueue(nextResult.value);
+    },
+
+    cancel(reason) {
+      const returnMethod = iterator.return;
+      if (returnMethod === undefined) {
+        return Promise.$resolve();
+      }
+      return (async () => {
+        let returnResult;
+        try {
+          returnResult = await returnMethod.$call(iterator, reason);
+        } catch (e) {
+          throw e;
+        }
+        if (!$isObject(returnResult)) {
+          throw new TypeError("Iterator result is not an object");
+        }
+      })();
+    },
+  });
+
+  return stream;
+}

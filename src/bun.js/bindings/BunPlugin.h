@@ -70,6 +70,9 @@ public:
         }
 
         VirtualModuleMap* _Nullable virtualModules = nullptr;
+        // Track which modules are currently executing their factory functions
+        // to detect and prevent deadlock from recursive imports
+        WTF::HashSet<String> modulesExecutingFactory;
         bool mustDoExpensiveRelativeLookup = false;
         JSC::EncodedJSValue run(JSC::JSGlobalObject* globalObject, BunString* namespaceString, BunString* path);
 

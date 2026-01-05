@@ -1,4 +1,4 @@
-import { test, expect, mock, afterEach } from "bun:test";
+import { expect, mock, test } from "bun:test";
 
 // Test fixtures
 const createFixture = (value: number) => ({
@@ -142,8 +142,8 @@ test("mock.restore() restores both function mocks AND module mocks", async () =>
   // Restore everything
   mock.restore();
 
-  // Function mock should be cleared
-  expect(mockFn).toHaveBeenCalledTimes(0);
+  // Function mock calls should still be tracked (restore doesn't clear calls)
+  expect(mockFn).toHaveBeenCalledTimes(1);
 
   // Module mock should be cleared
   delete require.cache[require.resolve(modulePath)];

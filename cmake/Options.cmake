@@ -129,6 +129,13 @@ endif()
 
 optionx(ENABLE_FUZZILLI BOOL "If fuzzilli support should be enabled" DEFAULT OFF)
 
+optionx(ENABLE_HEAP_BREAKDOWN BOOL "If malloc heap breakdown support should be enabled (macOS only)" DEFAULT OFF)
+
+if(ENABLE_HEAP_BREAKDOWN AND NOT APPLE)
+  message(WARNING "ENABLE_HEAP_BREAKDOWN is only supported on macOS, disabling")
+  setx(ENABLE_HEAP_BREAKDOWN OFF)
+endif()
+
 if(RELEASE AND LINUX AND CI AND NOT ENABLE_ASSERTIONS AND NOT ENABLE_ASAN)
   set(DEFAULT_LTO ON)
 else()

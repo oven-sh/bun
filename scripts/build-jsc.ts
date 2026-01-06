@@ -5,12 +5,12 @@ import { arch, platform } from "os";
 import { join, resolve } from "path";
 
 // Build configurations
-type BuildConfig = "debug" | "release" | "lto";
+type BuildConfig = "debug" | "release" | "lto" | "heap-breakdown";
 
 // Parse command line arguments
 const args = process.argv.slice(2);
 const buildConfig: BuildConfig = (args[0] as BuildConfig) || "debug";
-const validConfigs = ["debug", "release", "lto"];
+const validConfigs = ["debug", "release", "lto", "heap-breakdown"];
 
 if (!validConfigs.includes(buildConfig)) {
   console.error(`Invalid build configuration: ${buildConfig}`);
@@ -32,6 +32,7 @@ const WEBKIT_BUILD_DIR = join(WEBKIT_DIR, "WebKitBuild");
 const WEBKIT_RELEASE_DIR = join(WEBKIT_BUILD_DIR, "Release");
 const WEBKIT_DEBUG_DIR = join(WEBKIT_BUILD_DIR, "Debug");
 const WEBKIT_RELEASE_DIR_LTO = join(WEBKIT_BUILD_DIR, "ReleaseLTO");
+const WEBKIT_HEAP_BREAKDOWN_DIR = join(WEBKIT_BUILD_DIR, "ReleaseHeapBreakdown");
 
 // Homebrew prefix detection
 const HOMEBREW_PREFIX = IS_ARM64 ? "/opt/homebrew/" : "/usr/local/";
@@ -57,6 +58,8 @@ const getBuildDir = (config: BuildConfig) => {
       return WEBKIT_DEBUG_DIR;
     case "lto":
       return WEBKIT_RELEASE_DIR_LTO;
+    case "heap-breakdown":
+      return WEBKIT_HEAP_BREAKDOWN_DIR;
     default:
       return WEBKIT_RELEASE_DIR;
   }
@@ -122,6 +125,10 @@ const getBuildFlags = (config: BuildConfig) => {
       flags.push("-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_C_FLAGS=-flto=full", "-DCMAKE_CXX_FLAGS=-flto=full");
       break;
 
+    case "heap-breakdown":
+      flags.push("-DCMAKE_BUILD_TYPE=RelWithDebInfo", "-DENABLE_MALLOC_HEAP_BREAKDOWN=ON");
+      break;
+
     default: // release
       flags.push("-DCMAKE_BUILD_TYPE=RelWithDebInfo");
       break;
@@ -172,7 +179,7 @@ function runCommand(command: string, args: string[], options: any = {}) {
 }
 
 // Main build function
-function buildJSC() {
+async function buildJSC() {
   const buildDir = getBuildDir(buildConfig);
   const cmakeFlags = getBuildFlags(buildConfig);
   const env = getBuildEnv();
@@ -198,12 +205,21 @@ function buildJSC() {
 
   // Build with CMake
   console.log("\n🔨 Building JSC...");
-  const buildType = buildConfig === "debug" ? "Debug" : buildConfig === "lto" ? "Release" : "RelWithDebInfo";
+  const buildType = buildConfig === "debug" ? "Debug" : buildConfig === "lto" ? "Release" : "RelWithDebInfo"; // heap-breakdown uses RelWithDebInfo
 
   runCommand("cmake", ["--build", buildDir, "--config", buildType, "--target", "jsc"], {
     cwd: buildDir,
     env,
   });
+
+  // Remove duplicate InspectorProtocolObjects.h to prevent redefinition errors when building Bun
+  // The file exists in both DerivedSources/inspector and PrivateHeaders/JavaScriptCore,
+  // and #pragma once doesn't prevent double-inclusion from different paths
+  const duplicateHeader = join(buildDir, "JavaScriptCore/DerivedSources/inspector/InspectorProtocolObjects.h");
+  if (await Bun.file(duplicateHeader).exists()) {
+    console.log("\n🧹 Removing duplicate InspectorProtocolObjects.h...");
+    await Bun.$`rm ${duplicateHeader}`;
+  }
 
   console.log(`\n✅ JSC build completed successfully!`);
   console.log(`Build output: ${buildDir}`);
@@ -211,5 +227,5 @@ function buildJSC() {
 
 // Entry point
 if (import.meta.main) {
-  buildJSC();
+  await buildJSC();
 }

@@ -29,11 +29,11 @@ if(WEBKIT_LOCAL)
     include_directories(
       ${WEBKIT_PATH}
       ${WEBKIT_PATH}/JavaScriptCore/Headers/JavaScriptCore
+      ${WEBKIT_PATH}/JavaScriptCore/DerivedSources/inspector
       ${WEBKIT_PATH}/JavaScriptCore/PrivateHeaders
+      ${WEBKIT_PATH}/JavaScriptCore/PrivateHeaders/JavaScriptCore
       ${WEBKIT_PATH}/bmalloc/Headers
       ${WEBKIT_PATH}/WTF/Headers
-      ${WEBKIT_PATH}/JavaScriptCore/DerivedSources/inspector
-      ${WEBKIT_PATH}/JavaScriptCore/PrivateHeaders/JavaScriptCore
     )
   endif()
 

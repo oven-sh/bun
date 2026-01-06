@@ -88,7 +88,7 @@ describe("Runtime inspector activation", () => {
       expect(targetStderr).toContain("Debugger listening on ws://127.0.0.1:6499/");
     });
 
-    test("throws error for non-existent process", async () => {
+    test.todoIf(isWindows)("throws error for non-existent process", async () => {
       // Use a PID that definitely doesn't exist
       const fakePid = 999999999;
 

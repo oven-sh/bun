@@ -18,7 +18,7 @@ using namespace JSC;
 static const auto metafileStringPropertyName = "metafileString"_s;
 static const auto metafilePropertyName = "metafile"_s;
 
-JSC_DEFINE_CUSTOM_GETTER(bundlerMetafileLazyGetter, (JSGlobalObject* globalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(bundlerMetafileLazyGetter, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);

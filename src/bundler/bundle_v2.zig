@@ -4616,6 +4616,9 @@ pub const Graph = @import("./Graph.zig");
 
 const string = []const u8;
 
+// C++ binding for lazy metafile getter (defined in BundlerMetafile.cpp)
+extern "c" fn Bun__setupLazyMetafile(globalThis: *jsc.JSGlobalObject, buildOutput: jsc.JSValue, metafileString: jsc.JSValue) void;
+
 const options = @import("../options.zig");
 
 const bun = @import("bun");
@@ -4626,6 +4629,3 @@ const ThreadPoolLib = bun.ThreadPool;
 const Transpiler = bun.Transpiler;
 const default_allocator = bun.default_allocator;
 const strings = bun.strings;
-
-// C++ binding for lazy metafile getter (defined in BundlerMetafile.cpp)
-extern "c" fn Bun__setupLazyMetafile(globalThis: *jsc.JSGlobalObject, buildOutput: jsc.JSValue, metafileString: jsc.JSValue) void;

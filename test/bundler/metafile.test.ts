@@ -355,4 +355,139 @@ describe("bundler metafile", () => {
     expect(jsonImport!.with).toBeDefined();
     expect(jsonImport!.with!.type).toBe("json");
   });
+
+  test("metafile tracks require-call imports", async () => {
+    using dir = tempDir("metafile-require-test", {
+      "entry.js": `const foo = require("./foo.js"); console.log(foo);`,
+      "foo.js": `module.exports = { value: 42 };`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/entry.js`],
+      metafile: true,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.metafile).toBeDefined();
+
+    // Find the entry file in inputs
+    const inputs = result.metafile.inputs as Record<string, MetafileInput>;
+    let requireImport: MetafileImport | null = null;
+    for (const [path, input] of Object.entries(inputs)) {
+      if (path.includes("entry.js")) {
+        for (const imp of input.imports) {
+          if (imp.path.includes("foo.js")) {
+            requireImport = imp;
+            break;
+          }
+        }
+        break;
+      }
+    }
+
+    expect(requireImport).not.toBeNull();
+    expect(requireImport!.kind).toBe("require-call");
+  });
+
+  test("metafile tracks dynamic-import imports", async () => {
+    using dir = tempDir("metafile-dynamic-import-test", {
+      "entry.js": `import("./dynamic.js").then(m => console.log(m));`,
+      "dynamic.js": `export const value = 123;`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/entry.js`],
+      metafile: true,
+      splitting: true,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.metafile).toBeDefined();
+
+    // Find the entry file in inputs
+    const inputs = result.metafile.inputs as Record<string, MetafileInput>;
+    let dynamicImport: MetafileImport | null = null;
+    for (const [path, input] of Object.entries(inputs)) {
+      if (path.includes("entry.js")) {
+        for (const imp of input.imports) {
+          // With code splitting, dynamic imports have the original specifier in 'original' field
+          if (imp.kind === "dynamic-import" && imp.original === "./dynamic.js") {
+            dynamicImport = imp;
+            break;
+          }
+        }
+        break;
+      }
+    }
+
+    expect(dynamicImport).not.toBeNull();
+    expect(dynamicImport!.kind).toBe("dynamic-import");
+    expect(dynamicImport!.original).toBe("./dynamic.js");
+  });
+
+  test("metafile includes cssBundle for CSS outputs", async () => {
+    using dir = tempDir("metafile-css-bundle-test", {
+      "entry.js": `import "./styles.css"; console.log("styled");`,
+      "styles.css": `.foo { color: red; }`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/entry.js`],
+      metafile: true,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.metafile).toBeDefined();
+
+    const outputs = result.metafile.outputs as Record<string, MetafileOutput>;
+
+    // Find the JS output that should reference the CSS bundle
+    let foundCssBundle = false;
+    for (const [outputPath, output] of Object.entries(outputs)) {
+      if (outputPath.endsWith(".js") && output.cssBundle) {
+        foundCssBundle = true;
+        expect(typeof output.cssBundle).toBe("string");
+        expect(output.cssBundle.endsWith(".css")).toBe(true);
+        break;
+      }
+    }
+
+    expect(foundCssBundle).toBe(true);
+  });
+
+  test("metafile handles circular imports", async () => {
+    using dir = tempDir("metafile-circular-test", {
+      "a.js": `import { b } from "./b.js"; export const a = 1; console.log(b);`,
+      "b.js": `import { a } from "./a.js"; export const b = 2; console.log(a);`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/a.js`],
+      metafile: true,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.metafile).toBeDefined();
+
+    const inputs = result.metafile.inputs as Record<string, MetafileInput>;
+    const inputKeys = Object.keys(inputs);
+
+    // Should have both files
+    expect(inputKeys.length).toBe(2);
+
+    // Both files should have imports to each other
+    let aImportsB = false;
+    let bImportsA = false;
+    for (const [path, input] of Object.entries(inputs)) {
+      if (path.includes("a.js")) {
+        aImportsB = input.imports.some(imp => imp.path.includes("b.js"));
+      }
+      if (path.includes("b.js")) {
+        bImportsA = input.imports.some(imp => imp.path.includes("a.js"));
+      }
+    }
+
+    expect(aImportsB).toBe(true);
+    expect(bImportsA).toBe(true);
+  });
 });

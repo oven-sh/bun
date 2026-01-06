@@ -1184,6 +1184,7 @@ describe.todoIf(isWindows)("Bun.spawn with terminal option", () => {
 
     await proc.exited;
     // SIGINT causes null exitCode with signalCode
+    expect(proc.exitCode).toBeNull();
     expect(proc.signalCode).toBe("SIGINT");
   });
 
@@ -1222,6 +1223,7 @@ describe.todoIf(isWindows)("Bun.spawn with terminal option", () => {
     terminal.write("\x03");
 
     await proc2.exited;
+    expect(proc2.exitCode).toBeNull();
     expect(proc2.signalCode).toBe("SIGINT");
   });
 });

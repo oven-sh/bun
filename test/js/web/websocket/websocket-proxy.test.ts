@@ -154,12 +154,41 @@ beforeAll(async () => {
     },
   });
   wsPort = wsServer.port;
+
+  // Import tls certs here to set up wssServer
+  const { tls: tlsCertsLocal } = await import("harness");
+
+  // Create secure WebSocket echo server (wss://)
+  wssServer = Bun.serve({
+    port: 0,
+    tls: {
+      key: tlsCertsLocal.key,
+      cert: tlsCertsLocal.cert,
+    },
+    fetch(req, server) {
+      if (server.upgrade(req)) {
+        return;
+      }
+      return new Response("Expected WebSocket", { status: 400 });
+    },
+    websocket: {
+      message(ws, message) {
+        // Echo back
+        ws.send(message);
+      },
+      open(ws) {
+        ws.send("connected");
+      },
+    },
+  });
+  wssPort = wssServer.port;
 });
 
 afterAll(() => {
   proxy?.close();
   authProxy?.close();
   wsServer?.stop(true);
+  wssServer?.stop(true);
 });
 
 describe("WebSocket proxy API", () => {
@@ -378,38 +407,47 @@ describe("WebSocket through HTTP CONNECT proxy", () => {
 });
 
 describe("WebSocket wss:// through HTTP proxy (TLS tunnel)", () => {
-  // These tests require the TLS tunnel implementation
-  // Skip for now if connecting to external servers
+  // This tests the TLS tunnel: wss:// target through HTTP proxy
+  // The outer connection is plain TCP to the HTTP proxy, then TLS is
+  // negotiated inside the tunnel to the wss:// target server.
 
-  test.skip("wss:// through HTTP proxy", async () => {
-    const { promise, resolve, reject } = Promise.withResolvers<string>();
+  test("wss:// through HTTP proxy", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers<string[]>();
 
-    // This would require a wss:// echo server
-    const ws = new WebSocket("wss://echo.websocket.org", {
+    // Use local wss:// server with self-signed cert
+    const ws = new WebSocket(`wss://127.0.0.1:${wssPort}`, {
       proxy: `http://127.0.0.1:${proxyPort}`,
+      tls: {
+        // Trust the self-signed certificate used by the wss:// server
+        rejectUnauthorized: false,
+      },
     });
 
-    let echoMessage = "";
+    const receivedMessages: string[] = [];
 
     ws.onopen = () => {
-      ws.send("hello");
+      ws.send("hello via tls tunnel");
     };
 
     ws.onmessage = event => {
-      echoMessage = String(event.data);
-      ws.close();
+      receivedMessages.push(String(event.data));
+      if (receivedMessages.length === 2) {
+        ws.close();
+      }
     };
 
     ws.onclose = () => {
-      resolve(echoMessage);
+      resolve(receivedMessages);
     };
 
     ws.onerror = event => {
       reject(event);
     };
 
-    const message = await promise;
-    expect(message).toBe("hello");
+    const messages = await promise;
+    expect(messages).toContain("connected");
+    expect(messages).toContain("hello via tls tunnel");
+    gc();
   });
 });
 

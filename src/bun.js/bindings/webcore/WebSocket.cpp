@@ -571,10 +571,11 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
     void* sslConfig = m_sslConfig;
     m_sslConfig = nullptr; // Transfer ownership
 
-    // Use TLS client if either:
-    // 1. Target is wss:// (is_secure), OR
-    // 2. Proxy is https:// (m_proxyIsHTTPS)
-    bool useTLSClient = is_secure || m_proxyIsHTTPS;
+    // Use TLS client based on:
+    // - Proxy protocol (if using proxy): TLS for https:// proxy, plain for http:// proxy
+    // - Target protocol (if direct): TLS for wss://, plain for ws://
+    // The inner TLS tunnel (for wss:// through proxy) is handled by WebSocketProxyTunnel
+    bool useTLSClient = m_proxyUrl.isValid() ? m_proxyIsHTTPS : is_secure;
 
     if (useTLSClient) {
         us_socket_context_t* ctx = scriptExecutionContext()->webSocketContext<true>();
@@ -1471,6 +1472,7 @@ void WebSocket::didConnect(us_socket_t* socket, char* bufferedData, size_t buffe
 
     this->didConnect();
 }
+
 void WebSocket::didFailWithErrorCode(Bun::WebSocketErrorCode code)
 {
     // from new WebSocket() -> connect()
@@ -1657,12 +1659,68 @@ void WebSocket::updateHasPendingActivity()
         !(m_state == CLOSED && m_pendingActivityCount == 0));
 }
 
+// Forward declarations for tunnel mode (defined outside namespace)
+extern "C" void* Bun__WebSocketClient__initWithTunnel(CppWebSocket* ws, void* tunnel, JSC::JSGlobalObject* globalObject, unsigned char* bufferedData, size_t bufferedDataSize, const PerMessageDeflateParams* deflate_params);
+extern "C" void WebSocketProxyTunnel__setConnectedWebSocket(void* tunnel, void* websocket);
+
+void WebSocket::didConnectWithTunnel(void* tunnel, char* bufferedData, size_t bufferedDataSize, const PerMessageDeflateParams* deflate_params)
+{
+    this->m_upgradeClient = nullptr;
+
+    // Set extensions if permessage-deflate was negotiated
+    if (deflate_params != nullptr) {
+        StringBuilder extensions;
+        extensions.append("permessage-deflate"_s);
+        if (deflate_params->server_no_context_takeover) {
+            extensions.append("; server_no_context_takeover"_s);
+        }
+        if (deflate_params->client_no_context_takeover) {
+            extensions.append("; client_no_context_takeover"_s);
+        }
+        if (deflate_params->server_max_window_bits != 15) {
+            extensions.append("; server_max_window_bits="_s);
+            extensions.append(String::number(deflate_params->server_max_window_bits));
+        }
+        if (deflate_params->client_max_window_bits != 15) {
+            extensions.append("; client_max_window_bits="_s);
+            extensions.append(String::number(deflate_params->client_max_window_bits));
+        }
+        this->m_extensions = extensions.toString();
+    }
+
+    // For wss:// through HTTP proxy, we use a plain (non-TLS) WebSocket client
+    // because the TLS is handled by the proxy tunnel
+    this->m_connectedWebSocket.client = Bun__WebSocketClient__initWithTunnel(
+        reinterpret_cast<CppWebSocket*>(this),
+        tunnel,
+        this->scriptExecutionContext()->jsGlobalObject(),
+        reinterpret_cast<unsigned char*>(bufferedData),
+        bufferedDataSize,
+        deflate_params);
+    this->m_connectedWebSocketKind = ConnectedWebSocketKind::Client;
+
+    // IMPORTANT: Call didConnect() BEFORE setting the connected websocket on the tunnel.
+    // didConnect() sets m_state = OPEN, and messages are dropped if state != OPEN.
+    // By calling didConnect() first, we ensure the state is OPEN before the tunnel
+    // starts forwarding messages to the WebSocket client.
+    this->didConnect();
+
+    // Now set the connected websocket on the tunnel to start forwarding data
+    WebSocketProxyTunnel__setConnectedWebSocket(tunnel, this->m_connectedWebSocket.client);
+}
+
 } // namespace WebCore
 
 extern "C" void WebSocket__didConnect(WebCore::WebSocket* webSocket, us_socket_t* socket, char* bufferedData, size_t len, const PerMessageDeflateParams* deflate_params, void* customSSLCtx)
 {
     webSocket->didConnect(socket, bufferedData, len, deflate_params, customSSLCtx);
 }
+
+extern "C" void WebSocket__didConnectWithTunnel(WebCore::WebSocket* webSocket, void* tunnel, char* bufferedData, size_t len, const PerMessageDeflateParams* deflate_params)
+{
+    webSocket->didConnectWithTunnel(tunnel, bufferedData, len, deflate_params);
+}
+
 extern "C" void WebSocket__didAbruptClose(WebCore::WebSocket* webSocket, Bun::WebSocketErrorCode errorCode)
 {
     webSocket->didFailWithErrorCode(errorCode);

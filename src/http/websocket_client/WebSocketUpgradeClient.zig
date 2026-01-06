@@ -70,6 +70,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             // Proxy states
             proxy_handshake, // Sent CONNECT, waiting for 200
             proxy_tls_handshake, // TLS inside tunnel (for wss:// through proxy)
+            done, // WebSocket upgrade complete, forwarding data through tunnel
         };
 
         const HTTPClient = @This();
@@ -333,9 +334,11 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 this.websocket_request_buf = &[_]u8{};
             }
             if (this.proxy_tunnel) |tunnel| {
+                // Set to null BEFORE shutdown to prevent recursive cleanup
+                // (shutdown can trigger callbacks that lead back to clearData)
+                this.proxy_tunnel = null;
                 tunnel.shutdown();
                 tunnel.deref();
-                this.proxy_tunnel = null;
             }
             if (this.ssl_config) |config| {
                 config.deinit();
@@ -478,6 +481,16 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
         pub fn handleData(this: *HTTPClient, socket: Socket, data: []const u8) void {
             log("onData", .{});
+
+            // For tunnel mode after successful upgrade, forward all data to the tunnel
+            // The tunnel will decrypt and pass to the WebSocket client
+            if (this.state == .done and this.proxy_tunnel != null) {
+                if (this.proxy_tunnel) |tunnel| {
+                    tunnel.receiveData(data);
+                }
+                return;
+            }
+
             if (this.outgoing_websocket == null) {
                 this.clearData();
                 socket.close(.failure);
@@ -915,6 +928,36 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 @memcpy(overflow, remain_buf);
             }
 
+            // Check if we're using a proxy tunnel (wss:// through HTTP proxy)
+            if (this.proxy_tunnel) |tunnel| {
+                // wss:// through HTTP proxy: use tunnel mode
+                // For tunnel mode, the upgrade client STAYS ALIVE to forward socket data to the tunnel.
+                // The socket continues to call handleData on the upgrade client, which forwards to tunnel.
+                // The tunnel forwards decrypted data to the WebSocket client.
+                jsc.markBinding(@src());
+                if (!this.tcp.isClosed() and this.outgoing_websocket != null) {
+                    this.tcp.timeout(0);
+                    log("onDidConnect (tunnel mode)", .{});
+
+                    // Take the outgoing_websocket reference
+                    const ws = bun.take(&this.outgoing_websocket).?;
+                    // Note: We deref once for the outgoing_websocket, but keep the upgrade client alive
+                    this.deref();
+
+                    // Create the WebSocket client with the tunnel
+                    ws.didConnectWithTunnel(tunnel, overflow.ptr, overflow.len, if (deflate_result.enabled) &deflate_result.params else null);
+
+                    // Switch state to connected - handleData will forward to tunnel
+                    this.state = .done;
+                } else if (this.tcp.isClosed()) {
+                    this.terminate(ErrorCode.cancel);
+                } else if (this.outgoing_websocket == null) {
+                    this.tcp.close(.failure);
+                }
+                return;
+            }
+
+            // Normal (non-tunnel) mode - original code path
             // Don't destroy custom SSL context yet - the socket still needs it!
             // Save it before clearData() would destroy it, then transfer ownership to the WebSocket client.
             const saved_custom_ssl_ctx = this.custom_ssl_ctx;
@@ -930,11 +973,10 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 const ws = bun.take(&this.outgoing_websocket).?;
                 const socket = this.tcp;
 
+                // Normal mode: pass socket directly to WebSocket client
                 this.tcp.detach();
                 // Once again for the TCP socket.
                 defer this.deref();
-
-                // Pass custom SSL context to the WebSocket client, which takes ownership
                 ws.didConnect(socket.socket.get().?, overflow.ptr, overflow.len, if (deflate_result.enabled) &deflate_result.params else null, saved_custom_ssl_ctx);
             } else if (this.tcp.isClosed()) {
                 this.terminate(ErrorCode.cancel);
@@ -959,6 +1001,8 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             // Forward to proxy tunnel if active
             if (this.proxy_tunnel) |tunnel| {
                 tunnel.onWritable();
+                // In .done state (after WebSocket upgrade), just handle tunnel writes
+                if (this.state == .done) return;
             }
 
             if (this.to_send.len == 0)

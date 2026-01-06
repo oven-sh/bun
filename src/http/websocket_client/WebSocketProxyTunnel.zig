@@ -15,8 +15,10 @@ pub const ref = RefCount.ref;
 pub const deref = RefCount.deref;
 
 ref_count: RefCount,
-/// Reference to the upgrade client (WebSocketUpgradeClient)
+/// Reference to the upgrade client (WebSocketUpgradeClient) - used during handshake phase
 upgrade_client: ?*anyopaque = null,
+/// Reference to the connected WebSocket client - used after successful upgrade
+connected_websocket: ?*anyopaque = null,
 /// SSL wrapper for TLS inside tunnel
 wrapper: ?SSLWrapperType = null,
 /// Socket reference (the proxy connection)
@@ -120,11 +122,18 @@ fn onData(this: *WebSocketProxyTunnel, decrypted_data: []const u8) void {
     log("onData: {} bytes", .{decrypted_data.len});
     if (decrypted_data.len == 0) return;
 
-    // Get the upgrade client and forward decrypted data
+    // If we have a connected WebSocket client, forward data to it
+    if (this.connected_websocket) |ws_ptr| {
+        const WebSocketClient = @import("../websocket_client.zig").NewWebSocketClient(false);
+        const ws: *WebSocketClient = @ptrCast(@alignCast(ws_ptr));
+        ws.handleTunnelData(decrypted_data);
+        return;
+    }
+
+    // Otherwise, forward to the upgrade client for WebSocket response processing
     if (this.upgrade_client) |client_ptr| {
         const Client = NewHTTPUpgradeClient(false);
         const client: *Client = @ptrCast(@alignCast(client_ptr));
-        // Forward to client's data handler for WebSocket response processing
         client.handleDecryptedData(decrypted_data);
     }
 }
@@ -170,11 +179,31 @@ fn onHandshake(this: *WebSocketProxyTunnel, success: bool, ssl_error: uws.us_bun
 /// SSLWrapper callback: Called when connection is closing
 fn onClose(this: *WebSocketProxyTunnel) void {
     log("onClose", .{});
+
+    // If we have a connected WebSocket client, notify it of the close
+    if (this.connected_websocket) |ws_ptr| {
+        const WebSocketClient = @import("../websocket_client.zig").NewWebSocketClient(false);
+        const ws: *WebSocketClient = @ptrCast(@alignCast(ws_ptr));
+        ws.fail(ErrorCode.ended);
+        return;
+    }
+
+    // Otherwise notify the upgrade client
     if (this.upgrade_client) |client_ptr| {
         const Client = NewHTTPUpgradeClient(false);
         const client: *Client = @ptrCast(@alignCast(client_ptr));
         client.terminate(ErrorCode.ended);
     }
+}
+
+/// Set the connected WebSocket client. Called after successful WebSocket upgrade.
+/// This transitions the tunnel from upgrade phase to connected phase.
+/// After calling this, decrypted data will be forwarded to the WebSocket client.
+pub fn setConnectedWebSocket(this: *WebSocketProxyTunnel, ws: *anyopaque) void {
+    log("setConnectedWebSocket", .{});
+    this.connected_websocket = ws;
+    // Clear the upgrade client reference since we're now in connected phase
+    this.upgrade_client = null;
 }
 
 /// SSLWrapper callback: Called with encrypted data to send to network
@@ -254,6 +283,11 @@ pub fn shutdown(this: *WebSocketProxyTunnel) void {
 /// Check if the tunnel has backpressure
 pub fn hasBackpressure(this: *const WebSocketProxyTunnel) bool {
     return this.write_buffer.isNotEmpty();
+}
+
+/// C export for setting the connected WebSocket client from C++
+pub export fn WebSocketProxyTunnel__setConnectedWebSocket(tunnel: *WebSocketProxyTunnel, ws: *anyopaque) void {
+    tunnel.setConnectedWebSocket(ws);
 }
 
 const log = bun.Output.scoped(.WebSocketProxyTunnel, .visible);

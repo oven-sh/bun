@@ -1173,8 +1173,8 @@ describe.todoIf(isWindows)("Bun.spawn with terminal option", () => {
   test("existing terminal sends SIGINT on Ctrl+C", async () => {
     await using terminal = new Bun.Terminal({});
 
-    // Spawn sleep which will run until interrupted
-    await using proc = Bun.spawn(["sleep", "100"], { terminal });
+    // Spawn a process that will run until interrupted (sleepSync uses milliseconds)
+    await using proc = Bun.spawn([bunExe(), "-e", "Bun.sleepSync(100000)"], { terminal, env: bunEnv });
 
     // Wait for process to start - use longer delay for CI reliability
     await Bun.sleep(300);
@@ -1217,8 +1217,8 @@ describe.todoIf(isWindows)("Bun.spawn with terminal option", () => {
     await proc1.exited;
     expect(proc1.exitCode).toBe(0);
 
-    // Second spawn - interrupt with Ctrl+C
-    await using proc2 = Bun.spawn(["sleep", "100"], { terminal });
+    // Second spawn - interrupt with Ctrl+C (sleepSync uses milliseconds)
+    await using proc2 = Bun.spawn([bunExe(), "-e", "Bun.sleepSync(100000)"], { terminal, env: bunEnv });
     await Bun.sleep(300);
     terminal.write("\x03");
 

@@ -2229,6 +2229,10 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             else
                 status;
 
+            if (status == 204) {
+                this.flags.needs_content_length = false;
+            }
+
             const content_type, const needs_content_type, const content_type_needs_free = getContentType(
                 response.getInitHeaders(),
                 &this.blob,
@@ -2325,6 +2329,10 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             const blob = this.blob;
             const bytes = blob.slice();
             if (this.resp) |resp| {
+                if (!this.flags.needs_content_length) {
+                    return resp.endWithoutBody(this.shouldCloseConnection());
+                }
+
                 if (!resp.tryEnd(
                     bytes,
                     bytes.len,

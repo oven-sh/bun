@@ -487,6 +487,7 @@ pub fn s3DefaultClient(rare: *RareData, globalThis: *jsc.JSGlobalObject) jsc.JSV
             null,
             null,
             null,
+            false,
             globalThis,
         ) catch |err| switch (err) {
             error.OutOfMemory => bun.outOfMemory(),

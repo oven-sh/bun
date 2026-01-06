@@ -269,6 +269,34 @@ describe("bundler metafile", () => {
     expect(hasFormat).toBe(true);
   });
 
+  test("metafile detects cjs format for CommonJS files", async () => {
+    using dir = tempDir("metafile-cjs-format-test", {
+      "entry.js": `const foo = require("./foo.js"); console.log(foo);`,
+      "foo.js": `module.exports = { value: 42 };`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/entry.js`],
+      metafile: true,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.metafile).toBeDefined();
+
+    const inputs = result.metafile.inputs as Record<string, MetafileInput>;
+    // Find the foo.js file which uses CommonJS exports
+    let fooInput: MetafileInput | null = null;
+    for (const [path, input] of Object.entries(inputs)) {
+      if (path.includes("foo.js")) {
+        fooInput = input;
+        break;
+      }
+    }
+
+    expect(fooInput).not.toBeNull();
+    expect(fooInput!.format).toBe("cjs");
+  });
+
   test("metafile marks external imports", async () => {
     using dir = tempDir("metafile-external-test", {
       "index.js": `import fs from "fs"; console.log(fs);`,

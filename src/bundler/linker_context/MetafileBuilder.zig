@@ -270,10 +270,20 @@ pub fn generate(
         }
         j.pushStatic("\n      ]");
 
-        // Write format based on loader
+        // Write format based on exports_kind (esm vs cjs detection)
         const loader = loaders[source_index];
         const format: ?[]const u8 = switch (loader) {
-            .js, .jsx, .ts, .tsx => "esm",
+            .js, .jsx, .ts, .tsx => blk: {
+                const exports_kind = c.graph.ast.items(.exports_kind);
+                if (source_index < exports_kind.len) {
+                    break :blk switch (exports_kind[source_index]) {
+                        .cjs, .esm_with_dynamic_fallback_from_cjs => "cjs",
+                        .esm, .esm_with_dynamic_fallback => "esm",
+                        .none => null, // Unknown format, don't emit
+                    };
+                }
+                break :blk null;
+            },
             .json => "json",
             .css => "css",
             else => null,
@@ -312,6 +322,11 @@ pub fn generate(
 
     j.pushStatic("\n  }\n}\n");
 
+    // If no chunks, there are no chunk references to resolve, so just return the joined string
+    if (chunks.len == 0) {
+        return j.done(allocator);
+    }
+
     // Break output into pieces and resolve chunk references to final paths
     var intermediate = try c.breakOutputIntoPieces(allocator, &j, @intCast(chunks.len));
 
@@ -321,8 +336,8 @@ pub fn generate(
         c.parse_graph,
         &c.graph,
         "", // no import prefix for metafile
-        @constCast(&chunks[0]), // dummy chunk, not used for metafile
-        @constCast(chunks),
+        &chunks[0], // dummy chunk, not used for metafile
+        chunks,
         null, // no display size
         false, // not force absolute path
         false, // no source map shifts

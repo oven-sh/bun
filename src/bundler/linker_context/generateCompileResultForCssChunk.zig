@@ -137,9 +137,10 @@ fn generateCompileResultForCssChunkImpl(worker: *ThreadPool.Worker, c: *LinkerCo
             };
             const output = allocating_writer.written();
             // Update bytesInOutput for this source in the chunk (for metafile)
+            // Use atomic operation since multiple threads may update the same counter
             if (output.len > 0) {
                 if (chunk.files_with_parts_in_chunk.getPtr(idx.get())) |bytes_ptr| {
-                    bytes_ptr.* += output.len;
+                    _ = @atomicRmw(usize, bytes_ptr, .Add, output.len, .monotonic);
                 }
             }
             return CompileResult{

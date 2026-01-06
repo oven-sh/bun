@@ -60,13 +60,14 @@ fn generateCompileResultForJSChunkImpl(worker: *ThreadPool.Worker, c: *LinkerCon
     );
 
     // Update bytesInOutput for this source in the chunk (for metafile)
+    // Use atomic operation since multiple threads may update the same counter
     const code_len = switch (result) {
         .result => |r| r.code.len,
         else => 0,
     };
     if (code_len > 0 and !part_range.source_index.isRuntime()) {
         if (chunk.files_with_parts_in_chunk.getPtr(part_range.source_index.get())) |bytes_ptr| {
-            bytes_ptr.* += code_len;
+            _ = @atomicRmw(usize, bytes_ptr, .Add, code_len, .monotonic);
         }
     }
 

@@ -59,17 +59,17 @@ void MessagePortChannelRegistry::messagePortChannelCreated(MessagePortChannel& c
     // ASSERT(isMainThread());
 
     Locker locker { m_lock };
-    
+
     // When a channel is destroyed, its WeakRef becomes null but the map entry may still exist.
     // Clean up any stale entries before adding new channels with the same port identifiers.
     auto existingChannel1 = m_openChannels.get(channel.port1());
     if (!existingChannel1)
         m_openChannels.remove(channel.port1());
-    
+
     auto existingChannel2 = m_openChannels.get(channel.port2());
     if (!existingChannel2)
         m_openChannels.remove(channel.port2());
-    
+
     auto result = m_openChannels.add(channel.port1(), channel);
     ASSERT_UNUSED(result, result.isNewEntry);
 
@@ -82,14 +82,14 @@ void MessagePortChannelRegistry::messagePortChannelDestroyed(MessagePortChannel&
     // ASSERT(isMainThread());
 
     Locker locker { m_lock };
-    
+
     // The channel might have already been removed from m_openChannels if both ports
     // were closed in quick succession from different threads. With WeakRef, the entries
     // may still exist but point to null, or may have been removed entirely.
     // We defensively remove the entries without asserting they match.
     auto* existingChannel1 = m_openChannels.get(channel.port1());
     auto* existingChannel2 = m_openChannels.get(channel.port2());
-    
+
     // Only remove if the entry points to this channel (or is null/stale)
     if (!existingChannel1 || existingChannel1 == &channel)
         m_openChannels.remove(channel.port1());

@@ -255,11 +255,12 @@ pub fn generate(
         }
         try writer.writeAll("\n      ]");
 
-        // Write exports
+        // Write exports and entry point if applicable
         try writer.writeAll(",\n      \"exports\": [");
         if (chunk.entry_point.is_entry_point) {
             const entry_source_index = chunk.entry_point.source_index;
-            if (entry_source_index < c.graph.files.len) {
+            // Use sources.len as the authoritative bounds check
+            if (entry_source_index < sources.len) {
                 const resolved_exports = c.graph.meta.items(.resolved_exports)[entry_source_index];
                 var first_export = true;
                 var export_iter = resolved_exports.iterator();
@@ -278,7 +279,7 @@ pub fn generate(
         }
         try writer.writeAll("]");
 
-        // Write entry point if applicable
+        // Write entry point path
         if (chunk.entry_point.is_entry_point) {
             const entry_source_index = chunk.entry_point.source_index;
             if (entry_source_index < sources.len) {

@@ -202,14 +202,13 @@ pub const Async = struct {
                     },
                     .write => {
                         const args: Arguments.Write = task.args;
-                        const B = uv.uv_buf_t.init;
                         const fd = args.fd.uv();
 
                         var buf = args.buffer.slice();
                         buf = buf[@min(buf.len, args.offset)..];
                         buf = buf[0..@min(buf.len, args.length)];
 
-                        const rc = uv.uv_fs_write(loop, &task.req, fd, &.{B(buf)}, 1, args.position orelse -1, &uv_callback);
+                        const rc = uv.uv_fs_write(loop, &task.req, fd, &.{.init(buf)}, 1, args.position orelse -1, &uv_callback);
                         bun.debugAssert(rc == .zero);
                         log("uv write({d}) = scheduled", .{fd});
                     },
@@ -242,7 +241,7 @@ pub const Async = struct {
                         var sum: u64 = 0;
                         for (bufs) |b| sum += b.slice().len;
 
-                        const rc = uv.uv_fs_write(loop, &task.req, fd, bufs.ptr, @intCast(bufs.len), pos, &uv_callback);
+                        const rc = uv.uv_fs_write(loop, &task.req, fd, @ptrCast(bufs.ptr), @intCast(bufs.len), pos, &uv_callback);
                         bun.debugAssert(rc == .zero);
                         log("uv writev({d}, {*}, {d}, {d}, {d} total bytes) = scheduled", .{ fd, bufs.ptr, bufs.len, pos, sum });
                     },

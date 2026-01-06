@@ -1781,8 +1781,8 @@ const string = []const u8;
 
 const CompileTarget = @import("../../compile_target.zig");
 const Fs = @import("../../fs.zig");
-const resolve_path = @import("../../resolver/resolve_path.zig");
 const _resolver = @import("../../resolver/resolver.zig");
+const resolve_path = @import("../../resolver/resolve_path.zig");
 const std = @import("std");
 
 const options = @import("../../options.zig");

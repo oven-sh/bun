@@ -7,20 +7,20 @@ pub const JSBundler = struct {
     /// This allows bundling with virtual files that may not exist on disk.
     pub const FileMap = struct {
         map: bun.StringHashMapUnmanaged(jsc.Node.BlobOrStringOrBuffer) = .empty,
-        allocator: std.mem.Allocator = bun.default_allocator,
 
         pub fn deinitAndUnprotect(self: *FileMap) void {
             var iter = self.map.iterator();
             while (iter.next()) |entry| {
                 entry.value_ptr.deinitAndUnprotect();
-                self.allocator.free(entry.key_ptr.*);
+                bun.default_allocator.free(entry.key_ptr.*);
             }
-            self.map.deinit(self.allocator);
+            self.map.deinit(bun.default_allocator);
         }
 
         /// Resolve a specifier against the file map.
-        /// Returns the contents if the specifier exactly matches a key in the map.
-        /// Does not perform any path joining or normalization - only exact matches.
+        /// Returns the contents if the specifier exactly matches a key in the map,
+        /// or if the specifier is a relative path that, when joined with a source
+        /// directory, matches a key in the map.
         pub fn get(self: *const FileMap, specifier: []const u8) ?[]const u8 {
             if (self.map.count() == 0) return null;
             const entry = self.map.get(specifier) orelse return null;
@@ -73,10 +73,9 @@ pub const JSBundler = struct {
         /// Parse the files option from JavaScript.
         /// Expected format: Record<string, string | Blob | File | TypedArray | ArrayBuffer>
         /// Uses async parsing for cross-thread safety since bundler runs on a separate thread.
-        pub fn fromJS(globalThis: *jsc.JSGlobalObject, files_value: jsc.JSValue, allocator: std.mem.Allocator) JSError!FileMap {
+        pub fn fromJS(globalThis: *jsc.JSGlobalObject, files_value: jsc.JSValue) JSError!FileMap {
             var self = FileMap{
                 .map = .empty,
-                .allocator = allocator,
             };
             errdefer self.deinitAndUnprotect();
 
@@ -90,19 +89,19 @@ pub const JSBundler = struct {
             }).init(globalThis, files_obj);
             defer files_iter.deinit();
 
-            try self.map.ensureTotalCapacity(allocator, @intCast(files_iter.len));
+            try self.map.ensureTotalCapacity(bun.default_allocator, @intCast(files_iter.len));
 
             while (try files_iter.next()) |prop| {
                 const property_value = files_iter.value;
 
                 // Parse the value as BlobOrStringOrBuffer using async mode for thread safety
-                const blob_or_string = try jsc.Node.BlobOrStringOrBuffer.fromJSAsync(globalThis, allocator, property_value) orelse {
+                var blob_or_string = try jsc.Node.BlobOrStringOrBuffer.fromJSAsync(globalThis, bun.default_allocator, property_value) orelse {
                     return globalThis.throwInvalidArguments("Expected file content to be a string, Blob, File, TypedArray, or ArrayBuffer", .{});
                 };
+                errdefer blob_or_string.deinitAndUnprotect();
 
                 // Clone the key since we need to own it
-                const key = try prop.toOwnedSlice(allocator);
-                errdefer allocator.free(key);
+                const key = try prop.toOwnedSlice(bun.default_allocator);
 
                 self.map.putAssumeCapacity(key, blob_or_string);
             }
@@ -618,7 +617,7 @@ pub const JSBundler = struct {
 
             // Parse the files option for in-memory files
             if (try config.getOwnObject(globalThis, "files")) |files_obj| {
-                this.files = try FileMap.fromJS(globalThis, files_obj.toJS(), allocator);
+                this.files = try FileMap.fromJS(globalThis, files_obj.toJS());
             }
 
             if (try config.getBooleanLoose(globalThis, "emitDCEAnnotations")) |flag| {

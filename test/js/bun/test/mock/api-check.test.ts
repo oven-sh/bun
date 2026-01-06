@@ -1,8 +1,4 @@
-/**
- * Este teste verifica se a API mock.restoreModule() está disponível
- * Rode com: bun test test/js/bun/test/mock/api-check.test.ts
- */
-import { test, expect, mock } from "bun:test";
+import { expect, mock, test } from "bun:test";
 
 test("mock object has restore method", () => {
   expect(mock).toHaveProperty("restore");
@@ -20,7 +16,6 @@ test("mock object has module method", () => {
 });
 
 test("can call mock.restoreModule without crashing", () => {
-  // Should not throw even if not implemented yet
   expect(() => {
     mock.restoreModule();
   }).not.toThrow();
@@ -37,8 +32,3 @@ test("can call mock.restore without crashing", () => {
     mock.restore();
   }).not.toThrow();
 });
-
-console.log("✅ API structure check passed!");
-console.log("📝 To compile and test the full implementation:");
-console.log("   1. Install build dependencies (CMake, Ninja, etc.)");
-console.log("   2. Run: bun bd test test/js/bun/test/mock/mock-restore-module.test.ts");

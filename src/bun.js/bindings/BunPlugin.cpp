@@ -1034,8 +1034,6 @@ JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specif
     auto& vm = JSC::getVM(globalObject);
     auto& modulesPendingMock = globalObject->onLoadPlugins.modulesPendingMock;
 
-    // CRITICAL: If this module has a pending async mock, return the same Promise
-    // This ensures all imports of the same module await the same Promise and get the mock result
     if (auto pendingPromise = modulesPendingMock.get(specifierString)) {
         wasModuleMock = true;
         return pendingPromise.get();
@@ -1044,35 +1042,21 @@ JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specif
     if (auto virtualModuleFn = virtualModules.get(specifierString)) {
         auto& modulesExecutingFactory = globalObject->onLoadPlugins.modulesExecutingFactory;
 
-        // DEADLOCK PREVENTION: Check if this module is already executing its factory
-        // This happens when the factory function tries to import the same module
-        // Example: mock.module("./calc", async () => {
-        //   const original = await import("./calc"); // <- recursion detected here
-        //   return { ...original, add: () => 999 };
-        // });
         if (modulesExecutingFactory.contains(specifierString)) {
-            // Recursive import detected! Load the original module instead.
-            // This prevents deadlock and allows async factories to work intuitively.
-            // Return JSValue() to signal to the module loader to load normally from filesystem
-            // The mock is still in virtualModules, but we signal to skip it for this recursive call
             return JSC::JSValue();
         }
 
         JSC::JSObject* function = virtualModuleFn.get();
         auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-        // Mark this module as currently executing its factory
         modulesExecutingFactory.add(specifierString);
 
         JSValue result;
 
-        // Shared logic: create importOriginal helper if factory expects it
         JSC::MarkedArgumentBuffer arguments;
         bool shouldCreateHelper = false;
 
-        // Determine if we should create the importOriginal helper
         if (Zig::JSModuleMock* moduleMock = jsDynamicCast<Zig::JSModuleMock*>(function)) {
-            // For JSModuleMock, check the wrapped callback function
             JSC::JSValue callbackValue = moduleMock->callbackFunctionOrCachedResult.get();
             if (callbackValue.isCallable()) {
                 if (auto* callbackFunc = jsDynamicCast<JSC::JSFunction*>(callbackValue)) {
@@ -1082,27 +1066,20 @@ JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specif
                 }
             }
         } else if (auto* jsFunction = jsDynamicCast<JSC::JSFunction*>(function)) {
-            // For regular JSFunction, check directly
             if (auto* executable = jsFunction->jsExecutable()) {
                 shouldCreateHelper = executable->parameterCount() > 0;
             }
         }
 
-        // Create importOriginal helper if needed
         if (shouldCreateHelper) {
-            // CRITICAL: Use a virtualized specifier for importOriginal to avoid cache collision
-            // When importOriginal() loads with "module.ts?__bun_original", JSC caches it under that key.
-            // When the outer import loads "module.ts", it has no cache entry yet, so it gets the mock.
             WTF::StringBuilder virtualizedSpecifier;
             virtualizedSpecifier.append(specifierString);
-            // Add query parameter to virtualize the specifier
             if (specifierString.contains('?')) {
                 virtualizedSpecifier.append("&__bun_original=1"_s);
             } else {
                 virtualizedSpecifier.append("?__bun_original=1"_s);
             }
 
-            // Create JavaScript code: () => import("specifier?__bun_original=1")
             WTF::StringBuilder code;
             code.append("() => import("_s);
             code.append('"');
@@ -1117,7 +1094,6 @@ JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specif
             code.append('"');
             code.append(')');
 
-            // Evaluate the code to create the function
             JSC::SourceCode sourceCode = JSC::makeSource(
                 code.toString(),
                 JSC::SourceOrigin(),
@@ -1142,13 +1118,10 @@ JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specif
             arguments.append(importOriginalHelper);
         }
 
-        // Execute the factory function
         if (Zig::JSModuleMock* moduleMock = jsDynamicCast<Zig::JSModuleMock*>(function)) {
             wasModuleMock = true;
-            // module mock - pass arguments to executeOnce
             result = moduleMock->executeOnce(globalObject, arguments.size() > 0 ? &arguments : nullptr);
         } else {
-            // regular function
             JSC::CallData callData = JSC::getCallData(function);
             RELEASE_ASSERT(callData.type != JSC::CallData::Type::None);
             result = call(globalObject, function, callData, JSC::jsUndefined(), arguments);
@@ -1156,33 +1129,25 @@ JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specif
 
         RETURN_IF_EXCEPTION(throwScope, JSC::jsUndefined());
 
-        // Handle promises from async factory functions
-        // The module loader has built-in support for async virtual modules via PendingVirtualModuleResult
         if (auto* promise = JSC::jsDynamicCast<JSPromise*>(result)) {
             switch (promise->status()) {
             case JSPromise::Status::Rejected: {
-                // Factory failed - remove from tracking and throw
                 modulesExecutingFactory.remove(specifierString);
                 result = promise->result();
                 throwScope.throwException(globalObject, result);
                 return {};
             }
             case JSPromise::Status::Fulfilled: {
-                // Promise already resolved - extract result and continue processing
                 result = promise->result();
                 modulesExecutingFactory.remove(specifierString);
                 break;
             }
             case JSPromise::Status::Pending: {
-                // Promise still pending - store it so subsequent imports return the same Promise
-                // This is CRITICAL: when importOriginal() loads and caches the module, subsequent
-                // imports will find the pending Promise here and await it instead of using the cache
                 modulesPendingMock.set(specifierString, JSC::Strong<JSC::JSPromise>(vm, promise));
                 return promise;
             }
             }
         } else {
-            // Synchronous result - remove from tracking
             modulesExecutingFactory.remove(specifierString);
         }
 

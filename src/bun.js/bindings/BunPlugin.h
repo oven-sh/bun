@@ -70,11 +70,7 @@ public:
         }
 
         VirtualModuleMap* _Nullable virtualModules = nullptr;
-        // Track which modules are currently executing their factory functions
-        // to detect and prevent deadlock from recursive imports
         WTF::HashSet<String> modulesExecutingFactory;
-        // Track modules that have returned a pending Promise (async mock)
-        // Maps module path to the pending Promise so subsequent imports can await the same Promise
         WTF::UncheckedKeyHashMap<String, JSC::Strong<JSC::JSPromise>> modulesPendingMock;
         bool mustDoExpensiveRelativeLookup = false;
         JSC::EncodedJSValue run(JSC::JSGlobalObject* globalObject, BunString* namespaceString, BunString* path);

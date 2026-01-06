@@ -20,7 +20,6 @@ describe("mock.module() - importOriginal helper (Vitest compatibility)", () => {
         import { test, expect, mock } from "bun:test";
 
         test("partial mock with importOriginal", async () => {
-          // Vitest-style API: factory receives importOriginal helper
           mock.module("./calculator.ts", async (importOriginal) => {
             const original = await importOriginal();
             return {
@@ -31,10 +30,7 @@ describe("mock.module() - importOriginal helper (Vitest compatibility)", () => {
 
           const calc = await import("./calculator.ts");
 
-          // add should be mocked
           expect(calc.add(2, 3)).toBe(999);
-
-          // multiply should be original
           expect(calc.multiply(2, 3)).toBe(6);
         });
       `,
@@ -58,7 +54,6 @@ describe("mock.module() - importOriginal helper (Vitest compatibility)", () => {
     expect(stderr).not.toContain("Timeout");
     expect(stderr).not.toContain("deadlock");
     expect(exitCode).toBe(0);
-    // Test output goes to stderr in debug builds
     expect(stderr).toContain("1 pass");
   });
 
@@ -84,17 +79,16 @@ describe("mock.module() - importOriginal helper (Vitest compatibility)", () => {
             const original = await importOriginal();
             return {
               ...original,
-              square: () => 100, // mock square
-              // PI, cube, and default should be preserved
+              square: () => 100,
             };
           });
 
           const math = await import("./math.ts");
 
-          expect(math.square(5)).toBe(100);      // mocked
-          expect(math.cube(2)).toBe(8);          // original
-          expect(math.PI).toBe(3.14159);         // original
-          expect(math.default()).toBe("default"); // original
+          expect(math.square(5)).toBe(100);
+          expect(math.cube(2)).toBe(8);
+          expect(math.PI).toBe(3.14159);
+          expect(math.default()).toBe("default");
         });
       `,
     });
@@ -139,14 +133,13 @@ describe("mock.module() - importOriginal helper (Vitest compatibility)", () => {
             return {
               ...original,
               calculate: (a: number, b: number) => 555,
-              // simpleAdd should remain original
             };
           });
 
           const calc = await import("./calculator.ts");
 
-          expect(calc.calculate(1, 2)).toBe(555);    // mocked
-          expect(calc.simpleAdd(1, 2)).toBe(3);      // original
+          expect(calc.calculate(1, 2)).toBe(555);
+          expect(calc.simpleAdd(1, 2)).toBe(3);
         });
       `,
     });
@@ -232,10 +225,8 @@ describe("mock.module() - importOriginal helper (Vitest compatibility)", () => {
 
         test("importOriginal returns a value (not promise)", async () => {
           mock.module("./module.ts", async (importOriginal) => {
-            // importOriginal() should work synchronously within the async factory
             const original = await importOriginal();
 
-            // Verify it's an object with the expected exports
             expect(typeof original).toBe("object");
             expect(typeof original.original).toBe("function");
 
@@ -276,7 +267,6 @@ describe("mock.module() - importOriginal helper (Vitest compatibility)", () => {
         import { test, expect, mock } from "bun:test";
 
         test("factory without importOriginal parameter", async () => {
-          // Old style: pre-import before mocking
           const original = await import("./calculator.ts");
 
           mock.module("./calculator.ts", () => ({

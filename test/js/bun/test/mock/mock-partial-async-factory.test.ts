@@ -23,7 +23,6 @@ describe("mock.module() - async factory with recursive import (deadlock preventi
         import { test, expect, mock } from "bun:test";
 
         test("partial mock with async factory", async () => {
-          // This used to cause deadlock, but now should work!
           mock.module("./calculator.ts", async () => {
             const original = await import("./calculator.ts");
             return {
@@ -34,10 +33,7 @@ describe("mock.module() - async factory with recursive import (deadlock preventi
 
           const calc = await import("./calculator.ts");
 
-          // add should be mocked
           expect(calc.add(2, 3)).toBe(999);
-
-          // multiply and divide should be original
           expect(calc.multiply(2, 3)).toBe(6);
           expect(calc.divide(10, 2)).toBe(5);
         });
@@ -88,8 +84,8 @@ describe("mock.module() - async factory with recursive import (deadlock preventi
           });
 
           const math = await import("./math.ts");
-          expect(math.square(5)).toBe(100);  // mocked
-          expect(math.cube(2)).toBe(8);      // original
+          expect(math.square(5)).toBe(100);
+          expect(math.cube(2)).toBe(8);
         });
 
         test("second mock", async () => {
@@ -102,8 +98,8 @@ describe("mock.module() - async factory with recursive import (deadlock preventi
           });
 
           const math = await import("./math.ts");
-          expect(math.square(5)).toBe(25);   // original
-          expect(math.cube(2)).toBe(200);    // mocked
+          expect(math.square(5)).toBe(25);
+          expect(math.cube(2)).toBe(200);
         });
       `,
     });
@@ -142,7 +138,6 @@ describe("mock.module() - async factory with recursive import (deadlock preventi
 
         test("nested imports in async factory", async () => {
           mock.module("./calculator.ts", async () => {
-            // This imports calculator, which imports utils
             const original = await import("./calculator.ts");
             return {
               ...original,
@@ -182,7 +177,6 @@ describe("mock.module() - async factory with recursive import (deadlock preventi
         import { test, expect, mock } from "bun:test";
 
         test("sync factory without import", async () => {
-          // Regular sync factory (without await import) should still work
           mock.module("./calculator.ts", () => ({
             add: () => 777,
           }));
@@ -221,7 +215,6 @@ describe("mock.module() - async factory with recursive import (deadlock preventi
         import { test, expect, mock } from "bun:test";
 
         test("import before mock", async () => {
-          // Old workaround: import before mocking
           const original = await import("./calculator.ts");
 
           mock.module("./calculator.ts", () => ({

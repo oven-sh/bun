@@ -21,10 +21,8 @@ describe("mock.module() - Async Mocking Patterns that Work", () => {
 
         test("async factory - no import", async () => {
           mock.module("./calculator.ts", async () => {
-            // Simulate async operation (API call, etc)
             await new Promise(resolve => setTimeout(resolve, 10));
 
-            // Return completely mocked module
             return {
               add: () => 999,
               multiply: () => 888,
@@ -71,18 +69,16 @@ describe("mock.module() - Async Mocking Patterns that Work", () => {
         import { test, expect, mock } from "bun:test";
 
         test("import before mock", async () => {
-          // ✅ Import the original FIRST
           const original = await import("./calculator.ts");
 
-          // Then mock with reference to original
           mock.module("./calculator.ts", () => ({
             ...original,
-            add: () => 999, // Mock only add
+            add: () => 999,
           }));
 
           const calc = await import("./calculator.ts");
-          expect(calc.add(2, 3)).toBe(999);        // Mocked
-          expect(calc.multiply(2, 3)).toBe(6);     // Original
+          expect(calc.add(2, 3)).toBe(999);
+          expect(calc.multiply(2, 3)).toBe(6);
         });
       `,
     });
@@ -163,11 +159,9 @@ describe("mock.module() - Async Mocking Patterns that Work", () => {
         import { test, expect, mock } from "bun:test";
 
         test("multiple modules", async () => {
-          // Import both originals first
           const mathOrig = await import("./math.ts");
           const calcOrig = await import("./calc.ts");
 
-          // Mock both
           mock.module("./math.ts", () => ({
             ...mathOrig,
             square: () => 100,
@@ -181,9 +175,9 @@ describe("mock.module() - Async Mocking Patterns that Work", () => {
           const math = await import("./math.ts");
           const calc = await import("./calc.ts");
 
-          expect(math.square(5)).toBe(100);       // Mocked
-          expect(math.PI).toBe(3.14159);          // Original
-          expect(calc.add(2, 3)).toBe(999);       // Mocked
+          expect(math.square(5)).toBe(100);
+          expect(math.PI).toBe(3.14159);
+          expect(calc.add(2, 3)).toBe(999);
         });
       `,
     });
@@ -219,7 +213,6 @@ describe("mock.module() - Async Mocking Patterns that Work", () => {
 
         test("async factory with external operation", async () => {
           mock.module("./api.ts", async () => {
-            // Simulate async setup (e.g., loading fixtures)
             const fixtures = await Promise.resolve({ data: "mock data" });
 
             return {
@@ -277,11 +270,7 @@ describe("mock.module() - Async Mocking Patterns that Work", () => {
         });
 
         test("second test - original", async () => {
-          // Mock was restored, but module is cached
-          // For truly original behavior, would need cache clearing
           const counter = await import("./counter.ts");
-          // Note: In real tests, may still get mocked version due to cache
-          // This is expected behavior
           expect(typeof counter.getCount).toBe("function");
         });
       `,

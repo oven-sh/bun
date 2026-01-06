@@ -1172,7 +1172,6 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultResolve, (JSC::JSGlobalObje
         return retValue;
     }
 
-    // Clean up pending mock Promise on success
     if (wasModuleMock) {
         auto* zigGlobal = static_cast<Zig::GlobalObject*>(globalObject);
         auto specifierWtf = specifier.toWTFString(BunString::ZeroCopy);

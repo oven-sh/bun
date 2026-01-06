@@ -16,7 +16,6 @@ test("debug: async factory with pending Promise", async () => {
 
         mock.module("./module.ts", async () => {
           console.log("[TEST] Factory executing, will wait");
-          // Force Promise to be pending by using setTimeout
           await new Promise(resolve => setTimeout(resolve, 10));
           console.log("[TEST] Factory done waiting");
           return {

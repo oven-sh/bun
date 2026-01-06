@@ -1,6 +1,5 @@
 import { expect, mock, test } from "bun:test";
 
-// Test fixtures
 const createFixture = (value: number) => ({
   "age-fixture.ts": `export function getAge() { return ${value}; }`,
 });
@@ -10,22 +9,17 @@ test("mock.restoreModule() restores a specific module", async () => {
 
   const modulePath = require("path").join(String(dir), "age-fixture.ts");
 
-  // Import original
   const original = await import(modulePath);
   expect(original.getAge()).toBe(36);
 
-  // Mock the module
   mock.module(modulePath, () => ({
     getAge: () => 25,
   }));
 
-  // Should return mocked value
   expect(original.getAge()).toBe(25);
 
-  // Restore the module
   mock.restoreModule(modulePath);
 
-  // Should reload original after clearing cache
   delete require.cache[require.resolve(modulePath)];
   const restored = await import(modulePath + "?v=1");
   expect(restored.getAge()).toBe(36);
@@ -38,7 +32,6 @@ test("mock.restore() without args restores ALL module mocks", async () => {
   const module1Path = require("path").join(String(dir1), "age-fixture.ts");
   const module2Path = require("path").join(String(dir2), "age-fixture.ts");
 
-  // Mock both modules
   mock.module(module1Path, () => ({ getAge: () => 100 }));
   mock.module(module2Path, () => ({ getAge: () => 200 }));
 
@@ -48,10 +41,8 @@ test("mock.restore() without args restores ALL module mocks", async () => {
   expect(mod1.getAge()).toBe(100);
   expect(mod2.getAge()).toBe(200);
 
-  // Restore all mocks
   mock.restore();
 
-  // Clear cache and reimport
   delete require.cache[require.resolve(module1Path)];
   delete require.cache[require.resolve(module2Path)];
 
@@ -103,20 +94,16 @@ test("mocking same module multiple times, then restoring", async () => {
 
   const modulePath = require("path").join(String(dir), "age-fixture.ts");
 
-  // Mock version 1
   mock.module(modulePath, () => ({ getAge: () => 10 }));
   const mod1 = await import(modulePath);
   expect(mod1.getAge()).toBe(10);
 
-  // Mock version 2 (overwrite)
   mock.module(modulePath, () => ({ getAge: () => 20 }));
   expect(mod1.getAge()).toBe(20);
 
-  // Mock version 3 (overwrite again)
   mock.module(modulePath, () => ({ getAge: () => 30 }));
   expect(mod1.getAge()).toBe(30);
 
-  // Restore
   mock.restoreModule(modulePath);
 
   delete require.cache[require.resolve(modulePath)];
@@ -129,23 +116,18 @@ test("mock.restore() restores both function mocks AND module mocks", async () =>
 
   const modulePath = require("path").join(String(dir), "age-fixture.ts");
 
-  // Create a function mock
   const mockFn = mock(() => "function mock");
   mockFn();
   expect(mockFn).toHaveBeenCalledTimes(1);
 
-  // Create a module mock
   mock.module(modulePath, () => ({ getAge: () => 999 }));
   const mod = await import(modulePath);
   expect(mod.getAge()).toBe(999);
 
-  // Restore everything
   mock.restore();
 
-  // Function mock calls should still be tracked (restore doesn't clear calls)
   expect(mockFn).toHaveBeenCalledTimes(1);
 
-  // Module mock should be cleared
   delete require.cache[require.resolve(modulePath)];
   const restored = await import(modulePath + "?v=5");
   expect(restored.getAge()).toBe(42);
@@ -172,7 +154,6 @@ test("ESM and CJS mocks are both restored", async () => {
   const esmPath = require("path").join(String(dir), "module.ts");
   const cjsPath = require("path").join(String(dir), "module.cjs");
 
-  // Mock both
   mock.module(esmPath, () => ({ value: "mocked-esm" }));
   mock.module(cjsPath, () => ({ value: "mocked-cjs" }));
 
@@ -182,10 +163,8 @@ test("ESM and CJS mocks are both restored", async () => {
   expect(esm1.value).toBe("mocked-esm");
   expect(cjs1.value).toBe("mocked-cjs");
 
-  // Restore all
   mock.restore();
 
-  // Clear caches
   delete require.cache[require.resolve(esmPath)];
   delete require.cache[require.resolve(cjsPath)];
 

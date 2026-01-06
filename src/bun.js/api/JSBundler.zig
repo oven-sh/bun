@@ -3,6 +3,113 @@ const debug = bun.Output.scoped(.Transpiler, .visible);
 pub const JSBundler = struct {
     const OwnedString = bun.MutableString;
 
+    /// A map of file paths to their in-memory contents.
+    /// This allows bundling with virtual files that may not exist on disk.
+    pub const FileMap = struct {
+        map: bun.StringHashMapUnmanaged(jsc.Node.BlobOrStringOrBuffer) = .empty,
+        allocator: std.mem.Allocator = bun.default_allocator,
+
+        pub fn deinit(self: *FileMap) void {
+            var iter = self.map.iterator();
+            while (iter.next()) |entry| {
+                entry.value_ptr.deinit();
+                self.allocator.free(entry.key_ptr.*);
+            }
+            self.map.deinit(self.allocator);
+        }
+
+        /// Resolve a specifier against the file map.
+        /// Returns the contents if the specifier exactly matches a key in the map.
+        /// Does not perform any path joining or normalization - only exact matches.
+        pub fn get(self: *const FileMap, specifier: []const u8) ?[]const u8 {
+            if (self.map.count() == 0) return null;
+            const entry = self.map.get(specifier) orelse return null;
+            return entry.slice();
+        }
+
+        /// Check if the file map contains a given specifier.
+        pub fn contains(self: *const FileMap, specifier: []const u8) bool {
+            if (self.map.count() == 0) return false;
+            return self.map.contains(specifier);
+        }
+
+        /// Returns a resolver Result for a file in the map, or null if not found.
+        /// This creates a minimal Result that can be used by the bundler.
+        /// Uses the "memory" namespace to avoid triggering pathWithPrettyInitialized
+        /// allocations during the linking phase.
+        pub fn resolve(self: *const FileMap, source_dir: []const u8, specifier: []const u8) ?_resolver.Result {
+            // Fast path: if the map is empty, return immediately
+            if (self.map.count() == 0) return null;
+
+            // Check if the specifier is directly in the map
+            // Must use getKey to return the map's owned key, not the parameter
+            if (self.map.getKey(specifier)) |key| {
+                return _resolver.Result{
+                    .path_pair = .{
+                        .primary = Fs.Path.initWithNamespace(key, "memory"),
+                    },
+                    .module_type = .unknown,
+                };
+            }
+
+            // Also try with source_dir joined for relative specifiers
+            if (source_dir.len > 0 and !std.fs.path.isAbsolute(specifier)) {
+                var buf: bun.PathBuffer = undefined;
+                const joined = bun.path.joinAbsStringBuf(source_dir, &buf, &.{specifier}, .auto);
+                // Must use getKey to return the map's owned key, not the temporary buffer
+                if (self.map.getKey(joined)) |key| {
+                    return _resolver.Result{
+                        .path_pair = .{
+                            .primary = Fs.Path.initWithNamespace(key, "memory"),
+                        },
+                        .module_type = .unknown,
+                    };
+                }
+            }
+
+            return null;
+        }
+
+        /// Parse the files option from JavaScript.
+        /// Expected format: Record<string, string | Blob | File | TypedArray | ArrayBuffer>
+        pub fn fromJS(globalThis: *jsc.JSGlobalObject, files_value: jsc.JSValue, allocator: std.mem.Allocator) JSError!FileMap {
+            var self = FileMap{
+                .map = .empty,
+                .allocator = allocator,
+            };
+            errdefer self.deinit();
+
+            const files_obj = files_value.getObject() orelse {
+                return globalThis.throwInvalidArguments("Expected files to be an object", .{});
+            };
+
+            var files_iter = try jsc.JSPropertyIterator(.{
+                .skip_empty_name = true,
+                .include_value = true,
+            }).init(globalThis, files_obj);
+            defer files_iter.deinit();
+
+            try self.map.ensureTotalCapacity(allocator, @intCast(files_iter.len));
+
+            while (try files_iter.next()) |prop| {
+                const property_value = files_iter.value;
+
+                // Parse the value as BlobOrStringOrBuffer
+                const blob_or_string = try jsc.Node.BlobOrStringOrBuffer.fromJS(globalThis, allocator, property_value) orelse {
+                    return globalThis.throwInvalidArguments("Expected file content to be a string, Blob, File, TypedArray, or ArrayBuffer", .{});
+                };
+
+                // Clone the key since we need to own it
+                const key = try prop.toOwnedSlice(allocator);
+                errdefer allocator.free(key);
+
+                self.map.putAssumeCapacity(key, blob_or_string);
+            }
+
+            return self;
+        }
+    };
+
     pub const Config = struct {
         target: Target = Target.browser,
         entry_points: bun.StringSet = bun.StringSet.init(bun.default_allocator),
@@ -46,6 +153,9 @@ pub const JSBundler = struct {
         env_prefix: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         tsconfig_override: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         compile: ?CompileOptions = null,
+        /// In-memory files that can be used as entrypoints or imported.
+        /// These files do not need to exist on disk.
+        files: FileMap = .{},
 
         pub const CompileOptions = struct {
             compile_target: CompileTarget = .{},
@@ -505,6 +615,11 @@ pub const JSBundler = struct {
                 return globalThis.throwInvalidArguments("Expected entrypoints to be an array of strings", .{});
             }
 
+            // Parse the files option for in-memory files
+            if (try config.getOwnObject(globalThis, "files")) |files_obj| {
+                this.files = try FileMap.fromJS(globalThis, files_obj.toJS(), allocator);
+            }
+
             if (try config.getBooleanLoose(globalThis, "emitDCEAnnotations")) |flag| {
                 this.emit_dce_annotations = flag;
             }
@@ -537,6 +652,20 @@ pub const JSBundler = struct {
                     }
 
                     const entry_points = this.entry_points.keys();
+
+                    // Check if all entry points are in the FileMap - if so, use cwd
+                    if (this.files.map.count() > 0) {
+                        var all_in_filemap = true;
+                        for (entry_points) |ep| {
+                            if (!this.files.contains(ep)) {
+                                all_in_filemap = false;
+                                break;
+                            }
+                        }
+                        if (all_in_filemap) {
+                            break :brk ZigString.Slice.fromUTF8NeverFree(".");
+                        }
+                    }
 
                     if (entry_points.len == 1) {
                         break :brk ZigString.Slice.fromUTF8NeverFree(std.fs.path.dirname(entry_points[0]) orelse ".");
@@ -837,6 +966,7 @@ pub const JSBundler = struct {
             self.env_prefix.deinit();
             self.footer.deinit();
             self.tsconfig_override.deinit();
+            self.files.deinit();
         }
     };
 
@@ -1652,6 +1782,7 @@ const string = []const u8;
 const CompileTarget = @import("../../compile_target.zig");
 const Fs = @import("../../fs.zig");
 const resolve_path = @import("../../resolver/resolve_path.zig");
+const _resolver = @import("../../resolver/resolver.zig");
 const std = @import("std");
 
 const options = @import("../../options.zig");

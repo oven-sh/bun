@@ -48,6 +48,9 @@ if(NOT BUILDKITE_BUILD_STATUS EQUAL 0)
 endif()
 
 file(READ ${BUILDKITE_BUILD_PATH}/build.json BUILDKITE_BUILD)
+# Escape backslashes so CMake doesn't interpret JSON escape sequences (e.g., \n in commit messages)
+string(REPLACE "\\" "\\\\" BUILDKITE_BUILD "${BUILDKITE_BUILD}")
+
 string(JSON BUILDKITE_BUILD_UUID GET ${BUILDKITE_BUILD} id)
 string(JSON BUILDKITE_JOBS GET ${BUILDKITE_BUILD} jobs)
 string(JSON BUILDKITE_JOBS_COUNT LENGTH ${BUILDKITE_JOBS})

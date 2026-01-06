@@ -421,7 +421,7 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
     // TODO: meta contents
 
     chunk.isolated_hash = c.generateIsolatedHash(chunk);
-    chunk.is_executable = is_executable;
+    chunk.flags.is_executable = is_executable;
 
     if (c.options.source_maps != .none) {
         const can_have_shifts = chunk.intermediate_output == .pieces;

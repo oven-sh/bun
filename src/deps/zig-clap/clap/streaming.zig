@@ -61,9 +61,7 @@ pub fn StreamingClap(comptime Id: type, comptime ArgIterator: type) type {
                     const maybe_value = if (eql_index) |i| arg[i + 1 ..] else null;
 
                     for (parser.params) |*param| {
-                        const match = param.names.long orelse continue;
-
-                        if (!mem.eql(u8, name, match))
+                        if (!param.names.matchesLong(name))
                             continue;
 
                         if (param.takes_value == .none or param.takes_value == .one_optional) {

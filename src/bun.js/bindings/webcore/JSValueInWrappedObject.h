@@ -95,7 +95,7 @@ inline void JSValueInWrappedObject::setWeakly(JSC::JSValue value)
     m_nonCell = {};
     JSC::Weak weak { value.asCell() };
     WTF::storeStoreFence();
-    m_cell = WTFMove(weak);
+    m_cell = WTF::move(weak);
 }
 
 inline void JSValueInWrappedObject::set(JSC::VM& vm, const JSC::JSCell* owner, JSC::JSValue value)

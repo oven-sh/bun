@@ -71,7 +71,7 @@ void BundlerPlugin::NamespaceList::append(JSC::VM& vm, JSC::RegExp* filter, Stri
 
     auto pattern = filter->pattern();
     auto filter_regexp = FilterRegExp(pattern, filter->flags());
-    nsGroup->append(WTFMove(filter_regexp));
+    nsGroup->append(WTF::move(filter_regexp));
 }
 
 static bool anyMatchesForNamespace(JSC::VM& vm, BundlerPlugin::NamespaceList& list, const BunString* namespaceStr, const BunString* path)
@@ -260,7 +260,7 @@ void BundlerPlugin::NativePluginList::append(JSC::VM& vm, JSC::RegExp* filter, S
 
         auto pattern = filter->pattern();
         auto filter_regexp = FilterRegExp(pattern, filter->flags());
-        nsGroup->append(WTFMove(filter_regexp));
+        nsGroup->append(WTF::move(filter_regexp));
     }
 
     if (index == std::numeric_limits<unsigned>::max()) {
@@ -280,8 +280,7 @@ void BundlerPlugin::NativePluginList::append(JSC::VM& vm, JSC::RegExp* filter, S
 bool BundlerPlugin::FilterRegExp::match(JSC::VM& vm, const String& path)
 {
     WTF::Locker locker { lock };
-    constexpr bool usesPatternContextBuffer = false;
-    Yarr::MatchingContextHolder regExpContext(vm, usesPatternContextBuffer, nullptr, Yarr::MatchFrom::CompilerThread);
+    Yarr::MatchingContextHolder regExpContext(vm, nullptr, Yarr::MatchFrom::CompilerThread);
     return regex.match(path) != -1;
 }
 
@@ -670,11 +669,12 @@ extern "C" void JSBundlerPlugin__drainDeferred(Bun::JSBundlerPlugin* pluginObjec
     pluginObject->plugin.deferredPromises.moveTo(pluginObject, arguments);
     ASSERT(!arguments.hasOverflowed());
 
-    auto scope = DECLARE_THROW_SCOPE(pluginObject->vm());
+    auto& vm = pluginObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     for (auto promiseValue : arguments) {
         JSPromise* promise = jsCast<JSPromise*>(JSValue::decode(promiseValue));
         if (rejected) {
-            promise->reject(globalObject, JSC::jsUndefined());
+            promise->reject(vm, globalObject, JSC::jsUndefined());
         } else {
             promise->resolve(globalObject, JSC::jsUndefined());
         }

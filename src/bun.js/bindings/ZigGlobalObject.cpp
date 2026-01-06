@@ -531,7 +531,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
             auto& options = worker.options();
 
             if (options.env.has_value()) {
-                HashMap<String, String> map = WTFMove(*std::exchange(options.env, std::nullopt));
+                HashMap<String, String> map = *std::exchange(options.env, std::nullopt);
                 auto size = map.size();
 
                 // In theory, a GC could happen before we finish putting all the properties on the object.
@@ -547,7 +547,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
                 for (auto k : map) {
                     // They can have environment variables with numbers as keys.
                     // So we must use putDirectMayBeIndex to handle that.
-                    env->putDirectMayBeIndex(globalObject, JSC::Identifier::fromString(vm, WTFMove(k.key)), strings.at(i++));
+                    env->putDirectMayBeIndex(globalObject, JSC::Identifier::fromString(vm, WTF::move(k.key)), strings.at(i++));
                 }
                 globalObject->m_processEnvObject.set(vm, globalObject, env);
             }
@@ -853,6 +853,13 @@ void GlobalObject::promiseRejectionTracker(JSGlobalObject* obj, JSC::JSPromise* 
 
     // Do this in C++ for now
     auto* globalObj = static_cast<GlobalObject*>(obj);
+
+    // JSInternalPromise should not be tracked through the normal promise rejection mechanism
+    // as they are internal to the engine and should not be exposed to user space.
+    // See: JSInternalPromise.h - "CAUTION: Must not leak the JSInternalPromise to the user space"
+    if (jsDynamicCast<JSC::JSInternalPromise*>(promise))
+        return;
+
     switch (operation) {
     case JSPromiseRejectionOperation::Reject:
         globalObj->m_aboutToBeNotifiedRejectedPromises.append(obj->vm(), globalObj, promise);
@@ -1062,9 +1069,11 @@ JSC_DEFINE_HOST_FUNCTION(functionQueueMicrotask,
         asyncContext = JSC::jsUndefined();
     }
 
-    // This is a JSC builtin function
-    lexicalGlobalObject->queueMicrotask(function, callback, asyncContext,
-        JSC::JSValue {}, JSC::JSValue {});
+    // BunPerformMicrotaskJob accepts a variable number of arguments (up to: performMicrotask, job, asyncContext, arg0, arg1).
+    // The runtime inspects argumentCount to determine which arguments are present, so callers may pass only the subset they need.
+    // Here we pass: function, callback, asyncContext.
+    JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::BunPerformMicrotaskJob, globalObject, function, callback, asyncContext };
+    globalObject->vm().queueMicrotask(WTF::move(task));
 
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
@@ -1121,7 +1130,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBTOA,
             return {};
         }
         WTF::StringImpl::copyCharacters(ptr, encodedString.span16());
-        encodedString = WTFMove(dest);
+        encodedString = WTF::move(dest);
     }
 
     unsigned length = encodedString.length();
@@ -1189,7 +1198,7 @@ extern "C" JSC::EncodedJSValue ArrayBuffer__fromSharedMemfd(int64_t fd, JSC::JSG
     }));
 
     if (type == JSC::Uint8ArrayType) {
-        auto uint8array = JSC::JSUint8Array::create(globalObject, globalObject->m_typedArrayUint8.get(globalObject), WTFMove(buffer), 0, byteLength);
+        auto uint8array = JSC::JSUint8Array::create(globalObject, globalObject->m_typedArrayUint8.get(globalObject), WTF::move(buffer), 0, byteLength);
         return JSValue::encode(uint8array);
     }
 
@@ -1201,7 +1210,7 @@ extern "C" JSC::EncodedJSValue ArrayBuffer__fromSharedMemfd(int64_t fd, JSC::JSG
             return JSC::JSValue::encode(JSC::JSValue {});
         }
 
-        return JSValue::encode(JSC::JSArrayBuffer::create(globalObject->vm(), structure, WTFMove(buffer)));
+        return JSValue::encode(JSC::JSArrayBuffer::create(globalObject->vm(), structure, WTF::move(buffer)));
     } else {
         RELEASE_ASSERT_NOT_REACHED();
     }
@@ -1223,7 +1232,7 @@ extern "C" JSC::EncodedJSValue Bun__createArrayBufferForCopy(JSC::JSGlobalObject
     if (len > 0)
         memcpy(arrayBuffer->data(), ptr, len);
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::JSArrayBuffer::create(globalObject->vm(), globalObject->arrayBufferStructure(JSC::ArrayBufferSharingMode::Default), WTFMove(arrayBuffer))));
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::JSArrayBuffer::create(globalObject->vm(), globalObject->arrayBufferStructure(JSC::ArrayBufferSharingMode::Default), WTF::move(arrayBuffer))));
 }
 
 extern "C" JSC::EncodedJSValue Bun__allocUint8ArrayForCopy(JSC::JSGlobalObject* globalObject, size_t len, void** ptr)
@@ -1277,7 +1286,7 @@ extern "C" JSC::EncodedJSValue Bun__makeArrayBufferWithBytesNoCopy(JSC::JSGlobal
         if (deallocator) deallocator(p, deallocatorContext);
     }));
 
-    JSArrayBuffer* jsBuffer = JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(ArrayBufferSharingMode::Default), WTFMove(buffer));
+    JSArrayBuffer* jsBuffer = JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(ArrayBufferSharingMode::Default), WTF::move(buffer));
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsBuffer);
 }
@@ -1290,7 +1299,7 @@ extern "C" JSC::EncodedJSValue Bun__makeTypedArrayWithBytesNoCopy(JSC::JSGlobalO
     auto buffer_ = ArrayBuffer::createFromBytes({ static_cast<const uint8_t*>(ptr), len }, createSharedTask<void(void*)>([=](void* p) {
         if (deallocator) deallocator(p, deallocatorContext);
     }));
-    RefPtr<ArrayBuffer>&& buffer = WTFMove(buffer_);
+    RefPtr<ArrayBuffer>&& buffer = WTF::move(buffer_);
     if (!buffer) {
         throwOutOfMemoryError(globalObject, scope);
         return {};
@@ -1304,7 +1313,7 @@ extern "C" JSC::EncodedJSValue Bun__makeTypedArrayWithBytesNoCopy(JSC::JSGlobalO
     switch (ty) {
 #define JSC_TYPED_ARRAY_FACTORY(type) \
     case Type##type:                  \
-        RELEASE_AND_RETURN(scope, JSValue::encode(JS##type##Array::create(globalObject, globalObject->typedArrayStructure(Type##type, isResizableOrGrowableShared), WTFMove(buffer), offset, length)));
+        RELEASE_AND_RETURN(scope, JSValue::encode(JS##type##Array::create(globalObject, globalObject->typedArrayStructure(Type##type, isResizableOrGrowableShared), WTF::move(buffer), offset, length)));
 #undef JSC_TYPED_ARRAY_CHECK
         FOR_EACH_TYPED_ARRAY_TYPE_EXCLUDING_DATA_VIEW(JSC_TYPED_ARRAY_FACTORY)
     case NotTypedArray:
@@ -1328,7 +1337,7 @@ JSC_DEFINE_HOST_FUNCTION(functionCreateUninitializedArrayBuffer,
         return {};
     }
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::JSArrayBuffer::create(globalObject->vm(), globalObject->arrayBufferStructure(JSC::ArrayBufferSharingMode::Default), WTFMove(arrayBuffer))));
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::JSArrayBuffer::create(globalObject->vm(), globalObject->arrayBufferStructure(JSC::ArrayBufferSharingMode::Default), WTF::move(arrayBuffer))));
 }
 
 static inline JSC::EncodedJSValue jsFunctionAddEventListenerBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, Zig::GlobalObject* castedThis)
@@ -1349,7 +1358,7 @@ static inline JSC::EncodedJSValue jsFunctionAddEventListenerBody(JSC::JSGlobalOb
     EnsureStillAliveScope argument2 = callFrame->argument(2);
     auto options = argument2.value().isUndefined() ? false : convert<IDLUnion<IDLDictionary<AddEventListenerOptions>, IDLBoolean>>(*lexicalGlobalObject, argument2.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    auto result = JSValue::encode(WebCore::toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl->addEventListenerForBindings(WTFMove(type), WTFMove(listener), WTFMove(options)); }));
+    auto result = JSValue::encode(WebCore::toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl->addEventListenerForBindings(WTF::move(type), WTF::move(listener), WTF::move(options)); }));
     RETURN_IF_EXCEPTION(throwScope, {});
     vm.writeBarrier(&static_cast<JSObject&>(*castedThis), argument1.value());
     return result;
@@ -1378,7 +1387,7 @@ static inline JSC::EncodedJSValue jsFunctionRemoveEventListenerBody(JSC::JSGloba
     EnsureStillAliveScope argument2 = callFrame->argument(2);
     auto options = argument2.value().isUndefined() ? false : convert<IDLUnion<IDLDictionary<EventListenerOptions>, IDLBoolean>>(*lexicalGlobalObject, argument2.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    auto result = JSValue::encode(WebCore::toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl->removeEventListenerForBindings(WTFMove(type), WTFMove(listener), WTFMove(options)); }));
+    auto result = JSValue::encode(WebCore::toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl->removeEventListenerForBindings(WTF::move(type), WTF::move(listener), WTF::move(options)); }));
     RETURN_IF_EXCEPTION(throwScope, {});
     vm.writeBarrier(&static_cast<JSObject&>(*castedThis), argument1.value());
     return result;
@@ -1494,7 +1503,7 @@ JSC_DEFINE_HOST_FUNCTION(createWritableStreamFromInternal, (JSGlobalObject * glo
 
     auto* jsDOMGlobalObject = JSC::jsCast<JSDOMGlobalObject*>(globalObject);
     auto internalWritableStream = InternalWritableStream::fromObject(*jsDOMGlobalObject, *callFrame->uncheckedArgument(0).toObject(globalObject));
-    return JSValue::encode(toJSNewlyCreated(globalObject, jsDOMGlobalObject, WritableStream::create(WTFMove(internalWritableStream))));
+    return JSValue::encode(toJSNewlyCreated(globalObject, jsDOMGlobalObject, WritableStream::create(WTF::move(internalWritableStream))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(addAbortAlgorithmToSignal, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -1509,7 +1518,7 @@ JSC_DEFINE_HOST_FUNCTION(addAbortAlgorithmToSignal, (JSGlobalObject * globalObje
 
     Ref<AbortAlgorithm> abortAlgorithm = JSAbortAlgorithm::create(vm, callFrame->uncheckedArgument(1).getObject());
 
-    auto algorithmIdentifier = AbortSignal::addAbortAlgorithmToSignal(abortSignal->wrapped(), WTFMove(abortAlgorithm));
+    auto algorithmIdentifier = AbortSignal::addAbortAlgorithmToSignal(abortSignal->wrapped(), WTF::move(abortAlgorithm));
     return JSValue::encode(JSC::jsNumber(algorithmIdentifier));
 }
 
@@ -2984,7 +2993,7 @@ void GlobalObject::handleRejectedPromises()
     JSC::VM& virtual_machine = vm();
     auto scope = DECLARE_CATCH_SCOPE(virtual_machine);
     while (auto* promise = m_aboutToBeNotifiedRejectedPromises.takeFirst(this)) {
-        if (promise->isHandled(virtual_machine))
+        if (promise->isHandled())
             continue;
 
         Bun__handleRejectedPromise(this, promise);
@@ -3093,7 +3102,9 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskCallback(Zig::GlobalObject* g
 #endif
 
     // Do not use JSCell* here because the GC will try to visit it.
-    globalObject->queueMicrotask(function, JSValue(std::bit_cast<double>(reinterpret_cast<uintptr_t>(ptr))), JSValue(std::bit_cast<double>(reinterpret_cast<uintptr_t>(callback))), jsUndefined(), jsUndefined());
+    // Use BunInvokeJobWithArguments to pass the two arguments (ptr and callback) to the trampoline function
+    JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::BunInvokeJobWithArguments, globalObject, function, JSValue(std::bit_cast<double>(reinterpret_cast<uintptr_t>(ptr))), JSValue(std::bit_cast<double>(reinterpret_cast<uintptr_t>(callback))) };
+    globalObject->vm().queueMicrotask(WTF::move(task));
 }
 
 JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject,
@@ -3439,7 +3450,7 @@ static JSC::JSPromise* handleResponseOnStreamingAction(JSGlobalObject* lexicalGl
         return promise;
     }
 
-    auto wrapper = WebCore::toJSNewlyCreated(globalObject, globalObject, WTFMove(compiler));
+    auto wrapper = WebCore::toJSNewlyCreated(globalObject, globalObject, WTF::move(compiler));
     auto builtin = globalObject->wasmStreamingConsumeStreamFunction();
     auto callData = JSC::getCallData(builtin);
     MarkedArgumentBuffer arguments;

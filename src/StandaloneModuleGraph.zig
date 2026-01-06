@@ -1213,7 +1213,7 @@ pub const StandaloneModuleGraph = struct {
             }
         }
 
-        if (read_amount < trailer.len + @sizeOf(usize) + 32)
+        if (read_amount < trailer.len + @sizeOf(usize) + @sizeOf(Offsets))
             // definitely missing data
             return null;
 

@@ -1482,7 +1482,7 @@ pub const BundleV2 = struct {
         minify_duration: *u64,
         source_code_size: *u64,
         fetcher: ?*DependenciesScanner,
-    ) !std.array_list.Managed(options.OutputFile) {
+    ) !BuildResult {
         var this = try BundleV2.init(
             transpiler,
             null,
@@ -1536,10 +1536,24 @@ pub const BundleV2 = struct {
         // Do this at the very end, after processing all the imports/exports so that we can follow exports as needed.
         if (fetcher) |fetch| {
             try this.getAllDependencies(reachable_files, fetch);
-            return std.array_list.Managed(options.OutputFile).init(alloc);
+            return .{
+                .output_files = std.array_list.Managed(options.OutputFile).init(alloc),
+                .metafile = null,
+            };
         }
 
-        return try this.linker.generateChunksInParallel(chunks, false);
+        const output_files = try this.linker.generateChunksInParallel(chunks, false);
+
+        // Generate metafile if requested
+        const metafile: ?[]const u8 = if (this.linker.options.metafile)
+            LinkerContext.MetafileBuilder.generate(bun.default_allocator, &this.linker, chunks) catch null
+        else
+            null;
+
+        return .{
+            .output_files = output_files,
+            .metafile = metafile,
+        };
     }
 
     pub fn generateFromBakeProductionCLI(

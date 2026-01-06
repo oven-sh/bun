@@ -85,6 +85,7 @@ pub const BuildCommand = struct {
         this_transpiler.options.bundler_feature_flags = Runtime.Features.initBundlerFeatureFlags(allocator, ctx.args.feature_flags);
 
         this_transpiler.options.css_chunking = ctx.bundler_options.css_chunking;
+        this_transpiler.options.metafile = ctx.bundler_options.metafile.len > 0;
 
         this_transpiler.options.output_dir = ctx.bundler_options.outdir;
         this_transpiler.options.output_format = ctx.bundler_options.output_format;
@@ -308,7 +309,7 @@ pub const BuildCommand = struct {
                 this_transpiler.resolver.opts.entry_naming = this_transpiler.options.entry_naming;
             }
 
-            break :brk (BundleV2.generateFromCLI(
+            const build_result = BundleV2.generateFromCLI(
                 &this_transpiler,
                 allocator,
                 bun.jsc.AnyEventLoop.init(ctx.allocator),
@@ -326,7 +327,36 @@ pub const BuildCommand = struct {
 
                 Output.flush();
                 exitOrWatch(1, ctx.debug.hot_reload == .watch);
-            }).items;
+            };
+
+            // Write metafile if requested
+            if (build_result.metafile) |metafile_json| {
+                if (ctx.bundler_options.metafile.len > 0) {
+                    const metafile_path = ctx.bundler_options.metafile;
+                    const metafile_dir = std.fs.path.dirname(metafile_path);
+                    const metafile_basename = std.fs.path.basename(metafile_path);
+
+                    const dir = if (metafile_dir) |dir_path|
+                        std.fs.cwd().makeOpenPath(dir_path, .{}) catch |err| {
+                            Output.err(err, "could not open metafile directory {f}", .{bun.fmt.quote(dir_path)});
+                            exitOrWatch(1, ctx.debug.hot_reload == .watch);
+                            unreachable;
+                        }
+                    else
+                        std.fs.cwd();
+
+                    dir.writeFile(.{
+                        .sub_path = metafile_basename,
+                        .data = metafile_json,
+                    }) catch |err| {
+                        Output.err(err, "could not write metafile {f}", .{bun.fmt.quote(metafile_path)});
+                        exitOrWatch(1, ctx.debug.hot_reload == .watch);
+                        unreachable;
+                    };
+                }
+            }
+
+            break :brk build_result.output_files.items;
         };
         const bundled_end = std.time.nanoTimestamp();
 

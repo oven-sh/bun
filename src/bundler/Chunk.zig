@@ -36,6 +36,10 @@ pub const Chunk = struct {
 
     compile_results_for_chunk: []CompileResult = &.{},
 
+    /// Pre-built JSON fragment for this chunk's metafile output entry.
+    /// Generated during parallel chunk generation, joined at the end.
+    metafile_chunk_json: []const u8 = "",
+
     /// Pack boolean flags to reduce padding overhead.
     /// Previously 3 separate bool fields caused ~21 bytes of padding waste.
     flags: Flags = .{},

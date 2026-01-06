@@ -164,6 +164,7 @@ pub const build_only_params = [_]ParamType{
     clap.parseParam("--target <STR>                   The intended execution environment for the bundle. \"browser\", \"bun\" or \"node\"") catch unreachable,
     clap.parseParam("--outdir <STR>                   Default to \"dist\" if multiple files") catch unreachable,
     clap.parseParam("--outfile <STR>                  Write to a file") catch unreachable,
+    clap.parseParam("--metafile <STR>?                Write a JSON file with metadata about the build") catch unreachable,
     clap.parseParam("--sourcemap <STR>?               Build with sourcemaps - 'linked', 'inline', 'external', or 'none'") catch unreachable,
     clap.parseParam("--banner <STR>                   Add a banner to the bundled output such as \"use client\"; for a bundle being used with RSCs") catch unreachable,
     clap.parseParam("--footer <STR>                   Add a footer to the bundled output such as // built with bun!") catch unreachable,
@@ -1193,6 +1194,11 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             if (outfile.len > 0) {
                 ctx.bundler_options.outfile = outfile;
             }
+        }
+
+        if (args.option("--metafile")) |metafile| {
+            // If --metafile is passed without a value, default to "meta.json"
+            ctx.bundler_options.metafile = if (metafile.len > 0) metafile else "meta.json";
         }
 
         if (args.option("--root")) |root_dir| {

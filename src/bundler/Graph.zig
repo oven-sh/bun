@@ -77,9 +77,6 @@ pub const InputFile = struct {
     unique_key_for_additional_file: string = "",
     content_hash_for_additional_file: u64 = 0,
     is_plugin_file: bool = false,
-    /// Tracks actual bytes emitted to output for this input file (for metafile).
-    /// Updated atomically during code generation.
-    output_bytes: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
 };
 
 pub inline fn pathToSourceIndexMap(this: *Graph, target: options.Target) *PathToSourceIndexMap {

@@ -48,7 +48,6 @@ pub fn generate(
     var first_input = true;
     const sources = c.parse_graph.input_files.items(.source);
     const loaders = c.parse_graph.input_files.items(.loader);
-    const output_bytes = c.parse_graph.input_files.items(.output_bytes);
     const import_records_list = c.parse_graph.ast.items(.import_records);
 
     // Iterate through all files in chunks to collect unique source indices
@@ -190,6 +189,24 @@ pub fn generate(
 
         try writer.print("\n      \"bytes\": {d}", .{chunk_bytes});
 
+        // Compute per-source bytes from compile_results_for_chunk
+        var source_bytes = std.AutoHashMap(u32, usize).init(allocator);
+        defer source_bytes.deinit();
+
+        for (chunk.compile_results_for_chunk) |compile_result| {
+            const code_len = compile_result.code().len;
+            if (code_len > 0) {
+                const src_idx = compile_result.sourceIndex();
+                if (src_idx != Index.runtime.get()) {
+                    const entry = try source_bytes.getOrPut(src_idx);
+                    if (!entry.found_existing) {
+                        entry.value_ptr.* = 0;
+                    }
+                    entry.value_ptr.* += code_len;
+                }
+            }
+        }
+
         // Write inputs for this output
         try writer.writeAll(",\n      \"inputs\": {");
         var first_chunk_input = true;
@@ -211,8 +228,8 @@ pub fn generate(
 
             try writer.writeAll("\n        ");
             try writeJSONString(writer, file_path);
-            // Use the actual bytes emitted during code generation
-            const bytes_in_output = output_bytes[file_source_index].load(.monotonic);
+            // Use the actual bytes emitted for this source in this chunk
+            const bytes_in_output = source_bytes.get(file_source_index) orelse 0;
             try writer.print(": {{\n          \"bytesInOutput\": {d}\n        }}", .{bytes_in_output});
         }
         try writer.writeAll("\n      }");

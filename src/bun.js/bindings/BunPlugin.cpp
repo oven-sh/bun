@@ -667,7 +667,9 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
 
     JSValue entryValue = esm->get(globalObject, specifierString);
     RETURN_IF_EXCEPTION(scope, {});
-    if (entryValue) {
+    fprintf(stderr, "[DEBUG mock.module] entryValue: exists=%d, isUndefined=%d, isNull=%d\n", 
+            !!entryValue, entryValue.isUndefined(), entryValue.isNull());
+    if (entryValue && !entryValue.isUndefinedOrNull()) {
         removeFromESM = true;
         JSObject* entry = entryValue ? entryValue.getObject() : nullptr;
         if (entry) {
@@ -678,13 +680,51 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
                     JSC::JSModuleNamespaceObject* moduleNamespaceObject = mod->getModuleNamespace(globalObject);
                     RETURN_IF_EXCEPTION(scope, {});
                     if (moduleNamespaceObject) {
+                        bool alreadyHasSavedOriginals = globalObject->onLoadPlugins.originalExports.contains(specifier);
+                        bool alreadyHasSavedNamespace = globalObject->onLoadPlugins.originalNamespaceObjects.contains(specifier);
+                        bool alreadyMocked = globalObject->onLoadPlugins.virtualModules && 
+                                            globalObject->onLoadPlugins.virtualModules->contains(specifier);
+                        
+                        // Always save the namespace object if we don't have it yet (needed for re-mocking)
+                        if (!alreadyHasSavedNamespace) {
+                            globalObject->onLoadPlugins.originalNamespaceObjects.set(specifier, JSC::Strong<JSC::JSModuleNamespaceObject> { vm, moduleNamespaceObject });
+                            fprintf(stderr, "[DEBUG mock.module] Saved namespace object for: %s\n", specifier.utf8().data());
+                        }
+                        
+                        // Only save original export VALUES if:
+                        // 1. We haven't saved them before, AND
+                        // 2. This module isn't already mocked (don't save mocked values as originals)
+                        if (!alreadyHasSavedOriginals && !alreadyMocked) {
+                            // Save original export values before overriding
+                            BunPlugin::OriginalExportsMap originalExportsMap;
+                            JSC::PropertyNameArrayBuilder originalNamesBuilder(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+                            moduleNamespaceObject->getOwnPropertyNames(moduleNamespaceObject, globalObject, originalNamesBuilder, DontEnumPropertiesMode::Exclude);
+                            RETURN_IF_EXCEPTION(scope, {});
+                            
+                            size_t numProperties = originalNamesBuilder.size();
+                            for (size_t i = 0; i < numProperties; i++) {
+                                Identifier name = originalNamesBuilder[i];
+                                auto catchScope = DECLARE_CATCH_SCOPE(vm);
+                                JSValue originalValue = moduleNamespaceObject->get(globalObject, name);
+                                if (catchScope.exception()) {
+                                    catchScope.clearException();
+                                    originalValue = jsUndefined();
+                                }
+                                // Convert Identifier to String for storage
+                                originalExportsMap.set(name.string(), JSC::Strong<JSC::Unknown> { vm, originalValue });
+                            }
+                            globalObject->onLoadPlugins.originalExports.set(specifier, std::move(originalExportsMap));
+                            fprintf(stderr, "[DEBUG mock.module] Saved %zu original exports for: %s\n", numProperties, specifier.utf8().data());
+                        } else {
+                            fprintf(stderr, "[DEBUG mock.module] Skipping save of original exports: alreadyHasSavedOriginals=%d, alreadyMocked=%d\n", alreadyHasSavedOriginals, alreadyMocked);
+                        }
+
                         // If factory expects parameter (importOriginal), don't execute now
                         // Just remove from cache and let runVirtualModule handle it
                         if (!factoryExpectsParameter) {
                             JSValue exportsValue = getJSValue();
                             RETURN_IF_EXCEPTION(scope, {});
                             auto* object = exportsValue.getObject();
-                            removeFromESM = false;
 
                             if (object) {
                                 JSC::PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
@@ -719,6 +759,42 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
         }
     }
 
+    // If we already have a saved namespace object but no ESM entry (re-mocking), use the saved namespace
+    fprintf(stderr, "[DEBUG mock.module] Re-mock check: removeFromESM=%d, factoryExpectsParameter=%d\n", removeFromESM, factoryExpectsParameter);
+    if (!removeFromESM && !factoryExpectsParameter) {
+        auto savedNamespaceIt = globalObject->onLoadPlugins.originalNamespaceObjects.find(specifier);
+        fprintf(stderr, "[DEBUG mock.module] savedNamespaceIt found: %d\n", savedNamespaceIt != globalObject->onLoadPlugins.originalNamespaceObjects.end());
+        if (savedNamespaceIt != globalObject->onLoadPlugins.originalNamespaceObjects.end()) {
+            fprintf(stderr, "[DEBUG mock.module] Re-mocking with saved namespace for: %s\n", specifier.utf8().data());
+            JSC::JSModuleNamespaceObject* moduleNamespaceObject = savedNamespaceIt->value.get();
+            
+            JSValue exportsValue = getJSValue();
+            RETURN_IF_EXCEPTION(scope, {});
+            auto* object = exportsValue.getObject();
+
+            if (object) {
+                JSC::PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+                JSObject::getOwnPropertyNames(object, globalObject, names, DontEnumPropertiesMode::Exclude);
+                RETURN_IF_EXCEPTION(scope, {});
+
+                for (size_t i = 0; i < names.size(); i++) {
+                    Identifier name = names[i];
+                    auto catchScope = DECLARE_CATCH_SCOPE(vm);
+                    JSValue value = object->get(globalObject, name);
+                    if (catchScope.exception()) {
+                        catchScope.clearException();
+                        value = jsUndefined();
+                    }
+                    moduleNamespaceObject->overrideExportValue(globalObject, name, value);
+                    RETURN_IF_EXCEPTION(scope, {});
+                }
+            } else {
+                moduleNamespaceObject->overrideExportValue(globalObject, vm.propertyNames->defaultKeyword, exportsValue);
+                RETURN_IF_EXCEPTION(scope, {});
+            }
+        }
+    }
+
     entryValue = globalObject->requireMap()->get(globalObject, specifierString);
     RETURN_IF_EXCEPTION(scope, {});
     if (entryValue) {
@@ -738,8 +814,15 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
     }
 
     if (removeFromESM) {
+        fprintf(stderr, "[DEBUG mock.module] Removing from ESM: %s\n", specifier.utf8().data());
+        bool hasBeforeInMock = esm->has(globalObject, specifierString);
+        fprintf(stderr, "[DEBUG mock.module] ESM has before remove: %s\n", hasBeforeInMock ? "YES" : "NO");
+
         esm->remove(globalObject, specifierString);
         RETURN_IF_EXCEPTION(scope, {});
+
+        bool hasAfterInMock = esm->has(globalObject, specifierString);
+        fprintf(stderr, "[DEBUG mock.module] ESM has after remove: %s\n", hasAfterInMock ? "YES" : "NO");
     }
 
     if (removeFromCJS) {
@@ -758,31 +841,54 @@ static void restoreSingleModuleMock(Zig::GlobalObject* globalObject, const WTF::
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (globalObject->onLoadPlugins.virtualModules) {
-        globalObject->onLoadPlugins.virtualModules->remove(specifier);
-    }
+    fprintf(stderr, "[DEBUG] Restoring module: %s\n", specifier.utf8().data());
 
-    auto* specifierString = jsString(vm, specifier);
-    bool hadException = false;
-
-    auto* esm = globalObject->esmRegistryMap();
-    if (!scope.exception()) {
-        esm->remove(globalObject, specifierString);
-        if (scope.exception()) {
-            hadException = true;
-            scope.clearException();
+    // First, check if we have saved original exports to restore
+    auto originalExportsIt = globalObject->onLoadPlugins.originalExports.find(specifier);
+    auto originalNamespaceIt = globalObject->onLoadPlugins.originalNamespaceObjects.find(specifier);
+    
+    if (originalExportsIt != globalObject->onLoadPlugins.originalExports.end() && 
+        originalNamespaceIt != globalObject->onLoadPlugins.originalNamespaceObjects.end()) {
+        
+        fprintf(stderr, "[DEBUG] Found saved original exports, restoring in-place\n");
+        
+        JSC::JSModuleNamespaceObject* namespaceObject = originalNamespaceIt->value.get();
+        auto& savedExports = originalExportsIt->value;
+        
+        // Restore all original export values
+        for (auto& exportEntry : savedExports) {
+            auto catchScope = DECLARE_CATCH_SCOPE(vm);
+            // Convert String back to Identifier for overrideExportValue
+            auto identifier = Identifier::fromString(vm, exportEntry.key);
+            namespaceObject->overrideExportValue(globalObject, identifier, exportEntry.value.get());
+            if (catchScope.exception()) {
+                catchScope.clearException();
+            }
         }
-    } else {
-        hadException = true;
-        scope.clearException();
+        fprintf(stderr, "[DEBUG] Restored %u original exports\n", savedExports.size());
+        
+        // Clean up saved state
+        globalObject->onLoadPlugins.originalExports.remove(originalExportsIt);
+        globalObject->onLoadPlugins.originalNamespaceObjects.remove(originalNamespaceIt);
     }
 
-    globalObject->requireMap()->remove(globalObject, specifierString);
-    if (scope.exception()) {
-        hadException = true;
-    } else if (hadException) {
-        scope.throwException(globalObject, JSC::createError(globalObject, "Failed to restore module mock"_s));
+    if (globalObject->onLoadPlugins.virtualModules) {
+        bool removed = globalObject->onLoadPlugins.virtualModules->remove(specifier);
+        fprintf(stderr, "[DEBUG] Removed from virtualModules: %s\n", removed ? "YES" : "NO");
+
+        fprintf(stderr, "[DEBUG] Remaining virtualModules:\n");
+        for (auto& entry : *globalObject->onLoadPlugins.virtualModules) {
+            fprintf(stderr, "[DEBUG]   - %s\n", entry.key.utf8().data());
+        }
     }
+
+    bool removedPending = globalObject->onLoadPlugins.modulesPendingMock.remove(specifier);
+    bool removedExecuting = globalObject->onLoadPlugins.modulesExecutingFactory.remove(specifier);
+    fprintf(stderr, "[DEBUG] Removed from modulesPendingMock: %s\n", removedPending ? "YES" : "NO");
+    fprintf(stderr, "[DEBUG] Removed from modulesExecutingFactory: %s\n", removedExecuting ? "YES" : "NO");
+
+    // Note: We don't remove from ESM registry anymore since we restored exports in-place
+    // The module entry stays valid with original values restored
 }
 
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsRestoreModuleMock);
@@ -1030,15 +1136,21 @@ JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specif
     }
     auto& virtualModules = *globalObject->onLoadPlugins.virtualModules;
     WTF::String specifierString = specifier->toWTFString(BunString::ZeroCopy);
+    fprintf(stderr, "[DEBUG runVirtualModule] Called with specifier: %s\n", specifierString.utf8().data());
     auto& vm = JSC::getVM(globalObject);
     auto& modulesPendingMock = globalObject->onLoadPlugins.modulesPendingMock;
 
+    fprintf(stderr, "[DEBUG] Checking modulesPendingMock...\n");
     if (auto pendingPromise = modulesPendingMock.get(specifierString)) {
+        fprintf(stderr, "[DEBUG] Found in modulesPendingMock, returning promise\n");
         wasModuleMock = true;
         return pendingPromise.get();
     }
+    fprintf(stderr, "[DEBUG] Not in modulesPendingMock\n");
 
+    fprintf(stderr, "[DEBUG] Checking virtualModules...\n");
     if (auto virtualModuleFn = virtualModules.get(specifierString)) {
+        fprintf(stderr, "[DEBUG] Found in virtualModules\n");
         auto& modulesExecutingFactory = globalObject->onLoadPlugins.modulesExecutingFactory;
 
         if (modulesExecutingFactory.contains(specifierString)) {
@@ -1149,6 +1261,7 @@ JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specif
                 break;
             }
             case JSPromise::Status::Pending: {
+                fprintf(stderr, "[DEBUG] Adding %s to modulesPendingMock\n", specifierString.utf8().data());
                 modulesPendingMock.set(specifierString, JSC::Strong<JSC::JSPromise>(vm, promise));
                 return promise;
             }
@@ -1162,10 +1275,24 @@ JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specif
             return {};
         }
 
+        BunString checkSpec = Bun::toString(specifierString);
+        auto checkValue = Bun::toJS(globalObject, checkSpec);
+        auto* esmCheck = globalObject->esmRegistryMap();
+        bool hasInESM = esmCheck->has(globalObject, checkValue);
+        fprintf(stderr, "[DEBUG] After returning mock, ESM has entry: %s\n", hasInESM ? "YES" : "NO");
+
         return result;
     }
 
-    return fallback();
+    fprintf(stderr, "[DEBUG] Not in virtualModules, calling fallback()\n");
+    auto fallbackResult = fallback();
+    if (!fallbackResult) {
+        fprintf(stderr, "[DEBUG] fallback() returned null/undefined\n");
+    } else {
+        fprintf(stderr, "[DEBUG] fallback() returned non-null: isObject: %s\n",
+            fallbackResult.isObject() ? "YES" : "NO");
+    }
+    return fallbackResult;
 }
 
 } // namespace Bun

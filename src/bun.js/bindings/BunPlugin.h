@@ -4,6 +4,7 @@
 #include "headers-handwritten.h"
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/Strong.h>
+#include <JavaScriptCore/JSModuleNamespaceObject.h>
 #include "helpers.h"
 
 BUN_DECLARE_HOST_FUNCTION(jsFunctionBunPlugin);
@@ -61,6 +62,11 @@ public:
         void append(JSC::VM& vm, JSC::RegExp* filter, JSC::JSObject* func, String& namespaceString);
     };
 
+    // Store original export values for modules that were modified in-place
+    // Key: export name (String), Value: original JSValue
+    using OriginalExportsMap = WTF::UncheckedKeyHashMap<String, JSC::Strong<JSC::Unknown>>;
+    using ModuleOriginalExports = WTF::UncheckedKeyHashMap<String, OriginalExportsMap>;
+
     class OnLoad final : public Base {
 
     public:
@@ -72,6 +78,10 @@ public:
         VirtualModuleMap* _Nullable virtualModules = nullptr;
         WTF::HashSet<String> modulesExecutingFactory;
         WTF::UncheckedKeyHashMap<String, JSC::Strong<JSC::JSPromise>> modulesPendingMock;
+        // Store original exports for modules modified in-place (for restore functionality)
+        ModuleOriginalExports originalExports;
+        // Store original namespace objects for modules modified in-place
+        WTF::UncheckedKeyHashMap<String, JSC::Strong<JSC::JSModuleNamespaceObject>> originalNamespaceObjects;
         bool mustDoExpensiveRelativeLookup = false;
         JSC::EncodedJSValue run(JSC::JSGlobalObject* globalObject, BunString* namespaceString, BunString* path);
 

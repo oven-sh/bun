@@ -1124,6 +1124,9 @@ JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specif
             result = call(globalObject, function, callData, JSC::jsUndefined(), arguments);
         }
 
+        if (throwScope.exception()) {
+            modulesExecutingFactory.remove(specifierString);
+        }
         RETURN_IF_EXCEPTION(throwScope, JSC::jsUndefined());
 
         if (auto* promise = JSC::jsDynamicCast<JSPromise*>(result)) {

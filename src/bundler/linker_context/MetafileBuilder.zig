@@ -197,13 +197,13 @@ pub fn generate(
             const code_len = compile_result.code().len;
             if (code_len > 0) {
                 const src_idx = compile_result.sourceIndex();
-                if (src_idx != Index.runtime.get()) {
-                    const entry = try source_bytes.getOrPut(src_idx);
-                    if (!entry.found_existing) {
-                        entry.value_ptr.* = 0;
-                    }
-                    entry.value_ptr.* += code_len;
+                // Bounds check: skip runtime and invalid source indices
+                if (src_idx >= sources.len or src_idx == Index.runtime.get()) continue;
+                const entry = try source_bytes.getOrPut(src_idx);
+                if (!entry.found_existing) {
+                    entry.value_ptr.* = 0;
                 }
+                entry.value_ptr.* += code_len;
             }
         }
 

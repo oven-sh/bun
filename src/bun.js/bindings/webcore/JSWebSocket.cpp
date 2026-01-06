@@ -297,16 +297,12 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
     }
 
     auto object = (rejectUnauthorized == -1)
-        ? WebSocket::create(*context, WTFMove(url), protocols, WTFMove(headersInit), WTFMove(proxyUrl), WTFMove(proxyHeadersInit))
-        : WebSocket::create(*context, WTFMove(url), protocols, WTFMove(headersInit), rejectUnauthorized ? true : false, WTFMove(proxyUrl), WTFMove(proxyHeadersInit));
+        ? WebSocket::create(*context, WTFMove(url), protocols, WTFMove(headersInit), WTFMove(proxyUrl), WTFMove(proxyHeadersInit), sslConfig)
+        : WebSocket::create(*context, WTFMove(url), protocols, WTFMove(headersInit), rejectUnauthorized ? true : false, WTFMove(proxyUrl), WTFMove(proxyHeadersInit), sslConfig);
 
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
 
-    // Set SSL config if provided (ownership transferred to Zig via connect call)
-    if (sslConfig) {
-        object.returnValue()->setSSLConfig(sslConfig);
-    }
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
     auto jsValue = toJSNewlyCreated<IDLInterface<WebSocket>>(*lexicalGlobalObject, *globalObject, throwScope, WTFMove(object));
     if constexpr (IsExceptionOr<decltype(object)>)

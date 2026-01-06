@@ -401,6 +401,21 @@ pub fn takeServerName(this: *SSLConfig) ?[]const u8 {
     return bun.handleOom(bun.memory.dropSentinel(server_name, bun.default_allocator));
 }
 
+/// Returns true if this SSLConfig has any custom TLS options that would require
+/// a per-connection SSL context instead of the shared default context.
+/// This includes custom CA certificates, client certificates, keys, etc.
+pub fn hasCustomOptions(this: *const SSLConfig) bool {
+    return this.ca != null or
+        this.ca_file_name != null or
+        this.cert != null or
+        this.cert_file_name != null or
+        this.key != null or
+        this.key_file_name != null or
+        this.ssl_ciphers != null or
+        this.dh_params_file_name != null or
+        this.passphrase != null;
+}
+
 const std = @import("std");
 
 const bun = @import("bun");

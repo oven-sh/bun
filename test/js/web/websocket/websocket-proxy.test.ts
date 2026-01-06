@@ -240,13 +240,13 @@ describe("WebSocket proxy API", () => {
 
 describe("WebSocket through HTTP CONNECT proxy", () => {
   test("ws:// through HTTP proxy", async () => {
-    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    const { promise, resolve, reject } = Promise.withResolvers<string[]>();
 
     const ws = new WebSocket(`ws://127.0.0.1:${wsPort}`, {
       proxy: `http://127.0.0.1:${proxyPort}`,
     });
 
-    let receivedMessages: string[] = [];
+    const receivedMessages: string[] = [];
 
     ws.onopen = () => {
       ws.send("hello from client");
@@ -260,31 +260,27 @@ describe("WebSocket through HTTP CONNECT proxy", () => {
     };
 
     ws.onclose = () => {
-      try {
-        expect(receivedMessages).toContain("connected");
-        expect(receivedMessages).toContain("hello from client");
-        resolve();
-      } catch (e) {
-        reject(e);
-      }
+      resolve(receivedMessages);
     };
 
-    ws.onerror = () => {
-      reject(new Error("WebSocket error"));
+    ws.onerror = event => {
+      reject(event);
     };
 
-    await promise;
+    const messages = await promise;
+    expect(messages).toContain("connected");
+    expect(messages).toContain("hello from client");
     gc();
   });
 
   test("ws:// through HTTP proxy with auth", async () => {
-    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    const { promise, resolve, reject } = Promise.withResolvers<string[]>();
 
     const ws = new WebSocket(`ws://127.0.0.1:${wsPort}`, {
       proxy: `http://proxy_user:proxy_pass@127.0.0.1:${authProxyPort}`,
     });
 
-    let receivedMessages: string[] = [];
+    const receivedMessages: string[] = [];
 
     ws.onopen = () => {
       ws.send("hello with auth");
@@ -298,20 +294,16 @@ describe("WebSocket through HTTP CONNECT proxy", () => {
     };
 
     ws.onclose = () => {
-      try {
-        expect(receivedMessages).toContain("connected");
-        expect(receivedMessages).toContain("hello with auth");
-        resolve();
-      } catch (e) {
-        reject(e);
-      }
+      resolve(receivedMessages);
     };
 
-    ws.onerror = () => {
-      reject(new Error("WebSocket error"));
+    ws.onerror = event => {
+      reject(event);
     };
 
-    await promise;
+    const messages = await promise;
+    expect(messages).toContain("connected");
+    expect(messages).toContain("hello with auth");
     gc();
   });
 
@@ -330,8 +322,8 @@ describe("WebSocket through HTTP CONNECT proxy", () => {
       resolve();
     };
 
-    ws.onerror = () => {
-      reject(new Error("WebSocket error"));
+    ws.onerror = event => {
+      reject(event);
     };
 
     await promise;
@@ -390,31 +382,34 @@ describe("WebSocket wss:// through HTTP proxy (TLS tunnel)", () => {
   // Skip for now if connecting to external servers
 
   test.skip("wss:// through HTTP proxy", async () => {
-    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
 
     // This would require a wss:// echo server
     const ws = new WebSocket("wss://echo.websocket.org", {
       proxy: `http://127.0.0.1:${proxyPort}`,
     });
 
+    let echoMessage = "";
+
     ws.onopen = () => {
       ws.send("hello");
     };
 
     ws.onmessage = event => {
-      expect(String(event.data)).toBe("hello");
+      echoMessage = String(event.data);
       ws.close();
     };
 
     ws.onclose = () => {
-      resolve();
+      resolve(echoMessage);
     };
 
-    ws.onerror = () => {
-      reject(new Error("WebSocket error"));
+    ws.onerror = event => {
+      reject(event);
     };
 
-    await promise;
+    const message = await promise;
+    expect(message).toBe("hello");
   });
 });
 
@@ -512,10 +507,8 @@ describe("WebSocket through HTTPS proxy (TLS proxy)", () => {
     httpsProxy?.close();
   });
 
-  // TODO: Custom CA for HTTPS proxy requires applying SSLConfig to the proxy socket context
-  // Currently only rejectUnauthorized: false is supported for HTTPS proxies
-  test.skip("ws:// through HTTPS proxy with CA certificate", async () => {
-    const { promise, resolve, reject } = Promise.withResolvers<void>();
+  test("ws:// through HTTPS proxy with CA certificate", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers<string[]>();
 
     const ws = new WebSocket(`ws://127.0.0.1:${wsPort}`, {
       proxy: `https://127.0.0.1:${httpsProxyPort}`,
@@ -525,7 +518,7 @@ describe("WebSocket through HTTPS proxy (TLS proxy)", () => {
       },
     });
 
-    let receivedMessages: string[] = [];
+    const receivedMessages: string[] = [];
 
     ws.onopen = () => {
       ws.send("hello via https proxy");
@@ -539,20 +532,16 @@ describe("WebSocket through HTTPS proxy (TLS proxy)", () => {
     };
 
     ws.onclose = () => {
-      try {
-        expect(receivedMessages).toContain("connected");
-        expect(receivedMessages).toContain("hello via https proxy");
-        resolve();
-      } catch (e) {
-        reject(e);
-      }
+      resolve(receivedMessages);
     };
 
     ws.onerror = event => {
-      reject(new Error(`WebSocket error: ${(event as ErrorEvent).message || "unknown"}`));
+      reject(event);
     };
 
-    await promise;
+    const messages = await promise;
+    expect(messages).toContain("connected");
+    expect(messages).toContain("hello via https proxy");
     gc();
   });
 
@@ -582,7 +571,7 @@ describe("WebSocket through HTTPS proxy (TLS proxy)", () => {
   });
 
   test("ws:// through HTTPS proxy with rejectUnauthorized: false", async () => {
-    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    const { promise, resolve, reject } = Promise.withResolvers<string[]>();
 
     const ws = new WebSocket(`ws://127.0.0.1:${wsPort}`, {
       proxy: `https://127.0.0.1:${httpsProxyPort}`,
@@ -591,7 +580,7 @@ describe("WebSocket through HTTPS proxy (TLS proxy)", () => {
       },
     });
 
-    let receivedMessages: string[] = [];
+    const receivedMessages: string[] = [];
 
     ws.onopen = () => {
       ws.send("hello via https proxy no verify");
@@ -605,20 +594,16 @@ describe("WebSocket through HTTPS proxy (TLS proxy)", () => {
     };
 
     ws.onclose = () => {
-      try {
-        expect(receivedMessages).toContain("connected");
-        expect(receivedMessages).toContain("hello via https proxy no verify");
-        resolve();
-      } catch (e) {
-        reject(e);
-      }
+      resolve(receivedMessages);
     };
 
-    ws.onerror = () => {
-      reject(new Error("WebSocket error"));
+    ws.onerror = event => {
+      reject(event);
     };
 
-    await promise;
+    const messages = await promise;
+    expect(messages).toContain("connected");
+    expect(messages).toContain("hello via https proxy no verify");
     gc();
   });
 });

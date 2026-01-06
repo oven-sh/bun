@@ -79,6 +79,7 @@ pub fn start(this: *WebSocketProxyTunnel, ssl_options: SSLConfig, initial_data: 
     // We verify certificates manually after handshake
     options.reject_unauthorized = 0;
     options.request_cert = 1;
+    log("Starting WebSocketProxyTunnel TLS handshake {any}", .{ssl_options});
 
     this.wrapper = try SSLWrapperType.init(options, true, .{
         .ctx = this,

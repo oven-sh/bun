@@ -54,6 +54,11 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         // Track compression state of the entire message (across fragments)
         message_is_compressed: bool = false,
 
+        // Custom SSL context for per-connection TLS options (e.g., custom CA)
+        // This is set when the WebSocket is adopted from a connection that used a custom SSL context.
+        // Must be cleaned up when the WebSocket closes.
+        custom_ssl_ctx: ?*uws.SocketContext = null,
+
         const stack_frame_size = 1024;
         // Minimum message size to compress (RFC 7692 recommendation)
         const MIN_COMPRESS_SIZE = 860;
@@ -117,6 +122,11 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             this.message_is_compressed = false;
             if (this.deflate) |d| d.deinit();
             this.deflate = null;
+            // Clean up custom SSL context if we own one
+            if (this.custom_ssl_ctx) |ctx| {
+                ctx.deinit(ssl);
+                this.custom_ssl_ctx = null;
+            }
         }
 
         pub fn cancel(this: *WebSocket) callconv(.c) void {
@@ -1157,6 +1167,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             buffered_data: [*]u8,
             buffered_data_len: usize,
             deflate_params: ?*const WebSocketDeflate.Params,
+            custom_ssl_ctx_ptr: ?*anyopaque,
         ) callconv(.c) ?*anyopaque {
             const tcp = @as(*uws.us_socket_t, @ptrCast(input_socket));
             const ctx = @as(*uws.SocketContext, @ptrCast(socket_ctx));
@@ -1168,6 +1179,8 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 .send_buffer = bun.LinearFifo(u8, .Dynamic).init(bun.default_allocator),
                 .receive_buffer = bun.LinearFifo(u8, .Dynamic).init(bun.default_allocator),
                 .event_loop = globalThis.bunVM().eventLoop(),
+                // Take ownership of custom SSL context if provided
+                .custom_ssl_ctx = if (custom_ssl_ctx_ptr) |ptr| @ptrCast(ptr) else null,
             });
 
             if (deflate_params) |params| {

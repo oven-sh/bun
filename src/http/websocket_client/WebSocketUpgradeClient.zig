@@ -58,6 +58,11 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         // TLS options (full SSLConfig for complete TLS customization)
         ssl_config: ?*SSLConfig = null,
 
+        // Custom SSL context for per-connection TLS options (e.g., custom CA)
+        // This is used when ssl_config has custom options that can't be applied
+        // to the shared SSL context from C++.
+        custom_ssl_ctx: ?*uws.SocketContext = null,
+
         const State = enum {
             initializing,
             reading,
@@ -207,15 +212,64 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             else
                 display_host_;
 
-            // For HTTPS proxy support:
-            // When proxy_is_https is true, C++ uses the TLS client (NewHTTPUpgradeClient(true))
-            // which creates an SSL socket that connects to the proxy with TLS.
-            // The SSLConfig (including rejectUnauthorized, CA certs) is used for verification.
+            // For TLS connections with custom SSLConfig (e.g., custom CA), create a per-connection
+            // SSL context instead of using the shared context from C++. This is needed because:
+            // - The shared context is created once with default settings (no custom CA)
+            // - Custom CA certificates must be loaded at context creation time
+            // - This applies to both direct wss:// and HTTPS proxy connections
+            var connect_ctx: *uws.SocketContext = @ptrCast(socket_ctx);
+
+            log("connect: ssl={}, has_ssl_config={}, using_proxy={}", .{ ssl, ssl_config != null, using_proxy });
+
+            if (comptime ssl) {
+                if (ssl_config) |config| {
+                    if (config.hasCustomOptions()) {
+                        var ctx_opts = config.asUSockets();
+                        // We request the cert so we can verify it
+                        ctx_opts.request_cert = 1;
+                        // We manually handle rejection in handleHandshake
+                        ctx_opts.reject_unauthorized = 0;
+
+                        var err: uws.create_bun_socket_error_t = .none;
+                        if (uws.SocketContext.createSSLContext(
+                            vm.event_loop_handle.?,
+                            @sizeOf(usize),
+                            ctx_opts,
+                            &err,
+                        )) |custom_ctx| {
+                            // Configure the custom context with the same callbacks as the shared context
+                            Socket.configure(
+                                custom_ctx,
+                                true,
+                                *HTTPClient,
+                                struct {
+                                    pub const onOpen = handleOpen;
+                                    pub const onClose = handleClose;
+                                    pub const onData = handleData;
+                                    pub const onWritable = handleWritable;
+                                    pub const onTimeout = handleTimeout;
+                                    pub const onLongTimeout = handleTimeout;
+                                    pub const onConnectError = handleConnectError;
+                                    pub const onEnd = handleEnd;
+                                    pub const onHandshake = handleHandshake;
+                                },
+                            );
+                            client.custom_ssl_ctx = custom_ctx;
+                            connect_ctx = custom_ctx;
+                            log("Created custom SSL context for TLS connection with custom CA", .{});
+                        } else {
+                            // Failed to create custom context, fall back to shared context
+                            // The connection may still work if the CA isn't needed
+                            log("Failed to create custom SSL context: {s}", .{@tagName(err)});
+                        }
+                    }
+                }
+            }
 
             if (Socket.connectPtr(
                 display_host,
                 connect_port,
-                @as(*uws.SocketContext, @ptrCast(socket_ctx)),
+                connect_ctx,
                 HTTPClient,
                 client,
                 "tcp",
@@ -288,6 +342,10 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 bun.default_allocator.destroy(config);
                 this.ssl_config = null;
             }
+            if (this.custom_ssl_ctx) |ctx| {
+                ctx.deinit(ssl);
+                this.custom_ssl_ctx = null;
+            }
         }
         pub fn cancel(this: *HTTPClient) callconv(.c) void {
             this.clearData();
@@ -352,7 +410,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         }
 
         pub fn handleHandshake(this: *HTTPClient, socket: Socket, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
-            log("onHandshake({d})", .{success});
+            log("onHandshake({d}) ssl_error.error_no={d}", .{ success, ssl_error.error_no });
 
             const handshake_success = if (success == 1) true else false;
             var reject_unauthorized = false;
@@ -365,6 +423,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 if (reject_unauthorized) {
                     // only reject the connection if reject_unauthorized == true
                     if (ssl_error.error_no != 0) {
+                        log("TLS handshake failed: ssl_error={d}, has_custom_ctx={}", .{ ssl_error.error_no, this.custom_ssl_ctx != null });
                         this.fail(ErrorCode.tls_handshake_failed);
                         return;
                     }
@@ -856,6 +915,10 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 @memcpy(overflow, remain_buf);
             }
 
+            // Don't destroy custom SSL context yet - the socket still needs it!
+            // Save it before clearData() would destroy it, then transfer ownership to the WebSocket client.
+            const saved_custom_ssl_ctx = this.custom_ssl_ctx;
+            this.custom_ssl_ctx = null; // Prevent clearData from destroying it
             this.clearData();
             jsc.markBinding(@src());
             if (!this.tcp.isClosed() and this.outgoing_websocket != null) {
@@ -871,7 +934,8 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 // Once again for the TCP socket.
                 defer this.deref();
 
-                ws.didConnect(socket.socket.get().?, overflow.ptr, overflow.len, if (deflate_result.enabled) &deflate_result.params else null);
+                // Pass custom SSL context to the WebSocket client, which takes ownership
+                ws.didConnect(socket.socket.get().?, overflow.ptr, overflow.len, if (deflate_result.enabled) &deflate_result.params else null, saved_custom_ssl_ctx);
             } else if (this.tcp.isClosed()) {
                 this.terminate(ErrorCode.cancel);
             } else if (this.outgoing_websocket == null) {

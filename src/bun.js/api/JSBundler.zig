@@ -9,10 +9,10 @@ pub const JSBundler = struct {
         map: bun.StringHashMapUnmanaged(jsc.Node.BlobOrStringOrBuffer) = .empty,
         allocator: std.mem.Allocator = bun.default_allocator,
 
-        pub fn deinit(self: *FileMap) void {
+        pub fn deinitAndUnprotect(self: *FileMap) void {
             var iter = self.map.iterator();
             while (iter.next()) |entry| {
-                entry.value_ptr.deinit();
+                entry.value_ptr.deinitAndUnprotect();
                 self.allocator.free(entry.key_ptr.*);
             }
             self.map.deinit(self.allocator);
@@ -72,12 +72,13 @@ pub const JSBundler = struct {
 
         /// Parse the files option from JavaScript.
         /// Expected format: Record<string, string | Blob | File | TypedArray | ArrayBuffer>
+        /// Uses async parsing for cross-thread safety since bundler runs on a separate thread.
         pub fn fromJS(globalThis: *jsc.JSGlobalObject, files_value: jsc.JSValue, allocator: std.mem.Allocator) JSError!FileMap {
             var self = FileMap{
                 .map = .empty,
                 .allocator = allocator,
             };
-            errdefer self.deinit();
+            errdefer self.deinitAndUnprotect();
 
             const files_obj = files_value.getObject() orelse {
                 return globalThis.throwInvalidArguments("Expected files to be an object", .{});
@@ -94,8 +95,8 @@ pub const JSBundler = struct {
             while (try files_iter.next()) |prop| {
                 const property_value = files_iter.value;
 
-                // Parse the value as BlobOrStringOrBuffer
-                const blob_or_string = try jsc.Node.BlobOrStringOrBuffer.fromJS(globalThis, allocator, property_value) orelse {
+                // Parse the value as BlobOrStringOrBuffer using async mode for thread safety
+                const blob_or_string = try jsc.Node.BlobOrStringOrBuffer.fromJSAsync(globalThis, allocator, property_value) orelse {
                     return globalThis.throwInvalidArguments("Expected file content to be a string, Blob, File, TypedArray, or ArrayBuffer", .{});
                 };
 
@@ -966,7 +967,7 @@ pub const JSBundler = struct {
             self.env_prefix.deinit();
             self.footer.deinit();
             self.tsconfig_override.deinit();
-            self.files.deinit();
+            self.files.deinitAndUnprotect();
         }
     };
 

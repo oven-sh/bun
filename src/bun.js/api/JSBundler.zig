@@ -58,10 +58,15 @@ pub const JSBundler = struct {
             // Also try with source directory joined for relative specifiers
             // Use .posix to ensure consistent forward slashes across platforms
             if (!bun.path.Platform.posix.isAbsolute(specifier)) {
+                // Normalize source_file to use forward slashes (for Windows compatibility)
+                // On Windows, source_file may have backslashes from the real filesystem
+                var source_file_buf: bun.PathBuffer = undefined;
+                const normalized_source_file = bun.path.platformToPosixBuf(u8, source_file, &source_file_buf);
+
                 // Extract directory from source_file using posix path handling
                 // For "/entry.js", we want "/"; for "/src/index.js", we want "/src/"
                 var buf: bun.PathBuffer = undefined;
-                const source_dir = bun.path.dirname(source_file, .posix);
+                const source_dir = bun.path.dirname(normalized_source_file, .posix);
                 // Empty dirname means we should use root
                 const effective_source_dir = if (source_dir.len == 0) "/" else source_dir;
                 const joined = bun.path.joinAbsStringBuf(effective_source_dir, &buf, &.{specifier}, .posix);

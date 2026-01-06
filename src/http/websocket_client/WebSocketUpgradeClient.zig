@@ -484,8 +484,12 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
             // For tunnel mode after successful upgrade, forward all data to the tunnel
             // The tunnel will decrypt and pass to the WebSocket client
-            if (this.state == .done and this.proxy_tunnel != null) {
+            if (this.state == .done) {
                 if (this.proxy_tunnel) |tunnel| {
+                    // Ref the tunnel to keep it alive during this call
+                    // (in case the WebSocket client closes during processing)
+                    tunnel.ref();
+                    defer tunnel.deref();
                     tunnel.receiveData(data);
                 }
                 return;
@@ -939,10 +943,10 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                     this.tcp.timeout(0);
                     log("onDidConnect (tunnel mode)", .{});
 
-                    // Take the outgoing_websocket reference
+                    // Take the outgoing_websocket reference but DON'T deref the upgrade client.
+                    // We need to keep it alive to forward socket data to the tunnel.
+                    // The upgrade client will be cleaned up when the socket closes.
                     const ws = bun.take(&this.outgoing_websocket).?;
-                    // Note: We deref once for the outgoing_websocket, but keep the upgrade client alive
-                    this.deref();
 
                     // Create the WebSocket client with the tunnel
                     ws.didConnectWithTunnel(tunnel, overflow.ptr, overflow.len, if (deflate_result.enabled) &deflate_result.params else null);

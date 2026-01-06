@@ -208,7 +208,7 @@ pub fn reportSlowLifecycleScripts(this: *PackageManager) void {
     }
 }
 
-pub fn loadRootLifecycleScripts(this: *PackageManager, root_package: Package) void {
+pub fn loadRootLifecycleScripts(this: *PackageManager, root_package: Package, dependencies_changed: bool) void {
     const binding_dot_gyp_path = Path.joinAbsStringZ(
         Fs.FileSystem.instance.top_level_dir,
         &[_]string{"binding.gyp"},
@@ -232,6 +232,7 @@ pub fn loadRootLifecycleScripts(this: *PackageManager, root_package: Package) vo
             name,
             .root,
             add_node_gyp_rebuild_script,
+            dependencies_changed,
         );
     } else {
         if (Syscall.exists(binding_dot_gyp_path)) {
@@ -243,6 +244,7 @@ pub fn loadRootLifecycleScripts(this: *PackageManager, root_package: Package) vo
                 name,
                 .root,
                 true,
+                dependencies_changed,
             );
         }
     }

@@ -117,6 +117,10 @@ pub const JSBundler = struct {
                 // Clone the key since we need to own it
                 const key = try prop.toOwnedSlice(bun.default_allocator);
 
+                // Normalize backslashes to forward slashes for cross-platform consistency
+                // This ensures Windows paths like "C:\foo\bar.js" become "C:/foo/bar.js"
+                bun.path.platformToPosixInPlace(u8, key);
+
                 self.map.putAssumeCapacity(key, blob_or_string);
             }
 

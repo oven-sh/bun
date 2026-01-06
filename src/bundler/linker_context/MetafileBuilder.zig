@@ -238,6 +238,9 @@ pub fn generate(
         try writer.writeAll(",\n      \"imports\": [");
         var first_chunk_import = true;
         for (chunk.cross_chunk_imports.slice()) |cross_import| {
+            // Bounds check to prevent OOB access from corrupted data
+            if (cross_import.chunk_index >= chunks.len) continue;
+
             if (!first_chunk_import) {
                 try writer.writeAll(",");
             }

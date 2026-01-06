@@ -1952,6 +1952,38 @@ declare module "bun" {
      */
     reactFastRefresh?: boolean;
 
+    /**
+     * Generate a JSON file containing metadata about the build.
+     *
+     * The metafile contains information about inputs, outputs, imports, and exports
+     * which can be used for bundle analysis, visualization, or integration with
+     * other tools.
+     *
+     * When `true`, the metafile JSON string is included in the {@link BuildOutput.metafile} property.
+     *
+     * @default false
+     *
+     * @example
+     * ```ts
+     * const result = await Bun.build({
+     *   entrypoints: ['./src/index.ts'],
+     *   outdir: './dist',
+     *   metafile: true,
+     * });
+     *
+     * // Write metafile to disk for analysis
+     * if (result.metafile) {
+     *   await Bun.write('./dist/meta.json', result.metafile);
+     * }
+     *
+     * // Parse and analyze the metafile
+     * const meta = JSON.parse(result.metafile!);
+     * console.log('Input files:', Object.keys(meta.inputs));
+     * console.log('Output files:', Object.keys(meta.outputs));
+     * ```
+     */
+    metafile?: boolean;
+
     outdir?: string;
   }
 
@@ -2603,6 +2635,106 @@ declare module "bun" {
     outputs: BuildArtifact[];
     success: boolean;
     logs: Array<BuildMessage | ResolveMessage>;
+    /**
+     * Metadata about the build including inputs, outputs, and their relationships.
+     *
+     * Only present when {@link BuildConfig.metafile} is `true`.
+     *
+     * The metafile contains detailed information about:
+     * - **inputs**: All source files that were bundled, their byte sizes, imports, and format
+     * - **outputs**: All generated output files, their byte sizes, which inputs contributed to each output, imports between chunks, and exports
+     *
+     * This can be used for:
+     * - Bundle size analysis and visualization
+     * - Detecting unused code or dependencies
+     * - Understanding the dependency graph
+     * - Integration with bundle analyzer tools
+     *
+     * @example
+     * ```ts
+     * const result = await Bun.build({
+     *   entrypoints: ['./src/index.ts'],
+     *   outdir: './dist',
+     *   metafile: true,
+     * });
+     *
+     * if (result.metafile) {
+     *   // Analyze input files
+     *   for (const [path, input] of Object.entries(result.metafile.inputs)) {
+     *     console.log(`${path}: ${input.bytes} bytes, ${input.imports.length} imports`);
+     *   }
+     *
+     *   // Analyze output files
+     *   for (const [path, output] of Object.entries(result.metafile.outputs)) {
+     *     console.log(`${path}: ${output.bytes} bytes`);
+     *     for (const [inputPath, info] of Object.entries(output.inputs)) {
+     *       console.log(`  - ${inputPath}: ${info.bytesInOutput} bytes`);
+     *     }
+     *   }
+     *
+     *   // Write to disk for external analysis tools
+     *   await Bun.write('./dist/meta.json', JSON.stringify(result.metafile));
+     * }
+     * ```
+     */
+    metafile?: BuildMetafile;
+  }
+
+  /**
+   * Metafile structure containing build metadata for analysis.
+   *
+   * @category Bundler
+   */
+  interface BuildMetafile {
+    /** Information about all input source files */
+    inputs: {
+      [path: string]: {
+        /** Size of the input file in bytes */
+        bytes: number;
+        /** List of imports from this file */
+        imports: Array<{
+          /** Resolved path of the imported file */
+          path: string;
+          /** Type of import statement */
+          kind: ImportKind;
+          /** Original import specifier before resolution (if different from path) */
+          original?: string;
+          /** Whether this import is external to the bundle */
+          external?: boolean;
+          /** Import attributes (e.g., `{ type: "json" }`) */
+          with?: Record<string, string>;
+        }>;
+        /** Module format of the input file */
+        format?: "esm" | "cjs" | "json" | "css";
+      };
+    };
+    /** Information about all output files */
+    outputs: {
+      [path: string]: {
+        /** Size of the output file in bytes */
+        bytes: number;
+        /** Map of input files to their contribution in this output */
+        inputs: {
+          [path: string]: {
+            /** Number of bytes this input contributed to the output */
+            bytesInOutput: number;
+          };
+        };
+        /** List of imports to other chunks */
+        imports: Array<{
+          /** Path to the imported chunk */
+          path: string;
+          /** Type of import */
+          kind: ImportKind;
+        }>;
+        /** List of exported names from this output */
+        exports: string[];
+        /** Entry point path if this output is an entry point */
+        entryPoint?: string;
+        /** Path to the associated CSS bundle (for JS entry points with CSS) */
+        cssBundle?: string;
+      };
+    };
   }
 
   /**

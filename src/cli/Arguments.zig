@@ -1198,7 +1198,10 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
 
         if (args.option("--metafile")) |metafile| {
             // If --metafile is passed without a value, default to "meta.json"
-            ctx.bundler_options.metafile = if (metafile.len > 0) metafile else "meta.json";
+            ctx.bundler_options.metafile = if (metafile.len > 0)
+                bun.handleOom(allocator.dupeZ(u8, metafile))
+            else
+                "meta.json";
         }
 
         if (args.option("--root")) |root_dir| {

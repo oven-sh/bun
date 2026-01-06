@@ -332,27 +332,25 @@ pub const BuildCommand = struct {
             // Write metafile if requested
             if (build_result.metafile) |metafile_json| {
                 if (ctx.bundler_options.metafile.len > 0) {
-                    const metafile_path = ctx.bundler_options.metafile;
-                    const metafile_dir = std.fs.path.dirname(metafile_path);
-                    const metafile_basename = std.fs.path.basename(metafile_path);
-
-                    const dir = if (metafile_dir) |dir_path|
-                        std.fs.cwd().makeOpenPath(dir_path, .{}) catch |err| {
-                            Output.err(err, "could not open metafile directory {f}", .{bun.fmt.quote(dir_path)});
+                    // Use makeOpen which auto-creates parent directories on failure
+                    const file = switch (bun.sys.File.makeOpen(ctx.bundler_options.metafile, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o664)) {
+                        .result => |f| f,
+                        .err => |err| {
+                            Output.err(err, "could not open metafile {f}", .{bun.fmt.quote(ctx.bundler_options.metafile)});
                             exitOrWatch(1, ctx.debug.hot_reload == .watch);
                             unreachable;
-                        }
-                    else
-                        std.fs.cwd();
-
-                    dir.writeFile(.{
-                        .sub_path = metafile_basename,
-                        .data = metafile_json,
-                    }) catch |err| {
-                        Output.err(err, "could not write metafile {f}", .{bun.fmt.quote(metafile_path)});
-                        exitOrWatch(1, ctx.debug.hot_reload == .watch);
-                        unreachable;
+                        },
                     };
+                    defer file.close();
+
+                    switch (file.writeAll(metafile_json)) {
+                        .result => {},
+                        .err => |err| {
+                            Output.err(err, "could not write metafile {f}", .{bun.fmt.quote(ctx.bundler_options.metafile)});
+                            exitOrWatch(1, ctx.debug.hot_reload == .watch);
+                            unreachable;
+                        },
+                    }
                 }
             }
 

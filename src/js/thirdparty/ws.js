@@ -89,9 +89,13 @@ class BunWebSocket extends EventEmitter {
 
     let headers;
     let method = "GET";
+    let proxy;
+    let tlsOptions;
     // https://github.com/websockets/ws/blob/0d1b5e6c4acad16a6b1a1904426eb266a5ba2f72/lib/websocket.js#L741-L747
     if ($isObject(options)) {
       headers = options?.headers;
+      proxy = options?.proxy;
+      tlsOptions = options?.tls;
     }
 
     const finishRequest = options?.finishRequest;
@@ -131,7 +135,7 @@ class BunWebSocket extends EventEmitter {
         end: () => {
           if (!didCallEnd) {
             didCallEnd = true;
-            this.#createWebSocket(url, protocols, headers, method);
+            this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions);
           }
         },
         write() {},
@@ -160,16 +164,26 @@ class BunWebSocket extends EventEmitter {
       EventEmitter.$call(nodeHttpClientRequestSimulated);
       finishRequest(nodeHttpClientRequestSimulated);
       if (!didCallEnd) {
-        this.#createWebSocket(url, protocols, headers, method);
+        this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions);
       }
       return;
     }
 
-    this.#createWebSocket(url, protocols, headers, method);
+    this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions);
   }
 
-  #createWebSocket(url, protocols, headers, method) {
-    let ws = (this.#ws = new WebSocket(url, headers ? { headers, method, protocols } : protocols));
+  #createWebSocket(url, protocols, headers, method, proxy, tls) {
+    let wsOptions;
+    if (headers || proxy || tls) {
+      wsOptions = { protocols };
+      if (headers) wsOptions.headers = headers;
+      if (method) wsOptions.method = method;
+      if (proxy) wsOptions.proxy = proxy;
+      if (tls) wsOptions.tls = tls;
+    } else {
+      wsOptions = protocols;
+    }
+    let ws = (this.#ws = new WebSocket(url, wsOptions));
     ws.binaryType = "nodebuffer";
 
     return ws;

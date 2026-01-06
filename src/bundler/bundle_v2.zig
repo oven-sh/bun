@@ -541,7 +541,7 @@ pub const BundleV2 = struct {
 
         // Check the FileMap first for in-memory files
         if (this.file_map) |file_map| {
-            if (file_map.resolve(source_dir, import_record.specifier)) |file_map_result| {
+            if (file_map.resolve(import_record.source_file, import_record.specifier)) |file_map_result| {
                 const path_text = file_map_result.path_pair.primary.text;
                 const entry = bun.handleOom(this.pathToSourceIndexMap(target).getOrPut(this.allocator(), path_text));
                 if (!entry.found_existing) {
@@ -3277,7 +3277,7 @@ pub const BundleV2 = struct {
 
             // Check the FileMap first for in-memory files
             if (this.file_map) |file_map| {
-                if (file_map.resolve(source_dir, import_record.path.text)) |file_map_result| {
+                if (file_map.resolve(source.path.text, import_record.path.text)) |file_map_result| {
                     const path_text = file_map_result.path_pair.primary.text;
                     const import_record_loader = import_record.loader orelse Fs.Path.init(path_text).loader(&transpiler.options.loaders) orelse .file;
                     import_record.loader = import_record_loader;

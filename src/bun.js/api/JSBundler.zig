@@ -37,7 +37,10 @@ pub const JSBundler = struct {
         /// This creates a minimal Result that can be used by the bundler.
         /// Uses the "memory" namespace to avoid triggering pathWithPrettyInitialized
         /// allocations during the linking phase.
-        pub fn resolve(self: *const FileMap, source_dir: []const u8, specifier: []const u8) ?_resolver.Result {
+        ///
+        /// source_file: The full path of the importing file (e.g., "/src/index.js")
+        /// specifier: The import specifier (e.g., "./utils.js" or "/lib.js")
+        pub fn resolve(self: *const FileMap, source_file: []const u8, specifier: []const u8) ?_resolver.Result {
             // Fast path: if the map is empty, return immediately
             if (self.map.count() == 0) return null;
 
@@ -52,10 +55,16 @@ pub const JSBundler = struct {
                 };
             }
 
-            // Also try with source_dir joined for relative specifiers
-            if (source_dir.len > 0 and !std.fs.path.isAbsolute(specifier)) {
+            // Also try with source directory joined for relative specifiers
+            // Use .posix to ensure consistent forward slashes across platforms
+            if (!bun.path.Platform.posix.isAbsolute(specifier)) {
+                // Extract directory from source_file using posix path handling
+                // For "/entry.js", we want "/"; for "/src/index.js", we want "/src/"
                 var buf: bun.PathBuffer = undefined;
-                const joined = bun.path.joinAbsStringBuf(source_dir, &buf, &.{specifier}, .auto);
+                const source_dir = bun.path.dirname(source_file, .posix);
+                // Empty dirname means we should use root
+                const effective_source_dir = if (source_dir.len == 0) "/" else source_dir;
+                const joined = bun.path.joinAbsStringBuf(effective_source_dir, &buf, &.{specifier}, .posix);
                 // Must use getKey to return the map's owned key, not the temporary buffer
                 if (self.map.getKey(joined)) |key| {
                     return _resolver.Result{

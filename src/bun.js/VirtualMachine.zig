@@ -1580,6 +1580,8 @@ pub const ResolveFunctionResult = struct {
     result: ?Resolver.Result,
     path: string,
     query_string: []const u8 = "",
+    /// Resolved file path that doesn't exist (for better error messages)
+    resolved_path_for_error: []const u8 = "",
 };
 
 fn normalizeSpecifierForResolution(specifier_: []const u8, query_string: *[]const u8) []const u8 {
@@ -1665,9 +1667,45 @@ fn _resolve(
             )) {
                 .success => |r| r,
                 .failure => |e| e,
-                .pending, .not_found => if (!retry_on_not_found)
+                .pending => if (!retry_on_not_found)
                     error.ModuleNotFound
                 else {
+                    retry_on_not_found = false;
+
+                    const buster_name = name: {
+                        if (std.fs.path.isAbsolute(normalized_specifier)) {
+                            if (std.fs.path.dirname(normalized_specifier)) |dir| {
+                                // Normalized without trailing slash
+                                break :name bun.strings.normalizeSlashesOnly(&specifier_cache_resolver_buf, dir, std.fs.path.sep);
+                            }
+                        }
+
+                        var parts = [_]string{
+                            source_to_use,
+                            normalized_specifier,
+                            bun.pathLiteral(".."),
+                        };
+
+                        break :name bun.path.joinAbsStringBufZ(
+                            jsc_vm.transpiler.fs.top_level_dir,
+                            &specifier_cache_resolver_buf,
+                            &parts,
+                            .auto,
+                        );
+                    };
+
+                    // Only re-query if we previously had something cached.
+                    if (jsc_vm.transpiler.resolver.bustDirCache(bun.strings.withoutTrailingSlashWindowsPath(buster_name))) {
+                        continue;
+                    }
+
+                    return error.ModuleNotFound;
+                },
+                .not_found => |nf| if (!retry_on_not_found) {
+                    // Capture resolved path if available for better error message
+                    ret.resolved_path_for_error = nf.path;
+                    return error.ModuleNotFound;
+                } else {
                     retry_on_not_found = false;
 
                     const buster_name = name: {
@@ -1708,6 +1746,7 @@ fn _resolve(
     }
     ret.result = result;
     ret.query_string = query_string;
+    // resolved_path_for_error is set in the .not_found case above
     const result_path = result.pathConst() orelse return error.ModuleNotFound;
     jsc_vm.resolved_count += 1;
 
@@ -1754,6 +1793,7 @@ pub fn resolveMaybeNeedsTrailingSlash(
             source_utf8.slice(),
             error.NameTooLong,
             if (is_esm) .stmt else if (is_user_require_resolve) .require_resolve else .require,
+            "", // no resolved path for NameTooLong error
         ) catch |err| bun.handleOom(err);
         const msg = logger.Msg{
             .data = logger.rangeData(
@@ -1835,6 +1875,7 @@ pub fn resolveMaybeNeedsTrailingSlash(
                 source_utf8.slice(),
                 err,
                 import_kind,
+                result.resolved_path_for_error,
             );
             break :brk logger.Msg{
                 .data = logger.rangeData(

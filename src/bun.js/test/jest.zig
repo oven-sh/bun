@@ -265,7 +265,10 @@ pub const Jest = struct {
     extern fn JSMock__jsSpyOn(*JSGlobalObject, *CallFrame) callconv(jsc.conv) JSValue;
 
     fn jsRestoreMocks(globalObject: *JSGlobalObject, callframe: *CallFrame) callconv(jsc.conv) JSValue {
-        _ = JSMock__jsRestoreAllMocks(globalObject, callframe);
+        const restoreAllResult = JSMock__jsRestoreAllMocks(globalObject, callframe);
+        if (restoreAllResult == .zero) {
+            return restoreAllResult;
+        }
 
         const restoreModuleResult = JSMock__jsRestoreModuleMock(globalObject, callframe);
         if (restoreModuleResult == .zero) {

@@ -1962,8 +1962,8 @@ declare module "bun" {
      * File contents can be provided as:
      * - `string` - The source code as a string
      * - `Blob` - A Blob containing the source code
-     * - `TypedArray` - A typed array (e.g., `Uint8Array`) containing the source code
-     * - `ArrayBuffer` - An ArrayBuffer containing the source code
+     * - `NodeJS.TypedArray` - A typed array (e.g., `Uint8Array`) containing the source code
+     * - `ArrayBufferLike` - An ArrayBuffer containing the source code
      *
      * @example
      * ```ts
@@ -2009,7 +2009,7 @@ declare module "bun" {
      * });
      * ```
      */
-    files?: Record<string, string | Blob | TypedArray | ArrayBufferLike>;
+    files?: Record<string, string | Blob | NodeJS.TypedArray | ArrayBufferLike>;
 
     outdir?: string;
   }

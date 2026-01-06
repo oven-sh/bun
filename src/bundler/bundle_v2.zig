@@ -3300,9 +3300,15 @@ pub const BundleV2 = struct {
                     var result_copy = file_map_result;
                     resolve_task.* = ParseTask.init(&result_copy, Index.invalid, this);
                     resolve_task.known_target = target;
+                    // Use transpiler JSX options, applying force_node_env like the disk path does
                     resolve_task.jsx = transpiler.options.jsx;
+                    resolve_task.jsx.development = switch (transpiler.options.force_node_env) {
+                        .development => true,
+                        .production => false,
+                        .unspecified => transpiler.options.jsx.development,
+                    };
                     resolve_task.loader = import_record_loader;
-                    resolve_task.tree_shaking = true;
+                    resolve_task.tree_shaking = transpiler.options.tree_shaking;
                     resolve_task.side_effects = .has_side_effects;
                     resolve_entry.value_ptr.* = resolve_task;
                     continue;

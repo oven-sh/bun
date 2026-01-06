@@ -56,20 +56,30 @@ pub const JSBundler = struct {
             }
 
             // Also try with source directory joined for relative specifiers
-            // Use .posix to ensure consistent forward slashes across platforms
-            if (!bun.path.Platform.posix.isAbsolute(specifier)) {
+            // Use .loose to handle both forward and backslashes across platforms
+            if (!bun.path.Platform.loose.isAbsolute(specifier)) {
                 // Normalize source_file to use forward slashes (for Windows compatibility)
                 // On Windows, source_file may have backslashes from the real filesystem
+                // Use pathToPosixBuf which always converts \ to / regardless of build platform
                 var source_file_buf: bun.PathBuffer = undefined;
-                const normalized_source_file = bun.path.platformToPosixBuf(u8, source_file, &source_file_buf);
+                const normalized_source_file = bun.path.pathToPosixBuf(u8, source_file, &source_file_buf);
 
-                // Extract directory from source_file using posix path handling
+                // Extract directory from source_file using loose path handling
                 // For "/entry.js", we want "/"; for "/src/index.js", we want "/src/"
+                // For "C:/foo/bar.js", we want "C:/foo"
                 var buf: bun.PathBuffer = undefined;
-                const source_dir = bun.path.dirname(normalized_source_file, .posix);
-                // Empty dirname means we should use root
-                const effective_source_dir = if (source_dir.len == 0) "/" else source_dir;
-                const joined = bun.path.joinAbsStringBuf(effective_source_dir, &buf, &.{specifier}, .posix);
+                const source_dir = bun.path.dirname(normalized_source_file, .loose);
+                // Empty dirname could mean:
+                // 1. Root-level posix path like "/entry.js" -> use "/"
+                // 2. No path info available -> use filesystem's top-level directory
+                const effective_source_dir = if (source_dir.len == 0)
+                    (if (normalized_source_file.len > 0 and normalized_source_file[0] == '/')
+                        "/"
+                    else
+                        Fs.FileSystem.instance.top_level_dir)
+                else
+                    source_dir;
+                const joined = bun.path.joinAbsStringBuf(effective_source_dir, &buf, &.{specifier}, .loose);
                 // Must use getKey to return the map's owned key, not the temporary buffer
                 if (self.map.getKey(joined)) |key| {
                     return _resolver.Result{

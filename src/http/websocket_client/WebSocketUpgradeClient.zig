@@ -233,7 +233,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
                         var err: uws.create_bun_socket_error_t = .none;
                         if (uws.SocketContext.createSSLContext(
-                            vm.event_loop_handle.?,
+                            vm.uwsLoop(),
                             @sizeOf(usize),
                             ctx_opts,
                             &err,

@@ -5,6 +5,7 @@
 
 #include "root.h"
 #include "ZigGlobalObject.h"
+#include "BunBuiltinNames.h"
 
 #include <JavaScriptCore/CustomGetterSetter.h>
 #include <JavaScriptCore/JSCJSValueInlines.h>
@@ -14,8 +15,6 @@ namespace Bun {
 
 using namespace JSC;
 
-// Property name for the raw JSON string stored on the object
-static const auto metafileStringPropertyName = "metafileString"_s;
 static const auto metafilePropertyName = "metafile"_s;
 
 JSC_DEFINE_CUSTOM_GETTER(bundlerMetafileLazyGetter, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
@@ -28,8 +27,9 @@ JSC_DEFINE_CUSTOM_GETTER(bundlerMetafileLazyGetter, (JSGlobalObject * globalObje
         return JSValue::encode(jsUndefined());
     }
 
-    // Get the raw JSON string from metafileString property
-    JSValue metafileStringValue = thisObject->get(globalObject, Identifier::fromString(vm, metafileStringPropertyName));
+    // Get the raw JSON string from private property
+    const auto& privateName = Bun::builtinNames(vm).dataPrivateName();
+    JSValue metafileStringValue = thisObject->get(globalObject, privateName);
     RETURN_IF_EXCEPTION(scope, {});
 
     if (metafileStringValue.isUndefinedOrNull()) {
@@ -49,16 +49,9 @@ JSC_DEFINE_CUSTOM_GETTER(bundlerMetafileLazyGetter, (JSGlobalObject * globalObje
     thisObject->putDirect(vm, Identifier::fromString(vm, metafilePropertyName), parsedValue, 0);
 
     // Delete the raw string property since we no longer need it
-    thisObject->deleteProperty(globalObject, Identifier::fromString(vm, metafileStringPropertyName));
+    thisObject->deleteProperty(globalObject, privateName);
 
     return JSValue::encode(parsedValue);
-}
-
-// Creates a CustomGetterSetter for the lazy metafile property
-extern "C" JSC::EncodedJSValue Bun__createMetafileLazyGetterSetter(JSC::JSGlobalObject* globalObject)
-{
-    auto& vm = globalObject->vm();
-    return JSValue::encode(CustomGetterSetter::create(vm, bundlerMetafileLazyGetter, nullptr));
 }
 
 // Helper to set up the lazy metafile on a BuildOutput object
@@ -72,8 +65,9 @@ extern "C" void Bun__setupLazyMetafile(JSC::JSGlobalObject* globalObject, JSC::E
         return;
     }
 
-    // Store the raw JSON string (non-enumerable)
-    buildOutput->putDirect(vm, Identifier::fromString(vm, metafileStringPropertyName), metafileString, static_cast<unsigned>(PropertyAttribute::DontEnum));
+    // Store the raw JSON string in a private property
+    const auto& privateName = Bun::builtinNames(vm).dataPrivateName();
+    buildOutput->putDirect(vm, privateName, metafileString, 0);
 
     // Set up the lazy getter for metafile property
     buildOutput->putDirectCustomAccessor(

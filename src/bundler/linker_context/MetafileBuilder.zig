@@ -189,30 +189,13 @@ pub fn generate(
 
         try writer.print("\n      \"bytes\": {d}", .{chunk_bytes});
 
-        // Compute per-source bytes from compile_results_for_chunk
-        var source_bytes = std.AutoHashMap(u32, usize).init(allocator);
-        defer source_bytes.deinit();
-
-        for (chunk.compile_results_for_chunk) |compile_result| {
-            const code_len = compile_result.code().len;
-            if (code_len > 0) {
-                const src_idx = compile_result.sourceIndex();
-                // Bounds check: skip runtime and invalid source indices
-                if (src_idx >= sources.len or src_idx == Index.runtime.get()) continue;
-                const entry = try source_bytes.getOrPut(src_idx);
-                if (!entry.found_existing) {
-                    entry.value_ptr.* = 0;
-                }
-                entry.value_ptr.* += code_len;
-            }
-        }
-
-        // Write inputs for this output
+        // Write inputs for this output (bytesInOutput is pre-computed during chunk generation)
         try writer.writeAll(",\n      \"inputs\": {");
         var first_chunk_input = true;
         var chunk_iter = chunk.files_with_parts_in_chunk.iterator();
         while (chunk_iter.next()) |entry| {
             const file_source_index = entry.key_ptr.*;
+            const bytes_in_output = entry.value_ptr.*;
             if (file_source_index >= sources.len) continue;
             if (file_source_index == Index.runtime.get()) continue;
 
@@ -228,8 +211,6 @@ pub fn generate(
 
             try writer.writeAll("\n        ");
             try writeJSONString(writer, file_path);
-            // Use the actual bytes emitted for this source in this chunk
-            const bytes_in_output = source_bytes.get(file_source_index) orelse 0;
             try writer.print(": {{\n          \"bytesInOutput\": {d}\n        }}", .{bytes_in_output});
         }
         try writer.writeAll("\n      }");

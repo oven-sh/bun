@@ -135,9 +135,16 @@ fn generateCompileResultForCssChunkImpl(worker: *ThreadPool.Worker, c: *LinkerCo
                     };
                 },
             };
+            const output = allocating_writer.written();
+            // Update bytesInOutput for this source in the chunk (for metafile)
+            if (output.len > 0) {
+                if (chunk.files_with_parts_in_chunk.getPtr(idx.get())) |bytes_ptr| {
+                    bytes_ptr.* += output.len;
+                }
+            }
             return CompileResult{
                 .css = .{
-                    .result = .{ .result = allocating_writer.written() },
+                    .result = .{ .result = output },
                     .source_index = idx.get(),
                 },
             };

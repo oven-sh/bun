@@ -9,7 +9,9 @@ pub const Chunk = struct {
     /// for more info on this technique.
     unique_key: string = "",
 
-    files_with_parts_in_chunk: std.AutoArrayHashMapUnmanaged(Index.Int, void) = .{},
+    /// Maps source index to bytes contributed to this chunk's output (for metafile).
+    /// The value is updated during chunk generation to track bytesInOutput.
+    files_with_parts_in_chunk: std.AutoArrayHashMapUnmanaged(Index.Int, usize) = .{},
 
     /// We must not keep pointers to this type until all chunks have been allocated.
     entry_bits: AutoBitSet = undefined,

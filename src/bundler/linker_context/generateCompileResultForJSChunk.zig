@@ -59,6 +59,17 @@ fn generateCompileResultForJSChunkImpl(worker: *ThreadPool.Worker, c: *LinkerCon
         arena.allocator(),
     );
 
+    // Update bytesInOutput for this source in the chunk (for metafile)
+    const code_len = switch (result) {
+        .result => |r| r.code.len,
+        else => 0,
+    };
+    if (code_len > 0 and !part_range.source_index.isRuntime()) {
+        if (chunk.files_with_parts_in_chunk.getPtr(part_range.source_index.get())) |bytes_ptr| {
+            bytes_ptr.* += code_len;
+        }
+    }
+
     return .{
         .javascript = .{
             .source_index = part_range.source_index.get(),

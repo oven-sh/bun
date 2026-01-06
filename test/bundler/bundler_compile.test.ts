@@ -735,4 +735,31 @@ const server = serve({
       .env(bunEnv)
       .throws(true);
   });
+
+  // When compiling with 8+ embedded files, the main entry point should still run correctly.
+  itBundled("compile/ManyEmbeddedFiles", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import f1 from './assets/file-1.txt' with {type: "file"};
+        import f2 from './assets/file-2.txt' with {type: "file"};
+        import f3 from './assets/file-3.txt' with {type: "file"};
+        import f4 from './assets/file-4.txt' with {type: "file"};
+        import f5 from './assets/file-5.txt' with {type: "file"};
+        import f6 from './assets/file-6.txt' with {type: "file"};
+        import f7 from './assets/file-7.txt' with {type: "file"};
+        import f8 from './assets/file-8.txt' with {type: "file"};
+        console.log("IT WORKS");
+      `,
+      "/assets/file-1.txt": "1",
+      "/assets/file-2.txt": "2",
+      "/assets/file-3.txt": "3",
+      "/assets/file-4.txt": "4",
+      "/assets/file-5.txt": "5",
+      "/assets/file-6.txt": "6",
+      "/assets/file-7.txt": "7",
+      "/assets/file-8.txt": "8",
+    },
+    run: { stdout: "IT WORKS" },
+  });
 });

@@ -231,17 +231,28 @@ pub fn callback(task: *ThreadPool.Task) void {
             this.status = Status.success;
         },
         .local_tarball => {
-            const workspace_pkg_id = manager.lockfile.getWorkspacePkgIfWorkspaceDep(this.request.local_tarball.tarball.dependency_id);
-
             var abs_buf: bun.PathBuffer = undefined;
-            const tarball_path, const normalize = if (workspace_pkg_id != invalid_package_id) tarball_path: {
-                const workspace_res = manager.lockfile.packages.items(.resolution)[workspace_pkg_id];
+            const tarball_path, const normalize = tarball_path: {
+                // If the tarball path came from a catalog entry, it should always be resolved
+                // relative to the workspace root (where catalogs are defined), not relative
+                // to the workspace package that references the catalog.
+                if (this.request.local_tarball.tarball.from_catalog) {
+                    break :tarball_path .{ this.request.local_tarball.tarball.url.slice(), true };
+                }
 
-                if (workspace_res.tag != .workspace) break :tarball_path .{ this.request.local_tarball.tarball.url.slice(), true };
+                const workspace_pkg_id = manager.lockfile.getWorkspacePkgIfWorkspaceDep(this.request.local_tarball.tarball.dependency_id);
+                if (workspace_pkg_id == invalid_package_id) {
+                    break :tarball_path .{ this.request.local_tarball.tarball.url.slice(), true };
+                }
+
+                const workspace_res = manager.lockfile.packages.items(.resolution)[workspace_pkg_id];
+                if (workspace_res.tag != .workspace) {
+                    break :tarball_path .{ this.request.local_tarball.tarball.url.slice(), true };
+                }
 
                 // Construct an absolute path to the tarball.
-                // Normally tarball paths are always relative to the root directory, but if a
-                // workspace depends on a tarball path, it should be relative to the workspace.
+                // If a workspace directly depends on a tarball path (not via catalog),
+                // it should be relative to the workspace.
                 const workspace_path = workspace_res.value.workspace.slice(manager.lockfile.buffers.string_bytes.items);
                 break :tarball_path .{
                     Path.joinAbsStringBuf(
@@ -255,7 +266,7 @@ pub fn callback(task: *ThreadPool.Task) void {
                     ),
                     false,
                 };
-            } else .{ this.request.local_tarball.tarball.url.slice(), true };
+            };
 
             const result = readAndExtract(
                 manager.allocator,

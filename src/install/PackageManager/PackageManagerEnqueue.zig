@@ -151,6 +151,7 @@ pub fn enqueueTarballForReading(
         alias,
         path,
         resolution.*,
+        false,
     )));
 }
 
@@ -451,7 +452,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
         else => dependency.name_hash,
     };
 
-    const version = version: {
+    const version, const from_catalog = version: {
         if (dependency.version.tag == .npm) {
             if (this.known_npm_aliases.get(name_hash)) |aliased| {
                 const group = dependency.version.value.npm.version;
@@ -463,7 +464,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                         if (group.satisfies(query.range.left.version, buf, buf) or group.satisfies(query.range.right.version, buf, buf)) {
                             name = aliased.value.npm.name;
                             name_hash = String.Builder.stringHash(this.lockfile.str(&name));
-                            break :version aliased;
+                            break :version .{ aliased, false };
                         }
                         curr = query.next;
                     }
@@ -486,30 +487,30 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                 if (new.tag == .catalog) {
                     if (this.lockfile.catalogs.get(this.lockfile, new.value.catalog, name)) |catalog_dep| {
                         name, name_hash = updateNameAndNameHashFromVersionReplacement(this.lockfile, name, name_hash, catalog_dep.version);
-                        break :version catalog_dep.version;
+                        break :version .{ catalog_dep.version, true };
                     }
                 }
 
                 // `name_hash` stays the same
-                break :version new;
+                break :version .{ new, false };
             }
 
             if (dependency.version.tag == .catalog) {
                 if (this.lockfile.catalogs.get(this.lockfile, dependency.version.value.catalog, name)) |catalog_dep| {
                     name, name_hash = updateNameAndNameHashFromVersionReplacement(this.lockfile, name, name_hash, catalog_dep.version);
 
-                    break :version catalog_dep.version;
+                    break :version .{ catalog_dep.version, true };
                 }
             }
         }
 
         // explicit copy here due to `dependency.version` becoming undefined
         // when `getOrPutResolvedPackageWithFindResult` is called and resizes the list.
-        break :version Dependency.Version{
+        break :version .{ Dependency.Version{
             .literal = dependency.version.literal,
             .tag = dependency.version.tag,
             .value = dependency.version.value,
-        };
+        }, false };
     };
     var loaded_manifest: ?Npm.PackageManifest = null;
 
@@ -1133,6 +1134,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                         this.lockfile.str(&dependency.name),
                         url,
                         res,
+                        from_catalog,
                     )));
                 },
                 .remote => {
@@ -1294,6 +1296,7 @@ fn enqueueLocalTarball(
     name: string,
     path: string,
     resolution: Resolution,
+    from_catalog: bool,
 ) *ThreadPool.Task {
     var task = this.preallocated_resolve_tasks.get();
     task.* = Task{
@@ -1318,6 +1321,7 @@ fn enqueueLocalTarball(
                         *FileSystem.FilenameStore,
                         FileSystem.FilenameStore.instance,
                     ) catch unreachable,
+                    .from_catalog = from_catalog,
                 },
             },
         },

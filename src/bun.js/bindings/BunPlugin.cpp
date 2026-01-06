@@ -828,17 +828,16 @@ static void restoreSingleModuleMock(Zig::GlobalObject* globalObject, const WTF::
     // First, check if we have saved original exports to restore
     auto originalExportsIt = globalObject->onLoadPlugins.originalExports.find(specifier);
     auto originalNamespaceIt = globalObject->onLoadPlugins.originalNamespaceObjects.find(specifier);
-    
-    if (originalExportsIt != globalObject->onLoadPlugins.originalExports.end() && 
+
+    if (originalExportsIt != globalObject->onLoadPlugins.originalExports.end() &&
         originalNamespaceIt != globalObject->onLoadPlugins.originalNamespaceObjects.end()) {
-        
+
         JSC::JSModuleNamespaceObject* namespaceObject = originalNamespaceIt->value.get();
         auto& savedExports = originalExportsIt->value;
-        
+
         // Restore all original export values
         for (auto& exportEntry : savedExports) {
             auto catchScope = DECLARE_CATCH_SCOPE(vm);
-            // Convert String back to Identifier for overrideExportValue
             auto identifier = Identifier::fromString(vm, exportEntry.key);
             namespaceObject->overrideExportValue(globalObject, identifier, exportEntry.value.get());
             if (catchScope.exception()) {
@@ -857,9 +856,6 @@ static void restoreSingleModuleMock(Zig::GlobalObject* globalObject, const WTF::
 
     globalObject->onLoadPlugins.modulesPendingMock.remove(specifier);
     globalObject->onLoadPlugins.modulesExecutingFactory.remove(specifier);
-
-    // Note: We don't remove from ESM registry anymore since we restored exports in-place
-    // The module entry stays valid with original values restored
 }
 
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsRestoreModuleMock);

@@ -1,13 +1,15 @@
 import { expect, mock, test } from "bun:test";
+import { tempDir } from "harness";
+import path from "path";
 
 const createFixture = (value: number) => ({
   "age-fixture.ts": `export function getAge() { return ${value}; }`,
 });
 
 test("mock.restoreModule() restores a specific module", async () => {
-  using dir = require("harness").tempDir("mock-restore-specific", createFixture(36));
+  using dir = tempDir("mock-restore-specific", createFixture(36));
 
-  const modulePath = require("path").join(String(dir), "age-fixture.ts");
+  const modulePath = path.join(String(dir), "age-fixture.ts");
 
   const original = await import(modulePath);
   expect(original.getAge()).toBe(36);
@@ -26,11 +28,11 @@ test("mock.restoreModule() restores a specific module", async () => {
 });
 
 test("mock.restore() without args restores ALL module mocks", async () => {
-  using dir1 = require("harness").tempDir("mock-restore-all-1", createFixture(10));
-  using dir2 = require("harness").tempDir("mock-restore-all-2", createFixture(20));
+  using dir1 = tempDir("mock-restore-all-1", createFixture(10));
+  using dir2 = tempDir("mock-restore-all-2", createFixture(20));
 
-  const module1Path = require("path").join(String(dir1), "age-fixture.ts");
-  const module2Path = require("path").join(String(dir2), "age-fixture.ts");
+  const module1Path = path.join(String(dir1), "age-fixture.ts");
+  const module2Path = path.join(String(dir2), "age-fixture.ts");
 
   mock.module(module1Path, () => ({ getAge: () => 100 }));
   mock.module(module2Path, () => ({ getAge: () => 200 }));
@@ -54,7 +56,7 @@ test("mock.restore() without args restores ALL module mocks", async () => {
 });
 
 test("mock.restoreModule() works with relative paths", async () => {
-  using dir = require("harness").tempDir("mock-restore-relative", {
+  using dir = tempDir("mock-restore-relative", {
     "test-module.ts": `export const value = "original";`,
     "test-file.ts": `
       import { mock } from "bun:test";
@@ -81,7 +83,7 @@ test("mock.restoreModule() works with relative paths", async () => {
     `,
   });
 
-  const testFile = require("path").join(String(dir), "test-file.ts");
+  const testFile = path.join(String(dir), "test-file.ts");
   const { testRestore } = await import(testFile);
 
   const result = testRestore();
@@ -90,9 +92,9 @@ test("mock.restoreModule() works with relative paths", async () => {
 });
 
 test("mocking same module multiple times, then restoring", async () => {
-  using dir = require("harness").tempDir("mock-restore-multi", createFixture(50));
+  using dir = tempDir("mock-restore-multi", createFixture(50));
 
-  const modulePath = require("path").join(String(dir), "age-fixture.ts");
+  const modulePath = path.join(String(dir), "age-fixture.ts");
 
   mock.module(modulePath, () => ({ getAge: () => 10 }));
   const mod1 = await import(modulePath);
@@ -112,9 +114,9 @@ test("mocking same module multiple times, then restoring", async () => {
 });
 
 test("mock.restore() restores both function mocks AND module mocks", async () => {
-  using dir = require("harness").tempDir("mock-restore-both", createFixture(42));
+  using dir = tempDir("mock-restore-both", createFixture(42));
 
-  const modulePath = require("path").join(String(dir), "age-fixture.ts");
+  const modulePath = path.join(String(dir), "age-fixture.ts");
 
   const mockFn = mock(() => "function mock");
   mockFn();
@@ -145,14 +147,14 @@ test("mock.restore() with no mocks doesn't throw", () => {
   }).not.toThrow();
 });
 
-test("ESM and CJS mocks are both restored", async () => {
-  using dir = require("harness").tempDir("mock-restore-esm-cjs", {
+test("mock.restore() handles both ESM and CJS modules", async () => {
+  using dir = tempDir("mock-restore-esm-cjs", {
     "module.ts": `export const value = "original-esm";`,
     "module.cjs": `module.exports = { value: "original-cjs" };`,
   });
 
-  const esmPath = require("path").join(String(dir), "module.ts");
-  const cjsPath = require("path").join(String(dir), "module.cjs");
+  const esmPath = path.join(String(dir), "module.ts");
+  const cjsPath = path.join(String(dir), "module.cjs");
 
   mock.module(esmPath, () => ({ value: "mocked-esm" }));
   mock.module(cjsPath, () => ({ value: "mocked-cjs" }));

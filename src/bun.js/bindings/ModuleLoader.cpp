@@ -1162,11 +1162,11 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultResolve, (JSC::JSGlobalObje
         auto retValue = JSValue::encode(promise->rejectWithCaughtException(globalObject, scope));
         pendingModule->internalField(2).set(vm, pendingModule, JSC::jsUndefined());
 
-        // Clean up pending mock Promise on rejection
         if (wasModuleMock) {
             auto* zigGlobal = static_cast<Zig::GlobalObject*>(globalObject);
             auto specifierWtf = specifier.toWTFString(BunString::ZeroCopy);
             zigGlobal->onLoadPlugins.modulesPendingMock.remove(specifierWtf);
+            zigGlobal->onLoadPlugins.modulesExecutingFactory.remove(specifierWtf);
         }
 
         return retValue;
@@ -1176,6 +1176,7 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultResolve, (JSC::JSGlobalObje
         auto* zigGlobal = static_cast<Zig::GlobalObject*>(globalObject);
         auto specifierWtf = specifier.toWTFString(BunString::ZeroCopy);
         zigGlobal->onLoadPlugins.modulesPendingMock.remove(specifierWtf);
+        zigGlobal->onLoadPlugins.modulesExecutingFactory.remove(specifierWtf);
     }
 
     scope.release();

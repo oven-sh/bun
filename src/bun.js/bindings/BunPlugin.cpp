@@ -1088,8 +1088,23 @@ JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specif
                 auto c = virtualizedStr[i];
                 if (c == '"' || c == '\\') {
                     code.append('\\');
+                    code.append(c);
+                } else if (c == '\n') {
+                    code.append("\\n"_s);
+                } else if (c == '\r') {
+                    code.append("\\r"_s);
+                } else if (c == '\t') {
+                    code.append("\\t"_s);
+                } else if (c == '\b') {
+                    code.append("\\b"_s);
+                } else if (c == '\f') {
+                    code.append("\\f"_s);
+                } else if (c < 0x20) {
+                    code.append("\\u00"_s);
+                    code.append(WTF::hex(c, 2));
+                } else {
+                    code.append(c);
                 }
-                code.append(c);
             }
             code.append('"');
             code.append(')');
@@ -1109,11 +1124,15 @@ JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specif
             );
 
             if (exception) {
+                modulesExecutingFactory.remove(specifierString);
                 throwScope.throwException(globalObject, exception.get());
                 return JSC::jsUndefined();
             }
 
-            RETURN_IF_EXCEPTION(throwScope, JSC::jsUndefined());
+            if (throwScope.exception()) {
+                modulesExecutingFactory.remove(specifierString);
+                return JSC::jsUndefined();
+            }
 
             arguments.append(importOriginalHelper);
         }
@@ -1152,6 +1171,7 @@ JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specif
         }
 
         if (!result.isObject()) {
+            modulesExecutingFactory.remove(specifierString);
             JSC::throwTypeError(globalObject, throwScope, "virtual module expects an object returned"_s);
             return {};
         }

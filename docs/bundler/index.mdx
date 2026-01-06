@@ -1252,6 +1252,7 @@ Generate metadata about the build in a structured format. The metafile contains 
       await Bun.write('./dist/meta.json', JSON.stringify(result.metafile));
     }
     ```
+
   </Tab>
   <Tab title="CLI">
     ```bash terminal icon="terminal"
@@ -1270,7 +1271,7 @@ interface BuildMetafile {
       imports: Array<{
         path: string;
         kind: ImportKind;
-        original?: string;  // Original specifier before resolution
+        original?: string; // Original specifier before resolution
         external?: boolean;
       }>;
       format?: "esm" | "cjs" | "json" | "css";
@@ -1285,7 +1286,7 @@ interface BuildMetafile {
       imports: Array<{ path: string; kind: ImportKind }>;
       exports: string[];
       entryPoint?: string;
-      cssBundle?: string;  // Associated CSS file for JS entry points
+      cssBundle?: string; // Associated CSS file for JS entry points
     };
   };
 }

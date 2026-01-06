@@ -8,6 +8,7 @@
 #include "ZigGlobalObject.h"
 
 #include <JavaScriptCore/CatchScope.h>
+#include <JavaScriptCore/Completion.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/JSMap.h>
@@ -413,7 +414,7 @@ public:
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
 
-    JSObject* executeOnce(JSC::JSGlobalObject* lexicalGlobalObject);
+    JSObject* executeOnce(JSC::JSGlobalObject* lexicalGlobalObject, JSC::MarkedArgumentBuffer* arguments = nullptr);
 
     template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
@@ -458,7 +459,7 @@ Structure* JSModuleMock::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globa
     return Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
 }
 
-JSObject* JSModuleMock::executeOnce(JSC::JSGlobalObject* lexicalGlobalObject)
+JSObject* JSModuleMock::executeOnce(JSC::JSGlobalObject* lexicalGlobalObject, JSC::MarkedArgumentBuffer* arguments)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -481,7 +482,15 @@ JSObject* JSModuleMock::executeOnce(JSC::JSGlobalObject* lexicalGlobalObject)
     }
 
     JSObject* callback = callbackValue.getObject();
-    JSC::JSValue result = JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, callback, JSC::getCallData(callback), JSC::jsUndefined(), ArgList());
+    JSC::JSValue result;
+
+    if (arguments && arguments->size() > 0) {
+        // Call with arguments (e.g., importOriginal helper)
+        result = JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, callback, JSC::getCallData(callback), JSC::jsUndefined(), *arguments);
+    } else {
+        // Call without arguments (backward compatibility)
+        result = JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, callback, JSC::getCallData(callback), JSC::jsUndefined(), ArgList());
+    }
     RETURN_IF_EXCEPTION(scope, {});
 
     if (!result.isObject()) {
@@ -589,6 +598,15 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
     auto* esm = globalObject->esmRegistryMap();
     RETURN_IF_EXCEPTION(scope, {});
 
+    // Check if factory expects importOriginal parameter
+    // If so, we cannot execute it synchronously, so just clear caches
+    bool factoryExpectsParameter = false;
+    if (auto* jsFunction = jsDynamicCast<JSC::JSFunction*>(callback)) {
+        if (auto* executable = jsFunction->jsExecutable()) {
+            factoryExpectsParameter = executable->parameterCount() > 0;
+        }
+    }
+
     auto getJSValue = [&]() -> JSValue {
         auto scope = DECLARE_THROW_SCOPE(vm);
         JSValue result = mock->executeOnce(globalObject);
@@ -634,32 +652,36 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
                     JSC::JSModuleNamespaceObject* moduleNamespaceObject = mod->getModuleNamespace(globalObject);
                     RETURN_IF_EXCEPTION(scope, {});
                     if (moduleNamespaceObject) {
-                        JSValue exportsValue = getJSValue();
-                        RETURN_IF_EXCEPTION(scope, {});
-                        auto* object = exportsValue.getObject();
-                        removeFromESM = false;
-
-                        if (object) {
-                            JSC::PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-                            JSObject::getOwnPropertyNames(object, globalObject, names, DontEnumPropertiesMode::Exclude);
+                        // If factory expects parameter (importOriginal), don't execute now
+                        // Just remove from cache and let runVirtualModule handle it
+                        if (!factoryExpectsParameter) {
+                            JSValue exportsValue = getJSValue();
                             RETURN_IF_EXCEPTION(scope, {});
+                            auto* object = exportsValue.getObject();
+                            removeFromESM = false;
 
-                            for (auto& name : names) {
-                                // consistent with regular esm handling code
-                                auto catchScope = DECLARE_CATCH_SCOPE(vm);
-                                JSValue value = object->get(globalObject, name);
-                                if (scope.exception()) [[unlikely]] {
-                                    scope.clearException();
-                                    value = jsUndefined();
+                            if (object) {
+                                JSC::PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+                                JSObject::getOwnPropertyNames(object, globalObject, names, DontEnumPropertiesMode::Exclude);
+                                RETURN_IF_EXCEPTION(scope, {});
+
+                                for (auto& name : names) {
+                                    // consistent with regular esm handling code
+                                    auto catchScope = DECLARE_CATCH_SCOPE(vm);
+                                    JSValue value = object->get(globalObject, name);
+                                    if (scope.exception()) [[unlikely]] {
+                                        scope.clearException();
+                                        value = jsUndefined();
+                                    }
+                                    moduleNamespaceObject->overrideExportValue(globalObject, name, value);
+                                    RETURN_IF_EXCEPTION(scope, {});
                                 }
-                                moduleNamespaceObject->overrideExportValue(globalObject, name, value);
+
+                            } else {
+                                // if it's not an object, I guess we just set the default export?
+                                moduleNamespaceObject->overrideExportValue(globalObject, vm.propertyNames->defaultKeyword, exportsValue);
                                 RETURN_IF_EXCEPTION(scope, {});
                             }
-
-                        } else {
-                            // if it's not an object, I guess we just set the default export?
-                            moduleNamespaceObject->overrideExportValue(globalObject, vm.propertyNames->defaultKeyword, exportsValue);
-                            RETURN_IF_EXCEPTION(scope, {});
                         }
 
                         // TODO: do we need to handle intermediate loading state here?
@@ -676,12 +698,16 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
     if (entryValue) {
         removeFromCJS = true;
         if (auto* moduleObject = entryValue ? jsDynamicCast<Bun::JSCommonJSModule*>(entryValue) : nullptr) {
-            JSValue exportsValue = getJSValue();
-            RETURN_IF_EXCEPTION(scope, {});
+            // If factory expects parameter (importOriginal), don't execute now
+            // Just remove from cache and let runVirtualModule handle it
+            if (!factoryExpectsParameter) {
+                JSValue exportsValue = getJSValue();
+                RETURN_IF_EXCEPTION(scope, {});
 
-            moduleObject->putDirect(vm, Bun::builtinNames(vm).exportsPublicName(), exportsValue, 0);
-            moduleObject->hasEvaluated = true;
-            removeFromCJS = false;
+                moduleObject->putDirect(vm, Bun::builtinNames(vm).exportsPublicName(), exportsValue, 0);
+                moduleObject->hasEvaluated = true;
+                removeFromCJS = false;
+            }
         }
     }
 
@@ -1019,7 +1045,12 @@ JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specif
         if (modulesExecutingFactory.contains(specifierString)) {
             // Recursive import detected! Load the original module instead.
             // This prevents deadlock and allows async factories to work intuitively.
-            return fallback();
+
+            fprintf(stderr, "DEBUG: Recursion detected for %s, returning null to load from filesystem\n", specifierString.utf8().data());
+
+            // Return JSValue() to signal to the module loader to load normally from filesystem
+            // The mock is still in virtualModules, but we signal to skip it for this recursive call
+            return JSC::JSValue();
         }
 
         JSC::JSObject* function = virtualModuleFn.get();
@@ -1030,57 +1061,137 @@ JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specif
 
         JSValue result;
 
+        // Shared logic: create importOriginal helper if factory expects it
+        JSC::MarkedArgumentBuffer arguments;
+        bool shouldCreateHelper = false;
+
+        // Determine if we should create the importOriginal helper
+        if (Zig::JSModuleMock* moduleMock = jsDynamicCast<Zig::JSModuleMock*>(function)) {
+            // For JSModuleMock, check the wrapped callback function
+            JSC::JSValue callbackValue = moduleMock->callbackFunctionOrCachedResult.get();
+            if (callbackValue.isCallable()) {
+                if (auto* callbackFunc = jsDynamicCast<JSC::JSFunction*>(callbackValue)) {
+                    if (auto* executable = callbackFunc->jsExecutable()) {
+                        shouldCreateHelper = executable->parameterCount() > 0;
+                    }
+                }
+            }
+        } else if (auto* jsFunction = jsDynamicCast<JSC::JSFunction*>(function)) {
+            // For regular JSFunction, check directly
+            if (auto* executable = jsFunction->jsExecutable()) {
+                shouldCreateHelper = executable->parameterCount() > 0;
+            }
+        }
+
+        // Create importOriginal helper if needed
+        if (shouldCreateHelper) {
+            fprintf(stderr, "DEBUG: Creating importOriginal helper for %s\n", specifierString.utf8().data());
+
+            // Instead of C++ host function, create a JavaScript function that does import()
+            // This will properly use the module loader and return a promise
+
+            // Temporarily remove the mock from virtualModules so importOriginal loads the real module
+            auto virtualModuleFnBackup = virtualModules.take(specifierString);
+
+            // Also remove from tracking
+            modulesExecutingFactory.remove(specifierString);
+
+            fprintf(stderr, "DEBUG: Temporarily removed mock and tracking for %s\n", specifierString.utf8().data());
+
+            // Create JavaScript code: () => import(specifier)
+            // The deadlock prevention logic will handle loading the original module
+            WTF::StringBuilder code;
+            code.append("() => import("_s);
+            code.append('"');
+            for (size_t i = 0; i < specifierString.length(); i++) {
+                auto c = specifierString[i];
+                if (c == '"' || c == '\\') {
+                    code.append('\\');
+                }
+                code.append(c);
+            }
+            code.append('"');
+            code.append(')');
+
+            // Evaluate the code to create the function
+            JSC::SourceCode sourceCode = JSC::makeSource(
+                code.toString(),
+                JSC::SourceOrigin(),
+                JSC::SourceTaintedOrigin::Untainted
+            );
+
+            NakedPtr<JSC::Exception> exception;
+            JSC::JSValue importOriginalHelper = JSC::evaluate(
+                globalObject,
+                sourceCode,
+                globalObject,
+                exception
+            );
+
+            // Restore the mock to virtualModules
+            virtualModules.set(specifierString, virtualModuleFnBackup);
+
+            // Restore tracking
+            modulesExecutingFactory.add(specifierString);
+
+            fprintf(stderr, "DEBUG: Restored mock and tracking for %s\n", specifierString.utf8().data());
+
+            if (exception) {
+                throwScope.throwException(globalObject, exception.get());
+                return JSC::jsUndefined();
+            }
+
+            RETURN_IF_EXCEPTION(throwScope, JSC::jsUndefined());
+
+            arguments.append(importOriginalHelper);
+            fprintf(stderr, "DEBUG: Added importOriginal helper to arguments\n");
+        }
+
+        // Execute the factory function
         if (Zig::JSModuleMock* moduleMock = jsDynamicCast<Zig::JSModuleMock*>(function)) {
             wasModuleMock = true;
-            // module mock
-            result = moduleMock->executeOnce(globalObject);
+            // module mock - pass arguments to executeOnce
+            result = moduleMock->executeOnce(globalObject, arguments.size() > 0 ? &arguments : nullptr);
         } else {
             // regular function
-            JSC::MarkedArgumentBuffer arguments;
             JSC::CallData callData = JSC::getCallData(function);
             RELEASE_ASSERT(callData.type != JSC::CallData::Type::None);
-
             result = call(globalObject, function, callData, JSC::jsUndefined(), arguments);
         }
 
         RETURN_IF_EXCEPTION(throwScope, JSC::jsUndefined());
 
         // Handle promises from async factory functions
+        // The module loader has built-in support for async virtual modules via PendingVirtualModuleResult
         if (auto* promise = JSC::jsDynamicCast<JSPromise*>(result)) {
-            // For async factories, we need to wait for the promise to resolve
-            // before removing from tracking set, otherwise recursive imports won't work correctly
+            fprintf(stderr, "DEBUG: Factory returned Promise with status: %d (0=Pending, 1=Fulfilled, 2=Rejected)\n", (int)promise->status());
+
             switch (promise->status()) {
             case JSPromise::Status::Rejected: {
-                // Remove from tracking since factory failed
+                // Factory failed - remove from tracking and throw
                 modulesExecutingFactory.remove(specifierString);
                 result = promise->result();
                 throwScope.throwException(globalObject, result);
                 return {};
             }
-            case JSPromise::Status::Pending: {
-                // Promise is still pending - this means the async factory is still executing
-                // We need to ensure the tracking set is cleaned up when the promise resolves
-                // Create a reaction to clean up the tracking set when promise settles
-
-                // Keep tracking set entry while promise is pending to detect recursive imports
-                // The promise will be awaited by the module loader, and when it resolves,
-                // we'll clean up the tracking set on the next import attempt
-
-                // Note: This is a limitation - the tracking set entry persists until next import
-                // but this is acceptable as it only affects the specific module being mocked
-                return promise;
-            }
             case JSPromise::Status::Fulfilled: {
-                // Promise already fulfilled - extract the result
+                // Promise already resolved - extract result and continue processing
+                fprintf(stderr, "DEBUG: Promise already fulfilled, extracting result\n");
                 result = promise->result();
+                modulesExecutingFactory.remove(specifierString);
                 break;
             }
+            case JSPromise::Status::Pending: {
+                // Promise still pending - return it for module loader to handle
+                // Keep in tracking so recursive imports detect it
+                fprintf(stderr, "DEBUG: Promise pending - returning to module loader for async handling\n");
+                return promise;
             }
+            }
+        } else {
+            // Synchronous result - remove from tracking
+            modulesExecutingFactory.remove(specifierString);
         }
-
-        // Remove from tracking set after execution completes successfully
-        // This only happens for sync factories or already-fulfilled promises
-        modulesExecutingFactory.remove(specifierString);
 
         if (!result.isObject()) {
             JSC::throwTypeError(globalObject, throwScope, "virtual module expects an object returned"_s);

@@ -41,6 +41,8 @@
 
 #include "BunProcess.h"
 
+extern "C" void JSC__JSGlobalObject__deleteModuleRegistryEntry(JSC::JSGlobalObject*, ZigString*);
+
 namespace Bun {
 using namespace JSC;
 using namespace Zig;
@@ -1153,16 +1155,36 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultResolve, (JSC::JSGlobalObje
 
     bool wasModuleMock = pendingModule->wasModuleMock;
 
+    fprintf(stderr, "DEBUG [ModuleLoader]: jsFunctionOnLoadObjectResultResolve called\n");
+    fprintf(stderr, "DEBUG [ModuleLoader]:   specifier: %s\n", specifier.toWTFString(BunString::ZeroCopy).utf8().data());
+    fprintf(stderr, "DEBUG [ModuleLoader]:   wasModuleMock: %s\n", wasModuleMock ? "true" : "false");
+    fprintf(stderr, "DEBUG [ModuleLoader]:   objectResult is object: %s\n", objectResult.isObject() ? "true" : "false");
+
     JSC::JSValue result = handleVirtualModuleResult<false>(static_cast<Zig::GlobalObject*>(globalObject), objectResult, &res, &specifier, &referrer, wasModuleMock);
+
+    fprintf(stderr, "DEBUG [ModuleLoader]:   handleVirtualModuleResult returned, res.success: %s\n", res.success ? "true" : "false");
+
     if (!scope.exception() && !res.success) [[unlikely]] {
         throwException(globalObject, scope, result);
     }
     if (scope.exception()) [[unlikely]] {
+        fprintf(stderr, "DEBUG [ModuleLoader]:   Exception occurred, rejecting promise\n");
         auto retValue = JSValue::encode(promise->rejectWithCaughtException(globalObject, scope));
         pendingModule->internalField(2).set(vm, pendingModule, JSC::jsUndefined());
         return retValue;
     }
+
+    // For module mocks, clear the cached module entry before resolving
+    // This is necessary because if the factory did a recursive import,
+    // the original module was cached and needs to be replaced with the mock
+    if (wasModuleMock && res.success) {
+        fprintf(stderr, "DEBUG [ModuleLoader]:   Clearing cached module entry for mock\n");
+        ZigString specifierZig = Zig::toZigString(specifier.toWTFString(BunString::ZeroCopy));
+        JSC__JSGlobalObject__deleteModuleRegistryEntry(globalObject, &specifierZig);
+    }
+
     scope.release();
+    fprintf(stderr, "DEBUG [ModuleLoader]:   Resolving internal promise\n");
     promise->resolve(globalObject, result);
     pendingModule->internalField(2).set(vm, pendingModule, JSC::jsUndefined());
     return JSValue::encode(jsUndefined());

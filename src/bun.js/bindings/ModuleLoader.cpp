@@ -41,8 +41,6 @@
 
 #include "BunProcess.h"
 
-extern "C" void JSC__JSGlobalObject__deleteModuleRegistryEntry(JSC::JSGlobalObject*, ZigString*);
-
 namespace Bun {
 using namespace JSC;
 using namespace Zig;
@@ -1174,17 +1172,8 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultResolve, (JSC::JSGlobalObje
         return retValue;
     }
 
-    // For module mocks, clear the cached module entry before resolving
-    // This is necessary because if the factory did a recursive import,
-    // the original module was cached and needs to be replaced with the mock
-    if (wasModuleMock && res.success) {
-        fprintf(stderr, "DEBUG [ModuleLoader]:   Clearing cached module entry for mock\n");
-        ZigString specifierZig = Zig::toZigString(specifier.toWTFString(BunString::ZeroCopy));
-        JSC__JSGlobalObject__deleteModuleRegistryEntry(globalObject, &specifierZig);
-    }
-
     scope.release();
-    fprintf(stderr, "DEBUG [ModuleLoader]:   Resolving internal promise\n");
+    fprintf(stderr, "DEBUG [ModuleLoader]:   Resolving internal promise with result\n");
     promise->resolve(globalObject, result);
     pendingModule->internalField(2).set(vm, pendingModule, JSC::jsUndefined());
     return JSValue::encode(jsUndefined());

@@ -73,6 +73,9 @@ public:
         // Track which modules are currently executing their factory functions
         // to detect and prevent deadlock from recursive imports
         WTF::HashSet<String> modulesExecutingFactory;
+        // Track modules that have returned a pending Promise (async mock)
+        // Used to prevent caching during recursive imports until the Promise resolves
+        WTF::HashSet<String> modulesPendingMock;
         bool mustDoExpensiveRelativeLookup = false;
         JSC::EncodedJSValue run(JSC::JSGlobalObject* globalObject, BunString* namespaceString, BunString* path);
 

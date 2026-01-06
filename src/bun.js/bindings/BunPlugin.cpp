@@ -1035,6 +1035,7 @@ JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specif
     if (auto virtualModuleFn = virtualModules.get(specifierString)) {
         auto& vm = JSC::getVM(globalObject);
         auto& modulesExecutingFactory = globalObject->onLoadPlugins.modulesExecutingFactory;
+        auto& modulesPendingMock = globalObject->onLoadPlugins.modulesPendingMock;
 
         // DEADLOCK PREVENTION: Check if this module is already executing its factory
         // This happens when the factory function tries to import the same module
@@ -1099,7 +1100,8 @@ JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specif
             fprintf(stderr, "DEBUG: Temporarily removed mock and tracking for %s\n", specifierString.utf8().data());
 
             // Create JavaScript code: () => import(specifier)
-            // The deadlock prevention logic will handle loading the original module
+            // By keeping the module out of modulesExecutingFactory during this call,
+            // recursion detection won't fire and the import will load normally
             WTF::StringBuilder code;
             code.append("() => import("_s);
             code.append('"');
@@ -1128,13 +1130,15 @@ JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specif
                 exception
             );
 
-            // Restore the mock to virtualModules
-            virtualModules.set(specifierString, virtualModuleFnBackup);
+            // DON'T restore the mock or tracking!
+            // Keep both removed so that when importOriginal() is called:
+            // 1. It won't find a mock in virtualModules (so fallback loads original)
+            // 2. It won't trigger recursion detection (tracking is empty)
+            // After factory execution completes, we can restore if needed, but for now
+            // the factory has exclusive access to load the original module
+            fprintf(stderr, "DEBUG: Kept mock and tracking removed during factory execution for %s\n", specifierString.utf8().data());
 
-            // Restore tracking
-            modulesExecutingFactory.add(specifierString);
-
-            fprintf(stderr, "DEBUG: Restored mock and tracking for %s\n", specifierString.utf8().data());
+            // Note: virtualModuleFnBackup holds the mock object, but we don't restore it yet
 
             if (exception) {
                 throwScope.throwException(globalObject, exception.get());
@@ -1183,8 +1187,9 @@ JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specif
             }
             case JSPromise::Status::Pending: {
                 // Promise still pending - return it for module loader to handle
-                // Keep in tracking so recursive imports detect it
-                fprintf(stderr, "DEBUG: Promise pending - returning to module loader for async handling\n");
+                // Mark this module as having a pending mock so we can prevent caching during recursive imports
+                modulesPendingMock.add(specifierString);
+                fprintf(stderr, "DEBUG: Promise pending - marked as pending mock and returning to module loader\n");
                 return promise;
             }
             }

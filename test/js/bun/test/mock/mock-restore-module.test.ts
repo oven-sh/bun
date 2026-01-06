@@ -176,3 +176,36 @@ test("mock.restore() handles both ESM and CJS modules", async () => {
   expect(esm2.value).toBe("original-esm");
   expect(cjs2.value).toBe("original-cjs");
 });
+
+test("mock and restore pre-loaded module (in-place restore)", async () => {
+  // This test verifies that mock.restoreModule works correctly for modules
+  // that are already loaded (like NPM modules). The module's exports should
+  // be restored in-place without needing to re-import.
+  using dir = tempDir("mock-restore-preloaded", {
+    "fixture.ts": `export const name = "original"; export function getId() { return 123; }`,
+  });
+
+  const modulePath = path.join(String(dir), "fixture.ts");
+
+  // First, load the module
+  const original = await import(modulePath);
+  expect(original.name).toBe("original");
+  expect(original.getId()).toBe(123);
+
+  // Mock the module
+  mock.module(modulePath, () => ({
+    name: "mocked",
+    getId: () => 999,
+  }));
+
+  // The same reference should now return mocked values (in-place mock)
+  expect(original.name).toBe("mocked");
+  expect(original.getId()).toBe(999);
+
+  // Restore the module
+  mock.restoreModule(modulePath);
+
+  // The same reference should now return original values (in-place restore)
+  expect(original.name).toBe("original");
+  expect(original.getId()).toBe(123);
+});

@@ -741,6 +741,9 @@ pub const api = struct {
         /// bun_macro
         bun_macro,
 
+        /// cloudflare
+        cloudflare,
+
         _,
 
         pub fn jsonStringify(self: @This(), writer: anytype) !void {

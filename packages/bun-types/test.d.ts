@@ -28,17 +28,31 @@ declare module "bun:test" {
      * value of `factory`. If the export didn't exist before, it will not be
      * added to existing import statements. This is due to how ESM works.
      *
+     * The factory function can optionally receive an `importOriginal` helper
+     * that loads the original module, useful for partial mocks (Vitest-compatible).
+     *
      * @param id module ID to mock
-     * @param factory a function returning an object that will be used as the exports of the mocked module
+     * @param factory a function returning an object that will be used as the exports of the mocked module.
+     *                Can optionally accept `importOriginal` parameter to load the real module.
      *
      * @example
      * ```ts
      * import { mock } from "bun:test";
      *
+     * // Simple mock
      * mock.module("fs/promises", () => {
      *  return {
      *    readFile: () => Promise.resolve("hello world"),
      *  };
+     * });
+     *
+     * // Partial mock with importOriginal (Vitest-compatible)
+     * mock.module("./calculator.ts", async (importOriginal) => {
+     *   const original = await importOriginal();
+     *   return {
+     *     ...original,
+     *     add: () => 999, // Override only this function
+     *   };
      * });
      *
      * import { readFile } from "fs/promises";
@@ -46,7 +60,41 @@ declare module "bun:test" {
      * console.log(await readFile("hello.txt", "utf8")); // hello world
      * ```
      */
-    module(id: string, factory: () => any): void | Promise<void>;
+    module(
+      id: string,
+      factory: (() => any) | ((importOriginal: () => Promise<any>) => any | Promise<any>),
+    ): void | Promise<void>;
+    /**
+     * Restore mocked module(s) to their original implementation.
+     *
+     * If called with a module ID, restores only that specific module.
+     * If called without arguments, restores ALL mocked modules.
+     *
+     * This removes the mock(s) and clears them from the module cache,
+     * allowing subsequent imports to load the real module(s).
+     *
+     * @param id optional module ID to restore. If omitted, restores all mocked modules.
+     *
+     * @example
+     * ```ts
+     * import { mock } from "bun:test";
+     *
+     * // Mock multiple modules
+     * mock.module("./math.ts", () => ({ add: () => 999 }));
+     * mock.module("./utils.ts", () => ({ format: () => "mocked" }));
+     *
+     * // Restore a specific module
+     * mock.restoreModule("./math.ts");
+     * const { add } = await import("./math.ts");
+     * console.log(add(2, 3)); // 5 (restored)
+     *
+     * // Restore all modules
+     * mock.restoreModule();
+     * const { format } = await import("./utils.ts");
+     * console.log(format("test")); // original implementation
+     * ```
+     */
+    restoreModule(id?: string): void;
     /**
      * Restore the previous value of mocks.
      */

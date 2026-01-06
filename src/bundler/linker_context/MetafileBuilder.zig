@@ -159,18 +159,20 @@ pub fn generateChunkJson(
 
 /// Assembles the final metafile JSON from pre-built chunk fragments.
 /// Called after all chunks have been generated in parallel.
+/// Chunk references (unique_keys) are resolved to their final output paths.
 /// The caller is responsible for freeing the returned slice.
 pub fn generate(
     allocator: std.mem.Allocator,
-    c: *const LinkerContext,
-    chunks: []const Chunk,
+    c: *LinkerContext,
+    chunks: []Chunk,
 ) ![]const u8 {
-    var json = std.array_list.Managed(u8).init(allocator);
-    errdefer json.deinit();
+    // Use StringJoiner so we can use breakOutputIntoPieces to resolve chunk references
+    var j = StringJoiner{
+        .allocator = allocator,
+    };
+    errdefer j.deinit();
 
-    const writer = json.writer();
-
-    try writer.writeAll("{\n  \"inputs\": {");
+    j.pushStatic("{\n  \"inputs\": {");
 
     // Collect all input files that are reachable
     var first_input = true;
@@ -208,16 +210,16 @@ pub fn generate(
         if (path.len == 0) continue;
 
         if (!first_input) {
-            try writer.writeAll(",");
+            j.pushStatic(",");
         }
         first_input = false;
 
-        try writer.writeAll("\n    ");
-        try writeJSONString(writer, path);
-        try writer.print(": {{\n      \"bytes\": {d}", .{source.contents.len});
+        j.pushStatic("\n    ");
+        j.push(std.fmt.allocPrint(allocator, "{f}", .{bun.fmt.formatJSONStringUTF8(path, .{})}) catch return error.OutOfMemory, allocator);
+        j.push(std.fmt.allocPrint(allocator, ": {{\n      \"bytes\": {d}", .{source.contents.len}) catch return error.OutOfMemory, allocator);
 
         // Write imports
-        try writer.writeAll(",\n      \"imports\": [");
+        j.pushStatic(",\n      \"imports\": [");
         if (source_index < import_records_list.len) {
             const import_records = import_records_list[source_index];
             var first_import = true;
@@ -225,25 +227,26 @@ pub fn generate(
                 if (record.kind == .internal) continue;
 
                 if (!first_import) {
-                    try writer.writeAll(",");
+                    j.pushStatic(",");
                 }
                 first_import = false;
 
-                try writer.writeAll("\n        {\n          \"path\": ");
-                // Use resolved path for "path" field
-                try writeJSONString(writer, record.path.text);
-                try writer.writeAll(",\n          \"kind\": ");
-                try writeJSONString(writer, record.kind.label());
+                j.pushStatic("\n        {\n          \"path\": ");
+                // Write path as-is - chunk references (unique_keys) will be resolved
+                // by breakOutputIntoPieces and code() below
+                j.push(std.fmt.allocPrint(allocator, "{f}", .{bun.fmt.formatJSONStringUTF8(record.path.text, .{})}) catch return error.OutOfMemory, allocator);
+                j.pushStatic(",\n          \"kind\": ");
+                j.push(std.fmt.allocPrint(allocator, "{f}", .{bun.fmt.formatJSONStringUTF8(record.kind.label(), .{})}) catch return error.OutOfMemory, allocator);
 
-                // Add "original" field if different from resolved path
+                // Add "original" field if different from path
                 if (record.original_path.len > 0 and !std.mem.eql(u8, record.original_path, record.path.text)) {
-                    try writer.writeAll(",\n          \"original\": ");
-                    try writeJSONString(writer, record.original_path);
+                    j.pushStatic(",\n          \"original\": ");
+                    j.push(std.fmt.allocPrint(allocator, "{f}", .{bun.fmt.formatJSONStringUTF8(record.original_path, .{})}) catch return error.OutOfMemory, allocator);
                 }
 
                 // Add "external": true for external imports
                 if (record.flags.is_external_without_side_effects or !record.source_index.isValid()) {
-                    try writer.writeAll(",\n          \"external\": true");
+                    j.pushStatic(",\n          \"external\": true");
                 }
 
                 // Add "with" for import attributes (json, toml, text loaders)
@@ -256,16 +259,16 @@ pub fn generate(
                         else => null,
                     };
                     if (with_type) |wt| {
-                        try writer.writeAll(",\n          \"with\": { \"type\": ");
-                        try writeJSONString(writer, wt);
-                        try writer.writeAll(" }");
+                        j.pushStatic(",\n          \"with\": { \"type\": ");
+                        j.push(std.fmt.allocPrint(allocator, "{f}", .{bun.fmt.formatJSONStringUTF8(wt, .{})}) catch return error.OutOfMemory, allocator);
+                        j.pushStatic(" }");
                     }
                 }
 
-                try writer.writeAll("\n        }");
+                j.pushStatic("\n        }");
             }
         }
-        try writer.writeAll("\n      ]");
+        j.pushStatic("\n      ]");
 
         // Write format based on loader
         const loader = loaders[source_index];
@@ -276,14 +279,14 @@ pub fn generate(
             else => null,
         };
         if (format) |fmt| {
-            try writer.writeAll(",\n      \"format\": ");
-            try writeJSONString(writer, fmt);
+            j.pushStatic(",\n      \"format\": ");
+            j.push(std.fmt.allocPrint(allocator, "{f}", .{bun.fmt.formatJSONStringUTF8(fmt, .{})}) catch return error.OutOfMemory, allocator);
         }
 
-        try writer.writeAll("\n    }");
+        j.pushStatic("\n    }");
     }
 
-    try writer.writeAll("\n  },\n  \"outputs\": {");
+    j.pushStatic("\n  },\n  \"outputs\": {");
 
     // Write outputs by joining pre-built chunk JSON fragments
     var first_output = true;
@@ -291,26 +294,41 @@ pub fn generate(
         if (chunk.final_rel_path.len == 0) continue;
 
         if (!first_output) {
-            try writer.writeAll(",");
+            j.pushStatic(",");
         }
         first_output = false;
 
-        try writer.writeAll("\n    ");
+        j.pushStatic("\n    ");
 
         // Use pre-built JSON fragment if available, otherwise generate inline
         if (chunk.metafile_chunk_json.len > 0) {
-            try writer.writeAll(chunk.metafile_chunk_json);
+            j.pushStatic(chunk.metafile_chunk_json);
         } else {
             // Fallback: generate inline (shouldn't happen in normal flow)
             const chunk_json = try generateChunkJson(allocator, c, chunk, chunks);
-            defer allocator.free(chunk_json);
-            try writer.writeAll(chunk_json);
+            j.push(chunk_json, allocator);
         }
     }
 
-    try writer.writeAll("\n  }\n}\n");
+    j.pushStatic("\n  }\n}\n");
 
-    return json.toOwnedSlice();
+    // Break output into pieces and resolve chunk references to final paths
+    var intermediate = try c.breakOutputIntoPieces(allocator, &j, @intCast(chunks.len));
+
+    // Get final output with all chunk references resolved
+    const code_result = try intermediate.code(
+        allocator,
+        c.parse_graph,
+        &c.graph,
+        "", // no import prefix for metafile
+        @constCast(&chunks[0]), // dummy chunk, not used for metafile
+        @constCast(chunks),
+        null, // no display size
+        false, // not force absolute path
+        false, // no source map shifts
+    );
+
+    return code_result.buffer;
 }
 
 fn writeJSONString(writer: anytype, str: []const u8) !void {
@@ -319,7 +337,9 @@ fn writeJSONString(writer: anytype, str: []const u8) !void {
 
 const bun = @import("bun");
 const std = @import("std");
+const strings = bun.strings;
 
 const Chunk = bun.bundle_v2.Chunk;
 const Index = bun.bundle_v2.Index;
 const LinkerContext = bun.bundle_v2.LinkerContext;
+const StringJoiner = bun.StringJoiner;

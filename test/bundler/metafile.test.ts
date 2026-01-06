@@ -410,7 +410,6 @@ describe("bundler metafile", () => {
     for (const [path, input] of Object.entries(inputs)) {
       if (path.includes("entry.js")) {
         for (const imp of input.imports) {
-          // With code splitting, dynamic imports have the original specifier in 'original' field
           if (imp.kind === "dynamic-import" && imp.original === "./dynamic.js") {
             dynamicImport = imp;
             break;
@@ -423,6 +422,13 @@ describe("bundler metafile", () => {
     expect(dynamicImport).not.toBeNull();
     expect(dynamicImport!.kind).toBe("dynamic-import");
     expect(dynamicImport!.original).toBe("./dynamic.js");
+    // The path should be the final chunk path (e.g., "./chunk-xxx.js"), not the internal unique_key
+    expect(dynamicImport!.path).toMatch(/^\.\/chunk-[a-z0-9]+\.js$/);
+
+    // Verify the path corresponds to an actual output chunk
+    const outputs = result.metafile.outputs as Record<string, MetafileOutput>;
+    const outputPaths = Object.keys(outputs);
+    expect(outputPaths).toContain(dynamicImport!.path);
   });
 
   test("metafile includes cssBundle for CSS outputs", async () => {

@@ -299,6 +299,9 @@ export interface BundlerTestInput {
 
   /** Run after the bun.build function is called with its output */
   onAfterApiBundle?(build: BuildOutput): Promise<void> | void;
+
+  /** If true, build outputs are kept in memory instead of written to disk. Defaults to false. */
+  memory?: boolean;
 }
 
 export interface SourceMapTests {
@@ -494,6 +497,7 @@ function expectBundled(
     generateOutput = true,
     onAfterApiBundle,
     throw: _throw = false,
+    memory = false,
     ...unknownProps
   } = opts;
 
@@ -584,7 +588,10 @@ function expectBundled(
   }
 
   return (async () => {
-    if (!backend) {
+    // memory mode requires API backend since we need in-memory outputs
+    if (memory) {
+      backend = "api";
+    } else if (!backend) {
       backend =
         dotenv ||
         typeof production !== "undefined" ||
@@ -701,6 +708,8 @@ function expectBundled(
 
     // Run bun build cli. In the future we can move to using `Bun.Transpiler.`
     let warningReference: Record<string, ErrorMeta[]> = {};
+    // Map to store build outputs in memory when memory=true
+    const memoryOutputs: Map<string, string> = new Map();
     const expectedErrors = bundleErrors
       ? Object.entries(bundleErrors).flatMap(([file, v]) => v.map(error => ({ file, error })))
       : null;
@@ -1111,7 +1120,7 @@ function expectBundled(
           },
           plugins: pluginArray,
           treeShaking,
-          outdir: generateOutput ? buildOutDir : undefined,
+          outdir: generateOutput && !memory ? buildOutDir : undefined,
           sourcemap: sourceMap,
           splitting,
           target,
@@ -1284,6 +1293,20 @@ for (const [key, blob] of build.outputs) {
         } else if (expectedErrors && expectedErrors.length > 0) {
           throw new Error("Errors were expected while bundling:\n" + expectedErrors.map(formatError).join("\n"));
         }
+
+        // Populate memoryOutputs if memory mode is enabled
+        if (memory && build.success) {
+          for (const artifact of build.outputs) {
+            let normalizedPath = artifact.path;
+            // Normalize path to have leading slash
+            if (normalizedPath.startsWith("./")) {
+              normalizedPath = normalizedPath.slice(1);
+            } else if (!normalizedPath.startsWith("/")) {
+              normalizedPath = "/" + normalizedPath;
+            }
+            memoryOutputs.set(normalizedPath, await artifact.text());
+          }
+        }
       } else {
         await esbuild.build({
           bundle: true,
@@ -1295,11 +1318,23 @@ for (const [key, blob] of build.outputs) {
     }
 
     const readCache: Record<string, string> = {};
-    const readFile = (file: string) =>
-      readCache[file] || (readCache[file] = readFileSync(path.join(root, file)).toUnixString());
+    const readFile = (file: string) => {
+      if (readCache[file]) return readCache[file];
+      // Check memory outputs first
+      if (memoryOutputs.size > 0) {
+        const memContent = memoryOutputs.get(file);
+        if (memContent !== undefined) {
+          readCache[file] = memContent;
+          return memContent;
+        }
+      }
+      return (readCache[file] = readFileSync(path.join(root, file)).toUnixString());
+    };
     const writeFile = (file: string, contents: string) => {
       readCache[file] = contents;
-      writeFileSync(path.join(root, file), contents);
+      if (!memory) {
+        writeFileSync(path.join(root, file), contents);
+      }
     };
     const api = {
       root,
@@ -1312,7 +1347,11 @@ for (const [key, blob] of build.outputs) {
       prependFile: (file, contents) => writeFile(file, dedent(contents) + "\n" + readFile(file)),
       appendFile: (file, contents) => writeFile(file, readFile(file) + "\n" + dedent(contents)),
       assertFileExists: file => {
-        if (!existsSync(path.join(root, file))) {
+        if (memoryOutputs.size > 0) {
+          if (!memoryOutputs.has(file)) {
+            throw new Error("Expected file to be in memory: " + file);
+          }
+        } else if (!existsSync(path.join(root, file))) {
           throw new Error("Expected file to be written: " + file);
         }
       },
@@ -1369,7 +1408,7 @@ for (const [key, blob] of build.outputs) {
 
     // Check that the bundle failed with status code 0 by verifying all files exist.
     // TODO: clean up this entire bit into one main loop\
-    if (!compile) {
+    if (!compile && !memory) {
       if (outfile) {
         if (!existsSync(outfile)) {
           throw new Error("Bundle was not written to disk: " + outfile);

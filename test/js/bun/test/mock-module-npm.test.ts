@@ -14,8 +14,6 @@ export function multiply(a: number, b: number) { return a * b; }`,
 
   // 1. First, import the original module (simulates NPM package already loaded)
   const original = await import(modulePath);
-  console.log("[TEST] Original add(2, 3):", original.add(2, 3));
-  console.log("[TEST] Original multiply(2, 3):", original.multiply(2, 3));
   expect(original.add(2, 3)).toBe(5);
   expect(original.multiply(2, 3)).toBe(6);
 
@@ -26,17 +24,13 @@ export function multiply(a: number, b: number) { return a * b; }`,
   }));
 
   // 3. The original reference should now see mocked values (in-place modification)
-  console.log("[TEST] After mock - original.add(2, 3):", original.add(2, 3));
   expect(original.add(2, 3)).toBe(999);
   expect(original.multiply(2, 3)).toBe(888);
 
   // 4. Restore the module
-  console.log("[TEST] About to restore...");
   mock.restoreModule(modulePath);
-  console.log("[TEST] Restore called");
 
   // 5. After restore, the original reference should have original values back (in-place restoration)
-  console.log("[TEST] After restore - original.add(2, 3):", original.add(2, 3));
   expect(original.add(2, 3)).toBe(5); // Should be 5 again, not 999!
   expect(original.multiply(2, 3)).toBe(6); // Should be 6 again, not 888!
 });

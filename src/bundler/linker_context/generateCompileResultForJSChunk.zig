@@ -59,6 +59,17 @@ fn generateCompileResultForJSChunkImpl(worker: *ThreadPool.Worker, c: *LinkerCon
         arena.allocator(),
     );
 
+    // Track output bytes for metafile generation
+    if (c.options.metafile) {
+        const code_len = switch (result) {
+            .result => |r| r.code.len,
+            else => 0,
+        };
+        if (code_len > 0 and !part_range.source_index.isRuntime()) {
+            _ = c.parse_graph.input_files.items(.output_bytes)[part_range.source_index.get()].fetchAdd(code_len, .monotonic);
+        }
+    }
+
     return .{
         .javascript = .{
             .source_index = part_range.source_index.get(),

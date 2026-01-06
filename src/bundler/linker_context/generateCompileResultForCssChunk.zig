@@ -135,9 +135,14 @@ fn generateCompileResultForCssChunkImpl(worker: *ThreadPool.Worker, c: *LinkerCo
                     };
                 },
             };
+            const output = allocating_writer.written();
+            // Track output bytes for metafile generation
+            if (c.options.metafile and output.len > 0) {
+                _ = c.parse_graph.input_files.items(.output_bytes)[idx.get()].fetchAdd(output.len, .monotonic);
+            }
             return CompileResult{
                 .css = .{
-                    .result = .{ .result = allocating_writer.written() },
+                    .result = .{ .result = output },
                     .source_index = idx.get(),
                 },
             };

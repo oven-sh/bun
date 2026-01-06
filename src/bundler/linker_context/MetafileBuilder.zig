@@ -48,6 +48,7 @@ pub fn generate(
     var first_input = true;
     const sources = c.parse_graph.input_files.items(.source);
     const loaders = c.parse_graph.input_files.items(.loader);
+    const output_bytes = c.parse_graph.input_files.items(.output_bytes);
     const import_records_list = c.parse_graph.ast.items(.import_records);
 
     // Iterate through all files in chunks to collect unique source indices
@@ -210,9 +211,9 @@ pub fn generate(
 
             try writer.writeAll("\n        ");
             try writeJSONString(writer, file_path);
-            // For now, use the source file size as bytesInOutput
-            // A more accurate implementation would track actual bytes contributed
-            try writer.print(": {{\n          \"bytesInOutput\": {d}\n        }}", .{file_source.contents.len});
+            // Use the actual bytes emitted during code generation
+            const bytes_in_output = output_bytes[file_source_index].load(.monotonic);
+            try writer.print(": {{\n          \"bytesInOutput\": {d}\n        }}", .{bytes_in_output});
         }
         try writer.writeAll("\n      }");
 

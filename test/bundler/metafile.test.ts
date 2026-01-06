@@ -142,8 +142,8 @@ describe("bundler metafile", () => {
     expect(entryImports!.length).toBe(1);
 
     const imp = entryImports![0];
-    // path should be the resolved path (contains lib/helper.js)
-    expect(imp.path).toContain("lib/helper.js");
+    // path should be the resolved path (contains lib/helper.js or lib\helper.js on Windows)
+    expect(imp.path.includes("lib/helper.js") || imp.path.includes("lib\\helper.js")).toBe(true);
     expect(imp.kind).toBe("import-statement");
     // original should be the original import specifier
     expect(imp.original).toBe("./lib/helper.js");

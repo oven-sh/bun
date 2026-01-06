@@ -1215,7 +1215,7 @@ pub fn Bun__fetch_(
             if (try options.getTruthyComptime(globalThis, "s3")) |s3_options| {
                 if (s3_options.isObject()) {
                     s3_options.ensureStillAlive();
-                    credentialsWithOptions = try s3.S3Credentials.getCredentialsWithOptions(credentialsWithOptions.credentials, .{}, s3_options, null, null, globalThis);
+                    credentialsWithOptions = try s3.S3Credentials.getCredentialsWithOptions(credentialsWithOptions.credentials, .{}, s3_options, null, null, false, globalThis);
                 }
             }
         }
@@ -1303,6 +1303,7 @@ pub fn Bun__fetch_(
                 if (headers) |h| (h.getContentType()) else null,
                 if (headers) |h| h.getContentDisposition() else null,
                 proxy_url,
+                credentialsWithOptions.request_payer,
                 @ptrCast(&Wrapper.resolve),
                 s3_stream,
             );

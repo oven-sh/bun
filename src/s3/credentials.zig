@@ -35,7 +35,7 @@ pub const S3Credentials = struct {
 
         return hasher.final();
     }
-    pub fn getCredentialsWithOptions(this: S3Credentials, default_options: MultiPartUploadOptions, options: ?jsc.JSValue, default_acl: ?ACL, default_storage_class: ?StorageClass, globalObject: *jsc.JSGlobalObject) bun.JSError!S3CredentialsWithOptions {
+    pub fn getCredentialsWithOptions(this: S3Credentials, default_options: MultiPartUploadOptions, options: ?jsc.JSValue, default_acl: ?ACL, default_storage_class: ?StorageClass, default_request_payer: bool, globalObject: *jsc.JSGlobalObject) bun.JSError!S3CredentialsWithOptions {
         bun.analytics.Features.s3 += 1;
         // get ENV config
         var new_credentials = S3CredentialsWithOptions{
@@ -43,6 +43,7 @@ pub const S3Credentials = struct {
             .options = default_options,
             .acl = default_acl,
             .storage_class = default_storage_class,
+            .request_payer = default_request_payer,
         };
         errdefer {
             new_credentials.deinit();
@@ -227,6 +228,10 @@ pub const S3Credentials = struct {
                         }
                     }
                 }
+
+                if (try opts.getBooleanStrict(globalObject, "requestPayer")) |request_payer| {
+                    new_credentials.request_payer = request_payer;
+                }
             }
         }
         return new_credentials;
@@ -347,7 +352,9 @@ pub const S3Credentials = struct {
         session_token: []const u8 = "",
         acl: ?ACL = null,
         storage_class: ?StorageClass = null,
-        _headers: [8]picohttp.Header = .{
+        request_payer: bool = false,
+        _headers: [9]picohttp.Header = .{
+            .{ .name = "", .value = "" },
             .{ .name = "", .value = "" },
             .{ .name = "", .value = "" },
             .{ .name = "", .value = "" },
@@ -416,6 +423,7 @@ pub const S3Credentials = struct {
         content_disposition: ?[]const u8 = null,
         acl: ?ACL = null,
         storage_class: ?StorageClass = null,
+        request_payer: bool = false,
     };
     /// This is not used for signing but for console.log output, is just nice to have
     pub fn guessBucket(endpoint: []const u8) ?[]const u8 {
@@ -629,133 +637,16 @@ pub const S3Credentials = struct {
         errdefer bun.default_allocator.free(amz_date);
 
         const amz_day = amz_date[0..8];
-        const signed_headers = if (signQuery) "host" else brk: {
-            if (content_md5 != null) {
-                if (storage_class != null) {
-                    if (acl != null) {
-                        if (content_disposition != null) {
-                            if (session_token != null) {
-                                break :brk "content-disposition;content-md5;host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-security-token;x-amz-storage-class";
-                            } else {
-                                break :brk "content-disposition;content-md5;host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-storage-class";
-                            }
-                        } else {
-                            if (session_token != null) {
-                                break :brk "content-md5;host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-security-token;x-amz-storage-class";
-                            } else {
-                                break :brk "content-md5;host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-storage-class";
-                            }
-                        }
-                    } else {
-                        if (content_disposition != null) {
-                            if (session_token != null) {
-                                break :brk "content-disposition;content-md5;host;x-amz-content-sha256;x-amz-date;x-amz-security-token;x-amz-storage-class";
-                            } else {
-                                break :brk "content-disposition;content-md5;host;x-amz-content-sha256;x-amz-date;x-amz-storage-class";
-                            }
-                        } else {
-                            if (session_token != null) {
-                                break :brk "content-md5;host;x-amz-content-sha256;x-amz-date;x-amz-security-token;x-amz-storage-class";
-                            } else {
-                                break :brk "content-md5;host;x-amz-content-sha256;x-amz-date;x-amz-storage-class";
-                            }
-                        }
-                    }
-                } else {
-                    if (acl != null) {
-                        if (content_disposition != null) {
-                            if (session_token != null) {
-                                break :brk "content-disposition;content-md5;host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-security-token";
-                            } else {
-                                break :brk "content-disposition;content-md5;host;x-amz-acl;x-amz-content-sha256;x-amz-date";
-                            }
-                        } else {
-                            if (session_token != null) {
-                                break :brk "content-md5;host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-security-token";
-                            } else {
-                                break :brk "content-md5;host;x-amz-acl;x-amz-content-sha256;x-amz-date";
-                            }
-                        }
-                    } else {
-                        if (content_disposition != null) {
-                            if (session_token != null) {
-                                break :brk "content-disposition;content-md5;host;x-amz-content-sha256;x-amz-date;x-amz-security-token";
-                            } else {
-                                break :brk "content-disposition;content-md5;host;x-amz-content-sha256;x-amz-date";
-                            }
-                        } else {
-                            if (session_token != null) {
-                                break :brk "content-md5;host;x-amz-content-sha256;x-amz-date;x-amz-security-token";
-                            } else {
-                                break :brk "content-md5;host;x-amz-content-sha256;x-amz-date";
-                            }
-                        }
-                    }
-                }
-            } else {
-                if (storage_class != null) {
-                    if (acl != null) {
-                        if (content_disposition != null) {
-                            if (session_token != null) {
-                                break :brk "content-disposition;host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-security-token;x-amz-storage-class";
-                            } else {
-                                break :brk "content-disposition;host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-storage-class";
-                            }
-                        } else {
-                            if (session_token != null) {
-                                break :brk "host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-security-token;x-amz-storage-class";
-                            } else {
-                                break :brk "host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-storage-class";
-                            }
-                        }
-                    } else {
-                        if (content_disposition != null) {
-                            if (session_token != null) {
-                                break :brk "content-disposition;host;x-amz-content-sha256;x-amz-date;x-amz-security-token;x-amz-storage-class";
-                            } else {
-                                break :brk "content-disposition;host;x-amz-content-sha256;x-amz-date;x-amz-storage-class";
-                            }
-                        } else {
-                            if (session_token != null) {
-                                break :brk "host;x-amz-content-sha256;x-amz-date;x-amz-security-token;x-amz-storage-class";
-                            } else {
-                                break :brk "host;x-amz-content-sha256;x-amz-date;x-amz-storage-class";
-                            }
-                        }
-                    }
-                } else {
-                    if (acl != null) {
-                        if (content_disposition != null) {
-                            if (session_token != null) {
-                                break :brk "content-disposition;host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-security-token";
-                            } else {
-                                break :brk "content-disposition;host;x-amz-acl;x-amz-content-sha256;x-amz-date";
-                            }
-                        } else {
-                            if (session_token != null) {
-                                break :brk "host;x-amz-acl;x-amz-content-sha256;x-amz-date;x-amz-security-token";
-                            } else {
-                                break :brk "host;x-amz-acl;x-amz-content-sha256;x-amz-date";
-                            }
-                        }
-                    } else {
-                        if (content_disposition != null) {
-                            if (session_token != null) {
-                                break :brk "content-disposition;host;x-amz-content-sha256;x-amz-date;x-amz-security-token";
-                            } else {
-                                break :brk "content-disposition;host;x-amz-content-sha256;x-amz-date";
-                            }
-                        } else {
-                            if (session_token != null) {
-                                break :brk "host;x-amz-content-sha256;x-amz-date;x-amz-security-token";
-                            } else {
-                                break :brk "host;x-amz-content-sha256;x-amz-date";
-                            }
-                        }
-                    }
-                }
-            }
+        const request_payer = signOptions.request_payer;
+        const header_key = SignedHeaders.Key{
+            .content_disposition = content_disposition != null,
+            .content_md5 = content_md5 != null,
+            .acl = acl != null,
+            .request_payer = request_payer,
+            .session_token = session_token != null,
+            .storage_class = storage_class != null,
         };
+        const signed_headers = if (signQuery) "host" else SignedHeaders.get(header_key);
 
         const service_name = "s3";
 
@@ -800,9 +691,9 @@ pub const S3Credentials = struct {
                 const canonical = brk_canonical: {
                     var stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
                     const allocator = stack_fallback.get();
-                    var query_parts: bun.BoundedArray([]const u8, 10) = .{};
+                    var query_parts: bun.BoundedArray([]const u8, 11) = .{};
 
-                    // Add parameters in alphabetical order: Content-MD5, X-Amz-Acl, X-Amz-Algorithm, X-Amz-Credential, X-Amz-Date, X-Amz-Expires, X-Amz-Security-Token, X-Amz-SignedHeaders, x-amz-storage-class
+                    // Add parameters in alphabetical order: Content-MD5, X-Amz-Acl, X-Amz-Algorithm, X-Amz-Credential, X-Amz-Date, X-Amz-Expires, X-Amz-Security-Token, X-Amz-SignedHeaders, x-amz-request-payer, x-amz-storage-class
 
                     if (encoded_content_md5) |encoded_content_md5_value| {
                         try query_parts.append(try std.fmt.allocPrint(allocator, "Content-MD5={s}", .{encoded_content_md5_value}));
@@ -825,6 +716,10 @@ pub const S3Credentials = struct {
                     }
 
                     try query_parts.append(try std.fmt.allocPrint(allocator, "X-Amz-SignedHeaders=host", .{}));
+
+                    if (request_payer) {
+                        try query_parts.append(try std.fmt.allocPrint(allocator, "x-amz-request-payer=requester", .{}));
+                    }
 
                     if (storage_class) |storage_class_value| {
                         try query_parts.append(try std.fmt.allocPrint(allocator, "x-amz-storage-class={s}", .{storage_class_value}));
@@ -851,9 +746,9 @@ pub const S3Credentials = struct {
                 // Build final URL with query parameters in alphabetical order to match canonical request
                 var url_stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
                 const url_allocator = url_stack_fallback.get();
-                var url_query_parts: bun.BoundedArray([]const u8, 10) = .{};
+                var url_query_parts: bun.BoundedArray([]const u8, 12) = .{};
 
-                // Add parameters in alphabetical order: Content-MD5, X-Amz-Acl, X-Amz-Algorithm, X-Amz-Credential, X-Amz-Date, X-Amz-Expires, X-Amz-Security-Token, X-Amz-SignedHeaders, x-amz-storage-class, X-Amz-Signature
+                // Add parameters in alphabetical order: Content-MD5, X-Amz-Acl, X-Amz-Algorithm, X-Amz-Credential, X-Amz-Date, X-Amz-Expires, X-Amz-Security-Token, X-Amz-Signature, X-Amz-SignedHeaders, x-amz-request-payer, x-amz-storage-class
 
                 if (encoded_content_md5) |encoded_content_md5_value| {
                     try url_query_parts.append(try std.fmt.allocPrint(url_allocator, "Content-MD5={s}", .{encoded_content_md5_value}));
@@ -879,6 +774,10 @@ pub const S3Credentials = struct {
 
                 try url_query_parts.append(try std.fmt.allocPrint(url_allocator, "X-Amz-SignedHeaders=host", .{}));
 
+                if (request_payer) {
+                    try url_query_parts.append(try std.fmt.allocPrint(url_allocator, "x-amz-request-payer=requester", .{}));
+                }
+
                 if (storage_class) |storage_class_value| {
                     try url_query_parts.append(try std.fmt.allocPrint(url_allocator, "x-amz-storage-class={s}", .{storage_class_value}));
                 }
@@ -894,143 +793,22 @@ pub const S3Credentials = struct {
 
                 break :brk try std.fmt.allocPrint(bun.default_allocator, "{s}://{s}{s}?{s}", .{ protocol, host, normalizedPath, url_query_string.items });
             } else {
-                const canonical = brk_canonical: {
-                    if (content_md5) |content_md5_value| {
-                        if (storage_class) |storage_class_value| {
-                            if (acl) |acl_value| {
-                                if (content_disposition) |disposition| {
-                                    if (session_token) |token| {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\ncontent-md5:{s}\nhost:{s}\nx-amz-acl:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-security-token:{s}\nx-amz-storage-class:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", disposition, content_md5_value, host, acl_value, aws_content_hash, amz_date, token, storage_class_value, signed_headers, aws_content_hash });
-                                    } else {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\ncontent-md5:{s}\nhost:{s}\nx-amz-acl:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-storage-class:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", disposition, content_md5_value, host, acl_value, aws_content_hash, amz_date, storage_class_value, signed_headers, aws_content_hash });
-                                    }
-                                } else {
-                                    if (session_token) |token| {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-md5:{s}\nhost:{s}\nx-amz-acl:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-security-token:{s}\nx-amz-storage-class:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", content_md5_value, host, acl_value, aws_content_hash, amz_date, token, storage_class_value, signed_headers, aws_content_hash });
-                                    } else {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-md5:{s}\nhost:{s}\nx-amz-acl:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-storage-class:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", content_md5_value, host, acl_value, aws_content_hash, amz_date, storage_class_value, signed_headers, aws_content_hash });
-                                    }
-                                }
-                            } else {
-                                if (content_disposition) |disposition| {
-                                    if (session_token) |token| {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\ncontent-md5:{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-security-token:{s}\nx-amz-storage-class:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", disposition, content_md5_value, host, aws_content_hash, amz_date, token, storage_class_value, signed_headers, aws_content_hash });
-                                    } else {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\ncontent-md5:{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-storage-class:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", disposition, content_md5_value, host, aws_content_hash, amz_date, storage_class_value, signed_headers, aws_content_hash });
-                                    }
-                                } else {
-                                    if (session_token) |token| {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-md5:{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-security-token:{s}\nx-amz-storage-class:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", content_md5_value, host, aws_content_hash, amz_date, token, storage_class_value, signed_headers, aws_content_hash });
-                                    } else {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-md5:{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-storage-class:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", content_md5_value, host, aws_content_hash, amz_date, storage_class_value, signed_headers, aws_content_hash });
-                                    }
-                                }
-                            }
-                        } else {
-                            if (acl) |acl_value| {
-                                if (content_disposition) |disposition| {
-                                    if (session_token) |token| {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\ncontent-md5:{s}\nhost:{s}\nx-amz-acl:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-security-token:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", disposition, content_md5_value, host, acl_value, aws_content_hash, amz_date, token, signed_headers, aws_content_hash });
-                                    } else {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\ncontent-md5:{s}\nhost:{s}\nx-amz-acl:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", disposition, content_md5_value, host, acl_value, aws_content_hash, amz_date, signed_headers, aws_content_hash });
-                                    }
-                                } else {
-                                    if (session_token) |token| {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-md5:{s}\nhost:{s}\nx-amz-acl:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-security-token:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", content_md5_value, host, acl_value, aws_content_hash, amz_date, token, signed_headers, aws_content_hash });
-                                    } else {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-md5:{s}\nhost:{s}\nx-amz-acl:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", content_md5_value, host, acl_value, aws_content_hash, amz_date, signed_headers, aws_content_hash });
-                                    }
-                                }
-                            } else {
-                                if (content_disposition) |disposition| {
-                                    if (session_token) |token| {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\ncontent-md5:{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-security-token:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", disposition, content_md5_value, host, aws_content_hash, amz_date, token, signed_headers, aws_content_hash });
-                                    } else {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\ncontent-md5:{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", disposition, content_md5_value, host, aws_content_hash, amz_date, signed_headers, aws_content_hash });
-                                    }
-                                } else {
-                                    if (session_token) |token| {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-md5:{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-security-token:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", content_md5_value, host, aws_content_hash, amz_date, token, signed_headers, aws_content_hash });
-                                    } else {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-md5:{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\n\n{s}\n{s}", .{
-                                            method_name,
-                                            normalizedPath,
-                                            if (search_params) |p| p[1..] else "",
-                                            content_md5_value,
-                                            host,
-                                            aws_content_hash,
-                                            amz_date,
-                                            signed_headers,
-                                            aws_content_hash,
-                                        });
-                                    }
-                                }
-                            }
-                        }
-                    } else {
-                        if (storage_class) |storage_class_value| {
-                            if (acl) |acl_value| {
-                                if (content_disposition) |disposition| {
-                                    if (session_token) |token| {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\nhost:{s}\nx-amz-acl:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-security-token:{s}\nx-amz-storage-class:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", disposition, host, acl_value, aws_content_hash, amz_date, token, storage_class_value, signed_headers, aws_content_hash });
-                                    } else {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\nhost:{s}\nx-amz-acl:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-storage-class:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", disposition, host, acl_value, aws_content_hash, amz_date, storage_class_value, signed_headers, aws_content_hash });
-                                    }
-                                } else {
-                                    if (session_token) |token| {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\nhost:{s}\nx-amz-acl:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-security-token:{s}\nx-amz-storage-class:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", host, acl_value, aws_content_hash, amz_date, token, storage_class_value, signed_headers, aws_content_hash });
-                                    } else {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\nhost:{s}\nx-amz-acl:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-storage-class:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", host, acl_value, aws_content_hash, amz_date, storage_class_value, signed_headers, aws_content_hash });
-                                    }
-                                }
-                            } else {
-                                if (content_disposition) |disposition| {
-                                    if (session_token) |token| {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-security-token:{s}\nx-amz-storage-class:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", disposition, host, aws_content_hash, amz_date, token, storage_class_value, signed_headers, aws_content_hash });
-                                    } else {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-storage-class:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", disposition, host, aws_content_hash, amz_date, storage_class_value, signed_headers, aws_content_hash });
-                                    }
-                                } else {
-                                    if (session_token) |token| {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-security-token:{s}\nx-amz-storage-class:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", host, aws_content_hash, amz_date, token, storage_class_value, signed_headers, aws_content_hash });
-                                    } else {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-storage-class:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", host, aws_content_hash, amz_date, storage_class_value, signed_headers, aws_content_hash });
-                                    }
-                                }
-                            }
-                        } else {
-                            if (acl) |acl_value| {
-                                if (content_disposition) |disposition| {
-                                    if (session_token) |token| {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\nhost:{s}\nx-amz-acl:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-security-token:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", disposition, host, acl_value, aws_content_hash, amz_date, token, signed_headers, aws_content_hash });
-                                    } else {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\nhost:{s}\nx-amz-acl:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", disposition, host, acl_value, aws_content_hash, amz_date, signed_headers, aws_content_hash });
-                                    }
-                                } else {
-                                    if (session_token) |token| {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\nhost:{s}\nx-amz-acl:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-security-token:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", host, acl_value, aws_content_hash, amz_date, token, signed_headers, aws_content_hash });
-                                    } else {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\nhost:{s}\nx-amz-acl:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", host, acl_value, aws_content_hash, amz_date, signed_headers, aws_content_hash });
-                                    }
-                                }
-                            } else {
-                                if (content_disposition) |disposition| {
-                                    if (session_token) |token| {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-security-token:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", disposition, host, aws_content_hash, amz_date, token, signed_headers, aws_content_hash });
-                                    } else {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\ncontent-disposition:{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", disposition, host, aws_content_hash, amz_date, signed_headers, aws_content_hash });
-                                    }
-                                } else {
-                                    if (session_token) |token| {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\nx-amz-security-token:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", host, aws_content_hash, amz_date, token, signed_headers, aws_content_hash });
-                                    } else {
-                                        break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\nhost:{s}\nx-amz-content-sha256:{s}\nx-amz-date:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, if (search_params) |p| p[1..] else "", host, aws_content_hash, amz_date, signed_headers, aws_content_hash });
-                                    }
-                                }
-                            }
-                        }
-                    }
-                };
+                const canonical = try CanonicalRequest.format(
+                    &tmp_buffer,
+                    header_key,
+                    method_name,
+                    normalizedPath,
+                    if (search_params) |p| p[1..] else "",
+                    content_disposition,
+                    content_md5,
+                    host,
+                    acl,
+                    aws_content_hash,
+                    amz_date,
+                    session_token,
+                    storage_class,
+                    signed_headers,
+                );
                 var sha_digest = std.mem.zeroes(bun.sha.SHA256.Digest);
                 bun.sha.SHA256.hash(canonical, &sha_digest, jsc.VirtualMachine.get().rareData().boringEngine());
 
@@ -1067,12 +845,14 @@ pub const S3Credentials = struct {
             .authorization = authorization,
             .acl = signOptions.acl,
             .storage_class = signOptions.storage_class,
+            .request_payer = request_payer,
             .url = try std.fmt.allocPrint(bun.default_allocator, "{s}://{s}{s}{s}", .{ protocol, host, normalizedPath, if (search_params) |s| s else "" }),
             ._headers = [_]picohttp.Header{
                 .{ .name = "x-amz-content-sha256", .value = aws_content_hash },
                 .{ .name = "x-amz-date", .value = amz_date },
                 .{ .name = "Host", .value = host },
                 .{ .name = "Authorization", .value = authorization[0..] },
+                .{ .name = "", .value = "" },
                 .{ .name = "", .value = "" },
                 .{ .name = "", .value = "" },
                 .{ .name = "", .value = "" },
@@ -1111,6 +891,11 @@ pub const S3Credentials = struct {
             result._headers_len += 1;
         }
 
+        if (request_payer) {
+            result._headers[result._headers_len] = .{ .name = "x-amz-request-payer", .value = "requester" };
+            result._headers_len += 1;
+        }
+
         return result;
     }
 };
@@ -1121,6 +906,8 @@ pub const S3CredentialsWithOptions = struct {
     acl: ?ACL = null,
     storage_class: ?StorageClass = null,
     content_disposition: ?[]const u8 = null,
+    /// indicates if requester pays for the request (for requester pays buckets)
+    request_payer: bool = false,
     /// indicates if the credentials have changed
     changed_credentials: bool = false,
     /// indicates if the virtual hosted style is used
@@ -1141,6 +928,123 @@ pub const S3CredentialsWithOptions = struct {
         if (this._bucketSlice) |slice| slice.deinit();
         if (this._sessionTokenSlice) |slice| slice.deinit();
         if (this._contentDispositionSlice) |slice| slice.deinit();
+    }
+};
+
+/// Comptime-generated lookup table for signed headers strings.
+/// Headers must be in alphabetical order per AWS Signature V4 spec.
+const SignedHeaders = struct {
+    const Key = packed struct(u6) {
+        content_disposition: bool,
+        content_md5: bool,
+        acl: bool,
+        request_payer: bool,
+        session_token: bool,
+        storage_class: bool,
+    };
+
+    fn generate(comptime key: Key) []const u8 {
+        return (if (key.content_disposition) "content-disposition;" else "") ++
+            (if (key.content_md5) "content-md5;" else "") ++
+            "host;" ++
+            (if (key.acl) "x-amz-acl;" else "") ++
+            "x-amz-content-sha256;x-amz-date" ++
+            (if (key.request_payer) ";x-amz-request-payer" else "") ++
+            (if (key.session_token) ";x-amz-security-token" else "") ++
+            (if (key.storage_class) ";x-amz-storage-class" else "");
+    }
+
+    const table = init: {
+        var t: [64][]const u8 = undefined;
+        for (0..64) |i| {
+            t[i] = generate(@bitCast(@as(u6, @intCast(i))));
+        }
+        break :init t;
+    };
+
+    pub fn get(key: Key) []const u8 {
+        return table[@as(u6, @bitCast(key))];
+    }
+};
+
+/// Comptime-generated format strings for canonical request.
+/// Uses the same key as SignedHeaders to select the right format.
+const CanonicalRequest = struct {
+    fn fmtString(comptime key: SignedHeaders.Key) []const u8 {
+        return "{s}\n{s}\n{s}\n" ++ // method, path, query
+            (if (key.content_disposition) "content-disposition:{s}\n" else "") ++
+            (if (key.content_md5) "content-md5:{s}\n" else "") ++
+            "host:{s}\n" ++
+            (if (key.acl) "x-amz-acl:{s}\n" else "") ++
+            "x-amz-content-sha256:{s}\nx-amz-date:{s}\n" ++
+            (if (key.request_payer) "x-amz-request-payer:requester\n" else "") ++
+            (if (key.session_token) "x-amz-security-token:{s}\n" else "") ++
+            (if (key.storage_class) "x-amz-storage-class:{s}\n" else "") ++
+            "\n{s}\n{s}"; // signed_headers, hash
+    }
+
+    inline fn formatForKey(
+        comptime key: SignedHeaders.Key,
+        buf: []u8,
+        method: []const u8,
+        path: []const u8,
+        query: []const u8,
+        content_disposition: ?[]const u8,
+        content_md5: ?[]const u8,
+        host: []const u8,
+        acl: ?[]const u8,
+        hash: []const u8,
+        date: []const u8,
+        session_token: ?[]const u8,
+        storage_class: ?[]const u8,
+        signed_headers: []const u8,
+    ) error{NoSpaceLeft}![]u8 {
+        return std.fmt.bufPrint(buf, fmtString(key), .{ method, path, query } ++
+            (if (key.content_disposition) .{content_disposition.?} else .{}) ++
+            (if (key.content_md5) .{content_md5.?} else .{}) ++
+            .{host} ++
+            (if (key.acl) .{acl.?} else .{}) ++
+            .{ hash, date } ++
+            (if (key.session_token) .{session_token.?} else .{}) ++
+            (if (key.storage_class) .{storage_class.?} else .{}) ++
+            .{ signed_headers, hash });
+    }
+
+    pub fn format(
+        buf: []u8,
+        key: SignedHeaders.Key,
+        method: []const u8,
+        path: []const u8,
+        query: []const u8,
+        content_disposition: ?[]const u8,
+        content_md5: ?[]const u8,
+        host: []const u8,
+        acl: ?[]const u8,
+        hash: []const u8,
+        date: []const u8,
+        session_token: ?[]const u8,
+        storage_class: ?[]const u8,
+        signed_headers: []const u8,
+    ) error{NoSpaceLeft}![]u8 {
+        // Dispatch to the right comptime-specialized function based on runtime key
+        return switch (@as(u6, @bitCast(key))) {
+            inline 0...63 => |idx| formatForKey(
+                @bitCast(idx),
+                buf,
+                method,
+                path,
+                query,
+                content_disposition,
+                content_md5,
+                host,
+                acl,
+                hash,
+                date,
+                session_token,
+                storage_class,
+                signed_headers,
+            ),
+        };
     }
 };
 

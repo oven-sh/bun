@@ -929,6 +929,7 @@ pub const BundleV2 = struct {
         this.linker.options.target = transpiler.options.target;
         this.linker.options.output_format = transpiler.options.output_format;
         this.linker.options.generate_bytecode_cache = transpiler.options.bytecode;
+        this.linker.options.metafile = transpiler.options.metafile;
 
         this.linker.dev_server = transpiler.options.dev_server;
 
@@ -1750,6 +1751,7 @@ pub const BundleV2 = struct {
 
     pub const BuildResult = struct {
         output_files: std.array_list.Managed(options.OutputFile),
+        metafile: ?[]const u8 = null,
 
         pub fn deinit(this: *BuildResult) void {
             for (this.output_files.items) |*output_file| {
@@ -1757,6 +1759,11 @@ pub const BundleV2 = struct {
             }
 
             this.output_files.clearAndFree();
+
+            if (this.metafile) |mf| {
+                bun.default_allocator.free(mf);
+                this.metafile = null;
+            }
         }
     };
 
@@ -1905,6 +1912,7 @@ pub const BundleV2 = struct {
             transpiler.options.banner = config.banner.slice();
             transpiler.options.footer = config.footer.slice();
             transpiler.options.react_fast_refresh = config.react_fast_refresh;
+            transpiler.options.metafile = config.metafile;
 
             if (transpiler.options.compile) {
                 // Emitting DCE annotations is nonsensical in --compile.
@@ -2205,7 +2213,7 @@ pub const BundleV2 = struct {
                             return promise.reject(globalThis, err);
                         };
                     }
-                    const build_output = jsc.JSValue.createEmptyObject(globalThis, 3);
+                    const build_output = jsc.JSValue.createEmptyObject(globalThis, 4);
                     build_output.put(globalThis, jsc.ZigString.static("outputs"), output_files_js);
                     build_output.put(globalThis, jsc.ZigString.static("success"), .true);
                     build_output.put(
@@ -2215,6 +2223,20 @@ pub const BundleV2 = struct {
                             return promise.reject(globalThis, err);
                         },
                     );
+
+                    // Add metafile if it was generated
+                    if (build.metafile) |metafile| {
+                        var metafile_str = bun.String.fromBytes(metafile);
+                        defer metafile_str.deref();
+                        const metafile_json = metafile_str.toJSByParseJSON(globalThis) catch |err| {
+                            return promise.reject(globalThis, err);
+                        };
+                        build_output.put(
+                            globalThis,
+                            jsc.ZigString.static("metafile"),
+                            metafile_json,
+                        );
+                    }
 
                     const didHandleCallbacks = if (this.plugins) |plugin| runOnEndCallbacks(globalThis, plugin, promise, build_output, .js_undefined) catch |err| {
                         return promise.reject(globalThis, err);
@@ -2603,7 +2625,7 @@ pub const BundleV2 = struct {
     pub fn runFromJSInNewThread(
         this: *BundleV2,
         entry_points: []const []const u8,
-    ) !std.array_list.Managed(options.OutputFile) {
+    ) !BuildResult {
         this.unique_key = generateUniqueKey();
 
         if (this.transpiler.log.errors > 0) {
@@ -2650,7 +2672,18 @@ pub const BundleV2 = struct {
             return error.BuildFailed;
         }
 
-        return try this.linker.generateChunksInParallel(chunks, false);
+        const output_files = try this.linker.generateChunksInParallel(chunks, false);
+
+        // Generate metafile if requested
+        const metafile: ?[]const u8 = if (this.linker.options.metafile)
+            LinkerContext.MetafileBuilder.generate(bun.default_allocator, &this.linker, chunks) catch null
+        else
+            null;
+
+        return .{
+            .output_files = output_files,
+            .metafile = metafile,
+        };
     }
 
     fn shouldAddWatcherPlugin(bv2: *BundleV2, namespace: []const u8, path: []const u8) bool {
@@ -3101,6 +3134,11 @@ pub const BundleV2 = struct {
         var last_error: ?anyerror = null;
 
         outer: for (ast.import_records.slice(), 0..) |*import_record, i| {
+            // Preserve original import specifier before resolution modifies path
+            if (import_record.original_path.len == 0) {
+                import_record.original_path = import_record.path.text;
+            }
+
             if (
             // Don't resolve TypeScript types
             import_record.flags.is_unused or

@@ -1153,27 +1153,33 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultResolve, (JSC::JSGlobalObje
 
     bool wasModuleMock = pendingModule->wasModuleMock;
 
-    fprintf(stderr, "DEBUG [ModuleLoader]: jsFunctionOnLoadObjectResultResolve called\n");
-    fprintf(stderr, "DEBUG [ModuleLoader]:   specifier: %s\n", specifier.toWTFString(BunString::ZeroCopy).utf8().data());
-    fprintf(stderr, "DEBUG [ModuleLoader]:   wasModuleMock: %s\n", wasModuleMock ? "true" : "false");
-    fprintf(stderr, "DEBUG [ModuleLoader]:   objectResult is object: %s\n", objectResult.isObject() ? "true" : "false");
-
     JSC::JSValue result = handleVirtualModuleResult<false>(static_cast<Zig::GlobalObject*>(globalObject), objectResult, &res, &specifier, &referrer, wasModuleMock);
-
-    fprintf(stderr, "DEBUG [ModuleLoader]:   handleVirtualModuleResult returned, res.success: %s\n", res.success ? "true" : "false");
 
     if (!scope.exception() && !res.success) [[unlikely]] {
         throwException(globalObject, scope, result);
     }
     if (scope.exception()) [[unlikely]] {
-        fprintf(stderr, "DEBUG [ModuleLoader]:   Exception occurred, rejecting promise\n");
         auto retValue = JSValue::encode(promise->rejectWithCaughtException(globalObject, scope));
         pendingModule->internalField(2).set(vm, pendingModule, JSC::jsUndefined());
+
+        // Clean up pending mock Promise on rejection
+        if (wasModuleMock) {
+            auto* zigGlobal = static_cast<Zig::GlobalObject*>(globalObject);
+            auto specifierWtf = specifier.toWTFString(BunString::ZeroCopy);
+            zigGlobal->onLoadPlugins.modulesPendingMock.remove(specifierWtf);
+        }
+
         return retValue;
     }
 
+    // Clean up pending mock Promise on success
+    if (wasModuleMock) {
+        auto* zigGlobal = static_cast<Zig::GlobalObject*>(globalObject);
+        auto specifierWtf = specifier.toWTFString(BunString::ZeroCopy);
+        zigGlobal->onLoadPlugins.modulesPendingMock.remove(specifierWtf);
+    }
+
     scope.release();
-    fprintf(stderr, "DEBUG [ModuleLoader]:   Resolving internal promise with result\n");
     promise->resolve(globalObject, result);
     pendingModule->internalField(2).set(vm, pendingModule, JSC::jsUndefined());
     return JSValue::encode(jsUndefined());

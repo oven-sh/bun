@@ -58,7 +58,8 @@ describe("mock.module() - importOriginal helper (Vitest compatibility)", () => {
     expect(stderr).not.toContain("Timeout");
     expect(stderr).not.toContain("deadlock");
     expect(exitCode).toBe(0);
-    expect(stdout).toContain("1 pass");
+    // Test output goes to stderr in debug builds
+    expect(stderr).toContain("1 pass");
   });
 
   test("importOriginal helper with ESM exports", async () => {
@@ -109,7 +110,7 @@ describe("mock.module() - importOriginal helper (Vitest compatibility)", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(exitCode).toBe(0);
-    expect(stdout).toContain("1 pass");
+    expect(stderr).toContain("1 pass");
   });
 
   test("importOriginal helper with nested dependencies", async () => {
@@ -161,7 +162,7 @@ describe("mock.module() - importOriginal helper (Vitest compatibility)", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(exitCode).toBe(0);
-    expect(stdout).toContain("1 pass");
+    expect(stderr).toContain("1 pass");
   });
 
   test("importOriginal helper - multiple mocks in same file", async () => {
@@ -218,7 +219,7 @@ describe("mock.module() - importOriginal helper (Vitest compatibility)", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(exitCode).toBe(0);
-    expect(stdout).toContain("2 pass");
+    expect(stderr).toContain("2 pass");
   });
 
   test("importOriginal helper - can be called synchronously in async factory", async () => {
@@ -261,7 +262,7 @@ describe("mock.module() - importOriginal helper (Vitest compatibility)", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(exitCode).toBe(0);
-    expect(stdout).toContain("1 pass");
+    expect(stderr).toContain("1 pass");
   });
 
   test("backward compatibility - factory without parameter still works", async () => {
@@ -300,6 +301,6 @@ describe("mock.module() - importOriginal helper (Vitest compatibility)", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(exitCode).toBe(0);
-    expect(stdout).toContain("1 pass");
+    expect(stderr).toContain("1 pass");
   });
 });

@@ -2238,18 +2238,13 @@ pub const BundleV2 = struct {
                         },
                     );
 
-                    // Add metafile if it was generated
+                    // Add metafile if it was generated (lazy parsing via getter)
                     if (build.metafile) |metafile| {
                         var metafile_str = bun.String.fromBytes(metafile);
-                        defer metafile_str.deref();
-                        const metafile_json = metafile_str.toJSByParseJSON(globalThis) catch |err| {
-                            return promise.reject(globalThis, err);
-                        };
-                        build_output.put(
-                            globalThis,
-                            jsc.ZigString.static("metafile"),
-                            metafile_json,
-                        );
+                        const metafile_js_str = metafile_str.toJS(globalThis);
+                        metafile_str.deref();
+                        // Set up lazy getter that parses JSON on first access and memoizes
+                        Bun__setupLazyMetafile(globalThis, build_output, metafile_js_str);
                     }
 
                     const didHandleCallbacks = if (this.plugins) |plugin| runOnEndCallbacks(globalThis, plugin, promise, build_output, .js_undefined) catch |err| {
@@ -4631,3 +4626,6 @@ const ThreadPoolLib = bun.ThreadPool;
 const Transpiler = bun.Transpiler;
 const default_allocator = bun.default_allocator;
 const strings = bun.strings;
+
+// C++ binding for lazy metafile getter (defined in BundlerMetafile.cpp)
+extern "c" fn Bun__setupLazyMetafile(globalThis: *jsc.JSGlobalObject, buildOutput: jsc.JSValue, metafileString: jsc.JSValue) void;

@@ -291,7 +291,7 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
 
         // Store proxy headers
         if (proxyHeaders) {
-            auto headersOrException = FetchHeaders::create(WTFMove(proxyHeaders));
+            auto headersOrException = FetchHeaders::create(WTF::move(proxyHeaders));
             if (!headersOrException.hasException()) {
                 auto hdrs = headersOrException.releaseReturnValue();
                 auto iterator = hdrs.get().createIterator(false);
@@ -302,7 +302,7 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
         }
     }
 
-    auto result = socket->connect(url, protocols, WTFMove(headers));
+    auto result = socket->connect(url, protocols, WTF::move(headers));
 
     if (result.hasException())
         return result.releaseException();
@@ -337,7 +337,7 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
 
         // Store proxy headers
         if (proxyHeaders) {
-            auto headersOrException = FetchHeaders::create(WTFMove(proxyHeaders));
+            auto headersOrException = FetchHeaders::create(WTF::move(proxyHeaders));
             if (!headersOrException.hasException()) {
                 auto hdrs = headersOrException.releaseReturnValue();
                 auto iterator = hdrs.get().createIterator(false);
@@ -348,7 +348,7 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
         }
     }
 
-    auto result = socket->connect(url, protocols, WTFMove(headers));
+    auto result = socket->connect(url, protocols, WTF::move(headers));
 
     if (result.hasException())
         return result.releaseException();

@@ -175,24 +175,14 @@ fn buildTarballFromObject(globalThis: *jsc.JSGlobalObject, obj: jsc.JSValue) bun
 }
 
 fn getEntryDataCopy(globalThis: *jsc.JSGlobalObject, value: jsc.JSValue, allocator: std.mem.Allocator) bun.JSError![]u8 {
-    // Check for TypedArray/ArrayBuffer first - copy immediately
-    if (value.asArrayBuffer(globalThis)) |array_buffer| {
-        return allocator.dupe(u8, array_buffer.slice());
-    }
-
-    // Check for Blob - copy immediately
+    // Check for Blob first - copy immediately
     if (value.as(jsc.WebCore.Blob)) |blob_ptr| {
         return allocator.dupe(u8, blob_ptr.sharedView());
     }
 
-    // Check for string - copy immediately
-    if (value.isString()) {
-        const str = try value.toSlice(globalThis, allocator);
-        defer str.deinit();
-        return allocator.dupe(u8, str.slice());
-    }
-
-    return globalThis.throwInvalidArguments("Archive entry value must be a Blob, string, TypedArray, or ArrayBuffer", .{});
+    // Use StringOrBuffer.fromJSToOwnedSlice for strings and typed arrays
+    // This handles the conversion efficiently without unnecessary copies
+    return jsc.Node.StringOrBuffer.fromJSToOwnedSlice(globalThis, value, allocator);
 }
 
 /// Static method: Archive.write(path, data, compress?)

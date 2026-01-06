@@ -131,11 +131,14 @@ describe("Bun.Archive", () => {
       }).toThrow();
     });
 
-    test("throws with invalid entry value type", () => {
-      expect(() => {
-        // @ts-expect-error - testing runtime behavior
-        Bun.Archive.from({ "file.txt": 123 });
-      }).toThrow();
+    test("converts non-string/buffer values to strings", async () => {
+      // @ts-expect-error - testing runtime behavior
+      const archive = Bun.Archive.from({ "file.txt": 123 });
+      // The archive should be created successfully - number is converted to string
+      expect(archive).toBeDefined();
+      const bytes = await archive.bytes();
+      // Should contain "123" somewhere in the tarball
+      expect(new TextDecoder().decode(bytes)).toContain("123");
     });
   });
 

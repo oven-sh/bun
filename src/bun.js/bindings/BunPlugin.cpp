@@ -504,6 +504,25 @@ JSObject* JSModuleMock::executeOnce(JSC::JSGlobalObject* lexicalGlobalObject, JS
     return object;
 }
 
+static bool factoryExpectsImportOriginal(JSC::JSObject* function)
+{
+    if (Zig::JSModuleMock* moduleMock = jsDynamicCast<Zig::JSModuleMock*>(function)) {
+        JSC::JSValue callbackValue = moduleMock->callbackFunctionOrCachedResult.get();
+        if (callbackValue.isCallable()) {
+            if (auto* callbackFunc = jsDynamicCast<JSC::JSFunction*>(callbackValue)) {
+                if (auto* executable = callbackFunc->jsExecutable()) {
+                    return executable->parameterCount() > 0;
+                }
+            }
+        }
+    } else if (auto* jsFunction = jsDynamicCast<JSC::JSFunction*>(function)) {
+        if (auto* executable = jsFunction->jsExecutable()) {
+            return executable->parameterCount() > 0;
+        }
+    }
+    return false;
+}
+
 static WTF::String resolveModuleSpecifier(
     JSC::JSGlobalObject* lexicalGlobalObject,
     Zig::GlobalObject* globalObject,
@@ -531,7 +550,7 @@ static WTF::String resolveModuleSpecifier(
             return specifier;
         } else {
             scope.throwException(lexicalGlobalObject, JSC::createTypeError(lexicalGlobalObject, "Invalid \"file:\" URL"_s));
-            return specifier;
+            return WTF::String();
         }
     }
 
@@ -612,14 +631,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
     auto* esm = globalObject->esmRegistryMap();
     RETURN_IF_EXCEPTION(scope, {});
 
-    // Check if factory expects importOriginal parameter
-    // If so, we cannot execute it synchronously, so just clear caches
-    bool factoryExpectsParameter = false;
-    if (auto* jsFunction = jsDynamicCast<JSC::JSFunction*>(callback)) {
-        if (auto* executable = jsFunction->jsExecutable()) {
-            factoryExpectsParameter = executable->parameterCount() > 0;
-        }
-    }
+    bool factoryExpectsParameter = factoryExpectsImportOriginal(callback);
 
     auto getJSValue = [&]() -> JSValue {
         auto scope = DECLARE_THROW_SCOPE(vm);
@@ -746,22 +758,31 @@ static void restoreSingleModuleMock(Zig::GlobalObject* globalObject, const WTF::
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // Remove from virtualModules map
     if (globalObject->onLoadPlugins.virtualModules) {
         globalObject->onLoadPlugins.virtualModules->remove(specifier);
     }
 
-    // Remove from ESM registry to force reload
-    auto* esm = globalObject->esmRegistryMap();
-    RETURN_IF_EXCEPTION(scope, void());
-
     auto* specifierString = jsString(vm, specifier);
-    esm->remove(globalObject, specifierString);
-    RETURN_IF_EXCEPTION(scope, void());
+    bool hadException = false;
 
-    // Remove from CJS require cache to force reload
+    auto* esm = globalObject->esmRegistryMap();
+    if (!scope.exception()) {
+        esm->remove(globalObject, specifierString);
+        if (scope.exception()) {
+            hadException = true;
+            scope.clearException();
+        }
+    } else {
+        hadException = true;
+        scope.clearException();
+    }
+
     globalObject->requireMap()->remove(globalObject, specifierString);
-    RETURN_IF_EXCEPTION(scope, void());
+    if (scope.exception()) {
+        hadException = true;
+    } else if (hadException) {
+        scope.throwException(globalObject, JSC::createError(globalObject, "Failed to restore module mock"_s));
+    }
 }
 
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsRestoreModuleMock);
@@ -804,7 +825,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsRestoreModuleMock, (JSC::JSGlobalO
     RETURN_IF_EXCEPTION(scope, {});
 
     if (specifier.isEmpty()) {
-        scope.throwException(lexicalGlobalObject, JSC::createTypeError(lexicalGlobalObject, "mock.restore(modulePath) requires a valid module path"_s));
+        scope.throwException(lexicalGlobalObject, JSC::createTypeError(lexicalGlobalObject, "mock.restoreModule() requires a valid module path"_s));
         return {};
     }
 
@@ -1032,22 +1053,7 @@ JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specif
         JSValue result;
 
         JSC::MarkedArgumentBuffer arguments;
-        bool shouldCreateHelper = false;
-
-        if (Zig::JSModuleMock* moduleMock = jsDynamicCast<Zig::JSModuleMock*>(function)) {
-            JSC::JSValue callbackValue = moduleMock->callbackFunctionOrCachedResult.get();
-            if (callbackValue.isCallable()) {
-                if (auto* callbackFunc = jsDynamicCast<JSC::JSFunction*>(callbackValue)) {
-                    if (auto* executable = callbackFunc->jsExecutable()) {
-                        shouldCreateHelper = executable->parameterCount() > 0;
-                    }
-                }
-            }
-        } else if (auto* jsFunction = jsDynamicCast<JSC::JSFunction*>(function)) {
-            if (auto* executable = jsFunction->jsExecutable()) {
-                shouldCreateHelper = executable->parameterCount() > 0;
-            }
-        }
+        bool shouldCreateHelper = factoryExpectsImportOriginal(function);
 
         if (shouldCreateHelper) {
             WTF::StringBuilder virtualizedSpecifier;
@@ -1152,7 +1158,6 @@ JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specif
         }
 
         if (!result.isObject()) {
-            modulesExecutingFactory.remove(specifierString);
             JSC::throwTypeError(globalObject, throwScope, "virtual module expects an object returned"_s);
             return {};
         }

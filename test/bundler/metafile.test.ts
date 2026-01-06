@@ -1,6 +1,35 @@
 import { describe, expect, test } from "bun:test";
 import { tempDir } from "harness";
 
+// Type definitions for metafile structure
+interface MetafileImport {
+  path: string;
+  kind: string;
+  original?: string;
+  external?: boolean;
+  with?: { type: string };
+}
+
+interface MetafileInput {
+  bytes: number;
+  imports: MetafileImport[];
+  format?: "esm" | "cjs";
+}
+
+interface MetafileOutput {
+  bytes: number;
+  inputs: Record<string, { bytesInOutput: number }>;
+  imports: Array<{ path: string; kind: string; external?: boolean }>;
+  exports: string[];
+  entryPoint?: string;
+  cssBundle?: string;
+}
+
+interface Metafile {
+  inputs: Record<string, MetafileInput>;
+  outputs: Record<string, MetafileOutput>;
+}
+
 describe("bundler metafile", () => {
   test("metafile option returns metafile object", async () => {
     using dir = tempDir("metafile-test", {
@@ -40,7 +69,7 @@ describe("bundler metafile", () => {
     expect(result.success).toBe(true);
     expect(result.metafile).toBeDefined();
 
-    const inputs = result.metafile.inputs;
+    const inputs = result.metafile.inputs as Record<string, MetafileInput>;
     const inputKeys = Object.keys(inputs);
 
     // Should have at least 2 input files
@@ -68,7 +97,7 @@ describe("bundler metafile", () => {
     expect(result.success).toBe(true);
     expect(result.metafile).toBeDefined();
 
-    const outputs = result.metafile.outputs;
+    const outputs = result.metafile.outputs as Record<string, MetafileOutput>;
     const outputKeys = Object.keys(outputs);
 
     // Should have at least 1 output
@@ -100,11 +129,11 @@ describe("bundler metafile", () => {
     expect(result.metafile).toBeDefined();
 
     // Find the entry file in inputs
-    const inputs = result.metafile.inputs;
-    let entryInput = null;
+    const inputs = result.metafile.inputs as Record<string, MetafileInput>;
+    let entryInput: MetafileInput | null = null;
     for (const [path, input] of Object.entries(inputs)) {
       if (path.includes("index.js")) {
-        entryInput = input as { bytes: number; imports: Array<{ path: string; kind: string }> };
+        entryInput = input;
         break;
       }
     }
@@ -129,11 +158,11 @@ describe("bundler metafile", () => {
     expect(result.metafile).toBeDefined();
 
     // Find the entry file in inputs
-    const inputs = result.metafile.inputs;
-    let entryImports: Array<{ path: string; kind: string; original?: string }> | null = null;
+    const inputs = result.metafile.inputs as Record<string, MetafileInput>;
+    let entryImports: MetafileImport[] | null = null;
     for (const [path, input] of Object.entries(inputs)) {
       if (path.includes("entry.js")) {
-        entryImports = (input as any).imports;
+        entryImports = input.imports;
         break;
       }
     }
@@ -176,7 +205,7 @@ describe("bundler metafile", () => {
     expect(result.success).toBe(true);
     expect(result.metafile).toBeDefined();
 
-    const outputs = result.metafile.outputs;
+    const outputs = result.metafile.outputs as Record<string, MetafileOutput>;
     const outputKeys = Object.keys(outputs);
     expect(outputKeys.length).toBeGreaterThanOrEqual(1);
 
@@ -199,7 +228,7 @@ describe("bundler metafile", () => {
     expect(result.success).toBe(true);
     expect(result.metafile).toBeDefined();
 
-    const outputs = result.metafile.outputs;
+    const outputs = result.metafile.outputs as Record<string, MetafileOutput>;
     const outputKeys = Object.keys(outputs);
 
     // At least one output should have entryPoint
@@ -227,7 +256,7 @@ describe("bundler metafile", () => {
     expect(result.success).toBe(true);
     expect(result.metafile).toBeDefined();
 
-    const inputs = result.metafile.inputs;
+    const inputs = result.metafile.inputs as Record<string, MetafileInput>;
     // At least one input should have format
     let hasFormat = false;
     for (const key of Object.keys(inputs)) {
@@ -254,7 +283,7 @@ describe("bundler metafile", () => {
     expect(result.success).toBe(true);
     expect(result.metafile).toBeDefined();
 
-    const inputs = result.metafile.inputs;
+    const inputs = result.metafile.inputs as Record<string, MetafileInput>;
     let foundExternal = false;
 
     for (const key of Object.keys(inputs)) {
@@ -286,7 +315,7 @@ describe("bundler metafile", () => {
     expect(result.success).toBe(true);
     expect(result.metafile).toBeDefined();
 
-    const outputs = result.metafile.outputs;
+    const outputs = result.metafile.outputs as Record<string, MetafileOutput>;
     const outputKeys = Object.keys(outputs);
 
     // With splitting, we should have more outputs (shared chunk)
@@ -308,12 +337,11 @@ describe("bundler metafile", () => {
     expect(result.metafile).toBeDefined();
 
     // Find the entry file in inputs
-    const inputs = result.metafile.inputs;
-    let jsonImport: { path: string; kind: string; with?: { type: string } } | null = null;
+    const inputs = result.metafile.inputs as Record<string, MetafileInput>;
+    let jsonImport: MetafileImport | null = null;
     for (const [path, input] of Object.entries(inputs)) {
       if (path.includes("entry.js")) {
-        const imports = (input as any).imports;
-        for (const imp of imports) {
+        for (const imp of input.imports) {
           if (imp.path.includes("data.json")) {
             jsonImport = imp;
             break;

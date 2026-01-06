@@ -136,6 +136,19 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamProtoFuncBlob, (JSGlobalObject * global
 
     return ZigGlobalObject__readableStreamToBlob(defaultGlobalObject(globalObject), JSValue::encode(thisObject));
 }
+
+JSC_DEFINE_HOST_FUNCTION(jsReadableStreamProtoFuncJSONL, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    JSReadableStream* thisObject = jsDynamicCast<JSReadableStream*>(callFrame->thisValue());
+    if (!thisObject) [[unlikely]] {
+        auto& vm = globalObject->vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        throwThisTypeError(*globalObject, scope, "ReadableStream"_s, "jsonl"_s);
+        return {};
+    }
+
+    return ZigGlobalObject__readableStreamToJSONL(defaultGlobalObject(globalObject), JSValue::encode(thisObject));
+}
 using JSReadableStreamDOMConstructor = JSDOMBuiltinConstructor<JSReadableStream>;
 
 template<> const ClassInfo JSReadableStreamDOMConstructor::s_info = { "ReadableStream"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStreamDOMConstructor) };
@@ -169,6 +182,7 @@ static const HashTableValue JSReadableStreamPrototypeTableValues[] = {
     { "cancel"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, readableStreamCancelCodeGenerator, 0 } },
     { "getReader"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, readableStreamGetReaderCodeGenerator, 0 } },
     { "json"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsReadableStreamProtoFuncJSON, 0 } },
+    { "jsonl"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsReadableStreamProtoFuncJSONL, 0 } },
     { "locked"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Accessor | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinAccessorType, readableStreamLockedCodeGenerator, 0 } },
     { "pipeThrough"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, readableStreamPipeThroughCodeGenerator, 2 } },
     { "pipeTo"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, readableStreamPipeToCodeGenerator, 1 } },

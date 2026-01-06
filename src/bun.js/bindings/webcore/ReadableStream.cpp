@@ -633,6 +633,26 @@ extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToBlob(Zig::Global
     return JSC::JSValue::encode(call(globalObject, function, callData, JSC::jsUndefined(), arguments));
 }
 
+extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToJSONL(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue)
+{
+    auto& vm = JSC::getVM(globalObject);
+
+    JSC::JSFunction* function = nullptr;
+    if (auto readableStreamToJSONL = globalObject->m_readableStreamToJSONL.get()) {
+        function = readableStreamToJSONL;
+    } else {
+        function = JSFunction::create(vm, globalObject, static_cast<JSC::FunctionExecutable*>(readableStreamReadableStreamToJSONLCodeGenerator(vm)), globalObject);
+
+        globalObject->m_readableStreamToJSONL.set(vm, globalObject, function);
+    }
+
+    JSC::MarkedArgumentBuffer arguments = JSC::MarkedArgumentBuffer();
+    arguments.append(JSValue::decode(readableStreamValue));
+
+    auto callData = JSC::getCallData(function);
+    return JSC::JSValue::encode(call(globalObject, function, callData, JSC::jsUndefined(), arguments));
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionReadableStreamToArrayBuffer, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);

@@ -30,17 +30,6 @@
 //! ```
 const MetafileBuilder = @This();
 
-const std = @import("std");
-const bun = @import("bun");
-
-const LinkerContext = bun.bundle_v2.LinkerContext;
-const Chunk = bun.bundle_v2.Chunk;
-const Index = bun.bundle_v2.Index;
-const options = bun.options;
-const ImportKind = bun.ImportKind;
-const ImportRecord = bun.ImportRecord;
-const Logger = bun.logger;
-
 /// Generates metafile JSON for the given chunks.
 /// The caller is responsible for freeing the returned slice.
 pub fn generate(
@@ -324,3 +313,10 @@ fn writeJSONString(writer: anytype, str: []const u8) !void {
     }
     try writer.writeByte('"');
 }
+
+const bun = @import("bun");
+const std = @import("std");
+
+const Chunk = bun.bundle_v2.Chunk;
+const Index = bun.bundle_v2.Index;
+const LinkerContext = bun.bundle_v2.LinkerContext;

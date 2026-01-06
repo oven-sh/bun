@@ -335,11 +335,11 @@ fn writeJSONString(writer: anytype, str: []const u8) !void {
     try writer.print("{f}", .{bun.fmt.formatJSONStringUTF8(str, .{})});
 }
 
-const bun = @import("bun");
 const std = @import("std");
-const strings = bun.strings;
+
+const bun = @import("bun");
+const StringJoiner = bun.StringJoiner;
 
 const Chunk = bun.bundle_v2.Chunk;
 const Index = bun.bundle_v2.Index;
 const LinkerContext = bun.bundle_v2.LinkerContext;
-const StringJoiner = bun.StringJoiner;

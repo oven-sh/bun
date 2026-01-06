@@ -214,7 +214,6 @@ extern "C" ssize_t bun_close_range(unsigned int start, unsigned int end, unsigne
 {
     // https://github.com/oven-sh/bun/issues/9669
     return syscall(__NR_close_range, start, end, flags);
-#endif
 }
 
 static void unset_cloexec(int fd)

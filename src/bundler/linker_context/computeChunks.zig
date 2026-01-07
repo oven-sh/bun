@@ -249,9 +249,29 @@ pub noinline fn computeChunks(
 
         var sorted_keys = try BabyList(string).initCapacity(temp_allocator, js_chunks.count());
 
-        // JS Chunks
         sorted_keys.appendSliceAssumeCapacity(js_chunks.keys());
-        sorted_keys.sortAsc();
+
+        // sort by entry_point_id to ensure the main entry point (id=0) comes first,
+        // then by key for determinism among the rest.
+        const ChunkSortContext = struct {
+            chunks: *const bun.StringArrayHashMap(Chunk),
+
+            pub fn lessThan(ctx: @This(), a_key: string, b_key: string) bool {
+                const a_chunk = ctx.chunks.get(a_key) orelse return true;
+                const b_chunk = ctx.chunks.get(b_key) orelse return false;
+                const a_id = a_chunk.entry_point.entry_point_id;
+                const b_id = b_chunk.entry_point.entry_point_id;
+
+                // Main entry point (id=0) always comes first
+                if (a_id == 0 and b_id != 0) return true;
+                if (b_id == 0 and a_id != 0) return false;
+
+                // Otherwise sort alphabetically by key for determinism
+                return bun.strings.order(a_key, b_key) == .lt;
+            }
+        };
+
+        sorted_keys.sort(ChunkSortContext, .{ .chunks = &js_chunks });
         var js_chunk_indices_with_css = try BabyList(u32).initCapacity(temp_allocator, js_chunks_with_css);
         for (sorted_keys.slice()) |key| {
             const chunk = js_chunks.get(key) orelse unreachable;

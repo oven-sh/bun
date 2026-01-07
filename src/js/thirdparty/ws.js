@@ -91,6 +91,7 @@ class BunWebSocket extends EventEmitter {
     let method = "GET";
     let proxy;
     let tlsOptions;
+    let agent;
     // https://github.com/websockets/ws/blob/0d1b5e6c4acad16a6b1a1904426eb266a5ba2f72/lib/websocket.js#L741-L747
     if ($isObject(options)) {
       headers = options?.headers;
@@ -98,7 +99,7 @@ class BunWebSocket extends EventEmitter {
       tlsOptions = options?.tls;
 
       // Extract from agent if provided (like HttpsProxyAgent)
-      const agent = options?.agent;
+      agent = options?.agent;
       if ($isObject(agent)) {
         // Get proxy from agent.proxy (can be URL object or string)
         if (!proxy && agent.proxy) {
@@ -183,7 +184,7 @@ class BunWebSocket extends EventEmitter {
         end: () => {
           if (!didCallEnd) {
             didCallEnd = true;
-            this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions);
+            this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions, agent);
           }
         },
         write() {},
@@ -212,22 +213,23 @@ class BunWebSocket extends EventEmitter {
       EventEmitter.$call(nodeHttpClientRequestSimulated);
       finishRequest(nodeHttpClientRequestSimulated);
       if (!didCallEnd) {
-        this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions);
+        this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions, agent);
       }
       return;
     }
 
-    this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions);
+    this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions, agent);
   }
 
-  #createWebSocket(url, protocols, headers, method, proxy, tls) {
+  #createWebSocket(url, protocols, headers, method, proxy, tls, agent) {
     let wsOptions;
-    if (headers || proxy || tls) {
+    if (headers || proxy || tls || agent) {
       wsOptions = { protocols };
       if (headers) wsOptions.headers = headers;
       if (method) wsOptions.method = method;
       if (proxy) wsOptions.proxy = proxy;
       if (tls) wsOptions.tls = tls;
+      if (agent) wsOptions.agent = agent;
     } else {
       wsOptions = protocols;
     }

@@ -74,7 +74,7 @@ extern "C" void Bun__setupLazyMetafile(JSC::JSGlobalObject* globalObject, JSC::E
         vm,
         Identifier::fromString(vm, metafilePropertyName),
         CustomGetterSetter::create(vm, bundlerMetafileLazyGetter, nullptr),
-        PropertyAttribute::CustomAccessor | 0);
+        PropertyAttribute::CustomValue | 0);
 }
 
 } // namespace Bun

@@ -69,6 +69,7 @@ pub const TestRunner = struct {
     run_todo: bool = false,
     concurrent: bool = false,
     randomize: ?std.Random = null,
+    seed: u32 = 0,
     concurrent_test_glob: ?[]const []const u8 = null,
     last_file: u64 = 0,
     bail: u32 = 0,
@@ -178,6 +179,69 @@ pub const Jest = struct {
         return createTestModule(globalObject) catch return .zero;
     }
 
+    fn createTestFlags(globalObject: *JSGlobalObject, test_runner: *TestRunner) JSValue {
+        const test_options = test_runner.test_options;
+        const flags = JSValue.createEmptyObject(globalObject, 11);
+
+        // defaultTimeout
+        const timeout = if (test_runner.default_timeout_override != std.math.maxInt(u32))
+            test_runner.default_timeout_override
+        else
+            test_options.default_timeout_ms;
+        flags.put(globalObject, "defaultTimeout", .jsNumber(timeout));
+
+        // updateSnapshots
+        flags.put(globalObject, "updateSnapshots", .jsBoolean(test_options.update_snapshots));
+
+        // rerunEach
+        if (test_options.repeat_count > 0) {
+            flags.put(globalObject, "rerunEach", .jsNumber(test_options.repeat_count));
+        } else {
+            flags.put(globalObject, "rerunEach", .js_undefined);
+        }
+
+        // runTodo
+        flags.put(globalObject, "runTodo", .jsBoolean(test_options.run_todo));
+
+        // only
+        flags.put(globalObject, "only", .jsBoolean(test_options.only));
+
+        // passWithNoTests
+        flags.put(globalObject, "passWithNoTests", .jsBoolean(test_options.pass_with_no_tests));
+
+        // concurrent
+        flags.put(globalObject, "concurrent", .jsBoolean(test_options.concurrent));
+
+        // randomize and seed - use resolved values from TestRunner
+        flags.put(globalObject, "randomize", .jsBoolean(test_runner.randomize != null));
+        if (test_runner.randomize != null) {
+            flags.put(globalObject, "seed", .jsNumber(test_runner.seed));
+        } else {
+            flags.put(globalObject, "seed", .js_undefined);
+        }
+
+        // bail
+        if (test_options.bail > 0) {
+            flags.put(globalObject, "bail", .jsNumber(test_options.bail));
+        } else {
+            flags.put(globalObject, "bail", .js_undefined);
+        }
+
+        // testFilterPattern
+        if (test_options.test_filter_pattern) |filter| {
+            const filter_str = bun.String.fromBytes(filter);
+            defer filter_str.deref();
+            flags.put(globalObject, "testFilterPattern", filter_str.toJS(globalObject));
+        } else {
+            flags.put(globalObject, "testFilterPattern", .js_undefined);
+        }
+
+        // maxConcurrency
+        flags.put(globalObject, "maxConcurrency", .jsNumber(test_options.max_concurrency));
+
+        return flags;
+    }
+
     pub fn createTestModule(globalObject: *JSGlobalObject) bun.JSError!JSValue {
         const module = JSValue.createEmptyObject(globalObject, 23);
 
@@ -206,6 +270,12 @@ pub const Jest = struct {
 
         // will add more 9 properties in the module here so we need to allocate 23 properties
         createMockObjects(globalObject, module);
+
+        // Add testFlags object
+        if (Jest.runner) |test_runner| {
+            const test_flags = createTestFlags(globalObject, test_runner);
+            module.put(globalObject, ZigString.static("testFlags"), test_flags);
+        }
 
         return module;
     }

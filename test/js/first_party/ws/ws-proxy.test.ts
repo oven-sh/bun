@@ -213,7 +213,8 @@ describe("ws package through HTTP CONNECT proxy", () => {
   });
 
   test("proxy auth failure returns error", async () => {
-    const { promise, resolve } = Promise.withResolvers<void>();
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    let sawError = false;
 
     const ws = new WebSocket(`ws://127.0.0.1:${wsPort}`, {
       proxy: `http://127.0.0.1:${authProxyPort}`, // No auth provided
@@ -221,15 +222,20 @@ describe("ws package through HTTP CONNECT proxy", () => {
 
     ws.on("open", () => {
       ws.close();
-      resolve();
+      reject(new Error("Expected proxy auth failure, but connection opened"));
     });
 
     ws.on("error", () => {
-      resolve(); // Expected - auth required
+      sawError = true;
+      ws.close();
     });
 
     ws.on("close", () => {
-      resolve();
+      if (sawError) {
+        resolve();
+      } else {
+        reject(new Error("Expected proxy auth failure (error event), got clean close instead"));
+      }
     });
 
     await promise;
@@ -237,7 +243,8 @@ describe("ws package through HTTP CONNECT proxy", () => {
   });
 
   test("proxy wrong credentials returns error", async () => {
-    const { promise, resolve } = Promise.withResolvers<void>();
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    let sawError = false;
 
     const ws = new WebSocket(`ws://127.0.0.1:${wsPort}`, {
       proxy: `http://wrong_user:wrong_pass@127.0.0.1:${authProxyPort}`,
@@ -245,15 +252,20 @@ describe("ws package through HTTP CONNECT proxy", () => {
 
     ws.on("open", () => {
       ws.close();
-      resolve();
+      reject(new Error("Expected proxy auth failure, but connection opened"));
     });
 
     ws.on("error", () => {
-      resolve(); // Expected - wrong credentials
+      sawError = true;
+      ws.close();
     });
 
     ws.on("close", () => {
-      resolve();
+      if (sawError) {
+        resolve();
+      } else {
+        reject(new Error("Expected proxy auth failure (error event), got clean close instead"));
+      }
     });
 
     await promise;
@@ -376,7 +388,8 @@ describe("ws package through HTTPS proxy (TLS proxy)", () => {
   });
 
   test("ws:// through HTTPS proxy fails without CA certificate", async () => {
-    const { promise, resolve } = Promise.withResolvers<void>();
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    let sawError = false;
 
     const ws = new WebSocket(`ws://127.0.0.1:${wsPort}`, {
       proxy: `https://127.0.0.1:${httpsProxyPort}`,
@@ -385,15 +398,20 @@ describe("ws package through HTTPS proxy (TLS proxy)", () => {
 
     ws.on("open", () => {
       ws.close();
-      resolve(); // Unexpected success
+      reject(new Error("Expected TLS verification failure, but connection opened"));
     });
 
     ws.on("error", () => {
-      resolve(); // Expected - TLS verification should fail
+      sawError = true;
+      ws.close();
     });
 
     ws.on("close", () => {
-      resolve();
+      if (sawError) {
+        resolve();
+      } else {
+        reject(new Error("Expected TLS verification failure (error event), got clean close instead"));
+      }
     });
 
     await promise;

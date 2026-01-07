@@ -433,17 +433,8 @@ static std::atomic<int64_t> Bun__activeSubprocessCount{0};
 // so parent can exit after subprocess exits
 static std::atomic<bool> Bun__pendingCtrlC{false};
 
-// Only absorb Ctrl+C for subprocesses in CLI script-runner scenarios.
-static std::atomic<bool> Bun__ctrlCAbsorptionEnabled{false};
-
 // When stdin is in raw mode, treat Ctrl+C as a keypress (no SIGINT).
 static std::atomic<bool> Bun__stdinRawMode{false};
-
-static bool Bun__debugCtrlC()
-{
-    static bool enabled = getenv("BUN_DEBUG_CTRL_C") != nullptr;
-    return enabled;
-}
 
 BOOL WINAPI Ctrlhandler(DWORD signal);
 
@@ -457,34 +448,6 @@ extern "C" void Bun__setStdinRawMode(bool raw)
         SetConsoleCtrlHandler(Ctrlhandler, FALSE);
         SetConsoleCtrlHandler(Ctrlhandler, TRUE);
     }
-
-    if (Bun__debugCtrlC()) {
-        fprintf(stderr, "[ctrlc] stdin raw mode: %d\n", raw ? 1 : 0);
-        if (raw) {
-            fprintf(stderr, "[ctrlc] re-registered Ctrlhandler (raw)\n");
-        }
-    }
-}
-
-extern "C" void Bun__setCtrlCAbsorptionEnabled(bool enabled)
-{
-    Bun__ctrlCAbsorptionEnabled.store(enabled, std::memory_order_relaxed);
-
-    // Ensure our handler runs before libuv's Ctrl handler when enabling
-    // Ctrl+C absorption in the script runner.
-    if (enabled) {
-        SetConsoleCtrlHandler(Ctrlhandler, FALSE);
-        SetConsoleCtrlHandler(Ctrlhandler, TRUE);
-    }
-
-    if (Bun__debugCtrlC()) {
-        fprintf(stderr, "[ctrlc] absorption enabled: %d\n", enabled ? 1 : 0);
-    }
-}
-
-extern "C" bool Bun__isCtrlCAbsorptionEnabled()
-{
-    return Bun__ctrlCAbsorptionEnabled.load(std::memory_order_relaxed);
 }
 
 extern "C" void Bun__incrementActiveSubprocess()
@@ -520,10 +483,6 @@ extern "C" int64_t Bun__getActiveSubprocessCount()
 BOOL WINAPI Ctrlhandler(DWORD signal)
 {
     if (signal == CTRL_C_EVENT) {
-        if (Bun__debugCtrlC()) {
-            fprintf(stderr, "[ctrlc] CTRL_C_EVENT raw=%d\n", Bun__stdinRawMode.load(std::memory_order_relaxed) ? 1 : 0);
-        }
-
         // When stdin is in raw mode, Ctrl+C should behave like a keypress.
         // This avoids delivering SIGINT to JS while a TUI is running.
         if (Bun__stdinRawMode.load(std::memory_order_relaxed)) {
@@ -545,9 +504,6 @@ BOOL WINAPI Ctrlhandler(DWORD signal)
                 CloseHandle(input);
             }
 
-            if (Bun__debugCtrlC()) {
-                fprintf(stderr, "[ctrlc] handled CTRL_C_EVENT (raw)\n");
-            }
             return TRUE;
         }
 
@@ -555,14 +511,7 @@ BOOL WINAPI Ctrlhandler(DWORD signal)
         // parent so the child can handle CTRL_C_EVENT directly.
         if (Bun__activeSubprocessCount.load(std::memory_order_relaxed) > 0) {
             Bun__pendingCtrlC.store(true, std::memory_order_relaxed);
-            if (Bun__debugCtrlC()) {
-                fprintf(stderr, "[ctrlc] absorbed CTRL_C_EVENT (subprocess count=%lld)\n", (long long)Bun__activeSubprocessCount.load(std::memory_order_relaxed));
-            }
             return TRUE;
-        }
-
-        if (Bun__debugCtrlC()) {
-            fprintf(stderr, "[ctrlc] passing CTRL_C_EVENT (not raw)\n");
         }
 
         Bun__restoreWindowsStdio();

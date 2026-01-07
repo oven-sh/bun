@@ -4,7 +4,7 @@ const GenericBorder = css.css_properties.border.GenericBorder;
 const LineStyle = css.css_properties.border.LineStyle;
 
 /// A value for the [outline](https://drafts.csswg.org/css-ui/#outline) shorthand property.
-pub const Outline = GenericBorder(OutlineStyle, 11);
+pub const Outline = GenericBorder(OutlineStyle);
 
 /// A value for the [outline-style](https://drafts.csswg.org/css-ui/#outline-style) property.
 pub const OutlineStyle = union(enum) {

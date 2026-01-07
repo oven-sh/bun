@@ -19,14 +19,8 @@ if (isMainThread) {
   worker1.postMessage(port1, [port1]);
   worker2.postMessage(port2, [port2]);
 
-  // Spam messages in a tight loop - this reliably triggers the crash
-  // for (let i = 0; i < 100000; i++) {
-  //   worker1.postMessage("PING");
-  //   worker2.postMessage("PING");
-  // }
-
   const startTime = Date.now();
-  const duration = 500; // Run for 2 seconds
+  const duration = 500;
   // Spam messages in a tight loop - this reliably triggers the crash
   while (Date.now() - startTime < duration) {
     worker1.postMessage("PING");

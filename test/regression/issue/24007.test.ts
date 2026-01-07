@@ -6,11 +6,10 @@
  * because certain filesystems (sshfs, fuse, NFS, bind mounts) don't provide d_type
  * information in directory entries (returns DT_UNKNOWN).
  *
- * Fix: Added fstatat() fallback in dir_iterator.zig when d_type is unknown.
+ * Fix: Added fstatat() fallback when d_type is unknown, following the lazy stat
+ * pattern from PR #18172.
  *
- * Note: This test verifies recursive glob patterns work correctly. Full verification
- * of the DT_UNKNOWN fallback requires testing in a Docker environment with bind mounts
- * as described in the original issue.
+ * See also: test/cli/run/glob-on-fuse.test.ts for FUSE filesystem testing.
  */
 import { test, expect, describe } from "bun:test";
 import { tempDir } from "harness";

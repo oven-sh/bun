@@ -177,6 +177,47 @@ class SQLHelper<T> {
   }
 }
 
+/**
+ * Build the column list for INSERT statements while determining which columns have defined values.
+ * This combines column name generation with defined column detection in a single pass.
+ * Returns the defined columns array and the SQL fragment for the column names.
+ */
+function buildDefinedColumnsAndQuery<T>(
+  columns: (keyof T)[],
+  items: T | T[],
+  escapeIdentifier: (name: string) => string,
+): { definedColumns: (keyof T)[]; columnsSql: string } {
+  const definedColumns: (keyof T)[] = [];
+  let columnsSql = "(";
+  const columnCount = columns.length;
+
+  for (let k = 0; k < columnCount; k++) {
+    const column = columns[k];
+
+    // Check if any item has this column defined
+    let hasDefinedValue = false;
+    if ($isArray(items)) {
+      for (let j = 0; j < items.length; j++) {
+        if (typeof items[j][column] !== "undefined") {
+          hasDefinedValue = true;
+          break;
+        }
+      }
+    } else {
+      hasDefinedValue = typeof items[column] !== "undefined";
+    }
+
+    if (hasDefinedValue) {
+      if (definedColumns.length > 0) columnsSql += ", ";
+      columnsSql += escapeIdentifier(column as string);
+      definedColumns.push(column);
+    }
+  }
+
+  columnsSql += ") VALUES";
+  return { definedColumns, columnsSql };
+}
+
 const SQLITE_MEMORY = ":memory:";
 const SQLITE_MEMORY_VARIANTS: string[] = [":memory:", "sqlite://:memory:", "sqlite:memory"];
 
@@ -911,6 +952,7 @@ export default {
   assertIsOptionsOfAdapter,
   parseOptions,
   SQLHelper,
+  buildDefinedColumnsAndQuery,
   normalizeSSLMode,
   SQLResultArray,
   SQLArrayParameter,

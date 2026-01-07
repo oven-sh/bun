@@ -1942,6 +1942,16 @@ declare module "bun" {
       development?: boolean;
     };
 
+    /**
+     * Enable React Fast Refresh transform.
+     *
+     * This adds the necessary code transformations for React Fast Refresh (hot module
+     * replacement for React components), but does not emit hot-module code itself.
+     *
+     * @default false
+     */
+    reactFastRefresh?: boolean;
+
     outdir?: string;
   }
 

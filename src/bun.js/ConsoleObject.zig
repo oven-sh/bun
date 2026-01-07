@@ -1629,11 +1629,11 @@ pub const Formatter = struct {
                         },
 
                         .j => {
-                            // JSON.stringify the value
+                            // JSON.stringify the value using FastStringifier for SIMD optimization
                             var str = bun.String.empty;
                             defer str.deref();
 
-                            try next_value.jsonStringify(global, 0, &str);
+                            try next_value.jsonStringifyFast(global, &str);
                             this.addForNewLine(str.length());
                             writer.print("{f}", .{str});
                         },

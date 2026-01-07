@@ -983,6 +983,7 @@ fn writeFileWithEmptySourceToDestination(ctx: *jsc.JSGlobalObject, destination_b
                 aws_options.acl,
                 proxy_url,
                 aws_options.storage_class,
+                aws_options.request_payer,
                 Wrapper.resolve,
                 Wrapper.new(.{
                     .promise = promise,
@@ -1130,6 +1131,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
                             destination_blob.contentTypeOrMimeType(),
                             aws_options.content_disposition,
                             proxy_url,
+                            aws_options.request_payer,
                             null,
                             undefined,
                         );
@@ -1171,6 +1173,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
                         aws_options.acl,
                         proxy_url,
                         aws_options.storage_class,
+                        aws_options.request_payer,
                         Wrapper.resolve,
                         Wrapper.new(.{
                             .store = source_store,
@@ -1199,6 +1202,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
                         destination_blob.contentTypeOrMimeType(),
                         aws_options.content_disposition,
                         proxy_url,
+                        aws_options.request_payer,
                         null,
                         undefined,
                     );
@@ -1405,6 +1409,7 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                                 destination_blob.contentTypeOrMimeType(),
                                 aws_options.content_disposition,
                                 proxy_url,
+                                aws_options.request_payer,
                                 null,
                                 undefined,
                             );
@@ -1466,6 +1471,7 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                                 destination_blob.contentTypeOrMimeType(),
                                 aws_options.content_disposition,
                                 proxy_url,
+                                aws_options.request_payer,
                                 null,
                                 undefined,
                             );
@@ -2239,16 +2245,17 @@ const S3BlobDownloadTask = struct {
         const path = this.blob.store.?.data.s3.path();
 
         this.poll_ref.ref(globalThis.bunVM());
+        const s3_store = &this.blob.store.?.data.s3;
         if (blob.offset > 0) {
             const len: ?usize = if (blob.getSize() != Blob.max_size) @intCast(blob.getSize()) else null;
             const offset: usize = @intCast(blob.offset);
-            try S3.downloadSlice(credentials, path, offset, len, @ptrCast(&S3BlobDownloadTask.onS3DownloadResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
+            try S3.downloadSlice(credentials, path, offset, len, @ptrCast(&S3BlobDownloadTask.onS3DownloadResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null, s3_store.request_payer);
         } else if (blob.getSize() == Blob.max_size) {
-            try S3.download(credentials, path, @ptrCast(&S3BlobDownloadTask.onS3DownloadResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
+            try S3.download(credentials, path, @ptrCast(&S3BlobDownloadTask.onS3DownloadResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null, s3_store.request_payer);
         } else {
             const len: usize = @intCast(blob.getSize());
             const offset: usize = @intCast(blob.offset);
-            try S3.downloadSlice(credentials, path, offset, len, @ptrCast(&S3BlobDownloadTask.onS3DownloadResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
+            try S3.downloadSlice(credentials, path, offset, len, @ptrCast(&S3BlobDownloadTask.onS3DownloadResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null, s3_store.request_payer);
         }
         return promise;
     }
@@ -2422,6 +2429,7 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, re
             this.contentTypeOrMimeType(),
             aws_options.content_disposition,
             proxy_url,
+            aws_options.request_payer,
             null,
             undefined,
         );
@@ -2666,6 +2674,7 @@ pub fn getWriter(
                     if (content_disposition_str) |cd| cd.slice() else null,
                     proxy_url,
                     credentialsWithOptions.storage_class,
+                    credentialsWithOptions.request_payer,
                 );
             }
         }
@@ -2678,6 +2687,7 @@ pub fn getWriter(
             null,
             proxy_url,
             null,
+            s3.request_payer,
         );
     }
 

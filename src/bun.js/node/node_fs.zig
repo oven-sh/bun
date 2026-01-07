@@ -4646,6 +4646,23 @@ pub const NodeFS = struct {
 
                         async_task.enqueue(name_to_copy);
                     },
+                    // Some filesystems (e.g., Docker bind mounts, FUSE, NFS) return
+                    // DT_UNKNOWN for d_type. Use fstatat to determine if it's a directory.
+                    .unknown => {
+                        if (current.name.len + 1 + name_to_copy.len > bun.MAX_PATH_BYTES) break :enqueue;
+
+                        // Lazy stat to determine if this is a directory we need to recurse into
+                        const stat_result = bun.sys.fstatat(fd, current.name.sliceAssumeZ());
+                        switch (stat_result) {
+                            .result => |st| {
+                                const real_kind = bun.sys.kindFromMode(st.mode);
+                                if (real_kind == .directory or real_kind == .sym_link) {
+                                    async_task.enqueue(name_to_copy);
+                                }
+                            },
+                            .err => {}, // Skip entries we can't stat
+                        }
+                    },
                     else => {},
                 }
             }
@@ -4785,6 +4802,23 @@ pub const NodeFS = struct {
                         => {
                             if (current.name.len + 1 + name_to_copy.len > bun.MAX_PATH_BYTES) break :enqueue;
                             stack.writeItem(basename_allocator.dupeZ(u8, name_to_copy) catch break :enqueue) catch break :enqueue;
+                        },
+                        // Some filesystems (e.g., Docker bind mounts, FUSE, NFS) return
+                        // DT_UNKNOWN for d_type. Use fstatat to determine if it's a directory.
+                        .unknown => {
+                            if (current.name.len + 1 + name_to_copy.len > bun.MAX_PATH_BYTES) break :enqueue;
+
+                            // Lazy stat to determine if this is a directory we need to recurse into
+                            const stat_result = bun.sys.fstatat(fd, current.name.sliceAssumeZ());
+                            switch (stat_result) {
+                                .result => |st| {
+                                    const real_kind = bun.sys.kindFromMode(st.mode);
+                                    if (real_kind == .directory or real_kind == .sym_link) {
+                                        stack.writeItem(basename_allocator.dupeZ(u8, name_to_copy) catch break :enqueue) catch break :enqueue;
+                                    }
+                                },
+                                .err => {}, // Skip entries we can't stat
+                            }
                         },
                         else => {},
                     }

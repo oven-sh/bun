@@ -171,11 +171,9 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                         linux.DT.REG => Entry.Kind.file,
                         linux.DT.SOCK => Entry.Kind.unix_domain_socket,
                         // DT_UNKNOWN: Some filesystems (e.g., bind mounts, FUSE, NFS)
-                        // don't provide d_type. Fall back to fstatat() to determine the type.
-                        else => switch (bun.sys.fstatat(self.dir, @ptrCast(name.ptr))) {
-                            .result => |st| bun.sys.kindFromMode(st.mode),
-                            .err => Entry.Kind.unknown,
-                        },
+                        // don't provide d_type. Callers should use fstatat() to determine
+                        // the type when needed (lazy stat pattern for performance).
+                        else => Entry.Kind.unknown,
                     };
                     return .{
                         .result = IteratorResult{

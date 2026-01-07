@@ -224,7 +224,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
             if (comptime ssl) {
                 if (ssl_config) |config| {
-                    if (config.hasCustomOptions()) {
+                    if (config.requires_custom_request_ctx) {
                         var ctx_opts = config.asUSockets();
                         // We request the cert so we can verify it
                         ctx_opts.request_cert = 1;
@@ -465,7 +465,6 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 this.state = .proxy_handshake;
             }
 
-            // Do not set MSG_MORE, see https://github.com/oven-sh/bun/issues/4010
             const wrote = socket.write(this.input_body_buf);
             if (wrote < 0) {
                 this.terminate(ErrorCode.failed_to_write);
@@ -1015,7 +1014,6 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             this.ref();
             defer this.deref();
 
-            // Do not set MSG_MORE, see https://github.com/oven-sh/bun/issues/4010
             const wrote = socket.write(this.to_send);
             if (wrote < 0) {
                 this.terminate(ErrorCode.failed_to_write);

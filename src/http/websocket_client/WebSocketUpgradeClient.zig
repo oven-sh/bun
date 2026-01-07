@@ -170,23 +170,35 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
             // Store proxy info if provided
             if (using_proxy) {
-                client.proxy_host = bun.default_allocator.dupe(u8, proxy_host.?.slice()) catch return null;
+                client.proxy_host = bun.default_allocator.dupe(u8, proxy_host.?.slice()) catch {
+                    client.deref();
+                    return null;
+                };
                 client.proxy_port = proxy_port;
                 client.proxy_is_https = proxy_is_https;
-                client.target_host = bun.default_allocator.dupe(u8, host.slice()) catch return null;
+                client.target_host = bun.default_allocator.dupe(u8, host.slice()) catch {
+                    client.deref();
+                    return null;
+                };
                 client.target_port = port;
                 // Use target_is_secure from C++, not ssl template parameter
                 // (ssl may be true for HTTPS proxy even with ws:// target)
                 client.target_is_https = target_is_secure;
 
                 if (proxy_authorization) |auth| {
-                    client.proxy_authorization = bun.default_allocator.dupe(u8, auth.slice()) catch return null;
+                    client.proxy_authorization = bun.default_allocator.dupe(u8, auth.slice()) catch {
+                        client.deref();
+                        return null;
+                    };
                 }
 
                 // Store proxy headers
                 if (proxy_header_count > 0) {
                     const proxy_hdrs = NonUTF8Headers.init(proxy_header_names, proxy_header_values, proxy_header_count);
-                    client.proxy_headers = proxy_hdrs.toHeaders(bun.default_allocator) catch return null;
+                    client.proxy_headers = proxy_hdrs.toHeaders(bun.default_allocator) catch {
+                        client.deref();
+                        return null;
+                    };
                 }
 
                 // Build CONNECT request for proxy
@@ -195,7 +207,10 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                     port,
                     client.proxy_authorization,
                     client.proxy_headers,
-                ) catch return null;
+                ) catch {
+                    client.deref();
+                    return null;
+                };
             }
 
             // Store TLS config if provided (ownership transferred to client)

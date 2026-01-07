@@ -3,6 +3,7 @@ import * as harness from "harness";
 import type { HttpsProxyAgent as HttpsProxyAgentType } from "https-proxy-agent";
 import net from "net";
 import tls from "tls";
+import { createConnectProxy, createTLSConnectProxy, startProxy } from "./proxy-test-utils";
 
 // Use dynamic require to avoid linter removing the import
 const { HttpsProxyAgent } = require("https-proxy-agent") as {
@@ -26,124 +27,14 @@ let tlsProxyPort: number;
 let wsPort: number;
 let wssPort: number;
 
-// Create an HTTP CONNECT proxy server using Node's net module
-function createConnectProxy(options: { requireAuth?: boolean } = {}) {
-  return net.createServer(clientSocket => {
-    let buffer = Buffer.alloc(0);
-    let tunnelEstablished = false;
-    let targetSocket: net.Socket | null = null;
-
-    clientSocket.on("data", data => {
-      // If tunnel is already established, forward data directly
-      if (tunnelEstablished && targetSocket) {
-        targetSocket.write(data);
-        return;
-      }
-
-      buffer = Buffer.concat([buffer, data]);
-      const bufferStr = buffer.toString();
-
-      // Check if we have complete headers
-      const headerEnd = bufferStr.indexOf("\r\n\r\n");
-      if (headerEnd === -1) return;
-
-      const headerPart = bufferStr.substring(0, headerEnd);
-      const lines = headerPart.split("\r\n");
-      const requestLine = lines[0];
-      const headers: Record<string, string> = {};
-
-      for (let i = 1; i < lines.length; i++) {
-        const line = lines[i];
-        if (line === "") break;
-        const colonIdx = line.indexOf(": ");
-        if (colonIdx > 0) {
-          headers[line.substring(0, colonIdx).toLowerCase()] = line.substring(colonIdx + 2);
-        }
-      }
-
-      // Check for CONNECT method
-      const match = requestLine.match(/^CONNECT\s+([^:]+):(\d+)\s+HTTP/);
-      if (!match) {
-        clientSocket.write("HTTP/1.1 400 Bad Request\r\n\r\n");
-        clientSocket.end();
-        return;
-      }
-
-      const [, targetHost, targetPort] = match;
-
-      // Check auth if required
-      if (options.requireAuth) {
-        const authHeader = headers["proxy-authorization"];
-        if (!authHeader) {
-          clientSocket.write("HTTP/1.1 407 Proxy Authentication Required\r\n\r\n");
-          clientSocket.end();
-          return;
-        }
-
-        const auth = Buffer.from(authHeader.replace("Basic ", "").trim(), "base64").toString("utf8");
-        if (auth !== "proxy_user:proxy_pass") {
-          clientSocket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
-          clientSocket.end();
-          return;
-        }
-      }
-
-      // Get any data after the headers (shouldn't be any for CONNECT)
-      const remainingData = buffer.subarray(headerEnd + 4);
-
-      // Connect to target
-      targetSocket = net.connect(parseInt(targetPort), targetHost, () => {
-        clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
-        tunnelEstablished = true;
-
-        // Forward any remaining data
-        if (remainingData.length > 0) {
-          targetSocket!.write(remainingData);
-        }
-
-        // Set up bidirectional piping
-        targetSocket!.on("data", chunk => {
-          clientSocket.write(chunk);
-        });
-      });
-
-      targetSocket.on("error", () => {
-        if (!tunnelEstablished) {
-          clientSocket.write("HTTP/1.1 502 Bad Gateway\r\n\r\n");
-        }
-        clientSocket.end();
-      });
-
-      targetSocket.on("close", () => clientSocket.destroy());
-      clientSocket.on("close", () => targetSocket?.destroy());
-    });
-
-    clientSocket.on("error", () => {
-      targetSocket?.destroy();
-    });
-  });
-}
-
 beforeAll(async () => {
   // Create HTTP CONNECT proxy
   proxy = createConnectProxy();
-  await new Promise<void>(resolve => {
-    proxy.listen(0, "127.0.0.1", () => {
-      const addr = proxy.address() as net.AddressInfo;
-      proxyPort = addr.port;
-      resolve();
-    });
-  });
+  proxyPort = await startProxy(proxy);
 
   // Create HTTP CONNECT proxy with auth
   authProxy = createConnectProxy({ requireAuth: true });
-  await new Promise<void>(resolve => {
-    authProxy.listen(0, "127.0.0.1", () => {
-      const addr = authProxy.address() as net.AddressInfo;
-      authProxyPort = addr.port;
-      resolve();
-    });
-  });
+  authProxyPort = await startProxy(authProxy);
 
   // Create WebSocket echo server
   wsServer = Bun.serve({
@@ -465,75 +356,6 @@ describe("WebSocket wss:// through HTTP proxy (TLS tunnel)", () => {
 // Import tls certs from harness for HTTPS proxy tests
 import { tls as tlsCerts } from "harness";
 
-// Create an HTTPS CONNECT proxy server using Node's tls module
-function createTLSConnectProxy() {
-  return tls.createServer(
-    {
-      key: tlsCerts.key,
-      cert: tlsCerts.cert,
-    },
-    clientSocket => {
-      let buffer = Buffer.alloc(0);
-      let tunnelEstablished = false;
-      let targetSocket: net.Socket | null = null;
-
-      clientSocket.on("data", data => {
-        if (tunnelEstablished && targetSocket) {
-          targetSocket.write(data);
-          return;
-        }
-
-        buffer = Buffer.concat([buffer, data]);
-        const bufferStr = buffer.toString();
-
-        const headerEnd = bufferStr.indexOf("\r\n\r\n");
-        if (headerEnd === -1) return;
-
-        const headerPart = bufferStr.substring(0, headerEnd);
-        const lines = headerPart.split("\r\n");
-        const requestLine = lines[0];
-
-        const match = requestLine.match(/^CONNECT\s+([^:]+):(\d+)\s+HTTP/);
-        if (!match) {
-          clientSocket.write("HTTP/1.1 400 Bad Request\r\n\r\n");
-          clientSocket.end();
-          return;
-        }
-
-        const [, targetHost, targetPort] = match;
-        const remainingData = buffer.subarray(headerEnd + 4);
-
-        targetSocket = net.connect(parseInt(targetPort), targetHost, () => {
-          clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
-          tunnelEstablished = true;
-
-          if (remainingData.length > 0) {
-            targetSocket!.write(remainingData);
-          }
-
-          targetSocket!.on("data", chunk => {
-            clientSocket.write(chunk);
-          });
-        });
-
-        targetSocket.on("error", () => {
-          if (!tunnelEstablished) {
-            clientSocket.write("HTTP/1.1 502 Bad Gateway\r\n\r\n");
-          }
-          clientSocket.end();
-        });
-
-        targetSocket.on("close", () => clientSocket.destroy());
-        clientSocket.on("close", () => targetSocket?.destroy());
-      });
-
-      clientSocket.on("error", () => {
-        targetSocket?.destroy();
-      });
-    },
-  );
-}
-
 describe("WebSocket through HTTPS proxy (TLS proxy)", () => {
   // These tests verify WebSocket connections through HTTPS (TLS) proxy servers
 
@@ -543,13 +365,7 @@ describe("WebSocket through HTTPS proxy (TLS proxy)", () => {
   beforeAll(async () => {
     // Create HTTPS CONNECT proxy
     httpsProxy = createTLSConnectProxy();
-    await new Promise<void>(resolve => {
-      httpsProxy.listen(0, "127.0.0.1", () => {
-        const addr = httpsProxy.address() as net.AddressInfo;
-        httpsProxyPort = addr.port;
-        resolve();
-      });
-    });
+    httpsProxyPort = await startProxy(httpsProxy);
   });
 
   afterAll(() => {

@@ -221,7 +221,8 @@ fn writeEncrypted(this: *WebSocketProxyTunnel, encrypted_data: []const u8) void 
     // Try direct write to socket
     const written = this.socket.write(encrypted_data);
     if (written < 0) {
-        // Write failed
+        // Write failed - buffer data for retry when socket becomes writable
+        bun.handleOom(this.write_buffer.write(encrypted_data));
         return;
     }
 

@@ -5338,6 +5338,67 @@ declare module "bun" {
       ref(): void;
       unref(): void;
       close(): void;
+      /**
+       * Enable or disable SO_BROADCAST socket option.
+       * @param enabled Whether to enable broadcast
+       * @returns The enabled value
+       */
+      setBroadcast(enabled: boolean): boolean;
+      /**
+       * Set the IP_TTL socket option.
+       * @param ttl Time to live value
+       * @returns The TTL value
+       */
+      setTTL(ttl: number): number;
+      /**
+       * Set the IP_MULTICAST_TTL socket option.
+       * @param ttl Time to live value for multicast packets
+       * @returns The TTL value
+       */
+      setMulticastTTL(ttl: number): number;
+      /**
+       * Enable or disable IP_MULTICAST_LOOP socket option.
+       * @param enabled Whether to enable multicast loopback
+       * @returns The enabled value
+       */
+      setMulticastLoopback(enabled: boolean): boolean;
+      /**
+       * Set the IP_MULTICAST_IF socket option to specify the outgoing interface
+       * for multicast packets.
+       * @param interfaceAddress The address of the interface to use
+       * @returns true on success
+       */
+      setMulticastInterface(interfaceAddress: string): boolean;
+      /**
+       * Join a multicast group.
+       * @param multicastAddress The multicast group address
+       * @param interfaceAddress Optional interface address to use
+       * @returns true on success
+       */
+      addMembership(multicastAddress: string, interfaceAddress?: string): boolean;
+      /**
+       * Leave a multicast group.
+       * @param multicastAddress The multicast group address
+       * @param interfaceAddress Optional interface address to use
+       * @returns true on success
+       */
+      dropMembership(multicastAddress: string, interfaceAddress?: string): boolean;
+      /**
+       * Join a source-specific multicast group.
+       * @param sourceAddress The source address
+       * @param groupAddress The multicast group address
+       * @param interfaceAddress Optional interface address to use
+       * @returns true on success
+       */
+      addSourceSpecificMembership(sourceAddress: string, groupAddress: string, interfaceAddress?: string): boolean;
+      /**
+       * Leave a source-specific multicast group.
+       * @param sourceAddress The source address
+       * @param groupAddress The multicast group address
+       * @param interfaceAddress Optional interface address to use
+       * @returns true on success
+       */
+      dropSourceSpecificMembership(sourceAddress: string, groupAddress: string, interfaceAddress?: string): boolean;
     }
 
     export interface ConnectedSocket<DataBinaryType extends BinaryType> extends BaseUDPSocket {

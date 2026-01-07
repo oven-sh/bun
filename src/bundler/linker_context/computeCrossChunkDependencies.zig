@@ -324,7 +324,6 @@ fn computeCrossChunkDependenciesWithChunkMetas(c: *LinkerContext, chunks: []Chun
                         const source_index = chunk.entry_point.source_index;
                         const entry_export_aliases = sorted_and_filtered_export_aliases[source_index];
                         const entry_resolved_exports = resolved_exports[source_index];
-                        const entry_imports_to_bind = imports_to_bind[source_index];
 
                         if (entry_export_aliases.len > 0) {
                             entry_point_export_refs = .{};
@@ -333,16 +332,18 @@ fn computeCrossChunkDependenciesWithChunkMetas(c: *LinkerContext, chunks: []Chun
                             for (entry_export_aliases) |alias| {
                                 if (entry_resolved_exports.get(alias)) |resolved_export| {
                                     var ref = resolved_export.data.import_ref;
-                                    // Follow the import binding if necessary
-                                    if (entry_imports_to_bind.get(ref)) |import_data| {
+                                    // Follow the import binding if necessary (use the export's source index)
+                                    if (imports_to_bind[resolved_export.data.source_index.get()].get(ref)) |import_data| {
                                         ref = import_data.data.import_ref;
                                     }
                                     // If this is an ES6 import from a CommonJS file, it will become a
                                     // property access off the namespace symbol instead of a bare
                                     // identifier. In that case we want to pull in the namespace symbol
                                     // instead. The namespace symbol stores the result of "require()".
-                                    if (c.graph.symbols.getConst(ref).?.namespace_alias) |namespace_alias| {
-                                        ref = namespace_alias.namespace_ref;
+                                    if (c.graph.symbols.getConst(ref)) |symbol| {
+                                        if (symbol.namespace_alias) |namespace_alias| {
+                                            ref = namespace_alias.namespace_ref;
+                                        }
                                     }
                                     // Store the alias so we can use it for exports_to_other_chunks
                                     entry_point_export_refs.?.putAssumeCapacity(ref, alias);

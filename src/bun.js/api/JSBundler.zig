@@ -38,7 +38,7 @@ pub const JSBundler = struct {
         /// Uses the "memory" namespace to avoid triggering pathWithPrettyInitialized
         /// allocations during the linking phase.
         ///
-        /// source_file: The full path of the importing file (e.g., "/src/index.js")
+        /// source_file: The path of the importing file (may be relative or absolute)
         /// specifier: The import specifier (e.g., "./utils.js" or "/lib.js")
         pub fn resolve(self: *const FileMap, source_file: []const u8, specifier: []const u8) ?_resolver.Result {
             // Fast path: if the map is empty, return immediately
@@ -60,11 +60,19 @@ pub const JSBundler = struct {
             if (specifier.len > 0 and specifier[0] != '/' and
                 !(specifier.len >= 3 and specifier[1] == ':' and (specifier[2] == '/' or specifier[2] == '\\')))
             {
+                // First, ensure source_file is absolute. It may be relative (e.g., "../../Windows/Temp/...")
+                // on Windows when the bundler stores paths relative to cwd.
+                var abs_source_buf: bun.PathBuffer = undefined;
+                const abs_source_file = if (isAbsolutePath(source_file))
+                    source_file
+                else
+                    Fs.FileSystem.instance.absBuf(&.{source_file}, &abs_source_buf);
+
                 // Normalize source_file to use forward slashes (for Windows compatibility)
                 // On Windows, source_file may have backslashes from the real filesystem
                 // Use pathToPosixBuf which always converts \ to / regardless of platform
                 var source_file_buf: bun.PathBuffer = undefined;
-                const normalized_source_file = bun.path.pathToPosixBuf(u8, source_file, &source_file_buf);
+                const normalized_source_file = bun.path.pathToPosixBuf(u8, abs_source_file, &source_file_buf);
 
                 // Extract directory from source_file using posix path handling
                 // For "/entry.js", we want "/"; for "/src/index.js", we want "/src/"
@@ -94,6 +102,23 @@ pub const JSBundler = struct {
             }
 
             return null;
+        }
+
+        /// Check if a path is absolute (works for both posix and Windows paths)
+        fn isAbsolutePath(path: []const u8) bool {
+            if (path.len == 0) return false;
+            // Posix absolute path
+            if (path[0] == '/') return true;
+            // Windows absolute path with drive letter (e.g., "C:\..." or "C:/...")
+            if (path.len >= 3 and path[1] == ':' and (path[2] == '/' or path[2] == '\\')) {
+                return switch (path[0]) {
+                    'a'...'z', 'A'...'Z' => true,
+                    else => false,
+                };
+            }
+            // Windows UNC path (e.g., "\\server\share")
+            if (path.len >= 2 and path[0] == '\\' and path[1] == '\\') return true;
+            return false;
         }
 
         /// Parse the files option from JavaScript.
@@ -131,7 +156,9 @@ pub const JSBundler = struct {
 
                 // Normalize backslashes to forward slashes for cross-platform consistency
                 // This ensures Windows paths like "C:\foo\bar.js" become "C:/foo/bar.js"
-                bun.path.platformToPosixInPlace(u8, key);
+                // Use dangerouslyConvertPathToPosixInPlace which always converts \ to /
+                // (uses sep_windows constant, not sep which varies by target)
+                bun.path.dangerouslyConvertPathToPosixInPlace(u8, key);
 
                 self.map.putAssumeCapacity(key, blob_or_string);
             }

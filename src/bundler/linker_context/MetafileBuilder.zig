@@ -214,9 +214,9 @@ pub fn generate(
         }
         first_input = false;
 
-        j.pushStatic("\n    ");
-        j.push(std.fmt.allocPrint(allocator, "{f}", .{bun.fmt.formatJSONStringUTF8(path, .{})}) catch return error.OutOfMemory, allocator);
-        j.push(std.fmt.allocPrint(allocator, ": {{\n      \"bytes\": {d}", .{source.contents.len}) catch return error.OutOfMemory, allocator);
+        j.pushStatic("\n    \"");
+        j.pushStatic(path);
+        j.push(std.fmt.allocPrint(allocator, "\": {{\n      \"bytes\": {d}", .{source.contents.len}) catch return error.OutOfMemory, allocator);
 
         // Write imports
         j.pushStatic(",\n      \"imports\": [");
@@ -231,17 +231,19 @@ pub fn generate(
                 }
                 first_import = false;
 
-                j.pushStatic("\n        {\n          \"path\": ");
+                j.pushStatic("\n        {\n          \"path\": \"");
                 // Write path as-is - chunk references (unique_keys) will be resolved
                 // by breakOutputIntoPieces and code() below
-                j.push(std.fmt.allocPrint(allocator, "{f}", .{bun.fmt.formatJSONStringUTF8(record.path.text, .{})}) catch return error.OutOfMemory, allocator);
-                j.pushStatic(",\n          \"kind\": ");
-                j.push(std.fmt.allocPrint(allocator, "{f}", .{bun.fmt.formatJSONStringUTF8(record.kind.label(), .{})}) catch return error.OutOfMemory, allocator);
+                j.pushStatic(record.path.text);
+                j.pushStatic("\",\n          \"kind\": \"");
+                j.pushStatic(record.kind.label());
+                j.pushStatic("\"");
 
                 // Add "original" field if different from path
                 if (record.original_path.len > 0 and !std.mem.eql(u8, record.original_path, record.path.text)) {
-                    j.pushStatic(",\n          \"original\": ");
-                    j.push(std.fmt.allocPrint(allocator, "{f}", .{bun.fmt.formatJSONStringUTF8(record.original_path, .{})}) catch return error.OutOfMemory, allocator);
+                    j.pushStatic(",\n          \"original\": \"");
+                    j.pushStatic(record.original_path);
+                    j.pushStatic("\"");
                 }
 
                 // Add "external": true for external imports
@@ -259,9 +261,9 @@ pub fn generate(
                         else => null,
                     };
                     if (with_type) |wt| {
-                        j.pushStatic(",\n          \"with\": { \"type\": ");
-                        j.push(std.fmt.allocPrint(allocator, "{f}", .{bun.fmt.formatJSONStringUTF8(wt, .{})}) catch return error.OutOfMemory, allocator);
-                        j.pushStatic(" }");
+                        j.pushStatic(",\n          \"with\": { \"type\": \"");
+                        j.pushStatic(wt);
+                        j.pushStatic("\" }");
                     }
                 }
 
@@ -289,8 +291,9 @@ pub fn generate(
             else => null,
         };
         if (format) |fmt| {
-            j.pushStatic(",\n      \"format\": ");
-            j.push(std.fmt.allocPrint(allocator, "{f}", .{bun.fmt.formatJSONStringUTF8(fmt, .{})}) catch return error.OutOfMemory, allocator);
+            j.pushStatic(",\n      \"format\": \"");
+            j.pushStatic(fmt);
+            j.pushStatic("\"");
         }
 
         j.pushStatic("\n    }");

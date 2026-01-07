@@ -114,9 +114,10 @@ describe.concurrent("issue #24007 - glob with recursive patterns", () => {
     const cwd = String(dir);
     const results = fs.readdirSync(cwd, { recursive: true, withFileTypes: true });
 
-    // Find the nested file
+    // Find the nested file in dir/subdir/
+    const expectedParent = path.join(cwd, "dir", "subdir");
     const nestedFile = results.find(
-      (d) => d.name === "file.txt" && d.parentPath?.includes("subdir")
+      (d) => d.name === "file.txt" && d.parentPath === expectedParent
     );
     expect(nestedFile).toBeDefined();
     expect(nestedFile!.isFile()).toBe(true);

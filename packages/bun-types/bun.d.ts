@@ -3075,83 +3075,26 @@ declare module "bun" {
      * Options for the TLS connection.
      *
      * Supports full TLS configuration including custom CA certificates,
-     * client certificates, and other TLS settings (similar to fetch).
+     * client certificates, and other TLS settings (same as fetch).
+     *
+     * @example
+     * ```ts
+     * // Using BunFile for certificates
+     * const ws = new WebSocket("wss://example.com", {
+     *   tls: {
+     *     ca: Bun.file("./ca.pem")
+     *   }
+     * });
+     *
+     * // Using Buffer
+     * const ws = new WebSocket("wss://example.com", {
+     *   tls: {
+     *     ca: fs.readFileSync("./ca.pem")
+     *   }
+     * });
+     * ```
      */
-    tls?: {
-      /**
-       * Whether to reject the connection if the certificate is not valid
-       *
-       * @default true
-       */
-      rejectUnauthorized?: boolean;
-
-      /**
-       * Custom CA certificate(s) to use for certificate verification.
-       * Can be a string, Buffer, or array of strings/Buffers.
-       *
-       * @example
-       * ```ts
-       * const ws = new WebSocket("wss://example.com", {
-       *   tls: {
-       *     ca: fs.readFileSync("./ca.pem")
-       *   }
-       * });
-       * ```
-       */
-      ca?: string | Buffer | (string | Buffer)[];
-
-      /**
-       * Client certificate to use for mutual TLS authentication.
-       * Can be a string, Buffer, or array of strings/Buffers.
-       */
-      cert?: string | Buffer | (string | Buffer)[];
-
-      /**
-       * Private key for the client certificate.
-       * Can be a string, Buffer, or array of strings/Buffers.
-       */
-      key?: string | Buffer | (string | Buffer)[];
-
-      /**
-       * Passphrase for the private key.
-       */
-      passphrase?: string;
-
-      /**
-       * Path to the CA certificate file.
-       */
-      caFile?: string;
-
-      /**
-       * Path to the client certificate file.
-       */
-      certFile?: string;
-
-      /**
-       * Path to the private key file.
-       */
-      keyFile?: string;
-
-      /**
-       * Server name for SNI (Server Name Indication).
-       */
-      serverName?: string;
-
-      /**
-       * SSL ciphers to use.
-       */
-      ciphers?: string;
-
-      /**
-       * Whether to request a certificate from the server.
-       */
-      requestCert?: boolean;
-
-      /**
-       * Secure protocol options (bitmask).
-       */
-      secureOptions?: number;
-    };
+    tls?: TLSOptions;
   };
 
   type WebSocketOptionsHeaders = {

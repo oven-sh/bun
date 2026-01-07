@@ -265,16 +265,10 @@ pub fn getTLSRejectUnauthorized(this: *const VirtualMachine) bool {
 
 pub fn onSubprocessSpawn(this: *VirtualMachine, process: *bun.spawn.Process) void {
     this.auto_killer.onSubprocessSpawn(process);
-    // Note: Subprocess counter increment is done BEFORE spawn in js_bun_spawn_bindings.zig
-    // to avoid race condition with Ctrl+C handling
 }
 
 pub fn onSubprocessExit(this: *VirtualMachine, process: *bun.spawn.Process) void {
     this.auto_killer.onSubprocessExit(process);
-    // Decrement active subprocess counter for Windows Ctrl+C handling
-    if (Environment.isWindows) {
-        Bun__decrementActiveSubprocess();
-    }
 }
 
 pub fn getVerboseFetch(this: *VirtualMachine) bun.http.HTTPVerboseLevel {
@@ -537,12 +531,6 @@ extern fn Bun__emitHandledPromiseEvent(*JSGlobalObject, promise: JSValue) bool;
 extern fn Bun__promises__isErrorLike(*JSGlobalObject, reason: JSValue) bool;
 extern fn Bun__promises__emitUnhandledRejectionWarning(*JSGlobalObject, reason: JSValue, promise: JSValue) void;
 extern fn Bun__noSideEffectsToString(vm: *jsc.VM, globalObject: *JSGlobalObject, reason: JSValue) JSValue;
-
-// Windows subprocess tracking for Ctrl+C handling
-extern fn Bun__incrementActiveSubprocess() void;
-extern fn Bun__decrementActiveSubprocess() void;
-extern fn Bun__hasPendingCtrlC() bool;
-extern fn Bun__clearPendingCtrlC() void;
 
 fn isErrorLike(globalObject: *JSGlobalObject, reason: JSValue) bun.JSError!bool {
     return jsc.fromJSHostCallGeneric(globalObject, @src(), Bun__promises__isErrorLike, .{ globalObject, reason });

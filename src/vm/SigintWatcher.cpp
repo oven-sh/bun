@@ -13,7 +13,7 @@ namespace Bun {
 #if OS(WINDOWS)
 // Defined in c-bindings.cpp - non-zero when we're waiting for a sync child process
 extern "C" int64_t Bun__currentSyncPID;
-// Defined in c-bindings.cpp - for async subprocess Ctrl+C handling
+// Defined in c-bindings.cpp - for Bun Shell subprocess Ctrl+C handling
 extern "C" int64_t Bun__getActiveSubprocessCount();
 extern "C" void Bun__setPendingCtrlC();
 
@@ -28,7 +28,7 @@ static BOOL WindowsCtrlHandler(DWORD signal)
             return true; // Absorb the event, don't terminate parent
         }
         
-        // If we have active async subprocesses, let them handle Ctrl+C.
+        // If we have an active Bun Shell subprocess, let it handle Ctrl+C.
         // Mark pending so parent can exit after child exits.
         if (Bun__getActiveSubprocessCount() > 0) {
             Bun__setPendingCtrlC();

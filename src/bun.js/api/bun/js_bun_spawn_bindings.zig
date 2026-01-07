@@ -585,20 +585,12 @@ pub fn spawnMaybeSync(
         },
     };
 
-    // Track active subprocess BEFORE spawning to avoid race condition with Ctrl+C
-    if (Environment.isWindows) {
-        Bun__incrementActiveSubprocess();
-    }
-
     var spawned = switch (bun.spawn.spawnProcess(
         &spawn_options,
         @ptrCast(argv.items.ptr),
         @ptrCast(env_array.items.ptr),
     ) catch |err| switch (err) {
         error.EMFILE, error.ENFILE => {
-            if (Environment.isWindows) {
-                Bun__decrementActiveSubprocess();
-            }
             spawn_options.deinit();
             const display_path: [:0]const u8 = if (argv.items.len > 0 and argv.items[0] != null)
                 std.mem.sliceTo(argv.items[0].?, 0)
@@ -609,17 +601,11 @@ pub fn spawnMaybeSync(
             return globalThis.throwValue(systemerror.toErrorInstance(globalThis));
         },
         else => {
-            if (Environment.isWindows) {
-                Bun__decrementActiveSubprocess();
-            }
             spawn_options.deinit();
             return globalThis.throwError(err, ": failed to spawn process") catch return .zero;
         },
     }) {
         .err => |err| {
-            if (Environment.isWindows) {
-                Bun__decrementActiveSubprocess();
-            }
             spawn_options.deinit();
             switch (err.getErrno()) {
                 .ACCES, .NOENT, .PERM, .ISDIR, .NOTDIR => |errno| {
@@ -1112,10 +1098,6 @@ pub fn appendEnvpFromJS(globalThis: *jsc.JSGlobalObject, object: *jsc.JSObject, 
 
 const log = Output.scoped(.Subprocess, .hidden);
 extern "C" const BUN_DEFAULT_PATH_FOR_SPAWN: [*:0]const u8;
-
-// Windows subprocess tracking for Ctrl+C handling
-extern "c" fn Bun__incrementActiveSubprocess() void;
-extern "c" fn Bun__decrementActiveSubprocess() void;
 
 const IPC = @import("../../ipc.zig");
 const Terminal = @import("./Terminal.zig");

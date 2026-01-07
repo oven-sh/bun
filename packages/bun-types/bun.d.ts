@@ -1564,7 +1564,29 @@ declare module "bun" {
     };
     treeShaking?: boolean;
     trimUnusedImports?: boolean;
-    jsxOptimizationInline?: boolean;
+
+    /**
+     * Enable or configure minification.
+     * When `true`, enables all minification options.
+     * When an object, allows granular control.
+     * @example
+     * ```js
+     * // Enable all minification
+     * { minify: true }
+     * // Granular control
+     * { minify: { whitespace: true, syntax: true, identifiers: false } }
+     * ```
+     */
+    minify?:
+      | boolean
+      | {
+          /** Minify whitespace and comments */
+          whitespace?: boolean;
+          /** Minify syntax (e.g., `a === undefined` -> `a === void 0`) */
+          syntax?: boolean;
+          /** Minify identifiers (rename variables to shorter names) */
+          identifiers?: boolean;
+        };
 
     /**
      * **Experimental**
@@ -1572,6 +1594,18 @@ declare module "bun" {
      * Minify whitespace and comments from the output.
      */
     minifyWhitespace?: boolean;
+    /**
+     * **Experimental**
+     *
+     * Minify syntax (e.g., `a === undefined` -> `a === void 0`).
+     */
+    minifySyntax?: boolean;
+    /**
+     * **Experimental**
+     *
+     * Minify identifiers (rename variables to shorter names).
+     */
+    minifyIdentifiers?: boolean;
     /**
      * **Experimental**
      *

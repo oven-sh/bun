@@ -16,7 +16,7 @@ import { tempDir } from "harness";
 import fs from "node:fs";
 import path from "node:path";
 
-describe("issue #24007 - glob with recursive patterns", () => {
+describe.concurrent("issue #24007 - glob with recursive patterns", () => {
   test("recursive glob pattern **/*.ts finds nested files", () => {
     using dir = tempDir("issue-24007", {
       "server/api/health.get.ts": "export default () => 'ok';",

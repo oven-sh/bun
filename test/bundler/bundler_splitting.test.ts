@@ -323,4 +323,35 @@ describe("bundler", () => {
       stdout: "a.js executed\na loaded from entry\nb.js executed\nb.js imports a {}\nb loaded from entry, value: B",
     },
   });
+
+  // https://github.com/oven-sh/bun/issues/22884
+  // When a shared module is listed as both an entry point AND imported by another
+  // entry point with splitting enabled, the output should not contain duplicate exports.
+  itBundled("splitting/NoDuplicateExportsWhenSharedModuleIsEntryPoint", {
+    files: {
+      "/shared.ts": `export const shared = "shared";`,
+      "/entry-a.ts": `
+        import { shared } from "./shared";
+        console.log(shared);
+      `,
+    },
+    entryPoints: ["/entry-a.ts", "/shared.ts"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      const sharedContent = api.readFile("/out/shared.js");
+      // Count how many times "export {" or "export{" appears in the file
+      const exportMatches = sharedContent.match(/export\s*\{/g) || [];
+      if (exportMatches.length > 1) {
+        throw new Error(
+          `shared.js contains ${exportMatches.length} export statements, expected 1. Content:\n${sharedContent}`,
+        );
+      }
+    },
+    run: [
+      { file: "/out/entry-a.js", stdout: "shared" },
+      { file: "/out/shared.js", stdout: "" },
+    ],
+  });
 });

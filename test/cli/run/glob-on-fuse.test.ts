@@ -12,9 +12,11 @@ import { join } from "node:path";
 
 describe.skipIf(!isLinux)("glob on a FUSE mount", () => {
   async function withFuseMount<T>(fn: (mountpoint: string) => Promise<T>): Promise<T> {
+    // Use tmpdirSync for empty mount point (tempDir requires file tree)
     const mountpoint = tmpdirSync();
 
     let pythonProcess: ReadableSubprocess | undefined = undefined;
+    let originalError: Error | undefined;
     try {
       // setup FUSE filesystem (uses fuse-fs.py which returns DT_UNKNOWN)
       pythonProcess = spawn({
@@ -24,15 +26,21 @@ describe.skipIf(!isLinux)("glob on a FUSE mount", () => {
         stderr: "pipe",
       });
 
-      // wait for mount to be ready
+      // wait for mount to be ready, also check if Python process exited early
       let tries = 0;
-      while (!fs.existsSync(join(mountpoint, "main.js")) && tries < 250) {
+      while (!fs.existsSync(join(mountpoint, "main.js")) && tries < 250 && pythonProcess.exitCode === null) {
         tries++;
         await Bun.sleep(5);
+      }
+      if (pythonProcess.exitCode !== null && pythonProcess.exitCode !== 0) {
+        throw new Error(`FUSE process exited early with code ${pythonProcess.exitCode}`);
       }
       expect(fs.existsSync(join(mountpoint, "main.js"))).toBeTrue();
 
       return await fn(mountpoint);
+    } catch (e) {
+      originalError = e instanceof Error ? e : new Error(String(e));
+      throw e;
     } finally {
       if (pythonProcess) {
         try {
@@ -45,7 +53,10 @@ describe.skipIf(!isLinux)("glob on a FUSE mount", () => {
         } catch (e) {
           pythonProcess.kill("SIGKILL");
           console.error("python process errored:", await new Response(pythonProcess.stderr).text());
-          throw e;
+          // Don't re-throw cleanup errors to preserve original test failures
+          if (!originalError) {
+            throw e;
+          }
         }
       }
     }

@@ -1354,8 +1354,9 @@ fn Tracer(comptime ns: []const u8) type {
             const args_info = @typeInfo(ArgsType);
 
             // Write array format: [namespace, timestamp, operation, data]
-            var buffered = std.io.bufferedWriter(file.writer());
-            const w = buffered.writer();
+            var buffer: [4096]u8 = undefined;
+            var buffered = file.writer().adaptToNewApi(&buffer);
+            const w = &buffered.new_interface;
 
             w.writeAll("[\"") catch return;
             w.writeAll(ns) catch return;
@@ -1409,14 +1410,15 @@ fn Tracer(comptime ns: []const u8) type {
                             w.writeAll(field.name) catch return;
                             w.writeAll("\":") catch return;
 
-                            // Stringify the field value - should be safe now
-                            std.json.stringify(field_value, .{}, w) catch return;
+                            // Stringify the field value using the new API
+                            var json_stringify: std.json.Stringify = .{ .writer = w };
+                            json_stringify.write(field_value) catch return;
                         }
                     }
                 }
             }
             w.writeAll("}]\n") catch return;
-            buffered.flush() catch return;
+            buffered.new_interface.flush() catch return;
         }
     };
 }
@@ -1452,7 +1454,7 @@ pub fn closeTrace() void {
 }
 
 /// Callback for Global.addExitCallback
-pub fn closeTraceCallback() callconv(.C) void {
+pub fn closeTraceCallback() callconv(.c) void {
     closeTrace();
 }
 

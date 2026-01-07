@@ -3401,6 +3401,7 @@ pub const NodeFS = struct {
 
     pub fn uv_close(_: *NodeFS, args: Arguments.Close, rc: i64) Maybe(Return.Close) {
         if (rc < 0) {
+            traceFS(.{ .call = "close", .fd = args.fd.cast(), .errno = @as(bun.sys.Error.Int, @intCast(-rc)) });
             return Maybe(Return.Close){ .err = .{
                 .errno = @intCast(-rc),
                 .syscall = .close,
@@ -3408,6 +3409,7 @@ pub const NodeFS = struct {
                 .from_libuv = true,
             } };
         }
+        traceFS(.{ .call = "close", .fd = args.fd.cast() });
         return .success;
     }
 
@@ -4236,6 +4238,7 @@ pub const NodeFS = struct {
     pub fn uv_open(this: *NodeFS, args: Arguments.Open, rc: i64) Maybe(Return.Open) {
         _ = this;
         if (rc < 0) {
+            traceFS(.{ .call = "open", .path = args.path.slice(), .flags = args.flags.asInt(), .mode = args.mode, .errno = @as(bun.sys.Error.Int, @intCast(-rc)) });
             return Maybe(Return.Open){ .err = .{
                 .errno = @intCast(-rc),
                 .syscall = .open,
@@ -4243,7 +4246,9 @@ pub const NodeFS = struct {
                 .from_libuv = true,
             } };
         }
-        return Maybe(Return.Open).initResult(.fromUV(@intCast(rc)));
+        const fd = bun.FileDescriptor.fromUV(@intCast(rc));
+        traceFS(.{ .call = "open", .path = args.path.slice(), .flags = args.flags.asInt(), .mode = args.mode, .fd = fd.cast() });
+        return Maybe(Return.Open).initResult(fd);
     }
 
     pub fn uv_statfs(_: *NodeFS, args: Arguments.StatFS, req: *uv.fs_t, rc: i64) Maybe(Return.StatFS) {
@@ -4323,6 +4328,7 @@ pub const NodeFS = struct {
     pub fn uv_read(this: *NodeFS, args: Arguments.Read, rc: i64) Maybe(Return.Read) {
         _ = this;
         if (rc < 0) {
+            traceFS(.{ .call = "read", .fd = args.fd.cast(), .offset = args.offset, .length = args.length, .errno = @as(bun.sys.Error.Int, @intCast(-rc)) });
             return Maybe(Return.Read){ .err = .{
                 .errno = @intCast(-rc),
                 .syscall = .read,
@@ -4330,7 +4336,9 @@ pub const NodeFS = struct {
                 .from_libuv = true,
             } };
         }
-        return Maybe(Return.Read).initResult(.{ .bytes_read = @intCast(rc) });
+        const bytes_read: u52 = @intCast(rc);
+        traceFS(.{ .call = "read", .fd = args.fd.cast(), .offset = args.offset, .length = args.length, .bytes_read = bytes_read });
+        return Maybe(Return.Read).initResult(.{ .bytes_read = bytes_read });
     }
 
     pub fn uv_readv(this: *NodeFS, args: Arguments.Readv, rc: i64) Maybe(Return.Readv) {
@@ -4367,6 +4375,7 @@ pub const NodeFS = struct {
     pub fn uv_write(this: *NodeFS, args: Arguments.Write, rc: i64) Maybe(Return.Write) {
         _ = this;
         if (rc < 0) {
+            traceFS(.{ .call = "write", .fd = args.fd.cast(), .offset = args.offset, .length = args.length, .errno = @as(bun.sys.Error.Int, @intCast(-rc)) });
             return Maybe(Return.Write){ .err = .{
                 .errno = @intCast(-rc),
                 .syscall = .write,
@@ -4374,7 +4383,9 @@ pub const NodeFS = struct {
                 .from_libuv = true,
             } };
         }
-        return Maybe(Return.Write).initResult(.{ .bytes_written = @intCast(rc) });
+        const bytes_written: u52 = @intCast(rc);
+        traceFS(.{ .call = "write", .fd = args.fd.cast(), .offset = args.offset, .length = args.length, .bytes_written = bytes_written });
+        return Maybe(Return.Write).initResult(.{ .bytes_written = bytes_written });
     }
 
     pub fn uv_writev(this: *NodeFS, args: Arguments.Writev, rc: i64) Maybe(Return.Writev) {

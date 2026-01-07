@@ -579,7 +579,7 @@ ZIG_DECL WebSocketHTTPClient* Bun__WebSocketHTTPClient__connect(
     JSC::JSGlobalObject* globalObject, void* socketContext, CppWebSocket* websocket,
     const ZigString* host, uint16_t port, const ZigString* path, const ZigString* protocols,
     ZigString* headerNames, ZigString* headerValues, size_t headerCount,
-    const ZigString* proxyHost, uint16_t proxyPort, bool proxyIsHTTPS,
+    const ZigString* proxyHost, uint16_t proxyPort,
     const ZigString* proxyAuthorization,
     ZigString* proxyHeaderNames, ZigString* proxyHeaderValues, size_t proxyHeaderCount,
     void* sslConfig, bool targetIsSecure);
@@ -594,7 +594,7 @@ ZIG_DECL WebSocketHTTPSClient* Bun__WebSocketHTTPSClient__connect(
     JSC::JSGlobalObject* globalObject, void* socketContext, CppWebSocket* websocket,
     const ZigString* host, uint16_t port, const ZigString* path, const ZigString* protocols,
     ZigString* headerNames, ZigString* headerValues, size_t headerCount,
-    const ZigString* proxyHost, uint16_t proxyPort, bool proxyIsHTTPS,
+    const ZigString* proxyHost, uint16_t proxyPort,
     const ZigString* proxyAuthorization,
     ZigString* proxyHeaderNames, ZigString* proxyHeaderValues, size_t proxyHeaderCount,
     void* sslConfig, bool targetIsSecure);

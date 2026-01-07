@@ -43,17 +43,8 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         state: State = .initializing,
         subprotocols: bun.StringSet,
 
-        // Proxy support
-        proxy_host: ?[]const u8 = null,
-        proxy_port: u16 = 0,
-        proxy_is_https: bool = false,
-        proxy_authorization: ?[]const u8 = null,
-        proxy_headers: ?Headers = null,
-        target_host: ?[]const u8 = null,
-        target_port: u16 = 0,
-        target_is_https: bool = false,
-        websocket_request_buf: []u8 = &[_]u8{},
-        proxy_tunnel: ?*WebSocketProxyTunnel = null,
+        /// Proxy state (null when not using proxy)
+        proxy: ?Proxy = null,
 
         // TLS options (full SSLConfig for complete TLS customization)
         ssl_config: ?*SSLConfig = null,
@@ -62,6 +53,33 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         // This is used when ssl_config has custom options that can't be applied
         // to the shared SSL context from C++.
         custom_ssl_ctx: ?*uws.SocketContext = null,
+
+        /// Proxy state for WebSocket connections through HTTP/HTTPS proxies.
+        /// This struct holds only the fields needed after the initial CONNECT request.
+        /// Fields like proxy_port, proxy_authorization, and proxy_headers are used
+        /// only during connect() and freed immediately after building the CONNECT request.
+        const Proxy = struct {
+            /// Target hostname for SNI during TLS handshake
+            target_host: []const u8,
+            /// Whether target uses TLS (wss://)
+            target_is_https: bool,
+            /// WebSocket upgrade request to send after CONNECT succeeds
+            websocket_request_buf: []u8,
+            /// TLS tunnel for wss:// through HTTP proxy
+            tunnel: ?*WebSocketProxyTunnel = null,
+
+            pub fn deinit(self: *Proxy) void {
+                bun.default_allocator.free(self.target_host);
+                if (self.websocket_request_buf.len > 0) {
+                    bun.default_allocator.free(self.websocket_request_buf);
+                }
+                if (self.tunnel) |tunnel| {
+                    self.tunnel = null;
+                    tunnel.shutdown();
+                    tunnel.deref();
+                }
+            }
+        };
 
         const State = enum {
             initializing,
@@ -115,7 +133,6 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             // Proxy parameters
             proxy_host: ?*const jsc.ZigString,
             proxy_port: u16,
-            proxy_is_https: bool,
             proxy_authorization: ?*const jsc.ZigString,
             proxy_header_names: ?[*]const jsc.ZigString,
             proxy_header_values: ?[*]const jsc.ZigString,
@@ -151,13 +168,71 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 extra_headers,
             ) catch return null;
 
+            // Build proxy state if using proxy
+            // The CONNECT request is built using local variables for proxy_authorization and proxy_headers
+            // which are freed immediately after building the request (not stored on the client).
+            var proxy_state: ?Proxy = null;
+            var connect_request: []u8 = &[_]u8{};
+            if (using_proxy) {
+                // Parse proxy authorization (temporary, freed after building CONNECT request)
+                var proxy_auth_slice: ?[]const u8 = null;
+                var proxy_auth_owned: ?[]u8 = null;
+                defer if (proxy_auth_owned) |auth| bun.default_allocator.free(auth);
+
+                if (proxy_authorization) |auth| {
+                    proxy_auth_owned = bun.default_allocator.dupe(u8, auth.slice()) catch {
+                        bun.default_allocator.free(body);
+                        return null;
+                    };
+                    proxy_auth_slice = proxy_auth_owned;
+                }
+
+                // Parse proxy headers (temporary, freed after building CONNECT request)
+                var proxy_hdrs: ?Headers = null;
+                defer if (proxy_hdrs) |*hdrs| hdrs.deinit();
+
+                if (proxy_header_count > 0) {
+                    const non_utf8_hdrs = NonUTF8Headers.init(proxy_header_names, proxy_header_values, proxy_header_count);
+                    proxy_hdrs = non_utf8_hdrs.toHeaders(bun.default_allocator) catch {
+                        bun.default_allocator.free(body);
+                        return null;
+                    };
+                }
+
+                // Build CONNECT request (proxy_auth and proxy_hdrs are freed by defer after this)
+                connect_request = buildConnectRequest(
+                    host.slice(),
+                    port,
+                    proxy_auth_slice,
+                    proxy_hdrs,
+                ) catch {
+                    bun.default_allocator.free(body);
+                    return null;
+                };
+
+                // Duplicate target_host (needed for SNI during TLS handshake)
+                const target_host_dup = bun.default_allocator.dupe(u8, host.slice()) catch {
+                    bun.default_allocator.free(body);
+                    bun.default_allocator.free(connect_request);
+                    return null;
+                };
+
+                proxy_state = .{
+                    .target_host = target_host_dup,
+                    // Use target_is_secure from C++, not ssl template parameter
+                    // (ssl may be true for HTTPS proxy even with ws:// target)
+                    .target_is_https = target_is_secure,
+                    .websocket_request_buf = body,
+                };
+            }
+
             var client = bun.new(HTTPClient, .{
                 .ref_count = .init(),
                 .tcp = .{ .socket = .{ .detached = {} } },
                 .outgoing_websocket = websocket,
-                .input_body_buf = if (using_proxy) &[_]u8{} else body,
-                .websocket_request_buf = if (using_proxy) body else &[_]u8{},
+                .input_body_buf = if (using_proxy) connect_request else body,
                 .state = .initializing,
+                .proxy = proxy_state,
                 .subprotocols = brk: {
                     var subprotocols = bun.StringSet.init(bun.default_allocator);
                     var it = bun.http.HeaderValueIterator.init(protocol_for_subprotocols.slice());
@@ -167,51 +242,6 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                     break :brk subprotocols;
                 },
             });
-
-            // Store proxy info if provided
-            if (using_proxy) {
-                client.proxy_host = bun.default_allocator.dupe(u8, proxy_host.?.slice()) catch {
-                    client.deref();
-                    return null;
-                };
-                client.proxy_port = proxy_port;
-                client.proxy_is_https = proxy_is_https;
-                client.target_host = bun.default_allocator.dupe(u8, host.slice()) catch {
-                    client.deref();
-                    return null;
-                };
-                client.target_port = port;
-                // Use target_is_secure from C++, not ssl template parameter
-                // (ssl may be true for HTTPS proxy even with ws:// target)
-                client.target_is_https = target_is_secure;
-
-                if (proxy_authorization) |auth| {
-                    client.proxy_authorization = bun.default_allocator.dupe(u8, auth.slice()) catch {
-                        client.deref();
-                        return null;
-                    };
-                }
-
-                // Store proxy headers
-                if (proxy_header_count > 0) {
-                    const proxy_hdrs = NonUTF8Headers.init(proxy_header_names, proxy_header_values, proxy_header_count);
-                    client.proxy_headers = proxy_hdrs.toHeaders(bun.default_allocator) catch {
-                        client.deref();
-                        return null;
-                    };
-                }
-
-                // Build CONNECT request for proxy
-                client.input_body_buf = buildConnectRequest(
-                    host.slice(),
-                    port,
-                    client.proxy_authorization,
-                    client.proxy_headers,
-                ) catch {
-                    client.deref();
-                    return null;
-                };
-            }
 
             // Store TLS config if provided (ownership transferred to client)
             client.ssl_config = ssl_config;
@@ -323,33 +353,10 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             this.clearInput();
             this.body.clearAndFree(bun.default_allocator);
 
-            // Clean up proxy allocations
-            if (this.proxy_host) |host| {
-                bun.default_allocator.free(host);
-                this.proxy_host = null;
-            }
-            if (this.target_host) |host| {
-                bun.default_allocator.free(host);
-                this.target_host = null;
-            }
-            if (this.proxy_authorization) |auth| {
-                bun.default_allocator.free(auth);
-                this.proxy_authorization = null;
-            }
-            if (this.proxy_headers) |*hdrs| {
-                hdrs.deinit();
-                this.proxy_headers = null;
-            }
-            if (this.websocket_request_buf.len > 0) {
-                bun.default_allocator.free(this.websocket_request_buf);
-                this.websocket_request_buf = &[_]u8{};
-            }
-            if (this.proxy_tunnel) |tunnel| {
-                // Set to null BEFORE shutdown to prevent recursive cleanup
-                // (shutdown can trigger callbacks that lead back to clearData)
-                this.proxy_tunnel = null;
-                tunnel.shutdown();
-                tunnel.deref();
+            // Clean up proxy state
+            if (this.proxy) |*p| {
+                p.deinit();
+                this.proxy = null;
             }
             if (this.ssl_config) |config| {
                 config.deinit();
@@ -472,7 +479,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             }
 
             // If using proxy, set state to proxy_handshake
-            if (this.proxy_host != null) {
+            if (this.proxy != null) {
                 this.state = .proxy_handshake;
             }
 
@@ -495,12 +502,14 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             // For tunnel mode after successful upgrade, forward all data to the tunnel
             // The tunnel will decrypt and pass to the WebSocket client
             if (this.state == .done) {
-                if (this.proxy_tunnel) |tunnel| {
-                    // Ref the tunnel to keep it alive during this call
-                    // (in case the WebSocket client closes during processing)
-                    tunnel.ref();
-                    defer tunnel.deref();
-                    tunnel.receiveData(data);
+                if (this.proxy) |*p| {
+                    if (p.tunnel) |tunnel| {
+                        // Ref the tunnel to keep it alive during this call
+                        // (in case the WebSocket client closes during processing)
+                        tunnel.ref();
+                        defer tunnel.deref();
+                        tunnel.receiveData(data);
+                    }
                 }
                 return;
             }
@@ -525,9 +534,11 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             }
 
             // Route through proxy tunnel if TLS handshake is in progress or complete
-            if (this.proxy_tunnel) |tunnel| {
-                tunnel.receiveData(data);
-                return;
+            if (this.proxy) |*p| {
+                if (p.tunnel) |tunnel| {
+                    tunnel.receiveData(data);
+                    return;
+                }
             }
 
             var body = data;
@@ -620,7 +631,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             const remain_buf = body[@as(usize, @intCast(response.bytes_read))..];
 
             // For wss:// through proxy, we need to do TLS handshake inside the tunnel
-            if (this.target_is_https) {
+            if (this.proxy.?.target_is_https) {
                 this.startProxyTLSHandshake(socket, remain_buf);
                 return;
             }
@@ -633,9 +644,9 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 bun.default_allocator.free(this.input_body_buf);
             }
 
-            // Use the WebSocket upgrade request
-            this.input_body_buf = this.websocket_request_buf;
-            this.websocket_request_buf = &[_]u8{};
+            // Use the WebSocket upgrade request from proxy state
+            this.input_body_buf = this.proxy.?.websocket_request_buf;
+            this.proxy.?.websocket_request_buf = &[_]u8{};
 
             // Send the WebSocket upgrade request
             const wrote = socket.write(this.input_body_buf);
@@ -662,8 +673,8 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             tunnel.socket = if (comptime ssl) .{ .ssl = socket } else .{ .tcp = socket };
 
             // Set hostname for SNI
-            if (this.target_host) |host| {
-                tunnel.sni_hostname = bun.default_allocator.dupe(u8, host) catch {
+            if (this.proxy) |*p| {
+                tunnel.sni_hostname = bun.default_allocator.dupe(u8, p.target_host) catch {
                     tunnel.deref();
                     this.terminate(ErrorCode.proxy_tunnel_failed);
                     return;
@@ -688,7 +699,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 return;
             };
 
-            this.proxy_tunnel = tunnel;
+            this.proxy.?.tunnel = tunnel;
             this.state = .proxy_tls_handshake;
         }
 
@@ -705,19 +716,23 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 this.input_body_buf = &[_]u8{};
             }
 
-            // Get the WebSocket upgrade request
-            const upgrade_request = this.websocket_request_buf;
+            // Get the WebSocket upgrade request from proxy state
+            const upgrade_request = this.proxy.?.websocket_request_buf;
             if (upgrade_request.len == 0) {
                 this.terminate(ErrorCode.failed_to_write);
                 return;
             }
 
             // Send through the tunnel (will be encrypted)
-            if (this.proxy_tunnel) |tunnel| {
-                _ = tunnel.writeData(upgrade_request) catch {
-                    this.terminate(ErrorCode.failed_to_write);
-                    return;
-                };
+            if (this.proxy) |*p| {
+                if (p.tunnel) |tunnel| {
+                    _ = tunnel.writeData(upgrade_request) catch {
+                        this.terminate(ErrorCode.failed_to_write);
+                        return;
+                    };
+                } else {
+                    this.terminate(ErrorCode.proxy_tunnel_failed);
+                }
             } else {
                 this.terminate(ErrorCode.proxy_tunnel_failed);
             }
@@ -943,32 +958,34 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             }
 
             // Check if we're using a proxy tunnel (wss:// through HTTP proxy)
-            if (this.proxy_tunnel) |tunnel| {
-                // wss:// through HTTP proxy: use tunnel mode
-                // For tunnel mode, the upgrade client STAYS ALIVE to forward socket data to the tunnel.
-                // The socket continues to call handleData on the upgrade client, which forwards to tunnel.
-                // The tunnel forwards decrypted data to the WebSocket client.
-                jsc.markBinding(@src());
-                if (!this.tcp.isClosed() and this.outgoing_websocket != null) {
-                    this.tcp.timeout(0);
-                    log("onDidConnect (tunnel mode)", .{});
+            if (this.proxy) |*p| {
+                if (p.tunnel) |tunnel| {
+                    // wss:// through HTTP proxy: use tunnel mode
+                    // For tunnel mode, the upgrade client STAYS ALIVE to forward socket data to the tunnel.
+                    // The socket continues to call handleData on the upgrade client, which forwards to tunnel.
+                    // The tunnel forwards decrypted data to the WebSocket client.
+                    jsc.markBinding(@src());
+                    if (!this.tcp.isClosed() and this.outgoing_websocket != null) {
+                        this.tcp.timeout(0);
+                        log("onDidConnect (tunnel mode)", .{});
 
-                    // Take the outgoing_websocket reference but DON'T deref the upgrade client.
-                    // We need to keep it alive to forward socket data to the tunnel.
-                    // The upgrade client will be cleaned up when the socket closes.
-                    const ws = bun.take(&this.outgoing_websocket).?;
+                        // Take the outgoing_websocket reference but DON'T deref the upgrade client.
+                        // We need to keep it alive to forward socket data to the tunnel.
+                        // The upgrade client will be cleaned up when the socket closes.
+                        const ws = bun.take(&this.outgoing_websocket).?;
 
-                    // Create the WebSocket client with the tunnel
-                    ws.didConnectWithTunnel(tunnel, overflow.ptr, overflow.len, if (deflate_result.enabled) &deflate_result.params else null);
+                        // Create the WebSocket client with the tunnel
+                        ws.didConnectWithTunnel(tunnel, overflow.ptr, overflow.len, if (deflate_result.enabled) &deflate_result.params else null);
 
-                    // Switch state to connected - handleData will forward to tunnel
-                    this.state = .done;
-                } else if (this.tcp.isClosed()) {
-                    this.terminate(ErrorCode.cancel);
-                } else if (this.outgoing_websocket == null) {
-                    this.tcp.close(.failure);
+                        // Switch state to connected - handleData will forward to tunnel
+                        this.state = .done;
+                    } else if (this.tcp.isClosed()) {
+                        this.terminate(ErrorCode.cancel);
+                    } else if (this.outgoing_websocket == null) {
+                        this.tcp.close(.failure);
+                    }
+                    return;
                 }
-                return;
             }
 
             // Normal (non-tunnel) mode - original code path
@@ -1013,10 +1030,12 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             bun.assert(this.isSameSocket(socket));
 
             // Forward to proxy tunnel if active
-            if (this.proxy_tunnel) |tunnel| {
-                tunnel.onWritable();
-                // In .done state (after WebSocket upgrade), just handle tunnel writes
-                if (this.state == .done) return;
+            if (this.proxy) |*p| {
+                if (p.tunnel) |tunnel| {
+                    tunnel.onWritable();
+                    // In .done state (after WebSocket upgrade), just handle tunnel writes
+                    if (this.state == .done) return;
+                }
             }
 
             if (this.to_send.len == 0)

@@ -18,12 +18,10 @@ const isDockerEnabled = harness.isDockerEnabled;
 // HTTP CONNECT proxy server for WebSocket tunneling
 let proxy: net.Server;
 let authProxy: net.Server;
-let tlsProxy: tls.Server;
 let wsServer: ReturnType<typeof Bun.serve>;
 let wssServer: ReturnType<typeof Bun.serve>;
 let proxyPort: number;
 let authProxyPort: number;
-let tlsProxyPort: number;
 let wsPort: number;
 let wssPort: number;
 
@@ -538,98 +536,99 @@ describe("WebSocket through HTTPS proxy (TLS proxy)", () => {
 // Import docker-compose dynamically to avoid issues when not using docker
 const dockerCompose = require("../../../docker/index.ts");
 
-if (false && isDockerEnabled()) {
-  describe("WebSocket through Squid proxy (Docker)", () => {
-    let squidInfo: { host: string; ports: Record<number, number>; proxyUrl?: string };
+// Set to false when the use-after-free bug is fixed
+const skipSquidTests = true;
 
-    beforeAll(async () => {
-      console.log("Starting squid proxy container...");
-      squidInfo = await dockerCompose.ensure("squid");
-      console.log(`Squid proxy ready at: ${squidInfo.host}:${squidInfo.ports[3128]}`);
-    }, 120_000);
+describe.skipIf(skipSquidTests || !isDockerEnabled())("WebSocket through Squid proxy (Docker)", () => {
+  let squidInfo: { host: string; ports: Record<number, number>; proxyUrl?: string };
 
-    afterAll(async () => {
-      if (!process.env.BUN_KEEP_DOCKER) {
-        await dockerCompose.down();
-      }
+  beforeAll(async () => {
+    console.log("Starting squid proxy container...");
+    squidInfo = await dockerCompose.ensure("squid");
+    console.log(`Squid proxy ready at: ${squidInfo.host}:${squidInfo.ports[3128]}`);
+  }, 120_000);
+
+  afterAll(async () => {
+    if (!process.env.BUN_KEEP_DOCKER) {
+      await dockerCompose.down();
+    }
+  });
+
+  test("ws:// through squid proxy to local server", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers<string[]>();
+    const proxyUrl = `http://${squidInfo.host}:${squidInfo.ports[3128]}`;
+
+    // Connect to our local WebSocket server through squid
+    const ws = new WebSocket(`ws://host.docker.internal:${wsPort}`, {
+      proxy: proxyUrl,
     });
 
-    test("ws:// through squid proxy to local server", async () => {
-      const { promise, resolve, reject } = Promise.withResolvers<string[]>();
-      const proxyUrl = `http://${squidInfo.host}:${squidInfo.ports[3128]}`;
+    const receivedMessages: string[] = [];
 
-      // Connect to our local WebSocket server through squid
-      const ws = new WebSocket(`ws://host.docker.internal:${wsPort}`, {
-        proxy: proxyUrl,
-      });
+    ws.onopen = () => {
+      ws.send("hello from bun via squid");
+    };
 
-      const receivedMessages: string[] = [];
+    ws.onmessage = event => {
+      receivedMessages.push(String(event.data));
+      if (receivedMessages.length === 2) {
+        ws.close();
+      }
+    };
 
-      ws.onopen = () => {
-        ws.send("hello from bun via squid");
-      };
+    ws.onclose = () => {
+      resolve(receivedMessages);
+    };
 
-      ws.onmessage = event => {
-        receivedMessages.push(String(event.data));
-        if (receivedMessages.length === 2) {
-          ws.close();
-        }
-      };
+    ws.onerror = event => {
+      reject(event);
+    };
 
-      ws.onclose = () => {
-        resolve(receivedMessages);
-      };
+    const messages = await promise;
+    expect(messages).toContain("connected");
+    expect(messages).toContain("hello from bun via squid");
+    gc();
+  }, 30_000);
 
-      ws.onerror = event => {
-        reject(event);
-      };
+  test("wss:// through squid proxy to local server", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers<string[]>();
+    const proxyUrl = `http://${squidInfo.host}:${squidInfo.ports[3128]}`;
 
-      const messages = await promise;
-      expect(messages).toContain("connected");
-      expect(messages).toContain("hello from bun via squid");
-      gc();
-    }, 30_000);
+    // Connect to our local secure WebSocket server through squid
+    const ws = new WebSocket(`wss://host.docker.internal:${wssPort}`, {
+      proxy: proxyUrl,
+      tls: {
+        rejectUnauthorized: false, // Accept self-signed cert
+      },
+    });
 
-    test("wss:// through squid proxy to local server", async () => {
-      const { promise, resolve, reject } = Promise.withResolvers<string[]>();
-      const proxyUrl = `http://${squidInfo.host}:${squidInfo.ports[3128]}`;
+    const receivedMessages: string[] = [];
 
-      // Connect to our local secure WebSocket server through squid
-      const ws = new WebSocket(`wss://host.docker.internal:${wssPort}`, {
-        proxy: proxyUrl,
-        tls: {
-          rejectUnauthorized: false, // Accept self-signed cert
-        },
-      });
+    ws.onopen = () => {
+      ws.send("hello wss from bun via squid");
+    };
 
-      const receivedMessages: string[] = [];
+    ws.onmessage = event => {
+      receivedMessages.push(String(event.data));
+      if (receivedMessages.length === 2) {
+        ws.close();
+      }
+    };
 
-      ws.onopen = () => {
-        ws.send("hello wss from bun via squid");
-      };
+    ws.onclose = () => {
+      resolve(receivedMessages);
+    };
 
-      ws.onmessage = event => {
-        receivedMessages.push(String(event.data));
-        if (receivedMessages.length === 2) {
-          ws.close();
-        }
-      };
+    ws.onerror = event => {
+      reject(event);
+    };
 
-      ws.onclose = () => {
-        resolve(receivedMessages);
-      };
-
-      ws.onerror = event => {
-        reject(event);
-      };
-
-      const messages = await promise;
-      expect(messages).toContain("connected");
-      expect(messages).toContain("hello wss from bun via squid");
-      gc();
-    }, 30_000);
-  });
-}
+    const messages = await promise;
+    expect(messages).toContain("connected");
+    expect(messages).toContain("hello wss from bun via squid");
+    gc();
+  }, 30_000);
+});
 
 describe("ws module with HttpsProxyAgent", () => {
   // These tests verify that the ws module (src/js/thirdparty/ws.js) correctly

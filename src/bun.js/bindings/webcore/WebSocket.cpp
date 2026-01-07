@@ -588,7 +588,7 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
             scriptExecutionContext()->jsGlobalObject(), ctx, reinterpret_cast<CppWebSocket*>(this),
             &host, port, &path, &clientProtocolString,
             headerNames.begin(), headerValues.begin(), headerNames.size(),
-            m_proxyUrl.isValid() ? &proxyHost : nullptr, proxyPort, m_proxyIsHTTPS,
+            m_proxyUrl.isValid() ? &proxyHost : nullptr, proxyPort,
             m_proxyAuthorization.isEmpty() ? nullptr : &proxyAuth,
             proxyHeaderNames.begin(), proxyHeaderValues.begin(), proxyHeaderNames.size(),
             sslConfig, is_secure);
@@ -599,7 +599,7 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
             scriptExecutionContext()->jsGlobalObject(), ctx, reinterpret_cast<CppWebSocket*>(this),
             &host, port, &path, &clientProtocolString,
             headerNames.begin(), headerValues.begin(), headerNames.size(),
-            m_proxyUrl.isValid() ? &proxyHost : nullptr, proxyPort, m_proxyIsHTTPS,
+            m_proxyUrl.isValid() ? &proxyHost : nullptr, proxyPort,
             m_proxyAuthorization.isEmpty() ? nullptr : &proxyAuth,
             proxyHeaderNames.begin(), proxyHeaderValues.begin(), proxyHeaderNames.size(),
             sslConfig, is_secure);

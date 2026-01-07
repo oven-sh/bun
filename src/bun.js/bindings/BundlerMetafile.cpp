@@ -1,11 +1,11 @@
 /**
- * Lazy getter for BuildOutput.metafile that parses JSON on first access
- * and memoizes the result by replacing the getter with the parsed value.
+ * Lazy getter for BuildOutput.metafile that parses JSON on first access.
+ * Uses CustomValue so the parsed result replaces the getter.
  */
 
 #include "root.h"
-#include "ZigGlobalObject.h"
 #include "BunBuiltinNames.h"
+#include "ZigGlobalObject.h"
 
 #include <JavaScriptCore/CustomGetterSetter.h>
 #include <JavaScriptCore/JSCJSValueInlines.h>
@@ -15,24 +15,21 @@ namespace Bun {
 
 using namespace JSC;
 
-static const auto metafilePropertyName = "metafile"_s;
-
-JSC_DEFINE_CUSTOM_GETTER(bundlerMetafileLazyGetter, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(bundlerMetafileLazyGetter, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName property))
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSObject* thisObject = jsDynamicCast<JSObject*>(JSValue::decode(thisValue));
+    JSObject* thisObject = JSValue::decode(thisValue).getObject();
     if (!thisObject) {
         return JSValue::encode(jsUndefined());
     }
 
     // Get the raw JSON string from private property
     const auto& privateName = Bun::builtinNames(vm).dataPrivateName();
-    JSValue metafileStringValue = thisObject->get(globalObject, privateName);
-    RETURN_IF_EXCEPTION(scope, {});
+    JSValue metafileStringValue = thisObject->getDirect(vm, privateName);
 
-    if (metafileStringValue.isUndefinedOrNull()) {
+    if (!metafileStringValue || metafileStringValue.isUndefinedOrNull()) {
         return JSValue::encode(jsUndefined());
     }
 
@@ -41,15 +38,11 @@ JSC_DEFINE_CUSTOM_GETTER(bundlerMetafileLazyGetter, (JSGlobalObject * globalObje
     RETURN_IF_EXCEPTION(scope, {});
 
     if (parsedValue.isUndefined()) {
-        // JSON parse failed, return undefined
         return JSValue::encode(jsUndefined());
     }
 
-    // Memoize: replace the getter with the parsed value using putDirect
-    thisObject->putDirect(vm, Identifier::fromString(vm, metafilePropertyName), parsedValue, 0);
-
-    // Delete the raw string property since we no longer need it
-    thisObject->deleteProperty(globalObject, privateName);
+    // Replace the getter with the parsed value
+    thisObject->putDirect(vm, property, parsedValue, 0);
 
     return JSValue::encode(parsedValue);
 }
@@ -59,7 +52,6 @@ extern "C" void Bun__setupLazyMetafile(JSC::JSGlobalObject* globalObject, JSC::E
 {
     auto& vm = globalObject->vm();
     JSObject* buildOutput = jsDynamicCast<JSObject*>(JSValue::decode(buildOutputEncoded));
-    JSValue metafileString = JSValue::decode(metafileStringEncoded);
 
     if (!buildOutput) {
         return;
@@ -67,12 +59,12 @@ extern "C" void Bun__setupLazyMetafile(JSC::JSGlobalObject* globalObject, JSC::E
 
     // Store the raw JSON string in a private property
     const auto& privateName = Bun::builtinNames(vm).dataPrivateName();
-    buildOutput->putDirect(vm, privateName, metafileString, 0);
+    buildOutput->putDirect(vm, privateName, JSValue::decode(metafileStringEncoded), 0);
 
-    // Set up the lazy getter for metafile property
+    // Set up the lazy getter
     buildOutput->putDirectCustomAccessor(
         vm,
-        Identifier::fromString(vm, metafilePropertyName),
+        Identifier::fromString(vm, "metafile"_s),
         CustomGetterSetter::create(vm, bundlerMetafileLazyGetter, nullptr),
         PropertyAttribute::CustomValue | 0);
 }

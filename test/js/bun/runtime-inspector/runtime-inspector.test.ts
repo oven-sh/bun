@@ -190,7 +190,10 @@ describe("Runtime inspector activation", () => {
       expect(matches?.length ?? 0).toBe(2);
     });
 
-    test("can activate inspector in multiple independent processes", async () => {
+    test("can activate inspector in multiple processes sequentially", async () => {
+      // Note: Runtime inspector uses hardcoded port 6499, so we must test
+      // sequential activation (activate first, shut down, then activate second)
+      // rather than concurrent activation.
       using dir = tempDir("debug-process-multi-test", {
         "target.js": `
           const fs = require("fs");
@@ -206,83 +209,87 @@ describe("Runtime inspector activation", () => {
         `,
       });
 
-      // Start two independent target processes
-      await using target1 = spawn({
-        cmd: [bunExe(), "target.js", "1"],
-        cwd: String(dir),
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-
-      await using target2 = spawn({
-        cmd: [bunExe(), "target.js", "2"],
-        cwd: String(dir),
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-
-      // Wait for both to be ready
       const decoder = new TextDecoder();
 
-      const reader1 = target1.stdout.getReader();
-      let output1 = "";
-      while (!output1.includes("READY-1")) {
-        const { value, done } = await reader1.read();
-        if (done) break;
-        output1 += decoder.decode(value, { stream: true });
+      // First process: activate inspector, verify, then shut down
+      {
+        await using target1 = spawn({
+          cmd: [bunExe(), "target.js", "1"],
+          cwd: String(dir),
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+
+        const reader1 = target1.stdout.getReader();
+        let output1 = "";
+        while (!output1.includes("READY-1")) {
+          const { value, done } = await reader1.read();
+          if (done) break;
+          output1 += decoder.decode(value, { stream: true });
+        }
+        reader1.releaseLock();
+
+        const pid1 = parseInt(await Bun.file(join(String(dir), "pid-1")).text(), 10);
+        expect(pid1).toBeGreaterThan(0);
+
+        await using debug1 = spawn({
+          cmd: [bunExe(), "-e", `process._debugProcess(${pid1})`],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+
+        expect(await debug1.exited).toBe(0);
+
+        const result1 = await waitForDebuggerListening(target1.stderr);
+        result1.reader.releaseLock();
+
+        expect(result1.stderr).toContain("Bun Inspector");
+
+        target1.kill();
+        await target1.exited;
       }
-      reader1.releaseLock();
 
-      const reader2 = target2.stdout.getReader();
-      let output2 = "";
-      while (!output2.includes("READY-2")) {
-        const { value, done } = await reader2.read();
-        if (done) break;
-        output2 += decoder.decode(value, { stream: true });
+      // Second process: now that first is shut down, port 6499 is free
+      {
+        await using target2 = spawn({
+          cmd: [bunExe(), "target.js", "2"],
+          cwd: String(dir),
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+
+        const reader2 = target2.stdout.getReader();
+        let output2 = "";
+        while (!output2.includes("READY-2")) {
+          const { value, done } = await reader2.read();
+          if (done) break;
+          output2 += decoder.decode(value, { stream: true });
+        }
+        reader2.releaseLock();
+
+        const pid2 = parseInt(await Bun.file(join(String(dir), "pid-2")).text(), 10);
+        expect(pid2).toBeGreaterThan(0);
+
+        await using debug2 = spawn({
+          cmd: [bunExe(), "-e", `process._debugProcess(${pid2})`],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+
+        expect(await debug2.exited).toBe(0);
+
+        const result2 = await waitForDebuggerListening(target2.stderr);
+        result2.reader.releaseLock();
+
+        expect(result2.stderr).toContain("Bun Inspector");
+
+        target2.kill();
+        await target2.exited;
       }
-      reader2.releaseLock();
-
-      const pid1 = parseInt(await Bun.file(join(String(dir), "pid-1")).text(), 10);
-      const pid2 = parseInt(await Bun.file(join(String(dir), "pid-2")).text(), 10);
-
-      // Activate inspector in both processes
-      await using debug1 = spawn({
-        cmd: [bunExe(), "-e", `process._debugProcess(${pid1})`],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-
-      await using debug2 = spawn({
-        cmd: [bunExe(), "-e", `process._debugProcess(${pid2})`],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-
-      const [exitCode1, exitCode2] = await Promise.all([debug1.exited, debug2.exited]);
-      expect(exitCode1).toBe(0);
-      expect(exitCode2).toBe(0);
-
-      // Wait for both inspectors to activate by reading stderr
-      const [result1, result2] = await Promise.all([
-        waitForDebuggerListening(target1.stderr),
-        waitForDebuggerListening(target2.stderr),
-      ]);
-
-      result1.reader.releaseLock();
-      result2.reader.releaseLock();
-
-      // Kill both targets
-      target1.kill();
-      target2.kill();
-      await Promise.all([target1.exited, target2.exited]);
-
-      // Both should have activated their inspector
-      expect(result1.stderr).toContain("Bun Inspector");
-      expect(result2.stderr).toContain("Bun Inspector");
     });
 
     test("throws when called with no arguments", async () => {

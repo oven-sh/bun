@@ -40,6 +40,7 @@ describe.skipIf(isWindows)("Runtime inspector SIGUSR1 activation", () => {
     reader.releaseLock();
 
     const pid = parseInt(await Bun.file(join(String(dir), "pid")).text(), 10);
+    expect(pid).toBeGreaterThan(0);
 
     // Send SIGUSR1
     process.kill(pid, "SIGUSR1");

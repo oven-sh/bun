@@ -337,6 +337,13 @@ fn computeCrossChunkDependenciesWithChunkMetas(c: *LinkerContext, chunks: []Chun
                                     if (entry_imports_to_bind.get(ref)) |import_data| {
                                         ref = import_data.data.import_ref;
                                     }
+                                    // If this is an ES6 import from a CommonJS file, it will become a
+                                    // property access off the namespace symbol instead of a bare
+                                    // identifier. In that case we want to pull in the namespace symbol
+                                    // instead. The namespace symbol stores the result of "require()".
+                                    if (c.graph.symbols.getConst(ref).?.namespace_alias) |namespace_alias| {
+                                        ref = namespace_alias.namespace_ref;
+                                    }
                                     // Store the alias so we can use it for exports_to_other_chunks
                                     entry_point_export_refs.?.putAssumeCapacity(ref, alias);
                                 }

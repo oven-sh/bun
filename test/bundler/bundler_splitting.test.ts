@@ -343,9 +343,9 @@ describe("bundler", () => {
       const sharedContent = api.readFile("/out/shared.js");
       // Count how many times "export {" or "export{" appears in the file
       const exportMatches = sharedContent.match(/export\s*\{/g) || [];
-      if (exportMatches.length > 1) {
+      if (exportMatches.length !== 1) {
         throw new Error(
-          `shared.js contains ${exportMatches.length} export statements, expected 1. Content:\n${sharedContent}`,
+          `shared.js contains ${exportMatches.length} export statements, expected exactly 1. Content:\n${sharedContent}`,
         );
       }
     },

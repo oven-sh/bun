@@ -74,7 +74,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         };
 
         const HTTPClient = @This();
-        pub fn register(_: *jsc.JSGlobalObject, _: *anyopaque, ctx: *uws.SocketContext) callconv(.c) void {
+        pub fn register(_: *jsc.JSGlobalObject, _: *uws.Loop, ctx: *uws.SocketContext) callconv(.c) void {
             Socket.configure(
                 ctx,
                 true,
@@ -103,7 +103,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         /// Returning null signals to the parent function that the connection failed.
         pub fn connect(
             global: *jsc.JSGlobalObject,
-            socket_ctx: *anyopaque,
+            socket_ctx: *uws.SocketContext,
             websocket: *CppWebSocket,
             host: *const jsc.ZigString,
             port: u16,
@@ -233,7 +233,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             // - The shared context is created once with default settings (no custom CA)
             // - Custom CA certificates must be loaded at context creation time
             // - This applies to both direct wss:// and HTTPS proxy connections
-            var connect_ctx: *uws.SocketContext = @ptrCast(socket_ctx);
+            var connect_ctx: *uws.SocketContext = socket_ctx;
 
             log("connect: ssl={}, has_ssl_config={}, using_proxy={}", .{ ssl, ssl_config != null, using_proxy });
 
@@ -662,7 +662,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
             // Create proxy tunnel
             var tunnel = WebSocketProxyTunnel.init();
-            tunnel.upgrade_client = this;
+            tunnel.upgrade_client = if (comptime ssl) .{ .https = this } else .{ .http = this };
             tunnel.socket = if (comptime ssl) .{ .ssl = socket } else .{ .tcp = socket };
 
             // Set target hostname for SNI

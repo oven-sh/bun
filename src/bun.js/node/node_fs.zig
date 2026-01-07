@@ -4627,6 +4627,9 @@ pub const NodeFS = struct {
                 break :brk bun.path.joinZBuf(buf, &path_parts, .auto);
             };
 
+            // Track effective kind - may be resolved from .unknown via stat
+            var effective_kind = current.kind;
+
             enqueue: {
                 switch (current.kind) {
                     // a symlink might be a directory or might not be
@@ -4651,11 +4654,12 @@ pub const NodeFS = struct {
                     .unknown => {
                         if (current.name.len + 1 + name_to_copy.len > bun.MAX_PATH_BYTES) break :enqueue;
 
-                        // Lazy stat to determine if this is a directory we need to recurse into
+                        // Lazy stat to determine the actual kind
                         const stat_result = bun.sys.fstatat(fd, current.name.sliceAssumeZ());
                         switch (stat_result) {
                             .result => |st| {
                                 const real_kind = bun.sys.kindFromMode(st.mode);
+                                effective_kind = real_kind;
                                 if (real_kind == .directory or real_kind == .sym_link) {
                                     async_task.enqueue(name_to_copy);
                                 }
@@ -4679,7 +4683,7 @@ pub const NodeFS = struct {
                     entries.append(.{
                         .name = bun.String.cloneUTF8(utf8_name),
                         .path = dirent_path_prev,
-                        .kind = current.kind,
+                        .kind = effective_kind,
                     }) catch |err| bun.handleOom(err);
                 },
                 Buffer => {
@@ -4791,6 +4795,9 @@ pub const NodeFS = struct {
                     break :brk bun.path.joinZBuf(buf, &path_parts, .auto);
                 };
 
+                // Track effective kind - may be resolved from .unknown via stat
+                var effective_kind = current.kind;
+
                 enqueue: {
                     switch (current.kind) {
                         // a symlink might be a directory or might not be
@@ -4808,11 +4815,12 @@ pub const NodeFS = struct {
                         .unknown => {
                             if (current.name.len + 1 + name_to_copy.len > bun.MAX_PATH_BYTES) break :enqueue;
 
-                            // Lazy stat to determine if this is a directory we need to recurse into
+                            // Lazy stat to determine the actual kind
                             const stat_result = bun.sys.fstatat(fd, current.name.sliceAssumeZ());
                             switch (stat_result) {
                                 .result => |st| {
                                     const real_kind = bun.sys.kindFromMode(st.mode);
+                                    effective_kind = real_kind;
                                     if (real_kind == .directory or real_kind == .sym_link) {
                                         stack.writeItem(basename_allocator.dupeZ(u8, name_to_copy) catch break :enqueue) catch break :enqueue;
                                     }
@@ -4835,7 +4843,7 @@ pub const NodeFS = struct {
                         entries.append(.{
                             .name = jsc.WebCore.encoding.toBunString(utf8_name, args.encoding),
                             .path = dirent_path_prev,
-                            .kind = current.kind,
+                            .kind = effective_kind,
                         }) catch |err| bun.handleOom(err);
                     },
                     Buffer => {

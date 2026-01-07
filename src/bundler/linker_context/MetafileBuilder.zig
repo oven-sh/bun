@@ -318,6 +318,9 @@ pub fn generate(
             j.pushStatic(chunk.metafile_chunk_json);
         } else {
             // Fallback: generate inline (shouldn't happen in normal flow)
+            if (Environment.isDebug) {
+                bun.Output.debugWarn("MetafileBuilder: generating chunk JSON inline for {s}", .{chunk.final_rel_path});
+            }
             const chunk_json = try generateChunkJson(allocator, c, chunk, chunks);
             j.push(chunk_json, allocator);
         }
@@ -356,6 +359,7 @@ fn writeJSONString(writer: anytype, str: []const u8) !void {
 const std = @import("std");
 
 const bun = @import("bun");
+const Environment = bun.Environment;
 const StringJoiner = bun.StringJoiner;
 
 const Chunk = bun.bundle_v2.Chunk;

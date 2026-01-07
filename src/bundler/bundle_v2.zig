@@ -4617,7 +4617,8 @@ pub const Graph = @import("./Graph.zig");
 const string = []const u8;
 
 // C++ binding for lazy metafile getter (defined in BundlerMetafile.cpp)
-extern "c" fn Bun__setupLazyMetafile(globalThis: *jsc.JSGlobalObject, buildOutput: jsc.JSValue, metafileString: jsc.JSValue) void;
+// Uses jsc.conv (SYSV_ABI on Windows x64) for proper calling convention
+extern "C" fn Bun__setupLazyMetafile(globalThis: *jsc.JSGlobalObject, buildOutput: jsc.JSValue, metafileString: jsc.JSValue) callconv(jsc.conv) void;
 
 const options = @import("../options.zig");
 

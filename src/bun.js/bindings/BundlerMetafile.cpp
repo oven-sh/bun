@@ -48,7 +48,7 @@ JSC_DEFINE_CUSTOM_GETTER(bundlerMetafileLazyGetter, (JSGlobalObject * globalObje
 }
 
 // Helper to set up the lazy metafile on a BuildOutput object
-extern "C" void Bun__setupLazyMetafile(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue buildOutputEncoded, JSC::EncodedJSValue metafileStringEncoded)
+extern "C" SYSV_ABI void Bun__setupLazyMetafile(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue buildOutputEncoded, JSC::EncodedJSValue metafileStringEncoded)
 {
     auto& vm = globalObject->vm();
     JSObject* buildOutput = jsDynamicCast<JSObject*>(JSValue::decode(buildOutputEncoded));

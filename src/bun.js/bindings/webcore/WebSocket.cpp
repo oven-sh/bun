@@ -221,6 +221,62 @@ WebSocket::~WebSocket()
     }
 }
 
+ExceptionOr<void> WebSocket::setupProxy(const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders)
+{
+    if (proxyUrl.isNull() || proxyUrl.isEmpty())
+        return { };
+
+    m_proxyUrl = URL { proxyUrl };
+    if (!m_proxyUrl.isValid())
+        return Exception { SyntaxError, makeString("Invalid proxy URL: "_s, proxyUrl) };
+
+    m_proxyIsHTTPS = m_proxyUrl.protocolIs("https"_s);
+
+    // Compute Basic auth from proxy URL credentials
+    if (!m_proxyUrl.user().isEmpty()) {
+        auto credentials = makeString(m_proxyUrl.user(), ':', m_proxyUrl.password());
+        auto utf8 = credentials.utf8();
+        auto encoded = base64EncodeToString(std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(utf8.data()), utf8.length()));
+        m_proxyAuthorization = makeString("Basic "_s, encoded);
+    }
+
+    // Store proxy headers
+    if (proxyHeaders) {
+        auto headersOrException = FetchHeaders::create(WTF::move(proxyHeaders));
+        if (!headersOrException.hasException()) {
+            auto hdrs = headersOrException.releaseReturnValue();
+            auto iterator = hdrs.get().createIterator(false);
+            while (auto value = iterator.next()) {
+                m_proxyHeaders.append({ value->key, value->value });
+            }
+        }
+    }
+
+    return { };
+}
+
+void WebSocket::setExtensionsFromDeflateParams(const PerMessageDeflateParams* deflate_params)
+{
+    if (deflate_params == nullptr)
+        return;
+
+    StringBuilder extensions;
+    extensions.append("permessage-deflate"_s);
+    if (deflate_params->server_no_context_takeover)
+        extensions.append("; server_no_context_takeover"_s);
+    if (deflate_params->client_no_context_takeover)
+        extensions.append("; client_no_context_takeover"_s);
+    if (deflate_params->server_max_window_bits != 15) {
+        extensions.append("; server_max_window_bits="_s);
+        extensions.append(String::number(deflate_params->server_max_window_bits));
+    }
+    if (deflate_params->client_max_window_bits != 15) {
+        extensions.append("; client_max_window_bits="_s);
+        extensions.append(String::number(deflate_params->client_max_window_bits));
+    }
+    m_extensions = extensions.toString();
+}
+
 ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url)
 {
     return create(context, url, Vector<String> {}, std::nullopt);
@@ -273,37 +329,11 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
     auto socket = adoptRef(*new WebSocket(context));
     socket->m_sslConfig = sslConfig; // Set BEFORE connect() so it's available during connection
 
-    // Set up proxy if provided
-    if (!proxyUrl.isNull() && !proxyUrl.isEmpty()) {
-        socket->m_proxyUrl = URL { proxyUrl };
-        if (!socket->m_proxyUrl.isValid()) {
-            return Exception { SyntaxError, makeString("Invalid proxy URL: "_s, proxyUrl) };
-        }
-        socket->m_proxyIsHTTPS = socket->m_proxyUrl.protocolIs("https"_s);
-
-        // Compute Basic auth from proxy URL credentials
-        if (!socket->m_proxyUrl.user().isEmpty()) {
-            auto credentials = makeString(socket->m_proxyUrl.user(), ':', socket->m_proxyUrl.password());
-            auto utf8 = credentials.utf8();
-            auto encoded = base64EncodeToString(std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(utf8.data()), utf8.length()));
-            socket->m_proxyAuthorization = makeString("Basic "_s, encoded);
-        }
-
-        // Store proxy headers
-        if (proxyHeaders) {
-            auto headersOrException = FetchHeaders::create(WTF::move(proxyHeaders));
-            if (!headersOrException.hasException()) {
-                auto hdrs = headersOrException.releaseReturnValue();
-                auto iterator = hdrs.get().createIterator(false);
-                while (auto value = iterator.next()) {
-                    socket->m_proxyHeaders.append({ value->key, value->value });
-                }
-            }
-        }
-    }
+    auto proxyResult = socket->setupProxy(proxyUrl, WTF::move(proxyHeaders));
+    if (proxyResult.hasException())
+        return proxyResult.releaseException();
 
     auto result = socket->connect(url, protocols, WTF::move(headers));
-
     if (result.hasException())
         return result.releaseException();
 
@@ -319,37 +349,11 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
     socket->setRejectUnauthorized(rejectUnauthorized);
     socket->m_sslConfig = sslConfig; // Set BEFORE connect() so it's available during connection
 
-    // Set up proxy if provided
-    if (!proxyUrl.isNull() && !proxyUrl.isEmpty()) {
-        socket->m_proxyUrl = URL { proxyUrl };
-        if (!socket->m_proxyUrl.isValid()) {
-            return Exception { SyntaxError, makeString("Invalid proxy URL: "_s, proxyUrl) };
-        }
-        socket->m_proxyIsHTTPS = socket->m_proxyUrl.protocolIs("https"_s);
-
-        // Compute Basic auth from proxy URL credentials
-        if (!socket->m_proxyUrl.user().isEmpty()) {
-            auto credentials = makeString(socket->m_proxyUrl.user(), ':', socket->m_proxyUrl.password());
-            auto utf8 = credentials.utf8();
-            auto encoded = base64EncodeToString(std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(utf8.data()), utf8.length()));
-            socket->m_proxyAuthorization = makeString("Basic "_s, encoded);
-        }
-
-        // Store proxy headers
-        if (proxyHeaders) {
-            auto headersOrException = FetchHeaders::create(WTF::move(proxyHeaders));
-            if (!headersOrException.hasException()) {
-                auto hdrs = headersOrException.releaseReturnValue();
-                auto iterator = hdrs.get().createIterator(false);
-                while (auto value = iterator.next()) {
-                    socket->m_proxyHeaders.append({ value->key, value->value });
-                }
-            }
-        }
-    }
+    auto proxyResult = socket->setupProxy(proxyUrl, WTF::move(proxyHeaders));
+    if (proxyResult.hasException())
+        return proxyResult.releaseException();
 
     auto result = socket->connect(url, protocols, WTF::move(headers));
-
     if (result.hasException())
         return result.releaseException();
 
@@ -1436,27 +1440,7 @@ void WebSocket::didClose(unsigned unhandledBufferedAmount, unsigned short code, 
 void WebSocket::didConnect(us_socket_t* socket, char* bufferedData, size_t bufferedDataSize, const PerMessageDeflateParams* deflate_params, void* customSSLCtx)
 {
     this->m_upgradeClient = nullptr;
-
-    // Set extensions if permessage-deflate was negotiated
-    if (deflate_params != nullptr) {
-        StringBuilder extensions;
-        extensions.append("permessage-deflate"_s);
-        if (deflate_params->server_no_context_takeover) {
-            extensions.append("; server_no_context_takeover"_s);
-        }
-        if (deflate_params->client_no_context_takeover) {
-            extensions.append("; client_no_context_takeover"_s);
-        }
-        if (deflate_params->server_max_window_bits != 15) {
-            extensions.append("; server_max_window_bits="_s);
-            extensions.append(String::number(deflate_params->server_max_window_bits));
-        }
-        if (deflate_params->client_max_window_bits != 15) {
-            extensions.append("; client_max_window_bits="_s);
-            extensions.append(String::number(deflate_params->client_max_window_bits));
-        }
-        this->m_extensions = extensions.toString();
-    }
+    setExtensionsFromDeflateParams(deflate_params);
 
     // Use TLS WebSocket client if:
     // 1. Target is wss:// (m_isSecure), OR
@@ -1669,27 +1653,7 @@ extern "C" void WebSocketProxyTunnel__setConnectedWebSocket(void* tunnel, void* 
 void WebSocket::didConnectWithTunnel(void* tunnel, char* bufferedData, size_t bufferedDataSize, const PerMessageDeflateParams* deflate_params)
 {
     this->m_upgradeClient = nullptr;
-
-    // Set extensions if permessage-deflate was negotiated
-    if (deflate_params != nullptr) {
-        StringBuilder extensions;
-        extensions.append("permessage-deflate"_s);
-        if (deflate_params->server_no_context_takeover) {
-            extensions.append("; server_no_context_takeover"_s);
-        }
-        if (deflate_params->client_no_context_takeover) {
-            extensions.append("; client_no_context_takeover"_s);
-        }
-        if (deflate_params->server_max_window_bits != 15) {
-            extensions.append("; server_max_window_bits="_s);
-            extensions.append(String::number(deflate_params->server_max_window_bits));
-        }
-        if (deflate_params->client_max_window_bits != 15) {
-            extensions.append("; client_max_window_bits="_s);
-            extensions.append(String::number(deflate_params->client_max_window_bits));
-        }
-        this->m_extensions = extensions.toString();
-    }
+    setExtensionsFromDeflateParams(deflate_params);
 
     // For wss:// through HTTP proxy, we use a plain (non-TLS) WebSocket client
     // because the TLS is handled by the proxy tunnel

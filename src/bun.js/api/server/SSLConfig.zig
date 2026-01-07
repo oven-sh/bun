@@ -403,17 +403,18 @@ pub fn takeServerName(this: *SSLConfig) ?[]const u8 {
 
 /// Returns true if this SSLConfig has any custom TLS options that would require
 /// a per-connection SSL context instead of the shared default context.
-/// This includes custom CA certificates, client certificates, keys, etc.
+/// This must match the conditions that set `requires_custom_request_ctx = true`
+/// in `fromGenerated()`.
 pub fn hasCustomOptions(this: *const SSLConfig) bool {
-    return this.ca != null or
+    return this.server_name != null or
+        this.ca != null or
         this.ca_file_name != null or
         this.cert != null or
         this.cert_file_name != null or
         this.key != null or
         this.key_file_name != null or
         this.ssl_ciphers != null or
-        this.dh_params_file_name != null or
-        this.passphrase != null;
+        this.protos != null;
 }
 
 const std = @import("std");

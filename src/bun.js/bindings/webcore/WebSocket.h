@@ -217,6 +217,8 @@ private:
 
     void sendWebSocketString(const String& message, const Opcode opcode);
     void sendWebSocketData(const char* data, size_t length, const Opcode opcode);
+    ExceptionOr<void> setupProxy(const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders);
+    void setExtensionsFromDeflateParams(const PerMessageDeflateParams* deflate_params);
 
     enum class BinaryType { Blob,
         ArrayBuffer,

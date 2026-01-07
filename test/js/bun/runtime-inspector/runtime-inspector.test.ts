@@ -4,7 +4,8 @@ import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 
 /**
- * Reads from a stderr stream until "Debugger listening" appears.
+ * Reads from a stderr stream until the full Bun Inspector banner appears.
+ * The banner has "Bun Inspector" in both header and footer lines.
  * Returns the accumulated stderr output.
  */
 async function waitForDebuggerListening(
@@ -14,7 +15,15 @@ async function waitForDebuggerListening(
   const decoder = new TextDecoder();
   let stderr = "";
 
-  while (!stderr.includes("Debugger listening")) {
+  // Wait for the full banner (header + content + footer)
+  // The banner format is:
+  // --------------------- Bun Inspector ---------------------
+  // Listening:
+  //   ws://localhost:6499/...
+  // Inspect in browser:
+  //   https://debug.bun.sh/#localhost:6499/...
+  // --------------------- Bun Inspector ---------------------
+  while ((stderr.match(/Bun Inspector/g) || []).length < 2) {
     const { value, done } = await reader.read();
     if (done) break;
     stderr += decoder.decode(value, { stream: true });
@@ -85,7 +94,8 @@ describe("Runtime inspector activation", () => {
       targetProc.kill();
       await targetProc.exited;
 
-      expect(targetStderr).toContain("Debugger listening on ws://127.0.0.1:6499/");
+      expect(targetStderr).toContain("Bun Inspector");
+      expect(targetStderr).toContain("ws://localhost:6499/");
     });
 
     test.todoIf(isWindows)("throws error for non-existent process", async () => {
@@ -154,8 +164,8 @@ describe("Runtime inspector activation", () => {
       });
       expect(await debug1.exited).toBe(0);
 
-      // Wait for the first debugger activation message
-      while (!stderr.includes("Debugger listening")) {
+      // Wait for the full debugger banner (header + content + footer)
+      while ((stderr.match(/Bun Inspector/g) || []).length < 2) {
         const { value, done } = await stderrReader.read();
         if (done) break;
         stderr += stderrDecoder.decode(value, { stream: true });
@@ -175,9 +185,9 @@ describe("Runtime inspector activation", () => {
       targetProc.kill();
       await targetProc.exited;
 
-      // Should only see one "Debugger listening" message
-      const matches = stderr.match(/Debugger listening/g);
-      expect(matches?.length ?? 0).toBe(1);
+      // Should only see one "Bun Inspector" banner (two occurrences of the text, for header and footer)
+      const matches = stderr.match(/Bun Inspector/g);
+      expect(matches?.length ?? 0).toBe(2);
     });
 
     test("can activate inspector in multiple independent processes", async () => {
@@ -271,8 +281,8 @@ describe("Runtime inspector activation", () => {
       await Promise.all([target1.exited, target2.exited]);
 
       // Both should have activated their inspector
-      expect(result1.stderr).toContain("Debugger listening");
-      expect(result2.stderr).toContain("Debugger listening");
+      expect(result1.stderr).toContain("Bun Inspector");
+      expect(result2.stderr).toContain("Bun Inspector");
     });
 
     test("throws when called with no arguments", async () => {

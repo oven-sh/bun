@@ -115,12 +115,10 @@ fn deinit(this: *WebSocketProxyTunnel) void {
 /// Start TLS handshake inside the tunnel
 /// The ssl_options should contain all TLS configuration including CA certificates.
 pub fn start(this: *WebSocketProxyTunnel, ssl_options: SSLConfig, initial_data: []const u8) !void {
-    var options = ssl_options;
     // Allow handshake to complete so we can access peer certificate for manual
     // hostname verification in onHandshake(). The actual reject_unauthorized
     // check uses this.reject_unauthorized field.
-    options.reject_unauthorized = 0;
-    options.request_cert = 1;
+    const options = ssl_options.forClientVerification();
     log("Starting WebSocketProxyTunnel TLS handshake {any}", .{ssl_options});
 
     this.wrapper = try SSLWrapperType.init(options, true, .{

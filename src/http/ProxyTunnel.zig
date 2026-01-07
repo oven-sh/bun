@@ -272,10 +272,8 @@ pub fn start(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is
         .ref_count = .init(),
     });
 
-    var custom_options = ssl_options;
-    // we always request the cert so we can verify it and also we manually abort the connection if the hostname doesn't match
-    custom_options.reject_unauthorized = 0;
-    custom_options.request_cert = 1;
+    // We always request the cert so we can verify it and also we manually abort the connection if the hostname doesn't match
+    const custom_options = ssl_options.forClientVerification();
     proxy_tunnel.wrapper = SSLWrapper(*HTTPClient).init(custom_options, true, .{
         .onOpen = ProxyTunnel.onOpen,
         .onData = ProxyTunnel.onData,

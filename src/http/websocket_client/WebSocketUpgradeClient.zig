@@ -240,11 +240,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             if (comptime ssl) {
                 if (ssl_config) |config| {
                     if (config.requires_custom_request_ctx) {
-                        var ctx_opts = config.asUSockets();
-                        // We request the cert so we can verify it
-                        ctx_opts.request_cert = 1;
-                        // We manually handle rejection in handleHandshake
-                        ctx_opts.reject_unauthorized = 0;
+                        const ctx_opts = config.asUSocketsForClientVerification();
 
                         var err: uws.create_bun_socket_error_t = .none;
                         if (uws.SocketContext.createSSLContext(

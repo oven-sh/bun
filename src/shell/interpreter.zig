@@ -748,7 +748,6 @@ pub const Interpreter = struct {
             jsobjs.deinit();
             if (export_env) |*ee| ee.deinit();
             if (cwd) |*cc| cc.deref();
-            shargs.deinit();
             interpreter.finalize();
             return error.JSError;
         }

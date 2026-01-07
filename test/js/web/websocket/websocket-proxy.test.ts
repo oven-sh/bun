@@ -142,6 +142,18 @@ describe("WebSocket proxy API", () => {
     ws.close();
   });
 
+  test("accepts proxy option with Headers class instance", () => {
+    const headers = new Headers({ "X-Custom-Header": "test-value" });
+    const ws = new WebSocket("ws://example.com", {
+      proxy: {
+        url: `http://127.0.0.1:${proxyPort}`,
+        headers: headers,
+      },
+    });
+    expect(ws.readyState).toBe(WebSocket.CONNECTING);
+    ws.close();
+  });
+
   test("accepts proxy URL with credentials", () => {
     const ws = new WebSocket("ws://example.com", {
       proxy: `http://user:pass@127.0.0.1:${authProxyPort}`,
@@ -245,6 +257,30 @@ describe("WebSocket through HTTP CONNECT proxy", () => {
       proxy: {
         url: `http://127.0.0.1:${proxyPort}`,
         headers: { "X-Custom-Proxy-Header": "test-value" },
+      },
+    });
+
+    ws.onopen = () => {
+      ws.close();
+      resolve();
+    };
+
+    ws.onerror = event => {
+      reject(event);
+    };
+
+    await promise;
+    gc();
+  });
+
+  test("ws:// through proxy with Headers class instance", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+
+    const headers = new Headers({ "X-Custom-Proxy-Header": "test-value-from-headers-class" });
+    const ws = new WebSocket(`ws://127.0.0.1:${wsPort}`, {
+      proxy: {
+        url: `http://127.0.0.1:${proxyPort}`,
+        headers: headers,
       },
     });
 

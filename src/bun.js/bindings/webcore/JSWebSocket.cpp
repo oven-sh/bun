@@ -63,6 +63,7 @@
 #include <wtf/URL.h>
 #include "IDLTypes.h"
 #include "FetchHeaders.h"
+#include "JSFetchHeaders.h"
 #include "headers.h"
 
 namespace WebCore {
@@ -287,8 +288,21 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
                         auto proxyHeadersValue = proxyOptions->getIfPropertyExists(globalObject, builtinnames.headersPublicName());
                         RETURN_IF_EXCEPTION(throwScope, {});
                         if (proxyHeadersValue && !proxyHeadersValue.isUndefinedOrNull()) {
-                            proxyHeadersInit = convert<IDLUnion<IDLSequence<IDLSequence<IDLByteString>>, IDLRecord<IDLByteString, IDLByteString>>>(*lexicalGlobalObject, proxyHeadersValue);
-                            RETURN_IF_EXCEPTION(throwScope, {});
+                            // Check if it's already a Headers instance (like fetch does)
+                            if (auto* jsHeaders = jsDynamicCast<JSFetchHeaders*>(proxyHeadersValue)) {
+                                // Convert FetchHeaders to the Init variant
+                                auto& headers = jsHeaders->wrapped();
+                                Vector<KeyValuePair<String, String>> pairs;
+                                auto iterator = headers.createIterator(false);
+                                while (auto value = iterator.next()) {
+                                    pairs.append({ value->key, value->value });
+                                }
+                                proxyHeadersInit = WTF::move(pairs);
+                            } else {
+                                // Fall back to IDL conversion for plain objects/arrays
+                                proxyHeadersInit = convert<IDLUnion<IDLSequence<IDLSequence<IDLByteString>>, IDLRecord<IDLByteString, IDLByteString>>>(*lexicalGlobalObject, proxyHeadersValue);
+                                RETURN_IF_EXCEPTION(throwScope, {});
+                            }
                         }
                     }
                 }
@@ -332,8 +346,21 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
                             RETURN_IF_EXCEPTION(throwScope, {});
                         }
                         if (!proxyHeadersValue.isUndefinedOrNull()) {
-                            proxyHeadersInit = convert<IDLUnion<IDLSequence<IDLSequence<IDLByteString>>, IDLRecord<IDLByteString, IDLByteString>>>(*lexicalGlobalObject, proxyHeadersValue);
-                            RETURN_IF_EXCEPTION(throwScope, {});
+                            // Check if it's already a Headers instance (like fetch does)
+                            if (auto* jsHeaders = jsDynamicCast<JSFetchHeaders*>(proxyHeadersValue)) {
+                                // Convert FetchHeaders to the Init variant
+                                auto& headers = jsHeaders->wrapped();
+                                Vector<KeyValuePair<String, String>> pairs;
+                                auto iterator = headers.createIterator(false);
+                                while (auto value = iterator.next()) {
+                                    pairs.append({ value->key, value->value });
+                                }
+                                proxyHeadersInit = WTF::move(pairs);
+                            } else {
+                                // Fall back to IDL conversion for plain objects/arrays
+                                proxyHeadersInit = convert<IDLUnion<IDLSequence<IDLSequence<IDLByteString>>, IDLRecord<IDLByteString, IDLByteString>>>(*lexicalGlobalObject, proxyHeadersValue);
+                                RETURN_IF_EXCEPTION(throwScope, {});
+                            }
                         }
                     }
 

@@ -224,7 +224,7 @@ WebSocket::~WebSocket()
 ExceptionOr<void> WebSocket::setupProxy(const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders)
 {
     if (proxyUrl.isNull() || proxyUrl.isEmpty())
-        return { };
+        return {};
 
     m_proxyUrl = URL { proxyUrl };
     if (!m_proxyUrl.isValid())
@@ -252,7 +252,7 @@ ExceptionOr<void> WebSocket::setupProxy(const String& proxyUrl, std::optional<Fe
         }
     }
 
-    return { };
+    return {};
 }
 
 void WebSocket::setExtensionsFromDeflateParams(const PerMessageDeflateParams* deflate_params)

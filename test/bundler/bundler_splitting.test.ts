@@ -497,4 +497,42 @@ describe("bundler", () => {
       { file: "/out/c.js", stdout: "" },
     ],
   });
+
+  // Test: Aliased exports with entry point overlap
+  // When shared.ts exports the same value under multiple names, and is both
+  // an entry point and imported by other entry points
+  itBundled("splitting/AliasedExportsWithEntryPointOverlap", {
+    files: {
+      "/shared.ts": `
+        export const foo = "foo";
+        export { foo as bar };
+      `,
+      "/entry-a.ts": `
+        import { foo } from "./shared";
+        console.log("a:", foo);
+      `,
+      "/entry-b.ts": `
+        import { bar } from "./shared";
+        console.log("b:", bar);
+      `,
+    },
+    entryPoints: ["/entry-a.ts", "/entry-b.ts", "/shared.ts"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      const sharedContent = api.readFile("/out/shared.js");
+      const exportMatches = sharedContent.match(/export\s*\{/g) || [];
+      if (exportMatches.length !== 1) {
+        throw new Error(
+          `shared.js contains ${exportMatches.length} export statements, expected exactly 1. Content:\n${sharedContent}`,
+        );
+      }
+    },
+    run: [
+      { file: "/out/entry-a.js", stdout: "a: foo" },
+      { file: "/out/entry-b.js", stdout: "b: foo" },
+      { file: "/out/shared.js", stdout: "" },
+    ],
+  });
 });

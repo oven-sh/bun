@@ -6,7 +6,7 @@
  */
 import { spawn, type ReadableSubprocess } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, tmpdirSync } from "harness";
+import { isLinux, tmpdirSync } from "harness";
 import fs from "node:fs";
 import { join } from "node:path";
 

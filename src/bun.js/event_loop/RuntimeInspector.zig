@@ -79,13 +79,6 @@ fn activateInspector(vm: *VirtualMachine) !void {
     vm.transpiler.options.debugger = true;
 
     try Debugger.create(vm, vm.global);
-
-    Output.prettyErrorln(
-        \\Debugger listening on ws://127.0.0.1:{s}/
-        \\For help, see: https://bun.com/docs/runtime/debugger
-        \\
-    , .{inspector_port});
-    Output.flush();
 }
 
 pub fn isInstalled() bool {

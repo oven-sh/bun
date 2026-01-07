@@ -54,11 +54,12 @@ describe.skipIf(!isWindows)("Runtime inspector Windows file mapping", () => {
     expect(debugStderr).toBe("");
     expect(debugExitCode).toBe(0);
 
-    // Wait for the debugger to start by reading stderr until we see the message
+    // Wait for the debugger to start by reading stderr until the full banner appears
     const stderrReader = targetProc.stderr.getReader();
     const stderrDecoder = new TextDecoder();
     let targetStderr = "";
-    while (!targetStderr.includes("Debugger listening")) {
+    // Wait for the full banner (header + content + footer)
+    while ((targetStderr.match(/Bun Inspector/g) || []).length < 2) {
       const { value, done } = await stderrReader.read();
       if (done) break;
       targetStderr += stderrDecoder.decode(value, { stream: true });
@@ -69,7 +70,8 @@ describe.skipIf(!isWindows)("Runtime inspector Windows file mapping", () => {
     await targetProc.exited;
 
     // Verify inspector actually started
-    expect(targetStderr).toContain("Debugger listening on ws://127.0.0.1:6499/");
+    expect(targetStderr).toContain("Bun Inspector");
+    expect(targetStderr).toContain("ws://localhost:6499/");
   });
 
   test("_debugProcess works with current process's own pid", async () => {
@@ -94,7 +96,7 @@ describe.skipIf(!isWindows)("Runtime inspector Windows file mapping", () => {
 
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-    expect(stderr).toContain("Debugger listening");
+    expect(stderr).toContain("Bun Inspector");
     expect(exitCode).toBe(0);
   });
 
@@ -147,8 +149,8 @@ describe.skipIf(!isWindows)("Runtime inspector Windows file mapping", () => {
     });
     await debug1.exited;
 
-    // Wait for debugger to actually start by reading stderr
-    while (!stderr.includes("Debugger listening")) {
+    // Wait for the full banner (header + content + footer)
+    while ((stderr.match(/Bun Inspector/g) || []).length < 2) {
       const { value, done } = await stderrReader.read();
       if (done) break;
       stderr += stderrDecoder.decode(value, { stream: true });
@@ -168,9 +170,9 @@ describe.skipIf(!isWindows)("Runtime inspector Windows file mapping", () => {
     stderr += remainingStderr;
     const exitCode = await targetProc.exited;
 
-    // Should only see one "Debugger listening" message
-    const matches = stderr.match(/Debugger listening/g);
-    expect(matches?.length ?? 0).toBe(1);
+    // Should only see one "Bun Inspector" banner (two occurrences of the text, for header and footer)
+    const matches = stderr.match(/Bun Inspector/g);
+    expect(matches?.length ?? 0).toBe(2);
     expect(exitCode).toBe(0);
   });
 
@@ -250,8 +252,8 @@ describe.skipIf(!isWindows)("Runtime inspector Windows file mapping", () => {
     const [stderr1, exitCode1] = await Promise.all([target1.stderr.text(), target1.exited]);
     const [stderr2, exitCode2] = await Promise.all([target2.stderr.text(), target2.exited]);
 
-    expect(stderr1).toContain("Debugger listening");
-    expect(stderr2).toContain("Debugger listening");
+    expect(stderr1).toContain("Bun Inspector");
+    expect(stderr2).toContain("Bun Inspector");
     expect(exitCode1).toBe(0);
     expect(exitCode2).toBe(0);
   });

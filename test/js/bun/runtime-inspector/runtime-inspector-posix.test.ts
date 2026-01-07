@@ -44,12 +44,13 @@ describe.skipIf(isWindows)("Runtime inspector SIGUSR1 activation", () => {
     // Send SIGUSR1
     process.kill(pid, "SIGUSR1");
 
-    // Wait for inspector to activate by reading stderr until "Debugger listening" appears
+    // Wait for inspector to activate by reading stderr until the full banner appears
     const stderrReader = proc.stderr.getReader();
     const stderrDecoder = new TextDecoder();
     let stderr = "";
 
-    while (!stderr.includes("Debugger listening")) {
+    // Wait for the full banner (header + content + footer)
+    while ((stderr.match(/Bun Inspector/g) || []).length < 2) {
       const { value, done } = await stderrReader.read();
       if (done) break;
       stderr += stderrDecoder.decode(value, { stream: true });
@@ -60,7 +61,8 @@ describe.skipIf(isWindows)("Runtime inspector SIGUSR1 activation", () => {
     proc.kill();
     await proc.exited;
 
-    expect(stderr).toContain("Debugger listening on ws://127.0.0.1:6499/");
+    expect(stderr).toContain("Bun Inspector");
+    expect(stderr).toContain("ws://localhost:6499/");
   });
 
   test("user SIGUSR1 listener takes precedence over inspector activation", async () => {
@@ -113,7 +115,7 @@ describe.skipIf(isWindows)("Runtime inspector SIGUSR1 activation", () => {
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
     expect(output).toContain("USER_HANDLER_CALLED");
-    expect(stderr).not.toContain("Debugger listening");
+    expect(stderr).not.toContain("Bun Inspector");
     expect(exitCode).toBe(0);
   });
 
@@ -160,8 +162,8 @@ describe.skipIf(isWindows)("Runtime inspector SIGUSR1 activation", () => {
     const stderrDecoder = new TextDecoder();
     let stderr = "";
 
-    // Wait until we see "Debugger listening" before sending second signal
-    while (!stderr.includes("Debugger listening")) {
+    // Wait for the full banner (header + content + footer) before sending second signal
+    while ((stderr.match(/Bun Inspector/g) || []).length < 2) {
       const { value, done } = await stderrReader.read();
       if (done) break;
       stderr += stderrDecoder.decode(value, { stream: true });
@@ -175,9 +177,9 @@ describe.skipIf(isWindows)("Runtime inspector SIGUSR1 activation", () => {
     const [remainingStderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
     stderr += remainingStderr;
 
-    // Should only see one "Debugger listening" message
-    const matches = stderr.match(/Debugger listening/g);
-    expect(matches?.length ?? 0).toBe(1);
+    // Should only see one "Bun Inspector" banner (two occurrences of the text, for header and footer)
+    const matches = stderr.match(/Bun Inspector/g);
+    expect(matches?.length ?? 0).toBe(2);
     expect(exitCode).toBe(0);
   });
 
@@ -202,7 +204,7 @@ describe.skipIf(isWindows)("Runtime inspector SIGUSR1 activation", () => {
 
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-    expect(stderr).toContain("Debugger listening");
+    expect(stderr).toContain("Bun Inspector");
     expect(exitCode).toBe(0);
   });
 
@@ -249,16 +251,16 @@ describe.skipIf(isWindows)("Runtime inspector SIGUSR1 activation", () => {
 
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-    // RuntimeInspector's "Debugger listening" should NOT appear because the signal
-    // handler was never installed (debugger was already enabled via --inspect).
-    expect(stderr).not.toContain("Debugger listening");
+    // Should only see one "Bun Inspector" banner (from --inspect flag, not from SIGUSR1)
+    // The banner has two occurrences of "Bun Inspector" (header and footer)
+    const matches = stderr.match(/Bun Inspector/g);
+    expect(matches?.length ?? 0).toBe(2);
     expect(exitCode).toBe(0);
   });
 
   test("SIGUSR1 is ignored when started with --inspect-wait", async () => {
     // When the process is started with --inspect-wait, the debugger is already active.
-    // Sending SIGUSR1 should NOT print the RuntimeInspector's "Debugger listening" message.
-    // Note: The standard debugger prints "Bun Inspector" and "Listening:", not "Debugger listening".
+    // Sending SIGUSR1 should NOT activate the inspector again.
     await using proc = spawn({
       cmd: [bunExe(), "--inspect-wait", "-e", "setTimeout(() => process.exit(0), 500)"],
       env: bunEnv,
@@ -295,17 +297,15 @@ describe.skipIf(isWindows)("Runtime inspector SIGUSR1 activation", () => {
 
     await proc.exited;
 
-    // SIGUSR1 should NOT trigger RuntimeInspector's "Debugger listening" message
-    // because the debugger was already started via --inspect-wait flag
-    expect(stderr).not.toContain("Debugger listening");
-    // Verify the standard debugger message IS present
-    expect(stderr).toContain("Bun Inspector");
+    // Should only see one "Bun Inspector" banner (from --inspect-wait flag, not from SIGUSR1)
+    // The banner has two occurrences of "Bun Inspector" (header and footer)
+    const matches = stderr.match(/Bun Inspector/g);
+    expect(matches?.length ?? 0).toBe(2);
   });
 
   test("SIGUSR1 is ignored when started with --inspect-brk", async () => {
     // When the process is started with --inspect-brk, the debugger is already active.
-    // Sending SIGUSR1 should NOT print the RuntimeInspector's "Debugger listening" message.
-    // Note: The standard debugger prints "Bun Inspector" and "Listening:", not "Debugger listening".
+    // Sending SIGUSR1 should NOT activate the inspector again.
     await using proc = spawn({
       cmd: [bunExe(), "--inspect-brk", "-e", "setTimeout(() => process.exit(0), 500)"],
       env: bunEnv,
@@ -342,10 +342,9 @@ describe.skipIf(isWindows)("Runtime inspector SIGUSR1 activation", () => {
 
     await proc.exited;
 
-    // SIGUSR1 should NOT trigger RuntimeInspector's "Debugger listening" message
-    // because the debugger was already started via --inspect-brk flag
-    expect(stderr).not.toContain("Debugger listening");
-    // Verify the standard debugger message IS present
-    expect(stderr).toContain("Bun Inspector");
+    // Should only see one "Bun Inspector" banner (from --inspect-brk flag, not from SIGUSR1)
+    // The banner has two occurrences of "Bun Inspector" (header and footer)
+    const matches = stderr.match(/Bun Inspector/g);
+    expect(matches?.length ?? 0).toBe(2);
   });
 });

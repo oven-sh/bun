@@ -16,7 +16,10 @@ describe.skipIf(!isLinux)("glob on a FUSE mount", () => {
     const mountpoint = tmpdirSync();
 
     let pythonProcess: ReadableSubprocess | undefined = undefined;
+    let result: T;
     let originalError: Error | undefined;
+    let cleanupError: Error | undefined;
+
     try {
       // setup FUSE filesystem (uses fuse-fs.py which returns DT_UNKNOWN)
       pythonProcess = spawn({
@@ -37,10 +40,9 @@ describe.skipIf(!isLinux)("glob on a FUSE mount", () => {
       }
       expect(fs.existsSync(join(mountpoint, "main.js"))).toBeTrue();
 
-      return await fn(mountpoint);
+      result = await fn(mountpoint);
     } catch (e) {
       originalError = e instanceof Error ? e : new Error(String(e));
-      throw e;
     } finally {
       if (pythonProcess) {
         try {
@@ -53,15 +55,27 @@ describe.skipIf(!isLinux)("glob on a FUSE mount", () => {
         } catch (e) {
           pythonProcess.kill("SIGKILL");
           console.error("python process errored:", await new Response(pythonProcess.stderr).text());
-          // Don't re-throw cleanup errors to preserve original test failures
+          // Capture cleanup error but don't throw inside finally
           if (!originalError) {
-            throw e;
+            cleanupError = e instanceof Error ? e : new Error(String(e));
           }
         }
       }
     }
+
+    // Re-throw errors outside finally block
+    if (originalError) {
+      throw originalError;
+    }
+    if (cleanupError) {
+      throw cleanupError;
+    }
+
+    return result!;
   }
 
+  // Set a long timeout so the test can clean up the filesystem mount itself
+  // rather than getting interrupted by timeout (matches run-file-on-fuse.test.ts)
   test(
     "Bun.Glob.scanSync finds files on FUSE mount",
     async () => {
@@ -121,4 +135,6 @@ describe.skipIf(!isLinux)("glob on a FUSE mount", () => {
     10000
   );
 });
+
+
 

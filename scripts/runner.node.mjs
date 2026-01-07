@@ -385,6 +385,29 @@ function getTestModifiers(testPath) {
 }
 
 /**
+ * @returns {string[]}
+ */
+function loadRetryableTests() {
+  const retryableTests = readFileSync(import.meta.dirname + "/retryable-tests.txt", "utf8")
+    .split("\n")
+    .filter(line => line.trim() && !line.trim().startsWith("#"));
+
+  return retryableTests;
+}
+
+/**
+ * @param {string} testPath
+ * @param {string[]} retryableTests
+ * @returns {boolean}
+ */
+function isTestRetryable(testPath, retryableTests) {
+  // Check if test path matches any pattern in the retryable list
+  const normalizedPath = testPath.replace(/\\/g, "/");
+
+  return retryableTests.some(pattern => normalizedPath.includes(pattern));
+}
+
+/**
  * @returns {Promise<TestResult[]>}
  */
 async function runTests() {
@@ -405,6 +428,9 @@ async function runTests() {
 
   const tests = getRelevantTests(testsPath, modifiers, expectations);
   !isQuiet && console.log("Running tests:", tests.length);
+
+  // Load retryable tests list
+  const retryableTests = loadRetryableTests();
 
   /** @type {VendorTest[] | undefined} */
   let vendorTests;
@@ -439,9 +465,13 @@ async function runTests() {
   const runTest = async (title, fn) => {
     const index = ++i;
 
+    // Check if test is retryable
+    const canRetry = isTestRetryable(title, retryableTests);
+    const effectiveMaxAttempts = canRetry ? maxAttempts : 1;
+
     let result, failure, flaky;
     let attempt = 1;
-    for (; attempt <= maxAttempts; attempt++) {
+    for (; attempt <= effectiveMaxAttempts; attempt++) {
       if (attempt > 1) {
         await new Promise(resolve => setTimeout(resolve, 5000 + Math.random() * 10_000));
       }
@@ -467,7 +497,7 @@ async function runTests() {
         break;
       }
 
-      const color = attempt >= maxAttempts ? "red" : "yellow";
+      const color = attempt >= effectiveMaxAttempts ? "red" : "yellow";
       const label = `${getAnsi(color)}[${index}/${total}] ${title} - ${error}${getAnsi("reset")}`;
       startGroup(label, () => {
         if (parallelism > 1) return;
@@ -478,7 +508,7 @@ async function runTests() {
       failure ||= result;
       flaky ||= true;
 
-      if (attempt >= maxAttempts || isAlwaysFailure(error)) {
+      if (attempt >= effectiveMaxAttempts || isAlwaysFailure(error)) {
         flaky = false;
         failedResults.push(failure);
         failedResultsTitles.push(title);

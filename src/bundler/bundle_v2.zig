@@ -1546,7 +1546,10 @@ pub const BundleV2 = struct {
 
         // Generate metafile if requested
         const metafile: ?[]const u8 = if (this.linker.options.metafile)
-            LinkerContext.MetafileBuilder.generate(bun.default_allocator, &this.linker, chunks) catch null
+            LinkerContext.MetafileBuilder.generate(bun.default_allocator, &this.linker, chunks) catch |err| blk: {
+                bun.Output.warn("Failed to generate metafile: {s}", .{@errorName(err)});
+                break :blk null;
+            }
         else
             null;
 
@@ -2685,7 +2688,10 @@ pub const BundleV2 = struct {
 
         // Generate metafile if requested
         const metafile: ?[]const u8 = if (this.linker.options.metafile)
-            LinkerContext.MetafileBuilder.generate(bun.default_allocator, &this.linker, chunks) catch null
+            LinkerContext.MetafileBuilder.generate(bun.default_allocator, &this.linker, chunks) catch |err| blk: {
+                bun.Output.warn("Failed to generate metafile: {s}", .{@errorName(err)});
+                break :blk null;
+            }
         else
             null;
 

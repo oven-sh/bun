@@ -44,6 +44,9 @@ JSC_DEFINE_CUSTOM_GETTER(bundlerMetafileLazyGetter, (JSGlobalObject * globalObje
     // Replace the getter with the parsed value
     thisObject->putDirect(vm, property, parsedValue, 0);
 
+    // Clear the raw JSON string so it can be GC'd
+    thisObject->putDirect(vm, privateName, jsUndefined(), 0);
+
     return JSValue::encode(parsedValue);
 }
 
@@ -53,6 +56,7 @@ extern "C" SYSV_ABI void Bun__setupLazyMetafile(JSC::JSGlobalObject* globalObjec
     auto& vm = globalObject->vm();
     JSObject* buildOutput = jsDynamicCast<JSObject*>(JSValue::decode(buildOutputEncoded));
 
+    ASSERT(buildOutput);
     if (!buildOutput) {
         return;
     }

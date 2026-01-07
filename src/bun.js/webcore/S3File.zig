@@ -253,8 +253,9 @@ pub fn constructS3FileWithS3CredentialsAndOptions(
     default_options: bun.S3.MultiPartUploadOptions,
     default_acl: ?bun.S3.ACL,
     default_storage_class: ?bun.S3.StorageClass,
+    default_request_payer: bool,
 ) bun.JSError!Blob {
-    var aws_options = try S3.S3Credentials.getCredentialsWithOptions(default_credentials.*, default_options, options, default_acl, default_storage_class, globalObject);
+    var aws_options = try S3.S3Credentials.getCredentialsWithOptions(default_credentials.*, default_options, options, default_acl, default_storage_class, default_request_payer, globalObject);
     defer aws_options.deinit();
 
     const store = brk: {
@@ -268,6 +269,7 @@ pub fn constructS3FileWithS3CredentialsAndOptions(
     store.data.s3.options = aws_options.options;
     store.data.s3.acl = aws_options.acl;
     store.data.s3.storage_class = aws_options.storage_class;
+    store.data.s3.request_payer = aws_options.request_payer;
 
     var blob = Blob.initWithStore(store, globalObject);
     if (options) |opts| {
@@ -304,13 +306,14 @@ pub fn constructS3FileWithS3Credentials(
     options: ?jsc.JSValue,
     existing_credentials: S3.S3Credentials,
 ) bun.JSError!Blob {
-    var aws_options = try S3.S3Credentials.getCredentialsWithOptions(existing_credentials, .{}, options, null, null, globalObject);
+    var aws_options = try S3.S3Credentials.getCredentialsWithOptions(existing_credentials, .{}, options, null, null, false, globalObject);
     defer aws_options.deinit();
     const store = bun.handleOom(Blob.Store.initS3(path, null, aws_options.credentials, bun.default_allocator));
     errdefer store.deinit();
     store.data.s3.options = aws_options.options;
     store.data.s3.acl = aws_options.acl;
     store.data.s3.storage_class = aws_options.storage_class;
+    store.data.s3.request_payer = aws_options.request_payer;
 
     var blob = Blob.initWithStore(store, globalObject);
     if (options) |opts| {
@@ -415,11 +418,12 @@ pub const S3BlobStatTask = struct {
         });
         this.store.ref();
         const promise = this.promise.value();
-        const credentials = blob.store.?.data.s3.getCredentials();
-        const path = blob.store.?.data.s3.path();
+        const s3_store = &blob.store.?.data.s3;
+        const credentials = s3_store.getCredentials();
+        const path = s3_store.path();
         const env = globalThis.bunVM().transpiler.env;
 
-        try S3.stat(credentials, path, @ptrCast(&S3BlobStatTask.onS3ExistsResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
+        try S3.stat(credentials, path, @ptrCast(&S3BlobStatTask.onS3ExistsResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null, s3_store.request_payer);
         return promise;
     }
     pub fn stat(globalThis: *jsc.JSGlobalObject, blob: *Blob) bun.JSTerminated!JSValue {
@@ -430,11 +434,12 @@ pub const S3BlobStatTask = struct {
         });
         this.store.ref();
         const promise = this.promise.value();
-        const credentials = blob.store.?.data.s3.getCredentials();
-        const path = blob.store.?.data.s3.path();
+        const s3_store = &blob.store.?.data.s3;
+        const credentials = s3_store.getCredentials();
+        const path = s3_store.path();
         const env = globalThis.bunVM().transpiler.env;
 
-        try S3.stat(credentials, path, @ptrCast(&S3BlobStatTask.onS3StatResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
+        try S3.stat(credentials, path, @ptrCast(&S3BlobStatTask.onS3StatResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null, s3_store.request_payer);
         return promise;
     }
     pub fn size(globalThis: *jsc.JSGlobalObject, blob: *Blob) bun.JSTerminated!JSValue {
@@ -445,11 +450,12 @@ pub const S3BlobStatTask = struct {
         });
         this.store.ref();
         const promise = this.promise.value();
-        const credentials = blob.store.?.data.s3.getCredentials();
-        const path = blob.store.?.data.s3.path();
+        const s3_store = &blob.store.?.data.s3;
+        const credentials = s3_store.getCredentials();
+        const path = s3_store.path();
         const env = globalThis.bunVM().transpiler.env;
 
-        try S3.stat(credentials, path, @ptrCast(&S3BlobStatTask.onS3SizeResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
+        try S3.stat(credentials, path, @ptrCast(&S3BlobStatTask.onS3SizeResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null, s3_store.request_payer);
         return promise;
     }
 
@@ -468,13 +474,14 @@ pub fn getPresignUrlFrom(this: *Blob, globalThis: *jsc.JSGlobalObject, extra_opt
     var method: bun.http.Method = .GET;
     var expires: usize = 86400; // 1 day default
 
+    const s3 = &this.store.?.data.s3;
     var credentialsWithOptions: S3.S3CredentialsWithOptions = .{
-        .credentials = this.store.?.data.s3.getCredentials().*,
+        .credentials = s3.getCredentials().*,
+        .request_payer = s3.request_payer,
     };
     defer {
         credentialsWithOptions.deinit();
     }
-    const s3 = &this.store.?.data.s3;
 
     if (extra_options) |options| {
         if (options.isObject()) {
@@ -497,6 +504,7 @@ pub fn getPresignUrlFrom(this: *Blob, globalThis: *jsc.JSGlobalObject, extra_opt
         .method = method,
         .acl = credentialsWithOptions.acl,
         .storage_class = credentialsWithOptions.storage_class,
+        .request_payer = credentialsWithOptions.request_payer,
     }, false, .{ .expires = expires }) catch |sign_err| {
         return S3.throwSignError(sign_err, globalThis);
     };

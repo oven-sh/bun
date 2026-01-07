@@ -37,19 +37,17 @@ mode: center
     	bunx --bun prisma init --datasource-provider sqlite
     	```
 
-    	This creates a basic schema. We need to update it to use the new Rust-free client with Bun optimization. Open `prisma/schema.prisma` and modify the generator block, then add a simple `User` model.
+    	This creates a basic schema. We need to update it to use the Bun runtime. Open `prisma/schema.prisma` and modify the generator block, then add a simple `User` model.
 
     	```prisma prisma/schema.prisma icon="/icons/ecosystem/prisma.svg"
     	  generator client {
-    	    provider = "prisma-client" // [!code ++]
-    	    output = "./generated" // [!code ++]
-    	    engineType = "client" // [!code ++]
+    	    provider = "prisma-client"
+    	    output = "../generated/prisma"
     	    runtime = "bun" // [!code ++]
     	  }
 
     	  datasource db {
     	    provider = "sqlite"
-    	    url      = env("DATABASE_URL")
     	  }
 
     	  model User { // [!code ++]
@@ -70,27 +68,27 @@ mode: center
     	 ```
     	 ```txt
     	Environment variables loaded from .env
-    	Prisma schema loaded from prisma/schema.prisma
-    	Datasource "db": SQLite database "dev.db" at "file:./dev.db"
+    	Loaded Prisma config from prisma.config.ts.
 
-    	SQLite database dev.db created at file:./dev.db
+      Prisma schema loaded from prisma/schema.prisma.
+      Datasource "db": SQLite database "dev.db" at "file:./dev.db"
 
-    	Applying migration `20251014141233_init`
+      SQLite database dev.db created at file:./dev.db
 
-    	The following migration(s) have been created and applied from new schema changes:
+      Applying migration `20260107124516_init`
 
-    	prisma/migrations/
-    	  └─ 20251014141233_init/
-    	    └─ migration.sql
+      The following migration(s) have been created and applied from new schema changes:
 
-    	Your database is now in sync with your schema.
+      prisma/migrations/
+        └─ 20260107124516_init/
+          └─ migration.sql
 
-    	✔ Generated Prisma Client (6.17.1) to ./generated in 18ms
+      Your database is now in sync with your schema.
     	```
     </Step>
 
     <Step title="Generate Prisma Client">
-    	As indicated in the output, Prisma re-generates our _Prisma client_ whenever we execute a new migration. The client provides a fully typed API for reading and writing from our database. You can manually re-generate the client with the Prisma CLI.
+    	Now we need to generate the Prisma client, which provides a fully typed API for reading and writing from our database.
 
     	```sh terminal icon="terminal"
     	bunx --bun prisma generate
@@ -101,11 +99,11 @@ mode: center
     	Now we need to create a Prisma client instance. Create a new file `prisma/db.ts` to initialize the PrismaClient with the LibSQL adapter.
 
     	```ts prisma/db.ts icon="/icons/typescript.svg"
-    	import { PrismaClient } from "./generated/client";
-    	import { PrismaLibSQL } from "@prisma/adapter-libsql";
+      import { PrismaClient } from "../generated/prisma/client";
+      import { PrismaLibSql } from "@prisma/adapter-libsql";
 
-    	const adapter = new PrismaLibSQL({ url: process.env.DATABASE_URL || "" });
-    	export const prisma = new PrismaClient({ adapter });
+      const adapter = new PrismaLibSql({ url: process.env.DATABASE_URL || "" });
+      export const prisma = new PrismaClient({ adapter });
     	```
     </Step>
 

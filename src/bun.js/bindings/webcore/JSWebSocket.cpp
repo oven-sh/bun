@@ -294,6 +294,111 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
                 }
             }
         }
+
+        // Parse agent option - extract proxy from agent.proxy if no explicit proxy
+        // This supports HttpsProxyAgent and similar agent libraries
+        if (proxyUrl.isNull() || proxyUrl.isEmpty()) {
+            auto agentValue = options->getIfPropertyExists(globalObject, PropertyName(Identifier::fromString(vm, "agent"_s)));
+            RETURN_IF_EXCEPTION(throwScope, {});
+            if (agentValue && !agentValue.isUndefinedOrNull() && agentValue.isObject()) {
+                if (JSC::JSObject* agentObj = agentValue.getObject()) {
+                    // Get agent.proxy (can be URL object or string)
+                    auto agentProxyValue = agentObj->getIfPropertyExists(globalObject, PropertyName(Identifier::fromString(vm, "proxy"_s)));
+                    RETURN_IF_EXCEPTION(throwScope, {});
+                    if (agentProxyValue && !agentProxyValue.isUndefinedOrNull()) {
+                        if (agentProxyValue.isString()) {
+                            proxyUrl = convert<IDLUSVString>(*lexicalGlobalObject, agentProxyValue);
+                        } else if (agentProxyValue.isObject()) {
+                            // URL object - get .href property
+                            if (JSC::JSObject* urlObj = agentProxyValue.getObject()) {
+                                auto hrefValue = urlObj->getIfPropertyExists(globalObject, PropertyName(Identifier::fromString(vm, "href"_s)));
+                                RETURN_IF_EXCEPTION(throwScope, {});
+                                if (hrefValue && hrefValue.isString()) {
+                                    proxyUrl = convert<IDLUSVString>(*lexicalGlobalObject, hrefValue);
+                                }
+                            }
+                        }
+                        RETURN_IF_EXCEPTION(throwScope, {});
+                    }
+
+                    // Get agent.proxyHeaders
+                    auto proxyHeadersValue = agentObj->getIfPropertyExists(globalObject, PropertyName(Identifier::fromString(vm, "proxyHeaders"_s)));
+                    RETURN_IF_EXCEPTION(throwScope, {});
+                    if (proxyHeadersValue && !proxyHeadersValue.isUndefinedOrNull()) {
+                        // If it's a function, call it
+                        if (proxyHeadersValue.isCallable()) {
+                            auto callData = JSC::getCallData(proxyHeadersValue);
+                            proxyHeadersValue = JSC::call(lexicalGlobalObject, proxyHeadersValue, callData, agentObj, JSC::MarkedArgumentBuffer());
+                            RETURN_IF_EXCEPTION(throwScope, {});
+                        }
+                        if (!proxyHeadersValue.isUndefinedOrNull()) {
+                            proxyHeadersInit = convert<IDLUnion<IDLSequence<IDLSequence<IDLByteString>>, IDLRecord<IDLByteString, IDLByteString>>>(*lexicalGlobalObject, proxyHeadersValue);
+                            RETURN_IF_EXCEPTION(throwScope, {});
+                        }
+                    }
+
+                    // Get TLS options from agent.connectOpts or agent.options
+                    // We build a filtered object with only supported TLS options (ca, cert, key, passphrase, rejectUnauthorized)
+                    // to avoid passing invalid properties like ALPNProtocols to the SSL parser
+                    if (rejectUnauthorized == -1 && !sslConfig) {
+                        auto connectOptsValue = agentObj->getIfPropertyExists(globalObject, PropertyName(Identifier::fromString(vm, "connectOpts"_s)));
+                        RETURN_IF_EXCEPTION(throwScope, {});
+                        if (!connectOptsValue || connectOptsValue.isUndefinedOrNull()) {
+                            connectOptsValue = agentObj->getIfPropertyExists(globalObject, PropertyName(Identifier::fromString(vm, "options"_s)));
+                            RETURN_IF_EXCEPTION(throwScope, {});
+                        }
+                        if (connectOptsValue && !connectOptsValue.isUndefinedOrNull() && connectOptsValue.isObject()) {
+                            if (JSC::JSObject* connectOptsObj = connectOptsValue.getObject()) {
+                                // Extract rejectUnauthorized
+                                auto rejectValue = connectOptsObj->getIfPropertyExists(globalObject, PropertyName(Identifier::fromString(vm, "rejectUnauthorized"_s)));
+                                RETURN_IF_EXCEPTION(throwScope, {});
+                                if (rejectValue && rejectValue.isBoolean()) {
+                                    rejectUnauthorized = rejectValue.asBoolean() ? 1 : 0;
+                                }
+
+                                // Build filtered TLS options object with only supported properties
+                                JSC::JSObject* filteredTlsOpts = JSC::constructEmptyObject(globalObject);
+                                bool hasTlsOpts = false;
+
+                                auto caValue = connectOptsObj->getIfPropertyExists(globalObject, PropertyName(Identifier::fromString(vm, "ca"_s)));
+                                RETURN_IF_EXCEPTION(throwScope, {});
+                                if (caValue && !caValue.isUndefinedOrNull()) {
+                                    filteredTlsOpts->putDirect(vm, Identifier::fromString(vm, "ca"_s), caValue);
+                                    hasTlsOpts = true;
+                                }
+
+                                auto certValue = connectOptsObj->getIfPropertyExists(globalObject, PropertyName(Identifier::fromString(vm, "cert"_s)));
+                                RETURN_IF_EXCEPTION(throwScope, {});
+                                if (certValue && !certValue.isUndefinedOrNull()) {
+                                    filteredTlsOpts->putDirect(vm, Identifier::fromString(vm, "cert"_s), certValue);
+                                    hasTlsOpts = true;
+                                }
+
+                                auto keyValue = connectOptsObj->getIfPropertyExists(globalObject, PropertyName(Identifier::fromString(vm, "key"_s)));
+                                RETURN_IF_EXCEPTION(throwScope, {});
+                                if (keyValue && !keyValue.isUndefinedOrNull()) {
+                                    filteredTlsOpts->putDirect(vm, Identifier::fromString(vm, "key"_s), keyValue);
+                                    hasTlsOpts = true;
+                                }
+
+                                auto passphraseValue = connectOptsObj->getIfPropertyExists(globalObject, PropertyName(Identifier::fromString(vm, "passphrase"_s)));
+                                RETURN_IF_EXCEPTION(throwScope, {});
+                                if (passphraseValue && !passphraseValue.isUndefinedOrNull()) {
+                                    filteredTlsOpts->putDirect(vm, Identifier::fromString(vm, "passphrase"_s), passphraseValue);
+                                    hasTlsOpts = true;
+                                }
+
+                                // Parse the filtered TLS options
+                                if (hasTlsOpts) {
+                                    sslConfig = Bun__WebSocket__parseSSLConfig(globalObject, JSValue::encode(filteredTlsOpts));
+                                    RETURN_IF_EXCEPTION(throwScope, {});
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     auto object = (rejectUnauthorized == -1)

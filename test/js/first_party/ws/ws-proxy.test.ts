@@ -1,8 +1,14 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { gc, tls as tlsCerts } from "harness";
+import type { HttpsProxyAgent as HttpsProxyAgentType } from "https-proxy-agent";
 import net from "net";
 import tls from "tls";
 import WebSocket from "ws";
+
+// Use dynamic require to avoid linter removing the import
+const { HttpsProxyAgent } = require("https-proxy-agent") as {
+  HttpsProxyAgent: typeof HttpsProxyAgentType;
+};
 
 // HTTP CONNECT proxy server for WebSocket tunneling
 let proxy: net.Server;
@@ -575,6 +581,186 @@ describe("ws package through HTTPS proxy (TLS proxy)", () => {
     });
 
     await promise;
+    gc();
+  });
+});
+
+describe("ws package with HttpsProxyAgent", () => {
+  test("ws:// through HttpsProxyAgent", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers<string[]>();
+
+    const agent = new HttpsProxyAgent(`http://127.0.0.1:${proxyPort}`);
+    const ws = new WebSocket(`ws://127.0.0.1:${wsPort}`, { agent });
+
+    const receivedMessages: string[] = [];
+
+    ws.on("open", () => {
+      ws.send("hello from ws via HttpsProxyAgent");
+    });
+
+    ws.on("message", (data: Buffer) => {
+      receivedMessages.push(data.toString());
+      if (receivedMessages.length === 2) {
+        ws.close();
+      }
+    });
+
+    ws.on("close", () => {
+      resolve(receivedMessages);
+    });
+
+    ws.on("error", (err: Error) => {
+      reject(err);
+    });
+
+    const messages = await promise;
+    expect(messages).toContain("connected");
+    expect(messages).toContain("hello from ws via HttpsProxyAgent");
+    gc();
+  });
+
+  test("wss:// through HttpsProxyAgent with rejectUnauthorized", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers<string[]>();
+
+    const agent = new HttpsProxyAgent(`http://127.0.0.1:${proxyPort}`, {
+      rejectUnauthorized: false,
+    });
+    const ws = new WebSocket(`wss://127.0.0.1:${wssPort}`, { agent });
+
+    const receivedMessages: string[] = [];
+
+    ws.on("open", () => {
+      ws.send("hello from wss via HttpsProxyAgent");
+    });
+
+    ws.on("message", (data: Buffer) => {
+      receivedMessages.push(data.toString());
+      if (receivedMessages.length === 2) {
+        ws.close();
+      }
+    });
+
+    ws.on("close", () => {
+      resolve(receivedMessages);
+    });
+
+    ws.on("error", (err: Error) => {
+      reject(err);
+    });
+
+    const messages = await promise;
+    expect(messages).toContain("connected");
+    expect(messages).toContain("hello from wss via HttpsProxyAgent");
+    gc();
+  });
+
+  test("HttpsProxyAgent with authentication", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers<string[]>();
+
+    const agent = new HttpsProxyAgent(`http://proxy_user:proxy_pass@127.0.0.1:${authProxyPort}`);
+    const ws = new WebSocket(`ws://127.0.0.1:${wsPort}`, { agent });
+
+    const receivedMessages: string[] = [];
+
+    ws.on("open", () => {
+      ws.send("hello from ws with auth via HttpsProxyAgent");
+    });
+
+    ws.on("message", (data: Buffer) => {
+      receivedMessages.push(data.toString());
+      if (receivedMessages.length === 2) {
+        ws.close();
+      }
+    });
+
+    ws.on("close", () => {
+      resolve(receivedMessages);
+    });
+
+    ws.on("error", (err: Error) => {
+      reject(err);
+    });
+
+    const messages = await promise;
+    expect(messages).toContain("connected");
+    expect(messages).toContain("hello from ws with auth via HttpsProxyAgent");
+    gc();
+  });
+
+  test("HttpsProxyAgent with agent.proxy as URL object", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers<string[]>();
+
+    // HttpsProxyAgent stores the proxy URL as a URL object in agent.proxy
+    const agent = new HttpsProxyAgent(`http://127.0.0.1:${proxyPort}`);
+    // Verify the agent has the proxy property as a URL object
+    expect(agent.proxy).toBeDefined();
+    expect(typeof agent.proxy).toBe("object");
+    expect(agent.proxy.href).toContain(`127.0.0.1:${proxyPort}`);
+
+    const ws = new WebSocket(`ws://127.0.0.1:${wsPort}`, { agent });
+
+    const receivedMessages: string[] = [];
+
+    ws.on("open", () => {
+      ws.send("hello via agent with URL object");
+    });
+
+    ws.on("message", (data: Buffer) => {
+      receivedMessages.push(data.toString());
+      if (receivedMessages.length === 2) {
+        ws.close();
+      }
+    });
+
+    ws.on("close", () => {
+      resolve(receivedMessages);
+    });
+
+    ws.on("error", (err: Error) => {
+      reject(err);
+    });
+
+    const messages = await promise;
+    expect(messages).toContain("connected");
+    expect(messages).toContain("hello via agent with URL object");
+    gc();
+  });
+
+  test("explicit proxy option takes precedence over agent", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers<string[]>();
+
+    // Create agent pointing to wrong port (that doesn't exist)
+    const agent = new HttpsProxyAgent(`http://127.0.0.1:1`);
+    // But use explicit proxy option with correct port
+    const ws = new WebSocket(`ws://127.0.0.1:${wsPort}`, {
+      agent,
+      proxy: `http://127.0.0.1:${proxyPort}`, // This should take precedence
+    });
+
+    const receivedMessages: string[] = [];
+
+    ws.on("open", () => {
+      ws.send("explicit proxy wins");
+    });
+
+    ws.on("message", (data: Buffer) => {
+      receivedMessages.push(data.toString());
+      if (receivedMessages.length === 2) {
+        ws.close();
+      }
+    });
+
+    ws.on("close", () => {
+      resolve(receivedMessages);
+    });
+
+    ws.on("error", (err: Error) => {
+      reject(err);
+    });
+
+    const messages = await promise;
+    expect(messages).toContain("connected");
+    expect(messages).toContain("explicit proxy wins");
     gc();
   });
 });

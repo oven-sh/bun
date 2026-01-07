@@ -96,6 +96,54 @@ class BunWebSocket extends EventEmitter {
       headers = options?.headers;
       proxy = options?.proxy;
       tlsOptions = options?.tls;
+
+      // Extract from agent if provided (like HttpsProxyAgent)
+      const agent = options?.agent;
+      if ($isObject(agent)) {
+        // Get proxy from agent.proxy (can be URL object or string)
+        if (!proxy && agent.proxy) {
+          const agentProxy = agent.proxy?.href || agent.proxy;
+          // Get proxy headers from agent.proxyHeaders
+          if (agent.proxyHeaders) {
+            const proxyHeaders = $isCallable(agent.proxyHeaders) ? agent.proxyHeaders.$call(agent) : agent.proxyHeaders;
+            proxy = { url: agentProxy, headers: proxyHeaders };
+          } else {
+            proxy = agentProxy;
+          }
+        }
+        // Get TLS options from agent.connectOpts or agent.options
+        // Only extract specific TLS options we support (not ALPNProtocols, etc.)
+        if (!tlsOptions) {
+          const agentOpts = agent.connectOpts || agent.options;
+          if ($isObject(agentOpts)) {
+            const newTlsOptions = {};
+            let hasTlsOptions = false;
+            if (agentOpts.rejectUnauthorized !== undefined) {
+              newTlsOptions.rejectUnauthorized = agentOpts.rejectUnauthorized;
+              hasTlsOptions = true;
+            }
+            if (agentOpts.ca) {
+              newTlsOptions.ca = agentOpts.ca;
+              hasTlsOptions = true;
+            }
+            if (agentOpts.cert) {
+              newTlsOptions.cert = agentOpts.cert;
+              hasTlsOptions = true;
+            }
+            if (agentOpts.key) {
+              newTlsOptions.key = agentOpts.key;
+              hasTlsOptions = true;
+            }
+            if (agentOpts.passphrase) {
+              newTlsOptions.passphrase = agentOpts.passphrase;
+              hasTlsOptions = true;
+            }
+            if (hasTlsOptions) {
+              tlsOptions = newTlsOptions;
+            }
+          }
+        }
+      }
     }
 
     const finishRequest = options?.finishRequest;

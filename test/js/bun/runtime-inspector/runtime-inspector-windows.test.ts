@@ -176,7 +176,10 @@ describe.skipIf(!isWindows)("Runtime inspector Windows file mapping", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("multiple Windows processes can have independent inspectors", async () => {
+  test("multiple Windows processes can have inspectors sequentially", async () => {
+    // Note: Runtime inspector uses hardcoded port 6499, so we must test
+    // sequential activation (activate first, shut down, then activate second)
+    // rather than concurrent activation.
     using dir = tempDir("windows-multi-test", {
       "target.js": `
         const fs = require("fs");
@@ -186,75 +189,107 @@ describe.skipIf(!isWindows)("Runtime inspector Windows file mapping", () => {
         fs.writeFileSync(path.join(process.cwd(), "pid-" + id), String(process.pid));
         console.log("READY-" + id);
 
-        setTimeout(() => process.exit(0), 500);
+        setTimeout(() => process.exit(0), 5000);
         setInterval(() => {}, 1000);
       `,
     });
 
-    await using target1 = spawn({
-      cmd: [bunExe(), "target.js", "1"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    await using target2 = spawn({
-      cmd: [bunExe(), "target.js", "2"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
     const decoder = new TextDecoder();
 
-    const reader1 = target1.stdout.getReader();
-    let output1 = "";
-    while (!output1.includes("READY-1")) {
-      const { value, done } = await reader1.read();
-      if (done) break;
-      output1 += decoder.decode(value, { stream: true });
+    // First process: activate inspector, verify, then shut down
+    {
+      await using target1 = spawn({
+        cmd: [bunExe(), "target.js", "1"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const reader1 = target1.stdout.getReader();
+      let output1 = "";
+      while (!output1.includes("READY-1")) {
+        const { value, done } = await reader1.read();
+        if (done) break;
+        output1 += decoder.decode(value, { stream: true });
+      }
+      reader1.releaseLock();
+
+      const pid1 = parseInt(await Bun.file(join(String(dir), "pid-1")).text(), 10);
+      expect(pid1).toBeGreaterThan(0);
+
+      await using debug1 = spawn({
+        cmd: [bunExe(), "-e", `process._debugProcess(${pid1})`],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      expect(await debug1.exited).toBe(0);
+
+      // Wait for the full banner
+      const stderrReader1 = target1.stderr.getReader();
+      const stderrDecoder1 = new TextDecoder();
+      let stderr1 = "";
+      while ((stderr1.match(/Bun Inspector/g) || []).length < 2) {
+        const { value, done } = await stderrReader1.read();
+        if (done) break;
+        stderr1 += stderrDecoder1.decode(value, { stream: true });
+      }
+      stderrReader1.releaseLock();
+
+      expect(stderr1).toContain("Bun Inspector");
+
+      target1.kill();
+      await target1.exited;
     }
-    reader1.releaseLock();
 
-    const reader2 = target2.stdout.getReader();
-    let output2 = "";
-    while (!output2.includes("READY-2")) {
-      const { value, done } = await reader2.read();
-      if (done) break;
-      output2 += decoder.decode(value, { stream: true });
+    // Second process: now that first is shut down, port 6499 is free
+    {
+      await using target2 = spawn({
+        cmd: [bunExe(), "target.js", "2"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const reader2 = target2.stdout.getReader();
+      let output2 = "";
+      while (!output2.includes("READY-2")) {
+        const { value, done } = await reader2.read();
+        if (done) break;
+        output2 += decoder.decode(value, { stream: true });
+      }
+      reader2.releaseLock();
+
+      const pid2 = parseInt(await Bun.file(join(String(dir), "pid-2")).text(), 10);
+      expect(pid2).toBeGreaterThan(0);
+
+      await using debug2 = spawn({
+        cmd: [bunExe(), "-e", `process._debugProcess(${pid2})`],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      expect(await debug2.exited).toBe(0);
+
+      // Wait for the full banner
+      const stderrReader2 = target2.stderr.getReader();
+      const stderrDecoder2 = new TextDecoder();
+      let stderr2 = "";
+      while ((stderr2.match(/Bun Inspector/g) || []).length < 2) {
+        const { value, done } = await stderrReader2.read();
+        if (done) break;
+        stderr2 += stderrDecoder2.decode(value, { stream: true });
+      }
+      stderrReader2.releaseLock();
+
+      expect(stderr2).toContain("Bun Inspector");
+
+      target2.kill();
+      await target2.exited;
     }
-    reader2.releaseLock();
-
-    const pid1 = parseInt(await Bun.file(join(String(dir), "pid-1")).text(), 10);
-    const pid2 = parseInt(await Bun.file(join(String(dir), "pid-2")).text(), 10);
-    expect(pid1).toBeGreaterThan(0);
-    expect(pid2).toBeGreaterThan(0);
-
-    // Activate inspector in both
-    await using debug1 = spawn({
-      cmd: [bunExe(), "-e", `process._debugProcess(${pid1})`],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    await using debug2 = spawn({
-      cmd: [bunExe(), "-e", `process._debugProcess(${pid2})`],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    await Promise.all([debug1.exited, debug2.exited]);
-
-    const [stderr1, exitCode1] = await Promise.all([target1.stderr.text(), target1.exited]);
-    const [stderr2, exitCode2] = await Promise.all([target2.stderr.text(), target2.exited]);
-
-    expect(stderr1).toContain("Bun Inspector");
-    expect(stderr2).toContain("Bun Inspector");
-    expect(exitCode1).toBe(0);
-    expect(exitCode2).toBe(0);
   });
 });

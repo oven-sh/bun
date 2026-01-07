@@ -295,6 +295,7 @@ pub const S3 = struct {
     options: bun.S3.MultiPartUploadOptions = .{},
     acl: ?bun.S3.ACL = null,
     storage_class: ?bun.S3.StorageClass = null,
+    request_payer: bool = false,
 
     pub fn isSeekable(_: *const @This()) ?bool {
         return true;
@@ -306,7 +307,7 @@ pub const S3 = struct {
     }
 
     pub fn getCredentialsWithOptions(this: *const @This(), options: ?JSValue, globalObject: *JSGlobalObject) bun.JSError!bun.S3.S3CredentialsWithOptions {
-        return S3Credentials.getCredentialsWithOptions(this.getCredentials().*, this.options, options, this.acl, this.storage_class, globalObject);
+        return S3Credentials.getCredentialsWithOptions(this.getCredentials().*, this.options, options, this.acl, this.storage_class, this.request_payer, globalObject);
     }
 
     pub fn path(this: *@This()) []const u8 {
@@ -365,7 +366,7 @@ pub const S3 = struct {
             .promise = promise,
             .store = store, // store is needed in case of not found error
             .global = globalThis,
-        }), proxy);
+        }), proxy, aws_options.request_payer);
 
         return value;
     }

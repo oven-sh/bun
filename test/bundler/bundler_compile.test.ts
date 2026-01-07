@@ -735,4 +735,24 @@ const server = serve({
       .env(bunEnv)
       .throws(true);
   });
+
+  // When compiling with 8+ entry points, the main entry point should still run correctly.
+  test("compile with 8+ entry points runs main entry correctly", async () => {
+    const dir = tempDirWithFiles("compile-many-entries", {
+      "app.js": `console.log("IT WORKS");`,
+      "assets/file-1": "",
+      "assets/file-2": "",
+      "assets/file-3": "",
+      "assets/file-4": "",
+      "assets/file-5": "",
+      "assets/file-6": "",
+      "assets/file-7": "",
+      "assets/file-8": "",
+    });
+
+    await Bun.$`${bunExe()} build --compile app.js assets/* --outfile app`.cwd(dir).env(bunEnv).throws(true);
+
+    const result = await Bun.$`./app`.cwd(dir).env(bunEnv).nothrow();
+    expect(result.stdout.toString().trim()).toBe("IT WORKS");
+  });
 });

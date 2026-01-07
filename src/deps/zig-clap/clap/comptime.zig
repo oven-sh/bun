@@ -156,6 +156,11 @@ pub fn ComptimeClap(
                         if (mem.eql(u8, name, "--" ++ l))
                             return true;
                     }
+                    // Check aliases
+                    for (param.names.long_aliases) |alias| {
+                        if (mem.eql(u8, name, "--" ++ alias))
+                            return true;
+                    }
                 }
 
                 return false;
@@ -171,6 +176,11 @@ pub fn ComptimeClap(
                     }
                     if (param.names.long) |l| {
                         if (mem.eql(u8, name, "--" ++ l))
+                            return param;
+                    }
+                    // Check aliases
+                    for (param.names.long_aliases) |alias| {
+                        if (mem.eql(u8, name, "--" ++ alias))
                             return param;
                     }
                 }

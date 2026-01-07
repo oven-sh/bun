@@ -661,9 +661,9 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             tunnel.upgrade_client = if (comptime ssl) .{ .https = this } else .{ .http = this };
             tunnel.socket = if (comptime ssl) .{ .ssl = socket } else .{ .tcp = socket };
 
-            // Set target hostname for SNI
+            // Set hostname for SNI
             if (this.target_host) |host| {
-                tunnel.target_hostname = bun.default_allocator.dupe(u8, host) catch {
+                tunnel.sni_hostname = bun.default_allocator.dupe(u8, host) catch {
                     tunnel.deref();
                     this.terminate(ErrorCode.proxy_tunnel_failed);
                     return;

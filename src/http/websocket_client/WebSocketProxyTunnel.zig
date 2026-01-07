@@ -63,8 +63,8 @@ wrapper: ?SSLWrapperType = null,
 socket: SocketUnion = .{ .none = {} },
 /// Write buffer for encrypted data (maintains TLS record ordering)
 write_buffer: bun.io.StreamBuffer = .{},
-/// Target hostname for SNI
-target_hostname: ?[]const u8 = null,
+/// Hostname for SNI (Server Name Indication)
+sni_hostname: ?[]const u8 = null,
 /// Whether to reject unauthorized certificates
 reject_unauthorized: bool = true,
 
@@ -105,9 +105,9 @@ fn deinit(this: *WebSocketProxyTunnel) void {
         this.wrapper = null;
     }
     this.write_buffer.deinit();
-    if (this.target_hostname) |hostname| {
+    if (this.sni_hostname) |hostname| {
         bun.default_allocator.free(hostname);
-        this.target_hostname = null;
+        this.sni_hostname = null;
     }
     bun.destroy(this);
 }
@@ -140,10 +140,10 @@ pub fn start(this: *WebSocketProxyTunnel, ssl_options: SSLConfig, initial_data: 
 /// SSLWrapper callback: Called before TLS handshake starts
 fn onOpen(this: *WebSocketProxyTunnel) void {
     log("onOpen", .{});
-    // Configure SNI with target hostname
+    // Configure SNI with hostname
     if (this.wrapper) |*wrapper| {
         if (wrapper.ssl) |ssl_ptr| {
-            if (this.target_hostname) |hostname| {
+            if (this.sni_hostname) |hostname| {
                 if (!bun.strings.isIPAddress(hostname)) {
                     // Set SNI hostname
                     const hostname_z = bun.default_allocator.dupeZ(u8, hostname) catch return;
@@ -191,7 +191,7 @@ fn onHandshake(this: *WebSocketProxyTunnel, success: bool, ssl_error: uws.us_bun
         // Verify server identity
         if (this.wrapper) |*wrapper| {
             if (wrapper.ssl) |ssl_ptr| {
-                if (this.target_hostname) |hostname| {
+                if (this.sni_hostname) |hostname| {
                     if (!BoringSSL.checkServerIdentity(ssl_ptr, hostname)) {
                         this.upgrade_client.terminate(ErrorCode.tls_handshake_failed);
                         return;

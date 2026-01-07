@@ -3141,9 +3141,10 @@ declare module "bun" {
            */
           url: string;
           /**
-           * Custom headers to send to the proxy server
+           * Custom headers to send to the proxy server.
+           * Supports plain objects or Headers class instances.
            */
-          headers?: import("node:http").OutgoingHttpHeaders;
+          headers?: import("node:http").OutgoingHttpHeaders | Headers;
         };
   };
 

@@ -23,7 +23,7 @@ pub fn parse(
     const allocator = arena.allocator();
     defer arena.deinit();
     var log = logger.Log.init(default_allocator);
-    const input_value = callframe.argumentsAsArray(1)[0];
+    const input_value = callframe.argument(0);
     if (input_value.isEmptyOrUndefinedOrNull()) {
         return globalThis.throwInvalidArguments("Expected a string to parse", .{});
     }
@@ -35,35 +35,20 @@ pub fn parse(
         return globalThis.throwValue(try log.toJS(globalThis, default_allocator, "Failed to parse JSONC"));
     };
 
-    // Convert AST to JSON string, then parse back to JS object
-    const buffer_writer = js_printer.BufferWriter.init(allocator);
-    var writer = js_printer.BufferPrinter.init(buffer_writer);
-    _ = js_printer.printJSON(
-        *js_printer.BufferPrinter,
-        &writer,
-        parse_result,
-        source,
-        .{
-            .mangled_props = null,
-        },
-    ) catch {
-        return globalThis.throwValue(try log.toJS(globalThis, default_allocator, "Failed to convert JSONC"));
+    return parse_result.toJS(allocator, globalThis) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.JSError => return error.JSError,
+        error.JSTerminated => return error.JSTerminated,
+        // JSONC parsing does not produce macros or identifiers
+        else => unreachable,
     };
-
-    const slice = writer.ctx.buffer.slice();
-    var out = bun.String.borrowUTF8(slice);
-    defer out.deref();
-
-    return out.toJSByParseJSON(globalThis);
 }
 
 const bun = @import("bun");
 const default_allocator = bun.default_allocator;
-const js_printer = bun.js_printer;
 const logger = bun.logger;
 const json = bun.interchange.json;
 
 const jsc = bun.jsc;
-const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
 const ZigString = jsc.ZigString;

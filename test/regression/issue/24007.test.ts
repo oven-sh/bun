@@ -6,7 +6,7 @@
  * because certain filesystems (sshfs, fuse, NFS, bind mounts) don't provide d_type
  * information in directory entries (returns DT_UNKNOWN).
  *
- * Fix: Added fstatat() fallback when d_type is unknown, following the lazy stat
+ * Fix: Added lstatat() fallback when d_type is unknown, following the lazy stat
  * pattern from PR #18172.
  *
  * See also: test/cli/run/glob-on-fuse.test.ts for FUSE filesystem testing.

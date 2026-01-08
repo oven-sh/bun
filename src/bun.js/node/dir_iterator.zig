@@ -171,7 +171,7 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                         linux.DT.REG => Entry.Kind.file,
                         linux.DT.SOCK => Entry.Kind.unix_domain_socket,
                         // DT_UNKNOWN: Some filesystems (e.g., bind mounts, FUSE, NFS)
-                        // don't provide d_type. Callers should use fstatat() to determine
+                        // don't provide d_type. Callers should use lstatat() to determine
                         // the type when needed (lazy stat pattern for performance).
                         else => Entry.Kind.unknown,
                     };

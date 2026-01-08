@@ -4650,7 +4650,7 @@ pub const NodeFS = struct {
                         async_task.enqueue(name_to_copy);
                     },
                     // Some filesystems (e.g., Docker bind mounts, FUSE, NFS) return
-                    // DT_UNKNOWN for d_type. Use fstatat to determine if it's a directory.
+                    // DT_UNKNOWN for d_type. Use lstatat to determine the actual type.
                     .unknown => {
                         if (current.name.len + 1 + name_to_copy.len > bun.MAX_PATH_BYTES) break :enqueue;
 
@@ -4811,7 +4811,7 @@ pub const NodeFS = struct {
                             stack.writeItem(basename_allocator.dupeZ(u8, name_to_copy) catch break :enqueue) catch break :enqueue;
                         },
                         // Some filesystems (e.g., Docker bind mounts, FUSE, NFS) return
-                        // DT_UNKNOWN for d_type. Use fstatat to determine if it's a directory.
+                        // DT_UNKNOWN for d_type. Use lstatat to determine the actual type.
                         .unknown => {
                             if (current.name.len + 1 + name_to_copy.len > bun.MAX_PATH_BYTES) break :enqueue;
 

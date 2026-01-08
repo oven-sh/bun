@@ -294,6 +294,7 @@ class Agent extends Dispatcher {
 class Pool extends Dispatcher {
   constructor(url, options) {
     super(options);
+    this.origin = url;
   }
   request() {}
 }
@@ -301,12 +302,14 @@ class Pool extends Dispatcher {
 class BalancedPool extends Dispatcher {
   constructor(upstreams, options) {
     super(options);
+    this.upstreams = upstreams;
   }
 }
 
 class Client extends Dispatcher {
   constructor(url, options) {
     super(options);
+    this.url = url;
   }
   request() {}
 }

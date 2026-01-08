@@ -185,16 +185,64 @@ fn getAgentTLSOptions(globalThis: *JSGlobalObject, agent: JSValue) bun.JSError!?
     // Fall back to connectOpts (used by https-proxy-agent)
     if (try agent.get(globalThis, "connectOpts")) |connect_opts| {
         if (connect_opts.isObject() and !connect_opts.isUndefinedOrNull()) {
-            return connect_opts;
+            if (try hasTLSProperties(globalThis, connect_opts)) {
+                return connect_opts;
+            }
         }
     }
     // Fall back to connect (used by undici.Agent)
     if (try agent.get(globalThis, "connect")) |connect| {
         if (connect.isObject() and !connect.isUndefinedOrNull()) {
-            return connect;
+            if (try hasTLSProperties(globalThis, connect)) {
+                return connect;
+            }
         }
     }
     return null;
+}
+
+/// Output struct for extractTLSSettings helper.
+const TLSSettings = struct {
+    reject_unauthorized: ?bool = null,
+    check_server_identity: ?JSValue = null,
+    ssl_config: ?*SSLConfig = null,
+};
+
+/// Extracts TLS settings from agent options object.
+/// Returns extracted settings on success, or null if no TLS settings found.
+fn extractTLSSettings(
+    vm: *VirtualMachine,
+    globalThis: *JSGlobalObject,
+    agent_opts: JSValue,
+) bun.JSError!TLSSettings {
+    var settings: TLSSettings = .{};
+
+    // Extract rejectUnauthorized
+    if (try agent_opts.get(globalThis, "rejectUnauthorized")) |reject| {
+        if (reject.isBoolean()) {
+            settings.reject_unauthorized = reject.asBoolean();
+        } else if (reject.isNumber()) {
+            settings.reject_unauthorized = reject.to(i32) != 0;
+        }
+    }
+
+    // Extract checkServerIdentity
+    if (try agent_opts.get(globalThis, "checkServerIdentity")) |csi| {
+        if (csi.isCell() and csi.isCallable()) {
+            settings.check_server_identity = csi;
+        }
+    }
+
+    // Extract SSL config
+    if (SSLConfig.fromJS(vm, globalThis, agent_opts) catch {
+        return error.JSError;
+    }) |config| {
+        const ssl_config_object = bun.handleOom(bun.default_allocator.create(SSLConfig));
+        ssl_config_object.* = config;
+        settings.ssl_config = ssl_config_object;
+    }
+
+    return settings;
 }
 
 comptime {
@@ -567,36 +615,19 @@ pub fn Bun__fetch_(
             return .zero;
         }
 
-        // Extract rejectUnauthorized and checkServerIdentity from globalAgent.options
-        if (try agent_opts.get(globalThis, "rejectUnauthorized")) |reject| {
-            if (reject.isBoolean()) {
-                reject_unauthorized = reject.asBoolean();
-            } else if (reject.isNumber()) {
-                reject_unauthorized = reject.to(i32) != 0;
-            }
-        }
-        if (globalThis.hasException()) {
+        // Extract TLS settings from agent options using shared helper
+        const tls_settings = extractTLSSettings(vm, globalThis, agent_opts) catch {
             is_error = true;
             return .zero;
+        };
+        if (tls_settings.reject_unauthorized) |reject| {
+            reject_unauthorized = reject;
         }
-
-        if (try agent_opts.get(globalThis, "checkServerIdentity")) |checkServerIdentity| {
-            if (checkServerIdentity.isCell() and checkServerIdentity.isCallable()) {
-                check_server_identity = checkServerIdentity;
-            }
+        if (tls_settings.check_server_identity) |csi| {
+            check_server_identity = csi;
         }
-        if (globalThis.hasException()) {
-            is_error = true;
-            return .zero;
-        }
-
-        if (SSLConfig.fromJS(vm, globalThis, agent_opts) catch {
-            is_error = true;
-            return .zero;
-        }) |config| {
-            const ssl_config_object = bun.handleOom(bun.default_allocator.create(SSLConfig));
-            ssl_config_object.* = config;
-            ssl_config = ssl_config_object;
+        if (tls_settings.ssl_config) |config| {
+            ssl_config = config;
         }
 
         if (globalThis.hasException()) {
@@ -952,30 +983,18 @@ pub fn Bun__fetch_(
             // If we got a proxy from agent, also check for TLS settings using the shared helper
             if (ssl_config == null) {
                 if (try getAgentTLSOptions(globalThis, current_agent)) |connect_opts| {
-                    // Extract rejectUnauthorized from connectOpts/connect
-                    if (try connect_opts.get(globalThis, "rejectUnauthorized")) |reject| {
-                        if (reject.isBoolean()) {
-                            reject_unauthorized = reject.asBoolean();
-                        } else if (reject.isNumber()) {
-                            reject_unauthorized = reject.to(i32) != 0;
-                        }
-                    }
-
-                    // Extract checkServerIdentity from connectOpts/connect
-                    if (try connect_opts.get(globalThis, "checkServerIdentity")) |csi| {
-                        if (csi.isCell() and csi.isCallable()) {
-                            check_server_identity = csi;
-                        }
-                    }
-
-                    // Extract SSL config from connectOpts/connect
-                    if (SSLConfig.fromJS(vm, globalThis, connect_opts) catch {
+                    const tls_settings = extractTLSSettings(vm, globalThis, connect_opts) catch {
                         is_error = true;
                         return .zero;
-                    }) |config| {
-                        const ssl_config_object = bun.handleOom(bun.default_allocator.create(SSLConfig));
-                        ssl_config_object.* = config;
-                        ssl_config = ssl_config_object;
+                    };
+                    if (tls_settings.reject_unauthorized) |reject| {
+                        reject_unauthorized = reject;
+                    }
+                    if (tls_settings.check_server_identity) |csi| {
+                        check_server_identity = csi;
+                    }
+                    if (tls_settings.ssl_config) |config| {
+                        ssl_config = config;
                     }
                 }
             }

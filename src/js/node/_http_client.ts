@@ -754,7 +754,7 @@ function ClientRequest(input, options, cb) {
     if (agentCa !== undefined) {
       if (!isValidTLSArray(agentCa))
         throw new TypeError(
-          "agent.options.ca must be a string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
+          "agent TLS ca option must be a string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
         );
       this._ensureTls().ca = agentCa;
     }
@@ -770,7 +770,7 @@ function ClientRequest(input, options, cb) {
     if (agentCert !== undefined) {
       if (!isValidTLSArray(agentCert))
         throw new TypeError(
-          "agent.options.cert must be a string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
+          "agent TLS cert option must be a string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
         );
       this._ensureTls().cert = agentCert;
     }
@@ -786,7 +786,7 @@ function ClientRequest(input, options, cb) {
     if (agentKey !== undefined) {
       if (!isValidTLSArray(agentKey))
         throw new TypeError(
-          "agent.options.key must be a string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
+          "agent TLS key option must be a string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
         );
       this._ensureTls().key = agentKey;
     }
@@ -797,7 +797,7 @@ function ClientRequest(input, options, cb) {
   } else {
     const agentPassphrase = getAgentTlsOption(agent, "passphrase");
     if (agentPassphrase !== undefined) {
-      if (typeof agentPassphrase !== "string") throw new TypeError("agent.options.passphrase must be a string");
+      if (typeof agentPassphrase !== "string") throw new TypeError("agent TLS passphrase option must be a string");
       this._ensureTls().passphrase = agentPassphrase;
     }
   }
@@ -807,7 +807,7 @@ function ClientRequest(input, options, cb) {
   } else {
     const agentCiphers = getAgentTlsOption(agent, "ciphers");
     if (agentCiphers !== undefined) {
-      if (typeof agentCiphers !== "string") throw new TypeError("agent.options.ciphers must be a string");
+      if (typeof agentCiphers !== "string") throw new TypeError("agent TLS ciphers option must be a string");
       this._ensureTls().ciphers = agentCiphers;
     }
   }
@@ -817,7 +817,7 @@ function ClientRequest(input, options, cb) {
   } else {
     const agentServername = getAgentTlsOption(agent, "servername");
     if (agentServername !== undefined) {
-      if (typeof agentServername !== "string") throw new TypeError("agent.options.servername must be a string");
+      if (typeof agentServername !== "string") throw new TypeError("agent TLS servername option must be a string");
       this._ensureTls().servername = agentServername;
     }
   }
@@ -827,7 +827,8 @@ function ClientRequest(input, options, cb) {
   } else {
     const agentSecureOptions = getAgentTlsOption(agent, "secureOptions");
     if (agentSecureOptions !== undefined) {
-      if (typeof agentSecureOptions !== "number") throw new TypeError("agent.options.secureOptions must be a number");
+      if (typeof agentSecureOptions !== "number")
+        throw new TypeError("agent TLS secureOptions option must be a number");
       this._ensureTls().secureOptions = agentSecureOptions;
     }
   }

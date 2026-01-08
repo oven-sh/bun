@@ -38,6 +38,38 @@ pub fn resolve_jsx_runtime(str: string) !Api.JsxRuntime {
     }
 }
 
+/// Parse a comma-separated list of values into a slice
+/// Used for permission flags like --allow-read=/tmp,/home/user
+pub fn parseCommaSeparated(allocator: std.mem.Allocator, value: []const u8) ?[]const []const u8 {
+    if (value.len == 0) return null;
+
+    // Count commas to determine array size
+    var count: usize = 1;
+    for (value) |c| {
+        if (c == ',') count += 1;
+    }
+
+    const result = allocator.alloc([]const u8, count) catch return null;
+    var iter = std.mem.splitScalar(u8, value, ',');
+    var i: usize = 0;
+    while (iter.next()) |part| {
+        // Trim whitespace from each part
+        const trimmed = std.mem.trim(u8, part, " \t");
+        if (trimmed.len > 0) {
+            result[i] = trimmed;
+            i += 1;
+        }
+    }
+
+    if (i == 0) {
+        allocator.free(result);
+        return null;
+    }
+
+    // Return only the filled portion
+    return result[0..i];
+}
+
 pub const ParamType = clap.Param(clap.Help);
 
 pub const base_params_ = (if (Environment.show_crash_trace) debug_params else [_]ParamType{}) ++ [_]ParamType{
@@ -118,6 +150,24 @@ pub const runtime_params_ = [_]ParamType{
     clap.parseParam("--unhandled-rejections <STR>      One of \"strict\", \"throw\", \"warn\", \"none\", or \"warn-with-error-code\"") catch unreachable,
     clap.parseParam("--console-depth <NUMBER>          Set the default depth for console.log object inspection (default: 2)") catch unreachable,
     clap.parseParam("--user-agent <STR>               Set the default User-Agent header for HTTP requests") catch unreachable,
+    // Permission flags (Deno-compatible security model)
+    clap.parseParam("--secure                          Enable secure-by-default mode (like Deno)") catch unreachable,
+    clap.parseParam("-A, --allow-all                   Allow all permissions") catch unreachable,
+    clap.parseParam("--allow-read <STR>?               Allow file system read access (optionally scoped to paths)") catch unreachable,
+    clap.parseParam("--allow-write <STR>?              Allow file system write access (optionally scoped to paths)") catch unreachable,
+    clap.parseParam("--allow-net <STR>?                Allow network access (optionally scoped to hosts)") catch unreachable,
+    clap.parseParam("--allow-env <STR>?                Allow environment variable access (optionally scoped to names)") catch unreachable,
+    clap.parseParam("--allow-sys <STR>?                Allow system info access (optionally scoped to kinds)") catch unreachable,
+    clap.parseParam("--allow-run <STR>?                Allow subprocess spawning (optionally scoped to commands)") catch unreachable,
+    clap.parseParam("--allow-ffi <STR>?                Allow FFI/native addon loading (optionally scoped to paths)") catch unreachable,
+    clap.parseParam("--deny-read <STR>?                Deny file system read access (optionally scoped to paths)") catch unreachable,
+    clap.parseParam("--deny-write <STR>?               Deny file system write access (optionally scoped to paths)") catch unreachable,
+    clap.parseParam("--deny-net <STR>?                 Deny network access (optionally scoped to hosts)") catch unreachable,
+    clap.parseParam("--deny-env <STR>?                 Deny environment variable access (optionally scoped to names)") catch unreachable,
+    clap.parseParam("--deny-sys <STR>?                 Deny system info access (optionally scoped to kinds)") catch unreachable,
+    clap.parseParam("--deny-run <STR>?                 Deny subprocess spawning (optionally scoped to commands)") catch unreachable,
+    clap.parseParam("--deny-ffi <STR>?                 Deny FFI/native addon loading (optionally scoped to paths)") catch unreachable,
+    clap.parseParam("--no-prompt                       Disable interactive permission prompts (always deny)") catch unreachable,
 };
 
 pub const auto_or_run_params = [_]ParamType{
@@ -879,6 +929,92 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
 
         // Back-compat boolean used by native code until fully migrated
         Bun__Node__UseSystemCA = (Bun__Node__CAStore == .system);
+
+        // Parse permission flags (Deno-compatible security model)
+        ctx.runtime_options.permissions.secure_mode = args.flag("--secure");
+        ctx.runtime_options.permissions.allow_all = args.flag("--allow-all");
+        ctx.runtime_options.permissions.no_prompt = args.flag("--no-prompt");
+
+        // Parse --allow-* flags (each can be a flag or have optional value)
+        if (args.option("--allow-read")) |value| {
+            if (value.len > 0) {
+                ctx.runtime_options.permissions.allow_read = parseCommaSeparated(allocator, value);
+            }
+            ctx.runtime_options.permissions.has_allow_read = true;
+        }
+        if (args.option("--allow-write")) |value| {
+            if (value.len > 0) {
+                ctx.runtime_options.permissions.allow_write = parseCommaSeparated(allocator, value);
+            }
+            ctx.runtime_options.permissions.has_allow_write = true;
+        }
+        if (args.option("--allow-net")) |value| {
+            if (value.len > 0) {
+                ctx.runtime_options.permissions.allow_net = parseCommaSeparated(allocator, value);
+            }
+            ctx.runtime_options.permissions.has_allow_net = true;
+        }
+        if (args.option("--allow-env")) |value| {
+            if (value.len > 0) {
+                ctx.runtime_options.permissions.allow_env = parseCommaSeparated(allocator, value);
+            }
+            ctx.runtime_options.permissions.has_allow_env = true;
+        }
+        if (args.option("--allow-sys")) |value| {
+            if (value.len > 0) {
+                ctx.runtime_options.permissions.allow_sys = parseCommaSeparated(allocator, value);
+            }
+            ctx.runtime_options.permissions.has_allow_sys = true;
+        }
+        if (args.option("--allow-run")) |value| {
+            if (value.len > 0) {
+                ctx.runtime_options.permissions.allow_run = parseCommaSeparated(allocator, value);
+            }
+            ctx.runtime_options.permissions.has_allow_run = true;
+        }
+        if (args.option("--allow-ffi")) |value| {
+            if (value.len > 0) {
+                ctx.runtime_options.permissions.allow_ffi = parseCommaSeparated(allocator, value);
+            }
+            ctx.runtime_options.permissions.has_allow_ffi = true;
+        }
+
+        // Parse --deny-* flags
+        if (args.option("--deny-read")) |value| {
+            if (value.len > 0) {
+                ctx.runtime_options.permissions.deny_read = parseCommaSeparated(allocator, value);
+            }
+        }
+        if (args.option("--deny-write")) |value| {
+            if (value.len > 0) {
+                ctx.runtime_options.permissions.deny_write = parseCommaSeparated(allocator, value);
+            }
+        }
+        if (args.option("--deny-net")) |value| {
+            if (value.len > 0) {
+                ctx.runtime_options.permissions.deny_net = parseCommaSeparated(allocator, value);
+            }
+        }
+        if (args.option("--deny-env")) |value| {
+            if (value.len > 0) {
+                ctx.runtime_options.permissions.deny_env = parseCommaSeparated(allocator, value);
+            }
+        }
+        if (args.option("--deny-sys")) |value| {
+            if (value.len > 0) {
+                ctx.runtime_options.permissions.deny_sys = parseCommaSeparated(allocator, value);
+            }
+        }
+        if (args.option("--deny-run")) |value| {
+            if (value.len > 0) {
+                ctx.runtime_options.permissions.deny_run = parseCommaSeparated(allocator, value);
+            }
+        }
+        if (args.option("--deny-ffi")) |value| {
+            if (value.len > 0) {
+                ctx.runtime_options.permissions.deny_ffi = parseCommaSeparated(allocator, value);
+            }
+        }
     }
 
     if (opts.port != null and opts.origin == null) {

@@ -27,6 +27,11 @@ fn Bindings(comptime function_name: NodeFSFunctionEnum) type {
                 return .zero;
             }
 
+            // Check permissions before executing the operation
+            if (comptime Arguments != void) {
+                try checkFsPermission(function_name, globalObject, args);
+            }
+
             var result = function(&this.node_fs, args, .sync);
             return switch (result) {
                 .err => |err| globalObject.throwValue(err.toJS(globalObject)),
@@ -52,6 +57,14 @@ fn Bindings(comptime function_name: NodeFSFunctionEnum) type {
             if (globalObject.hasException()) {
                 deinit = true;
                 return .zero;
+            }
+
+            // Check permissions before executing the operation
+            if (comptime Arguments != void) {
+                checkFsPermission(function_name, globalObject, args) catch |err| {
+                    deinit = true;
+                    return err;
+                };
             }
 
             const have_abort_signal = @hasField(Arguments, "signal");
@@ -238,3 +251,55 @@ const bun = @import("bun");
 const jsc = bun.jsc;
 const node = bun.api.node;
 const ArgumentsSlice = jsc.CallFrame.ArgumentsSlice;
+const permission_check = bun.permission_check;
+const permissions = bun.permissions;
+
+/// Determine what permission is required for a filesystem operation
+fn getRequiredPermission(comptime function_name: NodeFSFunctionEnum) ?struct { kind: permissions.Kind, needs_path: bool } {
+    return switch (function_name) {
+        // Read operations
+        .access, .exists, .lstat, .stat, .readFile, .readdir, .readlink, .realpath, .realpathNonNative => .{ .kind = .read, .needs_path = true },
+        .fstat, .read, .readv => .{ .kind = .read, .needs_path = false }, // FD-based, no path check
+
+        // Write operations
+        .appendFile, .writeFile, .chmod, .chown, .lchmod, .lchown, .link, .mkdir, .mkdtemp, .rm, .rmdir, .symlink, .truncate, .unlink, .utimes, .lutimes, .rename => .{ .kind = .write, .needs_path = true },
+        .fchmod, .fchown, .fsync, .fdatasync, .ftruncate, .futimes, .write, .writev, .close => .{ .kind = .write, .needs_path = false }, // FD-based
+
+        // Both read and write
+        .copyFile, .cp => .{ .kind = .write, .needs_path = true }, // Requires both, check write as it's more restrictive
+
+        // Open can be read or write depending on flags - check at a lower level
+        .open => null,
+
+        // Watch operations - read permission
+        .watch, .watchFile, .unwatchFile => .{ .kind = .read, .needs_path = true },
+
+        // statfs - sys permission
+        .statfs => null, // Special handling needed
+    };
+}
+
+/// Check permission for a filesystem operation
+fn checkFsPermission(comptime function_name: NodeFSFunctionEnum, globalObject: *jsc.JSGlobalObject, args: anytype) bun.JSError!void {
+    const perm_info = getRequiredPermission(function_name) orelse return;
+
+    if (!perm_info.needs_path) return;
+
+    // Extract path from arguments
+    const path_str: ?[]const u8 = if (@hasField(@TypeOf(args), "path")) blk: {
+        const path_like = args.path;
+        break :blk switch (@TypeOf(path_like)) {
+            node.fs.PathLike => path_like.slice(),
+            else => if (@hasDecl(@TypeOf(path_like), "slice")) path_like.slice() else null,
+        };
+    } else null;
+
+    if (path_str) |path| {
+        const checker = permission_check.getChecker(globalObject);
+        switch (perm_info.kind) {
+            .read => try checker.requireRead(path),
+            .write => try checker.requireWrite(path),
+            else => {},
+        }
+    }
+}

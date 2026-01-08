@@ -8,6 +8,7 @@ interface BundlerPlugin {
   onLoad: Map<string, [RegExp, OnLoadCallback][]>;
   onResolve: Map<string, [RegExp, OnResolveCallback][]>;
   onEndCallbacks: Array<(build: Bun.BuildOutput) => void | Promise<void>> | undefined;
+  virtualModules: Map<string, () => { contents: string; loader?: string }> | undefined;
   /** Binding to `JSBundlerPlugin__onLoadAsync` */
   onLoadAsync(
     internalID,
@@ -19,6 +20,7 @@ interface BundlerPlugin {
   /** Binding to `JSBundlerPlugin__addError` */
   addError(internalID: number, error: any, which: number): void;
   addFilter(filter, namespace, number): void;
+  addVirtualModule(path: string, moduleFunction: () => any): void;
   generateDeferPromise(id: number): Promise<void>;
   promises: Array<Promise<any>> | undefined;
 
@@ -112,6 +114,12 @@ export function runOnEndCallbacks(
   buildResult: Bun.BuildOutput,
   buildRejection: AggregateError | undefined,
 ): Promise<void> | void {
+  // Clean up virtual modules when build ends
+  if (this.virtualModules) {
+    this.virtualModules.clear();
+    this.virtualModules = undefined;
+  }
+
   const callbacks = this.onEndCallbacks;
   if (!callbacks) return;
   const promises: PromiseLike<unknown>[] = [];
@@ -347,8 +355,33 @@ export function runSetupFunction(
     onBeforeParse,
     onStart,
     resolve: notImplementedIssueFn(2771, "build.resolve()"),
-    module: () => {
-      throw new TypeError("module() is not supported in Bun.build() yet. Only via Bun.plugin() at runtime");
+    module: (specifier: string, callback: () => { contents: string; loader?: string }) => {
+      if (!(typeof specifier === "string")) {
+        throw $ERR_INVALID_ARG_TYPE("specifier", "string", specifier);
+      }
+      if (!$isCallable(callback)) {
+        throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
+      }
+
+      // Store the virtual module
+      if (!self.virtualModules) {
+        self.virtualModules = new Map();
+      }
+
+      // Check for duplicate registration
+      if (self.virtualModules.has(specifier)) {
+        const prev = self.virtualModules.get(specifier);
+        if (prev !== callback) {
+          throw new TypeError(`Virtual module "${specifier}" is already registered`);
+        }
+        return this; // idempotent - same callback already registered
+      }
+
+      // Register with native first; update JS map only on success
+      self.addVirtualModule(specifier, callback);
+      self.virtualModules.set(specifier, callback);
+
+      return this;
     },
     addPreload: () => {
       throw new TypeError("addPreload() is not supported in Bun.build() yet.");
@@ -395,8 +428,21 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
   const kind = $ImportKindIdToLabel[kindId];
 
   var promiseResult: any = (async (inputPath, inputNamespace, importer, kind) => {
-    var { onResolve, onLoad } = this;
+    var { onResolve, onLoad, virtualModules } = this;
+
+    // Check for virtual modules first (in file namespace or empty namespace)
+    if (virtualModules && (!inputNamespace || inputNamespace === "file") && virtualModules.has(inputPath)) {
+      this.onResolveAsync(internalID, inputPath, "file", false);
+      return null;
+    }
+
+    if (!onResolve) {
+      this.onResolveAsync(internalID, null, null, null);
+      return null;
+    }
+
     var results = onResolve.$get(inputNamespace);
+
     if (!results) {
       this.onResolveAsync(internalID, null, null, null);
       return null;
@@ -511,6 +557,74 @@ export function runOnLoadPlugins(
 
   const generateDefer = () => this.generateDeferPromise(internalID);
   var promiseResult = (async (internalID, path, namespace, isServerSide, defaultLoader, generateDefer) => {
+    // Check for virtual modules first (file namespace and in virtualModules map)
+    if (this.virtualModules && this.virtualModules.has(path) && namespace === "file") {
+      const virtualModuleCallback = this.virtualModules.get(path);
+      if (virtualModuleCallback) {
+        let result;
+        try {
+          result = virtualModuleCallback();
+        } catch (e) {
+          // If the callback throws, report it as an error
+          this.addError(internalID, e, 1);
+          return null;
+        }
+
+        try {
+          // Unwrap/await promises like onLoad
+          while (
+            result &&
+            $isPromise(result) &&
+            ($getPromiseInternalField(result, $promiseFieldFlags) & $promiseStateMask) === $promiseStateFulfilled
+          ) {
+            result = $getPromiseInternalField(result, $promiseFieldReactionsOrResult);
+          }
+          if (result && $isPromise(result)) {
+            result = await result;
+          }
+          if (!result || !$isObject(result)) {
+            throw new TypeError(`Virtual module "${path}" must return an object with "contents" property`);
+          }
+
+          var { contents, loader = "js" } = result as any;
+          if ((loader as any) === "object") {
+            if (!("exports" in result)) {
+              throw new TypeError('Virtual module returning loader: "object" must have "exports" property');
+            }
+            try {
+              contents = JSON.stringify(result.exports);
+              loader = "json";
+            } catch (e) {
+              throw new TypeError(
+                'Virtual module must return a JSON-serializable object when using loader: "object": ' + e,
+              );
+            }
+          }
+
+          if (!(typeof contents === "string") && !$isTypedArrayView(contents)) {
+            throw new TypeError(
+              `Virtual module "${path}" must return an object with "contents" as a string or Uint8Array`,
+            );
+          }
+
+          if (!(typeof loader === "string")) {
+            throw new TypeError(`Virtual module "${path}" "loader" must be a string if provided`);
+          }
+
+          const chosenLoader = LOADERS_MAP[loader];
+          if (chosenLoader === undefined) {
+            throw new TypeError(`Virtual module "${path}": Loader ${loader} is not supported.`);
+          }
+
+          this.onLoadAsync(internalID, contents as any, chosenLoader);
+          return null;
+        } catch (e) {
+          this.addError(internalID, e, 1);
+          return null;
+        }
+      }
+    }
+
     var results = this.onLoad.$get(namespace);
     if (!results) {
       this.onLoadAsync(internalID, null, null);

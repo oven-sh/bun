@@ -59,12 +59,16 @@ pub fn buildURLWithPrinter(
     const registry = std.mem.trimRight(u8, registry_, "/");
     const full_name = full_name_.slice();
 
+    // Check if this is a GitLab registry by looking for gitlab in the registry URL
+    const is_gitlab_registry = bun.strings.indexOf(registry, "gitlab") != null;
+    
     var name = full_name;
-    if (name[0] == '@') {
+    if (name[0] == '@' and !is_gitlab_registry) {
         if (strings.indexOfChar(name, '/')) |i| {
             name = name[i + 1 ..];
         }
     }
+    // For GitLab registries, keep the full scoped name
 
     const default_format = "{s}/{s}/-/";
 

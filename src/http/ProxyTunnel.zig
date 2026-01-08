@@ -192,7 +192,7 @@ fn onHandshake(this: *HTTPClient, handshake_success: bool, ssl_error: uws.us_bun
     }
 }
 
-pub fn write(this: *HTTPClient, encoded_data: []const u8) void {
+pub fn writeEncrypted(this: *HTTPClient, encoded_data: []const u8) void {
     if (this.proxy_tunnel) |proxy| {
         // Preserve TLS record ordering: if any encrypted bytes are buffered,
         // enqueue new bytes and flush them in FIFO via onWritable.
@@ -279,7 +279,7 @@ pub fn start(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is
         .onData = ProxyTunnel.onData,
         .onHandshake = ProxyTunnel.onHandshake,
         .onClose = ProxyTunnel.onClose,
-        .write = ProxyTunnel.write,
+        .write = ProxyTunnel.writeEncrypted,
         .ctx = this,
     }) catch |err| {
         if (err == error.OutOfMemory) {
@@ -339,7 +339,7 @@ pub fn onWritable(this: *ProxyTunnel, comptime is_ssl: bool, socket: NewHTTPCont
     }
 }
 
-pub fn receiveData(this: *ProxyTunnel, buf: []const u8) void {
+pub fn receive(this: *ProxyTunnel, buf: []const u8) void {
     this.ref();
     defer this.deref();
     if (this.wrapper) |*wrapper| {
@@ -347,7 +347,7 @@ pub fn receiveData(this: *ProxyTunnel, buf: []const u8) void {
     }
 }
 
-pub fn writeData(this: *ProxyTunnel, buf: []const u8) !usize {
+pub fn write(this: *ProxyTunnel, buf: []const u8) !usize {
     if (this.wrapper) |*wrapper| {
         return try wrapper.writeData(buf);
     }

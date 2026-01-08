@@ -738,7 +738,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             // For tunnel mode, write through the tunnel instead of direct socket
             if (this.proxy_tunnel) |tunnel| {
                 // The tunnel handles TLS encryption and buffering
-                _ = tunnel.writeData(bytes) catch {
+                _ = tunnel.write(bytes) catch {
                     this.terminate(ErrorCode.failed_to_write);
                     return false;
                 };

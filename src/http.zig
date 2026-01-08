@@ -1290,7 +1290,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                         this.setTimeout(socket, 5);
 
                         const to_send = this.state.request_body;
-                        const sent = proxy.writeData(to_send) catch return; // just wait and retry when onWritable! if closed internally will call proxy.onClose
+                        const sent = proxy.write(to_send) catch return; // just wait and retry when onWritable! if closed internally will call proxy.onClose
 
                         this.state.request_sent_len += sent;
                         this.state.request_body = this.state.request_body[sent..];
@@ -1345,7 +1345,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                     assert(!socket.isShutdown());
                     assert(!socket.isClosed());
                 }
-                const amount = proxy.writeData(to_send) catch return; // just wait and retry when onWritable! if closed internally will call proxy.onClose
+                const amount = proxy.write(to_send) catch return; // just wait and retry when onWritable! if closed internally will call proxy.onClose
 
                 if (comptime is_first_call) {
                     if (amount == 0) {
@@ -1605,7 +1605,7 @@ pub fn onData(
     if (this.proxy_tunnel) |proxy| {
         // if we have a tunnel we dont care about the other stages, we will just tunnel the data
         this.setTimeout(socket, 5);
-        proxy.receiveData(incoming_data);
+        proxy.receive(incoming_data);
         return;
     }
 

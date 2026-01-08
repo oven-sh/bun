@@ -504,7 +504,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                         // (in case the WebSocket client closes during processing)
                         tunnel.ref();
                         defer tunnel.deref();
-                        tunnel.receiveData(data);
+                        tunnel.receive(data);
                     }
                 }
                 return;
@@ -533,7 +533,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             // Route through proxy tunnel if TLS handshake is in progress or complete
             if (this.proxy) |*p| {
                 if (p.tunnel) |tunnel| {
-                    tunnel.receiveData(data);
+                    tunnel.receive(data);
                     return;
                 }
             }
@@ -723,7 +723,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             // Send through the tunnel (will be encrypted)
             if (this.proxy) |*p| {
                 if (p.tunnel) |tunnel| {
-                    _ = tunnel.writeData(upgrade_request) catch {
+                    _ = tunnel.write(upgrade_request) catch {
                         this.terminate(ErrorCode.failed_to_write);
                         return;
                     };

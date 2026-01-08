@@ -295,7 +295,7 @@ pub fn onWritable(this: *WebSocketProxyTunnel) void {
 }
 
 /// Feed encrypted data from the network to the SSL wrapper for decryption
-pub fn receiveData(this: *WebSocketProxyTunnel, data: []const u8) void {
+pub fn receive(this: *WebSocketProxyTunnel, data: []const u8) void {
     this.ref();
     defer this.deref();
 
@@ -305,7 +305,7 @@ pub fn receiveData(this: *WebSocketProxyTunnel, data: []const u8) void {
 }
 
 /// Write application data through the tunnel (will be encrypted)
-pub fn writeData(this: *WebSocketProxyTunnel, data: []const u8) !usize {
+pub fn write(this: *WebSocketProxyTunnel, data: []const u8) !usize {
     if (this.wrapper) |*wrapper| {
         return try wrapper.writeData(data);
     }

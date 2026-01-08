@@ -4656,7 +4656,7 @@ describe.concurrent("bun-install", () => {
     });
   });
 
-  it.todo("should report error on invalid format for package.json (snapshot not supported in concurrent)", async () => {
+  test.serial("should report error on invalid format for package.json", async () => {
     await withContext(defaultOpts, async ctx => {
       await writeFile(join(ctx.package_dir, "package.json"), "foo");
       const { stdout, stderr, exited } = spawn({
@@ -4677,7 +4677,7 @@ describe.concurrent("bun-install", () => {
     });
   });
 
-  it.todo("should report error on invalid format for dependencies (snapshot not supported in concurrent)", async () => {
+  test.serial("should report error on invalid format for dependencies", async () => {
     await withContext(defaultOpts, async ctx => {
       await writeFile(
         join(ctx.package_dir, "package.json"),
@@ -4740,7 +4740,7 @@ describe.concurrent("bun-install", () => {
     });
   });
 
-  it.todo("should report error on invalid format for workspaces (snapshot not supported in concurrent)", async () => {
+  test.serial("should report error on invalid format for workspaces", async () => {
     await withContext(defaultOpts, async ctx => {
       await writeFile(
         join(ctx.package_dir, "package.json"),
@@ -8789,7 +8789,7 @@ describe.concurrent("bun-install", () => {
     });
   });
 
-  it.todo("should handle modified git resolutions in bun.lock (snapshot not supported in concurrent)", async () => {
+  test.serial("should handle modified git resolutions in bun.lock", async () => {
     await withContext(defaultOpts, async ctx => {
       // install-test-8 has a dependency but because it's not in the lockfile
       // it won't be included in the install.

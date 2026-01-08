@@ -17,7 +17,7 @@ using namespace JSC;
 
 JSC_DEFINE_CUSTOM_GETTER(bundlerMetafileLazyGetter, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName property))
 {
-    auto& vm = getVM(globalObject);
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSObject* thisObject = JSValue::decode(thisValue).getObject();
@@ -28,21 +28,16 @@ JSC_DEFINE_CUSTOM_GETTER(bundlerMetafileLazyGetter, (JSGlobalObject * globalObje
     // Get the raw JSON string from private property
     const auto& privateName = Bun::builtinNames(vm).dataPrivateName();
     JSValue metafileStringValue = thisObject->getDirect(vm, privateName);
+    ASSERT(metafileStringValue.isString());
 
-    if (!metafileStringValue || metafileStringValue.isUndefinedOrNull()) {
-        return JSValue::encode(jsUndefined());
-    }
-
-    // Parse the JSON string
-    JSValue parsedValue = JSONParse(globalObject, metafileStringValue.toWTFString(globalObject));
+    auto str = metafileStringValue.toString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (parsedValue.isUndefined()) {
-        return JSValue::encode(jsUndefined());
-    }
+    auto view = str->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
 
-    // Replace the getter with the parsed value
-    thisObject->putDirect(vm, property, parsedValue, 0);
+    JSValue parsedValue = JSC::JSONParseWithException(globalObject, view);
+    RETURN_IF_EXCEPTION(scope, {});
 
     // Clear the raw JSON string so it can be GC'd
     thisObject->putDirect(vm, privateName, jsUndefined(), 0);
@@ -53,13 +48,9 @@ JSC_DEFINE_CUSTOM_GETTER(bundlerMetafileLazyGetter, (JSGlobalObject * globalObje
 // Helper to set up the lazy metafile on a BuildOutput object
 extern "C" SYSV_ABI void Bun__setupLazyMetafile(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue buildOutputEncoded, JSC::EncodedJSValue metafileStringEncoded)
 {
-    auto& vm = globalObject->vm();
-    JSObject* buildOutput = jsDynamicCast<JSObject*>(JSValue::decode(buildOutputEncoded));
-
+    auto& vm = JSC::getVM(globalObject);
+    JSObject* buildOutput = JSValue::decode(buildOutputEncoded).getObject();
     ASSERT(buildOutput);
-    if (!buildOutput) {
-        return;
-    }
 
     // Store the raw JSON string in a private property
     const auto& privateName = Bun::builtinNames(vm).dataPrivateName();

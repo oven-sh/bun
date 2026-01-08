@@ -155,4 +155,129 @@ describe("undici", () => {
     //   expect(json.form.foo).toBe("bar");
     // });
   });
+
+  describe("dispatcher TLS options", () => {
+    it("Agent should store connect options", () => {
+      const { Agent } = require("undici");
+      const agent = new Agent({
+        connect: {
+          rejectUnauthorized: false,
+          ca: "test-ca",
+        },
+      });
+
+      expect(agent.options).toBeDefined();
+      expect(agent.connect).toBeDefined();
+      expect(agent.connect.rejectUnauthorized).toBe(false);
+      expect(agent.connect.ca).toBe("test-ca");
+    });
+
+    it("Dispatcher should store connect options", () => {
+      const { Dispatcher } = require("undici");
+      const dispatcher = new Dispatcher({
+        connect: {
+          rejectUnauthorized: false,
+        },
+      });
+
+      expect(dispatcher.options).toBeDefined();
+      expect(dispatcher.connect).toBeDefined();
+      expect(dispatcher.connect.rejectUnauthorized).toBe(false);
+    });
+
+    it("Pool should store connect options", () => {
+      const { Pool } = require("undici");
+      const pool = new Pool("http://localhost", {
+        connect: {
+          rejectUnauthorized: false,
+        },
+      });
+
+      expect(pool.options).toBeDefined();
+      expect(pool.connect).toBeDefined();
+      expect(pool.connect.rejectUnauthorized).toBe(false);
+    });
+
+    it("BalancedPool should store connect options", () => {
+      const { BalancedPool } = require("undici");
+      const balancedPool = new BalancedPool(["http://localhost"], {
+        connect: {
+          rejectUnauthorized: false,
+        },
+      });
+
+      expect(balancedPool.options).toBeDefined();
+      expect(balancedPool.connect).toBeDefined();
+      expect(balancedPool.connect.rejectUnauthorized).toBe(false);
+    });
+
+    it("Client should store connect options", () => {
+      const { Client } = require("undici");
+      const client = new Client("http://localhost", {
+        connect: {
+          rejectUnauthorized: false,
+        },
+      });
+
+      expect(client.options).toBeDefined();
+      expect(client.connect).toBeDefined();
+      expect(client.connect.rejectUnauthorized).toBe(false);
+    });
+
+    it("ProxyAgent should store connect options", () => {
+      const { ProxyAgent } = require("undici");
+      const proxyAgent = new ProxyAgent({
+        connect: {
+          rejectUnauthorized: false,
+        },
+      });
+
+      expect(proxyAgent.options).toBeDefined();
+      expect(proxyAgent.connect).toBeDefined();
+      expect(proxyAgent.connect.rejectUnauthorized).toBe(false);
+    });
+
+    it("EnvHttpProxyAgent should store connect options", () => {
+      const { EnvHttpProxyAgent } = require("undici");
+      const envAgent = new EnvHttpProxyAgent({
+        connect: {
+          rejectUnauthorized: false,
+        },
+      });
+
+      expect(envAgent.options).toBeDefined();
+      expect(envAgent.connect).toBeDefined();
+      expect(envAgent.connect.rejectUnauthorized).toBe(false);
+    });
+
+    it("RetryAgent should store connect options", () => {
+      const { RetryAgent, Dispatcher } = require("undici");
+      const baseDispatcher = new Dispatcher();
+      const retryAgent = new RetryAgent(baseDispatcher, {
+        connect: {
+          rejectUnauthorized: false,
+        },
+      });
+
+      expect(retryAgent.options).toBeDefined();
+      expect(retryAgent.connect).toBeDefined();
+      expect(retryAgent.connect.rejectUnauthorized).toBe(false);
+    });
+
+    it("Agent without options should have undefined connect", () => {
+      const { Agent } = require("undici");
+      const agent = new Agent();
+
+      expect(agent.options).toBeUndefined();
+      expect(agent.connect).toBeUndefined();
+    });
+
+    it("Agent with options but no connect should not have connect", () => {
+      const { Agent } = require("undici");
+      const agent = new Agent({ someOtherOption: true });
+
+      expect(agent.options).toBeDefined();
+      expect(agent.connect).toBeUndefined();
+    });
+  });
 });

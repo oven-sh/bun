@@ -6,7 +6,16 @@ const { _ReadableFromWeb: ReadableFromWeb } = require("internal/webstreams_adapt
 const ObjectCreate = Object.create;
 const kEmptyObject = ObjectCreate(null);
 
-var fetch = Bun.fetch;
+const bunFetch = Bun.fetch;
+
+// Wrapper fetch that uses globalDispatcher when set
+function fetch(input, init) {
+  // If no dispatcher/agent is provided and globalDispatcher is set, use it
+  if (globalDispatcher && init?.dispatcher === undefined && init?.agent === undefined) {
+    return bunFetch(input, { ...init, dispatcher: globalDispatcher });
+  }
+  return bunFetch(input, init);
+}
 const bindings = $cpp("Undici.cpp", "createUndiciInternalBinding");
 const Response = bindings[0];
 const Request = bindings[1];
@@ -262,33 +271,75 @@ class MockAgent {
 
 function mockErrors() {}
 
-class Dispatcher extends EventEmitter {}
-class Agent extends Dispatcher {}
-class Pool extends Dispatcher {
-  request() {}
+class Dispatcher extends EventEmitter {
+  constructor(options) {
+    super();
+    // Store options for TLS fallback (used by Bun's fetch)
+    if (options) {
+      this.options = options;
+      // undici uses 'connect' for TLS options
+      if (options.connect) {
+        this.connect = options.connect;
+      }
+    }
+  }
 }
-class BalancedPool extends Dispatcher {}
-class Client extends Dispatcher {
+
+class Agent extends Dispatcher {
+  constructor(options) {
+    super(options);
+  }
+}
+
+class Pool extends Dispatcher {
+  constructor(url, options) {
+    super(options);
+  }
   request() {}
 }
 
-class DispatcherBase extends EventEmitter {}
+class BalancedPool extends Dispatcher {
+  constructor(upstreams, options) {
+    super(options);
+  }
+}
+
+class Client extends Dispatcher {
+  constructor(url, options) {
+    super(options);
+  }
+  request() {}
+}
+
+class DispatcherBase extends EventEmitter {
+  constructor(options) {
+    super();
+    // Store options for TLS fallback (used by Bun's fetch)
+    if (options) {
+      this.options = options;
+      // undici uses 'connect' for TLS options
+      if (options.connect) {
+        this.connect = options.connect;
+      }
+    }
+  }
+}
 
 class ProxyAgent extends DispatcherBase {
-  constructor() {
-    super();
+  constructor(options) {
+    super(options);
   }
 }
 
 class EnvHttpProxyAgent extends DispatcherBase {
-  constructor() {
-    super();
+  constructor(options) {
+    super(options);
   }
 }
 
 class RetryAgent extends Dispatcher {
-  constructor() {
-    super();
+  constructor(dispatcher, options) {
+    super(options);
   }
 }
 

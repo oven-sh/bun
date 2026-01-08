@@ -686,4 +686,559 @@ describe("https.globalAgent.options TLS fallback", () => {
       expect(exitCode).toBe(0);
     });
   });
+
+  describe.concurrent("undici module integration", () => {
+    test("undici.Agent with connect options works with Bun's fetch", async () => {
+      using dir = tempDir("test-undici-agent-fetch", {
+        "key.pem": serverKey,
+        "cert.pem": serverCert,
+        "test.js": `
+          const https = require('https');
+          const fs = require('fs');
+          const { Agent } = require('undici');
+
+          const serverTls = {
+            key: fs.readFileSync('./key.pem', 'utf8'),
+            cert: fs.readFileSync('./cert.pem', 'utf8'),
+          };
+
+          const server = https.createServer(serverTls, (req, res) => {
+            res.writeHead(200, { 'Content-Type': 'text/plain' });
+            res.end('Hello from undici.Agent');
+          });
+
+          server.listen(0, '127.0.0.1', async () => {
+            const port = server.address().port;
+
+            // Create undici.Agent with connect options
+            const agent = new Agent({
+              connect: {
+                rejectUnauthorized: false,
+              },
+            });
+
+            try {
+              // Use Bun's fetch with undici.Agent as dispatcher
+              const response = await fetch(\`https://127.0.0.1:\${port}/\`, {
+                dispatcher: agent,
+              });
+              const text = await response.text();
+              console.log(text);
+              server.close();
+              process.exit(text === 'Hello from undici.Agent' ? 0 : 1);
+            } catch (err) {
+              console.error(err.message);
+              server.close();
+              process.exit(1);
+            }
+          });
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test.js"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("Hello from undici.Agent");
+      expect(exitCode).toBe(0);
+    });
+
+    test("undici.Pool with connect options works with Bun's fetch", async () => {
+      using dir = tempDir("test-undici-pool-fetch", {
+        "key.pem": serverKey,
+        "cert.pem": serverCert,
+        "test.js": `
+          const https = require('https');
+          const fs = require('fs');
+          const { Pool } = require('undici');
+
+          const serverTls = {
+            key: fs.readFileSync('./key.pem', 'utf8'),
+            cert: fs.readFileSync('./cert.pem', 'utf8'),
+          };
+
+          const server = https.createServer(serverTls, (req, res) => {
+            res.writeHead(200, { 'Content-Type': 'text/plain' });
+            res.end('Hello from undici.Pool');
+          });
+
+          server.listen(0, '127.0.0.1', async () => {
+            const port = server.address().port;
+
+            // Create undici.Pool with connect options
+            const pool = new Pool(\`https://127.0.0.1:\${port}\`, {
+              connect: {
+                rejectUnauthorized: false,
+              },
+            });
+
+            try {
+              // Use Bun's fetch with undici.Pool as dispatcher
+              const response = await fetch(\`https://127.0.0.1:\${port}/\`, {
+                dispatcher: pool,
+              });
+              const text = await response.text();
+              console.log(text);
+              server.close();
+              process.exit(text === 'Hello from undici.Pool' ? 0 : 1);
+            } catch (err) {
+              console.error(err.message);
+              server.close();
+              process.exit(1);
+            }
+          });
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test.js"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("Hello from undici.Pool");
+      expect(exitCode).toBe(0);
+    });
+
+    test("undici.Client with connect options works with Bun's fetch", async () => {
+      using dir = tempDir("test-undici-client-fetch", {
+        "key.pem": serverKey,
+        "cert.pem": serverCert,
+        "test.js": `
+          const https = require('https');
+          const fs = require('fs');
+          const { Client } = require('undici');
+
+          const serverTls = {
+            key: fs.readFileSync('./key.pem', 'utf8'),
+            cert: fs.readFileSync('./cert.pem', 'utf8'),
+          };
+
+          const server = https.createServer(serverTls, (req, res) => {
+            res.writeHead(200, { 'Content-Type': 'text/plain' });
+            res.end('Hello from undici.Client');
+          });
+
+          server.listen(0, '127.0.0.1', async () => {
+            const port = server.address().port;
+
+            // Create undici.Client with connect options
+            const client = new Client(\`https://127.0.0.1:\${port}\`, {
+              connect: {
+                rejectUnauthorized: false,
+              },
+            });
+
+            try {
+              // Use Bun's fetch with undici.Client as dispatcher
+              const response = await fetch(\`https://127.0.0.1:\${port}/\`, {
+                dispatcher: client,
+              });
+              const text = await response.text();
+              console.log(text);
+              server.close();
+              process.exit(text === 'Hello from undici.Client' ? 0 : 1);
+            } catch (err) {
+              console.error(err.message);
+              server.close();
+              process.exit(1);
+            }
+          });
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test.js"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("Hello from undici.Client");
+      expect(exitCode).toBe(0);
+    });
+
+    test("undici.ProxyAgent with connect options works with Bun's fetch", async () => {
+      using dir = tempDir("test-undici-proxyagent-fetch", {
+        "key.pem": serverKey,
+        "cert.pem": serverCert,
+        "test.js": `
+          const https = require('https');
+          const fs = require('fs');
+          const { ProxyAgent } = require('undici');
+
+          const serverTls = {
+            key: fs.readFileSync('./key.pem', 'utf8'),
+            cert: fs.readFileSync('./cert.pem', 'utf8'),
+          };
+
+          const server = https.createServer(serverTls, (req, res) => {
+            res.writeHead(200, { 'Content-Type': 'text/plain' });
+            res.end('Hello from undici.ProxyAgent');
+          });
+
+          server.listen(0, '127.0.0.1', async () => {
+            const port = server.address().port;
+
+            // Create undici.ProxyAgent with connect options
+            const proxyAgent = new ProxyAgent({
+              connect: {
+                rejectUnauthorized: false,
+              },
+            });
+
+            try {
+              // Use Bun's fetch with undici.ProxyAgent as dispatcher
+              const response = await fetch(\`https://127.0.0.1:\${port}/\`, {
+                dispatcher: proxyAgent,
+              });
+              const text = await response.text();
+              console.log(text);
+              server.close();
+              process.exit(text === 'Hello from undici.ProxyAgent' ? 0 : 1);
+            } catch (err) {
+              console.error(err.message);
+              server.close();
+              process.exit(1);
+            }
+          });
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test.js"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("Hello from undici.ProxyAgent");
+      expect(exitCode).toBe(0);
+    });
+
+    test("undici.fetch uses https.globalAgent.options as fallback", async () => {
+      using dir = tempDir("test-undici-fetch-globalagent", {
+        "key.pem": serverKey,
+        "cert.pem": serverCert,
+        "test.js": `
+          const https = require('https');
+          const fs = require('fs');
+          const { fetch: undiciFetch } = require('undici');
+
+          const serverTls = {
+            key: fs.readFileSync('./key.pem', 'utf8'),
+            cert: fs.readFileSync('./cert.pem', 'utf8'),
+          };
+
+          const server = https.createServer(serverTls, (req, res) => {
+            res.writeHead(200, { 'Content-Type': 'text/plain' });
+            res.end('Hello from undici.fetch');
+          });
+
+          server.listen(0, '127.0.0.1', async () => {
+            const port = server.address().port;
+
+            // Set globalAgent.options.rejectUnauthorized to false
+            https.globalAgent.options.rejectUnauthorized = false;
+
+            try {
+              // Use undici.fetch - should use globalAgent.options as fallback
+              const response = await undiciFetch(\`https://127.0.0.1:\${port}/\`);
+              const text = await response.text();
+              console.log(text);
+              server.close();
+              process.exit(text === 'Hello from undici.fetch' ? 0 : 1);
+            } catch (err) {
+              console.error(err.message);
+              server.close();
+              process.exit(1);
+            }
+          });
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test.js"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("Hello from undici.fetch");
+      expect(exitCode).toBe(0);
+    });
+
+    test("undici.fetch with dispatcher uses dispatcher.connect for TLS", async () => {
+      using dir = tempDir("test-undici-fetch-dispatcher", {
+        "key.pem": serverKey,
+        "cert.pem": serverCert,
+        "test.js": `
+          const https = require('https');
+          const fs = require('fs');
+          const { fetch: undiciFetch, Agent } = require('undici');
+
+          const serverTls = {
+            key: fs.readFileSync('./key.pem', 'utf8'),
+            cert: fs.readFileSync('./cert.pem', 'utf8'),
+          };
+
+          const server = https.createServer(serverTls, (req, res) => {
+            res.writeHead(200, { 'Content-Type': 'text/plain' });
+            res.end('Hello from undici.fetch with Agent');
+          });
+
+          server.listen(0, '127.0.0.1', async () => {
+            const port = server.address().port;
+
+            // globalAgent.options has rejectUnauthorized: true (would fail)
+            https.globalAgent.options.rejectUnauthorized = true;
+
+            // Create undici.Agent with connect options
+            const agent = new Agent({
+              connect: {
+                rejectUnauthorized: false,
+              },
+            });
+
+            try {
+              // Use undici.fetch with dispatcher
+              const response = await undiciFetch(\`https://127.0.0.1:\${port}/\`, {
+                dispatcher: agent,
+              });
+              const text = await response.text();
+              console.log(text);
+              server.close();
+              process.exit(text === 'Hello from undici.fetch with Agent' ? 0 : 1);
+            } catch (err) {
+              console.error(err.message);
+              server.close();
+              process.exit(1);
+            }
+          });
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test.js"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("Hello from undici.fetch with Agent");
+      expect(exitCode).toBe(0);
+    });
+
+    test("undici.setGlobalDispatcher affects fetch TLS options", async () => {
+      using dir = tempDir("test-undici-setglobaldispatcher", {
+        "key.pem": serverKey,
+        "cert.pem": serverCert,
+        "test.js": `
+          const https = require('https');
+          const fs = require('fs');
+          const { Agent, setGlobalDispatcher, fetch: undiciFetch } = require('undici');
+
+          const serverTls = {
+            key: fs.readFileSync('./key.pem', 'utf8'),
+            cert: fs.readFileSync('./cert.pem', 'utf8'),
+          };
+
+          const server = https.createServer(serverTls, (req, res) => {
+            res.writeHead(200, { 'Content-Type': 'text/plain' });
+            res.end('Hello from global dispatcher');
+          });
+
+          server.listen(0, '127.0.0.1', async () => {
+            const port = server.address().port;
+
+            // Create undici.Agent with connect options and set as global dispatcher
+            const agent = new Agent({
+              connect: {
+                rejectUnauthorized: false,
+              },
+            });
+            setGlobalDispatcher(agent);
+
+            try {
+              // Use undici.fetch - should use global dispatcher's connect options
+              const response = await undiciFetch(\`https://127.0.0.1:\${port}/\`);
+              const text = await response.text();
+              console.log(text);
+              server.close();
+              process.exit(text === 'Hello from global dispatcher' ? 0 : 1);
+            } catch (err) {
+              console.error(err.message);
+              server.close();
+              process.exit(1);
+            }
+          });
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test.js"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("Hello from global dispatcher");
+      expect(exitCode).toBe(0);
+    });
+
+    test("undici.Agent stores options and connect properties correctly", async () => {
+      using dir = tempDir("test-undici-agent-props", {
+        "test.js": `
+          const { Agent, Dispatcher, Pool, Client, ProxyAgent, EnvHttpProxyAgent, RetryAgent } = require('undici');
+
+          // Test Agent
+          const agent = new Agent({
+            connect: {
+              rejectUnauthorized: false,
+              ca: 'test-ca',
+            },
+          });
+
+          if (!agent.options) {
+            console.error('Agent.options is missing');
+            process.exit(1);
+          }
+          if (!agent.connect) {
+            console.error('Agent.connect is missing');
+            process.exit(1);
+          }
+          if (agent.connect.rejectUnauthorized !== false) {
+            console.error('Agent.connect.rejectUnauthorized is not false');
+            process.exit(1);
+          }
+          if (agent.connect.ca !== 'test-ca') {
+            console.error('Agent.connect.ca is not test-ca');
+            process.exit(1);
+          }
+
+          // Test Dispatcher
+          const dispatcher = new Dispatcher({
+            connect: {
+              rejectUnauthorized: false,
+            },
+          });
+          if (!dispatcher.options || !dispatcher.connect) {
+            console.error('Dispatcher options/connect missing');
+            process.exit(1);
+          }
+
+          // Test Pool
+          const pool = new Pool('http://localhost', {
+            connect: {
+              rejectUnauthorized: false,
+            },
+          });
+          if (!pool.options || !pool.connect) {
+            console.error('Pool options/connect missing');
+            process.exit(1);
+          }
+
+          // Test Client
+          const client = new Client('http://localhost', {
+            connect: {
+              rejectUnauthorized: false,
+            },
+          });
+          if (!client.options || !client.connect) {
+            console.error('Client options/connect missing');
+            process.exit(1);
+          }
+
+          // Test ProxyAgent
+          const proxyAgent = new ProxyAgent({
+            connect: {
+              rejectUnauthorized: false,
+            },
+          });
+          if (!proxyAgent.options || !proxyAgent.connect) {
+            console.error('ProxyAgent options/connect missing');
+            process.exit(1);
+          }
+
+          // Test EnvHttpProxyAgent
+          const envAgent = new EnvHttpProxyAgent({
+            connect: {
+              rejectUnauthorized: false,
+            },
+          });
+          if (!envAgent.options || !envAgent.connect) {
+            console.error('EnvHttpProxyAgent options/connect missing');
+            process.exit(1);
+          }
+
+          // Test RetryAgent
+          const retryAgent = new RetryAgent(dispatcher, {
+            connect: {
+              rejectUnauthorized: false,
+            },
+          });
+          if (!retryAgent.options || !retryAgent.connect) {
+            console.error('RetryAgent options/connect missing');
+            process.exit(1);
+          }
+
+          // Test empty constructor
+          const emptyAgent = new Agent();
+          if (emptyAgent.options !== undefined || emptyAgent.connect !== undefined) {
+            console.error('Empty Agent should have undefined options/connect');
+            process.exit(1);
+          }
+
+          console.log('All undici classes store options correctly');
+          process.exit(0);
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test.js"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("All undici classes store options correctly");
+      expect(exitCode).toBe(0);
+    });
+  });
 });

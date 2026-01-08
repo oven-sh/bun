@@ -154,6 +154,12 @@ pub const SyscallAccessor = struct {
         };
     }
 
+    /// Like statat but does not follow symlinks.
+    pub fn lstatat(handle: Handle, path: [:0]const u8) Maybe(bun.Stat) {
+        if (comptime bun.Environment.isWindows) return statatWindows(handle.value, path);
+        return Syscall.lstatat(handle.value, path);
+    }
+
     pub fn openat(handle: Handle, path: [:0]const u8) !Maybe(Handle) {
         return switch (Syscall.openat(handle.value, path, bun.O.DIRECTORY | bun.O.RDONLY, 0)) {
             .err => |err| .{ .err = err },
@@ -910,9 +916,9 @@ pub fn GlobWalker_(
                                     const might_match = this.walker.matchPatternImpl(dir_iter_state.pattern, entry_name);
                                     if (!might_match) continue;
 
-                                    // Need to stat to determine actual kind
+                                    // Need to stat to determine actual kind (lstatat to not follow symlinks)
                                     const name_z = this.walker.arena.allocator().dupeZ(u8, entry_name) catch bun.outOfMemory();
-                                    const stat_result = Accessor.statat(dir.fd, name_z);
+                                    const stat_result = Accessor.lstatat(dir.fd, name_z);
                                     const real_kind: std.fs.File.Kind = switch (stat_result) {
                                         .result => |st| bun.sys.kindFromMode(st.mode),
                                         .err => continue, // Skip entries we can't stat

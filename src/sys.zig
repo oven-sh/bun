@@ -744,6 +744,23 @@ pub fn fstatat(fd: bun.FileDescriptor, path: [:0]const u8) Maybe(bun.Stat) {
     return Maybe(bun.Stat){ .result = stat_buf };
 }
 
+/// Like fstatat but does not follow symlinks (uses AT.SYMLINK_NOFOLLOW).
+/// This is the "at" equivalent of lstat.
+pub fn lstatat(fd: bun.FileDescriptor, path: [:0]const u8) Maybe(bun.Stat) {
+    if (Environment.isWindows) {
+        // Windows: symlinks handled differently, delegate to fstatat
+        return fstatat(fd, path);
+    }
+    var stat_buf = mem.zeroes(bun.Stat);
+    const fd_valid = if (fd == bun.invalid_fd) std.posix.AT.FDCWD else fd.native();
+    if (Maybe(bun.Stat).errnoSysFP(syscall.fstatat(fd_valid, path, &stat_buf, std.posix.AT.SYMLINK_NOFOLLOW), .fstatat, fd, path)) |err| {
+        log("lstatat({f}, {s}) = {s}", .{ fd, path, @tagName(err.getErrno()) });
+        return err;
+    }
+    log("lstatat({f}, {s}) = 0", .{ fd, path });
+    return Maybe(bun.Stat){ .result = stat_buf };
+}
+
 pub fn mkdir(file_path: [:0]const u8, flags: mode_t) Maybe(void) {
     return switch (Environment.os) {
         .mac => Maybe(void).errnoSysP(syscall.mkdir(file_path, flags), .mkdir, file_path) orelse .success,

@@ -4654,8 +4654,8 @@ pub const NodeFS = struct {
                     .unknown => {
                         if (current.name.len + 1 + name_to_copy.len > bun.MAX_PATH_BYTES) break :enqueue;
 
-                        // Lazy stat to determine the actual kind
-                        const stat_result = bun.sys.fstatat(fd, current.name.sliceAssumeZ());
+                        // Lazy stat to determine the actual kind (lstatat to not follow symlinks)
+                        const stat_result = bun.sys.lstatat(fd, current.name.sliceAssumeZ());
                         switch (stat_result) {
                             .result => |st| {
                                 const real_kind = bun.sys.kindFromMode(st.mode);
@@ -4815,8 +4815,8 @@ pub const NodeFS = struct {
                         .unknown => {
                             if (current.name.len + 1 + name_to_copy.len > bun.MAX_PATH_BYTES) break :enqueue;
 
-                            // Lazy stat to determine the actual kind
-                            const stat_result = bun.sys.fstatat(fd, current.name.sliceAssumeZ());
+                            // Lazy stat to determine the actual kind (lstatat to not follow symlinks)
+                            const stat_result = bun.sys.lstatat(fd, current.name.sliceAssumeZ());
                             switch (stat_result) {
                                 .result => |st| {
                                     const real_kind = bun.sys.kindFromMode(st.mode);

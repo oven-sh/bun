@@ -37,40 +37,32 @@
 #include "SerializedScriptValue.h"
 // #include "WorkerOrWorkletGlobalScope.h"
 #include <JavaScriptCore/JSCJSValueInlines.h>
-#include <wtf/SortedArrayMap.h>
 
 namespace WebCore {
 
-using NavigationTimingFunction = unsigned long long (PerformanceTiming::*)() const;
-
-static constexpr std::array<std::pair<ComparableASCIILiteral, NavigationTimingFunction>, 21> restrictedMarkMappings { {
-    { "connectEnd"_s, &PerformanceTiming::connectEnd },
-    { "connectStart"_s, &PerformanceTiming::connectStart },
-    { "domComplete"_s, &PerformanceTiming::domComplete },
-    { "domContentLoadedEventEnd"_s, &PerformanceTiming::domContentLoadedEventEnd },
-    { "domContentLoadedEventStart"_s, &PerformanceTiming::domContentLoadedEventStart },
-    { "domInteractive"_s, &PerformanceTiming::domInteractive },
-    { "domLoading"_s, &PerformanceTiming::domLoading },
-    { "domainLookupEnd"_s, &PerformanceTiming::domainLookupEnd },
-    { "domainLookupStart"_s, &PerformanceTiming::domainLookupStart },
-    { "fetchStart"_s, &PerformanceTiming::fetchStart },
-    { "loadEventEnd"_s, &PerformanceTiming::loadEventEnd },
-    { "loadEventStart"_s, &PerformanceTiming::loadEventStart },
-    { "navigationStart"_s, &PerformanceTiming::navigationStart },
-    { "redirectEnd"_s, &PerformanceTiming::redirectEnd },
-    { "redirectStart"_s, &PerformanceTiming::redirectStart },
-    { "requestStart"_s, &PerformanceTiming::requestStart },
-    { "responseEnd"_s, &PerformanceTiming::responseEnd },
-    { "responseStart"_s, &PerformanceTiming::responseStart },
-    { "secureConnectionStart"_s, &PerformanceTiming::secureConnectionStart },
-    { "unloadEventEnd"_s, &PerformanceTiming::unloadEventEnd },
-    { "unloadEventStart"_s, &PerformanceTiming::unloadEventStart },
-} };
-static constexpr SortedArrayMap restrictedMarkFunctions { restrictedMarkMappings };
-
 bool PerformanceUserTiming::isRestrictedMarkName(const String& markName)
 {
-    return restrictedMarkFunctions.contains(markName);
+    return markName == "connectEnd"_s
+        || markName == "connectStart"_s
+        || markName == "domComplete"_s
+        || markName == "domContentLoadedEventEnd"_s
+        || markName == "domContentLoadedEventStart"_s
+        || markName == "domInteractive"_s
+        || markName == "domLoading"_s
+        || markName == "domainLookupEnd"_s
+        || markName == "domainLookupStart"_s
+        || markName == "fetchStart"_s
+        || markName == "loadEventEnd"_s
+        || markName == "loadEventStart"_s
+        || markName == "navigationStart"_s
+        || markName == "redirectEnd"_s
+        || markName == "redirectStart"_s
+        || markName == "requestStart"_s
+        || markName == "responseEnd"_s
+        || markName == "responseStart"_s
+        || markName == "secureConnectionStart"_s
+        || markName == "unloadEventEnd"_s
+        || markName == "unloadEventStart"_s;
 }
 
 PerformanceUserTiming::PerformanceUserTiming(Performance& performance)

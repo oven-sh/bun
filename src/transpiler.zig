@@ -438,7 +438,7 @@ pub const Transpiler = struct {
     }
 
     pub fn deinit(this: *Transpiler) void {
-        this.options.deinit();
+        this.options.deinit(this.allocator);
         this.log.deinit();
         this.resolver.deinit();
         this.fs.deinit();
@@ -594,7 +594,7 @@ pub const Transpiler = struct {
     ) !?options.OutputFile {
         _ = outstream;
 
-        if (resolve_result.is_external) {
+        if (resolve_result.flags.is_external) {
             return null;
         }
 
@@ -630,7 +630,7 @@ pub const Transpiler = struct {
                         .file_hash = null,
                         .macro_remappings = transpiler.options.macro_remap,
                         .jsx = resolve_result.jsx,
-                        .emit_decorator_metadata = resolve_result.emit_decorator_metadata,
+                        .emit_decorator_metadata = resolve_result.flags.emit_decorator_metadata,
                     },
                     client_entry_point_,
                 ) orelse {
@@ -806,6 +806,7 @@ pub const Transpiler = struct {
                     .runtime_transpiler_cache = runtime_transpiler_cache,
                     .print_dce_annotations = transpiler.options.emit_dce_annotations,
                     .hmr_ref = ast.wrapper_ref,
+                    .mangled_props = null,
                 },
                 enable_source_map,
             ),
@@ -1113,6 +1114,7 @@ pub const Transpiler = struct {
                 opts.features.minify_identifiers = transpiler.options.minify_identifiers;
                 opts.features.dead_code_elimination = transpiler.options.dead_code_elimination;
                 opts.features.remove_cjs_module_wrapper = this_parse.remove_cjs_module_wrapper;
+                opts.features.bundler_feature_flags = transpiler.options.bundler_feature_flags;
 
                 if (transpiler.macro_context == null) {
                     transpiler.macro_context = js_ast.Macro.MacroContext.init(transpiler);

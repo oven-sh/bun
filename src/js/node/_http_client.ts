@@ -640,7 +640,7 @@ function startFetchClientRequest(self, customBody?) {
   const method = self[kMethod];
 
   let keepalive = true;
-  const agentKeepalive = self[kAgent]?.keepalive;
+  const agentKeepalive = self[kAgent]?.keepAlive;
   if (agentKeepalive !== undefined) {
     keepalive = agentKeepalive;
   }

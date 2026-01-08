@@ -626,6 +626,33 @@ declare module "bun" {
   }
 
   /**
+   * JSONC related APIs
+   */
+  namespace JSONC {
+    /**
+     * Parse a JSONC (JSON with Comments) string into a JavaScript value.
+     *
+     * Supports both single-line (`//`) and block comments (`/* ... *\/`), as well as
+     * trailing commas in objects and arrays.
+     *
+     * @category Utilities
+     *
+     * @param input The JSONC string to parse
+     * @returns A JavaScript value
+     *
+     * @example
+     * ```js
+     * const result = Bun.JSONC.parse(`{
+     *   // This is a comment
+     *   "name": "my-app",
+     *   "version": "1.0.0", // trailing comma is allowed
+     * }`);
+     * ```
+     */
+    export function parse(input: string): unknown;
+  }
+
+  /**
    * YAML related APIs
    */
   namespace YAML {
@@ -1740,9 +1767,9 @@ declare module "bun" {
      * @default "esm"
      */
     format?: /**
-       * ECMAScript Module format
-       */
-      | "esm"
+     * ECMAScript Module format
+     */
+    | "esm"
       /**
        * CommonJS format
        * **Experimental**
@@ -1892,6 +1919,24 @@ declare module "bun" {
     drop?: string[];
 
     /**
+     * Enable feature flags for dead-code elimination via `import { feature } from "bun:bundle"`.
+     *
+     * When `feature("FLAG_NAME")` is called, it returns `true` if FLAG_NAME is in this array,
+     * or `false` otherwise. This enables static dead-code elimination at bundle time.
+     *
+     * Equivalent to the CLI `--feature` flag.
+     *
+     * @example
+     * ```ts
+     * await Bun.build({
+     *   entrypoints: ['./src/index.ts'],
+     *   features: ['FEATURE_A', 'FEATURE_B'],
+     * });
+     * ```
+     */
+    features?: string[];
+
+    /**
      * - When set to `true`, the returned promise rejects with an AggregateError when a build failure happens.
      * - When set to `false`, returns a {@link BuildOutput} with `{success: false}`
      *
@@ -1924,6 +1969,107 @@ declare module "bun" {
       development?: boolean;
     };
 
+    /**
+     * Enable React Fast Refresh transform.
+     *
+     * This adds the necessary code transformations for React Fast Refresh (hot module
+     * replacement for React components), but does not emit hot-module code itself.
+     *
+     * @default false
+     */
+    reactFastRefresh?: boolean;
+
+    /**
+     * A map of file paths to their contents for in-memory bundling.
+     *
+     * This allows you to bundle virtual files that don't exist on disk, or override
+     * the contents of files that do exist on disk. The keys are file paths (which should
+     * match how they're imported) and the values are the file contents.
+     *
+     * File contents can be provided as:
+     * - `string` - The source code as a string
+     * - `Blob` - A Blob containing the source code
+     * - `NodeJS.TypedArray` - A typed array (e.g., `Uint8Array`) containing the source code
+     * - `ArrayBufferLike` - An ArrayBuffer containing the source code
+     *
+     * @example
+     * ```ts
+     * // Bundle entirely from memory (no files on disk needed)
+     * await Bun.build({
+     *   entrypoints: ["/app/index.ts"],
+     *   files: {
+     *     "/app/index.ts": `
+     *       import { helper } from "./helper.ts";
+     *       console.log(helper());
+     *     `,
+     *     "/app/helper.ts": `
+     *       export function helper() {
+     *         return "Hello from memory!";
+     *       }
+     *     `,
+     *   },
+     * });
+     * ```
+     *
+     * @example
+     * ```ts
+     * // Override a file on disk with in-memory contents
+     * await Bun.build({
+     *   entrypoints: ["./src/index.ts"],
+     *   files: {
+     *     // This will be used instead of the actual ./src/config.ts file
+     *     "./src/config.ts": `export const API_URL = "https://production.api.com";`,
+     *   },
+     * });
+     * ```
+     *
+     * @example
+     * ```ts
+     * // Mix disk files with in-memory files
+     * // Entry point is on disk, but imports a virtual file
+     * await Bun.build({
+     *   entrypoints: ["./src/index.ts"], // Real file on disk
+     *   files: {
+     *     // Virtual file that ./src/index.ts can import via "./generated.ts"
+     *     "./src/generated.ts": `export const BUILD_TIME = ${Date.now()};`,
+     *   },
+     * });
+     * ```
+     */
+    files?: Record<string, string | Blob | NodeJS.TypedArray | ArrayBufferLike>;
+
+    /**
+     * Generate a JSON file containing metadata about the build.
+     *
+     * The metafile contains information about inputs, outputs, imports, and exports
+     * which can be used for bundle analysis, visualization, or integration with
+     * other tools.
+     *
+     * When `true`, the metafile JSON string is included in the {@link BuildOutput.metafile} property.
+     *
+     * @default false
+     *
+     * @example
+     * ```ts
+     * const result = await Bun.build({
+     *   entrypoints: ['./src/index.ts'],
+     *   outdir: './dist',
+     *   metafile: true,
+     * });
+     *
+     * // Write metafile to disk for analysis
+     * if (result.metafile) {
+     *   await Bun.write('./dist/meta.json', result.metafile);
+     * }
+     *
+     * // Parse and analyze the metafile
+     * const meta = JSON.parse(result.metafile!);
+     * console.log('Input files:', Object.keys(meta.inputs));
+     * console.log('Output files:', Object.keys(meta.outputs));
+     * ```
+     */
+    metafile?: boolean;
+
     outdir?: string;
   }
 
@@ -1952,6 +2098,26 @@ declare module "bun" {
      * @default true
      */
     autoloadBunfig?: boolean;
+    /**
+     * Whether to autoload tsconfig.json when the standalone executable runs
+     *
+     * Standalone-only: applies only when building/running the standalone executable.
+     *
+     * Equivalent CLI flags: `--compile-autoload-tsconfig`, `--no-compile-autoload-tsconfig`
+     *
+     * @default false
+     */
+    autoloadTsconfig?: boolean;
+    /**
+     * Whether to autoload package.json when the standalone executable runs
+     *
+     * Standalone-only: applies only when building/running the standalone executable.
+     *
+     * Equivalent CLI flags: `--compile-autoload-package-json`, `--no-compile-autoload-package-json`
+     *
+     * @default false
+     */
+    autoloadPackageJson?: boolean;
     windows?: {
       hideConsole?: boolean;
       icon?: string;
@@ -2555,6 +2721,106 @@ declare module "bun" {
     outputs: BuildArtifact[];
     success: boolean;
     logs: Array<BuildMessage | ResolveMessage>;
+    /**
+     * Metadata about the build including inputs, outputs, and their relationships.
+     *
+     * Only present when {@link BuildConfig.metafile} is `true`.
+     *
+     * The metafile contains detailed information about:
+     * - **inputs**: All source files that were bundled, their byte sizes, imports, and format
+     * - **outputs**: All generated output files, their byte sizes, which inputs contributed to each output, imports between chunks, and exports
+     *
+     * This can be used for:
+     * - Bundle size analysis and visualization
+     * - Detecting unused code or dependencies
+     * - Understanding the dependency graph
+     * - Integration with bundle analyzer tools
+     *
+     * @example
+     * ```ts
+     * const result = await Bun.build({
+     *   entrypoints: ['./src/index.ts'],
+     *   outdir: './dist',
+     *   metafile: true,
+     * });
+     *
+     * if (result.metafile) {
+     *   // Analyze input files
+     *   for (const [path, input] of Object.entries(result.metafile.inputs)) {
+     *     console.log(`${path}: ${input.bytes} bytes, ${input.imports.length} imports`);
+     *   }
+     *
+     *   // Analyze output files
+     *   for (const [path, output] of Object.entries(result.metafile.outputs)) {
+     *     console.log(`${path}: ${output.bytes} bytes`);
+     *     for (const [inputPath, info] of Object.entries(output.inputs)) {
+     *       console.log(`  - ${inputPath}: ${info.bytesInOutput} bytes`);
+     *     }
+     *   }
+     *
+     *   // Write to disk for external analysis tools
+     *   await Bun.write('./dist/meta.json', JSON.stringify(result.metafile));
+     * }
+     * ```
+     */
+    metafile?: BuildMetafile;
+  }
+
+  /**
+   * Metafile structure containing build metadata for analysis.
+   *
+   * @category Bundler
+   */
+  interface BuildMetafile {
+    /** Information about all input source files */
+    inputs: {
+      [path: string]: {
+        /** Size of the input file in bytes */
+        bytes: number;
+        /** List of imports from this file */
+        imports: Array<{
+          /** Resolved path of the imported file */
+          path: string;
+          /** Type of import statement */
+          kind: ImportKind;
+          /** Original import specifier before resolution (if different from path) */
+          original?: string;
+          /** Whether this import is external to the bundle */
+          external?: boolean;
+          /** Import attributes (e.g., `{ type: "json" }`) */
+          with?: Record<string, string>;
+        }>;
+        /** Module format of the input file */
+        format?: "esm" | "cjs" | "json" | "css";
+      };
+    };
+    /** Information about all output files */
+    outputs: {
+      [path: string]: {
+        /** Size of the output file in bytes */
+        bytes: number;
+        /** Map of input files to their contribution in this output */
+        inputs: {
+          [path: string]: {
+            /** Number of bytes this input contributed to the output */
+            bytesInOutput: number;
+          };
+        };
+        /** List of imports to other chunks */
+        imports: Array<{
+          /** Path to the imported chunk */
+          path: string;
+          /** Type of import */
+          kind: ImportKind;
+        }>;
+        /** List of exported names from this output */
+        exports: string[];
+        /** Entry point path if this output is an entry point */
+        entryPoint?: string;
+        /** Path to the associated CSS bundle (for JS entry points with CSS) */
+        cssBundle?: string;
+      };
+    };
   }
 
   /**
@@ -3316,10 +3582,10 @@ declare module "bun" {
   function color(
     input: ColorInput,
     outputFormat?: /**
-       * True color ANSI color string, for use in terminals
-       * @example \x1b[38;2;100;200;200m
-       */
-      | "ansi"
+     * True color ANSI color string, for use in terminals
+     * @example \x1b[38;2;100;200;200m
+     */
+    | "ansi"
       | "ansi-16"
       | "ansi-16m"
       /**
@@ -3886,6 +4152,9 @@ declare module "bun" {
      */
     static readonly byteLength: 32;
   }
+
+  /** Extends the standard web formats with `brotli` and `zstd` support. */
+  type CompressionFormat = "gzip" | "deflate" | "deflate-raw" | "brotli" | "zstd";
 
   /** Compression options for `Bun.deflateSync` and `Bun.gzipSync` */
   interface ZlibCompressionOptions {
@@ -5287,6 +5556,67 @@ declare module "bun" {
       ref(): void;
       unref(): void;
       close(): void;
+      /**
+       * Enable or disable SO_BROADCAST socket option.
+       * @param enabled Whether to enable broadcast
+       * @returns The enabled value
+       */
+      setBroadcast(enabled: boolean): boolean;
+      /**
+       * Set the IP_TTL socket option.
+       * @param ttl Time to live value
+       * @returns The TTL value
+       */
+      setTTL(ttl: number): number;
+      /**
+       * Set the IP_MULTICAST_TTL socket option.
+       * @param ttl Time to live value for multicast packets
+       * @returns The TTL value
+       */
+      setMulticastTTL(ttl: number): number;
+      /**
+       * Enable or disable IP_MULTICAST_LOOP socket option.
+       * @param enabled Whether to enable multicast loopback
+       * @returns The enabled value
+       */
+      setMulticastLoopback(enabled: boolean): boolean;
+      /**
+       * Set the IP_MULTICAST_IF socket option to specify the outgoing interface
+       * for multicast packets.
+       * @param interfaceAddress The address of the interface to use
+       * @returns true on success
+       */
+      setMulticastInterface(interfaceAddress: string): boolean;
+      /**
+       * Join a multicast group.
+       * @param multicastAddress The multicast group address
+       * @param interfaceAddress Optional interface address to use
+       * @returns true on success
+       */
+      addMembership(multicastAddress: string, interfaceAddress?: string): boolean;
+      /**
+       * Leave a multicast group.
+       * @param multicastAddress The multicast group address
+       * @param interfaceAddress Optional interface address to use
+       * @returns true on success
+       */
+      dropMembership(multicastAddress: string, interfaceAddress?: string): boolean;
+      /**
+       * Join a source-specific multicast group.
+       * @param sourceAddress The source address
+       * @param groupAddress The multicast group address
+       * @param interfaceAddress Optional interface address to use
+       * @returns true on success
+       */
+      addSourceSpecificMembership(sourceAddress: string, groupAddress: string, interfaceAddress?: string): boolean;
+      /**
+       * Leave a source-specific multicast group.
+       * @param sourceAddress The source address
+       * @param groupAddress The multicast group address
+       * @param interfaceAddress Optional interface address to use
+       * @returns true on success
+       */
+      dropSourceSpecificMembership(sourceAddress: string, groupAddress: string, interfaceAddress?: string): boolean;
     }
 
     export interface ConnectedSocket<DataBinaryType extends BinaryType> extends BaseUDPSocket {
@@ -5650,17 +5980,11 @@ declare module "bun" {
       maxBuffer?: number;
     }
 
-    interface SpawnSyncOptions<In extends Writable, Out extends Readable, Err extends Readable> extends BaseOptions<
-      In,
-      Out,
-      Err
-    > {}
+    interface SpawnSyncOptions<In extends Writable, Out extends Readable, Err extends Readable>
+      extends BaseOptions<In, Out, Err> {}
 
-    interface SpawnOptions<In extends Writable, Out extends Readable, Err extends Readable> extends BaseOptions<
-      In,
-      Out,
-      Err
-    > {
+    interface SpawnOptions<In extends Writable, Out extends Readable, Err extends Readable>
+      extends BaseOptions<In, Out, Err> {
       /**
        * If true, stdout and stderr pipes will not automatically start reading
        * data. Reading will only begin when you access the `stdout` or `stderr`
@@ -5682,6 +6006,44 @@ declare module "bun" {
        * ```
        */
       lazy?: boolean;
+
+      /**
+       * Spawn the subprocess with a pseudo-terminal (PTY) attached.
+       *
+       * When this option is provided:
+       * - `stdin`, `stdout`, and `stderr` are all connected to the terminal
+       * - The subprocess sees itself running in a real terminal (`isTTY = true`)
+       * - Access the terminal via `subprocess.terminal`
+       * - `subprocess.stdin`, `subprocess.stdout`, `subprocess.stderr` return `null`
+       *
+       * Only available on POSIX systems (Linux, macOS).
+       *
+       * @example
+       * ```ts
+       * const proc = Bun.spawn(["bash"], {
+       *   terminal: {
+       *     cols: 80,
+       *     rows: 24,
+       *     data: (term, data) => console.log(data.toString()),
+       *   },
+       * });
+       *
+       * proc.terminal.write("echo hello\n");
+       * await proc.exited;
+       * proc.terminal.close();
+       * ```
+       *
+       * You can also pass an existing `Terminal` object for reuse across multiple spawns:
+       * ```ts
+       * const terminal = new Bun.Terminal({ ... });
+       * const proc1 = Bun.spawn(["echo", "first"], { terminal });
+       * await proc1.exited;
+       * const proc2 = Bun.spawn(["echo", "second"], { terminal });
+       * await proc2.exited;
+       * terminal.close();
+       * ```
+       */
+      terminal?: TerminalOptions | Terminal;
     }
 
     type ReadableToIO<X extends Readable> = X extends "pipe" | undefined
@@ -5795,6 +6157,24 @@ declare module "bun" {
     readonly stdin: SpawnOptions.WritableToIO<In>;
     readonly stdout: SpawnOptions.ReadableToIO<Out>;
     readonly stderr: SpawnOptions.ReadableToIO<Err>;
+
+    /**
+     * The terminal attached to this subprocess, if spawned with the `terminal` option.
+     * Returns `undefined` if no terminal was attached.
+     *
+     * When a terminal is attached, `stdin`, `stdout`, and `stderr` return `null`.
+     * Use `terminal.write()` and the `data` callback instead.
+     *
+     * @example
+     * ```ts
+     * const proc = Bun.spawn(["bash"], {
+     *   terminal: { data: (term, data) => console.log(data.toString()) },
+     * });
+     *
+     * proc.terminal?.write("echo hello\n");
+     * ```
+     */
+    readonly terminal: Terminal | undefined;
 
     /**
      * Access extra file descriptors passed to the `stdio` option in the options object.
@@ -6086,6 +6466,154 @@ declare module "bun" {
     "ignore" | "inherit" | null | undefined,
     "ignore" | "inherit" | null | undefined
   >;
+
+  /**
+   * Options for creating a pseudo-terminal (PTY).
+   */
+  interface TerminalOptions {
+    /**
+     * Number of columns for the terminal.
+     * @default 80
+     */
+    cols?: number;
+    /**
+     * Number of rows for the terminal.
+     * @default 24
+     */
+    rows?: number;
+    /**
+     * Terminal name (e.g., "xterm-256color").
+     * @default "xterm-256color"
+     */
+    name?: string;
+    /**
+     * Callback invoked when data is received from the terminal.
+     * @param terminal The terminal instance
+     * @param data The data received as a Uint8Array
+     */
+    data?: (terminal: Terminal, data: Uint8Array<ArrayBuffer>) => void;
+    /**
+     * Callback invoked when the PTY stream closes (EOF or read error).
+     * Note: exitCode is a PTY lifecycle status (0=clean EOF, 1=error), NOT the subprocess exit code.
+     * Use Subprocess.exited or onExit callback for actual process exit information.
+     * @param terminal The terminal instance
+     * @param exitCode PTY lifecycle status (0 for EOF, 1 for error)
+     * @param signal Reserved for future signal reporting, currently null
+     */
+    exit?: (terminal: Terminal, exitCode: number, signal: string | null) => void;
+    /**
+     * Callback invoked when the terminal is ready to receive more data.
+     * @param terminal The terminal instance
+     */
+    drain?: (terminal: Terminal) => void;
+  }
+
+  /**
+   * A pseudo-terminal (PTY) that can be used to spawn interactive terminal programs.
+   *
+   * @example
+   * ```ts
+   * await using terminal = new Bun.Terminal({
+   *   cols: 80,
+   *   rows: 24,
+   *   data(term, data) {
+   *     console.log("Received:", new TextDecoder().decode(data));
+   *   },
+   * });
+   *
+   * // Spawn a shell connected to the PTY
+   * const proc = Bun.spawn(["bash"], { terminal });
+   *
+   * // Write to the terminal
+   * terminal.write("echo hello\n");
+   *
+   * // Wait for process to exit
+   * await proc.exited;
+   *
+   * // Terminal is closed automatically by `await using`
+   * ```
+   */
+  class Terminal implements AsyncDisposable {
+    constructor(options: TerminalOptions);
+
+    /**
+     * Whether the terminal is closed.
+     */
+    readonly closed: boolean;
+
+    /**
+     * Write data to the terminal.
+     * @param data The data to write (string or BufferSource)
+     * @returns The number of bytes written
+     */
+    write(data: string | BufferSource): number;
+
+    /**
+     * Resize the terminal.
+     * @param cols New number of columns
+     * @param rows New number of rows
+     */
+    resize(cols: number, rows: number): void;
+
+    /**
+     * Set raw mode on the terminal.
+     * In raw mode, input is passed directly without processing.
+     * @param enabled Whether to enable raw mode
+     */
+    setRawMode(enabled: boolean): void;
+
+    /**
+     * Reference the terminal to keep the event loop alive.
+     */
+    ref(): void;
+
+    /**
+     * Unreference the terminal to allow the event loop to exit.
+     */
+    unref(): void;
+
+    /**
+     * Close the terminal.
+     */
+    close(): void;
+
+    /**
+     * Async dispose for use with `await using`.
+     */
+    [Symbol.asyncDispose](): Promise<void>;
+
+    /**
+     * Terminal input flags (c_iflag from termios).
+     * Controls input processing behavior like ICRNL, IXON, etc.
+     * Returns 0 if terminal is closed.
+     * Setting returns true on success, false on failure.
+     */
+    inputFlags: number;
+
+    /**
+     * Terminal output flags (c_oflag from termios).
+     * Controls output processing behavior like OPOST, ONLCR, etc.
+     * Returns 0 if terminal is closed.
+     * Setting returns true on success, false on failure.
+     */
+    outputFlags: number;
+
+    /**
+     * Terminal local flags (c_lflag from termios).
+     * Controls local processing like ICANON, ECHO, ISIG, etc.
+     * Returns 0 if terminal is closed.
+     * Setting returns true on success, false on failure.
+     */
+    localFlags: number;
+
+    /**
+     * Terminal control flags (c_cflag from termios).
+     * Controls hardware characteristics like CSIZE, PARENB, etc.
+     * Returns 0 if terminal is closed.
+     * Setting returns true on success, false on failure.
+     */
+    controlFlags: number;
+  }
 
   // Blocked on https://github.com/oven-sh/bun/issues/8329
   // /**

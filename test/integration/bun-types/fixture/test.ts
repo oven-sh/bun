@@ -7,6 +7,7 @@ import {
   expect,
   expectTypeOf,
   jest,
+  type Matchers,
   mock,
   type Mock,
   spyOn,
@@ -244,32 +245,39 @@ describe("Matcher Overload Type Tests", () => {
 
   test("toContainKey", () => {
     expect(obj).toContainKey("a");
+    expect(obj).toContainKey("b");
+    // @ts-expect-error simple check for key does not exist
+    expect(obj).toContainKey("c");
     expect(obj).toContainKey(10); // object key is number
     // @ts-expect-error - Argument of type '"c"' is not assignable to parameter of type 'number | "a" | "b"'.
-    expect(obj).toContainKey<keyof typeof obj>("c");
+    expect(obj).toContainKey<typeof obj>("c");
     // @ts-expect-error - Argument of type 'boolean' is not assignable to parameter of type 'string | number'.
-    expect(obj).toContainKey<keyof typeof obj>(true);
+    expect(obj).toContainKey<typeof obj>(true);
     // @ts-expect-error - Too many arguments for specific overload
-    expect(obj).toContainKey<keyof typeof obj>("a", "b");
+    expect(obj).toContainKey<typeof obj>("a", "b");
     // @ts-expect-error - Argument of type 'symbol' is not assignable to parameter of type 'string | number'.
-    expect(obj).toContainKey<keyof typeof obj>(Symbol("a"));
+    expect(obj).toContainKey<typeof obj>(Symbol("a"));
   });
 
   test("toContainAllKeys", () => {
     expect(obj).toContainAllKeys(["a", "b"]);
     expect(obj).toContainAllKeys([10, "a"]);
+    // @ts-expect-error simple check for key does not exist
+    expect(obj).toContainAllKeys(["c"]);
     // @ts-expect-error - Type '"c"' is not assignable to type 'number | "a" | "b"'.
-    expect(obj).toContainAllKeys<(keyof typeof obj)[]>(["a", "c"]);
+    expect(obj).toContainAllKeys<(typeof obj)[]>(["a", "c"]);
     // @ts-expect-error - Type 'boolean' is not assignable to type 'string | number'.
-    expect(obj).toContainAllKeys<(keyof typeof obj)[]>(["a", true]);
+    expect(obj).toContainAllKeys<(typeof obj)[]>(["a", true]);
     // @ts-expect-error - Argument must be an array
-    expect(obj).toContainAllKeys<Array<keyof typeof obj>>("a");
+    expect(obj).toContainAllKeys<Array<typeof obj>>("a");
     // @ts-expect-error - Array element type 'symbol' is not assignable to 'string | number'.
-    expect(obj).toContainAllKeys<(keyof typeof obj)[]>(["a", Symbol("b")]);
+    expect(obj).toContainAllKeys<(typeof obj)[]>(["a", Symbol("b")]);
   });
 
   test("toContainAnyKeys", () => {
     expect(obj).toContainAnyKeys(["a", "b", 10]);
+    // @ts-expect-error simple check for key does not exist
+    expect(obj).toContainAnyKeys(["c"]);
     // @ts-expect-error - 11 is not a key
     expect(obj).toContainAnyKeys(["a", "b", 11]);
     // @ts-expect-error - c is not a key
@@ -277,27 +285,29 @@ describe("Matcher Overload Type Tests", () => {
     // @ts-expect-error d is not a key
     expect(obj).toContainAnyKeys([10, "d"]);
     // @ts-expect-error - Type '"c"' is not assignable to type 'number | "a" | "b"'. Type '"d"' is not assignable to type 'number | "a" | "b"'.
-    expect(obj).toContainAnyKeys<(keyof typeof obj)[]>(["c", "d"]);
+    expect(obj).toContainAnyKeys<(typeof obj)[]>(["c", "d"]);
     // @ts-expect-error - Type 'boolean' is not assignable to type 'string | number'.
-    expect(obj).toContainAnyKeys<(keyof typeof obj)[]>([true, false]);
+    expect(obj).toContainAnyKeys<(typeof obj)[]>([true, false]);
     // @ts-expect-error - Argument must be an array
-    expect(obj).toContainAnyKeys<Array<keyof typeof obj>>("a");
+    expect(obj).toContainAnyKeys<Array<typeof obj>>("a");
     // @ts-expect-error - Array element type 'symbol' is not assignable to 'string | number'.
-    expect(obj).toContainAnyKeys<(keyof typeof obj)[]>([Symbol("a")]);
+    expect(obj).toContainAnyKeys<(typeof obj)[]>([Symbol("a")]);
   });
 
   test("toContainKeys", () => {
     // Alias for toContainAllKeys
     expect(obj).toContainKeys(["a", "b"]);
     expect(obj).toContainKeys([10, "a"]);
+    // @ts-expect-error simple check for key does not exist
+    expect(obj).toContainKeys(["c"]);
     // @ts-expect-error - Type '"c"' is not assignable to type 'number | "a" | "b"'.
-    expect(obj).toContainKeys<(keyof typeof obj)[]>(["a", "c"]);
+    expect(obj).toContainKeys<(typeof obj)[]>(["a", "c"]);
     // @ts-expect-error - Type 'boolean' is not assignable to type 'string | number'.
-    expect(obj).toContainKeys<(keyof typeof obj)[]>(["a", true]);
+    expect(obj).toContainKeys<(typeof obj)[]>(["a", true]);
     // @ts-expect-error - Argument must be an array
-    expect(obj).toContainKeys<Array<keyof typeof obj>>("a");
+    expect(obj).toContainKeys<Array<typeof obj>>("a");
     // @ts-expect-error - Array element type 'symbol' is not assignable to 'string | number'.
-    expect(obj).toContainKeys<(keyof typeof obj)[]>(["a", Symbol("b")]);
+    expect(obj).toContainKeys<(typeof obj)[]>(["a", Symbol("b")]);
   });
 
   test("toContainEqual", () => {
@@ -334,7 +344,7 @@ myNormalSpiedMethod("asdf");
 expectType<Mock<(name: string) => string>>(myNormalSpiedMethod);
 
 const spy = spyOn(console, "log");
-expectType(spy.mock.calls).is<[message?: any, ...optionalParams: any[]][]>();
+expectType(spy.mock.calls).is<any[][]>();
 
 jest.spyOn(console, "log");
 jest.fn(() => 123 as const);
@@ -400,3 +410,14 @@ declare const setOfStrings: Set<string>;
 /** 1. **/ expect(setOfStrings).toBe(new Set()); // this is inferrable to Set<string> so this should pass
 /** 2. **/ expect(setOfStrings).toBe(new Set<string>()); // exact, so we are happy!
 /** 3. **/ expect(setOfStrings).toBe<Set<string>>(new Set()); // happy! We opted out of type safety for this expectation
+
+// Cases for #24591
+declare const unknownMatchers: Matchers<unknown>;
+unknownMatchers.toContainKeys(["a", "b"]);
+unknownMatchers.toContainAnyKeys(["a", "b"]);
+unknownMatchers.toContainAllKeys(["a", "b"]);
+unknownMatchers.toContainKey("a");
+unknownMatchers.toContainEqual([""]);
+unknownMatchers.toEqual(["a", "b"]);
+unknownMatchers.toBeCloseTo(2);
+unknownMatchers.toBe("a");

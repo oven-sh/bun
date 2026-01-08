@@ -234,9 +234,11 @@ pub const FetchTasklet = struct {
         this.readable_stream_ref.deinit();
 
         this.scheduled_response_buffer.deinit();
-        if (this.request_body != .ReadableStream or this.is_waiting_request_stream_start) {
-            this.request_body.detach();
-        }
+        // Always detach request_body regardless of type.
+        // When request_body is a ReadableStream, startRequestStream() creates
+        // an independent Strong reference in ResumableSink, so FetchTasklet's
+        // reference becomes redundant and must be released to avoid leaks.
+        this.request_body.detach();
 
         this.abort_reason.deinit();
         this.check_server_identity.deinit();

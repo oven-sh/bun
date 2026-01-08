@@ -188,7 +188,7 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
     case DataCellTag::Json: {
         if (cell.value.json) {
             auto str = WTF::String(cell.value.json);
-            JSC::JSValue json = JSC::JSONParse(globalObject, str);
+            JSC::JSValue json = JSC::JSONParseWithException(globalObject, str);
             RETURN_IF_EXCEPTION(scope, {});
             return json;
         }
@@ -434,7 +434,7 @@ extern "C" EncodedJSValue JSC__createStructure(JSC::JSGlobalObject* globalObject
 {
     auto& vm = JSC::getVM(globalObject);
 
-    PropertyNameArray propertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+    PropertyNameArrayBuilder propertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
     std::span<ExternColumnIdentifier> names(namesPtr, capacity);
     uint32_t nonDuplicateCount = 0;
 

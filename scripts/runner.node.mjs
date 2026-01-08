@@ -77,9 +77,8 @@ const testTimeout = 3 * 60_000;
 const integrationTimeout = 5 * 60_000;
 
 function getNodeParallelTestTimeout(testPath) {
-  if (testPath.includes("test-dns")) {
-    return 90_000;
-  }
+  if (testPath.includes("test-dns")) return 60_000;
+  if (testPath.includes("-docker-")) return 60_000;
   if (!isCI) return 60_000; // everything slower in debug mode
   if (options["step"]?.includes("-asan-")) return 60_000;
   return 20_000;
@@ -1129,6 +1128,7 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
     ...process.env,
     PATH: path,
     TMPDIR: tmpdirPath,
+    BUN_TMPDIR: tmpdirPath,
     USER: username,
     HOME: homedir,
     SHELL: shellPath,

@@ -424,6 +424,7 @@ pub const Command = struct {
         pub const BundlerOptions = struct {
             outdir: []const u8 = "",
             outfile: []const u8 = "",
+            metafile: [:0]const u8 = "",
             root_dir: []const u8 = "",
             public_path: []const u8 = "",
             entry_naming: []const u8 = "[dir]/[name].[ext]",
@@ -461,6 +462,8 @@ pub const Command = struct {
             compile_exec_argv: ?[]const u8 = null,
             compile_autoload_dotenv: bool = true,
             compile_autoload_bunfig: bool = true,
+            compile_autoload_tsconfig: bool = false,
+            compile_autoload_package_json: bool = false,
             windows: options.WindowsOptions = .{},
         };
 

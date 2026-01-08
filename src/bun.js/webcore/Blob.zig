@@ -152,7 +152,7 @@ pub fn doReadFile(this: *Blob, comptime Function: anytype, global: *JSGlobalObje
         handler,
         Handler.run,
     ) catch |err| bun.handleOom(err);
-    var read_file_task = bun.handleOom(read_file.ReadFileTask.createOnJSThread(bun.default_allocator, global, file_read));
+    var read_file_task = read_file.ReadFileTask.createOnJSThread(bun.default_allocator, global, file_read);
 
     // Create the Promise only after the store has been ref()'d.
     // The garbage collector runs on memory allocations
@@ -190,7 +190,7 @@ pub fn doReadFileInternal(this: *Blob, comptime Handler: type, ctx: Handler, com
         this.offset,
         this.size,
     ) catch |err| bun.handleOom(err);
-    var read_file_task = bun.handleOom(read_file.ReadFileTask.createOnJSThread(bun.default_allocator, global, file_read));
+    var read_file_task = read_file.ReadFileTask.createOnJSThread(bun.default_allocator, global, file_read);
     read_file_task.schedule();
 }
 
@@ -968,9 +968,11 @@ fn writeFileWithEmptySourceToDestination(ctx: *jsc.JSGlobalObject, destination_b
                 s3.path(),
                 "",
                 destination_blob.contentTypeOrMimeType(),
+                aws_options.content_disposition,
                 aws_options.acl,
                 proxy_url,
                 aws_options.storage_class,
+                aws_options.request_payer,
                 Wrapper.resolve,
                 Wrapper.new(.{
                     .promise = promise,
@@ -1035,7 +1037,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
             WriteFilePromise.run,
             options.mkdirp_if_not_exists orelse true,
         ) catch unreachable;
-        var task = bun.handleOom(write_file.WriteFileTask.createOnJSThread(bun.default_allocator, ctx, file_copier));
+        var task = write_file.WriteFileTask.createOnJSThread(bun.default_allocator, ctx, file_copier);
         // Defer promise creation until we're just about to schedule the task
         var promise = jsc.JSPromise.create(ctx);
         const promise_value = promise.asValue(ctx);
@@ -1063,7 +1065,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
             destination_blob.size,
             ctx,
             options.mkdirp_if_not_exists orelse true,
-        ) catch unreachable;
+        );
         file_copier.schedule();
         return file_copier.promise.value();
     } else if (destination_type == .file and source_type == .s3) {
@@ -1116,7 +1118,9 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
                             aws_options.acl,
                             aws_options.storage_class,
                             destination_blob.contentTypeOrMimeType(),
+                            aws_options.content_disposition,
                             proxy_url,
+                            aws_options.request_payer,
                             null,
                             undefined,
                         );
@@ -1154,9 +1158,11 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
                         s3.path(),
                         bytes.slice(),
                         destination_blob.contentTypeOrMimeType(),
+                        aws_options.content_disposition,
                         aws_options.acl,
                         proxy_url,
                         aws_options.storage_class,
+                        aws_options.request_payer,
                         Wrapper.resolve,
                         Wrapper.new(.{
                             .store = source_store,
@@ -1183,7 +1189,9 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
                         aws_options.acl,
                         aws_options.storage_class,
                         destination_blob.contentTypeOrMimeType(),
+                        aws_options.content_disposition,
                         proxy_url,
+                        aws_options.request_payer,
                         null,
                         undefined,
                     );
@@ -1387,7 +1395,9 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                                 aws_options.acl,
                                 aws_options.storage_class,
                                 destination_blob.contentTypeOrMimeType(),
+                                aws_options.content_disposition,
                                 proxy_url,
+                                aws_options.request_payer,
                                 null,
                                 undefined,
                             );
@@ -1447,7 +1457,9 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                                 aws_options.acl,
                                 aws_options.storage_class,
                                 destination_blob.contentTypeOrMimeType(),
+                                aws_options.content_disposition,
                                 proxy_url,
+                                aws_options.request_payer,
                                 null,
                                 undefined,
                             );
@@ -2221,16 +2233,17 @@ const S3BlobDownloadTask = struct {
         const path = this.blob.store.?.data.s3.path();
 
         this.poll_ref.ref(globalThis.bunVM());
+        const s3_store = &this.blob.store.?.data.s3;
         if (blob.offset > 0) {
             const len: ?usize = if (blob.size != Blob.max_size) @intCast(blob.size) else null;
             const offset: usize = @intCast(blob.offset);
-            try S3.downloadSlice(credentials, path, offset, len, @ptrCast(&S3BlobDownloadTask.onS3DownloadResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
+            try S3.downloadSlice(credentials, path, offset, len, @ptrCast(&S3BlobDownloadTask.onS3DownloadResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null, s3_store.request_payer);
         } else if (blob.size == Blob.max_size) {
-            try S3.download(credentials, path, @ptrCast(&S3BlobDownloadTask.onS3DownloadResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
+            try S3.download(credentials, path, @ptrCast(&S3BlobDownloadTask.onS3DownloadResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null, s3_store.request_payer);
         } else {
             const len: usize = @intCast(blob.size);
             const offset: usize = @intCast(blob.offset);
-            try S3.downloadSlice(credentials, path, offset, len, @ptrCast(&S3BlobDownloadTask.onS3DownloadResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
+            try S3.downloadSlice(credentials, path, offset, len, @ptrCast(&S3BlobDownloadTask.onS3DownloadResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null, s3_store.request_payer);
         }
         return promise;
     }
@@ -2402,7 +2415,9 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, re
             aws_options.acl,
             aws_options.storage_class,
             this.contentTypeOrMimeType(),
+            aws_options.content_disposition,
             proxy_url,
+            aws_options.request_payer,
             null,
             undefined,
         );
@@ -2540,7 +2555,7 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, re
         assignment_result.ensureStillAlive();
         // it returns a Promise when it goes through ReadableStreamDefaultReader
         if (assignment_result.asAnyPromise()) |promise| {
-            switch (promise.status(globalThis.vm())) {
+            switch (promise.status()) {
                 .pending => {
                     const wrapper = FileStreamWrapper.new(.{
                         .promise = jsc.JSPromise.Strong.init(globalThis),
@@ -2629,6 +2644,14 @@ pub fn getWriter(
                         }
                     }
                 }
+                var content_disposition_str: ?ZigString.Slice = null;
+                defer if (content_disposition_str) |cd| cd.deinit();
+                if (try options.getTruthy(globalThis, "contentDisposition")) |content_disposition| {
+                    if (!content_disposition.isString()) {
+                        return globalThis.throwInvalidArgumentType("write", "options.contentDisposition", "string");
+                    }
+                    content_disposition_str = try content_disposition.toSlice(globalThis, bun.default_allocator);
+                }
                 const credentialsWithOptions = try s3.getCredentialsWithOptions(options, globalThis);
                 return try S3.writableStream(
                     credentialsWithOptions.credentials.dupe(),
@@ -2636,8 +2659,10 @@ pub fn getWriter(
                     globalThis,
                     credentialsWithOptions.options,
                     this.contentTypeOrMimeType(),
+                    if (content_disposition_str) |cd| cd.slice() else null,
                     proxy_url,
                     credentialsWithOptions.storage_class,
+                    credentialsWithOptions.request_payer,
                 );
             }
         }
@@ -2647,8 +2672,10 @@ pub fn getWriter(
             globalThis,
             .{},
             this.contentTypeOrMimeType(),
+            null,
             proxy_url,
             null,
+            s3.request_payer,
         );
     }
 

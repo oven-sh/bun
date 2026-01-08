@@ -8,6 +8,7 @@
     macro(FFI) \
     macro(FileSystemRouter) \
     macro(Glob) \
+    macro(JSONC) \
     macro(MD4) \
     macro(MD5) \
     macro(S3Client) \
@@ -19,6 +20,7 @@
     macro(SHA512_256) \
     macro(TOML) \
     macro(YAML) \
+    macro(Terminal) \
     macro(Transpiler) \
     macro(ValkeyClient) \
     macro(argv) \
@@ -68,6 +70,7 @@
     macro(spawn) \
     macro(spawnSync) \
     macro(stringWidth) \
+    macro(traceShellScript) \
     macro(udpSocket) \
     macro(which) \
     macro(write) \

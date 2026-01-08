@@ -3,11 +3,12 @@ pub fn create(globalThis: *jsc.JSGlobalObject) jsc.JSValue {
     object.put(
         globalThis,
         ZigString.static("parse"),
-        jsc.createCallback(
+        jsc.JSFunction.create(
             globalThis,
-            ZigString.static("parse"),
-            1,
+            "parse",
             parse,
+            1,
+            .{},
         ),
     );
 
@@ -22,12 +23,12 @@ pub fn parse(
     const allocator = arena.allocator();
     defer arena.deinit();
     var log = logger.Log.init(default_allocator);
-    const arguments = callframe.arguments_old(1).slice();
-    if (arguments.len == 0 or arguments[0].isEmptyOrUndefinedOrNull()) {
+    const input_value = callframe.argumentsAsArray(1)[0];
+    if (input_value.isEmptyOrUndefinedOrNull()) {
         return globalThis.throwInvalidArguments("Expected a string to parse", .{});
     }
 
-    var input_slice = try arguments[0].toSlice(globalThis, bun.default_allocator);
+    var input_slice = try input_value.toSlice(globalThis, bun.default_allocator);
     defer input_slice.deinit();
     const source = &logger.Source.initPathString("input.jsonc", input_slice.slice());
     const parse_result = json.parseTSConfig(source, &log, allocator, true) catch {

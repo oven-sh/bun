@@ -902,8 +902,7 @@ fn writeFileWithEmptySourceToDestination(ctx: *jsc.JSGlobalObject, destination_b
                         // SAFETY: we check if `file.pathlike` is an fd or
                         // not above, returning if it is.
                         var buf: bun.PathBuffer = undefined;
-                        // TODO: respect `options.mode`
-                        const mode: bun.Mode = jsc.Node.fs.default_permission;
+                        const mode: bun.Mode = options.mode orelse jsc.Node.fs.default_permission;
                         while (true) {
                             const open_res = bun.sys.open(file.pathlike.path.sliceZ(&buf), bun.O.CREAT | bun.O.TRUNC, mode);
                             switch (open_res) {
@@ -1054,6 +1053,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
                 ctx.bunVM().eventLoop(),
                 options.mkdirp_if_not_exists orelse true,
                 destination_blob.size,
+                options.mode,
             );
         }
         var file_copier = copy_file.CopyFile.create(
@@ -1064,6 +1064,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
             destination_blob.size,
             ctx,
             options.mkdirp_if_not_exists orelse true,
+            options.mode,
         );
         file_copier.schedule();
         return file_copier.promise.value();
@@ -1204,6 +1205,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
 const WriteFileOptions = struct {
     mkdirp_if_not_exists: ?bool = null,
     extra_options: ?JSValue = null,
+    mode: ?bun.Mode = null,
 };
 
 /// ## Errors
@@ -1530,6 +1532,7 @@ pub fn writeFile(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun
         return globalThis.throwInvalidArguments("Bun.write(pathOrFdOrBlob, blob) expects a Blob-y thing to write", .{});
     };
     var mkdirp_if_not_exists: ?bool = null;
+    var mode: ?bun.Mode = null;
     const options = args.nextEat();
     if (options) |options_object| {
         if (options_object.isObject()) {
@@ -1539,6 +1542,18 @@ pub fn writeFile(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun
                 }
                 mkdirp_if_not_exists = create_directory.toBoolean();
             }
+            if (try options_object.get(globalThis, "mode")) |mode_value| {
+                if (!mode_value.isEmptyOrUndefinedOrNull()) {
+                    if (!mode_value.isNumber()) {
+                        return globalThis.throwInvalidArgumentType("write", "options.mode", "number");
+                    }
+                    const mode_int = mode_value.toInt64();
+                    if (mode_int < 0 or mode_int > 0o777) {
+                        return globalThis.throwRangeError(mode_int, .{ .field_name = "mode", .min = 0, .max = 0o777 });
+                    }
+                    mode = @intCast(mode_int);
+                }
+            }
         } else if (!options_object.isEmptyOrUndefinedOrNull()) {
             return globalThis.throwInvalidArgumentType("write", "options", "object");
         }
@@ -1546,6 +1561,7 @@ pub fn writeFile(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun
     return writeFileInternal(globalThis, &path_or_blob, data, .{
         .mkdirp_if_not_exists = mkdirp_if_not_exists,
         .extra_options = options,
+        .mode = mode,
     });
 }
 

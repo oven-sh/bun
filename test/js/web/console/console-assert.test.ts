@@ -66,4 +66,57 @@ describe("console.assert", () => {
     expect(proc.stderr.toString()).toBe("");
     expect(proc.exitCode).toBe(0);
   });
+
+  test("with empty string message outputs 'Assertion failed: ' to stderr", () => {
+    const proc = Bun.spawnSync({
+      cmd: [bunExe(), "-e", 'console.assert(false, "")'],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    expect(proc.stdout.toString()).toBe("");
+    expect(proc.stderr.toString()).toBe("Assertion failed: \n");
+    expect(proc.exitCode).toBe(0);
+  });
+
+  test("with null argument outputs 'Assertion failed: null' to stderr", () => {
+    const proc = Bun.spawnSync({
+      cmd: [bunExe(), "-e", "console.assert(false, null)"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    expect(proc.stdout.toString()).toBe("");
+    expect(proc.stderr.toString()).toBe("Assertion failed: null\n");
+    expect(proc.exitCode).toBe(0);
+  });
+
+  test("with undefined argument outputs 'Assertion failed: undefined' to stderr", () => {
+    const proc = Bun.spawnSync({
+      cmd: [bunExe(), "-e", "console.assert(false, undefined)"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    expect(proc.stdout.toString()).toBe("");
+    expect(proc.stderr.toString()).toBe("Assertion failed: undefined\n");
+    expect(proc.exitCode).toBe(0);
+  });
+
+  test("with long message handles output correctly", () => {
+    const longMessage = "a]b]c".repeat(50);
+    const proc = Bun.spawnSync({
+      cmd: [bunExe(), "-e", `console.assert(false, "${longMessage}")`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    expect(proc.stdout.toString()).toBe("");
+    expect(proc.stderr.toString()).toBe(`Assertion failed: ${longMessage}\n`);
+    expect(proc.exitCode).toBe(0);
+  });
 });

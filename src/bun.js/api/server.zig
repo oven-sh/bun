@@ -1430,6 +1430,31 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             return jsc.JSValue.jsBoolean(debug_mode);
         }
 
+        pub fn getRoutes(this: *ThisServer, globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
+            const routes = this.user_routes.items;
+
+            // Collect unique paths using a StringHashMap
+            var seen_paths = std.StringHashMap(void).init(bun.default_allocator);
+            defer seen_paths.deinit();
+
+            for (routes) |route| {
+                const path = route.route.path;
+                try seen_paths.put(path, {});
+            }
+
+            // Create array with unique paths
+            const array = try jsc.JSValue.createEmptyArray(globalThis, seen_paths.count());
+            var i: u32 = 0;
+            var iter = seen_paths.keyIterator();
+            while (iter.next()) |path| {
+                const path_str = try bun.String.createUTF8ForJS(globalThis, path.*);
+                try array.putIndex(globalThis, i, path_str);
+                i += 1;
+            }
+
+            return array;
+        }
+
         pub fn onStaticRequestComplete(this: *ThisServer) void {
             this.pending_requests -= 1;
             this.deinitIfWeCan();

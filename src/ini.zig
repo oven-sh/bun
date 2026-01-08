@@ -1349,6 +1349,19 @@ pub fn loadNpmrc(
                             continue;
                         }
                     }
+
+                    // For GitLab registries, we need exact path matching since each project has its own auth token
+                    // The conf_item.registry_url should match the beginning of the scoped registry URL path
+                    const is_gitlab = bun.strings.indexOf(url.host, "gitlab") != null;
+                    if (is_gitlab) {
+                        const scoped_path = bun.strings.withoutTrailingSlash(url.pathname);
+                        const conf_path = bun.strings.withoutTrailingSlash(conf_item_url.pathname);
+
+                        if (!bun.strings.startsWith(scoped_path, conf_path)) {
+                            continue;
+                        }
+                    }
+
                     // Apply config to scoped registry
                     switch (conf_item.optname) {
                         ._authToken => {
@@ -1368,8 +1381,10 @@ pub fn loadNpmrc(
                         },
                         .certfile, .keyfile => unreachable,
                     }
-                    // We have to keep going as it could match multiple scopes
-                    continue;
+
+                    // For GitLab, we found an exact match, so we can break
+                    // For other registries, we continue as it could match multiple scopes
+                    if (is_gitlab) break;
                 }
             }
         }

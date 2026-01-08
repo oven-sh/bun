@@ -65,9 +65,7 @@ pub fn buildURLWithPrinter(
         const host_buf = bun.default_allocator.alloc(u8, url.host.len) catch break :blk false;
         defer bun.default_allocator.free(host_buf);
         const host = bun.strings.toLowerCaseWithType(u8, url.host, host_buf);
-        break :blk bun.strings.eqlComptime(host, "gitlab.com") or 
-               bun.strings.endsWith(host, ".gitlab.com") or
-               bun.strings.endsWith(host, ".gitlab.io");
+        break :blk bun.strings.indexOf(host, "gitlab") != null;
     };
     
     var name = full_name;

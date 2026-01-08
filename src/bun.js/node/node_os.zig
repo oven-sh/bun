@@ -34,6 +34,9 @@ const CPUTimes = struct {
 };
 
 pub fn cpus(global: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
+    // Check sys permission for CPU information
+    try bun.permission_check.requireSys(global, "cpus");
+
     const cpusImpl = switch (Environment.os) {
         .linux => cpusImplLinux,
         .mac => cpusImplDarwin,
@@ -302,6 +305,9 @@ pub fn getPriority(global: *jsc.JSGlobalObject, pid: i32) bun.JSError!i32 {
 }
 
 pub fn homedir(global: *jsc.JSGlobalObject) !bun.String {
+    // Check sys permission for home directory
+    try bun.permission_check.requireSys(global, "homedir");
+
     // In Node.js, this is a wrapper around uv_os_homedir.
     if (Environment.isWindows) {
         var out: bun.PathBuffer = undefined;
@@ -380,6 +386,9 @@ pub fn homedir(global: *jsc.JSGlobalObject) !bun.String {
 }
 
 pub fn hostname(global: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
+    // Check sys permission for hostname
+    try bun.permission_check.requireSys(global, "hostname");
+
     if (Environment.isWindows) {
         var name_buffer: [129:0]u16 = undefined;
         if (bun.windows.GetHostNameW(&name_buffer, name_buffer.len) == 0) {
@@ -405,6 +414,9 @@ pub fn hostname(global: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
 }
 
 pub fn loadavg(global: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
+    // Check sys permission for load average
+    try bun.permission_check.requireSys(global, "loadavg");
+
     const result = switch (bun.Environment.os) {
         .mac => loadavg: {
             var avg: c.struct_loadavg = undefined;
@@ -456,6 +468,9 @@ pub const networkInterfaces = switch (Environment.os) {
 };
 
 fn networkInterfacesPosix(globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
+    // Check sys permission for network interfaces
+    try bun.permission_check.requireSys(globalThis, "networkInterfaces");
+
     // getifaddrs sets a pointer to a linked list
     var interface_start: ?*c.ifaddrs = null;
     const rc = c.getifaddrs(&interface_start);
@@ -638,6 +653,9 @@ fn networkInterfacesPosix(globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSVal
 }
 
 fn networkInterfacesWindows(globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
+    // Check sys permission for network interfaces
+    try bun.permission_check.requireSys(globalThis, "networkInterfaces");
+
     var ifaces: [*]libuv.uv_interface_address_t = undefined;
     var count: c_int = undefined;
     const err = libuv.uv_interface_addresses(&ifaces, &count);
@@ -886,6 +904,9 @@ pub fn totalmem() u64 {
 }
 
 pub fn uptime(global: *jsc.JSGlobalObject) bun.JSError!f64 {
+    // Check sys permission for system uptime
+    try bun.permission_check.requireSys(global, "osUptime");
+
     switch (Environment.os) {
         .windows => {
             var uptime_value: f64 = undefined;
@@ -928,6 +949,9 @@ pub fn uptime(global: *jsc.JSGlobalObject) bun.JSError!f64 {
 }
 
 pub fn userInfo(globalThis: *jsc.JSGlobalObject, options: gen.UserInfoOptions) bun.JSError!jsc.JSValue {
+    // Check sys permission for user info
+    try bun.permission_check.requireSys(globalThis, "userInfo");
+
     _ = options; // TODO:
 
     const result = jsc.JSValue.createEmptyObject(globalThis, 5);

@@ -282,6 +282,11 @@ pub fn spawnMaybeSync(
 
             try getArgv(globalThis, cmd_value, PATH, cwd, &argv0, allocator, &argv);
 
+            // Check run permission for subprocess spawning
+            if (argv0) |cmd_path| {
+                try bun.permission_check.requireRun(globalThis, bun.sliceTo(cmd_path, 0));
+            }
+
             if (try args.get(globalThis, "stdio")) |stdio_val| {
                 if (!stdio_val.isEmptyOrUndefinedOrNull()) {
                     if (stdio_val.jsType().isArray()) {

@@ -59,8 +59,15 @@ pub fn buildURLWithPrinter(
     const registry = std.mem.trimRight(u8, registry_, "/");
     const full_name = full_name_.slice();
 
-    // Check if this is a GitLab registry by looking for gitlab in the registry URL
-    const is_gitlab_registry = bun.strings.indexOf(registry, "gitlab") != null;
+    // Check if this is a GitLab registry by parsing the URL and checking the hostname
+    const is_gitlab_registry = blk: {
+        const url = bun.URL.parse(registry);
+        const host = bun.strings.toLowerCaseWithType(u8, url.host, string_buf);
+        break :blk bun.strings.eqlComptime(host, "gitlab.com") or 
+               bun.strings.endsWith(host, ".gitlab.com") or
+               bun.strings.contains(host, ".gitlab.") or
+               bun.strings.startsWith(host, "gitlab.");
+    };
     
     var name = full_name;
     if (name[0] == '@' and !is_gitlab_registry) {

@@ -176,7 +176,7 @@ fn hasTLSProperties(globalThis: *JSGlobalObject, obj: JSValue) bun.JSError!bool 
 fn getAgentTLSOptions(globalThis: *JSGlobalObject, agent: JSValue) bun.JSError!?JSValue {
     // Try agent.options first (if it has TLS properties)
     if (try agent.get(globalThis, "options")) |opts| {
-        if (opts.isObject() and !opts.isUndefinedOrNull()) {
+        if (opts.isObject()) {
             if (try hasTLSProperties(globalThis, opts)) {
                 return opts;
             }
@@ -184,7 +184,7 @@ fn getAgentTLSOptions(globalThis: *JSGlobalObject, agent: JSValue) bun.JSError!?
     }
     // Fall back to connectOpts (used by https-proxy-agent)
     if (try agent.get(globalThis, "connectOpts")) |connect_opts| {
-        if (connect_opts.isObject() and !connect_opts.isUndefinedOrNull()) {
+        if (connect_opts.isObject()) {
             if (try hasTLSProperties(globalThis, connect_opts)) {
                 return connect_opts;
             }
@@ -192,7 +192,7 @@ fn getAgentTLSOptions(globalThis: *JSGlobalObject, agent: JSValue) bun.JSError!?
     }
     // Fall back to connect (used by undici.Agent)
     if (try agent.get(globalThis, "connect")) |connect| {
-        if (connect.isObject() and !connect.isUndefinedOrNull()) {
+        if (connect.isObject()) {
             if (try hasTLSProperties(globalThis, connect)) {
                 return connect;
             }

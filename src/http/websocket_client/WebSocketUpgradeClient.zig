@@ -650,22 +650,14 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 return;
             };
 
-            // Create proxy tunnel
-            var tunnel = WebSocketProxyTunnel.init();
-            tunnel.upgrade_client = if (comptime ssl) .{ .https = this } else .{ .http = this };
-            tunnel.socket = if (comptime ssl) .{ .ssl = socket } else .{ .tcp = socket };
+            // Get certificate verification setting
+            const reject_unauthorized = if (this.outgoing_websocket) |ws| ws.rejectUnauthorized() else true;
 
-            // Set hostname for SNI
-            tunnel.sni_hostname = bun.default_allocator.dupe(u8, p.getTargetHost()) catch {
-                tunnel.deref();
+            // Create proxy tunnel with all parameters
+            const tunnel = WebSocketProxyTunnel.init(ssl, this, socket, p.getTargetHost(), reject_unauthorized) catch {
                 this.terminate(ErrorCode.proxy_tunnel_failed);
                 return;
             };
-
-            // Set certificate verification
-            if (this.outgoing_websocket) |ws| {
-                tunnel.reject_unauthorized = ws.rejectUnauthorized();
-            }
 
             // Use ssl_config if available, otherwise use defaults
             const ssl_options: SSLConfig = if (this.ssl_config) |config| config.* else SSLConfig{
@@ -703,8 +695,8 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 return;
             };
 
-            // Get the WebSocket upgrade request from proxy state
-            const upgrade_request = p.getWebsocketRequestBuf();
+            // Take the WebSocket upgrade request from proxy state (transfers ownership)
+            const upgrade_request = p.takeWebsocketRequestBuf();
             if (upgrade_request.len == 0) {
                 this.terminate(ErrorCode.failed_to_write);
                 return;

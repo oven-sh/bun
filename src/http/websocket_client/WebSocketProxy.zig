@@ -41,11 +41,6 @@ pub fn getTunnel(self: *const WebSocketProxy) ?*WebSocketProxyTunnel {
     return self.#tunnel;
 }
 
-/// Get the WebSocket upgrade request buffer
-pub fn getWebsocketRequestBuf(self: *const WebSocketProxy) []u8 {
-    return self.#websocket_request_buf;
-}
-
 /// Set the TLS tunnel
 pub fn setTunnel(self: *WebSocketProxy, new_tunnel: ?*WebSocketProxyTunnel) void {
     self.#tunnel = new_tunnel;

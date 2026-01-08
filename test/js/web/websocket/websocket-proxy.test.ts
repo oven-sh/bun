@@ -55,15 +55,12 @@ beforeAll(async () => {
   });
   wsPort = wsServer.port;
 
-  // Import tls certs here to set up wssServer
-  const { tls: tlsCertsLocal } = await import("harness");
-
   // Create secure WebSocket echo server (wss://)
   wssServer = Bun.serve({
     port: 0,
     tls: {
-      key: tlsCertsLocal.key,
-      cert: tlsCertsLocal.cert,
+      key: tlsCerts.key,
+      cert: tlsCerts.cert,
     },
     fetch(req, server) {
       if (server.upgrade(req)) {

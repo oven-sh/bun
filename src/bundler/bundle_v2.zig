@@ -541,22 +541,24 @@ pub const BundleV2 = struct {
 
         // Check the FileMap first for in-memory files
         if (this.file_map) |file_map| {
-            if (file_map.resolve(import_record.source_file, import_record.specifier)) |file_map_result| {
-                const path_text = file_map_result.path_pair.primary.text;
-                const entry = bun.handleOom(this.pathToSourceIndexMap(target).getOrPut(this.allocator(), path_text));
+            if (file_map.resolve(import_record.source_file, import_record.specifier)) |_file_map_result| {
+                var file_map_result = _file_map_result;
+                var path_primary = file_map_result.path_pair.primary;
+                const entry = bun.handleOom(this.pathToSourceIndexMap(target).getOrPut(this.allocator(), path_primary.text));
                 if (!entry.found_existing) {
                     const loader: Loader = brk: {
                         const record: *ImportRecord = &this.graph.ast.items(.import_records)[import_record.importer_source_index].slice()[import_record.import_record_index];
                         if (record.loader) |out_loader| {
                             break :brk out_loader;
                         }
-                        break :brk Fs.Path.init(path_text).loader(&transpiler.options.loaders) orelse options.Loader.file;
+                        break :brk Fs.Path.init(path_primary.text).loader(&transpiler.options.loaders) orelse options.Loader.file;
                     };
-                    var result_copy = file_map_result;
+                    // For virtual files, use the path text as-is (no relative path computation needed).
+                    path_primary.pretty = bun.handleOom(this.allocator().dupe(u8, path_primary.text));
                     const idx = this.enqueueParseTask(
-                        &result_copy,
+                        &file_map_result,
                         &.{
-                            .path = Fs.Path.init(path_text),
+                            .path = path_primary,
                             .contents = "",
                         },
                         loader,
@@ -3277,28 +3279,31 @@ pub const BundleV2 = struct {
 
             // Check the FileMap first for in-memory files
             if (this.file_map) |file_map| {
-                if (file_map.resolve(source.path.text, import_record.path.text)) |file_map_result| {
-                    const path_text = file_map_result.path_pair.primary.text;
-                    const import_record_loader = import_record.loader orelse Fs.Path.init(path_text).loader(&transpiler.options.loaders) orelse .file;
+                if (file_map.resolve(source.path.text, import_record.path.text)) |_file_map_result| {
+                    var file_map_result = _file_map_result;
+                    var path_primary = file_map_result.path_pair.primary;
+                    const import_record_loader = import_record.loader orelse Fs.Path.init(path_primary.text).loader(&transpiler.options.loaders) orelse .file;
                     import_record.loader = import_record_loader;
 
-                    if (this.pathToSourceIndexMap(target).get(path_text)) |id| {
+                    if (this.pathToSourceIndexMap(target).get(path_primary.text)) |id| {
                         import_record.source_index = .init(id);
                         continue;
                     }
 
-                    const resolve_entry = resolve_queue.getOrPut(path_text) catch |err| bun.handleOom(err);
+                    const resolve_entry = resolve_queue.getOrPut(path_primary.text) catch |err| bun.handleOom(err);
                     if (resolve_entry.found_existing) {
                         import_record.path = resolve_entry.value_ptr.*.path;
                         continue;
                     }
 
-                    import_record.path = Fs.Path.init(path_text);
-                    resolve_entry.key_ptr.* = path_text;
-                    debug("created ParseTask from FileMap: {s}", .{path_text});
+                    // For virtual files, use the path text as-is (no relative path computation needed).
+                    path_primary.pretty = bun.handleOom(this.allocator().dupe(u8, path_primary.text));
+                    import_record.path = path_primary;
+                    resolve_entry.key_ptr.* = path_primary.text;
+                    debug("created ParseTask from FileMap: {s}", .{path_primary.text});
                     const resolve_task = bun.handleOom(bun.default_allocator.create(ParseTask));
-                    var result_copy = file_map_result;
-                    resolve_task.* = ParseTask.init(&result_copy, Index.invalid, this);
+                    file_map_result.path_pair.primary = path_primary;
+                    resolve_task.* = ParseTask.init(&file_map_result, Index.invalid, this);
                     resolve_task.known_target = target;
                     // Use transpiler JSX options, applying force_node_env like the disk path does
                     resolve_task.jsx = transpiler.options.jsx;

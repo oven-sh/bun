@@ -31,8 +31,9 @@ pub const JSBundler = struct {
 
             // Normalize backslashes to forward slashes for consistent lookup
             // Map keys are stored with forward slashes (normalized in fromJS)
-            var buf: bun.PathBuffer = undefined;
-            const normalized = bun.path.pathToPosixBuf(u8, specifier, &buf);
+            const buf = bun.path_buffer_pool.get();
+            defer bun.path_buffer_pool.put(buf);
+            const normalized = bun.path.pathToPosixBuf(u8, specifier, buf);
             const entry = self.map.get(normalized) orelse return null;
             return entry.slice();
         }
@@ -46,15 +47,14 @@ pub const JSBundler = struct {
             }
 
             // Normalize backslashes to forward slashes for consistent lookup
-            var buf: bun.PathBuffer = undefined;
-            const normalized = bun.path.pathToPosixBuf(u8, specifier, &buf);
+            const buf: bun.PathBuffer = bun.path_buffer_pool.get();
+            defer bun.path_buffer_pool.put(buf);
+            const normalized = bun.path.pathToPosixBuf(u8, specifier, buf);
             return self.map.contains(normalized);
         }
 
         /// Returns a resolver Result for a file in the map, or null if not found.
         /// This creates a minimal Result that can be used by the bundler.
-        /// Uses the "memory" namespace to avoid triggering pathWithPrettyInitialized
-        /// allocations during the linking phase.
         ///
         /// source_file: The path of the importing file (may be relative or absolute)
         /// specifier: The import specifier (e.g., "./utils.js" or "/lib.js")
@@ -68,19 +68,20 @@ pub const JSBundler = struct {
                 if (self.map.getKey(specifier)) |key| {
                     return _resolver.Result{
                         .path_pair = .{
-                            .primary = Fs.Path.initWithNamespace(key, "memory"),
+                            .primary = Fs.Path.initWithNamespace(key, "file"),
                         },
                         .module_type = .unknown,
                     };
                 }
             } else {
-                var buf: bun.PathBuffer = undefined;
-                const normalized_specifier = bun.path.pathToPosixBuf(u8, specifier, &buf);
+                const buf: bun.PathBuffer = bun.path_buffer_pool.get();
+                defer bun.path_buffer_pool.put(buf);
+                const normalized_specifier = bun.path.pathToPosixBuf(u8, specifier, buf);
 
                 if (self.map.getKey(normalized_specifier)) |key| {
                     return _resolver.Result{
                         .path_pair = .{
-                            .primary = Fs.Path.initWithNamespace(key, "memory"),
+                            .primary = Fs.Path.initWithNamespace(key, "file"),
                         },
                         .module_type = .unknown,
                     };
@@ -94,22 +95,25 @@ pub const JSBundler = struct {
             {
                 // First, ensure source_file is absolute. It may be relative (e.g., "../../Windows/Temp/...")
                 // on Windows when the bundler stores paths relative to cwd.
-                var abs_source_buf: bun.PathBuffer = undefined;
+                const abs_source_buf = bun.path_buffer_pool.get();
+                defer bun.path_buffer_pool.put(abs_source_buf);
                 const abs_source_file = if (isAbsolutePath(source_file))
                     source_file
                 else
-                    Fs.FileSystem.instance.absBuf(&.{source_file}, &abs_source_buf);
+                    Fs.FileSystem.instance.absBuf(&.{source_file}, abs_source_buf);
 
                 // Normalize source_file to use forward slashes (for Windows compatibility)
                 // On Windows, source_file may have backslashes from the real filesystem
                 // Use pathToPosixBuf which always converts \ to / regardless of platform
-                var source_file_buf: bun.PathBuffer = undefined;
-                const normalized_source_file = bun.path.pathToPosixBuf(u8, abs_source_file, &source_file_buf);
+                const source_file_buf = bun.path_buffer_pool.get();
+                defer bun.path_buffer_pool.put(source_file_buf);
+                const normalized_source_file = bun.path.pathToPosixBuf(u8, abs_source_file, source_file_buf);
 
                 // Extract directory from source_file using posix path handling
                 // For "/entry.js", we want "/"; for "/src/index.js", we want "/src/"
                 // For "C:/foo/bar.js", we want "C:/foo"
-                var buf: bun.PathBuffer = undefined;
+                const buf = bun.path_buffer_pool.get();
+                defer bun.path_buffer_pool.put(buf);
                 const source_dir = bun.path.dirname(normalized_source_file, .posix);
                 // If dirname returns empty but path starts with drive letter, extract the drive + root
                 const effective_source_dir = if (source_dir.len == 0)
@@ -122,7 +126,7 @@ pub const JSBundler = struct {
                 else
                     source_dir;
                 // Use .loose to preserve Windows drive letters, then normalize in-place on Windows
-                const joined_len = bun.path.joinAbsStringBuf(effective_source_dir, &buf, &.{specifier}, .loose).len;
+                const joined_len = bun.path.joinAbsStringBuf(effective_source_dir, buf, &.{specifier}, .loose).len;
                 if (bun.Environment.isWindows) {
                     bun.path.platformToPosixInPlace(u8, buf[0..joined_len]);
                 }
@@ -131,7 +135,7 @@ pub const JSBundler = struct {
                 if (self.map.getKey(joined)) |key| {
                     return _resolver.Result{
                         .path_pair = .{
-                            .primary = Fs.Path.initWithNamespace(key, "memory"),
+                            .primary = Fs.Path.initWithNamespace(key, "file"),
                         },
                         .module_type = .unknown,
                     };

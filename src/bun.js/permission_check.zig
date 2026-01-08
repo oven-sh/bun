@@ -8,14 +8,6 @@
 //!   try checker.requireRead("/path/to/file");
 //!   // ... perform read operation
 
-const std = @import("std");
-const permissions = @import("../permissions.zig");
-const jsc = bun.jsc;
-const bun = @import("bun");
-const JSGlobalObject = jsc.JSGlobalObject;
-const JSValue = jsc.JSValue;
-const ZigString = jsc.ZigString;
-
 /// Permission checker that wraps a JSGlobalObject and provides
 /// convenient methods for checking different permission types.
 pub const PermissionChecker = struct {
@@ -190,3 +182,11 @@ pub fn requireRun(global: *JSGlobalObject, command: []const u8) bun.JSError!void
 pub fn requireFfi(global: *JSGlobalObject, path: []const u8) bun.JSError!void {
     return getChecker(global).requireFfi(path);
 }
+
+const std = @import("std");
+const bun = @import("bun");
+const permissions = @import("../permissions.zig");
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;
+const ZigString = jsc.ZigString;

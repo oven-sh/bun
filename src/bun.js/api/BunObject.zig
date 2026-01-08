@@ -1460,7 +1460,19 @@ const PermissionsObject = struct {
         return object;
     }
 
-    fn parseDescriptor(globalThis: *jsc.JSGlobalObject, descriptor: jsc.JSValue) !struct { kind: bun.permissions.Kind, resource: ?[]const u8 } {
+    const ParsedDescriptor = struct {
+        kind: bun.permissions.Kind,
+        resource: ?[]const u8,
+        resource_slice: ?ZigString.Slice,
+
+        pub fn deinit(self: *ParsedDescriptor) void {
+            if (self.resource_slice) |*slice| {
+                slice.deinit();
+            }
+        }
+    };
+
+    fn parseDescriptor(globalThis: *jsc.JSGlobalObject, descriptor: jsc.JSValue) !ParsedDescriptor {
         if (descriptor.isEmptyOrUndefinedOrNull() or !descriptor.isObject()) {
             return globalThis.throwInvalidArguments("Expected a permission descriptor object", .{});
         }
@@ -1492,40 +1504,42 @@ const PermissionsObject = struct {
         };
 
         // Get optional path/host/variable/command
+        // The resource_slice owns the memory and must be cleaned up by the caller
         var resource: ?[]const u8 = null;
+        var resource_slice: ?ZigString.Slice = null;
         if (try descriptor.get(globalThis, "path")) |path_value| {
             if (!path_value.isEmptyOrUndefinedOrNull()) {
                 const path_str = try path_value.getZigString(globalThis);
-                var path_slice = path_str.toSlice(bun.default_allocator);
-                resource = path_slice.slice();
+                resource_slice = path_str.toSlice(bun.default_allocator);
+                resource = resource_slice.?.slice();
             }
         } else if (try descriptor.get(globalThis, "host")) |host_value| {
             if (!host_value.isEmptyOrUndefinedOrNull()) {
                 const host_str = try host_value.getZigString(globalThis);
-                var host_slice = host_str.toSlice(bun.default_allocator);
-                resource = host_slice.slice();
+                resource_slice = host_str.toSlice(bun.default_allocator);
+                resource = resource_slice.?.slice();
             }
         } else if (try descriptor.get(globalThis, "variable")) |var_value| {
             if (!var_value.isEmptyOrUndefinedOrNull()) {
                 const var_str = try var_value.getZigString(globalThis);
-                var var_slice = var_str.toSlice(bun.default_allocator);
-                resource = var_slice.slice();
+                resource_slice = var_str.toSlice(bun.default_allocator);
+                resource = resource_slice.?.slice();
             }
         } else if (try descriptor.get(globalThis, "command")) |cmd_value| {
             if (!cmd_value.isEmptyOrUndefinedOrNull()) {
                 const cmd_str = try cmd_value.getZigString(globalThis);
-                var cmd_slice = cmd_str.toSlice(bun.default_allocator);
-                resource = cmd_slice.slice();
+                resource_slice = cmd_str.toSlice(bun.default_allocator);
+                resource = resource_slice.?.slice();
             }
         } else if (try descriptor.get(globalThis, "kind")) |kind_value| {
             if (!kind_value.isEmptyOrUndefinedOrNull()) {
                 const kind_str = try kind_value.getZigString(globalThis);
-                var kind_slice = kind_str.toSlice(bun.default_allocator);
-                resource = kind_slice.slice();
+                resource_slice = kind_str.toSlice(bun.default_allocator);
+                resource = resource_slice.?.slice();
             }
         }
 
-        return .{ .kind = kind, .resource = resource };
+        return .{ .kind = kind, .resource = resource, .resource_slice = resource_slice };
     }
 
     fn createPermissionStatus(globalThis: *jsc.JSGlobalObject, state: bun.permissions.State) jsc.JSValue {
@@ -1546,7 +1560,8 @@ const PermissionsObject = struct {
         }
 
         const descriptor = args.ptr[0];
-        const parsed = try parseDescriptor(globalThis, descriptor);
+        var parsed = try parseDescriptor(globalThis, descriptor);
+        defer parsed.deinit();
         const vm = globalThis.bunVM();
         const state = vm.permissions.check(parsed.kind, parsed.resource);
         return createPermissionStatus(globalThis, state);
@@ -1572,10 +1587,15 @@ const PermissionsObject = struct {
         }
 
         const descriptor = args.ptr[0];
-        const parsed = try parseDescriptor(globalThis, descriptor);
+        var parsed = try parseDescriptor(globalThis, descriptor);
+        defer parsed.deinit();
         const vm = globalThis.bunVM();
 
-        // Revoke the permission (deny the entire permission type)
+        // Revoke the permission by denying the entire permission type.
+        // Note: This denies the entire permission type, not just the specific resource.
+        // For example, calling revoke({ name: "env", variable: "HOME" }) will deny ALL
+        // env access, not just access to the HOME variable. This matches the behavior
+        // of transitioning from any state to a more restrictive state.
         vm.permissions.deny(parsed.kind);
 
         // Return the new state

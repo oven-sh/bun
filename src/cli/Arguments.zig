@@ -40,6 +40,7 @@ pub fn resolve_jsx_runtime(str: string) !Api.JsxRuntime {
 
 /// Parse a comma-separated list of values into a slice
 /// Used for permission flags like --allow-read=/tmp,/home/user
+/// Panics on OOM to prevent silently broadening permissions.
 pub fn parseCommaSeparated(allocator: std.mem.Allocator, value: []const u8) ?[]const []const u8 {
     if (value.len == 0) return null;
 
@@ -49,7 +50,9 @@ pub fn parseCommaSeparated(allocator: std.mem.Allocator, value: []const u8) ?[]c
         if (c == ',') count += 1;
     }
 
-    const result = allocator.alloc([]const u8, count) catch return null;
+    // OOM during permission parsing is fatal - we can't silently fail and
+    // risk granting broader permissions than intended
+    const result = allocator.alloc([]const u8, count) catch @panic("OOM");
     var iter = std.mem.splitScalar(u8, value, ',');
     var i: usize = 0;
     while (iter.next()) |part| {

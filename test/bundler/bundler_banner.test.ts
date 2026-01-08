@@ -224,7 +224,7 @@ console.log("bun!");`,
         "#!/usr/bin/env bun
         // @bun @bytecode @bun-cjs
         (function(exports, require, module, __filename, __dirname) {// Copyright 2024 Example Corp
-        module.exports=1;console.log("bun!")})
+        module.exports=1;console.log("bun!");})
         "
       `);
     },

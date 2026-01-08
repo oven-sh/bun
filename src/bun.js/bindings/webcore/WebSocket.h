@@ -128,6 +128,8 @@ public:
     String binaryType() const;
     ExceptionOr<void> setBinaryType(const String&);
 
+    uint16_t upgradeStatusCode() const { return m_upgradeStatusCode; }
+
     ScriptExecutionContext* scriptExecutionContext() const final;
 
     using RefCounted::deref;
@@ -135,7 +137,7 @@ public:
     void didConnect();
     void disablePendingActivity();
     void didClose(unsigned unhandledBufferedAmount, unsigned short code, const String& reason);
-    void didConnect(us_socket_t* socket, char* bufferedData, size_t bufferedDataSize, const PerMessageDeflateParams* deflate_params);
+    void didConnect(us_socket_t* socket, char* bufferedData, size_t bufferedDataSize, const PerMessageDeflateParams* deflate_params, uint16_t upgradeStatusCode);
     void didFailWithErrorCode(Bun::WebSocketErrorCode code);
 
     void didReceiveMessage(String&& message);
@@ -222,6 +224,7 @@ private:
     String m_subprotocol;
     String m_extensions;
     void* m_upgradeClient { nullptr };
+    uint16_t m_upgradeStatusCode { 0 };
     bool m_isSecure { false };
     bool m_rejectUnauthorized { false };
     AnyWebSocket m_connectedWebSocket { nullptr };

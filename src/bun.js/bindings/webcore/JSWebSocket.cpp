@@ -82,6 +82,7 @@ static JSC_DECLARE_CUSTOM_GETTER(jsWebSocket_URL);
 static JSC_DECLARE_CUSTOM_GETTER(jsWebSocket_url);
 static JSC_DECLARE_CUSTOM_GETTER(jsWebSocket_readyState);
 static JSC_DECLARE_CUSTOM_GETTER(jsWebSocket_bufferedAmount);
+static JSC_DECLARE_CUSTOM_GETTER(jsWebSocket_upgradeStatusCode);
 static JSC_DECLARE_CUSTOM_GETTER(jsWebSocket_onopen);
 static JSC_DECLARE_CUSTOM_SETTER(setJSWebSocket_onopen);
 static JSC_DECLARE_CUSTOM_GETTER(jsWebSocket_onmessage);
@@ -326,6 +327,7 @@ static const HashTableValue JSWebSocketPrototypeTableValues[] = {
     { "url"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsWebSocket_url, 0 } },
     { "readyState"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsWebSocket_readyState, 0 } },
     { "bufferedAmount"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsWebSocket_bufferedAmount, 0 } },
+    { "upgradeStatusCode"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsWebSocket_upgradeStatusCode, 0 } },
     { "onopen"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsWebSocket_onopen, setJSWebSocket_onopen } },
     { "onmessage"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsWebSocket_onmessage, setJSWebSocket_onmessage } },
     { "onerror"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsWebSocket_onerror, setJSWebSocket_onerror } },
@@ -443,6 +445,19 @@ static inline JSValue jsWebSocket_bufferedAmountGetter(JSGlobalObject& lexicalGl
 JSC_DEFINE_CUSTOM_GETTER(jsWebSocket_bufferedAmount, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSWebSocket>::get<jsWebSocket_bufferedAmountGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
+}
+
+static inline JSValue jsWebSocket_upgradeStatusCodeGetter(JSGlobalObject& lexicalGlobalObject, JSWebSocket& thisObject)
+{
+    auto& vm = JSC::getVM(&lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto& impl = thisObject.wrapped();
+    RELEASE_AND_RETURN(throwScope, (toJS<IDLUnsignedShort>(lexicalGlobalObject, throwScope, impl.upgradeStatusCode())));
+}
+
+JSC_DEFINE_CUSTOM_GETTER(jsWebSocket_upgradeStatusCode, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
+{
+    return IDLAttribute<JSWebSocket>::get<jsWebSocket_upgradeStatusCodeGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
 
 static inline JSValue jsWebSocket_onopenGetter(JSGlobalObject& lexicalGlobalObject, JSWebSocket& thisObject)

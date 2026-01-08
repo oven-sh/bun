@@ -1297,9 +1297,10 @@ void WebSocket::didClose(unsigned unhandledBufferedAmount, unsigned short code, 
     this->disablePendingActivity();
 }
 
-void WebSocket::didConnect(us_socket_t* socket, char* bufferedData, size_t bufferedDataSize, const PerMessageDeflateParams* deflate_params)
+void WebSocket::didConnect(us_socket_t* socket, char* bufferedData, size_t bufferedDataSize, const PerMessageDeflateParams* deflate_params, uint16_t upgradeStatusCode)
 {
     this->m_upgradeClient = nullptr;
+    this->m_upgradeStatusCode = upgradeStatusCode;
 
     // Set extensions if permessage-deflate was negotiated
     if (deflate_params != nullptr) {
@@ -1506,9 +1507,9 @@ void WebSocket::updateHasPendingActivity()
 
 } // namespace WebCore
 
-extern "C" void WebSocket__didConnect(WebCore::WebSocket* webSocket, us_socket_t* socket, char* bufferedData, size_t len, const PerMessageDeflateParams* deflate_params)
+extern "C" void WebSocket__didConnect(WebCore::WebSocket* webSocket, us_socket_t* socket, char* bufferedData, size_t len, const PerMessageDeflateParams* deflate_params, uint16_t upgradeStatusCode)
 {
-    webSocket->didConnect(socket, bufferedData, len, deflate_params);
+    webSocket->didConnect(socket, bufferedData, len, deflate_params, upgradeStatusCode);
 }
 extern "C" void WebSocket__didAbruptClose(WebCore::WebSocket* webSocket, Bun::WebSocketErrorCode errorCode)
 {

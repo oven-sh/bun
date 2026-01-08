@@ -79,7 +79,7 @@ pub fn init(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.Cal
 
     var err = this.stream.init();
     if (err.isError()) {
-        try impl.emitError(this, globalThis, this_value, err);
+        impl.emitError(this, globalThis, this_value, err);
         return .false;
     }
 
@@ -93,6 +93,7 @@ pub fn init(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.Cal
         err = this.stream.setParams(@intCast(i), d);
         if (err.isError()) {
             // try impl.emitError(this, globalThis, this_value, err); //XXX: onerror isn't set yet
+            this.stream.close();
             return .false;
         }
     }
@@ -179,7 +180,21 @@ const Context = struct {
     }
 
     pub fn reset(this: *Context) Error {
+        if (this.state != null) {
+            this.deinitState();
+        }
         return this.init();
+    }
+
+    /// Frees the Brotli encoder/decoder state without changing mode.
+    /// Use close() for full cleanup that also sets mode to NONE.
+    fn deinitState(this: *Context) void {
+        switch (this.mode) {
+            .BROTLI_ENCODE => c.BrotliEncoderDestroyInstance(@ptrCast(@alignCast(this.state))),
+            .BROTLI_DECODE => c.BrotliDecoderDestroyInstance(@ptrCast(@alignCast(this.state))),
+            else => unreachable,
+        }
+        this.state = null;
     }
 
     pub fn setBuffers(this: *Context, in: ?[]const u8, out: ?[]u8) void {
@@ -238,11 +253,7 @@ const Context = struct {
     }
 
     pub fn close(this: *Context) void {
-        switch (this.mode) {
-            .BROTLI_ENCODE => c.BrotliEncoderDestroyInstance(@ptrCast(@alignCast(this.state))),
-            .BROTLI_DECODE => c.BrotliDecoderDestroyInstance(@ptrCast(@alignCast(this.state))),
-            else => unreachable,
-        }
+        this.deinitState();
         this.mode = .NONE;
     }
 

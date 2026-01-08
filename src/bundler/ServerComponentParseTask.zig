@@ -77,13 +77,19 @@ fn taskCallback(
         .client_entry_wrapper => |data| try task.generateClientEntryWrapper(data, &ab),
     }
 
+    var bundled_ast = try ab.toBundledAst(switch (task.data) {
+        // Server-side
+        .client_reference_proxy => task.ctx.transpiler.options.target,
+        // Client-side,
+        .client_entry_wrapper => .browser,
+    });
+
+    // `wrapper_ref` is used to hold the HMR api ref (see comment in
+    // `src/ast/Ast.zig`)
+    bundled_ast.wrapper_ref = ab.hmr_api_ref;
+
     return .{
-        .ast = try ab.toBundledAst(switch (task.data) {
-            // Server-side
-            .client_reference_proxy => task.ctx.transpiler.options.target,
-            // Client-side,
-            .client_entry_wrapper => .browser,
-        }),
+        .ast = bundled_ast,
         .source = task.source,
         .loader = .js,
         .log = log.*,
@@ -101,7 +107,7 @@ fn generateClientEntryWrapper(_: *ServerComponentParseTask, data: Data.ClientEnt
         .items = &.{},
         .is_single_line = true,
     });
-    b.import_records.items[record].was_originally_bare_import = true;
+    b.import_records.items[record].flags.was_originally_bare_import = true;
 }
 
 fn generateClientReferenceProxy(task: *ServerComponentParseTask, data: Data.ReferenceProxy, b: *AstBuilder) !void {
@@ -124,7 +130,7 @@ fn generateClientReferenceProxy(task: *ServerComponentParseTask, data: Data.Refe
         .data = if (task.ctx.transpiler.options.dev_server != null)
             data.other_source.path.pretty
         else
-            try std.fmt.allocPrint(b.allocator, "{}S{d:0>8}", .{
+            try std.fmt.allocPrint(b.allocator, "{f}S{d:0>8}", .{
                 bun.fmt.hexIntLower(task.ctx.unique_key),
                 data.other_source.index.get(),
             }),

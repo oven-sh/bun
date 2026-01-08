@@ -279,14 +279,31 @@ pub const PatchFile = struct {
 
         for (patch.hunks.items) |*hunk| {
             var line_cursor = hunk.header.patched.start - 1;
+
+            // Validate hunk start position is within bounds
+            if (line_cursor > lines.items.len) {
+                return .{ .err = bun.sys.Error.fromCode(.INVAL, .fstatat).withPath(file_path) };
+            }
+
             for (hunk.parts.items) |*part_| {
                 const part: *PatchMutationPart = part_;
                 switch (part.type) {
                     .context => {
                         // TODO: check if the lines match in the original file?
+
+                        // Validate context lines exist
+                        if (line_cursor + part.lines.items.len > lines.items.len) {
+                            return .{ .err = bun.sys.Error.fromCode(.INVAL, .fstatat).withPath(file_path) };
+                        }
+
                         line_cursor += @intCast(part.lines.items.len);
                     },
                     .insertion => {
+                        // Validate insertion position is within bounds
+                        if (line_cursor > lines.items.len) {
+                            return .{ .err = bun.sys.Error.fromCode(.INVAL, .fstatat).withPath(file_path) };
+                        }
+
                         const lines_to_insert = bun.handleOom(lines.addManyAt(bun.default_allocator, line_cursor, part.lines.items.len));
                         @memcpy(lines_to_insert, part.lines.items);
                         line_cursor += @intCast(part.lines.items.len);
@@ -296,6 +313,12 @@ pub const PatchFile = struct {
                     },
                     .deletion => {
                         // TODO: check if the lines match in the original file?
+
+                        // Validate deletion range is within bounds
+                        if (line_cursor + part.lines.items.len > lines.items.len) {
+                            return .{ .err = bun.sys.Error.fromCode(.INVAL, .fstatat).withPath(file_path) };
+                        }
+
                         bun.handleOom(lines.replaceRange(bun.default_allocator, line_cursor, part.lines.items.len, &.{}));
                         if (part.no_newline_at_end_of_file) {
                             bun.handleOom(lines.append(bun.default_allocator, ""));
@@ -394,15 +417,18 @@ pub const Hunk = struct {
 
     pub const Header = struct {
         original: struct {
-            start: u32,
+            start: u32 = 1,
             len: u32,
         },
         patched: struct {
-            start: u32,
+            start: u32 = 1,
             len: u32,
         },
 
-        pub const zeroes = std.mem.zeroes(Header);
+        pub const empty = Header{
+            .original = .{ .start = 1, .len = 0 },
+            .patched = .{ .start = 1, .len = 0 },
+        };
     };
 
     pub fn deinit(this: *Hunk, allocator: Allocator) void {
@@ -587,7 +613,7 @@ fn patchFileSecondPass(files: []FileDeets) ParseErr!PatchFile {
                         .hunk = if (file.hunks.items.len > 0) brk: {
                             const value = file.hunks.items[0];
                             file.hunks.items[0] = .{
-                                .header = Hunk.Header.zeroes,
+                                .header = Hunk.Header.empty,
                             };
                             break :brk bun.new(Hunk, value);
                         } else null,
@@ -608,7 +634,7 @@ fn patchFileSecondPass(files: []FileDeets) ParseErr!PatchFile {
                         .hunk = if (file.hunks.items.len > 0) brk: {
                             const value = file.hunks.items[0];
                             file.hunks.items[0] = .{
-                                .header = Hunk.Header.zeroes,
+                                .header = Hunk.Header.empty,
                             };
                             break :brk bun.new(Hunk, value);
                         } else null,
@@ -1150,7 +1176,7 @@ pub const TestingAPIs = struct {
         };
         defer patchfile.deinit(bun.default_allocator);
 
-        const str = try std.json.stringifyAlloc(bun.default_allocator, patchfile, .{});
+        const str = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{f}", .{std.json.fmt(patchfile, .{})}));
         const outstr = bun.String.borrowUTF8(str);
         return outstr.toJS(globalThis);
     }
@@ -1241,7 +1267,7 @@ pub fn spawnOpts(
             "XDG_CONFIG_HOME",
             "USERPROFILE",
         };
-        const PATH = bun.getenvZ("PATH");
+        const PATH = bun.env_var.PATH.get();
         const envp_buf = bun.handleOom(bun.default_allocator.allocSentinel(?[*:0]const u8, env_arr.len + @as(usize, if (PATH != null) 1 else 0), null));
         for (0..env_arr.len) |i| {
             envp_buf[i] = env_arr[i].ptr;
@@ -1265,12 +1291,12 @@ pub fn spawnOpts(
     };
 }
 
-pub fn diffPostProcess(result: *bun.spawn.sync.Result, old_folder: []const u8, new_folder: []const u8) !bun.jsc.Node.Maybe(std.ArrayList(u8), std.ArrayList(u8)) {
-    var stdout = std.ArrayList(u8).init(bun.default_allocator);
-    var stderr = std.ArrayList(u8).init(bun.default_allocator);
+pub fn diffPostProcess(result: *bun.spawn.sync.Result, old_folder: []const u8, new_folder: []const u8) !bun.jsc.Node.Maybe(std.array_list.Managed(u8), std.array_list.Managed(u8)) {
+    var stdout = std.array_list.Managed(u8).init(bun.default_allocator);
+    var stderr = std.array_list.Managed(u8).init(bun.default_allocator);
 
-    std.mem.swap(std.ArrayList(u8), &stdout, &result.stdout);
-    std.mem.swap(std.ArrayList(u8), &stderr, &result.stderr);
+    std.mem.swap(std.array_list.Managed(u8), &stdout, &result.stdout);
+    std.mem.swap(std.array_list.Managed(u8), &stderr, &result.stderr);
 
     var deinit_stdout = true;
     var deinit_stderr = true;
@@ -1333,7 +1359,7 @@ pub fn gitDiffInternal(
     allocator: std.mem.Allocator,
     old_folder_: []const u8,
     new_folder_: []const u8,
-) !bun.jsc.Node.Maybe(std.ArrayList(u8), std.ArrayList(u8)) {
+) !bun.jsc.Node.Maybe(std.array_list.Managed(u8), std.array_list.Managed(u8)) {
     const paths = gitDiffPreprocessPaths(allocator, old_folder_, new_folder_, false);
     const old_folder = paths[0];
     const new_folder = paths[1];
@@ -1366,7 +1392,7 @@ pub fn gitDiffInternal(
     child_proc.stderr_behavior = .Pipe;
     var map = std.process.EnvMap.init(allocator);
     defer map.deinit();
-    if (bun.getenvZ("PATH")) |v| try map.put("PATH", v);
+    if (bun.env_var.PATH.get()) |v| try map.put("PATH", v);
     try map.put("GIT_CONFIG_NOSYSTEM", "1");
     try map.put("HOME", "");
     try map.put("XDG_CONFIG_HOME", "");
@@ -1421,7 +1447,7 @@ pub fn gitDiffInternal(
 ///   .replace(new RegExp(`(a|b)${escapeStringRegexp(`/${removeTrailingAndLeadingSlash(bFolder)}/`)}`, "g"), "$1/")
 ///   .replace(new RegExp(escapeStringRegexp(`${aFolder}/`), "g"), "")
 ///   .replace(new RegExp(escapeStringRegexp(`${bFolder}/`), "g"), "");
-fn gitDiffPostprocess(stdout: *std.ArrayList(u8), old_folder: []const u8, new_folder: []const u8) !void {
+fn gitDiffPostprocess(stdout: *std.array_list.Managed(u8), old_folder: []const u8, new_folder: []const u8) !void {
     const old_folder_trimmed = std.mem.trim(u8, old_folder, "/");
     const new_folder_trimmed = std.mem.trim(u8, new_folder, "/");
 

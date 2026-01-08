@@ -10,7 +10,7 @@ pub const FolderResolution = union(Tag) {
         version: Dependency.Version,
         quoted: bool = true,
 
-        pub fn format(this: PackageWorkspaceSearchPathFormatter, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(this: PackageWorkspaceSearchPathFormatter, writer: *std.Io.Writer) std.Io.Writer.Error!void {
             var joined: [bun.MAX_PATH_BYTES + 2]u8 = undefined;
             const str_to_use = this.manager.lockfile.workspace_paths.getPtr(
                 @truncate(String.Builder.stringHash(this.manager.lockfile.str(&this.version.value.workspace))),
@@ -26,7 +26,7 @@ pub const FolderResolution = union(Tag) {
                 const quoted = bun.fmt.QuotedFormatter{
                     .text = paths.rel,
                 };
-                try quoted.format(fmt, opts, writer);
+                try quoted.format(writer);
             } else {
                 try writer.writeAll(paths.rel);
             }
@@ -194,7 +194,7 @@ pub const FolderResolution = union(Tag) {
                     body.data.reset();
                     var man = body.data.list.toManaged(manager.allocator);
                     defer body.data.list = man.moveToUnmanaged();
-                    _ = try file.readToEndWithArrayList(&man, true).unwrap();
+                    _ = try file.readToEndWithArrayList(&man, .probably_small).unwrap();
                 }
 
                 break :brk logger.Source.initPathString(abs, body.data.list.items);

@@ -14,6 +14,7 @@ pub const AnyPostgresError = error{
     InvalidServerSignature,
     InvalidTimeFormat,
     JSError,
+    JSTerminated,
     MultidimensionalArrayNotSupportedYet,
     NullsInArrayNotSupportedYet,
     OutOfMemory,
@@ -60,7 +61,7 @@ pub fn createPostgresError(
     message: []const u8,
     options: PostgresErrorOptions,
 ) bun.JSError!JSValue {
-    const opts_obj = JSValue.createEmptyObject(globalObject, 18);
+    const opts_obj = JSValue.createEmptyObject(globalObject, 0);
     opts_obj.ensureStillAlive();
     opts_obj.put(globalObject, jsc.ZigString.static("code"), try bun.String.createUTF8ForJS(globalObject, options.code));
     inline for (std.meta.fields(PostgresErrorOptions)) |field| {
@@ -110,6 +111,9 @@ pub fn postgresErrorToJS(globalObject: *jsc.JSGlobalObject, message: ?[]const u8
         error.UnknownFormatCode => "ERR_POSTGRES_UNKNOWN_FORMAT_CODE",
         error.JSError => {
             return globalObject.takeException(error.JSError);
+        },
+        error.JSTerminated => {
+            return globalObject.takeException(error.JSTerminated);
         },
         error.OutOfMemory => {
             // TODO: add binding for creating an out of memory error?

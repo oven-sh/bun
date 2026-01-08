@@ -8,7 +8,7 @@ pub fn postProcessCSSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, ch
         },
     };
 
-    var line_offset: bun.sourcemap.LineColumnOffset.Optional = if (c.options.source_maps != .none) .{ .value = .{} } else .{ .null = {} };
+    var line_offset: bun.SourceMap.LineColumnOffset.Optional = if (c.options.source_maps != .none) .{ .value = .{} } else .{ .null = {} };
 
     var newline_before_comment = false;
 
@@ -97,7 +97,7 @@ pub fn postProcessCSSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, ch
     // TODO: meta contents
 
     chunk.isolated_hash = c.generateIsolatedHash(chunk);
-    // chunk.is_executable = is_executable;
+    // chunk.flags.is_executable = is_executable;
 
     if (c.options.source_maps != .none) {
         const can_have_shifts = chunk.intermediate_output == .pieces;

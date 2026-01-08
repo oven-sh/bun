@@ -335,7 +335,7 @@ pub fn fromBlobCopyRef(globalThis: *JSGlobalObject, blob: *const Blob, recommend
             const proxy = globalThis.bunVM().transpiler.env.getHttpProxy(true, null);
             const proxy_url = if (proxy) |p| p.href else null;
 
-            return bun.S3.readableStream(credentials, path, blob.offset, if (blob.size != Blob.max_size) blob.size else null, proxy_url, globalThis);
+            return bun.S3.readableStream(credentials, path, blob.offset, if (blob.size != Blob.max_size) blob.size else null, proxy_url, s3.request_payer, globalThis);
         },
     }
 }
@@ -391,13 +391,12 @@ pub fn fromPipe(
 
 pub fn empty(globalThis: *JSGlobalObject) bun.JSError!jsc.JSValue {
     jsc.markBinding(@src());
-    return bun.jsc.fromJSHostCall(globalThis, @src(), ReadableStream__empty, .{globalThis});
+    return bun.cpp.ReadableStream__empty(globalThis);
 }
 
-pub fn used(globalThis: *JSGlobalObject) jsc.JSValue {
+pub fn used(globalThis: *JSGlobalObject) bun.JSError!jsc.JSValue {
     jsc.markBinding(@src());
-
-    return ReadableStream__used(globalThis);
+    return bun.cpp.ReadableStream__used(globalThis);
 }
 
 pub const StreamTag = enum(usize) {
@@ -575,6 +574,19 @@ pub fn NewSource(
             }
 
             @compileError("setRawMode is not implemented on " ++ @typeName(Context));
+        }
+
+        pub fn setFlowingFromJS(this: *ReadableStreamSourceType, _: *jsc.JSGlobalObject, call_frame: *jsc.CallFrame) bun.JSError!JSValue {
+            if (@hasDecl(Context, "setFlowing")) {
+                const flag = call_frame.argument(0);
+                if (Environment.allow_assert) {
+                    bun.assert(flag.isBoolean());
+                }
+                this.context.setFlowing(flag == .true);
+                return .js_undefined;
+            }
+
+            return .js_undefined;
         }
 
         const supports_ref = setRefUnrefFn != null;

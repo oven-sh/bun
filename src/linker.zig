@@ -61,7 +61,7 @@ pub const Linker = struct {
         file_path: Fs.Path,
         fd: ?FileDescriptorType,
     ) !Fs.FileSystem.RealFS.ModKey {
-        var file: std.fs.File = if (fd) |_fd| _fd.stdFile() else try std.fs.openFileAbsolute(file_path.text, .{ .mode = .read_only });
+        var file: std.fs.File = if (fd) |_fd| _fd.stdFile() else try std.fs.cwd().openFile(file_path.text, .{ .mode = .read_only });
         Fs.FileSystem.setMaxFd(file.handle);
         const modkey = try Fs.FileSystem.RealFS.ModKey.generate(&this.fs.fs, file_path.text, file);
 
@@ -107,20 +107,16 @@ pub const Linker = struct {
         comptime is_bun: bool,
     ) !void {
         const source_dir = file_path.sourceDir();
-        var externals = std.ArrayList(u32).init(linker.allocator);
+        var externals = std.array_list.Managed(u32).init(linker.allocator);
         var had_resolve_errors = false;
 
         const is_deferred = result.pending_imports.len > 0;
 
-        const import_records = result.ast.import_records.listManaged(linker.allocator);
-        defer {
-            result.ast.import_records = ImportRecord.List.fromList(import_records);
-        }
         // Step 1. Resolve imports & requires
         switch (result.loader) {
             .jsx, .js, .ts, .tsx => {
-                for (import_records.items, 0..) |*import_record, record_i| {
-                    if (import_record.is_unused or
+                for (result.ast.import_records.slice(), 0..) |*import_record, record_i| {
+                    if (import_record.flags.is_unused or
                         (is_bun and is_deferred and !result.isPendingImport(@intCast(record_i)))) continue;
 
                     const record_index = record_i;
@@ -146,12 +142,12 @@ pub const Linker = struct {
                     }
 
                     if (comptime is_bun) {
-                        if (jsc.ModuleLoader.HardcodedModule.Alias.get(import_record.path.text, linker.options.target)) |replacement| {
+                        if (jsc.ModuleLoader.HardcodedModule.Alias.get(import_record.path.text, linker.options.target, .{ .rewrite_jest_for_tests = linker.options.rewrite_jest_for_tests })) |replacement| {
                             if (replacement.tag == .builtin and import_record.kind.isCommonJS())
                                 continue;
                             import_record.path.text = replacement.path;
                             import_record.tag = replacement.tag;
-                            import_record.is_external_without_side_effects = true;
+                            import_record.flags.is_external_without_side_effects = true;
                             continue;
                         }
                         if (strings.startsWith(import_record.path.text, "node:")) {
@@ -163,29 +159,9 @@ pub const Linker = struct {
                             continue;
                         }
 
-                        // TODO: this is technical debt
-                        if (linker.options.rewrite_jest_for_tests) {
-                            if (strings.eqlComptime(
-                                import_record.path.text,
-                                "@jest/globals",
-                            ) or strings.eqlComptime(
-                                import_record.path.text,
-                                "vitest",
-                            )) {
-                                import_record.path.namespace = "bun";
-                                import_record.tag = .bun_test;
-                                import_record.path.text = "test";
-                                continue;
-                            }
-                        }
-
                         if (strings.hasPrefixComptime(import_record.path.text, "bun:")) {
                             import_record.path = Fs.Path.init(import_record.path.text["bun:".len..]);
                             import_record.path.namespace = "bun";
-
-                            if (strings.eqlComptime(import_record.path.text, "test")) {
-                                import_record.tag = .bun_test;
-                            }
 
                             // don't link bun
                             continue;
@@ -219,7 +195,7 @@ pub const Linker = struct {
                                     origin,
                                     import_path_format,
                                 );
-                                import_record.print_namespace_in_path = true;
+                                import_record.flags.print_namespace_in_path = true;
                                 continue;
                             }
                         }
@@ -239,7 +215,7 @@ pub const Linker = struct {
         result: *_transpiler.ParseResult,
         comptime is_bun: bool,
     ) !bool {
-        if (import_record.handles_import_errors) {
+        if (import_record.flags.handles_import_errors) {
             import_record.path.is_disabled = true;
             return false;
         }

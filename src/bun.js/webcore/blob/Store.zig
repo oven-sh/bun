@@ -60,7 +60,7 @@ pub fn toAnyBlob(this: *Store) ?Blob.Any {
     return null;
 }
 
-pub fn external(ptr: ?*anyopaque, _: ?*anyopaque, _: usize) callconv(.C) void {
+pub fn external(ptr: ?*anyopaque, _: ?*anyopaque, _: usize) callconv(.c) void {
     if (ptr == null) return;
     var this = bun.cast(*Store, ptr);
     this.deref();
@@ -295,6 +295,7 @@ pub const S3 = struct {
     options: bun.S3.MultiPartUploadOptions = .{},
     acl: ?bun.S3.ACL = null,
     storage_class: ?bun.S3.StorageClass = null,
+    request_payer: bool = false,
 
     pub fn isSeekable(_: *const @This()) ?bool {
         return true;
@@ -306,7 +307,7 @@ pub const S3 = struct {
     }
 
     pub fn getCredentialsWithOptions(this: *const @This(), options: ?JSValue, globalObject: *JSGlobalObject) bun.JSError!bun.S3.S3CredentialsWithOptions {
-        return S3Credentials.getCredentialsWithOptions(this.getCredentials().*, this.options, options, this.acl, this.storage_class, globalObject);
+        return S3Credentials.getCredentialsWithOptions(this.getCredentials().*, this.options, options, this.acl, this.storage_class, this.request_payer, globalObject);
     }
 
     pub fn path(this: *@This()) []const u8 {
@@ -333,16 +334,16 @@ pub const S3 = struct {
 
             pub const new = bun.TrivialNew(@This());
 
-            pub fn resolve(result: bun.S3.S3DeleteResult, opaque_self: *anyopaque) void {
+            pub fn resolve(result: bun.S3.S3DeleteResult, opaque_self: *anyopaque) bun.JSTerminated!void {
                 const self: *@This() = @ptrCast(@alignCast(opaque_self));
                 defer self.deinit();
                 const globalObject = self.global;
                 switch (result) {
                     .success => {
-                        self.promise.resolve(globalObject, .true);
+                        try self.promise.resolve(globalObject, .true);
                     },
                     .not_found, .failure => |err| {
-                        self.promise.reject(globalObject, err.toJS(globalObject, self.store.getPath()));
+                        try self.promise.reject(globalObject, err.toJS(globalObject, self.store.getPath()));
                     },
                 }
             }
@@ -361,11 +362,11 @@ pub const S3 = struct {
         defer aws_options.deinit();
         store.ref();
 
-        bun.S3.delete(&aws_options.credentials, this.path(), @ptrCast(&Wrapper.resolve), Wrapper.new(.{
+        try bun.S3.delete(&aws_options.credentials, this.path(), @ptrCast(&Wrapper.resolve), Wrapper.new(.{
             .promise = promise,
             .store = store, // store is needed in case of not found error
             .global = globalThis,
-        }), proxy);
+        }), proxy, aws_options.request_payer);
 
         return value;
     }
@@ -381,7 +382,7 @@ pub const S3 = struct {
             resolvedlistOptions: bun.S3.S3ListObjectsOptions,
             global: *JSGlobalObject,
 
-            pub fn resolve(result: bun.S3.S3ListObjectsResult, opaque_self: *anyopaque) void {
+            pub fn resolve(result: bun.S3.S3ListObjectsResult, opaque_self: *anyopaque) bun.JSTerminated!void {
                 const self: *@This() = @ptrCast(@alignCast(opaque_self));
                 defer self.deinit();
                 const globalObject = self.global;
@@ -390,11 +391,11 @@ pub const S3 = struct {
                     .success => |list_result| {
                         defer list_result.deinit();
                         const list_result_js = list_result.toJS(globalObject) catch return self.promise.reject(globalObject, error.JSError);
-                        self.promise.resolve(globalObject, list_result_js);
+                        try self.promise.resolve(globalObject, list_result_js);
                     },
 
                     inline .not_found, .failure => |err| {
-                        self.promise.reject(globalObject, err.toJS(globalObject, self.store.getPath()));
+                        try self.promise.reject(globalObject, err.toJS(globalObject, self.store.getPath()));
                     },
                 }
             }
@@ -421,7 +422,7 @@ pub const S3 = struct {
         const options = try bun.S3.getListObjectsOptionsFromJS(globalThis, listOptions);
         store.ref();
 
-        bun.S3.listObjects(&aws_options.credentials, options, @ptrCast(&Wrapper.resolve), bun.new(Wrapper, .{
+        try bun.S3.listObjects(&aws_options.credentials, options, @ptrCast(&Wrapper.resolve), bun.new(Wrapper, .{
             .promise = promise,
             .store = store, // store is needed in case of not found error
             .resolvedlistOptions = options,
@@ -503,7 +504,7 @@ pub const Bytes = struct {
 
     pub fn toInternalBlob(this: *Bytes) Blob.Internal {
         const ptr = this.ptr orelse return .{
-            .bytes = std.ArrayList(u8){
+            .bytes = std.array_list.Managed(u8){
                 .items = &.{},
                 .capacity = 0,
                 .allocator = this.allocator,

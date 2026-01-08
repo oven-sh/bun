@@ -74,3 +74,15 @@ it(`Bun.hash.rapidhash()`, () => {
   gcTick();
   expect(Bun.hash.rapidhash(new TextEncoder().encode("hello world"))).toBe(0x58a89bdcee89c08cn);
 });
+it("does not crash when changing Int32Array constructor with Bun.hash.xxHash32 as species", () => {
+  const arr = new Int32Array();
+  function foo(a4) {
+    return a4;
+  }
+  foo[Symbol.species] = Bun.hash.xxHash32;
+  arr.constructor = foo;
+
+  expect(() => {
+    arr.map(Bun.hash.xxHash32);
+  }).toThrow("species is not a constructor");
+});

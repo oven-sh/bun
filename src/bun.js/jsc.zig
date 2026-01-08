@@ -6,10 +6,10 @@
 //! TODO: Remove remaining aliases to `webcore` and `api`
 
 /// The calling convention used for JavaScript functions <> Native
-pub const conv = if (bun.Environment.isWindows and bun.Environment.isX64)
-    std.builtin.CallingConvention.SysV
+pub const conv: std.builtin.CallingConvention = if (bun.Environment.isWindows and bun.Environment.isX64)
+    .{ .x86_64_sysv = .{} }
 else
-    std.builtin.CallingConvention.C;
+    .c;
 
 /// Web Template Framework
 pub const wtf = @import("./bindings/WTF.zig").WTF;
@@ -32,17 +32,18 @@ pub const JSHostFnZig = host_fn.JSHostFnZig;
 pub const JSHostFnZigWithContext = host_fn.JSHostFnZigWithContext;
 pub const JSHostFunctionTypeWithContext = host_fn.JSHostFunctionTypeWithContext;
 pub const toJSHostFn = host_fn.toJSHostFn;
+pub const toJSHostFnResult = host_fn.toJSHostFnResult;
 pub const toJSHostFnWithContext = host_fn.toJSHostFnWithContext;
 pub const toJSHostCall = host_fn.toJSHostCall;
 pub const fromJSHostCall = host_fn.fromJSHostCall;
 pub const fromJSHostCallGeneric = host_fn.fromJSHostCallGeneric;
-pub const createCallback = host_fn.createCallback;
 
 // JSC Classes Bindings
 pub const AnyPromise = @import("./bindings/AnyPromise.zig").AnyPromise;
 pub const array_buffer = @import("./jsc/array_buffer.zig");
 pub const ArrayBuffer = array_buffer.ArrayBuffer;
 pub const MarkedArrayBuffer = array_buffer.MarkedArrayBuffer;
+pub const JSCArrayBuffer = array_buffer.JSCArrayBuffer;
 pub const CachedBytecode = @import("./bindings/CachedBytecode.zig").CachedBytecode;
 pub const CallFrame = @import("./bindings/CallFrame.zig").CallFrame;
 pub const CommonAbortReason = @import("./bindings/CommonAbortReason.zig").CommonAbortReason;
@@ -50,8 +51,8 @@ pub const CommonStrings = @import("./bindings/CommonStrings.zig").CommonStrings;
 pub const CustomGetterSetter = @import("./bindings/CustomGetterSetter.zig").CustomGetterSetter;
 pub const DOMFormData = @import("./bindings/DOMFormData.zig").DOMFormData;
 pub const DOMURL = @import("./bindings/DOMURL.zig").DOMURL;
+pub const DecodedJSValue = @import("./bindings/DecodedJSValue.zig").DecodedJSValue;
 pub const DeferredError = @import("./bindings/DeferredError.zig").DeferredError;
-pub const EncodedJSValue = @import("./bindings/EncodedJSValue.zig").EncodedJSValue;
 pub const GetterSetter = @import("./bindings/GetterSetter.zig").GetterSetter;
 pub const JSArray = @import("./bindings/JSArray.zig").JSArray;
 pub const JSArrayIterator = @import("./bindings/JSArrayIterator.zig").JSArrayIterator;
@@ -83,6 +84,7 @@ pub const SourceProvider = @import("./bindings/SourceProvider.zig").SourceProvid
 pub const CatchScope = @import("./bindings/CatchScope.zig").CatchScope;
 pub const ExceptionValidationScope = @import("./bindings/CatchScope.zig").ExceptionValidationScope;
 pub const MarkedArgumentBuffer = @import("./bindings/MarkedArgumentBuffer.zig").MarkedArgumentBuffer;
+pub const RegularExpression = @import("./bindings/RegularExpression.zig").RegularExpression;
 
 // JavaScript-related
 pub const Errorable = @import("./bindings/Errorable.zig").Errorable;
@@ -224,10 +226,10 @@ pub const Ref = struct {
     }
 };
 
-pub const OpaqueCallback = *const fn (current: ?*anyopaque) callconv(.C) void;
+pub const OpaqueCallback = *const fn (current: ?*anyopaque) callconv(.c) void;
 pub fn OpaqueWrap(comptime Context: type, comptime Function: fn (this: *Context) void) OpaqueCallback {
     return struct {
-        pub fn callback(ctx: ?*anyopaque) callconv(.C) void {
+        pub fn callback(ctx: ?*anyopaque) callconv(.c) void {
             const context: *Context = @as(*Context, @ptrCast(@alignCast(ctx.?)));
             Function(context);
         }
@@ -248,8 +250,8 @@ pub fn toJSTime(sec: isize, nsec: isize) JSTimeType {
 pub const MAX_SAFE_INTEGER = 9007199254740991;
 pub const MIN_SAFE_INTEGER = -9007199254740991;
 
-extern "c" fn JSCInitialize(env: [*]const [*:0]u8, count: usize, cb: *const fn ([*]const u8, len: usize) callconv(.C) void, eval_mode: bool) void;
-fn onJSCInvalidEnvVar(name: [*]const u8, len: usize) callconv(.C) void {
+extern "c" fn JSCInitialize(env: [*]const [*:0]u8, count: usize, cb: *const fn ([*]const u8, len: usize) callconv(.c) void, eval_mode: bool) void;
+fn onJSCInvalidEnvVar(name: [*]const u8, len: usize) callconv(.c) void {
     bun.Output.errGeneric(
         \\invalid JSC environment variable
         \\
@@ -274,6 +276,8 @@ pub const math = struct {
         return Bun__JSC__operationMathPow(x, y);
     }
 };
+
+pub const generated = @import("bindgen_generated");
 
 const bun = @import("bun");
 const std = @import("std");

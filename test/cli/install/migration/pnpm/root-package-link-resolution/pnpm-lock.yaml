@@ -1,0 +1,35 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      two-range-deps:
+        specifier: 1.0.0
+        version: 1.0.0
+
+packages:
+
+  '@types/is-number@2.0.0':
+    resolution: {integrity: sha512-GEeIxCB+NpM1NrDBqmkYPeU8bI//i+xPzdOY4E1YHet51IcFmz4js6k57m69fLl/cbn7sOR7wj9RNNw53X8AiA==}
+
+  no-deps@1.1.0:
+    resolution: {integrity: sha512-ebG2pipYAKINcNI3YxdsiAgFvNGp2gdRwxAKN2LYBm9+YxuH/lHH2sl+GKQTuGiNfCfNZRMHUyyLPEJD6HWm7w==}
+
+  two-range-deps@1.0.0:
+    resolution: {integrity: sha512-N+6kPy/GxuMncNz/EKuIrwdoYbh1qmvHDnw1UbM3sQE184kBn+6qAQgtf1wgT9dJnt6X+tWcTzSmfDvtJikVBA==}
+
+snapshots:
+
+  '@types/is-number@2.0.0': {}
+
+  no-deps@1.1.0: {}
+
+  two-range-deps@1.0.0:
+    dependencies:
+      '@types/is-number': 2.0.0
+      no-deps: 'link:'

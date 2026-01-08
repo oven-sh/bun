@@ -1624,7 +1624,7 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
     uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
 
     return uwsRes->template upgrade<void *>(
-        data ? std::move(data) : NULL,
+        data ? std::move(data) : nullptr,
         stringViewFromC(sec_web_socket_key, sec_web_socket_key_length),
         stringViewFromC(sec_web_socket_protocol, sec_web_socket_protocol_length),
         stringViewFromC(sec_web_socket_extensions,
@@ -1634,7 +1634,7 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
     uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
 
     return uwsRes->template upgrade<void *>(
-        data ? std::move(data) : NULL,
+        data ? std::move(data) : nullptr,
         stringViewFromC(sec_web_socket_key, sec_web_socket_key_length),
         stringViewFromC(sec_web_socket_protocol, sec_web_socket_protocol_length),
         stringViewFromC(sec_web_socket_extensions,
@@ -1700,7 +1700,8 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
   void us_socket_mark_needs_more_not_ssl(uws_res_r res)
   {
     us_socket_r s = (us_socket_t *)res;
-    s->context->loop->data.last_write_failed = 1;
+    if(us_socket_is_closed(s->flags.is_tls, s)) return;
+    s->flags.last_write_failed = 1;
     us_poll_change(&s->p, s->context->loop,
                    LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
   }
@@ -1801,16 +1802,46 @@ __attribute__((callback (corker, ctx)))
     }
   }
 
-  void uws_res_flush_headers(int ssl, uws_res_r res) {
+  void uws_res_flush_headers(int ssl, uws_res_r res, bool flushImmediately) {
     if (ssl) {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
-      uwsRes->flushHeaders();
+      uwsRes->flushHeaders(flushImmediately);
     } else {
       uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
-      uwsRes->flushHeaders();
+      uwsRes->flushHeaders(flushImmediately);
     }
   }
 
+  bool uws_res_is_corked(int ssl, uws_res_r res) {
+    if (ssl) {
+      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      return uwsRes->isCorked();
+    } else {
+      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+      return uwsRes->isCorked();
+    }
+  }
+
+  void *uws_res_get_socket_data(int ssl, uws_res_r res) {
+    if (ssl) {
+      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      return uwsRes->getSocketData();
+    } else {
+      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+      return uwsRes->getSocketData();
+    }
+  }
+
+  bool uws_res_is_connect_request(int ssl, uws_res_r res)
+  {
+    if (ssl) {
+      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      return uwsRes->isConnectRequest();
+    } else {
+      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+      return uwsRes->isConnectRequest();
+    }
+  }
   void *uws_res_get_native_handle(int ssl, uws_res_r res)
   {
     if (ssl)
@@ -1834,7 +1865,8 @@ __attribute__((callback (corker, ctx)))
   }
 
   void us_socket_sendfile_needs_more(us_socket_r s) {
-    s->context->loop->data.last_write_failed = 1;
+    if(us_socket_is_closed(s->flags.is_tls, s)) return;
+    s->flags.last_write_failed = 1;
     us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
   }
 

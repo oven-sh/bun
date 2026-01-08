@@ -5,7 +5,7 @@ pub fn toBeCloseTo(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallF
     const thisArguments = callFrame.arguments_old(2);
     const arguments = thisArguments.ptr[0..thisArguments.len];
 
-    incrementExpectCallCounter();
+    this.incrementExpectCallCounter();
 
     if (arguments.len < 1) {
         return globalThis.throwInvalidArguments("toBeCloseTo() requires at least 1 argument. Expected value must be a number", .{});
@@ -61,8 +61,8 @@ pub fn toBeCloseTo(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallF
     const expected_fmt = expected_.toFmt(&formatter);
     const received_fmt = received_.toFmt(&formatter);
 
-    const expected_line = "Expected: <green>{any}<r>\n";
-    const received_line = "Received: <red>{any}<r>\n";
+    const expected_line = "Expected: <green>{f}<r>\n";
+    const received_line = "Received: <red>{f}<r>\n";
     const expected_precision = "Expected precision: {d}\n";
     const expected_difference = "Expected difference: \\< <green>{d}<r>\n";
     const received_difference = "Received difference: <red>{d}<r>\n";
@@ -85,7 +85,6 @@ const jsc = bun.jsc;
 const CallFrame = bun.jsc.CallFrame;
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
-const incrementExpectCallCounter = bun.jsc.Expect.incrementExpectCallCounter;
 
 const Expect = bun.jsc.Expect.Expect;
 const getSignature = Expect.getSignature;

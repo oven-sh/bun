@@ -251,8 +251,9 @@ pub fn constructS3FileWithS3CredentialsAndOptions(
     default_options: bun.S3.MultiPartUploadOptions,
     default_acl: ?bun.S3.ACL,
     default_storage_class: ?bun.S3.StorageClass,
+    default_request_payer: bool,
 ) bun.JSError!Blob {
-    var aws_options = try S3.S3Credentials.getCredentialsWithOptions(default_credentials.*, default_options, options, default_acl, default_storage_class, globalObject);
+    var aws_options = try S3.S3Credentials.getCredentialsWithOptions(default_credentials.*, default_options, options, default_acl, default_storage_class, default_request_payer, globalObject);
     defer aws_options.deinit();
 
     const store = brk: {
@@ -266,6 +267,7 @@ pub fn constructS3FileWithS3CredentialsAndOptions(
     store.data.s3.options = aws_options.options;
     store.data.s3.acl = aws_options.acl;
     store.data.s3.storage_class = aws_options.storage_class;
+    store.data.s3.request_payer = aws_options.request_payer;
 
     var blob = Blob.initWithStore(store, globalObject);
     if (options) |opts| {
@@ -302,13 +304,14 @@ pub fn constructS3FileWithS3Credentials(
     options: ?jsc.JSValue,
     existing_credentials: S3.S3Credentials,
 ) bun.JSError!Blob {
-    var aws_options = try S3.S3Credentials.getCredentialsWithOptions(existing_credentials, .{}, options, null, null, globalObject);
+    var aws_options = try S3.S3Credentials.getCredentialsWithOptions(existing_credentials, .{}, options, null, null, false, globalObject);
     defer aws_options.deinit();
     const store = bun.handleOom(Blob.Store.initS3(path, null, aws_options.credentials, bun.default_allocator));
     errdefer store.deinit();
     store.data.s3.options = aws_options.options;
     store.data.s3.acl = aws_options.acl;
     store.data.s3.storage_class = aws_options.storage_class;
+    store.data.s3.request_payer = aws_options.request_payer;
 
     var blob = Blob.initWithStore(store, globalObject);
     if (options) |opts| {
@@ -343,9 +346,7 @@ fn constructS3FileInternal(
     path: jsc.Node.PathLike,
     options: ?jsc.JSValue,
 ) bun.JSError!*Blob {
-    var ptr = Blob.new(try constructS3FileInternalStore(globalObject, path, options));
-    ptr.allocator = bun.default_allocator;
-    return ptr;
+    return Blob.new(try constructS3FileInternalStore(globalObject, path, options));
 }
 
 pub const S3BlobStatTask = struct {
@@ -355,11 +356,11 @@ pub const S3BlobStatTask = struct {
 
     pub const new = bun.TrivialNew(S3BlobStatTask);
 
-    pub fn onS3ExistsResolved(result: S3.S3StatResult, this: *S3BlobStatTask) void {
+    pub fn onS3ExistsResolved(result: S3.S3StatResult, this: *S3BlobStatTask) bun.JSTerminated!void {
         defer this.deinit();
         switch (result) {
             .not_found => {
-                this.promise.resolve(this.global, .false);
+                try this.promise.resolve(this.global, .false);
             },
             .success => |_| {
                 // calling .exists() should not prevent it to download a bigger file
@@ -367,47 +368,47 @@ pub const S3BlobStatTask = struct {
                 // if (this.blob.size == Blob.max_size) {
                 //     this.blob.size = @truncate(stat.size);
                 // }
-                this.promise.resolve(this.global, .true);
+                try this.promise.resolve(this.global, .true);
             },
             .failure => |err| {
-                this.promise.reject(this.global, err.toJS(this.global, this.store.data.s3.path()));
+                try this.promise.reject(this.global, err.toJS(this.global, this.store.data.s3.path()));
             },
         }
     }
 
-    pub fn onS3SizeResolved(result: S3.S3StatResult, this: *S3BlobStatTask) void {
+    pub fn onS3SizeResolved(result: S3.S3StatResult, this: *S3BlobStatTask) bun.JSTerminated!void {
         defer this.deinit();
 
         switch (result) {
             .success => |stat_result| {
-                this.promise.resolve(this.global, JSValue.jsNumber(stat_result.size));
+                try this.promise.resolve(this.global, JSValue.jsNumber(stat_result.size));
             },
             .not_found, .failure => |err| {
-                this.promise.reject(this.global, err.toJS(this.global, this.store.data.s3.path()));
+                try this.promise.reject(this.global, err.toJS(this.global, this.store.data.s3.path()));
             },
         }
     }
 
-    pub fn onS3StatResolved(result: S3.S3StatResult, this: *S3BlobStatTask) void {
+    pub fn onS3StatResolved(result: S3.S3StatResult, this: *S3BlobStatTask) bun.JSError!void {
         defer this.deinit();
         const globalThis = this.global;
         switch (result) {
             .success => |stat_result| {
-                this.promise.resolve(globalThis, (S3Stat.init(
+                try this.promise.resolve(globalThis, (try S3Stat.init(
                     stat_result.size,
                     stat_result.etag,
                     stat_result.contentType,
                     stat_result.lastModified,
                     globalThis,
-                ) catch return).toJS(globalThis)); // TODO: properly propagate exception upwards
+                )).toJS(globalThis));
             },
             .not_found, .failure => |err| {
-                this.promise.reject(globalThis, err.toJS(globalThis, this.store.data.s3.path()));
+                try this.promise.reject(globalThis, err.toJS(globalThis, this.store.data.s3.path()));
             },
         }
     }
 
-    pub fn exists(globalThis: *jsc.JSGlobalObject, blob: *Blob) JSValue {
+    pub fn exists(globalThis: *jsc.JSGlobalObject, blob: *Blob) bun.JSTerminated!JSValue {
         const this = S3BlobStatTask.new(.{
             .promise = jsc.JSPromise.Strong.init(globalThis),
             .store = blob.store.?,
@@ -415,14 +416,15 @@ pub const S3BlobStatTask = struct {
         });
         this.store.ref();
         const promise = this.promise.value();
-        const credentials = blob.store.?.data.s3.getCredentials();
-        const path = blob.store.?.data.s3.path();
+        const s3_store = &blob.store.?.data.s3;
+        const credentials = s3_store.getCredentials();
+        const path = s3_store.path();
         const env = globalThis.bunVM().transpiler.env;
 
-        S3.stat(credentials, path, @ptrCast(&S3BlobStatTask.onS3ExistsResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
+        try S3.stat(credentials, path, @ptrCast(&S3BlobStatTask.onS3ExistsResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null, s3_store.request_payer);
         return promise;
     }
-    pub fn stat(globalThis: *jsc.JSGlobalObject, blob: *Blob) JSValue {
+    pub fn stat(globalThis: *jsc.JSGlobalObject, blob: *Blob) bun.JSTerminated!JSValue {
         const this = S3BlobStatTask.new(.{
             .promise = jsc.JSPromise.Strong.init(globalThis),
             .store = blob.store.?,
@@ -430,14 +432,15 @@ pub const S3BlobStatTask = struct {
         });
         this.store.ref();
         const promise = this.promise.value();
-        const credentials = blob.store.?.data.s3.getCredentials();
-        const path = blob.store.?.data.s3.path();
+        const s3_store = &blob.store.?.data.s3;
+        const credentials = s3_store.getCredentials();
+        const path = s3_store.path();
         const env = globalThis.bunVM().transpiler.env;
 
-        S3.stat(credentials, path, @ptrCast(&S3BlobStatTask.onS3StatResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
+        try S3.stat(credentials, path, @ptrCast(&S3BlobStatTask.onS3StatResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null, s3_store.request_payer);
         return promise;
     }
-    pub fn size(globalThis: *jsc.JSGlobalObject, blob: *Blob) JSValue {
+    pub fn size(globalThis: *jsc.JSGlobalObject, blob: *Blob) bun.JSTerminated!JSValue {
         const this = S3BlobStatTask.new(.{
             .promise = jsc.JSPromise.Strong.init(globalThis),
             .store = blob.store.?,
@@ -445,11 +448,12 @@ pub const S3BlobStatTask = struct {
         });
         this.store.ref();
         const promise = this.promise.value();
-        const credentials = blob.store.?.data.s3.getCredentials();
-        const path = blob.store.?.data.s3.path();
+        const s3_store = &blob.store.?.data.s3;
+        const credentials = s3_store.getCredentials();
+        const path = s3_store.path();
         const env = globalThis.bunVM().transpiler.env;
 
-        S3.stat(credentials, path, @ptrCast(&S3BlobStatTask.onS3SizeResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
+        try S3.stat(credentials, path, @ptrCast(&S3BlobStatTask.onS3SizeResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null, s3_store.request_payer);
         return promise;
     }
 
@@ -468,13 +472,14 @@ pub fn getPresignUrlFrom(this: *Blob, globalThis: *jsc.JSGlobalObject, extra_opt
     var method: bun.http.Method = .GET;
     var expires: usize = 86400; // 1 day default
 
+    const s3 = &this.store.?.data.s3;
     var credentialsWithOptions: S3.S3CredentialsWithOptions = .{
-        .credentials = this.store.?.data.s3.getCredentials().*,
+        .credentials = s3.getCredentials().*,
+        .request_payer = s3.request_payer,
     };
     defer {
         credentialsWithOptions.deinit();
     }
-    const s3 = &this.store.?.data.s3;
 
     if (extra_options) |options| {
         if (options.isObject()) {
@@ -497,6 +502,7 @@ pub fn getPresignUrlFrom(this: *Blob, globalThis: *jsc.JSGlobalObject, extra_opt
         .method = method,
         .acl = credentialsWithOptions.acl,
         .storage_class = credentialsWithOptions.storage_class,
+        .request_payer = credentialsWithOptions.request_payer,
     }, false, .{ .expires = expires }) catch |sign_err| {
         return S3.throwSignError(sign_err, globalThis);
     };
@@ -539,7 +545,7 @@ pub fn getPresignUrl(this: *Blob, globalThis: *jsc.JSGlobalObject, callframe: *j
 }
 
 pub fn getStat(this: *Blob, globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame) callconv(jsc.conv) JSValue {
-    return S3BlobStatTask.stat(globalThis, this);
+    return S3BlobStatTask.stat(globalThis, this) catch .zero;
 }
 
 pub fn stat(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
@@ -607,18 +613,17 @@ pub fn constructInternal(
     return constructS3FileInternal(globalObject, path, args.nextEat());
 }
 
-pub fn construct(
-    globalObject: *jsc.JSGlobalObject,
-    callframe: *jsc.CallFrame,
-) callconv(jsc.conv) ?*Blob {
+pub fn construct(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) callconv(jsc.conv) ?*Blob {
     return constructInternal(globalObject, callframe) catch |err| switch (err) {
         error.JSError => null,
         error.OutOfMemory => {
             _ = globalObject.throwOutOfMemoryValue();
             return null;
         },
+        error.JSTerminated => null,
     };
 }
+
 pub fn hasInstance(_: jsc.JSValue, _: *jsc.JSGlobalObject, value: jsc.JSValue) callconv(jsc.conv) bool {
     jsc.markBinding(@src());
     const blob = value.as(Blob) orelse return false;

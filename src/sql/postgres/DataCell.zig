@@ -151,8 +151,8 @@ fn parseArray(bytes: []const u8, bigint: bool, comptime arrayType: types.Tag, gl
                     .jsonb_array,
                     => {
                         const str_bytes = slice[1..current_idx];
-                        const needs_dynamic_buffer = str_bytes.len < stack_buffer.len;
-                        const buffer = if (needs_dynamic_buffer) try bun.default_allocator.alloc(u8, str_bytes.len) else stack_buffer[0..];
+                        const needs_dynamic_buffer = str_bytes.len > stack_buffer.len;
+                        const buffer = if (needs_dynamic_buffer) try bun.default_allocator.alloc(u8, str_bytes.len) else stack_buffer[0..str_bytes.len];
                         defer if (needs_dynamic_buffer) bun.default_allocator.free(buffer);
                         const unescaped = unescapePostgresString(str_bytes, buffer) catch return error.InvalidByteSequence;
                         try array.append(bun.default_allocator, SQLDataCell{ .tag = .json, .value = .{ .json = if (unescaped.len > 0) String.cloneUTF8(unescaped).value.WTFStringImpl else null }, .free_value = 1 });
@@ -168,8 +168,8 @@ fn parseArray(bytes: []const u8, bigint: bool, comptime arrayType: types.Tag, gl
                     slice = trySlice(slice, current_idx + 1);
                     continue;
                 }
-                const needs_dynamic_buffer = str_bytes.len < stack_buffer.len;
-                const buffer = if (needs_dynamic_buffer) try bun.default_allocator.alloc(u8, str_bytes.len) else stack_buffer[0..];
+                const needs_dynamic_buffer = str_bytes.len > stack_buffer.len;
+                const buffer = if (needs_dynamic_buffer) try bun.default_allocator.alloc(u8, str_bytes.len) else stack_buffer[0..str_bytes.len];
                 defer if (needs_dynamic_buffer) bun.default_allocator.free(buffer);
                 const string_bytes = unescapePostgresString(str_bytes, buffer) catch return error.InvalidByteSequence;
                 try array.append(bun.default_allocator, SQLDataCell{ .tag = .string, .value = .{ .string = if (string_bytes.len > 0) String.cloneUTF8(string_bytes).value.WTFStringImpl else null }, .free_value = 1 });
@@ -461,7 +461,7 @@ pub fn fromBytes(binary: bool, bigint: bool, oid: types.Tag, bytes: []const u8, 
         // TODO: .int2_array, .float8_array
         inline .int4_array, .float4_array => |tag| {
             if (binary) {
-                if (bytes.len < 16) {
+                if (bytes.len < 12) {
                     return error.InvalidBinaryData;
                 }
                 // https://github.com/postgres/postgres/blob/master/src/backend/utils/adt/arrayfuncs.c#L1549-L1645
@@ -560,7 +560,7 @@ pub fn fromBytes(binary: bool, bigint: bool, oid: types.Tag, bytes: []const u8, 
                 // this is probrably good enough for most cases
                 var stack_buffer = std.heap.stackFallback(1024, bun.default_allocator);
                 const allocator = stack_buffer.get();
-                var numeric_buffer = std.ArrayList(u8).fromOwnedSlice(allocator, &stack_buffer.buffer);
+                var numeric_buffer = std.array_list.Managed(u8).fromOwnedSlice(allocator, &stack_buffer.buffer);
                 numeric_buffer.items.len = 0;
                 defer numeric_buffer.deinit();
 
@@ -739,7 +739,7 @@ const PGNummericString = union(enum) {
     }
 };
 
-fn parseBinaryNumeric(input: []const u8, result: *std.ArrayList(u8)) !PGNummericString {
+fn parseBinaryNumeric(input: []const u8, result: *std.array_list.Managed(u8)) !PGNummericString {
     // Reference: https://github.com/postgres/postgres/blob/50e6eb731d98ab6d0e625a0b87fb327b172bbebd/src/backend/utils/adt/numeric.c#L7612-L7740
     if (input.len < 8) return error.InvalidBuffer;
     var fixed_buffer = std.io.fixedBufferStream(input);
@@ -750,6 +750,7 @@ fn parseBinaryNumeric(input: []const u8, result: *std.ArrayList(u8)) !PGNummeric
     const weight = try reader.readInt(i16, .big);
     const sign = try reader.readInt(u16, .big);
     const dscale = try reader.readInt(i16, .big);
+    log("ndigits: {d}, weight: {d}, sign: {d}, dscale: {d}", .{ ndigits, weight, sign, dscale });
 
     // Handle special cases
     switch (sign) {
@@ -786,8 +787,9 @@ fn parseBinaryNumeric(input: []const u8, result: *std.ArrayList(u8)) !PGNummeric
 
         while (idx <= weight) : (idx += 1) {
             const digit = if (idx < ndigits) try reader.readInt(u16, .big) else 0;
+            log("digit: {d}", .{digit});
             var digit_str: [4]u8 = undefined;
-            const digit_len = std.fmt.formatIntBuf(&digit_str, digit, 10, .lower, .{ .width = 4, .fill = '0' });
+            const digit_len = std.fmt.printInt(&digit_str, digit, 10, .lower, .{ .width = 4, .fill = '0' });
             if (!first_non_zero) {
                 //In the first digit, suppress extra leading decimal zeroes
                 var start_idx: usize = 0;
@@ -810,12 +812,14 @@ fn parseBinaryNumeric(input: []const u8, result: *std.ArrayList(u8)) !PGNummeric
         var idx: isize = scale_start;
         const end: usize = result.items.len + @as(usize, @intCast(dscale));
         while (idx < dscale) : (idx += 4) {
-            if (idx >= 0 and idx < ndigits) {
+            if (idx >= 0 and idx < dscale) {
                 const digit = reader.readInt(u16, .big) catch 0;
+                log("dscale digit: {d}", .{digit});
                 var digit_str: [4]u8 = undefined;
-                const digit_len = std.fmt.formatIntBuf(&digit_str, digit, 10, .lower, .{ .width = 4, .fill = '0' });
+                const digit_len = std.fmt.printInt(&digit_str, digit, 10, .lower, .{ .width = 4, .fill = '0' });
                 try result.appendSlice(digit_str[0..digit_len]);
             } else {
+                log("dscale digit: 0000", .{});
                 try result.appendSlice("0000");
             }
         }
@@ -902,7 +906,7 @@ pub const Putter = struct {
     count: usize = 0,
     globalObject: *jsc.JSGlobalObject,
 
-    pub fn toJS(this: *Putter, globalObject: *jsc.JSGlobalObject, array: JSValue, structure: JSValue, flags: SQLDataCell.Flags, result_mode: PostgresSQLQueryResultMode, cached_structure: ?PostgresCachedStructure) JSValue {
+    pub fn toJS(this: *Putter, globalObject: *jsc.JSGlobalObject, array: JSValue, structure: JSValue, flags: SQLDataCell.Flags, result_mode: PostgresSQLQueryResultMode, cached_structure: ?PostgresCachedStructure) !JSValue {
         var names: ?[*]jsc.JSObject.ExternColumnIdentifier = null;
         var names_count: u32 = 0;
         if (cached_structure) |c| {
@@ -912,7 +916,7 @@ pub const Putter = struct {
             }
         }
 
-        return SQLDataCell.JSC__constructObjectFromDataCell(
+        return SQLDataCell.constructObjectFromDataCell(
             globalObject,
             array,
             structure,
@@ -986,6 +990,8 @@ const debug = bun.Output.scoped(.Postgres, .visible);
 // External C++ formatting functions
 extern fn Postgres__formatTime(microseconds: i64, buffer: [*]u8, bufferSize: usize) usize;
 extern fn Postgres__formatTimeTz(microseconds: i64, tzOffsetSeconds: i32, buffer: [*]u8, bufferSize: usize) usize;
+
+const log = bun.Output.scoped(.PostgresDataCell, .visible);
 
 const PostgresCachedStructure = @import("../shared/CachedStructure.zig");
 const protocol = @import("./PostgresProtocol.zig");

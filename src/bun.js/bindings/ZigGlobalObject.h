@@ -40,6 +40,10 @@ class GlobalInternals;
 } // namespace shim
 } // namespace v8
 
+namespace node {
+struct node_module;
+} // namespace node
+
 #include "root.h"
 #include "headers-handwritten.h"
 #include <JavaScriptCore/CatchScope.h>
@@ -57,6 +61,8 @@ class GlobalInternals;
 #include "BunGlobalScope.h"
 #include <js_native_api.h>
 #include <node_api.h>
+#include "BakeAdditionsToGlobalObject.h"
+#include "WriteBarrierList.h"
 
 namespace Bun {
 class JSCommonJSExtensions;
@@ -183,8 +189,6 @@ public:
 
     void clearDOMGuardedObjects();
 
-    static void createCallSitesFromFrames(Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, JSCStackTrace& stackTrace, MarkedArgumentBuffer& callSites);
-
     static void reportUncaughtExceptionAtEventLoop(JSGlobalObject*, JSC::Exception*);
     static JSGlobalObject* deriveShadowRealmGlobalObject(JSGlobalObject* globalObject);
     static JSC::JSInternalPromise* moduleLoaderImportModule(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSString* moduleNameValue, JSC::JSValue parameters, const JSC::SourceOrigin&);
@@ -295,7 +299,6 @@ public:
     Structure* NodeVMSpecialSandboxStructure() const { return m_cachedNodeVMSpecialSandboxStructure.getInitializedOnMainThread(this); }
     Structure* globalProxyStructure() const { return m_cachedGlobalProxyStructure.getInitializedOnMainThread(this); }
     JSObject* lazyTestModuleObject() const { return m_lazyTestModuleObject.getInitializedOnMainThread(this); }
-    JSObject* lazyPreloadTestModuleObject() const { return m_lazyPreloadTestModuleObject.getInitializedOnMainThread(this); }
     Structure* CommonJSModuleObjectStructure() const { return m_commonJSModuleObjectStructure.getInitializedOnMainThread(this); }
     Structure* JSSocketAddressDTOStructure() const { return m_JSSocketAddressDTOStructure.getInitializedOnMainThread(this); }
     Structure* ImportMetaObjectStructure() const { return m_importMetaObjectStructure.getInitializedOnMainThread(this); }
@@ -312,6 +315,8 @@ public:
     Structure* JSSQLStatementStructure() const { return m_JSSQLStatementStructure.getInitializedOnMainThread(this); }
 
     v8::shim::GlobalInternals* V8GlobalInternals() const { return m_V8GlobalInternals.getInitializedOnMainThread(this); }
+
+    Bun::BakeAdditionsToGlobalObject& bakeAdditions() { return m_bakeAdditions; }
 
     bool hasProcessObject() const { return m_processObject.isInitialized(); }
 
@@ -370,8 +375,8 @@ public:
         Bun__HTTPRequestContextDebugTLS__onResolveStream,
         jsFunctionOnLoadObjectResultResolve,
         jsFunctionOnLoadObjectResultReject,
-        Bun__TestScope__onReject,
-        Bun__TestScope__onResolve,
+        Bun__TestScope__Describe2__bunTestThen,
+        Bun__TestScope__Describe2__bunTestCatch,
         Bun__BodyValueBufferer__onRejectStream,
         Bun__BodyValueBufferer__onResolveStream,
         Bun__onResolveEntryPointResult,
@@ -450,6 +455,8 @@ public:
     //   a new overload of `visitGlobalObjectMember` so it understands your type.
 
 #define FOR_EACH_GLOBALOBJECT_GC_MEMBER(V)                                                                   \
+    V(public, Bun::BakeAdditionsToGlobalObject, m_bakeAdditions)                                             \
+                                                                                                             \
     /* TODO: these should use LazyProperty */                                                                \
     V(private, WriteBarrier<JSFunction>, m_assignToStream)                                                   \
     V(private, WriteBarrier<JSFunction>, m_assignStreamToResumableSink)                                      \
@@ -580,7 +587,6 @@ public:
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_lazyRequireCacheObject)                                \
     V(public, LazyPropertyOfGlobalObject<Bun::JSCommonJSExtensions>, m_lazyRequireExtensionsObject)          \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_lazyTestModuleObject)                                 \
-    V(private, LazyPropertyOfGlobalObject<JSObject>, m_lazyPreloadTestModuleObject)                          \
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_testMatcherUtilsObject)                                \
     V(public, LazyPropertyOfGlobalObject<Structure>, m_cachedNodeVMGlobalObjectStructure)                    \
     V(public, LazyPropertyOfGlobalObject<Structure>, m_cachedNodeVMSpecialSandboxStructure)                  \
@@ -626,10 +632,6 @@ public:
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_bunStdout)                                             \
                                                                                                              \
     V(public, LazyPropertyOfGlobalObject<Structure>, m_JSNodeHTTPServerSocketStructure)                      \
-    V(public, LazyPropertyOfGlobalObject<JSFloat64Array>, m_statValues)                                      \
-    V(public, LazyPropertyOfGlobalObject<JSBigInt64Array>, m_bigintStatValues)                               \
-    V(public, LazyPropertyOfGlobalObject<JSFloat64Array>, m_statFsValues)                                    \
-    V(public, LazyPropertyOfGlobalObject<JSBigInt64Array>, m_bigintStatFsValues)                             \
     V(public, LazyPropertyOfGlobalObject<Symbol>, m_nodeVMDontContextify)                                    \
     V(public, LazyPropertyOfGlobalObject<Symbol>, m_nodeVMUseMainContextDefaultLoader)                       \
     V(public, LazyPropertyOfGlobalObject<JSFunction>, m_ipcSerializeFunction)                                \
@@ -653,8 +655,17 @@ public:
     // We will add it to the resulting napi value.
     void* m_pendingNapiModuleDlopenHandle = nullptr;
 
-    // Store the napi module struct to defer calling nm_register_func until after dlopen completes
+    // Store ALL napi module structs to defer calling nm_register_func until after dlopen completes
+    // A single .node file can register multiple modules during static constructors
+    WTF::Vector<napi_module> m_pendingNapiModules;
+
+    // Temporary storage for current NAPI module being executed
+    // Used by executePendingNapiModule to execute one module at a time
     std::optional<napi_module> m_pendingNapiModule = {};
+
+    // Store ALL V8 C++ module pointers to defer execution until after dlopen completes
+    // A single .node file can register multiple V8 modules during static constructors
+    WTF::Vector<node::node_module*> m_pendingV8Modules;
 
     JSObject* nodeErrorCache() const { return m_nodeErrorCache.getInitializedOnMainThread(this); }
 
@@ -673,9 +684,6 @@ public:
 
     String agentClusterID() const;
     static String defaultAgentClusterID();
-
-    void trackFFIFunction(JSC::JSFunction* function);
-    bool untrackFFIFunction(JSC::JSFunction* function);
 
     BunPlugin::OnLoad onLoadPlugins {};
     BunPlugin::OnResolve onResolvePlugins {};
@@ -726,8 +734,8 @@ public:
     // De-optimization once `require("module").runMain` is written to
     bool hasOverriddenModuleRunMain = false;
 
-    WTF::Vector<std::unique_ptr<napi_env__>> m_napiEnvs;
-    napi_env makeNapiEnv(const napi_module&);
+    WTF::Vector<WTF::Ref<NapiEnv>> m_napiEnvs;
+    Ref<NapiEnv> makeNapiEnv(const napi_module&);
     napi_env makeNapiEnvForFFI();
     bool hasNapiFinalizers() const;
 
@@ -735,8 +743,7 @@ private:
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);
     WebCore::SubtleCrypto* m_subtleCrypto = nullptr;
 
-    WTF::Vector<JSC::Strong<JSC::JSPromise>> m_aboutToBeNotifiedRejectedPromises;
-    WTF::Vector<JSC::Strong<JSC::JSFunction>> m_ffiFunctions;
+    Bun::WriteBarrierList<JSC::JSPromise> m_aboutToBeNotifiedRejectedPromises;
 };
 
 class EvalGlobalObject : public GlobalObject {
@@ -752,10 +759,7 @@ public:
 
 } // namespace Zig
 
-// TODO: move this
 namespace Bun {
-
-String formatStackTrace(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, const WTF::String& name, const WTF::String& message, OrdinalNumber& line, OrdinalNumber& column, WTF::String& sourceURL, Vector<JSC::StackFrame>& stackTrace, JSC::JSObject* errorInstance);
 
 ALWAYS_INLINE void* vm(Zig::GlobalObject* globalObject)
 {

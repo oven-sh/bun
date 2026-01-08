@@ -7,6 +7,7 @@ describe("bundler", () => {
     compile: {
       execArgv: ["--title=CompileExecArgvDualBehavior", "--smol"],
     },
+    backend: "cli",
     files: {
       "/entry.ts": /* js */ `
         // Test that --compile-exec-argv both processes flags AND populates execArgv
@@ -52,6 +53,7 @@ describe("bundler", () => {
     compile: {
       execArgv: ["--user-agent=test-agent", "--smol"],
     },
+    backend: "cli",
     files: {
       "/entry.ts": /* js */ `
         // Test that compile-exec-argv options don't appear in process.argv
@@ -115,6 +117,7 @@ describe("bundler", () => {
     compile: {
       execArgv: ["--user-agent=test-agent", "--smol"],
     },
+    backend: "cli",
     files: {
       "/entry.ts": /* js */ `
         // Test that user arguments are properly included when exec argv is present

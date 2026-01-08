@@ -42,7 +42,7 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
         chunk: *Chunk,
         chunks: []Chunk,
         minify_whitespace: bool,
-        output: std.ArrayList(u8),
+        output: std.array_list.Managed(u8),
         end_tag_indices: struct {
             head: ?u32 = 0,
             body: ?u32 = 0,
@@ -74,7 +74,7 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
             else
                 .file;
 
-            if (import_record.is_external_without_side_effects) {
+            if (import_record.flags.is_external_without_side_effects) {
                 debug("Leaving external import: {s}", .{import_record.path.text});
                 return;
             }
@@ -146,19 +146,19 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
             var array: bun.BoundedArray([]const u8, 2) = .{};
             // Put CSS before JS to reduce changes of flash of unstyled content
             if (this.chunk.getCSSChunkForHTML(this.chunks)) |css_chunk| {
-                const link_tag = bun.handleOom(std.fmt.allocPrintZ(allocator, "<link rel=\"stylesheet\" crossorigin href=\"{s}\">", .{css_chunk.unique_key}));
+                const link_tag = bun.handleOom(std.fmt.allocPrintSentinel(allocator, "<link rel=\"stylesheet\" crossorigin href=\"{s}\">", .{css_chunk.unique_key}, 0));
                 array.appendAssumeCapacity(link_tag);
             }
             if (this.chunk.getJSChunkForHTML(this.chunks)) |js_chunk| {
                 // type="module" scripts do not block rendering, so it is okay to put them in head
-                const script = bun.handleOom(std.fmt.allocPrintZ(allocator, "<script type=\"module\" crossorigin src=\"{s}\"></script>", .{js_chunk.unique_key}));
+                const script = bun.handleOom(std.fmt.allocPrintSentinel(allocator, "<script type=\"module\" crossorigin src=\"{s}\"></script>", .{js_chunk.unique_key}, 0));
                 array.appendAssumeCapacity(script);
             }
             return array;
         }
 
-        fn endHeadTagHandler(end: *lol.EndTag, opaque_this: ?*anyopaque) callconv(.C) lol.Directive {
-            const this: *@This() = @alignCast(@ptrCast(opaque_this.?));
+        fn endHeadTagHandler(end: *lol.EndTag, opaque_this: ?*anyopaque) callconv(.c) lol.Directive {
+            const this: *@This() = @ptrCast(@alignCast(opaque_this.?));
             if (this.linker.dev_server == null) {
                 this.addHeadTags(end) catch return .stop;
             } else {
@@ -167,8 +167,8 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
             return .@"continue";
         }
 
-        fn endBodyTagHandler(end: *lol.EndTag, opaque_this: ?*anyopaque) callconv(.C) lol.Directive {
-            const this: *@This() = @alignCast(@ptrCast(opaque_this.?));
+        fn endBodyTagHandler(end: *lol.EndTag, opaque_this: ?*anyopaque) callconv(.c) lol.Directive {
+            const this: *@This() = @ptrCast(@alignCast(opaque_this.?));
             if (this.linker.dev_server == null) {
                 this.addHeadTags(end) catch return .stop;
             } else {
@@ -177,8 +177,8 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
             return .@"continue";
         }
 
-        fn endHtmlTagHandler(end: *lol.EndTag, opaque_this: ?*anyopaque) callconv(.C) lol.Directive {
-            const this: *@This() = @alignCast(@ptrCast(opaque_this.?));
+        fn endHtmlTagHandler(end: *lol.EndTag, opaque_this: ?*anyopaque) callconv(.c) lol.Directive {
+            const this: *@This() = @ptrCast(@alignCast(opaque_this.?));
             if (this.linker.dev_server == null) {
                 this.addHeadTags(end) catch return .stop;
             } else {
@@ -201,7 +201,7 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
         .minify_whitespace = c.options.minify_whitespace,
         .chunk = chunk,
         .chunks = chunks,
-        .output = std.ArrayList(u8).init(output_allocator),
+        .output = std.array_list.Managed(u8).init(output_allocator),
         .current_import_record_index = 0,
         .end_tag_indices = .{
             .html = null,

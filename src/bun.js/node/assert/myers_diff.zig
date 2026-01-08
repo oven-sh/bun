@@ -151,7 +151,7 @@ pub fn DifferWithEql(comptime Line: type, comptime opts: Options, comptime areLi
             @memset(graph, 0);
             graph.len = graph_size;
 
-            var trace = std.ArrayList([]const uint).init(trace_alloc);
+            var trace = std.array_list.Managed([]const uint).init(trace_alloc);
             // reserve enough space for each frame to avoid realloc on ptr list. Lists may end up in the heap, but
             // this list is at the very from (and ∴ on stack).
             try trace.ensureTotalCapacityPrecise(max + 1);
@@ -217,7 +217,7 @@ pub fn DifferWithEql(comptime Line: type, comptime opts: Options, comptime areLi
 
         fn backtrack(
             allocator: Allocator,
-            trace: *const std.ArrayList([]const uint),
+            trace: *const std.array_list.Managed([]const uint),
             actual: []const Line,
             expected: []const Line,
         ) Error!DiffList(Line) {
@@ -291,11 +291,11 @@ pub fn DifferWithEql(comptime Line: type, comptime opts: Options, comptime areLi
     };
 }
 
-pub fn printDiff(T: type, diffs: std.ArrayList(Diff(T))) !void {
+pub fn printDiff(T: type, diffs: std.array_list.Managed(Diff(T))) !void {
     const stdout = if (builtin.is_test)
-        std.io.getStdErr().writer()
+        std.fs.File.stderr().writer()
     else
-        std.io.getStdOut().writer();
+        std.fs.File.stdout().writer();
 
     const specifier = switch (T) {
         u8 => "c",
@@ -375,7 +375,7 @@ pub const DiffKind = enum {
     delete,
     equal,
 
-    pub fn format(value: DiffKind, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(value: DiffKind, writer: *std.Io.Writer) !void {
         return switch (value) {
             .insert => writer.writeByte('+'),
             .delete => writer.writeByte('-'),
@@ -394,8 +394,7 @@ pub fn Diff(comptime T: type) type {
             return self.kind == other.kind and mem.eql(T, self.value, other.value);
         }
 
-        /// pub fn format(value: ?, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void
-        pub fn format(value: anytype, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(value: anytype, writer: *std.Io.Writer) !void {
             const specifier = switch (T) {
                 u8 => "c",
                 u32 => "u",
@@ -408,7 +407,7 @@ pub fn Diff(comptime T: type) type {
 }
 
 pub fn DiffList(comptime T: type) type {
-    return std.ArrayList(Diff(T));
+    return std.array_list.Managed(Diff(T));
 }
 
 // =============================================================================

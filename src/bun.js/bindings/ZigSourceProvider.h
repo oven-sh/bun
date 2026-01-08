@@ -50,8 +50,7 @@ public:
         return m_cachedBytecode.copyRef();
     };
 
-    void updateCache(const UnlinkedFunctionExecutable* executable, const SourceCode&,
-        CodeSpecializationKind kind, const UnlinkedFunctionCodeBlock* codeBlock);
+    void updateCache(const UnlinkedFunctionExecutable* executable, const SourceCode&, CodeSpecializationKind kind, const UnlinkedFunctionCodeBlock* codeBlock);
     void cacheBytecode(const BytecodeCacheGenerator& generator);
     void commitCachedBytecode();
     bool isBytecodeCacheEnabled() const;
@@ -65,7 +64,7 @@ private:
         JSC::SourceTaintedOrigin taintedness,
         const SourceOrigin& sourceOrigin, WTF::String&& sourceURL,
         const TextPosition& startPosition, JSC::SourceProviderSourceType sourceType)
-        : Base(sourceOrigin, WTFMove(sourceURL), String(), taintedness, startPosition, sourceType)
+        : Base(sourceOrigin, WTF::move(sourceURL), String(), taintedness, startPosition, sourceType)
         , m_globalObject(globalObject)
         , m_source(sourceImpl)
     {

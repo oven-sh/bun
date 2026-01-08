@@ -1,5 +1,5 @@
 /// Used to keep the bundle thread from spinning on Windows
-pub fn timerCallback(_: *bun.windows.libuv.Timer) callconv(.C) void {}
+pub fn timerCallback(_: *bun.windows.libuv.Timer) callconv(.c) void {}
 
 /// Originally, bake.DevServer required a separate bundling thread, but that was
 /// later removed. The bundling thread's scheduling logic is generalized over
@@ -149,9 +149,7 @@ pub fn BundleThread(CompletionStruct: type) type {
                 completion.log = out_log;
             }
 
-            completion.result = .{ .value = .{
-                .output_files = try this.runFromJSInNewThread(transpiler.options.entry_points),
-            } };
+            completion.result = .{ .value = try this.runFromJSInNewThread(transpiler.options.entry_points) };
 
             var out_log = Logger.Log.init(bun.default_allocator);
             bun.handleOom(this.transpiler.log.appendToWithRecycled(&out_log, true));

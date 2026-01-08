@@ -221,6 +221,10 @@ const log = Output.scoped(.HTTPInternalState, .hidden);
 
 const HTTPStage = enum {
     pending,
+
+    /// The `onOpen` callback has been called for the first time.
+    opened,
+
     headers,
     body,
     body_chunk,

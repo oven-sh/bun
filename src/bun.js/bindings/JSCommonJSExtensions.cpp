@@ -138,8 +138,12 @@ void JSCommonJSExtensions::finishCreation(JSC::VM& vm)
 extern "C" void NodeModuleModule__onRequireExtensionModify(
     Zig::GlobalObject* globalObject,
     const BunString* key,
-    uint32_t kind,
+    BunLoaderType loader,
     JSC::JSValue value);
+
+extern "C" void NodeModuleModule__onRequireExtensionModifyNonFunction(
+    Zig::GlobalObject* globalObject,
+    const BunString* key);
 
 void onAssign(Zig::GlobalObject* globalObject, JSC::PropertyName propertyName, JSC::JSValue value)
 {
@@ -147,23 +151,25 @@ void onAssign(Zig::GlobalObject* globalObject, JSC::PropertyName propertyName, J
     auto* name = propertyName.publicName();
     if (!name->startsWith('.')) return;
     BunString ext = Bun::toString(name);
-    uint32_t kind = 0;
     JSC::CallData callData = JSC::getCallData(value);
+    if (callData.type == JSC::CallData::Type::None) {
+        return NodeModuleModule__onRequireExtensionModifyNonFunction(globalObject, &ext);
+    }
+
+    BunLoaderType loader = BunLoaderTypeNone;
     if (callData.type == JSC::CallData::Type::Native) {
         auto* untaggedPtr = callData.native.function.untaggedPtr();
         if (untaggedPtr == &jsLoaderJS) {
-            kind = 1;
+            loader = BunLoaderTypeJS;
         } else if (untaggedPtr == &jsLoaderJSON) {
-            kind = 2;
+            loader = BunLoaderTypeJSON;
         } else if (untaggedPtr == &jsLoaderNode) {
-            kind = 3;
+            loader = BunLoaderTypeNAPI;
         } else if (untaggedPtr == &jsLoaderTS) {
-            kind = 4;
+            loader = BunLoaderTypeTS;
         }
-    } else if (callData.type == JSC::CallData::Type::None) {
-        kind = -1;
     }
-    NodeModuleModule__onRequireExtensionModify(globalObject, &ext, kind, value);
+    NodeModuleModule__onRequireExtensionModify(globalObject, &ext, loader, value);
 }
 
 bool JSCommonJSExtensions::defineOwnProperty(JSC::JSObject* object, JSC::JSGlobalObject* globalObject, JSC::PropertyName propertyName, const JSC::PropertyDescriptor& descriptor, bool shouldThrow)

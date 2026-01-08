@@ -55,14 +55,14 @@ pub fn deinit(this: *MySQLStatement) void {
     this.cached_structure.deinit();
     this.error_response.deinit();
     this.signature.deinit();
-    bun.default_allocator.destroy(this);
+    bun.destroy(this);
 }
 
 pub fn checkForDuplicateFields(this: *@This()) void {
     if (!this.execution_flags.needs_duplicate_check) return;
     this.execution_flags.needs_duplicate_check = false;
 
-    var seen_numbers = std.ArrayList(u32).init(bun.default_allocator);
+    var seen_numbers = std.array_list.Managed(u32).init(bun.default_allocator);
     defer seen_numbers.deinit();
     var seen_fields = bun.StringHashMap(void).init(bun.default_allocator);
     bun.handleOom(seen_fields.ensureUnusedCapacity(@intCast(this.columns.len)));

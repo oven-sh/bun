@@ -12,21 +12,21 @@ pub fn writeFormatCredentials(credentials: *S3Credentials, options: bun.S3.Multi
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime bun.Output.prettyFmt("<r>endpoint<d>:<r> \"", enable_ansi_colors));
         try writer.print(comptime bun.Output.prettyFmt("<r><b>{s}<r>\"", enable_ansi_colors), .{endpoint});
-        bun.handleOom(formatter.printComma(Writer, writer, enable_ansi_colors));
+        try formatter.printComma(Writer, writer, enable_ansi_colors);
         try writer.writeAll("\n");
 
         const region = if (credentials.region.len > 0) credentials.region else S3Credentials.guessRegion(credentials.endpoint);
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime bun.Output.prettyFmt("<r>region<d>:<r> \"", enable_ansi_colors));
         try writer.print(comptime bun.Output.prettyFmt("<r><b>{s}<r>\"", enable_ansi_colors), .{region});
-        bun.handleOom(formatter.printComma(Writer, writer, enable_ansi_colors));
+        try formatter.printComma(Writer, writer, enable_ansi_colors);
         try writer.writeAll("\n");
 
         // PS: We don't want to print the credentials if they are empty just signal that they are there without revealing them
         if (credentials.accessKeyId.len > 0) {
             try formatter.writeIndent(Writer, writer);
             try writer.writeAll(comptime bun.Output.prettyFmt("<r>accessKeyId<d>:<r> \"<r><b>[REDACTED]<r>\"", enable_ansi_colors));
-            bun.handleOom(formatter.printComma(Writer, writer, enable_ansi_colors));
+            try formatter.printComma(Writer, writer, enable_ansi_colors);
 
             try writer.writeAll("\n");
         }
@@ -34,7 +34,7 @@ pub fn writeFormatCredentials(credentials: *S3Credentials, options: bun.S3.Multi
         if (credentials.secretAccessKey.len > 0) {
             try formatter.writeIndent(Writer, writer);
             try writer.writeAll(comptime bun.Output.prettyFmt("<r>secretAccessKey<d>:<r> \"<r><b>[REDACTED]<r>\"", enable_ansi_colors));
-            bun.handleOom(formatter.printComma(Writer, writer, enable_ansi_colors));
+            try formatter.printComma(Writer, writer, enable_ansi_colors);
 
             try writer.writeAll("\n");
         }
@@ -42,7 +42,7 @@ pub fn writeFormatCredentials(credentials: *S3Credentials, options: bun.S3.Multi
         if (credentials.sessionToken.len > 0) {
             try formatter.writeIndent(Writer, writer);
             try writer.writeAll(comptime bun.Output.prettyFmt("<r>sessionToken<d>:<r> \"<r><b>[REDACTED]<r>\"", enable_ansi_colors));
-            bun.handleOom(formatter.printComma(Writer, writer, enable_ansi_colors));
+            try formatter.printComma(Writer, writer, enable_ansi_colors);
 
             try writer.writeAll("\n");
         }
@@ -51,7 +51,7 @@ pub fn writeFormatCredentials(credentials: *S3Credentials, options: bun.S3.Multi
             try formatter.writeIndent(Writer, writer);
             try writer.writeAll(comptime bun.Output.prettyFmt("<r>acl<d>:<r> ", enable_ansi_colors));
             try writer.print(comptime bun.Output.prettyFmt("<r><b>{s}<r>\"", enable_ansi_colors), .{acl_value.toString()});
-            bun.handleOom(formatter.printComma(Writer, writer, enable_ansi_colors));
+            try formatter.printComma(Writer, writer, enable_ansi_colors);
 
             try writer.writeAll("\n");
         }
@@ -59,14 +59,14 @@ pub fn writeFormatCredentials(credentials: *S3Credentials, options: bun.S3.Multi
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime bun.Output.prettyFmt("<r>partSize<d>:<r> ", enable_ansi_colors));
         try formatter.printAs(.Double, Writer, writer, jsc.JSValue.jsNumber(options.partSize), .NumberObject, enable_ansi_colors);
-        bun.handleOom(formatter.printComma(Writer, writer, enable_ansi_colors));
+        try formatter.printComma(Writer, writer, enable_ansi_colors);
 
         try writer.writeAll("\n");
 
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime bun.Output.prettyFmt("<r>queueSize<d>:<r> ", enable_ansi_colors));
         try formatter.printAs(.Double, Writer, writer, jsc.JSValue.jsNumber(options.queueSize), .NumberObject, enable_ansi_colors);
-        bun.handleOom(formatter.printComma(Writer, writer, enable_ansi_colors));
+        try formatter.printComma(Writer, writer, enable_ansi_colors);
         try writer.writeAll("\n");
 
         try formatter.writeIndent(Writer, writer);
@@ -88,18 +88,20 @@ pub const S3Client = struct {
     options: bun.S3.MultiPartUploadOptions = .{},
     acl: ?bun.S3.ACL = null,
     storage_class: ?bun.S3.StorageClass = null,
+    request_payer: bool = false,
 
     pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!*@This() {
         const arguments = callframe.arguments_old(1).slice();
         var args = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments);
         defer args.deinit();
-        var aws_options = try S3Credentials.getCredentialsWithOptions(globalThis.bunVM().transpiler.env.getS3Credentials(), .{}, args.nextEat(), null, null, globalThis);
+        var aws_options = try S3Credentials.getCredentialsWithOptions(globalThis.bunVM().transpiler.env.getS3Credentials(), .{}, args.nextEat(), null, null, false, globalThis);
         defer aws_options.deinit();
         return S3Client.new(.{
             .credentials = aws_options.credentials.dupe(),
             .options = aws_options.options,
             .acl = aws_options.acl,
             .storage_class = aws_options.storage_class,
+            .request_payer = aws_options.request_payer,
         });
     }
 
@@ -135,8 +137,7 @@ pub const S3Client = struct {
         };
         errdefer path.deinit();
         const options = args.nextEat();
-        var blob = Blob.new(try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl, ptr.storage_class));
-        blob.allocator = bun.default_allocator;
+        var blob = Blob.new(try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl, ptr.storage_class, ptr.request_payer));
         return blob.toJS(globalThis);
     }
 
@@ -153,7 +154,7 @@ pub const S3Client = struct {
         errdefer path.deinit();
 
         const options = args.nextEat();
-        var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl, ptr.storage_class);
+        var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl, ptr.storage_class, ptr.request_payer);
         defer blob.detach();
         return S3File.getPresignUrlFrom(&blob, globalThis, options);
     }
@@ -170,7 +171,7 @@ pub const S3Client = struct {
         };
         errdefer path.deinit();
         const options = args.nextEat();
-        var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl, ptr.storage_class);
+        var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl, ptr.storage_class, ptr.request_payer);
         defer blob.detach();
         return S3File.S3BlobStatTask.exists(globalThis, &blob);
     }
@@ -187,7 +188,7 @@ pub const S3Client = struct {
         };
         errdefer path.deinit();
         const options = args.nextEat();
-        var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl, ptr.storage_class);
+        var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl, ptr.storage_class, ptr.request_payer);
         defer blob.detach();
         return S3File.S3BlobStatTask.size(globalThis, &blob);
     }
@@ -204,7 +205,7 @@ pub const S3Client = struct {
         };
         errdefer path.deinit();
         const options = args.nextEat();
-        var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl, ptr.storage_class);
+        var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl, ptr.storage_class, ptr.request_payer);
         defer blob.detach();
         return S3File.S3BlobStatTask.stat(globalThis, &blob);
     }
@@ -222,7 +223,7 @@ pub const S3Client = struct {
         };
 
         const options = args.nextEat();
-        var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl, ptr.storage_class);
+        var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl, ptr.storage_class, ptr.request_payer);
         defer blob.detach();
         var blob_internal: PathOrBlob = .{ .blob = blob };
         return Blob.writeFileInternal(globalThis, &blob_internal, data, .{
@@ -237,7 +238,7 @@ pub const S3Client = struct {
         const object_keys = args[0];
         const options = args[1];
 
-        var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, .{ .string = bun.PathString.empty }, options, ptr.credentials, ptr.options, null, null);
+        var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, .{ .string = bun.PathString.empty }, options, ptr.credentials, ptr.options, null, null, ptr.request_payer);
 
         defer blob.detach();
         return blob.store.?.data.s3.listObjects(blob.store.?, globalThis, object_keys, options);
@@ -252,7 +253,7 @@ pub const S3Client = struct {
         };
         errdefer path.deinit();
         const options = args.nextEat();
-        var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl, ptr.storage_class);
+        var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl, ptr.storage_class, ptr.request_payer);
         defer blob.detach();
         return blob.store.?.data.s3.unlink(blob.store.?, globalThis, options);
     }

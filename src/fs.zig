@@ -47,10 +47,10 @@ pub const FileSystem = struct {
     }
 
     var tmpname_id_number = std.atomic.Value(u32).init(0);
-    pub fn tmpname(_: *const FileSystem, extname: string, buf: []u8, hash: u64) ![*:0]u8 {
+    pub fn tmpname(extname: string, buf: []u8, hash: u64) std.fmt.BufPrintError![:0]u8 {
         const hex_value = @as(u64, @truncate(@as(u128, @intCast(hash)) | @as(u128, @intCast(std.time.nanoTimestamp()))));
 
-        return try std.fmt.bufPrintZ(buf, ".{any}-{any}.{s}", .{
+        return try std.fmt.bufPrintZ(buf, ".{f}-{f}.{s}", .{
             bun.fmt.hexIntLower(hex_value),
             bun.fmt.hexIntUpper(tmpname_id_number.fetchAdd(1, .monotonic)),
             extname,
@@ -88,7 +88,7 @@ pub const FileSystem = struct {
     }
 
     pub fn initWithForce(top_level_dir_: ?stringZ, comptime force: bool) !*FileSystem {
-        const allocator = bun.fs_allocator;
+        const allocator = bun.default_allocator;
         var top_level_dir = top_level_dir_ orelse (if (Environment.isBrowser) "/project/" else try bun.getcwdAlloc(allocator));
         _ = &top_level_dir;
 
@@ -106,6 +106,11 @@ pub const FileSystem = struct {
         }
 
         return &instance;
+    }
+
+    pub fn deinit(this: *const FileSystem) void {
+        this.dirname_store.deinit();
+        this.filename_store.deinit();
     }
 
     pub const DirEntry = struct {
@@ -525,43 +530,55 @@ pub const FileSystem = struct {
         file_limit: usize = 32,
         file_quota: usize = 32,
 
-        pub var win_tempdir_cache: ?[]const u8 = undefined;
+        fn #platformTempDir() []const u8 {
+            // Try TMPDIR, TMP, and TEMP in that order, matching Node.js.
+            // https://github.com/nodejs/node/blob/e172be269890702bf2ad06252f2f152e7604d76c/src/node_credentials.cc#L132
+            if (bun.env_var.TMPDIR.getNotEmpty() orelse
+                bun.env_var.TMP.getNotEmpty() orelse
+                bun.env_var.TEMP.getNotEmpty()) |dir|
+            {
+                if (dir.len > 1 and dir[dir.len - 1] == std.fs.path.sep) {
+                    return dir[0 .. dir.len - 1];
+                }
 
-        pub fn platformTempDir() []const u8 {
+                return dir;
+            }
+
             return switch (Environment.os) {
                 // https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-gettemppathw#remarks
-                .windows => win_tempdir_cache orelse {
-                    const value = bun.getenvZ("TEMP") orelse bun.getenvZ("TMP") orelse brk: {
-                        if (bun.getenvZ("SystemRoot") orelse bun.getenvZ("windir")) |windir| {
-                            break :brk std.fmt.allocPrint(
-                                bun.default_allocator,
-                                "{s}\\Temp",
-                                .{strings.withoutTrailingSlash(windir)},
-                            ) catch |err| bun.handleOom(err);
-                        }
-
-                        if (bun.getenvZ("USERPROFILE")) |profile| {
-                            var buf: bun.PathBuffer = undefined;
-                            var parts = [_]string{"AppData\\Local\\Temp"};
-                            const out = bun.path.joinAbsStringBuf(profile, &buf, &parts, .loose);
-                            break :brk bun.handleOom(bun.default_allocator.dupe(u8, out));
-                        }
-
-                        var tmp_buf: bun.PathBuffer = undefined;
-                        const cwd = std.posix.getcwd(&tmp_buf) catch @panic("Failed to get cwd for platformTempDir");
-                        const root = bun.path.windowsFilesystemRoot(cwd);
-                        break :brk std.fmt.allocPrint(
+                .windows => {
+                    if (bun.env_var.SYSTEMROOT.get() orelse bun.env_var.WINDIR.get()) |windir| {
+                        return std.fmt.allocPrint(
                             bun.default_allocator,
-                            "{s}\\Windows\\Temp",
-                            .{strings.withoutTrailingSlash(root)},
+                            "{s}\\Temp",
+                            .{strings.withoutTrailingSlash(windir)},
                         ) catch |err| bun.handleOom(err);
-                    };
-                    win_tempdir_cache = value;
-                    return value;
+                    }
+
+                    if (bun.env_var.HOME.get()) |profile| {
+                        var buf: bun.PathBuffer = undefined;
+                        var parts = [_]string{"AppData\\Local\\Temp"};
+                        const out = bun.path.joinAbsStringBuf(profile, &buf, &parts, .loose);
+                        return bun.handleOom(bun.default_allocator.dupe(u8, out));
+                    }
+
+                    var tmp_buf: bun.PathBuffer = undefined;
+                    const cwd = std.posix.getcwd(&tmp_buf) catch @panic("Failed to get cwd for platformTempDir");
+                    const root = bun.path.windowsFilesystemRoot(cwd);
+                    return std.fmt.allocPrint(
+                        bun.default_allocator,
+                        "{s}\\Windows\\Temp",
+                        .{strings.withoutTrailingSlash(root)},
+                    ) catch |err| bun.handleOom(err);
                 },
                 .mac => "/private/tmp",
                 else => "/tmp",
             };
+        }
+
+        var get_platform_tempdir = bun.once(#platformTempDir);
+        pub fn platformTempDir() []const u8 {
+            return get_platform_tempdir.call(.{});
         }
 
         pub const Tmpfile = switch (Environment.os) {
@@ -569,25 +586,13 @@ pub const FileSystem = struct {
             else => TmpfilePosix,
         };
 
-        pub var tmpdir_path: []const u8 = undefined;
-        pub var tmpdir_path_set = false;
-        pub fn tmpdirPath(_: *const @This()) []const u8 {
-            if (!tmpdir_path_set) {
-                tmpdir_path = bun.getenvZ("BUN_TMPDIR") orelse bun.getenvZ("TMPDIR") orelse platformTempDir();
-                tmpdir_path_set = true;
-            }
-
-            return tmpdir_path;
+        pub fn tmpdirPath() []const u8 {
+            return bun.env_var.BUN_TMPDIR.getNotEmpty() orelse platformTempDir();
         }
 
         pub fn openTmpDir(_: *const RealFS) !std.fs.Dir {
-            if (!tmpdir_path_set) {
-                tmpdir_path = bun.getenvZ("BUN_TMPDIR") orelse bun.getenvZ("TMPDIR") orelse platformTempDir();
-                tmpdir_path_set = true;
-            }
-
             if (comptime Environment.isWindows) {
-                return (try bun.sys.openDirAtWindowsA(bun.invalid_fd, tmpdir_path, .{
+                return (try bun.sys.openDirAtWindowsA(bun.invalid_fd, tmpdirPath(), .{
                     .iterable = true,
                     // we will not delete the temp directory
                     .can_rename_or_delete = false,
@@ -595,7 +600,7 @@ pub const FileSystem = struct {
                 }).unwrap()).stdDir();
             }
 
-            return try bun.openDirAbsolute(tmpdir_path);
+            return try bun.openDirAbsolute(tmpdirPath());
         }
 
         pub fn entriesAt(this: *RealFS, index: allocators.IndexType, generation: bun.Generation) ?*EntriesOption {
@@ -603,7 +608,7 @@ pub const FileSystem = struct {
             if (existing.* == .entries) {
                 if (existing.entries.generation < generation) {
                     var handle = bun.openDirForIteration(FD.cwd(), existing.entries.dir).unwrap() catch |err| {
-                        existing.entries.data.clearAndFree(bun.fs_allocator);
+                        existing.entries.data.clearAndFree(bun.default_allocator);
 
                         return this.readDirectoryError(existing.entries.dir, err) catch unreachable;
                     };
@@ -619,10 +624,10 @@ pub const FileSystem = struct {
                         void,
                         void{},
                     ) catch |err| {
-                        existing.entries.data.clearAndFree(bun.fs_allocator);
+                        existing.entries.data.clearAndFree(bun.default_allocator);
                         return this.readDirectoryError(existing.entries.dir, err) catch unreachable;
                     };
-                    existing.entries.data.clearAndFree(bun.fs_allocator);
+                    existing.entries.data.clearAndFree(bun.default_allocator);
                     existing.entries.* = new_entry;
                 }
             }
@@ -631,12 +636,7 @@ pub const FileSystem = struct {
         }
 
         pub fn getDefaultTempDir() string {
-            return bun.getenvZ("BUN_TMPDIR") orelse bun.getenvZ("TMPDIR") orelse platformTempDir();
-        }
-
-        pub fn setTempdir(path: ?string) void {
-            tmpdir_path = path orelse getDefaultTempDir();
-            tmpdir_path_set = true;
+            return bun.env_var.BUN_TMPDIR.get() orelse platformTempDir();
         }
 
         pub const TmpfilePosix = struct {
@@ -721,7 +721,7 @@ pub const FileSystem = struct {
                 else
                     bun.strings.toWPathNormalized(&existing_buf, name);
                 if (comptime Environment.allow_assert) {
-                    debug("moveFileExW({s}, {s})", .{ bun.fmt.utf16(existing), bun.fmt.utf16(new) });
+                    debug("moveFileExW({f}, {f})", .{ bun.fmt.utf16(existing), bun.fmt.utf16(new) });
                 }
 
                 if (bun.windows.kernel32.MoveFileExW(existing.ptr, new.ptr, bun.windows.MOVEFILE_COPY_ALLOWED | bun.windows.MOVEFILE_REPLACE_EXISTING | bun.windows.MOVEFILE_WRITE_THROUGH) == bun.windows.FALSE) {
@@ -820,7 +820,7 @@ pub const FileSystem = struct {
             const file_limit = adjustUlimit() catch unreachable;
 
             if (!_entries_option_map_loaded) {
-                _entries_option_map = EntriesOption.Map.init(bun.fs_allocator);
+                _entries_option_map = EntriesOption.Map.init(bun.default_allocator);
                 _entries_option_map_loaded = true;
             }
 
@@ -851,7 +851,7 @@ pub const FileSystem = struct {
 
                 return try std.fmt.bufPrint(
                     &hash_name_buf,
-                    "{s}-{any}",
+                    "{s}-{f}",
                     .{
                         basename,
                         bun.fmt.hexIntLower(hex_int),
@@ -911,7 +911,7 @@ pub const FileSystem = struct {
         }
 
         pub fn modKey(fs: *RealFS, path: string) anyerror!ModKey {
-            var file = try std.fs.openFileAbsolute(path, std.fs.File.OpenFlags{ .mode = .read_only });
+            var file = try std.fs.cwd().openFile(path, std.fs.File.OpenFlags{ .mode = .read_only });
             defer {
                 if (fs.needToCloseFiles()) {
                     file.close();
@@ -962,7 +962,7 @@ pub const FileSystem = struct {
 
             var iter = bun.iterateDir(.fromStdDir(handle));
             var dir = DirEntry.init(_dir, generation);
-            const allocator = bun.fs_allocator;
+            const allocator = bun.default_allocator;
             errdefer dir.deinit(allocator);
 
             if (store_fd) {
@@ -976,7 +976,7 @@ pub const FileSystem = struct {
                 try dir.addEntry(prev_map, _entry, allocator, Iterator, iterator);
             }
 
-            debug("readdir({d}, {s}) = {d}", .{ handle.fd, _dir, dir.data.count() });
+            debug("readdir({f}, {s}) = {d}", .{ printHandle(handle.fd), _dir, dir.data.count() });
 
             return dir;
         }
@@ -984,11 +984,22 @@ pub const FileSystem = struct {
         fn readDirectoryError(fs: *RealFS, dir: string, err: anyerror) OOM!*EntriesOption {
             if (comptime FeatureFlags.enable_entry_cache) {
                 var get_or_put_result = try fs.entries.getOrPut(dir);
-                const opt = try fs.entries.put(&get_or_put_result, EntriesOption{
-                    .err = DirEntry.Err{ .original_err = err, .canonical_error = err },
-                });
+                switch (err) {
+                    error.ENOENT, error.FileNotFound => {
+                        fs.entries.markNotFound(get_or_put_result);
+                        temp_entries_option = EntriesOption{
+                            .err = DirEntry.Err{ .original_err = err, .canonical_error = err },
+                        };
+                        return &temp_entries_option;
+                    },
+                    else => {
+                        const opt = try fs.entries.put(&get_or_put_result, EntriesOption{
+                            .err = DirEntry.Err{ .original_err = err, .canonical_error = err },
+                        });
 
-                return opt;
+                        return opt;
+                    },
+                }
             }
 
             temp_entries_option = EntriesOption{
@@ -1052,11 +1063,18 @@ pub const FileSystem = struct {
                         }
 
                         in_place = cached_result.entries;
+                    } else if (cache_result.?.status == .not_found and generation == 0) {
+                        temp_entries_option = EntriesOption{
+                            .err = DirEntry.Err{ .original_err = error.ENOENT, .canonical_error = error.ENOENT },
+                        };
+                        return &temp_entries_option;
                     }
                 }
             }
 
-            var handle = maybe_handle orelse try fs.openDir(dir);
+            var handle = maybe_handle orelse (fs.openDir(dir) catch |err| {
+                return try fs.readDirectoryError(dir, err);
+            });
 
             defer {
                 if (maybe_handle == null and (!store_fd or fs.needToCloseFiles())) {
@@ -1083,14 +1101,14 @@ pub const FileSystem = struct {
                 Iterator,
                 iterator,
             ) catch |err| {
-                if (in_place) |existing| existing.data.clearAndFree(bun.fs_allocator);
+                if (in_place) |existing| existing.data.clearAndFree(bun.default_allocator);
                 return try fs.readDirectoryError(dir, err);
             };
 
             if (comptime FeatureFlags.enable_entry_cache) {
-                const entries_ptr = in_place orelse bun.handleOom(bun.fs_allocator.create(DirEntry));
+                const entries_ptr = in_place orelse bun.handleOom(bun.default_allocator.create(DirEntry));
                 if (in_place) |original| {
-                    original.data.clearAndFree(bun.fs_allocator);
+                    original.data.clearAndFree(bun.default_allocator);
                 }
                 if (store_fd and !entries.fd.isValid())
                     entries.fd = .fromStdDir(handle);
@@ -1123,7 +1141,7 @@ pub const FileSystem = struct {
         ) !PathContentsPair {
             return readFileWithHandleAndAllocator(
                 fs,
-                bun.fs_allocator,
+                bun.default_allocator,
                 path,
                 _size,
                 file,
@@ -1253,7 +1271,7 @@ pub const FileSystem = struct {
                     fs.readFileError(path, err);
                     return err;
                 });
-                debug("stat({}) = {d}", .{ file.handle, size });
+                debug("stat({f}) = {d}", .{ file.handle, size });
 
                 var buf = try allocator.alloc(u8, size + 1);
                 @memcpy(buf[0..initial_read.len], initial_read);
@@ -1270,7 +1288,7 @@ pub const FileSystem = struct {
                     return err;
                 };
                 file_contents = buf[0 .. read_count + initial_read.len];
-                debug("read({}, {d}) = {d}", .{ file.handle, size, read_count });
+                debug("read({f}, {d}) = {d}", .{ file.handle, size, read_count });
 
                 if (strings.BOM.detect(file_contents)) |bom| {
                     debug("Convert {s} BOM", .{@tagName(bom)});
@@ -1538,6 +1556,18 @@ pub const PathName = struct {
     /// extensionless files report ""
     ext: string,
     filename: string,
+
+    pub fn findExtname(_path: string) string {
+        var start: usize = 0;
+        if (bun.path.lastIndexOfSep(_path)) |i| {
+            start = i + 1;
+        }
+        const base = _path[start..];
+        if (bun.strings.lastIndexOfChar(base, '.')) |dot| {
+            if (dot > 0) return base[dot..];
+        }
+        return "";
+    }
 
     pub fn extWithoutLeadingDot(self: *const PathName) string {
         return if (self.ext.len > 0 and self.ext[0] == '.') self.ext[1..] else self.ext;
@@ -1959,6 +1989,24 @@ pub const Path = struct {
 //     var opened = try std.posix.open(path, if (Environment.isLinux) bun.O.PATH else bun.O.RDONLY, 0);
 //     defer std.posix.close(opened);
 // }
+
+pub fn printHandle(handle: anytype) std.fmt.Alt(@TypeOf(handle), FmtHandleFnGenerator(@TypeOf(handle)).fmtHandle) {
+    return .{ .data = handle };
+}
+fn FmtHandleFnGenerator(comptime T: type) type {
+    return struct {
+        fn fmtHandle(handle: T, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+            switch (@TypeOf(handle)) {
+                i32, c_int => try writer.print("{d}", .{handle}),
+                *anyopaque => try writer.print("{*}", .{handle}),
+                FD => try writer.print("{f}", .{handle}),
+                else => {
+                    @compileError("unsupported type for fmtHandle: " ++ @typeName(T));
+                },
+            }
+        }
+    };
+}
 
 pub const StatHash = @import("./fs/stat_hash.zig");
 

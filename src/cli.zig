@@ -91,6 +91,7 @@ pub const PackCommand = @import("./cli/pack_command.zig").PackCommand;
 pub const AuditCommand = @import("./cli/audit_command.zig").AuditCommand;
 pub const InitCommand = @import("./cli/init_command.zig").InitCommand;
 pub const WhyCommand = @import("./cli/why_command.zig").WhyCommand;
+pub const FuzzilliCommand = @import("./cli/fuzzilli_command.zig").FuzzilliCommand;
 
 pub const Arguments = @import("./cli/Arguments.zig");
 
@@ -181,12 +182,15 @@ pub const HelpCommand = struct {
         \\  <b><blue>patch <d>\<pkg\><r>                    Prepare a package for patching
         \\  <b><blue>pm <d>\<subcommand\><r>                Additional package management utilities
         \\  <b><blue>info<r>      <d>{s:<16}<r>     Display package metadata from the registry
+        \\  <b><blue>why<r>       <d>{s:<16}<r>     Explain why a package is installed
         \\
         \\  <b><yellow>build<r>     <d>./a.ts ./b.jsx<r>       Bundle TypeScript & JavaScript into a single file
         \\
         \\  <b><cyan>init<r>                           Start an empty Bun project from a built-in template
         \\  <b><cyan>create<r>    <d>{s:<16}<r>     Create a new project from a template <d>(bun c)<r>
         \\  <b><cyan>upgrade<r>                        Upgrade to latest version of Bun.
+        \\  <b><cyan>feedback<r>  <d>./file1 ./file2<r>      Provide feedback to the Bun team.
+        \\
         \\  <d>\<command\><r> <b><cyan>--help<r>               Print help text for command.
         \\
     ;
@@ -212,11 +216,27 @@ pub const HelpCommand = struct {
             packages_to_remove_filler[package_remove_i],
             packages_to_add_filler[(package_add_i + 1) % packages_to_add_filler.len],
             packages_to_add_filler[(package_add_i + 2) % packages_to_add_filler.len],
+            packages_to_add_filler[(package_add_i + 3) % packages_to_add_filler.len],
             packages_to_create_filler[package_create_i],
         };
 
         switch (reason) {
             .explicit => {
+                if (comptime Environment.isDebug) {
+                    if (bun.argv.len == 1) {
+                        if (bun.Output.isAIAgent()) {
+                            if (bun.env_var.npm_lifecycle_event.get()) |event| {
+                                if (bun.strings.hasPrefixComptime(event, "bd")) {
+                                    // claude gets very confused by the help menu
+                                    // let's give claude some self confidence.
+                                    Output.println("BUN COMPILED SUCCESSFULLY! 🎉", .{});
+                                    Global.exit(0);
+                                }
+                            }
+                        }
+                    }
+                }
+
                 Output.pretty(
                     "<r><b><magenta>Bun<r> is a fast JavaScript runtime, package manager, bundler, and test runner. <d>(" ++
                         Global.package_json_version_with_revision ++
@@ -323,12 +343,22 @@ pub const Command = struct {
         repeat_count: u32 = 0,
         run_todo: bool = false,
         only: bool = false,
+        pass_with_no_tests: bool = false,
+        concurrent: bool = false,
+        randomize: bool = false,
+        seed: ?u32 = null,
+        concurrent_test_glob: ?[]const []const u8 = null,
         bail: u32 = 0,
         coverage: TestCommand.CodeCoverageOptions = .{},
         test_filter_pattern: ?[]const u8 = null,
         test_filter_regex: ?*RegularExpression = null,
+        max_concurrency: u32 = 20,
 
-        file_reporter: ?TestCommand.FileReporter = null,
+        reporters: struct {
+            dots: bool = false,
+            only_failures: bool = false,
+            junit: bool = false,
+        } = .{},
         reporter_outfile: ?[]const u8 = null,
     };
 
@@ -358,6 +388,11 @@ pub const Command = struct {
         expose_gc: bool = false,
         preserve_symlinks_main: bool = false,
         console_depth: ?u16 = null,
+        cpu_prof: struct {
+            enabled: bool = false,
+            name: []const u8 = "",
+            dir: []const u8 = "",
+        } = .{},
     };
 
     var global_cli_ctx: Context = undefined;
@@ -380,6 +415,8 @@ pub const Command = struct {
         runtime_options: RuntimeOptions = .{},
 
         filters: []const []const u8 = &.{},
+        workspaces: bool = false,
+        if_present: bool = false,
 
         preloads: []const string = &.{},
         has_loaded_global_config: bool = false,
@@ -387,6 +424,7 @@ pub const Command = struct {
         pub const BundlerOptions = struct {
             outdir: []const u8 = "",
             outfile: []const u8 = "",
+            metafile: [:0]const u8 = "",
             root_dir: []const u8 = "",
             public_path: []const u8 = "",
             entry_naming: []const u8 = "[dir]/[name].[ext]",
@@ -400,6 +438,7 @@ pub const Command = struct {
             minify_syntax: bool = false,
             minify_whitespace: bool = false,
             minify_identifiers: bool = false,
+            keep_names: bool = false,
             ignore_dce_annotations: bool = false,
             emit_dce_annotations: bool = true,
             output_format: options.Format = .esm,
@@ -421,6 +460,10 @@ pub const Command = struct {
             compile: bool = false,
             compile_target: Cli.CompileTarget = .{},
             compile_exec_argv: ?[]const u8 = null,
+            compile_autoload_dotenv: bool = true,
+            compile_autoload_bunfig: bool = true,
+            compile_autoload_tsconfig: bool = false,
+            compile_autoload_package_json: bool = false,
             windows: options.WindowsOptions = .{},
         };
 
@@ -496,9 +539,9 @@ pub const Command = struct {
             // if we are bunx, but NOT a symlink to bun. when we run `<self> install`, we dont
             // want to recursively run bunx. so this check lets us peek back into bun install.
             if (args_iter.next()) |next| {
-                if (bun.strings.eqlComptime(next, "add") and bun.getRuntimeFeatureFlag(.BUN_INTERNAL_BUNX_INSTALL)) {
+                if (bun.strings.eqlComptime(next, "add") and bun.feature_flag.BUN_INTERNAL_BUNX_INSTALL.get()) {
                     return .AddCommand;
-                } else if (bun.strings.eqlComptime(next, "exec") and bun.getRuntimeFeatureFlag(.BUN_INTERNAL_BUNX_INSTALL)) {
+                } else if (bun.strings.eqlComptime(next, "exec") and bun.feature_flag.BUN_INTERNAL_BUNX_INSTALL.get()) {
                     return .ExecCommand;
                 }
             }
@@ -583,10 +626,14 @@ pub const Command = struct {
             RootCommandMatcher.case("auth") => .ReservedCommand,
             RootCommandMatcher.case("login") => .ReservedCommand,
             RootCommandMatcher.case("logout") => .ReservedCommand,
-            RootCommandMatcher.case("whoami") => .ReservedCommand,
+            RootCommandMatcher.case("whoami") => .PackageManagerCommand,
             RootCommandMatcher.case("prune") => .ReservedCommand,
-            RootCommandMatcher.case("list") => .ReservedCommand,
+            RootCommandMatcher.case("list") => .PackageManagerCommand,
             RootCommandMatcher.case("why") => .WhyCommand,
+            RootCommandMatcher.case("fuzzilli") => if (bun.Environment.enable_fuzzilli)
+                .FuzzilliCommand
+            else
+                .AutoCommand,
 
             RootCommandMatcher.case("-e") => .AutoCommand,
 
@@ -627,20 +674,20 @@ pub const Command = struct {
     /// function or that stack space is used up forever.
     pub fn start(allocator: std.mem.Allocator, log: *logger.Log) !void {
         if (comptime Environment.allow_assert) {
-            if (bun.getenvZ("MI_VERBOSE") == null) {
+            if (!bun.env_var.MI_VERBOSE.get()) {
                 bun.mimalloc.mi_option_set_enabled(.verbose, false);
             }
         }
 
         // bun build --compile entry point
-        if (!bun.getRuntimeFeatureFlag(.BUN_BE_BUN)) {
+        if (!bun.feature_flag.BUN_BE_BUN.get()) {
             if (try bun.StandaloneModuleGraph.fromExecutable(bun.default_allocator)) |graph| {
                 var offset_for_passthrough: usize = 0;
 
                 const ctx: *ContextData = brk: {
                     if (graph.compile_exec_argv.len > 0) {
                         const original_argv_len = bun.argv.len;
-                        var argv_list = std.ArrayList([:0]const u8).fromOwnedSlice(bun.default_allocator, bun.argv);
+                        var argv_list = std.array_list.Managed([:0]const u8).fromOwnedSlice(bun.default_allocator, bun.argv);
                         try bun.appendOptionsEnv(graph.compile_exec_argv, &argv_list, bun.default_allocator);
                         bun.argv = argv_list.items;
 
@@ -680,7 +727,7 @@ pub const Command = struct {
             }
         }
 
-        debug("argv: [{s}]", .{bun.fmt.fmtSlice(bun.argv, ", ")});
+        debug("argv: [{f}]", .{bun.fmt.fmtSlice(bun.argv, ", ")});
 
         const tag = which();
 
@@ -815,7 +862,7 @@ pub const Command = struct {
                 const ctx = try Command.init(allocator, log, .RunCommand);
                 ctx.args.target = .bun;
 
-                if (ctx.filters.len > 0) {
+                if (ctx.filters.len > 0 or ctx.workspaces) {
                     FilterRun.runScriptsWithFilter(ctx) catch |err| {
                         Output.prettyErrorln("<r><red>error<r>: {s}", .{@errorName(err)});
                         Global.exit(1);
@@ -854,7 +901,7 @@ pub const Command = struct {
                 };
                 ctx.args.target = .bun;
 
-                if (ctx.filters.len > 0) {
+                if (ctx.filters.len > 0 or ctx.workspaces) {
                     FilterRun.runScriptsWithFilter(ctx) catch |err| {
                         Output.prettyErrorln("<r><red>error<r>: {s}", .{@errorName(err)});
                         Global.exit(1);
@@ -896,6 +943,15 @@ pub const Command = struct {
                     try ExecCommand.exec(ctx);
                 } else Tag.printHelp(.ExecCommand, true);
             },
+            .FuzzilliCommand => {
+                if (bun.Environment.enable_fuzzilli) {
+                    const ctx = try Command.init(allocator, log, .FuzzilliCommand);
+                    try FuzzilliCommand.exec(ctx);
+                    return;
+                } else {
+                    return error.UnrecognizedCommand;
+                }
+            },
         }
     }
 
@@ -931,6 +987,7 @@ pub const Command = struct {
         PublishCommand,
         AuditCommand,
         WhyCommand,
+        FuzzilliCommand,
 
         /// Used by crash reports.
         ///
@@ -968,6 +1025,7 @@ pub const Command = struct {
                 .PublishCommand => 'k',
                 .AuditCommand => 'A',
                 .WhyCommand => 'W',
+                .FuzzilliCommand => 'F',
             };
         }
 
@@ -1120,8 +1178,8 @@ pub const Command = struct {
                 Command.Tag.CreateCommand => {
                     const intro_text =
                         \\<b>Usage<r><d>:<r>
-                        \\  <b><green>bun create<r> <magenta>\<MyReactComponent.(jsx|tsx)\><r> 
-                        \\  <b><green>bun create<r> <magenta>\<template\><r> <cyan>[...flags]<r> <blue>dest<r> 
+                        \\  <b><green>bun create<r> <magenta>\<MyReactComponent.(jsx|tsx)\><r>
+                        \\  <b><green>bun create<r> <magenta>\<template\><r> <cyan>[...flags]<r> <blue>dest<r>
                         \\  <b><green>bun create<r> <magenta>\<github-org/repo\><r> <cyan>[...flags]<r> <blue>dest<r>
                         \\
                         \\<b>Environment variables<r><d>:<r>
@@ -1273,7 +1331,7 @@ pub const Command = struct {
                         \\  <d>$<r> <b><green>bun why<r> <blue>"@types/*"<r> <cyan>--depth<r> <blue>2<r>
                         \\  <d>$<r> <b><green>bun why<r> <blue>"*-lodash"<r> <cyan>--top<r>
                         \\
-                        \\Full documentation is available at <magenta>https://bun.sh/docs/cli/why<r>
+                        \\Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>
                         \\
                     ;
 
@@ -1281,7 +1339,7 @@ pub const Command = struct {
                     Output.flush();
                 },
                 else => {
-                    HelpCommand.printWithReason(.explicit);
+                    HelpCommand.printWithReason(.explicit, false);
                 },
             }
         }
@@ -1695,11 +1753,11 @@ const bun = @import("bun");
 const Environment = bun.Environment;
 const Global = bun.Global;
 const Output = bun.Output;
-const RegularExpression = bun.RegularExpression;
 const bun_js = bun.bun_js;
 const clap = bun.clap;
 const default_allocator = bun.default_allocator;
 const logger = bun.logger;
 const strings = bun.strings;
 const File = bun.sys.File;
+const RegularExpression = bun.jsc.RegularExpression;
 const api = bun.schema.api;

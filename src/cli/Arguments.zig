@@ -42,6 +42,7 @@ pub const ParamType = clap.Param(clap.Help);
 
 pub const base_params_ = (if (Environment.show_crash_trace) debug_params else [_]ParamType{}) ++ [_]ParamType{
     clap.parseParam("--env-file <STR>...               Load environment variables from the specified file(s)") catch unreachable,
+    clap.parseParam("--no-env-file                     Disable automatic loading of .env files") catch unreachable,
     clap.parseParam("--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd.") catch unreachable,
     clap.parseParam("-c, --config <PATH>?              Specify path to Bun config file. Default <d>$cwd<r>/bunfig.toml") catch unreachable,
     clap.parseParam("-h, --help                        Display this menu and exit") catch unreachable,
@@ -65,6 +66,7 @@ pub const transpiler_params_ = [_]ParamType{
     clap.parseParam("--tsconfig-override <STR>          Specify custom tsconfig.json. Default <d>$cwd<r>/tsconfig.json") catch unreachable,
     clap.parseParam("-d, --define <STR>...              Substitute K:V while parsing, e.g. --define process.env.NODE_ENV:\"development\". Values are parsed as JSON.") catch unreachable,
     clap.parseParam("--drop <STR>...                   Remove function calls, e.g. --drop=console removes all console.* calls.") catch unreachable,
+    clap.parseParam("--feature <STR>...               Enable a feature flag for dead-code elimination, e.g. --feature=SUPER_SECRET") catch unreachable,
     clap.parseParam("-l, --loader <STR>...             Parse files with .ext:loader, e.g. --loader .js:jsx. Valid loaders: js, jsx, ts, tsx, json, toml, text, file, wasm, napi") catch unreachable,
     clap.parseParam("--no-macros                       Disable macros from being executed in the bundler, transpiler and runtime") catch unreachable,
     clap.parseParam("--jsx-factory <STR>               Changes the function called when compiling JSX elements using the classic JSX runtime") catch unreachable,
@@ -85,6 +87,9 @@ pub const runtime_params_ = [_]ParamType{
     clap.parseParam("--inspect <STR>?                  Activate Bun's debugger") catch unreachable,
     clap.parseParam("--inspect-wait <STR>?             Activate Bun's debugger, wait for a connection before executing") catch unreachable,
     clap.parseParam("--inspect-brk <STR>?              Activate Bun's debugger, set breakpoint on first line of code and wait") catch unreachable,
+    clap.parseParam("--cpu-prof                        Start CPU profiler and write profile to disk on exit") catch unreachable,
+    clap.parseParam("--cpu-prof-name <STR>             Specify the name of the CPU profile file") catch unreachable,
+    clap.parseParam("--cpu-prof-dir <STR>              Specify the directory where the CPU profile will be saved") catch unreachable,
     clap.parseParam("--if-present                      Exit without an error if the entrypoint does not exist") catch unreachable,
     clap.parseParam("--no-install                      Disable auto install in the Bun runtime") catch unreachable,
     clap.parseParam("--install <STR>                   Configure auto-install behavior. One of \"auto\" (default, auto-installs when no node_modules), \"fallback\" (missing packages only), \"force\" (always).") catch unreachable,
@@ -104,6 +109,9 @@ pub const runtime_params_ = [_]ParamType{
     clap.parseParam("--throw-deprecation               Determine whether or not deprecation warnings result in errors.") catch unreachable,
     clap.parseParam("--title <STR>                     Set the process title") catch unreachable,
     clap.parseParam("--zero-fill-buffers                Boolean to force Buffer.allocUnsafe(size) to be zero-filled.") catch unreachable,
+    clap.parseParam("--use-system-ca                   Use the system's trusted certificate authorities") catch unreachable,
+    clap.parseParam("--use-openssl-ca                  Use OpenSSL's default CA store") catch unreachable,
+    clap.parseParam("--use-bundled-ca                  Use bundled CA store") catch unreachable,
     clap.parseParam("--redis-preconnect                Preconnect to $REDIS_URL at startup") catch unreachable,
     clap.parseParam("--sql-preconnect                  Preconnect to PostgreSQL at startup") catch unreachable,
     clap.parseParam("--no-addons                       Throw an error if process.dlopen is called, and disable export condition \"node-addons\"") catch unreachable,
@@ -116,6 +124,7 @@ pub const auto_or_run_params = [_]ParamType{
     clap.parseParam("-F, --filter <STR>...             Run a script in all workspace packages matching the pattern") catch unreachable,
     clap.parseParam("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)") catch unreachable,
     clap.parseParam("--shell <STR>                     Control the shell used for package.json scripts. Supports either 'bun' or 'system'") catch unreachable,
+    clap.parseParam("--workspaces                      Run a script in all workspace packages (from the \"workspaces\" field in package.json)") catch unreachable,
 };
 
 pub const auto_only_params = [_]ParamType{
@@ -141,12 +150,21 @@ pub const build_only_params = [_]ParamType{
     clap.parseParam("--production                     Set NODE_ENV=production and enable minification") catch unreachable,
     clap.parseParam("--compile                        Generate a standalone Bun executable containing your bundled code. Implies --production") catch unreachable,
     clap.parseParam("--compile-exec-argv <STR>       Prepend arguments to the standalone executable's execArgv") catch unreachable,
+    clap.parseParam("--compile-autoload-dotenv        Enable autoloading of .env files in standalone executable (default: true)") catch unreachable,
+    clap.parseParam("--no-compile-autoload-dotenv     Disable autoloading of .env files in standalone executable") catch unreachable,
+    clap.parseParam("--compile-autoload-bunfig        Enable autoloading of bunfig.toml in standalone executable (default: true)") catch unreachable,
+    clap.parseParam("--no-compile-autoload-bunfig     Disable autoloading of bunfig.toml in standalone executable") catch unreachable,
+    clap.parseParam("--compile-autoload-tsconfig      Enable autoloading of tsconfig.json at runtime in standalone executable (default: false)") catch unreachable,
+    clap.parseParam("--no-compile-autoload-tsconfig   Disable autoloading of tsconfig.json at runtime in standalone executable") catch unreachable,
+    clap.parseParam("--compile-autoload-package-json  Enable autoloading of package.json at runtime in standalone executable (default: false)") catch unreachable,
+    clap.parseParam("--no-compile-autoload-package-json Disable autoloading of package.json at runtime in standalone executable") catch unreachable,
     clap.parseParam("--bytecode                       Use a bytecode cache") catch unreachable,
     clap.parseParam("--watch                          Automatically restart the process on file change") catch unreachable,
     clap.parseParam("--no-clear-screen                Disable clearing the terminal screen on reload when --watch is enabled") catch unreachable,
     clap.parseParam("--target <STR>                   The intended execution environment for the bundle. \"browser\", \"bun\" or \"node\"") catch unreachable,
     clap.parseParam("--outdir <STR>                   Default to \"dist\" if multiple files") catch unreachable,
     clap.parseParam("--outfile <STR>                  Write to a file") catch unreachable,
+    clap.parseParam("--metafile <STR>?                Write a JSON file with metadata about the build") catch unreachable,
     clap.parseParam("--sourcemap <STR>?               Build with sourcemaps - 'linked', 'inline', 'external', or 'none'") catch unreachable,
     clap.parseParam("--banner <STR>                   Add a banner to the bundled output such as \"use client\"; for a bundle being used with RSCs") catch unreachable,
     clap.parseParam("--footer <STR>                   Add a footer to the bundled output such as // built with bun!") catch unreachable,
@@ -166,6 +184,7 @@ pub const build_only_params = [_]ParamType{
     clap.parseParam("--minify-syntax                  Minify syntax and inline data") catch unreachable,
     clap.parseParam("--minify-whitespace              Minify whitespace") catch unreachable,
     clap.parseParam("--minify-identifiers             Minify identifiers") catch unreachable,
+    clap.parseParam("--keep-names                     Preserve original function and class names when minifying") catch unreachable,
     clap.parseParam("--css-chunking                   Chunk CSS files together to reduce duplicated CSS loaded in a browser. Only has an effect when multiple entrypoints import CSS") catch unreachable,
     clap.parseParam("--dump-environment-variables") catch unreachable,
     clap.parseParam("--conditions <STR>...            Pass custom conditions to resolve") catch unreachable,
@@ -190,41 +209,64 @@ pub const test_only_params = [_]ParamType{
     clap.parseParam("--timeout <NUMBER>               Set the per-test timeout in milliseconds, default is 5000.") catch unreachable,
     clap.parseParam("-u, --update-snapshots           Update snapshot files") catch unreachable,
     clap.parseParam("--rerun-each <NUMBER>            Re-run each test file <NUMBER> times, helps catch certain bugs") catch unreachable,
-    clap.parseParam("--only                           Only run tests that are marked with \"test.only()\"") catch unreachable,
     clap.parseParam("--todo                           Include tests that are marked with \"test.todo()\"") catch unreachable,
+    clap.parseParam("--only                           Run only tests that are marked with \"test.only()\" or \"describe.only()\"") catch unreachable,
+    clap.parseParam("--pass-with-no-tests             Exit with code 0 when no tests are found") catch unreachable,
+    clap.parseParam("--concurrent                     Treat all tests as `test.concurrent()` tests") catch unreachable,
+    clap.parseParam("--randomize                      Run tests in random order") catch unreachable,
+    clap.parseParam("--seed <INT>                     Set the random seed for test randomization") catch unreachable,
     clap.parseParam("--coverage                       Generate a coverage profile") catch unreachable,
     clap.parseParam("--coverage-reporter <STR>...     Report coverage in 'text' and/or 'lcov'. Defaults to 'text'.") catch unreachable,
     clap.parseParam("--coverage-dir <STR>             Directory for coverage files. Defaults to 'coverage'.") catch unreachable,
     clap.parseParam("--bail <NUMBER>?                 Exit the test suite after <NUMBER> failures. If you do not specify a number, it defaults to 1.") catch unreachable,
-    clap.parseParam("-t, --test-name-pattern <STR>    Run only tests with a name that matches the given regex.") catch unreachable,
-    clap.parseParam("--reporter <STR>                 Specify the test reporter. Currently --reporter=junit is the only supported format.") catch unreachable,
-    clap.parseParam("--reporter-outfile <STR>         The output file used for the format from --reporter.") catch unreachable,
+    clap.parseParam("-t, --test-name-pattern/--grep <STR>    Run only tests with a name that matches the given regex.") catch unreachable,
+    clap.parseParam("--reporter <STR>                 Test output reporter format. Available: 'junit' (requires --reporter-outfile), 'dots'. Default: console output.") catch unreachable,
+    clap.parseParam("--reporter-outfile <STR>         Output file path for the reporter format (required with --reporter).") catch unreachable,
+    clap.parseParam("--dots                           Enable dots reporter. Shorthand for --reporter=dots.") catch unreachable,
+    clap.parseParam("--only-failures                  Only display test failures, hiding passing tests.") catch unreachable,
+    clap.parseParam("--max-concurrency <NUMBER>        Maximum number of concurrent tests to execute at once. Default is 20.") catch unreachable,
 };
 pub const test_params = test_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
+fn loadGlobalBunfig(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: Command.Tag) !void {
+    if (ctx.has_loaded_global_config) return;
+
+    ctx.has_loaded_global_config = true;
+
+    var config_buf: bun.PathBuffer = undefined;
+    if (getHomeConfigPath(&config_buf)) |path| {
+        try loadBunfig(allocator, true, path, ctx, comptime cmd);
+    }
+}
+
 pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]const u8, ctx: Command.Context, comptime cmd: Command.Tag) !void {
-    var config_file = switch (bun.sys.openA(config_path, bun.O.RDONLY, 0)) {
-        .result => |fd| fd.stdFile(),
+    if (comptime cmd.readGlobalConfig()) {
+        loadGlobalBunfig(allocator, ctx, cmd) catch |err| {
+            if (auto_loaded) return;
+
+            Output.prettyErrorln("{}\nreading global config \"{s}\"", .{
+                err,
+                config_path,
+            });
+            Global.exit(1);
+        };
+    }
+
+    try loadBunfig(allocator, auto_loaded, config_path, ctx, cmd);
+}
+
+fn loadBunfig(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]const u8, ctx: Command.Context, comptime cmd: Command.Tag) !void {
+    const source = switch (bun.sys.File.toSource(config_path, allocator, .{ .convert_bom = true })) {
+        .result => |s| s,
         .err => |err| {
             if (auto_loaded) return;
-            Output.prettyErrorln("{}\nwhile opening config \"{s}\"", .{
+            Output.prettyErrorln("{f}\nwhile reading config \"{s}\"", .{
                 err,
                 config_path,
             });
             Global.exit(1);
         },
     };
-
-    defer config_file.close();
-    const contents = config_file.readToEndAlloc(allocator, std.math.maxInt(usize)) catch |err| {
-        if (auto_loaded) return;
-        Output.prettyErrorln("<r><red>error<r>: {s} reading config \"{s}\"", .{
-            @errorName(err),
-            config_path,
-        });
-        Global.exit(1);
-    };
-
     js_ast.Stmt.Data.Store.create();
     js_ast.Expr.Data.Store.create();
     defer {
@@ -236,13 +278,19 @@ pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_pa
         ctx.log.level = original_level;
     }
     ctx.log.level = logger.Log.Level.warn;
-    try Bunfig.parse(allocator, &logger.Source.initPathString(bun.asByteSlice(config_path), contents), ctx, cmd);
+    ctx.debug.loaded_bunfig = true;
+    try Bunfig.parse(allocator, &source, ctx, cmd);
 }
 
 fn getHomeConfigPath(buf: *bun.PathBuffer) ?[:0]const u8 {
-    if (bun.getenvZ("XDG_CONFIG_HOME") orelse bun.getenvZ(bun.DotEnv.home_env)) |data_dir| {
-        var paths = [_]string{".bunfig.toml"};
+    var paths = [_]string{".bunfig.toml"};
+
+    if (bun.env_var.XDG_CONFIG_HOME.get()) |data_dir| {
         return resolve_path.joinAbsStringBufZ(data_dir, buf, &paths, .auto);
+    }
+
+    if (bun.env_var.HOME.get()) |home_dir| {
+        return resolve_path.joinAbsStringBufZ(home_dir, buf, &paths, .auto);
     }
 
     return null;
@@ -284,7 +332,6 @@ pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx:
     if (config_path_.len == 0) {
         return;
     }
-    defer ctx.debug.loaded_bunfig = true;
     var config_path: [:0]u8 = undefined;
     if (config_path_[0] == '/') {
         @memcpy(config_buf[0..config_path_.len], config_path_);
@@ -387,6 +434,8 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
 
     if (cmd == .RunCommand or cmd == .AutoCommand) {
         ctx.filters = args.options("--filter");
+        ctx.workspaces = args.flag("--workspaces");
+        ctx.if_present = args.flag("--if-present");
 
         if (args.option("--elide-lines")) |elide_lines| {
             if (elide_lines.len > 0) {
@@ -403,6 +452,16 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             if (timeout_ms.len > 0) {
                 ctx.test_options.default_timeout_ms = std.fmt.parseInt(u32, timeout_ms, 10) catch {
                     Output.prettyErrorln("<r><red>error<r>: Invalid timeout: \"{s}\"", .{timeout_ms});
+                    Output.flush();
+                    Global.exit(1);
+                };
+            }
+        }
+
+        if (args.option("--max-concurrency")) |max_concurrency| {
+            if (max_concurrency.len > 0) {
+                ctx.test_options.max_concurrency = std.fmt.parseInt(u32, max_concurrency, 10) catch {
+                    Output.prettyErrorln("<r><red>error<r>: Invalid max-concurrency: \"{s}\"", .{max_concurrency});
                     Global.exit(1);
                 };
             }
@@ -420,7 +479,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 } else if (bun.strings.eqlComptime(reporter, "lcov")) {
                     ctx.test_options.coverage.reporters.lcov = true;
                 } else {
-                    Output.prettyErrorln("<r><red>error<r>: --coverage-reporter received invalid reporter: \"{s}\"", .{reporter});
+                    Output.prettyErrorln("<r><red>error<r>: invalid coverage reporter '{s}'. Available options: 'text' (console output), 'lcov' (code coverage file)", .{reporter});
                     Global.exit(1);
                 }
             }
@@ -433,14 +492,26 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         if (args.option("--reporter")) |reporter| {
             if (strings.eqlComptime(reporter, "junit")) {
                 if (ctx.test_options.reporter_outfile == null) {
-                    Output.errGeneric("--reporter=junit expects an output file from --reporter-outfile", .{});
+                    Output.errGeneric("--reporter=junit requires --reporter-outfile [file] to specify where to save the XML report", .{});
                     Global.crash();
                 }
-                ctx.test_options.file_reporter = .junit;
+                ctx.test_options.reporters.junit = true;
+            } else if (strings.eqlComptime(reporter, "dots") or strings.eqlComptime(reporter, "dot")) {
+                ctx.test_options.reporters.dots = true;
             } else {
-                Output.errGeneric("unrecognized reporter format: '{s}'. Currently, only 'junit' is supported", .{reporter});
+                Output.errGeneric("unsupported reporter format '{s}'. Available options: 'junit' (for XML test results), 'dots'", .{reporter});
                 Global.crash();
             }
+        }
+
+        // Handle --dots flag as shorthand for --reporter=dots
+        if (args.flag("--dots")) {
+            ctx.test_options.reporters.dots = true;
+        }
+
+        // Handle --only-failures flag
+        if (args.flag("--only-failures")) {
+            ctx.test_options.reporters.only_failures = true;
         }
 
         if (args.option("--coverage-dir")) |dir| {
@@ -451,11 +522,13 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             if (bail.len > 0) {
                 ctx.test_options.bail = std.fmt.parseInt(u32, bail, 10) catch |e| {
                     Output.prettyErrorln("<r><red>error<r>: --bail expects a number: {s}", .{@errorName(e)});
+                    Output.flush();
                     Global.exit(1);
                 };
 
                 if (ctx.test_options.bail == 0) {
                     Output.prettyErrorln("<r><red>error<r>: --bail expects a number greater than 0", .{});
+                    Output.flush();
                     Global.exit(1);
                 }
             } else {
@@ -474,7 +547,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             ctx.test_options.test_filter_pattern = namePattern;
             const regex = RegularExpression.init(bun.String.fromBytes(namePattern), RegularExpression.Flags.none) catch {
                 Output.prettyErrorln(
-                    "<r><red>error<r>: --test-name-pattern expects a valid regular expression but received {}",
+                    "<r><red>error<r>: --test-name-pattern expects a valid regular expression but received {f}",
                     .{
                         bun.fmt.QuotedFormatter{
                             .text = namePattern,
@@ -488,6 +561,17 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         ctx.test_options.update_snapshots = args.flag("--update-snapshots");
         ctx.test_options.run_todo = args.flag("--todo");
         ctx.test_options.only = args.flag("--only");
+        ctx.test_options.pass_with_no_tests = args.flag("--pass-with-no-tests");
+        ctx.test_options.concurrent = args.flag("--concurrent");
+        ctx.test_options.randomize = args.flag("--randomize");
+
+        if (args.option("--seed")) |seed_str| {
+            ctx.test_options.randomize = true;
+            ctx.test_options.seed = std.fmt.parseInt(u32, seed_str, 10) catch {
+                Output.prettyErrorln("<red>error<r>: Invalid seed value: {s}", .{seed_str});
+                std.process.exit(1);
+            };
+        }
     }
 
     ctx.args.absolute_working_dir = cwd;
@@ -509,6 +593,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
     }
 
     opts.drop = args.options("--drop");
+    opts.feature_flags = args.options("--feature");
 
     // Node added a `--loader` flag (that's kinda like `--register`). It's
     // completely different from ours.
@@ -535,6 +620,10 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
     opts.env_files = args.options("--env-file");
     opts.extension_order = args.options("--extension-order");
 
+    if (args.flag("--no-env-file")) {
+        opts.disable_default_env_files = true;
+    }
+
     if (args.flag("--preserve-symlinks")) {
         opts.preserve_symlinks = true;
     }
@@ -556,11 +645,11 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             const preloads = args.options("--preload");
             const preloads2 = args.options("--require");
             const preloads3 = args.options("--import");
-            const preload4 = bun.getenvZ("BUN_INSPECT_PRELOAD");
+            const preload4 = bun.env_var.BUN_INSPECT_PRELOAD.get();
 
             const total_preloads = ctx.preloads.len + preloads.len + preloads2.len + preloads3.len + (if (preload4 != null) @as(usize, 1) else @as(usize, 0));
             if (total_preloads > 0) {
-                var all = std.ArrayList(string).initCapacity(ctx.allocator, total_preloads) catch unreachable;
+                var all = std.array_list.Managed(string).initCapacity(ctx.allocator, total_preloads) catch unreachable;
                 if (ctx.preloads.len > 0) all.appendSliceAssumeCapacity(ctx.preloads);
                 if (preloads.len > 0) all.appendSliceAssumeCapacity(preloads);
                 if (preloads2.len > 0) all.appendSliceAssumeCapacity(preloads2);
@@ -734,6 +823,24 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             bun.jsc.RuntimeTranspilerCache.is_disabled = true;
         }
 
+        if (args.flag("--cpu-prof")) {
+            ctx.runtime_options.cpu_prof.enabled = true;
+            if (args.option("--cpu-prof-name")) |name| {
+                ctx.runtime_options.cpu_prof.name = name;
+            }
+            if (args.option("--cpu-prof-dir")) |dir| {
+                ctx.runtime_options.cpu_prof.dir = dir;
+            }
+        } else {
+            // Warn if --cpu-prof-name or --cpu-prof-dir is used without --cpu-prof
+            if (args.option("--cpu-prof-name")) |_| {
+                Output.warn("--cpu-prof-name requires --cpu-prof to be enabled", .{});
+            }
+            if (args.option("--cpu-prof-dir")) |_| {
+                Output.warn("--cpu-prof-dir requires --cpu-prof to be enabled", .{});
+            }
+        }
+
         if (args.flag("--no-deprecation")) {
             Bun__Node__ProcessNoDeprecation = true;
         }
@@ -746,6 +853,31 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         if (args.flag("--zero-fill-buffers")) {
             Bun__Node__ZeroFillBuffers = true;
         }
+        const use_system_ca = args.flag("--use-system-ca");
+        const use_openssl_ca = args.flag("--use-openssl-ca");
+        const use_bundled_ca = args.flag("--use-bundled-ca");
+
+        // Disallow any combination > 1
+        if (@as(u8, @intFromBool(use_system_ca)) + @as(u8, @intFromBool(use_openssl_ca)) + @as(u8, @intFromBool(use_bundled_ca)) > 1) {
+            Output.prettyErrorln("<r><red>error<r>: choose exactly one of --use-system-ca, --use-openssl-ca, or --use-bundled-ca", .{});
+            Global.exit(1);
+        }
+
+        // CLI overrides env var (NODE_USE_SYSTEM_CA)
+        if (use_bundled_ca) {
+            Bun__Node__CAStore = .bundled;
+        } else if (use_openssl_ca) {
+            Bun__Node__CAStore = .openssl;
+        } else if (use_system_ca) {
+            Bun__Node__CAStore = .system;
+        } else {
+            if (bun.env_var.NODE_USE_SYSTEM_CA.get()) {
+                Bun__Node__CAStore = .system;
+            }
+        }
+
+        // Back-compat boolean used by native code until fully migrated
+        Bun__Node__UseSystemCA = (Bun__Node__CAStore == .system);
     }
 
     if (opts.port != null and opts.origin == null) {
@@ -798,6 +930,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         ctx.bundler_options.minify_syntax = minify_flag or args.flag("--minify-syntax");
         ctx.bundler_options.minify_whitespace = minify_flag or args.flag("--minify-whitespace");
         ctx.bundler_options.minify_identifiers = minify_flag or args.flag("--minify-identifiers");
+        ctx.bundler_options.keep_names = args.flag("--keep-names");
 
         ctx.bundler_options.css_chunking = args.flag("--css-chunking");
 
@@ -848,7 +981,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                     if (_target.len > 4 and strings.hasPrefixComptime(_target, "bun-")) {
                         ctx.bundler_options.compile_target = CLI.Cli.CompileTarget.from(_target[3..]);
                         if (!ctx.bundler_options.compile_target.isSupported()) {
-                            Output.errGeneric("Unsupported compile target: {}\n", .{ctx.bundler_options.compile_target});
+                            Output.errGeneric("Unsupported compile target: {f}\n", .{ctx.bundler_options.compile_target});
                             Global.exit(1);
                         }
                         opts.target = .bun;
@@ -899,6 +1032,78 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 Global.crash();
             }
             ctx.bundler_options.compile_exec_argv = compile_exec_argv;
+        }
+
+        // Handle --compile-autoload-dotenv flags
+        {
+            const has_positive = args.flag("--compile-autoload-dotenv");
+            const has_negative = args.flag("--no-compile-autoload-dotenv");
+
+            if (has_positive or has_negative) {
+                if (!ctx.bundler_options.compile) {
+                    Output.errGeneric("--compile-autoload-dotenv requires --compile", .{});
+                    Global.crash();
+                }
+                if (has_positive and has_negative) {
+                    Output.errGeneric("Cannot use both --compile-autoload-dotenv and --no-compile-autoload-dotenv", .{});
+                    Global.crash();
+                }
+                ctx.bundler_options.compile_autoload_dotenv = has_positive;
+            }
+        }
+
+        // Handle --compile-autoload-bunfig flags
+        {
+            const has_positive = args.flag("--compile-autoload-bunfig");
+            const has_negative = args.flag("--no-compile-autoload-bunfig");
+
+            if (has_positive or has_negative) {
+                if (!ctx.bundler_options.compile) {
+                    Output.errGeneric("--compile-autoload-bunfig requires --compile", .{});
+                    Global.crash();
+                }
+                if (has_positive and has_negative) {
+                    Output.errGeneric("Cannot use both --compile-autoload-bunfig and --no-compile-autoload-bunfig", .{});
+                    Global.crash();
+                }
+                ctx.bundler_options.compile_autoload_bunfig = has_positive;
+            }
+        }
+
+        // Handle --compile-autoload-tsconfig flags (default: false, tsconfig not loaded at runtime)
+        {
+            const has_positive = args.flag("--compile-autoload-tsconfig");
+            const has_negative = args.flag("--no-compile-autoload-tsconfig");
+
+            if (has_positive or has_negative) {
+                if (!ctx.bundler_options.compile) {
+                    Output.errGeneric("--compile-autoload-tsconfig requires --compile", .{});
+                    Global.crash();
+                }
+                if (has_positive and has_negative) {
+                    Output.errGeneric("Cannot use both --compile-autoload-tsconfig and --no-compile-autoload-tsconfig", .{});
+                    Global.crash();
+                }
+                ctx.bundler_options.compile_autoload_tsconfig = has_positive;
+            }
+        }
+
+        // Handle --compile-autoload-package-json flags (default: false, package.json not loaded at runtime)
+        {
+            const has_positive = args.flag("--compile-autoload-package-json");
+            const has_negative = args.flag("--no-compile-autoload-package-json");
+
+            if (has_positive or has_negative) {
+                if (!ctx.bundler_options.compile) {
+                    Output.errGeneric("--compile-autoload-package-json requires --compile", .{});
+                    Global.crash();
+                }
+                if (has_positive and has_negative) {
+                    Output.errGeneric("Cannot use both --compile-autoload-package-json and --no-compile-autoload-package-json", .{});
+                    Global.crash();
+                }
+                ctx.bundler_options.compile_autoload_package_json = has_positive;
+            }
         }
 
         if (args.flag("--windows-hide-console")) {
@@ -989,6 +1194,14 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             if (outfile.len > 0) {
                 ctx.bundler_options.outfile = outfile;
             }
+        }
+
+        if (args.option("--metafile")) |metafile| {
+            // If --metafile is passed without a value, default to "meta.json"
+            ctx.bundler_options.metafile = if (metafile.len > 0)
+                bun.handleOom(allocator.dupeZ(u8, metafile))
+            else
+                "meta.json";
         }
 
         if (args.option("--root")) |root_dir| {
@@ -1250,6 +1463,10 @@ export var Bun__Node__ZeroFillBuffers = false;
 export var Bun__Node__ProcessNoDeprecation = false;
 export var Bun__Node__ProcessThrowDeprecation = false;
 
+pub const BunCAStore = enum(u8) { bundled, openssl, system };
+pub export var Bun__Node__CAStore: BunCAStore = .bundled;
+pub export var Bun__Node__UseSystemCA = false;
+
 const string = []const u8;
 
 const builtin = @import("builtin");
@@ -1262,7 +1479,6 @@ const FeatureFlags = bun.FeatureFlags;
 const Global = bun.Global;
 const OOM = bun.OOM;
 const Output = bun.Output;
-const RegularExpression = bun.RegularExpression;
 const clap = bun.clap;
 const js_ast = bun.ast;
 const logger = bun.logger;
@@ -1270,6 +1486,7 @@ const options = bun.options;
 const resolve_path = bun.path;
 const strings = bun.strings;
 const Api = bun.schema.api;
+const RegularExpression = bun.jsc.RegularExpression;
 
 const CLI = bun.cli;
 const Command = CLI.Command;

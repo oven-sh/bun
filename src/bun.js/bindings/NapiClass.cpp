@@ -107,7 +107,7 @@ void NapiClass::finishCreation(VM& vm, NativeExecutable* executable, const Strin
     Base::finishCreation(vm, executable, 0, name);
     ASSERT(inherits(info()));
     this->m_constructor = constructor;
-    auto globalObject = reinterpret_cast<Zig::GlobalObject*>(this->globalObject());
+    auto globalObject = static_cast<Zig::GlobalObject*>(this->globalObject());
 
     this->putDirect(vm, vm.propertyNames->name, jsString(vm, name), JSC::PropertyAttribute::DontEnum | 0);
 

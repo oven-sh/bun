@@ -117,7 +117,7 @@ pub fn init(resolve_result: *const _resolver.Result, source_index: Index, ctx: *
         .jsx = resolve_result.jsx,
         .source_index = source_index,
         .module_type = resolve_result.module_type,
-        .emit_decorator_metadata = resolve_result.emit_decorator_metadata,
+        .emit_decorator_metadata = resolve_result.flags.emit_decorator_metadata,
         .package_version = if (resolve_result.package_json) |package_json| package_json.version else "",
         .known_target = ctx.transpiler.options.target,
     };
@@ -382,7 +382,7 @@ fn getAST(
             const path_to_use = brk: {
                 // Implements embedded sqlite
                 if (loader == .sqlite_embedded) {
-                    const embedded_path = std.fmt.allocPrint(allocator, "{any}A{d:0>8}", .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() }) catch unreachable;
+                    const embedded_path = std.fmt.allocPrint(allocator, "{f}A{d:0>8}", .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() }) catch unreachable;
                     unique_key_for_additional_file.* = .{
                         .key = embedded_path,
                         .content_hash = ContentHasher.run(source.contents),
@@ -419,12 +419,12 @@ fn getAST(
                 }, Logger.Loc{ .start = 0 }),
             };
             require_args[1] = Expr.init(E.Object, E.Object{
-                .properties = G.Property.List.init(object_properties),
+                .properties = G.Property.List.fromOwnedSlice(object_properties),
                 .is_single_line = true,
             }, Logger.Loc{ .start = 0 });
             const require_call = Expr.init(E.Call, E.Call{
                 .target = require_property,
-                .args = BabyList(Expr).init(require_args),
+                .args = BabyList(Expr).fromOwnedSlice(require_args),
             }, Logger.Loc{ .start = 0 });
 
             const root = Expr.init(E.Dot, E.Dot{
@@ -446,7 +446,7 @@ fn getAST(
                 return error.ParserError;
             }
 
-            const unique_key = std.fmt.allocPrint(allocator, "{any}A{d:0>8}", .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() }) catch unreachable;
+            const unique_key = std.fmt.allocPrint(allocator, "{f}A{d:0>8}", .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() }) catch unreachable;
             // This injects the following code:
             //
             // require(unique_key)
@@ -460,7 +460,7 @@ fn getAST(
 
             const root = Expr.init(E.Call, E.Call{
                 .target = .{ .data = .{ .e_require_call_target = {} }, .loc = .{ .start = 0 } },
-                .args = BabyList(Expr).init(require_args),
+                .args = BabyList(Expr).fromOwnedSlice(require_args),
             }, Logger.Loc{ .start = 0 });
 
             unique_key_for_additional_file.* = .{
@@ -607,7 +607,7 @@ fn getAST(
             else
                 try std.fmt.allocPrint(
                     allocator,
-                    "{any}A{d:0>8}",
+                    "{f}A{d:0>8}",
                     .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() },
                 );
             const root = Expr.init(E.String, .{ .data = unique_key }, .{ .start = 0 });
@@ -675,7 +675,7 @@ fn getCodeForParseTaskWithoutPlugins(
                             source,
                             Logger.Loc.Empty,
                             allocator,
-                            "File not found {}",
+                            "File not found {f}",
                             .{bun.fmt.quote(file_path.text)},
                         ) catch {};
                         return error.FileNotFound;
@@ -685,7 +685,7 @@ fn getCodeForParseTaskWithoutPlugins(
                             source,
                             Logger.Loc.Empty,
                             allocator,
-                            "{s} reading file: {}",
+                            "{s} reading file: {f}",
                             .{ @errorName(err), bun.fmt.quote(file_path.text) },
                         ) catch {};
                     },
@@ -833,7 +833,6 @@ const OnBeforeParsePlugin = struct {
                 @max(this.column, -1),
                 @max(this.column_end - this.column, 0),
                 if (source_line_text.len > 0) bun.handleOom(allocator.dupe(u8, source_line_text)) else null,
-                null,
             );
             var msg = Logger.Msg{ .data = .{ .location = location, .text = bun.handleOom(allocator.dupe(u8, this.message())) } };
             switch (this.level) {
@@ -854,7 +853,7 @@ const OnBeforeParsePlugin = struct {
         pub fn logFn(
             args_: ?*OnBeforeParseArguments,
             log_options_: ?*BunLogOptions,
-        ) callconv(.C) void {
+        ) callconv(.c) void {
             const args = args_ orelse return;
             const log_options = log_options_ orelse return;
             log_options.append(args.context.log, args.context.file_path.namespace);
@@ -876,15 +875,15 @@ const OnBeforeParsePlugin = struct {
         source_len: usize = 0,
         loader: Loader,
 
-        fetch_source_code_fn: *const fn (*OnBeforeParseArguments, *OnBeforeParseResult) callconv(.C) i32 = &fetchSourceCode,
+        fetch_source_code_fn: *const fn (*OnBeforeParseArguments, *OnBeforeParseResult) callconv(.c) i32 = &fetchSourceCode,
 
         user_context: ?*anyopaque = null,
-        free_user_context: ?*const fn (?*anyopaque) callconv(.C) void = null,
+        free_user_context: ?*const fn (?*anyopaque) callconv(.c) void = null,
 
         log: *const fn (
             args_: ?*OnBeforeParseArguments,
             log_options_: ?*BunLogOptions,
-        ) callconv(.C) void = &BunLogOptions.logFn,
+        ) callconv(.c) void = &BunLogOptions.logFn,
 
         pub fn getWrapper(result: *OnBeforeParseResult) *OnBeforeParseResultWrapper {
             const wrapper: *OnBeforeParseResultWrapper = @fieldParentPtr("result", result);
@@ -893,7 +892,7 @@ const OnBeforeParsePlugin = struct {
         }
     };
 
-    pub fn fetchSourceCode(args: *OnBeforeParseArguments, result: *OnBeforeParseResult) callconv(.C) i32 {
+    pub fn fetchSourceCode(args: *OnBeforeParseArguments, result: *OnBeforeParseResult) callconv(.c) i32 {
         debug("fetchSourceCode", .{});
         const this = args.context;
         if (this.log.errors > 0 or this.deferred_error != null or this.should_continue_running.* != 1) {
@@ -1075,7 +1074,7 @@ fn runWithSourceCode(
 
     var transpiler = this.transpilerForTarget(task.known_target);
     errdefer transpiler.resetStore();
-    var resolver: *Resolver = &transpiler.resolver;
+    const resolver: *Resolver = &transpiler.resolver;
     const file_path = &task.path;
     const loader = task.loader orelse file_path.loader(&transpiler.options.loaders) orelse options.Loader.file;
 
@@ -1130,19 +1129,17 @@ fn runWithSourceCode(
     else
         .none;
 
-    if (
-    // separate_ssr_graph makes boundaries switch to client because the server file uses that generated file as input.
-    // this is not done when there is one server graph because it is easier for plugins to deal with.
-    (use_directive == .client and
+    if (use_directive == .client and
         task.known_target != .bake_server_components_ssr and
-        this.ctx.framework.?.server_components.?.separate_ssr_graph) or
+        this.ctx.framework != null and
+        this.ctx.framework.?.server_components.?.separate_ssr_graph or
         // set the target to the client when bundling client-side files
         ((transpiler.options.server_components or transpiler.options.dev_server != null) and
             task.known_target == .browser))
     {
-        transpiler = this.ctx.client_transpiler.?;
-        resolver = &transpiler.resolver;
-        bun.assert(transpiler.options.target == .browser);
+        // separate_ssr_graph makes boundaries switch to client because the server file uses that generated file as input.
+        // this is not done when there is one server graph because it is easier for plugins to deal with.
+        transpiler = this.transpilerForTarget(.browser);
     }
 
     const source = &Logger.Source{
@@ -1163,7 +1160,7 @@ fn runWithSourceCode(
     var opts = js_parser.Parser.Options.init(task.jsx, loader);
     opts.bundle = true;
     opts.warn_about_unbundled_modules = false;
-    opts.macro_context = &this.data.macro_context;
+    opts.macro_context = &transpiler.macro_context.?;
     opts.package_version = task.package_version;
 
     opts.features.allow_runtime = !source.index.isRuntime();
@@ -1175,8 +1172,11 @@ fn runWithSourceCode(
     opts.output_format = output_format;
     opts.features.minify_syntax = transpiler.options.minify_syntax;
     opts.features.minify_identifiers = transpiler.options.minify_identifiers;
+    opts.features.minify_keep_names = transpiler.options.keep_names;
+    opts.features.minify_whitespace = transpiler.options.minify_whitespace;
     opts.features.emit_decorator_metadata = transpiler.options.emit_decorator_metadata;
     opts.features.unwrap_commonjs_packages = transpiler.options.unwrap_commonjs_packages;
+    opts.features.bundler_feature_flags = transpiler.options.bundler_feature_flags;
     opts.features.hot_module_reloading = output_format == .internal_bake_dev and !source.index.isRuntime();
     opts.features.auto_polyfill_require = output_format == .esm and !opts.features.hot_module_reloading;
     opts.features.react_fast_refresh = target == .browser and

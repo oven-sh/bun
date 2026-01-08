@@ -130,7 +130,7 @@ Quote"Backslash
 55 | console.warn("Warning log");
 56 | console.warn(new Error("console.warn an error"));
 57 | console.error(new Error("console.error an error"));
-                   ^
+                       ^
 error: console.error an error
       at <file>:NN:NN
       at loadAndEvaluateModule (N:NN)

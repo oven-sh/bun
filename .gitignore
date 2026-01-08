@@ -1,12 +1,15 @@
+.claude/settings.local.json
 .DS_Store
 .env
 .envrc
 .eslintcache
+.gdb_history
 .idea
 .next
 .ninja_deps
 .ninja_log
 .npm
+.npmrc
 .npm.gz
 .parcel-cache
 .swcrc

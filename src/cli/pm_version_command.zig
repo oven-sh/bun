@@ -284,7 +284,7 @@ pub const PmVersionCommand = struct {
             \\  <cyan>patch<r>      <d>{s} → {s}<r>
             \\  <cyan>minor<r>      <d>{s} → {s}<r>
             \\  <cyan>major<r>      <d>{s} → {s}<r>
-            \\  <cyan>prerelease<r> <d>{s} → {s}<r> 
+            \\  <cyan>prerelease<r> <d>{s} → {s}<r>
             \\
         ;
         Output.pretty(increment_help_text, .{
@@ -448,7 +448,7 @@ pub const PmVersionCommand = struct {
 
     fn isGitClean(cwd: []const u8) bun.OOM!bool {
         var path_buf: bun.PathBuffer = undefined;
-        const git_path = bun.which(&path_buf, bun.getenvZ("PATH") orelse "", cwd, "git") orelse {
+        const git_path = bun.which(&path_buf, bun.env_var.PATH.get() orelse "", cwd, "git") orelse {
             Output.errGeneric("git must be installed to use `bun pm version --git-tag-version`", .{});
             Global.exit(1);
         };
@@ -461,7 +461,7 @@ pub const PmVersionCommand = struct {
             .cwd = cwd,
             .envp = null,
             .windows = if (Environment.isWindows) .{
-                .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(null)),
+                .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(null, null)),
             },
         }) catch |err| {
             Output.errGeneric("Failed to spawn git process: {s}", .{@errorName(err)});
@@ -481,7 +481,7 @@ pub const PmVersionCommand = struct {
 
     fn getVersionFromGit(allocator: std.mem.Allocator, cwd: []const u8) bun.OOM![]const u8 {
         var path_buf: bun.PathBuffer = undefined;
-        const git_path = bun.which(&path_buf, bun.getenvZ("PATH") orelse "", cwd, "git") orelse {
+        const git_path = bun.which(&path_buf, bun.env_var.PATH.get() orelse "", cwd, "git") orelse {
             Output.errGeneric("git must be installed to use `bun pm version from-git`", .{});
             Global.exit(1);
         };
@@ -494,7 +494,7 @@ pub const PmVersionCommand = struct {
             .cwd = cwd,
             .envp = null,
             .windows = if (Environment.isWindows) .{
-                .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(null)),
+                .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(null, null)),
             },
         }) catch |err| {
             Output.err(err, "Failed to spawn git process", .{});
@@ -528,7 +528,7 @@ pub const PmVersionCommand = struct {
 
     fn gitCommitAndTag(allocator: std.mem.Allocator, version: []const u8, custom_message: ?[]const u8, cwd: []const u8) bun.OOM!void {
         var path_buf: bun.PathBuffer = undefined;
-        const git_path = bun.which(&path_buf, bun.getenvZ("PATH") orelse "", cwd, "git") orelse {
+        const git_path = bun.which(&path_buf, bun.env_var.PATH.get() orelse "", cwd, "git") orelse {
             Output.errGeneric("git must be installed to use `bun pm version --git-tag-version`", .{});
             Global.exit(1);
         };
@@ -541,7 +541,7 @@ pub const PmVersionCommand = struct {
             .stdin = .ignore,
             .envp = null,
             .windows = if (Environment.isWindows) .{
-                .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(null)),
+                .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(null, null)),
             },
         }) catch |err| {
             Output.errGeneric("Git add failed: {s}", .{@errorName(err)});
@@ -575,7 +575,7 @@ pub const PmVersionCommand = struct {
             .stdin = .ignore,
             .envp = null,
             .windows = if (Environment.isWindows) .{
-                .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(null)),
+                .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(null, null)),
             },
         }) catch |err| {
             Output.errGeneric("Git commit failed: {s}", .{@errorName(err)});
@@ -606,7 +606,7 @@ pub const PmVersionCommand = struct {
             .stdin = .ignore,
             .envp = null,
             .windows = if (Environment.isWindows) .{
-                .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(null)),
+                .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(null, null)),
             },
         }) catch |err| {
             Output.errGeneric("Git tag failed: {s}", .{@errorName(err)});

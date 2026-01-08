@@ -50,7 +50,7 @@ fn prepareCssAstsForChunkImpl(c: *LinkerContext, chunk: *Chunk, allocator: std.m
                     var conditions: ?*bun.css.ImportConditions = null;
                     if (entry.conditions.len > 0) {
                         conditions = entry.conditions.mut(0);
-                        entry.condition_import_records.push(
+                        entry.condition_import_records.append(
                             allocator,
                             bun.ImportRecord{ .kind = .at, .path = p.*, .range = Logger.Range{} },
                         ) catch |err| bun.handleOom(err);
@@ -107,7 +107,7 @@ fn prepareCssAstsForChunkImpl(c: *LinkerContext, chunk: *Chunk, allocator: std.m
                             )) {
                                 .result => |v| v,
                                 .err => |e| {
-                                    bun.handleOom(c.log.addErrorFmt(null, Loc.Empty, c.allocator(), "Error generating CSS for import: {}", .{e}));
+                                    bun.handleOom(c.log.addErrorFmt(null, Loc.Empty, c.allocator(), "Error generating CSS for import: {f}", .{e}));
                                     continue;
                                 },
                             };
@@ -118,7 +118,7 @@ fn prepareCssAstsForChunkImpl(c: *LinkerContext, chunk: *Chunk, allocator: std.m
                     var empty_conditions = bun.css.ImportConditions{};
                     const actual_conditions = if (conditions) |cc| cc else &empty_conditions;
 
-                    entry.condition_import_records.push(allocator, bun.ImportRecord{
+                    entry.condition_import_records.append(allocator, bun.ImportRecord{
                         .kind = .at,
                         .path = p.*,
                         .range = Logger.Range.none,
@@ -156,7 +156,7 @@ fn prepareCssAstsForChunkImpl(c: *LinkerContext, chunk: *Chunk, allocator: std.m
                         // Filter out "@charset", "@import", and leading "@layer" rules
                         // TODO: we are doing simple version rn, only @import
                         for (ast.rules.v.items, 0..) |*rule, ruleidx| {
-                            // if ((rule.* == .import and import_records[source_index.get()].at(rule.import.import_record_idx).is_internal) or rule.* == .ignored) {} else {
+                            // if ((rule.* == .import and import_records[source_index.get()].at(rule.import.import_record_idx).flags.is_internal) or rule.* == .ignored) {} else {
                             if (rule.* == .import or rule.* == .ignored) {} else {
                                 // It's okay to do this because AST is allocated into arena
                                 const reslice = ast.rules.v.items[ruleidx..];

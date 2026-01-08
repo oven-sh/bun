@@ -206,7 +206,7 @@ DataPointer& DataPointer::operator=(DataPointer&& other) noexcept
 {
     if (this == &other) return *this;
     this->~DataPointer();
-    return *new (this) DataPointer(WTFMove(other));
+    return *new (this) DataPointer(WTF::move(other));
 }
 
 DataPointer::~DataPointer()
@@ -337,7 +337,7 @@ BignumPointer& BignumPointer::operator=(BignumPointer&& other) noexcept
 {
     if (this == &other) return *this;
     this->~BignumPointer();
-    return *new (this) BignumPointer(WTFMove(other));
+    return *new (this) BignumPointer(WTF::move(other));
 }
 
 BignumPointer::~BignumPointer()
@@ -515,7 +515,7 @@ BignumPointer BignumPointer::NewPrime(const PrimeConfig& params,
     PrimeCheckCallback cb)
 {
     BignumPointer prime(BN_new());
-    if (!prime || !prime.generate(params, WTFMove(cb))) {
+    if (!prime || !prime.generate(params, WTF::move(cb))) {
         return {};
     }
     return prime;
@@ -1039,7 +1039,7 @@ X509Pointer& X509Pointer::operator=(X509Pointer&& other) noexcept
 {
     if (this == &other) return *this;
     this->~X509Pointer();
-    return *new (this) X509Pointer(WTFMove(other));
+    return *new (this) X509Pointer(WTF::move(other));
 }
 
 X509Pointer::~X509Pointer()
@@ -1276,7 +1276,7 @@ X509View::CheckMatch X509View::checkHost(const std::span<const char> host,
     case 1: {
         if (peername != nullptr) {
             DataPointer name(peername, strlen(peername));
-            if (peerName != nullptr) *peerName = WTFMove(name);
+            if (peerName != nullptr) *peerName = WTF::move(name);
         }
         return CheckMatch::MATCH;
     }
@@ -1345,7 +1345,7 @@ std::optional<WTF::String> X509View::getFingerprint(
 
     if (X509_digest(get(), method, md, &md_size)) {
         if (md_size == 0) return std::nullopt;
-        std::span<LChar> fingerprint;
+        std::span<Latin1Character> fingerprint;
         WTF::String fingerprintStr = WTF::String::createUninitialized((md_size * 3) - 1, fingerprint);
 
         {
@@ -1384,11 +1384,11 @@ Result<X509Pointer, int> X509Pointer::Parse(
 
     X509Pointer pem(
         PEM_read_bio_X509_AUX(bio.get(), nullptr, NoPasswordCallback, nullptr));
-    if (pem) return Result<X509Pointer, int>(WTFMove(pem));
+    if (pem) return Result<X509Pointer, int>(WTF::move(pem));
     BIO_reset(bio.get());
 
     X509Pointer der(d2i_X509_bio(bio.get(), nullptr));
-    if (der) return Result<X509Pointer, int>(WTFMove(der));
+    if (der) return Result<X509Pointer, int>(WTF::move(der));
 
     return Result<X509Pointer, int>(ERR_get_error());
 }
@@ -1537,7 +1537,7 @@ BIOPointer& BIOPointer::operator=(BIOPointer&& other) noexcept
 {
     if (this == &other) return *this;
     this->~BIOPointer();
-    return *new (this) BIOPointer(WTFMove(other));
+    return *new (this) BIOPointer(WTF::move(other));
 }
 
 BIOPointer::~BIOPointer()
@@ -1638,7 +1638,7 @@ DHPointer& DHPointer::operator=(DHPointer&& other) noexcept
 {
     if (this == &other) return *this;
     this->~DHPointer();
-    return *new (this) DHPointer(WTFMove(other));
+    return *new (this) DHPointer(WTF::move(other));
 }
 
 DHPointer::~DHPointer()
@@ -1695,7 +1695,7 @@ DHPointer DHPointer::FromGroup(const WTF::StringView name,
     auto generator = GetStandardGenerator();
     if (!generator) return {}; // Unable to create the generator.
 
-    return New(WTFMove(group), WTFMove(generator));
+    return New(WTF::move(group), WTF::move(generator));
 }
 
 DHPointer DHPointer::New(BignumPointer&& p, BignumPointer&& g)
@@ -2131,7 +2131,7 @@ EVPKeyPointer::PrivateKeyEncodingConfig::PrivateKeyEncodingConfig(
         auto& otherPassphrase = other.passphrase.value();
         auto newPassphrase = DataPointer::Alloc(otherPassphrase.size());
         memcpy(newPassphrase.get(), otherPassphrase.get(), otherPassphrase.size());
-        passphrase = WTFMove(newPassphrase);
+        passphrase = WTF::move(newPassphrase);
     }
 }
 
@@ -2209,7 +2209,7 @@ EVPKeyPointer& EVPKeyPointer::operator=(EVPKeyPointer&& other) noexcept
 {
     if (this == &other) return *this;
     this->~EVPKeyPointer();
-    return *new (this) EVPKeyPointer(WTFMove(other));
+    return *new (this) EVPKeyPointer(WTF::move(other));
 }
 
 EVPKeyPointer::~EVPKeyPointer()
@@ -2361,7 +2361,7 @@ EVPKeyPointer::ParseKeyResult TryParsePublicKeyInner(const BIOPointer& bp,
     EVPKeyPointer pkey(parse(&p, der_len));
     if (!pkey)
         return EVPKeyPointer::ParseKeyResult(EVPKeyPointer::PKParseError::FAILED);
-    return EVPKeyPointer::ParseKeyResult(WTFMove(pkey));
+    return EVPKeyPointer::ParseKeyResult(WTF::move(pkey));
 }
 
 constexpr bool IsASN1Sequence(const unsigned char* data,
@@ -2523,7 +2523,7 @@ EVPKeyPointer::ParseKeyResult EVPKeyPointer::TryParsePrivateKey(
             return ParseKeyResult(PKParseError::FAILED, err);
         }
         if (!pkey) return ParseKeyResult(PKParseError::FAILED);
-        return ParseKeyResult(WTFMove(pkey));
+        return ParseKeyResult(WTF::move(pkey));
     };
 
     auto bio = BIOPointer::New(buffer);
@@ -2865,7 +2865,7 @@ SSLPointer& SSLPointer::operator=(SSLPointer&& other) noexcept
 {
     if (this == &other) return *this;
     this->~SSLPointer();
-    return *new (this) SSLPointer(WTFMove(other));
+    return *new (this) SSLPointer(WTF::move(other));
 }
 
 SSLPointer::~SSLPointer()
@@ -3092,7 +3092,7 @@ SSLCtxPointer& SSLCtxPointer::operator=(SSLCtxPointer&& other) noexcept
 {
     if (this == &other) return *this;
     this->~SSLCtxPointer();
-    return *new (this) SSLCtxPointer(WTFMove(other));
+    return *new (this) SSLCtxPointer(WTF::move(other));
 }
 
 SSLCtxPointer::~SSLCtxPointer()
@@ -3400,7 +3400,7 @@ CipherCtxPointer& CipherCtxPointer::operator=(
 {
     if (this == &other) return *this;
     this->~CipherCtxPointer();
-    return *new (this) CipherCtxPointer(WTFMove(other));
+    return *new (this) CipherCtxPointer(WTF::move(other));
 }
 
 CipherCtxPointer::~CipherCtxPointer()
@@ -4470,7 +4470,7 @@ void Cipher::ForEach(Cipher::CipherNameCallback&& callback)
 {
     ClearErrorOnReturn clearErrorOnReturn;
     CipherCallbackContext context;
-    context.cb = WTFMove(callback);
+    context.cb = WTF::move(callback);
 
     EVP_CIPHER_do_all_sorted(
 #if OPENSSL_VERSION_MAJOR >= 3
@@ -4885,7 +4885,7 @@ std::pair<WTF::String, WTF::String> X509Name::Iterator::operator*() const
     int value_str_size = ASN1_STRING_to_UTF8(&value_str, value);
 
     return {
-        WTFMove(name_str),
+        WTF::move(name_str),
         WTF::String::fromUTF8(std::span(value_str, value_str_size)),
     };
 }

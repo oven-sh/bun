@@ -322,11 +322,18 @@ pub const Permissions = struct {
         perm.allowed = null;
     }
 
-    /// Set permission to granted with resource list
+    /// Set permission to granted with resource list.
+    /// If resources is empty, the permission is denied (no access granted).
     pub fn grantWithResources(self: *Permissions, kind: Kind, resources: []const []const u8) void {
         const perm = self.getPermissionMut(kind);
-        perm.state = .granted_partial;
-        perm.allowed = resources;
+        if (resources.len == 0) {
+            // Empty resource list means no access granted - treat as denied
+            perm.state = .denied;
+            perm.allowed = null;
+        } else {
+            perm.state = .granted_partial;
+            perm.allowed = resources;
+        }
         self.allow_all = false;
     }
 

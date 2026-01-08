@@ -1076,6 +1076,9 @@ pub fn initWithModuleGraph(
     vm.configureDebugger(opts.debugger);
     vm.body_value_hive_allocator = Body.Value.HiveAllocator.init(bun.typedAllocator(jsc.WebCore.Body.Value));
 
+    // Initialize permissions with default allow-all mode for standalone module graphs
+    vm.permissions = try initDefaultPermissions(allocator);
+
     return vm;
 }
 
@@ -1117,17 +1120,13 @@ fn initPermissionsFromOptions(opts: ?*const bun.cli.Command.PermissionOptions) p
 
     const perm_opts = opts.?;
 
-    // If --allow-all is set, grant all permissions
-    if (perm_opts.allow_all) {
-        return permissions_module.Permissions.initAllowAll();
-    }
-
-    // If not in secure mode and no explicit permissions, allow all
-    if (!perm_opts.secure_mode) {
+    // If --allow-all is set or not in secure mode, grant all permissions
+    // but still apply no_prompt and deny flags
+    if (perm_opts.allow_all or !perm_opts.secure_mode) {
         var perms = permissions_module.Permissions.initAllowAll();
         perms.no_prompt = perm_opts.no_prompt;
 
-        // Apply any deny flags even in allow-all mode
+        // Apply any deny flags even in allow-all mode (deny takes precedence)
         if (perm_opts.deny_read) |denied| {
             perms.denyResources(.read, denied);
         }
@@ -1338,6 +1337,14 @@ pub fn init(opts: Options) !*VirtualMachine {
     return vm;
 }
 
+/// Initialize permissions with default allow-all mode.
+/// Used by VM constructors that don't have permission options.
+fn initDefaultPermissions(allocator: std.mem.Allocator) !*permissions_module.Permissions {
+    const perms = try allocator.create(permissions_module.Permissions);
+    perms.* = permissions_module.Permissions.initAllowAll();
+    return perms;
+}
+
 pub inline fn assertOnJSThread(vm: *const VirtualMachine) void {
     if (Environment.allow_assert) {
         if (vm.debug_thread_id != std.Thread.getCurrentId()) {
@@ -1494,6 +1501,10 @@ pub fn initWorker(
     vm.transpiler.setAllocator(allocator);
     vm.body_value_hive_allocator = Body.Value.HiveAllocator.init(bun.typedAllocator(jsc.WebCore.Body.Value));
 
+    // Workers inherit permissions from their parent VM
+    vm.permissions = try allocator.create(permissions_module.Permissions);
+    vm.permissions.* = worker.parent.permissions.*;
+
     return vm;
 }
 
@@ -1584,6 +1595,9 @@ pub fn initBake(opts: Options) anyerror!*VirtualMachine {
 
     vm.configureDebugger(opts.debugger);
     vm.body_value_hive_allocator = Body.Value.HiveAllocator.init(bun.typedAllocator(jsc.WebCore.Body.Value));
+
+    // Initialize permissions with default allow-all mode for bake
+    vm.permissions = try initDefaultPermissions(allocator);
 
     return vm;
 }
@@ -2095,6 +2109,10 @@ pub fn deinit(this: *VirtualMachine) void {
         rare_data.deinit();
     }
     this.overridden_main.deinit();
+
+    // Clean up permissions
+    this.allocator.destroy(this.permissions);
+
     this.has_terminated = true;
 }
 

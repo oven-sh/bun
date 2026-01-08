@@ -98,21 +98,21 @@ pub const PermissionChecker = struct {
 
     /// Throw a PermissionDenied error with Deno-compatible message format
     fn throwPermissionDenied(self: PermissionChecker, kind: permissions.Kind, resource: ?[]const u8) bun.JSError {
-        var buf: [1024]u8 = undefined;
-        var fbs = std.io.fixedBufferStream(&buf);
-        const writer = fbs.writer();
+        // Create error message
+        const kind_name = kind.toName();
+        const flag_name = kind.toFlagName();
 
-        permissions.formatDeniedMessage(writer, kind, resource) catch {
-            // Fallback message if formatting fails
-            _ = writer.write("PermissionDenied") catch {};
-        };
-
-        const message = fbs.getWritten();
-        self.global.throwError(
-            ZigString.initBytes(message).toJS(self.global),
-            .permission_denied,
-        );
-        return error.JSError;
+        if (resource) |res| {
+            return self.global.throwInvalidArguments(
+                "PermissionDenied: Requires {s} access to \"{s}\", run again with the --allow-{s} flag",
+                .{ kind_name, res, flag_name },
+            );
+        } else {
+            return self.global.throwInvalidArguments(
+                "PermissionDenied: Requires {s} access, run again with the --allow-{s} flag",
+                .{ kind_name, flag_name },
+            );
+        }
     }
 };
 

@@ -1575,8 +1575,8 @@ const PermissionsObject = struct {
         const parsed = try parseDescriptor(globalThis, descriptor);
         const vm = globalThis.bunVM();
 
-        // Revoke the permission
-        vm.permissions.deny(parsed.kind, parsed.resource);
+        // Revoke the permission (deny the entire permission type)
+        vm.permissions.deny(parsed.kind);
 
         // Return the new state
         const state = vm.permissions.check(parsed.kind, parsed.resource);

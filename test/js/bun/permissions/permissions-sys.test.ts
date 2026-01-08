@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 describe("System info permissions", () => {
@@ -23,11 +23,7 @@ describe("System info permissions", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stdout + stderr).toContain("PermissionDenied");
     expect(exitCode).not.toBe(0);
@@ -49,11 +45,7 @@ describe("System info permissions", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stdout).toContain("HOSTNAME:");
     expect(exitCode).toBe(0);
@@ -64,7 +56,9 @@ describe("System info permissions", () => {
       "test.ts": `
         import os from "os";
         try {
-          console.log("CPUS:", os.cpus().length);
+          // Must access a property like .model to trigger the native call
+          // because os.cpus() uses lazy evaluation
+          console.log("CPUS:", os.cpus()[0].model);
         } catch (e) {
           console.log("ERROR:", e.message);
           process.exit(1);
@@ -80,11 +74,7 @@ describe("System info permissions", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stdout + stderr).toContain("PermissionDenied");
     expect(exitCode).not.toBe(0);
@@ -111,11 +101,7 @@ describe("System info permissions", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stdout + stderr).toContain("PermissionDenied");
     expect(exitCode).not.toBe(0);
@@ -137,11 +123,7 @@ describe("System info permissions", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stdout).toContain("HOSTNAME:");
     expect(exitCode).toBe(0);

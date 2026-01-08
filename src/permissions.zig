@@ -36,6 +36,30 @@ pub const Kind = enum(u8) {
         };
     }
 
+    pub fn toFlagName(self: Kind) []const u8 {
+        return switch (self) {
+            .read => "read",
+            .write => "write",
+            .net => "net",
+            .env => "env",
+            .sys => "sys",
+            .run => "run",
+            .ffi => "ffi",
+        };
+    }
+
+    pub fn toName(self: Kind) []const u8 {
+        return switch (self) {
+            .read => "read",
+            .write => "write",
+            .net => "network",
+            .env => "env",
+            .sys => "sys",
+            .run => "run",
+            .ffi => "ffi",
+        };
+    }
+
     pub fn toString(self: Kind) []const u8 {
         return @tagName(self);
     }
@@ -190,6 +214,30 @@ fn matchesPattern(resource: []const u8, pattern: []const u8) bool {
                 if (resource[pattern.len] == '/' or resource[pattern.len] == '\\') {
                     return true;
                 }
+            }
+        }
+    }
+
+    // Host:port matching for network permissions
+    // Pattern "host" matches "host:port" (any port on that host)
+    // Pattern "host:port" requires exact match (handled above)
+    if (std.mem.indexOfScalar(u8, resource, ':')) |colon_pos| {
+        const resource_host = resource[0..colon_pos];
+        if (std.mem.eql(u8, resource_host, pattern)) {
+            return true;
+        }
+    }
+
+    // Command basename matching for run permissions
+    // Pattern "cmd" matches "/usr/bin/cmd" or any path ending in "/cmd"
+    // Only if pattern doesn't contain path separators
+    if (std.mem.indexOfScalar(u8, pattern, '/') == null and
+        std.mem.indexOfScalar(u8, pattern, '\\') == null)
+    {
+        if (std.mem.lastIndexOfScalar(u8, resource, '/')) |last_slash| {
+            const basename = resource[last_slash + 1 ..];
+            if (std.mem.eql(u8, basename, pattern)) {
+                return true;
             }
         }
     }

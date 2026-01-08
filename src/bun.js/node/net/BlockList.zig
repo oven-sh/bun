@@ -8,7 +8,7 @@ pub const toJS = js.toJS;
 
 ref_count: RefCount = .init(),
 globalThis: *jsc.JSGlobalObject,
-da_rules: std.ArrayList(Rule),
+da_rules: std.array_list.Managed(Rule),
 mutex: bun.Mutex = .{},
 
 /// We cannot lock/unlock a mutex
@@ -199,7 +199,7 @@ const StructuredCloneWriter = struct {
     ctx: *anyopaque,
     impl: *const fn (*anyopaque, ptr: [*]const u8, len: u32) callconv(jsc.conv) void,
 
-    pub const Writer = std.io.Writer(@This(), Error, write);
+    pub const Writer = std.Io.GenericWriter(@This(), Error, write);
     pub const Error = error{};
 
     fn write(this: StructuredCloneWriter, bytes: []const u8) Error!usize {
@@ -208,12 +208,16 @@ const StructuredCloneWriter = struct {
     }
 };
 
-pub fn onStructuredCloneDeserialize(globalThis: *jsc.JSGlobalObject, ptr: [*]u8, end: [*]u8) bun.JSError!jsc.JSValue {
-    const total_length: usize = @intFromPtr(end) - @intFromPtr(ptr);
-    var buffer_stream = std.io.fixedBufferStream(ptr[0..total_length]);
+pub fn onStructuredCloneDeserialize(globalThis: *jsc.JSGlobalObject, ptr: *[*]u8, end: [*]u8) bun.JSError!jsc.JSValue {
+    const total_length: usize = @intFromPtr(end) - @intFromPtr(ptr.*);
+    var buffer_stream = std.io.fixedBufferStream(ptr.*[0..total_length]);
     const reader = buffer_stream.reader();
 
     const int = reader.readInt(usize, .little) catch return globalThis.throw("BlockList.onStructuredCloneDeserialize failed", .{});
+
+    // Advance the pointer by the number of bytes consumed
+    ptr.* = ptr.* + buffer_stream.pos;
+
     const this: *@This() = @ptrFromInt(int);
     return this.toJS(globalThis);
 }

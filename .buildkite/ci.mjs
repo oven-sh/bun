@@ -16,6 +16,7 @@ import {
   getEmoji,
   getEnv,
   getLastSuccessfulBuild,
+  getSecret,
   isBuildkite,
   isBuildManual,
   isFork,
@@ -108,9 +109,9 @@ const buildPlatforms = [
   { os: "linux", arch: "x64", distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "linux", arch: "x64", baseline: true, distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "linux", arch: "x64", profile: "asan", distro: "amazonlinux", release: "2023", features: ["docker"] },
-  { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.21" },
-  { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.21" },
-  { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.21" },
+  { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.22" },
+  { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.22" },
+  { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.22" },
   { os: "windows", arch: "x64", release: "2019" },
   { os: "windows", arch: "x64", baseline: true, release: "2019" },
 ];
@@ -123,19 +124,16 @@ const testPlatforms = [
   { os: "darwin", arch: "aarch64", release: "13", tier: "previous" },
   { os: "darwin", arch: "x64", release: "14", tier: "latest" },
   { os: "darwin", arch: "x64", release: "13", tier: "previous" },
-  { os: "linux", arch: "aarch64", distro: "debian", release: "12", tier: "latest" },
-  { os: "linux", arch: "x64", distro: "debian", release: "12", tier: "latest" },
-  { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "12", tier: "latest" },
-  { os: "linux", arch: "x64", profile: "asan", distro: "debian", release: "12", tier: "latest" },
+  { os: "linux", arch: "aarch64", distro: "debian", release: "13", tier: "latest" },
+  { os: "linux", arch: "x64", distro: "debian", release: "13", tier: "latest" },
+  { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "13", tier: "latest" },
+  { os: "linux", arch: "x64", profile: "asan", distro: "debian", release: "13", tier: "latest" },
   { os: "linux", arch: "aarch64", distro: "ubuntu", release: "25.04", tier: "latest" },
-  { os: "linux", arch: "aarch64", distro: "ubuntu", release: "24.04", tier: "latest" },
   { os: "linux", arch: "x64", distro: "ubuntu", release: "25.04", tier: "latest" },
-  { os: "linux", arch: "x64", distro: "ubuntu", release: "24.04", tier: "latest" },
   { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "25.04", tier: "latest" },
-  { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "24.04", tier: "latest" },
-  { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.21", tier: "latest" },
-  { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.21", tier: "latest" },
-  { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.21", tier: "latest" },
+  { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.22", tier: "latest" },
+  { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.22", tier: "latest" },
+  { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.22", tier: "latest" },
   { os: "windows", arch: "x64", release: "2019", tier: "oldest" },
   { os: "windows", arch: "x64", release: "2019", baseline: true, tier: "oldest" },
 ];
@@ -223,7 +221,7 @@ function getImageName(platform, options) {
  * @param {number} [limit]
  * @link https://buildkite.com/docs/pipelines/command-step#retry-attributes
  */
-function getRetry(limit = 0) {
+function getRetry() {
   return {
     manual: {
       permit_on_passed: true,
@@ -292,7 +290,7 @@ function getEc2Agent(platform, options, ec2Options) {
  * @returns {string}
  */
 function getCppAgent(platform, options) {
-  const { os, arch, distro } = platform;
+  const { os, arch } = platform;
 
   if (os === "darwin") {
     return {
@@ -313,7 +311,7 @@ function getCppAgent(platform, options) {
  * @returns {string}
  */
 function getLinkBunAgent(platform, options) {
-  const { os, arch, distro } = platform;
+  const { os, arch } = platform;
 
   if (os === "darwin") {
     return {
@@ -343,7 +341,7 @@ function getZigPlatform() {
     arch: "aarch64",
     abi: "musl",
     distro: "alpine",
-    release: "3.21",
+    release: "3.22",
   };
 }
 
@@ -352,14 +350,7 @@ function getZigPlatform() {
  * @param {PipelineOptions} options
  * @returns {Agent}
  */
-function getZigAgent(platform, options) {
-  const { arch } = platform;
-
-  // Uncomment to restore to using macOS on-prem for Zig.
-  // return {
-  //   queue: "build-zig",
-  // };
-
+function getZigAgent(_platform, options) {
   return getEc2Agent(getZigPlatform(), options, {
     instanceType: "r8g.large",
   });
@@ -371,7 +362,7 @@ function getZigAgent(platform, options) {
  * @returns {Agent}
  */
 function getTestAgent(platform, options) {
-  const { os, arch } = platform;
+  const { os, arch, profile } = platform;
 
   if (os === "darwin") {
     return {
@@ -391,6 +382,13 @@ function getTestAgent(platform, options) {
   }
 
   if (arch === "aarch64") {
+    if (profile === "asan") {
+      return getEc2Agent(platform, options, {
+        instanceType: "c8g.2xlarge",
+        cpuCount: 2,
+        threadsPerCore: 1,
+      });
+    }
     return getEc2Agent(platform, options, {
       instanceType: "c8g.xlarge",
       cpuCount: 2,
@@ -398,6 +396,13 @@ function getTestAgent(platform, options) {
     });
   }
 
+  if (profile === "asan") {
+    return getEc2Agent(platform, options, {
+      instanceType: "c7i.2xlarge",
+      cpuCount: 2,
+      threadsPerCore: 1,
+    });
+  }
   return getEc2Agent(platform, options, {
     instanceType: "c7i.xlarge",
     cpuCount: 2,
@@ -452,23 +457,6 @@ function getBuildCommand(target, options, label) {
  * @param {PipelineOptions} options
  * @returns {Step}
  */
-function getBuildVendorStep(platform, options) {
-  return {
-    key: `${getTargetKey(platform)}-build-vendor`,
-    label: `${getTargetLabel(platform)} - build-vendor`,
-    agents: getCppAgent(platform, options),
-    retry: getRetry(),
-    cancel_on_build_failing: isMergeQueue(),
-    env: getBuildEnv(platform, options),
-    command: `${getBuildCommand(platform, options)} --target dependencies`,
-  };
-}
-
-/**
- * @param {Platform} platform
- * @param {PipelineOptions} options
- * @returns {Step}
- */
 function getBuildCppStep(platform, options) {
   const command = getBuildCommand(platform, options);
   return {
@@ -513,9 +501,9 @@ function getBuildZigStep(platform, options) {
   const toolchain = getBuildToolchain(platform);
   return {
     key: `${getTargetKey(platform)}-build-zig`,
+    retry: getRetry(),
     label: `${getTargetLabel(platform)} - build-zig`,
     agents: getZigAgent(platform, options),
-    retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
     env: getBuildEnv(platform, options),
     command: `${getBuildCommand(platform, options)} --target bun-zig --toolchain ${toolchain}`,
@@ -538,6 +526,7 @@ function getLinkBunStep(platform, options) {
     cancel_on_build_failing: isMergeQueue(),
     env: {
       BUN_LINK_ONLY: "ON",
+      ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
       ...getBuildEnv(platform, options),
     },
     command: `${getBuildCommand(platform, options, "build-bun")} --target bun`,
@@ -564,7 +553,6 @@ function getBuildBunStep(platform, options) {
 /**
  * @typedef {Object} TestOptions
  * @property {string} [buildId]
- * @property {boolean} [unifiedTests]
  * @property {string[]} [testFiles]
  * @property {boolean} [dryRun]
  */
@@ -577,12 +565,13 @@ function getBuildBunStep(platform, options) {
  */
 function getTestBunStep(platform, options, testOptions = {}) {
   const { os, profile } = platform;
-  const { buildId, unifiedTests, testFiles } = testOptions;
+  const { buildId, testFiles } = testOptions;
 
   const args = [`--step=${getTargetKey(platform)}-build-bun`];
   if (buildId) {
     args.push(`--build-id=${buildId}`);
   }
+
   if (testFiles) {
     args.push(...testFiles.map(testFile => `--include=${testFile}`));
   }
@@ -599,8 +588,11 @@ function getTestBunStep(platform, options, testOptions = {}) {
     agents: getTestAgent(platform, options),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
-    parallelism: unifiedTests ? undefined : os === "darwin" ? 2 : 10,
+    parallelism: os === "darwin" ? 2 : 10,
     timeout_in_minutes: profile === "asan" || os === "windows" ? 45 : 30,
+    env: {
+      ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
+    },
     command:
       os === "windows"
         ? `node .\\scripts\\runner.node.mjs ${args.join(" ")}`
@@ -778,8 +770,6 @@ function getBenchmarkStep() {
  * @property {Platform[]} [buildPlatforms]
  * @property {Platform[]} [testPlatforms]
  * @property {string[]} [testFiles]
- * @property {boolean} [unifiedBuilds]
- * @property {boolean} [unifiedTests]
  */
 
 /**
@@ -950,22 +940,6 @@ function getOptionsStep() {
         default: "false",
         options: booleanOptions,
       },
-      {
-        key: "unified-builds",
-        select: "Do you want to build each platform in a single step?",
-        hint: "If true, builds will not be split into separate steps (this will likely slow down the build)",
-        required: false,
-        default: "false",
-        options: booleanOptions,
-      },
-      {
-        key: "unified-tests",
-        select: "Do you want to run tests in a single step?",
-        hint: "If true, tests will not be split into separate steps (this will be very slow)",
-        required: false,
-        default: "false",
-        options: booleanOptions,
-      },
     ],
   };
 }
@@ -1031,8 +1005,6 @@ async function getPipelineOptions() {
       buildImages: parseBoolean(options["build-images"]),
       publishImages: parseBoolean(options["publish-images"]),
       testFiles: parseArray(options["test-files"]),
-      unifiedBuilds: parseBoolean(options["unified-builds"]),
-      unifiedTests: parseBoolean(options["unified-tests"]),
       buildPlatforms: buildPlatformKeys?.length
         ? buildPlatformKeys.flatMap(key => buildProfiles.map(profile => ({ ...buildPlatformsMap.get(key), profile })))
         : Array.from(buildPlatformsMap.values()),
@@ -1098,7 +1070,7 @@ async function getPipeline(options = {}) {
   const imagePlatforms = new Map(
     buildImages || publishImages
       ? [...buildPlatforms, ...testPlatforms]
-          .filter(({ os }) => os === "linux" || os === "windows")
+          .filter(({ os }) => os !== "darwin")
           .map(platform => [getImageKey(platform), platform])
       : [],
   );
@@ -1114,7 +1086,7 @@ async function getPipeline(options = {}) {
     });
   }
 
-  let { skipBuilds, forceBuilds, unifiedBuilds, dryRun } = options;
+  let { skipBuilds, forceBuilds, dryRun } = options;
   dryRun = dryRun || !!buildImages;
 
   /** @type {string | undefined} */
@@ -1132,7 +1104,7 @@ async function getPipeline(options = {}) {
   const includeASAN = !isMainBranch();
 
   if (!buildId) {
-    const relevantBuildPlatforms = includeASAN
+    let relevantBuildPlatforms = includeASAN
       ? buildPlatforms
       : buildPlatforms.filter(({ profile }) => profile !== "asan");
 
@@ -1145,13 +1117,16 @@ async function getPipeline(options = {}) {
           dependsOn.push(`${imageKey}-build-image`);
         }
 
+        const steps = [];
+        steps.push(getBuildCppStep(target, options));
+        steps.push(getBuildZigStep(target, options));
+        steps.push(getLinkBunStep(target, options));
+
         return getStepWithDependsOn(
           {
             key: getTargetKey(target),
             group: getTargetLabel(target),
-            steps: unifiedBuilds
-              ? [getBuildBunStep(target, options)]
-              : [getBuildCppStep(target, options), getBuildZigStep(target, options), getLinkBunStep(target, options)],
+            steps,
           },
           ...dependsOn,
         );
@@ -1160,13 +1135,13 @@ async function getPipeline(options = {}) {
   }
 
   if (!isMainBranch()) {
-    const { skipTests, forceTests, unifiedTests, testFiles } = options;
+    const { skipTests, forceTests, testFiles } = options;
     if (!skipTests || forceTests) {
       steps.push(
         ...testPlatforms.map(target => ({
           key: getTargetKey(target),
           group: getTargetLabel(target),
-          steps: [getTestBunStep(target, options, { unifiedTests, testFiles, buildId })],
+          steps: [getTestBunStep(target, options, { testFiles, buildId })],
         })),
       );
     }
@@ -1207,6 +1182,43 @@ async function main() {
   const options = await getPipelineOptions();
   if (options) {
     console.log("Generated options:", options);
+  }
+
+  startGroup("Querying GitHub for files...");
+  if (options && isBuildkite && !isMainBranch()) {
+    /** @type {string[]} */
+    let allFiles = [];
+    /** @type {string[]} */
+    let newFiles = [];
+    let prFileCount = 0;
+    try {
+      console.log("on buildkite: collecting new files from PR");
+      const per_page = 50;
+      const { BUILDKITE_PULL_REQUEST } = process.env;
+      for (let i = 1; i <= 10; i++) {
+        const res = await fetch(
+          `https://api.github.com/repos/oven-sh/bun/pulls/${BUILDKITE_PULL_REQUEST}/files?per_page=${per_page}&page=${i}`,
+          { headers: { Authorization: `Bearer ${getSecret("GITHUB_TOKEN")}` } },
+        );
+        const doc = await res.json();
+        console.log(`-> page ${i}, found ${doc.length} items`);
+        if (doc.length === 0) break;
+        for (const { filename, status } of doc) {
+          prFileCount += 1;
+          allFiles.push(filename);
+          if (status !== "added") continue;
+          newFiles.push(filename);
+        }
+        if (doc.length < per_page) break;
+      }
+      console.log(`- PR ${BUILDKITE_PULL_REQUEST}, ${prFileCount} files, ${newFiles.length} new files`);
+    } catch (e) {
+      console.error(e);
+    }
+    if (allFiles.every(filename => filename.startsWith("docs/"))) {
+      console.log(`- PR is only docs, skipping tests!`);
+      return;
+    }
   }
 
   startGroup("Generating pipeline...");

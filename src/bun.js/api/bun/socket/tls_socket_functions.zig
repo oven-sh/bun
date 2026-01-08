@@ -39,7 +39,7 @@ pub fn setServername(this: *This, globalObject: *jsc.JSGlobalObject, callframe: 
             // match node.js exceptions
             return globalObject.throw("Already started.", .{});
         }
-        const host__ = default_allocator.dupeZ(u8, host) catch bun.outOfMemory();
+        const host__ = bun.handleOom(default_allocator.dupeZ(u8, host));
         defer default_allocator.free(host__);
         ssl_ptr.setHostname(host__);
     }
@@ -237,7 +237,7 @@ pub fn getSharedSigalgs(this: *This, globalObject: *jsc.JSGlobalObject, _: *jsc.
         if (hash_str != null) {
             const hash_str_len = bun.len(hash_str);
             const hash_slice = hash_str[0..hash_str_len];
-            const buffer = bun.default_allocator.alloc(u8, sig_with_md.len + hash_str_len + 1) catch bun.outOfMemory();
+            const buffer = bun.handleOom(bun.default_allocator.alloc(u8, sig_with_md.len + hash_str_len + 1));
             defer bun.default_allocator.free(buffer);
 
             bun.copy(u8, buffer, sig_with_md);
@@ -245,7 +245,7 @@ pub fn getSharedSigalgs(this: *This, globalObject: *jsc.JSGlobalObject, _: *jsc.
             bun.copy(u8, buffer[sig_with_md.len + 1 ..], hash_slice);
             try array.putIndex(globalObject, @as(u32, @intCast(i)), jsc.ZigString.fromUTF8(buffer).toJS(globalObject));
         } else {
-            const buffer = bun.default_allocator.alloc(u8, sig_with_md.len + 6) catch bun.outOfMemory();
+            const buffer = bun.handleOom(bun.default_allocator.alloc(u8, sig_with_md.len + 6));
             defer bun.default_allocator.free(buffer);
 
             bun.copy(u8, buffer, sig_with_md);
@@ -259,7 +259,7 @@ pub fn getSharedSigalgs(this: *This, globalObject: *jsc.JSGlobalObject, _: *jsc.
 pub fn getCipher(this: *This, globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
     const ssl_ptr = this.socket.ssl() orelse return .js_undefined;
     const cipher = BoringSSL.SSL_get_current_cipher(ssl_ptr);
-    var result = JSValue.createEmptyObject(globalObject, 3);
+    var result = JSValue.createEmptyObject(globalObject, 0);
 
     if (cipher == null) {
         result.put(globalObject, ZigString.static("name"), JSValue.jsNull());
@@ -383,9 +383,9 @@ pub fn getEphemeralKeyInfo(this: *This, globalObject: *jsc.JSGlobalObject, _: *j
     if (this.isServer()) {
         return JSValue.jsNull();
     }
-    var result = JSValue.createEmptyObject(globalObject, 3);
 
     const ssl_ptr = this.socket.ssl() orelse return JSValue.jsNull();
+    var result = JSValue.createEmptyObject(globalObject, 0);
 
     // TODO: investigate better option or compatible way to get the key
     // this implementation follows nodejs but for BoringSSL SSL_get_server_tmp_key will always return 0
@@ -534,6 +534,11 @@ pub fn disableRenegotiation(this: *This, _: *jsc.JSGlobalObject, _: *jsc.CallFra
     return .js_undefined;
 }
 
+pub fn isSessionReused(this: *This, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
+    const ssl_ptr = this.socket.ssl() orelse return .false;
+    return JSValue.jsBoolean(BoringSSL.SSL_session_reused(ssl_ptr) == 1);
+}
+
 pub fn setVerifyMode(this: *This, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     if (this.socket.isDetached()) {
         return .js_undefined;
@@ -566,7 +571,7 @@ pub fn setVerifyMode(this: *This, globalObject: *jsc.JSGlobalObject, callframe: 
     return .js_undefined;
 }
 
-fn alwaysAllowSSLVerifyCallback(_: c_int, _: ?*BoringSSL.X509_STORE_CTX) callconv(.C) c_int {
+fn alwaysAllowSSLVerifyCallback(_: c_int, _: ?*BoringSSL.X509_STORE_CTX) callconv(.c) c_int {
     return 1;
 }
 
@@ -621,9 +626,9 @@ noinline fn getSSLException(globalThis: *jsc.JSGlobalObject, defaultMessage: []c
 
     if (written > 0) {
         const message = output_buf[0..written];
-        zig_str = ZigString.init(std.fmt.allocPrint(bun.default_allocator, "OpenSSL {s}", .{message}) catch bun.outOfMemory());
+        zig_str = ZigString.init(bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "OpenSSL {s}", .{message})));
         var encoded_str = zig_str.withEncoding();
-        encoded_str.mark();
+        encoded_str.markGlobal();
 
         // We shouldn't *need* to do this but it's not entirely clear.
         BoringSSL.ERR_clear_error();

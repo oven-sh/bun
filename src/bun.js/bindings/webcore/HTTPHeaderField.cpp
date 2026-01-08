@@ -32,14 +32,14 @@ namespace RFC7230 {
 
 bool isTokenCharacter(char16_t c)
 {
-    return c < 0x80 && isTokenCharacter(static_cast<LChar>(c));
+    return c < 0x80 && isTokenCharacter(static_cast<Latin1Character>(c));
 }
 bool isDelimiter(char16_t c)
 {
-    return c < 0x80 && isDelimiter(static_cast<LChar>(c));
+    return c < 0x80 && isDelimiter(static_cast<Latin1Character>(c));
 }
 
-bool isTokenCharacter(LChar c)
+bool isTokenCharacter(Latin1Character c)
 {
     return isASCIIAlpha(c) || isASCIIDigit(c)
         || c == '!' || c == '#' || c == '$'
@@ -49,7 +49,7 @@ bool isTokenCharacter(LChar c)
         || c == '`' || c == '|' || c == '~';
 }
 
-bool isDelimiter(LChar c)
+bool isDelimiter(Latin1Character c)
 {
     return c == '(' || c == ')' || c == ','
         || c == '/' || c == ':' || c == ';'
@@ -218,9 +218,9 @@ std::optional<HTTPHeaderField> HTTPHeaderField::create(String&& unparsedName, St
     if (!RFC7230::isValidName(trimmedName) || !RFC7230::isValidValue(trimmedValue))
         return std::nullopt;
 
-    auto name = trimmedName.length() == unparsedName.length() ? WTFMove(unparsedName) : trimmedName.toString();
-    auto value = trimmedValue.length() == unparsedValue.length() ? WTFMove(unparsedValue) : trimmedValue.toString();
-    return { { WTFMove(name), WTFMove(value) } };
+    auto name = trimmedName.length() == unparsedName.length() ? WTF::move(unparsedName) : trimmedName.toString();
+    auto value = trimmedValue.length() == unparsedValue.length() ? WTF::move(unparsedValue) : trimmedValue.toString();
+    return { { WTF::move(name), WTF::move(value) } };
 }
 
 }

@@ -125,11 +125,11 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSURLSearchParamsDOMCons
     EnsureStillAliveScope argument0 = callFrame->argument(0);
     auto init = argument0.value().isUndefined() ? emptyString() : convert<IDLUnion<IDLSequence<IDLSequence<IDLUSVString>>, IDLRecord<IDLUSVString, IDLUSVString>, IDLUSVString>>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    auto object = URLSearchParams::create(WTFMove(init));
+    auto object = URLSearchParams::create(WTF::move(init));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
-    auto jsValue = toJSNewlyCreated<IDLInterface<URLSearchParams>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTFMove(object));
+    auto jsValue = toJSNewlyCreated<IDLInterface<URLSearchParams>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTF::move(object));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     setSubclassStructureIfNeeded<URLSearchParams>(lexicalGlobalObject, callFrame, asObject(jsValue));
@@ -183,7 +183,7 @@ static const HashTableValue JSURLSearchParamsPrototypeTableValues[] = {
     { "toString"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsURLSearchParamsPrototypeFunction_toString, 0 } },
     { "toJSON"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsURLSearchParamsPrototypeFunction_toJSON, 0 } },
     { "length"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsURLSearchParamsPrototype_getLength, 0 } },
-    { "size"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsURLSearchParamsPrototype_getLength, 0 } },
+    { "size"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), NoIntrinsic, { HashTableValue::GetterSetterType, jsURLSearchParamsPrototype_getLength, 0 } },
 };
 
 const ClassInfo JSURLSearchParamsPrototype::s_info = { "URLSearchParams"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSURLSearchParamsPrototype) };
@@ -199,7 +199,7 @@ void JSURLSearchParamsPrototype::finishCreation(VM& vm)
 const ClassInfo JSURLSearchParams::s_info = { "URLSearchParams"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSURLSearchParams) };
 
 JSURLSearchParams::JSURLSearchParams(Structure* structure, JSDOMGlobalObject& globalObject, Ref<URLSearchParams>&& impl)
-    : JSDOMWrapper<URLSearchParams>(structure, globalObject, WTFMove(impl))
+    : JSDOMWrapper<URLSearchParams>(structure, globalObject, WTF::move(impl))
 {
 }
 
@@ -259,7 +259,7 @@ static inline JSC::EncodedJSValue jsURLSearchParamsPrototypeFunction_appendBody(
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
     auto value = convert<IDLUSVString>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.append(WTFMove(name), WTFMove(value)); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.append(WTF::move(name), WTF::move(value)); })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsURLSearchParamsPrototypeFunction_append, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -287,7 +287,7 @@ static inline JSC::EncodedJSValue jsURLSearchParamsPrototypeFunction_deleteBody(
         RETURN_IF_EXCEPTION(throwScope, {});
     }
 
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.remove(WTFMove(name), WTFMove(value)); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.remove(WTF::move(name), WTF::move(value)); })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsURLSearchParamsPrototypeFunction_delete, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -361,7 +361,7 @@ static inline JSC::EncodedJSValue jsURLSearchParamsPrototypeFunction_hasBody(JSC
         RETURN_IF_EXCEPTION(throwScope, {});
     }
 
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLBoolean>(*lexicalGlobalObject, throwScope, impl.has(name, WTFMove(value)))));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLBoolean>(*lexicalGlobalObject, throwScope, impl.has(name, WTF::move(value)))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsURLSearchParamsPrototypeFunction_has, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -384,7 +384,7 @@ static inline JSC::EncodedJSValue jsURLSearchParamsPrototypeFunction_setBody(JSC
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
     auto value = convert<IDLUSVString>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.set(WTFMove(name), WTFMove(value)); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.set(WTF::move(name), WTF::move(value)); })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsURLSearchParamsPrototypeFunction_set, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -422,6 +422,61 @@ JSC_DEFINE_HOST_FUNCTION(jsURLSearchParamsPrototypeFunction_toString, (JSGlobalO
     return IDLOperation<JSURLSearchParams>::call<jsURLSearchParamsPrototypeFunction_toStringBody>(*lexicalGlobalObject, *callFrame, "toString");
 }
 
+template<bool hasIndex>
+static void putIntoObject(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSObject* obj,
+    const Identifier& ident, std::optional<unsigned> index, const String& key,
+    JSValue stringValue, WTF::HashSet<String>& seenKeys,
+    GCDeferralContext& deferralContext, JSC::ThrowScope& throwScope)
+{
+    if (seenKeys.contains(key)) {
+        JSValue jsValue;
+        if constexpr (hasIndex) {
+            jsValue = obj->getDirectIndex(lexicalGlobalObject, index.value());
+        } else {
+            jsValue = obj->getDirect(vm, ident);
+        }
+        RETURN_IF_EXCEPTION(throwScope, );
+
+        if (jsValue.isString()) {
+            JSC::ObjectInitializationScope initializationScope(vm);
+
+            JSC::JSArray* array = JSC::JSArray::tryCreateUninitializedRestricted(
+                initializationScope, &deferralContext,
+                lexicalGlobalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
+                2);
+
+            if (!array) [[unlikely]] {
+                throwScope.throwException(lexicalGlobalObject, createOutOfMemoryError(lexicalGlobalObject));
+                return;
+            }
+
+            array->initializeIndex(initializationScope, 0, jsValue);
+            array->initializeIndex(initializationScope, 1, stringValue);
+
+            if constexpr (hasIndex) {
+                obj->putDirectIndex(lexicalGlobalObject, index.value(), array);
+                throwScope.assertNoException(); // not a proxy.
+            } else {
+                obj->putDirect(vm, ident, array);
+            }
+        } else if (jsValue.isCell() && jsValue.asCell()->type() == ArrayType) {
+            JSC::JSArray* array = jsCast<JSC::JSArray*>(jsValue.getObject());
+            array->push(lexicalGlobalObject, stringValue);
+            RETURN_IF_EXCEPTION(throwScope, );
+        } else {
+            RELEASE_ASSERT_NOT_REACHED();
+        }
+    } else {
+        seenKeys.add(key);
+        if constexpr (hasIndex) {
+            obj->putDirectIndex(lexicalGlobalObject, index.value(), stringValue);
+            throwScope.assertNoException(); // not a proxy.
+        } else {
+            obj->putDirect(vm, ident, stringValue);
+        }
+    }
+}
+
 JSC::JSValue getInternalProperties(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSURLSearchParams* castedThis)
 {
     auto& impl = castedThis->wrapped();
@@ -439,38 +494,22 @@ JSC::JSValue getInternalProperties(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlob
 
     RETURN_IF_EXCEPTION(throwScope, {});
     WTF::HashSet<String> seenKeys;
+    GCDeferralContext deferralContext(vm);
+
     for (auto entry = iter.next(); entry.has_value(); entry = iter.next()) {
         auto& key = entry.value().key;
         auto& value = entry.value().value;
         auto ident = Identifier::fromString(vm, key);
-        if (seenKeys.contains(key)) {
-            JSValue jsValue = obj->getDirect(vm, ident);
-            if (jsValue.isString()) {
-                JSValue stringResult = jsString(vm, value);
-                ensureStillAliveHere(stringResult);
+        auto index = JSC::parseIndex(ident);
 
-                GCDeferralContext deferralContext(lexicalGlobalObject->vm());
-                JSC::ObjectInitializationScope initializationScope(lexicalGlobalObject->vm());
+        JSValue stringValue = jsString(vm, value);
 
-                JSC::JSArray* array = JSC::JSArray::tryCreateUninitializedRestricted(
-                    initializationScope, &deferralContext,
-                    lexicalGlobalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
-                    2);
-
-                array->initializeIndex(initializationScope, 0, jsValue);
-                array->initializeIndex(initializationScope, 1, stringResult);
-                obj->putDirect(vm, ident, array, 0);
-            } else if (jsValue.isCell() && jsValue.asCell()->type() == ArrayType) {
-                JSC::JSArray* array = jsCast<JSC::JSArray*>(jsValue.getObject());
-                array->push(lexicalGlobalObject, jsString(vm, value));
-                RETURN_IF_EXCEPTION(throwScope, {});
-            } else {
-                RELEASE_ASSERT_NOT_REACHED();
-            }
-        } else {
-            seenKeys.add(key);
-            obj->putDirect(vm, ident, jsString(vm, value), 0);
+        if (index.has_value()) [[unlikely]] {
+            putIntoObject<true>(vm, lexicalGlobalObject, obj, ident, index, key, stringValue, seenKeys, deferralContext, throwScope);
+        } else [[likely]] {
+            putIntoObject<false>(vm, lexicalGlobalObject, obj, ident, index, key, stringValue, seenKeys, deferralContext, throwScope);
         }
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
 
     RELEASE_AND_RETURN(throwScope, obj);
@@ -648,7 +687,7 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
     //         // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
     // #endif
     // }
-    return createWrapper<URLSearchParams>(globalObject, WTFMove(impl));
+    return createWrapper<URLSearchParams>(globalObject, WTF::move(impl));
 }
 
 JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, URLSearchParams& impl)
@@ -669,5 +708,4 @@ size_t JSURLSearchParams::estimatedSize(JSC::JSCell* cell, JSC::VM& vm)
     auto& wrapped = thisObject->wrapped();
     return Base::estimatedSize(cell, vm) + wrapped.memoryCost();
 }
-
 }

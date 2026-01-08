@@ -98,6 +98,11 @@ declare module "bun" {
     ): void;
   }
 
+  /**
+   * @deprecated Use {@link Serve.Options Bun.Serve.Options<T, R>} instead
+   */
+  type ServeOptions<T = undefined, R extends string = never> = Serve.Options<T, R>;
+
   /** @deprecated Use {@link SQL.Query Bun.SQL.Query} */
   type SQLQuery<T = any> = SQL.Query<T>;
 

@@ -1,0 +1,192 @@
+.steps {
+  margin-top: 0;
+}
+
+div[data-component-part="card-icon"] > svg {
+  mask-size: 80%;
+}
+
+.font-mono {
+  font-weight: 700 !important;
+}
+
+.nav-tabs .nav-tabs-item {
+  font-size: 0.8rem !important;
+}
+
+.mdx-content > span[data-as="p"] {
+  margin-bottom: 2rem !important;
+}
+
+.dark\:bg-white\/5:is(.dark *) {
+  background-color: rgb(155 155 155 / 5%);
+}
+
+ul#sidebar-group > li > a {
+  font-size: 0.825rem;
+  line-height: 1rem;
+  font-weight: 500;
+}
+
+pre.shiki {
+  line-height: 1.4rem;
+  font-size: 0.8rem;
+}
+
+.dark\:ring-white\/\[0\.14\]:is(.dark *) {
+  border: 1px solid rgb(255 255 255/0.14) !important;
+  --tw-ring-color: transparent;
+}
+
+.ring-transparent {
+  border: 1px solid transparent !important;
+}
+
+/* Remove top border radius when there's a header */
+.code-block:has([data-component-part="code-block-header"]) div[data-component-part="code-block-root"] {
+  border-top-right-radius: 0px !important;
+  border-top-left-radius: 0px !important;
+}
+
+/* Remove top border radius for code groups with tab bars */
+.code-group:has([data-component-part="code-group-tab-bar"]) div[data-component-part="code-block-root"] {
+  border-top-right-radius: 0px !important;
+  border-top-left-radius: 0px !important;
+}
+
+img.code-block-icon {
+  background: transparent !important;
+}
+
+div[data-component-part="card-icon"] img {
+  background: transparent !important;
+}
+
+html.dark .card-group .card:not(:hover) {
+  border: 1px solid rgb(255 255 255/0.1) !important;
+}
+
+html:not(.dark) .card-group .card {
+  border: 1px solid rgb(var(--gray-200)) !important;
+}
+
+.dark div[data-component-part="card-content-container"] {
+  background: rgb(255 255 255/0.03);
+}
+
+.card:hover {
+  border-color: rgb(var(--gray-400) / var(--tw-border-opacity)) !important;
+}
+
+html.dark .shiki,
+html.dark .shiki span {
+  background-color: transparent !important;
+}
+
+.prose :where(hr):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
+  margin-top: 2rem !important;
+  margin-bottom: 2rem !important;
+}
+
+footer#footer a[href*="mintlify.com"] {
+  display: none;
+}
+
+.nav-tabs {
+  width: 100% !important;
+}
+
+a[href="/guides"],
+a[href="/docs/guides"] {
+  margin-left: auto !important;
+}
+
+div[data-component-part="card-content-container"] {
+  height: 100% !important;
+}
+
+div#guides-list div[data-component-part="card-content-container"] > *:nth-child(2) {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between !important;
+}
+
+/* hacky css to show terminal output until we have a better component */
+.code-block + .code-block[language="text"] {
+  margin-top: -32px;
+  z-index: -1;
+  border-top-right-radius: 0px;
+  border-top-left-radius: 0px;
+  border-top: none;
+}
+
+.code-block + .code-block[language="text"],
+.code-block + .code-block[language="text"] div[data-component-part="code-block-root"] {
+  background-color: rgb(var(--gray-50)) !important;
+}
+
+html.dark .code-block + .code-block[language="text"],
+html.dark .code-block + .code-block[language="text"] div[data-component-part="code-block-root"] {
+  background-color: #16171e !important;
+}
+
+.code-block + .code-block[language="text"] div.absolute.top-3 {
+  display: none;
+}
+
+.code-block:has(+ .code-block[language="text"]) {
+  border-bottom-right-radius: 0px;
+  border-bottom-left-radius: 0px;
+}
+
+.code-block:has(+ .code-block[language="text"]) div[data-component-part="code-block-root"] {
+  border-bottom-right-radius: 0px;
+  border-bottom-left-radius: 0px;
+}
+
+div.callout .code-block {
+  margin-bottom: 0px;
+}
+
+[language="shellscript"] code span.line:not(:empty):has(span)::before {
+  content: "$ ";
+  color: #6272a4;
+  user-select: none;
+}
+
+[language="shellscript"] code span.line:has(> span:first-child[style*="color: rgb(98, 114, 164)"])::before,
+[language="shellscript"] code span.line:has(> span:first-child[style*="#6272A4"])::before {
+  content: "";
+}
+
+[language="powershell"] code span.line:not(:empty):has(span)::before {
+  content: "> ";
+  color: #6272a4;
+  user-select: none;
+}
+
+[language="powershell"] code span.line:has(> span:first-child[style*="color: rgb(98, 114, 164)"])::before,
+[language="powershell"] code span.line:has(> span:first-child[style*="#6272A4"])::before {
+  content: "";
+}
+
+.dark [data-component-part="code-block-root"]:not(.has-line-numbers) .line-highlight,
+.dark [data-component-part="code-block-root"]:not(.has-line-numbers) .line-highlight:after,
+.dark [data-component-part="code-block-root"]:not(.has-line-numbers) .line-highlight:before {
+  background: rgb(219 219 219 / 20%) !important;
+}
+
+.dark[data-component-part="code-block-root"]:not(.has-line-numbers) .line-highlight:before {
+  border-color: white;
+}
+
+[data-component-part="code-block-root"]:not(.has-line-numbers) .line-highlight,
+[data-component-part="code-block-root"]:not(.has-line-numbers) .line-highlight:after,
+[data-component-part="code-block-root"]:not(.has-line-numbers) .line-highlight:before {
+  background: rgb(var(--gray-200) / 0.5) !important;
+}
+
+[data-component-part="code-block-root"]:not(.has-line-numbers) .line-highlight:before {
+  border-color: rgb(172, 172, 172);
+}

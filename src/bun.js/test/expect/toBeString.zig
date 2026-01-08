@@ -4,7 +4,7 @@ pub fn toBeString(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFr
     const thisValue = callFrame.this();
     const value: JSValue = try this.getValue(globalThis, thisValue, "toBeString", "");
 
-    incrementExpectCallCounter();
+    this.incrementExpectCallCounter();
 
     const not = this.flags.not;
     const pass = value.isString() != not;
@@ -17,11 +17,11 @@ pub fn toBeString(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFr
 
     if (not) {
         const signature = comptime getSignature("toBeString", "", true);
-        return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
+        return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{f}<r>\n", .{received});
     }
 
     const signature = comptime getSignature("toBeString", "", false);
-    return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
+    return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{f}<r>\n", .{received});
 }
 
 const bun = @import("bun");
@@ -30,7 +30,6 @@ const jsc = bun.jsc;
 const CallFrame = bun.jsc.CallFrame;
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
-const incrementExpectCallCounter = bun.jsc.Expect.incrementExpectCallCounter;
 
 const Expect = bun.jsc.Expect.Expect;
 const getSignature = Expect.getSignature;

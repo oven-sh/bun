@@ -1,8 +1,4 @@
 // Hardcoded module "node:stream/consumers" / "readable-stream/consumer"
-"use strict";
-
-const { Buffer } = require("node:buffer");
-
 const JSONParse = JSON.parse;
 
 async function blob(stream): Promise<Blob> {

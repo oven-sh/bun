@@ -44,7 +44,7 @@ pub noinline fn computeChunks(
                 break :brk try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len));
             } else {
                 // Force HTML chunks to always be generated, even if there's an identical JS file.
-                break :brk try std.fmt.allocPrint(temp_allocator, "{}", .{JSChunkKeyFormatter{
+                break :brk try std.fmt.allocPrint(temp_allocator, "{f}", .{JSChunkKeyFormatter{
                     .has_html = has_html_chunk,
                     .entry_bits = entry_bits.bytes(this.graph.entry_points.len),
                 }});
@@ -63,8 +63,8 @@ pub noinline fn computeChunks(
                     },
                     .entry_bits = entry_bits.*,
                     .content = .html,
-                    .output_source_map = sourcemap.SourceMapPieces.init(this.allocator()),
-                    .is_browser_chunk_from_server_build = could_be_browser_target_from_server_build and ast_targets[source_index] == .browser,
+                    .output_source_map = SourceMap.SourceMapPieces.init(this.allocator()),
+                    .flags = .{ .is_browser_chunk_from_server_build = could_be_browser_target_from_server_build and ast_targets[source_index] == .browser },
                 };
             }
         }
@@ -94,12 +94,14 @@ pub noinline fn computeChunks(
                     .content = .{
                         .css = .{
                             .imports_in_chunk_in_order = order,
-                            .asts = this.allocator().alloc(bun.css.BundlerStyleSheet, order.len) catch bun.outOfMemory(),
+                            .asts = bun.handleOom(this.allocator().alloc(bun.css.BundlerStyleSheet, order.len)),
                         },
                     },
-                    .output_source_map = sourcemap.SourceMapPieces.init(this.allocator()),
-                    .has_html_chunk = has_html_chunk,
-                    .is_browser_chunk_from_server_build = could_be_browser_target_from_server_build and ast_targets[source_index] == .browser,
+                    .output_source_map = SourceMap.SourceMapPieces.init(this.allocator()),
+                    .flags = .{
+                        .has_html_chunk = has_html_chunk,
+                        .is_browser_chunk_from_server_build = could_be_browser_target_from_server_build and ast_targets[source_index] == .browser,
+                    },
                 };
             }
 
@@ -119,9 +121,11 @@ pub noinline fn computeChunks(
             .content = .{
                 .javascript = .{},
             },
-            .has_html_chunk = has_html_chunk,
-            .output_source_map = sourcemap.SourceMapPieces.init(this.allocator()),
-            .is_browser_chunk_from_server_build = could_be_browser_target_from_server_build and ast_targets[source_index] == .browser,
+            .output_source_map = SourceMap.SourceMapPieces.init(this.allocator()),
+            .flags = .{
+                .has_html_chunk = has_html_chunk,
+                .is_browser_chunk_from_server_build = could_be_browser_target_from_server_build and ast_targets[source_index] == .browser,
+            },
         };
 
         {
@@ -156,7 +160,7 @@ pub noinline fn computeChunks(
                     var css_files_with_parts_in_chunk = std.AutoArrayHashMapUnmanaged(Index.Int, void){};
                     for (order.slice()) |entry| {
                         if (entry.kind == .source_index) {
-                            css_files_with_parts_in_chunk.put(this.allocator(), entry.kind.source_index.get(), {}) catch bun.outOfMemory();
+                            bun.handleOom(css_files_with_parts_in_chunk.put(this.allocator(), entry.kind.source_index.get(), {}));
                         }
                     }
                     css_chunk_entry.value_ptr.* = .{
@@ -169,13 +173,15 @@ pub noinline fn computeChunks(
                         .content = .{
                             .css = .{
                                 .imports_in_chunk_in_order = order,
-                                .asts = this.allocator().alloc(bun.css.BundlerStyleSheet, order.len) catch bun.outOfMemory(),
+                                .asts = bun.handleOom(this.allocator().alloc(bun.css.BundlerStyleSheet, order.len)),
                             },
                         },
                         .files_with_parts_in_chunk = css_files_with_parts_in_chunk,
-                        .output_source_map = sourcemap.SourceMapPieces.init(this.allocator()),
-                        .has_html_chunk = has_html_chunk,
-                        .is_browser_chunk_from_server_build = could_be_browser_target_from_server_build and ast_targets[source_index] == .browser,
+                        .output_source_map = SourceMap.SourceMapPieces.init(this.allocator()),
+                        .flags = .{
+                            .has_html_chunk = has_html_chunk,
+                            .is_browser_chunk_from_server_build = could_be_browser_target_from_server_build and ast_targets[source_index] == .browser,
+                        },
                     };
                 }
             }
@@ -217,8 +223,8 @@ pub noinline fn computeChunks(
                                 .content = .{
                                     .javascript = .{},
                                 },
-                                .output_source_map = sourcemap.SourceMapPieces.init(this.allocator()),
-                                .is_browser_chunk_from_server_build = is_browser_chunk_from_server_build,
+                                .output_source_map = SourceMap.SourceMapPieces.init(this.allocator()),
+                                .flags = .{ .is_browser_chunk_from_server_build = is_browser_chunk_from_server_build },
                             };
                         }
 
@@ -256,7 +262,7 @@ pub noinline fn computeChunks(
             sorted_chunks.appendAssumeCapacity(chunk);
 
             // Attempt to order the JS HTML chunk immediately after the non-html one.
-            if (chunk.has_html_chunk) {
+            if (chunk.flags.has_html_chunk) {
                 if (html_chunks.fetchSwapRemove(key)) |html_chunk| {
                     sorted_chunks.appendAssumeCapacity(html_chunk.value);
                 }
@@ -286,7 +292,7 @@ pub noinline fn computeChunks(
         }
 
         // We don't care about the order of the HTML chunks that have no JS chunks.
-        try sorted_chunks.append(this.allocator(), html_chunks.values());
+        try sorted_chunks.appendSlice(this.allocator(), html_chunks.values());
 
         break :sort_chunks sorted_chunks.slice();
     };
@@ -316,7 +322,7 @@ pub noinline fn computeChunks(
         return chunks;
     }
 
-    const unique_key_item_len = std.fmt.count("{any}C{d:0>8}", .{ bun.fmt.hexIntLower(unique_key), chunks.len });
+    const unique_key_item_len = std.fmt.count("{f}C{d:0>8}", .{ bun.fmt.hexIntLower(unique_key), chunks.len });
     var unique_key_builder = try bun.StringBuilder.initCapacity(this.allocator(), unique_key_item_len * chunks.len);
     this.unique_key_buf = unique_key_builder.allocatedSlice();
 
@@ -332,19 +338,19 @@ pub noinline fn computeChunks(
         // Assign a unique key to each chunk. This key encodes the index directly so
         // we can easily recover it later without needing to look it up in a map. The
         // last 8 numbers of the key are the chunk index.
-        chunk.unique_key = unique_key_builder.fmt("{}C{d:0>8}", .{ bun.fmt.hexIntLower(unique_key), chunk_id });
+        chunk.unique_key = unique_key_builder.fmt("{f}C{d:0>8}", .{ bun.fmt.hexIntLower(unique_key), chunk_id });
         if (this.unique_key_prefix.len == 0)
-            this.unique_key_prefix = chunk.unique_key[0..std.fmt.count("{}", .{bun.fmt.hexIntLower(unique_key)})];
+            this.unique_key_prefix = chunk.unique_key[0..std.fmt.count("{f}", .{bun.fmt.hexIntLower(unique_key)})];
 
         if (chunk.entry_point.is_entry_point and
-            (chunk.content == .html or (kinds[chunk.entry_point.source_index] == .user_specified and !chunk.has_html_chunk)))
+            (chunk.content == .html or (kinds[chunk.entry_point.source_index] == .user_specified and !chunk.flags.has_html_chunk)))
         {
             // Use fileWithTarget template if there are HTML imports and user hasn't manually set naming
             if (has_server_html_imports and bv2.transpiler.options.entry_naming.len == 0) {
                 chunk.template = PathTemplate.fileWithTarget;
             } else {
                 chunk.template = PathTemplate.file;
-                if (chunk.is_browser_chunk_from_server_build) {
+                if (chunk.flags.is_browser_chunk_from_server_build) {
                     chunk.template.data = bv2.transpilerForTarget(.browser).options.entry_naming;
                 } else {
                     chunk.template.data = bv2.transpiler.options.entry_naming;
@@ -355,7 +361,7 @@ pub noinline fn computeChunks(
                 chunk.template = PathTemplate.chunkWithTarget;
             } else {
                 chunk.template = PathTemplate.chunk;
-                if (chunk.is_browser_chunk_from_server_build) {
+                if (chunk.flags.is_browser_chunk_from_server_build) {
                     chunk.template.data = bv2.transpilerForTarget(.browser).options.chunk_naming;
                 } else {
                     chunk.template.data = bv2.transpiler.options.chunk_naming;
@@ -389,7 +395,10 @@ pub noinline fn computeChunks(
                 };
                 defer dir.close();
 
-                break :dir try dir.getFdPath(&real_path_buf);
+                break :dir dir.getFdPath(&real_path_buf) catch |err| {
+                    try this.log.addErrorFmt(null, .Empty, this.allocator(), "{s}: Failed to get full path for directory '{s}'", .{ @errorName(err), dir_path });
+                    return error.BuildFailed;
+                };
             };
 
             chunk.template.placeholder.dir = try resolve_path.relativeAlloc(this.allocator(), this.resolver.opts.root_dir, dir);
@@ -403,7 +412,7 @@ const JSChunkKeyFormatter = struct {
     has_html: bool,
     entry_bits: []const u8,
 
-    pub fn format(this: @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {
+    pub fn format(this: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         try writer.writeAll(&[_]u8{@intFromBool(!this.has_html)});
         try writer.writeAll(this.entry_bits);
     }
@@ -419,8 +428,8 @@ const std = @import("std");
 
 const bun = @import("bun");
 const BabyList = bun.BabyList;
+const SourceMap = bun.SourceMap;
 const options = bun.options;
-const sourcemap = bun.sourcemap;
 const AutoBitSet = bun.bit_set.AutoBitSet;
 
 const bundler = bun.bundle_v2;

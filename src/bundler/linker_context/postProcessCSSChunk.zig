@@ -8,7 +8,7 @@ pub fn postProcessCSSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, ch
         },
     };
 
-    var line_offset: bun.sourcemap.LineColumnOffset.Optional = if (c.options.source_maps != .none) .{ .value = .{} } else .{ .null = {} };
+    var line_offset: bun.SourceMap.LineColumnOffset.Optional = if (c.options.source_maps != .none) .{ .value = .{} } else .{ .null = {} };
 
     var newline_before_comment = false;
 
@@ -31,7 +31,7 @@ pub fn postProcessCSSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, ch
     const compile_results = chunk.compile_results_for_chunk;
 
     var compile_results_for_source_map: std.MultiArrayList(CompileResultForSourceMap) = .{};
-    compile_results_for_source_map.setCapacity(worker.allocator, compile_results.len) catch bun.outOfMemory();
+    bun.handleOom(compile_results_for_source_map.setCapacity(worker.allocator, compile_results.len));
 
     const sources: []const Logger.Source = c.parse_graph.input_files.items(.source);
     for (compile_results) |compile_result| {
@@ -93,11 +93,11 @@ pub fn postProcessCSSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, ch
         worker.allocator,
         &j,
         @as(u32, @truncate(ctx.chunks.len)),
-    ) catch bun.outOfMemory();
+    ) catch |err| bun.handleOom(err);
     // TODO: meta contents
 
     chunk.isolated_hash = c.generateIsolatedHash(chunk);
-    // chunk.is_executable = is_executable;
+    // chunk.flags.is_executable = is_executable;
 
     if (c.options.source_maps != .none) {
         const can_have_shifts = chunk.intermediate_output == .pieces;

@@ -22,7 +22,6 @@
 "use strict";
 
 const { SafeMap, SafeSet, SafeWeakSet } = require("internal/primordials");
-const { Buffer } = require("node:buffer");
 const {
   isKeyObject,
   isPromise,
@@ -829,9 +828,10 @@ function rejects(
   error: nodeAssert.AssertPredicate,
   message?: string | Error,
 ): Promise<void>;
-assert.rejects = async function rejects(promiseFn: () => Promise<unknown>, ...args: any[]): Promise<void> {
-  expectsError(rejects, await waitForActual(promiseFn), ...args);
-};
+async function rejects(block: (() => Promise<unknown>) | Promise<unknown>, ...args: any[]): Promise<void> {
+  expectsError(rejects, await waitForActual(block), ...args);
+}
+assert.rejects = rejects;
 
 /**
  * Asserts that the function `fn` does not throw an error.
@@ -975,7 +975,7 @@ var CallTracker;
 Object.defineProperty(assert, "CallTracker", {
   get() {
     if (CallTracker === undefined) {
-      const { deprecate } = require("node:util");
+      const { deprecate } = require("internal/util/deprecate");
       CallTracker = deprecate(require("internal/assert/calltracker"), "assert.CallTracker is deprecated.", "DEP0173");
     }
     return CallTracker;

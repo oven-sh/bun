@@ -65,7 +65,7 @@ pub const Store = struct {
             if (parent_id == maybe_parent_id) {
                 return true;
             }
-            parent_dedupe.put(parent_id, {}) catch bun.outOfMemory();
+            bun.handleOom(parent_dedupe.put(parent_id, {}));
         }
 
         len = parent_dedupe.count();
@@ -77,7 +77,7 @@ pub const Store = struct {
                 if (parent_id == maybe_parent_id) {
                     return true;
                 }
-                parent_dedupe.put(parent_id, {}) catch bun.outOfMemory();
+                bun.handleOom(parent_dedupe.put(parent_id, {}));
                 len = parent_dedupe.count();
             }
             i += 1;
@@ -103,6 +103,9 @@ pub const Store = struct {
         parents: std.ArrayListUnmanaged(Id) = .empty,
         step: std.atomic.Value(Installer.Task.Step) = .init(.link_package),
 
+        // if true this entry gets symlinked to `node_modules/.bun/node_modules`
+        hoisted: bool,
+
         peer_hash: PeerHash,
 
         scripts: ?*Package.Scripts.List = null,
@@ -125,7 +128,7 @@ pub const Store = struct {
             store: *const Store,
             lockfile: *const Lockfile,
 
-            pub fn format(this: @This(), comptime _: string, _: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
+            pub fn format(this: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
                 const store = this.store;
                 const entries = store.entries.slice();
                 const entry_peer_hashes = entries.items(.peer_hash);
@@ -145,14 +148,23 @@ pub const Store = struct {
                 const pkg_res = pkg_resolutions[pkg_id];
 
                 switch (pkg_res.tag) {
+                    .root => {
+                        if (pkg_name.isEmpty()) {
+                            try writer.writeAll(std.fs.path.basename(bun.fs.FileSystem.instance.top_level_dir));
+                        } else {
+                            try writer.print("{f}@root", .{
+                                pkg_name.fmtStorePath(string_buf),
+                            });
+                        }
+                    },
                     .folder => {
-                        try writer.print("{}@file+{}", .{
+                        try writer.print("{f}@file+{f}", .{
                             pkg_name.fmtStorePath(string_buf),
                             pkg_res.value.folder.fmtStorePath(string_buf),
                         });
                     },
                     else => {
-                        try writer.print("{}@{}", .{
+                        try writer.print("{f}@{f}", .{
                             pkg_name.fmtStorePath(string_buf),
                             pkg_res.fmtStorePath(string_buf),
                         });
@@ -160,7 +172,7 @@ pub const Store = struct {
                 }
 
                 if (peer_hash != .none) {
-                    try writer.print("+{}", .{
+                    try writer.print("+{f}", .{
                         bun.fmt.hexIntLower(peer_hash.cast()),
                     });
                 }
@@ -184,7 +196,7 @@ pub const Store = struct {
                 if (parent_id == .invalid) {
                     continue;
                 }
-                parents.put(bun.default_allocator, parent_id, {}) catch bun.outOfMemory();
+                bun.handleOom(parents.put(bun.default_allocator, parent_id, {}));
             }
 
             len = parents.count();
@@ -193,7 +205,7 @@ pub const Store = struct {
                     if (parent_id == .invalid) {
                         continue;
                     }
-                    parents.put(bun.default_allocator, parent_id, {}) catch bun.outOfMemory();
+                    bun.handleOom(parents.put(bun.default_allocator, parent_id, {}));
                     len = parents.count();
                 }
                 i += 1;

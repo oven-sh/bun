@@ -8,7 +8,7 @@
 
 #define AUTO_EXTERN_C extern "C"
 #ifdef WIN32
-  #define AUTO_EXTERN_C_ZIG extern "C" 
+  #define AUTO_EXTERN_C_ZIG extern "C"
 #else
   #define AUTO_EXTERN_C_ZIG extern "C" __attribute__((weak))
 #endif
@@ -129,7 +129,7 @@ CPP_DECL void WebCore__AbortSignal__cleanNativeBindings(WebCore::AbortSignal* ar
 CPP_DECL JSC::EncodedJSValue WebCore__AbortSignal__create(JSC::JSGlobalObject* arg0);
 CPP_DECL WebCore::AbortSignal* WebCore__AbortSignal__fromJS(JSC::EncodedJSValue JSValue0);
 CPP_DECL WebCore::AbortSignal* WebCore__AbortSignal__ref(WebCore::AbortSignal* arg0);
-CPP_DECL WebCore::AbortSignal* WebCore__AbortSignal__signal(WebCore::AbortSignal* arg0, JSC::JSGlobalObject*,  uint8_t abortReason); 
+CPP_DECL WebCore::AbortSignal* WebCore__AbortSignal__signal(WebCore::AbortSignal* arg0, JSC::JSGlobalObject*,  uint8_t abortReason);
 CPP_DECL JSC::EncodedJSValue WebCore__AbortSignal__toJS(WebCore::AbortSignal* arg0, JSC::JSGlobalObject* arg1);
 CPP_DECL void WebCore__AbortSignal__unref(WebCore::AbortSignal* arg0);
 
@@ -137,7 +137,7 @@ CPP_DECL void WebCore__AbortSignal__unref(WebCore::AbortSignal* arg0);
 
 CPP_DECL JSC::EncodedJSValue JSC__JSPromise__asValue(JSC::JSPromise* arg0, JSC::JSGlobalObject* arg1);
 CPP_DECL JSC::JSPromise* JSC__JSPromise__create(JSC::JSGlobalObject* arg0);
-CPP_DECL bool JSC__JSPromise__isHandled(const JSC::JSPromise* arg0, JSC::VM* arg1);
+CPP_DECL bool JSC__JSPromise__isHandled(const JSC::JSPromise* arg0);
 CPP_DECL void JSC__JSPromise__reject(JSC::JSPromise* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2);
 CPP_DECL void JSC__JSPromise__rejectAsHandled(JSC::JSPromise* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2);
 CPP_DECL JSC::JSPromise* JSC__JSPromise__rejectedPromise(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue1);
@@ -147,22 +147,22 @@ CPP_DECL void JSC__JSPromise__resolve(JSC::JSPromise* arg0, JSC::JSGlobalObject*
 CPP_DECL JSC::JSPromise* JSC__JSPromise__resolvedPromise(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue1);
 CPP_DECL JSC::EncodedJSValue JSC__JSPromise__resolvedPromiseValue(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue1);
 CPP_DECL JSC::EncodedJSValue JSC__JSPromise__result(JSC::JSPromise* arg0, JSC::VM* arg1);
-CPP_DECL void JSC__JSPromise__setHandled(JSC::JSPromise* arg0, JSC::VM* arg1);
-CPP_DECL uint32_t JSC__JSPromise__status(const JSC::JSPromise* arg0, JSC::VM* arg1);
+CPP_DECL void JSC__JSPromise__setHandled(JSC::JSPromise* arg0);
+CPP_DECL uint32_t JSC__JSPromise__status(const JSC::JSPromise* arg0);
 
 #pragma mark - JSC::JSInternalPromise
 
 CPP_DECL JSC::JSInternalPromise* JSC__JSInternalPromise__create(JSC::JSGlobalObject* arg0);
-CPP_DECL bool JSC__JSInternalPromise__isHandled(const JSC::JSInternalPromise* arg0, JSC::VM* arg1);
+CPP_DECL bool JSC__JSInternalPromise__isHandled(const JSC::JSInternalPromise* arg0);
 CPP_DECL void JSC__JSInternalPromise__reject(JSC::JSInternalPromise* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2);
 CPP_DECL void JSC__JSInternalPromise__rejectAsHandled(JSC::JSInternalPromise* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2);
 CPP_DECL void JSC__JSInternalPromise__rejectAsHandledException(JSC::JSInternalPromise* arg0, JSC::JSGlobalObject* arg1, JSC::Exception* arg2);
 CPP_DECL JSC::JSInternalPromise* JSC__JSInternalPromise__rejectedPromise(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue1);
 CPP_DECL void JSC__JSInternalPromise__resolve(JSC::JSInternalPromise* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2);
 CPP_DECL JSC::JSInternalPromise* JSC__JSInternalPromise__resolvedPromise(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue1);
-CPP_DECL JSC::EncodedJSValue JSC__JSInternalPromise__result(const JSC::JSInternalPromise* arg0, JSC::VM* arg1);
+CPP_DECL JSC::EncodedJSValue JSC__JSInternalPromise__result(const JSC::JSInternalPromise* arg0);
 CPP_DECL void JSC__JSInternalPromise__setHandled(JSC::JSInternalPromise* arg0, JSC::VM* arg1);
-CPP_DECL uint32_t JSC__JSInternalPromise__status(const JSC::JSInternalPromise* arg0, JSC::VM* arg1);
+CPP_DECL uint32_t JSC__JSInternalPromise__status(const JSC::JSInternalPromise* arg0);
 
 #pragma mark - JSC::JSFunction
 
@@ -186,17 +186,17 @@ CPP_DECL JSC::VM* JSC__JSGlobalObject__vm(JSC::JSGlobalObject* arg0);
 #pragma mark - JSC::JSMap
 
 CPP_DECL JSC::EncodedJSValue JSC__JSMap__create(JSC::JSGlobalObject* arg0);
-CPP_DECL JSC::EncodedJSValue JSC__JSMap__get_(JSC::JSMap* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2);
+CPP_DECL JSC::EncodedJSValue JSC__JSMap__get(JSC::JSMap* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2);
 CPP_DECL bool JSC__JSMap__has(JSC::JSMap* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2);
 CPP_DECL bool JSC__JSMap__remove(JSC::JSMap* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2);
 CPP_DECL void JSC__JSMap__set(JSC::JSMap* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2, JSC::EncodedJSValue JSValue3);
+CPP_DECL uint32_t JSC__JSMap__size(JSC::JSMap* arg0, JSC::JSGlobalObject* arg1);
 
 #pragma mark - JSC::JSValue
 
 CPP_DECL void JSC__JSValue__then(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2, SYSV_ABI JSC::EncodedJSValue(* ArgFn3)(JSC::JSGlobalObject* arg0, JSC::CallFrame* arg1), SYSV_ABI JSC::EncodedJSValue(* ArgFn4)(JSC::JSGlobalObject* arg0, JSC::CallFrame* arg1));
-CPP_DECL bool JSC__JSValue__asArrayBuffer_(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, Bun__ArrayBuffer* arg2);
+CPP_DECL bool JSC__JSValue__asArrayBuffer(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, Bun__ArrayBuffer* arg2);
 CPP_DECL unsigned char JSC__JSValue__asBigIntCompare(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2);
-CPP_DECL JSC::JSCell* JSC__JSValue__asCell(JSC::EncodedJSValue JSValue0);
 CPP_DECL JSC::JSInternalPromise* JSC__JSValue__asInternalPromise(JSC::EncodedJSValue JSValue0);
 CPP_DECL JSC::JSPromise* JSC__JSValue__asPromise(JSC::EncodedJSValue JSValue0);
 CPP_DECL JSC::JSString* JSC__JSValue__asString(JSC::EncodedJSValue JSValue0);
@@ -260,16 +260,14 @@ CPP_DECL bool JSC__JSValue__isUInt32AsAnyInt(JSC::EncodedJSValue JSValue0);
 CPP_DECL bool JSC__JSValue__jestDeepEquals(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* arg2);
 CPP_DECL bool JSC__JSValue__jestDeepMatch(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* arg2, bool arg3);
 CPP_DECL bool JSC__JSValue__jestStrictDeepEquals(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* arg2);
-CPP_DECL JSC::EncodedJSValue JSC__JSValue__jsDoubleNumber(double arg0);
-CPP_DECL JSC::EncodedJSValue JSC__JSValue__jsNull();
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__jsNumberFromChar(unsigned char arg0);
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__jsNumberFromDouble(double arg0);
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__jsNumberFromInt64(int64_t arg0);
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__jsNumberFromU16(uint16_t arg0);
 CPP_DECL void JSC__JSValue__jsonStringify(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, uint32_t arg2, BunString* arg3);
+CPP_DECL void JSC__JSValue__jsonStringifyFast(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, BunString* arg3);
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__jsTDZValue();
 CPP_DECL unsigned char JSC__JSValue__jsType(JSC::EncodedJSValue JSValue0);
-CPP_DECL JSC::EncodedJSValue JSC__JSValue__jsUndefined();
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__keys(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue arg1);
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__values(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue arg1);
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__parseJSON(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1);
@@ -623,9 +621,9 @@ ZIG_DECL JSC::EncodedJSValue Bun__Process__createArgv0(JSC::JSGlobalObject* arg0
 ZIG_DECL JSC::EncodedJSValue Bun__Process__getCwd(JSC::JSGlobalObject* arg0);
 ZIG_DECL JSC::EncodedJSValue Bun__Process__createExecArgv(JSC::JSGlobalObject* arg0);
 ZIG_DECL JSC::EncodedJSValue Bun__Process__getExecPath(JSC::JSGlobalObject* arg0);
-ZIG_DECL void Bun__Process__getTitle(JSC::JSGlobalObject* arg0, ZigString* arg1);
+ZIG_DECL void Bun__Process__getTitle(JSC::JSGlobalObject* arg0, BunString* arg1);
+ZIG_DECL void Bun__Process__setTitle(JSC::JSGlobalObject* arg0, BunString* arg1);
 ZIG_DECL JSC::EncodedJSValue Bun__Process__setCwd(JSC::JSGlobalObject* arg0, ZigString* arg1);
-ZIG_DECL JSC::EncodedJSValue Bun__Process__setTitle(JSC::JSGlobalObject* arg0, ZigString* arg1);
 ZIG_DECL JSC::EncodedJSValue Bun__Process__getEval(JSC::JSGlobalObject* arg0);
 
 #endif
@@ -729,8 +727,8 @@ BUN_DECLARE_HOST_FUNCTION(Bun__BodyValueBufferer__onResolveStream);
 
 #ifdef __cplusplus
 
-BUN_DECLARE_HOST_FUNCTION(Bun__TestScope__onReject);
-BUN_DECLARE_HOST_FUNCTION(Bun__TestScope__onResolve);
+BUN_DECLARE_HOST_FUNCTION(Bun__TestScope__Describe2__bunTestThen);
+BUN_DECLARE_HOST_FUNCTION(Bun__TestScope__Describe2__bunTestCatch);
 
 #endif
 

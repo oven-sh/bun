@@ -1,24 +1,28 @@
 import { SQL, randomUUIDv7 } from "bun";
-import { expect, test } from "bun:test";
+import { beforeEach, expect, test } from "bun:test";
 import { describeWithContainer } from "harness";
 
 describeWithContainer(
   "mysql",
   {
-    image: "mysql:8",
-    env: {
-      MYSQL_ROOT_PASSWORD: "bun",
-    },
+    image: "mysql_plain",
+    env: {},
+    args: [],
   },
-  (port: number) => {
-    const options = {
-      url: `mysql://root:bun@localhost:${port}`,
+  container => {
+    // Use a getter to avoid reading port/host at define time
+    const getOptions = () => ({
+      url: `mysql://root@${container.host}:${container.port}/bun_sql_test`,
       max: 1,
       bigint: true,
-    };
+    });
+
+    beforeEach(async () => {
+      await container.ready;
+    });
 
     test("Transaction works", async () => {
-      await using sql = new SQL(options);
+      await using sql = new SQL(getOptions());
       const random_name = ("t_" + randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
       await sql`CREATE TEMPORARY TABLE IF NOT EXISTS ${sql(random_name)} (a int)`;
 
@@ -32,13 +36,23 @@ describeWithContainer(
     });
 
     test("Throws on illegal transactions", async () => {
-      await using sql = new SQL({ ...options, max: 2 });
+      await using sql = new SQL({ ...getOptions(), max: 2 });
+      try {
+        await sql`BEGIN`;
+        expect.unreachable();
+      } catch (error) {
+        expect(error.code).toBe("ERR_MYSQL_UNSAFE_TRANSACTION");
+      }
+    });
+
+    test(".catch suppresses uncaught promise rejection", async () => {
+      await using sql = new SQL({ ...getOptions(), max: 2 });
       const error = await sql`BEGIN`.catch(e => e);
       return expect(error.code).toBe("ERR_MYSQL_UNSAFE_TRANSACTION");
     });
 
     test("Transaction throws", async () => {
-      await using sql = new SQL(options);
+      await using sql = new SQL(getOptions());
       const random_name = ("t_" + randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
       await sql`CREATE TEMPORARY TABLE IF NOT EXISTS ${sql(random_name)} (a int)`;
       expect(
@@ -52,7 +66,7 @@ describeWithContainer(
     });
 
     test("Transaction rolls back", async () => {
-      await using sql = new SQL(options);
+      await using sql = new SQL(getOptions());
       const random_name = ("t_" + randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
 
       await sql`CREATE TEMPORARY TABLE IF NOT EXISTS ${sql(random_name)} (a int)`;
@@ -70,7 +84,7 @@ describeWithContainer(
     });
 
     test("Transaction throws on uncaught savepoint", async () => {
-      await using sql = new SQL(options);
+      await using sql = new SQL(getOptions());
       const random_name = ("t_" + randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
       await sql`CREATE TEMPORARY TABLE IF NOT EXISTS ${sql(random_name)} (a int)`;
       expect(
@@ -87,7 +101,7 @@ describeWithContainer(
     });
 
     test("Transaction throws on uncaught named savepoint", async () => {
-      await using sql = new SQL(options);
+      await using sql = new SQL(getOptions());
       const random_name = ("t_" + randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
       await sql`CREATE TEMPORARY TABLE IF NOT EXISTS ${sql(random_name)} (a int)`;
       expect(
@@ -104,7 +118,7 @@ describeWithContainer(
     });
 
     test("Transaction succeeds on caught savepoint", async () => {
-      await using sql = new SQL(options);
+      await using sql = new SQL(getOptions());
       const random_name = ("t_" + randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
       await sql`CREATE TABLE IF NOT EXISTS ${sql(random_name)} (a int)`;
       try {
@@ -128,7 +142,7 @@ describeWithContainer(
 
     test("Savepoint returns Result", async () => {
       let result;
-      await using sql = new SQL(options);
+      await using sql = new SQL(getOptions());
       await sql.begin(async t => {
         result = await t.savepoint(s => s`select 1 as x`);
       });
@@ -136,14 +150,14 @@ describeWithContainer(
     });
 
     test("Uncaught transaction request errors bubbles to transaction", async () => {
-      await using sql = new SQL(options);
+      await using sql = new SQL(getOptions());
       expect(await sql.begin(sql => [sql`select wat`, sql`select 1 as x, ${1} as a`]).catch(e => e.message)).toBe(
         "Unknown column 'wat' in 'field list'",
       );
     });
 
     test("Transaction rejects with rethrown error", async () => {
-      await using sql = new SQL(options);
+      await using sql = new SQL(getOptions());
       expect(
         await sql
           .begin(async sql => {
@@ -158,7 +172,7 @@ describeWithContainer(
     });
 
     test("Parallel transactions", async () => {
-      await using sql = new SQL({ ...options, max: 2 });
+      await using sql = new SQL({ ...getOptions(), max: 2 });
 
       expect(
         (await Promise.all([sql.begin(sql => sql`select 1 as count`), sql.begin(sql => sql`select 1 as count`)]))
@@ -168,13 +182,13 @@ describeWithContainer(
     });
 
     test("Many transactions at beginning of connection", async () => {
-      await using sql = new SQL({ ...options, max: 2 });
+      await using sql = new SQL({ ...getOptions(), max: 2 });
       const xs = await Promise.all(Array.from({ length: 30 }, () => sql.begin(sql => sql`select 1`)));
       return expect(xs.length).toBe(30);
     });
 
     test("Transactions array", async () => {
-      await using sql = new SQL(options);
+      await using sql = new SQL(getOptions());
       expect(
         (await sql.begin(sql => [sql`select 1 as count`, sql`select 1 as count`])).map(x => x[0].count).join(""),
       ).toBe("11");

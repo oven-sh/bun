@@ -29,7 +29,7 @@
 #include <JavaScriptCore/YarrMatchingContextHolder.h>
 #include "ErrorCode.h"
 #include "napi_external.h"
-#include <JavaScriptCore/Strong.h>
+
 #include <JavaScriptCore/JSPromise.h>
 
 #if OS(WINDOWS)
@@ -71,7 +71,7 @@ void BundlerPlugin::NamespaceList::append(JSC::VM& vm, JSC::RegExp* filter, Stri
 
     auto pattern = filter->pattern();
     auto filter_regexp = FilterRegExp(pattern, filter->flags());
-    nsGroup->append(WTFMove(filter_regexp));
+    nsGroup->append(WTF::move(filter_regexp));
 }
 
 static bool anyMatchesForNamespace(JSC::VM& vm, BundlerPlugin::NamespaceList& list, const BunString* namespaceStr, const BunString* path)
@@ -117,9 +117,9 @@ static const HashTableValue JSBundlerPluginHashTable[] = {
     { "generateDeferPromise"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBundlerPluginFunction_generateDeferPromise, 0 } },
 };
 
-class JSBundlerPlugin final : public JSC::JSNonFinalObject {
+class JSBundlerPlugin final : public JSC::JSDestructibleObject {
 public:
-    using Base = JSC::JSNonFinalObject;
+    using Base = JSC::JSDestructibleObject;
     static JSBundlerPlugin* create(JSC::VM& vm,
         JSC::JSGlobalObject* globalObject,
         JSC::Structure* structure,
@@ -156,6 +156,9 @@ public:
     }
 
     DECLARE_VISIT_CHILDREN;
+    DECLARE_VISIT_OUTPUT_CONSTRAINTS;
+
+    template<typename Visitor> void visitAdditionalChildren(Visitor&);
 
     Bun::BundlerPlugin plugin;
     /// These are defined in BundlerPlugin.ts
@@ -165,17 +168,33 @@ public:
 
     JSC::JSGlobalObject* m_globalObject;
 
+    static void destroy(JSC::JSCell* cell)
+    {
+        JSBundlerPlugin* thisObject = static_cast<JSBundlerPlugin*>(cell);
+        thisObject->~JSBundlerPlugin();
+    }
+
 private:
     JSBundlerPlugin(JSC::VM& vm, JSC::JSGlobalObject* global, JSC::Structure* structure, void* config, BunPluginTarget target,
         JSBundlerPluginAddErrorCallback addError, JSBundlerPluginOnLoadAsyncCallback onLoadAsync, JSBundlerPluginOnResolveAsyncCallback onResolveAsync)
-        : JSC::JSNonFinalObject(vm, structure)
+        : Base(vm, structure)
         , plugin(BundlerPlugin(config, target, addError, onLoadAsync, onResolveAsync))
         , m_globalObject(global)
     {
     }
 
+    ~JSBundlerPlugin() = default;
     void finishCreation(JSC::VM&);
 };
+
+template<typename Visitor>
+void JSBundlerPlugin::visitAdditionalChildren(Visitor& visitor)
+{
+    this->onLoadFunction.visit(visitor);
+    this->onResolveFunction.visit(visitor);
+    this->setupFunction.visit(visitor);
+    this->plugin.deferredPromises.visit(this, visitor);
+}
 
 template<typename Visitor>
 void JSBundlerPlugin::visitChildrenImpl(JSCell* cell, Visitor& visitor)
@@ -183,11 +202,18 @@ void JSBundlerPlugin::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     JSBundlerPlugin* thisObject = jsCast<JSBundlerPlugin*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    thisObject->onLoadFunction.visit(visitor);
-    thisObject->onResolveFunction.visit(visitor);
-    thisObject->setupFunction.visit(visitor);
+    thisObject->visitAdditionalChildren(visitor);
 }
 DEFINE_VISIT_CHILDREN(JSBundlerPlugin);
+
+template<typename Visitor>
+void JSBundlerPlugin::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
+{
+    JSBundlerPlugin* thisObject = jsCast<JSBundlerPlugin*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    thisObject->visitAdditionalChildren(visitor);
+}
+DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSBundlerPlugin);
 
 const JSC::ClassInfo JSBundlerPlugin::s_info = { "BundlerPlugin"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBundlerPlugin) };
 
@@ -234,7 +260,7 @@ void BundlerPlugin::NativePluginList::append(JSC::VM& vm, JSC::RegExp* filter, S
 
         auto pattern = filter->pattern();
         auto filter_regexp = FilterRegExp(pattern, filter->flags());
-        nsGroup->append(WTFMove(filter_regexp));
+        nsGroup->append(WTF::move(filter_regexp));
     }
 
     if (index == std::numeric_limits<unsigned>::max()) {
@@ -254,8 +280,7 @@ void BundlerPlugin::NativePluginList::append(JSC::VM& vm, JSC::RegExp* filter, S
 bool BundlerPlugin::FilterRegExp::match(JSC::VM& vm, const String& path)
 {
     WTF::Locker locker { lock };
-    constexpr bool usesPatternContextBuffer = false;
-    Yarr::MatchingContextHolder regExpContext(vm, usesPatternContextBuffer, nullptr, Yarr::MatchFrom::CompilerThread);
+    Yarr::MatchingContextHolder regExpContext(vm, nullptr, Yarr::MatchFrom::CompilerThread);
     return regex.match(path) != -1;
 }
 
@@ -425,10 +450,11 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onResolveAsync, (JSC::JSGlobalO
 
 extern "C" JSC::EncodedJSValue JSBundlerPlugin__appendDeferPromise(Bun::JSBundlerPlugin* pluginObject)
 {
-    JSC::JSGlobalObject* globalObject = pluginObject->globalObject();
-    Strong<JSPromise> strong_promise = JSC::Strong<JSPromise>(globalObject->vm(), JSPromise::create(globalObject->vm(), globalObject->promiseStructure()));
-    JSPromise* ret = strong_promise.get();
-    pluginObject->plugin.deferredPromises.append(strong_promise);
+    auto* vm = &pluginObject->vm();
+    auto* globalObject = pluginObject->globalObject();
+
+    JSPromise* ret = JSPromise::create(*vm, globalObject->promiseStructure());
+    pluginObject->plugin.deferredPromises.append(*vm, pluginObject, ret);
 
     return JSC::JSValue::encode(ret);
 }
@@ -638,15 +664,23 @@ extern "C" void JSBundlerPlugin__setConfig(Bun::JSBundlerPlugin* plugin, void* c
 
 extern "C" void JSBundlerPlugin__drainDeferred(Bun::JSBundlerPlugin* pluginObject, bool rejected)
 {
-    auto deferredPromises = std::exchange(pluginObject->plugin.deferredPromises, {});
-    for (auto& promise : deferredPromises) {
+    auto* globalObject = pluginObject->globalObject();
+    MarkedArgumentBuffer arguments;
+    pluginObject->plugin.deferredPromises.moveTo(pluginObject, arguments);
+    ASSERT(!arguments.hasOverflowed());
+
+    auto& vm = pluginObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    for (auto promiseValue : arguments) {
+        JSPromise* promise = jsCast<JSPromise*>(JSValue::decode(promiseValue));
         if (rejected) {
-            promise->reject(pluginObject->globalObject(), JSC::jsUndefined());
+            promise->reject(vm, globalObject, JSC::jsUndefined());
         } else {
-            promise->resolve(pluginObject->globalObject(), JSC::jsUndefined());
+            promise->resolve(globalObject, JSC::jsUndefined());
         }
-        promise.clear();
+        RETURN_IF_EXCEPTION(scope, );
     }
+    RETURN_IF_EXCEPTION(scope, );
 }
 
 extern "C" void JSBundlerPlugin__tombstone(Bun::JSBundlerPlugin* plugin)

@@ -1,7 +1,7 @@
 const Echo = @This();
 
 /// Should be allocated with the arena from Builtin
-output: std.ArrayList(u8),
+output: std.array_list.Managed(u8),
 
 state: union(enum) {
     idle,
@@ -22,17 +22,17 @@ pub fn start(this: *Echo) Yield {
     for (args, 0..) |arg, i| {
         const thearg = std.mem.span(arg);
         if (i < args_len - 1) {
-            this.output.appendSlice(thearg) catch bun.outOfMemory();
-            this.output.append(' ') catch bun.outOfMemory();
+            bun.handleOom(this.output.appendSlice(thearg));
+            bun.handleOom(this.output.append(' '));
         } else {
             if (thearg.len > 0 and thearg[thearg.len - 1] == '\n') {
                 has_leading_newline = true;
             }
-            this.output.appendSlice(bun.strings.trimSubsequentLeadingChars(thearg, '\n')) catch bun.outOfMemory();
+            bun.handleOom(this.output.appendSlice(bun.strings.trimSubsequentLeadingChars(thearg, '\n')));
         }
     }
 
-    if (!has_leading_newline and !no_newline) this.output.append('\n') catch bun.outOfMemory();
+    if (!has_leading_newline and !no_newline) bun.handleOom(this.output.append('\n'));
 
     if (this.bltn().stdout.needsIO()) |safeguard| {
         this.state = .waiting;

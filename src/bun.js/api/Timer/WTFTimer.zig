@@ -35,14 +35,17 @@ inline fn runWithoutRemoving(this: *const WTFTimer) void {
 
 pub fn update(this: *WTFTimer, seconds: f64, repeat: bool) void {
     // There's only one of these per VM, and each VM has its own imminent_gc_timer
-    this.imminent.store(if (seconds == 0) this else null, .seq_cst);
-
-    if (seconds == 0.0) {
+    // Only set imminent if it's not already set to avoid overwriting another timer
+    if (seconds == 0) {
+        _ = this.imminent.cmpxchgStrong(null, this, .seq_cst, .seq_cst);
         return;
+    } else {
+        // Clear imminent if this timer was the one that set it
+        _ = this.imminent.cmpxchgStrong(this, null, .seq_cst, .seq_cst);
     }
 
     const modf = std.math.modf(seconds);
-    var interval = bun.timespec.now();
+    var interval = bun.timespec.now(.force_real_time);
     interval.sec += @intFromFloat(modf.ipart);
     interval.nsec += @intFromFloat(modf.fpart * std.time.ns_per_s);
     if (interval.nsec >= std.time.ns_per_s) {
@@ -59,7 +62,8 @@ pub fn cancel(this: *WTFTimer) void {
     defer this.lock.unlock();
 
     if (this.script_execution_context_id.valid()) {
-        this.imminent.store(null, .seq_cst);
+        // Only clear imminent if this timer was the one that set it
+        _ = this.imminent.cmpxchgStrong(this, null, .seq_cst, .seq_cst);
 
         if (this.event_loop_timer.state == .ACTIVE) {
             this.vm.timer.remove(&this.event_loop_timer);
@@ -67,14 +71,11 @@ pub fn cancel(this: *WTFTimer) void {
     }
 }
 
-pub fn fire(this: *WTFTimer, _: *const bun.timespec, _: *VirtualMachine) EventLoopTimer.Arm {
+pub fn fire(this: *WTFTimer, _: *const bun.timespec, _: *VirtualMachine) void {
     this.event_loop_timer.state = .FIRED;
-    this.imminent.store(null, .seq_cst);
+    // Only clear imminent if this timer was the one that set it
+    _ = this.imminent.cmpxchgStrong(this, null, .seq_cst, .seq_cst);
     this.runWithoutRemoving();
-    return if (this.repeat)
-        .{ .rearm = this.event_loop_timer.next }
-    else
-        .disarm;
 }
 
 pub fn deinit(this: *WTFTimer) void {
@@ -128,7 +129,7 @@ export fn WTFTimer__secondsUntilTimer(this: *WTFTimer) f64 {
     this.lock.lock();
     defer this.lock.unlock();
     if (this.event_loop_timer.state == .ACTIVE) {
-        const until = this.event_loop_timer.next.duration(&bun.timespec.now());
+        const until = this.event_loop_timer.next.duration(&bun.timespec.now(.force_real_time));
         const sec: f64, const nsec: f64 = .{ @floatFromInt(until.sec), @floatFromInt(until.nsec) };
         return sec + nsec / std.time.ns_per_s;
     }

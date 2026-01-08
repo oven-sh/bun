@@ -145,7 +145,7 @@ fn stdIoRead(this: File, buf: []u8) ReadError!usize {
     return try this.read(buf).unwrap();
 }
 
-pub const Reader = std.io.Reader(File, anyerror, stdIoRead);
+pub const Reader = std.Io.GenericReader(File, anyerror, stdIoRead);
 
 pub fn reader(self: File) Reader {
     return Reader{ .context = self };
@@ -166,8 +166,8 @@ fn stdIoWriteQuietDebug(this: File, bytes: []const u8) WriteError!usize {
     return bytes.len;
 }
 
-pub const Writer = std.io.Writer(File, anyerror, stdIoWrite);
-pub const QuietWriter = if (Environment.isDebug) std.io.Writer(File, anyerror, stdIoWriteQuietDebug) else Writer;
+pub const Writer = std.Io.GenericWriter(File, anyerror, stdIoWrite);
+pub const QuietWriter = if (Environment.isDebug) std.Io.GenericWriter(File, anyerror, stdIoWriteQuietDebug) else Writer;
 
 pub fn writer(self: File) Writer {
     return Writer{ .context = self };
@@ -241,7 +241,7 @@ pub fn kind(self: File) Maybe(std.fs.File.Kind) {
 }
 
 pub const ReadToEndResult = struct {
-    bytes: std.ArrayList(u8) = std.ArrayList(u8).init(default_allocator),
+    bytes: std.array_list.Managed(u8) = std.array_list.Managed(u8).init(default_allocator),
     err: ?Error = null,
 
     pub fn unwrap(self: *const ReadToEndResult) ![]u8 {
@@ -275,9 +275,9 @@ pub fn readFillBuf(this: File, buf: []u8) Maybe([]u8) {
     return .{ .result = buf[0..read_amount] };
 }
 
-pub fn readToEndWithArrayList(this: File, list: *std.ArrayList(u8), probably_small: bool) Maybe(usize) {
-    if (probably_small) {
-        list.ensureUnusedCapacity(64) catch bun.outOfMemory();
+pub fn readToEndWithArrayList(this: File, list: *std.array_list.Managed(u8), size_guess: enum { probably_small, unknown_size }) Maybe(usize) {
+    if (size_guess == .probably_small) {
+        bun.handleOom(list.ensureUnusedCapacity(64));
     } else {
         list.ensureTotalCapacityPrecise(
             switch (this.getEndPos()) {
@@ -286,13 +286,13 @@ pub fn readToEndWithArrayList(this: File, list: *std.ArrayList(u8), probably_sma
                 },
                 .result => |s| s,
             } + 16,
-        ) catch bun.outOfMemory();
+        ) catch |err| bun.handleOom(err);
     }
 
     var total: i64 = 0;
     while (true) {
         if (list.unusedCapacitySlice().len == 0) {
-            list.ensureUnusedCapacity(16) catch bun.outOfMemory();
+            bun.handleOom(list.ensureUnusedCapacity(16));
         }
 
         switch (if (comptime Environment.isPosix)
@@ -319,8 +319,8 @@ pub fn readToEndWithArrayList(this: File, list: *std.ArrayList(u8), probably_sma
 /// Use this function on potentially large files.
 /// Calls fstat() on the file to get the size of the file and avoids reallocations + extra read() calls.
 pub fn readToEnd(this: File, allocator: std.mem.Allocator) ReadToEndResult {
-    var list = std.ArrayList(u8).init(allocator);
-    return switch (readToEndWithArrayList(this, &list, false)) {
+    var list = std.array_list.Managed(u8).init(allocator);
+    return switch (readToEndWithArrayList(this, &list, .unknown_size)) {
         .err => |err| .{ .err = err, .bytes = list },
         .result => .{ .err = null, .bytes = list },
     };
@@ -329,8 +329,8 @@ pub fn readToEnd(this: File, allocator: std.mem.Allocator) ReadToEndResult {
 /// Use this function on small files <= 1024 bytes.
 /// File will skip the fstat() call, preallocating 64 bytes instead of the file's size.
 pub fn readToEndSmall(this: File, allocator: std.mem.Allocator) ReadToEndResult {
-    var list = std.ArrayList(u8).init(allocator);
-    return switch (readToEndWithArrayList(this, &list, true)) {
+    var list = std.array_list.Managed(u8).init(allocator);
+    return switch (readToEndWithArrayList(this, &list, .probably_small)) {
         .err => |err| .{ .err = err, .bytes = list },
         .result => .{ .err = null, .bytes = list },
     };
@@ -421,7 +421,7 @@ pub fn toSourceAt(dir_fd: anytype, path: anytype, allocator: std.mem.Allocator, 
 
     if (opts.convert_bom) {
         if (bun.strings.BOM.detect(bytes)) |bom| {
-            bytes = bom.removeAndConvertToUTF8AndFree(allocator, bytes) catch bun.outOfMemory();
+            bytes = bun.handleOom(bom.removeAndConvertToUTF8AndFree(allocator, bytes));
         }
     }
 

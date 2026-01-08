@@ -68,7 +68,7 @@ pub fn AstMaybe(
                                     .loc = name_loc,
                                     .ref = p.newSymbol(.import, name) catch unreachable,
                                 };
-                                p.module_scope.generated.push(p.allocator, new_item.ref.?) catch unreachable;
+                                bun.handleOom(p.module_scope.generated.append(p.allocator, new_item.ref.?));
 
                                 import_items.put(name, new_item) catch unreachable;
                                 p.is_import_item.put(p.allocator, new_item.ref.?, {}) catch unreachable;
@@ -197,7 +197,7 @@ pub fn AstMaybe(
                                     return null;
                                 }
 
-                                var stmts = std.ArrayList(Stmt).initCapacity(p.allocator, props.len * 2) catch unreachable;
+                                var stmts = std.array_list.Managed(Stmt).initCapacity(p.allocator, props.len * 2) catch unreachable;
                                 var decls = p.allocator.alloc(Decl, props.len) catch unreachable;
                                 var clause_items = p.allocator.alloc(js_ast.ClauseItem, props.len) catch unreachable;
 
@@ -212,9 +212,9 @@ pub fn AstMaybe(
                                     if (!named_export_entry.found_existing) {
                                         const new_ref = p.newSymbol(
                                             .other,
-                                            std.fmt.allocPrint(p.allocator, "${any}", .{bun.fmt.fmtIdentifier(key)}) catch unreachable,
+                                            std.fmt.allocPrint(p.allocator, "${f}", .{bun.fmt.fmtIdentifier(key)}) catch unreachable,
                                         ) catch unreachable;
-                                        p.module_scope.generated.push(p.allocator, new_ref) catch unreachable;
+                                        bun.handleOom(p.module_scope.generated.append(p.allocator, new_ref));
                                         named_export_entry.value_ptr.* = .{
                                             .loc_ref = LocRef{
                                                 .loc = name_loc,
@@ -318,9 +318,9 @@ pub fn AstMaybe(
                                 if (!named_export_entry.found_existing) {
                                     const new_ref = p.newSymbol(
                                         .other,
-                                        std.fmt.allocPrint(p.allocator, "${any}", .{bun.fmt.fmtIdentifier(name)}) catch unreachable,
+                                        std.fmt.allocPrint(p.allocator, "${f}", .{bun.fmt.fmtIdentifier(name)}) catch unreachable,
                                     ) catch unreachable;
-                                    p.module_scope.generated.push(p.allocator, new_ref) catch unreachable;
+                                    bun.handleOom(p.module_scope.generated.append(p.allocator, new_ref));
                                     named_export_entry.value_ptr.* = .{
                                         .loc_ref = LocRef{
                                             .loc = name_loc,
@@ -411,7 +411,7 @@ pub fn AstMaybe(
                     }
 
                     // Inline import.meta properties for Bake
-                    if (p.options.framework != null) {
+                    if (p.options.framework != null or (p.options.bundle and p.options.output_format == .cjs)) {
                         if (strings.eqlComptime(name, "dir") or strings.eqlComptime(name, "dirname")) {
                             // Inline import.meta.dir
                             return p.newExpr(E.String.init(p.source.path.name.dir), name_loc);
@@ -425,7 +425,7 @@ pub fn AstMaybe(
                             // Inline import.meta.url as file:// URL
                             const bunstr = bun.String.fromBytes(p.source.path.text);
                             defer bunstr.deref();
-                            const url = std.fmt.allocPrint(p.allocator, "{s}", .{jsc.URL.fileURLFromString(bunstr)}) catch unreachable;
+                            const url = std.fmt.allocPrint(p.allocator, "{f}", .{jsc.URL.fileURLFromString(bunstr)}) catch unreachable;
                             return p.newExpr(E.String.init(url), name_loc);
                         }
                     }
@@ -459,12 +459,12 @@ pub fn AstMaybe(
                             p.allocator,
                             id.ref,
                             .{},
-                        ) catch bun.outOfMemory();
+                        ) catch |err| bun.handleOom(err);
                         const inner_use = gop.value_ptr.getOrPutValue(
                             p.allocator,
                             name,
                             .{},
-                        ) catch bun.outOfMemory();
+                        ) catch |err| bun.handleOom(err);
                         inner_use.value_ptr.count_estimate += 1;
                     }
                 },
@@ -491,9 +491,9 @@ pub fn AstMaybe(
                                     if (!named_export_entry.found_existing) {
                                         const new_ref = p.newSymbol(
                                             .other,
-                                            std.fmt.allocPrint(p.allocator, "${any}", .{bun.fmt.fmtIdentifier(name)}) catch unreachable,
+                                            std.fmt.allocPrint(p.allocator, "${f}", .{bun.fmt.fmtIdentifier(name)}) catch unreachable,
                                         ) catch unreachable;
-                                        p.module_scope.generated.push(p.allocator, new_ref) catch unreachable;
+                                        bun.handleOom(p.module_scope.generated.append(p.allocator, new_ref));
                                         named_export_entry.value_ptr.* = .{
                                             .loc_ref = LocRef{
                                                 .loc = name_loc,
@@ -572,8 +572,8 @@ pub fn AstMaybe(
                                     p.allocator,
                                     "import.meta.hot.{s} does not exist",
                                     .{name},
-                                ) catch bun.outOfMemory(),
-                            ) catch bun.outOfMemory();
+                                ) catch |err| bun.handleOom(err),
+                            ) catch |err| bun.handleOom(err);
                             return .{ .data = .e_undefined, .loc = loc };
                         }
                     },
@@ -650,6 +650,9 @@ pub fn AstMaybe(
                         E.Unary{
                             .op = .un_typeof,
                             .value = expr,
+                            .flags = .{
+                                .was_originally_typeof_identifier = expr.data == .e_identifier,
+                            },
                         },
                         logger.Loc.Empty,
                     ),

@@ -11,7 +11,7 @@ pub const TerminalHyperlink = struct {
         };
     }
 
-    pub fn format(this: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(this: @This(), writer: *std.Io.Writer) !void {
         if (this.enabled) {
             const ESC = "\x1b";
             const OSC8 = ESC ++ "]8;;";
@@ -96,30 +96,24 @@ pub const UpdateInteractiveCommand = struct {
         };
 
         const new_package_json_source = try manager.allocator.dupe(u8, package_json_writer.ctx.writtenWithoutTrailingZero());
-        defer manager.allocator.free(new_package_json_source);
 
         // Write the updated package.json
         const write_file = std.fs.cwd().createFile(package_json_path, .{}) catch |err| {
+            manager.allocator.free(new_package_json_source);
             Output.errGeneric("Failed to write package.json at {s}: {s}", .{ package_json_path, @errorName(err) });
             return err;
         };
         defer write_file.close();
 
         write_file.writeAll(new_package_json_source) catch |err| {
+            manager.allocator.free(new_package_json_source);
             Output.errGeneric("Failed to write package.json at {s}: {s}", .{ package_json_path, @errorName(err) });
             return err;
         };
-    }
 
-    fn resolveCatalogDependency(manager: *PackageManager, dep: Install.Dependency) ?Install.Dependency.Version {
-        return if (dep.version.tag == .catalog) blk: {
-            const catalog_dep = manager.lockfile.catalogs.get(
-                manager.lockfile,
-                dep.version.value.catalog,
-                dep.name,
-            ) orelse return null;
-            break :blk catalog_dep.version;
-        } else dep.version;
+        // Update the cache so installWithManager sees the new package.json
+        // This is critical - without this, installWithManager will use the cached old version
+        package_json.*.source.contents = new_package_json_source;
     }
 
     pub fn exec(ctx: Command.Context) !void {
@@ -157,7 +151,7 @@ pub const UpdateInteractiveCommand = struct {
         updates: []const PackageUpdate,
     ) !void {
         // Group updates by workspace
-        var workspace_groups = bun.StringHashMap(std.ArrayList(PackageUpdate)).init(bun.default_allocator);
+        var workspace_groups = bun.StringHashMap(std.array_list.Managed(PackageUpdate)).init(bun.default_allocator);
         defer {
             var it = workspace_groups.iterator();
             while (it.next()) |entry| {
@@ -170,7 +164,7 @@ pub const UpdateInteractiveCommand = struct {
         for (updates) |update| {
             const result = try workspace_groups.getOrPut(update.workspace_path);
             if (!result.found_existing) {
-                result.value_ptr.* = std.ArrayList(PackageUpdate).init(bun.default_allocator);
+                result.value_ptr.* = std.array_list.Managed(PackageUpdate).init(bun.default_allocator);
             }
             try result.value_ptr.append(update);
         }
@@ -249,7 +243,7 @@ pub const UpdateInteractiveCommand = struct {
     ) !void {
 
         // Group catalog updates by workspace path
-        var workspace_catalog_updates = bun.StringHashMap(std.ArrayList(CatalogUpdateRequest)).init(bun.default_allocator);
+        var workspace_catalog_updates = bun.StringHashMap(std.array_list.Managed(CatalogUpdateRequest)).init(bun.default_allocator);
         defer {
             var it = workspace_catalog_updates.iterator();
             while (it.next()) |entry| {
@@ -266,7 +260,7 @@ pub const UpdateInteractiveCommand = struct {
 
             const result = try workspace_catalog_updates.getOrPut(update.workspace_path);
             if (!result.found_existing) {
-                result.value_ptr.* = std.ArrayList(CatalogUpdateRequest).init(bun.default_allocator);
+                result.value_ptr.* = std.array_list.Managed(CatalogUpdateRequest).init(bun.default_allocator);
             }
 
             // Parse catalog_key (format: "package_name" or "package_name:catalog_name")
@@ -370,20 +364,20 @@ pub const UpdateInteractiveCommand = struct {
                 original_cwd,
                 manager,
                 filters,
-            ) catch bun.outOfMemory();
+            ) catch |err| bun.handleOom(err);
         } else if (manager.options.do.recursive) blk: {
-            break :blk getAllWorkspaces(bun.default_allocator, manager) catch bun.outOfMemory();
+            break :blk bun.handleOom(getAllWorkspaces(bun.default_allocator, manager));
         } else blk: {
             const root_pkg_id = manager.root_package_id.get(manager.lockfile, manager.workspace_name_hash);
             if (root_pkg_id == invalid_package_id) return;
 
-            const ids = bun.default_allocator.alloc(PackageID, 1) catch bun.outOfMemory();
+            const ids = bun.handleOom(bun.default_allocator.alloc(PackageID, 1));
             ids[0] = root_pkg_id;
             break :blk ids;
         };
         defer bun.default_allocator.free(workspace_pkg_ids);
 
-        try OutdatedCommand.updateManifestsIfNecessary(manager, workspace_pkg_ids);
+        try manager.populateManifestCache(.{ .ids = workspace_pkg_ids });
 
         // Get outdated packages
         const outdated_packages = try getOutdatedPackages(bun.default_allocator, manager, workspace_pkg_ids);
@@ -410,7 +404,7 @@ pub const UpdateInteractiveCommand = struct {
 
         // Create package specifier array from selected packages
         // Group selected packages by workspace
-        var workspace_updates = bun.StringHashMap(std.ArrayList([]const u8)).init(bun.default_allocator);
+        var workspace_updates = bun.StringHashMap(std.array_list.Managed([]const u8)).init(bun.default_allocator);
         defer {
             var it = workspace_updates.iterator();
             while (it.next()) |entry| {
@@ -432,7 +426,7 @@ pub const UpdateInteractiveCommand = struct {
         }
 
         // Collect all package updates with full information
-        var package_updates = std.ArrayList(PackageUpdate).init(bun.default_allocator);
+        var package_updates = std.array_list.Managed(PackageUpdate).init(bun.default_allocator);
         defer package_updates.deinit();
 
         // Process selected packages
@@ -531,21 +525,13 @@ pub const UpdateInteractiveCommand = struct {
                     try updatePackageJsonFilesFromUpdates(manager, package_updates.items);
                 }
 
-                // Get the root package.json from cache (should be updated after our saves)
-                const package_json_contents = manager.root_package_json_file.readToEndAlloc(ctx.allocator, std.math.maxInt(usize)) catch |err| {
-                    if (manager.options.log_level != .silent) {
-                        Output.prettyErrorln("<r><red>{s} reading package.json<r> :(", .{@errorName(err)});
-                        Output.flush();
-                    }
-                    return;
-                };
                 manager.to_update = true;
 
                 // Reset the timer to show actual install time instead of total command time
                 var install_ctx = ctx;
                 install_ctx.start_time = std.time.nanoTimestamp();
 
-                try PackageManager.installWithManager(manager, install_ctx, package_json_contents, manager.root_dir.dir);
+                try PackageManager.installWithManager(manager, install_ctx, PackageManager.root_package_json_path, manager.root_dir.dir);
             }
         }
     }
@@ -621,14 +607,14 @@ pub const UpdateInteractiveCommand = struct {
 
                             const abs_res_path = path.joinAbsStringBuf(FileSystem.instance.top_level_dir, &path_buf, &[_]string{res_path}, .posix);
 
-                            if (!glob.walk.matchImpl(allocator, pattern, strings.withoutTrailingSlash(abs_res_path)).matches()) {
+                            if (!glob.match(pattern, strings.withoutTrailingSlash(abs_res_path)).matches()) {
                                 break :matched false;
                             }
                         },
                         .name => |pattern| {
                             const name = pkg_names[workspace_pkg_id].slice(string_buf);
 
-                            if (!glob.walk.matchImpl(allocator, pattern, name).matches()) {
+                            if (!glob.match(pattern, name).matches()) {
                                 break :matched false;
                             }
                         },
@@ -654,7 +640,7 @@ pub const UpdateInteractiveCommand = struct {
         packages: []OutdatedPackage,
     ) ![]OutdatedPackage {
         // Create a map to track catalog dependencies by name
-        var catalog_map = bun.StringHashMap(std.ArrayList(OutdatedPackage)).init(allocator);
+        var catalog_map = bun.StringHashMap(std.array_list.Managed(OutdatedPackage)).init(allocator);
         defer catalog_map.deinit();
         defer {
             var iter = catalog_map.iterator();
@@ -663,7 +649,7 @@ pub const UpdateInteractiveCommand = struct {
             }
         }
 
-        var result = std.ArrayList(OutdatedPackage).init(allocator);
+        var result = std.array_list.Managed(OutdatedPackage).init(allocator);
         defer result.deinit();
 
         // Group catalog dependencies
@@ -671,7 +657,7 @@ pub const UpdateInteractiveCommand = struct {
             if (pkg.is_catalog) {
                 const entry = try catalog_map.getOrPut(pkg.name);
                 if (!entry.found_existing) {
-                    entry.value_ptr.* = std.ArrayList(OutdatedPackage).init(allocator);
+                    entry.value_ptr.* = std.array_list.Managed(OutdatedPackage).init(allocator);
                 }
                 try entry.value_ptr.append(pkg);
             } else {
@@ -688,7 +674,7 @@ pub const UpdateInteractiveCommand = struct {
                 var first = catalog_packages[0];
 
                 // Build combined workspace name
-                var workspace_names = std.ArrayList(u8).init(allocator);
+                var workspace_names = std.array_list.Managed(u8).init(allocator);
                 defer workspace_names.deinit();
 
                 if (catalog_packages.len > 0) {
@@ -740,10 +726,10 @@ pub const UpdateInteractiveCommand = struct {
         const pkg_resolutions = packages.items(.resolution);
         const pkg_dependencies = packages.items(.dependencies);
 
-        var outdated_packages = std.ArrayList(OutdatedPackage).init(allocator);
+        var outdated_packages = std.array_list.Managed(OutdatedPackage).init(allocator);
         defer outdated_packages.deinit();
 
-        var version_buf = std.ArrayList(u8).init(allocator);
+        var version_buf = std.array_list.Managed(u8).init(allocator);
         defer version_buf.deinit();
         const version_writer = version_buf.writer();
 
@@ -752,8 +738,8 @@ pub const UpdateInteractiveCommand = struct {
             for (pkg_deps.begin()..pkg_deps.end()) |dep_id| {
                 const package_id = lockfile.buffers.resolutions.items[dep_id];
                 if (package_id == invalid_package_id) continue;
-                const dep = lockfile.buffers.dependencies.items[dep_id];
-                const resolved_version = resolveCatalogDependency(manager, dep) orelse continue;
+                const dep = &lockfile.buffers.dependencies.items[dep_id];
+                const resolved_version = manager.lockfile.resolveCatalogDependency(dep) orelse continue;
                 if (resolved_version.tag != .npm and resolved_version.tag != .dist_tag) continue;
                 const resolution = pkg_resolutions[package_id];
                 if (resolution.tag != .npm) continue;
@@ -768,16 +754,17 @@ pub const UpdateInteractiveCommand = struct {
                     package_name,
                     &expired,
                     .load_from_memory_fallback_to_disk,
+                    manager.options.minimum_release_age_ms != null,
                 ) orelse continue;
 
-                const latest = manifest.findByDistTag("latest") orelse continue;
+                const latest = manifest.findByDistTagWithFilter("latest", manager.options.minimum_release_age_ms, manager.options.minimum_release_age_excludes).unwrap() orelse continue;
 
                 // In interactive mode, show the constrained update version as "Target"
                 // but always include packages (don't filter out breaking changes)
                 const update_version = if (resolved_version.tag == .npm)
-                    manifest.findBestVersion(resolved_version.value.npm.version, string_buf) orelse latest
+                    manifest.findBestVersionWithFilter(resolved_version.value.npm.version, string_buf, manager.options.minimum_release_age_ms, manager.options.minimum_release_age_excludes).unwrap() orelse latest
                 else
-                    manifest.findByDistTag(resolved_version.value.dist_tag.tag.slice(string_buf)) orelse latest;
+                    manifest.findByDistTagWithFilter(resolved_version.value.dist_tag.tag.slice(string_buf), manager.options.minimum_release_age_ms, manager.options.minimum_release_age_excludes).unwrap() orelse latest;
 
                 // Skip only if both the constrained update AND the latest version are the same as current
                 // This ensures we show packages where latest is newer even if constrained update isn't
@@ -800,15 +787,15 @@ pub const UpdateInteractiveCommand = struct {
                 }
 
                 version_buf.clearRetainingCapacity();
-                try version_writer.print("{}", .{resolution.value.npm.version.fmt(string_buf)});
+                try version_writer.print("{f}", .{resolution.value.npm.version.fmt(string_buf)});
                 const current_version_buf = try allocator.dupe(u8, version_buf.items);
 
                 version_buf.clearRetainingCapacity();
-                try version_writer.print("{}", .{update_version.version.fmt(manifest.string_buf)});
+                try version_writer.print("{f}", .{update_version.version.fmt(manifest.string_buf)});
                 const update_version_buf = try allocator.dupe(u8, version_buf.items);
 
                 version_buf.clearRetainingCapacity();
-                try version_writer.print("{}", .{latest.version.fmt(manifest.string_buf)});
+                try version_writer.print("{f}", .{latest.version.fmt(manifest.string_buf)});
                 const latest_version_buf = try allocator.dupe(u8, version_buf.items);
 
                 // Already filtered by version.order check above
@@ -1180,7 +1167,7 @@ pub const UpdateInteractiveCommand = struct {
     }
 
     fn processMultiSelect(state: *MultiSelectState, initial_terminal_size: TerminalSize) ![]bool {
-        const colors = Output.enable_ansi_colors;
+        const colors = Output.enable_ansi_colors_stdout;
 
         // Clear any previous progress output
         Output.print("\r\x1B[2K", .{}); // Clear entire line
@@ -1445,7 +1432,7 @@ pub const UpdateInteractiveCommand = struct {
 
                     const uses_default_registry = pkg.manager.options.scope.url_hash == Install.Npm.Registry.default_url_hash and
                         pkg.manager.scopeForPackageName(pkg.name).url_hash == Install.Npm.Registry.default_url_hash;
-                    const package_url = if (Output.enable_ansi_colors and uses_default_registry)
+                    const package_url = if (Output.enable_ansi_colors_stdout and uses_default_registry)
                         try std.fmt.allocPrint(bun.default_allocator, "https://npmjs.org/package/{s}/v/{s}", .{ pkg.name, brk: {
                             if (selected) {
                                 if (pkg.use_latest) {
@@ -1465,14 +1452,14 @@ pub const UpdateInteractiveCommand = struct {
 
                     if (selected) {
                         if (strings.eqlComptime(checkbox_color, "red")) {
-                            Output.pretty("<r><red>{}<r>", .{hyperlink});
+                            Output.pretty("<r><red>{f}<r>", .{hyperlink});
                         } else if (strings.eqlComptime(checkbox_color, "yellow")) {
-                            Output.pretty("<r><yellow>{}<r>", .{hyperlink});
+                            Output.pretty("<r><yellow>{f}<r>", .{hyperlink});
                         } else {
-                            Output.pretty("<r><green>{}<r>", .{hyperlink});
+                            Output.pretty("<r><green>{f}<r>", .{hyperlink});
                         }
                     } else {
-                        Output.pretty("<r>{}<r>", .{hyperlink});
+                        Output.pretty("<r>{f}<r>", .{hyperlink});
                     }
 
                     // Print dev/peer/optional tag if applicable
@@ -1535,7 +1522,7 @@ pub const UpdateInteractiveCommand = struct {
                             Output.pretty("<r>{s}<r>", .{truncated_target});
                         } else {
                             // Use diffFmt for full versions
-                            Output.pretty("{}", .{target_full.diffFmt(
+                            Output.pretty("{f}", .{target_full.diffFmt(
                                 current_full,
                                 pkg.update_version,
                                 pkg.current_version,
@@ -1595,7 +1582,7 @@ pub const UpdateInteractiveCommand = struct {
                             Output.pretty("<r>{s}<r>", .{truncated_latest});
                         } else {
                             // Use diffFmt for full versions
-                            Output.pretty("{}", .{latest_full.diffFmt(
+                            Output.pretty("{f}", .{latest_full.diffFmt(
                                 current_full,
                                 pkg.latest_version,
                                 pkg.current_version,
@@ -1656,7 +1643,10 @@ pub const UpdateInteractiveCommand = struct {
             Output.flush();
 
             // Read input
-            const byte = std.io.getStdIn().reader().readByte() catch return state.selected;
+            var reader_buffer: [1]u8 = undefined;
+            var reader_file = std.fs.File.stdin().readerStreaming(&reader_buffer);
+            const reader = &reader_file.interface;
+            const byte = reader.takeByte() catch return state.selected;
 
             switch (byte) {
                 '\n', '\r' => return state.selected,
@@ -1720,9 +1710,9 @@ pub const UpdateInteractiveCommand = struct {
                     state.toggle_all = false;
                 },
                 27 => { // escape sequence
-                    const seq = std.io.getStdIn().reader().readByte() catch continue;
+                    const seq = reader.takeByte() catch continue;
                     if (seq == '[') {
-                        const arrow = std.io.getStdIn().reader().readByte() catch continue;
+                        const arrow = reader.takeByte() catch continue;
                         switch (arrow) {
                             'A' => { // up arrow
                                 if (state.cursor > 0) {
@@ -1749,7 +1739,7 @@ pub const UpdateInteractiveCommand = struct {
                                 state.selected[state.cursor] = true;
                             },
                             '5' => { // Page Up
-                                const tilde = std.io.getStdIn().reader().readByte() catch continue;
+                                const tilde = reader.takeByte() catch continue;
                                 if (tilde == '~') {
                                     // Move up by viewport height
                                     if (state.cursor >= state.viewport_height) {
@@ -1761,7 +1751,7 @@ pub const UpdateInteractiveCommand = struct {
                                 }
                             },
                             '6' => { // Page Down
-                                const tilde = std.io.getStdIn().reader().readByte() catch continue;
+                                const tilde = reader.takeByte() catch continue;
                                 if (tilde == '~') {
                                     // Move down by viewport height
                                     if (state.cursor + state.viewport_height < state.packages.len) {
@@ -1777,7 +1767,7 @@ pub const UpdateInteractiveCommand = struct {
                                 var buffer: [32]u8 = undefined;
                                 var buf_idx: usize = 0;
                                 while (buf_idx < buffer.len) : (buf_idx += 1) {
-                                    const c = std.io.getStdIn().reader().readByte() catch break;
+                                    const c = reader.takeByte() catch break;
                                     if (c == 'M' or c == 'm') {
                                         // Parse SGR mouse event: ESC[<button;col;row(M or m)
                                         // button: 64 = scroll up, 65 = scroll down
@@ -1994,10 +1984,39 @@ fn updateNamedCatalog(
 }
 
 fn preserveVersionPrefix(original_version: string, new_version: string, allocator: std.mem.Allocator) !string {
-    if (original_version.len > 0) {
-        const first_char = original_version[0];
+    if (original_version.len > 1) {
+        var orig_version = original_version;
+        var alias: ?string = null;
+
+        // Preserve npm: prefix
+        if (strings.withoutPrefixIfPossibleComptime(original_version, "npm:")) |after_npm| {
+            if (strings.lastIndexOfChar(after_npm, '@')) |i| {
+                alias = after_npm[0..i];
+                if (i + 2 < after_npm.len) {
+                    orig_version = after_npm[i + 1 ..];
+                }
+            } else {
+                alias = after_npm;
+            }
+        }
+
+        // Preserve other version prefixes
+        const first_char = orig_version[0];
         if (first_char == '^' or first_char == '~' or first_char == '>' or first_char == '<' or first_char == '=') {
+            const second_char = orig_version[1];
+            if ((first_char == '>' or first_char == '<') and second_char == '=') {
+                if (alias) |a| {
+                    return try std.fmt.allocPrint(allocator, "npm:{s}@{c}={s}", .{ a, first_char, new_version });
+                }
+                return try std.fmt.allocPrint(allocator, "{c}={s}", .{ first_char, new_version });
+            }
+            if (alias) |a| {
+                return try std.fmt.allocPrint(allocator, "npm:{s}@{c}{s}", .{ a, first_char, new_version });
+            }
             return try std.fmt.allocPrint(allocator, "{c}{s}", .{ first_char, new_version });
+        }
+        if (alias) |a| {
+            return try std.fmt.allocPrint(allocator, "npm:{s}@{s}", .{ a, new_version });
         }
     }
     return try allocator.dupe(u8, new_version);
@@ -2016,6 +2035,7 @@ const glob = bun.glob;
 const logger = bun.logger;
 const path = bun.path;
 const strings = bun.strings;
+const Command = bun.cli.Command;
 const FileSystem = bun.fs.FileSystem;
 
 const Semver = bun.Semver;
@@ -2025,9 +2045,6 @@ const String = Semver.String;
 const JSAst = bun.ast;
 const E = JSAst.E;
 const Expr = JSAst.Expr;
-
-const Command = bun.cli.Command;
-const OutdatedCommand = bun.cli.OutdatedCommand;
 
 const Install = bun.install;
 const DependencyID = Install.DependencyID;

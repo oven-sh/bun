@@ -9,13 +9,13 @@ pub fn toBeInstanceOf(this: *Expect, globalThis: *JSGlobalObject, callFrame: *Ca
         return globalThis.throwInvalidArguments("toBeInstanceOf() requires 1 argument", .{});
     }
 
-    incrementExpectCallCounter();
+    this.incrementExpectCallCounter();
     var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
     defer formatter.deinit();
 
     const expected_value = arguments[0];
     if (!expected_value.isConstructor()) {
-        return globalThis.throw("Expected value must be a function: {any}", .{expected_value.toFmt(&formatter)});
+        return globalThis.throw("Expected value must be a function: {f}", .{expected_value.toFmt(&formatter)});
     }
     expected_value.ensureStillAlive();
 
@@ -30,14 +30,14 @@ pub fn toBeInstanceOf(this: *Expect, globalThis: *JSGlobalObject, callFrame: *Ca
     const expected_fmt = expected_value.toFmt(&formatter);
     const value_fmt = value.toFmt(&formatter);
     if (not) {
-        const expected_line = "Expected constructor: not <green>{any}<r>\n";
-        const received_line = "Received value: <red>{any}<r>\n";
+        const expected_line = "Expected constructor: not <green>{f}<r>\n";
+        const received_line = "Received value: <red>{f}<r>\n";
         const signature = comptime getSignature("toBeInstanceOf", "<green>expected<r>", true);
         return this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_fmt, value_fmt });
     }
 
-    const expected_line = "Expected constructor: <green>{any}<r>\n";
-    const received_line = "Received value: <red>{any}<r>\n";
+    const expected_line = "Expected constructor: <green>{f}<r>\n";
+    const received_line = "Received value: <red>{f}<r>\n";
     const signature = comptime getSignature("toBeInstanceOf", "<green>expected<r>", false);
     return this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_fmt, value_fmt });
 }
@@ -48,7 +48,6 @@ const jsc = bun.jsc;
 const CallFrame = bun.jsc.CallFrame;
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
-const incrementExpectCallCounter = bun.jsc.Expect.incrementExpectCallCounter;
 
 const Expect = bun.jsc.Expect.Expect;
 const getSignature = Expect.getSignature;

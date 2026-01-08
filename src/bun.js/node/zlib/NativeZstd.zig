@@ -84,7 +84,7 @@ pub fn init(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.Cal
 
     var err = this.stream.init(pledged_src_size);
     if (err.isError()) {
-        try impl.emitError(this, globalThis, this_value, err);
+        impl.emitError(this, globalThis, this_value, err);
         return .false;
     }
 
@@ -93,7 +93,10 @@ pub fn init(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.Cal
     for (params_.asU32(), 0..) |x, i| {
         if (x == std.math.maxInt(u32)) continue;
         const err_ = this.stream.setParams(@intCast(i), x);
-        if (err_.isError()) return globalThis.ERR(.ZLIB_INITIALIZATION_FAILED, "{s}", .{std.mem.sliceTo(err_.msg.?, 0)}).throw();
+        if (err_.isError()) {
+            this.stream.close();
+            return globalThis.ERR(.ZLIB_INITIALIZATION_FAILED, "{s}", .{std.mem.sliceTo(err_.msg.?, 0)}).throw();
+        }
     }
 
     return .true;
@@ -135,7 +138,11 @@ const Context = struct {
                 if (state == null) return .init("Could not initialize zstd instance", -1, "ERR_ZLIB_INITIALIZATION_FAILED");
                 this.state = state.?;
                 const result = c.ZSTD_CCtx_setPledgedSrcSize(state, pledged_src_size);
-                if (c.ZSTD_isError(result) > 0) return .init("Could not set pledged src size", -1, "ERR_ZLIB_INITIALIZATION_FAILED");
+                if (c.ZSTD_isError(result) > 0) {
+                    _ = c.ZSTD_freeCCtx(state);
+                    this.state = null;
+                    return .init("Could not set pledged src size", -1, "ERR_ZLIB_INITIALIZATION_FAILED");
+                }
                 return .ok;
             },
             .ZSTD_DECOMPRESS => {
@@ -165,7 +172,21 @@ const Context = struct {
     }
 
     pub fn reset(this: *Context) Error {
+        if (this.state != null) {
+            this.deinitState();
+        }
         return this.init(this.pledged_src_size);
+    }
+
+    /// Frees the Zstd encoder/decoder state without changing mode.
+    /// Use close() for full cleanup that also sets mode to NONE.
+    fn deinitState(this: *Context) void {
+        _ = switch (this.mode) {
+            .ZSTD_COMPRESS => c.ZSTD_freeCCtx(@ptrCast(this.state)),
+            .ZSTD_DECOMPRESS => c.ZSTD_freeDCtx(@ptrCast(this.state)),
+            else => unreachable,
+        };
+        this.state = null;
     }
 
     pub fn setBuffers(this: *Context, in: ?[]const u8, out: ?[]u8) void {
@@ -243,13 +264,8 @@ const Context = struct {
             .ZSTD_DECOMPRESS => c.ZSTD_DCtx_reset(@ptrCast(this.state), c.ZSTD_reset_session_and_parameters),
             else => unreachable,
         };
-        _ = switch (this.mode) {
-            .ZSTD_COMPRESS => c.ZSTD_freeCCtx(@ptrCast(this.state)),
-            .ZSTD_DECOMPRESS => c.ZSTD_freeDCtx(@ptrCast(this.state)),
-            else => unreachable,
-        };
+        this.deinitState();
         this.mode = .NONE;
-        this.state = null;
     }
 };
 

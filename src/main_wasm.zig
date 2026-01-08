@@ -193,8 +193,8 @@ export fn init(heapsize: u32) void {
 var log: Logger.Log = undefined;
 
 const TestAnalyzer = struct {
-    string_buffer: std.ArrayList(u8),
-    items: std.ArrayList(api.TestResponseItem),
+    string_buffer: std.array_list.Managed(u8),
+    items: std.array_list.Managed(api.TestResponseItem),
 
     pub fn visitExpr(this: *TestAnalyzer, parser: *bun.js_parser.TSXParser, expr: JSAst.Expr) !void {
         switch (expr.data) {
@@ -436,7 +436,7 @@ export fn getTests(opts_array: u64) u64 {
     defer arena.deinit();
     var log_ = Logger.Log.init(allocator);
     var reader = ApiReader.init(Uint8Array.fromJS(opts_array), allocator);
-    var opts = api.GetTestsRequest.decode(&reader) catch bun.outOfMemory();
+    var opts = bun.handleOom(api.GetTestsRequest.decode(&reader));
     var code = Logger.Source.initPathString(if (opts.path.len > 0) opts.path else "my-test-file.test.tsx", opts.contents);
     code.contents_is_recycled = true;
     defer {
@@ -447,13 +447,13 @@ export fn getTests(opts_array: u64) u64 {
     var parser = JSParser.Parser.init(.{
         .jsx = .{},
         .ts = true,
-    }, &log_, &code, define, allocator) catch bun.outOfMemory();
+    }, &log_, &code, define, allocator) catch |err| bun.handleOom(err);
 
     var anaylzer = TestAnalyzer{
-        .items = std.ArrayList(
+        .items = std.array_list.Managed(
             api.TestResponseItem,
         ).init(allocator),
-        .string_buffer = std.ArrayList(
+        .string_buffer = std.array_list.Managed(
             u8,
         ).init(allocator),
     };
@@ -470,7 +470,7 @@ export fn getTests(opts_array: u64) u64 {
         return 0;
     };
 
-    var output = std.ArrayList(u8).init(default_allocator);
+    var output = std.array_list.Managed(u8).init(default_allocator);
     var output_writer = output.writer();
     const Encoder = ApiWriter(@TypeOf(output_writer));
     var encoder = Encoder.init(output_writer);
@@ -545,7 +545,7 @@ export fn transform(opts_array: u64) u64 {
         .errors = (log.toAPI(allocator) catch unreachable).msgs,
     };
 
-    var output = std.ArrayList(u8).init(default_allocator);
+    var output = std.array_list.Managed(u8).init(default_allocator);
     var output_writer = output.writer();
     const Encoder = ApiWriter(@TypeOf(output_writer));
     var encoder = Encoder.init(output_writer);
@@ -588,7 +588,7 @@ export fn scan(opts_array: u64) u64 {
     const result = parser.parse() catch unreachable;
     if (log.errors == 0) {
         var scan_result = std.mem.zeroes(api.ScanResult);
-        var output = std.ArrayList(u8).init(default_allocator);
+        var output = std.array_list.Managed(u8).init(default_allocator);
         var output_writer = output.writer();
         const Encoder = ApiWriter(@TypeOf(output_writer));
 
@@ -612,7 +612,7 @@ export fn scan(opts_array: u64) u64 {
         scan_result.encode(&encoder) catch unreachable;
         return @as(u64, @bitCast([2]u32{ @intFromPtr(output.items.ptr), output.items.len }));
     } else {
-        var output = std.ArrayList(u8).init(default_allocator);
+        var output = std.array_list.Managed(u8).init(default_allocator);
         var output_writer = output.writer();
         const Encoder = ApiWriter(@TypeOf(output_writer));
         var scan_result = api.ScanResult{

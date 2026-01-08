@@ -61,7 +61,7 @@ pub const ExternalModules = struct {
     };
 
     pub fn isNodeBuiltin(str: string) bool {
-        return bun.jsc.ModuleLoader.HardcodedModule.Alias.has(str, .node);
+        return bun.jsc.ModuleLoader.HardcodedModule.Alias.has(str, .node, .{});
     }
 
     const default_wildcard_patterns = &[_]WildcardPattern{
@@ -116,7 +116,7 @@ pub const ExternalModules = struct {
             return result;
         }
 
-        var patterns = std.ArrayList(WildcardPattern).initCapacity(allocator, default_wildcard_patterns.len) catch unreachable;
+        var patterns = std.array_list.Managed(WildcardPattern).initCapacity(allocator, default_wildcard_patterns.len) catch unreachable;
         patterns.appendSliceAssumeCapacity(default_wildcard_patterns[0..]);
 
         for (externals) |external| {
@@ -142,7 +142,7 @@ pub const ExternalModules = struct {
             }
         }
 
-        result.patterns = patterns.toOwnedSlice() catch bun.outOfMemory();
+        result.patterns = bun.handleOom(patterns.toOwnedSlice());
 
         return result;
     }
@@ -640,6 +640,14 @@ pub const Loader = enum(u8) {
         _,
         pub fn unwrap(opt: Optional) ?Loader {
             return if (opt == .none) null else @enumFromInt(@intFromEnum(opt));
+        }
+
+        pub fn fromAPI(loader: bun.schema.api.Loader) Optional {
+            if (loader == ._none) {
+                return .none;
+            }
+            const l: Loader = .fromAPI(loader);
+            return @enumFromInt(@intFromEnum(l));
         }
     };
 
@@ -1220,7 +1228,6 @@ pub const JSX = struct {
         .{ "react", RuntimeDevelopmentPair{ .runtime = .classic, .development = null } },
         .{ "react-jsx", RuntimeDevelopmentPair{ .runtime = .automatic, .development = true } },
         .{ "react-jsxdev", RuntimeDevelopmentPair{ .runtime = .automatic, .development = true } },
-        .{ "solid", RuntimeDevelopmentPair{ .runtime = .solid, .development = null } },
     });
 
     pub const Pragma = struct {
@@ -1242,6 +1249,7 @@ pub const JSX = struct {
         /// - tsconfig.json's `compilerOptions.jsx` (`react-jsx` or `react-jsxdev`)
         development: bool = true,
         parse: bool = true,
+        side_effects: bool = false,
 
         pub const ImportSource = struct {
             development: string = "react/jsx-dev-runtime",
@@ -1380,6 +1388,7 @@ pub const JSX = struct {
             }
 
             pragma.runtime = jsx.runtime;
+            pragma.side_effects = jsx.side_effects;
 
             if (jsx.import_source.len > 0) {
                 pragma.package_name = jsx.import_source;
@@ -1708,6 +1717,9 @@ pub const BundleOptions = struct {
     banner: string = "",
     define: *defines.Define,
     drop: []const []const u8 = &.{},
+    /// Set of enabled feature flags for dead-code elimination via `import { feature } from "bun:bundle"`.
+    /// Initialized once from the CLI --feature flags.
+    bundler_feature_flags: *const bun.StringSet = &Runtime.Features.empty_bundler_feature_flags,
     loaders: Loader.HashTable,
     resolve_dir: string = "/",
     jsx: JSX.Pragma = JSX.Pragma{},
@@ -1763,6 +1775,7 @@ pub const BundleOptions = struct {
     polyfill_node_globals: bool = false,
     transform_only: bool = false,
     load_tsconfig_json: bool = true,
+    load_package_json: bool = true,
 
     rewrite_jest_for_tests: bool = false,
 
@@ -1787,6 +1800,7 @@ pub const BundleOptions = struct {
     minify_whitespace: bool = false,
     minify_syntax: bool = false,
     minify_identifiers: bool = false,
+    keep_names: bool = false,
     dead_code_elimination: bool = true,
     css_chunking: bool,
 
@@ -1896,6 +1910,15 @@ pub const BundleOptions = struct {
         this.defines_loaded = true;
     }
 
+    pub fn deinit(this: *BundleOptions, allocator: std.mem.Allocator) void {
+        this.define.deinit();
+        // Free bundler_feature_flags if it was allocated (not the static empty set)
+        if (this.bundler_feature_flags != &Runtime.Features.empty_bundler_feature_flags) {
+            @constCast(this.bundler_feature_flags).deinit();
+            allocator.destroy(@constCast(this.bundler_feature_flags));
+        }
+    }
+
     pub fn loader(this: *const BundleOptions, ext: string) Loader {
         return this.loaders.get(ext) orelse .file;
     }
@@ -1994,6 +2017,7 @@ pub const BundleOptions = struct {
             .transform_options = transform,
             .css_chunking = false,
             .drop = transform.drop,
+            .bundler_feature_flags = Runtime.Features.initBundlerFeatureFlags(allocator, transform.feature_flags),
         };
 
         analytics.Features.define += @as(usize, @intFromBool(transform.define != null));
@@ -2005,6 +2029,8 @@ pub const BundleOptions = struct {
         if (transform.env_files.len > 0) {
             opts.env.files = transform.env_files;
         }
+
+        opts.env.disable_default_env_files = transform.disable_default_env_files;
 
         if (transform.origin) |origin| {
             opts.origin = URL.parse(origin);
@@ -2173,8 +2199,8 @@ pub const TransformResult = struct {
         log: *logger.Log,
         allocator: std.mem.Allocator,
     ) !TransformResult {
-        var errors = try std.ArrayList(logger.Msg).initCapacity(allocator, log.errors);
-        var warnings = try std.ArrayList(logger.Msg).initCapacity(allocator, log.warnings);
+        var errors = try std.array_list.Managed(logger.Msg).initCapacity(allocator, log.errors);
+        var warnings = try std.array_list.Managed(logger.Msg).initCapacity(allocator, log.warnings);
         for (log.msgs.items) |msg| {
             switch (msg.kind) {
                 logger.Kind.err => {
@@ -2210,6 +2236,9 @@ pub const Env = struct {
 
     /// List of explicit env files to load (e..g specified by --env-file args)
     files: []const []const u8 = &[_][]u8{},
+
+    /// If true, disable loading of default .env files (from --no-env-file flag or bunfig)
+    disable_default_env_files: bool = false,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -2521,7 +2550,7 @@ pub const PathTemplate = struct {
         }
     }
 
-    pub fn format(self: PathTemplate, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(self: PathTemplate, writer: *std.Io.Writer) !void {
         var remain = self.data;
         while (strings.indexOfChar(remain, '[')) |j| {
             try writeReplacingSlashesOnWindows(writer, remain[0..j]);
@@ -2562,7 +2591,7 @@ pub const PathTemplate = struct {
                 .ext => try writeReplacingSlashesOnWindows(writer, self.placeholder.ext),
                 .hash => {
                     if (self.placeholder.hash) |hash| {
-                        try writer.print("{any}", .{bun.fmt.truncatedHash32(hash)});
+                        try writer.print("{f}", .{bun.fmt.truncatedHash32(hash)});
                     }
                 },
                 .target => try writeReplacingSlashesOnWindows(writer, self.placeholder.target),

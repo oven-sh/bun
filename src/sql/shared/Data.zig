@@ -2,8 +2,10 @@
 pub const Data = union(enum) {
     owned: bun.ByteList,
     temporary: []const u8,
-    inline_storage: std.BoundedArray(u8, 15),
+    inline_storage: InlineStorage,
     empty: void,
+
+    pub const InlineStorage = bun.BoundedArray(u8, 15);
 
     pub const Empty: Data = .{ .empty = {} };
 
@@ -13,26 +15,32 @@ pub const Data = union(enum) {
         }
 
         if (possibly_inline_bytes.len <= 15) {
-            var inline_storage = std.BoundedArray(u8, 15){};
+            var inline_storage = InlineStorage{};
             @memcpy(inline_storage.buffer[0..possibly_inline_bytes.len], possibly_inline_bytes);
             inline_storage.len = @truncate(possibly_inline_bytes.len);
             return .{ .inline_storage = inline_storage };
         }
-        return .{ .owned = bun.ByteList.init(try allocator.dupe(u8, possibly_inline_bytes)) };
+        return .{
+            .owned = bun.ByteList.fromOwnedSlice(try allocator.dupe(u8, possibly_inline_bytes)),
+        };
     }
 
     pub fn toOwned(this: @This()) !bun.ByteList {
         return switch (this) {
             .owned => this.owned,
-            .temporary => bun.ByteList.init(try bun.default_allocator.dupe(u8, this.temporary)),
-            .empty => bun.ByteList.init(&.{}),
-            .inline_storage => bun.ByteList.init(try bun.default_allocator.dupe(u8, this.inline_storage.slice())),
+            .temporary => bun.ByteList.fromOwnedSlice(
+                try bun.default_allocator.dupe(u8, this.temporary),
+            ),
+            .empty => bun.ByteList.empty,
+            .inline_storage => bun.ByteList.fromOwnedSlice(
+                try bun.default_allocator.dupe(u8, this.inline_storage.slice()),
+            ),
         };
     }
 
     pub fn deinit(this: *@This()) void {
         switch (this.*) {
-            .owned => this.owned.deinitWithAllocator(bun.default_allocator),
+            .owned => |*owned| owned.clearAndFree(bun.default_allocator),
             .temporary => {},
             .empty => {},
             .inline_storage => {},
@@ -43,12 +51,10 @@ pub const Data = union(enum) {
     /// Generally, for security reasons.
     pub fn zdeinit(this: *@This()) void {
         switch (this.*) {
-            .owned => {
-
+            .owned => |*owned| {
                 // Zero bytes before deinit
-                @memset(this.owned.slice(), 0);
-
-                this.owned.deinitWithAllocator(bun.default_allocator);
+                bun.freeSensitive(bun.default_allocator, owned.slice());
+                owned.deinit(bun.default_allocator);
             },
             .temporary => {},
             .empty => {},

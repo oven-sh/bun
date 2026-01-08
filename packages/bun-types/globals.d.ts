@@ -1,13 +1,25 @@
 declare module "bun" {
   namespace __internal {
-    type NodeCryptoWebcryptoSubtleCrypto = import("crypto").webcrypto.SubtleCrypto;
     type NodeCryptoWebcryptoCryptoKey = import("crypto").webcrypto.CryptoKey;
     type NodeCryptoWebcryptoCryptoKeyPair = import("crypto").webcrypto.CryptoKeyPair;
+
+    type LibEmptyOrNodeCryptoWebcryptoSubtleCrypto = LibDomIsLoaded extends true
+      ? {}
+      : import("crypto").webcrypto.SubtleCrypto;
 
     type LibWorkerOrBunWorker = LibDomIsLoaded extends true ? {} : Bun.Worker;
     type LibEmptyOrBunWebSocket = LibDomIsLoaded extends true ? {} : Bun.WebSocket;
 
-    type LibPerformanceOrNodePerfHooksPerformance = LibDomIsLoaded extends true ? {} : import("perf_hooks").Performance;
+    type LibEmptyOrNodeStreamWebCompressionStream = LibDomIsLoaded extends true
+      ? {}
+      : import("node:stream/web").CompressionStream;
+    type LibEmptyOrNodeStreamWebDecompressionStream = LibDomIsLoaded extends true
+      ? {}
+      : import("node:stream/web").DecompressionStream;
+
+    type LibPerformanceOrNodePerfHooksPerformance = LibDomIsLoaded extends true
+      ? {}
+      : import("node:perf_hooks").Performance;
     type LibEmptyOrPerformanceEntry = LibDomIsLoaded extends true ? {} : import("node:perf_hooks").PerformanceEntry;
     type LibEmptyOrPerformanceMark = LibDomIsLoaded extends true ? {} : import("node:perf_hooks").PerformanceMark;
     type LibEmptyOrPerformanceMeasure = LibDomIsLoaded extends true ? {} : import("node:perf_hooks").PerformanceMeasure;
@@ -73,6 +85,24 @@ declare var WritableStream: Bun.__internal.UseLibDomIfAvailable<
   {
     prototype: WritableStream;
     new <W = any>(underlyingSink?: Bun.UnderlyingSink<W>, strategy?: QueuingStrategy<W>): WritableStream<W>;
+  }
+>;
+
+interface CompressionStream extends Bun.__internal.LibEmptyOrNodeStreamWebCompressionStream {}
+declare var CompressionStream: Bun.__internal.UseLibDomIfAvailable<
+  "CompressionStream",
+  {
+    prototype: CompressionStream;
+    new (format: Bun.CompressionFormat): CompressionStream;
+  }
+>;
+
+interface DecompressionStream extends Bun.__internal.LibEmptyOrNodeStreamWebDecompressionStream {}
+declare var DecompressionStream: Bun.__internal.UseLibDomIfAvailable<
+  "DecompressionStream",
+  {
+    prototype: DecompressionStream;
+    new (format: Bun.CompressionFormat): DecompressionStream;
   }
 >;
 
@@ -199,7 +229,7 @@ interface TextEncoder extends Bun.__internal.LibEmptyOrNodeUtilTextEncoder {
    * @param src The text to encode.
    * @param dest The array to hold the encode result.
    */
-  encodeInto(src?: string, dest?: Bun.BufferSource): import("util").EncodeIntoResult;
+  encodeInto(src?: string, dest?: Bun.BufferSource): import("node:util").TextEncoderEncodeIntoResult;
 }
 declare var TextEncoder: Bun.__internal.UseLibDomIfAvailable<
   "TextEncoder",
@@ -860,7 +890,10 @@ interface ErrnoException extends Error {
   syscall?: string | undefined;
 }
 
-/** An abnormal event (called an exception) which occurs as a result of calling a method or accessing a property of a web API. */
+/**
+ * An abnormal event (called an exception) which occurs as a result of calling a
+ * method or accessing a property of a web API
+ */
 interface DOMException extends Error {
   readonly message: string;
   readonly name: string;
@@ -890,17 +923,41 @@ interface DOMException extends Error {
   readonly INVALID_NODE_TYPE_ERR: 24;
   readonly DATA_CLONE_ERR: 25;
 }
-
-// declare var DOMException: {
-//   prototype: DOMException;
-//   new (message?: string, name?: string): DOMException;
-// };
+declare var DOMException: {
+  prototype: DOMException;
+  new (message?: string, name?: string): DOMException;
+  readonly INDEX_SIZE_ERR: 1;
+  readonly DOMSTRING_SIZE_ERR: 2;
+  readonly HIERARCHY_REQUEST_ERR: 3;
+  readonly WRONG_DOCUMENT_ERR: 4;
+  readonly INVALID_CHARACTER_ERR: 5;
+  readonly NO_DATA_ALLOWED_ERR: 6;
+  readonly NO_MODIFICATION_ALLOWED_ERR: 7;
+  readonly NOT_FOUND_ERR: 8;
+  readonly NOT_SUPPORTED_ERR: 9;
+  readonly INUSE_ATTRIBUTE_ERR: 10;
+  readonly INVALID_STATE_ERR: 11;
+  readonly SYNTAX_ERR: 12;
+  readonly INVALID_MODIFICATION_ERR: 13;
+  readonly NAMESPACE_ERR: 14;
+  readonly INVALID_ACCESS_ERR: 15;
+  readonly VALIDATION_ERR: 16;
+  readonly TYPE_MISMATCH_ERR: 17;
+  readonly SECURITY_ERR: 18;
+  readonly NETWORK_ERR: 19;
+  readonly ABORT_ERR: 20;
+  readonly URL_MISMATCH_ERR: 21;
+  readonly QUOTA_EXCEEDED_ERR: 22;
+  readonly TIMEOUT_ERR: 23;
+  readonly INVALID_NODE_TYPE_ERR: 24;
+  readonly DATA_CLONE_ERR: 25;
+};
 
 declare function alert(message?: string): void;
 declare function confirm(message?: string): boolean;
 declare function prompt(message?: string, _default?: string): string | null;
 
-interface SubtleCrypto extends Bun.__internal.NodeCryptoWebcryptoSubtleCrypto {}
+interface SubtleCrypto extends Bun.__internal.LibEmptyOrNodeCryptoWebcryptoSubtleCrypto {}
 declare var SubtleCrypto: {
   prototype: SubtleCrypto;
   new (): SubtleCrypto;
@@ -1396,7 +1453,6 @@ interface Blob {
    *
    * This first decodes the data from UTF-8, then parses it as JSON.
    */
-  // eslint-disable-next-line @definitelytyped/no-unnecessary-generics
   json(): Promise<any>;
 
   /**
@@ -1556,6 +1612,15 @@ declare var URL: Bun.__internal.UseLibDomIfAvailable<
   }
 >;
 
+/**
+ * The **`AbortController`** interface represents a controller object that allows you to abort one or more Web requests as and when desired.
+ *
+ * [MDN Reference](https://developer.mozilla.org/docs/Web/API/AbortController)
+ */
+interface AbortController {
+  readonly signal: AbortSignal;
+  abort(reason?: any): void;
+}
 declare var AbortController: Bun.__internal.UseLibDomIfAvailable<
   "AbortController",
   {
@@ -1564,6 +1629,12 @@ declare var AbortController: Bun.__internal.UseLibDomIfAvailable<
   }
 >;
 
+interface AbortSignal extends EventTarget {
+  readonly aborted: boolean;
+  onabort: ((this: AbortSignal, ev: Event) => any) | null;
+  readonly reason: any;
+  throwIfAborted(): void;
+}
 declare var AbortSignal: Bun.__internal.UseLibDomIfAvailable<
   "AbortSignal",
   {
@@ -1588,12 +1659,6 @@ declare var AbortSignal: Bun.__internal.UseLibDomIfAvailable<
      */
     any(signals: AbortSignal[]): AbortSignal;
   }
->;
-
-interface DOMException {}
-declare var DOMException: Bun.__internal.UseLibDomIfAvailable<
-  "DOMException",
-  { prototype: DOMException; new (): DOMException }
 >;
 
 interface FormData {
@@ -1628,6 +1693,10 @@ declare var EventSource: Bun.__internal.UseLibDomIfAvailable<
 
 interface Performance extends Bun.__internal.LibPerformanceOrNodePerfHooksPerformance {}
 declare var performance: Bun.__internal.UseLibDomIfAvailable<"performance", Performance>;
+declare var Performance: Bun.__internal.UseLibDomIfAvailable<
+  "Performance",
+  { new (): Performance; prototype: Performance }
+>;
 
 interface PerformanceEntry extends Bun.__internal.LibEmptyOrPerformanceEntry {}
 declare var PerformanceEntry: Bun.__internal.UseLibDomIfAvailable<
@@ -1854,14 +1923,44 @@ interface BunFetchRequestInit extends RequestInit {
    * Override http_proxy or HTTPS_PROXY
    * This is a custom property that is not part of the Fetch API specification.
    *
+   * Can be a string URL or an object with `url` and optional `headers`.
+   *
    * @example
    * ```js
+   * // String format
    * const response = await fetch("http://example.com", {
    *  proxy: "https://username:password@127.0.0.1:8080"
    * });
+   *
+   * // Object format with custom headers sent to the proxy
+   * const response = await fetch("http://example.com", {
+   *  proxy: {
+   *    url: "https://127.0.0.1:8080",
+   *    headers: {
+   *      "Proxy-Authorization": "Bearer token",
+   *      "X-Custom-Proxy-Header": "value"
+   *    }
+   *  }
+   * });
    * ```
+   *
+   * If a `Proxy-Authorization` header is provided in `proxy.headers`, it takes
+   * precedence over credentials parsed from the proxy URL.
    */
-  proxy?: string;
+  proxy?:
+    | string
+    | {
+        /**
+         * The proxy URL
+         */
+        url: string;
+        /**
+         * Custom headers to send to the proxy server.
+         * These headers are sent in the CONNECT request (for HTTPS targets)
+         * or in the proxy request (for HTTP targets).
+         */
+        headers?: Bun.HeadersInit;
+      };
 
   /**
    * Override the default S3 options
@@ -1948,3 +2047,21 @@ declare namespace fetch {
   ): void;
 }
 //#endregion
+
+interface RegExpConstructor {
+  /**
+   * Escapes any potential regex syntax characters in a string, and returns a
+   * new string that can be safely used as a literal pattern for the RegExp()
+   * constructor.
+   *
+   * [MDN Reference](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/RegExp/escape)
+   *
+   * @example
+   * ```ts
+   * const re = new RegExp(RegExp.escape("foo.bar"));
+   * re.test("foo.bar"); // true
+   * re.test("foo!bar"); // false
+   * ```
+   */
+  escape(string: string): string;
+}

@@ -14,7 +14,7 @@ state: union(enum) {
     wait_write_err,
     done,
 } = .idle,
-redirection_file: std.ArrayList(u8),
+redirection_file: std.array_list.Managed(u8),
 exit_code: ExitCode = 0,
 
 pub const ParentPtr = StatePtrUnion(.{
@@ -28,7 +28,7 @@ pub const ChildPtr = StatePtrUnion(.{
     Expansion,
 });
 
-pub fn format(this: *const Subshell, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+pub fn format(this: *const Subshell, writer: *std.Io.Writer) !void {
     try writer.print("Subshell(0x{x})", .{@intFromPtr(this)});
 }
 
@@ -47,7 +47,7 @@ pub fn init(
         .io = io,
         .redirection_file = undefined,
     };
-    subshell.redirection_file = std.ArrayList(u8).init(subshell.base.allocator());
+    subshell.redirection_file = std.array_list.Managed(u8).init(subshell.base.allocator());
     return subshell;
 }
 
@@ -73,12 +73,12 @@ pub fn initDupeShellState(
             return .{ .err = e };
         },
     };
-    subshell.redirection_file = std.ArrayList(u8).init(subshell.base.allocator());
+    subshell.redirection_file = std.array_list.Managed(u8).init(subshell.base.allocator());
     return .{ .result = subshell };
 }
 
 pub fn start(this: *Subshell) Yield {
-    log("{} start", .{this});
+    log("{f} start", .{this});
     const script = Script.init(this.base.interpreter, this.base.shell, &this.node.script, Script.ParentPtr.init(this), this.io.copy());
     return script.start();
 }
@@ -130,7 +130,7 @@ pub fn next(this: *Subshell) Yield {
 }
 
 pub fn transitionToExec(this: *Subshell) Yield {
-    log("{} transitionToExec", .{this});
+    log("{f} transitionToExec", .{this});
     const script = Script.init(this.base.interpreter, this.base.shell, &this.node.script, Script.ParentPtr.init(this), this.io.copy());
     this.state = .exec;
     return script.start();
@@ -143,7 +143,7 @@ pub fn childDone(this: *Subshell, child_ptr: ChildPtr, exit_code: ExitCode) Yiel
             const err = this.state.expanding_redirect.expansion.state.err;
             defer err.deinit(bun.default_allocator);
             this.state.expanding_redirect.expansion.deinit();
-            return this.writeFailingError("{}\n", .{err});
+            return this.writeFailingError("{f}\n", .{err});
         }
         child_ptr.deinit();
         return .{ .subshell = this };

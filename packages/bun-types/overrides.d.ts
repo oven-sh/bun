@@ -1,26 +1,61 @@
 export {};
 
-declare module "stream/web" {
-  interface ReadableStream {
-    /**
-     * Consume a ReadableStream as text
-     */
-    text(): Promise<string>;
+/**
+ * This is like a BodyMixin, but exists to more things
+ * (e.g. Blob, ReadableStream, Response, etc.)
+ *
+ * Notably, this doesn't have a `blob()` because it's the lowest
+ * common denominator of these objects. A `Blob` in Bun does not
+ * have a `.blob()` method.
+ */
+interface BunConsumerConvenienceMethods {
+  /**
+   * Consume as text
+   */
+  text(): Promise<string>;
 
+  /**
+   * Consume as a Uint8Array, backed by an ArrayBuffer
+   */
+  bytes(): Promise<Uint8Array<ArrayBuffer>>;
+
+  /**
+   * Consume as JSON
+   */
+  json(): Promise<any>;
+}
+
+declare module "stream/web" {
+  interface ReadableStream extends BunConsumerConvenienceMethods {
     /**
-     * Consume a ReadableStream as a Uint8Array
+     * Consume as a Blob
      */
+    blob(): Promise<Blob>;
+  }
+}
+
+declare module "buffer" {
+  interface Blob extends BunConsumerConvenienceMethods {
+    // We have to specify bytes again even though it comes from
+    // BunConsumerConvenienceMethods, because inheritance in TypeScript is
+    // slightly different from just "copying in the methods" (the difference is
+    // related to how type parameters are resolved)
     bytes(): Promise<Uint8Array<ArrayBuffer>>;
 
     /**
-     * Consume a ReadableStream as JSON
+     * Consume the blob as a FormData instance
      */
-    json(): Promise<any>;
+    formData(): Promise<FormData>;
 
     /**
-     * Consume a ReadableStream as a Blob
+     * Consume the blob as an ArrayBuffer
      */
-    blob(): Promise<Blob>;
+    arrayBuffer(): Promise<ArrayBuffer>;
+
+    /**
+     * Returns a readable stream of the blob's contents
+     */
+    stream(): ReadableStream<Uint8Array<ArrayBuffer>>;
   }
 }
 
@@ -51,7 +86,7 @@ declare global {
       reallyExit(code?: number): never;
       dlopen(module: { exports: any }, filename: string, flags?: number): void;
       _exiting: boolean;
-      noDeprecation: boolean;
+      noDeprecation?: boolean | undefined;
 
       binding(m: "constants"): {
         os: typeof import("node:os").constants;
@@ -174,6 +209,96 @@ declare global {
         UV_ENODATA: number;
         UV_EUNATCH: number;
       };
+      binding(m: "http_parser"): {
+        methods: [
+          "DELETE",
+          "GET",
+          "HEAD",
+          "POST",
+          "PUT",
+          "CONNECT",
+          "OPTIONS",
+          "TRACE",
+          "COPY",
+          "LOCK",
+          "MKCOL",
+          "MOVE",
+          "PROPFIND",
+          "PROPPATCH",
+          "SEARCH",
+          "UNLOCK",
+          "BIND",
+          "REBIND",
+          "UNBIND",
+          "ACL",
+          "REPORT",
+          "MKACTIVITY",
+          "CHECKOUT",
+          "MERGE",
+          "M - SEARCH",
+          "NOTIFY",
+          "SUBSCRIBE",
+          "UNSUBSCRIBE",
+          "PATCH",
+          "PURGE",
+          "MKCALENDAR",
+          "LINK",
+          "UNLINK",
+          "SOURCE",
+          "QUERY",
+        ];
+        allMethods: [
+          "DELETE",
+          "GET",
+          "HEAD",
+          "POST",
+          "PUT",
+          "CONNECT",
+          "OPTIONS",
+          "TRACE",
+          "COPY",
+          "LOCK",
+          "MKCOL",
+          "MOVE",
+          "PROPFIND",
+          "PROPPATCH",
+          "SEARCH",
+          "UNLOCK",
+          "BIND",
+          "REBIND",
+          "UNBIND",
+          "ACL",
+          "REPORT",
+          "MKACTIVITY",
+          "CHECKOUT",
+          "MERGE",
+          "M - SEARCH",
+          "NOTIFY",
+          "SUBSCRIBE",
+          "UNSUBSCRIBE",
+          "PATCH",
+          "PURGE",
+          "MKCALENDAR",
+          "LINK",
+          "UNLINK",
+          "SOURCE",
+          "PRI",
+          "DESCRIBE",
+          "ANNOUNCE",
+          "SETUP",
+          "PLAY",
+          "PAUSE",
+          "TEARDOWN",
+          "GET_PARAMETER",
+          "SET_PARAMETER",
+          "REDIRECT",
+          "RECORD",
+          "FLUSH",
+          "QUERY",
+        ];
+        HTTPParser: unknown;
+        ConnectionsList: unknown;
+      };
       binding(m: string): object;
     }
 
@@ -183,11 +308,11 @@ declare global {
   }
 }
 
-declare module "fs/promises" {
+declare module "node:fs/promises" {
   function exists(path: Bun.PathLike): Promise<boolean>;
 }
 
-declare module "tls" {
+declare module "node:tls" {
   interface BunConnectionOptions extends Omit<ConnectionOptions, "key" | "ca" | "tls" | "cert"> {
     /**
      * Optionally override the trusted CA certificates. Default is to trust
@@ -233,4 +358,19 @@ declare module "tls" {
   }
 
   function connect(options: BunConnectionOptions, secureConnectListener?: () => void): TLSSocket;
+}
+
+declare module "console" {
+  interface Console {
+    /**
+     * Asynchronously read lines from standard input (fd 0)
+     *
+     * ```ts
+     * for await (const line of console) {
+     *   console.log(line);
+     * }
+     * ```
+     */
+    [Symbol.asyncIterator](): AsyncIterableIterator<string>;
+  }
 }

@@ -8,8 +8,22 @@ pub const Names = struct {
     /// '-' prefix
     short: ?u8 = null,
 
-    /// '--' prefix
+    /// '--' prefix (primary name, used for display/help)
     long: ?[]const u8 = null,
+
+    /// Additional '--' prefixed aliases (e.g., --grep as alias for --test-name-pattern)
+    long_aliases: []const []const u8 = &.{},
+
+    /// Check if the given name matches the primary long name or any alias
+    pub fn matchesLong(self: Names, name: []const u8) bool {
+        if (self.long) |l| {
+            if (mem.eql(u8, name, l)) return true;
+        }
+        for (self.long_aliases) |alias| {
+            if (mem.eql(u8, name, alias)) return true;
+        }
+        return false;
+    }
 };
 
 /// Whether a param takes no value (a flag), one value, or can be specified multiple times.
@@ -51,6 +65,7 @@ pub fn Param(comptime Id: type) type {
 
 /// Takes a string and parses it to a Param(Help).
 /// This is the reverse of 'help' but for at single parameter only.
+/// Supports multiple long name variants separated by '/' (e.g., "--test-name-pattern/--grep").
 pub fn parseParam(line: []const u8) !Param(Help) {
     @setEvalBranchQuota(999999);
 
@@ -89,9 +104,65 @@ pub fn parseParam(line: []const u8) !Param(Help) {
     } else null;
 
     var res = parseParamRest(it.rest());
-    res.names.long = param_str[2..];
     res.names.short = short_name;
+
+    // Parse long names - supports multiple variants separated by '/'
+    // e.g., "--test-name-pattern/--grep" becomes primary "test-name-pattern" with alias "grep"
+    const long_names = parseLongNames(param_str);
+    res.names.long = long_names.long;
+    res.names.long_aliases = long_names.long_aliases;
     return res;
+}
+
+fn parseLongNames(comptime param_str: []const u8) Names {
+    comptime {
+        // Count how many long name variants we have (separated by '/')
+        var alias_count: usize = 0;
+        for (param_str) |c| {
+            if (c == '/') alias_count += 1;
+        }
+
+        if (alias_count == 0) {
+            // No aliases, just the primary name
+            if (mem.startsWith(u8, param_str, "--")) {
+                return .{ .long = param_str[2..], .long_aliases = &.{} };
+            }
+            return .{ .long = null, .long_aliases = &.{} };
+        }
+
+        // Parse multiple long names at comptime
+        // First pass: find the primary name
+        var primary: ?[]const u8 = null;
+        var name_it = mem.splitScalar(u8, param_str, '/');
+        while (name_it.next()) |name_part| {
+            if (!mem.startsWith(u8, name_part, "--")) continue;
+            primary = name_part[2..];
+            break;
+        }
+
+        // Second pass: collect aliases into a comptime-known array type
+        const aliases = blk: {
+            var result: [alias_count][]const u8 = undefined;
+            var idx: usize = 0;
+            var it = mem.splitScalar(u8, param_str, '/');
+            var is_first = true;
+            while (it.next()) |name_part| {
+                if (!mem.startsWith(u8, name_part, "--")) continue;
+                if (is_first) {
+                    is_first = false;
+                    continue; // Skip primary
+                }
+                result[idx] = name_part[2..];
+                idx += 1;
+            }
+            break :blk result;
+        };
+
+        return .{
+            .long = primary,
+            .long_aliases = &aliases,
+        };
+    }
 }
 
 fn parseParamRest(line: []const u8) Param(Help) {
@@ -356,7 +427,7 @@ pub fn helpFull(
             var cs = io.countingWriter(stream);
             try stream.print("\t", .{});
             try printParam(cs.writer(), Id, param, Error, context, valueText);
-            try stream.writeByteNTimes(' ', max_spacing - @as(usize, @intCast(cs.bytes_written)));
+            try stream.splatByteAll(' ', max_spacing - @as(usize, @intCast(cs.bytes_written)));
             try stream.print("\t{s}\n", .{try helpText(context, param)});
         }
     }

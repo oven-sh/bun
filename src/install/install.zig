@@ -10,7 +10,10 @@ pub const BuntagHashBuf = [max_buntag_hash_buf_len]u8;
 
 pub fn buntaghashbuf_make(buf: *BuntagHashBuf, patch_hash: u64) [:0]u8 {
     @memcpy(buf[0..bun_hash_tag.len], bun_hash_tag);
-    const digits = std.fmt.bufPrint(buf[bun_hash_tag.len..], "{x}", .{patch_hash}) catch bun.outOfMemory();
+    const digits = std.fmt.bufPrint(buf[bun_hash_tag.len..], "{x}", .{patch_hash}) catch |err|
+        switch (err) {
+            error.NoSpaceLeft => unreachable,
+        };
     buf[bun_hash_tag.len + digits.len] = 0;
     const bunhashtag = buf[0 .. bun_hash_tag.len + digits.len :0];
     return bunhashtag;
@@ -19,7 +22,7 @@ pub fn buntaghashbuf_make(buf: *BuntagHashBuf, patch_hash: u64) [:0]u8 {
 pub const StorePathFormatter = struct {
     str: string,
 
-    pub fn format(this: StorePathFormatter, comptime _: string, _: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
+    pub fn format(this: StorePathFormatter, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         // if (!this.opts.replace_slashes) {
         //     try writer.writeAll(this.str);
         //     return;
@@ -69,7 +72,7 @@ pub fn initializeMiniStore() void {
         pub threadlocal var instance: ?*@This() = null;
     };
     if (MiniStore.instance == null) {
-        var mini_store = bun.default_allocator.create(MiniStore) catch bun.outOfMemory();
+        var mini_store = bun.handleOom(bun.default_allocator.create(MiniStore));
         mini_store.* = .{
             .heap = bun.MimallocArena.init(),
             .memory_allocator = undefined,
@@ -210,7 +213,7 @@ pub const ExtractData = struct {
 
 pub const DependencyInstallContext = struct {
     tree_id: Lockfile.Tree.Id = 0,
-    path: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
+    path: std.array_list.Managed(u8) = std.array_list.Managed(u8).init(bun.default_allocator),
     dependency_id: DependencyID,
 };
 
@@ -252,6 +255,9 @@ pub const PackageInstall = @import("./PackageInstall.zig").PackageInstall;
 pub const Repository = @import("./repository.zig").Repository;
 pub const Resolution = @import("./resolution.zig").Resolution;
 pub const Store = @import("./isolated_install/Store.zig").Store;
+pub const FileCopier = @import("./isolated_install/FileCopier.zig").FileCopier;
+pub const PnpmMatcher = @import("./PnpmMatcher.zig");
+pub const PostinstallOptimizer = @import("./postinstall_optimizer.zig").PostinstallOptimizer;
 
 pub const ArrayIdentityContext = @import("../identity_context.zig").ArrayIdentityContext;
 pub const IdentityContext = @import("../identity_context.zig").IdentityContext;

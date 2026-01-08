@@ -12,25 +12,25 @@ pub fn toHaveLength(
         return globalThis.throwInvalidArguments("toHaveLength() takes 1 argument", .{});
     }
 
-    incrementExpectCallCounter();
+    this.incrementExpectCallCounter();
 
     const expected: JSValue = arguments[0];
     const value: JSValue = try this.getValue(globalThis, thisValue, "toHaveLength", "<green>expected<r>");
 
     if (!value.isObject() and !value.isString()) {
         var fmt = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        return globalThis.throw("Received value does not have a length property: {any}", .{value.toFmt(&fmt)});
+        return globalThis.throw("Received value does not have a length property: {f}", .{value.toFmt(&fmt)});
     }
 
     if (!expected.isNumber()) {
         var fmt = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        return globalThis.throw("Expected value must be a non-negative integer: {any}", .{expected.toFmt(&fmt)});
+        return globalThis.throw("Expected value must be a non-negative integer: {f}", .{expected.toFmt(&fmt)});
     }
 
     const expected_length: f64 = expected.asNumber();
     if (@round(expected_length) != expected_length or std.math.isInf(expected_length) or std.math.isNan(expected_length) or expected_length < 0) {
         var fmt = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        return globalThis.throw("Expected value must be a non-negative integer: {any}", .{expected.toFmt(&fmt)});
+        return globalThis.throw("Expected value must be a non-negative integer: {f}", .{expected.toFmt(&fmt)});
     }
 
     const not = this.flags.not;
@@ -40,7 +40,7 @@ pub fn toHaveLength(
 
     if (actual_length == std.math.inf(f64)) {
         var fmt = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        return globalThis.throw("Received value does not have a length property: {any}", .{value.toFmt(&fmt)});
+        return globalThis.throw("Received value does not have a length property: {f}", .{value.toFmt(&fmt)});
     } else if (std.math.isNan(actual_length)) {
         return globalThis.throw("Received value has non-number length property: {}", .{actual_length});
     }
@@ -72,7 +72,6 @@ const jsc = bun.jsc;
 const CallFrame = bun.jsc.CallFrame;
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
-const incrementExpectCallCounter = bun.jsc.Expect.incrementExpectCallCounter;
 
 const Expect = bun.jsc.Expect.Expect;
 const getSignature = Expect.getSignature;

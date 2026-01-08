@@ -1,12 +1,15 @@
+.claude/settings.local.json
 .DS_Store
 .env
 .envrc
 .eslintcache
+.gdb_history
 .idea
 .next
 .ninja_deps
 .ninja_log
 .npm
+.npmrc
 .npm.gz
 .parcel-cache
 .swcrc
@@ -187,3 +190,6 @@ scratch*.{js,ts,tsx,cjs,mjs}
 *.bun-build
 
 scripts/lldb-inline
+
+# We regenerate these in all the build scripts
+cmake/sources/*.txt

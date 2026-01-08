@@ -25,7 +25,7 @@ pub fn toBeWithin(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFr
         return globalThis.throw("toBeWithin() requires the second argument to be a number", .{});
     }
 
-    incrementExpectCallCounter();
+    this.incrementExpectCallCounter();
 
     var pass = value.isNumber();
     if (pass) {
@@ -45,14 +45,14 @@ pub fn toBeWithin(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFr
     const received_fmt = value.toFmt(&formatter);
 
     if (not) {
-        const expected_line = "Expected: not between <green>{any}<r> <d>(inclusive)<r> and <green>{any}<r> <d>(exclusive)<r>\n";
-        const received_line = "Received: <red>{any}<r>\n";
+        const expected_line = "Expected: not between <green>{f}<r> <d>(inclusive)<r> and <green>{f}<r> <d>(exclusive)<r>\n";
+        const received_line = "Received: <red>{f}<r>\n";
         const signature = comptime getSignature("toBeWithin", "<green>start<r><d>, <r><green>end<r>", true);
         return this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ start_fmt, end_fmt, received_fmt });
     }
 
-    const expected_line = "Expected: between <green>{any}<r> <d>(inclusive)<r> and <green>{any}<r> <d>(exclusive)<r>\n";
-    const received_line = "Received: <red>{any}<r>\n";
+    const expected_line = "Expected: between <green>{f}<r> <d>(inclusive)<r> and <green>{f}<r> <d>(exclusive)<r>\n";
+    const received_line = "Received: <red>{f}<r>\n";
     const signature = comptime getSignature("toBeWithin", "<green>start<r><d>, <r><green>end<r>", false);
     return this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ start_fmt, end_fmt, received_fmt });
 }
@@ -63,7 +63,6 @@ const jsc = bun.jsc;
 const CallFrame = bun.jsc.CallFrame;
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
-const incrementExpectCallCounter = bun.jsc.Expect.incrementExpectCallCounter;
 
 const Expect = bun.jsc.Expect.Expect;
 const getSignature = Expect.getSignature;

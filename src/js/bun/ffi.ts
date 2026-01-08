@@ -526,6 +526,7 @@ function cc(options) {
 
 function linkSymbols(options) {
   const result = nativeLinkSymbols(options);
+  if (Error.isError(result)) throw result;
 
   for (let key in result.symbols) {
     var symbol = result.symbols[key];

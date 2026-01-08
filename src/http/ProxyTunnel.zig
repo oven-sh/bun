@@ -19,6 +19,7 @@ const ProxyTunnelWrapper = SSLWrapper(*HTTPClient);
 
 fn onOpen(this: *HTTPClient) void {
     log("ProxyTunnel onOpen", .{});
+    bun.analytics.Features.http_client_proxy += 1;
     this.state.response_stage = .proxy_handshake;
     this.state.request_stage = .proxy_handshake;
     if (this.proxy_tunnel) |proxy| {
@@ -193,6 +194,12 @@ fn onHandshake(this: *HTTPClient, handshake_success: bool, ssl_error: uws.us_bun
 
 pub fn write(this: *HTTPClient, encoded_data: []const u8) void {
     if (this.proxy_tunnel) |proxy| {
+        // Preserve TLS record ordering: if any encrypted bytes are buffered,
+        // enqueue new bytes and flush them in FIFO via onWritable.
+        if (proxy.write_buffer.isNotEmpty()) {
+            bun.handleOom(proxy.write_buffer.write(encoded_data));
+            return;
+        }
         const written = switch (proxy.socket) {
             .ssl => |socket| socket.write(encoded_data),
             .tcp => |socket| socket.write(encoded_data),
@@ -201,7 +208,7 @@ pub fn write(this: *HTTPClient, encoded_data: []const u8) void {
         const pending = encoded_data[@intCast(written)..];
         if (pending.len > 0) {
             // lets flush when we are truly writable
-            proxy.write_buffer.write(pending) catch bun.outOfMemory();
+            bun.handleOom(proxy.write_buffer.write(pending));
         }
     }
 }
@@ -210,8 +217,32 @@ fn onClose(this: *HTTPClient) void {
     log("ProxyTunnel onClose {s}", .{if (this.proxy_tunnel == null) "tunnel is detached" else "tunnel exists"});
     if (this.proxy_tunnel) |proxy| {
         proxy.ref();
-        // defer the proxy deref the proxy tunnel may still be in use after triggering the close callback
-        defer bun.http.http_thread.scheduleProxyDeref(proxy);
+
+        // If a response is in progress, mirror HTTPClient.onClose semantics:
+        // treat connection close as end-of-body for identity transfer when no content-length.
+        const in_progress = this.state.stage != .done and this.state.stage != .fail and this.state.flags.is_redirect_pending == false;
+        if (in_progress) {
+            if (this.state.isChunkedEncoding()) {
+                switch (this.state.chunked_decoder._state) {
+                    .CHUNKED_IN_TRAILERS_LINE_HEAD, .CHUNKED_IN_TRAILERS_LINE_MIDDLE => {
+                        this.state.flags.received_last_chunk = true;
+                        progressUpdateForProxySocket(this, proxy);
+                        // Drop our temporary ref asynchronously to avoid freeing within callback
+                        bun.http.http_thread.scheduleProxyDeref(proxy);
+                        return;
+                    },
+                    else => {},
+                }
+            } else if (this.state.content_length == null and this.state.response_stage == .body) {
+                this.state.flags.received_last_chunk = true;
+                progressUpdateForProxySocket(this, proxy);
+                // Balance the ref we took asynchronously
+                bun.http.http_thread.scheduleProxyDeref(proxy);
+                return;
+            }
+        }
+
+        // Otherwise, treat as failure.
         const err = proxy.shutdown_err;
         switch (proxy.socket) {
             .ssl => |socket| {
@@ -223,6 +254,16 @@ fn onClose(this: *HTTPClient) void {
             .none => {},
         }
         proxy.detachSocket();
+        // Deref after returning to the event loop to avoid lifetime hazards.
+        bun.http.http_thread.scheduleProxyDeref(proxy);
+    }
+}
+
+fn progressUpdateForProxySocket(this: *HTTPClient, proxy: *ProxyTunnel) void {
+    switch (proxy.socket) {
+        .ssl => |socket| this.progressUpdate(true, &bun.http.http_thread.https_context, socket),
+        .tcp => |socket| this.progressUpdate(false, &bun.http.http_thread.http_context, socket),
+        .none => {},
     }
 }
 

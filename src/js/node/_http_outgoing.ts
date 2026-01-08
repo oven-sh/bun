@@ -1,6 +1,6 @@
 const { Stream } = require("internal/stream");
 const { isUint8Array, validateString } = require("internal/validators");
-const { deprecate } = require("node:util");
+const { deprecate } = require("internal/util/deprecate");
 const ObjectDefineProperty = Object.defineProperty;
 const ObjectKeys = Object.keys;
 const {

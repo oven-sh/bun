@@ -15,14 +15,14 @@ pub fn notifyServerStarted(this: *HTTPServerAgent, instance: jsc.API.AnyServer) 
     if (this.agent) |agent| {
         this.next_server_id = .init(this.next_server_id.get() + 1);
         instance.setInspectorServerID(this.next_server_id);
-        var url = instance.getURLAsString() catch bun.outOfMemory();
+        var url = bun.handleOom(instance.getURLAsString());
         defer url.deref();
 
         agent.notifyServerStarted(
             this.next_server_id,
             @intCast(instance.vm().hot_reload_counter),
             &url,
-            @floatFromInt(bun.timespec.now().ms()),
+            @floatFromInt(bun.timespec.now(.allow_mocked_time).ms()),
             instance.ptr.ptr(),
         );
     }
@@ -37,7 +37,7 @@ pub fn notifyServerStopped(this: *const HTTPServerAgent, server: jsc.API.AnyServ
 pub fn notifyServerRoutesUpdated(this: *const HTTPServerAgent, server: jsc.API.AnyServer) !void {
     if (this.agent) |agent| {
         const config = server.config();
-        var routes = std.ArrayList(Route).init(bun.default_allocator);
+        var routes = std.array_list.Managed(Route).init(bun.default_allocator);
         defer {
             for (routes.items) |*route| {
                 route.deinit();

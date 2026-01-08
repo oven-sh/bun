@@ -58,12 +58,17 @@ describe.skipIf(!isEnabled)("Valkey: Basic String Operations", () => {
       const existsNow = await ctx.redis.exists(key);
       expect(existsNow).toBe(true);
 
-      // Wait for expiration
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      // Poll until key expires (max 2 seconds)
+      let expired = false;
+      const startTime = Date.now();
+      while (!expired && Date.now() - startTime < 2000) {
+        expired = !(await ctx.redis.exists(key));
+        if (!expired) {
+          await new Promise(resolve => setTimeout(resolve, 50));
+        }
+      }
 
-      // Key should be gone after expiry
-      const existsLater = await ctx.redis.exists(key);
-      expect(existsLater).toBe(false);
+      expect(expired).toBe(true);
     });
 
     test("APPEND command", async () => {

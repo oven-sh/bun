@@ -344,8 +344,9 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
     }
 
     bool is_secure = m_url.protocolIs("wss"_s) || m_url.protocolIs("https"_s);
+    bool is_unix = m_url.protocolIs("ws+unix"_s);
 
-    if (!m_url.protocolIs("http"_s) && !m_url.protocolIs("ws"_s) && !is_secure) {
+    if (!m_url.protocolIs("http"_s) && !m_url.protocolIs("ws"_s) && !is_secure && !is_unix) {
         // context.addConsoleMessage(MessageSource::JS, MessageLevel::Error, );
         m_state = CLOSED;
         updateHasPendingActivity();
@@ -425,13 +426,59 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
     if (!protocols.isEmpty())
         protocolString = joinStrings(protocols, subprotocolSeparator());
 
-    ZigString host = Zig::toZigString(m_url.host());
-    auto resource = resourceName(m_url);
-    ZigString path = Zig::toZigString(resource);
     ZigString clientProtocolString = Zig::toZigString(protocolString);
-    uint16_t port = is_secure ? 443 : 80;
-    if (auto userPort = m_url.port()) {
-        port = userPort.value();
+    ZigString host;
+    ZigString path;
+    uint16_t port;
+
+    String requestPath;
+    String resource;
+
+    if (is_unix) {
+        // ws+unix URL format: ws+unix://socket_path:request_path
+        // Example: ws+unix:///tmp/my-socket:/api/endpoint?foo=bar
+        //   socket_path = /tmp/my-socket (URL uses forward slashes on all platforms)
+        //   request_path = /api/endpoint?foo=bar
+        // On Windows: ws+unix://C:/temp/socket:/api → fileSystemPath() converts to C:\temp\socket
+        // https://github.com/websockets/ws/blob/master/doc/ws.md#ipc-connections
+        auto urlPath = m_url.path().toString();
+
+        // Find the colon that separates socket path from request path
+        size_t colonPos = urlPath.find(':');
+
+        String socketPathFromURL;
+        if (colonPos == notFound) {
+            socketPathFromURL = urlPath;
+            requestPath = "/"_s;
+        } else {
+            socketPathFromURL = urlPath.substring(0, colonPos);
+            requestPath = urlPath.substring(colonPos + 1);
+            if (requestPath.isEmpty())
+                requestPath = "/"_s;
+        }
+        if (!requestPath.startsWith('/'))
+            requestPath = makeString("/"_s, requestPath);
+
+        auto query = m_url.queryWithLeadingQuestionMark();
+        if (!query.isEmpty())
+            requestPath = makeString(requestPath, query);
+
+        // Convert socket path from URL representation to filesystem path
+        // Create a file:// URL and use fileSystemPath() for proper conversion
+        auto fileURL = URL(makeString("file://"_s, socketPathFromURL));
+        auto socketPath = fileURL.fileSystemPath();
+
+        host = Zig::toZigString(socketPath);
+        path = Zig::toZigString(requestPath);
+        port = 0;
+    } else {
+        host = Zig::toZigString(m_url.host());
+        resource = resourceName(m_url);
+        path = Zig::toZigString(resource);
+        port = is_secure ? 443 : 80;
+        if (auto userPort = m_url.port()) {
+            port = userPort.value();
+        }
     }
 
     Vector<ZigString, 8> headerNames;
@@ -460,11 +507,11 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
     if (is_secure) {
         us_socket_context_t* ctx = scriptExecutionContext()->webSocketContext<true>();
         RELEASE_ASSERT(ctx);
-        this->m_upgradeClient = Bun__WebSocketHTTPSClient__connect(scriptExecutionContext()->jsGlobalObject(), ctx, reinterpret_cast<CppWebSocket*>(this), &host, port, &path, &clientProtocolString, headerNames.begin(), headerValues.begin(), headerNames.size());
+        this->m_upgradeClient = Bun__WebSocketHTTPSClient__connect(scriptExecutionContext()->jsGlobalObject(), ctx, reinterpret_cast<CppWebSocket*>(this), &host, port, &path, &clientProtocolString, headerNames.begin(), headerValues.begin(), headerNames.size(), is_unix);
     } else {
         us_socket_context_t* ctx = scriptExecutionContext()->webSocketContext<false>();
         RELEASE_ASSERT(ctx);
-        this->m_upgradeClient = Bun__WebSocketHTTPClient__connect(scriptExecutionContext()->jsGlobalObject(), ctx, reinterpret_cast<CppWebSocket*>(this), &host, port, &path, &clientProtocolString, headerNames.begin(), headerValues.begin(), headerNames.size());
+        this->m_upgradeClient = Bun__WebSocketHTTPClient__connect(scriptExecutionContext()->jsGlobalObject(), ctx, reinterpret_cast<CppWebSocket*>(this), &host, port, &path, &clientProtocolString, headerNames.begin(), headerValues.begin(), headerNames.size(), is_unix);
     }
 
     headerValues.clear();

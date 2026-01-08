@@ -191,6 +191,10 @@ function mountModal() {
 let isModalVisible = false;
 function setModalVisible(visible: boolean) {
   if (isModalVisible === visible || !domShadowRoot) return;
+  if (!config.overlay && visible) {
+    isModalVisible = false;
+    return;
+  }
   isModalVisible = visible;
   domShadowRoot.style.display = visible ? "block" : "none";
 }

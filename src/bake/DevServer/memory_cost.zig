@@ -171,6 +171,7 @@ pub fn memoryCostDetailed(dev: *DevServer) MemoryCost {
             },
             .enable_after_bundle => {},
         },
+        .client_overlay = {},
     });
     return .{
         .assets = assets,

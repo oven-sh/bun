@@ -26,6 +26,7 @@ pub const Options = struct {
     // Debugging features
     dump_sources: ?[]const u8 = if (Environment.isDebug) ".bake-debug" else null,
     dump_state_on_crash: ?bool = null,
+    client_overlay: bool = true,
 };
 
 // The fields `client_graph`, `server_graph`, `directory_watchers`, and `assets`
@@ -244,6 +245,7 @@ assume_perfect_incremental_bundling: bool = false,
 /// - Echoing browser console logs to the server for debugging
 /// - WebKit Inspector remote debugging integration
 broadcast_console_log_from_browser_to_server: bool,
+client_overlay: bool,
 
 pub const internal_prefix = "/_bun";
 /// Assets which are routed to the `Assets` storage.
@@ -346,6 +348,7 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         .assume_perfect_incremental_bundling = bun.feature_flag.BUN_ASSUME_PERFECT_INCREMENTAL.get() orelse bun.Environment.isDebug,
         .testing_batch_events = .disabled,
         .broadcast_console_log_from_browser_to_server = options.broadcast_console_log_from_browser_to_server,
+        .client_overlay = options.client_overlay,
         .server_transpiler = undefined,
         .client_transpiler = undefined,
         .ssr_transpiler = undefined,
@@ -696,6 +699,7 @@ pub fn deinit(dev: *DevServer) void {
             .enable_after_bundle => {},
         },
         .broadcast_console_log_from_browser_to_server = {},
+        .client_overlay = {},
 
         .magic = {
             bun.debugAssert(dev.magic == .valid);
@@ -2058,6 +2062,7 @@ fn generateClientBundle(dev: *DevServer, route_bundle: *RouteBundle) bun.OOM![]u
         .react_refresh_entry_point = react_fast_refresh_id,
         .script_id = script_id,
         .console_log = dev.shouldReceiveConsoleLogFromBrowser(),
+        .overlay = dev.shouldShowClientOverlay(),
     });
 
     return client_bundle;
@@ -2779,6 +2784,7 @@ pub fn finalizeBundle(
                     .kind = .hmr_chunk,
                     .script_id = script_id,
                     .console_log = dev.shouldReceiveConsoleLogFromBrowser(),
+                    .overlay = dev.shouldShowClientOverlay(),
                 });
             }
         } else {
@@ -4190,6 +4196,9 @@ pub fn relativePath(dev: *DevServer, relative_path_buf: *bun.PathBuffer, path: [
 /// inspector domains are registered at initialization time.
 fn shouldReceiveConsoleLogFromBrowser(dev: *const DevServer) bool {
     return dev.inspector() != null or dev.broadcast_console_log_from_browser_to_server;
+}
+pub fn shouldShowClientOverlay(dev: *DevServer) bool {
+    return dev.client_overlay;
 }
 
 fn dumpStateDueToCrash(dev: *DevServer) !void {

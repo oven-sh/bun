@@ -229,7 +229,7 @@ console.log("bun!");`,
       `);
     },
     run: {
-        stdout: "bun!\n",
-    }
+      stdout: "bun!\n",
+    },
   });
 });

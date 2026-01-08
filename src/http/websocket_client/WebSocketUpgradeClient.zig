@@ -376,7 +376,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             this.ref();
             defer this.deref();
 
-            // The C++ end of the socket is no longer holding a reference to this, sowe must clear it.
+            // The C++ end of the socket is no longer holding a reference to this, so we must clear it.
             if (this.outgoing_websocket != null) {
                 this.outgoing_websocket = null;
                 this.deref();
@@ -393,10 +393,6 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         pub fn fail(this: *HTTPClient, code: ErrorCode) void {
             log("onFail: {s}", .{@tagName(code)});
             jsc.markBinding(@src());
-
-            this.ref();
-            defer this.deref();
-
             this.dispatchAbruptClose(code);
 
             if (comptime ssl) {
@@ -515,6 +511,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             }
 
             if (this.outgoing_websocket == null) {
+                this.state = .failed;
                 this.clearData();
                 socket.close(.failure);
                 return;

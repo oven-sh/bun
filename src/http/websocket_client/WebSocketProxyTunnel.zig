@@ -139,6 +139,9 @@ pub fn start(this: *WebSocketProxyTunnel, ssl_options: SSLConfig, initial_data: 
 
 /// SSLWrapper callback: Called before TLS handshake starts
 fn onOpen(this: *WebSocketProxyTunnel) void {
+    this.ref();
+    defer this.deref();
+
     log("onOpen", .{});
     // Configure SNI with hostname
     if (this.wrapper) |*wrapper| {
@@ -157,6 +160,9 @@ fn onOpen(this: *WebSocketProxyTunnel) void {
 
 /// SSLWrapper callback: Called with decrypted data from the network
 fn onData(this: *WebSocketProxyTunnel, decrypted_data: []const u8) void {
+    this.ref();
+    defer this.deref();
+
     log("onData: {} bytes", .{decrypted_data.len});
     if (decrypted_data.len == 0) return;
 
@@ -172,6 +178,9 @@ fn onData(this: *WebSocketProxyTunnel, decrypted_data: []const u8) void {
 
 /// SSLWrapper callback: Called after TLS handshake completes
 fn onHandshake(this: *WebSocketProxyTunnel, success: bool, ssl_error: uws.us_bun_verify_error_t) void {
+    this.ref();
+    defer this.deref();
+
     log("onHandshake: success={}", .{success});
 
     if (this.upgrade_client.isNone()) return;
@@ -207,6 +216,9 @@ fn onHandshake(this: *WebSocketProxyTunnel, success: bool, ssl_error: uws.us_bun
 
 /// SSLWrapper callback: Called when connection is closing
 fn onClose(this: *WebSocketProxyTunnel) void {
+    this.ref();
+    defer this.deref();
+
     log("onClose", .{});
 
     // If we have a connected WebSocket client, notify it of the close
@@ -214,6 +226,9 @@ fn onClose(this: *WebSocketProxyTunnel) void {
         ws.fail(ErrorCode.ended);
         return;
     }
+
+    // Check if upgrade client is already cleaned up (prevents re-entrancy during cleanup)
+    if (this.upgrade_client.isNone()) return;
 
     // Otherwise notify the upgrade client
     this.upgrade_client.terminate(ErrorCode.ended);

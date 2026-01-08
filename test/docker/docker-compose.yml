@@ -219,7 +219,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
-      test: ["CMD-SHELL", "nc -z localhost 3128 || exit 1"]
+      test: ["CMD-SHELL", "pgrep squid > /dev/null"]
       interval: 1h
       timeout: 5s
       retries: 30

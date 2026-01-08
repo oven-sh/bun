@@ -529,17 +529,10 @@ describe("WebSocket through HTTPS proxy (TLS proxy)", () => {
 
 // Squid proxy tests - run when Docker is enabled
 // Uses docker-compose infrastructure to run squid proxy
-// TODO: Docker squid tests are temporarily disabled due to a use-after-free issue
-// when the squid proxy closes the connection unexpectedly. The local mock proxy tests
-// provide good coverage. The Docker tests can be re-enabled once the lifecycle issue
-// is debugged.
 // Import docker-compose dynamically to avoid issues when not using docker
 const dockerCompose = require("../../../docker/index.ts");
 
-// Set to false when the use-after-free bug is fixed
-const skipSquidTests = true;
-
-describe.skipIf(skipSquidTests || !isDockerEnabled())("WebSocket through Squid proxy (Docker)", () => {
+describe.skipIf(!isDockerEnabled())("WebSocket through Squid proxy (Docker)", () => {
   let squidInfo: { host: string; ports: Record<number, number>; proxyUrl?: string };
 
   beforeAll(async () => {
@@ -552,7 +545,7 @@ describe.skipIf(skipSquidTests || !isDockerEnabled())("WebSocket through Squid p
     if (!process.env.BUN_KEEP_DOCKER) {
       await dockerCompose.down();
     }
-  });
+  }, 30_000);
 
   test("ws:// through squid proxy to local server", async () => {
     const { promise, resolve, reject } = Promise.withResolvers<string[]>();

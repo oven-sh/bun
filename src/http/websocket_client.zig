@@ -133,10 +133,11 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 this.custom_ssl_ctx = null;
             }
             // Clean up proxy tunnel if we own one
+            // Set to null FIRST to prevent re-entrancy (shutdown can trigger callbacks)
             if (this.proxy_tunnel) |tunnel| {
+                this.proxy_tunnel = null;
                 tunnel.shutdown();
                 tunnel.deref();
-                this.proxy_tunnel = null;
             }
         }
 

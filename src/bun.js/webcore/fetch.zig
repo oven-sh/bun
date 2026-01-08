@@ -199,11 +199,7 @@ fn getAgentTLSOptions(globalThis: *JSGlobalObject, agent: JSValue) bun.JSError!?
 }
 
 /// Output struct for extractTLSSettings helper.
-/// Note: check_server_identity stores a raw JSValue without GC protection.
-/// This is safe because:
-/// 1. The source objects (agent_opts) remain live on the JS stack during the entire Bun__fetch_ call
-/// 2. No explicit GC triggers occur between extraction and Strong reference creation (line ~1650)
-/// 3. The extraction and usage are synchronous within the same call frame
+/// Note: check_server_identity stores an unprotected raw JSValue, but this is safe because agent_opts remain live on the JS stack for the synchronous Bun__fetch_ call, so no GC can run before the value is promoted to a Strong reference.
 const TLSSettings = struct {
     reject_unauthorized: ?bool = null,
     check_server_identity: ?JSValue = null,
@@ -584,7 +580,7 @@ pub fn Bun__fetch_(
                 if (objects_to_try[i] != .zero) {
                     // Check "agent" property (node-fetch compatibility)
                     if (try objects_to_try[i].get(globalThis, "agent")) |agent| {
-                        if (agent.isObject() and !agent.isUndefinedOrNull()) {
+                        if (agent.isObject()) {
                             if (try getAgentTLSOptions(globalThis, agent)) |opts| {
                                 break :blk opts;
                             }
@@ -592,7 +588,7 @@ pub fn Bun__fetch_(
                     }
                     // Check "dispatcher" property (undici compatibility)
                     if (try objects_to_try[i].get(globalThis, "dispatcher")) |dispatcher| {
-                        if (dispatcher.isObject() and !dispatcher.isUndefinedOrNull()) {
+                        if (dispatcher.isObject()) {
                             if (try getAgentTLSOptions(globalThis, dispatcher)) |opts| {
                                 break :blk opts;
                             }
@@ -603,7 +599,7 @@ pub fn Bun__fetch_(
 
             // Fall back to https.globalAgent
             const global_agent = globalThis.getHttpsGlobalAgent();
-            if (!global_agent.isObject() or global_agent.isUndefinedOrNull()) {
+            if (!global_agent.isObject()) {
                 break :fallback_to_agent;
             }
             if (try getAgentTLSOptions(globalThis, global_agent)) |opts| {
@@ -894,7 +890,7 @@ pub fn Bun__fetch_(
                 if (objects_to_try[i] != .zero) {
                     // Check "agent" property (node-fetch compatibility)
                     if (try objects_to_try[i].get(globalThis, "agent")) |agent| {
-                        if (agent.isObject() and !agent.isUndefinedOrNull()) {
+                        if (agent.isObject()) {
                             if (try agent.get(globalThis, "proxy")) |proxy_val| {
                                 if (!proxy_val.isUndefinedOrNull()) {
                                     break :blk .{ agent, proxy_val };
@@ -904,7 +900,7 @@ pub fn Bun__fetch_(
                     }
                     // Check "dispatcher" property (undici compatibility)
                     if (try objects_to_try[i].get(globalThis, "dispatcher")) |dispatcher| {
-                        if (dispatcher.isObject() and !dispatcher.isUndefinedOrNull()) {
+                        if (dispatcher.isObject()) {
                             if (try dispatcher.get(globalThis, "proxy")) |proxy_val| {
                                 if (!proxy_val.isUndefinedOrNull()) {
                                     break :blk .{ dispatcher, proxy_val };
@@ -917,7 +913,7 @@ pub fn Bun__fetch_(
 
             // Fall back to https.globalAgent
             const global_agent = globalThis.getHttpsGlobalAgent();
-            if (!global_agent.isObject() or global_agent.isUndefinedOrNull()) {
+            if (!global_agent.isObject()) {
                 break :fallback_to_agent_proxy;
             }
             if (try global_agent.get(globalThis, "proxy")) |proxy_val| {
@@ -962,7 +958,8 @@ pub fn Bun__fetch_(
             allocator.free(url_proxy_buffer);
             url_proxy_buffer = buffer;
 
-            // If we got a proxy from agent, also check for TLS settings using the shared helper
+            // When proxy is sourced from an agent/dispatcher, inherit TLS/connect options from that agent
+            // so per-agent TLS overrides (reject_unauthorized, check_server_identity, ssl_config) are respected.
             if (ssl_config == null) {
                 if (try getAgentTLSOptions(globalThis, current_agent)) |connect_opts| {
                     const tls_settings = extractTLSSettings(vm, globalThis, connect_opts) catch {

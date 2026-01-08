@@ -195,7 +195,7 @@ pub fn size(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSEr
             return S3BlobStatTask.size(globalThis, &blob);
         },
         .blob => |*blob| {
-            return Blob.getSize(blob, globalThis);
+            return Blob.getSizeForJS(blob, globalThis);
         },
     }
 }

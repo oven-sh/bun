@@ -53,10 +53,10 @@ pub fn setup(
         .offset = blobe.offset,
         .store = blobe.store.?,
         .chunk_size = @min(
-            if (user_chunk_size > 0) @min(user_chunk_size, blobe.size) else blobe.size,
+            if (user_chunk_size > 0) @min(user_chunk_size, blobe.getSize()) else blobe.getSize(),
             1024 * 1024 * 2,
         ),
-        .remain = blobe.size,
+        .remain = blobe.getSize(),
         .done = false,
         .content_type = content_type,
         .content_type_allocated = content_type_allocated,
@@ -111,7 +111,7 @@ pub fn toAnyBlob(this: *ByteBlobLoader, globalThis: *JSGlobalObject) ?Blob.Any {
 
         var blob = Blob.initWithStore(store, globalThis);
         blob.offset = this.offset;
-        blob.size = this.remain;
+        blob.setSize(this.remain);
 
         // Make sure to preserve the content-type.
         // https://github.com/oven-sh/bun/issues/14988

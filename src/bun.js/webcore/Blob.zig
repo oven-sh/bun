@@ -25,12 +25,13 @@ pub const fromJSDirect = js.fromJSDirect;
 
 reported_estimated_size: usize = 0,
 
-size: SizeType = 0,
+_size: SizeType = 0,
 offset: SizeType = 0,
 store: ?*Store = null,
 content_type: string = "",
 content_type_allocated: bool = false,
 content_type_was_set: bool = false,
+is_slice: bool = false,
 
 /// JavaScriptCore strings are either latin1 or UTF-16
 /// When UTF-16, they're nearly always due to non-ascii characters
@@ -65,7 +66,8 @@ pub const max_size = std.math.maxInt(SizeType);
 ///    and f64 for `last_modified`. Removed reserved bytes, it's handled by version
 ///    number.
 /// 3: Added File name serialization for File objects (when is_jsdom_file is true)
-const serialization_version: u8 = 3;
+/// 4: Added is_slice
+const serialization_version: u8 = 4;
 
 comptime {
     _ = Bun__Blob__getSizeForBindings;
@@ -138,7 +140,7 @@ pub fn doReadFile(this: *Blob, comptime Function: anytype, global: *JSGlobalObje
         promise_value.ensureStillAlive();
         handler.promise.strong.set(global, promise_value);
 
-        read_file.ReadFileUV.start(handler.globalThis.bunVM().uvLoop(), this.store.?, this.offset, this.size, Handler, handler);
+        read_file.ReadFileUV.start(handler.globalThis.bunVM().uvLoop(), this.store.?, this.offset, this.getSize(), Handler, handler);
 
         return promise_value;
     }
@@ -147,7 +149,7 @@ pub fn doReadFile(this: *Blob, comptime Function: anytype, global: *JSGlobalObje
         bun.default_allocator,
         this.store.?,
         this.offset,
-        this.size,
+        this.getSize(),
         *Handler,
         handler,
         Handler.run,
@@ -180,7 +182,7 @@ pub fn NewInternalReadFileHandler(comptime Context: type, comptime Function: any
 pub fn doReadFileInternal(this: *Blob, comptime Handler: type, ctx: Handler, comptime Function: anytype, global: *JSGlobalObject) void {
     if (Environment.isWindows) {
         const ReadFileHandler = NewInternalReadFileHandler(Handler, Function);
-        return read_file.ReadFileUV.start(libuv.Loop.get(), this.store.?, this.offset, this.size, ReadFileHandler, ctx);
+        return read_file.ReadFileUV.start(libuv.Loop.get(), this.store.?, this.offset, this.getSize(), ReadFileHandler, ctx);
     }
     const file_read = read_file.ReadFile.createWithCtx(
         bun.default_allocator,
@@ -188,7 +190,7 @@ pub fn doReadFileInternal(this: *Blob, comptime Handler: type, ctx: Handler, com
         ctx,
         NewInternalReadFileHandler(Handler, Function).run,
         this.offset,
-        this.size,
+        this.getSize(),
     ) catch |err| bun.handleOom(err);
     var read_file_task = read_file.ReadFileTask.createOnJSThread(bun.default_allocator, global, file_read);
     read_file_task.schedule();
@@ -236,7 +238,7 @@ const FormDataContext = struct {
                 joiner.pushStatic("\r\n\r\n");
 
                 if (blob.store) |store| {
-                    if (blob.size == Blob.max_size) {
+                    if (blob.getSize() == Blob.max_size) {
                         blob.resolveSize();
                     }
                     switch (store.data) {
@@ -253,7 +255,7 @@ const FormDataContext = struct {
                                     .encoding = .buffer,
                                     .path = file.pathlike,
                                     .offset = blob.offset,
-                                    .max_size = blob.size,
+                                    .max_size = blob.getSize(),
                                 },
                                 .sync,
                             );
@@ -340,6 +342,11 @@ fn _onStructuredCloneSerialize(
             try writer.writeInt(u32, 0, .little);
         }
     }
+
+    if (serialization_version >= 4) {
+        try writer.writeInt(u8, @intFromBool(this.is_slice), .little);
+    }
+
 }
 
 pub fn onStructuredCloneSerialize(
@@ -510,6 +517,10 @@ fn _onStructuredCloneDeserialize(
         }
 
         if (version == 3) break :versions;
+
+        if (version >= 4) {
+            blob.is_slice = try reader.readInt(u8, .little) != 0;
+        }
     }
 
     bun.assertf(blob.isHeapAllocated(), "expected blob to be heap-allocated", .{});
@@ -728,7 +739,7 @@ pub fn writeFormat(this: *Blob, comptime Formatter: type, formatter: *Formatter,
                 }
             },
             .bytes => {
-                try writeFormatForSize(this.is_jsdom_file, this.size, writer, enable_ansi_colors);
+                try writeFormatForSize(this.is_jsdom_file, this.getSize(), writer, enable_ansi_colors);
             },
         }
     }
@@ -1054,15 +1065,15 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
                 source_store,
                 ctx.bunVM().eventLoop(),
                 options.mkdirp_if_not_exists orelse true,
-                destination_blob.size,
+                if (destination_blob.is_slice) @min(source_blob.getSize(), destination_blob.getSize()) else source_blob.getSize(),
             );
         }
         var file_copier = copy_file.CopyFile.create(
             bun.default_allocator,
             destination_store,
             source_store,
-            destination_blob.offset,
-            destination_blob.size,
+            source_blob.offset,
+            if (destination_blob.is_slice) @min(source_blob.getSize(), destination_blob.getSize()) else source_blob.getSize(),
             ctx,
             options.mkdirp_if_not_exists orelse true,
         );
@@ -1227,8 +1238,9 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
         // TODO only reset last_modified on success paths instead of
         // resetting last_modified at the beginning for better performance.
         if (blob_store.data == .file) {
-            // reset last_modified to force getLastModified() to reload after writing.
+            // reset last_modified and max_size to force getLastModified() and getActualSize() to reload after writing.
             blob_store.data.file.last_modified = jsc.init_timestamp;
+            blob_store.data.file.max_size = Blob.max_size;
         }
     }
 
@@ -1839,8 +1851,8 @@ fn calculateEstimatedByteSize(this: *Blob) void {
         switch (store.data) {
             .bytes => {
                 size += store.data.bytes.stored_name.estimatedSize();
-                size += if (this.size != Blob.max_size)
-                    this.size
+                size += if (this.getSize() != Blob.max_size)
+                    this.getSize()
                 else
                     store.data.bytes.len;
             },
@@ -2162,7 +2174,7 @@ pub fn getFormData(
 }
 
 fn getExistsSync(this: *Blob) jsc.JSValue {
-    if (this.size == Blob.max_size) {
+    if (this.getSize() == Blob.max_size) {
         this.resolveSize();
     }
 
@@ -2207,8 +2219,8 @@ const S3BlobDownloadTask = struct {
         switch (result) {
             .success => |response| {
                 const bytes = response.body.list.items;
-                if (this.blob.size == Blob.max_size) {
-                    this.blob.size = @truncate(bytes.len);
+                if (this.blob.getSize() == Blob.max_size) {
+                    this.blob.setSize(@truncate(bytes.len));
                 }
                 try jsc.AnyPromise.wrap(.{ .normal = this.promise.get() }, this.globalThis, S3BlobDownloadTask.callHandler, .{ this, bytes });
             },
@@ -2235,13 +2247,13 @@ const S3BlobDownloadTask = struct {
         this.poll_ref.ref(globalThis.bunVM());
         const s3_store = &this.blob.store.?.data.s3;
         if (blob.offset > 0) {
-            const len: ?usize = if (blob.size != Blob.max_size) @intCast(blob.size) else null;
+            const len: ?usize = if (blob.getSize() != Blob.max_size) @intCast(blob.getSize()) else null;
             const offset: usize = @intCast(blob.offset);
             try S3.downloadSlice(credentials, path, offset, len, @ptrCast(&S3BlobDownloadTask.onS3DownloadResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null, s3_store.request_payer);
-        } else if (blob.size == Blob.max_size) {
+        } else if (blob.getSize() == Blob.max_size) {
             try S3.download(credentials, path, @ptrCast(&S3BlobDownloadTask.onS3DownloadResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null, s3_store.request_payer);
         } else {
-            const len: usize = @intCast(blob.size);
+            const len: usize = @intCast(blob.getSize());
             const offset: usize = @intCast(blob.offset);
             try S3.downloadSlice(credentials, path, offset, len, @ptrCast(&S3BlobDownloadTask.onS3DownloadResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null, s3_store.request_payer);
         }
@@ -2789,7 +2801,8 @@ pub fn getSliceFrom(this: *Blob, globalThis: *jsc.JSGlobalObject, relativeStart:
     // which is okay because this will only be a <= slice
     var blob = this.dupe();
     blob.offset = offset;
-    blob.size = len;
+    blob._size = len;
+    blob.is_slice = true;
 
     // infer the content type if it was not specified
     if (content_type.len == 0 and this.content_type.len > 0 and !this.content_type_allocated) {
@@ -2818,7 +2831,7 @@ pub fn getSlice(
     var arguments_ = callframe.arguments_old(3);
     var args = arguments_.ptr[0..arguments_.len];
 
-    if (this.size == 0) {
+    if (this.getSize() == 0) {
         const empty = Blob.initEmpty(globalThis);
         var ptr = Blob.new(empty);
         return ptr.toJS(globalThis);
@@ -2828,7 +2841,7 @@ pub fn getSlice(
     var relativeStart: i64 = 0;
 
     // If the optional end parameter is not used as a parameter when making this call, let relativeEnd be size.
-    var relativeEnd: i64 = @as(i64, @intCast(this.size));
+    var relativeEnd: i64 = @as(i64, @intCast(this.getSize()));
 
     if (args.ptr[0].isString()) {
         args.ptr[2] = args.ptr[0];
@@ -2847,10 +2860,10 @@ pub fn getSlice(
             const start = start_.toInt64();
             if (start < 0) {
                 // If the optional start parameter is negative, let relativeStart be start + size.
-                relativeStart = @as(i64, @intCast(@max(start +% @as(i64, @intCast(this.size)), 0)));
+                relativeStart = @as(i64, @intCast(@max(start +% @as(i64, @intCast(this.getSize())), 0)));
             } else {
                 // Otherwise, let relativeStart be start.
-                relativeStart = @min(@as(i64, @intCast(start)), @as(i64, @intCast(this.size)));
+                relativeStart = @min(@as(i64, @intCast(start)), @as(i64, @intCast(this.getSize())));
             }
         }
     }
@@ -2861,10 +2874,10 @@ pub fn getSlice(
             // If end is negative, let relativeEnd be max((size + end), 0).
             if (end < 0) {
                 // If the optional start parameter is negative, let relativeStart be start + size.
-                relativeEnd = @as(i64, @intCast(@max(end +% @as(i64, @intCast(this.size)), 0)));
+                relativeEnd = @as(i64, @intCast(@max(end +% @as(i64, @intCast(this.getSize())), 0)));
             } else {
                 // Otherwise, let relativeStart be start.
-                relativeEnd = @min(@as(i64, @intCast(end)), @as(i64, @intCast(this.size)));
+                relativeEnd = @min(@as(i64, @intCast(end)), @as(i64, @intCast(this.getSize())));
             }
         }
     }
@@ -3035,7 +3048,7 @@ pub fn getLastModified(
 }
 
 pub fn getSizeForBindings(this: *Blob) u64 {
-    if (this.size == Blob.max_size) {
+    if (this.getSize() == Blob.max_size) {
         this.resolveSize();
     }
 
@@ -3047,10 +3060,10 @@ pub fn getSizeForBindings(this: *Blob) u64 {
         return std.math.maxInt(u64);
     }
 
-    if (this.size == Blob.max_size)
+    if (this.getSize() == Blob.max_size)
         return std.math.maxInt(u64);
 
-    return this.size;
+    return this.getSize();
 }
 
 export fn Bun__Blob__getSizeForBindings(this: *Blob) callconv(.c) u64 {
@@ -3105,15 +3118,35 @@ pub fn getStat(this: *Blob, globalThis: *jsc.JSGlobalObject, callback: *jsc.Call
         else => .js_undefined,
     };
 }
-pub fn getSize(this: *Blob, _: *jsc.JSGlobalObject) JSValue {
-    if (this.size == Blob.max_size) {
+
+pub fn getSize(this: *const Blob) SizeType {
+    if (this.store) |store| {
+        if (store.data == .file and !this.is_slice) {
+            return store.data.file.max_size;
+        }
+    }
+    return this._size;
+}
+
+pub fn setSize(this: *Blob, size: SizeType) void {
+    if (this.store) |store| {
+        if (store.data == .file and !this.is_slice) {
+            store.data.file.max_size = size;
+            return;
+        }
+    }
+    this._size = size;
+}
+
+pub fn getSizeForJS(this: *Blob, _: *jsc.JSGlobalObject) JSValue {
+    if (this.getSize() == Blob.max_size) {
         if (this.isS3()) {
             return jsc.JSValue.jsNumber(std.math.nan(f64));
         }
         this.resolveSize();
-        if (this.size == Blob.max_size and this.store != null) {
+        if (this.getSize() == Blob.max_size and this.store != null) {
             return .jsNumber(std.math.inf(f64));
-        } else if (this.size == 0 and this.store != null) {
+        } else if (this.getSize() == 0 and this.store != null) {
             if (this.store.?.data == .file and
                 (this.store.?.data.file.seekable orelse true) == false and
                 this.store.?.data.file.max_size == Blob.max_size)
@@ -3123,7 +3156,7 @@ pub fn getSize(this: *Blob, _: *jsc.JSGlobalObject) JSValue {
         }
     }
 
-    return JSValue.jsNumber(this.size);
+    return JSValue.jsNumber(this.getSize());
 }
 
 pub fn resolveSize(this: *Blob) void {
@@ -3133,12 +3166,12 @@ pub fn resolveSize(this: *Blob) void {
             const store_size = store.size();
             if (store_size != Blob.max_size) {
                 this.offset = @min(store_size, offset);
-                this.size = store_size - offset;
+                this._size = store_size - offset;
             }
 
             return;
         } else if (store.data == .file) {
-            if (store.data.file.seekable == null) {
+            if (store.data.file.seekable == null or store.data.file.max_size == Blob.max_size) {
                 resolveFileStat(store);
             }
 
@@ -3147,14 +3180,14 @@ pub fn resolveSize(this: *Blob) void {
                 const offset = this.offset;
 
                 this.offset = @min(store_size, offset);
-                this.size = store_size -| offset;
+                this._size = store_size -| offset;
                 return;
             }
         }
 
-        this.size = 0;
+        this._size = 0;
     } else {
-        this.size = 0;
+        this._size = 0;
     }
 }
 
@@ -3266,7 +3299,7 @@ pub fn initWithAllASCII(bytes: []u8, allocator: std.mem.Allocator, globalThis: *
         store.?.is_all_ascii = is_all_ascii;
     }
     return Blob{
-        .size = @as(SizeType, @truncate(bytes.len)),
+        ._size = @as(SizeType, @truncate(bytes.len)),
         .store = store,
         .content_type = "",
         .globalThis = globalThis,
@@ -3277,7 +3310,7 @@ pub fn initWithAllASCII(bytes: []u8, allocator: std.mem.Allocator, globalThis: *
 /// Takes ownership of `bytes`, which must have been allocated with `allocator`.
 pub fn init(bytes: []u8, allocator: std.mem.Allocator, globalThis: *JSGlobalObject) Blob {
     return Blob{
-        .size = @as(SizeType, @truncate(bytes.len)),
+        ._size = @as(SizeType, @truncate(bytes.len)),
         .store = if (bytes.len > 0)
             Blob.Store.init(bytes, allocator)
         else
@@ -3294,7 +3327,7 @@ pub fn createWithBytesAndAllocator(
     was_string: bool,
 ) Blob {
     return Blob{
-        .size = @as(SizeType, @truncate(bytes.len)),
+        ._size = @as(SizeType, @truncate(bytes.len)),
         .store = if (bytes.len > 0)
             Blob.Store.init(bytes, allocator)
         else
@@ -3349,7 +3382,7 @@ pub fn create(
 
 pub fn initWithStore(store: *Blob.Store, globalThis: *JSGlobalObject) Blob {
     return Blob{
-        .size = store.size(),
+        ._size = store.size(),
         .store = store,
         .content_type = if (store.data == .file)
             store.data.file.mime_type.value
@@ -3361,7 +3394,7 @@ pub fn initWithStore(store: *Blob.Store, globalThis: *JSGlobalObject) Blob {
 
 pub fn initEmpty(globalThis: *JSGlobalObject) Blob {
     return Blob{
-        .size = 0,
+        ._size = 0,
         .store = null,
         .content_type = "",
         .globalThis = globalThis,
@@ -3438,12 +3471,12 @@ pub fn deinit(this: *Blob) void {
 }
 
 pub fn sharedView(this: *const Blob) []const u8 {
-    if (this.size == 0 or this.store == null) return "";
+    if (this.getSize() == 0 or this.store == null) return "";
     var slice_ = this.store.?.sharedView();
     if (slice_.len == 0) return "";
     slice_ = slice_[this.offset..];
 
-    return slice_[0..@min(slice_.len, @as(usize, this.size))];
+    return slice_[0..@min(slice_.len, @as(usize, this.getSize()))];
 }
 
 pub const Lifetime = jsc.WebCore.Lifetime;
@@ -3455,7 +3488,7 @@ pub fn setIsASCIIFlag(this: *Blob, is_all_ascii: bool) void {
     // we can update the store's is_all_ascii flag
     // and any other Blob that points to the same store
     // can skip checking the encoding
-    if (this.size > 0 and this.offset == 0 and this.store.?.data == .bytes) {
+    if (this.getSize() > 0 and this.offset == 0 and this.store.?.data == .bytes) {
         this.store.?.is_all_ascii = is_all_ascii;
     }
 }
@@ -4092,7 +4125,7 @@ pub const Any = union(enum) {
 
     pub inline fn fastSize(this: *const Any) Blob.SizeType {
         return switch (this.*) {
-            .Blob => this.Blob.size,
+            .Blob => this.Blob.getSize(),
             .WTFStringImpl => @truncate(this.WTFStringImpl.byteLength()),
             .InternalBlob => @truncate(this.slice().len),
         };
@@ -4100,7 +4133,7 @@ pub const Any = union(enum) {
 
     pub inline fn size(this: *const Any) Blob.SizeType {
         return switch (this.*) {
-            .Blob => this.Blob.size,
+            .Blob => this.Blob.getSize(),
             .WTFStringImpl => @truncate(this.WTFStringImpl.utf8ByteLength()),
             else => @truncate(this.slice().len),
         };

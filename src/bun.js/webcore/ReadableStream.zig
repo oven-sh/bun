@@ -318,7 +318,7 @@ pub fn fromBlobCopyRef(globalThis: *JSGlobalObject, blob: *const Blob, recommend
                 .context = .{
                     .event_loop = jsc.EventLoopHandle.init(globalThis.bunVM().eventLoop()),
                     .start_offset = blob.offset,
-                    .max_size = if (blob.size != Blob.max_size) blob.size else null,
+                    .max_size = if (blob.getSize() != Blob.max_size) blob.getSize() else null,
 
                     .lazy = .{
                         .blob = store,
@@ -335,7 +335,7 @@ pub fn fromBlobCopyRef(globalThis: *JSGlobalObject, blob: *const Blob, recommend
             const proxy = globalThis.bunVM().transpiler.env.getHttpProxy(true, null);
             const proxy_url = if (proxy) |p| p.href else null;
 
-            return bun.S3.readableStream(credentials, path, blob.offset, if (blob.size != Blob.max_size) blob.size else null, proxy_url, s3.request_payer, globalThis);
+            return bun.S3.readableStream(credentials, path, blob.offset, if (blob.getSize() != Blob.max_size) blob.getSize() else null, proxy_url, s3.request_payer, globalThis);
         },
     }
 }

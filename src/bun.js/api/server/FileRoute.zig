@@ -195,7 +195,7 @@ pub fn on(this: *FileRoute, req: *uws.Request, resp: AnyResponse, method: bun.ht
         };
 
         const stat_size: u64 = @intCast(@max(stat.size, 0));
-        const _size: u64 = @min(stat_size, @as(u64, this.blob.size));
+        const _size: u64 = @min(stat_size, @as(u64, this.blob.getSize()));
 
         if (bun.S.ISDIR(@intCast(stat.mode))) {
             break :brk .{ false, 0, undefined, false };
@@ -271,7 +271,7 @@ pub fn on(this: *FileRoute, req: *uws.Request, resp: AnyResponse, method: bun.ht
     const transfer = StreamTransfer.create(fd, resp, this, pollable, file_type != .file, file_type);
     transfer.start(
         if (file_type == .file) this.blob.offset else 0,
-        if (file_type == .file and this.blob.size > 0) @intCast(size) else null,
+        if (file_type == .file and this.blob.getSize() > 0) @intCast(size) else null,
     );
 }
 

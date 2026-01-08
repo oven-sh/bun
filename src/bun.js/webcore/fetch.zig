@@ -1140,7 +1140,7 @@ pub fn Bun__fetch_(
                         break :use_sendfile;
                     }
 
-                    const original_size = body.AnyBlob.Blob.size;
+                    const original_size = body.AnyBlob.Blob.getSize();
                     const stat_size = @as(Blob.SizeType, @intCast(stat.size));
                     const blob_size = if (bun.isRegularFile(stat.mode))
                         stat_size
@@ -1173,7 +1173,7 @@ pub fn Bun__fetch_(
                     .encoding = .buffer,
                     .path = .{ .fd = opened_fd },
                     .offset = body.AnyBlob.Blob.offset,
-                    .max_size = body.AnyBlob.Blob.size,
+                    .max_size = body.AnyBlob.Blob.getSize(),
                 },
                 .sync,
             );

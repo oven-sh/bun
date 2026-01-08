@@ -969,12 +969,12 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 }
             }
 
-            const original_size = this.blob.Blob.size;
+            const original_size = this.blob.Blob.getSize();
             const stat_size = @as(Blob.SizeType, @intCast(stat.size));
-            this.blob.Blob.size = if (bun.isRegularFile(stat.mode))
+            this.blob.Blob.setSize(if (bun.isRegularFile(stat.mode))
                 stat_size
             else
-                @min(original_size, stat_size);
+                @min(original_size, stat_size));
 
             this.flags.needs_content_length = true;
 
@@ -1061,12 +1061,12 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 const stat_size = @as(Blob.SizeType, @intCast(result.result.total_size));
 
                 if (this.blob == .Blob) {
-                    const original_size = this.blob.Blob.size;
+                    const original_size = this.blob.Blob.getSize();
                     // if we dont know the size we use the stat size
-                    this.blob.Blob.size = if (original_size == 0 or original_size == Blob.max_size)
+                    this.blob.Blob.setSize(if (original_size == 0 or original_size == Blob.max_size)
                         stat_size
                     else // the blob can be a slice of a file
-                        @max(original_size, stat_size);
+                        @max(original_size, stat_size));
                 }
 
                 if (!this.flags.has_written_status)
@@ -1485,10 +1485,10 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     this.renderMetadata();
 
                     blob.resolveSize();
-                    if (blob.size == Blob.max_size) {
+                    if (blob.getSize() == Blob.max_size) {
                         resp.writeHeaderInt("content-length", 0);
                     } else {
-                        resp.writeHeaderInt("content-length", blob.size);
+                        resp.writeHeaderInt("content-length", blob.getSize());
                     }
                     this.endWithoutBody(this.shouldCloseConnection());
                 },

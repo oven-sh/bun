@@ -94,10 +94,21 @@ public:
         Clean = 1,
     };
 
+    // Tracks the connection type for both the upgrade client and the connected websocket.
+    // This replaces separate m_isSecure and m_proxyIsHTTPS bools.
+    enum class ConnectionType : uint8_t {
+        Plain,      // ws:// direct connection
+        TLS,        // wss:// direct connection
+        ProxyPlain, // ws:// or wss:// through HTTP proxy (plain socket to proxy)
+        ProxyTLS    // ws:// or wss:// through HTTPS proxy (TLS socket to proxy)
+    };
+
     ExceptionOr<void> connect(const String& url);
     ExceptionOr<void> connect(const String& url, const String& protocol);
     ExceptionOr<void> connect(const String& url, const Vector<String>& protocols);
     ExceptionOr<void> connect(const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&&);
+    // Internal connect with proxy config (used by create() with proxy support)
+    ExceptionOr<void> connect(const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&&, std::optional<struct ProxyConfig>&&);
 
     ExceptionOr<void> send(const String& message);
     ExceptionOr<void> send(JSC::ArrayBuffer&);
@@ -217,7 +228,6 @@ private:
 
     void sendWebSocketString(const String& message, const Opcode opcode);
     void sendWebSocketData(const char* data, size_t length, const Opcode opcode);
-    ExceptionOr<void> setupProxy(const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders);
     void setExtensionsFromDeflateParams(const PerMessageDeflateParams* deflate_params);
 
     enum class BinaryType { Blob,
@@ -238,17 +248,11 @@ private:
     String m_subprotocol;
     String m_extensions;
     void* m_upgradeClient { nullptr };
-    bool m_isSecure { false };
+    ConnectionType m_connectionType { ConnectionType::Plain };
     bool m_rejectUnauthorized { false };
     AnyWebSocket m_connectedWebSocket { nullptr };
     ConnectedWebSocketKind m_connectedWebSocketKind { ConnectedWebSocketKind::None };
     size_t m_pendingActivityCount { 0 };
-
-    // Proxy support
-    URL m_proxyUrl;
-    String m_proxyAuthorization;
-    Vector<std::pair<String, String>> m_proxyHeaders;
-    bool m_proxyIsHTTPS { false };
 
     // TLS options (SSLConfig pointer from Zig - ownership transferred to Zig)
     void* m_sslConfig { nullptr };

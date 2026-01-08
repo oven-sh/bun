@@ -556,7 +556,7 @@ pub fn setVerifyMode(this: *This, globalObject: *jsc.JSGlobalObject, callframe: 
     }
 
     const request_cert = request_cert_js.toBoolean();
-    const reject_unauthorized = request_cert_js.toBoolean();
+    const reject_unauthorized = reject_unauthorized_js.toBoolean();
     var verify_mode: c_int = BoringSSL.SSL_VERIFY_NONE;
     if (this.isServer()) {
         if (request_cert) {

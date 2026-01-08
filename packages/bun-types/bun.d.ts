@@ -630,16 +630,16 @@ declare module "bun" {
    */
   namespace JSONC {
     /**
-     * Parse a JSONC (JSON with Comments) string into a JavaScript object.
-     * 
-     * Supports both single-line (//) and block comments (/* */), as well as 
+     * Parse a JSONC (JSON with Comments) string into a JavaScript value.
+     *
+     * Supports both single-line (`//`) and block comments (`/* ... *\/`), as well as
      * trailing commas in objects and arrays.
      *
      * @category Utilities
      *
      * @param input The JSONC string to parse
-     * @returns A JavaScript object
-     * 
+     * @returns A JavaScript value
+     *
      * @example
      * ```js
      * const result = Bun.JSONC.parse(`{
@@ -649,9 +649,10 @@ declare module "bun" {
      * }`);
      * ```
      */
-    export function parse(input: string): object;
+    export function parse(input: string): unknown;
   }
 
+  /**
    * YAML related APIs
    */
   namespace YAML {

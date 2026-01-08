@@ -23,6 +23,7 @@ pub fn parse(
     const allocator = arena.allocator();
     defer arena.deinit();
     var log = logger.Log.init(default_allocator);
+    defer log.deinit();
     const input_value = callframe.argument(0);
     if (input_value.isEmptyOrUndefinedOrNull()) {
         return globalThis.throwInvalidArguments("Expected a string to parse", .{});

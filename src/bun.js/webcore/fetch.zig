@@ -199,6 +199,11 @@ fn getAgentTLSOptions(globalThis: *JSGlobalObject, agent: JSValue) bun.JSError!?
 }
 
 /// Output struct for extractTLSSettings helper.
+/// Note: check_server_identity stores a raw JSValue without GC protection.
+/// This is safe because:
+/// 1. The source objects (agent_opts) remain live on the JS stack during the entire Bun__fetch_ call
+/// 2. No explicit GC triggers occur between extraction and Strong reference creation (line ~1650)
+/// 3. The extraction and usage are synchronous within the same call frame
 const TLSSettings = struct {
     reject_unauthorized: ?bool = null,
     check_server_identity: ?JSValue = null,

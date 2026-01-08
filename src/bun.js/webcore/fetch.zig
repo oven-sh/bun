@@ -165,9 +165,6 @@ fn hasTLSProperties(globalThis: *JSGlobalObject, obj: JSValue) bun.JSError!bool 
                 return true;
             }
         }
-        if (globalThis.hasException()) {
-            return error.JSError;
-        }
     }
     return false;
 }
@@ -610,11 +607,6 @@ pub fn Bun__fetch_(
             break :fallback_to_agent;
         };
 
-        if (globalThis.hasException()) {
-            is_error = true;
-            return .zero;
-        }
-
         // Extract TLS settings from agent options using shared helper
         const tls_settings = extractTLSSettings(vm, globalThis, agent_opts) catch {
             is_error = true;
@@ -628,11 +620,6 @@ pub fn Bun__fetch_(
         }
         if (tls_settings.ssl_config) |config| {
             ssl_config = config;
-        }
-
-        if (globalThis.hasException()) {
-            is_error = true;
-            return .zero;
         }
     }
 
@@ -938,11 +925,6 @@ pub fn Bun__fetch_(
         const current_agent = agent_and_proxy[0];
         const proxy_value = agent_and_proxy[1];
 
-        if (globalThis.hasException()) {
-            is_error = true;
-            return .zero;
-        }
-
         // Try to get the proxy URL - could be a string or URL object with href
         var proxy_href: ?bun.String = null;
         if (proxy_value.isString()) {
@@ -956,11 +938,6 @@ pub fn Bun__fetch_(
                     proxy_href = try jsc.URL.hrefFromJS(href_value, globalThis);
                 }
             }
-        }
-
-        if (globalThis.hasException()) {
-            is_error = true;
-            return .zero;
         }
 
         if (proxy_href) |href| {
@@ -999,11 +976,6 @@ pub fn Bun__fetch_(
                 }
             }
         }
-    }
-
-    if (globalThis.hasException()) {
-        is_error = true;
-        return .zero;
     }
 
     // signal: AbortSignal | undefined;

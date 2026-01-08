@@ -156,12 +156,12 @@ fn messageWithTypeAndLevel_(
         return;
     }
 
-    const enable_colors = if (level == .Warning or level == .Error)
+    const enable_colors = if (level == .Warning or level == .Error or message_type == .Assert)
         Output.enable_ansi_colors_stderr
     else
         Output.enable_ansi_colors_stdout;
 
-    const writer = if (level == .Warning or level == .Error)
+    const writer = if (level == .Warning or level == .Error or message_type == .Assert)
         console.error_writer
     else
         console.writer;
@@ -227,7 +227,14 @@ fn messageWithTypeAndLevel_(
         }
     }
 
-    if (print_length > 0)
+    if (print_length > 0) {
+        if (message_type == .Assert) {
+            const prefix = if (print_options.enable_colors)
+                Output.prettyFmt("<r><red>Assertion failed:<r> ", true)
+            else
+                "Assertion failed: ";
+            writer.writeAll(prefix) catch {};
+        }
         try format2(
             level,
             global,
@@ -235,8 +242,8 @@ fn messageWithTypeAndLevel_(
             print_length,
             writer,
             print_options,
-        )
-    else if (message_type == .Log) {
+        );
+    } else if (message_type == .Log) {
         _ = console.writer.write("\n") catch 0;
         console.writer.flush() catch {};
     } else if (message_type != .Trace)

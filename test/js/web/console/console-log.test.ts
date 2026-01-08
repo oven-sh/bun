@@ -179,3 +179,24 @@ it("console.log with SharedArrayBuffer", () => {
     "
   `);
 });
+
+// https://github.com/oven-sh/bun/issues/19953
+it("console.assert() with message should include 'Assertion failed' prefix", async () => {
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), join(import.meta.dir, "console-assert.fixture.js")],
+    stdin: "inherit",
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+
+  // Check stdout/stderr before exit code for better error messages on failure
+  const err = await stderr.text();
+  const out = await stdout.text();
+  const exitCode = await exited;
+
+  expect(out).toBe("");
+  expect(err).toContain("Assertion failed:");
+  expect(err).toContain("test message");
+  expect(exitCode).toBe(0);
+});

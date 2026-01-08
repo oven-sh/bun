@@ -2347,6 +2347,7 @@ pub fn handleResponseMetadata(
     const status_code = response.status_code;
 
     if (status_code == 407) {
+        // If the request is being proxied and passes through the 407 status code, then let's also not do HTTP Keep-Alive.
         this.flags.disable_keepalive = true;
     }
 

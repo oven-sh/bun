@@ -582,6 +582,42 @@ fn getAST(
         .dataurl, .base64, .bunsh => {
             return try getEmptyAST(log, transpiler, opts, allocator, source, E.String);
         },
+        .bytes => {
+            // Convert to base64
+            const encoded_len = std.base64.standard.Encoder.calcSize(source.contents.len);
+            const encoded = allocator.alloc(u8, encoded_len) catch unreachable;
+            _ = bun.base64.encode(encoded, source.contents);
+
+            // Create base64 string argument
+            const base64_string = Expr.init(E.String, E.String{
+                .data = encoded,
+            }, Logger.Loc.Empty);
+
+            // Create Uint8Array identifier using the special type
+            const uint8array_ident = Expr{
+                .data = .{ .e_uint8array_identifier = {} },
+                .loc = Logger.Loc.Empty,
+            };
+
+            // Create Uint8Array.fromBase64 dot access
+            const from_base64 = Expr.init(E.Dot, E.Dot{
+                .target = uint8array_ident,
+                .name = "fromBase64",
+                .name_loc = Logger.Loc.Empty,
+            }, Logger.Loc.Empty);
+
+            // Create the call expression
+            const args = allocator.alloc(Expr, 1) catch unreachable;
+            args[0] = base64_string;
+
+            const uint8array_call = Expr.init(E.Call, E.Call{
+                .target = from_base64,
+                .args = BabyList(Expr).fromOwnedSlice(args),
+            }, Logger.Loc.Empty);
+
+            // Use the call as the export value
+            return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, uint8array_call, source, "")).?);
+        },
         .file, .wasm => {
             bun.assert(loader.shouldCopyForBundling());
 

@@ -156,6 +156,47 @@ const StringOrURL = struct {
     }
 };
 
+/// Checks if an object has TLS-related properties (rejectUnauthorized, ca, cert, key, checkServerIdentity).
+fn hasTLSProperties(globalThis: *JSGlobalObject, obj: JSValue) bun.JSError!bool {
+    const props = [_][]const u8{ "rejectUnauthorized", "ca", "cert", "key", "checkServerIdentity" };
+    inline for (props) |prop| {
+        if (try obj.get(globalThis, prop)) |val| {
+            if (!val.isUndefinedOrNull()) {
+                return true;
+            }
+        }
+        if (globalThis.hasException()) {
+            return error.JSError;
+        }
+    }
+    return false;
+}
+
+/// Gets TLS options from an agent by checking options, connectOpts, or connect properties.
+fn getAgentTLSOptions(globalThis: *JSGlobalObject, agent: JSValue) bun.JSError!?JSValue {
+    // Try agent.options first (if it has TLS properties)
+    if (try agent.get(globalThis, "options")) |opts| {
+        if (opts.isObject() and !opts.isUndefinedOrNull()) {
+            if (try hasTLSProperties(globalThis, opts)) {
+                return opts;
+            }
+        }
+    }
+    // Fall back to connectOpts (used by https-proxy-agent)
+    if (try agent.get(globalThis, "connectOpts")) |connect_opts| {
+        if (connect_opts.isObject() and !connect_opts.isUndefinedOrNull()) {
+            return connect_opts;
+        }
+    }
+    // Fall back to connect (used by undici.Agent)
+    if (try agent.get(globalThis, "connect")) |connect| {
+        if (connect.isObject() and !connect.isUndefinedOrNull()) {
+            return connect;
+        }
+    }
+    return null;
+}
+
 comptime {
     const Bun__fetch = jsc.toJSHostFn(Bun__fetch_);
     @export(&Bun__fetch, .{ .name = "Bun__fetch" });
@@ -482,52 +523,6 @@ pub fn Bun__fetch_(
     // Fallback to agent.options/connectOpts or https.globalAgent.options/connectOpts if no TLS config was provided
     // This also supports HttpsProxyAgent which uses connectOpts
     if (ssl_config == null) fallback_to_agent: {
-        // Helper to check if an object has TLS-related properties
-        const hasTLSProperties = struct {
-            fn check(globalThis_: *JSGlobalObject, obj: JSValue) !bool {
-                // Check for any of the TLS-related properties
-                const props = [_][]const u8{ "rejectUnauthorized", "ca", "cert", "key", "checkServerIdentity" };
-                inline for (props) |prop| {
-                    if (try obj.get(globalThis_, prop)) |val| {
-                        if (!val.isUndefinedOrNull()) {
-                            return true;
-                        }
-                    }
-                    if (globalThis_.hasException()) {
-                        return error.JSError;
-                    }
-                }
-                return false;
-            }
-        }.check;
-
-        // Helper to get TLS options from an agent (options, connectOpts, or connect)
-        const getAgentTLSOptions = struct {
-            fn get(globalThis_: *JSGlobalObject, agent: JSValue, hasTLSProps: *const fn (*JSGlobalObject, JSValue) bun.JSError!bool) bun.JSError!?JSValue {
-                // Try agent.options first (if it has TLS properties)
-                if (try agent.get(globalThis_, "options")) |opts| {
-                    if (opts.isObject() and !opts.isUndefinedOrNull()) {
-                        if (try hasTLSProps(globalThis_, opts)) {
-                            return opts;
-                        }
-                    }
-                }
-                // Fall back to connectOpts (used by https-proxy-agent)
-                if (try agent.get(globalThis_, "connectOpts")) |connect_opts| {
-                    if (connect_opts.isObject() and !connect_opts.isUndefinedOrNull()) {
-                        return connect_opts;
-                    }
-                }
-                // Fall back to connect (used by undici.Agent)
-                if (try agent.get(globalThis_, "connect")) |connect| {
-                    if (connect.isObject() and !connect.isUndefinedOrNull()) {
-                        return connect;
-                    }
-                }
-                return null;
-            }
-        }.get;
-
         // First check for per-request agent/dispatcher option, then fall back to globalAgent
         const agent_opts = blk: {
             // Check for agent (node-fetch compatibility) or dispatcher (undici compatibility) in options/request_init
@@ -540,7 +535,7 @@ pub fn Bun__fetch_(
                     // Check "agent" property (node-fetch compatibility)
                     if (try objects_to_try[i].get(globalThis, "agent")) |agent| {
                         if (agent.isObject() and !agent.isUndefinedOrNull()) {
-                            if (try getAgentTLSOptions(globalThis, agent, &hasTLSProperties)) |opts| {
+                            if (try getAgentTLSOptions(globalThis, agent)) |opts| {
                                 break :blk opts;
                             }
                         }
@@ -548,7 +543,7 @@ pub fn Bun__fetch_(
                     // Check "dispatcher" property (undici compatibility)
                     if (try objects_to_try[i].get(globalThis, "dispatcher")) |dispatcher| {
                         if (dispatcher.isObject() and !dispatcher.isUndefinedOrNull()) {
-                            if (try getAgentTLSOptions(globalThis, dispatcher, &hasTLSProperties)) |opts| {
+                            if (try getAgentTLSOptions(globalThis, dispatcher)) |opts| {
                                 break :blk opts;
                             }
                         }
@@ -561,7 +556,7 @@ pub fn Bun__fetch_(
             if (!global_agent.isObject() or global_agent.isUndefinedOrNull()) {
                 break :fallback_to_agent;
             }
-            if (try getAgentTLSOptions(globalThis, global_agent, &hasTLSProperties)) |opts| {
+            if (try getAgentTLSOptions(globalThis, global_agent)) |opts| {
                 break :blk opts;
             }
             break :fallback_to_agent;

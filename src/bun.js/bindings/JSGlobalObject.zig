@@ -800,13 +800,6 @@ pub const JSGlobalObject = opaque {
     extern fn JSGlobalObject__tryTakeException(*JSGlobalObject) JSValue;
     extern fn JSGlobalObject__requestTermination(this: *JSGlobalObject) void;
 
-    extern fn JSC__JSGlobalObject__getHttpsGlobalAgentOptions(*JSGlobalObject) JSValue;
-    /// Gets `https.globalAgent.options` from the node:https module for TLS fallback.
-    /// Returns undefined if not available.
-    pub fn getHttpsGlobalAgentOptions(this: *JSGlobalObject) JSValue {
-        return JSC__JSGlobalObject__getHttpsGlobalAgentOptions(this);
-    }
-
     extern fn JSC__JSGlobalObject__getHttpsGlobalAgent(*JSGlobalObject) JSValue;
     /// Gets `https.globalAgent` from the node:https module.
     /// Returns undefined if not available.

@@ -1,33 +1,54 @@
-import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+import { join } from "path";
 import {
+  createTestContext,
+  destroyTestContext,
   dummyAfterAll,
-  dummyAfterEach,
   dummyBeforeAll,
-  dummyBeforeEach,
-  dummyRegistry,
-  package_dir,
-  setHandler,
-  write,
-} from "./dummy.registry.js";
+  dummyRegistryForContext,
+  setContextHandler,
+  type TestContext,
+} from "./dummy.registry";
 
-beforeAll(dummyBeforeAll);
-afterAll(dummyAfterAll);
-beforeEach(async () => {
-  await dummyBeforeEach();
+beforeAll(() => {
+  setDefaultTimeout(1000 * 60 * 5);
+  dummyBeforeAll();
 });
-afterEach(dummyAfterEach);
+afterAll(dummyAfterAll);
 
-test("security scanner blocks bun update on fatal advisory", async () => {
-  const urls: string[] = [];
-  setHandler(
-    dummyRegistry(urls, {
-      "0.1.0": {},
-      "0.2.0": {},
-    }),
-  );
+async function withContext(
+  opts: { linker?: "hoisted" | "isolated" } | undefined,
+  fn: (ctx: TestContext) => Promise<void>,
+): Promise<void> {
+  const ctx = await createTestContext(opts ? { linker: opts.linker! } : undefined);
+  try {
+    await fn(ctx);
+  } finally {
+    destroyTestContext(ctx);
+  }
+}
 
-  const scannerCode = `
+const defaultOpts = { linker: "hoisted" as const };
+
+// Helper function to write to package_dir
+async function write(ctx: TestContext, path: string, content: string | object) {
+  await Bun.write(join(ctx.package_dir, path), typeof content === "string" ? content : JSON.stringify(content));
+}
+
+describe.concurrent("Security Scanner for bun update", () => {
+  test("security scanner blocks bun update on fatal advisory", async () => {
+    await withContext(defaultOpts, async ctx => {
+      const urls: string[] = [];
+      setContextHandler(
+        ctx,
+        dummyRegistryForContext(ctx, urls, {
+          "0.1.0": {},
+          "0.2.0": {},
+        }),
+      );
+
+      const scannerCode = `
     export const scanner = {
       version: "1",
       scan: async ({ packages }) => {
@@ -44,109 +65,115 @@ test("security scanner blocks bun update on fatal advisory", async () => {
     };
   `;
 
-  await write("./scanner.ts", scannerCode);
-  await write("package.json", {
-    name: "my-app",
-    version: "1.0.0",
-    dependencies: {
-      moo: "0.1.0",
-    },
-  });
+      await write(ctx, "./scanner.ts", scannerCode);
+      await write(ctx, "package.json", {
+        name: "my-app",
+        version: "1.0.0",
+        dependencies: {
+          moo: "0.1.0",
+        },
+      });
 
-  // First install without security scanning (to have something to update)
-  await using installProc = Bun.spawn({
-    cmd: [bunExe(), "install", "--no-summary"],
-    env: bunEnv,
-    cwd: package_dir,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+      // First install without security scanning (to have something to update)
+      await using installProc = Bun.spawn({
+        cmd: [bunExe(), "install", "--no-summary"],
+        env: bunEnv,
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
 
-  await installProc.stdout.text();
-  await installProc.stderr.text();
-  await installProc.exited;
+      await installProc.stdout.text();
+      await installProc.stderr.text();
+      await installProc.exited;
 
-  await write(
-    "./bunfig.toml",
-    `
+      await write(
+        ctx,
+        "./bunfig.toml",
+        `
 [install]
 saveTextLockfile = false
 
 [install.security]
 scanner = "./scanner.ts"
 `,
-  );
+      );
 
-  await using updateProc = Bun.spawn({
-    cmd: [bunExe(), "update", "moo"],
-    env: bunEnv,
-    cwd: package_dir,
-    stdout: "pipe",
-    stderr: "pipe",
+      await using updateProc = Bun.spawn({
+        cmd: [bunExe(), "update", "moo"],
+        env: bunEnv,
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [updateOut, updateErr, updateExitCode] = await Promise.all([
+        updateProc.stdout.text(),
+        updateProc.stderr.text(),
+        updateProc.exited,
+      ]);
+
+      expect(updateOut).toContain("FATAL: moo");
+      expect(updateOut).toContain("Fatal security issue detected");
+      expect(updateOut).toContain("Installation aborted due to fatal security advisories");
+
+      expect(updateExitCode).toBe(1);
+    });
   });
 
-  const [updateOut, updateErr, updateExitCode] = await Promise.all([
-    updateProc.stdout.text(),
-    updateProc.stderr.text(),
-    updateProc.exited,
-  ]);
+  test("security scanner does not run on bun update when disabled", async () => {
+    await withContext(defaultOpts, async ctx => {
+      const urls: string[] = [];
+      setContextHandler(
+        ctx,
+        dummyRegistryForContext(ctx, urls, {
+          "0.1.0": {},
+          "0.2.0": {},
+        }),
+      );
 
-  expect(updateOut).toContain("FATAL: moo");
-  expect(updateOut).toContain("Fatal security issue detected");
-  expect(updateOut).toContain("Installation aborted due to fatal security advisories");
+      await write(ctx, "package.json", {
+        name: "my-app",
+        version: "1.0.0",
+        dependencies: {
+          moo: "0.1.0",
+        },
+      });
 
-  expect(updateExitCode).toBe(1);
-});
+      // Remove bunfig.toml to ensure no security scanner
+      await write(ctx, "bunfig.toml", "");
 
-test("security scanner does not run on bun update when disabled", async () => {
-  const urls: string[] = [];
-  setHandler(
-    dummyRegistry(urls, {
-      "0.1.0": {},
-      "0.2.0": {},
-    }),
-  );
+      await using installProc = Bun.spawn({
+        cmd: [bunExe(), "install", "--no-summary"],
+        env: bunEnv,
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
 
-  await write("package.json", {
-    name: "my-app",
-    version: "1.0.0",
-    dependencies: {
-      moo: "0.1.0",
-    },
+      await installProc.stdout.text();
+      await installProc.stderr.text();
+      await installProc.exited;
+
+      await using updateProc = Bun.spawn({
+        cmd: [bunExe(), "update", "moo"],
+        env: bunEnv,
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [updateOut, updateErr, updateExitCode] = await Promise.all([
+        updateProc.stdout.text(),
+        updateProc.stderr.text(),
+        updateProc.exited,
+      ]);
+
+      expect(updateOut).not.toContain("Security scanner");
+      expect(updateOut).not.toContain("WARN:");
+      expect(updateOut).not.toContain("FATAL:");
+
+      expect(updateExitCode).toBe(0);
+    });
   });
-
-  // Remove bunfig.toml to ensure no security scanner
-  await write("bunfig.toml", "");
-
-  await using installProc = Bun.spawn({
-    cmd: [bunExe(), "install", "--no-summary"],
-    env: bunEnv,
-    cwd: package_dir,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  await installProc.stdout.text();
-  await installProc.stderr.text();
-  await installProc.exited;
-
-  await using updateProc = Bun.spawn({
-    cmd: [bunExe(), "update", "moo"],
-    env: bunEnv,
-    cwd: package_dir,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const [updateOut, updateErr, updateExitCode] = await Promise.all([
-    updateProc.stdout.text(),
-    updateProc.stderr.text(),
-    updateProc.exited,
-  ]);
-
-  expect(updateOut).not.toContain("Security scanner");
-  expect(updateOut).not.toContain("WARN:");
-  expect(updateOut).not.toContain("FATAL:");
-
-  expect(updateExitCode).toBe(0);
 });

@@ -15,7 +15,7 @@ param(
 );
 
 # filter out 32 bit + ARM
-if (-not ((Get-CimInstance Win32_ComputerSystem)).SystemType -match "x64-based") {
+if (-not ((Get-CimInstance Win32_ComputerSystem).SystemType -match "x64-based")) {
   Write-Output "Install Failed:"
   Write-Output "Bun for Windows is currently only available for x86 64-bit Windows.`n"
   return 1
@@ -65,12 +65,15 @@ function Write-Env {
   $EnvRegisterKey = $RegisterKey.OpenSubKey('Environment', $true)
   if ($null -eq $Value) {
     $EnvRegisterKey.DeleteValue($Key)
-  } else {
+  }
+  else {
     $RegistryValueKind = if ($Value.Contains('%')) {
       [Microsoft.Win32.RegistryValueKind]::ExpandString
-    } elseif ($EnvRegisterKey.GetValue($Key)) {
+    }
+    elseif ($EnvRegisterKey.GetValue($Key)) {
       $EnvRegisterKey.GetValueKind($Key)
-    } else {
+    }
+    else {
       [Microsoft.Win32.RegistryValueKind]::String
     }
     $EnvRegisterKey.SetValue($Key, $Value, $RegistryValueKind)
@@ -107,7 +110,7 @@ function Install-Bun {
   $IsBaseline = $ForceBaseline
   if (!$IsBaseline) {
     $IsBaseline = !( `
-      Add-Type -MemberDefinition '[DllImport("kernel32.dll")] public static extern bool IsProcessorFeaturePresent(int ProcessorFeature);' `
+        Add-Type -MemberDefinition '[DllImport("kernel32.dll")] public static extern bool IsProcessorFeaturePresent(int ProcessorFeature);' `
         -Name 'Kernel32' -Namespace 'Win32' -PassThru `
     )::IsProcessorFeaturePresent(40);
   }
@@ -117,9 +120,11 @@ function Install-Bun {
 
   try {
     Remove-Item "${BunBin}\bun.exe" -Force
-  } catch [System.Management.Automation.ItemNotFoundException] {
+  }
+  catch [System.Management.Automation.ItemNotFoundException] {
     # ignore
-  } catch [System.UnauthorizedAccessException] {
+  }
+  catch [System.UnauthorizedAccessException] {
     $openProcesses = Get-Process -Name bun | Where-Object { $_.Path -eq "${BunBin}\bun.exe" }
     if ($openProcesses.Count -gt 0) {
       Write-Output "Install Failed - An older installation exists and is open. Please close open Bun processes and try again."
@@ -128,7 +133,8 @@ function Install-Bun {
     Write-Output "Install Failed - An unknown error occurred while trying to remove the existing installation"
     Write-Output $_
     return 1
-  } catch {
+  }
+  catch {
     Write-Output "Install Failed - An unknown error occurred while trying to remove the existing installation"
     Write-Output $_
     return 1
@@ -164,7 +170,8 @@ function Install-Bun {
       # Use Invoke-RestMethod instead of Invoke-WebRequest because Invoke-WebRequest breaks on
       # some machines, see 
       Invoke-RestMethod -Uri $URL -OutFile $ZipPath
-    } catch {
+    }
+    catch {
       Write-Output "Install Failed - could not download $URL"
       Write-Output "The command 'Invoke-RestMethod $URL -OutFile $ZipPath' exited with code ${LASTEXITCODE}`n"
       return 1
@@ -185,7 +192,8 @@ function Install-Bun {
     if (!(Test-Path "${BunBin}\$Target\bun.exe")) {
       throw "The file '${BunBin}\$Target\bun.exe' does not exist. Download is corrupt or intercepted Antivirus?`n"
     }
-  } catch {
+  }
+  catch {
     Write-Output "Install Failed - could not unzip $ZipPath"
     Write-Error $_
     return 1
@@ -197,7 +205,8 @@ function Install-Bun {
   Remove-Item $ZipPath -Force
 
   $BunRevision = "$(& "${BunBin}\bun.exe" --revision)"
-  if ($LASTEXITCODE -eq 1073741795) { # STATUS_ILLEGAL_INSTRUCTION
+  if ($LASTEXITCODE -eq 1073741795) {
+    # STATUS_ILLEGAL_INSTRUCTION
     if ($IsBaseline) {
       Write-Output "Install Failed - bun.exe (baseline) is not compatible with your CPU.`n"
       Write-Output "Please open a GitHub issue with your CPU model:`nhttps://github.com/oven-sh/bun/issues/new/choose`n"
@@ -213,8 +222,7 @@ function Install-Bun {
   # '-1073741515' was spotted in the wild, but not clearly documented as a status code:
   # https://discord.com/channels/876711213126520882/1149339379446325248/1205194965383250081
   # http://community.sqlbackupandftp.com/t/error-1073741515-solved/1305
-  if (($LASTEXITCODE -eq 3221225781) -or ($LASTEXITCODE -eq -1073741515)) # STATUS_DLL_NOT_FOUND
-  { 
+  if (($LASTEXITCODE -eq 3221225781) -or ($LASTEXITCODE -eq -1073741515)) { # STATUS_DLL_NOT_FOUND 
     # TODO: as of July 2024, Bun has no external dependencies.
     # I want to keep this error message in for a few months to ensure that
     # if someone somehow runs into this, it can be reported.
@@ -245,7 +253,8 @@ function Install-Bun {
       Write-Output "The command '${BunBin}\bun.exe completions' exited with code ${LASTEXITCODE}`n"
       return 1
     }
-  } catch {
+  }
+  catch {
     # it is possible on powershell 5 that an error happens, but it is probably fine?
   }
   $env:IS_BUN_AUTO_UPDATE = $null
@@ -253,7 +262,8 @@ function Install-Bun {
 
   $DisplayVersion = if ($BunRevision -like "*-canary.*") {
     "${BunRevision}"
-  } else {
+  }
+  else {
     "$(& "${BunBin}\bun.exe" --version)"
   }
 
@@ -270,7 +280,8 @@ function Install-Bun {
       Write-Warning "Note: Another bun.exe is already in %PATH% at $($existing.Source)`nTyping 'bun' in your terminal will not use what was just installed.`n"
       $hasExistingOther = $true;
     }
-  } catch {}
+  }
+  catch {}
 
   if (-not $NoRegisterInstallation) {
     $rootKey = $null
@@ -281,14 +292,15 @@ function Install-Bun {
       New-ItemProperty -Path $RegistryKey -Name "InstallLocation" -Value "${BunRoot}" -PropertyType String -Force | Out-Null
       New-ItemProperty -Path $RegistryKey -Name "DisplayIcon" -Value $BunBin\bun.exe -PropertyType String -Force | Out-Null
       New-ItemProperty -Path $RegistryKey -Name "UninstallString" -Value "powershell -c `"& `'$BunRoot\uninstall.ps1`' -PauseOnError`" -ExecutionPolicy Bypass" -PropertyType String -Force | Out-Null
-    } catch {
+    }
+    catch {
       if ($rootKey -ne $null) {
         Remove-Item -Path $RegistryKey -Force
       }
     }
   }
 
-  if(!$hasExistingOther) {
+  if (!$hasExistingOther) {
     # Only try adding to path if there isn't already a bun.exe in the path
     $Path = (Get-Env -Key "Path") -split ';'
     if ($Path -notcontains $BunBin) {
@@ -296,7 +308,8 @@ function Install-Bun {
         $Path += $BunBin
         Write-Env -Key 'Path' -Value ($Path -join ';')
         $env:PATH = $Path -join ';'
-      } else {
+      }
+      else {
         Write-Output "Skipping adding '${BunBin}' to the user's %PATH%`n"
       }
     }

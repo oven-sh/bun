@@ -3649,159 +3649,169 @@ describe.concurrent("bun-install", () => {
     });
   });
 
-  it("should handle bitbucket git dependencies", async () => {
-    await withContext(defaultOpts, async ctx => {
-      const deps = [
-        "bitbucket:dylan-conway/public-install-test",
-        "bitbucket.org:dylan-conway/public-install-test",
-        "bitbucket.com:dylan-conway/public-install-test",
-        "git@bitbucket.org:dylan-conway/public-install-test",
-      ];
-      for (const dep of deps) {
-        const urls: string[] = [];
-        setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
-        await writeFile(
-          join(ctx.package_dir, "package.json"),
-          JSON.stringify({
-            name: "foo",
-            version: "0.0.1",
-            dependencies: {
-              "public-install-test": dep,
-            },
-          }),
-        );
-        const { stdout, stderr, exited } = spawn({
-          cmd: [bunExe(), "install"],
-          cwd: ctx.package_dir,
-          stdout: "pipe",
-          stdin: "pipe",
-          stderr: "pipe",
-          env,
+  describe("should handle bitbucket git dependencies", () => {
+    const deps = [
+      "bitbucket:dylan-conway/public-install-test",
+      "bitbucket.org:dylan-conway/public-install-test",
+      "bitbucket.com:dylan-conway/public-install-test",
+      "git@bitbucket.org:dylan-conway/public-install-test",
+    ];
+
+    for (const dep of deps) {
+      it(`install ${dep}`, async () => {
+        await withContext(defaultOpts, async ctx => {
+          const urls: string[] = [];
+          setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+          await writeFile(
+            join(ctx.package_dir, "package.json"),
+            JSON.stringify({
+              name: "foo",
+              version: "0.0.1",
+              dependencies: {
+                "public-install-test": dep,
+              },
+            }),
+          );
+          const { stdout, stderr, exited } = spawn({
+            cmd: [bunExe(), "install"],
+            cwd: ctx.package_dir,
+            stdout: "pipe",
+            stdin: "pipe",
+            stderr: "pipe",
+            env,
+          });
+
+          const err = await stderr.text();
+          expect(err).toContain("Saved lockfile");
+          const out = await stdout.text();
+          expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+            expect.stringContaining("bun install v1."),
+            "",
+            `+ public-install-test@git+ssh://${dep}#79265e2d9754c60b60f97cc8d859fb6da073b5d2`,
+            "",
+            expect.stringContaining("installed"),
+          ]);
+          expect(await exited).toBe(0);
+          await access(join(ctx.package_dir, "bun.lockb"));
         });
+      });
 
-        const err = await stderr.text();
-        expect(err).toContain("Saved lockfile");
-        const out = await stdout.text();
-        expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-          expect.stringContaining("bun install v1."),
-          "",
-          `+ public-install-test@git+ssh://${dep}#79265e2d9754c60b60f97cc8d859fb6da073b5d2`,
-          "",
-          expect.stringContaining("installed"),
-        ]);
-        expect(await exited).toBe(0);
-        await access(join(ctx.package_dir, "bun.lockb"));
-      }
+      it(`add ${dep}`, async () => {
+        await withContext(defaultOpts, async ctx => {
+          const urls: string[] = [];
+          setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+          await writeFile(
+            join(ctx.package_dir, "package.json"),
+            JSON.stringify({
+              name: "foo",
+              version: "0.0.1",
+            }),
+          );
 
-      for (const dep of deps) {
-        const urls: string[] = [];
-        setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
-        await writeFile(
-          join(ctx.package_dir, "package.json"),
-          JSON.stringify({
-            name: "foo",
-            version: "0.0.1",
-          }),
-        );
+          const { stdout, stderr, exited } = spawn({
+            cmd: [bunExe(), "add", dep],
+            cwd: ctx.package_dir,
+            stdout: "pipe",
+            stdin: "pipe",
+            stderr: "pipe",
+            env,
+          });
 
-        const { stdout, stderr, exited } = spawn({
-          cmd: [bunExe(), "add", dep],
-          cwd: ctx.package_dir,
-          stdout: "pipe",
-          stdin: "pipe",
-          stderr: "pipe",
-          env,
+          const err = await stderr.text();
+          expect(err).toContain("Saved lockfile");
+          const out = await stdout.text();
+          expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+            expect.stringContaining("bun add v1."),
+            "",
+            `installed publicinstalltest@git+ssh://${dep}#79265e2d9754c60b60f97cc8d859fb6da073b5d2`,
+            "",
+            expect.stringContaining("installed"),
+          ]);
+          expect(await exited).toBe(0);
+          await access(join(ctx.package_dir, "bun.lockb"));
         });
-
-        const err = await stderr.text();
-        expect(err).toContain("Saved lockfile");
-        const out = await stdout.text();
-        expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-          expect.stringContaining("bun add v1."),
-          "",
-          `installed publicinstalltest@git+ssh://${dep}#79265e2d9754c60b60f97cc8d859fb6da073b5d2`,
-          "",
-          expect.stringContaining("installed"),
-        ]);
-        expect(await exited).toBe(0);
-        await access(join(ctx.package_dir, "bun.lockb"));
-      }
-    });
+      });
+    }
   });
 
-  it("should handle gitlab git dependencies", async () => {
-    await withContext(defaultOpts, async ctx => {
-      const deps = ["gitlab:dylan-conway/public-install-test", "gitlab.com:dylan-conway/public-install-test"];
-      for (const dep of deps) {
-        const urls: string[] = [];
-        setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
-        await writeFile(
-          join(ctx.package_dir, "package.json"),
-          JSON.stringify({
-            name: "foo",
-            version: "0.0.1",
-            dependencies: {
-              "public-install-test": dep,
-            },
-          }),
-        );
-        const { stdout, stderr, exited } = spawn({
-          cmd: [bunExe(), "install"],
-          cwd: ctx.package_dir,
-          stdout: "pipe",
-          stdin: "pipe",
-          stderr: "pipe",
-          env,
+  describe("should handle gitlab git dependencies", () => {
+    const deps = ["gitlab:dylan-conway/public-install-test", "gitlab.com:dylan-conway/public-install-test"];
+
+    for (const dep of deps) {
+      it(`install ${dep}`, async () => {
+        await withContext(defaultOpts, async ctx => {
+          const urls: string[] = [];
+          setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+          await writeFile(
+            join(ctx.package_dir, "package.json"),
+            JSON.stringify({
+              name: "foo",
+              version: "0.0.1",
+              dependencies: {
+                "public-install-test": dep,
+              },
+            }),
+          );
+          const { stdout, stderr, exited } = spawn({
+            cmd: [bunExe(), "install"],
+            cwd: ctx.package_dir,
+            stdout: "pipe",
+            stdin: "pipe",
+            stderr: "pipe",
+            env,
+          });
+
+          const err = await stderr.text();
+          expect(err).toContain("Saved lockfile");
+          const out = await stdout.text();
+          expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+            expect.stringContaining("bun install v1."),
+            "",
+            `+ public-install-test@git+ssh://${dep}#93f3aa4ec9ca8a0bacc010776db48bfcd915c44c`,
+            "",
+            expect.stringContaining("installed"),
+          ]);
+          expect(await exited).toBe(0);
+          await access(join(ctx.package_dir, "bun.lockb"));
         });
+      });
 
-        const err = await stderr.text();
-        expect(err).toContain("Saved lockfile");
-        const out = await stdout.text();
-        expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-          expect.stringContaining("bun install v1."),
-          "",
-          `+ public-install-test@git+ssh://${dep}#93f3aa4ec9ca8a0bacc010776db48bfcd915c44c`,
-          "",
-          expect.stringContaining("installed"),
-        ]);
-        expect(await exited).toBe(0);
-        await access(join(ctx.package_dir, "bun.lockb"));
-      }
+      it(`add ${dep}`, async () => {
+        await withContext(defaultOpts, async ctx => {
+          const urls: string[] = [];
+          setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+          await writeFile(
+            join(ctx.package_dir, "package.json"),
+            JSON.stringify({
+              name: "foo",
+              version: "0.0.1",
+            }),
+          );
 
-      for (const dep of deps) {
-        const urls: string[] = [];
-        setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
-        await writeFile(
-          join(ctx.package_dir, "package.json"),
-          JSON.stringify({
-            name: "foo",
-            version: "0.0.1",
-          }),
-        );
+          const { stdout, stderr, exited } = spawn({
+            cmd: [bunExe(), "add", dep],
+            cwd: ctx.package_dir,
+            stdout: "pipe",
+            stdin: "pipe",
+            stderr: "pipe",
+            env,
+          });
 
-        const { stdout, stderr, exited } = spawn({
-          cmd: [bunExe(), "add", dep],
-          cwd: ctx.package_dir,
-          stdout: "pipe",
-          stdin: "pipe",
-          stderr: "pipe",
-          env,
+          const err = await stderr.text();
+          expect(err).toContain("Saved lockfile");
+          const out = await stdout.text();
+          expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+            expect.stringContaining("bun add v1."),
+            "",
+            `installed public-install-test@git+ssh://${dep}#93f3aa4ec9ca8a0bacc010776db48bfcd915c44c`,
+            "",
+            expect.stringContaining("installed"),
+          ]);
+          expect(await exited).toBe(0);
+          await access(join(ctx.package_dir, "bun.lockb"));
         });
-
-        const err = await stderr.text();
-        expect(err).toContain("Saved lockfile");
-        const out = await stdout.text();
-        expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-          expect.stringContaining("bun add v1."),
-          "",
-          `installed public-install-test@git+ssh://${dep}#93f3aa4ec9ca8a0bacc010776db48bfcd915c44c`,
-          "",
-          expect.stringContaining("installed"),
-        ]);
-        expect(await exited).toBe(0);
-        await access(join(ctx.package_dir, "bun.lockb"));
-      }
-    });
+      });
+    }
   });
 
   it("should handle GitHub URL in dependencies (github:user/repo#tag)", async () => {

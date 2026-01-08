@@ -23,6 +23,12 @@ pub const JSBundler = struct {
         /// directory, matches a key in the map.
         pub fn get(self: *const FileMap, specifier: []const u8) ?[]const u8 {
             if (self.map.count() == 0) return null;
+
+            if (comptime !bun.Environment.isWindows) {
+                const entry = self.map.get(specifier) orelse return null;
+                return entry.slice();
+            }
+
             // Normalize backslashes to forward slashes for consistent lookup
             // Map keys are stored with forward slashes (normalized in fromJS)
             var buf: bun.PathBuffer = undefined;
@@ -34,6 +40,11 @@ pub const JSBundler = struct {
         /// Check if the file map contains a given specifier.
         pub fn contains(self: *const FileMap, specifier: []const u8) bool {
             if (self.map.count() == 0) return false;
+
+            if (comptime !bun.Environment.isWindows) {
+                return self.map.contains(specifier);
+            }
+
             // Normalize backslashes to forward slashes for consistent lookup
             var buf: bun.PathBuffer = undefined;
             const normalized = bun.path.pathToPosixBuf(u8, specifier, &buf);
@@ -51,12 +62,21 @@ pub const JSBundler = struct {
             // Fast path: if the map is empty, return immediately
             if (self.map.count() == 0) return null;
 
-            {
+            // Check if the specifier is directly in the map
+            // Must use getKey to return the map's owned key, not the parameter
+            if (comptime !bun.Environment.isWindows) {
+                if (self.map.getKey(specifier)) |key| {
+                    return _resolver.Result{
+                        .path_pair = .{
+                            .primary = Fs.Path.initWithNamespace(key, "memory"),
+                        },
+                        .module_type = .unknown,
+                    };
+                }
+            } else {
                 var buf: bun.PathBuffer = undefined;
                 const normalized_specifier = bun.path.pathToPosixBuf(u8, specifier, &buf);
 
-                // Check if the specifier is directly in the map
-                // Must use getKey to return the map's owned key, not the parameter
                 if (self.map.getKey(normalized_specifier)) |key| {
                     return _resolver.Result{
                         .path_pair = .{

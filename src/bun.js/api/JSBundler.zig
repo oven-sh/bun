@@ -47,7 +47,7 @@ pub const JSBundler = struct {
             }
 
             // Normalize backslashes to forward slashes for consistent lookup
-            const buf: bun.PathBuffer = bun.path_buffer_pool.get();
+            const buf = bun.path_buffer_pool.get();
             defer bun.path_buffer_pool.put(buf);
             const normalized = bun.path.pathToPosixBuf(u8, specifier, buf);
             return self.map.contains(normalized);
@@ -74,7 +74,7 @@ pub const JSBundler = struct {
                     };
                 }
             } else {
-                const buf: bun.PathBuffer = bun.path_buffer_pool.get();
+                const buf = bun.path_buffer_pool.get();
                 defer bun.path_buffer_pool.put(buf);
                 const normalized_specifier = bun.path.pathToPosixBuf(u8, specifier, buf);
 

@@ -471,7 +471,7 @@ pub const BunxCommand = struct {
         debug("install_param: {s}", .{install_param});
         debug("result_package_name: {s}", .{result_package_name});
 
-        const temp_dir = bun.fs.FileSystem.RealFS.platformTempDir();
+        const temp_dir = bun.fs.FileSystem.platformTempDir();
 
         const PATH_FOR_BIN_DIRS = brk: {
             if (ignore_cwd.len == 0) break :brk PATH;

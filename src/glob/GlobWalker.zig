@@ -212,7 +212,7 @@ pub const DirEntryAccessor = struct {
             if (self.value) |*value| {
                 const nextval = value.next() orelse return .{ .result = null };
                 const name = nextval.key_ptr.*;
-                const kind = nextval.value_ptr.*.kind(&FS.instance.fs, true);
+                const kind = nextval.value_ptr.*.kind(&FS.instance, true);
                 const fskind = switch (kind) {
                     .file => std.fs.File.Kind.file,
                     .dir => std.fs.File.Kind.directory,
@@ -263,7 +263,7 @@ pub const DirEntryAccessor = struct {
         // TODO do we want to propagate ENOTDIR through the 'Maybe' to match the SyscallAccessor?
         // The glob implementation specifically checks for this error when dealing with symlinks
         // return .{ .err = Syscall.Error.fromCode(bun.sys.E.NOTDIR, Syscall.Tag.open) };
-        const res = try FS.instance.fs.readDirectory(path, null, 0, false);
+        const res = try FS.instance.readDirectory(path, null, 0, false);
         switch (res.*) {
             .entries => |entry| {
                 return .{ .result = .{ .value = entry } };
@@ -281,7 +281,7 @@ pub const DirEntryAccessor = struct {
     }
 
     pub fn getcwd(path_buf: *bun.PathBuffer) Maybe([]const u8) {
-        @memcpy(path_buf, bun.fs.FileSystem.instance.fs.cwd);
+        @memcpy(path_buf, bun.fs.FileSystem.instance.cwd);
     }
 };
 

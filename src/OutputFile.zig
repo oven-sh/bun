@@ -74,7 +74,7 @@ pub const FileOperation = struct {
 
     pub fn getPathname(file: *const FileOperation) string {
         if (file.is_tmpdir) {
-            return resolve_path.joinAbs(Fs.FileSystem.RealFS.tmpdirPath(), .auto, file.pathname);
+            return resolve_path.joinAbs(Fs.FileSystem.tmpdirPath(), .auto, file.pathname);
         } else {
             return file.pathname;
         }
@@ -325,7 +325,7 @@ pub fn copyTo(file: *const OutputFile, _: string, rel_path: []const u8, dir: Fil
     const fd_in = bun.FD.fromStdFile(try std.fs.cwd().openFile(file.src_path.text, .{ .mode = .read_only }));
 
     if (Environment.isWindows) {
-        do_close = Fs.FileSystem.instance.fs.needToCloseFiles();
+        do_close = Fs.FileSystem.instance.needToCloseFiles();
 
         // use paths instead of bun.getFdPathW()
         @panic("TODO windows");

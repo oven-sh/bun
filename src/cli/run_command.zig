@@ -603,7 +603,7 @@ pub const RunCommand = struct {
         // This path is almost always a path to a user directory. So it cannot be inlined like
         // our uses of /tmp. You can use one of these functions instead:
         // - bun.windows.GetTempPathW (native)
-        // - bun.fs.FileSystem.RealFS.platformTempDir (any platform)
+        // - bun.fs.FileSystem.platformTempDir (any platform)
         .windows => @compileError("Do not use RunCommand.bun_node_dir on Windows"),
 
         .mac => "/private/tmp",
@@ -1041,7 +1041,7 @@ pub const RunCommand = struct {
                         var dir_slice: string = "";
                         while (iter.next()) |entry| {
                             const value = entry.value_ptr.*;
-                            if (value.kind(&this_transpiler.fs.fs, true) == .file) {
+                            if (value.kind(this_transpiler.fs, true) == .file) {
                                 if (!has_copied) {
                                     bun.copy(u8, &path_buf, value.dir);
                                     dir_slice = path_buf[0..value.dir.len];
@@ -1078,7 +1078,7 @@ pub const RunCommand = struct {
                             !strings.contains(name, ".d.ts") and
                             !strings.contains(name, ".d.mts") and
                             !strings.contains(name, ".d.cts") and
-                            value.kind(&this_transpiler.fs.fs, true) == .file)
+                            value.kind(this_transpiler.fs, true) == .file)
                         {
                             _ = try results.getOrPut(this_transpiler.fs.filename_store.append(@TypeOf(name), name) catch continue);
                         }

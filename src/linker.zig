@@ -60,10 +60,10 @@ pub const Linker = struct {
         this: *ThisLinker,
         file_path: Fs.Path,
         fd: ?FileDescriptorType,
-    ) !Fs.FileSystem.RealFS.ModKey {
+    ) !Fs.FileSystem.ModKey {
         var file: std.fs.File = if (fd) |_fd| _fd.stdFile() else try std.fs.cwd().openFile(file_path.text, .{ .mode = .read_only });
         Fs.FileSystem.setMaxFd(file.handle);
-        const modkey = try Fs.FileSystem.RealFS.ModKey.generate(&this.fs.fs, file_path.text, file);
+        const modkey = try Fs.FileSystem.ModKey.generate(this.fs, file_path.text, file);
 
         if (fd == null)
             file.close();

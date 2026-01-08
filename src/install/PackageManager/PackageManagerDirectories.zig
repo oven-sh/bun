@@ -30,7 +30,7 @@ var getTemporaryDirectoryOnce = bun.once(struct {
         var cache_directory = manager.getCacheDirectory();
         // The chosen tempdir must be on the same filesystem as the cache directory
         // This makes renameat() work
-        const temp_dir_name = Fs.FileSystem.RealFS.getDefaultTempDir();
+        const temp_dir_name = Fs.FileSystem.getDefaultTempDir();
 
         var tried_dot_tmp = false;
         var tempdir: std.fs.Dir = bun.MakePath.makeOpenPath(std.fs.cwd(), temp_dir_name, .{}) catch brk: {
@@ -691,7 +691,7 @@ pub fn writeYarnLock(this: *PackageManager) !void {
 
     var tmpname_buf: [512]u8 = undefined;
     tmpname_buf[0..8].* = "tmplock-".*;
-    var tmpfile = FileSystem.RealFS.Tmpfile{};
+    var tmpfile = FileSystem.Tmpfile{};
     var secret: [32]u8 = undefined;
     std.mem.writeInt(u64, secret[0..8], @as(u64, @intCast(std.time.milliTimestamp())), .little);
     var base64_bytes: [64]u8 = undefined;
@@ -701,7 +701,7 @@ pub fn writeYarnLock(this: *PackageManager) !void {
     tmpname_buf[tmpname__.len + 8] = 0;
     const tmpname = tmpname_buf[0 .. tmpname__.len + 8 :0];
 
-    tmpfile.create(&FileSystem.instance.fs, tmpname) catch |err| {
+    tmpfile.create(&FileSystem.instance, tmpname) catch |err| {
         Output.prettyErrorln("<r><red>error:<r> failed to create tmpfile: {s}", .{@errorName(err)});
         Global.crash();
     };

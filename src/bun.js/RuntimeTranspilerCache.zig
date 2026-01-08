@@ -423,7 +423,7 @@ pub const RuntimeTranspilerCache = struct {
         }
 
         {
-            const parts = &[_][]const u8{ bun.fs.FileSystem.RealFS.tmpdirPath(), "bun", "@t@" };
+            const parts = &[_][]const u8{ bun.fs.FileSystem.tmpdirPath(), "bun", "@t@" };
             return bun.fs.FileSystem.instance.absBufZ(parts, buf);
         }
     }

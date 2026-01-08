@@ -13,7 +13,7 @@ pub const WriteDestination = enum {
 
 pub fn validatePath(
     log: *logger.Log,
-    _: *Fs.FileSystem.Implementation,
+    _: *Fs.FileSystem,
     cwd: string,
     rel_path: string,
     allocator: std.mem.Allocator,
@@ -81,7 +81,7 @@ pub const ExternalModules = struct {
 
     pub fn init(
         allocator: std.mem.Allocator,
-        fs: *Fs.FileSystem.Implementation,
+        fs: *Fs.FileSystem,
         cwd: string,
         externals: []const string,
         log: *logger.Log,
@@ -2084,7 +2084,7 @@ pub const BundleOptions = struct {
             opts.main_fields = transform.main_fields;
         }
 
-        opts.external = ExternalModules.init(allocator, &fs.fs, fs.top_level_dir, transform.external, log, opts.target);
+        opts.external = ExternalModules.init(allocator, fs, fs.top_level_dir, transform.external, log, opts.target);
         opts.out_extensions = opts.target.outExtensions(allocator);
 
         opts.source_map = SourceMapOption.fromApi(transform.source_map orelse .none);

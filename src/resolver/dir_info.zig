@@ -66,7 +66,7 @@ pub fn getFileDescriptor(dirinfo: *const DirInfo) StoredFileDescriptorType {
 }
 
 pub fn getEntries(dirinfo: *const DirInfo, generation: bun.Generation) ?*Fs.FileSystem.DirEntry {
-    const entries_ptr = Fs.FileSystem.instance.fs.entriesAt(dirinfo.entries, generation) orelse return null;
+    const entries_ptr = Fs.FileSystem.instance.entriesAt(dirinfo.entries, generation) orelse return null;
     switch (entries_ptr.*) {
         .entries => {
             return entries_ptr.entries;
@@ -78,7 +78,7 @@ pub fn getEntries(dirinfo: *const DirInfo, generation: bun.Generation) ?*Fs.File
 }
 
 pub fn getEntriesConst(dirinfo: *const DirInfo) ?*const Fs.FileSystem.DirEntry {
-    const entries_ptr = Fs.FileSystem.instance.fs.entries.atIndex(dirinfo.entries) orelse return null;
+    const entries_ptr = Fs.FileSystem.instance.entries.atIndex(dirinfo.entries) orelse return null;
     switch (entries_ptr.*) {
         .entries => {
             return entries_ptr.entries;

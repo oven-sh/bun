@@ -485,4 +485,101 @@ describe("bundler files option", () => {
     expect(output).toContain("from memory via relative key");
     expect(output).not.toContain("from disk");
   });
+
+  test("onLoad plugin can transform in-memory files", async () => {
+    let loadCalled = false;
+    let loadedPath = "";
+
+    const result = await Bun.build({
+      entrypoints: ["/entry.js"],
+      files: {
+        "/entry.js": `import { value } from "./lib.js"; console.log(value);`,
+        "/lib.js": `export const value = "original";`,
+      },
+      plugins: [
+        {
+          name: "test-onload",
+          setup(build) {
+            build.onLoad({ filter: /lib\.js$/ }, args => {
+              loadCalled = true;
+              loadedPath = args.path;
+              return {
+                contents: `export const value = "transformed by plugin";`,
+                loader: "js",
+              };
+            });
+          },
+        },
+      ],
+    });
+
+    expect(result.success).toBe(true);
+    expect(loadCalled).toBe(true);
+    expect(loadedPath).toBe("/lib.js");
+
+    const output = await result.outputs[0].text();
+    expect(output).toContain("transformed by plugin");
+    expect(output).not.toContain("original");
+  });
+
+  test("onResolve plugin can redirect in-memory file imports", async () => {
+    let resolveCalled = false;
+
+    const result = await Bun.build({
+      entrypoints: ["/entry.js"],
+      files: {
+        "/entry.js": `import { value } from "virtual:data"; console.log(value);`,
+        "/actual-data.js": `export const value = "from actual-data";`,
+      },
+      plugins: [
+        {
+          name: "test-onresolve",
+          setup(build) {
+            build.onResolve({ filter: /^virtual:data$/ }, args => {
+              resolveCalled = true;
+              return {
+                path: "/actual-data.js",
+                namespace: "file",
+              };
+            });
+          },
+        },
+      ],
+    });
+
+    expect(result.success).toBe(true);
+    expect(resolveCalled).toBe(true);
+
+    const output = await result.outputs[0].text();
+    expect(output).toContain("from actual-data");
+  });
+
+  test("plugin can provide content for in-memory file via onLoad", async () => {
+    const result = await Bun.build({
+      entrypoints: ["/entry.js"],
+      files: {
+        "/entry.js": `import data from "./data.json"; console.log(data.name);`,
+        // Provide empty placeholder - plugin will replace content
+        "/data.json": `{}`,
+      },
+      plugins: [
+        {
+          name: "json-transform",
+          setup(build) {
+            build.onLoad({ filter: /\.json$/ }, args => {
+              return {
+                contents: `export default { name: "injected by plugin" };`,
+                loader: "js",
+              };
+            });
+          },
+        },
+      ],
+    });
+
+    expect(result.success).toBe(true);
+
+    const output = await result.outputs[0].text();
+    expect(output).toContain("injected by plugin");
+  });
 });

@@ -311,18 +311,8 @@ class Client extends Dispatcher {
   request() {}
 }
 
-class DispatcherBase extends EventEmitter {
-  constructor(options) {
-    super();
-    // Store options for TLS fallback (used by Bun's fetch)
-    if (options) {
-      this.options = options;
-      // undici uses 'connect' for TLS options
-      if (options.connect) {
-        this.connect = options.connect;
-      }
-    }
-  }
+class DispatcherBase extends Dispatcher {
+  // Inherits options/connect handling from Dispatcher
 }
 
 class ProxyAgent extends DispatcherBase {
@@ -340,6 +330,7 @@ class EnvHttpProxyAgent extends DispatcherBase {
 class RetryAgent extends Dispatcher {
   constructor(dispatcher, options) {
     super(options);
+    this.dispatcher = dispatcher;
   }
 }
 

@@ -949,24 +949,9 @@ pub fn Bun__fetch_(
             allocator.free(url_proxy_buffer);
             url_proxy_buffer = buffer;
 
-            // If we got a proxy from agent, also check connectOpts/connect for TLS settings
+            // If we got a proxy from agent, also check for TLS settings using the shared helper
             if (ssl_config == null) {
-                // Try connectOpts first (https-proxy-agent), then connect (undici.Agent)
-                const tls_opts = blk: {
-                    if (try current_agent.get(globalThis, "connectOpts")) |connect_opts| {
-                        if (connect_opts.isObject() and !connect_opts.isUndefinedOrNull()) {
-                            break :blk connect_opts;
-                        }
-                    }
-                    if (try current_agent.get(globalThis, "connect")) |connect| {
-                        if (connect.isObject() and !connect.isUndefinedOrNull()) {
-                            break :blk connect;
-                        }
-                    }
-                    break :blk @as(?JSValue, null);
-                };
-
-                if (tls_opts) |connect_opts| {
+                if (try getAgentTLSOptions(globalThis, current_agent)) |connect_opts| {
                     // Extract rejectUnauthorized from connectOpts/connect
                     if (try connect_opts.get(globalThis, "rejectUnauthorized")) |reject| {
                         if (reject.isBoolean()) {

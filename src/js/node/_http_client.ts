@@ -60,6 +60,15 @@ const ObjectAssign = Object.assign;
 const RegExpPrototypeExec = RegExp.prototype.exec;
 const StringPrototypeToUpperCase = String.prototype.toUpperCase;
 
+// Helper to get TLS option from agent with fallback chain:
+// agent.options -> agent.connectOpts (https-proxy-agent) -> agent.connect (undici.Agent)
+function getAgentTlsOption(agent, key) {
+  let value = agent?.options?.[key];
+  if (value === undefined) value = agent?.connectOpts?.[key];
+  if (value === undefined) value = agent?.connect?.[key];
+  return value;
+}
+
 function emitErrorEventNT(self, err) {
   if (self.destroyed) return;
   if (self.listenerCount("error") > 0) {
@@ -728,12 +737,10 @@ function ClientRequest(input, options, cb) {
     throw new Error("pfx is not supported");
   }
 
-  if (options.rejectUnauthorized !== undefined) this._ensureTls().rejectUnauthorized = options.rejectUnauthorized;
-  else {
-    // Check agent.options, agent.connectOpts (https-proxy-agent), or agent.connect (undici.Agent)
-    let agentRejectUnauthorized = agent?.options?.rejectUnauthorized;
-    if (agentRejectUnauthorized === undefined) agentRejectUnauthorized = agent?.connectOpts?.rejectUnauthorized;
-    if (agentRejectUnauthorized === undefined) agentRejectUnauthorized = agent?.connect?.rejectUnauthorized;
+  if (options.rejectUnauthorized !== undefined) {
+    this._ensureTls().rejectUnauthorized = options.rejectUnauthorized;
+  } else {
+    const agentRejectUnauthorized = getAgentTlsOption(agent, "rejectUnauthorized");
     if (agentRejectUnauthorized !== undefined) this._ensureTls().rejectUnauthorized = agentRejectUnauthorized;
   }
   if (options.ca) {
@@ -743,9 +750,7 @@ function ClientRequest(input, options, cb) {
       );
     this._ensureTls().ca = options.ca;
   } else {
-    let agentCa = agent?.options?.ca;
-    if (agentCa === undefined) agentCa = agent?.connectOpts?.ca;
-    if (agentCa === undefined) agentCa = agent?.connect?.ca;
+    const agentCa = getAgentTlsOption(agent, "ca");
     if (agentCa !== undefined) {
       if (!isValidTLSArray(agentCa))
         throw new TypeError(
@@ -761,9 +766,7 @@ function ClientRequest(input, options, cb) {
       );
     this._ensureTls().cert = options.cert;
   } else {
-    let agentCert = agent?.options?.cert;
-    if (agentCert === undefined) agentCert = agent?.connectOpts?.cert;
-    if (agentCert === undefined) agentCert = agent?.connect?.cert;
+    const agentCert = getAgentTlsOption(agent, "cert");
     if (agentCert !== undefined) {
       if (!isValidTLSArray(agentCert))
         throw new TypeError(
@@ -779,9 +782,7 @@ function ClientRequest(input, options, cb) {
       );
     this._ensureTls().key = options.key;
   } else {
-    let agentKey = agent?.options?.key;
-    if (agentKey === undefined) agentKey = agent?.connectOpts?.key;
-    if (agentKey === undefined) agentKey = agent?.connect?.key;
+    const agentKey = getAgentTlsOption(agent, "key");
     if (agentKey !== undefined) {
       if (!isValidTLSArray(agentKey))
         throw new TypeError(
@@ -794,9 +795,7 @@ function ClientRequest(input, options, cb) {
     if (typeof options.passphrase !== "string") throw new TypeError("passphrase argument must be a string");
     this._ensureTls().passphrase = options.passphrase;
   } else {
-    let agentPassphrase = agent?.options?.passphrase;
-    if (agentPassphrase === undefined) agentPassphrase = agent?.connectOpts?.passphrase;
-    if (agentPassphrase === undefined) agentPassphrase = agent?.connect?.passphrase;
+    const agentPassphrase = getAgentTlsOption(agent, "passphrase");
     if (agentPassphrase !== undefined) {
       if (typeof agentPassphrase !== "string") throw new TypeError("agent.options.passphrase must be a string");
       this._ensureTls().passphrase = agentPassphrase;
@@ -806,9 +805,7 @@ function ClientRequest(input, options, cb) {
     if (typeof options.ciphers !== "string") throw new TypeError("ciphers argument must be a string");
     this._ensureTls().ciphers = options.ciphers;
   } else {
-    let agentCiphers = agent?.options?.ciphers;
-    if (agentCiphers === undefined) agentCiphers = agent?.connectOpts?.ciphers;
-    if (agentCiphers === undefined) agentCiphers = agent?.connect?.ciphers;
+    const agentCiphers = getAgentTlsOption(agent, "ciphers");
     if (agentCiphers !== undefined) {
       if (typeof agentCiphers !== "string") throw new TypeError("agent.options.ciphers must be a string");
       this._ensureTls().ciphers = agentCiphers;
@@ -818,22 +815,17 @@ function ClientRequest(input, options, cb) {
     if (typeof options.servername !== "string") throw new TypeError("servername argument must be a string");
     this._ensureTls().servername = options.servername;
   } else {
-    let agentServername = agent?.options?.servername;
-    if (agentServername === undefined) agentServername = agent?.connectOpts?.servername;
-    if (agentServername === undefined) agentServername = agent?.connect?.servername;
+    const agentServername = getAgentTlsOption(agent, "servername");
     if (agentServername !== undefined) {
       if (typeof agentServername !== "string") throw new TypeError("agent.options.servername must be a string");
       this._ensureTls().servername = agentServername;
     }
   }
-
   if (options.secureOptions) {
     if (typeof options.secureOptions !== "number") throw new TypeError("secureOptions argument must be a number");
     this._ensureTls().secureOptions = options.secureOptions;
   } else {
-    let agentSecureOptions = agent?.options?.secureOptions;
-    if (agentSecureOptions === undefined) agentSecureOptions = agent?.connectOpts?.secureOptions;
-    if (agentSecureOptions === undefined) agentSecureOptions = agent?.connect?.secureOptions;
+    const agentSecureOptions = getAgentTlsOption(agent, "secureOptions");
     if (agentSecureOptions !== undefined) {
       if (typeof agentSecureOptions !== "number") throw new TypeError("agent.options.secureOptions must be a number");
       this._ensureTls().secureOptions = agentSecureOptions;

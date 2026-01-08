@@ -74,7 +74,7 @@ pub const FileOperation = struct {
 
     pub fn getPathname(file: *const FileOperation) string {
         if (file.is_tmpdir) {
-            return resolve_path.joinAbs(@TypeOf(Fs.FileSystem.instance.fs).tmpdir_path, .auto, file.pathname);
+            return resolve_path.joinAbs(Fs.FileSystem.RealFS.tmpdirPath(), .auto, file.pathname);
         } else {
             return file.pathname;
         }

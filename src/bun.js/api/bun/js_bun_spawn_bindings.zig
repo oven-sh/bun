@@ -427,6 +427,11 @@ pub fn spawnMaybeSync(
             }
         } else {
             try getArgv(globalThis, cmd_value, PATH, cwd, &argv0, allocator, &argv);
+
+            // Check run permission for subprocess spawning
+            if (argv0) |cmd_path| {
+                try bun.permission_check.requireRun(globalThis, bun.sliceTo(cmd_path, 0));
+            }
         }
     }
 

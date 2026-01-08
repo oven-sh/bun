@@ -32,6 +32,7 @@
     macro(hash) \
     macro(inspect) \
     macro(origin) \
+    macro(permissions) \
     macro(s3) \
     macro(semver) \
     macro(unsafe) \

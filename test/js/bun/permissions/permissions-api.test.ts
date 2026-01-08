@@ -1,5 +1,4 @@
-import { test, expect, describe } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { describe, expect, test } from "bun:test";
 
 describe("Bun.permissions API", () => {
   test("Bun.permissions.query returns permission status", async () => {
@@ -48,12 +47,12 @@ describe("Bun.permissions API", () => {
     }
   });
 
-  test("Bun.permissions.query throws on invalid name", async () => {
-    expect(Bun.permissions.query({ name: "invalid" })).rejects.toThrow();
+  test("Bun.permissions.query throws on invalid name", () => {
+    expect(() => Bun.permissions.query({ name: "invalid" })).toThrow("Unknown permission name");
   });
 
-  test("Bun.permissions.query throws on missing name", async () => {
-    expect(Bun.permissions.query({} as any)).rejects.toThrow();
+  test("Bun.permissions.query throws on missing name", () => {
+    expect(() => Bun.permissions.query({} as any)).toThrow("'name' property");
   });
 
   test("Bun.permissions.request returns permission status", async () => {

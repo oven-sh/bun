@@ -1,10 +1,10 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import * as harness from "harness";
+import { tls as tlsCerts } from "harness";
 import type { HttpsProxyAgent as HttpsProxyAgentType } from "https-proxy-agent";
 import net from "net";
 import tls from "tls";
 import { createConnectProxy, createTLSConnectProxy, startProxy } from "./proxy-test-utils";
-import { tls as tlsCerts } from "harness";
 // Use dynamic require to avoid linter removing the import
 const { HttpsProxyAgent } = require("https-proxy-agent") as {
   HttpsProxyAgent: typeof HttpsProxyAgentType;

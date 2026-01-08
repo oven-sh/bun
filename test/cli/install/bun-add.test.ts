@@ -2,9 +2,8 @@ import { file, spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { access, appendFile, copyFile, mkdir, readlink, rm, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env, readdirSorted, tmpdirSync, toBeValidBin, toBeWorkspaceLink, toHaveBins } from "harness";
-import { join, relative, resolve } from "path";
+import { basename, join, relative, resolve } from "path";
 import {
-  check_npm_auth_type,
   createTestContext,
   destroyTestContext,
   dummyAfterAll,
@@ -860,8 +859,6 @@ describe.concurrent("bun-add", () => {
   });
   it("should add dependency with package.json in it and http tarball", async () => {
     await withContext(defaultOpts, async ctx => {
-      const old_check_npm_auth_type = check_npm_auth_type.check;
-      check_npm_auth_type.check = false;
       using server = Bun.serve({
         port: 0,
         fetch(req) {
@@ -873,21 +870,61 @@ describe.concurrent("bun-add", () => {
         },
       });
       const urls: string[] = [];
-      setContextHandler(
-        ctx,
-        dummyRegistryForContext(ctx, urls, {
-          "0.0.3": {
-            bin: {
-              "baz-run": "index.js",
-            },
+      const info = {
+        "0.0.3": {
+          bin: {
+            "baz-run": "index.js",
           },
-          "0.0.5": {
-            bin: {
-              "baz-run": "index.js",
-            },
+        },
+        "0.0.5": {
+          bin: {
+            "baz-run": "index.js",
           },
-        }),
-      );
+        },
+      };
+      // Custom handler that skips npm-auth-type check (needed because this test uses BUN_CONFIG_TOKEN)
+      setContextHandler(ctx, async request => {
+        urls.push(request.url);
+        const url = request.url.replaceAll("%2f", "/");
+
+        expect(request.method).toBe("GET");
+        if (url.endsWith(".tgz")) {
+          return new Response(file(join(import.meta.dir, basename(url).toLowerCase())));
+        }
+        expect(request.headers.get("accept")).toBe(
+          "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
+        );
+        // Skip npm-auth-type check since this test uses BUN_CONFIG_TOKEN
+        expect(await request.text()).toBe("");
+
+        const urlObj = new URL(url);
+        const pathAfterPrefix = urlObj.pathname.replace(`/${ctx.id}/`, "/");
+        const name = pathAfterPrefix.slice(1);
+
+        const versions: Record<string, any> = {};
+        let version;
+        for (version in info) {
+          if (!/^[0-9]/.test(version)) continue;
+          versions[version] = {
+            name,
+            version,
+            dist: {
+              tarball: `${ctx.registry_url}${name}-${version}.tgz`,
+            },
+            ...info[version],
+          };
+        }
+
+        return new Response(
+          JSON.stringify({
+            name,
+            versions,
+            "dist-tags": {
+              latest: version,
+            },
+          }),
+        );
+      });
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -946,8 +983,6 @@ describe.concurrent("bun-add", () => {
         },
       });
       await access(join(ctx.package_dir, "bun.lockb"));
-      // Reset to old value for other tests
-      check_npm_auth_type.check = old_check_npm_auth_type;
     });
   });
 
@@ -2402,7 +2437,6 @@ describe.concurrent("bun-add", () => {
   it("should add multiple dependencies specified on command line", async () => {
     await withContext(defaultOpts, async ctx => {
       const add_dir = tmpdirSync();
-      expect(check_npm_auth_type.check).toBe(true);
       using server = Bun.serve({
         port: 0,
         fetch(req) {

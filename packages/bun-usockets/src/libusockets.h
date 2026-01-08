@@ -310,10 +310,10 @@ void us_socket_context_close(int ssl, us_socket_context_r context);
 
 /* Listen for connections. Acts as the main driving cog in a server. Will call set async callbacks. */
 struct us_listen_socket_t *us_socket_context_listen(int ssl, us_socket_context_r context,
-    const char *host, int port, int options, int socket_ext_size, int* error);
+    const char *host, int port, int options, int socket_ext_size, int backlog, int* error);
 
 struct us_listen_socket_t *us_socket_context_listen_unix(int ssl, us_socket_context_r context,
-    const char *path, size_t pathlen, int options, int socket_ext_size, int* error);
+    const char *path, size_t pathlen, int options, int socket_ext_size, int backlog, int* error);
 
 /* listen_socket.c/.h */
 void us_listen_socket_close(int ssl, struct us_listen_socket_t *ls) nonnull_fn_decl;

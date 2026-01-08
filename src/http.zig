@@ -309,24 +309,15 @@ fn writeProxyConnect(
     writer: Writer,
     client: *HTTPClient,
 ) !void {
-    var port: []const u8 = undefined;
-    if (client.url.getPort()) |_| {
-        port = client.url.port;
-    } else {
-        port = if (client.url.isHTTPS()) "443" else "80";
-    }
-    _ = writer.write("CONNECT ") catch 0;
-    _ = writer.write(client.url.hostname) catch 0;
-    _ = writer.write(":") catch 0;
-    _ = writer.write(port) catch 0;
-    _ = writer.write(" HTTP/1.1\r\n") catch 0;
+    const port: []const u8 = if (client.url.getPort() != null)
+        client.url.port
+    else if (client.url.isHTTPS())
+        "443"
+    else
+        "80";
 
-    _ = writer.write("Host: ") catch 0;
-    _ = writer.write(client.url.hostname) catch 0;
-    _ = writer.write(":") catch 0;
-    _ = writer.write(port) catch 0;
-
-    _ = writer.write("\r\nProxy-Connection: Keep-Alive\r\n") catch 0;
+    // Write base CONNECT request
+    proxy_helpers.writeConnectRequestStart(Writer, writer, client.url.hostname, port);
 
     // Check if user provided Proxy-Authorization in custom headers
     const user_provided_proxy_auth = if (client.proxy_headers) |hdrs| hdrs.get("proxy-authorization") != null else false;
@@ -334,9 +325,7 @@ fn writeProxyConnect(
     // Only write auto-generated proxy_authorization if user didn't provide one
     if (client.proxy_authorization) |auth| {
         if (!user_provided_proxy_auth) {
-            _ = writer.write("Proxy-Authorization: ") catch 0;
-            _ = writer.write(auth) catch 0;
-            _ = writer.write("\r\n") catch 0;
+            proxy_helpers.writeHeader(Writer, writer, "Proxy-Authorization", auth);
         }
     }
 
@@ -346,14 +335,11 @@ fn writeProxyConnect(
         const names = slice.items(.name);
         const values = slice.items(.value);
         for (names, 0..) |name_ptr, idx| {
-            _ = writer.write(hdrs.asStr(name_ptr)) catch 0;
-            _ = writer.write(": ") catch 0;
-            _ = writer.write(hdrs.asStr(values[idx])) catch 0;
-            _ = writer.write("\r\n") catch 0;
+            proxy_helpers.writeHeader(Writer, writer, hdrs.asStr(name_ptr), hdrs.asStr(values[idx]));
         }
     }
 
-    _ = writer.write("\r\n") catch 0;
+    proxy_helpers.writeConnectRequestEnd(Writer, writer);
 }
 
 fn writeProxyRequest(
@@ -362,12 +348,12 @@ fn writeProxyRequest(
     request: picohttp.Request,
     client: *HTTPClient,
 ) !void {
-    var port: []const u8 = undefined;
-    if (client.url.getPort()) |_| {
-        port = client.url.port;
-    } else {
-        port = if (client.url.isHTTPS()) "443" else "80";
-    }
+    const port: []const u8 = if (client.url.getPort() != null)
+        client.url.port
+    else if (client.url.isHTTPS())
+        "443"
+    else
+        "80";
 
     _ = writer.write(request.method) catch 0;
     // will always be http:// here, https:// needs CONNECT tunnel
@@ -384,9 +370,7 @@ fn writeProxyRequest(
     // Only write auto-generated proxy_authorization if user didn't provide one
     if (client.proxy_authorization) |auth| {
         if (!user_provided_proxy_auth) {
-            _ = writer.write("Proxy-Authorization: ") catch 0;
-            _ = writer.write(auth) catch 0;
-            _ = writer.write("\r\n") catch 0;
+            proxy_helpers.writeHeader(Writer, writer, "Proxy-Authorization", auth);
         }
     }
 
@@ -396,18 +380,12 @@ fn writeProxyRequest(
         const names = slice.items(.name);
         const values = slice.items(.value);
         for (names, 0..) |name_ptr, idx| {
-            _ = writer.write(hdrs.asStr(name_ptr)) catch 0;
-            _ = writer.write(": ") catch 0;
-            _ = writer.write(hdrs.asStr(values[idx])) catch 0;
-            _ = writer.write("\r\n") catch 0;
+            proxy_helpers.writeHeader(Writer, writer, hdrs.asStr(name_ptr), hdrs.asStr(values[idx]));
         }
     }
 
     for (request.headers) |header| {
-        _ = writer.write(header.name) catch 0;
-        _ = writer.write(": ") catch 0;
-        _ = writer.write(header.value) catch 0;
-        _ = writer.write("\r\n") catch 0;
+        proxy_helpers.writeHeader(Writer, writer, header.name, header.value);
     }
 
     _ = writer.write("\r\n") catch 0;
@@ -2632,6 +2610,7 @@ const string = []const u8;
 
 const HTTPCertError = @import("./http/HTTPCertError.zig");
 const ProxyTunnel = @import("./http/ProxyTunnel.zig");
+const proxy_helpers = @import("./http/proxy.zig");
 const std = @import("std");
 const URL = @import("./url.zig").URL;
 

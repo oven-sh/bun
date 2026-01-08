@@ -136,6 +136,7 @@ public:
     void disablePendingActivity();
     void didClose(unsigned unhandledBufferedAmount, unsigned short code, const String& reason);
     void didConnect(us_socket_t* socket, char* bufferedData, size_t bufferedDataSize, const PerMessageDeflateParams* deflate_params);
+    void didConnectWithSSLTunnel(us_socket_t* socket, char* bufferedData, size_t bufferedDataSize, const PerMessageDeflateParams* deflate_params, void* ssl_ptr, void* ssl_ctx_ptr);
     void didFailWithErrorCode(Bun::WebSocketErrorCode code);
 
     void didReceiveMessage(String&& message);

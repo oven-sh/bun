@@ -54,6 +54,9 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         // Track compression state of the entire message (across fragments)
         message_is_compressed: bool = false,
 
+        // For TLS-over-proxy: SSL wrapper for userspace TLS
+        ssl_tunnel: ?*SSLTunnel = null,
+
         const stack_frame_size = 1024;
         // Minimum message size to compress (RFC 7692 recommendation)
         const MIN_COMPRESS_SIZE = 860;
@@ -117,6 +120,12 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             this.message_is_compressed = false;
             if (this.deflate) |d| d.deinit();
             this.deflate = null;
+            // Clean up TLS tunnel for TLS-over-proxy
+            if (this.ssl_tunnel) |tunnel| {
+                tunnel.deinit();
+                bun.destroy(tunnel);
+                this.ssl_tunnel = null;
+            }
         }
 
         pub fn cancel(this: *WebSocket) callconv(.c) void {
@@ -351,6 +360,15 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         }
 
         pub fn handleData(this: *WebSocket, socket: Socket, data_: []const u8) void {
+            this.handleDataImpl(socket, data_, false);
+        }
+
+        /// Handle data that's already decrypted (e.g., initial buffered data from SSLWrapper)
+        fn handleDecryptedData(this: *WebSocket, socket: Socket, data_: []const u8) void {
+            this.handleDataImpl(socket, data_, true);
+        }
+
+        fn handleDataImpl(this: *WebSocket, socket: Socket, data_: []const u8, already_decrypted: bool) void {
 
             // after receiving close we should ignore the data
             if (this.close_received) return;
@@ -361,7 +379,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             // handler to run with additional data before the microtask queue is
             // drained.
             if (this.initial_data_handler) |initial_handler| {
-                // This calls `handleData`
+                // This calls `handleDecryptedData` because initial data is already decrypted
                 // We deliberately do not set this.initial_data_handler to null here, that's done in handleWithoutDeinit.
                 // We do not free the memory here since the lifetime is managed by the microtask queue (it should free when called from there)
                 initial_handler.handleWithoutDeinit();
@@ -375,7 +393,20 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                     return;
             }
 
+            // For TLS-over-proxy, decrypt the data first (unless already decrypted)
             var data = data_;
+            var decrypt_buffer: [SSLTunnel.BUFFER_SIZE]u8 = undefined;
+            if (!already_decrypted) {
+                if (this.ssl_tunnel) |tunnel| {
+                    const decrypted_len = tunnel.decrypt(data_, &decrypt_buffer) catch |err| {
+                        log("SSL decrypt error: {}", .{err});
+                        this.terminate(ErrorCode.closed);
+                        return;
+                    };
+                    if (decrypted_len == 0) return; // Need more data
+                    data = decrypt_buffer[0..decrypted_len];
+                }
+            }
             var receive_state = this.receive_state;
             var terminated = false;
             var is_fragmented = false;
@@ -713,6 +744,29 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             socket: Socket,
             bytes: []const u8,
         ) bool {
+            // For TLS-over-proxy, encrypt the data first
+            if (this.ssl_tunnel) |tunnel| {
+                const encrypted = tunnel.encrypt(bytes) catch |err| {
+                    if (err == error.WouldBlock) {
+                        _ = this.copyToSendBuffer(bytes, false);
+                        return true;
+                    }
+                    log("SSL encrypt error: {}", .{err});
+                    this.terminate(ErrorCode.failed_to_write);
+                    return false;
+                };
+                if (encrypted.len == 0) return true;
+
+                // Send encrypted data
+                const wrote = socket.write(encrypted);
+                if (wrote < 0) {
+                    this.terminate(ErrorCode.failed_to_write);
+                    return false;
+                }
+                tunnel.markSent(@intCast(wrote));
+                return true;
+            }
+
             // fast path: no backpressure, no queue, just send the bytes.
             if (!this.hasBackpressure()) {
                 // Do not set MSG_MORE, see https://github.com/oven-sh/bun/issues/4010
@@ -1135,7 +1189,9 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 defer ws.unref();
 
                 if (this_socket.outgoing_websocket != null and !this_socket.tcp.isClosed()) {
-                    this_socket.handleData(this_socket.tcp, this.slice);
+                    // Use handleDecryptedData because initial buffered data is already decrypted
+                    // (it came from SSLWrapper during the upgrade handshake)
+                    this_socket.handleDecryptedData(this_socket.tcp, this.slice);
                 }
             }
 
@@ -1254,6 +1310,18 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             // This is under-estimated a little, as we don't include usockets context.
             return cost;
         }
+
+        /// Set the SSL tunnel for TLS-over-proxy support.
+        /// Takes ownership of the SSL and CTX pointers.
+        pub fn setSSLTunnel(this: *WebSocket, ssl_ptr: *BoringSSL.c.SSL, ctx_ptr: *BoringSSL.c.SSL_CTX) callconv(.c) void {
+            if (this.ssl_tunnel != null) {
+                // Already has a tunnel, clean it up first
+                this.ssl_tunnel.?.deinit();
+                bun.destroy(this.ssl_tunnel.?);
+            }
+            this.ssl_tunnel = bun.new(SSLTunnel, SSLTunnel.init(ssl_ptr, ctx_ptr));
+        }
+
         pub fn exportAll() void {
             comptime {
                 const name = if (ssl) "WebSocketClientTLS" else "WebSocketClient";
@@ -1266,6 +1334,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 @export(&writeBinaryData, .{ .name = "Bun__" ++ name ++ "__writeBinaryData" });
                 @export(&writeBlob, .{ .name = "Bun__" ++ name ++ "__writeBlob" });
                 @export(&writeString, .{ .name = "Bun__" ++ name ++ "__writeString" });
+                @export(&setSSLTunnel, .{ .name = "Bun__" ++ name ++ "__setSSLTunnel" });
             }
         }
     };
@@ -1304,6 +1373,7 @@ pub const ErrorCode = enum(i32) {
     tls_handshake_failed = 30,
     message_too_big = 31,
     protocol_error = 32,
+    proxy_connect_failed = 33,
 };
 
 pub const Mask = struct {
@@ -1580,3 +1650,88 @@ const default_allocator = bun.default_allocator;
 const jsc = bun.jsc;
 const strings = bun.strings;
 const uws = bun.uws;
+
+/// SSLTunnel manages TLS-over-proxy for WebSocket connections.
+/// It wraps BoringSSL state and provides read/write operations.
+pub const SSLTunnel = struct {
+    ssl: *BoringSSL.c.SSL,
+    ctx: *BoringSSL.c.SSL_CTX,
+    write_buffer: bun.io.StreamBuffer = .{},
+
+    const BUFFER_SIZE = 65536;
+
+    pub fn init(ssl: *BoringSSL.c.SSL, ctx: *BoringSSL.c.SSL_CTX) SSLTunnel {
+        return .{ .ssl = ssl, .ctx = ctx };
+    }
+
+    /// Decrypt incoming data from the TCP socket
+    pub fn decrypt(this: *SSLTunnel, encrypted_data: []const u8, out_buffer: []u8) !usize {
+        const input = BoringSSL.c.SSL_get_rbio(this.ssl) orelse return error.SSLError;
+        const written = BoringSSL.c.BIO_write(input, encrypted_data.ptr, @intCast(encrypted_data.len));
+        if (written <= 0) return error.SSLError;
+
+        var total_read: usize = 0;
+        while (total_read < out_buffer.len) {
+            const just_read = BoringSSL.c.SSL_read(this.ssl, out_buffer[total_read..].ptr, @intCast(out_buffer.len - total_read));
+            if (just_read <= 0) {
+                const err = BoringSSL.c.SSL_get_error(this.ssl, just_read);
+                BoringSSL.c.ERR_clear_error();
+                if (err == BoringSSL.c.SSL_ERROR_WANT_READ or err == BoringSSL.c.SSL_ERROR_WANT_WRITE) {
+                    break;
+                }
+                if (total_read > 0) break;
+                return error.SSLError;
+            }
+            total_read += @intCast(just_read);
+        }
+        return total_read;
+    }
+
+    /// Encrypt data for sending to the TCP socket
+    pub fn encrypt(this: *SSLTunnel, plaintext: []const u8) ![]const u8 {
+        const written = BoringSSL.c.SSL_write(this.ssl, plaintext.ptr, @intCast(plaintext.len));
+        if (written <= 0) {
+            const err = BoringSSL.c.SSL_get_error(this.ssl, written);
+            BoringSSL.c.ERR_clear_error();
+            if (err == BoringSSL.c.SSL_ERROR_WANT_READ or err == BoringSSL.c.SSL_ERROR_WANT_WRITE) {
+                return error.WouldBlock;
+            }
+            return error.SSLError;
+        }
+
+        // Read encrypted data from output BIO
+        const output = BoringSSL.c.SSL_get_wbio(this.ssl) orelse return error.SSLError;
+        const pending = BoringSSL.c.BIO_ctrl_pending(output);
+        if (pending == 0) return &[_]u8{};
+
+        // Ensure we have enough capacity and get a writable slice
+        try this.write_buffer.ensureUnusedCapacity(@intCast(pending));
+        const writable = this.write_buffer.list.unusedCapacitySlice();
+
+        const bio_read = BoringSSL.c.BIO_read(output, writable.ptr, @intCast(pending));
+        if (bio_read <= 0) return error.SSLError;
+
+        this.write_buffer.list.items.len += @intCast(bio_read);
+        return this.write_buffer.slice();
+    }
+
+    /// Get any pending encrypted data that needs to be sent
+    pub fn getPendingEncrypted(this: *SSLTunnel) []const u8 {
+        return this.write_buffer.slice();
+    }
+
+    /// Mark encrypted data as sent
+    pub fn markSent(this: *SSLTunnel, len: usize) void {
+        if (len == this.write_buffer.slice().len) {
+            this.write_buffer.reset();
+        } else {
+            this.write_buffer.cursor += @intCast(len);
+        }
+    }
+
+    pub fn deinit(this: *SSLTunnel) void {
+        BoringSSL.c.SSL_free(this.ssl);
+        BoringSSL.c.SSL_CTX_free(this.ctx);
+        this.write_buffer.deinit();
+    }
+};

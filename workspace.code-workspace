@@ -1,9 +1,9 @@
 {
   "folders": [
-	{
-		"path": "."
-	}
-],
+    {
+      "path": ".",
+    },
+  ],
   "settings": {
     "git.autoRepositoryDetection": "openEditors",
     "search.quickOpen.includeSymbols": false,
@@ -89,8 +89,8 @@
       "numeric": "cpp",
       "set": "cpp",
       "__memory": "cpp",
-      "memory_resource": "cpp"
+      "memory_resource": "cpp",
     },
-    "git.ignoreLimitWarning": true
-  }
+    "git.ignoreLimitWarning": true,
+  },
 }

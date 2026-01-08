@@ -156,12 +156,13 @@ fn messageWithTypeAndLevel_(
         return;
     }
 
-    const enable_colors = if (level == .Warning or level == .Error)
+    const is_stderr = level == .Warning or level == .Error or message_type == .Assert;
+    const enable_colors = if (is_stderr)
         Output.enable_ansi_colors_stderr
     else
         Output.enable_ansi_colors_stdout;
 
-    const writer = if (level == .Warning or level == .Error)
+    const writer = if (is_stderr)
         console.error_writer
     else
         console.writer;
@@ -224,6 +225,15 @@ fn messageWithTypeAndLevel_(
                 if (colors_prop.isBoolean())
                     print_options.enable_colors = colors_prop.toBoolean();
             }
+        }
+    }
+
+    // Print "Assertion failed: " prefix for console.assert with arguments
+    if (message_type == .Assert and print_length > 0) {
+        if (enable_colors) {
+            writer.writeAll(Output.prettyFmt("<r><red>Assertion failed:<r> ", true)) catch {};
+        } else {
+            writer.writeAll("Assertion failed: ") catch {};
         }
     }
 

@@ -215,7 +215,7 @@ services:
       - target: 3128
         published: 0
         protocol: tcp
-    # Use host network mode to allow connections back to host services
+    # Use extra_hosts to allow connections back to host services via bridge network
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:

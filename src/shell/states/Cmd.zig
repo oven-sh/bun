@@ -485,7 +485,13 @@ fn initSubproc(this: *Cmd) Yield {
 
         const path_buf = bun.path_buffer_pool.get();
         defer bun.path_buffer_pool.put(path_buf);
-        const resolved = which(path_buf, spawn_args.PATH, spawn_args.cwd, first_arg_real) orelse blk: {
+        // Check shell environment for PATH before falling back to process PATH.
+        // cmd_local_env takes precedence over export_env (more local scope wins).
+        const path_key = shell.EnvStr.initSlice("PATH");
+        const shell_path = this.base.shell.cmd_local_env.get(path_key) orelse
+            this.base.shell.export_env.get(path_key);
+        const lookup_path = if (shell_path) |p| p.slice() else spawn_args.PATH;
+        const resolved = which(path_buf, lookup_path, spawn_args.cwd, first_arg_real) orelse blk: {
             if (bun.strings.eqlComptime(first_arg_real, "bun") or bun.strings.eqlComptime(first_arg_real, "bun-debug")) blk2: {
                 break :blk bun.selfExePath() catch break :blk2;
             }

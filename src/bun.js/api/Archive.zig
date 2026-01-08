@@ -47,9 +47,10 @@ fn countFilesInArchive(data: []const u8) u32 {
     const archive = lib.Archive.readNew();
     defer _ = archive.readFree();
 
-    // Support all formats and filters
-    _ = archive.readSupportFormatAll();
-    _ = archive.readSupportFilterAll();
+    _ = archive.readSupportFormatTar();
+    _ = archive.readSupportFormatGnutar();
+    _ = archive.readSupportFilterGzip();
+    _ = archive.readSetOptions("read_concatenated_archives");
 
     // Open the archive from memory
     if (archive.readOpenMemory(data) != .ok) {

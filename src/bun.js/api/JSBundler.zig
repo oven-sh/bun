@@ -46,6 +46,7 @@ pub const JSBundler = struct {
         env_prefix: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         tsconfig_override: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         compile: ?CompileOptions = null,
+        metafile: bool = false,
 
         pub const CompileOptions = struct {
             compile_target: CompileTarget = .{},
@@ -706,6 +707,10 @@ pub const JSBundler = struct {
 
             if (try config.getBooleanStrict(globalThis, "throw")) |flag| {
                 this.throw_on_error = flag;
+            }
+
+            if (try config.getBooleanLoose(globalThis, "metafile")) |flag| {
+                this.metafile = flag;
             }
 
             if (try CompileOptions.fromJS(

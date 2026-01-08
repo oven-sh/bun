@@ -149,9 +149,7 @@ pub fn BundleThread(CompletionStruct: type) type {
                 completion.log = out_log;
             }
 
-            completion.result = .{ .value = .{
-                .output_files = try this.runFromJSInNewThread(transpiler.options.entry_points),
-            } };
+            completion.result = .{ .value = try this.runFromJSInNewThread(transpiler.options.entry_points) };
 
             var out_log = Logger.Log.init(bun.default_allocator);
             bun.handleOom(this.transpiler.log.appendToWithRecycled(&out_log, true));

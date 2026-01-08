@@ -1,5 +1,5 @@
 export const exitCodeMap = {
-  usage: 1,
+  usage: 29,
 
   websocketMessagesAreBanned: 30,
   consoleError: 31,

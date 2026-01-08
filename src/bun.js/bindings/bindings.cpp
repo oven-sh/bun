@@ -6150,3 +6150,24 @@ extern "C" JSC::EncodedJSValue JSC__JSGlobalObject__getHttpsGlobalAgentOptions(Z
 
     return JSValue::encode(options);
 }
+
+extern "C" JSC::EncodedJSValue JSC__JSGlobalObject__getHttpsGlobalAgent(Zig::GlobalObject* globalObject)
+{
+    auto& vm = globalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    // Get node:https module from internal registry
+    JSValue httpsModule = globalObject->internalModuleRegistry()->requireId(
+        globalObject, vm, Bun::InternalModuleRegistry::Field::NodeHttps);
+    RETURN_IF_EXCEPTION(throwScope, JSValue::encode(jsUndefined()));
+
+    if (!httpsModule.isObject())
+        return JSValue::encode(jsUndefined());
+
+    // Get globalAgent from the module
+    JSValue globalAgent = httpsModule.getObject()->get(globalObject,
+        Identifier::fromString(vm, "globalAgent"_s));
+    RETURN_IF_EXCEPTION(throwScope, JSValue::encode(jsUndefined()));
+
+    return JSValue::encode(globalAgent);
+}

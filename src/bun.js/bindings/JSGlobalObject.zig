@@ -807,6 +807,13 @@ pub const JSGlobalObject = opaque {
         return JSC__JSGlobalObject__getHttpsGlobalAgentOptions(this);
     }
 
+    extern fn JSC__JSGlobalObject__getHttpsGlobalAgent(*JSGlobalObject) JSValue;
+    /// Gets `https.globalAgent` from the node:https module.
+    /// Returns undefined if not available.
+    pub fn getHttpsGlobalAgent(this: *JSGlobalObject) JSValue {
+        return JSC__JSGlobalObject__getHttpsGlobalAgent(this);
+    }
+
     extern fn Zig__GlobalObject__create(*anyopaque, i32, bool, bool, ?*anyopaque) *JSGlobalObject;
     pub fn create(
         v: *jsc.VirtualMachine,

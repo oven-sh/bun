@@ -479,11 +479,97 @@ pub fn Bun__fetch_(
         return .zero;
     }
 
-    // Fallback to https.globalAgent.options if no TLS config was provided
-    if (ssl_config == null) fallback_to_global_agent: {
-        const agent_opts = globalThis.getHttpsGlobalAgentOptions();
-        if (!agent_opts.isObject() or agent_opts.isUndefinedOrNull()) {
-            break :fallback_to_global_agent;
+    // Fallback to agent.options/connectOpts or https.globalAgent.options/connectOpts if no TLS config was provided
+    // This also supports HttpsProxyAgent which uses connectOpts
+    if (ssl_config == null) fallback_to_agent: {
+        // Helper to check if an object has TLS-related properties
+        const hasTLSProperties = struct {
+            fn check(globalThis_: *JSGlobalObject, obj: JSValue) !bool {
+                // Check for any of the TLS-related properties
+                const props = [_][]const u8{ "rejectUnauthorized", "ca", "cert", "key", "checkServerIdentity" };
+                inline for (props) |prop| {
+                    if (try obj.get(globalThis_, prop)) |val| {
+                        if (!val.isUndefinedOrNull()) {
+                            return true;
+                        }
+                    }
+                    if (globalThis_.hasException()) {
+                        return error.JSError;
+                    }
+                }
+                return false;
+            }
+        }.check;
+
+        // Helper to get TLS options from an agent (options, connectOpts, or connect)
+        const getAgentTLSOptions = struct {
+            fn get(globalThis_: *JSGlobalObject, agent: JSValue, hasTLSProps: *const fn (*JSGlobalObject, JSValue) bun.JSError!bool) bun.JSError!?JSValue {
+                // Try agent.options first (if it has TLS properties)
+                if (try agent.get(globalThis_, "options")) |opts| {
+                    if (opts.isObject() and !opts.isUndefinedOrNull()) {
+                        if (try hasTLSProps(globalThis_, opts)) {
+                            return opts;
+                        }
+                    }
+                }
+                // Fall back to connectOpts (used by https-proxy-agent)
+                if (try agent.get(globalThis_, "connectOpts")) |connect_opts| {
+                    if (connect_opts.isObject() and !connect_opts.isUndefinedOrNull()) {
+                        return connect_opts;
+                    }
+                }
+                // Fall back to connect (used by undici.Agent)
+                if (try agent.get(globalThis_, "connect")) |connect| {
+                    if (connect.isObject() and !connect.isUndefinedOrNull()) {
+                        return connect;
+                    }
+                }
+                return null;
+            }
+        }.get;
+
+        // First check for per-request agent/dispatcher option, then fall back to globalAgent
+        const agent_opts = blk: {
+            // Check for agent (node-fetch compatibility) or dispatcher (undici compatibility) in options/request_init
+            const objects_to_try = [_]JSValue{
+                options_object orelse .zero,
+                request_init_object orelse .zero,
+            };
+            inline for (0..2) |i| {
+                if (objects_to_try[i] != .zero) {
+                    // Check "agent" property (node-fetch compatibility)
+                    if (try objects_to_try[i].get(globalThis, "agent")) |agent| {
+                        if (agent.isObject() and !agent.isUndefinedOrNull()) {
+                            if (try getAgentTLSOptions(globalThis, agent, &hasTLSProperties)) |opts| {
+                                break :blk opts;
+                            }
+                        }
+                    }
+                    // Check "dispatcher" property (undici compatibility)
+                    if (try objects_to_try[i].get(globalThis, "dispatcher")) |dispatcher| {
+                        if (dispatcher.isObject() and !dispatcher.isUndefinedOrNull()) {
+                            if (try getAgentTLSOptions(globalThis, dispatcher, &hasTLSProperties)) |opts| {
+                                break :blk opts;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Fall back to https.globalAgent
+            const global_agent = globalThis.getHttpsGlobalAgent();
+            if (!global_agent.isObject() or global_agent.isUndefinedOrNull()) {
+                break :fallback_to_agent;
+            }
+            if (try getAgentTLSOptions(globalThis, global_agent, &hasTLSProperties)) |opts| {
+                break :blk opts;
+            }
+            break :fallback_to_agent;
+        };
+
+        if (globalThis.hasException()) {
+            is_error = true;
+            return .zero;
         }
 
         // Extract rejectUnauthorized and checkServerIdentity from globalAgent.options
@@ -770,6 +856,151 @@ pub fn Bun__fetch_(
 
         break :extract_proxy url_proxy_buffer;
     };
+
+    if (globalThis.hasException()) {
+        is_error = true;
+        return .zero;
+    }
+
+    // Fallback to agent.proxy or https.globalAgent.proxy if no proxy was provided
+    // This enables compatibility with https-proxy-agent and similar libraries
+    if (proxy == null) fallback_to_agent_proxy: {
+        // First check for per-request agent/dispatcher option, then fall back to globalAgent
+        const agent_and_proxy = blk: {
+            // Check for agent (node-fetch compatibility) or dispatcher (undici compatibility) in options/request_init
+            const objects_to_try = [_]JSValue{
+                options_object orelse .zero,
+                request_init_object orelse .zero,
+            };
+            inline for (0..2) |i| {
+                if (objects_to_try[i] != .zero) {
+                    // Check "agent" property (node-fetch compatibility)
+                    if (try objects_to_try[i].get(globalThis, "agent")) |agent| {
+                        if (agent.isObject() and !agent.isUndefinedOrNull()) {
+                            if (try agent.get(globalThis, "proxy")) |proxy_val| {
+                                if (!proxy_val.isUndefinedOrNull()) {
+                                    break :blk .{ agent, proxy_val };
+                                }
+                            }
+                        }
+                    }
+                    // Check "dispatcher" property (undici compatibility)
+                    if (try objects_to_try[i].get(globalThis, "dispatcher")) |dispatcher| {
+                        if (dispatcher.isObject() and !dispatcher.isUndefinedOrNull()) {
+                            if (try dispatcher.get(globalThis, "proxy")) |proxy_val| {
+                                if (!proxy_val.isUndefinedOrNull()) {
+                                    break :blk .{ dispatcher, proxy_val };
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Fall back to https.globalAgent
+            const global_agent = globalThis.getHttpsGlobalAgent();
+            if (!global_agent.isObject() or global_agent.isUndefinedOrNull()) {
+                break :fallback_to_agent_proxy;
+            }
+            if (try global_agent.get(globalThis, "proxy")) |proxy_val| {
+                if (!proxy_val.isUndefinedOrNull()) {
+                    break :blk .{ global_agent, proxy_val };
+                }
+            }
+            break :fallback_to_agent_proxy;
+        };
+        const current_agent = agent_and_proxy[0];
+        const proxy_value = agent_and_proxy[1];
+
+        if (globalThis.hasException()) {
+            is_error = true;
+            return .zero;
+        }
+
+        // Try to get the proxy URL - could be a string or URL object with href
+        var proxy_href: ?bun.String = null;
+        if (proxy_value.isString()) {
+            if ((try proxy_value.getLength(ctx)) > 0) {
+                proxy_href = try jsc.URL.hrefFromJS(proxy_value, globalThis);
+            }
+        } else if (proxy_value.isObject()) {
+            // URL object - get href property
+            if (try proxy_value.get(globalThis, "href")) |href_value| {
+                if (href_value.isString() and (try href_value.getLength(ctx)) > 0) {
+                    proxy_href = try jsc.URL.hrefFromJS(href_value, globalThis);
+                }
+            }
+        }
+
+        if (globalThis.hasException()) {
+            is_error = true;
+            return .zero;
+        }
+
+        if (proxy_href) |href| {
+            if (href.tag == .Dead) {
+                break :fallback_to_agent_proxy;
+            }
+            defer href.deref();
+            const buffer = try std.fmt.allocPrint(allocator, "{s}{f}", .{ url_proxy_buffer, href });
+            url = ZigURL.parse(buffer[0..url.href.len]);
+            if (url.isFile()) {
+                url_type = URLType.file;
+            } else if (url.isBlob()) {
+                url_type = URLType.blob;
+            }
+
+            proxy = ZigURL.parse(buffer[url.href.len..]);
+            allocator.free(url_proxy_buffer);
+            url_proxy_buffer = buffer;
+
+            // If we got a proxy from agent, also check connectOpts/connect for TLS settings
+            if (ssl_config == null) {
+                // Try connectOpts first (https-proxy-agent), then connect (undici.Agent)
+                const tls_opts = blk: {
+                    if (try current_agent.get(globalThis, "connectOpts")) |connect_opts| {
+                        if (connect_opts.isObject() and !connect_opts.isUndefinedOrNull()) {
+                            break :blk connect_opts;
+                        }
+                    }
+                    if (try current_agent.get(globalThis, "connect")) |connect| {
+                        if (connect.isObject() and !connect.isUndefinedOrNull()) {
+                            break :blk connect;
+                        }
+                    }
+                    break :blk @as(?JSValue, null);
+                };
+
+                if (tls_opts) |connect_opts| {
+                    // Extract rejectUnauthorized from connectOpts/connect
+                    if (try connect_opts.get(globalThis, "rejectUnauthorized")) |reject| {
+                        if (reject.isBoolean()) {
+                            reject_unauthorized = reject.asBoolean();
+                        } else if (reject.isNumber()) {
+                            reject_unauthorized = reject.to(i32) != 0;
+                        }
+                    }
+
+                    // Extract checkServerIdentity from connectOpts/connect
+                    if (try connect_opts.get(globalThis, "checkServerIdentity")) |csi| {
+                        if (csi.isCell() and csi.isCallable()) {
+                            check_server_identity = csi;
+                        }
+                    }
+
+                    // Extract SSL config from connectOpts/connect
+                    if (SSLConfig.fromJS(vm, globalThis, connect_opts) catch {
+                        is_error = true;
+                        return .zero;
+                    }) |config| {
+                        const ssl_config_object = bun.handleOom(bun.default_allocator.create(SSLConfig));
+                        ssl_config_object.* = config;
+                        ssl_config = ssl_config_object;
+                    }
+                }
+            }
+        }
+    }
 
     if (globalThis.hasException()) {
         is_error = true;

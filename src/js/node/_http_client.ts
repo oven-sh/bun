@@ -730,13 +730,11 @@ function ClientRequest(input, options, cb) {
 
   if (options.rejectUnauthorized !== undefined) this._ensureTls().rejectUnauthorized = options.rejectUnauthorized;
   else {
+    // Check agent.options, agent.connectOpts (https-proxy-agent), or agent.connect (undici.Agent)
     let agentRejectUnauthorized = agent?.options?.rejectUnauthorized;
+    if (agentRejectUnauthorized === undefined) agentRejectUnauthorized = agent?.connectOpts?.rejectUnauthorized;
+    if (agentRejectUnauthorized === undefined) agentRejectUnauthorized = agent?.connect?.rejectUnauthorized;
     if (agentRejectUnauthorized !== undefined) this._ensureTls().rejectUnauthorized = agentRejectUnauthorized;
-    else {
-      // popular https-proxy-agent uses connectOpts
-      agentRejectUnauthorized = agent?.connectOpts?.rejectUnauthorized;
-      if (agentRejectUnauthorized !== undefined) this._ensureTls().rejectUnauthorized = agentRejectUnauthorized;
-    }
   }
   if (options.ca) {
     if (!isValidTLSArray(options.ca))
@@ -747,6 +745,7 @@ function ClientRequest(input, options, cb) {
   } else {
     let agentCa = agent?.options?.ca;
     if (agentCa === undefined) agentCa = agent?.connectOpts?.ca;
+    if (agentCa === undefined) agentCa = agent?.connect?.ca;
     if (agentCa !== undefined) {
       if (!isValidTLSArray(agentCa))
         throw new TypeError(
@@ -764,6 +763,7 @@ function ClientRequest(input, options, cb) {
   } else {
     let agentCert = agent?.options?.cert;
     if (agentCert === undefined) agentCert = agent?.connectOpts?.cert;
+    if (agentCert === undefined) agentCert = agent?.connect?.cert;
     if (agentCert !== undefined) {
       if (!isValidTLSArray(agentCert))
         throw new TypeError(
@@ -781,6 +781,7 @@ function ClientRequest(input, options, cb) {
   } else {
     let agentKey = agent?.options?.key;
     if (agentKey === undefined) agentKey = agent?.connectOpts?.key;
+    if (agentKey === undefined) agentKey = agent?.connect?.key;
     if (agentKey !== undefined) {
       if (!isValidTLSArray(agentKey))
         throw new TypeError(
@@ -795,6 +796,7 @@ function ClientRequest(input, options, cb) {
   } else {
     let agentPassphrase = agent?.options?.passphrase;
     if (agentPassphrase === undefined) agentPassphrase = agent?.connectOpts?.passphrase;
+    if (agentPassphrase === undefined) agentPassphrase = agent?.connect?.passphrase;
     if (agentPassphrase !== undefined) {
       if (typeof agentPassphrase !== "string") throw new TypeError("agent.options.passphrase must be a string");
       this._ensureTls().passphrase = agentPassphrase;
@@ -806,6 +808,7 @@ function ClientRequest(input, options, cb) {
   } else {
     let agentCiphers = agent?.options?.ciphers;
     if (agentCiphers === undefined) agentCiphers = agent?.connectOpts?.ciphers;
+    if (agentCiphers === undefined) agentCiphers = agent?.connect?.ciphers;
     if (agentCiphers !== undefined) {
       if (typeof agentCiphers !== "string") throw new TypeError("agent.options.ciphers must be a string");
       this._ensureTls().ciphers = agentCiphers;
@@ -817,6 +820,7 @@ function ClientRequest(input, options, cb) {
   } else {
     let agentServername = agent?.options?.servername;
     if (agentServername === undefined) agentServername = agent?.connectOpts?.servername;
+    if (agentServername === undefined) agentServername = agent?.connect?.servername;
     if (agentServername !== undefined) {
       if (typeof agentServername !== "string") throw new TypeError("agent.options.servername must be a string");
       this._ensureTls().servername = agentServername;
@@ -829,6 +833,7 @@ function ClientRequest(input, options, cb) {
   } else {
     let agentSecureOptions = agent?.options?.secureOptions;
     if (agentSecureOptions === undefined) agentSecureOptions = agent?.connectOpts?.secureOptions;
+    if (agentSecureOptions === undefined) agentSecureOptions = agent?.connect?.secureOptions;
     if (agentSecureOptions !== undefined) {
       if (typeof agentSecureOptions !== "number") throw new TypeError("agent.options.secureOptions must be a number");
       this._ensureTls().secureOptions = agentSecureOptions;

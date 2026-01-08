@@ -23,14 +23,21 @@ pub const JSBundler = struct {
         /// directory, matches a key in the map.
         pub fn get(self: *const FileMap, specifier: []const u8) ?[]const u8 {
             if (self.map.count() == 0) return null;
-            const entry = self.map.get(specifier) orelse return null;
+            // Normalize backslashes to forward slashes for consistent lookup
+            // Map keys are stored with forward slashes (normalized in fromJS)
+            var buf: bun.PathBuffer = undefined;
+            const normalized = bun.path.pathToPosixBuf(u8, specifier, &buf);
+            const entry = self.map.get(normalized) orelse return null;
             return entry.slice();
         }
 
         /// Check if the file map contains a given specifier.
         pub fn contains(self: *const FileMap, specifier: []const u8) bool {
             if (self.map.count() == 0) return false;
-            return self.map.contains(specifier);
+            // Normalize backslashes to forward slashes for consistent lookup
+            var buf: bun.PathBuffer = undefined;
+            const normalized = bun.path.pathToPosixBuf(u8, specifier, &buf);
+            return self.map.contains(normalized);
         }
 
         /// Returns a resolver Result for a file in the map, or null if not found.
@@ -44,15 +51,20 @@ pub const JSBundler = struct {
             // Fast path: if the map is empty, return immediately
             if (self.map.count() == 0) return null;
 
-            // Check if the specifier is directly in the map
-            // Must use getKey to return the map's owned key, not the parameter
-            if (self.map.getKey(specifier)) |key| {
-                return _resolver.Result{
-                    .path_pair = .{
-                        .primary = Fs.Path.initWithNamespace(key, "memory"),
-                    },
-                    .module_type = .unknown,
-                };
+            {
+                var buf: bun.PathBuffer = undefined;
+                const normalized_specifier = bun.path.pathToPosixBuf(u8, specifier, &buf);
+
+                // Check if the specifier is directly in the map
+                // Must use getKey to return the map's owned key, not the parameter
+                if (self.map.getKey(normalized_specifier)) |key| {
+                    return _resolver.Result{
+                        .path_pair = .{
+                            .primary = Fs.Path.initWithNamespace(key, "memory"),
+                        },
+                        .module_type = .unknown,
+                    };
+                }
             }
 
             // Also try with source directory joined for relative specifiers
@@ -89,7 +101,12 @@ pub const JSBundler = struct {
                         Fs.FileSystem.instance.top_level_dir)
                 else
                     source_dir;
-                const joined = bun.path.joinAbsStringBuf(effective_source_dir, &buf, &.{specifier}, .posix);
+                // Use .loose to preserve Windows drive letters, then normalize in-place on Windows
+                const joined_len = bun.path.joinAbsStringBuf(effective_source_dir, &buf, &.{specifier}, .loose).len;
+                if (bun.Environment.isWindows) {
+                    bun.path.platformToPosixInPlace(u8, buf[0..joined_len]);
+                }
+                const joined = buf[0..joined_len];
                 // Must use getKey to return the map's owned key, not the temporary buffer
                 if (self.map.getKey(joined)) |key| {
                     return _resolver.Result{

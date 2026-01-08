@@ -3,7 +3,7 @@ import { describe, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isBroken, isLinux, nodeExe } from "harness";
 import { basename, join } from "path";
 
-describe("AsyncLocalStorage passes context to callbacks", () => {
+describe.concurrent("AsyncLocalStorage passes context to callbacks", () => {
   let files = [...new Glob(join(import.meta.dir, "async-context", "async-context-*.js")).scanSync()];
 
   let todos = ["async-context-worker_threads-message.js"];

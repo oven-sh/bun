@@ -1332,9 +1332,9 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
   }
 
   if (!handle) {
-    if ($isCallable(callback)) {
-      process.nextTick(callback);
-    }
+    // Match Node.js behavior: no socket means no "finish" or end callback.
+    // Still mark the response as finished so writableEnded is true.
+    this.finished = true;
     return this;
   }
 

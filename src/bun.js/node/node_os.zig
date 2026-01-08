@@ -279,11 +279,17 @@ pub fn cpusImplWindows(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
     return values;
 }
 
-pub fn freemem() u64 {
+pub fn freememImpl() u64 {
     // OsBinding.cpp
     return @extern(*const fn () callconv(.c) u64, .{
         .name = "Bun__Os__getFreeMemory",
     })();
+}
+
+pub fn freemem(global: *jsc.JSGlobalObject) bun.JSError!u64 {
+    // Check sys permission for system memory info
+    try bun.permission_check.requireSys(global, "systemMemoryInfo");
+    return freememImpl();
 }
 
 extern fn get_process_priority(pid: i32) i32;
@@ -873,7 +879,7 @@ pub fn setPriority2(global: *jsc.JSGlobalObject, priority: i32) !void {
     return setPriority1(global, 0, priority);
 }
 
-pub fn totalmem() u64 {
+pub fn totalmemImpl() u64 {
     switch (bun.Environment.os) {
         .mac => {
             var memory_: [32]c_ulonglong = undefined;
@@ -901,6 +907,12 @@ pub fn totalmem() u64 {
         },
         .wasm => @compileError("unsupported os"),
     }
+}
+
+pub fn totalmem(global: *jsc.JSGlobalObject) bun.JSError!u64 {
+    // Check sys permission for system memory info
+    try bun.permission_check.requireSys(global, "systemMemoryInfo");
+    return totalmemImpl();
 }
 
 pub fn uptime(global: *jsc.JSGlobalObject) bun.JSError!f64 {

@@ -468,7 +468,9 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
             if (comptime ssl) {
                 if (this.hostname.len > 0) {
-                    socket.getNativeHandle().?.configureHTTPClient(this.hostname);
+                    if (socket.getNativeHandle()) |handle| {
+                        handle.configureHTTPClient(this.hostname);
+                    }
                     bun.default_allocator.free(this.hostname);
                     this.hostname = "";
                 }
@@ -627,8 +629,14 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
             const remain_buf = body[@as(usize, @intCast(response.bytes_read))..];
 
+            // Safely unwrap proxy state - it must exist if we're in proxy_handshake state
+            const p = if (this.proxy) |*proxy| proxy else {
+                this.terminate(ErrorCode.proxy_tunnel_failed);
+                return;
+            };
+
             // For wss:// through proxy, we need to do TLS handshake inside the tunnel
-            if (this.proxy.?.target_is_https) {
+            if (p.target_is_https) {
                 this.startProxyTLSHandshake(socket, remain_buf);
                 return;
             }
@@ -642,8 +650,8 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             }
 
             // Use the WebSocket upgrade request from proxy state
-            this.input_body_buf = this.proxy.?.websocket_request_buf;
-            this.proxy.?.websocket_request_buf = &[_]u8{};
+            this.input_body_buf = p.websocket_request_buf;
+            p.websocket_request_buf = &[_]u8{};
 
             // Send the WebSocket upgrade request
             const wrote = socket.write(this.input_body_buf);
@@ -664,19 +672,23 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         fn startProxyTLSHandshake(this: *HTTPClient, socket: Socket, initial_data: []const u8) void {
             log("startProxyTLSHandshake", .{});
 
+            // Safely unwrap proxy state - it must exist if we're called from handleProxyResponse
+            const p = if (this.proxy) |*proxy| proxy else {
+                this.terminate(ErrorCode.proxy_tunnel_failed);
+                return;
+            };
+
             // Create proxy tunnel
             var tunnel = WebSocketProxyTunnel.init();
             tunnel.upgrade_client = if (comptime ssl) .{ .https = this } else .{ .http = this };
             tunnel.socket = if (comptime ssl) .{ .ssl = socket } else .{ .tcp = socket };
 
             // Set hostname for SNI
-            if (this.proxy) |*p| {
-                tunnel.sni_hostname = bun.default_allocator.dupe(u8, p.target_host) catch {
-                    tunnel.deref();
-                    this.terminate(ErrorCode.proxy_tunnel_failed);
-                    return;
-                };
-            }
+            tunnel.sni_hostname = bun.default_allocator.dupe(u8, p.target_host) catch {
+                tunnel.deref();
+                this.terminate(ErrorCode.proxy_tunnel_failed);
+                return;
+            };
 
             // Set certificate verification
             if (this.outgoing_websocket) |ws| {
@@ -696,7 +708,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 return;
             };
 
-            this.proxy.?.tunnel = tunnel;
+            p.tunnel = tunnel;
             this.state = .proxy_tls_handshake;
         }
 
@@ -713,23 +725,25 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 this.input_body_buf = &[_]u8{};
             }
 
+            // Safely unwrap proxy state and send through the tunnel
+            const p = if (this.proxy) |*proxy| proxy else {
+                this.terminate(ErrorCode.proxy_tunnel_failed);
+                return;
+            };
+
             // Get the WebSocket upgrade request from proxy state
-            const upgrade_request = this.proxy.?.websocket_request_buf;
+            const upgrade_request = p.websocket_request_buf;
             if (upgrade_request.len == 0) {
                 this.terminate(ErrorCode.failed_to_write);
                 return;
             }
 
             // Send through the tunnel (will be encrypted)
-            if (this.proxy) |*p| {
-                if (p.tunnel) |tunnel| {
-                    _ = tunnel.write(upgrade_request) catch {
-                        this.terminate(ErrorCode.failed_to_write);
-                        return;
-                    };
-                } else {
-                    this.terminate(ErrorCode.proxy_tunnel_failed);
-                }
+            if (p.tunnel) |tunnel| {
+                _ = tunnel.write(upgrade_request) catch {
+                    this.terminate(ErrorCode.failed_to_write);
+                    return;
+                };
             } else {
                 this.terminate(ErrorCode.proxy_tunnel_failed);
             }
@@ -1005,7 +1019,11 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 this.tcp.detach();
                 // Once again for the TCP socket.
                 defer this.deref();
-                ws.didConnect(socket.socket.get().?, overflow.ptr, overflow.len, if (deflate_result.enabled) &deflate_result.params else null, saved_custom_ssl_ctx);
+                if (socket.socket.get()) |native_socket| {
+                    ws.didConnect(native_socket, overflow.ptr, overflow.len, if (deflate_result.enabled) &deflate_result.params else null, saved_custom_ssl_ctx);
+                } else {
+                    this.terminate(ErrorCode.failed_to_connect);
+                }
             } else if (this.tcp.isClosed()) {
                 this.terminate(ErrorCode.cancel);
             } else if (this.outgoing_websocket == null) {

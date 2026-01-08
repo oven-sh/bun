@@ -119,7 +119,6 @@ pub fn start(this: *WebSocketProxyTunnel, ssl_options: SSLConfig, initial_data: 
     // hostname verification in onHandshake(). The actual reject_unauthorized
     // check uses this.reject_unauthorized field.
     const options = ssl_options.forClientVerification();
-    log("Starting WebSocketProxyTunnel TLS handshake {any}", .{ssl_options});
 
     this.wrapper = try SSLWrapperType.init(options, true, .{
         .ctx = this,

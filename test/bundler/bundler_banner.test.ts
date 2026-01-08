@@ -214,7 +214,8 @@ module.exports = 1;`,
     backend: "api",
     files: {
       "/a.js": `#!/usr/bin/env bun
-module.exports = 1;`,
+module.exports = 1;
+console.log("bun!");`,
     },
     onAfterBundle(api) {
       const content = api.readFile("/out/a.js");
@@ -223,9 +224,12 @@ module.exports = 1;`,
         "#!/usr/bin/env bun
         // @bun @bytecode @bun-cjs
         (function(exports, require, module, __filename, __dirname) {// Copyright 2024 Example Corp
-        module.exports=1;})
+        module.exports=1;console.log("bun!")})
         "
       `);
     },
+    run: {
+        stdout: "bun!\n",
+    }
   });
 });

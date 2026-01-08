@@ -214,9 +214,9 @@ pub fn generate(
         }
         first_input = false;
 
-        j.pushStatic("\n    \"");
-        j.pushStatic(path);
-        j.push(std.fmt.allocPrint(allocator, "\": {{\n      \"bytes\": {d}", .{source.contents.len}) catch return error.OutOfMemory, allocator);
+        j.pushStatic("\n    ");
+        j.push(try std.fmt.allocPrint(allocator, "{f}", .{bun.fmt.formatJSONStringUTF8(path, .{})}), allocator);
+        j.push(try std.fmt.allocPrint(allocator, ": {{\n      \"bytes\": {d}", .{source.contents.len}), allocator);
 
         // Write imports
         j.pushStatic(",\n      \"imports\": [");
@@ -231,19 +231,18 @@ pub fn generate(
                 }
                 first_import = false;
 
-                j.pushStatic("\n        {\n          \"path\": \"");
-                // Write path as-is - chunk references (unique_keys) will be resolved
+                j.pushStatic("\n        {\n          \"path\": ");
+                // Write path with JSON escaping - chunk references (unique_keys) will be resolved
                 // by breakOutputIntoPieces and code() below
-                j.pushStatic(record.path.text);
-                j.pushStatic("\",\n          \"kind\": \"");
+                j.push(try std.fmt.allocPrint(allocator, "{f}", .{bun.fmt.formatJSONStringUTF8(record.path.text, .{})}), allocator);
+                j.pushStatic(",\n          \"kind\": \"");
                 j.pushStatic(record.kind.label());
                 j.pushStatic("\"");
 
                 // Add "original" field if different from path
                 if (record.original_path.len > 0 and !std.mem.eql(u8, record.original_path, record.path.text)) {
-                    j.pushStatic(",\n          \"original\": \"");
-                    j.pushStatic(record.original_path);
-                    j.pushStatic("\"");
+                    j.pushStatic(",\n          \"original\": ");
+                    j.push(try std.fmt.allocPrint(allocator, "{f}", .{bun.fmt.formatJSONStringUTF8(record.original_path, .{})}), allocator);
                 }
 
                 // Add "external": true for external imports

@@ -39,6 +39,9 @@ JSC_DEFINE_CUSTOM_GETTER(bundlerMetafileLazyGetter, (JSGlobalObject * globalObje
     JSValue parsedValue = JSC::JSONParseWithException(globalObject, view);
     RETURN_IF_EXCEPTION(scope, {});
 
+    // Replace the lazy getter with the parsed value (memoize for subsequent accesses)
+    thisObject->putDirect(vm, property, parsedValue, 0);
+
     // Clear the raw JSON string so it can be GC'd
     thisObject->putDirect(vm, privateName, jsUndefined(), 0);
 

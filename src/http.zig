@@ -522,13 +522,14 @@ pub fn isKeepAlivePossible(this: *HTTPClient) bool {
     if (comptime FeatureFlags.enable_keepalive) {
         // TODO keepalive for unix sockets
         if (this.unix_socket_path.length() > 0) return false;
-        // is not possible to reuse Proxy with TSL, so disable keepalive if url is tunneling HTTPS
+
+        // is not possible to reuse Proxy with TLS, so disable keepalive if url is tunneling HTTPS
         if (this.proxy_tunnel != null or (this.http_proxy != null and this.url.isHTTPS())) {
             log("Keep-Alive release (proxy tunneling https)", .{});
             return false;
         }
 
-        //check state
+        // check state
         if (this.state.flags.allow_keepalive and !this.flags.disable_keepalive) return true;
     }
     return false;
@@ -2338,11 +2339,17 @@ pub fn handleResponseMetadata(
             return ShouldContinue.continue_streaming;
         }
 
-        //proxy denied connection so return proxy result (407, 403 etc)
+        // proxy denied connection so return proxy result (407, 403 etc)
         this.flags.proxy_tunneling = false;
+        this.flags.disable_keepalive = true;
     }
 
     const status_code = response.status_code;
+
+    if (status_code == 407) {
+        // If the request is being proxied and passes through the 407 status code, then let's also not do HTTP Keep-Alive.
+        this.flags.disable_keepalive = true;
+    }
 
     // if is no redirect or if is redirect == "manual" just proceed
     const is_redirect = status_code >= 300 and status_code <= 399;

@@ -419,12 +419,9 @@ execute_process(
     --command=list-outputs
     --sources=${BUN_BINDGENV2_SOURCES_COMMA_SEPARATED}
     --codegen-path=${CODEGEN_PATH}
-  RESULT_VARIABLE bindgen_result
   OUTPUT_VARIABLE bindgen_outputs
+  COMMAND_ERROR_IS_FATAL ANY
 )
-if(${bindgen_result})
-  message(FATAL_ERROR "bindgenv2/script.ts exited with non-zero status")
-endif()
 foreach(output IN LISTS bindgen_outputs)
   if(output MATCHES "\.cpp$")
     list(APPEND BUN_BINDGENV2_CPP_OUTPUTS ${output})

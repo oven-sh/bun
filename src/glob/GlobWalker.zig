@@ -917,7 +917,10 @@ pub fn GlobWalker_(
                                     if (!might_match) continue;
 
                                     // Need to stat to determine actual kind (lstatat to not follow symlinks)
-                                    const name_z = this.walker.arena.allocator().dupeZ(u8, entry_name) catch bun.outOfMemory();
+                                    // Use stack fallback for short names (typical case) to avoid arena allocation
+                                    const stackbuf_size = 256;
+                                    var stfb = std.heap.stackFallback(stackbuf_size, this.walker.arena.allocator());
+                                    const name_z = stfb.get().dupeZ(u8, entry_name) catch bun.outOfMemory();
                                     const stat_result = Accessor.lstatat(dir.fd, name_z);
                                     const real_kind: std.fs.File.Kind = switch (stat_result) {
                                         .result => |st| bun.sys.kindFromMode(st.mode),

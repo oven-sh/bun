@@ -2243,7 +2243,7 @@ pub const BundleV2 = struct {
 
                     // Add metafile if it was generated (lazy parsing via getter)
                     if (build.metafile) |metafile| {
-                        const metafile_js_str = bun.String.createUTF8ForJS(metafile) catch |err| {
+                        const metafile_js_str = bun.String.createUTF8ForJS(globalThis, metafile) catch |err| {
                             return promise.reject(globalThis, err);
                         };
                         // Set up lazy getter that parses JSON on first access and memoizes

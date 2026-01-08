@@ -29,10 +29,7 @@ pub const BufferReadStream = struct {
 
     pub fn deinit(this: *BufferReadStream) void {
         _ = this.archive.readClose();
-        // don't free it if we never actually read it
-        // if (this.reading) {
-        //     _ = lib.archive_read_free(this.archive);
-        // }
+        _ = this.archive.readFree();
     }
 
     pub fn openRead(this: *BufferReadStream) Archive.Result {

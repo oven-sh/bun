@@ -1291,6 +1291,79 @@ declare module "bun:bundle" {
 
 Ensure the file is included in your `tsconfig.json` (e.g., `"include": ["src", "env.d.ts"]`). Now `feature()` only accepts those flags, and invalid strings like `feature("TYPO")` become type errors.
 
+### metafile
+
+Generate metadata about the build in a structured format. The metafile contains information about all input files, output files, their sizes, imports, and exports. This is useful for:
+
+- **Bundle analysis**: Understand what's contributing to bundle size
+- **Visualization**: Feed into tools like [esbuild's bundle analyzer](https://esbuild.github.io/analyze/) or other visualization tools
+- **Dependency tracking**: See the full import graph of your application
+- **CI integration**: Track bundle size changes over time
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    const result = await Bun.build({
+      entrypoints: ['./src/index.ts'],
+      outdir: './dist',
+      metafile: true,
+    });
+
+    if (result.metafile) {
+      // Analyze inputs
+      for (const [path, meta] of Object.entries(result.metafile.inputs)) {
+        console.log(`${path}: ${meta.bytes} bytes`);
+      }
+
+      // Analyze outputs
+      for (const [path, meta] of Object.entries(result.metafile.outputs)) {
+        console.log(`${path}: ${meta.bytes} bytes`);
+      }
+
+      // Save for external analysis tools
+      await Bun.write('./dist/meta.json', JSON.stringify(result.metafile));
+    }
+    ```
+
+  </Tab>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./src/index.ts --outdir ./dist --metafile ./dist/meta.json
+    ```
+  </Tab>
+</Tabs>
+
+The metafile structure contains:
+
+```ts
+interface BuildMetafile {
+  inputs: {
+    [path: string]: {
+      bytes: number;
+      imports: Array<{
+        path: string;
+        kind: ImportKind;
+        original?: string; // Original specifier before resolution
+        external?: boolean;
+      }>;
+      format?: "esm" | "cjs" | "json" | "css";
+    };
+  };
+  outputs: {
+    [path: string]: {
+      bytes: number;
+      inputs: {
+        [path: string]: { bytesInOutput: number };
+      };
+      imports: Array<{ path: string; kind: ImportKind }>;
+      exports: string[];
+      entryPoint?: string;
+      cssBundle?: string; // Associated CSS file for JS entry points
+    };
+  };
+}
+```
+
 ## Outputs
 
 The `Bun.build` function returns a `Promise<BuildOutput>`, defined as:
@@ -1300,6 +1373,7 @@ interface BuildOutput {
   outputs: BuildArtifact[];
   success: boolean;
   logs: Array<object>; // see docs for details
+  metafile?: BuildMetafile; // only when metafile: true
 }
 
 interface BuildArtifact extends Blob {

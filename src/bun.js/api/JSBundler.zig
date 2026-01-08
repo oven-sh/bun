@@ -254,6 +254,7 @@ pub const JSBundler = struct {
         /// In-memory files that can be used as entrypoints or imported.
         /// These files do not need to exist on disk.
         files: FileMap = .{},
+        metafile: bool = false,
 
         pub const CompileOptions = struct {
             compile_target: CompileTarget = .{},
@@ -933,6 +934,10 @@ pub const JSBundler = struct {
 
             if (try config.getBooleanStrict(globalThis, "throw")) |flag| {
                 this.throw_on_error = flag;
+            }
+
+            if (try config.getBooleanLoose(globalThis, "metafile")) |flag| {
+                this.metafile = flag;
             }
 
             if (try CompileOptions.fromJS(

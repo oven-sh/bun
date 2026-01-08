@@ -479,6 +479,51 @@ pub fn Bun__fetch_(
         return .zero;
     }
 
+    // Fallback to https.globalAgent.options if no TLS config was provided
+    if (ssl_config == null) fallback_to_global_agent: {
+        const agent_opts = globalThis.getHttpsGlobalAgentOptions();
+        if (!agent_opts.isObject() or agent_opts.isUndefinedOrNull()) {
+            break :fallback_to_global_agent;
+        }
+
+        // Extract rejectUnauthorized and checkServerIdentity from globalAgent.options
+        if (try agent_opts.get(globalThis, "rejectUnauthorized")) |reject| {
+            if (reject.isBoolean()) {
+                reject_unauthorized = reject.asBoolean();
+            } else if (reject.isNumber()) {
+                reject_unauthorized = reject.to(i32) != 0;
+            }
+        }
+        if (globalThis.hasException()) {
+            is_error = true;
+            return .zero;
+        }
+
+        if (try agent_opts.get(globalThis, "checkServerIdentity")) |checkServerIdentity| {
+            if (checkServerIdentity.isCell() and checkServerIdentity.isCallable()) {
+                check_server_identity = checkServerIdentity;
+            }
+        }
+        if (globalThis.hasException()) {
+            is_error = true;
+            return .zero;
+        }
+
+        if (SSLConfig.fromJS(vm, globalThis, agent_opts) catch {
+            is_error = true;
+            return .zero;
+        }) |config| {
+            const ssl_config_object = bun.handleOom(bun.default_allocator.create(SSLConfig));
+            ssl_config_object.* = config;
+            ssl_config = ssl_config_object;
+        }
+
+        if (globalThis.hasException()) {
+            is_error = true;
+            return .zero;
+        }
+    }
+
     // unix: string | undefined
     unix_socket_path = extract_unix_socket_path: {
         const objects_to_try = [_]JSValue{

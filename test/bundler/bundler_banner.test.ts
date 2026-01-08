@@ -203,4 +203,33 @@ module.exports = 1;`,
       `);
     },
   });
+
+  itBundled("banner/SourceHashbangWithBytecodeAndCJSTargetBun", {
+    banner: "// Copyright 2024 Example Corp",
+    format: "cjs",
+    target: "bun",
+    bytecode: true,
+    outdir: "/out",
+    minifyWhitespace: true,
+    backend: "api",
+    files: {
+      "/a.js": `#!/usr/bin/env bun
+module.exports = 1;
+console.log("bun!");`,
+    },
+    onAfterBundle(api) {
+      const content = api.readFile("/out/a.js");
+      // Shebang from source should come first, then @bun pragma
+      expect(content).toMatchInlineSnapshot(`
+        "#!/usr/bin/env bun
+        // @bun @bytecode @bun-cjs
+        (function(exports, require, module, __filename, __dirname) {// Copyright 2024 Example Corp
+        module.exports=1;console.log("bun!");})
+        "
+      `);
+    },
+    run: {
+      stdout: "bun!\n",
+    },
+  });
 });

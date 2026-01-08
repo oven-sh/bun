@@ -188,7 +188,7 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
     case DataCellTag::Json: {
         if (cell.value.json) {
             auto str = WTF::String(cell.value.json);
-            JSC::JSValue json = JSC::JSONParse(globalObject, str);
+            JSC::JSValue json = JSC::JSONParseWithException(globalObject, str);
             RETURN_IF_EXCEPTION(scope, {});
             return json;
         }

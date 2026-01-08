@@ -53,7 +53,7 @@ const TESTS: [name: string, builder: () => TestBuilder, runs?: number][] = [
   ],
 ];
 
-describe("fd leak", () => {
+describe.concurrent("fd leak", () => {
   function fdLeakTest(name: string, builder: () => TestBuilder, runs: number = 1000, threshold: number = 5) {
     test(`fdleak_${name}`, async () => {
       Bun.gc(true);
@@ -123,12 +123,14 @@ describe("fd leak", () => {
 
       // console.log("THE CODE", readFileSync(tempfile, "utf-8"));
 
-      const { stdout, stderr, exitCode } = Bun.spawnSync([process.argv0, "--smol", "test", tempfile], {
+      const { exited, stderr: stream } = Bun.spawn([process.argv0, "--smol", "test", tempfile], {
         env: bunEnv,
+        stderr: "pipe",
       });
+      const [exitCode, stderr] = await Promise.all([exited, stream.text()]);
       // console.log("STDOUT:", stdout.toString(), "\n\nSTDERR:", stderr.toString());
       if (exitCode != 0) {
-        console.log("\n\nSTDERR:", stderr.toString());
+        console.log("\n\nSTDERR:", stderr);
       }
       expect(exitCode).toBe(0);
     }, 100_000);
@@ -215,12 +217,15 @@ describe("fd leak", () => {
 
         // console.log("THE CODE", readFileSync(tempfile, "utf-8"));
 
-        const { stdout, stderr, exitCode } = Bun.spawnSync([process.argv0, "--smol", "test", tempfile], {
+        const { stderr: stream, exited } = Bun.spawn([process.argv0, "--smol", "test", tempfile], {
           env: bunEnv,
+          stdout: "ignore",
+          stderr: "pipe",
         });
+        const [exitCode, stderr] = await Promise.all([exited, stream.text()]);
         // console.log("STDOUT:", stdout.toString(), "\n\nSTDERR:", stderr.toString());
         if (exitCode != 0) {
-          console.log("\n\nSTDERR:", stderr.toString());
+          console.log("\n\nSTDERR:", stderr);
         }
         expect(exitCode).toBe(0);
       },
@@ -373,7 +378,7 @@ describe("fd leak", () => {
     true,
   );
 
-  describe("#11816", async () => {
+  describe.serial("#11816", async () => {
     function doit(builtin: boolean) {
       test(builtin ? "builtin" : "external", async () => {
         const files = tempDirWithFiles("hi", {
@@ -406,7 +411,7 @@ describe("fd leak", () => {
     doit(true);
   });
 
-  describe("not leaking ParsedShellScript when ShellInterpreter never runs", async () => {
+  describe.serial("not leaking ParsedShellScript when ShellInterpreter never runs", () => {
     function doit(builtin: boolean) {
       test(builtin ? "builtin" : "external", async () => {
         const files = tempDirWithFiles("hi", {

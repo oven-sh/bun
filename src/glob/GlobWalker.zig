@@ -253,6 +253,20 @@ pub const DirEntryAccessor = struct {
         return Syscall.stat(path);
     }
 
+    /// Like statat but does not follow symlinks.
+    pub fn lstatat(handle: Handle, path_: [:0]const u8) Maybe(bun.Stat) {
+        var path: [:0]const u8 = path_;
+        var buf: bun.PathBuffer = undefined;
+        if (!bun.path.Platform.auto.isAbsolute(path)) {
+            if (handle.value) |entry| {
+                const slice = bun.path.joinStringBuf(&buf, [_][]const u8{ entry.dir, path }, .auto);
+                buf[slice.len] = 0;
+                path = buf[0..slice.len :0];
+            }
+        }
+        return Syscall.lstat(path);
+    }
+
     pub fn open(path: [:0]const u8) !Maybe(Handle) {
         return openat(.empty, path);
     }

@@ -97,10 +97,10 @@ public:
     // Tracks the connection type for both the upgrade client and the connected websocket.
     // This replaces separate m_isSecure and m_proxyIsHTTPS bools.
     enum class ConnectionType : uint8_t {
-        Plain,      // ws:// direct connection
-        TLS,        // wss:// direct connection
+        Plain, // ws:// direct connection
+        TLS, // wss:// direct connection
         ProxyPlain, // ws:// or wss:// through HTTP proxy (plain socket to proxy)
-        ProxyTLS    // ws:// or wss:// through HTTPS proxy (TLS socket to proxy)
+        ProxyTLS // ws:// or wss:// through HTTPS proxy (TLS socket to proxy)
     };
 
     ExceptionOr<void> connect(const String& url);

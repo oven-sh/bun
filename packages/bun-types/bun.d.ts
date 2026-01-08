@@ -821,6 +821,8 @@ declare module "bun" {
        * Must be a valid Unix permission mode (0 to 0o777 / 511 in decimal).
        * If omitted, defaults to the system default based on umask (typically 0o644).
        *
+       * @throws {RangeError} If the mode is outside the valid range (0 to 0o777).
+       *
        * @example
        * ```ts
        * await Bun.write(Bun.file("./secret.txt"), Bun.file("./source.txt"), { mode: 0o600 });
@@ -865,6 +867,8 @@ declare module "bun" {
        *
        * Must be a valid Unix permission mode (0 to 0o777 / 511 in decimal).
        * If omitted, defaults to the system default based on umask (typically 0o644).
+       *
+       * @throws {RangeError} If the mode is outside the valid range (0 to 0o777).
        *
        * @example
        * ```ts

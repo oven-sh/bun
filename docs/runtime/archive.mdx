@@ -61,6 +61,9 @@ File contents can be:
 - **ArrayBuffers** - Raw binary data
 
 ```ts
+const data = "binary data";
+const arrayBuffer = new ArrayBuffer(8);
+
 const archive = Bun.Archive.from({
   "text.txt": "Plain text",
   "blob.bin": new Blob([data]),
@@ -81,6 +84,7 @@ await Bun.Archive.write("output.tar", {
 });
 
 // Write gzipped tar
+const files = { "src/index.ts": "console.log('Hello');" };
 await Bun.Archive.write("output.tar.gz", files, "gzip");
 ```
 
@@ -89,6 +93,7 @@ await Bun.Archive.write("output.tar.gz", files, "gzip");
 Get the archive data as bytes or a Blob:
 
 ```ts
+const files = { "hello.txt": "Hello, World!" };
 const archive = Bun.Archive.from(files);
 
 // As Uint8Array
@@ -123,7 +128,8 @@ const archive = Bun.Archive.from(await response.blob());
 Use `.extract()` to write all files to a directory:
 
 ```ts
-const archive = Bun.Archive.from(tarballBytes);
+const tarball = await Bun.file("package.tar.gz").bytes();
+const archive = Bun.Archive.from(tarball);
 const count = await archive.extract("./extracted");
 console.log(`Extracted ${count} files`);
 ```
@@ -137,7 +143,8 @@ The target directory is created automatically if it doesn't exist. Existing file
 Use `.files()` to get archive contents as a `Map` of `File` objects without extracting to disk:
 
 ```ts
-const archive = Bun.Archive.from(tarballBytes);
+const tarball = await Bun.file("package.tar.gz").bytes();
+const archive = Bun.Archive.from(tarball);
 const files = await archive.files();
 
 for (const [path, file] of files) {
@@ -182,9 +189,11 @@ Bun.Archive supports gzip compression for both reading and writing:
 
 ```ts
 // Reading: automatically detects gzip
+const gzippedTarball = await Bun.file("archive.tar.gz").bytes();
 const archive = Bun.Archive.from(gzippedTarball);
 
 // Writing: specify compression
+const files = { "hello.txt": "Hello, World!" };
 await Bun.Archive.write("output.tar.gz", files, "gzip");
 
 // Getting bytes: specify compression
@@ -270,6 +279,14 @@ await Bun.Archive.write("my-project.tar.gz", archive, "gzip");
 ## Reference
 
 ```ts
+type ArchiveCompression = "gzip" | boolean;
+
+type ArchiveInput =
+  | Record<string, string | Blob | ArrayBufferView | ArrayBufferLike>
+  | Blob
+  | ArrayBufferView
+  | ArrayBufferLike;
+
 class Archive {
   /**
    * Create an Archive from input data
@@ -279,7 +296,11 @@ class Archive {
   /**
    * Write an archive directly to disk
    */
-  static write(path: string, data: ArchiveInput, compress?: "gzip" | boolean): Promise<void>;
+  static write(
+    path: string,
+    data: ArchiveInput | Archive,
+    compress?: ArchiveCompression
+  ): Promise<void>;
 
   /**
    * Extract archive to a directory
@@ -290,12 +311,12 @@ class Archive {
   /**
    * Get archive as a Blob
    */
-  blob(compress?: "gzip" | boolean): Promise<Blob>;
+  blob(compress?: ArchiveCompression): Promise<Blob>;
 
   /**
    * Get archive as a Uint8Array
    */
-  bytes(compress?: "gzip" | boolean): Promise<Uint8Array>;
+  bytes(compress?: ArchiveCompression): Promise<Uint8Array<ArrayBuffer>>;
 
   /**
    * Get archive contents as File objects
@@ -303,10 +324,4 @@ class Archive {
    */
   files(glob?: string): Promise<Map<string, File>>;
 }
-
-type ArchiveInput =
-  | Record<string, string | Blob | ArrayBufferView | ArrayBuffer>
-  | Blob
-  | ArrayBufferView
-  | ArrayBuffer;
 ```

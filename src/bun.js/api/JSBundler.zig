@@ -1750,7 +1750,7 @@ pub const BuildArtifact = struct {
         return ZigString.init(out).toJS(globalThis);
     }
 
-    pub fn getSize(this: *BuildArtifact, globalObject: *jsc.JSGlobalObject) JSValue {
+    pub fn getSize(this: *BuildArtifact, globalObject: *jsc.JSGlobalObject) bun.JSError!JSValue {
         return @call(bun.callmod_inline, Blob.getSize, .{ &this.blob, globalObject });
     }
 

@@ -160,6 +160,42 @@ Each `File` object includes:
 - `lastModified` - Modification timestamp
 - Standard `Blob` methods: `text()`, `arrayBuffer()`, `stream()`, etc.
 
+### Error Handling
+
+Archive operations can fail due to corrupted data, I/O errors, or invalid paths. Use try/catch to handle these cases:
+
+```ts
+try {
+  const tarball = await Bun.file("package.tar.gz").bytes();
+  const archive = Bun.Archive.from(tarball);
+  const count = await archive.extract("./output");
+  console.log(`Extracted ${count} files`);
+} catch (error) {
+  if (error.code === "EACCES") {
+    console.error("Permission denied");
+  } else if (error.code === "ENOSPC") {
+    console.error("Disk full");
+  } else {
+    console.error("Archive error:", error.message);
+  }
+}
+```
+
+Common error scenarios:
+- **Corrupted/truncated archives** - `Archive.from()` throws when data is invalid
+- **Permission denied** - `extract()` throws if the target directory is not writable
+- **Disk full** - `extract()` throws if there's insufficient space
+- **Invalid paths** - Operations throw for malformed file paths
+
+When using `files()` with a glob pattern, an empty `Map` is returned if no files match:
+
+```ts
+const matches = await archive.files("*.nonexistent");
+if (matches.size === 0) {
+  console.log("No matching files found");
+}
+```
+
 ### Filtering with Glob Patterns
 
 Pass a glob pattern to filter which files are returned:

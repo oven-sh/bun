@@ -92,4 +92,19 @@ JSC::JSValue getIfPropertyExistsPrototypePollutionMitigation(JSC::VM& vm, JSC::J
     return value;
 }
 
+JSC::JSValue getOwnPropertyIfExists(JSC::JSGlobalObject* globalObject, JSC::JSObject* object, const JSC::PropertyName& name)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PropertySlot slot(object, PropertySlot::InternalMethodType::GetOwnProperty, nullptr);
+    if (!object->methodTable()->getOwnPropertySlot(object, globalObject, name, slot)) {
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSC::jsUndefined();
+    }
+    RETURN_IF_EXCEPTION(scope, {});
+    JSValue value = slot.getValue(globalObject, name);
+    RETURN_IF_EXCEPTION(scope, {});
+    return value;
+}
+
 }

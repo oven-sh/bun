@@ -3293,8 +3293,7 @@ static JSC::JSInternalPromise* rejectedInternalPromise(JSC::JSGlobalObject* glob
 {
     auto& vm = JSC::getVM(globalObject);
     JSInternalPromise* promise = JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
-    promise->internalField(JSC::JSPromise::Field::ReactionsOrResult).set(vm, promise, value);
-    promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, jsNumber(promise->internalField(JSC::JSPromise::Field::Flags).get().asUInt32AsAnyInt() | JSC::JSPromise::isFirstResolvingFunctionCalledFlag | static_cast<unsigned>(JSC::JSPromise::Status::Rejected)));
+    promise->rejectAsHandled(vm, globalObject, value);
     return promise;
 }
 

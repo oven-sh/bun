@@ -1128,6 +1128,7 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
     ...process.env,
     PATH: path,
     TMPDIR: tmpdirPath,
+    BUN_TMPDIR: tmpdirPath,
     USER: username,
     HOME: homedir,
     SHELL: shellPath,

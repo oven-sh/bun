@@ -902,8 +902,7 @@ fn writeFileWithEmptySourceToDestination(ctx: *jsc.JSGlobalObject, destination_b
                         // SAFETY: we check if `file.pathlike` is an fd or
                         // not above, returning if it is.
                         var buf: bun.PathBuffer = undefined;
-                        // TODO: respect `options.mode`
-                        const mode: bun.Mode = jsc.Node.fs.default_permission;
+                        const mode: bun.Mode = options.mode orelse jsc.Node.fs.default_permission;
                         while (true) {
                             const open_res = bun.sys.open(file.pathlike.path.sliceZ(&buf), bun.O.CREAT | bun.O.TRUNC, mode);
                             switch (open_res) {
@@ -972,6 +971,7 @@ fn writeFileWithEmptySourceToDestination(ctx: *jsc.JSGlobalObject, destination_b
                 aws_options.acl,
                 proxy_url,
                 aws_options.storage_class,
+                aws_options.request_payer,
                 Wrapper.resolve,
                 Wrapper.new(.{
                     .promise = promise,
@@ -1054,6 +1054,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
                 ctx.bunVM().eventLoop(),
                 options.mkdirp_if_not_exists orelse true,
                 destination_blob.size,
+                options.mode,
             );
         }
         var file_copier = copy_file.CopyFile.create(
@@ -1064,6 +1065,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
             destination_blob.size,
             ctx,
             options.mkdirp_if_not_exists orelse true,
+            options.mode,
         );
         file_copier.schedule();
         return file_copier.promise.value();
@@ -1119,6 +1121,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
                             destination_blob.contentTypeOrMimeType(),
                             aws_options.content_disposition,
                             proxy_url,
+                            aws_options.request_payer,
                             null,
                             undefined,
                         );
@@ -1160,6 +1163,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
                         aws_options.acl,
                         proxy_url,
                         aws_options.storage_class,
+                        aws_options.request_payer,
                         Wrapper.resolve,
                         Wrapper.new(.{
                             .store = source_store,
@@ -1188,6 +1192,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
                         destination_blob.contentTypeOrMimeType(),
                         aws_options.content_disposition,
                         proxy_url,
+                        aws_options.request_payer,
                         null,
                         undefined,
                     );
@@ -1204,6 +1209,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
 const WriteFileOptions = struct {
     mkdirp_if_not_exists: ?bool = null,
     extra_options: ?JSValue = null,
+    mode: ?bun.Mode = null,
 };
 
 /// ## Errors
@@ -1393,6 +1399,7 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                                 destination_blob.contentTypeOrMimeType(),
                                 aws_options.content_disposition,
                                 proxy_url,
+                                aws_options.request_payer,
                                 null,
                                 undefined,
                             );
@@ -1454,6 +1461,7 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                                 destination_blob.contentTypeOrMimeType(),
                                 aws_options.content_disposition,
                                 proxy_url,
+                                aws_options.request_payer,
                                 null,
                                 undefined,
                             );
@@ -1530,6 +1538,7 @@ pub fn writeFile(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun
         return globalThis.throwInvalidArguments("Bun.write(pathOrFdOrBlob, blob) expects a Blob-y thing to write", .{});
     };
     var mkdirp_if_not_exists: ?bool = null;
+    var mode: ?bun.Mode = null;
     const options = args.nextEat();
     if (options) |options_object| {
         if (options_object.isObject()) {
@@ -1539,6 +1548,18 @@ pub fn writeFile(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun
                 }
                 mkdirp_if_not_exists = create_directory.toBoolean();
             }
+            if (try options_object.get(globalThis, "mode")) |mode_value| {
+                if (!mode_value.isEmptyOrUndefinedOrNull()) {
+                    if (!mode_value.isNumber()) {
+                        return globalThis.throwInvalidArgumentType("write", "options.mode", "number");
+                    }
+                    const mode_int = mode_value.toInt64();
+                    if (mode_int < 0 or mode_int > 0o777) {
+                        return globalThis.throwRangeError(mode_int, .{ .field_name = "mode", .min = 0, .max = 0o777 });
+                    }
+                    mode = @intCast(mode_int);
+                }
+            }
         } else if (!options_object.isEmptyOrUndefinedOrNull()) {
             return globalThis.throwInvalidArgumentType("write", "options", "object");
         }
@@ -1546,6 +1567,7 @@ pub fn writeFile(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun
     return writeFileInternal(globalThis, &path_or_blob, data, .{
         .mkdirp_if_not_exists = mkdirp_if_not_exists,
         .extra_options = options,
+        .mode = mode,
     });
 }
 
@@ -2227,16 +2249,17 @@ const S3BlobDownloadTask = struct {
         const path = this.blob.store.?.data.s3.path();
 
         this.poll_ref.ref(globalThis.bunVM());
+        const s3_store = &this.blob.store.?.data.s3;
         if (blob.offset > 0) {
             const len: ?usize = if (blob.size != Blob.max_size) @intCast(blob.size) else null;
             const offset: usize = @intCast(blob.offset);
-            try S3.downloadSlice(credentials, path, offset, len, @ptrCast(&S3BlobDownloadTask.onS3DownloadResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
+            try S3.downloadSlice(credentials, path, offset, len, @ptrCast(&S3BlobDownloadTask.onS3DownloadResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null, s3_store.request_payer);
         } else if (blob.size == Blob.max_size) {
-            try S3.download(credentials, path, @ptrCast(&S3BlobDownloadTask.onS3DownloadResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
+            try S3.download(credentials, path, @ptrCast(&S3BlobDownloadTask.onS3DownloadResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null, s3_store.request_payer);
         } else {
             const len: usize = @intCast(blob.size);
             const offset: usize = @intCast(blob.offset);
-            try S3.downloadSlice(credentials, path, offset, len, @ptrCast(&S3BlobDownloadTask.onS3DownloadResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null);
+            try S3.downloadSlice(credentials, path, offset, len, @ptrCast(&S3BlobDownloadTask.onS3DownloadResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null, s3_store.request_payer);
         }
         return promise;
     }
@@ -2410,6 +2433,7 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, re
             this.contentTypeOrMimeType(),
             aws_options.content_disposition,
             proxy_url,
+            aws_options.request_payer,
             null,
             undefined,
         );
@@ -2654,6 +2678,7 @@ pub fn getWriter(
                     if (content_disposition_str) |cd| cd.slice() else null,
                     proxy_url,
                     credentialsWithOptions.storage_class,
+                    credentialsWithOptions.request_payer,
                 );
             }
         }
@@ -2666,6 +2691,7 @@ pub fn getWriter(
             null,
             proxy_url,
             null,
+            s3.request_payer,
         );
     }
 

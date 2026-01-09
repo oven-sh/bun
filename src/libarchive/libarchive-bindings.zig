@@ -1351,3 +1351,77 @@ const mode_t = bun.Mode;
 
 const FILE = @import("std").c.FILE;
 const dev_t = @import("std").c.dev_t;
+
+/// Growing memory buffer for archive writes with libarchive callbacks
+pub const GrowingBuffer = struct {
+    buffer: []u8 = &.{},
+    used: usize = 0,
+    allocator: std.mem.Allocator,
+    had_error: bool = false,
+
+    pub fn init(allocator: std.mem.Allocator) GrowingBuffer {
+        return .{ .allocator = allocator };
+    }
+
+    pub fn deinit(self: *GrowingBuffer) void {
+        if (self.buffer.len > 0) {
+            self.allocator.free(self.buffer);
+            self.buffer = &.{};
+        }
+    }
+
+    pub fn toOwnedSlice(self: *GrowingBuffer) error{OutOfMemory}![]u8 {
+        if (self.had_error) return error.OutOfMemory;
+        if (self.used == 0) {
+            self.deinit();
+            return &.{};
+        }
+        const result = self.allocator.realloc(self.buffer, self.used) catch self.buffer[0..self.used];
+        self.buffer = &.{};
+        self.used = 0;
+        return result;
+    }
+
+    fn ensureCapacity(self: *GrowingBuffer, needed: usize) bool {
+        if (self.used + needed <= self.buffer.len) return true;
+        const new_capacity = @max(self.buffer.len * 2, self.used + needed, 64 * 1024);
+        if (self.buffer.len == 0) {
+            self.buffer = self.allocator.alloc(u8, new_capacity) catch {
+                self.had_error = true;
+                return false;
+            };
+        } else {
+            self.buffer = self.allocator.realloc(self.buffer, new_capacity) catch {
+                self.had_error = true;
+                return false;
+            };
+        }
+        return true;
+    }
+
+    fn write(self: *GrowingBuffer, data: []const u8) bool {
+        if (!self.ensureCapacity(data.len)) return false;
+        @memcpy(self.buffer[self.used..][0..data.len], data);
+        self.used += data.len;
+        return true;
+    }
+
+    pub fn openCallback(_: *struct_archive, client_data: *anyopaque) callconv(.c) c_int {
+        const self: *GrowingBuffer = @ptrCast(@alignCast(client_data));
+        self.used = 0;
+        self.had_error = false;
+        return 0;
+    }
+
+    pub fn writeCallback(_: *struct_archive, client_data: *anyopaque, buff: ?*const anyopaque, length: usize) callconv(.c) la_ssize_t {
+        const self: *GrowingBuffer = @ptrCast(@alignCast(client_data));
+        if (buff == null or length == 0) return 0;
+        const data: [*]const u8 = @ptrCast(buff.?);
+        if (!self.write(data[0..length])) return -1;
+        return @intCast(length);
+    }
+
+    pub fn closeCallback(_: *struct_archive, _: *anyopaque) callconv(.c) c_int {
+        return 0;
+    }
+};

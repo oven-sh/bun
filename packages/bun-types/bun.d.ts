@@ -3290,16 +3290,29 @@ declare module "bun" {
 
   type WebSocketOptionsTLS = {
     /**
-     * Options for the TLS connection
+     * Options for the TLS connection.
+     *
+     * Supports full TLS configuration including custom CA certificates,
+     * client certificates, and other TLS settings (same as fetch).
+     *
+     * @example
+     * ```ts
+     * // Using BunFile for certificates
+     * const ws = new WebSocket("wss://example.com", {
+     *   tls: {
+     *     ca: Bun.file("./ca.pem")
+     *   }
+     * });
+     *
+     * // Using Buffer
+     * const ws = new WebSocket("wss://example.com", {
+     *   tls: {
+     *     ca: fs.readFileSync("./ca.pem")
+     *   }
+     * });
+     * ```
      */
-    tls?: {
-      /**
-       * Whether to reject the connection if the certificate is not valid
-       *
-       * @default true
-       */
-      rejectUnauthorized?: boolean;
-    };
+    tls?: TLSOptions;
   };
 
   type WebSocketOptionsHeaders = {
@@ -3309,10 +3322,57 @@ declare module "bun" {
     headers?: import("node:http").OutgoingHttpHeaders;
   };
 
+  type WebSocketOptionsProxy = {
+    /**
+     * HTTP proxy to use for the WebSocket connection.
+     *
+     * Can be a string URL or an object with `url` and optional `headers`.
+     *
+     * @example
+     * ```ts
+     * // String format
+     * const ws = new WebSocket("wss://example.com", {
+     *   proxy: "http://proxy.example.com:8080"
+     * });
+     *
+     * // With credentials
+     * const ws = new WebSocket("wss://example.com", {
+     *   proxy: "http://user:pass@proxy.example.com:8080"
+     * });
+     *
+     * // Object format with custom headers
+     * const ws = new WebSocket("wss://example.com", {
+     *   proxy: {
+     *     url: "http://proxy.example.com:8080",
+     *     headers: {
+     *       "Proxy-Authorization": "Bearer token"
+     *     }
+     *   }
+     * });
+     * ```
+     */
+    proxy?:
+      | string
+      | {
+          /**
+           * The proxy URL (http:// or https://)
+           */
+          url: string;
+          /**
+           * Custom headers to send to the proxy server.
+           * Supports plain objects or Headers class instances.
+           */
+          headers?: import("node:http").OutgoingHttpHeaders | Headers;
+        };
+  };
+
   /**
    * Constructor options for the `Bun.WebSocket` client
    */
-  type WebSocketOptions = WebSocketOptionsProtocolsOrProtocol & WebSocketOptionsTLS & WebSocketOptionsHeaders;
+  type WebSocketOptions = WebSocketOptionsProtocolsOrProtocol &
+    WebSocketOptionsTLS &
+    WebSocketOptionsHeaders &
+    WebSocketOptionsProxy;
 
   interface WebSocketEventMap {
     close: CloseEvent;

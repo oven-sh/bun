@@ -797,7 +797,7 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             expect(typeof settings.maxHeaderSize).toBe("number");
           };
           const { promise, resolve, reject } = Promise.withResolvers();
-          const client = http2.connect("https://www.example.com");
+          const client = http2.connect(HTTPS_SERVER, TLS_OPTIONS);
           client.on("error", reject);
           expect(client.connecting).toBeTrue();
           expect(client.alpnProtocol).toBeUndefined();
@@ -816,12 +816,11 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
           expect(req.pending).toBeFalse();
           expect(typeof req.id).toBe("number");
           expect(req.session).toBeDefined();
-          expect(req.sentHeaders).toEqual({
-            ":authority": "www.example.com",
-            ":method": "GET",
-            ":path": "/",
-            ":scheme": "https",
-          });
+          // Check that sent headers have correct structure
+          expect(req.sentHeaders[":method"]).toBe("GET");
+          expect(req.sentHeaders[":path"]).toBe("/");
+          expect(req.sentHeaders[":scheme"]).toBe("https");
+          expect(typeof req.sentHeaders[":authority"]).toBe("string");
           expect(req.sentTrailers).toBeUndefined();
           expect(req.sentInfoHeaders.length).toBe(0);
           expect(req.scheme).toBe("https");

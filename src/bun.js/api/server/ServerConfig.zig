@@ -34,6 +34,7 @@ sni: ?bun.BabyList(SSLConfig) = null,
 max_request_body_size: usize = 1024 * 1024 * 128,
 development: DevelopmentOption = .development,
 broadcast_console_log_from_browser_to_server_for_bake: bool = false,
+enable_uncaught_exception_reporting_from_browser_to_terminal_for_bake: bool = true,
 
 /// Enable automatic workspace folders for Chrome DevTools
 /// https://chromium.googlesource.com/devtools/devtools-frontend/+/main/docs/ecosystem/automatic_workspace_folders.md
@@ -469,6 +470,7 @@ pub fn fromJS(
 
                 if (try dev.getBooleanStrict(global, "console")) |console| {
                     args.broadcast_console_log_from_browser_to_server_for_bake = console;
+                    args.enable_uncaught_exception_reporting_from_browser_to_terminal_for_bake = console;
                 }
 
                 if (try dev.getBooleanStrict(global, "chromeDevToolsAutomaticWorkspaceFolders")) |enable_chrome_devtools_automatic_workspace_folders| {

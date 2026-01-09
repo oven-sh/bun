@@ -238,17 +238,17 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
             pub fn start(_: *@This()) void {}
         };
 
-        pub fn memoryCost(this: *ThisSink) callconv(.C) usize {
+        pub fn memoryCost(this: *ThisSink) callconv(.c) usize {
             return @sizeOf(ThisSink) + SinkType.memoryCost(&this.sink);
         }
 
-        const AssignToStreamFn = *const fn (*JSGlobalObject, JSValue, *anyopaque, **anyopaque) callconv(.C) JSValue;
-        const OnCloseFn = *const fn (JSValue, JSValue) callconv(.C) void;
-        const OnReadyFn = *const fn (JSValue, JSValue, JSValue) callconv(.C) void;
-        const OnStartFn = *const fn (JSValue, *JSGlobalObject) callconv(.C) void;
-        const CreateObjectFn = *const fn (*JSGlobalObject, *anyopaque, usize) callconv(.C) JSValue;
-        const SetDestroyCallbackFn = *const fn (JSValue, usize) callconv(.C) void;
-        const DetachPtrFn = *const fn (JSValue) callconv(.C) void;
+        const AssignToStreamFn = *const fn (*JSGlobalObject, JSValue, *anyopaque, **anyopaque) callconv(.c) JSValue;
+        const OnCloseFn = *const fn (JSValue, JSValue) callconv(.c) void;
+        const OnReadyFn = *const fn (JSValue, JSValue, JSValue) callconv(.c) void;
+        const OnStartFn = *const fn (JSValue, *JSGlobalObject) callconv(.c) void;
+        const CreateObjectFn = *const fn (*JSGlobalObject, *anyopaque, usize) callconv(.c) JSValue;
+        const SetDestroyCallbackFn = *const fn (JSValue, usize) callconv(.c) void;
+        const DetachPtrFn = *const fn (JSValue) callconv(.c) void;
 
         const assignToStreamExtern = @extern(AssignToStreamFn, .{ .name = abi_name ++ "__assignToStream" });
         const onCloseExtern = @extern(OnCloseFn, .{ .name = abi_name ++ "__onClose" }).*;
@@ -311,7 +311,7 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
             return createObject(globalThis, this, 0);
         }
 
-        pub fn finalize(ptr: *anyopaque) callconv(.C) void {
+        pub fn finalize(ptr: *anyopaque) callconv(.c) void {
             var this = @as(*ThisSink, @ptrCast(@alignCast(ptr)));
 
             this.sink.finalize();
@@ -340,7 +340,7 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
             _,
         };
         const fromJSExtern = @extern(
-            *const fn (value: JSValue) callconv(.C) FromJSResult,
+            *const fn (value: JSValue) callconv(.c) FromJSResult,
             .{ .name = abi_name ++ "__fromJS" },
         );
 
@@ -465,7 +465,7 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
             return this.sink.writeLatin1(.{ .temporary = view.slice() }).toJS(globalThis);
         }
 
-        pub fn close(globalThis: *JSGlobalObject, sink_ptr: ?*anyopaque) callconv(.C) JSValue {
+        pub fn close(globalThis: *JSGlobalObject, sink_ptr: ?*anyopaque) callconv(.c) JSValue {
             jsc.markBinding(@src());
             const this: *ThisSink = @ptrCast(@alignCast(sink_ptr orelse return .js_undefined));
 
@@ -550,15 +550,17 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
                 }
             }
 
-            defer {
-                if (comptime @hasField(SinkType, "done")) {
-                    if (this.sink.done) {
-                        callframe.this().unprotect();
-                    }
+            const result = this.sink.endFromJS(globalThis).toJS(globalThis);
+
+            // Protect the JS wrapper from GC while an async operation is pending.
+            // This prevents the JS wrapper from being collected before the Promise resolves.
+            if (comptime @hasDecl(SinkType, "protectJSWrapper")) {
+                if (this.sink.pending.state == .pending) {
+                    this.sink.protectJSWrapper(globalThis, callframe.this());
                 }
             }
 
-            return this.sink.endFromJS(globalThis).toJS(globalThis);
+            return result;
         }
 
         pub fn endWithSink(ptr: *anyopaque, globalThis: *JSGlobalObject) callconv(jsc.conv) JSValue {
@@ -575,7 +577,7 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
             return this.sink.endFromJS(globalThis).toJS(globalThis) catch .zero; // TODO: properly propagate exception upwards
         }
 
-        pub fn updateRef(ptr: *anyopaque, value: bool) callconv(.C) void {
+        pub fn updateRef(ptr: *anyopaque, value: bool) callconv(.c) void {
             jsc.markBinding(@src());
             var this = bun.cast(*ThisSink, ptr);
             if (comptime @hasDecl(SinkType, "updateRef"))
@@ -588,7 +590,7 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
         const jsEnd = jsc.toJSHostFn(@This().end);
         const jsConstruct = jsc.toJSHostFn(construct);
 
-        fn jsGetInternalFd(ptr: *anyopaque) callconv(.C) JSValue {
+        fn jsGetInternalFd(ptr: *anyopaque) callconv(.c) JSValue {
             var this = bun.cast(*ThisSink, ptr);
             if (comptime @hasDecl(SinkType, "getFd")) {
                 return JSValue.jsNumber(this.sink.getFd());
@@ -623,7 +625,7 @@ pub const DestructorPtr = bun.TaggedPointerUnion(.{
 pub export fn Bun__onSinkDestroyed(
     ptr_value: ?*anyopaque,
     sink_ptr: ?*anyopaque,
-) callconv(.C) void {
+) callconv(.c) void {
     _ = sink_ptr; // autofix
     const ptr = DestructorPtr.from(ptr_value);
 

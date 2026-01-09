@@ -95,7 +95,11 @@ public:
     CommonAbortReason commonReason() const { return m_commonReason; }
 
     void cleanNativeBindings(void* ref);
-    void addNativeCallback(NativeCallbackTuple callback) { m_native_callbacks.append(callback); }
+    void addNativeCallback(NativeCallbackTuple callback)
+    {
+        m_native_callbacks.append(callback);
+        eventListenersDidChange();
+    }
 
     bool hasActiveTimeoutTimer() const { return m_timeout != nullptr; }
     bool hasAbortEventListener() const { return m_flags & static_cast<uint8_t>(AbortSignalFlags::HasAbortEventListener); }
@@ -123,6 +127,8 @@ public:
     bool isDependent() const { return m_flags & static_cast<uint8_t>(AbortSignalFlags::Dependent); }
 
     size_t memoryCost() const;
+
+    AbortSignalTimeout getTimeout() const { return m_timeout; }
 
 private:
     enum class Aborted : bool {

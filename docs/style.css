@@ -91,6 +91,7 @@ html.dark .shiki span {
 footer#footer a[href*="mintlify.com"] {
   display: none;
 }
+
 .nav-tabs {
   width: 100% !important;
 }
@@ -144,25 +145,29 @@ html.dark .code-block + .code-block[language="text"] div[data-component-part="co
   border-bottom-left-radius: 0px;
 }
 
-.code-block[language="shellscript"] code span.line:not(:empty):has(span)::before {
+div.callout .code-block {
+  margin-bottom: 0px;
+}
+
+[language="shellscript"] code span.line:not(:empty):has(span)::before {
   content: "$ ";
   color: #6272a4;
   user-select: none;
 }
 
-.code-block[language="shellscript"] code span.line:has(> span:first-child[style*="color: rgb(98, 114, 164)"])::before,
-.code-block[language="shellscript"] code span.line:has(> span:first-child[style*="#6272A4"])::before {
+[language="shellscript"] code span.line:has(> span:first-child[style*="color: rgb(98, 114, 164)"])::before,
+[language="shellscript"] code span.line:has(> span:first-child[style*="#6272A4"])::before {
   content: "";
 }
 
-.code-block[language="powershell"] code span.line:not(:empty):has(span)::before {
+[language="powershell"] code span.line:not(:empty):has(span)::before {
   content: "> ";
   color: #6272a4;
   user-select: none;
 }
 
-.code-block[language="powershell"] code span.line:has(> span:first-child[style*="color: rgb(98, 114, 164)"])::before,
-.code-block[language="powershell"] code span.line:has(> span:first-child[style*="#6272A4"])::before {
+[language="powershell"] code span.line:has(> span:first-child[style*="color: rgb(98, 114, 164)"])::before,
+[language="powershell"] code span.line:has(> span:first-child[style*="#6272A4"])::before {
   content: "";
 }
 

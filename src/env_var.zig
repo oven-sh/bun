@@ -97,7 +97,6 @@ pub const JENKINS_URL = New(kind.string, "JENKINS_URL", .{});
 /// `MIMALLOC_VERBOSE`, documented here: https://microsoft.github.io/mimalloc/environment.html
 pub const MI_VERBOSE = New(kind.boolean, "MI_VERBOSE", .{ .default = false });
 pub const NO_COLOR = New(kind.boolean, "NO_COLOR", .{ .default = false });
-pub const NODE = New(kind.string, "NODE", .{});
 pub const NODE_CHANNEL_FD = New(kind.string, "NODE_CHANNEL_FD", .{});
 pub const NODE_PRESERVE_SYMLINKS_MAIN = New(kind.boolean, "NODE_PRESERVE_SYMLINKS_MAIN", .{ .default = false });
 pub const NODE_USE_SYSTEM_CA = New(kind.boolean, "NODE_USE_SYSTEM_CA", .{ .default = false });
@@ -110,11 +109,11 @@ pub const SHELL = PlatformSpecificNew(kind.string, "SHELL", null, .{});
 /// C:\Windows, for example.
 /// Note: Do not use this variable directly -- use os.zig's implementation instead.
 pub const SYSTEMROOT = PlatformSpecificNew(kind.string, null, "SYSTEMROOT", .{});
-pub const TEMP = PlatformSpecificNew(kind.string, null, "TEMP", .{});
+pub const TEMP = PlatformSpecificNew(kind.string, "TEMP", "TEMP", .{});
 pub const TERM = New(kind.string, "TERM", .{});
 pub const TERM_PROGRAM = New(kind.string, "TERM_PROGRAM", .{});
-pub const TMP = PlatformSpecificNew(kind.string, null, "TMP", .{});
-pub const TMPDIR = PlatformSpecificNew(kind.string, "TMPDIR", null, .{});
+pub const TMP = PlatformSpecificNew(kind.string, "TMP", "TMP", .{});
+pub const TMPDIR = PlatformSpecificNew(kind.string, "TMPDIR", "TMPDIR", .{});
 pub const TMUX = New(kind.string, "TMUX", .{});
 pub const TODIUM = New(kind.string, "TODIUM", .{});
 pub const USER = PlatformSpecificNew(kind.string, "USER", "USERNAME", .{});
@@ -599,6 +598,16 @@ fn PlatformSpecificNew(
                 return windows_key;
             }
 
+            return null;
+        }
+
+        pub fn getNotEmpty() ReturnType {
+            if (Self.get()) |v| {
+                if (v.len == 0) {
+                    return null;
+                }
+                return v;
+            }
             return null;
         }
 

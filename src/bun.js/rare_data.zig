@@ -42,6 +42,8 @@ valkey_context: ValkeyContext = .{},
 
 tls_default_ciphers: ?[:0]const u8 = null,
 
+#spawn_sync_event_loop: bun.ptr.Owned(?*SpawnSyncEventLoop) = .initNull(),
+
 const PipeReadBuffer = [256 * 1024]u8;
 const DIGESTED_HMAC_256_LEN = 32;
 pub const AWSSignatureCache = struct {
@@ -293,7 +295,7 @@ pub const CleanupHook = struct {
         };
     }
 
-    pub const Function = *const fn (?*anyopaque) callconv(.C) void;
+    pub const Function = *const fn (?*anyopaque) callconv(.c) void;
 };
 
 pub fn pushCleanupHook(
@@ -485,6 +487,7 @@ pub fn s3DefaultClient(rare: *RareData, globalThis: *jsc.JSGlobalObject) jsc.JSV
             null,
             null,
             null,
+            false,
             globalThis,
         ) catch |err| switch (err) {
             error.OutOfMemory => bun.outOfMemory(),
@@ -537,6 +540,7 @@ pub fn deinit(this: *RareData) void {
         bun.default_allocator.destroy(pipe);
     }
 
+    this.#spawn_sync_event_loop.deinit();
     this.aws_signature_cache.deinit();
 
     this.s3_default_client.deinit();
@@ -566,6 +570,17 @@ pub fn websocketDeflate(this: *RareData) *WebSocketDeflate.RareData {
     return this.websocket_deflate orelse brk: {
         this.websocket_deflate = bun.new(WebSocketDeflate.RareData, .{});
         break :brk this.websocket_deflate.?;
+    };
+}
+
+pub const SpawnSyncEventLoop = @import("./event_loop/SpawnSyncEventLoop.zig");
+
+pub fn spawnSyncEventLoop(this: *RareData, vm: *jsc.VirtualMachine) *SpawnSyncEventLoop {
+    return this.#spawn_sync_event_loop.get() orelse brk: {
+        this.#spawn_sync_event_loop = .new(undefined);
+        const ptr: *SpawnSyncEventLoop = this.#spawn_sync_event_loop.get().?;
+        ptr.init(vm);
+        break :brk ptr;
     };
 }
 

@@ -22,7 +22,7 @@ pub fn buntaghashbuf_make(buf: *BuntagHashBuf, patch_hash: u64) [:0]u8 {
 pub const StorePathFormatter = struct {
     str: string,
 
-    pub fn format(this: StorePathFormatter, comptime _: string, _: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
+    pub fn format(this: StorePathFormatter, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         // if (!this.opts.replace_slashes) {
         //     try writer.writeAll(this.str);
         //     return;
@@ -213,7 +213,7 @@ pub const ExtractData = struct {
 
 pub const DependencyInstallContext = struct {
     tree_id: Lockfile.Tree.Id = 0,
-    path: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
+    path: std.array_list.Managed(u8) = std.array_list.Managed(u8).init(bun.default_allocator),
     dependency_id: DependencyID,
 };
 

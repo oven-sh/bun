@@ -24,4 +24,11 @@ ALWAYS_INLINE JSC::JSValue getIfPropertyExistsPrototypePollutionMitigation(JSC::
     return getIfPropertyExistsPrototypePollutionMitigation(JSC::getVM(globalObject), globalObject, object, name);
 }
 
+/**
+ * Gets an own property only (no prototype chain lookup).
+ * Returns jsUndefined() if property doesn't exist as own property.
+ * This is the strictest form of property access - use for security-critical options.
+ */
+JSC::JSValue getOwnPropertyIfExists(JSC::JSGlobalObject* globalObject, JSC::JSObject* object, const JSC::PropertyName& name);
+
 }

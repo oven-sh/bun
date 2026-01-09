@@ -140,4 +140,19 @@ describe("IOWriter file output redirection", () => {
       .fileEquals("pipe_output.txt", "pipe test\n")
       .runAsTest("pipe with file redirection");
   });
+
+  describe("&> redirect (stdout and stderr to same file)", () => {
+    // This test verifies the fix for the bug where using &> with a builtin
+    // command caused the same file descriptor to be closed twice, resulting
+    // in an EBADF error. The issue was that two separate IOWriter instances
+    // were created for the same fd when both stdout and stderr were redirected.
+    TestBuilder.command`pwd &> pwd_output.txt`.exitCode(0).runAsTest("builtin pwd with &> redirect");
+
+    TestBuilder.command`echo "hello" &> echo_output.txt`
+      .exitCode(0)
+      .fileEquals("echo_output.txt", "hello\n")
+      .runAsTest("builtin echo with &> redirect");
+
+    TestBuilder.command`pwd &>> append_output.txt`.exitCode(0).runAsTest("builtin pwd with &>> append redirect");
+  });
 });

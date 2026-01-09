@@ -26,7 +26,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
    wget curl git python3 python3-pip ninja-build \
    software-properties-common apt-transport-https \
    ca-certificates gnupg lsb-release unzip \
-   libxml2-dev ruby ruby-dev bison gawk perl make golang \
+   libxml2-dev ruby ruby-dev bison gawk perl make golang ccache \
    && add-apt-repository ppa:ubuntu-toolchain-r/test \
    && apt-get update \
    && apt-get install -y gcc-13 g++-13 libgcc-13-dev libstdc++-13-dev \
@@ -35,7 +35,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
    && wget https://apt.llvm.org/llvm.sh \
    && chmod +x llvm.sh \
    && ./llvm.sh ${LLVM_VERSION} all \
-   && rm llvm.sh
+   && rm llvm.sh \
+   && rm -rf /var/lib/apt/lists/*
 
 
 RUN --mount=type=tmpfs,target=/tmp \
@@ -47,14 +48,6 @@ RUN --mount=type=tmpfs,target=/tmp \
     fi && \
     wget -O /tmp/cmake.sh "$cmake_url" && \
     sh /tmp/cmake.sh --skip-license --prefix=/usr
-
-RUN --mount=type=tmpfs,target=/tmp \
-    sccache_version="0.12.0" && \
-    arch=$(uname -m) && \
-    sccache_url="https://github.com/mozilla/sccache/releases/download/v${sccache_version}/sccache-v${sccache_version}-${arch}-unknown-linux-musl.tar.gz" && \
-    wget -O /tmp/sccache.tar.gz "$sccache_url" && \
-    tar -xzf /tmp/sccache.tar.gz -C /tmp && \
-    install -m755 /tmp/sccache-v${sccache_version}-${arch}-unknown-linux-musl/sccache /usr/local/bin
 
 RUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-13 130 \
    --slave /usr/bin/g++ g++ /usr/bin/g++-13 \
@@ -132,6 +125,18 @@ RUN ARCH=$(if [ "$TARGETARCH" = "arm64" ]; then echo "arm64"; else echo "amd64";
     mv /tmp/buildkite-agent/buildkite-agent /usr/bin/buildkite-agent
 
 RUN mkdir -p /var/cache/buildkite-agent /var/log/buildkite-agent /var/run/buildkite-agent /etc/buildkite-agent /var/lib/buildkite-agent/cache/bun
+
+# The following is necessary to configure buildkite to use a stable
+# checkout directory for ccache to be effective.
+RUN mkdir -p -m 755 /var/lib/buildkite-agent/hooks && \
+    cat <<'EOF' > /var/lib/buildkite-agent/hooks/environment
+#!/bin/sh
+set -efu
+
+export BUILDKITE_BUILD_CHECKOUT_PATH=/var/lib/buildkite-agent/build
+EOF
+
+RUN chmod 744 /var/lib/buildkite-agent/hooks/environment
 
 COPY  ../*/agent.mjs /var/bun/scripts/
 

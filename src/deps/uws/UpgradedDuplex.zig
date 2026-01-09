@@ -270,7 +270,6 @@ pub fn getJSHandlers(this: *UpgradedDuplex, globalThis: *jsc.JSGlobalObject) bun
                 null,
                 0,
                 onReceivedData,
-                false,
                 this,
             );
             dataCallback.ensureStillAlive();
@@ -290,7 +289,6 @@ pub fn getJSHandlers(this: *UpgradedDuplex, globalThis: *jsc.JSGlobalObject) bun
                 null,
                 0,
                 onReceivedData,
-                false,
                 this,
             );
             endCallback.ensureStillAlive();
@@ -310,7 +308,6 @@ pub fn getJSHandlers(this: *UpgradedDuplex, globalThis: *jsc.JSGlobalObject) bun
                 null,
                 0,
                 onWritable,
-                false,
                 this,
             );
             writableCallback.ensureStillAlive();
@@ -329,7 +326,6 @@ pub fn getJSHandlers(this: *UpgradedDuplex, globalThis: *jsc.JSGlobalObject) bun
                 null,
                 0,
                 onCloseJS,
-                false,
                 this,
             );
             closeCallback.ensureStillAlive();
@@ -436,7 +432,7 @@ pub fn setTimeoutInMilliseconds(this: *UpgradedDuplex, ms: c_uint) void {
     }
 
     // reschedule the timer
-    this.event_loop_timer.next = bun.timespec.msFromNow(ms);
+    this.event_loop_timer.next = bun.timespec.msFromNow(.allow_mocked_time, ms);
     this.vm.timer.insert(&this.event_loop_timer);
 }
 pub fn setTimeout(this: *UpgradedDuplex, seconds: c_uint) void {

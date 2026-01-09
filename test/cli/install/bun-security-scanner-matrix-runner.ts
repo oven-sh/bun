@@ -1,4 +1,4 @@
-import { bunEnv, bunExe, runBunInstall, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, runBunInstall, tempDirWithFiles } from "harness";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { isCI } from "../../harness";
@@ -21,15 +21,19 @@ type TestName = ReturnType<typeof getTestName>;
 // don't get totally lost.
 const TESTS_TO_SKIP: Set<string> = new Set<TestName>([
   // https://github.com/oven-sh/bun/issues/22255
-  "0289 (without modules)", "0292 (without modules)", "0295 (without modules)", "0298 (without modules)", "0307 (without modules)", "0310 (without modules)", "0313 (without modules)", "0316 (without modules)", // remove "is-even"
-  "0325 (without modules)", "0328 (without modules)", "0331 (without modules)", "0334 (without modules)", "0343 (without modules)", "0346 (without modules)", "0349 (without modules)", "0352 (without modules)", // remove "left-pad,is-even"
-  "0361 (without modules)", "0364 (without modules)", "0367 (without modules)", "0370 (without modules)", "0379 (without modules)", "0382 (without modules)", "0385 (without modules)", "0388 (without modules)", // uninstall "is-even"
-  "0397 (without modules)", "0400 (without modules)", "0403 (without modules)", "0406 (without modules)", "0415 (without modules)", "0418 (without modules)", "0421 (without modules)", "0424 (without modules)", // uninstall "left-pad,is-even"
+  // remove "is-even"
+  "0481 (without modules)", "0486 (without modules)", "0491 (without modules)", "0496 (without modules)", "0511 (without modules)", "0516 (without modules)", "0521 (without modules)", "0526 (without modules)",
+  // remove "left-pad,is-even"
+  "0541 (without modules)", "0546 (without modules)", "0551 (without modules)", "0556 (without modules)", "0571 (without modules)", "0576 (without modules)", "0581 (without modules)", "0586 (without modules)",
+  // uninstall "is-even"
+  "0601 (without modules)", "0606 (without modules)", "0611 (without modules)", "0616 (without modules)", "0631 (without modules)", "0636 (without modules)", "0641 (without modules)", "0646 (without modules)",
+  // uninstall "left-pad,is-even"
+  "0661 (without modules)", "0666 (without modules)", "0671 (without modules)", "0676 (without modules)", "0691 (without modules)", "0696 (without modules)", "0701 (without modules)", "0706 (without modules)",
 ]);
 
 interface SecurityScannerTestOptions {
   command: "install" | "update" | "add" | "remove" | "uninstall";
-  args: string[];
+  args: readonly string[];
   hasExistingNodeModules: boolean;
   linker: "hoisted" | "isolated";
   scannerType: "local" | "npm" | "npm.bunfigonly";
@@ -38,6 +42,10 @@ interface SecurityScannerTestOptions {
 
   hasLockfile: boolean;
   scannerSyncronouslyThrows: boolean;
+
+  // TTY options for testing interactive prompts
+  hasTTY: boolean;
+  ttyResponse: "y" | "n"; // Response to send when prompted (only used when hasTTY is true and scannerReturns is "warn")
 }
 
 const DO_TEST_DEBUG = process.env.SCANNER_TEST_DEBUG === "true";
@@ -70,6 +78,8 @@ async function runSecurityScannerTest(options: SecurityScannerTestOptions) {
     scannerReturns,
     shouldFail,
     scannerSyncronouslyThrows,
+    hasTTY,
+    ttyResponse,
   } = options;
 
   const expectedExitCode = shouldFail ? 1 : 0;
@@ -224,51 +234,90 @@ scanner = "${scannerPath}"`,
     console.log(`cd ${dir} && ${cmd.join(" ")}`);
   }
 
-  await using proc = Bun.spawn({
-    cmd,
-    cwd: dir,
-    stdout: "pipe",
-    stderr: "pipe",
-    stdin: "pipe",
-    env: bunEnv,
-  });
-
   let errAndOut = "";
+  let exitCode: number;
 
-  if (DO_TEST_DEBUG) {
-    const write = (chunk: Uint8Array<ArrayBuffer>, stream: NodeJS.WriteStream, decoder: TextDecoder) => {
-      const str = decoder.decode(chunk);
+  if (hasTTY) {
+    let responseSent = false;
 
-      errAndOut += str;
+    await using terminal = new Bun.Terminal({
+      cols: 80,
+      rows: 24,
+      data(_term, data) {
+        const text = new TextDecoder().decode(data);
+        errAndOut += text;
 
-      const lines = str.split("\n");
-      for (const line of lines) {
-        stream.write(redSubprocessPrefix);
-        stream.write(" ");
-        stream.write(line);
-        stream.write("\n");
-      }
-    };
+        if (DO_TEST_DEBUG) {
+          const lines = text.split("\n");
+          for (const line of lines) {
+            process.stdout.write(redSubprocessPrefix);
+            process.stdout.write(" ");
+            process.stdout.write(line);
+            process.stdout.write("\n");
+          }
+        }
 
-    const outDecoder = new TextDecoder();
-    const stdoutWriter = new WritableStream<Uint8Array<ArrayBuffer>>({
-      write: chunk => write(chunk, process.stdout, outDecoder),
-      close: () => void process.stdout.write(outDecoder.decode()),
+        // When we see the prompt, send the configured response
+        if (!responseSent && errAndOut.includes("Continue anyway? [y/N]")) {
+          responseSent = true;
+          terminal.write(ttyResponse + "\n");
+        }
+      },
     });
 
-    const errDecoder = new TextDecoder();
-    const stderrWriter = new WritableStream<Uint8Array<ArrayBuffer>>({
-      write: chunk => write(chunk, process.stderr, errDecoder),
-      close: () => void process.stderr.write(errDecoder.decode()),
+    await using proc = Bun.spawn(cmd, {
+      cwd: dir,
+      env: bunEnv,
+      terminal,
     });
 
-    await Promise.all([proc.stdout.pipeTo(stdoutWriter), proc.stderr.pipeTo(stderrWriter)]);
+    exitCode = await proc.exited;
   } else {
-    const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
-    errAndOut = stdout + stderr;
-  }
+    // Non-TTY mode: use piped stdin to ensure isatty(stdin) returns false
+    await using proc = Bun.spawn({
+      cmd,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "pipe",
+      env: bunEnv,
+    });
 
-  const exitCode = await proc.exited;
+    if (DO_TEST_DEBUG) {
+      const write = (chunk: Uint8Array<ArrayBuffer>, stream: NodeJS.WriteStream, decoder: TextDecoder) => {
+        const str = decoder.decode(chunk, { stream: true });
+
+        errAndOut += str;
+
+        const lines = str.split("\n");
+        for (const line of lines) {
+          stream.write(redSubprocessPrefix);
+          stream.write(" ");
+          stream.write(line);
+          stream.write("\n");
+        }
+      };
+
+      const outDecoder = new TextDecoder();
+      const stdoutWriter = new WritableStream<Uint8Array<ArrayBuffer>>({
+        write: chunk => write(chunk, process.stdout, outDecoder),
+        close: () => void process.stdout.write(outDecoder.decode()),
+      });
+
+      const errDecoder = new TextDecoder();
+      const stderrWriter = new WritableStream<Uint8Array<ArrayBuffer>>({
+        write: chunk => write(chunk, process.stderr, errDecoder),
+        close: () => void process.stderr.write(errDecoder.decode()),
+      });
+
+      await Promise.all([proc.stdout.pipeTo(stdoutWriter), proc.stderr.pipeTo(stderrWriter)]);
+    } else {
+      const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
+      errAndOut = stdout + stderr;
+    }
+
+    exitCode = await proc.exited;
+  }
 
   if (exitCode !== expectedExitCode) {
     console.log("Command:", cmd.join(" "));
@@ -301,6 +350,20 @@ scanner = "${scannerPath}"`,
     if (scannerReturns === "warn") {
       expect(errAndOut).toContain("WARNING:");
       expect(errAndOut).toContain("Test warning");
+
+      if (hasTTY) {
+        // In TTY mode, we should see the interactive prompt
+        expect(errAndOut).toContain("Continue anyway? [y/N]");
+        if (ttyResponse === "y") {
+          expect(errAndOut).toContain("Continuing with installation...");
+        } else {
+          expect(errAndOut).toContain("Installation cancelled.");
+        }
+      } else {
+        // In non-TTY mode, we should see the no-TTY error message
+        expect(errAndOut).toContain("Security warnings found. Cannot prompt for confirmation (no TTY).");
+        expect(errAndOut).toContain("Installation cancelled.");
+      }
     } else if (scannerReturns === "fatal") {
       expect(errAndOut).toContain("FATAL:");
       expect(errAndOut).toContain("Test fatal error");
@@ -309,11 +372,27 @@ scanner = "${scannerPath}"`,
 
   if (scannerType !== "npm.bunfigonly" && !hasExistingNodeModules) {
     switch (scannerReturns) {
-      case "fatal":
-      case "warn": {
-        // When there are fatal advisories OR warnings (with no TTY to prompt),
-        // the installation is cancelled and packages should NOT be installed
+      case "fatal": {
+        // Fatal advisories always cancel installation
         expect(await Bun.file(join(dir, "node_modules", "left-pad", "package.json")).exists()).toBe(false);
+        break;
+      }
+
+      case "warn": {
+        if (hasTTY && ttyResponse === "y") {
+          // User accepted the warning in TTY mode, command proceeds normally
+          // For remove/uninstall without existing node_modules, nothing gets installed
+          // For other commands, packages should be installed
+          if (command === "remove" || command === "uninstall") {
+            // These commands don't install packages, they remove them
+            // Without existing node_modules, there's nothing to verify
+          } else {
+            expect(await Bun.file(join(dir, "node_modules", "left-pad", "package.json")).exists()).toBe(true);
+          }
+        } else {
+          // No TTY to prompt OR user rejected, installation is cancelled
+          expect(await Bun.file(join(dir, "node_modules", "left-pad", "package.json")).exists()).toBe(false);
+        }
         break;
       }
 
@@ -386,8 +465,12 @@ scanner = "${scannerPath}"`,
   const requestedTarballs = registry.getRequestedTarballs();
 
   // when we have no node modules and the scanner comes from npm, we must first install the scanner
-  // but, if we expext the scanner to report failure then we should ONLY see the scanner tarball requested, no others
-  if (scannerType === "npm" && !hasExistingNodeModules && (scannerReturns === "fatal" || scannerReturns === "warn")) {
+  // but, if we expect the scanner to report failure then we should ONLY see the scanner tarball requested, no others
+  // Exception: when hasTTY is true and ttyResponse is "y", the user accepts the warning and installation continues
+  const installationWasCancelled =
+    scannerReturns === "fatal" || (scannerReturns === "warn" && (!hasTTY || ttyResponse === "n"));
+
+  if (scannerType === "npm" && !hasExistingNodeModules && installationWasCancelled) {
     const doWeExpectToAlwaysTryToResolve =
       // If there is no lockfile, we will resolve packages
       !hasLockfile ||
@@ -410,40 +493,15 @@ scanner = "${scannerPath}"`,
   const sortedPackages = [...requestedPackages].sort();
   const sortedTarballs = [...requestedTarballs].sort();
 
-  if (command === "install") {
-    expect(sortedPackages).toMatchSnapshot("requested-packages: install");
-    expect(sortedTarballs).toMatchSnapshot("requested-tarballs: install");
-  } else if (command === "add") {
-    expect(sortedPackages).toMatchSnapshot("requested-packages: add");
-    expect(sortedTarballs).toMatchSnapshot("requested-tarballs: add");
-  } else if (command === "update") {
-    if (args.length > 0) {
-      expect(sortedPackages).toMatchSnapshot("requested-packages: update with args");
-      expect(sortedTarballs).toMatchSnapshot("requested-tarballs: update with args");
-    } else {
-      expect(sortedPackages).toMatchSnapshot("requested-packages: update without args");
-      expect(sortedTarballs).toMatchSnapshot("requested-tarballs: update without args");
-    }
-  } else if (command === "remove" || command === "uninstall") {
-    if (args.length > 0) {
-      expect(sortedPackages).toMatchSnapshot("requested-packages: remove with args");
-      expect(sortedTarballs).toMatchSnapshot("requested-tarballs: remove with args");
-    } else {
-      expect(sortedPackages).toMatchSnapshot("requested-packages: remove without args");
-      expect(sortedTarballs).toMatchSnapshot("requested-tarballs: remove without args");
-    }
-  } else {
-    expect(sortedPackages).toMatchSnapshot("requested-packages: unknown command");
-    expect(sortedTarballs).toMatchSnapshot("requested-tarballs: unknown command");
-  }
+  const key = `${command} ${args.length > 0 ? "with args" : "without args"}` as const;
+  expect(sortedPackages).toMatchSnapshot(`requested-packages: ${key}`);
+  expect(sortedTarballs).toMatchSnapshot(`requested-tarballs: ${key}`);
 }
 
 export function runSecurityScannerTests(selfModuleName: string, hasExistingNodeModules: boolean) {
   let i = 0;
 
-  const bunTest = Bun.jest(selfModuleName);
-
-  const { describe, beforeAll, afterAll } = bunTest;
+  const { describe, beforeAll, afterAll, test } = Bun.jest(selfModuleName);
 
   beforeAll(async () => {
     registryUrl = await startRegistry(DO_TEST_DEBUG);
@@ -452,6 +510,13 @@ export function runSecurityScannerTests(selfModuleName: string, hasExistingNodeM
   afterAll(() => {
     stopRegistry();
   });
+
+  const ttyConfigs = [
+    { hasTTY: false, ttyResponse: "n", ttyLabel: "no-TTY" } as const,
+    { hasTTY: true, ttyResponse: "y", ttyLabel: "TTY:y" } as const,
+    { hasTTY: true, ttyResponse: "n", ttyLabel: "TTY:n" } as const,
+  ];
+  const ttyConfigsNoTTY = ttyConfigs.filter(c => !c.hasTTY);
 
   describe.each(["install", "update", "add", "remove", "uninstall"] as const)("bun %s", command => {
     describe.each([
@@ -463,58 +528,74 @@ export function runSecurityScannerTests(selfModuleName: string, hasExistingNodeM
         describe.each(["local", "npm", "npm.bunfigonly"] as const)("(scanner: %s)", scannerType => {
           describe.each([true, false] as const)("(bun.lock exists: %p)", hasLockfile => {
             describe.each(["none", "warn", "fatal"] as const)("(advisories: %s)", scannerReturns => {
-              if ((command === "add" || command === "uninstall" || command === "remove") && args.length === 0) {
-                // TODO(@alii): Test this case:
-                //  - Exit code 1
-                //  - No changes to disk
-                //  - Scanner does not run
-                return;
-              }
+              // TTY tests only apply to "warn" cases - for "none" and "fatal", only test non-TTY
+              const applicableTtyConfigs = scannerReturns === "warn" ? ttyConfigs : ttyConfigsNoTTY;
 
-              const testName = getTestName(String(++i).padStart(4, "0"), hasExistingNodeModules);
+              describe.each(applicableTtyConfigs)("($ttyLabel)", ({ hasTTY, ttyResponse }) => {
+                if ((command === "add" || command === "uninstall" || command === "remove") && args.length === 0) {
+                  // TODO(@alii): Test this case:
+                  //  - Exit code 1
+                  //  - No changes to disk
+                  //  - Scanner does not run
+                  return;
+                }
 
-              if (TESTS_TO_SKIP.has(testName)) {
-                return test.skip(testName, async () => {
-                  // TODO
-                });
-              }
+                const testName = getTestName(String(++i).padStart(4, "0"), hasExistingNodeModules);
 
-              if (isCI) {
-                if (command === "uninstall") {
+                if (TESTS_TO_SKIP.has(testName)) {
                   return test.skip(testName, async () => {
-                    // Same as `remove`, optimising for CI time here
+                    // TODO
                   });
                 }
 
-                const random = Math.random();
-
-                if (random < (100 - CI_SAMPLE_PERCENT) / 100) {
+                if (hasTTY && isWindows) {
                   return test.skip(testName, async () => {
-                    // skipping this one for CI
+                    // PTY not supported on Windows
                   });
                 }
-              }
 
-              // npm.bunfigonly is the case where a scanner is a valid npm package name identifier
-              // but is not referenced in package.json anywhere and is not in the lockfile, so the only knowledge
-              // of this package's existence is the fact that it was defined in as the value in bunfig.toml
-              // Therefore, we should fail because we don't know where to install it from
-              const shouldFail =
-                scannerType === "npm.bunfigonly" || scannerReturns === "fatal" || scannerReturns === "warn";
+                if (isCI) {
+                  if (command === "uninstall") {
+                    return test.skip(testName, async () => {
+                      // Same as `remove`, optimising for CI time here
+                    });
+                  }
 
-              test(testName, async () => {
-                await runSecurityScannerTest({
-                  command,
-                  args,
-                  hasExistingNodeModules,
-                  linker,
-                  scannerType,
-                  scannerReturns,
-                  shouldFail,
-                  hasLockfile,
+                  const random = Math.random();
 
-                  // TODO(@alii): Test this case
-                  scannerSyncronouslyThrows: false,
+                  if (random < (100 - CI_SAMPLE_PERCENT) / 100) {
+                    return test.skip(testName, async () => {
+                      // skipping this one for CI
+                    });
+                  }
+                }
+
+                // npm.bunfigonly is the case where a scanner is a valid npm package name identifier
+                // but is not referenced in package.json anywhere and is not in the lockfile, so the only knowledge
+                // of this package's existence is the fact that it was defined in as the value in bunfig.toml
+                // Therefore, we should fail because we don't know where to install it from
+                const shouldFail =
+                  scannerType === "npm.bunfigonly" ||
+                  scannerReturns === "fatal" ||
+                  (scannerReturns === "warn" && (!hasTTY || ttyResponse === "n"));
+
+                test(testName, async () => {
+                  await runSecurityScannerTest({
+                    command,
+                    args,
+                    hasExistingNodeModules,
+                    linker,
+                    scannerType,
+                    scannerReturns,
+                    shouldFail,
+                    hasLockfile,
+
+                    // TODO(@alii): Test this case
+                    scannerSyncronouslyThrows: false,
+
+                    hasTTY,
+                    ttyResponse,
+                  });
                 });
               });
             });

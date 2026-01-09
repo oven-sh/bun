@@ -15,7 +15,6 @@
           if (element.getAttribute("rel") === "noreferrer") {
             element.removeAttribute("rel");
           }
-          console.log(`Removed target="_blank" from: ${element.textContent || element.innerHTML.substring(0, 50)}`);
         }
       });
     });

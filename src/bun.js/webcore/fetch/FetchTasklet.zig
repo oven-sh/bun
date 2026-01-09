@@ -234,9 +234,11 @@ pub const FetchTasklet = struct {
         this.readable_stream_ref.deinit();
 
         this.scheduled_response_buffer.deinit();
-        if (this.request_body != .ReadableStream or this.is_waiting_request_stream_start) {
-            this.request_body.detach();
-        }
+        // Always detach request_body regardless of type.
+        // When request_body is a ReadableStream, startRequestStream() creates
+        // an independent Strong reference in ResumableSink, so FetchTasklet's
+        // reference becomes redundant and must be released to avoid leaks.
+        this.request_body.detach();
 
         this.abort_reason.deinit();
         this.check_server_identity.deinit();
@@ -779,7 +781,7 @@ pub const FetchTasklet = struct {
                 error.NAME_CONSTRAINTS_WITHOUT_SANS => bun.String.static("Issuer has name constraints but leaf has no SANs"),
                 error.UNKNOWN_CERTIFICATE_VERIFICATION_ERROR => bun.String.static("unknown certificate verification error"),
 
-                else => |e| bun.String.createFormat("{s} fetching \"{}\". For more information, pass `verbose: true` in the second argument to fetch()", .{
+                else => |e| bun.String.createFormat("{s} fetching \"{f}\". For more information, pass `verbose: true` in the second argument to fetch()", .{
                     @errorName(e),
                     path,
                 }) catch |err| bun.handleOom(err),
@@ -926,7 +928,7 @@ pub const FetchTasklet = struct {
         this.ignore_data = true;
     }
 
-    export fn Bun__FetchResponse_finalize(this: *FetchTasklet) callconv(.C) void {
+    export fn Bun__FetchResponse_finalize(this: *FetchTasklet) callconv(.c) void {
         log("onResponseFinalize", .{});
         if (this.native_response) |response| {
             const body = response.getBodyValue();
@@ -1049,6 +1051,7 @@ pub const FetchTasklet = struct {
             fetch_options.redirect_type,
             .{
                 .http_proxy = proxy,
+                .proxy_headers = fetch_options.proxy_headers,
                 .hostname = fetch_options.hostname,
                 .signals = fetch_tasklet.signals,
                 .unix_socket_path = fetch_options.unix_socket_path,
@@ -1222,6 +1225,7 @@ pub const FetchTasklet = struct {
         verbose: http.HTTPVerboseLevel = .none,
         redirect_type: FetchRedirect = FetchRedirect.follow,
         proxy: ?ZigURL = null,
+        proxy_headers: ?Headers = null,
         url_proxy_buffer: []const u8 = "",
         signal: ?*jsc.WebCore.AbortSignal = null,
         globalThis: ?*JSGlobalObject,

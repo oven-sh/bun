@@ -285,7 +285,7 @@ pub const Version = struct {
     value: Value = .{ .uninitialized = {} },
 
     pub fn toJS(dep: *const Version, buf: []const u8, globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
-        const object = jsc.JSValue.createEmptyObject(globalThis, 2);
+        const object = jsc.JSValue.createEmptyObject(globalThis, 0);
         object.put(globalThis, "type", bun.String.static(@tagName(dep.tag)).toJS(globalThis));
 
         switch (dep.tag) {
@@ -308,7 +308,7 @@ pub const Version = struct {
             },
             .npm => {
                 object.put(globalThis, "name", try dep.value.npm.name.toJS(buf, globalThis));
-                var version_str = try bun.String.createFormat("{}", .{dep.value.npm.version.fmt(buf)});
+                var version_str = try bun.String.createFormat("{f}", .{dep.value.npm.version.fmt(buf)});
                 object.put(globalThis, "version", version_str.transferToJS(globalThis));
                 object.put(globalThis, "alias", jsc.JSValue.jsBoolean(dep.value.npm.is_alias));
             },

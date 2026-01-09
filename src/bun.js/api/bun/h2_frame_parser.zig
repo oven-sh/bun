@@ -1205,16 +1205,18 @@ pub const H2FrameParser = struct {
         var it = this.streams.valueIterator();
         while (it.next()) |stream| {
             log("incrementWindowSizeIfNeeded stream {} {} {} {}", .{ stream.id, stream.usedWindowSize, stream.windowSize, this.isServer });
-            if (stream.usedWindowSize >= stream.windowSize) {
+            if (stream.usedWindowSize >= stream.windowSize / 2 and stream.usedWindowSize > 0) {
+                const consumed = stream.usedWindowSize;
                 stream.usedWindowSize = 0;
                 log("incrementWindowSizeIfNeeded stream {} {} {}", .{ stream.id, stream.windowSize, this.isServer });
-                this.sendWindowUpdate(stream.id, UInt31WithReserved.init(@truncate(stream.windowSize), false));
+                this.sendWindowUpdate(stream.id, UInt31WithReserved.init(@truncate(consumed), false));
             }
         }
         log("incrementWindowSizeIfNeeded connection {} {} {}", .{ this.usedWindowSize, this.windowSize, this.isServer });
-        if (this.usedWindowSize >= this.windowSize) {
+        if (this.usedWindowSize >= this.windowSize / 2 and this.usedWindowSize > 0) {
+            const consumed = this.usedWindowSize;
             this.usedWindowSize = 0;
-            this.sendWindowUpdate(0, UInt31WithReserved.init(@truncate(this.windowSize), false));
+            this.sendWindowUpdate(0, UInt31WithReserved.init(@truncate(consumed), false));
         }
     }
 
@@ -3028,7 +3030,7 @@ pub const H2FrameParser = struct {
         var stream = this.streams.getPtr(stream_id) orelse {
             return globalObject.throw("Invalid stream id", .{});
         };
-        var state = jsc.JSValue.createEmptyObject(globalObject, 7);
+        var state = jsc.JSValue.createEmptyObject(globalObject, 6);
 
         state.put(globalObject, jsc.ZigString.static("localWindowSize"), jsc.JSValue.jsNumber(stream.windowSize));
         state.put(globalObject, jsc.ZigString.static("state"), jsc.JSValue.jsNumber(@intFromEnum(stream.state)));

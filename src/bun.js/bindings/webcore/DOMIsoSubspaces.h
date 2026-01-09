@@ -266,6 +266,8 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForReadableStreamSource;
     std::unique_ptr<IsoSubspace> m_subspaceForTransformStream;
     std::unique_ptr<IsoSubspace> m_subspaceForTransformStreamDefaultController;
+    std::unique_ptr<IsoSubspace> m_subspaceForCompressionStream;
+    std::unique_ptr<IsoSubspace> m_subspaceForDecompressionStream;
     std::unique_ptr<IsoSubspace> m_subspaceForWritableStream;
     std::unique_ptr<IsoSubspace> m_subspaceForWritableStreamDefaultController;
     std::unique_ptr<IsoSubspace> m_subspaceForWritableStreamDefaultWriter;
@@ -936,6 +938,7 @@ public:
     // std::unique_ptr<IsoSubspace> m_subspaceForDOMFormData;
     // std::unique_ptr<IsoSubspace> m_subspaceForDOMFormDataIterator;
     std::unique_ptr<IsoSubspace> m_subspaceForDOMURL;
+    std::unique_ptr<IsoSubspace> m_subspaceForURLPattern;
     std::unique_ptr<IsoSubspace> m_subspaceForJSSign;
     std::unique_ptr<IsoSubspace> m_subspaceForJSVerify;
     std::unique_ptr<IsoSubspace> m_subspaceForJSHmac;

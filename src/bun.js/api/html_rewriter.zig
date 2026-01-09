@@ -59,7 +59,7 @@ pub const HTMLRewriter = struct {
         callFrame: *jsc.CallFrame,
         listener: JSValue,
     ) bun.JSError!JSValue {
-        const selector_slice = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{}", .{selector_name}));
+        const selector_slice = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{f}", .{selector_name}));
         defer bun.default_allocator.free(selector_slice);
 
         var selector = LOLHTML.HTMLSelector.parse(selector_slice) catch
@@ -250,13 +250,13 @@ pub const HTMLRewriter = struct {
         failed: bool = false,
         output: jsc.WebCore.Sink,
         signal: jsc.WebCore.Signal = .{},
-        backpressure: std.fifo.LinearFifo(u8, .Dynamic) = std.fifo.LinearFifo(u8, .Dynamic).init(bun.default_allocator),
+        backpressure: bun.LinearFifo(u8, .Dynamic) = bun.LinearFifo(u8, .Dynamic).init(bun.default_allocator),
 
         pub fn finalize(this: *HTMLRewriterLoader) void {
             if (this.finalized) return;
             this.rewriter.deinit();
             this.backpressure.deinit();
-            this.backpressure = std.fifo.LinearFifo(u8, .Dynamic).init(bun.default_allocator);
+            this.backpressure = bun.LinearFifo(u8, .Dynamic).init(bun.default_allocator);
             this.finalized = true;
         }
 
@@ -960,7 +960,7 @@ fn HandlerCallback(
 
                 if (result.asAnyPromise()) |promise| {
                     this.global.bunVM().waitForPromise(promise);
-                    const fail = promise.status(this.global.vm()) == .rejected;
+                    const fail = promise.status() == .rejected;
                     if (fail) {
                         this.global.bunVM().unhandledRejection(this.global, promise.result(this.global.vm()), promise.asValue());
                     }

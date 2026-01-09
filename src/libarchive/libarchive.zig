@@ -29,10 +29,7 @@ pub const BufferReadStream = struct {
 
     pub fn deinit(this: *BufferReadStream) void {
         _ = this.archive.readClose();
-        // don't free it if we never actually read it
-        // if (this.reading) {
-        //     _ = lib.archive_read_free(this.archive);
-        // }
+        _ = this.archive.readFree();
     }
 
     pub fn openRead(this: *BufferReadStream) Archive.Result {
@@ -76,7 +73,7 @@ pub const BufferReadStream = struct {
     pub fn archive_close_callback(
         _: *Archive,
         _: *anyopaque,
-    ) callconv(.C) c_int {
+    ) callconv(.c) c_int {
         return 0;
     }
 
@@ -84,7 +81,7 @@ pub const BufferReadStream = struct {
         _: *Archive,
         ctx_: *anyopaque,
         buffer: [*c]*const anyopaque,
-    ) callconv(.C) lib.la_ssize_t {
+    ) callconv(.c) lib.la_ssize_t {
         var this = fromCtx(ctx_);
         const remaining = this.bufLeft();
         if (remaining.len == 0) return 0;
@@ -99,7 +96,7 @@ pub const BufferReadStream = struct {
         _: *Archive,
         ctx_: *anyopaque,
         offset: lib.la_int64_t,
-    ) callconv(.C) lib.la_int64_t {
+    ) callconv(.c) lib.la_int64_t {
         var this = fromCtx(ctx_);
 
         const buflen = @as(isize, @intCast(this.buf.len));
@@ -107,7 +104,7 @@ pub const BufferReadStream = struct {
 
         const proposed = pos + offset;
         const new_pos = @min(@max(proposed, 0), buflen - 1);
-        this.pos = @as(usize, @intCast(this.pos));
+        this.pos = @as(usize, @intCast(new_pos));
         return new_pos - pos;
     }
 
@@ -116,7 +113,7 @@ pub const BufferReadStream = struct {
         ctx_: *anyopaque,
         offset: lib.la_int64_t,
         whence: c_int,
-    ) callconv(.C) lib.la_int64_t {
+    ) callconv(.c) lib.la_int64_t {
         var this = fromCtx(ctx_);
 
         const buflen = @as(isize, @intCast(this.buf.len));
@@ -146,20 +143,20 @@ pub const BufferReadStream = struct {
     //     ctx_: *anyopaque,
     //     buffer: *const anyopaque,
     //     len: usize,
-    // ) callconv(.C) lib.la_ssize_t {
+    // ) callconv(.c) lib.la_ssize_t {
     //     var this = fromCtx(ctx_);
     // }
 
     // pub fn archive_close_callback(
     //     archive: *Archive,
     //     ctx_: *anyopaque,
-    // ) callconv(.C) c_int {
+    // ) callconv(.c) c_int {
     //     var this = fromCtx(ctx_);
     // }
     // pub fn archive_free_callback(
     //     archive: *Archive,
     //     ctx_: *anyopaque,
-    // ) callconv(.C) c_int {
+    // ) callconv(.c) c_int {
     //     var this = fromCtx(ctx_);
     // }
 
@@ -167,7 +164,7 @@ pub const BufferReadStream = struct {
     //     archive: *Archive,
     //     ctx1: *anyopaque,
     //     ctx2: *anyopaque,
-    // ) callconv(.C) c_int {
+    // ) callconv(.c) c_int {
     //     var this = fromCtx(ctx1);
     //     var that = fromCtx(ctx2);
     // }
@@ -319,6 +316,8 @@ pub const Archiver = struct {
         const dir_fd = dir.fd;
 
         var normalized_buf: bun.OSPathBuffer = undefined;
+        var use_pwrite = Environment.isPosix;
+        var use_lseek = true;
 
         loop: while (true) {
             const r = archive.readNextHeader(&entry);
@@ -344,7 +343,7 @@ pub const Archiver = struct {
                     if (comptime ContextType != void and @hasDecl(std.meta.Child(ContextType), "onFirstDirectoryName")) {
                         if (appender.needs_first_dirname) {
                             if (comptime Environment.isWindows) {
-                                const list = std.ArrayList(u8).init(default_allocator);
+                                const list = std.array_list.Managed(u8).init(default_allocator);
                                 var result = try strings.toUTF8ListWithType(list, pathname[0..pathname.len]);
                                 // onFirstDirectoryName copies the contents of pathname to another buffer, safe to free
                                 defer result.deinit();
@@ -402,7 +401,7 @@ pub const Archiver = struct {
                     const path_slice: bun.OSPathSlice = path.ptr[0..path.len];
 
                     if (options.log) {
-                        Output.prettyln(" {}", .{bun.fmt.fmtOSPath(path_slice, .{})});
+                        Output.prettyln(" {f}", .{bun.fmt.fmtOSPath(path_slice, .{})});
                     }
 
                     count += 1;
@@ -510,6 +509,7 @@ pub const Archiver = struct {
                             };
 
                             const size: usize = @intCast(@max(entry.size(), 0));
+
                             if (size > 0) {
                                 if (ctx) |ctx_| {
                                     const hash: u64 = if (ctx_.pluckers.len > 0)
@@ -550,13 +550,14 @@ pub const Archiver = struct {
                                 }
 
                                 var retries_remaining: u8 = 5;
+
                                 possibly_retry: while (retries_remaining != 0) : (retries_remaining -= 1) {
-                                    switch (archive.readDataIntoFd(file_handle.uv())) {
+                                    switch (archive.readDataIntoFd(file_handle, &use_pwrite, &use_lseek)) {
                                         .eof => break :loop,
                                         .ok => break :possibly_retry,
                                         .retry => {
                                             if (options.log) {
-                                                Output.err("libarchive error", "extracting {}, retry {d} / {d}", .{
+                                                Output.err("libarchive error", "extracting {f}, retry {d} / {d}", .{
                                                     bun.fmt.fmtOSPath(path_slice, .{}),
                                                     retries_remaining,
                                                     5,
@@ -566,7 +567,7 @@ pub const Archiver = struct {
                                         else => {
                                             if (options.log) {
                                                 const archive_error = bun.sliceTo(lib.Archive.errorString(@ptrCast(archive)), 0);
-                                                Output.err("libarchive error", "extracting {}: {s}", .{
+                                                Output.err("libarchive error", "extracting {f}: {s}", .{
                                                     bun.fmt.fmtOSPath(path_slice, .{}),
                                                     archive_error,
                                                 });

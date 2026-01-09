@@ -1378,9 +1378,9 @@ fn computeArgumentsForFrameworkRequest(
         .client_id = framework_bundle.cached_client_bundle_url.get() orelse str: {
             const bundle_index: u32 = route_bundle_index.get();
             const generation: u32 = route_bundle.client_script_generation;
-            const str = bun.String.createFormat(client_prefix ++ "/route-{}{}.js", .{
-                std.fmt.fmtSliceHexLower(std.mem.asBytes(&bundle_index)),
-                std.fmt.fmtSliceHexLower(std.mem.asBytes(&generation)),
+            const str = bun.String.createFormat(client_prefix ++ "/route-{x}{x}.js", .{
+                std.mem.asBytes(&bundle_index),
+                std.mem.asBytes(&generation),
             }) catch |err| bun.handleOom(err);
             defer str.deref();
             const js = str.toJS(dev.vm.global);
@@ -1688,7 +1688,7 @@ pub const DeferredRequest = struct {
     /// is very silly. This contributes to ~6kb of the initial DevServer allocation.
     const max_preallocated = 16;
 
-    pub const List = std.SinglyLinkedList(DeferredRequest);
+    pub const List = bun.deprecated.SinglyLinkedList(DeferredRequest);
     pub const Node = List.Node;
 
     const debugLog = bun.Output.Scoped("DlogeferredRequest", .hidden).log;
@@ -1759,7 +1759,7 @@ pub const DeferredRequest = struct {
     };
 
     fn onAbortWrapper(this: *anyopaque) void {
-        const self: *DeferredRequest = @alignCast(@ptrCast(this));
+        const self: *DeferredRequest = @ptrCast(@alignCast(this));
         if (!self.isAlive()) return;
         self.onAbortImpl();
     }
@@ -1832,7 +1832,7 @@ pub fn startAsyncBundle(
     if (dev.inspector()) |agent| {
         var sfa_state = std.heap.stackFallback(256, dev.allocator());
         const sfa = sfa_state.get();
-        var trigger_files = try std.ArrayList(bun.String).initCapacity(sfa, entry_points.set.count());
+        var trigger_files = try std.array_list.Managed(bun.String).initCapacity(sfa, entry_points.set.count());
         defer trigger_files.deinit();
         defer for (trigger_files.items) |*str| {
             str.deref();
@@ -1940,7 +1940,7 @@ fn indexFailures(dev: *DevServer) !void {
         var gts = try dev.initGraphTraceState(sfa, 0);
         defer gts.deinit(sfa);
 
-        var payload = try std.ArrayList(u8).initCapacity(sfa, total_len);
+        var payload = try std.array_list.Managed(u8).initCapacity(sfa, total_len);
         defer payload.deinit();
         payload.appendAssumeCapacity(MessageId.errors.char());
         const w = payload.writer();
@@ -1980,7 +1980,7 @@ fn indexFailures(dev: *DevServer) !void {
 
         dev.publish(.errors, payload.items, .binary);
     } else if (dev.incremental_result.failures_removed.items.len > 0) {
-        var payload = try std.ArrayList(u8).initCapacity(sfa, @sizeOf(MessageId) + @sizeOf(u32) + dev.incremental_result.failures_removed.items.len * @sizeOf(u32));
+        var payload = try std.array_list.Managed(u8).initCapacity(sfa, @sizeOf(MessageId) + @sizeOf(u32) + dev.incremental_result.failures_removed.items.len * @sizeOf(u32));
         defer payload.deinit();
         payload.appendAssumeCapacity(MessageId.errors.char());
         const w = payload.writer();
@@ -2565,7 +2565,7 @@ pub fn finalizeBundle(
     var has_route_bits_set = false;
 
     var hot_update_payload_sfa = std.heap.stackFallback(65536, dev.allocator());
-    var hot_update_payload = std.ArrayList(u8).initCapacity(hot_update_payload_sfa.get(), 65536) catch
+    var hot_update_payload = std.array_list.Managed(u8).initCapacity(hot_update_payload_sfa.get(), 65536) catch
         unreachable; // enough space
     defer hot_update_payload.deinit();
     hot_update_payload.appendAssumeCapacity(MessageId.hot_update.char());
@@ -2835,7 +2835,7 @@ pub fn finalizeBundle(
             inspector_agent = null;
         }
         if (inspector_agent) |agent| {
-            var buf = std.ArrayList(u8).init(bun.default_allocator);
+            var buf = std.array_list.Managed(u8).init(bun.default_allocator);
             defer buf.deinit();
             try dev.encodeSerializedFailures(dev.bundling_failures.keys(), &buf, agent);
         }
@@ -3019,7 +3019,7 @@ pub fn handleParseTaskFailure(
     dev.graph_safety_lock.lock();
     defer dev.graph_safety_lock.unlock();
 
-    debug.log("handleParseTaskFailure({}, .{s}, {}, {d} messages)", .{
+    debug.log("handleParseTaskFailure({}, .{s}, {f}, {d} messages)", .{
         err,
         @tagName(graph),
         bun.fmt.quote(abs_path),
@@ -3261,7 +3261,7 @@ const ErrorPageKind = enum {
 fn encodeSerializedFailures(
     dev: *const DevServer,
     failures: []const SerializedFailure,
-    buf: *std.ArrayList(u8),
+    buf: *std.array_list.Managed(u8),
     inspector_agent: ?*BunFrontendDevServerAgent,
 ) bun.OOM!void {
     var all_failures_len: usize = 0;
@@ -3294,7 +3294,7 @@ fn sendSerializedFailures(
     kind: ErrorPageKind,
     inspector_agent: ?*BunFrontendDevServerAgent,
 ) !void {
-    var buf: std.ArrayList(u8) = try .initCapacity(dev.allocator(), 2048);
+    var buf: std.array_list.Managed(u8) = try .initCapacity(dev.allocator(), 2048);
     errdefer buf.deinit();
 
     try buf.appendSlice(switch (kind) {
@@ -3377,7 +3377,7 @@ fn printMemoryLine(dev: *DevServer) void {
     }
     if (!debug.isVisible()) return;
     const stats = dev.allocation_scope.stats();
-    Output.prettyErrorln("<d>DevServer tracked {}, measured: {} ({}), process: {}<r>", .{
+    Output.prettyErrorln("<d>DevServer tracked {f}, measured: {} ({f}), process: {f}<r>", .{
         bun.fmt.size(dev.memoryCost(), .{}),
         stats.num_allocations,
         bun.fmt.size(stats.total_memory_allocated, .{}),
@@ -3560,15 +3560,16 @@ pub fn dumpBundle(dump_dir: std.fs.Dir, graph: bake.Graph, rel_path: []const u8,
 
     const file = try inner_dir.createFile(bun.path.basename(name), .{});
     defer file.close();
-
-    var bufw = std.io.bufferedWriter(file.writer());
+    var file_buffer: [1024]u8 = undefined;
+    var file_writer = file.writerStreaming(&file_buffer);
+    const bufw = &file_writer.interface;
 
     if (!bun.strings.hasSuffixComptime(rel_path, ".map")) {
-        try bufw.writer().print("// {s} bundled for {s}\n", .{
+        try bufw.print("// {f} bundled for {s}\n", .{
             bun.fmt.quote(rel_path),
             @tagName(graph),
         });
-        try bufw.writer().print("// Bundled at {d}, Bun " ++ bun.Global.package_json_version_with_canary ++ "\n", .{
+        try bufw.print("// Bundled at {d}, Bun " ++ bun.Global.package_json_version_with_canary ++ "\n", .{
             std.time.nanoTimestamp(),
         });
     }
@@ -3577,12 +3578,12 @@ pub fn dumpBundle(dump_dir: std.fs.Dir, graph: bake.Graph, rel_path: []const u8,
     // are never executable on their own as they contain only a single module.
 
     if (wrap)
-        try bufw.writer().writeAll("({\n");
+        try bufw.writeAll("({\n");
 
-    try bufw.writer().writeAll(chunk);
+    try bufw.writeAll(chunk);
 
     if (wrap)
-        try bufw.writer().writeAll("});\n");
+        try bufw.writeAll("});\n");
 
     try bufw.flush();
 }
@@ -3610,7 +3611,7 @@ pub fn emitVisualizerMessageIfNeeded(dev: *DevServer) void {
     if (dev.emit_incremental_visualizer_events == 0) return;
 
     var sfb = std.heap.stackFallback(65536, dev.allocator());
-    var payload = std.ArrayList(u8).initCapacity(sfb.get(), 65536) catch
+    var payload = std.array_list.Managed(u8).initCapacity(sfb.get(), 65536) catch
         unreachable; // enough capacity on the stack
     defer payload.deinit();
 
@@ -3625,7 +3626,7 @@ pub fn emitMemoryVisualizerMessageTimer(timer: *EventLoopTimer, _: *const bun.ti
     assert(dev.magic == .valid);
     dev.emitMemoryVisualizerMessage();
     timer.state = .FIRED;
-    dev.vm.timer.update(timer, &bun.timespec.msFromNow(1000));
+    dev.vm.timer.update(timer, &bun.timespec.msFromNow(.allow_mocked_time, 1000));
 }
 
 pub fn emitMemoryVisualizerMessageIfNeeded(dev: *DevServer) void {
@@ -3639,7 +3640,7 @@ pub fn emitMemoryVisualizerMessage(dev: *DevServer) void {
     bun.debugAssert(dev.emit_memory_visualizer_events > 0);
 
     var sfb = std.heap.stackFallback(65536, dev.allocator());
-    var payload = std.ArrayList(u8).initCapacity(sfb.get(), 65536) catch
+    var payload = std.array_list.Managed(u8).initCapacity(sfb.get(), 65536) catch
         unreachable; // enough capacity on the stack
     defer payload.deinit();
     payload.appendAssumeCapacity(MessageId.memory_visualizer.char());
@@ -3647,7 +3648,7 @@ pub fn emitMemoryVisualizerMessage(dev: *DevServer) void {
     dev.publish(.memory_visualizer, payload.items, .binary);
 }
 
-pub fn writeMemoryVisualizerMessage(dev: *DevServer, payload: *std.ArrayList(u8)) !void {
+pub fn writeMemoryVisualizerMessage(dev: *DevServer, payload: *std.array_list.Managed(u8)) !void {
     const w = payload.writer();
     const Fields = extern struct {
         incremental_graph_client: u32,
@@ -3701,7 +3702,7 @@ pub fn writeMemoryVisualizerMessage(dev: *DevServer, payload: *std.ArrayList(u8)
     }
 }
 
-pub fn writeVisualizerMessage(dev: *DevServer, payload: *std.ArrayList(u8)) !void {
+pub fn writeVisualizerMessage(dev: *DevServer, payload: *std.array_list.Managed(u8)) !void {
     payload.appendAssumeCapacity(MessageId.visualizer.char());
     const w = payload.writer();
 
@@ -4057,7 +4058,7 @@ pub fn onFileUpdate(dev: *DevServer, events: []Watcher.Event, changed_files: []?
         counts[event.index] = update_count;
         const kind = kinds[event.index];
 
-        debug.log("{s} change: {s} {}", .{ @tagName(kind), file_path, event.op });
+        debug.log("{s} change: {s} {f}", .{ @tagName(kind), file_path, event.op });
 
         switch (kind) {
             .file => {
@@ -4083,7 +4084,7 @@ pub fn onFileUpdate(dev: *DevServer, events: []Watcher.Event, changed_files: []?
 
 pub fn onWatchError(_: *DevServer, err: bun.sys.Error) void {
     if (err.path.len > 0) {
-        Output.err(err, "failed to watch {} for hot-reloading", .{bun.fmt.quote(err.path)});
+        Output.err(err, "failed to watch {f} for hot-reloading", .{bun.fmt.quote(err.path)});
     } else {
         Output.err(err, "failed to watch files for hot-reloading", .{});
     }
@@ -4214,7 +4215,7 @@ fn dumpStateDueToCrash(dev: *DevServer) !void {
     try file.writeAll("\nlet inlinedData = Uint8Array.from(atob(\"");
 
     var sfb = std.heap.stackFallback(4096, dev.allocator());
-    var payload = try std.ArrayList(u8).initCapacity(sfb.get(), 4096);
+    var payload = try std.array_list.Managed(u8).initCapacity(sfb.get(), 4096);
     defer payload.deinit();
     try dev.writeVisualizerMessage(&payload);
 
@@ -4227,7 +4228,7 @@ fn dumpStateDueToCrash(dev: *DevServer) !void {
     try file.writeAll("\"), c => c.charCodeAt(0));\n");
     try file.writeAll(end);
 
-    Output.note("Dumped incremental bundler graph to {}", .{bun.fmt.quote(filepath)});
+    Output.note("Dumped incremental bundler graph to {f}", .{bun.fmt.quote(filepath)});
 }
 
 const RouteIndexAndRecurseFlag = packed struct(u32) {

@@ -247,7 +247,7 @@ pub fn writeFormat(this: *Request, this_value: JSValue, comptime Formatter: type
         .zero => "Request",
         else => "BunRequest",
     };
-    try writer.print("{s} ({}) {{\n", .{ class_label, bun.fmt.size(this.#body.value.size(), .{}) });
+    try writer.print("{s} ({f}) {{\n", .{ class_label, bun.fmt.size(this.#body.value.size(), .{}) });
     {
         formatter.indent += 1;
         defer formatter.indent -|= 1;
@@ -263,7 +263,7 @@ pub fn writeFormat(this: *Request, this_value: JSValue, comptime Formatter: type
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime Output.prettyFmt("<r>url<d>:<r> ", enable_ansi_colors));
         try this.ensureURL();
-        try writer.print(comptime Output.prettyFmt("\"<b>{}<r>\"", enable_ansi_colors), .{this.url});
+        try writer.print(comptime Output.prettyFmt("\"<b>{f}<r>\"", enable_ansi_colors), .{this.url});
         formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
         try writer.writeAll("\n");
 
@@ -451,7 +451,7 @@ pub fn sizeOfURL(this: *const Request) usize {
                     .is_https = this.https,
                     .host = host,
                 };
-                return this.getProtocol().len + req_url.len + std.fmt.count("{any}", .{fmt});
+                return this.getProtocol().len + req_url.len + std.fmt.count("{f}", .{fmt});
             }
         }
         return req_url.len;
@@ -478,7 +478,7 @@ pub fn ensureURL(this: *Request) bun.OOM!void {
                     .is_https = this.https,
                     .host = host,
                 };
-                const url_bytelength = std.fmt.count("{s}{any}{s}", .{
+                const url_bytelength = std.fmt.count("{s}{f}{s}", .{
                     this.getProtocol(),
                     fmt,
                     req_url,
@@ -490,7 +490,7 @@ pub fn ensureURL(this: *Request) bun.OOM!void {
 
                 if (url_bytelength < 128) {
                     var buffer: [128]u8 = undefined;
-                    const url = std.fmt.bufPrint(&buffer, "{s}{any}{s}", .{
+                    const url = std.fmt.bufPrint(&buffer, "{s}{f}{s}", .{
                         this.getProtocol(),
                         fmt,
                         req_url,
@@ -518,7 +518,7 @@ pub fn ensureURL(this: *Request) bun.OOM!void {
 
                 if (strings.isAllASCII(host) and strings.isAllASCII(req_url)) {
                     this.url, const bytes = bun.String.createUninitialized(.latin1, url_bytelength);
-                    _ = std.fmt.bufPrint(bytes, "{s}{any}{s}", .{
+                    _ = std.fmt.bufPrint(bytes, "{s}{f}{s}", .{
                         this.getProtocol(),
                         fmt,
                         req_url,
@@ -527,7 +527,7 @@ pub fn ensureURL(this: *Request) bun.OOM!void {
                     };
                 } else {
                     // slow path
-                    const temp_url = try std.fmt.allocPrint(bun.default_allocator, "{s}{any}{s}", .{
+                    const temp_url = try std.fmt.allocPrint(bun.default_allocator, "{s}{f}{s}", .{
                         this.getProtocol(),
                         fmt,
                         req_url,
@@ -813,7 +813,7 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
         if (!globalThis.hasException()) {
             // globalThis.throw can cause GC, which could cause the above string to be freed.
             // so we must increment the reference count before calling it.
-            return globalThis.ERR(.INVALID_URL, "Failed to construct 'Request': Invalid URL \"{}\"", .{req.url}).throw();
+            return globalThis.ERR(.INVALID_URL, "Failed to construct 'Request': Invalid URL \"{f}\"", .{req.url}).throw();
         }
         return error.JSError;
     }
@@ -866,19 +866,23 @@ pub fn doClone(
 
     const js_wrapper = cloned.toJS(globalThis);
     if (js_wrapper != .zero) {
-        if (cloned.#body.value == .Locked) {
-            if (cloned.#body.value.Locked.readable.get(globalThis)) |readable| {
-                // If we are teed, then we need to update the cached .body
-                // value to point to the new readable stream
-                // We must do this on both the original and cloned request
-                // but especially the original request since it will have a stale .body value now.
-                js.bodySetCached(js_wrapper, globalThis, readable.value);
-                if (this.#body.value.Locked.readable.get(globalThis)) |other_readable| {
-                    js.bodySetCached(this_value, globalThis, other_readable.value);
-                }
-            }
+        // After toJS, checkBodyStreamRef has already moved the streams from
+        // Locked.readable to js.gc.stream. So we need to use js.gc.stream
+        // to get the streams and update the body cache.
+        if (js.gc.stream.get(js_wrapper)) |cloned_stream| {
+            js.bodySetCached(js_wrapper, globalThis, cloned_stream);
         }
     }
+
+    // Update the original request's body cache with the new teed stream.
+    // At this point, this.#body.value.Locked.readable still holds the teed stream
+    // because checkBodyStreamRef hasn't been called on the original request yet.
+    if (this.#body.value == .Locked) {
+        if (this.#body.value.Locked.readable.get(globalThis)) |readable| {
+            js.bodySetCached(this_value, globalThis, readable.value);
+        }
+    }
+
     this.checkBodyStreamRef(globalThis);
     return js_wrapper;
 }

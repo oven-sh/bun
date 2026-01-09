@@ -113,7 +113,7 @@ pub fn scanImportsAndExports(this: *LinkerContext) ScanImportsAndExportsError!vo
                         //
                         // In that case the module *is* considered a CommonJS module because
                         // the namespace object must be created.
-                        if ((record.contains_import_star or record.contains_default_alias) and
+                        if ((record.flags.contains_import_star or record.flags.contains_default_alias) and
                             !other_flags.has_lazy_export and !other_flags.force_cjs_to_esm and
                             exports_kind[other_file] == .none)
                         {
@@ -121,7 +121,7 @@ pub fn scanImportsAndExports(this: *LinkerContext) ScanImportsAndExportsError!vo
                             flags[other_file].wrap = .cjs;
                         }
 
-                        if (record.contains_default_alias and
+                        if (record.flags.contains_default_alias and
                             other_flags.force_cjs_to_esm)
                         {
                             exports_kind[other_file] = .cjs;
@@ -280,7 +280,7 @@ pub fn scanImportsAndExports(this: *LinkerContext) ScanImportsAndExportsError!vo
 
                             .imports_to_bind = this.graph.meta.items(.imports_to_bind),
 
-                            .source_index_stack = try std.ArrayList(u32).initCapacity(this.allocator(), 32),
+                            .source_index_stack = try std.array_list.Managed(u32).initCapacity(this.allocator(), 32),
                             .exports_kind = exports_kind,
                             .named_exports = this.graph.ast.items(.named_exports),
                         };
@@ -424,14 +424,14 @@ pub fn scanImportsAndExports(this: *LinkerContext) ScanImportsAndExportsError!vo
                 var count: usize = 0;
                 if (is_entry_point and output_format == .esm) {
                     for (aliases) |alias| {
-                        count += std.fmt.count("export_{}", .{bun.fmt.fmtIdentifier(alias)});
+                        count += std.fmt.count("export_{f}", .{bun.fmt.fmtIdentifier(alias)});
                     }
                 }
 
                 const ident_fmt_len: usize = if (source.identifier_name.len > 0)
                     source.identifier_name.len
                 else
-                    std.fmt.count("{}", .{source.fmtIdentifier()});
+                    std.fmt.count("{f}", .{source.fmtIdentifier()});
 
                 if (wrap == .esm and wrapper_refs[id].isValid()) {
                     count += "init_".len + ident_fmt_len;
@@ -461,7 +461,7 @@ pub fn scanImportsAndExports(this: *LinkerContext) ScanImportsAndExportsError!vo
                 const copies = try this.allocator().alloc(Ref, aliases.len);
 
                 for (aliases, copies) |alias, *copy| {
-                    const original_name = builder.fmt("export_{}", .{bun.fmt.fmtIdentifier(alias)});
+                    const original_name = builder.fmt("export_{f}", .{bun.fmt.fmtIdentifier(alias)});
                     copy.* = this.graph.generateNewSymbol(source_index, .other, original_name);
                 }
                 this.graph.meta.items(.cjs_export_copies)[id] = copies;
@@ -472,7 +472,7 @@ pub fn scanImportsAndExports(this: *LinkerContext) ScanImportsAndExportsError!vo
                 const ref = wrapper_refs[id];
                 if (ref.isValid()) {
                     const original_name = builder.fmt(
-                        "init_{}",
+                        "init_{f}",
                         .{source.fmtIdentifier()},
                     );
 
@@ -486,8 +486,8 @@ pub fn scanImportsAndExports(this: *LinkerContext) ScanImportsAndExportsError!vo
             // aesthetics and is not about correctness. This is done here because by
             // this point, we know the CommonJS status will not change further.
             if (wrap != .cjs and export_kind != .cjs and output_format != .internal_bake_dev) {
-                const exports_name = builder.fmt("exports_{}", .{source.fmtIdentifier()});
-                const module_name = builder.fmt("module_{}", .{source.fmtIdentifier()});
+                const exports_name = builder.fmt("exports_{f}", .{source.fmtIdentifier()});
+                const module_name = builder.fmt("module_{f}", .{source.fmtIdentifier()});
 
                 // Note: it's possible for the symbols table to be resized
                 // so we cannot call .get() above this scope.
@@ -571,7 +571,7 @@ pub fn scanImportsAndExports(this: *LinkerContext) ScanImportsAndExportsError!vo
                 const extra_count = @as(usize, @intFromBool(force_include_exports)) +
                     @as(usize, @intFromBool(add_wrapper));
 
-                var dependencies = bun.handleOom(std.ArrayList(js_ast.Dependency).initCapacity(this.allocator(), extra_count));
+                var dependencies = bun.handleOom(std.array_list.Managed(js_ast.Dependency).initCapacity(this.allocator(), extra_count));
 
                 var resolved_exports_list: *ResolvedExports = &this.graph.meta.items(.resolved_exports)[id];
                 for (aliases) |alias| {
@@ -694,11 +694,11 @@ pub fn scanImportsAndExports(this: *LinkerContext) ScanImportsAndExportsError!vo
                                 //
                                 if (kind != .require and
                                     (kind != .stmt or
-                                        record.contains_import_star or
-                                        record.contains_default_alias or
-                                        record.contains_es_module_alias))
+                                        record.flags.contains_import_star or
+                                        record.flags.contains_default_alias or
+                                        record.flags.contains_es_module_alias))
                                 {
-                                    record.wrap_with_to_esm = true;
+                                    record.flags.wrap_with_to_esm = true;
                                     to_esm_uses += 1;
                                 }
                             }
@@ -727,7 +727,7 @@ pub fn scanImportsAndExports(this: *LinkerContext) ScanImportsAndExportsError!vo
                         // This is an ES6 import of a CommonJS module, so it needs the
                         // "__toESM" wrapper as long as it's not a bare "require()"
                         if (kind != .require and other_export_kind == .cjs and output_format != .internal_bake_dev) {
-                            record.wrap_with_to_esm = true;
+                            record.flags.wrap_with_to_esm = true;
                             to_esm_uses += 1;
                         }
 
@@ -755,7 +755,7 @@ pub fn scanImportsAndExports(this: *LinkerContext) ScanImportsAndExportsError!vo
                             // and subtle set of transpiler interop issues. See for example
                             // https://github.com/evanw/esbuild/issues/1591.
                             if (kind == .require) {
-                                record.wrap_with_to_commonjs = true;
+                                record.flags.wrap_with_to_commonjs = true;
                                 to_common_js_uses += 1;
                             }
                         }
@@ -817,7 +817,7 @@ pub fn scanImportsAndExports(this: *LinkerContext) ScanImportsAndExportsError!vo
                             Index.source(source_index),
                         );
                         this.graph.ast.items(.flags)[id].uses_exports_ref = true;
-                        record.calls_runtime_re_export_fn = true;
+                        record.flags.calls_runtime_re_export_fn = true;
                         re_export_uses += 1;
                     }
                 }
@@ -944,7 +944,7 @@ const DependencyWrapper = struct {
 
 const ExportStarContext = struct {
     import_records_list: []const ImportRecord.List,
-    source_index_stack: std.ArrayList(Index.Int),
+    source_index_stack: std.array_list.Managed(Index.Int),
     exports_kind: []js_ast.ExportsKind,
     named_exports: []js_ast.Ast.NamedExports,
     resolved_exports: []ResolvedExports,
@@ -1131,8 +1131,8 @@ fn validateComposesFromProperties(
                         .{ .text = std.fmt.allocPrint(
                             v.allocator,
                             "The specification of \"composes\" does not define an order when class declarations from separate files are composed together. " ++
-                                "The value of the {} property for {} may change unpredictably as the code is edited. " ++
-                                "Make sure that all definitions of {} for {} are in a single file.",
+                                "The value of the {f} property for {f} may change unpredictably as the code is edited. " ++
+                                "Make sure that all definitions of {f} for {f} are in a single file.",
                             .{ bun.fmt.quote(property_name), bun.fmt.quote(local_original_name), bun.fmt.quote(property_name), bun.fmt.quote(local_original_name) },
                         ) catch |err| bun.handleOom(err) },
                     },

@@ -350,7 +350,7 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
     var source_maps: bun.StringArrayHashMapUnmanaged(OutputFile.Index) = .{};
     @memset(module_keys, bun.String.dead);
     for (bundled_outputs, 0..) |file, i| {
-        log("src_index={any} side={s} src={s} dest={s} - {?d}\n", .{
+        log("src_index={?f} side={s} src={s} dest={s} - {?d}\n", .{
             file.source_index.unwrap(),
             if (file.side) |s| @tagName(s) else "null",
             file.src_path.text,
@@ -388,14 +388,14 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
                 // Client-side resources will be written to disk for usage in on the client side
                 _ = file.writeToDisk(root_dir, ".") catch |err| {
                     bun.handleErrorReturnTrace(err, @errorReturnTrace());
-                    Output.err(err, "Failed to write {} to output directory", .{bun.fmt.quote(file.dest_path)});
+                    Output.err(err, "Failed to write {f} to output directory", .{bun.fmt.quote(file.dest_path)});
                 };
             },
             .server => {
                 if (ctx.bundler_options.bake_debug_dump_server) {
                     _ = file.writeToDisk(root_dir, ".") catch |err| {
                         bun.handleErrorReturnTrace(err, @errorReturnTrace());
-                        Output.err(err, "Failed to write {} to output directory", .{bun.fmt.quote(file.dest_path)});
+                        Output.err(err, "Failed to write {f} to output directory", .{bun.fmt.quote(file.dest_path)});
                     };
                 }
 
@@ -461,7 +461,7 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
             const runtime_file: *const OutputFile = &bundled_outputs[runtime_file_index];
             _ = runtime_file.writeToDisk(root_dir, ".") catch |err| {
                 bun.handleErrorReturnTrace(err, @errorReturnTrace());
-                Output.err(err, "Failed to write {} to output directory", .{bun.fmt.quote(runtime_file.dest_path)});
+                Output.err(err, "Failed to write {f} to output directory", .{bun.fmt.quote(runtime_file.dest_path)});
             };
         }
     }
@@ -504,7 +504,7 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
             break :brk raw;
         } orelse {
             Output.errGeneric("Framework does not support static site generation", .{});
-            Output.note("The file {s} is missing the \"prerender\" export, which defines how to generate static files.", .{
+            Output.note("The file {f} is missing the \"prerender\" export, which defines how to generate static files.", .{
                 bun.fmt.quote(bun.path.relative(cwd, entry_points.files.keys()[router_type.server_file.get()].absPath())),
             });
             bun.Global.crash();
@@ -520,7 +520,7 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
                 break :brk raw;
             } orelse {
                 Output.errGeneric("Framework does not support static site generation", .{});
-                Output.note("The file {s} is missing the \"getParams\" export, which defines how to generate static files.", .{
+                Output.note("The file {f} is missing the \"getParams\" export, which defines how to generate static files.", .{
                     bun.fmt.quote(bun.path.relative(cwd, entry_points.files.keys()[router_type.server_file.get()].absPath())),
                 });
                 bun.Global.crash();
@@ -531,7 +531,7 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
         try server_param_funcs.putIndex(global, @intCast(i), server_param_func);
     }
 
-    var navigatable_routes = std.ArrayList(FrameworkRouter.Route.Index).init(allocator);
+    var navigatable_routes = std.array_list.Managed(FrameworkRouter.Route.Index).init(allocator);
     for (router.routes.items, 0..) |route, i| {
         _ = route.file_page.unwrap() orelse continue;
         try navigatable_routes.append(FrameworkRouter.Route.Index.init(@intCast(i)));
@@ -697,7 +697,7 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
         route_param_info,
         route_style_references,
     );
-    render_promise.setHandled(vm.jsc_vm);
+    render_promise.setHandled();
     vm.waitForPromise(.{ .normal = render_promise });
     switch (render_promise.unwrap(vm.jsc_vm, .mark_handled)) {
         .pending => unreachable,
@@ -744,7 +744,7 @@ extern fn BakeGetModuleNamespace(global: *jsc.JSGlobalObject, key: JSValue) JSVa
 extern fn BakeLoadModuleByKey(global: *jsc.JSGlobalObject, key: JSValue) JSValue;
 
 fn BakeGetOnModuleNamespace(global: *jsc.JSGlobalObject, module: JSValue, property: []const u8) ?JSValue {
-    const f = @extern(*const fn (*jsc.JSGlobalObject, JSValue, [*]const u8, usize) callconv(.C) JSValue, .{
+    const f = @extern(*const fn (*jsc.JSGlobalObject, JSValue, [*]const u8, usize) callconv(.c) JSValue, .{
         .name = "BakeGetOnModuleNamespace",
     });
     const result: JSValue = f(global, module, property.ptr, property.len);
@@ -782,7 +782,7 @@ extern fn BakeRenderRoutesForProdStatic(
 /// The result of this function is a JSValue that wont be garbage collected, as
 /// it will always have at least one reference by the module loader.
 fn BakeRegisterProductionChunk(global: *jsc.JSGlobalObject, key: bun.String, source_code: bun.String) bun.JSError!JSValue {
-    const f = @extern(*const fn (*jsc.JSGlobalObject, bun.String, bun.String) callconv(.C) JSValue, .{
+    const f = @extern(*const fn (*jsc.JSGlobalObject, bun.String, bun.String) callconv(.c) JSValue, .{
         .name = "BakeRegisterProductionChunk",
     });
     const result: JSValue = f(global, key, source_code);
@@ -791,7 +791,7 @@ fn BakeRegisterProductionChunk(global: *jsc.JSGlobalObject, key: bun.String, sou
     return result;
 }
 
-pub export fn BakeToWindowsPath(input: bun.String) callconv(.C) bun.String {
+pub export fn BakeToWindowsPath(input: bun.String) callconv(.c) bun.String {
     if (comptime bun.Environment.isPosix) {
         @panic("This code should not be called on POSIX systems.");
     }
@@ -806,7 +806,7 @@ pub export fn BakeToWindowsPath(input: bun.String) callconv(.C) bun.String {
     return bun.String.cloneUTF16(output_slice);
 }
 
-pub export fn BakeProdResolve(global: *jsc.JSGlobalObject, a_str: bun.String, specifier_str: bun.String) callconv(.C) bun.String {
+pub export fn BakeProdResolve(global: *jsc.JSGlobalObject, a_str: bun.String, specifier_str: bun.String) callconv(.c) bun.String {
     var sfa = std.heap.stackFallback(@sizeOf(bun.PathBuffer) * 2, bun.default_allocator);
     const alloc = sfa.get();
 
@@ -821,7 +821,7 @@ pub export fn BakeProdResolve(global: *jsc.JSGlobalObject, a_str: bun.String, sp
     defer referrer.deinit();
 
     if (bun.resolver.isPackagePath(specifier.slice())) {
-        return global.throw("Non-relative import {} from {} are not allowed in production assets. This is a bug in Bun's bundler", .{
+        return global.throw("Non-relative import {f} from {f} are not allowed in production assets. This is a bug in Bun's bundler", .{
             bun.fmt.quote(specifier.slice()),
             bun.fmt.quote(referrer.slice()),
         }) catch bun.String.dead;

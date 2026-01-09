@@ -27,14 +27,47 @@ Use `bun:test` with files that end in `*.test.{ts,js,jsx,tsx,mjs,cjs}`. If it's 
 
 When spawning Bun processes, use `bunExe` and `bunEnv` from `harness`. This ensures the same build of Bun is used to run the test and ensures debug logging is silenced.
 
+##### Use `-e` for single-file tests
+
 ```ts
 import { bunEnv, bunExe, tempDir } from "harness";
 import { test, expect } from "bun:test";
 
-test("spawns a Bun process", async () => {
+test("single-file test spawns a Bun process", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", "console.log('Hello, world!')"],
+    env: bunEnv,
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([
+    proc.stdout.text(),
+    proc.stderr.text(),
+    proc.exited,
+  ]);
+
+  expect(stderr).toBe("");
+  expect(stdout).toBe("Hello, world!\n");
+  expect(exitCode).toBe(0);
+});
+```
+
+##### When multi-file tests are required:
+
+```ts
+import { bunEnv, bunExe, tempDir } from "harness";
+import { test, expect } from "bun:test";
+
+test("multi-file test spawns a Bun process", async () => {
+  // If a test MUST use multiple files:
   using dir = tempDir("my-test-prefix", {
     "my.fixture.ts": `
-      console.log("Hello, world!");
+      import { foo } from "./foo.ts";
+      foo();
+    `,
+    "foo.ts": `
+      export function foo() {
+        console.log("Hello, world!");
+      }
     `,
   });
 
@@ -74,7 +107,7 @@ When callbacks must be used and it's just a single callback, use `Promise.withRe
 
 ```ts
 const ws = new WebSocket("ws://localhost:8080");
-const { promise, resolve, reject } = Promise.withResolvers();
+const { promise, resolve, reject } = Promise.withResolvers<void>(); // Can specify any type here for resolution value
 ws.onopen = resolve;
 ws.onclose = reject;
 await promise;
@@ -119,6 +152,33 @@ To create a repetitive string, use `Buffer.alloc(count, fill).toString()` instea
 - Regression tests for specific issues go in `/test/regression/issue/${issueNumber}.test.ts`. If there's no issue number, do not put them in the regression directory.
 - Unit tests for specific features are organized by module (e.g., `/test/js/bun/`, `/test/js/node/`)
 - Integration tests are in `/test/integration/`
+
+### Nested/complex object equality
+
+Prefer usage of `.toEqual` rather than many `.toBe` assertions for nested or complex objects.
+
+<example>
+
+BAD (try to avoid doing this):
+
+```ts
+expect(result).toHaveLength(3);
+expect(result[0].optional).toBe(null);
+expect(result[1].optional).toBe("middle-value"); // CRITICAL: middle item's value must be preserved
+expect(result[2].optional).toBe(null);
+```
+
+**GOOD (always prefer this):**
+
+```ts
+expect(result).toEqual([
+  { optional: null },
+  { optional: "middle-value" }, // CRITICAL: middle item's value must be preserved
+  { optional: null },
+]);
+```
+
+</example>
 
 ### Common Imports from `harness`
 

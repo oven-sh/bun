@@ -9,9 +9,9 @@ pub const js_fns = struct {
     pub const Signature = union(enum) {
         scope_functions: *const ScopeFunctions,
         str: []const u8,
-        pub fn format(this: Signature, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(this: Signature, writer: *std.Io.Writer) !void {
             switch (this) {
-                .scope_functions => try writer.print("{}", .{this.scope_functions.*}),
+                .scope_functions => try writer.print("{f}", .{this.scope_functions.*}),
                 .str => try writer.print("{s}", .{this.str}),
             }
         }
@@ -19,19 +19,19 @@ pub const js_fns = struct {
     const GetActiveCfg = struct { signature: Signature, allow_in_preload: bool };
     fn getActiveTestRoot(globalThis: *jsc.JSGlobalObject, cfg: GetActiveCfg) bun.JSError!*BunTestRoot {
         if (bun.jsc.Jest.Jest.runner == null) {
-            return globalThis.throw("Cannot use {s} outside of the test runner. Run \"bun test\" to run tests.", .{cfg.signature});
+            return globalThis.throw("Cannot use {f} outside of the test runner. Run \"bun test\" to run tests.", .{cfg.signature});
         }
         const bunTestRoot = &bun.jsc.Jest.Jest.runner.?.bun_test_root;
         const vm = globalThis.bunVM();
         if (vm.is_in_preload and !cfg.allow_in_preload) {
-            return globalThis.throw("Cannot use {s} during preload.", .{cfg.signature});
+            return globalThis.throw("Cannot use {f} during preload.", .{cfg.signature});
         }
         return bunTestRoot;
     }
     pub fn cloneActiveStrong(globalThis: *jsc.JSGlobalObject, cfg: GetActiveCfg) bun.JSError!BunTestPtr {
         const bunTestRoot = try getActiveTestRoot(globalThis, cfg);
         const bunTest = bunTestRoot.cloneActiveFile() orelse {
-            return globalThis.throw("Cannot use {s} outside of a test file.", .{cfg.signature});
+            return globalThis.throw("Cannot use {f} outside of a test file.", .{cfg.signature});
         };
 
         return bunTest;
@@ -217,7 +217,7 @@ pub const BunTest = struct {
     /// Whether tests in this file should default to concurrent execution
     default_concurrent: bool,
     first_last: BunTestRoot.FirstLast,
-    extra_execution_entries: std.ArrayList(*ExecutionEntry),
+    extra_execution_entries: std.array_list.Managed(*ExecutionEntry),
     wants_wakeup: bool = false,
 
     phase: enum {
@@ -308,7 +308,7 @@ pub const BunTest = struct {
             return the_sequence.active_entry;
         }
 
-        pub fn format(this: *const RefDataValue, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(this: *const RefDataValue, writer: *std.Io.Writer) !void {
             switch (this.*) {
                 .start => try writer.print("start", .{}),
                 .collection => try writer.print("collection: active_scope={?s}", .{this.collection.active_scope.base.name}),
@@ -336,7 +336,7 @@ pub const BunTest = struct {
         fn #destroy(this: *RefData) void {
             group.begin(@src());
             defer group.end();
-            group.log("refData: {}", .{this.phase});
+            group.log("refData: {f}", .{this.phase});
 
             var buntest_weak = this.buntest_weak;
             bun.destroy(this);
@@ -387,7 +387,7 @@ pub const BunTest = struct {
     pub fn ref(this_strong: BunTestPtr, phase: RefDataValue) *RefData {
         group.begin(@src());
         defer group.end();
-        group.log("ref: {}", .{phase});
+        group.log("ref: {f}", .{phase});
 
         return bun.new(RefData, .{
             .buntest_weak = this_strong.cloneWeak(),
@@ -570,7 +570,7 @@ pub const BunTest = struct {
                 group.log("-> inserting timer", .{});
                 globalThis.bunVM().timer.insert(&this.timer);
                 if (group.getLogEnabled()) {
-                    const duration = this.timer.next.duration(&bun.timespec.now());
+                    const duration = this.timer.next.duration(&bun.timespec.now(.force_real_time));
                     group.log("-> timer duration: {}", .{duration});
                 }
             }
@@ -631,7 +631,7 @@ pub const BunTest = struct {
         var done_callback: jsc.JSValue = .zero;
 
         if (cfg_done_parameter) {
-            group.log("callTestCallback -> appending done callback param: data {}", .{cfg_data});
+            group.log("callTestCallback -> appending done callback param: data {f}", .{cfg_data});
             done_callback = DoneCallback.createUnbound(globalThis);
             done_arg = DoneCallback.bind(done_callback, globalThis) catch |e| blk: {
                 this.onUncaughtException(globalThis, globalThis.takeException(e), false, cfg_data);
@@ -654,8 +654,8 @@ pub const BunTest = struct {
             // Prevent the user's Promise rejection from going into the uncaught promise rejection queue.
             if (result != .zero)
                 if (result.asPromise()) |promise|
-                    if (promise.status(globalThis.vm()) == .rejected)
-                        promise.setHandled(globalThis.vm());
+                    if (promise.status() == .rejected)
+                        promise.setHandled();
 
             const prev_unhandled_count = vm.unhandled_error_counter;
             globalThis.handleRejectedPromises();
@@ -679,9 +679,9 @@ pub const BunTest = struct {
             if (result.asPromise()) |promise| {
                 defer result.ensureStillAlive(); // because sometimes we use promise without result
 
-                group.log("callTestCallback -> promise: data {}", .{cfg_data});
+                group.log("callTestCallback -> promise: data {f}", .{cfg_data});
 
-                switch (promise.status(globalThis.vm())) {
+                switch (promise.status()) {
                     .pending => {
                         // not immediately resolved; register 'then' to handle the result when it becomes available
                         const this_ref: *RefData = if (dcb_ref) |dcb_ref_value| dcb_ref_value.dupe() else ref(this_strong, cfg_data);
@@ -842,11 +842,11 @@ pub const BaseScope = struct {
 
 pub const DescribeScope = struct {
     base: BaseScope,
-    entries: std.ArrayList(TestScheduleEntry),
-    beforeAll: std.ArrayList(*ExecutionEntry),
-    beforeEach: std.ArrayList(*ExecutionEntry),
-    afterEach: std.ArrayList(*ExecutionEntry),
-    afterAll: std.ArrayList(*ExecutionEntry),
+    entries: std.array_list.Managed(TestScheduleEntry),
+    beforeAll: std.array_list.Managed(*ExecutionEntry),
+    beforeEach: std.array_list.Managed(*ExecutionEntry),
+    afterEach: std.array_list.Managed(*ExecutionEntry),
+    afterAll: std.array_list.Managed(*ExecutionEntry),
 
     /// if true, the describe callback threw an error. do not run any tests declared in this scope.
     failed: bool = false,
@@ -906,7 +906,7 @@ pub const DescribeScope = struct {
         return entry;
     }
     pub const HookTag = enum { beforeAll, beforeEach, afterEach, afterAll };
-    pub fn getHookEntries(this: *DescribeScope, tag: HookTag) *std.ArrayList(*ExecutionEntry) {
+    pub fn getHookEntries(this: *DescribeScope, tag: HookTag) *std.array_list.Managed(*ExecutionEntry) {
         switch (tag) {
             .beforeAll => return &this.beforeAll,
             .beforeEach => return &this.beforeEach,
@@ -924,6 +924,10 @@ pub const ExecutionEntryCfg = struct {
     /// 0 = unlimited timeout
     timeout: u32,
     has_done_parameter: bool,
+    /// Number of times to retry a failed test (0 = no retries)
+    retry_count: u32 = 0,
+    /// Number of times to repeat a test (0 = run once, 1 = run twice, etc.)
+    repeat_count: u32 = 0,
 };
 pub const ExecutionEntry = struct {
     base: BaseScope,
@@ -935,9 +939,14 @@ pub const ExecutionEntry = struct {
     /// when this entry begins executing, the timespec will be set to the current time plus the timeout(ms).
     timespec: bun.timespec = .epoch,
     added_in_phase: AddedInPhase,
+    /// Number of times to retry a failed test (0 = no retries)
+    retry_count: u32,
+    /// Number of times to repeat a test (0 = run once, 1 = run twice, etc.)
+    repeat_count: u32,
 
     next: ?*ExecutionEntry = null,
-    skip_to: ?*ExecutionEntry = null,
+    /// if this entry fails, go to the entry 'failure_skip_past.next'
+    failure_skip_past: ?*ExecutionEntry = null,
 
     const AddedInPhase = enum { preload, collection, execution };
 
@@ -948,6 +957,8 @@ pub const ExecutionEntry = struct {
             .timeout = cfg.timeout,
             .has_done_parameter = cfg.has_done_parameter,
             .added_in_phase = phase,
+            .retry_count = cfg.retry_count,
+            .repeat_count = cfg.repeat_count,
         });
 
         if (cb) |c| {
@@ -1013,6 +1024,8 @@ pub const RunOneResult = union(enum) {
         timeout: bun.timespec = .epoch,
     },
 };
+
+pub const FakeTimers = @import("./timers/FakeTimers.zig");
 
 pub const Execution = @import("./Execution.zig");
 pub const debug = @import("./debug.zig");

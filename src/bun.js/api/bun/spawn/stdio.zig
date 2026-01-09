@@ -100,7 +100,7 @@ pub const Stdio = union(enum) {
             else => "spawn_stdio_memory_file",
         };
 
-        const fd = bun.sys.memfd_create(label, 0).unwrap() catch return false;
+        const fd = bun.sys.memfd_create(label, .cross_process).unwrap() catch return false;
 
         var remain = this.byteSlice();
 
@@ -360,7 +360,7 @@ pub const Stdio = union(enum) {
             if (file_fd >= std.math.maxInt(i32)) {
                 var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis };
                 defer formatter.deinit();
-                return globalThis.throwInvalidArguments("file descriptor must be a valid integer, received: {}", .{value.toFmt(&formatter)});
+                return globalThis.throwInvalidArguments("file descriptor must be a valid integer, received: {f}", .{value.toFmt(&formatter)});
             }
 
             if (fd.stdioTag()) |tag| switch (tag) {

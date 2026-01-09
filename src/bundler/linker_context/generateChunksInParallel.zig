@@ -2,7 +2,7 @@ pub fn generateChunksInParallel(
     c: *LinkerContext,
     chunks: []Chunk,
     comptime is_dev_server: bool,
-) !if (is_dev_server) void else std.ArrayList(options.OutputFile) {
+) !if (is_dev_server) void else std.array_list.Managed(options.OutputFile) {
     const trace = bun.perf.trace("Bundler.generateChunksInParallel");
     defer trace.end();
 
@@ -227,7 +227,7 @@ pub fn generateChunksInParallel(
             chunk_visit_map.setAll(false);
             chunk.template.placeholder.hash = hash.digest();
 
-            const rel_path = bun.handleOom(std.fmt.allocPrint(c.allocator(), "{any}", .{chunk.template}));
+            const rel_path = bun.handleOom(std.fmt.allocPrint(c.allocator(), "{f}", .{chunk.template}));
             bun.path.platformToPosixInPlace(u8, rel_path);
 
             if ((try path_names_map.getOrPut(rel_path)).found_existing) {
@@ -251,7 +251,7 @@ pub fn generateChunksInParallel(
         }
 
         if (duplicates_map.count() > 0) {
-            var msg = std.ArrayList(u8).init(bun.default_allocator);
+            var msg = std.array_list.Managed(u8).init(bun.default_allocator);
             errdefer msg.deinit();
 
             var entry_naming: ?[]const u8 = null;
@@ -304,6 +304,18 @@ pub fn generateChunksInParallel(
         }
     }
 
+    // Generate metafile JSON fragments for each chunk (after paths are resolved)
+    if (c.options.metafile) {
+        for (chunks) |*chunk| {
+            chunk.metafile_chunk_json = LinkerContext.MetafileBuilder.generateChunkJson(
+                bun.default_allocator,
+                c,
+                chunk,
+                chunks,
+            ) catch "";
+        }
+    }
+
     var output_files = try OutputFileListBuilder.init(bun.default_allocator, c, chunks, c.parse_graph.additional_output_files.items.len);
 
     const root_path = c.resolver.opts.output_dir;
@@ -327,7 +339,7 @@ pub fn generateChunksInParallel(
         for (chunks, 0..) |*chunk, chunk_index_in_chunks_list| {
             var display_size: usize = 0;
 
-            const public_path = if (chunk.is_browser_chunk_from_server_build)
+            const public_path = if (chunk.flags.is_browser_chunk_from_server_build)
                 bundler.transpilerForTarget(.browser).options.public_path
             else
                 c.options.public_path;
@@ -340,7 +352,7 @@ pub fn generateChunksInParallel(
                 chunk,
                 chunks,
                 &display_size,
-                c.resolver.opts.compile and !chunk.is_browser_chunk_from_server_build,
+                c.resolver.opts.compile and !chunk.flags.is_browser_chunk_from_server_build,
                 chunk.content.sourcemap(c.options.source_maps) != .none,
             );
             var code_result = _code_result catch @panic("Failed to allocate memory for output file");
@@ -369,7 +381,7 @@ pub fn generateChunksInParallel(
 
                         const source_map_start = "//# sourceMappingURL=";
                         const total_len = code_result.buffer.len + source_map_start.len + a.len + b.len + "\n".len;
-                        var buf = std.ArrayList(u8).initCapacity(Chunk.IntermediateOutput.allocatorForSize(total_len), total_len) catch @panic("Failed to allocate memory for output file with inline source map");
+                        var buf = std.array_list.Managed(u8).initCapacity(Chunk.IntermediateOutput.allocatorForSize(total_len), total_len) catch @panic("Failed to allocate memory for output file with inline source map");
                         buf.appendSliceAssumeCapacity(code_result.buffer);
                         buf.appendSliceAssumeCapacity(source_map_start);
                         buf.appendSliceAssumeCapacity(a);
@@ -404,7 +416,7 @@ pub fn generateChunksInParallel(
 
                     const source_map_start = "//# sourceMappingURL=data:application/json;base64,";
                     const total_len = code_result.buffer.len + source_map_start.len + encode_len + 1;
-                    var buf = std.ArrayList(u8).initCapacity(Chunk.IntermediateOutput.allocatorForSize(total_len), total_len) catch @panic("Failed to allocate memory for output file with inline source map");
+                    var buf = std.array_list.Managed(u8).initCapacity(Chunk.IntermediateOutput.allocatorForSize(total_len), total_len) catch @panic("Failed to allocate memory for output file with inline source map");
 
                     buf.appendSliceAssumeCapacity(code_result.buffer);
                     buf.appendSliceAssumeCapacity(source_map_start);
@@ -441,7 +453,7 @@ pub fn generateChunksInParallel(
                             const bytecode, const cached_bytecode = result;
                             const source_provider_url_str = source_provider_url.toSlice(bun.default_allocator);
                             defer source_provider_url_str.deinit();
-                            debug("Bytecode cache generated {s}: {}", .{ source_provider_url_str.slice(), bun.fmt.size(bytecode.len, .{ .space_between_number_and_unit = true }) });
+                            debug("Bytecode cache generated {s}: {f}", .{ source_provider_url_str.slice(), bun.fmt.size(bytecode.len, .{ .space_between_number_and_unit = true }) });
                             @memcpy(fdpath[0..chunk.final_rel_path.len], chunk.final_rel_path);
                             fdpath[chunk.final_rel_path.len..][0..bun.bytecode_extension.len].* = bun.bytecode_extension.*;
 
@@ -490,7 +502,7 @@ pub fn generateChunksInParallel(
             else
                 .chunk;
 
-            const side: bun.bake.Side = if (chunk.content == .css or chunk.is_browser_chunk_from_server_build)
+            const side: bun.bake.Side = if (chunk.content == .css or chunk.flags.is_browser_chunk_from_server_build)
                 .client
             else switch (c.graph.ast.items(.target)[chunk.entry_point.source_index]) {
                 .browser => .client,
@@ -510,7 +522,7 @@ pub fn generateChunksInParallel(
                 .output_kind = output_kind,
                 .input_loader = if (chunk.entry_point.is_entry_point) c.parse_graph.input_files.items(.loader)[chunk.entry_point.source_index] else .js,
                 .output_path = try bun.default_allocator.dupe(u8, chunk.final_rel_path),
-                .is_executable = chunk.is_executable,
+                .is_executable = chunk.flags.is_executable,
                 .source_map_index = source_map_index,
                 .bytecode_index = bytecode_index,
                 .side = side,

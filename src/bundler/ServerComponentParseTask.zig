@@ -107,7 +107,7 @@ fn generateClientEntryWrapper(_: *ServerComponentParseTask, data: Data.ClientEnt
         .items = &.{},
         .is_single_line = true,
     });
-    b.import_records.items[record].was_originally_bare_import = true;
+    b.import_records.items[record].flags.was_originally_bare_import = true;
 }
 
 fn generateClientReferenceProxy(task: *ServerComponentParseTask, data: Data.ReferenceProxy, b: *AstBuilder) !void {
@@ -130,7 +130,7 @@ fn generateClientReferenceProxy(task: *ServerComponentParseTask, data: Data.Refe
         .data = if (task.ctx.transpiler.options.dev_server != null)
             data.other_source.path.pretty
         else
-            try std.fmt.allocPrint(b.allocator, "{}S{d:0>8}", .{
+            try std.fmt.allocPrint(b.allocator, "{f}S{d:0>8}", .{
                 bun.fmt.hexIntLower(task.ctx.unique_key),
                 data.other_source.index.get(),
             }),

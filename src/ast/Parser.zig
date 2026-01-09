@@ -134,17 +134,17 @@ pub const Parser = struct {
                 // - import 'foo';
                 // - import("foo")
                 // - require("foo")
-                import_record.is_unused = import_record.is_unused or
+                import_record.flags.is_unused = import_record.flags.is_unused or
                     (import_record.kind == .stmt and
-                        !import_record.was_originally_bare_import and
-                        !import_record.calls_runtime_re_export_fn);
+                        !import_record.flags.was_originally_bare_import and
+                        !import_record.flags.calls_runtime_re_export_fn);
             }
 
             var iter = scan_pass.used_symbols.iterator();
             while (iter.next()) |entry| {
                 const val = entry.value_ptr;
                 if (val.used) {
-                    scan_pass.import_records.items[val.import_record_index].is_unused = false;
+                    scan_pass.import_records.items[val.import_record_index].flags.is_unused = false;
                 }
             }
         }
@@ -291,10 +291,10 @@ pub const Parser = struct {
                         return data.len;
                     }
                 };
-                const writer = std.io.Writer(fakeWriter, anyerror, fakeWriter.writeAll){
+                const writer = std.Io.GenericWriter(fakeWriter, anyerror, fakeWriter.writeAll){
                     .context = fakeWriter{},
                 };
-                var buffered_writer = std.io.bufferedWriter(writer);
+                var buffered_writer = bun.deprecated.bufferedWriter(writer);
                 const actual = buffered_writer.writer();
                 for (self.log.msgs.items) |msg| {
                     var m: logger.Msg = msg;
@@ -343,14 +343,14 @@ pub const Parser = struct {
         defer p.lexer.deinit();
 
         var binary_expression_stack_heap = std.heap.stackFallback(42 * @sizeOf(ParserType.BinaryExpressionVisitor), bun.default_allocator);
-        p.binary_expression_stack = std.ArrayList(ParserType.BinaryExpressionVisitor).initCapacity(
+        p.binary_expression_stack = std.array_list.Managed(ParserType.BinaryExpressionVisitor).initCapacity(
             binary_expression_stack_heap.get(),
             41, // one less in case of unlikely alignment between the stack buffer and reality
         ) catch unreachable; // stack allocation cannot fail
         defer p.binary_expression_stack.clearAndFree();
 
         var binary_expression_simplify_stack_heap = std.heap.stackFallback(48 * @sizeOf(SideEffects.BinaryExpressionSimplifyVisitor), bun.default_allocator);
-        p.binary_expression_simplify_stack = std.ArrayList(SideEffects.BinaryExpressionSimplifyVisitor).initCapacity(
+        p.binary_expression_simplify_stack = std.array_list.Managed(SideEffects.BinaryExpressionSimplifyVisitor).initCapacity(
             binary_expression_simplify_stack_heap.get(),
             47,
         ) catch unreachable; // stack allocation cannot fail
@@ -1023,7 +1023,7 @@ pub const Parser = struct {
 
                 const import_record: ?*const ImportRecord = brk: {
                     for (p.import_records.items) |*import_record| {
-                        if (import_record.is_internal or import_record.is_unused) continue;
+                        if (import_record.flags.is_internal or import_record.flags.is_unused) continue;
                         if (import_record.kind == .stmt) break :brk import_record;
                     }
 
@@ -1037,7 +1037,7 @@ pub const Parser = struct {
                     var notes = ListManaged(logger.Data).init(p.allocator);
 
                     try notes.append(logger.Data{
-                        .text = try std.fmt.allocPrint(p.allocator, "Try require({}) instead", .{bun.fmt.QuotedFormatter{ .text = record.path.text }}),
+                        .text = try std.fmt.allocPrint(p.allocator, "Try require({f}) instead", .{bun.fmt.QuotedFormatter{ .text = record.path.text }}),
                     });
 
                     if (uses_module_ref) {
@@ -1094,7 +1094,7 @@ pub const Parser = struct {
                     // If they use an import statement, we say it's ESM because that's not allowed in CommonJS files.
                     const uses_any_import_statements = brk: {
                         for (p.import_records.items) |*import_record| {
-                            if (import_record.is_internal or import_record.is_unused) continue;
+                            if (import_record.flags.is_internal or import_record.flags.is_unused) continue;
                             if (import_record.kind == .stmt) break :brk true;
                         }
 
@@ -1494,7 +1494,7 @@ pub const Parser = struct {
 
         var state: PragmaState = .{};
 
-        while (cursor < self.lexer.end) : (cursor += 1) {
+        while (cursor < end) : (cursor += 1) {
             switch (contents[cursor]) {
                 '\n' => break,
                 '@' => {
@@ -1583,5 +1583,5 @@ const WrapMode = js_parser.WrapMode;
 
 const std = @import("std");
 const List = std.ArrayListUnmanaged;
-const ListManaged = std.ArrayList;
 const Allocator = std.mem.Allocator;
+const ListManaged = std.array_list.Managed;

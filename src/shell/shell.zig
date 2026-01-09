@@ -2,6 +2,7 @@ pub const interpret = @import("./interpreter.zig");
 pub const subproc = @import("./subproc.zig");
 
 pub const AllocScope = @import("./AllocScope.zig");
+pub const TraceInterpreter = @import("./TraceInterpreter.zig");
 
 pub const EnvMap = interpret.EnvMap;
 pub const EnvStr = interpret.EnvStr;
@@ -47,9 +48,9 @@ pub const ShellErr = union(enum) {
         };
     }
 
-    pub fn format(this: *const ShellErr, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(this: *const ShellErr, writer: *std.Io.Writer) !void {
         return switch (this.*) {
-            .sys => |e| writer.print("bun: {s}: {}", .{ e.message, e.path }),
+            .sys => |e| writer.print("bun: {f}: {f}", .{ e.message, e.path }),
             .custom => |msg| writer.print("bun: {s}", .{msg}),
             .invalid_arguments => |args| writer.print("bun: invalid arguments: {s}", .{args.val}),
             .todo => |msg| writer.print("bun: TODO: {s}", .{msg}),
@@ -91,7 +92,7 @@ pub const ShellErr = union(enum) {
         defer this.deinit(bun.default_allocator);
         switch (this) {
             .sys => |err| {
-                bun.Output.prettyErrorln("<r><red>error<r>: Failed due to error: <b>bunsh: {s}: {}<r>", .{ err.message, err.path });
+                bun.Output.prettyErrorln("<r><red>error<r>: Failed due to error: <b>bunsh: {f}: {f}<r>", .{ err.message, err.path });
             },
             .custom => |custom| {
                 bun.Output.prettyErrorln("<r><red>error<r>: Failed due to error: <b>{s}<r>", .{custom});
@@ -354,7 +355,7 @@ pub const AST = struct {
         /// Note that commands in a pipeline cannot be async
         /// TODO: Extra indirection for essentially a boolean feels bad for performance
         /// could probably find a more efficient way to encode this information.
-        @"async": *Expr,
+        async: *Expr,
 
         pub fn memoryCost(this: *const @This()) usize {
             return switch (this.*) {
@@ -371,7 +372,7 @@ pub const AST = struct {
                 .subshell => |subshell| subshell.memoryCost(),
                 .@"if" => |@"if"| @"if".memoryCost(),
                 .condexpr => |condexpr| condexpr.memoryCost(),
-                .@"async" => |@"async"| @"async".memoryCost(),
+                .async => |async| async.memoryCost(),
             };
         }
 
@@ -394,7 +395,7 @@ pub const AST = struct {
             subshell,
             @"if",
             condexpr,
-            @"async",
+            async,
         };
     };
 
@@ -1089,7 +1090,7 @@ pub const Parser = struct {
     alloc: Allocator,
     jsobjs: []JSValue,
     current: u32 = 0,
-    errors: std.ArrayList(Error),
+    errors: std.array_list.Managed(Error),
     inside_subshell: ?SubshellKind = null,
 
     const SubshellKind = enum {
@@ -1116,7 +1117,7 @@ pub const Parser = struct {
             .tokens = lex_result.tokens,
             .alloc = allocator,
             .jsobjs = jsobjs,
-            .errors = std.ArrayList(Error).init(allocator),
+            .errors = std.array_list.Managed(Error).init(allocator),
         };
     }
 
@@ -1175,7 +1176,7 @@ pub const Parser = struct {
     }
 
     pub fn parse_stmt(self: *Parser) !AST.Stmt {
-        var exprs = std.ArrayList(AST.Expr).init(self.alloc);
+        var exprs = std.array_list.Managed(AST.Expr).init(self.alloc);
 
         while (if (self.inside_subshell == null)
             !self.match_any_comptime(&.{ .Semicolon, .Newline, .Eof })
@@ -1264,7 +1265,7 @@ pub const Parser = struct {
         var expr = try self.parse_compound_cmd();
 
         if (self.peek() == .Pipe) {
-            var pipeline_items = std.ArrayList(AST.PipelineItem).init(self.alloc);
+            var pipeline_items = std.array_list.Managed(AST.PipelineItem).init(self.alloc);
             try pipeline_items.append(expr.asPipelineItem() orelse {
                 try self.add_error_expected_pipeline_item(@as(AST.Expr.Tag, expr));
                 return ParseError.Expected;
@@ -1598,7 +1599,7 @@ pub const Parser = struct {
     }
 
     fn parse_simple_cmd(self: *Parser) !AST.CmdOrAssigns {
-        var assigns = std.ArrayList(AST.Assign).init(self.alloc);
+        var assigns = std.array_list.Managed(AST.Assign).init(self.alloc);
         while (if (self.inside_subshell == null)
             !self.check_any_comptime(&.{ .Semicolon, .Newline, .Eof })
         else
@@ -1631,7 +1632,7 @@ pub const Parser = struct {
             return .{ .assigns = assigns.items[0..] };
         };
 
-        var name_and_args = std.ArrayList(AST.Atom).init(self.alloc);
+        var name_and_args = std.array_list.Managed(AST.Atom).init(self.alloc);
         try name_and_args.append(name);
         while (try self.parse_atom()) |arg| {
             try name_and_args.append(arg);
@@ -1750,7 +1751,7 @@ pub const Parser = struct {
 
     fn parse_atom(self: *Parser) !?AST.Atom {
         var array_alloc = std.heap.stackFallback(@sizeOf(AST.SimpleAtom), self.alloc);
-        var atoms = try std.ArrayList(AST.SimpleAtom).initCapacity(array_alloc.get(), 1);
+        var atoms = try std.array_list.Managed(AST.SimpleAtom).initCapacity(array_alloc.get(), 1);
         var has_brace_open = false;
         var has_brace_close = false;
         var has_comma = false;
@@ -2328,7 +2329,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
         tokens: ArrayList(Token),
         delimit_quote: bool = false,
         in_subshell: ?SubShellKind = null,
-        errors: std.ArrayList(LexError),
+        errors: std.array_list.Managed(LexError),
 
         /// Contains a list of strings we need to escape
         /// Not owned by this struct
@@ -3740,7 +3741,7 @@ pub const CmdEnvIter = struct {
     const Value = struct {
         val: [:0]const u8,
 
-        pub fn format(self: Value, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(self: Value, writer: *std.Io.Writer) !void {
             try writer.writeAll(self.val);
         }
     };
@@ -3748,7 +3749,7 @@ pub const CmdEnvIter = struct {
     const Key = struct {
         val: []const u8,
 
-        pub fn format(self: Key, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(self: Key, writer: *std.Io.Writer) !void {
             try writer.writeAll(self.val);
         }
 
@@ -3864,9 +3865,9 @@ pub fn shellCmdFromJS(
     globalThis: *jsc.JSGlobalObject,
     string_args: JSValue,
     template_args: *jsc.JSArrayIterator,
-    out_jsobjs: *std.ArrayList(JSValue),
-    jsstrings: *std.ArrayList(bun.String),
-    out_script: *std.ArrayList(u8),
+    out_jsobjs: *std.array_list.Managed(JSValue),
+    jsstrings: *std.array_list.Managed(bun.String),
+    out_script: *std.array_list.Managed(u8),
     marked_argument_buffer: *jsc.MarkedArgumentBuffer,
 ) bun.JSError!void {
     var builder = ShellSrcBuilder.init(globalThis, out_script, jsstrings);
@@ -3895,9 +3896,9 @@ pub fn shellCmdFromJS(
 pub fn handleTemplateValue(
     globalThis: *jsc.JSGlobalObject,
     template_value: JSValue,
-    out_jsobjs: *std.ArrayList(JSValue),
-    out_script: *std.ArrayList(u8),
-    jsstrings: *std.ArrayList(bun.String),
+    out_jsobjs: *std.array_list.Managed(JSValue),
+    out_script: *std.array_list.Managed(u8),
+    jsstrings: *std.array_list.Managed(bun.String),
     jsobjref_buf: []u8,
     marked_argument_buffer: *jsc.MarkedArgumentBuffer,
 ) bun.JSError!void {
@@ -3918,6 +3919,12 @@ pub fn handleTemplateValue(
                 if (store.data == .file) {
                     if (store.data.file.pathlike == .path) {
                         const path = store.data.file.pathlike.path.slice();
+
+                        // Check for null bytes in path (security: prevent null byte injection)
+                        if (bun.strings.indexOfChar(path, 0) != null) {
+                            return globalThis.ERR(.INVALID_ARG_VALUE, "The shell argument must be a string without null bytes. Received {f}", .{bun.fmt.quote(path)}).throw();
+                        }
+
                         if (!try builder.appendUTF8(path, true)) {
                             return globalThis.throw("Shell script string contains invalid UTF-16", .{});
                         }
@@ -3983,6 +3990,12 @@ pub fn handleTemplateValue(
             if (try template_value.getOwnTruthy(globalThis, "raw")) |maybe_str| {
                 const bunstr = try maybe_str.toBunString(globalThis);
                 defer bunstr.deref();
+
+                // Check for null bytes in shell argument (security: prevent null byte injection)
+                if (bunstr.indexOfAsciiChar(0) != null) {
+                    return globalThis.ERR(.INVALID_ARG_VALUE, "The shell argument must be a string without null bytes. Received \"{f}\"", .{bunstr.toZigString()}).throw();
+                }
+
                 if (!try builder.appendBunStr(bunstr, false)) {
                     return globalThis.throw("Shell script string contains invalid UTF-16", .{});
                 }
@@ -4004,7 +4017,7 @@ pub fn handleTemplateValue(
             return;
         }
 
-        return globalThis.throw("Invalid JS object used in shell: {}, you might need to call `.toString()` on it", .{template_value.fmtString(globalThis)});
+        return globalThis.throw("Invalid JS object used in shell: {f}, you might need to call `.toString()` on it", .{template_value.fmtString(globalThis)});
     }
 
     return;
@@ -4012,14 +4025,14 @@ pub fn handleTemplateValue(
 
 pub const ShellSrcBuilder = struct {
     globalThis: *jsc.JSGlobalObject,
-    outbuf: *std.ArrayList(u8),
-    jsstrs_to_escape: *std.ArrayList(bun.String),
+    outbuf: *std.array_list.Managed(u8),
+    jsstrs_to_escape: *std.array_list.Managed(bun.String),
     jsstr_ref_buf: [128]u8 = [_]u8{0} ** 128,
 
     pub fn init(
         globalThis: *jsc.JSGlobalObject,
-        outbuf: *std.ArrayList(u8),
-        jsstrs_to_escape: *std.ArrayList(bun.String),
+        outbuf: *std.array_list.Managed(u8),
+        jsstrs_to_escape: *std.array_list.Managed(bun.String),
     ) ShellSrcBuilder {
         return .{
             .globalThis = globalThis,
@@ -4031,6 +4044,11 @@ pub const ShellSrcBuilder = struct {
     pub fn appendJSValueStr(this: *ShellSrcBuilder, jsval: JSValue, comptime allow_escape: bool) bun.JSError!bool {
         const bunstr = try jsval.toBunString(this.globalThis);
         defer bunstr.deref();
+
+        // Check for null bytes in shell argument (security: prevent null byte injection)
+        if (bunstr.indexOfAsciiChar(0) != null) {
+            return this.globalThis.ERR(.INVALID_ARG_VALUE, "The shell argument must be a string without null bytes. Received \"{f}\"", .{bunstr.toZigString()}).throw();
+        }
 
         return try this.appendBunStr(bunstr, allow_escape);
     }
@@ -4122,7 +4140,7 @@ pub fn assertSpecialChar(comptime c: u8) void {
 /// Characters that need to be backslashed inside double quotes
 const BACKSLASHABLE_CHARS = [_]u8{ '$', '`', '"', '\\' };
 
-pub fn escapeBunStr(bunstr: bun.String, outbuf: *std.ArrayList(u8), comptime add_quotes: bool) bun.OOM!bool {
+pub fn escapeBunStr(bunstr: bun.String, outbuf: *std.array_list.Managed(u8), comptime add_quotes: bool) bun.OOM!bool {
     if (bunstr.isUTF16()) {
         const res = try escapeUtf16(bunstr.utf16(), outbuf, add_quotes);
         return !res.is_invalid;
@@ -4133,7 +4151,7 @@ pub fn escapeBunStr(bunstr: bun.String, outbuf: *std.ArrayList(u8), comptime add
 }
 
 /// works for utf-8, latin-1, and ascii
-pub fn escape8Bit(str: []const u8, outbuf: *std.ArrayList(u8), comptime add_quotes: bool) !void {
+pub fn escape8Bit(str: []const u8, outbuf: *std.array_list.Managed(u8), comptime add_quotes: bool) !void {
     try outbuf.ensureUnusedCapacity(str.len);
 
     if (add_quotes) try outbuf.append('\"');
@@ -4154,7 +4172,7 @@ pub fn escape8Bit(str: []const u8, outbuf: *std.ArrayList(u8), comptime add_quot
     if (add_quotes) try outbuf.append('\"');
 }
 
-pub fn escapeUtf16(str: []const u16, outbuf: *std.ArrayList(u8), comptime add_quotes: bool) !struct { is_invalid: bool = false } {
+pub fn escapeUtf16(str: []const u16, outbuf: *std.array_list.Managed(u8), comptime add_quotes: bool) !struct { is_invalid: bool = false } {
     if (add_quotes) try outbuf.append('"');
 
     const non_ascii = bun.strings.firstNonASCII16(str) orelse 0;
@@ -4269,7 +4287,7 @@ pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
             return this;
         }
 
-        pub fn format(this: *const @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(this: *const @This(), writer: *std.Io.Writer) !void {
             const slc = this.slice();
             try writer.print("{}", .{slc});
         }
@@ -4436,7 +4454,8 @@ pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
             switch (this.*) {
                 .inlined => {
                     if (this.inlined.len == INLINED_MAX) {
-                        this.* = .{ .heap = this.inlined.promote(INLINED_MAX, new) };
+                        const promoted = this.inlined.promote(INLINED_MAX, new);
+                        this.* = .{ .heap = promoted };
                         return;
                     }
                     this.inlined.items[this.inlined.len] = new;
@@ -4519,17 +4538,17 @@ pub const TestingAPIs = struct {
         };
         var template_args = try template_args_js.arrayIterator(globalThis);
         var stack_alloc = std.heap.stackFallback(@sizeOf(bun.String) * 4, arena.allocator());
-        var jsstrings = try std.ArrayList(bun.String).initCapacity(stack_alloc.get(), 4);
+        var jsstrings = try std.array_list.Managed(bun.String).initCapacity(stack_alloc.get(), 4);
         defer {
             for (jsstrings.items[0..]) |bunstr| {
                 bunstr.deref();
             }
             jsstrings.deinit();
         }
-        var jsobjs = std.ArrayList(JSValue).init(arena.allocator());
+        var jsobjs = std.array_list.Managed(JSValue).init(arena.allocator());
         defer jsobjs.deinit();
 
-        var script = std.ArrayList(u8).init(arena.allocator());
+        var script = std.array_list.Managed(u8).init(arena.allocator());
         try shellCmdFromJS(globalThis, string_args, &template_args, &jsobjs, &jsstrings, &script, marked_argument_buffer);
 
         const lex_result = brk: {
@@ -4552,13 +4571,13 @@ pub const TestingAPIs = struct {
             return globalThis.throwPretty("{s}", .{str});
         }
 
-        var test_tokens = try std.ArrayList(Test.TestToken).initCapacity(arena.allocator(), lex_result.tokens.len);
+        var test_tokens = try std.array_list.Managed(Test.TestToken).initCapacity(arena.allocator(), lex_result.tokens.len);
         for (lex_result.tokens) |tok| {
             const test_tok = Test.TestToken.from_real(tok, lex_result.strpool);
             try test_tokens.append(test_tok);
         }
 
-        const str = try std.json.stringifyAlloc(globalThis.bunVM().allocator, test_tokens.items[0..], .{});
+        const str = bun.handleOom(std.fmt.allocPrint(globalThis.bunVM().allocator, "{f}", .{std.json.fmt(test_tokens.items[0..], .{})}));
 
         defer globalThis.bunVM().allocator.free(str);
         var bun_str = bun.String.fromBytes(str);
@@ -4586,16 +4605,16 @@ pub const TestingAPIs = struct {
         };
         var template_args = try template_args_js.arrayIterator(globalThis);
         var stack_alloc = std.heap.stackFallback(@sizeOf(bun.String) * 4, arena.allocator());
-        var jsstrings = try std.ArrayList(bun.String).initCapacity(stack_alloc.get(), 4);
+        var jsstrings = try std.array_list.Managed(bun.String).initCapacity(stack_alloc.get(), 4);
         defer {
             for (jsstrings.items[0..]) |bunstr| {
                 bunstr.deref();
             }
             jsstrings.deinit();
         }
-        var jsobjs = std.ArrayList(JSValue).init(arena.allocator());
+        var jsobjs = std.array_list.Managed(JSValue).init(arena.allocator());
         defer jsobjs.deinit();
-        var script = std.ArrayList(u8).init(arena.allocator());
+        var script = std.array_list.Managed(u8).init(arena.allocator());
         try shellCmdFromJS(globalThis, string_args, &template_args, &jsobjs, &jsstrings, &script, marked_argument_buffer);
 
         var out_parser: ?Parser = null;
@@ -4616,7 +4635,7 @@ pub const TestingAPIs = struct {
             return globalThis.throwError(err, "failed to lex/parse shell");
         };
 
-        const str = try std.json.stringifyAlloc(globalThis.bunVM().allocator, script_ast, .{});
+        const str = bun.handleOom(std.fmt.allocPrint(globalThis.bunVM().allocator, "{f}", .{std.json.fmt(script_ast, .{})}));
 
         defer globalThis.bunVM().allocator.free(str);
         return bun.String.createUTF8ForJS(globalThis, str);
@@ -4627,6 +4646,9 @@ pub const ShellSubprocess = @import("./subproc.zig").ShellSubprocess;
 
 const Syscall = @import("../sys.zig");
 const builtin = @import("builtin");
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+const ArrayList = std.array_list.Managed;
 
 const bun = @import("bun");
 const assert = bun.assert;
@@ -4637,7 +4659,3 @@ const JSValue = bun.jsc.JSValue;
 
 const CodepointIterator = bun.strings.UnsignedCodepointIterator;
 const isAllAscii = bun.strings.isAllASCII;
-
-const std = @import("std");
-const ArrayList = std.ArrayList;
-const Allocator = std.mem.Allocator;

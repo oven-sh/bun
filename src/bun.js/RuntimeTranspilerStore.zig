@@ -70,17 +70,18 @@ pub fn dumpSourceStringFailiable(vm: *VirtualMachine, specifier: string, written
             ) catch "";
             defer bun.default_allocator.free(source_file);
 
-            var bufw = std.io.bufferedWriter(file.writer());
-            const w = bufw.writer();
+            var bufw_buffer: [4096]u8 = undefined;
+            var bufw = file.writerStreaming(&bufw_buffer);
+            const w = &bufw.interface;
             try w.print(
                 \\{{
                 \\  "version": 3,
-                \\  "file": {},
+                \\  "file": {f},
                 \\  "sourceRoot": "",
-                \\  "sources": [{}],
-                \\  "sourcesContent": [{}],
+                \\  "sources": [{f}],
+                \\  "sourcesContent": [{f}],
                 \\  "names": [],
-                \\  "mappings": "{}"
+                \\  "mappings": "{f}"
                 \\}}
             , .{
                 bun.fmt.formatJSONStringUTF8(std.fs.path.basename(specifier), .{}),
@@ -88,7 +89,7 @@ pub fn dumpSourceStringFailiable(vm: *VirtualMachine, specifier: string, written
                 bun.fmt.formatJSONStringUTF8(source_file, .{}),
                 mappings.formatVLQs(),
             });
-            try bufw.flush();
+            try w.flush();
         }
     } else {
         dir.writeFile(.{
@@ -509,14 +510,14 @@ pub const RuntimeTranspilerStore = struct {
                 if (HardcodedModule.Alias.get(import_record.path.text, transpiler.options.target, .{ .rewrite_jest_for_tests = transpiler.options.rewrite_jest_for_tests })) |replacement| {
                     import_record.path.text = replacement.path;
                     import_record.tag = replacement.tag;
-                    import_record.is_external_without_side_effects = true;
+                    import_record.flags.is_external_without_side_effects = true;
                     continue;
                 }
 
                 if (strings.hasPrefixComptime(import_record.path.text, "bun:")) {
                     import_record.path = Fs.Path.init(import_record.path.text["bun:".len..]);
                     import_record.path.namespace = "bun";
-                    import_record.is_external_without_side_effects = true;
+                    import_record.flags.is_external_without_side_effects = true;
                 }
             }
 

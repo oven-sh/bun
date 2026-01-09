@@ -117,7 +117,7 @@ pub fn init(resolve_result: *const _resolver.Result, source_index: Index, ctx: *
         .jsx = resolve_result.jsx,
         .source_index = source_index,
         .module_type = resolve_result.module_type,
-        .emit_decorator_metadata = resolve_result.emit_decorator_metadata,
+        .emit_decorator_metadata = resolve_result.flags.emit_decorator_metadata,
         .package_version = if (resolve_result.package_json) |package_json| package_json.version else "",
         .known_target = ctx.transpiler.options.target,
     };
@@ -382,7 +382,7 @@ fn getAST(
             const path_to_use = brk: {
                 // Implements embedded sqlite
                 if (loader == .sqlite_embedded) {
-                    const embedded_path = std.fmt.allocPrint(allocator, "{any}A{d:0>8}", .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() }) catch unreachable;
+                    const embedded_path = std.fmt.allocPrint(allocator, "{f}A{d:0>8}", .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() }) catch unreachable;
                     unique_key_for_additional_file.* = .{
                         .key = embedded_path,
                         .content_hash = ContentHasher.run(source.contents),
@@ -446,7 +446,7 @@ fn getAST(
                 return error.ParserError;
             }
 
-            const unique_key = std.fmt.allocPrint(allocator, "{any}A{d:0>8}", .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() }) catch unreachable;
+            const unique_key = std.fmt.allocPrint(allocator, "{f}A{d:0>8}", .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() }) catch unreachable;
             // This injects the following code:
             //
             // require(unique_key)
@@ -607,7 +607,7 @@ fn getAST(
             else
                 try std.fmt.allocPrint(
                     allocator,
-                    "{any}A{d:0>8}",
+                    "{f}A{d:0>8}",
                     .{ bun.fmt.hexIntLower(unique_key_prefix), source.index.get() },
                 );
             const root = Expr.init(E.String, .{ .data = unique_key }, .{ .start = 0 });
@@ -635,6 +635,16 @@ fn getCodeForParseTaskWithoutPlugins(
         .fd => |contents| brk: {
             const trace = bun.perf.trace("Bundler.readFile");
             defer trace.end();
+
+            // Check FileMap for in-memory files first
+            if (task.ctx.file_map) |file_map| {
+                if (file_map.get(file_path.text)) |file_contents| {
+                    break :brk .{
+                        .contents = file_contents,
+                        .fd = bun.invalid_fd,
+                    };
+                }
+            }
 
             if (strings.eqlComptime(file_path.namespace, "node")) lookup_builtin: {
                 if (task.ctx.framework) |f| {
@@ -675,7 +685,7 @@ fn getCodeForParseTaskWithoutPlugins(
                             source,
                             Logger.Loc.Empty,
                             allocator,
-                            "File not found {}",
+                            "File not found {f}",
                             .{bun.fmt.quote(file_path.text)},
                         ) catch {};
                         return error.FileNotFound;
@@ -685,7 +695,7 @@ fn getCodeForParseTaskWithoutPlugins(
                             source,
                             Logger.Loc.Empty,
                             allocator,
-                            "{s} reading file: {}",
+                            "{s} reading file: {f}",
                             .{ @errorName(err), bun.fmt.quote(file_path.text) },
                         ) catch {};
                     },
@@ -853,7 +863,7 @@ const OnBeforeParsePlugin = struct {
         pub fn logFn(
             args_: ?*OnBeforeParseArguments,
             log_options_: ?*BunLogOptions,
-        ) callconv(.C) void {
+        ) callconv(.c) void {
             const args = args_ orelse return;
             const log_options = log_options_ orelse return;
             log_options.append(args.context.log, args.context.file_path.namespace);
@@ -875,15 +885,15 @@ const OnBeforeParsePlugin = struct {
         source_len: usize = 0,
         loader: Loader,
 
-        fetch_source_code_fn: *const fn (*OnBeforeParseArguments, *OnBeforeParseResult) callconv(.C) i32 = &fetchSourceCode,
+        fetch_source_code_fn: *const fn (*OnBeforeParseArguments, *OnBeforeParseResult) callconv(.c) i32 = &fetchSourceCode,
 
         user_context: ?*anyopaque = null,
-        free_user_context: ?*const fn (?*anyopaque) callconv(.C) void = null,
+        free_user_context: ?*const fn (?*anyopaque) callconv(.c) void = null,
 
         log: *const fn (
             args_: ?*OnBeforeParseArguments,
             log_options_: ?*BunLogOptions,
-        ) callconv(.C) void = &BunLogOptions.logFn,
+        ) callconv(.c) void = &BunLogOptions.logFn,
 
         pub fn getWrapper(result: *OnBeforeParseResult) *OnBeforeParseResultWrapper {
             const wrapper: *OnBeforeParseResultWrapper = @fieldParentPtr("result", result);
@@ -892,7 +902,7 @@ const OnBeforeParsePlugin = struct {
         }
     };
 
-    pub fn fetchSourceCode(args: *OnBeforeParseArguments, result: *OnBeforeParseResult) callconv(.C) i32 {
+    pub fn fetchSourceCode(args: *OnBeforeParseArguments, result: *OnBeforeParseResult) callconv(.c) i32 {
         debug("fetchSourceCode", .{});
         const this = args.context;
         if (this.log.errors > 0 or this.deferred_error != null or this.should_continue_running.* != 1) {
@@ -1176,6 +1186,7 @@ fn runWithSourceCode(
     opts.features.minify_whitespace = transpiler.options.minify_whitespace;
     opts.features.emit_decorator_metadata = transpiler.options.emit_decorator_metadata;
     opts.features.unwrap_commonjs_packages = transpiler.options.unwrap_commonjs_packages;
+    opts.features.bundler_feature_flags = transpiler.options.bundler_feature_flags;
     opts.features.hot_module_reloading = output_format == .internal_bake_dev and !source.index.isRuntime();
     opts.features.auto_polyfill_require = output_format == .esm and !opts.features.hot_module_reloading;
     opts.features.react_fast_refresh = target == .browser and

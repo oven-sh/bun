@@ -245,10 +245,10 @@ pub const NapiStatus = enum(c_uint) {
 /// napi_env.setLastError.
 pub const napi_status = c_uint;
 
-pub const napi_callback = ?*const fn (napi_env, napi_callback_info) callconv(.C) napi_value;
+pub const napi_callback = ?*const fn (napi_env, napi_callback_info) callconv(.c) napi_value;
 
 /// expects `napi_env`, `callback_data`, `context`
-pub const NapiFinalizeFunction = *const fn (napi_env, ?*anyopaque, ?*anyopaque) callconv(.C) void;
+pub const NapiFinalizeFunction = *const fn (napi_env, ?*anyopaque, ?*anyopaque) callconv(.c) void;
 pub const napi_finalize = ?NapiFinalizeFunction;
 pub const napi_property_descriptor = extern struct {
     utf8name: [*c]const u8,
@@ -483,7 +483,7 @@ pub export fn napi_create_string_utf16(env_: napi_env, str: ?[*]const char16_t, 
     };
 
     if (comptime bun.Environment.allow_assert)
-        log("napi_create_string_utf16: {d} {any}", .{ slice.len, bun.fmt.FormatUTF16{ .buf = slice[0..@min(slice.len, 512)] } });
+        log("napi_create_string_utf16: {d} {f}", .{ slice.len, bun.fmt.FormatUTF16{ .buf = slice[0..@min(slice.len, 512)] } });
 
     if (slice.len == 0) {
         result.set(env, bun.String.empty.toJS(env.toJS()));
@@ -1139,9 +1139,9 @@ pub const napi_threadsafe_function_release_mode = enum(c_uint) {
 pub const napi_tsfn_nonblocking = 0;
 pub const napi_tsfn_blocking = 1;
 pub const napi_threadsafe_function_call_mode = c_uint;
-pub const napi_async_execute_callback = *const fn (napi_env, ?*anyopaque) callconv(.C) void;
-pub const napi_async_complete_callback = *const fn (napi_env, napi_status, ?*anyopaque) callconv(.C) void;
-pub const napi_threadsafe_function_call_js = *const fn (napi_env, napi_value, ?*anyopaque, ?*anyopaque) callconv(.C) void;
+pub const napi_async_execute_callback = *const fn (napi_env, ?*anyopaque) callconv(.c) void;
+pub const napi_async_complete_callback = *const fn (napi_env, napi_status, ?*anyopaque) callconv(.c) void;
+pub const napi_threadsafe_function_call_js = *const fn (napi_env, napi_value, ?*anyopaque, ?*anyopaque) callconv(.c) void;
 pub const napi_node_version = extern struct {
     major: u32,
     minor: u32,
@@ -1159,9 +1159,9 @@ pub const napi_node_version = extern struct {
 };
 pub const struct_napi_async_cleanup_hook_handle__ = opaque {};
 pub const napi_async_cleanup_hook_handle = ?*struct_napi_async_cleanup_hook_handle__;
-pub const napi_async_cleanup_hook = ?*const fn (napi_async_cleanup_hook_handle, ?*anyopaque) callconv(.C) void;
+pub const napi_async_cleanup_hook = ?*const fn (napi_async_cleanup_hook_handle, ?*anyopaque) callconv(.c) void;
 
-pub const napi_addon_register_func = *const fn (napi_env, napi_value) callconv(.C) napi_value;
+pub const napi_addon_register_func = *const fn (napi_env, napi_value) callconv(.c) napi_value;
 pub const struct_napi_module = extern struct {
     nm_version: c_int,
     nm_flags: c_uint,
@@ -1347,13 +1347,13 @@ pub extern fn napi_create_typedarray(env: napi_env, napi_typedarray_type, length
 pub extern fn napi_remove_async_cleanup_hook(handle: napi_async_cleanup_hook_handle) napi_status;
 pub extern fn napi_remove_env_cleanup_hook(env: napi_env, function: ?*const fn (?*anyopaque) void, data: ?*anyopaque) napi_status;
 
-extern fn napi_internal_cleanup_env_cpp(env: napi_env) callconv(.C) void;
-extern fn napi_internal_check_gc(env: napi_env) callconv(.C) void;
+extern fn napi_internal_cleanup_env_cpp(env: napi_env) callconv(.c) void;
+extern fn napi_internal_check_gc(env: napi_env) callconv(.c) void;
 
 pub export fn napi_internal_register_cleanup_zig(env_: napi_env) void {
     const env = env_.?;
     env.toJS().bunVM().rareData().pushCleanupHook(env.toJS(), env, struct {
-        fn callback(data: ?*anyopaque) callconv(.C) void {
+        fn callback(data: ?*anyopaque) callconv(.c) void {
             napi_internal_cleanup_env_cpp(@ptrCast(data));
         }
     }.callback);
@@ -1365,7 +1365,7 @@ pub export fn napi_internal_suppress_crash_on_abort_if_desired() void {
     }
 }
 
-extern fn napi_internal_remove_finalizer(env: napi_env, fun: napi_finalize, hint: ?*anyopaque, data: ?*anyopaque) callconv(.C) void;
+extern fn napi_internal_remove_finalizer(env: napi_env, fun: napi_finalize, hint: ?*anyopaque, data: ?*anyopaque) callconv(.c) void;
 
 pub const Finalizer = struct {
     env: NapiEnv.Ref,
@@ -1398,7 +1398,7 @@ pub const Finalizer = struct {
     /// For Node-API modules not built with NAPI_EXPERIMENTAL, finalizers should be deferred to the
     /// immediate task queue instead of run immediately. This lets finalizers perform allocations,
     /// which they couldn't if they ran immediately while the garbage collector is still running.
-    pub export fn napi_internal_enqueue_finalizer(env: napi_env, fun: napi_finalize, data: ?*anyopaque, hint: ?*anyopaque) callconv(.C) void {
+    pub export fn napi_internal_enqueue_finalizer(env: napi_env, fun: napi_finalize, data: ?*anyopaque, hint: ?*anyopaque) callconv(.c) void {
         var this: Finalizer = .{
             .fun = fun orelse return,
             .env = .cloneFromRaw(env orelse return),
@@ -1458,7 +1458,7 @@ pub const ThreadSafeFunction = struct {
 
     has_queued_finalizer: bool = false,
     queue: Queue = .{
-        .data = std.fifo.LinearFifo(?*anyopaque, .Dynamic).init(bun.default_allocator),
+        .data = bun.LinearFifo(?*anyopaque, .Dynamic).init(bun.default_allocator),
         .max_queue_size = 0,
     },
 
@@ -1487,7 +1487,7 @@ pub const ThreadSafeFunction = struct {
     };
 
     pub const Queue = struct {
-        data: std.fifo.LinearFifo(?*anyopaque, .Dynamic),
+        data: bun.LinearFifo(?*anyopaque, .Dynamic),
 
         /// This value will never change after initialization. Zero means the size is unlimited.
         max_queue_size: usize,
@@ -1495,7 +1495,7 @@ pub const ThreadSafeFunction = struct {
         count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
 
         pub fn init(max_queue_size: usize, allocator: std.mem.Allocator) Queue {
-            return .{ .data = std.fifo.LinearFifo(?*anyopaque, .Dynamic).init(allocator), .max_queue_size = max_queue_size };
+            return .{ .data = bun.LinearFifo(?*anyopaque, .Dynamic).init(allocator), .max_queue_size = max_queue_size };
         }
 
         pub fn deinit(this: *Queue) void {
@@ -1683,6 +1683,7 @@ pub const ThreadSafeFunction = struct {
                 .env = this.env,
                 .fun = fun,
                 .data = this.finalizer_data,
+                .hint = this.ctx,
             };
             finalizer.enqueue();
         } else {
@@ -1911,6 +1912,10 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn _ZN2v812api_internal23GetFunctionTemplateDataEPNS_7IsolateENS_5LocalINS_4DataEEE() *anyopaque;
     pub extern fn _ZNK2v88Function7GetNameEv() *anyopaque;
     pub extern fn _ZNK2v85Value10IsFunctionEv() *anyopaque;
+    pub extern fn _ZNK2v85Value5IsMapEv() *anyopaque;
+    pub extern fn _ZNK2v85Value7IsArrayEv() *anyopaque;
+    pub extern fn _ZNK2v85Value7IsInt32Ev() *anyopaque;
+    pub extern fn _ZNK2v85Value8IsBigIntEv() *anyopaque;
     pub extern fn _ZN2v812api_internal17FromJustIsNothingEv() *anyopaque;
     pub extern fn uv_os_getpid() *anyopaque;
     pub extern fn uv_os_getppid() *anyopaque;
@@ -1992,6 +1997,10 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn @"?GetFunctionTemplateData@api_internal@v8@@YA?AV?$Local@VValue@v8@@@2@PEAVIsolate@2@V?$Local@VData@v8@@@2@@Z"() *anyopaque;
     pub extern fn @"?GetName@Function@v8@@QEBA?AV?$Local@VValue@v8@@@2@XZ"() *anyopaque;
     pub extern fn @"?IsFunction@Value@v8@@QEBA_NXZ"() *anyopaque;
+    pub extern fn @"?IsMap@Value@v8@@QEBA_NXZ"() *anyopaque;
+    pub extern fn @"?IsArray@Value@v8@@QEBA_NXZ"() *anyopaque;
+    pub extern fn @"?IsInt32@Value@v8@@QEBA_NXZ"() *anyopaque;
+    pub extern fn @"?IsBigInt@Value@v8@@QEBA_NXZ"() *anyopaque;
     pub extern fn @"?FromJustIsNothing@api_internal@v8@@YAXXZ"() *anyopaque;
 };
 
@@ -2535,7 +2544,7 @@ pub const NapiFinalizerTask = struct {
     }
 
     fn runAsCleanupHook(opaque_this: ?*anyopaque) callconv(.c) void {
-        const this: *NapiFinalizerTask = @alignCast(@ptrCast(opaque_this.?));
+        const this: *NapiFinalizerTask = @ptrCast(@alignCast(opaque_this.?));
         this.runOnJSThread();
     }
 };

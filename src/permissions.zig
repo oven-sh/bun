@@ -206,6 +206,7 @@ pub const NetProtocol = enum {
 /// Port pattern for network permissions
 pub const PortPattern = union(enum) {
     any, // * or omitted - matches any port
+    none, // invalid pattern - matches no ports (fail closed for security)
     single: u16, // :443 - matches exactly this port
     list: []const u16, // :80;443 - matches any of these ports (semicolon-separated)
     range: struct { min: u16, max: u16 }, // :8000-9000 - matches ports in range
@@ -213,6 +214,7 @@ pub const PortPattern = union(enum) {
     pub fn matches(self: PortPattern, port: ?u16) bool {
         return switch (self) {
             .any => true,
+            .none => false, // Invalid patterns fail closed - deny access
             .single => |p| if (port) |rp| rp == p else false,
             .list => |ports| {
                 if (port) |rp| {
@@ -393,6 +395,10 @@ fn matchesNetworkPatternString(resource: []const u8, pattern: []const u8) bool {
     }
 
     // Check port match
+    // If pattern is .none (invalid), always deny
+    if (pat_port_pattern == .none) {
+        return false;
+    }
     if (!pat_port_pattern.matches(res_port)) {
         // Special case: if pattern has no port spec and resource has port,
         // allow match for backward compatibility
@@ -424,6 +430,7 @@ fn findPortSeparator(s: []const u8) ?usize {
 /// Parse a port pattern string into a PortPattern
 /// The caller must provide a buffer for port lists to avoid thread-local state issues.
 /// The returned PortPattern.list slice points into the provided buffer.
+/// On parse errors, returns .none (fail closed) to avoid accidentally granting broader permissions.
 fn parsePortPatternString(port_str: []const u8, port_buf: *[16]u16) PortPattern {
     if (port_str.len == 0 or std.mem.eql(u8, port_str, "*")) {
         return .any;
@@ -433,12 +440,14 @@ fn parsePortPatternString(port_str: []const u8, port_buf: *[16]u16) PortPattern 
     if (std.mem.indexOfScalar(u8, port_str, '-')) |dash_pos| {
         const min_str = port_str[0..dash_pos];
         const max_str = port_str[dash_pos + 1 ..];
-        const min_port = std.fmt.parseInt(u16, min_str, 10) catch return .any;
-        const max_port = std.fmt.parseInt(u16, max_str, 10) catch return .any;
+        // Fail closed on parse errors - don't accidentally grant access
+        const min_port = std.fmt.parseInt(u16, min_str, 10) catch return .none;
+        const max_port = std.fmt.parseInt(u16, max_str, 10) catch return .none;
         if (min_port <= max_port) {
             return .{ .range = .{ .min = min_port, .max = max_port } };
         }
-        return .any;
+        // Invalid range (min > max) - fail closed
+        return .none;
     }
 
     // Check for list (e.g., "80;443") - semicolon-separated to avoid conflict with CLI comma separator
@@ -454,16 +463,18 @@ fn parsePortPatternString(port_str: []const u8, port_buf: *[16]u16) PortPattern 
             iter = std.mem.splitScalar(u8, port_str, ';');
             while (iter.next()) |seg| {
                 const trimmed = std.mem.trim(u8, seg, " ");
-                port_buf[i] = std.fmt.parseInt(u16, trimmed, 10) catch return .any;
+                // Fail closed on parse errors
+                port_buf[i] = std.fmt.parseInt(u16, trimmed, 10) catch return .none;
                 i += 1;
             }
             return .{ .list = port_buf[0..count] };
         }
-        return .any;
+        // Too many ports (>16) - fail closed
+        return .none;
     }
 
-    // Single port
-    const port = std.fmt.parseInt(u16, port_str, 10) catch return .any;
+    // Single port - fail closed on parse errors
+    const port = std.fmt.parseInt(u16, port_str, 10) catch return .none;
     return .{ .single = port };
 }
 

@@ -102,6 +102,7 @@ pub fn isInstalled() bool {
 const posix = if (Environment.isPosix) struct {
     var semaphore: ?Semaphore = null;
     var thread: ?std.Thread = null;
+    var shutting_down: std.atomic.Value(bool) = std.atomic.Value(bool).init(false);
 
     fn signalHandler(_: c_int) callconv(.c) void {
         // Signal handlers can only call async-signal-safe functions.
@@ -117,6 +118,10 @@ const posix = if (Environment.isPosix) struct {
 
         while (true) {
             _ = semaphore.?.wait();
+            if (shutting_down.load(.acquire)) {
+                log("SignalInspector thread exiting", .{});
+                return;
+            }
             log("SignalInspector thread woke, activating inspector", .{});
             requestInspectorActivation();
         }
@@ -147,8 +152,14 @@ const posix = if (Environment.isPosix) struct {
     }
 
     fn uninstall() void {
-        // Don't restore signal handler - user handler has already been installed.
-        // The SignalInspector thread keeps running but won't receive any more wakeups.
+        // Signal the thread to exit. We don't join because:
+        // 1. This is called from JS context (process.on('SIGUSR1', ...))
+        // 2. Blocking the JS thread is bad
+        // 3. The thread will exit on its own after checking shutting_down
+        // The thread and semaphore are "leaked" and anyway this happens once
+        // per process lifetime when user installs their own SIGUSR1 handler
+        shutting_down.store(true, .release);
+        if (semaphore) |sem| _ = sem.post();
     }
 } else struct {};
 

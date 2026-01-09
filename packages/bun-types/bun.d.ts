@@ -6972,9 +6972,9 @@ declare module "bun" {
    * - A TypedArray or ArrayBuffer containing existing archive data
    */
   type ArchiveInput =
-    | Record<string, string | Blob | NodeJS.TypedArray | ArrayBufferLike>
+    | Record<string, string | Blob | ArrayBufferView | ArrayBufferLike>
     | Blob
-    | NodeJS.TypedArray
+    | ArrayBufferView
     | ArrayBufferLike;
 
   /**

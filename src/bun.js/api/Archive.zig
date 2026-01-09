@@ -343,7 +343,7 @@ fn parsePatternArg(globalThis: *jsc.JSGlobalObject, arg: jsc.JSValue, name: []co
     // Array of strings
     if (arg.jsType() == .Array) {
         const len = try arg.getLength(globalThis);
-        if (len == 0) return &.{};
+        if (len == 0) return allocator.alloc([]const u8, 0) catch return error.OutOfMemory;
 
         var patterns = std.ArrayList([]const u8).initCapacity(allocator, @intCast(len)) catch return error.OutOfMemory;
         errdefer {
@@ -976,16 +976,7 @@ fn extractToDiskFiltered(
                 const file = dir.createFileZ(pathname, .{
                     .truncate = true,
                     .mode = mode,
-                }) catch |err| {
-                    // Try creating parent directory and retry
-                    if (err == error.FileNotFound) {
-                        if (std.fs.path.dirname(pathname)) |parent| {
-                            dir.makePath(parent) catch {};
-                            break;
-                        }
-                    }
-                    continue;
-                };
+                }) catch continue;
                 defer file.close();
 
                 if (size > 0) {

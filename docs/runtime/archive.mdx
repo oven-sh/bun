@@ -201,7 +201,8 @@ try {
   const archive = Bun.Archive.from(tarball);
   const count = await archive.extract("./output");
   console.log(`Extracted ${count} files`);
-} catch (error) {
+} catch (e: unknown) {
+  const error = e as { code?: string; message?: string };
   if (error.code === "EACCES") {
     console.error("Permission denied");
   } else if (error.code === "ENOSPC") {
@@ -218,6 +219,8 @@ Common error scenarios:
 - **Permission denied** - `extract()` throws if the target directory is not writable
 - **Disk full** - `extract()` throws if there's insufficient space
 - **Invalid paths** - Operations throw for malformed file paths
+
+**Security warning**: When extracting archives from untrusted sources, be aware of potential security risks like path traversal attacks (e.g., `../../../etc/passwd`) or symlink attacks. Consider validating file paths and avoiding extraction of symlinks from untrusted archives.
 
 When using `files()` with a glob pattern, an empty `Map` is returned if no files match:
 
@@ -347,6 +350,8 @@ await Bun.Archive.write("my-project.tar.gz", archive, "gzip");
 ## Reference
 
 ```ts
+type ArrayBufferView = NodeJS.TypedArray | DataView;
+
 type ArchiveCompression = "gzip" | boolean;
 
 type ArchiveInput =
@@ -371,11 +376,14 @@ class Archive {
   /**
    * Write an archive directly to disk
    */
-  static write(path: string, data: ArchiveInput | Archive, compress?: ArchiveCompression): Promise<void>;
+  static write(
+    path: string,
+    data: ArchiveInput | Archive,
+    compress?: ArchiveCompression
+  ): Promise<void>;
 
   /**
    * Extract archive to a directory
-   * @param options - Optional glob/ignore patterns for filtering
    * @returns Number of files extracted
    */
   extract(path: string, options?: ArchiveExtractOptions): Promise<number>;
@@ -392,7 +400,6 @@ class Archive {
 
   /**
    * Get archive contents as File objects
-   * @param glob - Optional glob pattern to filter files
    */
   files(glob?: string): Promise<Map<string, File>>;
 }

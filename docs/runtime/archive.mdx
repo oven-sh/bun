@@ -53,6 +53,7 @@ const archive = Bun.Archive.from({
 ```
 
 File contents can be:
+
 - **Strings** - Text content
 - **Blobs** - Binary data
 - **TypedArrays** (e.g., `Uint8Array`) - Raw bytes
@@ -145,6 +146,7 @@ for (const [path, file] of files) {
 ```
 
 Each `File` object includes:
+
 - `name` - The file path within the archive
 - `size` - File size in bytes
 - `lastModified` - Modification timestamp
@@ -166,6 +168,7 @@ const jsonFiles = await archive.files("*.json");
 ```
 
 Supported glob patterns:
+
 - `*` - Match any characters except `/`
 - `**` - Match any characters including `/`
 - `?` - Match single character
@@ -188,6 +191,7 @@ const gzippedBytes = await archive.bytes("gzip");
 ```
 
 The compression argument accepts:
+
 - `"gzip"` - Enable gzip compression
 - `true` - Same as `"gzip"`
 - `false` or `undefined` - No compression
@@ -274,11 +278,7 @@ class Archive {
   /**
    * Write an archive directly to disk
    */
-  static write(
-    path: string,
-    data: ArchiveInput,
-    compress?: "gzip" | boolean
-  ): Promise<void>;
+  static write(path: string, data: ArchiveInput, compress?: "gzip" | boolean): Promise<void>;
 
   /**
    * Extract archive to a directory
@@ -303,9 +303,5 @@ class Archive {
   files(glob?: string): Promise<Map<string, File>>;
 }
 
-type ArchiveInput =
-  | Record<string, string | Blob | TypedArray | ArrayBuffer>
-  | Blob
-  | TypedArray
-  | ArrayBuffer;
+type ArchiveInput = Record<string, string | Blob | TypedArray | ArrayBuffer> | Blob | TypedArray | ArrayBuffer;
 ```

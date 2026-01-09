@@ -136,6 +136,37 @@ console.log(`Extracted ${count} files`);
 
 The target directory is created automatically if it doesn't exist. Existing files are overwritten.
 
+### Filtering Extracted Files
+
+Use glob patterns to extract only specific files:
+
+```ts
+const archive = Bun.Archive.from(tarball);
+
+// Extract only TypeScript files
+const count = await archive.extract("./src", { glob: "**/*.ts" });
+
+// Extract files from multiple directories
+const count = await archive.extract("./output", {
+  glob: ["src/**", "lib/**"]
+});
+```
+
+Use ignore patterns to exclude files:
+
+```ts
+// Extract everything except test files
+const count = await archive.extract("./dist", {
+  ignore: "**/*.test.*"
+});
+
+// Combine glob and ignore patterns
+const count = await archive.extract("./output", {
+  glob: "src/**",
+  ignore: ["**/*.test.ts", "**/__tests__/**"]
+});
+```
+
 ## Reading Archive Contents
 
 ### Get All Files
@@ -324,6 +355,13 @@ type ArchiveInput =
   | ArrayBufferView
   | ArrayBufferLike;
 
+interface ArchiveExtractOptions {
+  /** Glob pattern(s) to include */
+  glob?: string | string[];
+  /** Glob pattern(s) to exclude */
+  ignore?: string | string[];
+}
+
 class Archive {
   /**
    * Create an Archive from input data
@@ -337,9 +375,10 @@ class Archive {
 
   /**
    * Extract archive to a directory
+   * @param options - Optional glob/ignore patterns for filtering
    * @returns Number of files extracted
    */
-  extract(path: string): Promise<number>;
+  extract(path: string, options?: ArchiveExtractOptions): Promise<number>;
 
   /**
    * Get archive as a Blob

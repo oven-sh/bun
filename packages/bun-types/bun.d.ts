@@ -6986,6 +6986,40 @@ declare module "bun" {
   type ArchiveCompression = "gzip" | boolean;
 
   /**
+   * Options for extracting archive contents.
+   */
+  interface ArchiveExtractOptions {
+    /**
+     * Glob pattern(s) to include. Only files matching at least one pattern will be extracted.
+     * If not specified, all files are included (unless excluded by `ignore`).
+     *
+     * @example
+     * ```ts
+     * // Extract only TypeScript files
+     * { glob: "**\/*.ts" }
+     *
+     * // Extract files from multiple directories
+     * { glob: ["src/**", "lib/**"] }
+     * ```
+     */
+    glob?: string | string[];
+
+    /**
+     * Glob pattern(s) to exclude. Files matching any pattern will be skipped.
+     *
+     * @example
+     * ```ts
+     * // Exclude test files
+     * { ignore: "**\/*.test.*" }
+     *
+     * // Exclude multiple patterns
+     * { ignore: ["**\/*.test.ts", "**\/__tests__/**", "node_modules/**"] }
+     * ```
+     */
+    ignore?: string | string[];
+  }
+
+  /**
    * A class for creating and extracting tar archives with optional gzip compression.
    *
    * `Bun.Archive` provides a fast, native implementation for working with tar archives.
@@ -7092,16 +7126,41 @@ declare module "bun" {
      * Existing files will be overwritten.
      *
      * @param path - The directory path to extract files to
+     * @param options - Optional extraction options
+     * @param options.glob - Glob pattern(s) to include (only matching files are extracted)
+     * @param options.ignore - Glob pattern(s) to exclude (matching files are skipped)
      * @returns A promise that resolves with the number of files extracted
      *
      * @example
+     * **Extract all files:**
      * ```ts
      * const archive = Bun.Archive.from(tarballBytes);
      * const count = await archive.extract("./extracted");
      * console.log(`Extracted ${count} files`);
      * ```
+     *
+     * @example
+     * **Extract only TypeScript files:**
+     * ```ts
+     * const count = await archive.extract("./src", { glob: "**\/*.ts" });
+     * ```
+     *
+     * @example
+     * **Extract everything except tests:**
+     * ```ts
+     * const count = await archive.extract("./dist", { ignore: "**\/*.test.*" });
+     * ```
+     *
+     * @example
+     * **Combine glob and ignore patterns:**
+     * ```ts
+     * const count = await archive.extract("./output", {
+     *   glob: ["src/**", "lib/**"],
+     *   ignore: ["**\/*.test.ts", "**\/__tests__/**"]
+     * });
+     * ```
      */
-    extract(path: string): Promise<number>;
+    extract(path: string, options?: ArchiveExtractOptions): Promise<number>;
 
     /**
      * Get the archive contents as a `Blob`.

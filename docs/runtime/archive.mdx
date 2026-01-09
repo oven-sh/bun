@@ -148,7 +148,7 @@ const count = await archive.extract("./src", { glob: "**/*.ts" });
 
 // Extract files from multiple directories
 const count = await archive.extract("./output", {
-  glob: ["src/**", "lib/**"]
+  glob: ["src/**", "lib/**"],
 });
 ```
 
@@ -157,13 +157,13 @@ Use ignore patterns to exclude files:
 ```ts
 // Extract everything except test files
 const count = await archive.extract("./dist", {
-  ignore: "**/*.test.*"
+  ignore: "**/*.test.*",
 });
 
 // Combine glob and ignore patterns
 const count = await archive.extract("./output", {
   glob: "src/**",
-  ignore: ["**/*.test.ts", "**/__tests__/**"]
+  ignore: ["**/*.test.ts", "**/__tests__/**"],
 });
 ```
 

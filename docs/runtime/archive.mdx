@@ -376,11 +376,7 @@ class Archive {
   /**
    * Write an archive directly to disk
    */
-  static write(
-    path: string,
-    data: ArchiveInput | Archive,
-    compress?: ArchiveCompression
-  ): Promise<void>;
+  static write(path: string, data: ArchiveInput | Archive, compress?: ArchiveCompression): Promise<void>;
 
   /**
    * Extract archive to a directory

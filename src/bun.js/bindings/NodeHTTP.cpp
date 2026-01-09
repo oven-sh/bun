@@ -474,9 +474,9 @@ static EncodedJSValue NodeHTTPServer__onRequest(
     }
     args.append(jsBoolean(request->isAncient()));
 
-    // For CONNECT requests, pass the pipelined data (head buffer) from the request
-    if (!request->connectHead.empty()) {
-        JSC::JSUint8Array* headBuffer = WebCore::createBuffer(globalObject, std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(request->connectHead.data()), request->connectHead.length()));
+    // Pass pipelined data (head buffer) for Node.js compat (connect/upgrade events)
+    if (request->headLength > 0) {
+        JSC::JSUint8Array* headBuffer = WebCore::createBuffer(globalObject, std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(request->headData), request->headLength));
         args.append(headBuffer);
     } else {
         args.append(jsUndefined());

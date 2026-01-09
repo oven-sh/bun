@@ -160,8 +160,14 @@ namespace uWS
         std::map<std::string, unsigned short, std::less<>> *currentParameterOffsets = nullptr;
 
     public:
-        /* For CONNECT requests, this is any data pipelined after the headers */
-        std::string_view connectHead;
+        /* Any data pipelined after the HTTP headers (before response).
+         * Used for Node.js compatibility: 'connect' and 'upgrade' events
+         * pass this as the 'head' Buffer parameter.
+         * WARNING: This points to stack-allocated data in the receive buffer.
+         * Must be cloned before the request handler returns. */
+        const char* headData = nullptr;
+        unsigned int headLength = 0;
+
         bool isAncient()
         {
             return ancientHttp;
@@ -885,8 +891,14 @@ namespace uWS
             /* If returned socket is not what we put in we need
              * to break here as we either have upgraded to
              * WebSockets or otherwise closed the socket. */
+<<<<<<< HEAD
             /* For CONNECT requests, store the remaining data as the connect head */
             req->connectHead = isConnectRequest ? std::string_view(data, length) : std::string_view();
+=======
+            /* Store any remaining data as head for Node.js compat (connect/upgrade events) */
+            req->headData = data;
+            req->headLength = length;
+>>>>>>> b30dc1e4b4 (fix(http): properly handle pipelined data in CONNECT requests)
             void *returnedUser = requestHandler(user, req);
             if (returnedUser != user) {
                 /* We are upgraded to WebSocket or otherwise broken */

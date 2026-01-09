@@ -129,8 +129,7 @@ describe("File system permissions", () => {
     expect(exitCode).toBe(0);
   });
 
-  // TODO: Enable once --deny-* CLI flags are implemented
-  test.skip("--deny-read takes precedence over --allow-read", async () => {
+  test("--deny-read takes precedence over --allow-read", async () => {
     using dir = tempDir("perm-fs-deny", {
       "test.ts": `
         import { readFileSync } from "fs";

@@ -230,6 +230,62 @@ fn start(other_vm: *VirtualMachine) void {
     }
 }
 
+// ---- node:inspector minimal Zig exports (PR2) ----
+
+pub export fn Bun__nodeInspectorInit(globalObject: *JSGlobalObject) void {
+    jsc.markBinding(@src());
+
+    var vm = VirtualMachine.get();
+
+    if (vm.debugger == null) {
+        vm.debugger = .{};
+    }
+
+    // If the debugger thread hasn't started, we need to ensure it calls into
+    // Bun__startJSDebuggerThread at least once so the debugger thread context is ready.
+    //
+    // Use a whitespace URL: internal/debugger.ts treats whitespace as a stop command.
+    if (!vm.has_started_debugger) {
+        var dbg = &vm.debugger.?;
+        if (dbg.from_environment_variable.len == 0 and dbg.path_or_port == null) {
+            dbg.from_environment_variable = " ";
+        }
+
+        futex_atomic.store(1, .monotonic);
+
+        // create() will spawn the thread and mark has_created_debugger/has_started_debugger
+        create(vm, globalObject) catch {
+            // Avoid deadlock if create fails.
+            futex_atomic.store(0, .monotonic);
+            bun.Futex.wake(&futex_atomic, 1);
+            // If we cannot start the debugger thread, node:inspector will error in C++.
+            return;
+        };
+
+        // Wait for debugger thread to finish bootstrap (start() sets futex_atomic -> 0 and wakes).
+        while (futex_atomic.load(.monotonic) > 0) {
+            bun.Futex.waitForever(&futex_atomic, 1);
+        }
+    }
+}
+
+pub export fn Bun__nodeInspectorWaitForDebugger() void {
+    jsc.markBinding(@src());
+
+    var vm = VirtualMachine.get();
+    if (vm.debugger == null) return;
+
+    var dbg = &vm.debugger.?;
+
+    dbg.wait_for_connection = .forever;
+    dbg.must_block_until_connected = true;
+    dbg.poll_ref.ref(vm);
+
+    waitForDebuggerIfNecessary(vm);
+}
+
+// ---- rest of file unchanged (agents + async plumbing) ----
+
 pub const AsyncTaskTracker = struct {
     id: u64,
 
@@ -344,22 +400,17 @@ pub const TestReporterAgent = struct {
         }
     }
 
-    /// Caller must ensure that it is enabled first.
-    ///
-    /// Since we may have to call .deinit on the name string.
     pub fn reportTestFound(this: TestReporterAgent, callFrame: *jsc.CallFrame, test_id: i32, name: *bun.String, item_type: TestType, parentId: i32) void {
         debug("reportTestFound", .{});
 
         this.handle.?.reportTestFound(callFrame, test_id, name, item_type, parentId);
     }
 
-    /// Caller must ensure that it is enabled first.
     pub fn reportTestStart(this: TestReporterAgent, test_id: i32) void {
         debug("reportTestStart", .{});
         this.handle.?.reportTestStart(test_id);
     }
 
-    /// Caller must ensure that it is enabled first.
     pub fn reportTestEnd(this: TestReporterAgent, test_id: i32, bunTestStatus: TestStatus, elapsed: f64) void {
         debug("reportTestEnd", .{});
         this.handle.?.reportTestEnd(test_id, bunTestStatus, elapsed);

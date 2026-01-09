@@ -161,6 +161,7 @@ static inline bool applyGlobalAgentFallback(
     void*& sslConfig)
 {
     JSValue httpsGlobalAgent = JSValue::decode(JSC__JSGlobalObject__getHttpsGlobalAgent(globalObject));
+    RETURN_IF_EXCEPTION(throwScope, false);
     if (!httpsGlobalAgent.isObject())
         return true;
 

@@ -219,7 +219,7 @@ fn findAgentOrDispatcher(
             }
         }
     }
-    const global_agent = globalThis.getHttpsGlobalAgent();
+    const global_agent = try globalThis.getHttpsGlobalAgent();
     if (global_agent.isObject()) return global_agent;
     return null;
 }
@@ -257,7 +257,7 @@ fn findAgentWithProxy(
             }
         }
     }
-    const global_agent = globalThis.getHttpsGlobalAgent();
+    const global_agent = try globalThis.getHttpsGlobalAgent();
     if (global_agent.isObject()) {
         if (try global_agent.get(globalThis, "proxy")) |proxy_val| {
             if (!proxy_val.isUndefinedOrNull()) {

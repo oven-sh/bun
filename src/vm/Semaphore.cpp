@@ -49,3 +49,27 @@ bool Semaphore::wait()
 }
 
 } // namespace Bun
+
+extern "C" {
+
+Bun::Semaphore* Bun__Semaphore__create(unsigned int value)
+{
+    return new Bun::Semaphore(value);
+}
+
+void Bun__Semaphore__destroy(Bun::Semaphore* sem)
+{
+    delete sem;
+}
+
+bool Bun__Semaphore__signal(Bun::Semaphore* sem)
+{
+    return sem->signal();
+}
+
+bool Bun__Semaphore__wait(Bun::Semaphore* sem)
+{
+    return sem->wait();
+}
+
+}

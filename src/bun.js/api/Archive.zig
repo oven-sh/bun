@@ -343,7 +343,9 @@ fn parsePatternArg(globalThis: *jsc.JSGlobalObject, arg: jsc.JSValue, name: []co
     // Array of strings
     if (arg.jsType() == .Array) {
         const len = try arg.getLength(globalThis);
-        if (len == 0) return allocator.alloc([]const u8, 0) catch return error.OutOfMemory;
+        if (len == 0) {
+            return globalThis.throwInvalidArguments("Archive: {s} array must not be empty", .{name});
+        }
 
         var patterns = std.ArrayList([]const u8).initCapacity(allocator, @intCast(len)) catch return error.OutOfMemory;
         errdefer {
@@ -903,6 +905,31 @@ fn compressGzip(data: []const u8) ![]u8 {
     return bun.default_allocator.realloc(output, result.written) catch output[0..result.written];
 }
 
+/// Check if a path is safe (no absolute paths or path traversal)
+fn isSafePath(pathname: []const u8) bool {
+    // Reject empty paths
+    if (pathname.len == 0) return false;
+
+    // Reject absolute paths
+    if (pathname[0] == '/' or pathname[0] == '\\') return false;
+
+    // Check for Windows drive letters (e.g., "C:")
+    if (pathname.len >= 2 and pathname[1] == ':') return false;
+
+    // Reject paths with ".." components
+    var iter = std.mem.splitScalar(u8, pathname, '/');
+    while (iter.next()) |component| {
+        if (std.mem.eql(u8, component, "..")) return false;
+        // Also check Windows-style separators
+        var win_iter = std.mem.splitScalar(u8, component, '\\');
+        while (win_iter.next()) |win_component| {
+            if (std.mem.eql(u8, win_component, "..")) return false;
+        }
+    }
+
+    return true;
+}
+
 /// Extract archive to disk with glob/ignore pattern filtering
 fn extractToDiskFiltered(
     file_buffer: []const u8,
@@ -934,7 +961,9 @@ fn extractToDiskFiltered(
 
     while (archive.readNextHeader(&entry) == .ok) {
         const pathname = entry.pathnameUtf8();
-        if (pathname.len == 0) continue;
+
+        // Validate path safety (reject absolute paths, path traversal)
+        if (!isSafePath(pathname)) continue;
 
         // Apply glob pattern filtering (if patterns specified, at least one must match)
         if (glob_patterns) |patterns| {
@@ -965,16 +994,27 @@ fn extractToDiskFiltered(
 
         switch (kind) {
             .directory => {
-                dir.makePath(pathname) catch continue;
+                dir.makePath(pathname) catch |err| switch (err) {
+                    error.PathAlreadyExists => {},
+                    else => continue,
+                };
                 count += 1;
             },
             .file => {
                 const size: usize = @intCast(@max(entry.size(), 0));
-                const mode: bun.Mode = @intCast(entry.perm() | 0o666);
+                // Sanitize permissions: use entry perms masked to 0o777, or default 0o644
+                const entry_perm = entry.perm();
+                const mode: bun.Mode = if (entry_perm != 0)
+                    @intCast(entry_perm & 0o777)
+                else
+                    0o644;
 
                 // Create parent directories if needed
                 if (std.fs.path.dirname(pathname)) |parent_dir| {
-                    dir.makePath(parent_dir) catch {};
+                    dir.makePath(parent_dir) catch |err| switch (err) {
+                        error.PathAlreadyExists => {},
+                        else => {},
+                    };
                 }
 
                 // Create and write the file
@@ -996,10 +1036,20 @@ fn extractToDiskFiltered(
                             break;
                         }
                         const bytes_read: usize = @intCast(read);
-                        _ = file.write(buf[0..bytes_read]) catch {
-                            write_success = false;
-                            break;
-                        };
+                        // Write all bytes, handling partial writes
+                        var written: usize = 0;
+                        while (written < bytes_read) {
+                            const w = file.write(buf[written..bytes_read]) catch {
+                                write_success = false;
+                                break;
+                            };
+                            if (w == 0) {
+                                write_success = false;
+                                break;
+                            }
+                            written += w;
+                        }
+                        if (!write_success) break;
                         remaining -= bytes_read;
                     }
                 }
@@ -1014,6 +1064,8 @@ fn extractToDiskFiltered(
             },
             .sym_link => {
                 const link_target = entry.symlink();
+                // Validate symlink target is also safe
+                if (!isSafePath(link_target)) continue;
                 // Symlinks are only extracted on POSIX systems (Linux/macOS).
                 // On Windows, symlinks are skipped since they require elevated privileges.
                 if (bun.Environment.isPosix) {

@@ -230,28 +230,31 @@ Common error scenarios:
 
 The count returned by `extract()` includes all successfully written entries (files, directories, and symlinks on POSIX systems).
 
-**Security warning**: When extracting archives from untrusted sources, be aware of potential security risks like path traversal attacks (e.g., `../../../etc/passwd`) or symlink attacks. For untrusted archives, validate paths before extraction:
+**Security note**: Bun.Archive automatically validates paths during extraction, rejecting:
+- Absolute paths (starting with `/` or `\`)
+- Path traversal attempts (containing `..` components)
+- Unsafe symlink targets
+
+For additional security with untrusted archives, you can enumerate and validate paths before extraction:
 
 ```ts
 const archive = Bun.Archive.from(untrustedData);
 const files = await archive.files();
 
-// Validate each path before extraction
+// Optional: Custom validation for additional checks
 for (const [path] of files) {
-  // Reject absolute paths
-  if (path.startsWith("/") || path.startsWith("\\")) {
-    throw new Error(`Unsafe path: ${path}`);
+  // Example: Reject hidden files
+  if (path.startsWith(".") || path.includes("/.")) {
+    throw new Error(`Hidden file rejected: ${path}`);
   }
-  // Reject path traversal
-  if (path.includes("..")) {
-    throw new Error(`Path traversal detected: ${path}`);
+  // Example: Whitelist specific directories
+  if (!path.startsWith("src/") && !path.startsWith("lib/")) {
+    throw new Error(`Unexpected path: ${path}`);
   }
 }
 
-// Extract to a controlled destination after validation
-await archive.extract("./safe-output", {
-  ignore: ["../**", "/**"], // Extra safety
-});
+// Extract to a controlled destination
+await archive.extract("./safe-output");
 ```
 
 When using `files()` with a glob pattern, an empty `Map` is returned if no files match:

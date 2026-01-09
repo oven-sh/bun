@@ -304,5 +304,9 @@ class Archive {
   files(glob?: string): Promise<Map<string, File>>;
 }
 
-type ArchiveInput = Record<string, string | Blob | ArrayBufferView | ArrayBuffer> | Blob | ArrayBufferView | ArrayBuffer;
+type ArchiveInput =
+  | Record<string, string | Blob | ArrayBufferView | ArrayBuffer>
+  | Blob
+  | ArrayBufferView
+  | ArrayBuffer;
 ```

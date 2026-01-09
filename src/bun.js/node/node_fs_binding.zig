@@ -298,7 +298,42 @@ fn checkFsPermission(comptime function_name: NodeFSFunctionEnum, globalObject: *
         return;
     }
 
-    // Extract the path from the arguments
+    // Handle multi-path operations (rename, link, symlink, cp, copyFile)
+    // These need to check both source and destination paths
+    if (comptime @hasField(ArgsType, "old_path") and @hasField(ArgsType, "new_path")) {
+        // rename, link: check write on both paths
+        const old_path = args.old_path.slice();
+        const new_path = args.new_path.slice();
+        const resolved_old = resolvePath(globalObject, old_path, &path_resolve_buf);
+        const resolved_new = resolvePath(globalObject, new_path, &path_resolve_buf2);
+        try permission_check.requireWrite(globalObject, resolved_old);
+        try permission_check.requireWrite(globalObject, resolved_new);
+        return;
+    }
+
+    if (comptime @hasField(ArgsType, "target_path") and @hasField(ArgsType, "new_path")) {
+        // symlink: check read on target, write on new_path
+        const target_path = args.target_path.slice();
+        const new_path = args.new_path.slice();
+        const resolved_target = resolvePath(globalObject, target_path, &path_resolve_buf);
+        const resolved_new = resolvePath(globalObject, new_path, &path_resolve_buf2);
+        try permission_check.requireRead(globalObject, resolved_target);
+        try permission_check.requireWrite(globalObject, resolved_new);
+        return;
+    }
+
+    if (comptime @hasField(ArgsType, "src") and @hasField(ArgsType, "dest")) {
+        // cp, copyFile: check read on src, write on dest
+        const src_path = args.src.slice();
+        const dest_path = args.dest.slice();
+        const resolved_src = resolvePath(globalObject, src_path, &path_resolve_buf);
+        const resolved_dest = resolvePath(globalObject, dest_path, &path_resolve_buf2);
+        try permission_check.requireRead(globalObject, resolved_src);
+        try permission_check.requireWrite(globalObject, resolved_dest);
+        return;
+    }
+
+    // Extract the path from the arguments (single-path operations)
     const path_slice: ?[]const u8 = blk: {
         // Different argument types have different field names for the path
         if (comptime @hasField(ArgsType, "path")) {
@@ -339,16 +374,7 @@ fn checkFsPermission(comptime function_name: NodeFSFunctionEnum, globalObject: *
     }
 
     // Resolve relative paths to absolute paths
-    const resolved_path: []const u8 = brk: {
-        const path = path_slice.?;
-        // If it's already an absolute path, use it directly
-        if (bun.path.Platform.auto.isAbsolute(path)) {
-            break :brk path;
-        }
-        // Otherwise, resolve it relative to the cwd
-        const cwd = globalObject.bunVM().transpiler.fs.top_level_dir;
-        break :brk bun.path.joinAbsStringBuf(cwd, &path_resolve_buf, &.{path}, .auto);
-    };
+    const resolved_path = resolvePath(globalObject, path_slice.?, &path_resolve_buf);
 
     // Check the permission
     switch (required.?.kind) {
@@ -358,4 +384,16 @@ fn checkFsPermission(comptime function_name: NodeFSFunctionEnum, globalObject: *
     }
 }
 
+/// Resolve a path to an absolute path using the current working directory
+fn resolvePath(globalObject: *jsc.JSGlobalObject, path: []const u8, buf: *[bun.MAX_PATH_BYTES]u8) []const u8 {
+    // If it's already an absolute path, use it directly
+    if (bun.path.Platform.auto.isAbsolute(path)) {
+        return path;
+    }
+    // Otherwise, resolve it relative to the cwd
+    const cwd = globalObject.bunVM().transpiler.fs.top_level_dir;
+    return bun.path.joinAbsStringBuf(cwd, buf, &.{path}, .auto);
+}
+
 threadlocal var path_resolve_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+threadlocal var path_resolve_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;

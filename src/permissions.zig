@@ -376,10 +376,11 @@ fn matchesNetworkPatternString(resource: []const u8, pattern: []const u8) bool {
     // Parse port from pattern
     var pat_host = pat_remaining;
     var pat_port_pattern: PortPattern = .any;
+    var port_list_buf: [16]u16 = undefined; // Local buffer for port list parsing
     if (findPortSeparator(pat_remaining)) |colon_pos| {
         pat_host = pat_remaining[0..colon_pos];
         const port_str = pat_remaining[colon_pos + 1 ..];
-        pat_port_pattern = parsePortPatternString(port_str);
+        pat_port_pattern = parsePortPatternString(port_str, &port_list_buf);
     }
 
     // Parse port from resource
@@ -421,7 +422,9 @@ fn findPortSeparator(s: []const u8) ?usize {
 }
 
 /// Parse a port pattern string into a PortPattern
-fn parsePortPatternString(port_str: []const u8) PortPattern {
+/// The caller must provide a buffer for port lists to avoid thread-local state issues.
+/// The returned PortPattern.list slice points into the provided buffer.
+fn parsePortPatternString(port_str: []const u8, port_buf: *[16]u16) PortPattern {
     if (port_str.len == 0 or std.mem.eql(u8, port_str, "*")) {
         return .any;
     }
@@ -445,19 +448,16 @@ fn parsePortPatternString(port_str: []const u8) PortPattern {
         var iter = std.mem.splitScalar(u8, port_str, ';');
         while (iter.next()) |_| count += 1;
 
-        // Parse into static buffer (max 16 ports)
+        // Parse into caller-provided buffer (max 16 ports)
         if (count <= 16) {
-            var ports: [16]u16 = undefined;
             var i: usize = 0;
             iter = std.mem.splitScalar(u8, port_str, ';');
             while (iter.next()) |seg| {
                 const trimmed = std.mem.trim(u8, seg, " ");
-                ports[i] = std.fmt.parseInt(u16, trimmed, 10) catch return .any;
+                port_buf[i] = std.fmt.parseInt(u16, trimmed, 10) catch return .any;
                 i += 1;
             }
-            // Store in thread-local buffer
-            @memcpy(port_list_buf[0..count], ports[0..count]);
-            return .{ .list = port_list_buf[0..count] };
+            return .{ .list = port_buf[0..count] };
         }
         return .any;
     }
@@ -466,8 +466,6 @@ fn parsePortPatternString(port_str: []const u8) PortPattern {
     const port = std.fmt.parseInt(u16, port_str, 10) catch return .any;
     return .{ .single = port };
 }
-
-threadlocal var port_list_buf: [16]u16 = undefined;
 
 /// Match a host against a pattern with wildcards
 /// Supports:

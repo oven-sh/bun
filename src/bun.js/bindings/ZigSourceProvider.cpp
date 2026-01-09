@@ -242,7 +242,7 @@ static std::optional<DeserializedModuleMetadata> deserializeCachedModuleMetadata
             }
         }
 
-        metadata.requestedModules.append({ WTFMove(specifier) });
+        metadata.requestedModules.append({ WTF::move(specifier) });
     }
 
     // Read import entries
@@ -260,9 +260,9 @@ static std::optional<DeserializedModuleMetadata> deserializeCachedModuleMetadata
         WTF::String localName = readString(vm, ptr);
 
         metadata.importEntries.append({ type,
-            WTFMove(moduleRequest),
-            WTFMove(importName),
-            WTFMove(localName) });
+            WTF::move(moduleRequest),
+            WTF::move(importName),
+            WTF::move(localName) });
     }
 
     // Read export entries
@@ -281,10 +281,10 @@ static std::optional<DeserializedModuleMetadata> deserializeCachedModuleMetadata
         WTF::String localName = readString(vm, ptr);
 
         metadata.exportEntries.append({ type,
-            WTFMove(exportName),
-            WTFMove(moduleName),
-            WTFMove(importName),
-            WTFMove(localName) });
+            WTF::move(exportName),
+            WTF::move(moduleName),
+            WTF::move(importName),
+            WTF::move(localName) });
     }
 
     // Read star exports
@@ -307,7 +307,7 @@ static std::optional<DeserializedModuleMetadata> deserializeCachedModuleMetadata
         WTF::String name = readString(vm, ptr);
         if (ptr + 4 > end) return std::nullopt;
         uint32_t bits = readUint32(ptr);
-        metadata.declaredVariables.append({ WTFMove(name), bits });
+        metadata.declaredVariables.append({ WTF::move(name), bits });
     }
 
     // Read lexical variables (v3+)
@@ -320,7 +320,7 @@ static std::optional<DeserializedModuleMetadata> deserializeCachedModuleMetadata
         WTF::String name = readString(vm, ptr);
         if (ptr + 4 > end) return std::nullopt;
         uint32_t bits = readUint32(ptr);
-        metadata.lexicalVariables.append({ WTFMove(name), bits });
+        metadata.lexicalVariables.append({ WTF::move(name), bits });
     }
 
     // Read code features (v3+)
@@ -392,7 +392,7 @@ Ref<SourceProvider> SourceProvider::create(
                 // Create CachedBytecode with span pointing directly into BMES buffer
                 Ref<JSC::CachedBytecode> bytecode = JSC::CachedBytecode::create(
                     std::span<uint8_t>(const_cast<uint8_t*>(extractedBytecodeStart), extractedBytecodeSize),
-                    WTFMove(bmesDestructor), {});
+                    WTF::move(bmesDestructor), {});
 
                 auto provider = adoptRef(*new SourceProvider(
                     globalObject->isThreadLocalDefaultGlobalObject ? globalObject : nullptr,
@@ -402,7 +402,7 @@ Ref<SourceProvider> SourceProvider::create(
                     toSourceOrigin(sourceURLString, isBuiltin),
                     sourceURLString.impl(), TextPosition(),
                     sourceType));
-                provider->m_cachedBytecode = WTFMove(bytecode);
+                provider->m_cachedBytecode = WTF::move(bytecode);
 
                 // Also deserialize module metadata from BMES v3+
                 auto deserializedMetadata = deserializeCachedModuleMetadata(globalObject->vm(), bytecodeData, bytecodeSize);
@@ -431,7 +431,7 @@ Ref<SourceProvider> SourceProvider::create(
                             entry.localName });
                     }
 
-                    cachedMetadata.starExports = WTFMove(deserializedMetadata->starExports);
+                    cachedMetadata.starExports = WTF::move(deserializedMetadata->starExports);
 
                     cachedMetadata.declaredVariables.reserveInitialCapacity(deserializedMetadata->declaredVariables.size());
                     for (const auto& entry : deserializedMetadata->declaredVariables) {
@@ -445,7 +445,7 @@ Ref<SourceProvider> SourceProvider::create(
 
                     cachedMetadata.codeFeatures = deserializedMetadata->codeFeatures;
 
-                    provider->m_cachedModuleMetadata = WTFMove(cachedMetadata);
+                    provider->m_cachedModuleMetadata = WTF::move(cachedMetadata);
                 }
 
                 return provider;
@@ -788,7 +788,7 @@ extern "C" bool generateCachedModuleByteCodeWithMetadata(
 
     RefPtr<CachedBytecode> finalCache = CachedBytecode::create(
         std::span<uint8_t>(finalBuffer, metadataBuffer.size()),
-        WTFMove(finalDestructor),
+        WTF::move(finalDestructor),
         {});
 
     finalCache->ref();

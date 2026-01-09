@@ -171,7 +171,17 @@ const netStatus = await Bun.permissions.query({
   name: "net",
   host: "example.com"
 });
+
+// Request permission (returns current state)
+const requested = await Bun.permissions.request({ name: "env" });
+
+// Revoke permission (denies the entire permission type)
+const revoked = await Bun.permissions.revoke({ name: "read" });
 ```
+
+<Note>
+`revoke()` denies the entire permission type, not just a specific resource. Calling `revoke({ name: "read", path: "/tmp" })` will deny all read access, not just to `/tmp`.
+</Note>
 
 ### Permission descriptors
 

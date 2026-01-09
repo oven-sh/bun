@@ -658,12 +658,123 @@ pub const Archive = opaque {
     }
 
     extern fn archive_read_data(*Archive, ?*anyopaque, usize) isize;
+
+    pub const Block = struct {
+        bytes: []const u8 = "",
+        offset: i64,
+        result: Result,
+    };
+    pub fn next(archive: *Archive, offset: *i64) ?Block {
+        var buff: *const anyopaque = undefined;
+        var size: usize = 0;
+        const r = archive_read_data_block(@ptrCast(archive), @ptrCast(&buff), &size, offset);
+        if (r == Result.eof) return null;
+        if (r != Result.ok) return .{ .offset = offset.*, .result = r };
+        const ptr: [*]const u8 = @ptrCast(buff);
+        return .{ .bytes = ptr[0..size], .offset = offset.*, .result = r };
+    }
+
     pub fn readData(archive: *Archive, buf: []u8) isize {
         return archive_read_data(archive, buf.ptr, buf.len);
     }
     extern fn archive_read_data_into_fd(*Archive, fd: c_int) Result;
-    pub fn readDataIntoFd(archive: *Archive, fd: c_int) Result {
-        return archive_read_data_into_fd(archive, fd);
+    fn writeZerosToFile(file: bun.sys.File, count: usize) Result {
+        // Use undefined + memset instead of comptime zero-init to reduce binary size
+        var zero_buf: [16 * 1024]u8 = undefined;
+        @memset(&zero_buf, 0);
+        var remaining = count;
+        while (remaining > 0) {
+            const to_write = zero_buf[0..@min(remaining, zero_buf.len)];
+            switch (file.writeAll(to_write)) {
+                .err => return Result.failed,
+                .result => {},
+            }
+            remaining -= to_write.len;
+        }
+        return Result.ok;
+    }
+
+    /// Reads data from the archive and writes it to the given file descriptor.
+    /// This is a port of libarchive's archive_read_data_into_fd with optimizations:
+    /// - Uses pwrite when possible to avoid needing lseek for sparse file handling
+    /// - Falls back to lseek + write if pwrite is not available
+    /// - Falls back to writing zeros if lseek is not available
+    /// - Truncates the file to the final size to handle trailing sparse holes
+    pub fn readDataIntoFd(archive: *Archive, fd: bun.FileDescriptor, can_use_pwrite: *bool, can_use_lseek: *bool) Result {
+        var target_offset: i64 = 0; // Updated by archive.next() - where this block should be written
+        var actual_offset: i64 = 0; // Where we've actually written to (for write() path)
+        var final_offset: i64 = 0; // Track the furthest point we need the file to extend to
+        const file = bun.sys.File{ .handle = fd };
+
+        while (archive.next(&target_offset)) |block| {
+            if (block.result != Result.ok) {
+                return block.result;
+            }
+            const data = block.bytes;
+
+            // Track the furthest point we need to write to (for final truncation)
+            final_offset = @max(final_offset, block.offset + @as(i64, @intCast(data.len)));
+
+            if (comptime bun.Environment.isPosix) {
+                // Try pwrite first - it handles sparse files without needing lseek
+                if (can_use_pwrite.*) {
+                    switch (file.pwriteAll(data, block.offset)) {
+                        .err => {
+                            can_use_pwrite.* = false;
+                            bun.Output.debugWarn("libarchive: falling back to write() after pwrite() failure", .{});
+                            // Fall through to lseek+write path
+                        },
+                        .result => {
+                            // pwrite doesn't update file position, but track logical position for fallback
+                            actual_offset = @max(actual_offset, block.offset + @as(i64, @intCast(data.len)));
+                            continue;
+                        },
+                    }
+                }
+            }
+
+            // Handle mismatch between actual position and target position
+            if (block.offset != actual_offset) seek: {
+                if (can_use_lseek.*) {
+                    switch (bun.sys.setFileOffset(fd, @intCast(block.offset))) {
+                        .err => can_use_lseek.* = false,
+                        .result => {
+                            actual_offset = block.offset;
+                            break :seek;
+                        },
+                    }
+                }
+
+                // lseek failed or not available
+                if (block.offset > actual_offset) {
+                    // Write zeros to fill the gap
+                    const zero_count: usize = @intCast(block.offset - actual_offset);
+                    const zero_result = writeZerosToFile(file, zero_count);
+                    if (zero_result != Result.ok) {
+                        return zero_result;
+                    }
+                    actual_offset = block.offset;
+                } else {
+                    // Can't seek backward without lseek
+                    return Result.failed;
+                }
+            }
+
+            switch (file.writeAll(data)) {
+                .err => return Result.failed,
+                .result => {
+                    actual_offset += @intCast(data.len);
+                },
+            }
+        }
+
+        // Handle trailing sparse hole by truncating file to final size
+        // This extends the file to include any trailing zeros without actually writing them
+        if (final_offset > actual_offset) {
+            _ = bun.sys.ftruncate(fd, final_offset);
+        }
+
+        return Result.ok;
     }
 
     extern fn archive_read_support_filter_all(*Archive) Result;
@@ -1013,7 +1124,7 @@ pub extern fn archive_read_header_position(*struct_archive) la_int64_t;
 pub extern fn archive_read_has_encrypted_entries(*struct_archive) c_int;
 pub extern fn archive_read_format_capabilities(*struct_archive) c_int;
 pub extern fn archive_seek_data(*struct_archive, la_int64_t, c_int) la_int64_t;
-pub extern fn archive_read_data_block(a: *struct_archive, buff: [*c]*const anyopaque, size: [*c]usize, offset: [*c]la_int64_t) c_int;
+pub extern fn archive_read_data_block(a: *struct_archive, buff: [*c]*const anyopaque, size: [*c]usize, offset: [*c]la_int64_t) Archive.Result;
 pub extern fn archive_read_data_skip(*struct_archive) c_int;
 pub extern fn archive_read_set_format_option(_a: *struct_archive, m: [*c]const u8, o: [*c]const u8, v: [*c]const u8) c_int;
 pub extern fn archive_read_set_filter_option(_a: *struct_archive, m: [*c]const u8, o: [*c]const u8, v: [*c]const u8) c_int;

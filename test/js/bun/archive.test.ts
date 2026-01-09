@@ -1060,6 +1060,104 @@ describe("Bun.Archive", () => {
     });
   });
 
+  describe("sparse files", () => {
+    // These test sparse tar files created with GNU tar --sparse
+    // They exercise the pwrite/lseek/writeZeros code paths in readDataIntoFd
+    const fixturesDir = join(import.meta.dir, "fixtures", "sparse-tars");
+
+    test("extracts sparse file with small hole (< 1 tar block)", async () => {
+      using dir = tempDir("sparse-small", {});
+
+      const tarData = await Bun.file(join(fixturesDir, "small-hole.tar")).bytes();
+      const archive = Bun.Archive.from(tarData);
+      await archive.extract(String(dir));
+
+      const extracted = await Bun.file(join(String(dir), "small-hole.bin")).bytes();
+
+      // File structure: 64 bytes 'A', 256 bytes hole, 64 bytes 'B'
+      expect(extracted.length).toBe(384);
+      expect(extracted.slice(0, 64)).toEqual(new Uint8Array(64).fill(0x41));
+      expect(extracted.slice(64, 320)).toEqual(new Uint8Array(256).fill(0));
+      expect(extracted.slice(320, 384)).toEqual(new Uint8Array(64).fill(0x42));
+    });
+
+    test("extracts sparse file with 1 tar block hole (512 bytes)", async () => {
+      using dir = tempDir("sparse-1block", {});
+
+      const tarData = await Bun.file(join(fixturesDir, "one-block-hole.tar")).bytes();
+      const archive = Bun.Archive.from(tarData);
+      await archive.extract(String(dir));
+
+      const extracted = await Bun.file(join(String(dir), "one-block-hole.bin")).bytes();
+
+      // File structure: 100 bytes 'C', 512 bytes hole, 100 bytes 'D'
+      expect(extracted.length).toBe(712);
+      expect(extracted.slice(0, 100)).toEqual(new Uint8Array(100).fill(0x43));
+      expect(extracted.slice(100, 612)).toEqual(new Uint8Array(512).fill(0));
+      expect(extracted.slice(612, 712)).toEqual(new Uint8Array(100).fill(0x44));
+    });
+
+    test("extracts sparse file with multi-block hole (5 tar blocks)", async () => {
+      using dir = tempDir("sparse-multi", {});
+
+      const tarData = await Bun.file(join(fixturesDir, "multi-block-hole.tar")).bytes();
+      const archive = Bun.Archive.from(tarData);
+      await archive.extract(String(dir));
+
+      const extracted = await Bun.file(join(String(dir), "multi-block-hole.bin")).bytes();
+
+      // File structure: 128 bytes random, 2560 bytes hole, 128 bytes random
+      expect(extracted.length).toBe(2816);
+      // Verify the hole is zeros
+      expect(extracted.slice(128, 2688)).toEqual(new Uint8Array(2560).fill(0));
+    });
+
+    test("extracts sparse file with leading hole", async () => {
+      using dir = tempDir("sparse-leading", {});
+
+      const tarData = await Bun.file(join(fixturesDir, "leading-hole.tar")).bytes();
+      const archive = Bun.Archive.from(tarData);
+      await archive.extract(String(dir));
+
+      const extracted = await Bun.file(join(String(dir), "leading-hole.bin")).bytes();
+
+      // File structure: 2048 bytes hole, 512 bytes 'Y'
+      expect(extracted.length).toBe(2560);
+      expect(extracted.slice(0, 2048)).toEqual(new Uint8Array(2048).fill(0));
+      expect(extracted.slice(2048, 2560)).toEqual(new Uint8Array(512).fill(0x59));
+    });
+
+    test("extracts sparse file with trailing hole", async () => {
+      using dir = tempDir("sparse-trailing", {});
+
+      const tarData = await Bun.file(join(fixturesDir, "trailing-hole.tar")).bytes();
+      const archive = Bun.Archive.from(tarData);
+      await archive.extract(String(dir));
+
+      const extracted = await Bun.file(join(String(dir), "trailing-hole.bin")).bytes();
+
+      // File structure: 256 bytes 'X', 5120 bytes hole
+      expect(extracted.length).toBe(5376);
+      expect(extracted.slice(0, 256)).toEqual(new Uint8Array(256).fill(0x58));
+      expect(extracted.slice(256, 5376)).toEqual(new Uint8Array(5120).fill(0));
+    });
+
+    test("extracts sparse file with large hole (64KB)", async () => {
+      using dir = tempDir("sparse-large", {});
+
+      const tarData = await Bun.file(join(fixturesDir, "large-hole.tar")).bytes();
+      const archive = Bun.Archive.from(tarData);
+      await archive.extract(String(dir));
+
+      const extracted = await Bun.file(join(String(dir), "large-hole.bin")).bytes();
+
+      // File structure: 1024 bytes random, 64KB hole, 1024 bytes random
+      expect(extracted.length).toBe(67584);
+      // Verify the 64KB hole is zeros
+      expect(extracted.slice(1024, 66560)).toEqual(new Uint8Array(65536).fill(0));
+    });
+  });
+
   describe("concurrent operations", () => {
     test("multiple extract operations run correctly", async () => {
       const archive = Bun.Archive.from({

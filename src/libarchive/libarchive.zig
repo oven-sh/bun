@@ -316,6 +316,8 @@ pub const Archiver = struct {
         const dir_fd = dir.fd;
 
         var normalized_buf: bun.OSPathBuffer = undefined;
+        var use_pwrite = Environment.isPosix;
+        var use_lseek = Environment.isPosix;
 
         loop: while (true) {
             const r = archive.readNextHeader(&entry);
@@ -507,6 +509,7 @@ pub const Archiver = struct {
                             };
 
                             const size: usize = @intCast(@max(entry.size(), 0));
+
                             if (size > 0) {
                                 if (ctx) |ctx_| {
                                     const hash: u64 = if (ctx_.pluckers.len > 0)
@@ -547,8 +550,9 @@ pub const Archiver = struct {
                                 }
 
                                 var retries_remaining: u8 = 5;
+
                                 possibly_retry: while (retries_remaining != 0) : (retries_remaining -= 1) {
-                                    switch (archive.readDataIntoFd(file_handle.uv())) {
+                                    switch (archive.readDataIntoFd(file_handle, &use_pwrite, &use_lseek)) {
                                         .eof => break :loop,
                                         .ok => break :possibly_retry,
                                         .retry => {

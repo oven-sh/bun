@@ -336,12 +336,12 @@ comptime {
     }
 }
 
+const Semaphore = @import("../../sync/Semaphore.zig");
 const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
 const Output = bun.Output;
-const Semaphore = @import("../../sync/Semaphore.zig");
 
 const jsc = bun.jsc;
 const Debugger = jsc.Debugger;

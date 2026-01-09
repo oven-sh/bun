@@ -18,6 +18,7 @@ export const ALPNProtocols = b.union("ALPNProtocols", {
   none: b.null,
   string: b.String,
   buffer: b.ArrayBuffer,
+  array: b.Array(b.String),
 });
 
 export const SSLConfig = b.dictionary(

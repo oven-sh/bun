@@ -6127,6 +6127,10 @@ extern "C" [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue JSC__JSGlobalObject__getH
     auto& vm = globalObject->vm();
     auto catchScope = DECLARE_CATCH_SCOPE(vm);
 
+    // If there's already an exception, don't do anything - just return undefined
+    if (catchScope.exception())
+        return JSValue::encode(jsUndefined());
+
     // Get node:https module from internal registry
     JSValue httpsModule = globalObject->internalModuleRegistry()->requireId(
         globalObject, vm, Bun::InternalModuleRegistry::Field::NodeHttps);

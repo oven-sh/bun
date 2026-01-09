@@ -291,6 +291,55 @@ pub fn fromGenerated(
             const buffer: jsc.ArrayBuffer = ref.get().asArrayBuffer();
             break :blk try bun.default_allocator.dupeZ(u8, buffer.byteSlice());
         },
+        .array => |*arr| blk: {
+            // Convert array of protocol strings to ALPN wire format:
+            // Each protocol is prefixed with its length byte
+            const protocol_strings = arr.items();
+            if (protocol_strings.len == 0) break :blk null;
+
+            // First pass: convert all strings to UTF-8 and calculate total size
+            // Use stack fallback allocator - ALPN typically has 1-3 protocols
+            var stack_fallback = std.heap.stackFallback(8 * @sizeOf(jsc.ZigString.Slice), bun.default_allocator);
+            const slice_allocator = stack_fallback.get();
+            var utf8_slices = try slice_allocator.alloc(jsc.ZigString.Slice, protocol_strings.len);
+            defer slice_allocator.free(utf8_slices);
+
+            var total_len: usize = 0;
+            for (protocol_strings, 0..) |*str_ref, i| {
+                const s = str_ref.get();
+                utf8_slices[i] = s.toUTF8(bun.default_allocator);
+                const len = utf8_slices[i].len;
+                if (len > 255) {
+                    // Clean up already converted slices
+                    for (utf8_slices[0 .. i + 1]) |*slice| {
+                        slice.deinit();
+                    }
+                    return global.throw("ALPN protocol name exceeds maximum length of 255 bytes", .{});
+                }
+                total_len += 1 + len; // 1 byte for length + protocol string
+            }
+            defer {
+                for (utf8_slices) |*slice| {
+                    slice.deinit();
+                }
+            }
+
+            // Allocate buffer with null terminator
+            const buf = try bun.default_allocator.allocSentinel(u8, total_len, 0);
+            errdefer bun.default_allocator.free(buf);
+
+            // Fill buffer with length-prefixed protocols
+            var offset: usize = 0;
+            for (utf8_slices) |slice| {
+                const protocol_bytes = slice.slice();
+                buf[offset] = @intCast(protocol_bytes.len);
+                offset += 1;
+                @memcpy(buf[offset..][0..protocol_bytes.len], protocol_bytes);
+                offset += protocol_bytes.len;
+            }
+
+            break :blk buf;
+        },
     };
     if (protocols) |some_protocols| {
         result.protos = some_protocols;

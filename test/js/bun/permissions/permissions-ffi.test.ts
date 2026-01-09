@@ -70,14 +70,14 @@ describe("FFI permissions", () => {
     using dir = tempDir("perm-ffi-granular", {});
     const libPath = `${String(dir)}/allowed.so`;
 
-    // Write the test file with the actual path interpolated
+    // Write the test file with the actual path interpolated (use JSON.stringify for Windows path escaping)
     await Bun.write(
       `${String(dir)}/test.ts`,
       `
         import { dlopen } from "bun:ffi";
         try {
           // This will fail with "library not found" (not permission denied)
-          dlopen("${libPath}", {});
+          dlopen(${JSON.stringify(libPath)}, {});
           console.log("LOADED");
         } catch (e) {
           if (e.message.includes("PermissionDenied")) {
@@ -115,7 +115,7 @@ describe("FFI permissions", () => {
       `
         import { dlopen } from "bun:ffi";
         try {
-          dlopen("${forbiddenPath}", {});
+          dlopen(${JSON.stringify(forbiddenPath)}, {});
           console.log("LOADED");
         } catch (e) {
           console.log("ERROR:", e.message);

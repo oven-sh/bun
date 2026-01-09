@@ -78,6 +78,7 @@ describe("Worker permission inheritance", () => {
 
     expect(stdout + stderr).toContain("DENIED");
     expect(stdout + stderr).toContain("PermissionDenied");
+    expect(exitCode).toBe(0);
   });
 
   test("Worker inherits write permission from parent", async () => {
@@ -250,6 +251,7 @@ describe("Worker permission inheritance", () => {
 
     expect(stdout).toContain("allowed:ok");
     expect(stdout).toContain("forbidden:denied");
+    expect(exitCode).toBe(0);
   });
 
   test("-A grants all permissions to Worker", async () => {

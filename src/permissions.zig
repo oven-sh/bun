@@ -269,7 +269,8 @@ fn matchesPattern(resource: []const u8, pattern: []const u8) bool {
     // Host:port matching for network permissions
     // Pattern "host" matches "host:port" (any port on that host)
     // Pattern "host:port" requires exact match (handled above)
-    if (std.mem.indexOfScalar(u8, resource, ':')) |colon_pos| {
+    // Use findPortSeparator to handle IPv6 addresses correctly (e.g., [::1]:8080)
+    if (findPortSeparator(resource)) |colon_pos| {
         const resource_host = resource[0..colon_pos];
         if (std.mem.eql(u8, resource_host, pattern)) {
             return true;

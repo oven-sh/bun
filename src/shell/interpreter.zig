@@ -279,6 +279,16 @@ pub const Interpreter = struct {
     } = .{},
     exit_code: ?ExitCode = 0,
     this_jsvalue: JSValue = .zero,
+    abort_signal: ?*webcore.AbortSignal = null,
+    /// Tracks whether the interpreter has been aborted.
+    /// IMPORTANT: This flag persists even after abort_signal is cleared.
+    /// This is necessary because clearAbortSignal() nulls abort_signal,
+    /// but we still need isAborted() to return true for spawn-point checks.
+    aborted: bool = false,
+    /// Registry of active subprocesses for abort handling.
+    /// Subprocesses register themselves when spawned and unregister in deinit.
+    /// This enables immediate process termination when abort signal fires.
+    active_subprocesses: std.ArrayListUnmanaged(*shell.Subprocess) = .{},
 
     __alloc_scope: if (bun.Environment.enableAllocScopes) bun.AllocationScope else void,
     estimated_size_for_gc: usize = 0,
@@ -708,6 +718,7 @@ pub const Interpreter = struct {
         var quiet: bool = false;
         var cwd: ?bun.String = null;
         var export_env: ?EnvMap = null;
+        var abort_signal: ?*webcore.AbortSignal = null;
 
         if (parsed_shell_script.args == null) return globalThis.throw("shell: shell args is null, this is a bug in Bun. Please file a GitHub issue.", .{});
 
@@ -718,6 +729,7 @@ pub const Interpreter = struct {
             &quiet,
             &cwd,
             &export_env,
+            &abort_signal,
         );
 
         const cwd_string: ?bun.jsc.ZigString.Slice = if (cwd) |c| brk: {
@@ -739,6 +751,7 @@ pub const Interpreter = struct {
                 jsobjs.deinit();
                 if (export_env) |*ee| ee.deinit();
                 if (cwd) |*cc| cc.deref();
+                if (abort_signal) |sig| sig.unref();
                 shargs.deinit();
                 return try throwShellErr(e, .{ .js = globalThis.bunVM().event_loop });
             },
@@ -748,6 +761,7 @@ pub const Interpreter = struct {
             jsobjs.deinit();
             if (export_env) |*ee| ee.deinit();
             if (cwd) |*cc| cc.deref();
+            if (abort_signal) |sig| sig.unref();
             shargs.deinit();
             interpreter.finalize();
             return error.JSError;
@@ -766,6 +780,16 @@ pub const Interpreter = struct {
         );
         interpreter.this_jsvalue = js_value;
         interpreter.keep_alive.ref(globalThis.bunVM());
+
+        // Wire up abort signal AFTER interpreter is fully created and registered
+        // Pattern from js_bun_spawn_bindings.zig
+        // Adding the abort listener may call onAbortSignal immediately if already aborted
+        // Therefore, we must do this at the very end, after the JS value is created.
+        if (abort_signal) |signal| {
+            signal.pendingActivityRef();
+            interpreter.abort_signal = signal.addListener(interpreter, Interpreter.onAbortSignal);
+        }
+
         bun.analytics.Features.shell += 1;
         return js_value;
     }
@@ -1228,6 +1252,8 @@ pub const Interpreter = struct {
     }
 
     fn deinitFromFinalizer(this: *ThisInterpreter) void {
+        this.clearAbortSignal();
+        this.active_subprocesses.deinit(bun.default_allocator);
         if (this.root_shell._buffered_stderr == .owned) {
             this.root_shell._buffered_stderr.owned.deinit(bun.default_allocator);
         }
@@ -1241,6 +1267,8 @@ pub const Interpreter = struct {
 
     fn deinitEverything(this: *ThisInterpreter) void {
         log("deinit interpreter", .{});
+        this.clearAbortSignal();
+        this.active_subprocesses.deinit(bun.default_allocator);
         this.root_io.deref();
         this.root_shell.deinitImpl(false, true);
         for (this.vm_args_utf8.items[0..]) |str| {
@@ -1325,6 +1353,89 @@ pub const Interpreter = struct {
 
     pub fn getBufferedStderr(this: *ThisInterpreter, globalThis: *JSGlobalObject) jsc.JSValue {
         return ioToJSValue(globalThis, this.root_shell.buffered_stderr());
+    }
+
+    /// Register a subprocess with the interpreter for abort handling.
+    /// Called from Cmd when a subprocess is successfully spawned.
+    pub fn registerSubprocess(this: *ThisInterpreter, subprocess: *shell.Subprocess) void {
+        this.active_subprocesses.append(bun.default_allocator, subprocess) catch {
+            // On allocation failure, the subprocess won't be tracked for abort.
+            // This is acceptable - worst case, it won't be killed immediately on abort.
+        };
+    }
+
+    /// Unregister a subprocess from the interpreter.
+    /// Called from Cmd.deinit when the subprocess is being cleaned up.
+    pub fn unregisterSubprocess(this: *ThisInterpreter, subprocess: *shell.Subprocess) void {
+        // Find and remove the subprocess from the list
+        for (this.active_subprocesses.items, 0..) |proc, i| {
+            if (proc == subprocess) {
+                _ = this.active_subprocesses.swapRemove(i);
+                return;
+            }
+        }
+    }
+
+    /// Callback invoked when the AbortSignal fires.
+    /// Signature must match: fn(?*anyopaque, JSValue) callconv(.c) void
+    pub fn onAbortSignal(interpreter_ctx: ?*anyopaque, _: jsc.JSValue) callconv(.c) void {
+        const this: *ThisInterpreter = @ptrCast(@alignCast(interpreter_ctx.?));
+        // IMPORTANT: Set the aborted flag FIRST, before clearing the signal.
+        // This flag persists and allows isAborted() to return true even after
+        // clearAbortSignal() nulls the abort_signal pointer.
+        // This is critical for spawn-point checks that happen after the signal fires.
+        this.aborted = true;
+        this.abortAllCommands();
+        this.clearAbortSignal();
+    }
+
+    /// Clean up abort signal references. Call this:
+    /// 1. When the signal fires (in onAbortSignal)
+    /// 2. In finalize/deinit
+    /// Pattern from subprocess.zig:738-745
+    fn clearAbortSignal(this: *ThisInterpreter) void {
+        if (this.abort_signal) |signal| {
+            this.abort_signal = null;
+            signal.pendingActivityUnref();
+            signal.cleanNativeBindings(this);
+            signal.unref();
+        }
+    }
+
+    /// Check if the interpreter has been aborted.
+    /// Builtins and state machines should call this at key points to exit early.
+    ///
+    /// IMPORTANT: This checks the `aborted` flag, NOT the signal pointer.
+    /// The flag is set in onAbortSignal() BEFORE clearAbortSignal() nulls the pointer.
+    /// This ensures isAborted() returns true even after the signal is cleaned up,
+    /// which is critical for spawn-point checks that happen after the signal fires.
+    pub fn isAborted(this: *const ThisInterpreter) bool {
+        return this.aborted;
+    }
+
+    /// Kill all running subprocesses when abort signal fires.
+    /// Uses the subprocess registry for immediate termination.
+    fn abortAllCommands(this: *ThisInterpreter) void {
+        // Kill all registered subprocesses immediately with SIGTERM
+        // The subprocess registry tracks all active subprocesses spawned by Cmd nodes.
+        // Use @intFromEnum for consistency with existing codebase patterns (see subproc.zig:884)
+        const sigterm = @intFromEnum(bun.SignalCode.SIGTERM);
+        for (this.active_subprocesses.items) |subprocess| {
+            // tryKill returns success if process already exited, so safe to call unconditionally
+            _ = subprocess.tryKill(sigterm);
+        }
+        // Note: We don't clear the list here - subprocesses will unregister themselves
+        // in Cmd.deinit when the state machine unwinds.
+        //
+        // The abort flow is:
+        // 1. Signal fires -> onAbortSignal called
+        // 2. abortAllCommands sends SIGTERM to all registered subprocesses
+        // 3. Subprocesses receive signal and begin terminating
+        // 4. State machine continues/unwinds (isAborted() returns true at checkpoints)
+        // 5. Cmd.deinit is called -> unregisters subprocess and does final cleanup
+        //
+        // For builtins: They check isAborted() at yield points and exit early.
+        // For new spawns: Check isAborted() before spawning in Cmd state machine.
     }
 
     pub fn finalize(this: *ThisInterpreter) void {
@@ -2016,6 +2127,7 @@ const Maybe = bun.sys.Maybe;
 const jsc = bun.jsc;
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
+const webcore = bun.webcore;
 
 const shell = bun.shell;
 const Yield = shell.Yield;

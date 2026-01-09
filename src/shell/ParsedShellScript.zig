@@ -11,6 +11,7 @@ jsobjs: std.array_list.Managed(JSValue),
 export_env: ?EnvMap = null,
 quiet: bool = false,
 cwd: ?bun.String = null,
+abort_signal: ?*webcore.AbortSignal = null,
 this_jsvalue: JSValue = .zero,
 estimated_size_for_gc: usize = 0,
 
@@ -45,17 +46,20 @@ pub fn take(
     out_quiet: *bool,
     out_cwd: *?bun.String,
     out_export_env: *?EnvMap,
+    out_abort_signal: *?*webcore.AbortSignal,
 ) void {
     out_args.* = this.args.?;
     out_jsobjs.* = this.jsobjs;
     out_quiet.* = this.quiet;
     out_cwd.* = this.cwd;
     out_export_env.* = this.export_env;
+    out_abort_signal.* = this.abort_signal;
 
     this.args = null;
     this.jsobjs = std.array_list.Managed(JSValue).init(bun.default_allocator);
     this.cwd = null;
     this.export_env = null;
+    this.abort_signal = null; // ownership transferred
 }
 
 pub fn finalize(
@@ -65,6 +69,7 @@ pub fn finalize(
 
     if (this.export_env) |*env| env.deinit();
     if (this.cwd) |*cwd| cwd.deref();
+    if (this.abort_signal) |signal| signal.unref();
     if (this.args) |a| a.deinit();
     bun.destroy(this);
 }
@@ -83,6 +88,16 @@ pub fn setCwd(this: *ParsedShellScript, globalThis: *JSGlobalObject, callframe: 
 pub fn setQuiet(this: *ParsedShellScript, _: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const arg = callframe.argument(0);
     this.quiet = arg.toBoolean();
+    return .js_undefined;
+}
+
+pub fn setSignal(this: *ParsedShellScript, globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    const signal_val = callframe.argument(0);
+    const signal = signal_val.as(jsc.WebCore.AbortSignal) orelse {
+        return globalThis.throwInvalidArgumentTypeValue("signal", "AbortSignal", signal_val);
+    };
+    if (this.abort_signal) |old| old.unref();
+    this.abort_signal = signal.ref();
     return .js_undefined;
 }
 
@@ -205,6 +220,7 @@ const assert = bun.assert;
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
+const webcore = bun.webcore;
 
 const CallFrame = jsc.CallFrame;
 const ArgumentsSlice = jsc.CallFrame.ArgumentsSlice;

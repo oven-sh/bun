@@ -29,10 +29,7 @@ pub const BufferReadStream = struct {
 
     pub fn deinit(this: *BufferReadStream) void {
         _ = this.archive.readClose();
-        // don't free it if we never actually read it
-        // if (this.reading) {
-        //     _ = lib.archive_read_free(this.archive);
-        // }
+        _ = this.archive.readFree();
     }
 
     pub fn openRead(this: *BufferReadStream) Archive.Result {
@@ -107,7 +104,7 @@ pub const BufferReadStream = struct {
 
         const proposed = pos + offset;
         const new_pos = @min(@max(proposed, 0), buflen - 1);
-        this.pos = @as(usize, @intCast(this.pos));
+        this.pos = @as(usize, @intCast(new_pos));
         return new_pos - pos;
     }
 
@@ -319,6 +316,8 @@ pub const Archiver = struct {
         const dir_fd = dir.fd;
 
         var normalized_buf: bun.OSPathBuffer = undefined;
+        var use_pwrite = Environment.isPosix;
+        var use_lseek = true;
 
         loop: while (true) {
             const r = archive.readNextHeader(&entry);
@@ -510,6 +509,7 @@ pub const Archiver = struct {
                             };
 
                             const size: usize = @intCast(@max(entry.size(), 0));
+
                             if (size > 0) {
                                 if (ctx) |ctx_| {
                                     const hash: u64 = if (ctx_.pluckers.len > 0)
@@ -550,8 +550,9 @@ pub const Archiver = struct {
                                 }
 
                                 var retries_remaining: u8 = 5;
+
                                 possibly_retry: while (retries_remaining != 0) : (retries_remaining -= 1) {
-                                    switch (archive.readDataIntoFd(file_handle.uv())) {
+                                    switch (archive.readDataIntoFd(file_handle, &use_pwrite, &use_lseek)) {
                                         .eof => break :loop,
                                         .ok => break :possibly_retry,
                                         .retry => {

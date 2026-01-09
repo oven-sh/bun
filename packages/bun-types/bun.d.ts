@@ -626,6 +626,33 @@ declare module "bun" {
   }
 
   /**
+   * JSONC related APIs
+   */
+  namespace JSONC {
+    /**
+     * Parse a JSONC (JSON with Comments) string into a JavaScript value.
+     *
+     * Supports both single-line (`//`) and block comments (`/* ... *\/`), as well as
+     * trailing commas in objects and arrays.
+     *
+     * @category Utilities
+     *
+     * @param input The JSONC string to parse
+     * @returns A JavaScript value
+     *
+     * @example
+     * ```js
+     * const result = Bun.JSONC.parse(`{
+     *   // This is a comment
+     *   "name": "my-app",
+     *   "version": "1.0.0", // trailing comma is allowed
+     * }`);
+     * ```
+     */
+    export function parse(input: string): unknown;
+  }
+
+  /**
    * YAML related APIs
    */
   namespace YAML {
@@ -816,6 +843,20 @@ declare module "bun" {
     input: BunFile,
     options?: {
       /**
+       * Set the file permissions of the destination when it is created or overwritten.
+       *
+       * Must be a valid Unix permission mode (0 to 0o777 / 511 in decimal).
+       * If omitted, defaults to the system default based on umask (typically 0o644).
+       *
+       * @throws {RangeError} If the mode is outside the valid range (0 to 0o777).
+       *
+       * @example
+       * ```ts
+       * await Bun.write(Bun.file("./secret.txt"), Bun.file("./source.txt"), { mode: 0o600 });
+       * ```
+       */
+      mode?: number;
+      /**
        * If `true`, create the parent directory if it doesn't exist. By default, this is `true`.
        *
        * If `false`, this will throw an error if the directory doesn't exist.
@@ -848,6 +889,20 @@ declare module "bun" {
     destinationPath: PathLike,
     input: BunFile,
     options?: {
+      /**
+       * Set the file permissions of the destination when it is created or overwritten.
+       *
+       * Must be a valid Unix permission mode (0 to 0o777 / 511 in decimal).
+       * If omitted, defaults to the system default based on umask (typically 0o644).
+       *
+       * @throws {RangeError} If the mode is outside the valid range (0 to 0o777).
+       *
+       * @example
+       * ```ts
+       * await Bun.write("./secret.txt", Bun.file("./source.txt"), { mode: 0o600 });
+       * ```
+       */
+      mode?: number;
       /**
        * If `true`, create the parent directory if it doesn't exist. By default, this is `true`.
        *
@@ -1951,6 +2006,65 @@ declare module "bun" {
      * @default false
      */
     reactFastRefresh?: boolean;
+
+    /**
+     * A map of file paths to their contents for in-memory bundling.
+     *
+     * This allows you to bundle virtual files that don't exist on disk, or override
+     * the contents of files that do exist on disk. The keys are file paths (which should
+     * match how they're imported) and the values are the file contents.
+     *
+     * File contents can be provided as:
+     * - `string` - The source code as a string
+     * - `Blob` - A Blob containing the source code
+     * - `NodeJS.TypedArray` - A typed array (e.g., `Uint8Array`) containing the source code
+     * - `ArrayBufferLike` - An ArrayBuffer containing the source code
+     *
+     * @example
+     * ```ts
+     * // Bundle entirely from memory (no files on disk needed)
+     * await Bun.build({
+     *   entrypoints: ["/app/index.ts"],
+     *   files: {
+     *     "/app/index.ts": `
+     *       import { helper } from "./helper.ts";
+     *       console.log(helper());
+     *     `,
+     *     "/app/helper.ts": `
+     *       export function helper() {
+     *         return "Hello from memory!";
+     *       }
+     *     `,
+     *   },
+     * });
+     * ```
+     *
+     * @example
+     * ```ts
+     * // Override a file on disk with in-memory contents
+     * await Bun.build({
+     *   entrypoints: ["./src/index.ts"],
+     *   files: {
+     *     // This will be used instead of the actual ./src/config.ts file
+     *     "./src/config.ts": `export const API_URL = "https://production.api.com";`,
+     *   },
+     * });
+     * ```
+     *
+     * @example
+     * ```ts
+     * // Mix disk files with in-memory files
+     * // Entry point is on disk, but imports a virtual file
+     * await Bun.build({
+     *   entrypoints: ["./src/index.ts"], // Real file on disk
+     *   files: {
+     *     // Virtual file that ./src/index.ts can import via "./generated.ts"
+     *     "./src/generated.ts": `export const BUILD_TIME = ${Date.now()};`,
+     *   },
+     * });
+     * ```
+     */
+    files?: Record<string, string | Blob | NodeJS.TypedArray | ArrayBufferLike>;
 
     /**
      * Generate a JSON file containing metadata about the build.
@@ -3204,16 +3318,29 @@ declare module "bun" {
 
   type WebSocketOptionsTLS = {
     /**
-     * Options for the TLS connection
+     * Options for the TLS connection.
+     *
+     * Supports full TLS configuration including custom CA certificates,
+     * client certificates, and other TLS settings (same as fetch).
+     *
+     * @example
+     * ```ts
+     * // Using BunFile for certificates
+     * const ws = new WebSocket("wss://example.com", {
+     *   tls: {
+     *     ca: Bun.file("./ca.pem")
+     *   }
+     * });
+     *
+     * // Using Buffer
+     * const ws = new WebSocket("wss://example.com", {
+     *   tls: {
+     *     ca: fs.readFileSync("./ca.pem")
+     *   }
+     * });
+     * ```
      */
-    tls?: {
-      /**
-       * Whether to reject the connection if the certificate is not valid
-       *
-       * @default true
-       */
-      rejectUnauthorized?: boolean;
-    };
+    tls?: TLSOptions;
   };
 
   type WebSocketOptionsHeaders = {
@@ -3223,10 +3350,57 @@ declare module "bun" {
     headers?: import("node:http").OutgoingHttpHeaders;
   };
 
+  type WebSocketOptionsProxy = {
+    /**
+     * HTTP proxy to use for the WebSocket connection.
+     *
+     * Can be a string URL or an object with `url` and optional `headers`.
+     *
+     * @example
+     * ```ts
+     * // String format
+     * const ws = new WebSocket("wss://example.com", {
+     *   proxy: "http://proxy.example.com:8080"
+     * });
+     *
+     * // With credentials
+     * const ws = new WebSocket("wss://example.com", {
+     *   proxy: "http://user:pass@proxy.example.com:8080"
+     * });
+     *
+     * // Object format with custom headers
+     * const ws = new WebSocket("wss://example.com", {
+     *   proxy: {
+     *     url: "http://proxy.example.com:8080",
+     *     headers: {
+     *       "Proxy-Authorization": "Bearer token"
+     *     }
+     *   }
+     * });
+     * ```
+     */
+    proxy?:
+      | string
+      | {
+          /**
+           * The proxy URL (http:// or https://)
+           */
+          url: string;
+          /**
+           * Custom headers to send to the proxy server.
+           * Supports plain objects or Headers class instances.
+           */
+          headers?: import("node:http").OutgoingHttpHeaders | Headers;
+        };
+  };
+
   /**
    * Constructor options for the `Bun.WebSocket` client
    */
-  type WebSocketOptions = WebSocketOptionsProtocolsOrProtocol & WebSocketOptionsTLS & WebSocketOptionsHeaders;
+  type WebSocketOptions = WebSocketOptionsProtocolsOrProtocol &
+    WebSocketOptionsTLS &
+    WebSocketOptionsHeaders &
+    WebSocketOptionsProxy;
 
   interface WebSocketEventMap {
     close: CloseEvent;

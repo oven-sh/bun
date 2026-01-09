@@ -638,8 +638,8 @@ const AsyncTransformTask = jsc.API.JSTranspiler.TransformTask.AsyncTransformTask
 
 const ArchiveBlobTask = jsc.API.Archive.BlobTask;
 const ArchiveExtractTask = jsc.API.Archive.ExtractTask;
-const ArchiveWriteTask = jsc.API.Archive.WriteTask;
 const ArchiveFilesTask = jsc.API.Archive.FilesTask;
+const ArchiveWriteTask = jsc.API.Archive.WriteTask;
 
 const Timer = jsc.API.Timer;
 const ImmediateObject = Timer.ImmediateObject;

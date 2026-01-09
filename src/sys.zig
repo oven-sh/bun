@@ -2163,13 +2163,13 @@ pub fn pidfd_open(pid: std.os.linux.pid_t, flags: u32) Maybe(i32) {
 
 pub fn lseek(fd: bun.FileDescriptor, offset: i64, whence: usize) Maybe(usize) {
     while (true) {
-        const rc = syscall.lseek(fd.cast(), offset, whence);
+        const rc = syscall.lseek(fd.cast(), offset, @intCast(whence));
         if (Maybe(usize).errnoSysFd(rc, .lseek, fd)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
 
-        return Maybe(usize){ .result = rc };
+        return Maybe(usize){ .result = @intCast(rc) };
     }
 }
 

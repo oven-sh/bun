@@ -121,7 +121,7 @@ await Bun.build({
   outdir: "./dist",
   target: "bun",
   compile: true,
-  experimentalEsmBytecode: true,  // Enable ESM bytecode cache
+  experimentalEsmBytecode: true, // Enable ESM bytecode cache
 });
 ```
 
@@ -137,25 +137,25 @@ Tested with synthetic modules containing realistic JavaScript patterns (classes,
 
 #### ESM Bytecode Cache Performance
 
-| Size | Source | Binary Increase | No Cache | With Cache | Improvement | Time Saved |
-|------|--------|-----------------|----------|------------|-------------|------------|
-| tiny | 12 KB | +16 KB | 9.26 ms | 10.13 ms | -9.4% | -0.87 ms |
-| small | 28 KB | +54 KB | 9.78 ms | 10.43 ms | -6.7% | -0.66 ms |
-| medium | 212 KB | +483 KB | 13.92 ms | 13.56 ms | +2.6% | +0.36 ms |
-| large | 2 MB | +4.9 MB | 48.27 ms | 41.83 ms | **+13.4%** | +6.44 ms |
-| xlarge | 10 MB | +24 MB | 214.80 ms | 192.13 ms | **+10.6%** | +22.67 ms |
-| huge | 20 MB | +49 MB | 430.52 ms | 364.97 ms | **+15.2%** | **+65.56 ms** |
+| Size   | Source | Binary Increase | No Cache  | With Cache | Improvement | Time Saved    |
+| ------ | ------ | --------------- | --------- | ---------- | ----------- | ------------- |
+| tiny   | 12 KB  | +16 KB          | 9.26 ms   | 10.13 ms   | -9.4%       | -0.87 ms      |
+| small  | 28 KB  | +54 KB          | 9.78 ms   | 10.43 ms   | -6.7%       | -0.66 ms      |
+| medium | 212 KB | +483 KB         | 13.92 ms  | 13.56 ms   | +2.6%       | +0.36 ms      |
+| large  | 2 MB   | +4.9 MB         | 48.27 ms  | 41.83 ms   | **+13.4%**  | +6.44 ms      |
+| xlarge | 10 MB  | +24 MB          | 214.80 ms | 192.13 ms  | **+10.6%**  | +22.67 ms     |
+| huge   | 20 MB  | +49 MB          | 430.52 ms | 364.97 ms  | **+15.2%**  | **+65.56 ms** |
 
 #### Comparison with CJS Bytecode Cache
 
-| Size | ESM Improvement | CJS Improvement | ESM Time Saved | CJS Time Saved |
-|------|-----------------|-----------------|----------------|----------------|
-| tiny | -9.4% | -4.6% | -0.87 ms | -0.43 ms |
-| small | -6.7% | -3.2% | -0.66 ms | -0.31 ms |
-| medium | +2.6% | +3.6% | +0.36 ms | +0.53 ms |
-| large | +13.4% | +16.6% | +6.44 ms | +10.40 ms |
-| xlarge | +10.6% | +14.4% | +22.67 ms | +39.99 ms |
-| huge | +15.2% | +19.4% | +65.56 ms | +109.84 ms |
+| Size   | ESM Improvement | CJS Improvement | ESM Time Saved | CJS Time Saved |
+| ------ | --------------- | --------------- | -------------- | -------------- |
+| tiny   | -9.4%           | -4.6%           | -0.87 ms       | -0.43 ms       |
+| small  | -6.7%           | -3.2%           | -0.66 ms       | -0.31 ms       |
+| medium | +2.6%           | +3.6%           | +0.36 ms       | +0.53 ms       |
+| large  | +13.4%          | +16.6%          | +6.44 ms       | +10.40 ms      |
+| xlarge | +10.6%          | +14.4%          | +22.67 ms      | +39.99 ms      |
+| huge   | +15.2%          | +19.4%          | +65.56 ms      | +109.84 ms     |
 
 ### Key Findings
 
@@ -215,6 +215,7 @@ With ESM bytecode cache enabled, the following operations are skipped during mod
 ### Memory Considerations
 
 The module metadata is kept in memory after loading to support:
+
 - Module namespace object creation
 - Dynamic import resolution
 - Hot module replacement (future)

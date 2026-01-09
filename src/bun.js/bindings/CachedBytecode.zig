@@ -90,10 +90,6 @@ pub const CachedBytecode = opaque {
     }
 };
 
-const bun = @import("bun");
-const std = @import("std");
-const jsc = bun.jsc;
-
 pub const TestingAPIs = struct {
     pub fn generateForESMWithMetadata(global: *jsc.JSGlobalObject, call_frame: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         const source_url_val = call_frame.argument(0);
@@ -137,3 +133,8 @@ pub const TestingAPIs = struct {
         return jsc.JSValue.jsBoolean(CachedBytecode.validateMetadata(cache_slice));
     }
 };
+
+const std = @import("std");
+
+const bun = @import("bun");
+const jsc = bun.jsc;

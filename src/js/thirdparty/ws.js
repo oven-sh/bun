@@ -229,7 +229,41 @@ class BunWebSocket extends EventEmitter {
       if (method) wsOptions.method = method;
       if (proxy) wsOptions.proxy = proxy;
       if (tls) wsOptions.tls = tls;
-      if (agent) wsOptions.agent = agent;
+      else if (agent) {
+        // limited support for agent (ca, cert, key, passphrase, rejectUnauthorized and proxy)
+        const tls = {};
+        let hasTlsOptions = false;
+        const connectOpts = agent.connectOpts || agent.options || agent;
+        if (connectOpts) {
+          if (connectOpts.rejectUnauthorized !== undefined) {
+            tls.rejectUnauthorized = connectOpts.rejectUnauthorized;
+            hasTlsOptions = true;
+          }
+          if (connectOpts.ca) {
+            tls.ca = connectOpts.ca;
+            hasTlsOptions = true;
+          }
+          if (connectOpts.cert) {
+            tls.cert = connectOpts.cert;
+            hasTlsOptions = true;
+          }
+          if (connectOpts.key) {
+            tls.key = connectOpts.key;
+            hasTlsOptions = true;
+          }
+          if (connectOpts.passphrase) {
+            tls.passphrase = connectOpts.passphrase;
+            hasTlsOptions = true;
+          }
+          const proxy = connectOpts.proxy || agent.proxy;
+          if (proxy) {
+            wsOptions.proxy = proxy;
+          }
+          if (hasTlsOptions) {
+            wsOptions.tls = tls;
+          }
+        }
+      }
     } else {
       wsOptions = protocols;
     }

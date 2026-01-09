@@ -62,8 +62,15 @@ const StringPrototypeToUpperCase = String.prototype.toUpperCase;
 
 // Helper to get TLS option from agent with fallback chain:
 // agent.options -> agent.connectOpts (https-proxy-agent) -> agent.connect (undici.Agent)
+// Treats null as unset to continue the fallback chain
 function getAgentTlsOption(agent, key) {
-  return agent?.options?.[key] ?? agent?.connectOpts?.[key] ?? agent?.connect?.[key];
+  const fromOptions = agent?.options?.[key];
+  if (fromOptions != null) return fromOptions;
+  const fromConnectOpts = agent?.connectOpts?.[key];
+  if (fromConnectOpts != null) return fromConnectOpts;
+  const fromConnect = agent?.connect?.[key];
+  if (fromConnect != null) return fromConnect;
+  return undefined;
 }
 
 function emitErrorEventNT(self, err) {

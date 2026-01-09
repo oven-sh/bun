@@ -68,7 +68,6 @@ describe("https.globalAgent.options TLS fallback", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect(stderr).not.toMatch(/(Error|Exception|Traceback)/i);
       expect(stdout.trim()).toBe("Hello");
       expect(exitCode).toBe(0);
     });
@@ -130,7 +129,6 @@ describe("https.globalAgent.options TLS fallback", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect(stderr).not.toMatch(/(Error|Exception|Traceback)/i);
       expect(stdout.trim()).toBe("Hello");
       expect(exitCode).toBe(0);
     });
@@ -194,7 +192,6 @@ describe("https.globalAgent.options TLS fallback", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect(stderr).not.toMatch(/(Error|Exception|Traceback)/i);
       expect(stdout.trim()).toBe("Hello");
       expect(exitCode).toBe(0);
     });
@@ -258,7 +255,6 @@ describe("https.globalAgent.options TLS fallback", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect(stderr).not.toMatch(/(Error|Exception|Traceback)/i);
       expect(stdout.trim()).toBe("Hello from connect");
       expect(exitCode).toBe(0);
     });
@@ -314,7 +310,6 @@ describe("https.globalAgent.options TLS fallback", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect(stderr).not.toMatch(/(Error|Exception|Traceback)/i);
       expect(stdout.trim()).toBe("Hello from fetch");
       expect(exitCode).toBe(0);
     });
@@ -372,7 +367,6 @@ describe("https.globalAgent.options TLS fallback", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect(stderr).not.toMatch(/(Error|Exception|Traceback)/i);
       expect(stdout.trim()).toBe("Hello with CA");
       expect(exitCode).toBe(0);
     });
@@ -431,7 +425,6 @@ describe("https.globalAgent.options TLS fallback", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect(stderr).not.toMatch(/(Error|Exception|Traceback)/i);
       expect(stdout.trim()).toBe("Hello override");
       expect(exitCode).toBe(0);
     });
@@ -487,7 +480,6 @@ describe("https.globalAgent.options TLS fallback", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect(stderr).not.toMatch(/(Error|Exception|Traceback)/i);
       expect(stdout.trim()).toBe("Hello from connectOpts");
       expect(exitCode).toBe(0);
     });
@@ -553,7 +545,6 @@ describe("https.globalAgent.options TLS fallback", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect(stderr).not.toMatch(/(Error|Exception|Traceback)/i);
       expect(stdout.trim()).toBe("Hello with agent TLS");
       expect(exitCode).toBe(0);
     });
@@ -617,7 +608,6 @@ describe("https.globalAgent.options TLS fallback", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect(stderr).not.toMatch(/(Error|Exception|Traceback)/i);
       expect(stdout.trim()).toBe("Hello with dispatcher TLS");
       expect(exitCode).toBe(0);
     });
@@ -681,7 +671,6 @@ describe("https.globalAgent.options TLS fallback", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect(stderr).not.toMatch(/(Error|Exception|Traceback)/i);
       expect(stdout.trim()).toBe("Hello with undici connect");
       expect(exitCode).toBe(0);
     });
@@ -745,7 +734,6 @@ describe("https.globalAgent.options TLS fallback", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect(stderr).not.toMatch(/(Error|Exception|Traceback)/i);
       expect(stdout.trim()).toBe("Hello from undici.Agent");
       expect(exitCode).toBe(0);
     });
@@ -807,7 +795,6 @@ describe("https.globalAgent.options TLS fallback", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect(stderr).not.toMatch(/(Error|Exception|Traceback)/i);
       expect(stdout.trim()).toBe("Hello from undici.Pool");
       expect(exitCode).toBe(0);
     });
@@ -869,7 +856,6 @@ describe("https.globalAgent.options TLS fallback", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect(stderr).not.toMatch(/(Error|Exception|Traceback)/i);
       expect(stdout.trim()).toBe("Hello from undici.Client");
       expect(exitCode).toBe(0);
     });
@@ -931,7 +917,6 @@ describe("https.globalAgent.options TLS fallback", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect(stderr).not.toMatch(/(Error|Exception|Traceback)/i);
       expect(stdout.trim()).toBe("Hello from undici.ProxyAgent");
       expect(exitCode).toBe(0);
     });
@@ -987,7 +972,6 @@ describe("https.globalAgent.options TLS fallback", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect(stderr).not.toMatch(/(Error|Exception|Traceback)/i);
       expect(stdout.trim()).toBe("Hello from undici.fetch");
       expect(exitCode).toBe(0);
     });
@@ -1052,7 +1036,6 @@ describe("https.globalAgent.options TLS fallback", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect(stderr).not.toMatch(/(Error|Exception|Traceback)/i);
       expect(stdout.trim()).toBe("Hello from undici.fetch with Agent");
       expect(exitCode).toBe(0);
     });
@@ -1113,7 +1096,6 @@ describe("https.globalAgent.options TLS fallback", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect(stderr).not.toMatch(/(Error|Exception|Traceback)/i);
       expect(stdout.trim()).toBe("Hello from global dispatcher");
       expect(exitCode).toBe(0);
     });

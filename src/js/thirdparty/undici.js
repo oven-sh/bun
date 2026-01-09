@@ -4,6 +4,7 @@ const { Readable } = StreamModule;
 const { _ReadableFromWeb: ReadableFromWeb } = require("internal/webstreams_adapters");
 
 const ObjectCreate = Object.create;
+const ObjectDefineProperty = Object.defineProperty;
 const kEmptyObject = ObjectCreate(null);
 
 const bunFetch = Bun.fetch;
@@ -278,14 +279,14 @@ class Dispatcher extends EventEmitter {
     // TLS settings (rejectUnauthorized, ca, cert, key, etc.). This differs from
     // upstream undici which doesn't expose these properties.
     if (options) {
-      Object.defineProperty(this, "options", {
+      ObjectDefineProperty(this, "options", {
         value: options,
         writable: true,
         enumerable: false,
         configurable: true,
       });
       if (options.connect) {
-        Object.defineProperty(this, "connect", {
+        ObjectDefineProperty(this, "connect", {
           value: options.connect,
           writable: true,
           enumerable: false,

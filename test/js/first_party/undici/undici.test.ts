@@ -157,14 +157,23 @@ describe("undici", () => {
   });
 
   describe("dispatcher TLS options", () => {
+    // Import once at describe level
+    const {
+      Agent,
+      Dispatcher,
+      Pool,
+      BalancedPool,
+      Client,
+      ProxyAgent,
+      EnvHttpProxyAgent,
+      RetryAgent,
+    } = require("undici");
+
+    // Shared connect options for tests that verify ca
+    const connectOpts = { rejectUnauthorized: false, ca: "test-ca" };
+
     it("Agent should store connect options", () => {
-      const { Agent } = require("undici");
-      const agent = new Agent({
-        connect: {
-          rejectUnauthorized: false,
-          ca: "test-ca",
-        },
-      });
+      const agent = new Agent({ connect: connectOpts });
 
       expect(agent.options).toBeDefined();
       expect(agent.connect).toBeDefined();
@@ -173,7 +182,6 @@ describe("undici", () => {
     });
 
     it("Dispatcher should store connect options", () => {
-      const { Dispatcher } = require("undici");
       const dispatcher = new Dispatcher({
         connect: {
           rejectUnauthorized: false,
@@ -186,20 +194,15 @@ describe("undici", () => {
     });
 
     it("Pool should store connect options", () => {
-      const { Pool } = require("undici");
-      const pool = new Pool(hostUrl, {
-        connect: {
-          rejectUnauthorized: false,
-        },
-      });
+      const pool = new Pool(hostUrl, { connect: connectOpts });
 
       expect(pool.options).toBeDefined();
       expect(pool.connect).toBeDefined();
       expect(pool.connect.rejectUnauthorized).toBe(false);
+      expect(pool.connect.ca).toBe("test-ca");
     });
 
     it("BalancedPool should store connect options", () => {
-      const { BalancedPool } = require("undici");
       const balancedPool = new BalancedPool([hostUrl], {
         connect: {
           rejectUnauthorized: false,
@@ -212,20 +215,15 @@ describe("undici", () => {
     });
 
     it("Client should store connect options", () => {
-      const { Client } = require("undici");
-      const client = new Client(hostUrl, {
-        connect: {
-          rejectUnauthorized: false,
-        },
-      });
+      const client = new Client(hostUrl, { connect: connectOpts });
 
       expect(client.options).toBeDefined();
       expect(client.connect).toBeDefined();
       expect(client.connect.rejectUnauthorized).toBe(false);
+      expect(client.connect.ca).toBe("test-ca");
     });
 
     it("ProxyAgent should store connect options", () => {
-      const { ProxyAgent } = require("undici");
       const proxyAgent = new ProxyAgent({
         connect: {
           rejectUnauthorized: false,
@@ -238,7 +236,6 @@ describe("undici", () => {
     });
 
     it("EnvHttpProxyAgent should store connect options", () => {
-      const { EnvHttpProxyAgent } = require("undici");
       const envAgent = new EnvHttpProxyAgent({
         connect: {
           rejectUnauthorized: false,
@@ -251,7 +248,6 @@ describe("undici", () => {
     });
 
     it("RetryAgent should store connect options", () => {
-      const { RetryAgent, Dispatcher } = require("undici");
       const baseDispatcher = new Dispatcher();
       const retryAgent = new RetryAgent(baseDispatcher, {
         connect: {
@@ -265,7 +261,6 @@ describe("undici", () => {
     });
 
     it("Agent without options should have undefined connect", () => {
-      const { Agent } = require("undici");
       const agent = new Agent();
 
       expect(agent.options).toBeUndefined();
@@ -273,7 +268,6 @@ describe("undici", () => {
     });
 
     it("Agent with options but no connect should not have connect", () => {
-      const { Agent } = require("undici");
       const agent = new Agent({ someOtherOption: true });
 
       expect(agent.options).toBeDefined();

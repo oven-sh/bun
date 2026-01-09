@@ -190,7 +190,8 @@ static inline bool applyGlobalAgentFallback(
     }
 
     // Fallback to globalAgent.options/connectOpts/connect for TLS options
-    if (rejectUnauthorized == -1 && !sslConfig) {
+    // Only proceed if we need either rejectUnauthorized OR sslConfig
+    if (rejectUnauthorized == -1 || !sslConfig) {
         // Try globalAgent.options first, then globalAgent.connectOpts, then globalAgent.connect
         JSValue tlsSourceValue;
         auto optionsValue = Bun::getOwnPropertyIfExists(globalObject, agentObj, PropertyName(Identifier::fromString(vm, "options"_s)));
@@ -214,48 +215,19 @@ static inline bool applyGlobalAgentFallback(
 
         if (tlsSourceValue && tlsSourceValue.isObject()) {
             if (JSC::JSObject* tlsSourceObj = tlsSourceValue.getObject()) {
-                // Extract rejectUnauthorized
-                auto rejectValue = Bun::getOwnPropertyIfExists(globalObject, tlsSourceObj, PropertyName(Identifier::fromString(vm, "rejectUnauthorized"_s)));
-                RETURN_IF_EXCEPTION(throwScope, false);
-                if (rejectValue && rejectValue.isBoolean()) {
-                    rejectUnauthorized = rejectValue.asBoolean() ? 1 : 0;
+                // Extract rejectUnauthorized ONLY when not already set
+                if (rejectUnauthorized == -1) {
+                    auto rejectValue = Bun::getOwnPropertyIfExists(globalObject, tlsSourceObj, PropertyName(Identifier::fromString(vm, "rejectUnauthorized"_s)));
+                    RETURN_IF_EXCEPTION(throwScope, false);
+                    if (rejectValue && rejectValue.isBoolean()) {
+                        rejectUnauthorized = rejectValue.asBoolean() ? 1 : 0;
+                    }
                 }
 
-                // Build filtered TLS options object with only supported properties
-                JSC::JSObject* filteredTlsOpts = JSC::constructEmptyObject(globalObject);
-                bool hasTlsOpts = false;
-
-                auto caValue = Bun::getOwnPropertyIfExists(globalObject, tlsSourceObj, PropertyName(Identifier::fromString(vm, "ca"_s)));
-                RETURN_IF_EXCEPTION(throwScope, false);
-                if (caValue && !caValue.isUndefinedOrNull()) {
-                    filteredTlsOpts->putDirect(vm, Identifier::fromString(vm, "ca"_s), caValue);
-                    hasTlsOpts = true;
-                }
-
-                auto certValue = Bun::getOwnPropertyIfExists(globalObject, tlsSourceObj, PropertyName(Identifier::fromString(vm, "cert"_s)));
-                RETURN_IF_EXCEPTION(throwScope, false);
-                if (certValue && !certValue.isUndefinedOrNull()) {
-                    filteredTlsOpts->putDirect(vm, Identifier::fromString(vm, "cert"_s), certValue);
-                    hasTlsOpts = true;
-                }
-
-                auto keyValue = Bun::getOwnPropertyIfExists(globalObject, tlsSourceObj, PropertyName(Identifier::fromString(vm, "key"_s)));
-                RETURN_IF_EXCEPTION(throwScope, false);
-                if (keyValue && !keyValue.isUndefinedOrNull()) {
-                    filteredTlsOpts->putDirect(vm, Identifier::fromString(vm, "key"_s), keyValue);
-                    hasTlsOpts = true;
-                }
-
-                auto passphraseValue = Bun::getOwnPropertyIfExists(globalObject, tlsSourceObj, PropertyName(Identifier::fromString(vm, "passphrase"_s)));
-                RETURN_IF_EXCEPTION(throwScope, false);
-                if (passphraseValue && !passphraseValue.isUndefinedOrNull()) {
-                    filteredTlsOpts->putDirect(vm, Identifier::fromString(vm, "passphrase"_s), passphraseValue);
-                    hasTlsOpts = true;
-                }
-
-                // Parse the filtered TLS options
-                if (hasTlsOpts) {
-                    sslConfig = Bun__WebSocket__parseSSLConfig(globalObject, JSValue::encode(filteredTlsOpts));
+                // Parse sslConfig ONLY when not already set
+                // Pass the full object - SSLConfig.fromJS extracts only the properties it needs
+                if (!sslConfig) {
+                    sslConfig = Bun__WebSocket__parseSSLConfig(globalObject, JSValue::encode(tlsSourceValue));
                     RETURN_IF_EXCEPTION(throwScope, false);
                 }
             }
@@ -516,9 +488,7 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
                     }
 
                     // Get TLS options from agent.connectOpts or agent.options
-                    // We build a filtered object with only supported TLS options (ca, cert, key, passphrase, rejectUnauthorized)
-                    // to avoid passing invalid properties like ALPNProtocols to the SSL parser
-                    if (rejectUnauthorized == -1 && !sslConfig) {
+                    if (rejectUnauthorized == -1 || !sslConfig) {
                         auto connectOptsValue = Bun::getOwnPropertyIfExists(globalObject, agentObj, PropertyName(Identifier::fromString(vm, "connectOpts"_s)));
                         RETURN_IF_EXCEPTION(throwScope, {});
                         if (!connectOptsValue || connectOptsValue.isUndefinedOrNull()) {
@@ -527,48 +497,19 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
                         }
                         if (connectOptsValue && !connectOptsValue.isUndefinedOrNull() && connectOptsValue.isObject()) {
                             if (JSC::JSObject* connectOptsObj = connectOptsValue.getObject()) {
-                                // Extract rejectUnauthorized
-                                auto rejectValue = Bun::getOwnPropertyIfExists(globalObject, connectOptsObj, PropertyName(Identifier::fromString(vm, "rejectUnauthorized"_s)));
-                                RETURN_IF_EXCEPTION(throwScope, {});
-                                if (rejectValue && rejectValue.isBoolean()) {
-                                    rejectUnauthorized = rejectValue.asBoolean() ? 1 : 0;
+                                // Extract rejectUnauthorized ONLY when not already set
+                                if (rejectUnauthorized == -1) {
+                                    auto rejectValue = Bun::getOwnPropertyIfExists(globalObject, connectOptsObj, PropertyName(Identifier::fromString(vm, "rejectUnauthorized"_s)));
+                                    RETURN_IF_EXCEPTION(throwScope, {});
+                                    if (rejectValue && rejectValue.isBoolean()) {
+                                        rejectUnauthorized = rejectValue.asBoolean() ? 1 : 0;
+                                    }
                                 }
 
-                                // Build filtered TLS options object with only supported properties
-                                JSC::JSObject* filteredTlsOpts = JSC::constructEmptyObject(globalObject);
-                                bool hasTlsOpts = false;
-
-                                auto caValue = Bun::getOwnPropertyIfExists(globalObject, connectOptsObj, PropertyName(Identifier::fromString(vm, "ca"_s)));
-                                RETURN_IF_EXCEPTION(throwScope, {});
-                                if (caValue && !caValue.isUndefinedOrNull()) {
-                                    filteredTlsOpts->putDirect(vm, Identifier::fromString(vm, "ca"_s), caValue);
-                                    hasTlsOpts = true;
-                                }
-
-                                auto certValue = Bun::getOwnPropertyIfExists(globalObject, connectOptsObj, PropertyName(Identifier::fromString(vm, "cert"_s)));
-                                RETURN_IF_EXCEPTION(throwScope, {});
-                                if (certValue && !certValue.isUndefinedOrNull()) {
-                                    filteredTlsOpts->putDirect(vm, Identifier::fromString(vm, "cert"_s), certValue);
-                                    hasTlsOpts = true;
-                                }
-
-                                auto keyValue = Bun::getOwnPropertyIfExists(globalObject, connectOptsObj, PropertyName(Identifier::fromString(vm, "key"_s)));
-                                RETURN_IF_EXCEPTION(throwScope, {});
-                                if (keyValue && !keyValue.isUndefinedOrNull()) {
-                                    filteredTlsOpts->putDirect(vm, Identifier::fromString(vm, "key"_s), keyValue);
-                                    hasTlsOpts = true;
-                                }
-
-                                auto passphraseValue = Bun::getOwnPropertyIfExists(globalObject, connectOptsObj, PropertyName(Identifier::fromString(vm, "passphrase"_s)));
-                                RETURN_IF_EXCEPTION(throwScope, {});
-                                if (passphraseValue && !passphraseValue.isUndefinedOrNull()) {
-                                    filteredTlsOpts->putDirect(vm, Identifier::fromString(vm, "passphrase"_s), passphraseValue);
-                                    hasTlsOpts = true;
-                                }
-
-                                // Parse the filtered TLS options
-                                if (hasTlsOpts) {
-                                    sslConfig = Bun__WebSocket__parseSSLConfig(globalObject, JSValue::encode(filteredTlsOpts));
+                                // Parse sslConfig ONLY when not already set
+                                // Pass the full object - SSLConfig.fromJS extracts only the properties it needs
+                                if (!sslConfig) {
+                                    sslConfig = Bun__WebSocket__parseSSLConfig(globalObject, JSValue::encode(connectOptsValue));
                                     RETURN_IF_EXCEPTION(throwScope, {});
                                 }
                             }

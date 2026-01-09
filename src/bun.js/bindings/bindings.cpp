@@ -6131,19 +6131,19 @@ extern "C" [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue JSC__JSGlobalObject__getH
     JSValue httpsModule = globalObject->internalModuleRegistry()->requireId(
         globalObject, vm, Bun::InternalModuleRegistry::Field::NodeHttps);
     if (catchScope.exception()) {
-        catchScope.clearException();
-        return JSValue::encode(jsUndefined());
+        if (!catchScope.clearExceptionExceptTermination())
+            return JSValue::encode(jsUndefined());
     }
 
     if (!httpsModule.isObject())
         return JSValue::encode(jsUndefined());
 
-    // Get globalAgent from the module
-    JSValue globalAgent = httpsModule.getObject()->get(globalObject,
-        Identifier::fromString(vm, "globalAgent"_s));
+    // Get globalAgent from the module (reuse identifier)
+    auto globalAgentId = Identifier::fromString(vm, "globalAgent"_s);
+    JSValue globalAgent = httpsModule.getObject()->get(globalObject, globalAgentId);
     if (catchScope.exception()) {
-        catchScope.clearException();
-        return JSValue::encode(jsUndefined());
+        if (!catchScope.clearExceptionExceptTermination())
+            return JSValue::encode(jsUndefined());
     }
 
     return JSValue::encode(globalAgent);

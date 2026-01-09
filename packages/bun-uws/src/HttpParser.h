@@ -891,14 +891,9 @@ namespace uWS
             /* If returned socket is not what we put in we need
              * to break here as we either have upgraded to
              * WebSockets or otherwise closed the socket. */
-<<<<<<< HEAD
-            /* For CONNECT requests, store the remaining data as the connect head */
-            req->connectHead = isConnectRequest ? std::string_view(data, length) : std::string_view();
-=======
             /* Store any remaining data as head for Node.js compat (connect/upgrade events) */
             req->headData = data;
             req->headLength = length;
->>>>>>> b30dc1e4b4 (fix(http): properly handle pipelined data in CONNECT requests)
             void *returnedUser = requestHandler(user, req);
             if (returnedUser != user) {
                 /* We are upgraded to WebSocket or otherwise broken */

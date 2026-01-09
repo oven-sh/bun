@@ -325,14 +325,17 @@ pub fn extract(this: *Archive, globalThis: *jsc.JSGlobalObject, callframe: *jsc.
     return startExtractTask(globalThis, this.store, path_slice.slice(), glob_patterns, ignore_patterns);
 }
 
-/// Parse a string or array of strings into a pattern list
-fn parsePatternArg(globalThis: *jsc.JSGlobalObject, arg: jsc.JSValue, name: []const u8) bun.JSError![]const []const u8 {
+/// Parse a string or array of strings into a pattern list.
+/// Returns null for empty strings or empty arrays (treated as "no filter").
+fn parsePatternArg(globalThis: *jsc.JSGlobalObject, arg: jsc.JSValue, name: []const u8) bun.JSError!?[]const []const u8 {
     const allocator = bun.default_allocator;
 
     // Single string
     if (arg.isString()) {
         const str_slice = try arg.toSlice(globalThis, allocator);
         defer str_slice.deinit();
+        // Empty string = no filter
+        if (str_slice.len == 0) return null;
         const pattern = allocator.dupe(u8, str_slice.slice()) catch return error.OutOfMemory;
         errdefer allocator.free(pattern);
         const patterns = allocator.alloc([]const u8, 1) catch return error.OutOfMemory;
@@ -343,9 +346,8 @@ fn parsePatternArg(globalThis: *jsc.JSGlobalObject, arg: jsc.JSValue, name: []co
     // Array of strings
     if (arg.jsType() == .Array) {
         const len = try arg.getLength(globalThis);
-        if (len == 0) {
-            return globalThis.throwInvalidArguments("Archive: {s} array must not be empty", .{name});
-        }
+        // Empty array = no filter
+        if (len == 0) return null;
 
         var patterns = std.ArrayList([]const u8).initCapacity(allocator, @intCast(len)) catch return error.OutOfMemory;
         errdefer {
@@ -362,8 +364,16 @@ fn parsePatternArg(globalThis: *jsc.JSGlobalObject, arg: jsc.JSValue, name: []co
             }
             const str_slice = try item.toSlice(globalThis, allocator);
             defer str_slice.deinit();
+            // Skip empty strings in array
+            if (str_slice.len == 0) continue;
             const pattern = allocator.dupe(u8, str_slice.slice()) catch return error.OutOfMemory;
             patterns.appendAssumeCapacity(pattern);
+        }
+
+        // If all strings were empty, treat as no filter
+        if (patterns.items.len == 0) {
+            patterns.deinit(allocator);
+            return null;
         }
 
         return patterns.toOwnedSlice(allocator) catch return error.OutOfMemory;

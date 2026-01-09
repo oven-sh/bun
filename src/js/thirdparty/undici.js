@@ -274,12 +274,23 @@ function mockErrors() {}
 class Dispatcher extends EventEmitter {
   constructor(options) {
     super();
-    // Store options for TLS fallback (used by Bun's fetch)
+    // Bun TLS fallback shim: Store options non-enumerably for fetch() to extract
+    // TLS settings (rejectUnauthorized, ca, cert, key, etc.). This differs from
+    // upstream undici which doesn't expose these properties.
     if (options) {
-      this.options = options;
-      // undici uses 'connect' for TLS options
+      Object.defineProperty(this, "options", {
+        value: options,
+        writable: true,
+        enumerable: false,
+        configurable: true,
+      });
       if (options.connect) {
-        this.connect = options.connect;
+        Object.defineProperty(this, "connect", {
+          value: options.connect,
+          writable: true,
+          enumerable: false,
+          configurable: true,
+        });
       }
     }
   }

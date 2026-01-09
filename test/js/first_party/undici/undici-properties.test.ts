@@ -122,9 +122,12 @@ describe("undici class properties", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const stdout = await proc.stdout.text();
+    const stderr = await proc.stderr.text();
+    const exitCode = await proc.exited;
 
-    expect(stderr).toBe("");
+    // Check stderr/stdout first for better diagnostics
+    expect(stderr.trim()).toBe("");
     expect(stdout.trim()).toBe("All undici classes store options correctly");
     expect(exitCode).toBe(0);
   });

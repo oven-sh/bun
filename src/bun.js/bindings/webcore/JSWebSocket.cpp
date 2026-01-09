@@ -189,9 +189,9 @@ static inline bool applyGlobalAgentFallback(
         }
     }
 
-    // Fallback to globalAgent.options/connectOpts for TLS options
+    // Fallback to globalAgent.options/connectOpts/connect for TLS options
     if (rejectUnauthorized == -1 && !sslConfig) {
-        // Try globalAgent.options first, then globalAgent.connectOpts
+        // Try globalAgent.options first, then globalAgent.connectOpts, then globalAgent.connect
         JSValue tlsSourceValue;
         auto optionsValue = Bun::getOwnPropertyIfExists(globalObject, agentObj, PropertyName(Identifier::fromString(vm, "options"_s)));
         RETURN_IF_EXCEPTION(throwScope, false);
@@ -202,6 +202,13 @@ static inline bool applyGlobalAgentFallback(
             RETURN_IF_EXCEPTION(throwScope, false);
             if (connectOptsValue && !connectOptsValue.isUndefinedOrNull() && connectOptsValue.isObject()) {
                 tlsSourceValue = connectOptsValue;
+            } else {
+                // Also check "connect" for undici.Agent compatibility
+                auto connectValue = Bun::getOwnPropertyIfExists(globalObject, agentObj, PropertyName(Identifier::fromString(vm, "connect"_s)));
+                RETURN_IF_EXCEPTION(throwScope, false);
+                if (connectValue && !connectValue.isUndefinedOrNull() && connectValue.isObject()) {
+                    tlsSourceValue = connectValue;
+                }
             }
         }
 

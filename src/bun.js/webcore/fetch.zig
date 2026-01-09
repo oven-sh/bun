@@ -198,6 +198,76 @@ fn getAgentTLSOptions(globalThis: *JSGlobalObject, agent: JSValue) bun.JSError!?
     return null;
 }
 
+/// Finds agent/dispatcher from options or falls back to https.globalAgent.
+/// Returns null if no agent is found.
+fn findAgentOrDispatcher(
+    globalThis: *JSGlobalObject,
+    options_object: ?JSValue,
+    request_init_object: ?JSValue,
+) bun.JSError!?JSValue {
+    const objects_to_try = [_]JSValue{
+        options_object orelse .zero,
+        request_init_object orelse .zero,
+    };
+    inline for (0..2) |i| {
+        if (objects_to_try[i] != .zero) {
+            if (try objects_to_try[i].get(globalThis, "agent")) |agent| {
+                if (agent.isObject()) return agent;
+            }
+            if (try objects_to_try[i].get(globalThis, "dispatcher")) |dispatcher| {
+                if (dispatcher.isObject()) return dispatcher;
+            }
+        }
+    }
+    const global_agent = globalThis.getHttpsGlobalAgent();
+    if (global_agent.isObject()) return global_agent;
+    return null;
+}
+
+/// Finds agent/dispatcher with a proxy property from options or falls back to https.globalAgent.
+/// Returns the agent and its proxy value as a tuple, or null if no agent with proxy is found.
+fn findAgentWithProxy(
+    globalThis: *JSGlobalObject,
+    options_object: ?JSValue,
+    request_init_object: ?JSValue,
+) bun.JSError!?struct { JSValue, JSValue } {
+    const objects_to_try = [_]JSValue{
+        options_object orelse .zero,
+        request_init_object orelse .zero,
+    };
+    inline for (0..2) |i| {
+        if (objects_to_try[i] != .zero) {
+            if (try objects_to_try[i].get(globalThis, "agent")) |agent| {
+                if (agent.isObject()) {
+                    if (try agent.get(globalThis, "proxy")) |proxy_val| {
+                        if (!proxy_val.isUndefinedOrNull()) {
+                            return .{ agent, proxy_val };
+                        }
+                    }
+                }
+            }
+            if (try objects_to_try[i].get(globalThis, "dispatcher")) |dispatcher| {
+                if (dispatcher.isObject()) {
+                    if (try dispatcher.get(globalThis, "proxy")) |proxy_val| {
+                        if (!proxy_val.isUndefinedOrNull()) {
+                            return .{ dispatcher, proxy_val };
+                        }
+                    }
+                }
+            }
+        }
+    }
+    const global_agent = globalThis.getHttpsGlobalAgent();
+    if (global_agent.isObject()) {
+        if (try global_agent.get(globalThis, "proxy")) |proxy_val| {
+            if (!proxy_val.isUndefinedOrNull()) {
+                return .{ global_agent, proxy_val };
+            }
+        }
+    }
+    return null;
+}
+
 /// Output struct for extractTLSSettings helper.
 /// Note: check_server_identity stores an unprotected raw JSValue, but this is safe because agent_opts remain live on the JS stack for the synchronous Bun__fetch_ call, so no GC can run before the value is promoted to a Strong reference.
 const TLSSettings = struct {
@@ -570,43 +640,8 @@ pub fn Bun__fetch_(
     // This also supports HttpsProxyAgent which uses connectOpts
     if (ssl_config == null) fallback_to_agent: {
         // First check for per-request agent/dispatcher option, then fall back to globalAgent
-        const agent_opts = blk: {
-            // Check for agent (node-fetch compatibility) or dispatcher (undici compatibility) in options/request_init
-            const objects_to_try = [_]JSValue{
-                options_object orelse .zero,
-                request_init_object orelse .zero,
-            };
-            inline for (0..2) |i| {
-                if (objects_to_try[i] != .zero) {
-                    // Check "agent" property (node-fetch compatibility)
-                    if (try objects_to_try[i].get(globalThis, "agent")) |agent| {
-                        if (agent.isObject()) {
-                            if (try getAgentTLSOptions(globalThis, agent)) |opts| {
-                                break :blk opts;
-                            }
-                        }
-                    }
-                    // Check "dispatcher" property (undici compatibility)
-                    if (try objects_to_try[i].get(globalThis, "dispatcher")) |dispatcher| {
-                        if (dispatcher.isObject()) {
-                            if (try getAgentTLSOptions(globalThis, dispatcher)) |opts| {
-                                break :blk opts;
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Fall back to https.globalAgent
-            const global_agent = globalThis.getHttpsGlobalAgent();
-            if (!global_agent.isObject()) {
-                break :fallback_to_agent;
-            }
-            if (try getAgentTLSOptions(globalThis, global_agent)) |opts| {
-                break :blk opts;
-            }
-            break :fallback_to_agent;
-        };
+        const agent = try findAgentOrDispatcher(globalThis, options_object, request_init_object) orelse break :fallback_to_agent;
+        const agent_opts = try getAgentTLSOptions(globalThis, agent) orelse break :fallback_to_agent;
 
         // Extract TLS settings from agent options using shared helper
         const tls_settings = extractTLSSettings(vm, globalThis, agent_opts) catch {
@@ -880,49 +915,7 @@ pub fn Bun__fetch_(
     // This enables compatibility with https-proxy-agent and similar libraries
     if (proxy == null) fallback_to_agent_proxy: {
         // First check for per-request agent/dispatcher option, then fall back to globalAgent
-        const agent_and_proxy = blk: {
-            // Check for agent (node-fetch compatibility) or dispatcher (undici compatibility) in options/request_init
-            const objects_to_try = [_]JSValue{
-                options_object orelse .zero,
-                request_init_object orelse .zero,
-            };
-            inline for (0..2) |i| {
-                if (objects_to_try[i] != .zero) {
-                    // Check "agent" property (node-fetch compatibility)
-                    if (try objects_to_try[i].get(globalThis, "agent")) |agent| {
-                        if (agent.isObject()) {
-                            if (try agent.get(globalThis, "proxy")) |proxy_val| {
-                                if (!proxy_val.isUndefinedOrNull()) {
-                                    break :blk .{ agent, proxy_val };
-                                }
-                            }
-                        }
-                    }
-                    // Check "dispatcher" property (undici compatibility)
-                    if (try objects_to_try[i].get(globalThis, "dispatcher")) |dispatcher| {
-                        if (dispatcher.isObject()) {
-                            if (try dispatcher.get(globalThis, "proxy")) |proxy_val| {
-                                if (!proxy_val.isUndefinedOrNull()) {
-                                    break :blk .{ dispatcher, proxy_val };
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Fall back to https.globalAgent
-            const global_agent = globalThis.getHttpsGlobalAgent();
-            if (!global_agent.isObject()) {
-                break :fallback_to_agent_proxy;
-            }
-            if (try global_agent.get(globalThis, "proxy")) |proxy_val| {
-                if (!proxy_val.isUndefinedOrNull()) {
-                    break :blk .{ global_agent, proxy_val };
-                }
-            }
-            break :fallback_to_agent_proxy;
-        };
+        const agent_and_proxy = try findAgentWithProxy(globalThis, options_object, request_init_object) orelse break :fallback_to_agent_proxy;
         const current_agent = agent_and_proxy[0];
         const proxy_value = agent_and_proxy[1];
 

@@ -916,15 +916,23 @@ describe("WebSocket with https.globalAgent fallback", () => {
   const https = require("https");
   let originalProxy: unknown;
   let originalOptions: Record<string, unknown>;
+  let originalConnectOpts: unknown;
+  let originalConnect: unknown;
 
   beforeEach(() => {
     originalProxy = https.globalAgent.proxy;
     originalOptions = { ...https.globalAgent.options };
+    originalConnectOpts = https.globalAgent.connectOpts;
+    originalConnect = https.globalAgent.connect;
   });
 
   afterEach(() => {
     https.globalAgent.proxy = originalProxy;
-    https.globalAgent.options = originalOptions;
+    // Mutate rather than replace to preserve object reference
+    Object.keys(https.globalAgent.options).forEach((k: string) => delete https.globalAgent.options[k]);
+    Object.assign(https.globalAgent.options, originalOptions);
+    https.globalAgent.connectOpts = originalConnectOpts;
+    https.globalAgent.connect = originalConnect;
   });
 
   test("wss:// uses https.globalAgent.options.rejectUnauthorized", async () => {

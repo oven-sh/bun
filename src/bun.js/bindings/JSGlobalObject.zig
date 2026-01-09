@@ -804,6 +804,7 @@ pub const JSGlobalObject = opaque {
     /// Gets `https.globalAgent` from the node:https module.
     /// Returns undefined if not available.
     pub fn getHttpsGlobalAgent(this: *JSGlobalObject) JSValue {
+        jsc.markBinding(@src());
         return JSC__JSGlobalObject__getHttpsGlobalAgent(this);
     }
 

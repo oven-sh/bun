@@ -63,10 +63,7 @@ const StringPrototypeToUpperCase = String.prototype.toUpperCase;
 // Helper to get TLS option from agent with fallback chain:
 // agent.options -> agent.connectOpts (https-proxy-agent) -> agent.connect (undici.Agent)
 function getAgentTlsOption(agent, key) {
-  let value = agent?.options?.[key];
-  if (value === undefined) value = agent?.connectOpts?.[key];
-  if (value === undefined) value = agent?.connect?.[key];
-  return value;
+  return agent?.options?.[key] ?? agent?.connectOpts?.[key] ?? agent?.connect?.[key];
 }
 
 function emitErrorEventNT(self, err) {
@@ -738,10 +735,18 @@ function ClientRequest(input, options, cb) {
   }
 
   if (options.rejectUnauthorized !== undefined) {
+    if (typeof options.rejectUnauthorized !== "boolean") {
+      throw new TypeError("rejectUnauthorized argument must be a boolean");
+    }
     this._ensureTls().rejectUnauthorized = options.rejectUnauthorized;
   } else {
     const agentRejectUnauthorized = getAgentTlsOption(agent, "rejectUnauthorized");
-    if (agentRejectUnauthorized !== undefined) this._ensureTls().rejectUnauthorized = agentRejectUnauthorized;
+    if (agentRejectUnauthorized !== undefined) {
+      if (typeof agentRejectUnauthorized !== "boolean") {
+        throw new TypeError("agent TLS rejectUnauthorized option must be a boolean");
+      }
+      this._ensureTls().rejectUnauthorized = agentRejectUnauthorized;
+    }
   }
   if (options.ca) {
     if (!isValidTLSArray(options.ca))
@@ -821,7 +826,7 @@ function ClientRequest(input, options, cb) {
       this._ensureTls().servername = agentServername;
     }
   }
-  if (options.secureOptions) {
+  if (options.secureOptions !== undefined) {
     if (typeof options.secureOptions !== "number") throw new TypeError("secureOptions argument must be a number");
     this._ensureTls().secureOptions = options.secureOptions;
   } else {

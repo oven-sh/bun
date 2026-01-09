@@ -187,7 +187,7 @@ describe("undici", () => {
 
     it("Pool should store connect options", () => {
       const { Pool } = require("undici");
-      const pool = new Pool("http://localhost", {
+      const pool = new Pool(hostUrl, {
         connect: {
           rejectUnauthorized: false,
         },
@@ -200,7 +200,7 @@ describe("undici", () => {
 
     it("BalancedPool should store connect options", () => {
       const { BalancedPool } = require("undici");
-      const balancedPool = new BalancedPool(["http://localhost"], {
+      const balancedPool = new BalancedPool([hostUrl], {
         connect: {
           rejectUnauthorized: false,
         },
@@ -213,7 +213,7 @@ describe("undici", () => {
 
     it("Client should store connect options", () => {
       const { Client } = require("undici");
-      const client = new Client("http://localhost", {
+      const client = new Client(hostUrl, {
         connect: {
           rejectUnauthorized: false,
         },

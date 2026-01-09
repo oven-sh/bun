@@ -6122,15 +6122,18 @@ extern "C" void JSC__ArrayBuffer__asBunArrayBuffer(JSC::ArrayBuffer* self, Bun__
     out->shared = self->isShared();
 }
 
-extern "C" JSC::EncodedJSValue JSC__JSGlobalObject__getHttpsGlobalAgent(Zig::GlobalObject* globalObject)
+extern "C" [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue JSC__JSGlobalObject__getHttpsGlobalAgent(Zig::GlobalObject* globalObject)
 {
     auto& vm = globalObject->vm();
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto catchScope = DECLARE_CATCH_SCOPE(vm);
 
     // Get node:https module from internal registry
     JSValue httpsModule = globalObject->internalModuleRegistry()->requireId(
         globalObject, vm, Bun::InternalModuleRegistry::Field::NodeHttps);
-    RETURN_IF_EXCEPTION(throwScope, JSValue::encode(jsUndefined()));
+    if (catchScope.exception()) {
+        catchScope.clearException();
+        return JSValue::encode(jsUndefined());
+    }
 
     if (!httpsModule.isObject())
         return JSValue::encode(jsUndefined());
@@ -6138,7 +6141,10 @@ extern "C" JSC::EncodedJSValue JSC__JSGlobalObject__getHttpsGlobalAgent(Zig::Glo
     // Get globalAgent from the module
     JSValue globalAgent = httpsModule.getObject()->get(globalObject,
         Identifier::fromString(vm, "globalAgent"_s));
-    RETURN_IF_EXCEPTION(throwScope, JSValue::encode(jsUndefined()));
+    if (catchScope.exception()) {
+        catchScope.clearException();
+        return JSValue::encode(jsUndefined());
+    }
 
     return JSValue::encode(globalAgent);
 }

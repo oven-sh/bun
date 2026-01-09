@@ -57,11 +57,6 @@ const kSignal = Symbol("signal");
 const kMaxHeaderSize = Symbol("maxHeaderSize");
 const abortedSymbol = Symbol("aborted");
 const kClearTimeout = Symbol("kClearTimeout");
-const kWriteCount = Symbol("writeCount");
-const kResolveNextChunk = Symbol("resolveNextChunk");
-const kFetching = Symbol("fetching");
-const kOnEnd = Symbol("onEnd");
-const kHandleResponse = Symbol("handleResponse");
 
 const headerStateSymbol = Symbol("headerState");
 // used for pretending to emit events in the right order
@@ -526,15 +521,12 @@ export {
   kEmptyBuffer,
   kEmptyObject,
   kFetchRequest,
-  kFetching,
   kHandle,
-  kHandleResponse,
   kHost,
   kInternalSocketData,
   kMaxHeaderSize,
   kMaxHeadersCount,
   kMethod,
-  kOnEnd,
   kOptions,
   kOutHeaders,
   kParser,
@@ -545,7 +537,6 @@ export {
   kRealListen,
   kRequest,
   kRes,
-  kResolveNextChunk,
   kReusedSocket,
   kSignal,
   kSocketPath,
@@ -553,7 +544,6 @@ export {
   kTls,
   kUpgradeOrConnect,
   kUseDefaultPort,
-  kWriteCount,
   noBodySymbol,
   optionsSymbol,
   parseProxyConfigFromEnv,

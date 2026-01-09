@@ -44,11 +44,6 @@ const {
   callCloseCallback,
   emitCloseNTAndComplete,
   kEmptyBuffer,
-  kWriteCount,
-  kResolveNextChunk,
-  kFetching,
-  kOnEnd,
-  kHandleResponse,
 } = require("internal/http");
 
 const { globalAgent } = require("node:_http_agent");
@@ -71,653 +66,6 @@ function emitErrorEventNT(self, err) {
   if (self.destroyed) return;
   if (self.listenerCount("error") > 0) {
     self.emit("error", err);
-  }
-}
-
-// Module-scope no-ops for initial state
-function noopResolveNextChunk(_end: boolean) {}
-function noopCallback() {}
-
-// Module-scope emit helper functions
-function maybeEmitSocketClientRequest(self) {
-  if (self.destroyed) return;
-  if (!(self[kEmitState] & (1 << ClientRequestEmitState.socket))) {
-    self[kEmitState] |= 1 << ClientRequestEmitState.socket;
-    self.emit("socket", self.socket);
-  }
-}
-
-function maybeEmitPrefinishClientRequest(self) {
-  maybeEmitSocketClientRequest(self);
-
-  if (!(self[kEmitState] & (1 << ClientRequestEmitState.prefinish))) {
-    self[kEmitState] |= 1 << ClientRequestEmitState.prefinish;
-    self.emit("prefinish");
-  }
-}
-
-function maybeEmitFinishClientRequest(self) {
-  maybeEmitPrefinishClientRequest(self);
-
-  if (!(self[kEmitState] & (1 << ClientRequestEmitState.finish))) {
-    self[kEmitState] |= 1 << ClientRequestEmitState.finish;
-    self.emit("finish");
-  }
-}
-
-function maybeEmitCloseClientRequest(self) {
-  maybeEmitPrefinishClientRequest(self);
-
-  if (!self._closed) {
-    process.nextTick(emitCloseNTAndComplete, self);
-  }
-}
-
-// Module-scope event handlers
-function socketCloseListenerClientRequest(self) {
-  self.destroyed = true;
-
-  const res = self.res;
-  if (res) {
-    // Socket closed before we emitted 'end' below.
-    if (!res.complete) {
-      res.destroy(new ConnResetException("aborted"));
-    }
-    if (!self._closed) {
-      self._closed = true;
-      callCloseCallback(self);
-      self.emit("close");
-      self.socket?.emit?.("close");
-    }
-    if (!res.aborted && res.readable) {
-      res.push(null);
-    }
-  } else if (!self._closed) {
-    self._closed = true;
-    callCloseCallback(self);
-    self.emit("close");
-    self.socket?.emit?.("close");
-  }
-}
-
-function onAbortClientRequest(self, _err?: Error) {
-  self[kClearTimeout]?.();
-  socketCloseListenerClientRequest(self);
-  if (!self[abortedSymbol] && !self?.res?.complete) {
-    process.nextTick(emitAbortNextTick, self);
-    self[abortedSymbol] = true;
-  }
-}
-
-// Module-scope write functions
-function pushChunkClientRequest(self, chunk) {
-  self[kBodyChunks].push(chunk);
-  if (self[kWriteCount] > 1) {
-    startFetchClientRequest(self);
-  }
-  self[kResolveNextChunk]?.(false);
-}
-
-function writeInternalClientRequest(self, chunk, encoding, callback) {
-  const MAX_FAKE_BACKPRESSURE_SIZE = 1024 * 1024;
-  const canSkipReEncodingData =
-    // UTF-8 string:
-    (typeof chunk === "string" && (encoding === "utf-8" || encoding === "utf8" || !encoding)) ||
-    // Buffer
-    ($isTypedArrayView(chunk) && (!encoding || encoding === "buffer" || encoding === "utf-8"));
-  let bodySize = 0;
-  if (!canSkipReEncodingData) {
-    chunk = Buffer.from(chunk, encoding);
-  }
-  bodySize = chunk.length;
-  self[kWriteCount]++;
-
-  if (!self[kBodyChunks]) {
-    self[kBodyChunks] = [];
-    pushChunkClientRequest(self, chunk);
-
-    if (callback) callback();
-    return true;
-  }
-
-  // Signal fake backpressure if the body size is > 1024 * 1024
-  // So that code which loops forever until backpressure is signaled
-  // will eventually exit.
-
-  for (let chunk of self[kBodyChunks]) {
-    bodySize += chunk.length;
-    if (bodySize >= MAX_FAKE_BACKPRESSURE_SIZE) {
-      break;
-    }
-  }
-  pushChunkClientRequest(self, chunk);
-
-  if (callback) callback();
-  return bodySize < MAX_FAKE_BACKPRESSURE_SIZE;
-}
-
-function writeClientRequest(self, chunk, encoding, callback) {
-  if (self.destroyed) return false;
-  if ($isCallable(chunk)) {
-    callback = chunk;
-    chunk = undefined;
-    encoding = undefined;
-  } else if ($isCallable(encoding)) {
-    callback = encoding;
-    encoding = undefined;
-  } else if (!$isCallable(callback)) {
-    callback = undefined;
-  }
-
-  return writeInternalClientRequest(self, chunk, encoding, callback);
-}
-
-function endClientRequest(self, chunk, encoding, callback) {
-  OutgoingMessage.prototype.end.$call(self, chunk, encoding, callback);
-
-  if ($isCallable(chunk)) {
-    callback = chunk;
-    chunk = undefined;
-    encoding = undefined;
-  } else if ($isCallable(encoding)) {
-    callback = encoding;
-    encoding = undefined;
-  } else if (!$isCallable(callback)) {
-    callback = undefined;
-  }
-
-  if (chunk) {
-    if (self.finished) {
-      emitErrorNextTickIfErrorListenerNT(self, $ERR_STREAM_WRITE_AFTER_END(), callback);
-      return self;
-    }
-
-    writeInternalClientRequest(self, chunk, encoding, null);
-  } else if (self.finished) {
-    if (callback) {
-      if (!self.writableFinished) {
-        self.on("finish", callback);
-      } else {
-        callback($ERR_STREAM_ALREADY_FINISHED("end"));
-      }
-    }
-  }
-
-  if (callback) {
-    self.once("finish", callback);
-  }
-
-  if (!self.finished) {
-    sendClientRequest(self);
-    self[kResolveNextChunk]?.(true);
-  }
-
-  return self;
-}
-
-function flushHeadersClientRequest(self) {
-  if (!self[kFetching]) {
-    self[kAbortController] ??= new AbortController();
-    self[kAbortController].signal.addEventListener("abort", onAbortClientRequest.bind(null, self), {
-      once: true,
-    });
-    startFetchClientRequest(self);
-  }
-}
-
-function destroyClientRequest(self, err?: Error) {
-  if (self.destroyed) return self;
-  self.destroyed = true;
-
-  const res = self.res;
-
-  // If we're aborting, we don't care about any more response data.
-  if (res) {
-    res._dump();
-  }
-
-  self.finished = true;
-
-  if (self.res && !self.res.complete) {
-    self.res.emit("end");
-  }
-
-  // If request is destroyed we abort the current response
-  self[kAbortController]?.abort?.();
-  self.socket.destroy(err);
-
-  return self;
-}
-
-function abortClientRequest(self) {
-  if (self.aborted) return;
-  self[abortedSymbol] = true;
-  process.nextTick(emitAbortNextTick, self);
-  self[kAbortController]?.abort?.();
-  destroyClientRequest(self);
-}
-
-function ensureTlsClientRequest(self) {
-  if (self[kTls] === null) self[kTls] = {};
-  return self[kTls];
-}
-
-function signalAbortHandler(self) {
-  self[kAbortController]?.abort();
-}
-
-function clearTimeoutClientRequest(self) {
-  const timeoutTimer = self[kTimeoutTimer];
-  if (timeoutTimer) {
-    clearTimeout(timeoutTimer);
-    self[kTimeoutTimer] = undefined;
-    self.removeAllListeners("timeout");
-  }
-}
-
-function setSocketKeepAliveClientRequest(_enable = true, _initialDelay = 0) {}
-
-function setNoDelayClientRequest(_noDelay = true) {}
-
-// Module-scope send function
-function sendClientRequest(self) {
-  self.finished = true;
-  self[kAbortController] ??= new AbortController();
-  self[kAbortController].signal.addEventListener("abort", onAbortClientRequest.bind(null, self), { once: true });
-
-  var body = self[kBodyChunks] && self[kBodyChunks].length > 1 ? new Blob(self[kBodyChunks]) : self[kBodyChunks]?.[0];
-
-  try {
-    startFetchClientRequest(self, body);
-    self[kOnEnd] = () => {
-      self[kHandleResponse]?.();
-    };
-  } catch (err) {
-    if (!!$debug) globalReportError(err);
-    self.emit("error", err);
-  } finally {
-    process.nextTick(maybeEmitFinishClientRequest, self);
-  }
-}
-
-// Promise executor for body iterator chunk resolution
-function resolveNextChunkCallback(self, resolve, end: boolean) {
-  self[kResolveNextChunk] = noopResolveNextChunk;
-  if (end) {
-    resolve(undefined);
-  } else {
-    resolve(self[kBodyChunks].shift());
-  }
-}
-
-function setupChunkResolverExecutor(self, resolve) {
-  self[kResolveNextChunk] = resolveNextChunkCallback.bind(null, self, resolve);
-}
-
-// Module-scope ReadableStream factory for request body
-function bodyStreamClientRequest(self) {
-  return new ReadableStream({
-    async pull(controller) {
-      while (self[kBodyChunks]?.length > 0) {
-        controller.enqueue(self[kBodyChunks].shift());
-      }
-
-      if (self[kBodyChunks]?.length === 0) {
-        self.emit("drain");
-      }
-
-      if (self.finished) {
-        self[kHandleResponse]?.();
-        controller.close();
-        return;
-      }
-
-      const chunk = await new Promise(setupChunkResolverExecutor.bind(null, self));
-      if (chunk !== null) {
-        controller.enqueue(chunk);
-      }
-
-      if (self[kBodyChunks]?.length === 0) {
-        self.emit("drain");
-      }
-
-      if (self.finished) {
-        self[kHandleResponse]?.();
-        controller.close();
-      }
-    },
-  });
-}
-
-// Module-scope ReadableStream factory for upgrade body
-function upgradeBodyStreamClientRequest(upgradedPromise) {
-  let socketIter: AsyncIterator<any> | null = null;
-
-  return new ReadableStream({
-    async pull(controller) {
-      if (!socketIter) {
-        const socket = await upgradedPromise;
-        if (!socket) {
-          controller.close();
-          return;
-        }
-        socketIter = socket[kWrappedSocketWritable]()[Symbol.asyncIterator]();
-      }
-
-      const { value, done } = await socketIter.next();
-      if (done) {
-        controller.close();
-      } else {
-        controller.enqueue(value);
-      }
-    },
-  });
-}
-
-// Helper functions for startFetch
-function getURLClientRequest(self, host) {
-  if (isIPv6(host)) {
-    host = `[${host}]`;
-  }
-
-  const path = self[kPath];
-  const protocol = self[kProtocol];
-
-  if (path.startsWith("http://") || path.startsWith("https://")) {
-    return [path, `${protocol}//${host}${self[kUseDefaultPort] ? "" : ":" + self[kPort]}`];
-  } else {
-    let proxy: string | undefined;
-    const url = `${protocol}//${host}${self[kUseDefaultPort] ? "" : ":" + self[kPort]}${path}`;
-    // support agent proxy url/string for http/https
-    try {
-      // getters can throw
-      const agentProxy = self[kAgent]?.proxy;
-      // this should work for URL like objects and strings
-      proxy = agentProxy?.href || agentProxy;
-    } catch {}
-    return [url, proxy];
-  }
-}
-
-function failDNSLookupClientRequest(self, message, name, code, syscall) {
-  const error = new Error(message);
-  error.name = name;
-  error.code = code;
-  error.syscall = syscall;
-  if (!!$debug) globalReportError(error);
-  process.nextTick((s, err) => s.emit("error", err), self, error);
-}
-
-function goClientRequest(
-  self,
-  url,
-  proxy,
-  softFail,
-  method,
-  keepalive,
-  protocol,
-  customBody,
-  isUpgrade,
-  isDuplex,
-  upgradedResponse?,
-) {
-  const tls = protocol === "https:" && self[kTls] ? { ...self[kTls], serverName: self[kTls].servername } : undefined;
-
-  const fetchOptions: any = {
-    method,
-    headers: self.getHeaders(),
-    redirect: "manual",
-    signal: self[kAbortController]?.signal,
-    // Timeouts are handled via this.setTimeout.
-    timeout: false,
-    // Disable auto gzip/deflate
-    decompress: false,
-    keepalive,
-  };
-  const upgradeHeader = fetchOptions?.headers?.upgrade;
-  const isUpgradeFromHeader = typeof upgradeHeader === "string" && upgradeHeader !== "h2" && upgradeHeader !== "h2c";
-  let keepOpen = false;
-
-  if (isDuplex) {
-    fetchOptions.duplex = "half";
-    keepOpen = true;
-  }
-
-  if (isUpgradeFromHeader) {
-    const { promise: upgradedPromise, resolve } = Promise.withResolvers<WrappedSocket | null>();
-    upgradedResponse = resolve;
-    fetchOptions.body = upgradeBodyStreamClientRequest(upgradedPromise);
-  } else if (method !== "GET" && method !== "HEAD" && method !== "OPTIONS") {
-    if (customBody !== undefined) {
-      fetchOptions.body = customBody;
-    } else if (isDuplex) {
-      fetchOptions.body = bodyStreamClientRequest(self);
-    }
-  }
-
-  if (tls) {
-    fetchOptions.tls = tls;
-  }
-
-  if (!!$debug) {
-    fetchOptions.verbose = true;
-  }
-
-  if (proxy) {
-    fetchOptions.proxy = proxy;
-  }
-
-  const socketPath = self[kSocketPath];
-
-  if (socketPath) {
-    fetchOptions.unix = socketPath;
-  }
-
-  //@ts-ignore
-  self[kFetchRequest] = fetch(url, fetchOptions).then(response => {
-    if (self.aborted) {
-      upgradedResponse?.(null);
-      maybeEmitCloseClientRequest(self);
-      return;
-    }
-
-    self[kHandleResponse] = () => {
-      self[kFetchRequest] = null;
-      self[kClearTimeout]();
-      self[kHandleResponse] = noopCallback;
-
-      const prevIsHTTPS = getIsNextIncomingMessageHTTPS();
-      setIsNextIncomingMessageHTTPS(response.url.startsWith("https:"));
-      var res = (self.res = new IncomingMessage(response, {
-        [typeSymbol]: NodeHTTPIncomingRequestType.FetchResponse,
-        [reqSymbol]: self,
-      }));
-      setIsNextIncomingMessageHTTPS(prevIsHTTPS);
-      res.req = self;
-      let timer;
-      res.setTimeout = (msecs, callback) => {
-        if (timer) {
-          clearTimeout(timer);
-        }
-        timer = setTimeout(() => {
-          if (res.complete) {
-            return;
-          }
-          res.emit("timeout");
-          callback?.();
-        }, msecs);
-      };
-      process.nextTick(
-        (s, r) => {
-          // If the user did not listen for the 'response' event, then they
-          // can't possibly read the data, so we ._dump() it into the void
-          // so that the socket doesn't hang there in a paused state.
-          const contentLength = r.headers["content-length"];
-          if (contentLength && isNaN(Number(contentLength))) {
-            emitErrorEventNT(s, $HPE_UNEXPECTED_CONTENT_LENGTH("Parse Error"));
-
-            r.complete = true;
-            maybeEmitCloseClientRequest(s);
-            return;
-          }
-          try {
-            if (isUpgradeFromHeader) {
-              if (response.status === 101) {
-                const socket = new WrappedSocket(response.body, r, maybeEmitCloseClientRequest.bind(null, s));
-                upgradedResponse(socket);
-                s.socket = socket;
-                s.emit("upgrade", r, socket, kEmptyBuffer);
-                return;
-              }
-              upgradedResponse(null);
-            }
-            if (s.aborted || !s.emit("response", r)) {
-              r._dump();
-            }
-          } finally {
-            maybeEmitCloseClientRequest(s);
-            if (r.statusCode === 304) {
-              r.complete = true;
-              maybeEmitCloseClientRequest(s);
-              return;
-            }
-          }
-        },
-        self,
-        res,
-      );
-    };
-
-    if (!keepOpen) {
-      self[kHandleResponse]();
-    }
-
-    self[kOnEnd]();
-  });
-
-  if (!softFail) {
-    // Don't emit an error if we're iterating over multiple possible addresses and we haven't reached the end yet.
-    // This is for the happy eyeballs implementation.
-    self[kFetchRequest]
-      .catch(err => {
-        if (err.code === "ConnectionRefused") {
-          err = new Error("ECONNREFUSED");
-          err.code = "ECONNREFUSED";
-        }
-        // Node treats AbortError separately.
-        // The "abort" listener on the abort controller should have called this
-        if (isAbortError(err)) {
-          return;
-        }
-
-        if (!!$debug) globalReportError(err);
-
-        try {
-          self.emit("error", err);
-        } catch (_err) {
-          void _err;
-        }
-      })
-      .finally(() => {
-        if (!keepOpen) {
-          self[kFetching] = false;
-          self[kFetchRequest] = null;
-          self[kClearTimeout]();
-        }
-      });
-  }
-
-  return self[kFetchRequest];
-}
-
-function iterateCandidatesClientRequest(self, candidates, host, port, method, keepalive, protocol, customBody) {
-  if (candidates.length === 0) {
-    // If we get to this point, it means that none of the addresses could be connected to.
-    failDNSLookupClientRequest(self, `connect ECONNREFUSED ${host}:${port}`, "Error", "ECONNREFUSED", "connect");
-    return;
-  }
-
-  const [url, proxy] = getURLClientRequest(self, candidates.shift().address);
-  const upgradeHeader = self.getHeader("upgrade");
-  const isUpgrade = typeof upgradeHeader === "string" && upgradeHeader !== "h2" && upgradeHeader !== "h2c";
-  const isDuplex = isUpgrade || (customBody === undefined && !self.finished);
-
-  goClientRequest(
-    self,
-    url,
-    proxy,
-    candidates.length > 0,
-    method,
-    keepalive,
-    protocol,
-    customBody,
-    isUpgrade,
-    isDuplex,
-  )?.catch(() => iterateCandidatesClientRequest(self, candidates, host, port, method, keepalive, protocol, customBody));
-}
-
-function startFetchClientRequest(self, customBody?) {
-  if (self[kFetching]) {
-    return false;
-  }
-
-  self[kFetching] = true;
-
-  const method = self[kMethod];
-
-  let keepalive = true;
-  const agentKeepalive = self[kAgent]?.keepAlive;
-  if (agentKeepalive !== undefined) {
-    keepalive = agentKeepalive;
-  }
-
-  const protocol = self[kProtocol];
-  const host = self[kHost];
-  const options = self[kOptions];
-  const port = self[kPort];
-
-  const upgradeHeader = self.getHeader("upgrade");
-  const isUpgrade = typeof upgradeHeader === "string" && upgradeHeader !== "h2" && upgradeHeader !== "h2c";
-  const isDuplex = isUpgrade || (customBody === undefined && !self.finished);
-
-  if (isIP(host) || !options.lookup) {
-    // Don't need to bother with lookup if it's already an IP address or no lookup function is provided.
-    const [url, proxy] = getURLClientRequest(self, host);
-    goClientRequest(self, url, proxy, false, method, keepalive, protocol, customBody, isUpgrade, isDuplex);
-    return true;
-  }
-
-  try {
-    options.lookup(host, { all: true }, (err, results) => {
-      if (err) {
-        if (!!$debug) globalReportError(err);
-        process.nextTick((s, e) => s.emit("error", e), self, err);
-        return;
-      }
-
-      let candidates = results.sort((a, b) => b.family - a.family); // prefer IPv6
-
-      if (candidates.length === 0) {
-        failDNSLookupClientRequest(self, "No records found", "DNSException", "ENOTFOUND", "getaddrinfo");
-        return;
-      }
-
-      if (!self.hasHeader("Host")) {
-        self.setHeader("Host", `${host}:${port}`);
-      }
-
-      // We want to try all possible addresses, beginning with the IPv6 ones, until one succeeds.
-      // All addresses except for the last are allowed to "soft fail" -- instead of reporting
-      // an error to the user, we'll just skip to the next address.
-      // The last address is required to work, and if it fails we'll throw an error.
-      iterateCandidatesClientRequest(self, candidates, host, port, method, keepalive, protocol, customBody);
-    });
-
-    return true;
-  } catch (err) {
-    if (!!$debug) globalReportError(err);
-    process.nextTick((s, e) => s.emit("error", e), self, err);
-    return false;
   }
 }
 const kWrappedSocketWritable = Symbol("WrappedSocketWritable");
@@ -852,20 +200,586 @@ function ClientRequest(input, options, cb) {
     return new (ClientRequest as any)(input, options, cb);
   }
 
-  // Initialize symbol-keyed state
-  this[kWriteCount] = 0;
-  this[kResolveNextChunk] = noopResolveNextChunk;
-  this[kFetching] = false;
-  this[kOnEnd] = noopCallback;
-  this[kHandleResponse] = noopCallback;
+  this.write = (chunk, encoding, callback) => {
+    if (this.destroyed) return false;
+    if ($isCallable(chunk)) {
+      callback = chunk;
+      chunk = undefined;
+      encoding = undefined;
+    } else if ($isCallable(encoding)) {
+      callback = encoding;
+      encoding = undefined;
+    } else if (!$isCallable(callback)) {
+      callback = undefined;
+    }
 
-  // Bind module-scope functions to this instance
-  this.write = (chunk, encoding, callback) => writeClientRequest(this, chunk, encoding, callback);
-  this.end = (chunk, encoding, callback) => endClientRequest(this, chunk, encoding, callback);
-  this.flushHeaders = () => flushHeadersClientRequest(this);
-  this.destroy = (err?: Error) => destroyClientRequest(this, err);
-  this.abort = () => abortClientRequest(this);
-  this._ensureTls = () => ensureTlsClientRequest(this);
+    return write_(chunk, encoding, callback);
+  };
+
+  let writeCount = 0;
+  let resolveNextChunk: ((end: boolean) => void) | undefined = _end => {};
+
+  const pushChunk = chunk => {
+    this[kBodyChunks].push(chunk);
+    if (writeCount > 1) {
+      startFetch();
+    }
+    resolveNextChunk?.(false);
+  };
+
+  const write_ = (chunk, encoding, callback) => {
+    const MAX_FAKE_BACKPRESSURE_SIZE = 1024 * 1024;
+    const canSkipReEncodingData =
+      // UTF-8 string:
+      (typeof chunk === "string" && (encoding === "utf-8" || encoding === "utf8" || !encoding)) ||
+      // Buffer
+      ($isTypedArrayView(chunk) && (!encoding || encoding === "buffer" || encoding === "utf-8"));
+    let bodySize = 0;
+    if (!canSkipReEncodingData) {
+      chunk = Buffer.from(chunk, encoding);
+    }
+    bodySize = chunk.length;
+    writeCount++;
+
+    if (!this[kBodyChunks]) {
+      this[kBodyChunks] = [];
+      pushChunk(chunk);
+
+      if (callback) callback();
+      return true;
+    }
+
+    // Signal fake backpressure if the body size is > 1024 * 1024
+    // So that code which loops forever until backpressure is signaled
+    // will eventually exit.
+
+    for (let chunk of this[kBodyChunks]) {
+      bodySize += chunk.length;
+      if (bodySize >= MAX_FAKE_BACKPRESSURE_SIZE) {
+        break;
+      }
+    }
+    pushChunk(chunk);
+
+    if (callback) callback();
+    return bodySize < MAX_FAKE_BACKPRESSURE_SIZE;
+  };
+
+  const oldEnd = this.end;
+
+  this.end = function (chunk, encoding, callback) {
+    oldEnd?.$call(this, chunk, encoding, callback);
+
+    if ($isCallable(chunk)) {
+      callback = chunk;
+      chunk = undefined;
+      encoding = undefined;
+    } else if ($isCallable(encoding)) {
+      callback = encoding;
+      encoding = undefined;
+    } else if (!$isCallable(callback)) {
+      callback = undefined;
+    }
+
+    if (chunk) {
+      if (this.finished) {
+        emitErrorNextTickIfErrorListenerNT(this, $ERR_STREAM_WRITE_AFTER_END(), callback);
+        return this;
+      }
+
+      write_(chunk, encoding, null);
+    } else if (this.finished) {
+      if (callback) {
+        if (!this.writableFinished) {
+          this.on("finish", callback);
+        } else {
+          callback($ERR_STREAM_ALREADY_FINISHED("end"));
+        }
+      }
+    }
+
+    if (callback) {
+      this.once("finish", callback);
+    }
+
+    if (!this.finished) {
+      send();
+      resolveNextChunk?.(true);
+    }
+
+    return this;
+  };
+
+  this.flushHeaders = function () {
+    if (!fetching) {
+      this[kAbortController] ??= new AbortController();
+      this[kAbortController].signal.addEventListener("abort", onAbort, {
+        once: true,
+      });
+      startFetch();
+    }
+  };
+
+  this.destroy = function (err?: Error) {
+    if (this.destroyed) return this;
+    this.destroyed = true;
+
+    const res = this.res;
+
+    // If we're aborting, we don't care about any more response data.
+    if (res) {
+      res._dump();
+    }
+
+    this.finished = true;
+
+    if (this.res && !this.res.complete) {
+      this.res.emit("end");
+    }
+
+    // If request is destroyed we abort the current response
+    this[kAbortController]?.abort?.();
+    this.socket.destroy(err);
+
+    return this;
+  };
+
+  this._ensureTls = () => {
+    if (this[kTls] === null) this[kTls] = {};
+    return this[kTls];
+  };
+
+  const socketCloseListener = () => {
+    this.destroyed = true;
+
+    const res = this.res;
+    if (res) {
+      // Socket closed before we emitted 'end' below.
+      if (!res.complete) {
+        res.destroy(new ConnResetException("aborted"));
+      }
+      if (!this._closed) {
+        this._closed = true;
+        callCloseCallback(this);
+        this.emit("close");
+        this.socket?.emit?.("close");
+      }
+      if (!res.aborted && res.readable) {
+        res.push(null);
+      }
+    } else if (!this._closed) {
+      this._closed = true;
+      callCloseCallback(this);
+      this.emit("close");
+      this.socket?.emit?.("close");
+    }
+  };
+
+  const onAbort = (_err?: Error) => {
+    this[kClearTimeout]?.();
+    socketCloseListener();
+    if (!this[abortedSymbol] && !this?.res?.complete) {
+      process.nextTick(emitAbortNextTick, this);
+      this[abortedSymbol] = true;
+    }
+  };
+
+  let fetching = false;
+
+  const startFetch = (customBody?) => {
+    if (fetching) {
+      return false;
+    }
+
+    fetching = true;
+
+    const method = this[kMethod];
+
+    let keepalive = true;
+    const agentKeepalive = this[kAgent]?.keepalive;
+    if (agentKeepalive !== undefined) {
+      keepalive = agentKeepalive;
+    }
+
+    const protocol = this[kProtocol];
+    const path = this[kPath];
+    let host = this[kHost];
+
+    const getURL = host => {
+      if (isIPv6(host)) {
+        host = `[${host}]`;
+      }
+
+      if (path.startsWith("http://") || path.startsWith("https://")) {
+        return [path, `${protocol}//${host}${this[kUseDefaultPort] ? "" : ":" + this[kPort]}`];
+      } else {
+        let proxy: string | undefined;
+        const url = `${protocol}//${host}${this[kUseDefaultPort] ? "" : ":" + this[kPort]}${path}`;
+        // support agent proxy url/string for http/https
+        try {
+          // getters can throw
+          const agentProxy = this[kAgent]?.proxy;
+          // this should work for URL like objects and strings
+          proxy = agentProxy?.href || agentProxy;
+        } catch {}
+        return [url, proxy];
+      }
+    };
+
+    const go = (url, proxy, softFail = false) => {
+      const tls =
+        protocol === "https:" && this[kTls] ? { ...this[kTls], serverName: this[kTls].servername } : undefined;
+
+      const fetchOptions: any = {
+        method,
+        headers: this.getHeaders(),
+        redirect: "manual",
+        signal: this[kAbortController]?.signal,
+        // Timeouts are handled via this.setTimeout.
+        timeout: false,
+        // Disable auto gzip/deflate
+        decompress: false,
+        keepalive,
+      };
+      const upgradeHeader = fetchOptions?.headers?.upgrade;
+      const isUpgrade = typeof upgradeHeader === "string" && upgradeHeader !== "h2" && upgradeHeader !== "h2c";
+      let keepOpen = false;
+      // no body and not finished
+      const isDuplex = isUpgrade || (customBody === undefined && !this.finished);
+
+      if (isDuplex) {
+        fetchOptions.duplex = "half";
+        keepOpen = true;
+      }
+
+      let upgradedResponse: ((socket: WrappedSocket | null) => void) | undefined = undefined;
+      if (isUpgrade) {
+        const { promise: upgradedPromise, resolve } = Promise.withResolvers<WrappedSocket | null>();
+        upgradedResponse = resolve;
+        let socketIter: AsyncIterator<any> | null = null;
+        fetchOptions.body = new ReadableStream({
+          async pull(controller) {
+            if (!socketIter) {
+              const socket = await upgradedPromise;
+              if (!socket) {
+                controller.close();
+                return;
+              }
+              socketIter = socket[kWrappedSocketWritable]()[Symbol.asyncIterator]();
+            }
+            const { value, done } = await socketIter.next();
+            if (done) {
+              controller.close();
+            } else {
+              controller.enqueue(value);
+            }
+          },
+        });
+      } else if (method !== "GET" && method !== "HEAD" && method !== "OPTIONS") {
+        const self = this;
+        if (customBody !== undefined) {
+          fetchOptions.body = customBody;
+        } else if (isDuplex) {
+          fetchOptions.body = new ReadableStream({
+            async pull(controller) {
+              while (self[kBodyChunks]?.length > 0) {
+                controller.enqueue(self[kBodyChunks].shift());
+              }
+              if (self[kBodyChunks]?.length === 0) {
+                self.emit("drain");
+              }
+              if (self.finished) {
+                handleResponse?.();
+                controller.close();
+                return;
+              }
+              const chunk = await new Promise<any>(resolve => {
+                resolveNextChunk = end => {
+                  resolveNextChunk = undefined;
+                  if (end) {
+                    resolve(undefined);
+                  } else {
+                    resolve(self[kBodyChunks].shift());
+                  }
+                };
+              });
+              if (chunk !== null && chunk !== undefined) {
+                controller.enqueue(chunk);
+              }
+              if (self[kBodyChunks]?.length === 0) {
+                self.emit("drain");
+              }
+              if (self.finished) {
+                handleResponse?.();
+                controller.close();
+              }
+            },
+          });
+        }
+      }
+
+      if (tls) {
+        fetchOptions.tls = tls;
+      }
+
+      if (!!$debug) {
+        fetchOptions.verbose = true;
+      }
+
+      if (proxy) {
+        fetchOptions.proxy = proxy;
+      }
+
+      const socketPath = this[kSocketPath];
+
+      if (socketPath) {
+        fetchOptions.unix = socketPath;
+      }
+
+      //@ts-ignore
+      this[kFetchRequest] = fetch(url, fetchOptions).then(response => {
+        if (this.aborted) {
+          upgradedResponse?.(null);
+          maybeEmitClose();
+          return;
+        }
+
+        handleResponse = () => {
+          this[kFetchRequest] = null;
+          this[kClearTimeout]();
+          handleResponse = undefined;
+
+          const prevIsHTTPS = getIsNextIncomingMessageHTTPS();
+          setIsNextIncomingMessageHTTPS(response.url.startsWith("https:"));
+          var res = (this.res = new IncomingMessage(response, {
+            [typeSymbol]: NodeHTTPIncomingRequestType.FetchResponse,
+            [reqSymbol]: this,
+          }));
+          setIsNextIncomingMessageHTTPS(prevIsHTTPS);
+          res.req = this;
+          let timer;
+          res.setTimeout = (msecs, callback) => {
+            if (timer) {
+              clearTimeout(timer);
+            }
+            timer = setTimeout(() => {
+              if (res.complete) {
+                return;
+              }
+              res.emit("timeout");
+              callback?.();
+            }, msecs);
+          };
+          process.nextTick(
+            (self, res) => {
+              // If the user did not listen for the 'response' event, then they
+              // can't possibly read the data, so we ._dump() it into the void
+              // so that the socket doesn't hang there in a paused state.
+              const contentLength = res.headers["content-length"];
+              if (contentLength && isNaN(Number(contentLength))) {
+                emitErrorEventNT(self, $HPE_UNEXPECTED_CONTENT_LENGTH("Parse Error"));
+
+                res.complete = true;
+                maybeEmitClose();
+                return;
+              }
+              try {
+                if (isUpgrade) {
+                  if (response.status === 101) {
+                    const socket = new WrappedSocket(response.body, res, maybeEmitClose);
+                    upgradedResponse(socket);
+                    this.socket = socket;
+                    this.emit("upgrade", res, socket, kEmptyBuffer);
+                    return;
+                  }
+                  upgradedResponse(null);
+                }
+                if (self.aborted || !self.emit("response", res)) {
+                  res._dump();
+                }
+              } finally {
+                maybeEmitClose();
+                if (res.statusCode === 304) {
+                  res.complete = true;
+                  maybeEmitClose();
+                  return;
+                }
+              }
+            },
+            this,
+            res,
+          );
+        };
+
+        if (!keepOpen) {
+          handleResponse();
+        }
+
+        onEnd();
+      });
+
+      if (!softFail) {
+        // Don't emit an error if we're iterating over multiple possible addresses and we haven't reached the end yet.
+        // This is for the happy eyeballs implementation.
+        this[kFetchRequest]
+          .catch(err => {
+            if (err.code === "ConnectionRefused") {
+              err = new Error("ECONNREFUSED");
+              err.code = "ECONNREFUSED";
+            }
+            // Node treats AbortError separately.
+            // The "abort" listener on the abort controller should have called this
+            if (isAbortError(err)) {
+              return;
+            }
+
+            if (!!$debug) globalReportError(err);
+
+            try {
+              this.emit("error", err);
+            } catch (_err) {
+              void _err;
+            }
+          })
+          .finally(() => {
+            if (!keepOpen) {
+              fetching = false;
+              this[kFetchRequest] = null;
+              this[kClearTimeout]();
+            }
+          });
+      }
+
+      return this[kFetchRequest];
+    };
+
+    if (isIP(host) || !options.lookup) {
+      // Don't need to bother with lookup if it's already an IP address or no lookup function is provided.
+      const [url, proxy] = getURL(host);
+      go(url, proxy, false);
+      return true;
+    }
+
+    try {
+      options.lookup(host, { all: true }, (err, results) => {
+        if (err) {
+          if (!!$debug) globalReportError(err);
+          process.nextTick((self, err) => self.emit("error", err), this, err);
+          return;
+        }
+
+        let candidates = results.sort((a, b) => b.family - a.family); // prefer IPv6
+
+        const fail = (message, name, code, syscall) => {
+          const error = new Error(message);
+          error.name = name;
+          error.code = code;
+          error.syscall = syscall;
+          if (!!$debug) globalReportError(error);
+          process.nextTick((self, err) => self.emit("error", err), this, error);
+        };
+
+        if (candidates.length === 0) {
+          fail("No records found", "DNSException", "ENOTFOUND", "getaddrinfo");
+          return;
+        }
+
+        if (!this.hasHeader("Host")) {
+          this.setHeader("Host", `${host}:${port}`);
+        }
+
+        // We want to try all possible addresses, beginning with the IPv6 ones, until one succeeds.
+        // All addresses except for the last are allowed to "soft fail" -- instead of reporting
+        // an error to the user, we'll just skip to the next address.
+        // The last address is required to work, and if it fails we'll throw an error.
+
+        const iterate = () => {
+          if (candidates.length === 0) {
+            // If we get to this point, it means that none of the addresses could be connected to.
+            fail(`connect ECONNREFUSED ${host}:${port}`, "Error", "ECONNREFUSED", "connect");
+            return;
+          }
+
+          const [url, proxy] = getURL(candidates.shift().address);
+          go(url, proxy, candidates.length > 0).catch(iterate);
+        };
+
+        iterate();
+      });
+
+      return true;
+    } catch (err) {
+      if (!!$debug) globalReportError(err);
+      process.nextTick((self, err) => self.emit("error", err), this, err);
+      return false;
+    }
+  };
+
+  let onEnd = () => {};
+  let handleResponse: (() => void) | undefined = () => {};
+
+  const send = () => {
+    this.finished = true;
+    this[kAbortController] ??= new AbortController();
+    this[kAbortController].signal.addEventListener("abort", onAbort, { once: true });
+
+    var body = this[kBodyChunks] && this[kBodyChunks].length > 1 ? new Blob(this[kBodyChunks]) : this[kBodyChunks]?.[0];
+
+    try {
+      startFetch(body);
+      onEnd = () => {
+        handleResponse?.();
+      };
+    } catch (err) {
+      if (!!$debug) globalReportError(err);
+      this.emit("error", err);
+    } finally {
+      process.nextTick(maybeEmitFinish.bind(this));
+    }
+  };
+
+  // --- For faking the events in the right order ---
+  const maybeEmitSocket = () => {
+    if (this.destroyed) return;
+    if (!(this[kEmitState] & (1 << ClientRequestEmitState.socket))) {
+      this[kEmitState] |= 1 << ClientRequestEmitState.socket;
+      this.emit("socket", this.socket);
+    }
+  };
+
+  const maybeEmitPrefinish = () => {
+    maybeEmitSocket();
+
+    if (!(this[kEmitState] & (1 << ClientRequestEmitState.prefinish))) {
+      this[kEmitState] |= 1 << ClientRequestEmitState.prefinish;
+      this.emit("prefinish");
+    }
+  };
+
+  const maybeEmitFinish = () => {
+    maybeEmitPrefinish();
+
+    if (!(this[kEmitState] & (1 << ClientRequestEmitState.finish))) {
+      this[kEmitState] |= 1 << ClientRequestEmitState.finish;
+      this.emit("finish");
+    }
+  };
+
+  const maybeEmitClose = () => {
+    maybeEmitPrefinish();
+
+    if (!this._closed) {
+      process.nextTick(emitCloseNTAndComplete, this);
+    }
+  };
+
+  this.abort = () => {
+    if (this.aborted) return;
+    this[abortedSymbol] = true;
+    process.nextTick(emitAbortNextTick, this);
+    this[kAbortController]?.abort?.();
+    this.destroy();
+  };
 
   if (typeof input === "string") {
     const urlStr = input;
@@ -937,7 +851,13 @@ function ClientRequest(input, options, cb) {
   const signal = options.signal;
   if (signal) {
     //We still want to control abort function and timeout so signal call our AbortController
-    signal.addEventListener("abort", signalAbortHandler.bind(null, this), { once: true });
+    signal.addEventListener(
+      "abort",
+      () => {
+        this[kAbortController]?.abort();
+      },
+      { once: true },
+    );
     this[kSignal] = signal;
   }
   let method = options.method;
@@ -1160,9 +1080,18 @@ function ClientRequest(input, options, cb) {
 
   this[kEmitState] = 0;
 
-  this.setSocketKeepAlive = setSocketKeepAliveClientRequest;
-  this.setNoDelay = setNoDelayClientRequest;
-  this[kClearTimeout] = clearTimeoutClientRequest.bind(null, this);
+  this.setSocketKeepAlive = (_enable = true, _initialDelay = 0) => {};
+
+  this.setNoDelay = (_noDelay = true) => {};
+
+  this[kClearTimeout] = () => {
+    const timeoutTimer = this[kTimeoutTimer];
+    if (timeoutTimer) {
+      clearTimeout(timeoutTimer);
+      this[kTimeoutTimer] = undefined;
+      this.removeAllListeners("timeout");
+    }
+  };
 }
 
 const ClientRequestPrototype = {

@@ -1,14 +1,9 @@
 {
   "lsp": {
     "zls": {
-      "binary": {
-        "path": "vendor/zig/zls"
-      },
       "settings": {
-        "zig_exe_path": "vendor/zig/zig",
-        "zig_lib_path": "vendor/zig/lib",
-        "build_on_save_args": ["-Dgenerated-code=./build/debug/codegen", "--watch", "-fincremental"]
-      }
-    }
-  }
+        "build_on_save_args": ["-Dgenerated-code=./build/debug/codegen", "--watch", "-fincremental"],
+      },
+    },
+  },
 }

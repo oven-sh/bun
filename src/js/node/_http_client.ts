@@ -738,43 +738,64 @@ function ClientRequest(input, options, cb) {
       if (agentRejectUnauthorized !== undefined) this._ensureTls().rejectUnauthorized = agentRejectUnauthorized;
     }
   }
-  if (options.ca) {
-    if (!isValidTLSArray(options.ca))
-      throw new TypeError(
-        "ca argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
-      );
-    this._ensureTls().ca = options.ca;
+  {
+    const ca = options.ca ?? agent?.options?.ca ?? agent?.connectOpts?.ca;
+    if (ca) {
+      if (!isValidTLSArray(ca))
+        throw new TypeError(
+          "ca argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
+        );
+      this._ensureTls().ca = ca;
+    }
   }
-  if (options.cert) {
-    if (!isValidTLSArray(options.cert))
-      throw new TypeError(
-        "cert argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
-      );
-    this._ensureTls().cert = options.cert;
+  {
+    const cert = options.cert ?? agent?.options?.cert ?? agent?.connectOpts?.cert;
+    if (cert) {
+      if (!isValidTLSArray(cert))
+        throw new TypeError(
+          "cert argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
+        );
+      this._ensureTls().cert = cert;
+    }
   }
-  if (options.key) {
-    if (!isValidTLSArray(options.key))
-      throw new TypeError(
-        "key argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
-      );
-    this._ensureTls().key = options.key;
+  {
+    const key = options.key ?? agent?.options?.key ?? agent?.connectOpts?.key;
+    if (key) {
+      if (!isValidTLSArray(key))
+        throw new TypeError(
+          "key argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
+        );
+      this._ensureTls().key = key;
+    }
   }
-  if (options.passphrase) {
-    if (typeof options.passphrase !== "string") throw new TypeError("passphrase argument must be a string");
-    this._ensureTls().passphrase = options.passphrase;
+  {
+    const passphrase = options.passphrase ?? agent?.options?.passphrase ?? agent?.connectOpts?.passphrase;
+    if (passphrase) {
+      if (typeof passphrase !== "string") throw new TypeError("passphrase argument must be a string");
+      this._ensureTls().passphrase = passphrase;
+    }
   }
-  if (options.ciphers) {
-    if (typeof options.ciphers !== "string") throw new TypeError("ciphers argument must be a string");
-    this._ensureTls().ciphers = options.ciphers;
+  {
+    const ciphers = options.ciphers ?? agent?.options?.ciphers ?? agent?.connectOpts?.ciphers;
+    if (ciphers) {
+      if (typeof ciphers !== "string") throw new TypeError("ciphers argument must be a string");
+      this._ensureTls().ciphers = ciphers;
+    }
   }
-  if (options.servername) {
-    if (typeof options.servername !== "string") throw new TypeError("servername argument must be a string");
-    this._ensureTls().servername = options.servername;
+  {
+    const servername = options.servername ?? agent?.options?.servername ?? agent?.connectOpts?.servername;
+    if (servername) {
+      if (typeof servername !== "string") throw new TypeError("servername argument must be a string");
+      this._ensureTls().servername = servername;
+    }
   }
 
-  if (options.secureOptions) {
-    if (typeof options.secureOptions !== "number") throw new TypeError("secureOptions argument must be a string");
-    this._ensureTls().secureOptions = options.secureOptions;
+  {
+    const secureOptions = options.secureOptions ?? agent?.options?.secureOptions ?? agent?.connectOpts?.secureOptions;
+    if (secureOptions) {
+      if (typeof secureOptions !== "number") throw new TypeError("secureOptions argument must be a number");
+      this._ensureTls().secureOptions = secureOptions;
+    }
   }
   this[kPath] = options.path || "/";
   if (cb) {

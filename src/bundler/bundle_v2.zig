@@ -118,6 +118,9 @@ pub const BundleV2 = struct {
     bun_watcher: ?*bun.Watcher,
     plugins: ?*jsc.API.JSBundler.Plugin,
     completion: ?*JSBundleCompletionTask,
+    /// In-memory files that can be used as entrypoints or imported.
+    /// This is a pointer to the FileMap in the completion config.
+    file_map: ?*const jsc.API.JSBundler.FileMap,
     source_code_length: usize,
 
     /// There is a race condition where an onResolve plugin may schedule a task on the bundle thread before it's parsing task completes
@@ -534,9 +537,47 @@ pub const BundleV2 = struct {
         target: options.Target,
     ) void {
         const transpiler = this.transpilerForTarget(target);
+        const source_dir = Fs.PathName.init(import_record.source_file).dirWithTrailingSlash();
+
+        // Check the FileMap first for in-memory files
+        if (this.file_map) |file_map| {
+            if (file_map.resolve(import_record.source_file, import_record.specifier)) |_file_map_result| {
+                var file_map_result = _file_map_result;
+                var path_primary = file_map_result.path_pair.primary;
+                const entry = bun.handleOom(this.pathToSourceIndexMap(target).getOrPut(this.allocator(), path_primary.text));
+                if (!entry.found_existing) {
+                    const loader: Loader = brk: {
+                        const record: *ImportRecord = &this.graph.ast.items(.import_records)[import_record.importer_source_index].slice()[import_record.import_record_index];
+                        if (record.loader) |out_loader| {
+                            break :brk out_loader;
+                        }
+                        break :brk Fs.Path.init(path_primary.text).loader(&transpiler.options.loaders) orelse options.Loader.file;
+                    };
+                    // For virtual files, use the path text as-is (no relative path computation needed).
+                    path_primary.pretty = bun.handleOom(this.allocator().dupe(u8, path_primary.text));
+                    const idx = this.enqueueParseTask(
+                        &file_map_result,
+                        &.{
+                            .path = path_primary,
+                            .contents = "",
+                        },
+                        loader,
+                        import_record.original_target,
+                    ) catch |err| bun.handleOom(err);
+                    entry.value_ptr.* = idx;
+                    const record: *ImportRecord = &this.graph.ast.items(.import_records)[import_record.importer_source_index].slice()[import_record.import_record_index];
+                    record.source_index = Index.init(idx);
+                } else {
+                    const record: *ImportRecord = &this.graph.ast.items(.import_records)[import_record.importer_source_index].slice()[import_record.import_record_index];
+                    record.source_index = Index.init(entry.value_ptr.*);
+                }
+                return;
+            }
+        }
+
         var had_busted_dir_cache: bool = false;
         var resolve_result: _resolver.Result = while (true) break transpiler.resolver.resolve(
-            Fs.PathName.init(import_record.source_file).dirWithTrailingSlash(),
+            source_dir,
             import_record.specifier,
             import_record.kind,
         ) catch |err| {
@@ -880,6 +921,7 @@ pub const BundleV2 = struct {
             .bun_watcher = null,
             .plugins = null,
             .completion = null,
+            .file_map = null,
             .source_code_length = 0,
             .thread_lock = .initLocked(),
         };
@@ -1032,6 +1074,18 @@ pub const BundleV2 = struct {
                     for (data) |entry_point| {
                         if (this.enqueueEntryPointOnResolvePluginIfNeeded(entry_point, this.transpiler.options.target)) {
                             continue;
+                        }
+
+                        // Check FileMap first for in-memory entry points
+                        if (this.file_map) |file_map| {
+                            if (file_map.resolve("", entry_point)) |file_map_result| {
+                                _ = try this.enqueueEntryItem(
+                                    file_map_result,
+                                    true,
+                                    this.transpiler.options.target,
+                                );
+                                continue;
+                            }
                         }
 
                         // no plugins were matched
@@ -3275,6 +3329,49 @@ pub const BundleV2 = struct {
                     ast.target.bakeGraph(),
                     ast.target,
                 };
+
+            // Check the FileMap first for in-memory files
+            if (this.file_map) |file_map| {
+                if (file_map.resolve(source.path.text, import_record.path.text)) |_file_map_result| {
+                    var file_map_result = _file_map_result;
+                    var path_primary = file_map_result.path_pair.primary;
+                    const import_record_loader = import_record.loader orelse Fs.Path.init(path_primary.text).loader(&transpiler.options.loaders) orelse .file;
+                    import_record.loader = import_record_loader;
+
+                    if (this.pathToSourceIndexMap(target).get(path_primary.text)) |id| {
+                        import_record.source_index = .init(id);
+                        continue;
+                    }
+
+                    const resolve_entry = resolve_queue.getOrPut(path_primary.text) catch |err| bun.handleOom(err);
+                    if (resolve_entry.found_existing) {
+                        import_record.path = resolve_entry.value_ptr.*.path;
+                        continue;
+                    }
+
+                    // For virtual files, use the path text as-is (no relative path computation needed).
+                    path_primary.pretty = bun.handleOom(this.allocator().dupe(u8, path_primary.text));
+                    import_record.path = path_primary;
+                    resolve_entry.key_ptr.* = path_primary.text;
+                    debug("created ParseTask from FileMap: {s}", .{path_primary.text});
+                    const resolve_task = bun.handleOom(bun.default_allocator.create(ParseTask));
+                    file_map_result.path_pair.primary = path_primary;
+                    resolve_task.* = ParseTask.init(&file_map_result, Index.invalid, this);
+                    resolve_task.known_target = target;
+                    // Use transpiler JSX options, applying force_node_env like the disk path does
+                    resolve_task.jsx = transpiler.options.jsx;
+                    resolve_task.jsx.development = switch (transpiler.options.force_node_env) {
+                        .development => true,
+                        .production => false,
+                        .unspecified => transpiler.options.jsx.development,
+                    };
+                    resolve_task.loader = import_record_loader;
+                    resolve_task.tree_shaking = transpiler.options.tree_shaking;
+                    resolve_task.side_effects = .has_side_effects;
+                    resolve_entry.value_ptr.* = resolve_task;
+                    continue;
+                }
+            }
 
             var had_busted_dir_cache = false;
             var resolve_result: _resolver.Result = inner: while (true) break transpiler.resolver.resolveWithFramework(

@@ -162,7 +162,7 @@ pub const S3Credentials = struct {
                 }
 
                 if (try opts.getOptional(globalObject, "pageSize", i64)) |pageSize| {
-                    if (pageSize < MultiPartUploadOptions.MIN_SINGLE_UPLOAD_SIZE and pageSize > MultiPartUploadOptions.MAX_SINGLE_UPLOAD_SIZE) {
+                    if (pageSize < MultiPartUploadOptions.MIN_SINGLE_UPLOAD_SIZE or pageSize > MultiPartUploadOptions.MAX_SINGLE_UPLOAD_SIZE) {
                         return globalObject.throwRangeError(pageSize, .{
                             .min = @intCast(MultiPartUploadOptions.MIN_SINGLE_UPLOAD_SIZE),
                             .max = @intCast(MultiPartUploadOptions.MAX_SINGLE_UPLOAD_SIZE),
@@ -173,7 +173,7 @@ pub const S3Credentials = struct {
                     }
                 }
                 if (try opts.getOptional(globalObject, "partSize", i64)) |partSize| {
-                    if (partSize < MultiPartUploadOptions.MIN_SINGLE_UPLOAD_SIZE and partSize > MultiPartUploadOptions.MAX_SINGLE_UPLOAD_SIZE) {
+                    if (partSize < MultiPartUploadOptions.MIN_SINGLE_UPLOAD_SIZE or partSize > MultiPartUploadOptions.MAX_SINGLE_UPLOAD_SIZE) {
                         return globalObject.throwRangeError(partSize, .{
                             .min = @intCast(MultiPartUploadOptions.MIN_SINGLE_UPLOAD_SIZE),
                             .max = @intCast(MultiPartUploadOptions.MAX_SINGLE_UPLOAD_SIZE),
@@ -196,7 +196,7 @@ pub const S3Credentials = struct {
                 }
 
                 if (try opts.getOptional(globalObject, "retry", i32)) |retry| {
-                    if (retry < 0 and retry > 255) {
+                    if (retry < 0 or retry > 255) {
                         return globalObject.throwRangeError(retry, .{
                             .min = 0,
                             .max = 255,

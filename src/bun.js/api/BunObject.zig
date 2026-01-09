@@ -49,6 +49,7 @@ pub const BunObject = struct {
     // --- Callbacks ---
 
     // --- Lazy property callbacks ---
+    pub const Archive = toJSLazyPropertyCallback(Bun.getArchiveConstructor);
     pub const CryptoHasher = toJSLazyPropertyCallback(Crypto.CryptoHasher.getter);
     pub const CSRF = toJSLazyPropertyCallback(Bun.getCSRFObject);
     pub const FFI = toJSLazyPropertyCallback(Bun.FFIObject.getter);
@@ -116,6 +117,7 @@ pub const BunObject = struct {
         }
 
         // --- Lazy property callbacks ---
+        @export(&BunObject.Archive, .{ .name = lazyPropertyCallbackName("Archive") });
         @export(&BunObject.CryptoHasher, .{ .name = lazyPropertyCallbackName("CryptoHasher") });
         @export(&BunObject.CSRF, .{ .name = lazyPropertyCallbackName("CSRF") });
         @export(&BunObject.FFI, .{ .name = lazyPropertyCallbackName("FFI") });
@@ -1271,6 +1273,10 @@ pub fn getTOMLObject(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSVa
 
 pub fn getYAMLObject(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
     return YAMLObject.create(globalThis);
+}
+
+pub fn getArchiveConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
+    return jsc.API.Archive.js.getConstructor(globalThis);
 }
 
 pub fn getGlobConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {

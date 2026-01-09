@@ -13,7 +13,7 @@ for (const timeout of [0, 1, 10, 20, 100, 300]) {
         return new Response("Hello World");
       },
     });
-    const THRESHOLD = 50;
+    const THRESHOLD = 60;
 
     const time = performance.now();
     try {

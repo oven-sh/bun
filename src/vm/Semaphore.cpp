@@ -71,5 +71,4 @@ bool Bun__Semaphore__wait(Bun::Semaphore* sem)
 {
     return sem->wait();
 }
-
 }

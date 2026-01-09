@@ -5057,6 +5057,10 @@ restart:
             if (!propertyValue)
                 return true;
 
+            // Skip prototype methods (but keep instance properties that are functions)
+            if (objectToUse != object && propertyValue.isCallable())
+                return true;
+
             anyHits = true;
             JSC::EnsureStillAliveScope ensureStillAliveScope(propertyValue);
 
@@ -5177,6 +5181,10 @@ restart:
                     scope.clearException();
                     propertyValue = jsUndefined();
                 }
+
+                // Skip prototype methods (but keep instance properties that are functions)
+                if (iterating != object && propertyValue.isCallable())
+                    continue;
 
                 JSC::EnsureStillAliveScope ensureStillAliveScope(propertyValue);
 

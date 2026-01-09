@@ -158,6 +158,7 @@ pub const build_only_params = [_]ParamType{
     clap.parseParam("--no-compile-autoload-tsconfig   Disable autoloading of tsconfig.json at runtime in standalone executable") catch unreachable,
     clap.parseParam("--compile-autoload-package-json  Enable autoloading of package.json at runtime in standalone executable (default: false)") catch unreachable,
     clap.parseParam("--no-compile-autoload-package-json Disable autoloading of package.json at runtime in standalone executable") catch unreachable,
+    clap.parseParam("--compile-executable-path <STR>  Path to a Bun executable to use for cross-compilation instead of downloading") catch unreachable,
     clap.parseParam("--bytecode                       Use a bytecode cache") catch unreachable,
     clap.parseParam("--watch                          Automatically restart the process on file change") catch unreachable,
     clap.parseParam("--no-clear-screen                Disable clearing the terminal screen on reload when --watch is enabled") catch unreachable,
@@ -1104,6 +1105,14 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 }
                 ctx.bundler_options.compile_autoload_package_json = has_positive;
             }
+        }
+
+        if (args.option("--compile-executable-path")) |path| {
+            if (!ctx.bundler_options.compile) {
+                Output.errGeneric("--compile-executable-path requires --compile", .{});
+                Global.crash();
+            }
+            ctx.bundler_options.compile_executable_path = path;
         }
 
         if (args.flag("--windows-hide-console")) {

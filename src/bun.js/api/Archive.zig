@@ -351,15 +351,17 @@ fn parsePatternArg(globalThis: *jsc.JSGlobalObject, arg: jsc.JSValue, name: []co
             patterns.deinit(allocator);
         }
 
-        var iter = try arg.arrayIterator(globalThis);
-        while (try iter.next()) |item| {
+        // Use index-based iteration for safety (avoids issues if array mutates)
+        var i: u32 = 0;
+        while (i < len) : (i += 1) {
+            const item = try arg.getIndex(globalThis, i);
             if (!item.isString()) {
                 return globalThis.throwInvalidArguments("Archive.extract: {s} array must contain only strings", .{name});
             }
             const str_slice = try item.toSlice(globalThis, allocator);
             defer str_slice.deinit();
             const pattern = allocator.dupe(u8, str_slice.slice()) catch return error.OutOfMemory;
-            patterns.appendAssumeCapacity(pattern);
+            patterns.append(allocator, pattern) catch return error.OutOfMemory;
         }
 
         return patterns.toOwnedSlice(allocator) catch return error.OutOfMemory;

@@ -223,12 +223,36 @@ try {
 
 Common error scenarios:
 
-- **Corrupted/truncated archives** - `Archive.from()` throws when data is invalid
+- **Corrupted/truncated archives** - `Archive.from()` loads the archive data; errors may be deferred until read/extract operations
 - **Permission denied** - `extract()` throws if the target directory is not writable
 - **Disk full** - `extract()` throws if there's insufficient space
 - **Invalid paths** - Operations throw for malformed file paths
 
-**Security warning**: When extracting archives from untrusted sources, be aware of potential security risks like path traversal attacks (e.g., `../../../etc/passwd`) or symlink attacks. Consider validating file paths and avoiding extraction of symlinks from untrusted archives.
+The count returned by `extract()` includes all successfully written entries (files, directories, and symlinks on POSIX systems).
+
+**Security warning**: When extracting archives from untrusted sources, be aware of potential security risks like path traversal attacks (e.g., `../../../etc/passwd`) or symlink attacks. For untrusted archives, validate paths before extraction:
+
+```ts
+const archive = Bun.Archive.from(untrustedData);
+const files = await archive.files();
+
+// Validate each path before extraction
+for (const [path] of files) {
+  // Reject absolute paths
+  if (path.startsWith("/") || path.startsWith("\\")) {
+    throw new Error(`Unsafe path: ${path}`);
+  }
+  // Reject path traversal
+  if (path.includes("..")) {
+    throw new Error(`Path traversal detected: ${path}`);
+  }
+}
+
+// Extract to a controlled destination after validation
+await archive.extract("./safe-output", {
+  ignore: ["../**", "/**"],  // Extra safety
+});
+```
 
 When using `files()` with a glob pattern, an empty `Map` is returned if no files match:
 
@@ -370,9 +394,9 @@ type ArchiveInput =
 
 interface ArchiveExtractOptions {
   /** Glob pattern(s) to include */
-  glob?: string | string[];
+  glob?: string | readonly string[];
   /** Glob pattern(s) to exclude */
-  ignore?: string | string[];
+  ignore?: string | readonly string[];
 }
 
 class Archive {
@@ -388,7 +412,7 @@ class Archive {
 
   /**
    * Extract archive to a directory
-   * @returns Number of files extracted
+   * @returns Number of entries extracted (files, directories, and symlinks)
    */
   extract(path: string, options?: ArchiveExtractOptions): Promise<number>;
 
@@ -405,6 +429,6 @@ class Archive {
   /**
    * Get archive contents as File objects
    */
-  files(glob?: string | string[]): Promise<Map<string, File>>;
+  files(glob?: string | readonly string[]): Promise<Map<string, File>>;
 }
 ```

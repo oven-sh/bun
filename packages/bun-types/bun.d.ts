@@ -6998,7 +6998,7 @@ declare module "bun" {
      * await archive.extract("./out", { glob: ["src/**", "lib/**"] });
      * ```
      */
-    glob?: string | string[];
+    glob?: string | readonly string[];
 
     /**
      * Glob pattern(s) to exclude. Files matching any pattern will be skipped.
@@ -7012,7 +7012,7 @@ declare module "bun" {
      * await archive.extract("./out", { ignore: ["*.test.ts", "__tests__/**"] });
      * ```
      */
-    ignore?: string | string[];
+    ignore?: string | readonly string[];
   }
 
   /**
@@ -7237,7 +7237,7 @@ declare module "bun" {
      * }
      * ```
      */
-    files(glob?: string | string[]): Promise<Map<string, File>>;
+    files(glob?: string | readonly string[]): Promise<Map<string, File>>;
   }
 
   /**

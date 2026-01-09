@@ -399,7 +399,7 @@ export function windowsEnv(
       }
       if (internalEnv[k] !== value) {
         editWindowsEnvVar(k, value);
-        internalEnv[k] = value;
+        $putByValDirect(internalEnv, k, value);
       }
       return true;
     },

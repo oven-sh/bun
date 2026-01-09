@@ -180,7 +180,7 @@ pub const BufferReadStream = struct {
 /// The check works by resolving the symlink target relative to the symlink's
 /// directory location using a fake root, then checking if the result stays
 /// within that fake root.
-fn isSymlinkTargetSafe(symlink_path: []const u8, link_target: [:0]const u8) bool {
+fn isSymlinkTargetSafe(symlink_path: []const u8, link_target: [:0]const u8, symlink_join_buf: *?*bun.PathBuffer) bool {
     // Absolute symlink targets are never safe - they could point anywhere
     if (link_target.len > 0 and link_target[0] == '/') {
         return false;
@@ -192,10 +192,14 @@ fn isSymlinkTargetSafe(symlink_path: []const u8, link_target: [:0]const u8) bool
     // Use a fake root to resolve the path and check if it escapes
     const fake_root = "/packages/";
 
-    var buf: bun.PathBuffer = undefined;
+    const join_buf = symlink_join_buf.* orelse join_buf: {
+        symlink_join_buf.* = bun.path_buffer_pool.get();
+        break :join_buf symlink_join_buf.*.?;
+    };
+
     const resolved = bun.path.joinAbsStringBuf(
         fake_root,
-        &buf,
+        join_buf,
         &.{ symlink_dir, link_target },
         .posix,
     );
@@ -349,6 +353,9 @@ pub const Archiver = struct {
         var count: u32 = 0;
         const dir_fd = dir.fd;
 
+        var symlink_join_buf: ?*bun.PathBuffer = null;
+        defer if (symlink_join_buf) |join_buf| bun.path_buffer_pool.put(join_buf);
+
         var normalized_buf: bun.OSPathBuffer = undefined;
 
         loop: while (true) {
@@ -470,7 +477,7 @@ pub const Archiver = struct {
                                 // Validate that the symlink target doesn't escape the extraction directory.
                                 // This prevents path traversal attacks where a malicious tarball creates a symlink
                                 // pointing outside (e.g., to /tmp), then writes files through that symlink.
-                                if (!isSymlinkTargetSafe(path_slice, link_target)) {
+                                if (!isSymlinkTargetSafe(path_slice, link_target, &symlink_join_buf)) {
                                     // Skip symlinks that would escape the extraction directory
                                     if (options.log) {
                                         Output.warn("Skipping symlink with unsafe target: {f} -> {s}\n", .{

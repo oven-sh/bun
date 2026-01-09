@@ -1494,7 +1494,7 @@ pub const Parser = struct {
 
         var state: PragmaState = .{};
 
-        while (cursor < self.lexer.end) : (cursor += 1) {
+        while (cursor < end) : (cursor += 1) {
             switch (contents[cursor]) {
                 '\n' => break,
                 '@' => {

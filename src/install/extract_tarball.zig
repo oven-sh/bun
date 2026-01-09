@@ -61,10 +61,11 @@ pub fn buildURLWithPrinter(
 
     // Check if this is a GitLab registry by parsing the URL and checking the hostname
     const is_gitlab_registry = blk: {
-        const url = bun.URL.parse(registry) catch break :blk false;
+        const url = bun.URL.parse(registry);
+        if (url.host.len == 0) break :blk false;
         const host_buf = bun.default_allocator.alloc(u8, url.host.len) catch break :blk false;
         defer bun.default_allocator.free(host_buf);
-        const host = bun.strings.toLowerCaseWithType(u8, url.host, host_buf);
+        const host = bun.strings.copyLowercase(url.host, host_buf);
         break :blk bun.strings.indexOf(host, "gitlab") != null;
     };
     

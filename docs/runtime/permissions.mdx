@@ -19,7 +19,11 @@ bun script.js
 bun --secure script.js
 ```
 
-In secure mode, operations like file I/O, network access, and subprocess spawning will throw a `PermissionDenied` error unless explicitly granted.
+In secure mode, operations like file I/O, network access, and subprocess spawning will throw a `PermissionDenied` error unless explicitly granted. The error includes details about the denied permission type and the resource that was accessed.
+
+<Note>
+The `--allow-*` and `--deny-*` flags only take effect when `--secure` is specified. Without `--secure`, all operations are allowed regardless of permission flags.
+</Note>
 
 ---
 
@@ -95,7 +99,17 @@ bun --secure --allow-net=localhost:3000 script.js
 
 # Allow port range
 bun --secure --allow-net=localhost:3000-4000 script.js
+
+# Allow IPv6 localhost
+bun --secure --allow-net=[::1]:3000 script.js
+
+# Allow IPv6 address
+bun --secure --allow-net=[2001:db8::1]:443 script.js
 ```
+
+<Note>
+IPv6 addresses must be enclosed in square brackets when specifying a port, e.g., `[::1]:3000`.
+</Note>
 
 #### Network wildcards
 
@@ -172,7 +186,7 @@ const netStatus = await Bun.permissions.query({
   host: "example.com"
 });
 
-// Request permission (returns current state)
+// Request permission (returns current state, may prompt user)
 const requested = await Bun.permissions.request({ name: "env" });
 
 // Revoke permission (denies the entire permission type)
@@ -182,6 +196,20 @@ const revoked = await Bun.permissions.revoke({ name: "read" });
 <Note>
 `revoke()` denies the entire permission type, not just a specific resource. Calling `revoke({ name: "read", path: "/tmp" })` will deny all read access, not just to `/tmp`.
 </Note>
+
+### Permission states
+
+- **`granted`**: The operation is allowed
+- **`denied`**: The operation is blocked
+- **`prompt`**: The user may be prompted for permission (only when running with `--secure` and without `--no-prompt`)
+
+<Note>
+The `prompt` state only exists when `--secure` is used without `--no-prompt`. In other modes, permissions are either `granted` (default mode) or `denied` (secure mode with `--no-prompt`).
+</Note>
+
+### request() behavior
+
+`request()` returns the current permission state. If the state is `prompt`, the user may be prompted interactively. If permissions are already `granted` or `denied`, no prompt is shown and the current state is returned.
 
 ### Permission descriptors
 

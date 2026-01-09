@@ -317,7 +317,7 @@ pub const Archiver = struct {
 
         var normalized_buf: bun.OSPathBuffer = undefined;
         var use_pwrite = Environment.isPosix;
-        var use_lseek = Environment.isPosix;
+        var use_lseek = true;
 
         loop: while (true) {
             const r = archive.readNextHeader(&entry);

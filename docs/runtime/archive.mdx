@@ -278,8 +278,11 @@ const tsFiles = await archive.files("**/*.ts");
 // Get files in src directory
 const srcFiles = await archive.files("src/*");
 
-// Get all JSON files
-const jsonFiles = await archive.files("*.json");
+// Get all JSON files (recursive)
+const jsonFiles = await archive.files("**/*.json");
+
+// Get multiple file types with array of patterns
+const codeFiles = await archive.files(["**/*.ts", "**/*.js"]);
 ```
 
 Supported glob patterns:

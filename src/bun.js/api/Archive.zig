@@ -1005,7 +1005,8 @@ fn extractToDiskFiltered(
         switch (kind) {
             .directory => {
                 dir.makePath(pathname) catch |err| switch (err) {
-                    error.PathAlreadyExists => {},
+                    // Directory already exists - don't count as extracted
+                    error.PathAlreadyExists => continue,
                     else => continue,
                 };
                 count += 1;

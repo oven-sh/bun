@@ -3971,7 +3971,48 @@ fn fromJSWithoutDeferGC(
                             .DOMWrapper => {
                                 if (item.as(Blob)) |blob| {
                                     could_have_non_ascii = could_have_non_ascii or blob.charset != .all_ascii;
-                                    joiner.pushStatic(blob.sharedView());
+                                    if (blob.store) |store| {
+                                        if (blob.size == Blob.max_size) {
+                                            blob.resolveSize();
+                                        }
+                                        switch (store.data) {
+                                            .file => |file| {
+                                                const res = jsc.Node.fs.NodeFS.readFile(
+                                                    global.bunVM().nodeFS(),
+                                                    .{
+                                                        .encoding = .buffer,
+                                                        .path = file.pathlike,
+                                                        .offset = blob.offset,
+                                                        .max_size = blob.size,
+                                                    },
+                                                    .sync,
+                                                );
+                                                switch (res) {
+                                                    .err => |err| {
+                                                        const end_result = joiner.done(bun.default_allocator) catch {
+                                                            return global.throwOutOfMemory();
+                                                        };
+                                                        bun.default_allocator.free(end_result);
+                                                        return global.throwValue(err.toJS(global));
+                                                    },
+                                                    .result => |result| {
+                                                        could_have_non_ascii = true;
+                                                        joiner.push(result.slice(), result.buffer.allocator);
+                                                    },
+                                                }
+                                            },
+                                            .bytes => {
+                                                joiner.pushStatic(blob.sharedView());
+                                            },
+                                            .s3 => {
+                                                const end_result = joiner.done(bun.default_allocator) catch {
+                                                    return global.throwOutOfMemory();
+                                                };
+                                                bun.default_allocator.free(end_result);
+                                                return global.throwInvalidArguments("Cannot use S3 files in Blob constructor with multiple parts", .{});
+                                            },
+                                        }
+                                    }
                                     continue;
                                 } else {
                                     const sliced = try current.toSliceClone(global);
@@ -3991,7 +4032,48 @@ fn fromJSWithoutDeferGC(
             .DOMWrapper => {
                 if (current.as(Blob)) |blob| {
                     could_have_non_ascii = could_have_non_ascii or blob.charset != .all_ascii;
-                    joiner.pushStatic(blob.sharedView());
+                    if (blob.store) |store| {
+                        if (blob.size == Blob.max_size) {
+                            blob.resolveSize();
+                        }
+                        switch (store.data) {
+                            .file => |file| {
+                                const res = jsc.Node.fs.NodeFS.readFile(
+                                    global.bunVM().nodeFS(),
+                                    .{
+                                        .encoding = .buffer,
+                                        .path = file.pathlike,
+                                        .offset = blob.offset,
+                                        .max_size = blob.size,
+                                    },
+                                    .sync,
+                                );
+                                switch (res) {
+                                    .err => |err| {
+                                        const end_result = joiner.done(bun.default_allocator) catch {
+                                            return global.throwOutOfMemory();
+                                        };
+                                        bun.default_allocator.free(end_result);
+                                        return global.throwValue(err.toJS(global));
+                                    },
+                                    .result => |result| {
+                                        could_have_non_ascii = true;
+                                        joiner.push(result.slice(), result.buffer.allocator);
+                                    },
+                                }
+                            },
+                            .bytes => {
+                                joiner.pushStatic(blob.sharedView());
+                            },
+                            .s3 => {
+                                const end_result = joiner.done(bun.default_allocator) catch {
+                                    return global.throwOutOfMemory();
+                                };
+                                bun.default_allocator.free(end_result);
+                                return global.throwInvalidArguments("Cannot use S3 files in Blob constructor with multiple parts", .{});
+                            },
+                        }
+                    }
                 } else {
                     const sliced = try current.toSliceClone(global);
                     const allocator = sliced.allocator.get();

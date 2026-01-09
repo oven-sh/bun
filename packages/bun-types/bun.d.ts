@@ -843,6 +843,20 @@ declare module "bun" {
     input: BunFile,
     options?: {
       /**
+       * Set the file permissions of the destination when it is created or overwritten.
+       *
+       * Must be a valid Unix permission mode (0 to 0o777 / 511 in decimal).
+       * If omitted, defaults to the system default based on umask (typically 0o644).
+       *
+       * @throws {RangeError} If the mode is outside the valid range (0 to 0o777).
+       *
+       * @example
+       * ```ts
+       * await Bun.write(Bun.file("./secret.txt"), Bun.file("./source.txt"), { mode: 0o600 });
+       * ```
+       */
+      mode?: number;
+      /**
        * If `true`, create the parent directory if it doesn't exist. By default, this is `true`.
        *
        * If `false`, this will throw an error if the directory doesn't exist.
@@ -875,6 +889,20 @@ declare module "bun" {
     destinationPath: PathLike,
     input: BunFile,
     options?: {
+      /**
+       * Set the file permissions of the destination when it is created or overwritten.
+       *
+       * Must be a valid Unix permission mode (0 to 0o777 / 511 in decimal).
+       * If omitted, defaults to the system default based on umask (typically 0o644).
+       *
+       * @throws {RangeError} If the mode is outside the valid range (0 to 0o777).
+       *
+       * @example
+       * ```ts
+       * await Bun.write("./secret.txt", Bun.file("./source.txt"), { mode: 0o600 });
+       * ```
+       */
+      mode?: number;
       /**
        * If `true`, create the parent directory if it doesn't exist. By default, this is `true`.
        *

@@ -908,9 +908,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 args.flag("--debug-no-minify");
         }
 
-        // TODO: support --format=esm
         if (ctx.bundler_options.bytecode) {
-            ctx.bundler_options.output_format = .cjs;
             ctx.args.target = .bun;
         }
 
@@ -1230,10 +1228,6 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             }
 
             ctx.bundler_options.output_format = format;
-            if (format != .cjs and ctx.bundler_options.bytecode) {
-                Output.errGeneric("format must be 'cjs' when bytecode is true. Eventually we'll add esm support as well.", .{});
-                Global.exit(1);
-            }
         }
 
         if (args.flag("--splitting")) {

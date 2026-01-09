@@ -1,4 +1,45 @@
 pub const InitCommand = struct {
+    fn removeJsonPropertyLine(alloc: std.mem.Allocator, content: []const u8, key: []const u8) ![]u8 {
+        var out = std.ArrayList(u8).init(alloc);
+        errdefer out.deinit();
+
+        var i: usize = 0;
+        while (i < content.len) {
+            const line_start = i;
+            var line_end = i;
+            while (line_end < content.len and content[line_end] != '\n') : (line_end += 1) {}
+            const line = content[line_start..line_end];
+
+            // Trim leading spaces/tabs for matching
+            var j: usize = 0;
+            while (j < line.len and (line[j] == ' ' or line[j] == '\t')) : (j += 1) {}
+
+            var skip = false;
+            if (j < line.len and line[j] == '"') {
+                const key_start = j + 1;
+                const key_end = key_start + key.len;
+                if (key_end <= line.len and std.mem.eql(u8, line[key_start..key_end], key)) {
+                    if (key_end < line.len and line[key_end] == '"') {
+                        var p: usize = key_end + 1;
+                        while (p < line.len and (line[p] == ' ' or line[p] == '\t')) : (p += 1) {}
+                        if (p < line.len and line[p] == ':') {
+                            skip = true;
+                        }
+                    }
+                }
+            }
+
+            if (!skip) {
+                try out.appendSlice(line);
+                if (line_end < content.len) try out.append('\n');
+            }
+
+            i = if (line_end < content.len) line_end + 1 else line_end;
+        }
+
+        return out.toOwnedSlice();
+    }
+
     pub fn prompt(
         alloc: std.mem.Allocator,
         comptime label: string,
@@ -819,7 +860,20 @@ pub const InitCommand = struct {
                             "tsconfig.json"
                         else
                             "jsconfig.json";
-                        Assets.createFull("tsconfig.json", filename, " (for editor autocomplete)", false, .{}) catch break :brk;
+
+                        if (template == .typescript_library) {
+                            const base = InitCommand.Assets.@"tsconfig.json";
+                            const filtered = try removeJsonPropertyLine(alloc, base, "jsx");
+                            defer alloc.free(filtered);
+
+                            var file = try std.fs.cwd().createFile(filename, .{ .truncate = true });
+                            defer file.close();
+                            try file.writeAll(filtered);
+                            Output.prettyln(" + <r><d>{s} (for editor autocomplete)<r>", .{filename});
+                            Output.flush();
+                        } else {
+                            Assets.createFull("tsconfig.json", filename, " (for editor autocomplete)", false, .{}) catch break :brk;
+                        }
                     }
                 }
 
@@ -1242,16 +1296,13 @@ const Template = enum {
     }
 };
 
-const string = []const u8;
-const stringZ = [:0]const u8;
-
+const std = @import("std");
+const bun = @import("bun");
 const CLI = @import("../cli.zig");
 const Fs = @import("../fs.zig");
 const options = @import("../options.zig");
-const std = @import("std");
 const initializeStore = @import("./create_command.zig").initializeStore;
 
-const bun = @import("bun");
 const Environment = bun.Environment;
 const Global = bun.Global;
 const JSON = bun.json;
@@ -1265,3 +1316,34 @@ const strings = bun.strings;
 
 const exists = bun.sys.exists;
 const existsZ = bun.sys.existsZ;
+
+const string = []const u8;
+const stringZ = [:0]const u8;
+
+test "removeJsonPropertyLine removes jsx property line and preserves others" {
+    const alloc = std.testing.allocator;
+    const input =
+        "{\n" ++ "  \"compilerOptions\": {\n" ++ "    \"moduleDetection\": \"force\",\n" ++ "    \"jsx\": \"react-jsx\",\n" ++ "    \"allowJs\": true\n" ++ "  }\n" ++ "}\n";
+
+    const output = try InitCommand.removeJsonPropertyLine(alloc, input, "jsx");
+    defer alloc.free(output);
+
+    try std.testing.expect(std.mem.indexOf(u8, output, "\"jsx\"") == null);
+    // Ensure other keys remain
+    try std.testing.expect(std.mem.indexOf(u8, output, "\"moduleDetection\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "\"allowJs\"") != null);
+
+    const expected =
+        "{\n" ++ "  \"compilerOptions\": {\n" ++ "    \"moduleDetection\": \"force\",\n" ++ "    \"allowJs\": true\n" ++ "  }\n" ++ "}\n";
+    try std.testing.expectEqualStrings(expected, output);
+}
+
+test "removeJsonPropertyLine no-op when key missing" {
+    const alloc = std.testing.allocator;
+    const input =
+        "{\n" ++ "  \"compilerOptions\": {\n" ++ "    \"moduleDetection\": \"force\",\n" ++ "    \"allowJs\": true\n" ++ "  }\n" ++ "}\n";
+
+    const output = try InitCommand.removeJsonPropertyLine(alloc, input, "jsx");
+    defer alloc.free(output);
+    try std.testing.expectEqualStrings(input, output);
+}

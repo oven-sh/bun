@@ -13,6 +13,15 @@
 #include "wtf/Forward.h"
 
 #include "NativeModuleImpl.h"
+
+// Forward declarations for node:inspector binding functions
+namespace Bun {
+JSC_DECLARE_HOST_FUNCTION(jsBunInspectorOpen);
+JSC_DECLARE_HOST_FUNCTION(jsBunInspectorClose);
+JSC_DECLARE_HOST_FUNCTION(jsBunInspectorUrl);
+JSC_DECLARE_HOST_FUNCTION(jsBunInspectorWaitForDebugger);
+}
+
 namespace Bun {
 
 extern "C" bool BunTest__shouldGenerateCodeCoverage(BunString sourceURL);
@@ -162,6 +171,45 @@ Structure* InternalModuleRegistry::createStructure(VM& vm, JSGlobalObject* globa
 JSValue InternalModuleRegistry::requireId(JSGlobalObject* globalObject, VM& vm, Field id)
 {
     auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    // Special handling for NodeInspector: ensure __bunInspector binding is set before loading the module
+    if (id == Field::NodeInspector) {
+        auto* zigGlobalObject = jsCast<Zig::GlobalObject*>(globalObject);
+        if (!zigGlobalObject->hasProperty(globalObject, JSC::Identifier::fromString(vm, "__bunInspector"_s))) {
+            // Create and expose the __bunInspector binding
+            auto* bunInspector = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 4);
+
+            bunInspector->putDirect(
+                vm,
+                JSC::Identifier::fromString(vm, "open"_s),
+                JSC::JSFunction::create(vm, globalObject, 2, "open"_s, jsBunInspectorOpen, JSC::ImplementationVisibility::Public),
+                0);
+
+            bunInspector->putDirect(
+                vm,
+                JSC::Identifier::fromString(vm, "close"_s),
+                JSC::JSFunction::create(vm, globalObject, 0, "close"_s, jsBunInspectorClose, JSC::ImplementationVisibility::Public),
+                0);
+
+            bunInspector->putDirect(
+                vm,
+                JSC::Identifier::fromString(vm, "url"_s),
+                JSC::JSFunction::create(vm, globalObject, 0, "url"_s, jsBunInspectorUrl, JSC::ImplementationVisibility::Public),
+                0);
+
+            bunInspector->putDirect(
+                vm,
+                JSC::Identifier::fromString(vm, "waitForDebugger"_s),
+                JSC::JSFunction::create(vm, globalObject, 0, "waitForDebugger"_s, jsBunInspectorWaitForDebugger, JSC::ImplementationVisibility::Public),
+                0);
+
+            zigGlobalObject->putDirect(
+                vm,
+                JSC::Identifier::fromString(vm, "__bunInspector"_s),
+                bunInspector,
+                JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+        }
+    }
 
     auto value = internalField(id).get();
     if (!value || value.isUndefined()) {

@@ -67,6 +67,13 @@ FOREACH_EXPOSED_BUILTIN_IMR(DECL_GETTER)
 
 } // namespace ExposeNodeModuleGlobalGetters
 
+namespace Bun {
+JSC_DECLARE_HOST_FUNCTION(jsBunInspectorOpen);
+JSC_DECLARE_HOST_FUNCTION(jsBunInspectorClose);
+JSC_DECLARE_HOST_FUNCTION(jsBunInspectorUrl);
+JSC_DECLARE_HOST_FUNCTION(jsBunInspectorWaitForDebugger);
+}
+
 extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__ExposeNodeModuleGlobals(Zig::GlobalObject* globalObject)
 {
 
@@ -84,4 +91,37 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__ExposeNodeModuleGlobals(Zig::Global
 
     FOREACH_EXPOSED_BUILTIN_IMR(PUT_CUSTOM_GETTER_SETTER)
 #undef PUT_CUSTOM_GETTER_SETTER
+
+    // Internal, non-enumerable binding used by src/js/node/inspector.ts
+    auto* bunInspector = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 4);
+
+    bunInspector->putDirect(
+        vm,
+        JSC::Identifier::fromString(vm, "open"_s),
+        JSC::JSFunction::create(vm, globalObject, 2, "open"_s, Bun::jsBunInspectorOpen, JSC::ImplementationVisibility::Public),
+        0);
+
+    bunInspector->putDirect(
+        vm,
+        JSC::Identifier::fromString(vm, "close"_s),
+        JSC::JSFunction::create(vm, globalObject, 0, "close"_s, Bun::jsBunInspectorClose, JSC::ImplementationVisibility::Public),
+        0);
+
+    bunInspector->putDirect(
+        vm,
+        JSC::Identifier::fromString(vm, "url"_s),
+        JSC::JSFunction::create(vm, globalObject, 0, "url"_s, Bun::jsBunInspectorUrl, JSC::ImplementationVisibility::Public),
+        0);
+
+    bunInspector->putDirect(
+        vm,
+        JSC::Identifier::fromString(vm, "waitForDebugger"_s),
+        JSC::JSFunction::create(vm, globalObject, 0, "waitForDebugger"_s, Bun::jsBunInspectorWaitForDebugger, JSC::ImplementationVisibility::Public),
+        0);
+
+    globalObject->putDirect(
+        vm,
+        JSC::Identifier::fromString(vm, "__bunInspector"_s),
+        bunInspector,
+        JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 }

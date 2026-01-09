@@ -394,19 +394,14 @@ pub fn bytes(this: *Archive, globalThis: *jsc.JSGlobalObject, callframe: *jsc.Ca
 pub fn files(this: *Archive, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const glob_arg = callframe.argument(0);
 
-    var glob_pattern: ?[]const u8 = null;
+    var glob_patterns: ?[]const []const u8 = null;
+    errdefer if (glob_patterns) |patterns| freePatterns(patterns);
 
     if (!glob_arg.isUndefinedOrNull()) {
-        if (!glob_arg.isString()) {
-            return globalThis.throwInvalidArguments("Archive.files: argument must be a string glob pattern or undefined", .{});
-        }
-        const glob_slice = try glob_arg.toSlice(globalThis, bun.default_allocator);
-        defer glob_slice.deinit();
-        glob_pattern = try bun.default_allocator.dupe(u8, glob_slice.slice());
+        glob_patterns = try parsePatternArg(globalThis, glob_arg, "glob");
     }
-    errdefer if (glob_pattern) |p| bun.default_allocator.free(p);
 
-    return startFilesTask(globalThis, this.store, glob_pattern);
+    return startFilesTask(globalThis, this.store, glob_patterns);
 }
 
 // ============================================================================
@@ -751,7 +746,7 @@ const FilesContext = struct {
     };
 
     store: *jsc.WebCore.Blob.Store,
-    glob_pattern: ?[]const u8,
+    glob_patterns: ?[]const []const u8,
     result: Result = .{ .err = error.ReadError },
 
     fn cloneErrorString(archive: *libarchive.lib.Archive) ?[*:0]u8 {
@@ -784,8 +779,16 @@ const FilesContext = struct {
             if (entry.filetype() != @intFromEnum(lib.FileType.regular)) continue;
 
             const pathname = entry.pathnameUtf8();
-            if (this.glob_pattern) |pattern| {
-                if (!bun.glob.match(pattern, pathname).matches()) continue;
+            // Apply glob pattern filtering (if patterns specified, at least one must match)
+            if (this.glob_patterns) |patterns| {
+                var matches_any = false;
+                for (patterns) |pattern| {
+                    if (bun.glob.match(pattern, pathname).matches()) {
+                        matches_any = true;
+                        break;
+                    }
+                }
+                if (!matches_any) continue;
             }
 
             const size: usize = @intCast(@max(entry.size(), 0));
@@ -846,20 +849,20 @@ const FilesContext = struct {
     fn deinit(this: *FilesContext) void {
         this.result.deinit();
         this.store.deref();
-        if (this.glob_pattern) |p| bun.default_allocator.free(p);
+        if (this.glob_patterns) |patterns| freePatterns(patterns);
     }
 };
 
 pub const FilesTask = AsyncTask(FilesContext);
 
-fn startFilesTask(globalThis: *jsc.JSGlobalObject, store: *jsc.WebCore.Blob.Store, glob_pattern: ?[]const u8) bun.JSError!jsc.JSValue {
+fn startFilesTask(globalThis: *jsc.JSGlobalObject, store: *jsc.WebCore.Blob.Store, glob_patterns: ?[]const []const u8) bun.JSError!jsc.JSValue {
     store.ref();
     errdefer store.deref();
-    errdefer if (glob_pattern) |p| bun.default_allocator.free(p);
+    errdefer if (glob_patterns) |patterns| freePatterns(patterns);
 
     const task = try FilesTask.create(globalThis, .{
         .store = store,
-        .glob_pattern = glob_pattern,
+        .glob_patterns = glob_patterns,
     });
 
     const promise_js = task.promise.value();
@@ -977,8 +980,8 @@ fn extractToDiskFiltered(
                     .truncate = true,
                     .mode = mode,
                 }) catch continue;
-                defer file.close();
 
+                var write_success = true;
                 if (size > 0) {
                     // Read archive data and write to file
                     var remaining = size;
@@ -986,13 +989,26 @@ fn extractToDiskFiltered(
                     while (remaining > 0) {
                         const to_read = @min(remaining, buf.len);
                         const read = archive.readData(buf[0..to_read]);
-                        if (read <= 0) break;
+                        if (read <= 0) {
+                            write_success = false;
+                            break;
+                        }
                         const bytes_read: usize = @intCast(read);
-                        _ = file.write(buf[0..bytes_read]) catch break;
+                        _ = file.write(buf[0..bytes_read]) catch {
+                            write_success = false;
+                            break;
+                        };
                         remaining -= bytes_read;
                     }
                 }
-                count += 1;
+                file.close();
+
+                if (write_success) {
+                    count += 1;
+                } else {
+                    // Remove partial file on failure
+                    dir.deleteFile(pathname) catch {};
+                }
             },
             .sym_link => {
                 const link_target = entry.symlink();

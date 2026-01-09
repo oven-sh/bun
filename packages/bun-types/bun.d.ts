@@ -6996,10 +6996,10 @@ declare module "bun" {
      * @example
      * ```ts
      * // Extract only TypeScript files
-     * { glob: "**\/*.ts" }
+     * await archive.extract("./out", { glob: "src/*.ts" });
      *
      * // Extract files from multiple directories
-     * { glob: ["src/**", "lib/**"] }
+     * await archive.extract("./out", { glob: ["src/**", "lib/**"] });
      * ```
      */
     glob?: string | string[];
@@ -7010,10 +7010,10 @@ declare module "bun" {
      * @example
      * ```ts
      * // Exclude test files
-     * { ignore: "**\/*.test.*" }
+     * await archive.extract("./out", { ignore: "*.test.*" });
      *
      * // Exclude multiple patterns
-     * { ignore: ["**\/*.test.ts", "**\/__tests__/**", "node_modules/**"] }
+     * await archive.extract("./out", { ignore: ["*.test.ts", "__tests__/**"] });
      * ```
      */
     ignore?: string | string[];
@@ -7212,7 +7212,7 @@ declare module "bun" {
      *
      * Only regular files are included; directories are not returned.
      *
-     * @param glob - Optional glob pattern to filter files (e.g., `"*.txt"`, `"src/**\/*.js"`)
+     * @param glob - Optional glob pattern(s) to filter files (e.g., `"*.txt"`, `"src/**"`)
      * @returns A promise that resolves with a Map where keys are file paths and values are File objects
      *
      * @example
@@ -7227,8 +7227,8 @@ declare module "bun" {
      * @example
      * **Filter by glob pattern:**
      * ```ts
-     * const tsFiles = await archive.files("**\/*.ts");
-     * const srcFiles = await archive.files("src/*");
+     * const tsFiles = await archive.files("src/*.ts");
+     * const srcFiles = await archive.files(["src/**", "lib/**"]);
      * ```
      *
      * @example
@@ -7241,7 +7241,7 @@ declare module "bun" {
      * }
      * ```
      */
-    files(glob?: string): Promise<Map<string, File>>;
+    files(glob?: string | string[]): Promise<Map<string, File>>;
   }
 
   /**

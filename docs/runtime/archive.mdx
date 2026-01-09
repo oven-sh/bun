@@ -117,7 +117,9 @@ Create an archive from existing tar/tar.gz data:
 // From a file
 const tarball = await Bun.file("package.tar.gz").bytes();
 const archive = Bun.Archive.from(tarball);
+```
 
+```ts
 // From a fetch response
 const response = await fetch("https://example.com/archive.tar.gz");
 const archive = Bun.Archive.from(await response.blob());
@@ -397,6 +399,6 @@ class Archive {
   /**
    * Get archive contents as File objects
    */
-  files(glob?: string): Promise<Map<string, File>>;
+  files(glob?: string | string[]): Promise<Map<string, File>>;
 }
 ```

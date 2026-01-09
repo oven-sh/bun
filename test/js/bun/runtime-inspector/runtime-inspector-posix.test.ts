@@ -120,6 +120,76 @@ describe.skipIf(isWindows)("Runtime inspector SIGUSR1 activation", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("multiple SIGUSR1s work after user installs handler", async () => {
+    // After user installs their own SIGUSR1 handler, multiple signals should all
+    // be delivered to the user handler correctly.
+    using dir = tempDir("sigusr1-uninstall-test", {
+      "test.js": `
+        const fs = require("fs");
+        const path = require("path");
+
+        let count = 0;
+        process.on("SIGUSR1", () => {
+          count++;
+          console.log("SIGNAL_" + count);
+          if (count >= 3) {
+            setTimeout(() => process.exit(0), 100);
+          }
+        });
+
+        fs.writeFileSync(path.join(process.cwd(), "pid"), String(process.pid));
+        console.log("READY");
+
+        setInterval(() => {}, 1000);
+      `,
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "test.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const reader = proc.stdout.getReader();
+    const decoder = new TextDecoder();
+
+    let output = "";
+    while (!output.includes("READY")) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      output += decoder.decode(value, { stream: true });
+    }
+
+    const pid = parseInt(await Bun.file(join(String(dir), "pid")).text(), 10);
+
+    // Send 3 SIGUSR1s with small delays
+    for (let i = 0; i < 3; i++) {
+      process.kill(pid, "SIGUSR1");
+      await Bun.sleep(30);
+    }
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      output += decoder.decode(value, { stream: true });
+    }
+    output += decoder.decode();
+
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(output).toMatchInlineSnapshot(`
+      "READY
+      SIGNAL_1
+      SIGNAL_2
+      SIGNAL_3
+      "
+    `);
+    expect(stderr).not.toContain("Bun Inspector");
+    expect(exitCode).toBe(0);
+  });
+
   test("inspector does not activate twice via SIGUSR1", async () => {
     using dir = tempDir("sigusr1-twice-test", {
       "test.js": `

@@ -901,6 +901,9 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
         req.destroy();
       }
     }
+
+    // Emit close event on the socket to trigger onServerResponseClose
+    callCloseCallback(this);
   }
   #onCloseForDestroy(closeCallback) {
     this.#onClose();

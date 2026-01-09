@@ -163,7 +163,7 @@ namespace uWS
         /* Any data pipelined after the HTTP headers (before response).
          * Used for Node.js compatibility: 'connect' and 'upgrade' events
          * pass this as the 'head' Buffer parameter.
-         * WARNING: This points to stack-allocated data in the receive buffer.
+         * WARNING: This points to data in the receive buffer and may be stack-allocated.
          * Must be cloned before the request handler returns. */
         const char* headData = nullptr;
         unsigned int headLength = 0;

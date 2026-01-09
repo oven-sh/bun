@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import * as harness from "harness";
 import { tls as tlsCerts } from "harness";
 import type { HttpsProxyAgent as HttpsProxyAgentType } from "https-proxy-agent";
@@ -882,6 +882,235 @@ describe("WebSocket with HttpsProxyAgent", () => {
       proxy: `http://127.0.0.1:${proxyPort}`, // This should take precedence
     });
 
+    const receivedMessages: string[] = [];
+
+    ws.onopen = () => {
+      ws.send("explicit proxy wins");
+    };
+
+    ws.onmessage = event => {
+      receivedMessages.push(String(event.data));
+      if (receivedMessages.length === 2) {
+        ws.close();
+      }
+    };
+
+    ws.onclose = () => {
+      resolve(receivedMessages);
+    };
+
+    ws.onerror = event => {
+      reject(event);
+    };
+
+    const messages = await promise;
+    expect(messages).toContain("connected");
+    expect(messages).toContain("explicit proxy wins");
+    gc();
+  });
+});
+
+describe("WebSocket with https.globalAgent fallback", () => {
+  // Save original globalAgent state
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const https = require("https");
+  let originalProxy: unknown;
+  let originalOptions: Record<string, unknown>;
+
+  beforeEach(() => {
+    originalProxy = https.globalAgent.proxy;
+    originalOptions = { ...https.globalAgent.options };
+  });
+
+  afterEach(() => {
+    https.globalAgent.proxy = originalProxy;
+    https.globalAgent.options = originalOptions;
+  });
+
+  test("wss:// uses https.globalAgent.options.rejectUnauthorized", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers<string[]>();
+
+    // Set globalAgent to skip TLS verification
+    https.globalAgent.options.rejectUnauthorized = false;
+
+    // Connect to wss server with self-signed cert - no explicit tls options
+    const ws = new WebSocket(`wss://127.0.0.1:${wssPort}`);
+    const receivedMessages: string[] = [];
+
+    ws.onopen = () => {
+      ws.send("hello via globalAgent");
+    };
+
+    ws.onmessage = event => {
+      receivedMessages.push(String(event.data));
+      if (receivedMessages.length === 2) {
+        ws.close();
+      }
+    };
+
+    ws.onclose = () => {
+      resolve(receivedMessages);
+    };
+
+    ws.onerror = event => {
+      reject(event);
+    };
+
+    const messages = await promise;
+    expect(messages).toContain("connected");
+    expect(messages).toContain("hello via globalAgent");
+    gc();
+  });
+
+  test("wss:// uses https.globalAgent.options.ca", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers<string[]>();
+
+    // Set globalAgent to trust the test cert
+    https.globalAgent.options.ca = tlsCerts.cert;
+
+    const ws = new WebSocket(`wss://127.0.0.1:${wssPort}`);
+    const receivedMessages: string[] = [];
+
+    ws.onopen = () => {
+      ws.send("hello with globalAgent CA");
+    };
+
+    ws.onmessage = event => {
+      receivedMessages.push(String(event.data));
+      if (receivedMessages.length === 2) {
+        ws.close();
+      }
+    };
+
+    ws.onclose = () => {
+      resolve(receivedMessages);
+    };
+
+    ws.onerror = event => {
+      reject(event);
+    };
+
+    const messages = await promise;
+    expect(messages).toContain("connected");
+    expect(messages).toContain("hello with globalAgent CA");
+    gc();
+  });
+
+  test("wss:// fails without globalAgent TLS options (self-signed cert)", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    let sawError = false;
+
+    // globalAgent defaults - should reject self-signed cert
+    https.globalAgent.options.rejectUnauthorized = true;
+    delete https.globalAgent.options.ca;
+
+    const ws = new WebSocket(`wss://127.0.0.1:${wssPort}`);
+
+    ws.onopen = () => {
+      ws.close();
+      reject(new Error("Expected TLS error, but connection opened"));
+    };
+
+    ws.onerror = () => {
+      sawError = true;
+      ws.close();
+    };
+
+    ws.onclose = () => {
+      if (sawError) {
+        resolve();
+      } else {
+        reject(new Error("Expected TLS error, got clean close"));
+      }
+    };
+
+    await promise;
+    gc();
+  });
+
+  test("ws:// uses https.globalAgent.proxy", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers<string[]>();
+
+    // Set globalAgent proxy
+    https.globalAgent.proxy = new URL(`http://127.0.0.1:${proxyPort}`);
+
+    // Connect without explicit proxy option - should use globalAgent.proxy
+    const ws = new WebSocket(`ws://127.0.0.1:${wsPort}`);
+    const receivedMessages: string[] = [];
+
+    ws.onopen = () => {
+      ws.send("hello via globalAgent.proxy");
+    };
+
+    ws.onmessage = event => {
+      receivedMessages.push(String(event.data));
+      if (receivedMessages.length === 2) {
+        ws.close();
+      }
+    };
+
+    ws.onclose = () => {
+      resolve(receivedMessages);
+    };
+
+    ws.onerror = event => {
+      reject(event);
+    };
+
+    const messages = await promise;
+    expect(messages).toContain("connected");
+    expect(messages).toContain("hello via globalAgent.proxy");
+    gc();
+  });
+
+  test("explicit tls option takes precedence over globalAgent", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers<string[]>();
+
+    // Set globalAgent to reject unauthorized (strict)
+    https.globalAgent.options.rejectUnauthorized = true;
+    delete https.globalAgent.options.ca;
+
+    // But use explicit tls option to allow self-signed
+    const ws = new WebSocket(`wss://127.0.0.1:${wssPort}`, {
+      tls: { rejectUnauthorized: false },
+    });
+    const receivedMessages: string[] = [];
+
+    ws.onopen = () => {
+      ws.send("explicit tls wins");
+    };
+
+    ws.onmessage = event => {
+      receivedMessages.push(String(event.data));
+      if (receivedMessages.length === 2) {
+        ws.close();
+      }
+    };
+
+    ws.onclose = () => {
+      resolve(receivedMessages);
+    };
+
+    ws.onerror = event => {
+      reject(event);
+    };
+
+    const messages = await promise;
+    expect(messages).toContain("connected");
+    expect(messages).toContain("explicit tls wins");
+    gc();
+  });
+
+  test("explicit proxy option takes precedence over globalAgent.proxy", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers<string[]>();
+
+    // Set globalAgent proxy to wrong port
+    https.globalAgent.proxy = new URL("http://127.0.0.1:1");
+
+    // But use explicit proxy option with correct port
+    const ws = new WebSocket(`ws://127.0.0.1:${wsPort}`, {
+      proxy: `http://127.0.0.1:${proxyPort}`,
+    });
     const receivedMessages: string[] = [];
 
     ws.onopen = () => {

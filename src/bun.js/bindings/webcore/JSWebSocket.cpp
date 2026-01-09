@@ -67,6 +67,9 @@
 #include "headers.h"
 #include "ObjectBindings.h"
 
+// Extern declaration for getting https.globalAgent from Zig
+extern "C" JSC::EncodedJSValue JSC__JSGlobalObject__getHttpsGlobalAgent(Zig::GlobalObject* globalObject);
+
 namespace WebCore {
 using namespace JSC;
 
@@ -146,26 +149,149 @@ static_assert(WebSocket::OPEN == 1, "OPEN in WebSocket does not match value from
 static_assert(WebSocket::CLOSING == 2, "CLOSING in WebSocket does not match value from IDL");
 static_assert(WebSocket::CLOSED == 3, "CLOSED in WebSocket does not match value from IDL");
 
+// Helper function to apply https.globalAgent fallback for proxy and TLS options.
+// Modifies proxyUrl, rejectUnauthorized, and sslConfig by reference if globalAgent has values set.
+// Returns true on success, false if an exception was thrown.
+static inline bool applyGlobalAgentFallback(
+    Zig::GlobalObject* globalObject,
+    JSC::VM& vm,
+    JSC::ThrowScope& throwScope,
+    String& proxyUrl,
+    int& rejectUnauthorized,
+    void*& sslConfig)
+{
+    JSValue httpsGlobalAgent = JSValue::decode(JSC__JSGlobalObject__getHttpsGlobalAgent(globalObject));
+    if (!httpsGlobalAgent.isObject())
+        return true;
+
+    JSC::JSObject* agentObj = httpsGlobalAgent.getObject();
+    if (!agentObj)
+        return true;
+
+    // Fallback to globalAgent.proxy if no proxy was provided
+    if (proxyUrl.isNull() || proxyUrl.isEmpty()) {
+        auto agentProxyValue = Bun::getOwnPropertyIfExists(globalObject, agentObj, PropertyName(Identifier::fromString(vm, "proxy"_s)));
+        RETURN_IF_EXCEPTION(throwScope, false);
+        if (agentProxyValue && !agentProxyValue.isUndefinedOrNull()) {
+            if (agentProxyValue.isString()) {
+                proxyUrl = convert<IDLUSVString>(*globalObject, agentProxyValue);
+            } else if (agentProxyValue.isObject()) {
+                // URL object - get .href property
+                if (JSC::JSObject* urlObj = agentProxyValue.getObject()) {
+                    auto hrefValue = Bun::getOwnPropertyIfExists(globalObject, urlObj, PropertyName(Identifier::fromString(vm, "href"_s)));
+                    RETURN_IF_EXCEPTION(throwScope, false);
+                    if (hrefValue && hrefValue.isString()) {
+                        proxyUrl = convert<IDLUSVString>(*globalObject, hrefValue);
+                    }
+                }
+            }
+            RETURN_IF_EXCEPTION(throwScope, false);
+        }
+    }
+
+    // Fallback to globalAgent.options/connectOpts for TLS options
+    if (rejectUnauthorized == -1 && !sslConfig) {
+        // Try globalAgent.options first, then globalAgent.connectOpts
+        JSValue tlsSourceValue;
+        auto optionsValue = Bun::getOwnPropertyIfExists(globalObject, agentObj, PropertyName(Identifier::fromString(vm, "options"_s)));
+        RETURN_IF_EXCEPTION(throwScope, false);
+        if (optionsValue && !optionsValue.isUndefinedOrNull() && optionsValue.isObject()) {
+            tlsSourceValue = optionsValue;
+        } else {
+            auto connectOptsValue = Bun::getOwnPropertyIfExists(globalObject, agentObj, PropertyName(Identifier::fromString(vm, "connectOpts"_s)));
+            RETURN_IF_EXCEPTION(throwScope, false);
+            if (connectOptsValue && !connectOptsValue.isUndefinedOrNull() && connectOptsValue.isObject()) {
+                tlsSourceValue = connectOptsValue;
+            }
+        }
+
+        if (tlsSourceValue && tlsSourceValue.isObject()) {
+            if (JSC::JSObject* tlsSourceObj = tlsSourceValue.getObject()) {
+                // Extract rejectUnauthorized
+                auto rejectValue = Bun::getOwnPropertyIfExists(globalObject, tlsSourceObj, PropertyName(Identifier::fromString(vm, "rejectUnauthorized"_s)));
+                RETURN_IF_EXCEPTION(throwScope, false);
+                if (rejectValue && rejectValue.isBoolean()) {
+                    rejectUnauthorized = rejectValue.asBoolean() ? 1 : 0;
+                }
+
+                // Build filtered TLS options object with only supported properties
+                JSC::JSObject* filteredTlsOpts = JSC::constructEmptyObject(globalObject);
+                bool hasTlsOpts = false;
+
+                auto caValue = Bun::getOwnPropertyIfExists(globalObject, tlsSourceObj, PropertyName(Identifier::fromString(vm, "ca"_s)));
+                RETURN_IF_EXCEPTION(throwScope, false);
+                if (caValue && !caValue.isUndefinedOrNull()) {
+                    filteredTlsOpts->putDirect(vm, Identifier::fromString(vm, "ca"_s), caValue);
+                    hasTlsOpts = true;
+                }
+
+                auto certValue = Bun::getOwnPropertyIfExists(globalObject, tlsSourceObj, PropertyName(Identifier::fromString(vm, "cert"_s)));
+                RETURN_IF_EXCEPTION(throwScope, false);
+                if (certValue && !certValue.isUndefinedOrNull()) {
+                    filteredTlsOpts->putDirect(vm, Identifier::fromString(vm, "cert"_s), certValue);
+                    hasTlsOpts = true;
+                }
+
+                auto keyValue = Bun::getOwnPropertyIfExists(globalObject, tlsSourceObj, PropertyName(Identifier::fromString(vm, "key"_s)));
+                RETURN_IF_EXCEPTION(throwScope, false);
+                if (keyValue && !keyValue.isUndefinedOrNull()) {
+                    filteredTlsOpts->putDirect(vm, Identifier::fromString(vm, "key"_s), keyValue);
+                    hasTlsOpts = true;
+                }
+
+                auto passphraseValue = Bun::getOwnPropertyIfExists(globalObject, tlsSourceObj, PropertyName(Identifier::fromString(vm, "passphrase"_s)));
+                RETURN_IF_EXCEPTION(throwScope, false);
+                if (passphraseValue && !passphraseValue.isUndefinedOrNull()) {
+                    filteredTlsOpts->putDirect(vm, Identifier::fromString(vm, "passphrase"_s), passphraseValue);
+                    hasTlsOpts = true;
+                }
+
+                // Parse the filtered TLS options
+                if (hasTlsOpts) {
+                    sslConfig = Bun__WebSocket__parseSSLConfig(globalObject, JSValue::encode(filteredTlsOpts));
+                    RETURN_IF_EXCEPTION(throwScope, false);
+                }
+            }
+        }
+    }
+
+    return true;
+}
+
 static inline JSC::EncodedJSValue constructJSWebSocket1(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* castedThis = jsCast<JSWebSocketDOMConstructor*>(callFrame->jsCallee());
-    ASSERT(castedThis);
-    auto* context = castedThis->scriptExecutionContext();
+    auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* context = globalObject->scriptExecutionContext();
     if (!context) [[unlikely]]
         return throwConstructorScriptExecutionContextUnavailableError(*lexicalGlobalObject, throwScope, "WebSocket"_s);
+
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto url = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
+
     EnsureStillAliveScope argument1 = callFrame->argument(1);
     auto protocols = argument1.value().isUndefined() ? Converter<IDLSequence<IDLDOMString>>::ReturnType {} : convert<IDLSequence<IDLDOMString>>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    auto object = WebSocket::create(*context, WTF::move(url), WTF::move(protocols));
+
+    // Apply globalAgent fallback for proxy and TLS options
+    String proxyUrl;
+    int rejectUnauthorized = -1;
+    void* sslConfig = nullptr;
+
+    if (!applyGlobalAgentFallback(globalObject, vm, throwScope, proxyUrl, rejectUnauthorized, sslConfig))
+        return {};
+
+    auto object = (rejectUnauthorized == -1)
+        ? WebSocket::create(*context, WTF::move(url), protocols, std::nullopt, WTF::move(proxyUrl), std::nullopt, sslConfig)
+        : WebSocket::create(*context, WTF::move(url), protocols, std::nullopt, rejectUnauthorized ? true : false, WTF::move(proxyUrl), std::nullopt, sslConfig);
+
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
+
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
-    auto jsValue = toJSNewlyCreated<IDLInterface<WebSocket>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTF::move(object));
+    auto jsValue = toJSNewlyCreated<IDLInterface<WebSocket>>(*lexicalGlobalObject, *globalObject, throwScope, WTF::move(object));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     setSubclassStructureIfNeeded<WebSocket>(lexicalGlobalObject, callFrame, asObject(jsValue));
@@ -177,22 +303,39 @@ static inline JSC::EncodedJSValue constructJSWebSocket2(JSGlobalObject* lexicalG
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* castedThis = jsCast<JSWebSocketDOMConstructor*>(callFrame->jsCallee());
-    ASSERT(castedThis);
-    auto* context = castedThis->scriptExecutionContext();
+    auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* context = globalObject->scriptExecutionContext();
     if (!context) [[unlikely]]
         return throwConstructorScriptExecutionContextUnavailableError(*lexicalGlobalObject, throwScope, "WebSocket"_s);
+
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto url = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
+
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
     auto protocol = convert<IDLDOMString>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    auto object = WebSocket::create(*context, WTF::move(url), WTF::move(protocol));
+
+    // Apply globalAgent fallback for proxy and TLS options
+    String proxyUrl;
+    int rejectUnauthorized = -1;
+    void* sslConfig = nullptr;
+
+    if (!applyGlobalAgentFallback(globalObject, vm, throwScope, proxyUrl, rejectUnauthorized, sslConfig))
+        return {};
+
+    // Convert single protocol to Vector for the create overload that supports TLS options
+    Vector<String> protocols { WTF::move(protocol) };
+
+    auto object = (rejectUnauthorized == -1)
+        ? WebSocket::create(*context, WTF::move(url), protocols, std::nullopt, WTF::move(proxyUrl), std::nullopt, sslConfig)
+        : WebSocket::create(*context, WTF::move(url), protocols, std::nullopt, rejectUnauthorized ? true : false, WTF::move(proxyUrl), std::nullopt, sslConfig);
+
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
+
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
-    auto jsValue = toJSNewlyCreated<IDLInterface<WebSocket>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTF::move(object));
+    auto jsValue = toJSNewlyCreated<IDLInterface<WebSocket>>(*lexicalGlobalObject, *globalObject, throwScope, WTF::move(object));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     setSubclassStructureIfNeeded<WebSocket>(lexicalGlobalObject, callFrame, asObject(jsValue));
@@ -428,6 +571,10 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
             }
         }
     }
+
+    // Fallback to https.globalAgent for proxy and TLS options
+    if (!applyGlobalAgentFallback(globalObject, vm, throwScope, proxyUrl, rejectUnauthorized, sslConfig))
+        return {};
 
     auto object = (rejectUnauthorized == -1)
         ? WebSocket::create(*context, WTF::move(url), protocols, WTF::move(headersInit), WTF::move(proxyUrl), WTF::move(proxyHeadersInit), sslConfig)

@@ -30,6 +30,10 @@ export default [
         fn: "bytes",
         length: 0,
       },
+      files: {
+        fn: "files",
+        length: 0,
+      },
     },
   }),
 ];

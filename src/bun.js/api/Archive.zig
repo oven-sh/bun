@@ -5,15 +5,12 @@ pub const toJS = js.toJS;
 pub const fromJS = js.fromJS;
 pub const fromJSDirect = js.fromJSDirect;
 
-const log = bun.Output.scoped(.Archive, .hidden);
-
-/// The underlying data for the archive - owned bytes
-data: []u8,
-allocator: std.mem.Allocator,
+/// The underlying data for the archive - uses Blob.Store for thread-safe ref counting
+store: *jsc.WebCore.Blob.Store,
 
 pub fn finalize(this: *Archive) void {
     jsc.markBinding(@src());
-    this.allocator.free(this.data);
+    this.store.deref();
     bun.destroy(this);
 }
 
@@ -21,11 +18,9 @@ pub fn finalize(this: *Archive) void {
 pub fn writeFormat(this: *const Archive, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
     const Writer = @TypeOf(writer);
     const Output = bun.Output;
+    const data = this.store.sharedView();
 
-    // Count files in the archive
-    const file_count = countFilesInArchive(this.data);
-
-    try writer.print(comptime Output.prettyFmt("Archive ({f}) {{\n", enable_ansi_colors), .{bun.fmt.size(this.data.len, .{})});
+    try writer.print(comptime Output.prettyFmt("Archive ({f}) {{\n", enable_ansi_colors), .{bun.fmt.size(data.len, .{})});
 
     {
         formatter.indent += 1;
@@ -33,7 +28,7 @@ pub fn writeFormat(this: *const Archive, comptime Formatter: type, formatter: *F
 
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime Output.prettyFmt("<r>files<d>:<r> ", enable_ansi_colors));
-        try formatter.printAs(.Double, Writer, writer, jsc.JSValue.jsNumber(file_count), .NumberObject, enable_ansi_colors);
+        try formatter.printAs(.Double, Writer, writer, jsc.JSValue.jsNumber(countFilesInArchive(data)), .NumberObject, enable_ansi_colors);
     }
     try writer.writeAll("\n");
     try formatter.writeIndent(Writer, writer);
@@ -41,27 +36,28 @@ pub fn writeFormat(this: *const Archive, comptime Formatter: type, formatter: *F
     formatter.resetLine();
 }
 
-/// Count the number of files in an archive
-fn countFilesInArchive(data: []const u8) u32 {
-    const lib = libarchive.lib;
-    const archive = lib.Archive.readNew();
-    defer _ = archive.readFree();
-
+/// Configure archive for reading tar/tar.gz
+fn configureArchiveReader(archive: *libarchive.lib.Archive) void {
     _ = archive.readSupportFormatTar();
     _ = archive.readSupportFormatGnutar();
     _ = archive.readSupportFilterGzip();
     _ = archive.readSetOptions("read_concatenated_archives");
+}
 
-    // Open the archive from memory
+/// Count the number of files in an archive
+fn countFilesInArchive(data: []const u8) u32 {
+    const archive = libarchive.lib.Archive.readNew();
+    defer _ = archive.readFree();
+    configureArchiveReader(archive);
+
     if (archive.readOpenMemory(data) != .ok) {
         return 0;
     }
 
     var count: u32 = 0;
-    var entry: *lib.Archive.Entry = undefined;
+    var entry: *libarchive.lib.Archive.Entry = undefined;
     while (archive.readNextHeader(&entry) == .ok) {
-        // Only count regular files, not directories
-        if (entry.filetype() == @intFromEnum(lib.FileType.regular)) {
+        if (entry.filetype() == @intFromEnum(libarchive.lib.FileType.regular)) {
             count += 1;
         }
     }
@@ -79,49 +75,17 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSErr
 /// - An object { [path: string]: Blob | string | ArrayBufferView | ArrayBufferLike }
 /// - A Blob, ArrayBufferView, or ArrayBufferLike (assumes it's already a valid archive)
 pub fn from(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    const args = callframe.argumentsAsArray(1);
-    if (args[0] == .zero) {
+    const arg = callframe.argumentsAsArray(1)[0];
+    if (arg == .zero) {
         return globalThis.throwInvalidArguments("Archive.from requires an argument", .{});
     }
-
-    return fromValue(globalThis, args[0]);
+    const data = try getArchiveData(globalThis, arg, false);
+    return createArchive(globalThis, data);
 }
 
-/// Create archive from a value (helper for both from() and write())
-fn fromValue(globalThis: *jsc.JSGlobalObject, arg: jsc.JSValue) bun.JSError!jsc.JSValue {
-    const allocator = bun.default_allocator;
-
-    // Check if it's a typed array, ArrayBuffer, or similar - copy immediately
-    if (arg.asArrayBuffer(globalThis)) |array_buffer| {
-        const data = try allocator.dupe(u8, array_buffer.slice());
-        return createArchive(globalThis, data, allocator);
-    }
-
-    // Check if it's a Blob - copy immediately
-    if (arg.as(jsc.WebCore.Blob)) |blob_ptr| {
-        const data = try allocator.dupe(u8, blob_ptr.sharedView());
-        return createArchive(globalThis, data, allocator);
-    }
-
-    // Check if it's an object with entries (plain object)
-    if (arg.isObject()) {
-        return fromObject(globalThis, arg);
-    }
-
-    return globalThis.throwInvalidArguments("Archive.from expects an object, Blob, TypedArray, or ArrayBuffer", .{});
-}
-
-fn createArchive(globalThis: *jsc.JSGlobalObject, data: []u8, allocator: std.mem.Allocator) jsc.JSValue {
-    const archive = bun.new(Archive, .{
-        .data = data,
-        .allocator = allocator,
-    });
-    return archive.toJS(globalThis);
-}
-
-fn fromObject(globalThis: *jsc.JSGlobalObject, obj: jsc.JSValue) bun.JSError!jsc.JSValue {
-    const archive_bytes = try buildTarballFromObject(globalThis, obj);
-    return createArchive(globalThis, archive_bytes, bun.default_allocator);
+fn createArchive(globalThis: *jsc.JSGlobalObject, data: []u8) jsc.JSValue {
+    const store = jsc.WebCore.Blob.Store.init(data, bun.default_allocator);
+    return bun.new(Archive, .{ .store = store }).toJS(globalThis);
 }
 
 /// Shared helper that builds tarball bytes from a JS object
@@ -206,34 +170,34 @@ pub fn write(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
     const use_gzip = try parseCompressArg(globalThis, compress_arg);
 
     // Get archive data directly without creating an intermediate Archive object
-    const archive_data = try getArchiveData(globalThis, data_arg);
+    const archive_data = try getArchiveData(globalThis, data_arg, true);
     errdefer bun.default_allocator.free(archive_data);
 
     // Create write task - it takes ownership of archive_data
-    const task = try WriteTask.createWithData(globalThis, archive_data, path_slice.slice(), use_gzip);
+    const task = try WriteTask.create(globalThis, archive_data, path_slice.slice(), use_gzip);
     const promise_js = task.promise.value();
     task.schedule();
 
     return promise_js;
 }
 
-/// Get archive data from a value without creating an Archive object
-fn getArchiveData(globalThis: *jsc.JSGlobalObject, arg: jsc.JSValue) bun.JSError![]u8 {
-    const allocator = bun.default_allocator;
-
-    // Check if it's a typed array, ArrayBuffer, or similar - copy immediately
+/// Get archive data from a value, returning owned bytes
+fn getArchiveData(globalThis: *jsc.JSGlobalObject, arg: jsc.JSValue, accept_archive: bool) bun.JSError![]u8 {
+    // Check if it's a typed array, ArrayBuffer, or similar
     if (arg.asArrayBuffer(globalThis)) |array_buffer| {
-        return allocator.dupe(u8, array_buffer.slice());
+        return bun.default_allocator.dupe(u8, array_buffer.slice());
     }
 
-    // Check if it's a Blob - copy immediately
+    // Check if it's a Blob
     if (arg.as(jsc.WebCore.Blob)) |blob_ptr| {
-        return allocator.dupe(u8, blob_ptr.sharedView());
+        return bun.default_allocator.dupe(u8, blob_ptr.sharedView());
     }
 
     // Check if it's an existing Archive
-    if (fromJS(arg)) |archive| {
-        return allocator.dupe(u8, archive.data);
+    if (accept_archive) {
+        if (fromJS(arg)) |archive| {
+            return bun.default_allocator.dupe(u8, archive.store.sharedView());
+        }
     }
 
     // Check if it's an object with entries (plain object) - build tarball
@@ -241,7 +205,7 @@ fn getArchiveData(globalThis: *jsc.JSGlobalObject, arg: jsc.JSValue) bun.JSError
         return buildTarballFromObject(globalThis, arg);
     }
 
-    return globalThis.throwInvalidArguments("Archive.write expects an object, Blob, TypedArray, ArrayBuffer, or Archive", .{});
+    return globalThis.throwInvalidArguments("Expected an object, Blob, TypedArray, or ArrayBuffer", .{});
 }
 
 fn parseCompressArg(globalThis: *jsc.JSGlobalObject, arg: jsc.JSValue) bun.JSError!bool {
@@ -315,10 +279,34 @@ pub fn bytes(this: *Archive, globalThis: *jsc.JSGlobalObject, callframe: *jsc.Ca
     return promise_js;
 }
 
+/// Instance method: archive.files(glob?)
+/// Returns Promise<Map<string, File>> with archive file contents
+pub fn files(this: *Archive, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    const glob_arg = callframe.argument(0);
+
+    var glob_pattern: ?[]const u8 = null;
+
+    if (!glob_arg.isUndefinedOrNull()) {
+        if (!glob_arg.isString()) {
+            return globalThis.throwInvalidArguments("Archive.files: argument must be a string glob pattern or undefined", .{});
+        }
+        const glob_slice = try glob_arg.toSlice(globalThis, bun.default_allocator);
+        defer glob_slice.deinit();
+        glob_pattern = try bun.default_allocator.dupe(u8, glob_slice.slice());
+    }
+    errdefer if (glob_pattern) |p| bun.default_allocator.free(p);
+
+    const task = try FilesTask.create(globalThis, this, glob_pattern);
+    const promise_js = task.promise.value();
+    task.schedule();
+
+    return promise_js;
+}
+
 // Task for extracting archives
 pub const ExtractTask = struct {
-    /// Owned copy of archive data (copied to avoid GC issues)
-    archive_data: []u8,
+    /// Reference to archive data store (thread-safe ref counted)
+    store: *jsc.WebCore.Blob.Store,
     path: []const u8,
     promise: jsc.JSPromise.Strong,
     vm: *jsc.VirtualMachine,
@@ -333,11 +321,11 @@ pub const ExtractTask = struct {
 
     pub fn create(globalThis: *jsc.JSGlobalObject, archive: *Archive, path: []const u8) bun.JSError!*ExtractTask {
         const vm = globalThis.bunVM();
-        const archive_data = bun.default_allocator.dupe(u8, archive.data) catch return error.OutOfMemory;
-        errdefer bun.default_allocator.free(archive_data);
         const path_copy = bun.default_allocator.dupe(u8, path) catch return error.OutOfMemory;
+        archive.store.ref();
+        errdefer archive.store.deref();
         const extract_task = bun.new(ExtractTask, .{
-            .archive_data = archive_data,
+            .store = archive.store,
             .path = path_copy,
             .promise = jsc.JSPromise.Strong.init(globalThis),
             .vm = vm,
@@ -358,7 +346,7 @@ pub const ExtractTask = struct {
 
     fn doExtract(this: *ExtractTask) void {
         const count = libarchive.Archiver.extractToDisk(
-            this.archive_data,
+            this.store.sharedView(),
             this.path,
             null,
             void,
@@ -380,7 +368,7 @@ pub const ExtractTask = struct {
 
     pub fn runFromJS(this: *ExtractTask) bun.JSTerminated!void {
         defer {
-            bun.default_allocator.free(this.archive_data);
+            this.store.deref();
             bun.default_allocator.free(this.path);
             bun.destroy(this);
         }
@@ -411,27 +399,25 @@ pub const ExtractTask = struct {
 pub const BlobTask = struct {
     pub const OutputType = enum { blob, bytes };
 
-    /// Owned copy of archive data (copied to avoid GC issues)
-    archive_data: []u8,
+    /// Reference to archive data store (thread-safe ref counted)
+    store: *jsc.WebCore.Blob.Store,
     use_gzip: bool,
     promise: jsc.JSPromise.Strong,
     vm: *jsc.VirtualMachine,
     output_type: OutputType,
-    result: union(enum) {
-        pending: void,
-        success: []u8,
-        err: []const u8,
-    } = .pending,
+    /// For gzip case, holds the compressed data
+    compressed_data: ?[]u8 = null,
+    err: ?[]const u8 = null,
     task: jsc.WorkPoolTask = .{ .callback = &run },
     concurrent_task: jsc.ConcurrentTask = .{},
     ref: bun.Async.KeepAlive = .{},
 
     pub fn create(globalThis: *jsc.JSGlobalObject, archive: *Archive, use_gzip: bool, output_type: OutputType) bun.JSError!*BlobTask {
         const vm = globalThis.bunVM();
-        // Copy archive data to avoid GC issues - Archive could be finalized while task runs
-        const archive_data = bun.default_allocator.dupe(u8, archive.data) catch return error.OutOfMemory;
+        archive.store.ref();
+        errdefer archive.store.deref();
         const blob_task = bun.new(BlobTask, .{
-            .archive_data = archive_data,
+            .store = archive.store,
             .use_gzip = use_gzip,
             .promise = jsc.JSPromise.Strong.init(globalThis),
             .vm = vm,
@@ -454,17 +440,13 @@ pub const BlobTask = struct {
     fn doCreateBlob(this: *BlobTask) void {
         if (this.use_gzip) {
             // Compress with gzip
-            const compressed = compressGzip(this.archive_data) catch |err| {
-                this.result = .{ .err = @errorName(err) };
+            const compressed = compressGzip(this.store.sharedView()) catch |err| {
+                this.err = @errorName(err);
                 return;
             };
-            this.result = .{ .success = compressed };
-        } else {
-            // Just copy the data (already have our own copy in archive_data)
-            // Transfer ownership from archive_data to result
-            this.result = .{ .success = this.archive_data };
-            this.archive_data = &.{}; // Ownership transferred
+            this.compressed_data = compressed;
         }
+        // For non-gzip case, we'll just ref the store and create a blob from it in runFromJS
     }
 
     fn onFinish(this: *BlobTask) void {
@@ -475,23 +457,16 @@ pub const BlobTask = struct {
 
     pub fn runFromJS(this: *BlobTask) bun.JSTerminated!void {
         defer {
-            // Free archive_data if ownership wasn't transferred (gzip case keeps archive_data)
-            if (this.archive_data.len > 0) {
-                bun.default_allocator.free(this.archive_data);
-            }
-            // Free result data if ownership wasn't transferred to Blob/Buffer.
-            // Ownership transfers at Blob/Buffer creation (lines 512, 521), and result
-            // is set to .pending immediately after. This cleanup only runs on:
-            // shutdown or error in doCreateBlob (result stays .success or .err).
-            if (this.result == .success and this.result.success.len > 0) {
-                bun.default_allocator.free(this.result.success);
+            this.store.deref();
+            // Free compressed data if ownership wasn't transferred
+            if (this.compressed_data) |data| {
+                bun.default_allocator.free(data);
             }
             bun.destroy(this);
         }
 
         this.ref.unref(this.vm);
 
-        // On shutdown, defer will free result data
         if (this.vm.isShuttingDown()) {
             return;
         }
@@ -499,41 +474,57 @@ pub const BlobTask = struct {
         const globalThis = this.vm.global;
         const promise = this.promise.swap();
 
-        switch (this.result) {
-            .success => |data| {
-                switch (this.output_type) {
-                    .blob => {
-                        // Transfer ownership to Blob - ownership transfers at creation time
-                        const blob_struct = jsc.WebCore.Blob.createWithBytesAndAllocator(data, bun.default_allocator, globalThis, false);
-                        const blob_ptr = jsc.WebCore.Blob.new(blob_struct);
-                        // Mark as transferred immediately after Blob takes ownership,
-                        // before resolve which could throw
-                        this.result = .pending;
-                        try promise.resolve(globalThis, blob_ptr.toJS(globalThis));
-                    },
-                    .bytes => {
-                        // Transfer ownership to Buffer - ownership transfers at creation time
-                        const array = jsc.JSValue.createBuffer(globalThis, data);
-                        // Mark as transferred immediately after Buffer takes ownership,
-                        // before resolve which could throw
-                        this.result = .pending;
-                        try promise.resolve(globalThis, array);
-                    },
-                }
-            },
-            .err => |err_msg| {
-                const err = globalThis.createErrorInstance("{s}", .{err_msg});
-                try promise.reject(globalThis, err);
-            },
-            .pending => unreachable,
+        // Handle error case
+        if (this.err) |err_msg| {
+            const err = globalThis.createErrorInstance("{s}", .{err_msg});
+            try promise.reject(globalThis, err);
+            return;
+        }
+
+        if (this.use_gzip) {
+            // Gzip case: use compressed data
+            const data = this.compressed_data.?;
+            switch (this.output_type) {
+                .blob => {
+                    const blob_struct = jsc.WebCore.Blob.createWithBytesAndAllocator(data, bun.default_allocator, globalThis, false);
+                    const blob_ptr = jsc.WebCore.Blob.new(blob_struct);
+                    this.compressed_data = null; // Ownership transferred
+                    try promise.resolve(globalThis, blob_ptr.toJS(globalThis));
+                },
+                .bytes => {
+                    const array = jsc.JSValue.createBuffer(globalThis, data);
+                    this.compressed_data = null; // Ownership transferred
+                    try promise.resolve(globalThis, array);
+                },
+            }
+        } else {
+            // Non-gzip case: reference the store directly (no copy needed for blob)
+            switch (this.output_type) {
+                .blob => {
+                    // Create a Blob that references the same store (zero-copy)
+                    this.store.ref();
+                    errdefer this.store.deref();
+                    const new_blob = jsc.WebCore.Blob.initWithStore(this.store, globalThis);
+                    const blob_ptr = jsc.WebCore.Blob.new(new_blob);
+                    try promise.resolve(globalThis, blob_ptr.toJS(globalThis));
+                },
+                .bytes => {
+                    // createBuffer takes ownership of the slice, so we need to copy it
+                    const data_copy = bun.default_allocator.dupe(u8, this.store.sharedView()) catch {
+                        try promise.reject(globalThis, globalThis.createOutOfMemoryError());
+                        return;
+                    };
+                    const array = jsc.JSValue.createBuffer(globalThis, data_copy);
+                    try promise.resolve(globalThis, array);
+                },
+            }
         }
     }
 };
 
 // Task for writing archives to disk
 pub const WriteTask = struct {
-    /// Owned copy of archive data (copied to avoid GC issues)
-    archive_data: []u8,
+    data: []u8,
     path: []const u8,
     use_gzip: bool,
     promise: jsc.JSPromise.Strong,
@@ -548,29 +539,12 @@ pub const WriteTask = struct {
     concurrent_task: jsc.ConcurrentTask = .{},
     ref: bun.Async.KeepAlive = .{},
 
-    pub fn create(globalThis: *jsc.JSGlobalObject, archive: *Archive, path: []const u8, use_gzip: bool) bun.JSError!*WriteTask {
-        const vm = globalThis.bunVM();
-        // Copy archive data to avoid GC issues - Archive could be finalized while task runs
-        const archive_data = bun.default_allocator.dupe(u8, archive.data) catch return error.OutOfMemory;
-        errdefer bun.default_allocator.free(archive_data);
-        const path_copy = bun.default_allocator.dupe(u8, path) catch return error.OutOfMemory;
-        const write_task = bun.new(WriteTask, .{
-            .archive_data = archive_data,
-            .path = path_copy,
-            .use_gzip = use_gzip,
-            .promise = jsc.JSPromise.Strong.init(globalThis),
-            .vm = vm,
-        });
-        write_task.ref.ref(vm);
-        return write_task;
-    }
-
-    /// Create with pre-allocated data (takes ownership of archive_data on success)
-    pub fn createWithData(globalThis: *jsc.JSGlobalObject, archive_data: []u8, path: []const u8, use_gzip: bool) bun.JSError!*WriteTask {
+    /// Create with pre-allocated data (takes ownership of archive_data)
+    pub fn create(globalThis: *jsc.JSGlobalObject, archive_data: []u8, path: []const u8, use_gzip: bool) bun.JSError!*WriteTask {
         const vm = globalThis.bunVM();
         const path_copy = bun.default_allocator.dupe(u8, path) catch return error.OutOfMemory;
         const write_task = bun.new(WriteTask, .{
-            .archive_data = archive_data,
+            .data = archive_data,
             .path = path_copy,
             .use_gzip = use_gzip,
             .promise = jsc.JSPromise.Strong.init(globalThis),
@@ -592,12 +566,12 @@ pub const WriteTask = struct {
 
     fn doWrite(this: *WriteTask) void {
         const data_to_write = if (this.use_gzip)
-            compressGzip(this.archive_data) catch |err| {
+            compressGzip(this.data) catch |err| {
                 this.result = .{ .zig_err = @errorName(err) };
                 return;
             }
         else
-            this.archive_data;
+            this.data;
 
         defer if (this.use_gzip) bun.default_allocator.free(data_to_write);
 
@@ -638,9 +612,8 @@ pub const WriteTask = struct {
 
     pub fn runFromJS(this: *WriteTask) bun.JSTerminated!void {
         defer {
-            bun.default_allocator.free(this.archive_data);
+            bun.default_allocator.free(this.data);
             bun.default_allocator.free(this.path);
-            // Free cloned sys_err path/dest if present
             if (this.result == .sys_err) {
                 var sys_err = this.result.sys_err;
                 sys_err.deinit();
@@ -667,6 +640,209 @@ pub const WriteTask = struct {
             },
             .sys_err => |sys_err| {
                 try promise.reject(globalThis, sys_err.toJS(globalThis));
+            },
+            .pending => unreachable,
+        }
+    }
+};
+
+// Task for getting archive files as Map<string, File>
+pub const FilesTask = struct {
+    /// Reference to archive data store (thread-safe ref counted)
+    store: *jsc.WebCore.Blob.Store,
+    glob_pattern: ?[]const u8,
+    promise: jsc.JSPromise.Strong,
+    vm: *jsc.VirtualMachine,
+    result: union(enum) {
+        pending: void,
+        success: FileEntryList,
+        err: []const u8,
+    } = .pending,
+    task: jsc.WorkPoolTask = .{ .callback = &run },
+    concurrent_task: jsc.ConcurrentTask = .{},
+    ref: bun.Async.KeepAlive = .{},
+
+    const FileEntry = struct {
+        path: []u8,
+        data: []u8,
+        mtime: i64,
+    };
+    const FileEntryList = std.ArrayList(FileEntry);
+
+    pub fn create(globalThis: *jsc.JSGlobalObject, archive: *Archive, glob_pattern: ?[]const u8) bun.JSError!*FilesTask {
+        const vm = globalThis.bunVM();
+        archive.store.ref();
+        errdefer archive.store.deref();
+        const files_task = bun.new(FilesTask, .{
+            .store = archive.store,
+            .glob_pattern = glob_pattern,
+            .promise = jsc.JSPromise.Strong.init(globalThis),
+            .vm = vm,
+        });
+        files_task.ref.ref(vm);
+        return files_task;
+    }
+
+    pub fn schedule(this: *FilesTask) void {
+        jsc.WorkPool.schedule(&this.task);
+    }
+
+    fn run(task: *jsc.WorkPoolTask) void {
+        const this: *FilesTask = @fieldParentPtr("task", task);
+        this.doCollectFiles();
+        this.onFinish();
+    }
+
+    fn doCollectFiles(this: *FilesTask) void {
+        const lib = libarchive.lib;
+        const archive = lib.Archive.readNew();
+        defer _ = archive.readFree();
+        configureArchiveReader(archive);
+
+        if (archive.readOpenMemory(this.store.sharedView()) != .ok) {
+            this.result = .{ .err = "Failed to open archive" };
+            return;
+        }
+
+        var entries: FileEntryList = .empty;
+        errdefer {
+            for (entries.items) |entry| {
+                bun.default_allocator.free(entry.path);
+                bun.default_allocator.free(entry.data);
+            }
+            entries.deinit(bun.default_allocator);
+        }
+
+        var entry: *lib.Archive.Entry = undefined;
+        while (archive.readNextHeader(&entry) == .ok) {
+            // Only include regular files, not directories
+            if (entry.filetype() != @intFromEnum(lib.FileType.regular)) {
+                continue;
+            }
+
+            const pathname = entry.pathnameUtf8();
+            const path_slice: []const u8 = pathname;
+
+            // Apply glob filter if provided
+            if (this.glob_pattern) |pattern| {
+                if (!bun.glob.match(pattern, path_slice).matches()) {
+                    continue;
+                }
+            }
+
+            const size: usize = @intCast(@max(entry.size(), 0));
+
+            // Copy the path
+            const path_copy = bun.default_allocator.dupe(u8, path_slice) catch {
+                this.result = .{ .err = "OutOfMemory" };
+                return;
+            };
+            errdefer bun.default_allocator.free(path_copy);
+
+            // Read the file data
+            var data: []u8 = &.{};
+            if (size > 0) {
+                data = bun.default_allocator.alloc(u8, size) catch {
+                    this.result = .{ .err = "OutOfMemory" };
+                    return;
+                };
+                errdefer bun.default_allocator.free(data);
+
+                var total_read: usize = 0;
+                while (total_read < size) {
+                    const read = archive.readData(data[total_read..]);
+                    if (read < 0) {
+                        this.result = .{ .err = "Failed to read archive entry data" };
+                        return;
+                    }
+                    if (read == 0) break;
+                    total_read += @intCast(read);
+                }
+            }
+
+            entries.append(bun.default_allocator, .{
+                .path = path_copy,
+                .data = data,
+                .mtime = entry.mtime(),
+            }) catch {
+                bun.default_allocator.free(path_copy);
+                if (data.len > 0) bun.default_allocator.free(data);
+                this.result = .{ .err = "OutOfMemory" };
+                return;
+            };
+        }
+
+        this.result = .{ .success = entries };
+    }
+
+    fn onFinish(this: *FilesTask) void {
+        this.vm.enqueueTaskConcurrent(
+            this.concurrent_task.from(this, .manual_deinit),
+        );
+    }
+
+    pub fn runFromJS(this: *FilesTask) bun.JSTerminated!void {
+        this.ref.unref(this.vm);
+
+        defer {
+            this.store.deref();
+            if (this.glob_pattern) |p| bun.default_allocator.free(p);
+            // Clean up entries
+            if (this.result == .success) {
+                for (this.result.success.items) |entry| {
+                    bun.default_allocator.free(entry.path);
+                    if (entry.data.len > 0) bun.default_allocator.free(entry.data);
+                }
+                this.result.success.deinit(bun.default_allocator);
+            }
+            bun.destroy(this);
+        }
+
+        if (this.vm.isShuttingDown()) {
+            return;
+        }
+
+        const globalThis = this.vm.global;
+        const promise = this.promise.swap();
+
+        switch (this.result) {
+            .success => |*entries| {
+                // Create a new Map
+                const map = jsc.JSMap.create(globalThis);
+                const map_ptr = jsc.JSMap.fromJS(map) orelse {
+                    try promise.reject(globalThis, globalThis.createErrorInstance("Failed to create Map", .{}));
+                    return;
+                };
+
+                // Populate the map with File objects
+                for (entries.items) |*entry| {
+                    // Create the File (Blob with is_jsdom_file=true and name set)
+                    // Blob takes ownership of entry.data
+                    const blob_struct = jsc.WebCore.Blob.createWithBytesAndAllocator(
+                        entry.data,
+                        bun.default_allocator,
+                        globalThis,
+                        false,
+                    );
+                    entry.data = &.{}; // Ownership transferred to Blob
+
+                    const blob_ptr = jsc.WebCore.Blob.new(blob_struct);
+                    blob_ptr.is_jsdom_file = true;
+                    blob_ptr.name = bun.String.cloneUTF8(entry.path);
+                    blob_ptr.last_modified = @floatFromInt(entry.mtime * 1000);
+
+                    // Use blob's name for map key (avoids second clone)
+                    map_ptr.set(globalThis, blob_ptr.name.toJS(globalThis), blob_ptr.toJS(globalThis)) catch |err| {
+                        try promise.reject(globalThis, globalThis.createErrorInstance("Failed to populate Map: {s}", .{@errorName(err)}));
+                        return;
+                    };
+                }
+
+                try promise.resolve(globalThis, map);
+            },
+            .err => |err_msg| {
+                const err = globalThis.createErrorInstance("{s}", .{err_msg});
+                try promise.reject(globalThis, err);
             },
             .pending => unreachable,
         }
@@ -818,6 +994,8 @@ fn buildTarballFromEntries(entries: bun.StringArrayHashMap([]u8), use_gzip: bool
     const entry = lib.Archive.Entry.new();
     defer entry.free();
 
+    const now_secs: isize = @intCast(@divTrunc(std.time.milliTimestamp(), 1000));
+
     // Write each entry
     var iter = entries.iterator();
     while (iter.next()) |kv| {
@@ -831,6 +1009,7 @@ fn buildTarballFromEntries(entries: bun.StringArrayHashMap([]u8), use_gzip: bool
         entry.setSize(@intCast(value.len));
         entry.setFiletype(@intFromEnum(lib.FileType.regular));
         entry.setPerm(0o644);
+        entry.setMtime(now_secs, 0);
 
         // Write header
         if (archive.writeHeader(entry) != .ok) {

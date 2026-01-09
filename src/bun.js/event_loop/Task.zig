@@ -8,6 +8,7 @@ pub const Task = TaggedPointerUnion(.{
     ArchiveExtractTask,
     ArchiveBlobTask,
     ArchiveWriteTask,
+    ArchiveFilesTask,
     AsyncGlobWalkTask,
     AsyncTransformTask,
     bun.bake.DevServer.HotReloadEvent,
@@ -146,6 +147,10 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine, co
             },
             @field(Task.Tag, @typeName(ArchiveWriteTask)) => {
                 var archive_task: *ArchiveWriteTask = task.get(ArchiveWriteTask).?;
+                try archive_task.runFromJS();
+            },
+            @field(Task.Tag, @typeName(ArchiveFilesTask)) => {
+                var archive_task: *ArchiveFilesTask = task.get(ArchiveFilesTask).?;
                 try archive_task.runFromJS();
             },
             @field(Task.Tag, @typeName(ShellAsync)) => {
@@ -634,6 +639,7 @@ const AsyncTransformTask = jsc.API.JSTranspiler.TransformTask.AsyncTransformTask
 const ArchiveBlobTask = jsc.API.Archive.BlobTask;
 const ArchiveExtractTask = jsc.API.Archive.ExtractTask;
 const ArchiveWriteTask = jsc.API.Archive.WriteTask;
+const ArchiveFilesTask = jsc.API.Archive.FilesTask;
 
 const Timer = jsc.API.Timer;
 const ImmediateObject = Timer.ImmediateObject;

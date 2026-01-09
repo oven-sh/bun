@@ -876,6 +876,190 @@ describe("Bun.Archive", () => {
     });
   });
 
+  describe("archive.files()", () => {
+    test("returns a Map of File objects", async () => {
+      const archive = Bun.Archive.from({
+        "hello.txt": "Hello, World!",
+        "data.json": JSON.stringify({ foo: "bar" }),
+      });
+
+      const files = await archive.files();
+      expect(files).toBeInstanceOf(Map);
+      expect(files.size).toBe(2);
+
+      const helloFile = files.get("hello.txt");
+      expect(helloFile).toBeInstanceOf(File);
+      expect(helloFile!.name).toBe("hello.txt");
+      expect(await helloFile!.text()).toBe("Hello, World!");
+
+      const dataFile = files.get("data.json");
+      expect(dataFile).toBeInstanceOf(File);
+      expect(dataFile!.name).toBe("data.json");
+      expect(await dataFile!.text()).toBe(JSON.stringify({ foo: "bar" }));
+    });
+
+    test("returns empty Map for empty archive", async () => {
+      const archive = Bun.Archive.from({});
+      const files = await archive.files();
+      expect(files).toBeInstanceOf(Map);
+      expect(files.size).toBe(0);
+    });
+
+    test("handles nested directory structure", async () => {
+      const archive = Bun.Archive.from({
+        "root.txt": "Root file",
+        "dir1/file1.txt": "File in dir1",
+        "dir1/dir2/file2.txt": "File in dir1/dir2",
+      });
+
+      const files = await archive.files();
+      expect(files.size).toBe(3);
+
+      expect(files.get("root.txt")!.name).toBe("root.txt");
+      expect(files.get("dir1/file1.txt")!.name).toBe("dir1/file1.txt");
+      expect(files.get("dir1/dir2/file2.txt")!.name).toBe("dir1/dir2/file2.txt");
+    });
+
+    test("filters files with glob pattern", async () => {
+      const archive = Bun.Archive.from({
+        "file1.txt": "Text file 1",
+        "file2.txt": "Text file 2",
+        "file1.json": "JSON file 1",
+        "subdir/file3.txt": "Text file 3",
+      });
+
+      const txtFiles = await archive.files("*.txt");
+      expect(txtFiles.size).toBe(2);
+      expect(txtFiles.has("file1.txt")).toBe(true);
+      expect(txtFiles.has("file2.txt")).toBe(true);
+      expect(txtFiles.has("file1.json")).toBe(false);
+      expect(txtFiles.has("subdir/file3.txt")).toBe(false);
+    });
+
+    test("filters with ** glob pattern", async () => {
+      const archive = Bun.Archive.from({
+        "file1.txt": "Text file 1",
+        "subdir/file2.txt": "Text file 2",
+        "subdir/deep/file3.txt": "Text file 3",
+        "other.json": "JSON file",
+      });
+
+      // **/*.txt matches all .txt files including at root level (** can match zero segments)
+      const allTxtFiles = await archive.files("**/*.txt");
+      expect(allTxtFiles.size).toBe(3);
+      expect(allTxtFiles.has("file1.txt")).toBe(true);
+      expect(allTxtFiles.has("subdir/file2.txt")).toBe(true);
+      expect(allTxtFiles.has("subdir/deep/file3.txt")).toBe(true);
+    });
+
+    test("filters with directory pattern", async () => {
+      const archive = Bun.Archive.from({
+        "src/index.js": "source 1",
+        "src/util.js": "source 2",
+        "test/index.test.js": "test 1",
+        "package.json": "{}",
+      });
+
+      const srcFiles = await archive.files("src/*");
+      expect(srcFiles.size).toBe(2);
+      expect(srcFiles.has("src/index.js")).toBe(true);
+      expect(srcFiles.has("src/util.js")).toBe(true);
+    });
+
+    test("returns empty Map when no files match glob", async () => {
+      const archive = Bun.Archive.from({
+        "file1.txt": "Text file",
+        "file2.json": "JSON file",
+      });
+
+      const xmlFiles = await archive.files("*.xml");
+      expect(xmlFiles).toBeInstanceOf(Map);
+      expect(xmlFiles.size).toBe(0);
+    });
+
+    test("handles binary data correctly", async () => {
+      const binaryData = new Uint8Array([0, 1, 2, 255, 254, 253, 128, 127]);
+      const archive = Bun.Archive.from({
+        "binary.bin": binaryData,
+      });
+
+      const files = await archive.files();
+      const binaryFile = files.get("binary.bin");
+      expect(binaryFile).toBeInstanceOf(File);
+
+      const extractedBytes = new Uint8Array(await binaryFile!.arrayBuffer());
+      expect(extractedBytes.length).toBe(binaryData.length);
+      for (let i = 0; i < binaryData.length; i++) {
+        expect(extractedBytes[i]).toBe(binaryData[i]);
+      }
+    });
+
+    test("File objects have lastModified property", async () => {
+      // Tar archives store mtime in seconds, so round down to nearest second
+      const beforeTime = Math.floor(Date.now() / 1000) * 1000;
+      const archive = Bun.Archive.from({
+        "file.txt": "content",
+      });
+
+      const files = await archive.files();
+      const file = files.get("file.txt");
+      const afterTime = Date.now() + 1000; // Add 1 second for rounding tolerance
+
+      expect(file!.lastModified).toBeGreaterThanOrEqual(beforeTime);
+      expect(file!.lastModified).toBeLessThanOrEqual(afterTime);
+    });
+
+    test("throws with non-string glob argument", async () => {
+      const archive = Bun.Archive.from({
+        "file.txt": "content",
+      });
+
+      await expect(async () => {
+        // @ts-expect-error - testing runtime behavior
+        await archive.files(123);
+      }).toThrow();
+    });
+
+    test("works with gzipped archive source", async () => {
+      const sourceArchive = Bun.Archive.from({
+        "hello.txt": "Hello from gzip!",
+      });
+
+      const gzippedBlob = await sourceArchive.blob("gzip");
+      const archive = Bun.Archive.from(gzippedBlob);
+
+      const files = await archive.files();
+      expect(files.size).toBe(1);
+      expect(await files.get("hello.txt")!.text()).toBe("Hello from gzip!");
+    });
+
+    test("concurrent files() operations work correctly", async () => {
+      const archive = Bun.Archive.from({
+        "file.txt": "content",
+      });
+
+      const [files1, files2, files3] = await Promise.all([archive.files(), archive.files(), archive.files()]);
+
+      expect(files1.size).toBe(1);
+      expect(files2.size).toBe(1);
+      expect(files3.size).toBe(1);
+    });
+
+    test("files() works even if archive is not referenced (GC safety)", async () => {
+      const promise = Bun.Archive.from({
+        "test.txt": "GC test content",
+      }).files();
+
+      Bun.gc(true);
+      Bun.gc(true);
+
+      const files = await promise;
+      expect(files).toBeInstanceOf(Map);
+      expect(files.size).toBe(1);
+      expect(await files.get("test.txt")!.text()).toBe("GC test content");
+    });
+  });
+
   describe("concurrent operations", () => {
     test("multiple extract operations run correctly", async () => {
       const archive = Bun.Archive.from({

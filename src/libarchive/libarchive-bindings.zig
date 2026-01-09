@@ -821,6 +821,9 @@ pub const Archive = opaque {
         pub fn size(entry: *Entry) i64 {
             return archive_entry_size(entry);
         }
+        pub fn mtime(entry: *Entry) i64 {
+            return @intCast(archive_entry_mtime(@ptrCast(entry)));
+        }
         extern fn archive_entry_symlink(*Entry) [*c]const u8;
         pub fn symlink(entry: *Entry) [:0]const u8 {
             return bun.sliceTo(archive_entry_symlink(entry), 0);

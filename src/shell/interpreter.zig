@@ -444,10 +444,10 @@ pub const Interpreter = struct {
 
             if (comptime free_buffered_io) {
                 if (this._buffered_stdout == .owned) {
-                    this._buffered_stdout.owned.deinit(bun.default_allocator);
+                    this._buffered_stdout.owned.clearAndFree(bun.default_allocator);
                 }
                 if (this._buffered_stderr == .owned) {
-                    this._buffered_stderr.owned.deinit(bun.default_allocator);
+                    this._buffered_stderr.owned.clearAndFree(bun.default_allocator);
                 }
             }
 
@@ -1191,20 +1191,21 @@ pub const Interpreter = struct {
         defer decrPendingActivityFlag(&this.has_pending_activity);
 
         if (this.event_loop == .js) {
-            defer this.deinitAfterJSRun();
             this.exit_code = exit_code;
             const this_jsvalue = this.this_jsvalue;
             if (this_jsvalue != .zero) {
                 if (jsc.Codegen.JSShellInterpreter.resolveGetCached(this_jsvalue)) |resolve| {
                     const loop = this.event_loop.js;
                     const globalThis = this.globalThis;
-                    this.this_jsvalue = .zero;
+                    const buffered_stdout = this.getBufferedStdout(globalThis);
+                    const buffered_stderr = this.getBufferedStderr(globalThis);
                     this.keep_alive.disable();
+                    this.#derefRootShellAndIOIfNeeded(true);
                     loop.enter();
                     _ = resolve.call(globalThis, .js_undefined, &.{
                         JSValue.jsNumberFromU16(exit_code),
-                        this.getBufferedStdout(globalThis),
-                        this.getBufferedStderr(globalThis),
+                        buffered_stdout,
+                        buffered_stderr,
                     }) catch |err| globalThis.reportActiveExceptionAsUnhandled(err);
                     jsc.Codegen.JSShellInterpreter.resolveSetCached(this_jsvalue, globalThis, .js_undefined);
                     jsc.Codegen.JSShellInterpreter.rejectSetCached(this_jsvalue, globalThis, .js_undefined);
@@ -1219,35 +1220,41 @@ pub const Interpreter = struct {
         return .done;
     }
 
-    fn deinitAfterJSRun(this: *ThisInterpreter) void {
-        log("Interpreter(0x{x}) deinitAfterJSRun", .{@intFromPtr(this)});
-        this.root_io.deref();
-        this.keep_alive.disable();
-        this.root_shell.deinitImpl(false, false);
+    fn #derefRootShellAndIOIfNeeded(this: *ThisInterpreter, free_buffered_io: bool) void {
+        if (free_buffered_io) {
+            // Can safely be called multiple times.
+            if (this.root_shell._buffered_stderr == .owned) {
+                this.root_shell._buffered_stderr.owned.clearAndFree(bun.default_allocator);
+            }
+            if (this.root_shell._buffered_stdout == .owned) {
+                this.root_shell._buffered_stdout.owned.clearAndFree(bun.default_allocator);
+            }
+        }
+
+        // Has this already been finalized?
+        if (this.this_jsvalue != .zero) {
+            // Cannot be safely called multiple times.
+            this.root_io.deref();
+            this.root_shell.deinitImpl(false, false);
+        }
+
         this.this_jsvalue = .zero;
     }
 
     fn deinitFromFinalizer(this: *ThisInterpreter) void {
-        if (this.root_shell._buffered_stderr == .owned) {
-            this.root_shell._buffered_stderr.owned.deinit(bun.default_allocator);
-        }
-        if (this.root_shell._buffered_stdout == .owned) {
-            this.root_shell._buffered_stdout.owned.deinit(bun.default_allocator);
-        }
-        this.this_jsvalue = .zero;
+        this.#derefRootShellAndIOIfNeeded(true);
+        this.keep_alive.disable();
         this.args.deinit();
         this.allocator.destroy(this);
     }
 
     fn deinitEverything(this: *ThisInterpreter) void {
         log("deinit interpreter", .{});
-        this.root_io.deref();
-        this.root_shell.deinitImpl(false, true);
+        this.#derefRootShellAndIOIfNeeded(true);
         for (this.vm_args_utf8.items[0..]) |str| {
             str.deinit();
         }
         this.vm_args_utf8.deinit();
-        this.this_jsvalue = .zero;
         this.allocator.destroy(this);
     }
 

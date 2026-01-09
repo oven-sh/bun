@@ -364,6 +364,94 @@ group("write .tar.gz to disk (100 small files)", () => {
   }
 });
 
+// ============================================================================
+// Get files array from archive (files() method) benchmarks
+// ============================================================================
+
+// Helper to get files array from node-tar (reads all entries into memory)
+async function getFilesArrayNodeTar(buffer) {
+  return new Promise((resolve, reject) => {
+    const files = new Map();
+    const unpack = new Unpack({
+      onReadEntry: entry => {
+        if (entry.type === "File") {
+          const chunks = [];
+          entry.on("data", chunk => chunks.push(chunk));
+          entry.on("end", () => {
+            const content = Buffer.concat(chunks);
+            // Create a File-like object similar to Bun.Archive.files()
+            files.set(entry.path, new Blob([content]));
+          });
+        }
+        entry.resume(); // Drain the entry
+      },
+    });
+    unpack.on("end", () => resolve(files));
+    unpack.on("error", reject);
+    unpack.end(buffer);
+  });
+}
+
+group("files() - get all files as Map (3 small files)", () => {
+  bench("node-tar", async () => {
+    await getFilesArrayNodeTar(smallTarBuffer);
+  });
+
+  if (hasBunArchive) {
+    bench("Bun.Archive.files()", async () => {
+      await Bun.Archive.from(smallBunArchive).files();
+    });
+  }
+});
+
+group("files() - get all files as Map (3 x 100KB files)", () => {
+  bench("node-tar", async () => {
+    await getFilesArrayNodeTar(largeTarBuffer);
+  });
+
+  if (hasBunArchive) {
+    bench("Bun.Archive.files()", async () => {
+      await Bun.Archive.from(largeBunArchive).files();
+    });
+  }
+});
+
+group("files() - get all files as Map (100 small files)", () => {
+  bench("node-tar", async () => {
+    await getFilesArrayNodeTar(manyFilesTarBuffer);
+  });
+
+  if (hasBunArchive) {
+    bench("Bun.Archive.files()", async () => {
+      await Bun.Archive.from(manyFilesBunArchive).files();
+    });
+  }
+});
+
+group("files() - get all files as Map from .tar.gz (3 small files)", () => {
+  bench("node-tar", async () => {
+    await getFilesArrayNodeTar(smallTarGzBuffer);
+  });
+
+  if (hasBunArchive) {
+    bench("Bun.Archive.files()", async () => {
+      await Bun.Archive.from(smallBunArchiveGz).files();
+    });
+  }
+});
+
+group("files() - get all files as Map from .tar.gz (100 small files)", () => {
+  bench("node-tar", async () => {
+    await getFilesArrayNodeTar(manyFilesTarGzBuffer);
+  });
+
+  if (hasBunArchive) {
+    bench("Bun.Archive.files()", async () => {
+      await Bun.Archive.from(manyFilesBunArchiveGz).files();
+    });
+  }
+});
+
 await run();
 
 // Cleanup

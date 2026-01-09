@@ -1,0 +1,311 @@
+---
+title: Archive
+description: Create and extract tar archives with Bun's fast native implementation
+---
+
+Bun provides a fast, native implementation for working with tar archives through `Bun.Archive`. It supports creating archives from in-memory data, extracting archives to disk, and reading archive contents without extraction.
+
+## Quickstart
+
+**Create an archive from files:**
+
+```ts
+const archive = Bun.Archive.from({
+  "hello.txt": "Hello, World!",
+  "data.json": JSON.stringify({ foo: "bar" }),
+  "nested/file.txt": "Nested content",
+});
+
+// Write to disk
+await Bun.Archive.write("bundle.tar", archive);
+```
+
+**Extract an archive:**
+
+```ts
+const tarball = await Bun.file("package.tar.gz").bytes();
+const archive = Bun.Archive.from(tarball);
+const fileCount = await archive.extract("./output");
+console.log(`Extracted ${fileCount} files`);
+```
+
+**Read archive contents without extracting:**
+
+```ts
+const archive = Bun.Archive.from(tarballBytes);
+const files = await archive.files();
+
+for (const [path, file] of files) {
+  console.log(`${path}: ${await file.text()}`);
+}
+```
+
+## Creating Archives
+
+Use `Bun.Archive.from()` to create an archive from an object where keys are file paths and values are file contents:
+
+```ts
+const archive = Bun.Archive.from({
+  "README.md": "# My Project",
+  "src/index.ts": "console.log('Hello');",
+  "package.json": JSON.stringify({ name: "my-project" }),
+});
+```
+
+File contents can be:
+- **Strings** - Text content
+- **Blobs** - Binary data
+- **TypedArrays** (e.g., `Uint8Array`) - Raw bytes
+- **ArrayBuffers** - Raw binary data
+
+```ts
+const archive = Bun.Archive.from({
+  "text.txt": "Plain text",
+  "blob.bin": new Blob([data]),
+  "bytes.bin": new Uint8Array([1, 2, 3, 4]),
+  "buffer.bin": arrayBuffer,
+});
+```
+
+### Writing Archives to Disk
+
+Use `Bun.Archive.write()` to create and write an archive in one operation:
+
+```ts
+// Write uncompressed tar
+await Bun.Archive.write("output.tar", {
+  "file1.txt": "content1",
+  "file2.txt": "content2",
+});
+
+// Write gzipped tar
+await Bun.Archive.write("output.tar.gz", files, "gzip");
+```
+
+### Getting Archive Bytes
+
+Get the archive data as bytes or a Blob:
+
+```ts
+const archive = Bun.Archive.from(files);
+
+// As Uint8Array
+const bytes = await archive.bytes();
+
+// As Blob
+const blob = await archive.blob();
+
+// With gzip compression
+const gzippedBytes = await archive.bytes("gzip");
+const gzippedBlob = await archive.blob("gzip");
+```
+
+## Extracting Archives
+
+### From Existing Archive Data
+
+Create an archive from existing tar/tar.gz data:
+
+```ts
+// From a file
+const tarball = await Bun.file("package.tar.gz").bytes();
+const archive = Bun.Archive.from(tarball);
+
+// From a fetch response
+const response = await fetch("https://example.com/archive.tar.gz");
+const archive = Bun.Archive.from(await response.blob());
+```
+
+### Extracting to Disk
+
+Use `.extract()` to write all files to a directory:
+
+```ts
+const archive = Bun.Archive.from(tarballBytes);
+const count = await archive.extract("./extracted");
+console.log(`Extracted ${count} files`);
+```
+
+The target directory is created automatically if it doesn't exist. Existing files are overwritten.
+
+## Reading Archive Contents
+
+### Get All Files
+
+Use `.files()` to get archive contents as a `Map` of `File` objects without extracting to disk:
+
+```ts
+const archive = Bun.Archive.from(tarballBytes);
+const files = await archive.files();
+
+for (const [path, file] of files) {
+  console.log(`${path}: ${file.size} bytes`);
+  console.log(await file.text());
+}
+```
+
+Each `File` object includes:
+- `name` - The file path within the archive
+- `size` - File size in bytes
+- `lastModified` - Modification timestamp
+- Standard `Blob` methods: `text()`, `arrayBuffer()`, `stream()`, etc.
+
+### Filtering with Glob Patterns
+
+Pass a glob pattern to filter which files are returned:
+
+```ts
+// Get only TypeScript files
+const tsFiles = await archive.files("**/*.ts");
+
+// Get files in src directory
+const srcFiles = await archive.files("src/*");
+
+// Get all JSON files
+const jsonFiles = await archive.files("*.json");
+```
+
+Supported glob patterns:
+- `*` - Match any characters except `/`
+- `**` - Match any characters including `/`
+- `?` - Match single character
+- `[abc]` - Match character set
+- `{a,b}` - Match alternatives
+
+## Compression
+
+Bun.Archive supports gzip compression for both reading and writing:
+
+```ts
+// Reading: automatically detects gzip
+const archive = Bun.Archive.from(gzippedTarball);
+
+// Writing: specify compression
+await Bun.Archive.write("output.tar.gz", files, "gzip");
+
+// Getting bytes: specify compression
+const gzippedBytes = await archive.bytes("gzip");
+```
+
+The compression argument accepts:
+- `"gzip"` - Enable gzip compression
+- `true` - Same as `"gzip"`
+- `false` or `undefined` - No compression
+
+## Examples
+
+### Bundle Project Files
+
+```ts
+import { Glob } from "bun";
+
+// Collect source files
+const files: Record<string, string> = {};
+const glob = new Glob("src/**/*.ts");
+
+for await (const path of glob.scan(".")) {
+  files[path] = await Bun.file(path).text();
+}
+
+// Add package.json
+files["package.json"] = await Bun.file("package.json").text();
+
+// Create compressed archive
+await Bun.Archive.write("bundle.tar.gz", files, "gzip");
+```
+
+### Extract and Process npm Package
+
+```ts
+const response = await fetch("https://registry.npmjs.org/lodash/-/lodash-4.17.21.tgz");
+const archive = Bun.Archive.from(await response.blob());
+
+// Get package.json
+const files = await archive.files("package/package.json");
+const packageJson = files.get("package/package.json");
+
+if (packageJson) {
+  const pkg = JSON.parse(await packageJson.text());
+  console.log(`Package: ${pkg.name}@${pkg.version}`);
+}
+```
+
+### Create Archive from Directory
+
+```ts
+import { readdir } from "node:fs/promises";
+import { join } from "node:path";
+
+async function archiveDirectory(dir: string): Promise<Bun.Archive> {
+  const files: Record<string, Blob> = {};
+
+  async function walk(currentDir: string, prefix: string = "") {
+    const entries = await readdir(currentDir, { withFileTypes: true });
+
+    for (const entry of entries) {
+      const fullPath = join(currentDir, entry.name);
+      const archivePath = prefix ? `${prefix}/${entry.name}` : entry.name;
+
+      if (entry.isDirectory()) {
+        await walk(fullPath, archivePath);
+      } else {
+        files[archivePath] = Bun.file(fullPath);
+      }
+    }
+  }
+
+  await walk(dir);
+  return Bun.Archive.from(files);
+}
+
+const archive = await archiveDirectory("./my-project");
+await Bun.Archive.write("my-project.tar.gz", archive, "gzip");
+```
+
+## Reference
+
+```ts
+class Archive {
+  /**
+   * Create an Archive from input data
+   */
+  static from(data: ArchiveInput): Archive;
+
+  /**
+   * Write an archive directly to disk
+   */
+  static write(
+    path: string,
+    data: ArchiveInput,
+    compress?: "gzip" | boolean
+  ): Promise<void>;
+
+  /**
+   * Extract archive to a directory
+   * @returns Number of files extracted
+   */
+  extract(path: string): Promise<number>;
+
+  /**
+   * Get archive as a Blob
+   */
+  blob(compress?: "gzip" | boolean): Promise<Blob>;
+
+  /**
+   * Get archive as a Uint8Array
+   */
+  bytes(compress?: "gzip" | boolean): Promise<Uint8Array>;
+
+  /**
+   * Get archive contents as File objects
+   * @param glob - Optional glob pattern to filter files
+   */
+  files(glob?: string): Promise<Map<string, File>>;
+}
+
+type ArchiveInput =
+  | Record<string, string | Blob | TypedArray | ArrayBuffer>
+  | Blob
+  | TypedArray
+  | ArrayBuffer;
+```

@@ -748,8 +748,14 @@ pub fn fstatat(fd: bun.FileDescriptor, path: [:0]const u8) Maybe(bun.Stat) {
 /// This is the "at" equivalent of lstat.
 pub fn lstatat(fd: bun.FileDescriptor, path: [:0]const u8) Maybe(bun.Stat) {
     if (Environment.isWindows) {
-        // Windows: symlinks handled differently, delegate to fstatat
-        return fstatat(fd, path);
+        // Use O.NOFOLLOW to not follow symlinks (FILE_OPEN_REPARSE_POINT on Windows)
+        return switch (openatWindowsA(fd, path, O.NOFOLLOW, 0)) {
+            .result => |file| {
+                defer file.close();
+                return fstat(file);
+            },
+            .err => |err| Maybe(bun.Stat){ .err = err },
+        };
     }
     var stat_buf = mem.zeroes(bun.Stat);
     const fd_valid = if (fd == bun.invalid_fd) std.posix.AT.FDCWD else fd.native();

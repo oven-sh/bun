@@ -231,6 +231,7 @@ Common error scenarios:
 The count returned by `extract()` includes all successfully written entries (files, directories, and symlinks on POSIX systems).
 
 **Security note**: Bun.Archive automatically validates paths during extraction, rejecting:
+
 - Absolute paths (starting with `/` or `\`)
 - Path traversal attempts (containing `..` components)
 - Unsafe symlink targets

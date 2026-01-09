@@ -1343,15 +1343,6 @@ pub const ARCHIVE_ENTRY_ACL_STYLE_COMPACT = @as(c_int, 0x00000010);
 pub const OLD_ARCHIVE_ENTRY_ACL_STYLE_EXTRA_ID = @as(c_int, 1024);
 pub const OLD_ARCHIVE_ENTRY_ACL_STYLE_MARK_DEFAULT = @as(c_int, 2048);
 
-const std = @import("std");
-
-const bun = @import("bun");
-const OOM = bun.OOM;
-const mode_t = bun.Mode;
-
-const FILE = @import("std").c.FILE;
-const dev_t = @import("std").c.dev_t;
-
 /// Growing memory buffer for archive writes with libarchive callbacks
 pub const GrowingBuffer = struct {
     buffer: []u8 = &.{},
@@ -1425,3 +1416,12 @@ pub const GrowingBuffer = struct {
         return 0;
     }
 };
+
+const std = @import("std");
+
+const bun = @import("bun");
+const OOM = bun.OOM;
+const mode_t = bun.Mode;
+
+const FILE = @import("std").c.FILE;
+const dev_t = @import("std").c.dev_t;

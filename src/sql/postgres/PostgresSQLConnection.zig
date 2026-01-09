@@ -618,12 +618,9 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
             return .zero;
         }
 
-        // we always request the cert so we can verify it and also we manually abort the connection if the hostname doesn't match
-        const original_reject_unauthorized = tls_config.reject_unauthorized;
-        tls_config.reject_unauthorized = 0;
-        tls_config.request_cert = 1;
+        // We always request the cert so we can verify it and also we manually abort the connection if the hostname doesn't match.
         // We create it right here so we can throw errors early.
-        const context_options = tls_config.asUSockets();
+        const context_options = tls_config.asUSocketsForClientVerification();
         var err: uws.create_bun_socket_error_t = .none;
         tls_ctx = uws.SocketContext.createSSLContext(vm.uwsLoop(), @sizeOf(*PostgresSQLConnection), context_options, &err) orelse {
             if (err != .none) {
@@ -632,8 +629,6 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
                 return globalObject.throwValue(err.toJS(globalObject));
             }
         };
-        // restore the original reject_unauthorized
-        tls_config.reject_unauthorized = original_reject_unauthorized;
         if (err != .none) {
             tls_config.deinit();
             if (tls_ctx) |ctx| {

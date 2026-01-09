@@ -128,7 +128,7 @@ static EncodedJSValue getOwnProxyObject(JSPropertyIterator* iter, JSObject* obje
     return JSValue::encode(result);
 }
 
-extern "C" EncodedJSValue Bun__JSPropertyIterator__getNameAndValue(JSPropertyIterator* iter, JSC::JSGlobalObject* globalObject, JSC::JSObject* object, BunString* propertyName, size_t i)
+extern "C" EncodedJSValue Bun__JSPropertyIterator__getNameAndValue(JSPropertyIterator* iter, JSC::JSGlobalObject* globalObject, JSC::JSObject* object, JSValue* key, BunString* propertyName, size_t i)
 {
     auto& vm = iter->vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -149,11 +149,12 @@ extern "C" EncodedJSValue Bun__JSPropertyIterator__getNameAndValue(JSPropertyIte
     JSValue result = slot.getValue(globalObject, prop);
     RETURN_IF_EXCEPTION(scope, {});
 
+    *key = jsString(vm, String(prop.impl()));
     *propertyName = Bun::toString(prop.impl());
     return JSValue::encode(result);
 }
 
-extern "C" EncodedJSValue Bun__JSPropertyIterator__getNameAndValueNonObservable(JSPropertyIterator* iter, JSC::JSGlobalObject* globalObject, JSC::JSObject* object, BunString* propertyName, size_t i)
+extern "C" EncodedJSValue Bun__JSPropertyIterator__getNameAndValueNonObservable(JSPropertyIterator* iter, JSC::JSGlobalObject* globalObject, JSC::JSObject* object, JSValue* key, BunString* propertyName, size_t i)
 {
     auto& vm = iter->vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -176,13 +177,16 @@ extern "C" EncodedJSValue Bun__JSPropertyIterator__getNameAndValueNonObservable(
     JSValue result = slot.getPureResult();
     RETURN_IF_EXCEPTION(scope, {});
 
+    *key = jsString(vm, String(prop.impl()));
     *propertyName = Bun::toString(prop.impl());
     return JSValue::encode(result);
 }
 
-extern "C" void Bun__JSPropertyIterator__getName(JSPropertyIterator* iter, BunString* propertyName, size_t i)
+extern "C" void Bun__JSPropertyIterator__getName(JSPropertyIterator* iter, JSValue* key, BunString* propertyName, size_t i)
 {
+    auto& vm = iter->vm;
     const auto& prop = iter->properties->propertyNameVector()[i];
+    *key = jsString(vm, String(prop.impl()));
     *propertyName = Bun::toString(prop.impl());
 }
 

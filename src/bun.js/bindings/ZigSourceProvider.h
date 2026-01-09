@@ -91,14 +91,16 @@ public:
     };
 
     // ESM bytecode cache support
-    bool hasCachedModuleMetadata() const override
+    // TODO: Add 'override' once oven-sh/WebKit adds virtual methods to
+    // JSC::SourceProvider for hasCachedModuleMetadata/createModuleRecordFromCache
+    bool hasCachedModuleMetadata() const
     {
         return m_cachedModuleMetadata.has_value();
     }
 
     JSC::JSModuleRecord* createModuleRecordFromCache(
         JSC::JSGlobalObject* globalObject,
-        const JSC::Identifier& moduleKey) override;
+        const JSC::Identifier& moduleKey);
 
     void updateCache(const UnlinkedFunctionExecutable* executable, const SourceCode&, CodeSpecializationKind kind, const UnlinkedFunctionCodeBlock* codeBlock);
     void cacheBytecode(const BytecodeCacheGenerator& generator);

@@ -2,6 +2,8 @@
 #include "napi.h"
 
 #include "BunProcess.h"
+#include "DLHandleMap.h"
+#include "v8/node.h"
 
 // Include the CMake-generated dependency versions header
 #include "bun_dependency_versions.h"
@@ -294,7 +296,7 @@ JSC_DEFINE_CUSTOM_SETTER(Process_defaultSetter, (JSC::JSGlobalObject * globalObj
     return true;
 }
 
-extern "C" bool Bun__resolveEmbeddedNodeFile(void*, BunString*);
+extern "C" bool Bun__resolveEmbeddedNodeFile(void*, BunString*, int32_t*);
 #if OS(WINDOWS)
 extern "C" HMODULE Bun__LoadLibraryBunString(BunString*);
 #endif
@@ -432,6 +434,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
     }
 
     CString utf8;
+    int32_t linuxMemfdToClose = -1;
 
     // Support embedded .node files
     // See StandaloneModuleGraph.zig for what this "$bunfs" thing is
@@ -443,8 +446,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
     bool deleteAfter = false;
     if (filename.startsWith(StandaloneModuleGraph__base_path)) {
         BunString bunStr = Bun::toString(filename);
-        if (Bun__resolveEmbeddedNodeFile(globalObject->bunVM(), &bunStr)) {
-            filename = bunStr.toWTFString(BunString::ZeroCopy);
+        if (Bun__resolveEmbeddedNodeFile(globalObject->bunVM(), &bunStr, &linuxMemfdToClose)) {
+            filename = bunStr.transferToWTFString();
             deleteAfter = !filename.startsWith("/proc/"_s);
         }
     }
@@ -479,11 +482,20 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
                 delete[] dupeZ;
             }
         }
+        ASSERT(linuxMemfdToClose == -1);
 #else
         if (deleteAfter) {
             deleteAfter = false;
             Bun__unlink(utf8.data(), utf8.length());
         }
+#if OS(LINUX)
+        if (linuxMemfdToClose != -1) {
+            close(linuxMemfdToClose);
+            linuxMemfdToClose = -1;
+        }
+#else
+        ASSERT(linuxMemfdToClose == -1);
+#endif
 #endif
     };
 
@@ -567,14 +579,82 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 #endif
 
     if (callCountAtStart != globalObject->napiModuleRegisterCallCount) {
-        // Module self-registered via static constructor
-        if (globalObject->m_pendingNapiModule) {
-            // Execute the stored registration function now that dlopen has completed
-            Napi::executePendingNapiModule(globalObject);
+        // Module self-registered via static constructor(s)
+        // Save ALL registrations to handle map before executing
 
-            // Clear the pending module
+        if (handle) {
+            // Save all NAPI module registrations
+            for (auto& mod : globalObject->m_pendingNapiModules) {
+                auto* heapModule = new napi_module(mod);
+                Bun::DLHandleMap::singleton().add(handle, heapModule);
+            }
+
+            // Save all V8 C++ module registrations
+            for (auto* mod : globalObject->m_pendingV8Modules) {
+                Bun::DLHandleMap::singleton().add(handle, mod);
+            }
+        }
+
+        // Execute all NAPI modules
+        for (auto& mod : globalObject->m_pendingNapiModules) {
+            // Restore dlopen handle for this module before execution
+            // executePendingNapiModule clears it, so we must set it for each module
+            globalObject->m_pendingNapiModuleDlopenHandle = handle;
+            globalObject->m_pendingNapiModule = mod;
+            Napi::executePendingNapiModule(globalObject);
             globalObject->m_pendingNapiModule = {};
         }
+
+        // Clear all pending registrations
+        globalObject->m_pendingNapiModules.clear();
+        globalObject->m_pendingV8Modules.clear();
+
+        JSValue resultValue = globalObject->m_pendingNapiModuleAndExports[0].get();
+        globalObject->napiModuleRegisterCallCount = 0;
+        globalObject->m_pendingNapiModuleAndExports[0].clear();
+        globalObject->m_pendingNapiModuleAndExports[1].clear();
+
+        RETURN_IF_EXCEPTION(scope, {});
+
+        if (resultValue && resultValue != strongModule.get()) {
+            if (resultValue.isCell() && resultValue.getObject()->isErrorInstance()) {
+                JSC::throwException(globalObject, scope, resultValue);
+                return {};
+            }
+        }
+
+        return JSValue::encode(jsUndefined());
+    }
+
+    // Module didn't self-register on this load. Check if we have cached registrations.
+    if (auto cachedModules = Bun::DLHandleMap::singleton().get(handle)) {
+        // Replay all registrations from this handle
+        // This will populate the vectors again via register functions
+        for (auto& registration : *cachedModules) {
+            std::visit([](auto&& mod) {
+                using T = std::decay_t<decltype(mod)>;
+                if constexpr (std::is_same_v<T, node::node_module*>) {
+                    node::node_module_register(mod);
+                } else if constexpr (std::is_same_v<T, napi_module*>) {
+                    napi_module_register(mod);
+                }
+            },
+                registration);
+        }
+
+        // Execute all NAPI modules that were just registered
+        for (auto& mod : globalObject->m_pendingNapiModules) {
+            // Restore dlopen handle for this module before execution
+            // executePendingNapiModule clears it, so we must set it for each module
+            globalObject->m_pendingNapiModuleDlopenHandle = handle;
+            globalObject->m_pendingNapiModule = mod;
+            Napi::executePendingNapiModule(globalObject);
+            globalObject->m_pendingNapiModule = {};
+        }
+
+        // Clear the vectors (no need to save again since already in DLHandleMap)
+        globalObject->m_pendingNapiModules.clear();
+        globalObject->m_pendingV8Modules.clear();
 
         JSValue resultValue = globalObject->m_pendingNapiModuleAndExports[0].get();
         globalObject->napiModuleRegisterCallCount = 0;
@@ -962,6 +1042,7 @@ static void loadSignalNumberMap()
         signalNameToNumberMap->add(signalNames[2], SIGQUIT);
         signalNameToNumberMap->add(signalNames[9], SIGKILL);
         signalNameToNumberMap->add(signalNames[15], SIGTERM);
+        signalNameToNumberMap->add(signalNames[27], SIGWINCH);
 #else
         signalNameToNumberMap->add(signalNames[0], SIGHUP);
         signalNameToNumberMap->add(signalNames[1], SIGINT);
@@ -3659,7 +3740,7 @@ JSC_DEFINE_CUSTOM_GETTER(processTitle, (JSC::JSGlobalObject * globalObject, JSC:
     BunString str;
     Bun__Process__getTitle(globalObject, &str);
     auto value = str.transferToWTFString();
-    auto* result = jsString(globalObject->vm(), WTFMove(value));
+    auto* result = jsString(globalObject->vm(), WTF::move(value));
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, JSValue::encode(result));
 #else

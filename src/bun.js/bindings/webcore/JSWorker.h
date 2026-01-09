@@ -33,7 +33,7 @@ public:
     using DOMWrapped = Worker;
     static JSWorker* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<Worker>&& impl)
     {
-        JSWorker* ptr = new (NotNull, JSC::allocateCell<JSWorker>(globalObject->vm())) JSWorker(structure, *globalObject, WTFMove(impl));
+        JSWorker* ptr = new (NotNull, JSC::allocateCell<JSWorker>(globalObject->vm())) JSWorker(structure, *globalObject, WTF::move(impl));
         ptr->finishCreation(globalObject->vm());
         return ptr;
     }

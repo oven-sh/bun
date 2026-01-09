@@ -571,12 +571,12 @@ const ImportVariant = enum {
     pub fn determine(record: *const ImportRecord, s_import: *const S.Import) ImportVariant {
         var variant = ImportVariant.path_only;
 
-        if (record.contains_import_star) {
+        if (record.flags.contains_import_star) {
             variant = variant.hasStar();
         }
 
-        if (!record.was_originally_bare_import) {
-            if (!record.contains_default_alias) {
+        if (!record.flags.was_originally_bare_import) {
+            if (!record.flags.contains_default_alias) {
                 if (s_import.default_name) |default_name| {
                     if (default_name.ref != null) {
                         variant = variant.hasDefault();
@@ -735,7 +735,7 @@ fn NewPrinter(
                             .e_await, .e_undefined, .e_number => {
                                 left_level.* = .call;
                             },
-                            .e_boolean => {
+                            .e_boolean, .e_branch_boolean => {
                                 // When minifying, booleans are printed as "!0 and "!1"
                                 if (p.options.minify_syntax) {
                                     left_level.* = .call;
@@ -831,14 +831,14 @@ fn NewPrinter(
 
         fn fmt(p: *Printer, comptime str: string, args: anytype) !void {
             const len = @call(
-                .always_inline,
+                bun.callmod_inline,
                 std.fmt.count,
                 .{ str, args },
             );
             var ptr = try p.writer.reserve(len);
 
             const written = @call(
-                .always_inline,
+                bun.callmod_inline,
                 std.fmt.bufPrint,
                 .{ ptr[0..len], str, args },
             ) catch unreachable;
@@ -1667,7 +1667,7 @@ fn NewPrinter(
                 defer if (wrap_comma_operator) p.print(")");
 
                 // Wrap this with a call to "__toESM()" if this is a CommonJS file
-                const wrap_with_to_esm = record.wrap_with_to_esm;
+                const wrap_with_to_esm = record.flags.wrap_with_to_esm;
                 if (wrap_with_to_esm) {
                     p.printSpaceBeforeIdentifier();
                     p.printSymbol(p.options.to_esm_ref);
@@ -1698,7 +1698,7 @@ fn NewPrinter(
                     // Return the namespace object if this is an ESM file
                     if (meta.exports_ref.isValid()) {
                         // Wrap this with a call to "__toCommonJS()" if this is an ESM file
-                        const wrap_with_to_cjs = record.wrap_with_to_commonjs;
+                        const wrap_with_to_cjs = record.flags.wrap_with_to_commonjs;
                         if (wrap_with_to_cjs) {
                             p.printSymbol(p.options.to_commonjs_ref);
                             p.print("(");
@@ -1730,7 +1730,7 @@ fn NewPrinter(
                 p.printSpaceBeforeIdentifier();
 
                 if (p.options.inline_require_and_import_errors) {
-                    if (record.path.is_disabled and record.handles_import_errors) {
+                    if (record.path.is_disabled and record.flags.handles_import_errors) {
                         p.printRequireError(record.path.text);
                         return;
                     }
@@ -1741,7 +1741,7 @@ fn NewPrinter(
                     }
                 }
 
-                const wrap_with_to_esm = record.wrap_with_to_esm;
+                const wrap_with_to_esm = record.flags.wrap_with_to_esm;
 
                 if (module_type == .internal_bake_dev) {
                     p.printSpaceBeforeIdentifier();
@@ -2677,7 +2677,7 @@ fn NewPrinter(
                         p.print(")");
                     }
                 },
-                .e_boolean => |e| {
+                .e_boolean, .e_branch_boolean => |e| {
                     p.addSourceMapping(expr.loc);
                     if (p.options.minify_syntax) {
                         if (level.gte(Level.prefix)) {
@@ -2869,10 +2869,10 @@ fn NewPrinter(
                                 if (wrap) {
                                     p.print(")");
                                 }
-                            } else if (import_record.was_originally_require and import_record.path.is_disabled) {
+                            } else if (import_record.flags.was_originally_require and import_record.path.is_disabled) {
                                 p.addSourceMapping(expr.loc);
 
-                                if (import_record.handles_import_errors) {
+                                if (import_record.flags.handles_import_errors) {
                                     p.printRequireError(import_record.path.text);
                                 } else {
                                     p.printDisabledImport();
@@ -4324,7 +4324,7 @@ fn NewPrinter(
                     }
 
                     if (record.path.is_disabled) {
-                        if (record.contains_import_star) {
+                        if (record.flags.contains_import_star) {
                             p.print("var ");
                             p.printSymbol(s.namespace_ref);
                             p.@"print = "();
@@ -4370,7 +4370,7 @@ fn NewPrinter(
                             p.print("}");
                             p.@"print = "();
 
-                            if (record.contains_import_star) {
+                            if (record.flags.contains_import_star) {
                                 p.printSymbol(s.namespace_ref);
                                 p.printSemicolonAfterStatement();
                             } else {
@@ -4382,7 +4382,7 @@ fn NewPrinter(
                         return;
                     }
 
-                    if (record.handles_import_errors and record.path.is_disabled and record.kind.isCommonJS()) {
+                    if (record.flags.handles_import_errors and record.path.is_disabled and record.kind.isCommonJS()) {
                         return;
                     }
 
@@ -4436,7 +4436,7 @@ fn NewPrinter(
                         item_count += 1;
                     }
 
-                    if (record.contains_import_star) {
+                    if (record.flags.contains_import_star) {
                         if (item_count > 0) {
                             p.print(",");
                         }
@@ -4450,7 +4450,7 @@ fn NewPrinter(
 
                     if (item_count > 0) {
                         if (!p.options.minify_whitespace or
-                            record.contains_import_star or
+                            record.flags.contains_import_star or
                             s.items.len == 0)
                             p.print(" ");
 
@@ -4574,7 +4574,7 @@ fn NewPrinter(
                 unreachable;
 
             const quote = bestQuoteCharForString(u8, import_record.path.text, false);
-            if (import_record.print_namespace_in_path and !import_record.path.isFile()) {
+            if (import_record.flags.print_namespace_in_path and !import_record.path.isFile()) {
                 p.print(quote);
                 p.printStringCharactersUTF8(import_record.path.namespace, quote);
                 p.print(":");
@@ -4588,7 +4588,7 @@ fn NewPrinter(
         }
 
         pub fn printBundledImport(p: *Printer, record: ImportRecord, s: *S.Import) void {
-            if (record.is_internal) {
+            if (record.flags.is_internal) {
                 return;
             }
 

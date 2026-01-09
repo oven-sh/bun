@@ -250,7 +250,7 @@ WTF::String formatStackTrace(
             }
         }
 
-        WTF::String functionName = Zig::functionName(vm, globalObjectForFrame, frame, !errorInstance, &flags);
+        WTF::String functionName = Zig::functionName(vm, globalObjectForFrame, frame, errorInstance ? Zig::FinalizerSafety::NotInFinalizer : Zig::FinalizerSafety::MustNotTriggerGC, &flags);
         OrdinalNumber originalLine = {};
         OrdinalNumber originalColumn = {};
         OrdinalNumber displayLine = {};
@@ -687,7 +687,7 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
     JSCStackTrace::getFramesForCaller(vm, callFrame, errorObject, caller, stackTrace, stackTraceLimit);
 
     if (auto* instance = jsDynamicCast<JSC::ErrorInstance*>(errorObject)) {
-        instance->setStackFrames(vm, WTFMove(stackTrace));
+        instance->setStackFrames(vm, WTF::move(stackTrace));
         if (instance->hasMaterializedErrorInfo()) {
             const auto& propertyName = vm.propertyNames->stack;
             VM::DeletePropertyModeScope scope(vm, VM::DeletePropertyMode::IgnoreConfigurable);

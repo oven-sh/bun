@@ -284,7 +284,7 @@ pub const PackageInstaller = struct {
             if (manager.postinstall_optimizer.isNativeBinlinkEnabled()) native_binlink_optimization: {
                 // Check for native binlink optimization
                 const name_hash = pkg_name_hashes[package_id];
-                if (manager.postinstall_optimizer.get(name_hash)) |optimizer| {
+                if (manager.postinstall_optimizer.get(.{ .name_hash = name_hash })) |optimizer| {
                     switch (optimizer) {
                         .native_binlink => {
                             const target_cpu = manager.options.cpu;
@@ -1152,7 +1152,7 @@ pub const PackageInstaller = struct {
                     const truncated_dep_name_hash: TruncatedPackageNameHash = @truncate(dep.name_hash);
                     const is_trusted, const is_trusted_through_update_request = brk: {
                         if (this.trusted_dependencies_from_update_requests.contains(truncated_dep_name_hash)) break :brk .{ true, true };
-                        if (this.lockfile.hasTrustedDependency(alias.slice(this.lockfile.buffers.string_bytes.items))) break :brk .{ true, false };
+                        if (this.lockfile.hasTrustedDependency(alias.slice(this.lockfile.buffers.string_bytes.items), resolution)) break :brk .{ true, false };
                         break :brk .{ false, false };
                     };
 
@@ -1163,7 +1163,11 @@ pub const PackageInstaller = struct {
 
                         enqueueLifecycleScripts: {
                             if (this.manager.postinstall_optimizer.shouldIgnoreLifecycleScripts(
-                                pkg_name_hash,
+                                .{
+                                    .name_hash = pkg_name_hash,
+                                    .version = if (resolution.tag == .npm) resolution.value.npm.version else null,
+                                    .version_buf = this.lockfile.buffers.string_bytes.items,
+                                },
                                 this.lockfile.packages.items(.resolutions)[package_id].get(this.lockfile.buffers.resolutions.items),
                                 this.lockfile.packages.items(.meta),
                                 this.manager.options.cpu,
@@ -1353,7 +1357,11 @@ pub const PackageInstaller = struct {
 
                 enqueueLifecycleScripts: {
                     if (this.manager.postinstall_optimizer.shouldIgnoreLifecycleScripts(
-                        pkg_name_hash,
+                        .{
+                            .name_hash = pkg_name_hash,
+                            .version = if (resolution.tag == .npm) resolution.value.npm.version else null,
+                            .version_buf = this.lockfile.buffers.string_bytes.items,
+                        },
                         this.lockfile.packages.items(.resolutions)[package_id].get(this.lockfile.buffers.resolutions.items),
                         this.lockfile.packages.items(.meta),
                         this.manager.options.cpu,

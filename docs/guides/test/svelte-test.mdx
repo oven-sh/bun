@@ -14,7 +14,7 @@ bun add @testing-library/svelte svelte@4 @happy-dom/global-registrator
 
 Then, save this plugin in your project.
 
-```ts svelte-loader.js icon="/icons/typescript.svg"
+```ts svelte-loader.ts icon="/icons/typescript.svg"
 import { plugin } from "bun";
 import { compile } from "svelte/compiler";
 import { readFileSync } from "fs";
@@ -61,10 +61,10 @@ Add this to `bunfig.toml` to tell Bun to preload the plugin, so it loads before 
 ```toml bunfig.toml icon="settings"
 [test]
 # Tell Bun to load this plugin before your tests run
-preload = ["./svelte-loader.js"]
+preload = ["./svelte-loader.ts"]
 
 # This also works:
-# test.preload = ["./svelte-loader.js"]
+# test.preload = ["./svelte-loader.ts"]
 ```
 
 ---

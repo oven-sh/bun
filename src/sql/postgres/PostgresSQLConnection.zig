@@ -62,10 +62,7 @@ flags: ConnectionFlags = .{},
 /// After being connected, this is an idle timeout timer.
 timer: bun.api.Timer.EventLoopTimer = .{
     .tag = .PostgresSQLConnectionTimeout,
-    .next = .{
-        .sec = 0,
-        .nsec = 0,
-    },
+    .next = .epoch,
 },
 
 /// This timer controls the maximum lifetime of a connection.
@@ -74,10 +71,7 @@ timer: bun.api.Timer.EventLoopTimer = .{
 max_lifetime_interval_ms: u32 = 0,
 max_lifetime_timer: bun.api.Timer.EventLoopTimer = .{
     .tag = .PostgresSQLConnectionMaxLifetime,
-    .next = .{
-        .sec = 0,
-        .nsec = 0,
-    },
+    .next = .epoch,
 },
 auto_flusher: AutoFlusher = .{},
 
@@ -230,7 +224,7 @@ pub fn resetConnectionTimeout(this: *PostgresSQLConnection) void {
         return;
     }
 
-    this.timer.next = bun.timespec.msFromNow(@intCast(interval));
+    this.timer.next = bun.timespec.msFromNow(.allow_mocked_time, @intCast(interval));
     this.vm.timer.insert(&this.timer);
 }
 
@@ -289,7 +283,7 @@ fn setupMaxLifetimeTimerIfNecessary(this: *PostgresSQLConnection) void {
     if (this.max_lifetime_interval_ms == 0) return;
     if (this.max_lifetime_timer.state == .ACTIVE) return;
 
-    this.max_lifetime_timer.next = bun.timespec.msFromNow(@intCast(this.max_lifetime_interval_ms));
+    this.max_lifetime_timer.next = bun.timespec.msFromNow(.allow_mocked_time, @intCast(this.max_lifetime_interval_ms));
     this.vm.timer.insert(&this.max_lifetime_timer);
 }
 
@@ -731,12 +725,9 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
             return .zero;
         }
 
-        // we always request the cert so we can verify it and also we manually abort the connection if the hostname doesn't match
-        const original_reject_unauthorized = tls_config.reject_unauthorized;
-        tls_config.reject_unauthorized = 0;
-        tls_config.request_cert = 1;
+        // We always request the cert so we can verify it and also we manually abort the connection if the hostname doesn't match.
         // We create it right here so we can throw errors early.
-        const context_options = tls_config.asUSockets();
+        const context_options = tls_config.asUSocketsForClientVerification();
         var err: uws.create_bun_socket_error_t = .none;
         tls_ctx = uws.SocketContext.createSSLContext(vm.uwsLoop(), @sizeOf(*PostgresSQLConnection), context_options, &err) orelse {
             if (err != .none) {
@@ -745,8 +736,6 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
                 return globalObject.throwValue(err.toJS(globalObject));
             }
         };
-        // restore the original reject_unauthorized
-        tls_config.reject_unauthorized = original_reject_unauthorized;
         if (err != .none) {
             tls_config.deinit();
             if (tls_ctx) |ctx| {

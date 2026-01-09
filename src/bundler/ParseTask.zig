@@ -117,7 +117,7 @@ pub fn init(resolve_result: *const _resolver.Result, source_index: Index, ctx: *
         .jsx = resolve_result.jsx,
         .source_index = source_index,
         .module_type = resolve_result.module_type,
-        .emit_decorator_metadata = resolve_result.emit_decorator_metadata,
+        .emit_decorator_metadata = resolve_result.flags.emit_decorator_metadata,
         .package_version = if (resolve_result.package_json) |package_json| package_json.version else "",
         .known_target = ctx.transpiler.options.target,
     };
@@ -635,6 +635,16 @@ fn getCodeForParseTaskWithoutPlugins(
         .fd => |contents| brk: {
             const trace = bun.perf.trace("Bundler.readFile");
             defer trace.end();
+
+            // Check FileMap for in-memory files first
+            if (task.ctx.file_map) |file_map| {
+                if (file_map.get(file_path.text)) |file_contents| {
+                    break :brk .{
+                        .contents = file_contents,
+                        .fd = bun.invalid_fd,
+                    };
+                }
+            }
 
             if (strings.eqlComptime(file_path.namespace, "node")) lookup_builtin: {
                 if (task.ctx.framework) |f| {
@@ -1176,6 +1186,7 @@ fn runWithSourceCode(
     opts.features.minify_whitespace = transpiler.options.minify_whitespace;
     opts.features.emit_decorator_metadata = transpiler.options.emit_decorator_metadata;
     opts.features.unwrap_commonjs_packages = transpiler.options.unwrap_commonjs_packages;
+    opts.features.bundler_feature_flags = transpiler.options.bundler_feature_flags;
     opts.features.hot_module_reloading = output_format == .internal_bake_dev and !source.index.isRuntime();
     opts.features.auto_polyfill_require = output_format == .esm and !opts.features.hot_module_reloading;
     opts.features.react_fast_refresh = target == .browser and

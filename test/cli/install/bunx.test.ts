@@ -792,3 +792,78 @@ console.log("EXECUTED: multi-tool-alt (alternate binary)");
     });
   });
 });
+
+// Regression test: bunx should not crash on corrupted .bunx files (Windows only)
+// When the .bunx metadata file is corrupted (e.g., missing quote terminator in bin_path),
+// bunx should gracefully fall back to the slow path instead of panicking.
+it.skipIf(!isWindows)("should not crash on corrupted .bunx file with missing quote", async () => {
+  // First, install a package to create a valid .bunx file
+  // Use typescript which creates both .exe and .bunx files
+  // Need to init first to create package.json
+  const initProc = spawn({
+    cmd: [bunExe(), "init", "-y"],
+    cwd: x_dir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  await initProc.exited;
+
+  const subprocess1 = spawn({
+    cmd: [bunExe(), "add", "typescript@5.0.0"],
+    cwd: x_dir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const [err1, out1, exitCode1] = await Promise.all([
+    subprocess1.stderr.text(),
+    subprocess1.stdout.text(),
+    subprocess1.exited,
+  ]);
+
+  // Find the .bunx file
+  const binDir = join(x_dir, "node_modules", ".bin");
+  const bunxFile = join(binDir, "tsc.bunx");
+
+  // Verify the file exists before corrupting it
+  expect(await Bun.file(bunxFile).exists()).toBe(true);
+
+  // Create a corrupted .bunx file:
+  // Valid format: [bin_path UTF-16LE]["(quote)][null][shebang][bin_len u32][args_len u32][flags u16]
+  // Corrupted: Replace the quote with 'X' but keep valid lengths/flags
+  const binPath = Buffer.from("typescript\\bin\\tsc", "utf16le");
+  const corruptedQuote = Buffer.from("X", "utf16le"); // 'X' instead of '"'
+  const nullChar = Buffer.alloc(2, 0);
+  const shebang = Buffer.from("node ", "utf16le");
+  const binLen = Buffer.alloc(4);
+  binLen.writeUInt32LE(binPath.length);
+  const argsLen = Buffer.alloc(4);
+  argsLen.writeUInt32LE(shebang.length);
+  // Valid flags with has_shebang=true, is_node_or_bun=true, version=v5
+  const flags = Buffer.alloc(2);
+  flags.writeUInt16LE(0xab37);
+
+  const corruptedData = Buffer.concat([binPath, corruptedQuote, nullChar, shebang, binLen, argsLen, flags]);
+  await writeFile(bunxFile, corruptedData);
+
+  // Now run bunx - it should NOT crash, but may fail gracefully
+  // Using bun run to invoke tsc.exe, which triggers the BunXFastPath
+  const subprocess2 = spawn({
+    cmd: [bunExe(), "run", "tsc", "--version"],
+    cwd: x_dir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const [stderr, stdout, exitCode] = await Promise.all([
+    subprocess2.stderr.text(),
+    subprocess2.stdout.text(),
+    subprocess2.exited,
+  ]);
+
+  // The key assertion: we should NOT see a panic
+  expect(stderr).not.toContain("panic");
+  expect(stderr).not.toContain("reached unreachable code");
+});

@@ -253,7 +253,10 @@ afterAll(async () => {
   if (TEMP_DIR) {
     if (Bun.env.TYPES_INTEGRATION_TEST_KEEP_TEMP_DIR === "true") {
       console.log(`Keeping temp dir ${TEMP_DIR}/fixture for debugging`);
-      await cp(TSCONFIG_SOURCE_PATH, join(TEMP_DIR, "fixture", "tsconfig.json"));
+      // Write tsconfig with skipLibCheck disabled for proper type checking
+      const tsconfig = structuredClone(sourceTsconfig);
+      tsconfig.compilerOptions.skipLibCheck = false;
+      await Bun.write(join(TEMP_DIR, "fixture", "tsconfig.json"), JSON.stringify(tsconfig, null, 2));
     } else {
       await rm(TEMP_DIR, { recursive: true, force: true });
     }
@@ -261,14 +264,16 @@ afterAll(async () => {
 });
 
 describe("@types/bun integration test", () => {
-  test("checks without lib.dom.d.ts", async () => {
-    const { diagnostics, emptyInterfaces } = await diagnose(TEMP_FIXTURE_DIR);
+  describe("basic type checks", () => {
+    test("checks without lib.dom.d.ts", async () => {
+      const { diagnostics, emptyInterfaces } = await diagnose(TEMP_FIXTURE_DIR);
 
-    expect(emptyInterfaces).toEqual(expectedEmptyInterfacesWhenNoDOM);
-    expect(diagnostics).toEqual([]);
+      expect(emptyInterfaces).toEqual(expectedEmptyInterfacesWhenNoDOM);
+      expect(diagnostics).toEqual([]);
+    });
   });
 
-  describe("test-globals reference", () => {
+  describe("Test Globals", () => {
     const code = `
       const test_shouldBeAFunction: Function = test;
       const it_shouldBeAFunction: Function = it;
@@ -357,274 +362,394 @@ describe("@types/bun integration test", () => {
     });
   });
 
-  test("checks with no lib at all", async () => {
-    const { diagnostics, emptyInterfaces } = await diagnose(TEMP_FIXTURE_DIR, {
-      options: {
-        lib: [],
-      },
+  describe("bun:bundle feature()", () => {
+    test("Registry augmentation restricts feature() to known flags", async () => {
+      const testCode = `
+        // Augment the Registry to define known flags
+        declare module "bun:bundle" {
+          interface Registry {
+            features: "DEBUG" | "PREMIUM" | "BETA";
+          }
+        }
+
+        import { feature } from "bun:bundle";
+
+        // Valid flags work
+        const a: boolean = feature("DEBUG");
+        const b: boolean = feature("PREMIUM");
+        const c: boolean = feature("BETA");
+
+        // Invalid flags are caught at compile time
+        // @ts-expect-error - "INVALID_FLAG" is not assignable to "DEBUG" | "PREMIUM" | "BETA"
+        const invalid: boolean = feature("INVALID_FLAG");
+
+        // @ts-expect-error - typos are caught
+        const typo: boolean = feature("DEUBG");
+      `;
+
+      const { diagnostics, emptyInterfaces } = await diagnose(TEMP_FIXTURE_DIR, {
+        files: {
+          "registry-test.ts": testCode,
+        },
+      });
+
+      expect(emptyInterfaces).toEqual(expectedEmptyInterfacesWhenNoDOM);
+      // Filter to only our test file - no diagnostics because @ts-expect-error suppresses errors
+      const relevantDiagnostics = diagnostics.filter(d => d.line?.startsWith("registry-test.ts"));
+      expect(relevantDiagnostics).toEqual([]);
     });
 
-    expect(emptyInterfaces).toEqual(expectedEmptyInterfacesWhenNoDOM);
-    expect(diagnostics).toEqual([]);
+    test("Registry augmentation produces type errors for invalid flags", async () => {
+      // Verify that without @ts-expect-error, invalid flags actually produce errors
+      const invalidTestCode = `
+        declare module "bun:bundle" {
+          interface Registry {
+            features: "ALLOWED_FLAG";
+          }
+        }
+
+        import { feature } from "bun:bundle";
+
+        // This should cause a type error - INVALID_FLAG is not in Registry.features
+        const invalid: boolean = feature("INVALID_FLAG");
+      `;
+
+      const { diagnostics, emptyInterfaces } = await diagnose(TEMP_FIXTURE_DIR, {
+        files: {
+          "registry-invalid-test.ts": invalidTestCode,
+        },
+      });
+
+      expect(emptyInterfaces).toEqual(expectedEmptyInterfacesWhenNoDOM);
+      const relevantDiagnostics = diagnostics.filter(d => d.line?.startsWith("registry-invalid-test.ts"));
+      expect(relevantDiagnostics).toMatchInlineSnapshot(`
+        [
+          {
+            "code": 2345,
+            "line": "registry-invalid-test.ts:11:42",
+            "message": "Argument of type '\"INVALID_FLAG\"' is not assignable to parameter of type '\"ALLOWED_FLAG\"'.",
+          },
+        ]
+      `);
+    });
+
+    test("without Registry augmentation, feature() accepts any string", async () => {
+      // When Registry is not augmented, feature() falls back to accepting any string
+      const testCode = `
+        import { feature } from "bun:bundle";
+
+        // Any string works when Registry.features is not defined
+        const a: boolean = feature("ANY_FLAG");
+        const b: boolean = feature("ANOTHER_FLAG");
+        const c: boolean = feature("whatever");
+      `;
+
+      const { diagnostics, emptyInterfaces } = await diagnose(TEMP_FIXTURE_DIR, {
+        files: {
+          "no-registry-test.ts": testCode,
+        },
+      });
+
+      expect(emptyInterfaces).toEqual(expectedEmptyInterfacesWhenNoDOM);
+      const relevantDiagnostics = diagnostics.filter(d => d.line?.startsWith("no-registry-test.ts"));
+      expect(relevantDiagnostics).toEqual([]);
+    });
   });
 
-  test("fails with types: [] and no jsx", async () => {
-    const { diagnostics, emptyInterfaces } = await diagnose(TEMP_FIXTURE_DIR, {
-      options: {
-        lib: [],
-        types: [],
-        jsx: ts.JsxEmit.None,
-      },
+  describe("lib configuration", () => {
+    test("checks with no lib at all", async () => {
+      const { diagnostics, emptyInterfaces } = await diagnose(TEMP_FIXTURE_DIR, {
+        options: {
+          lib: [],
+        },
+      });
+
+      expect(emptyInterfaces).toEqual(expectedEmptyInterfacesWhenNoDOM);
+      expect(diagnostics).toEqual([]);
     });
 
-    expect(emptyInterfaces).toEqual(expectedEmptyInterfacesWhenNoDOM);
-    expect(diagnostics).toEqual([
-      // // This is expected because we, of course, can't check that our tsx file is passing
-      // // when tsx is turned off...
-      // {
-      //   "code": 17004,
-      //   "line": "[slug].tsx:17:10",
-      //   "message": "Cannot use JSX unless the '--jsx' flag is provided.",
-      // },
-    ]);
-  });
+    test("fails with types: [] and no jsx", async () => {
+      const { diagnostics, emptyInterfaces } = await diagnose(TEMP_FIXTURE_DIR, {
+        options: {
+          lib: [],
+          types: [],
+          jsx: ts.JsxEmit.None,
+        },
+      });
 
-  test("checks with lib.dom.d.ts", async () => {
-    const { diagnostics, emptyInterfaces } = await diagnose(TEMP_FIXTURE_DIR, {
-      options: {
-        lib: ["ESNext", "DOM", "DOM.Iterable", "DOM.AsyncIterable"].map(name => `lib.${name.toLowerCase()}.d.ts`),
-      },
+      expect(emptyInterfaces).toEqual(expectedEmptyInterfacesWhenNoDOM);
+      expect(diagnostics).toEqual([
+        // // This is expected because we, of course, can't check that our tsx file is passing
+        // // when tsx is turned off...
+        // {
+        //   "code": 17004,
+        //   "line": "[slug].tsx:17:10",
+        //   "message": "Cannot use JSX unless the '--jsx' flag is provided.",
+        // },
+      ]);
     });
 
-    expect(emptyInterfaces).toEqual(
-      new Set([
-        "ThisType",
-        "RTCAnswerOptions",
-        "RTCOfferAnswerOptions",
-        "RTCSetParameterOptions",
-        "EXT_color_buffer_float",
-        "EXT_float_blend",
-        "EXT_frag_depth",
-        "EXT_shader_texture_lod",
-        "FragmentDirective",
-        "MediaSourceHandle",
-        "OES_element_index_uint",
-        "OES_fbo_render_mipmap",
-        "OES_texture_float",
-        "OES_texture_float_linear",
-        "OES_texture_half_float_linear",
-        "PeriodicWave",
-        "RTCRtpScriptTransform",
-        "WebGLBuffer",
-        "WebGLFramebuffer",
-        "WebGLProgram",
-        "WebGLQuery",
-        "WebGLRenderbuffer",
-        "WebGLSampler",
-        "WebGLShader",
-        "WebGLSync",
-        "WebGLTexture",
-        "WebGLTransformFeedback",
-        "WebGLUniformLocation",
-        "WebGLVertexArrayObject",
-        "WebGLVertexArrayObjectOES",
-      ]),
-    );
-    expect(diagnostics).toEqual([
-      {
-        code: 2322,
-        line: "24154.ts:11:3",
-        message:
-          "Type 'Blob' is not assignable to type 'import(\"buffer\").Blob'.\nThe types returned by 'stream()' are incompatible between these types.\nType 'ReadableStream<Uint8Array<ArrayBuffer>>' is missing the following properties from type 'ReadableStream<any>': blob, text, bytes, json, and 2 more.",
-      },
-      {
-        code: 2769,
-        line: "fetch.ts:25:32",
-        message:
-          "No overload matches this call.\nOverload 1 of 3, '(input: string | Request | URL, init?: RequestInit | undefined): Promise<Response>', gave the following error.\nType 'AsyncGenerator<\"chunk1\" | \"chunk2\", void, unknown>' is not assignable to type 'BodyInit | null | undefined'.\nType 'AsyncGenerator<\"chunk1\" | \"chunk2\", void, unknown>' is missing the following properties from type 'ReadableStream<any>': locked, cancel, getReader, pipeThrough, and 3 more.\nOverload 2 of 3, '(input: string | Request | URL, init?: BunFetchRequestInit | undefined): Promise<Response>', gave the following error.\nType 'AsyncGenerator<\"chunk1\" | \"chunk2\", void, unknown>' is not assignable to type 'BodyInit | null | undefined'.\nType 'AsyncGenerator<\"chunk1\" | \"chunk2\", void, unknown>' is missing the following properties from type 'ReadableStream<any>': locked, cancel, getReader, pipeThrough, and 3 more.\nOverload 3 of 3, '(input: RequestInfo | URL, init?: RequestInit | undefined): Promise<Response>', gave the following error.\nType 'AsyncGenerator<\"chunk1\" | \"chunk2\", void, unknown>' is not assignable to type 'BodyInit | null | undefined'.\nType 'AsyncGenerator<\"chunk1\" | \"chunk2\", void, unknown>' is missing the following properties from type 'ReadableStream<any>': locked, cancel, getReader, pipeThrough, and 3 more.",
-      },
-      {
-        code: 2769,
-        line: "fetch.ts:33:32",
-        message:
-          "No overload matches this call.\nOverload 1 of 3, '(input: string | Request | URL, init?: RequestInit | undefined): Promise<Response>', gave the following error.\nType '{ [Symbol.asyncIterator](): AsyncGenerator<\"data1\" | \"data2\", void, unknown>; }' is not assignable to type 'BodyInit | null | undefined'.\nType '{ [Symbol.asyncIterator](): AsyncGenerator<\"data1\" | \"data2\", void, unknown>; }' is missing the following properties from type 'ReadableStream<any>': locked, cancel, getReader, pipeThrough, and 3 more.\nOverload 2 of 3, '(input: string | Request | URL, init?: BunFetchRequestInit | undefined): Promise<Response>', gave the following error.\nType '{ [Symbol.asyncIterator](): AsyncGenerator<\"data1\" | \"data2\", void, unknown>; }' is not assignable to type 'BodyInit | null | undefined'.\nType '{ [Symbol.asyncIterator](): AsyncGenerator<\"data1\" | \"data2\", void, unknown>; }' is missing the following properties from type 'ReadableStream<any>': locked, cancel, getReader, pipeThrough, and 3 more.\nOverload 3 of 3, '(input: RequestInfo | URL, init?: RequestInit | undefined): Promise<Response>', gave the following error.\nType '{ [Symbol.asyncIterator](): AsyncGenerator<\"data1\" | \"data2\", void, unknown>; }' is not assignable to type 'BodyInit | null | undefined'.\nType '{ [Symbol.asyncIterator](): AsyncGenerator<\"data1\" | \"data2\", void, unknown>; }' is missing the following properties from type 'ReadableStream<any>': locked, cancel, getReader, pipeThrough, and 3 more.",
-      },
-      {
-        code: 2769,
-        line: "fetch.ts:168:34",
-        message:
-          "No overload matches this call.\nOverload 1 of 3, '(input: string | Request | URL, init?: RequestInit | undefined): Promise<Response>', gave the following error.\nType 'SharedArrayBuffer' is not assignable to type 'BodyInit | null | undefined'.\nType 'SharedArrayBuffer' is missing the following properties from type 'ArrayBuffer': resizable, resize, detached, transfer, transferToFixedLength\nOverload 2 of 3, '(input: string | Request | URL, init?: BunFetchRequestInit | undefined): Promise<Response>', gave the following error.\nType 'SharedArrayBuffer' is not assignable to type 'BodyInit | null | undefined'.\nType 'SharedArrayBuffer' is missing the following properties from type 'ArrayBuffer': resizable, resize, detached, transfer, transferToFixedLength\nOverload 3 of 3, '(input: RequestInfo | URL, init?: RequestInit | undefined): Promise<Response>', gave the following error.\nType 'SharedArrayBuffer' is not assignable to type 'BodyInit | null | undefined'.\nType 'SharedArrayBuffer' is missing the following properties from type 'ArrayBuffer': resizable, resize, detached, transfer, transferToFixedLength",
-      },
-      {
-        code: 2353,
-        line: "globals.ts:307:5",
-        message: "Object literal may only specify known properties, and 'headers' does not exist in type 'string[]'.",
-      },
-      {
-        code: 2345,
-        line: "http.ts:43:24",
-        message:
-          "Argument of type '() => AsyncGenerator<Uint8Array<ArrayBuffer> | \"hey\", void, unknown>' is not assignable to parameter of type 'BodyInit | null | undefined'.",
-      },
-      {
-        code: 2345,
-        line: "http.ts:55:24",
-        message:
-          "Argument of type 'AsyncGenerator<Uint8Array<ArrayBuffer> | \"it works!\", void, unknown>' is not assignable to parameter of type 'BodyInit | null | undefined'.\nType 'AsyncGenerator<Uint8Array<ArrayBuffer> | \"it works!\", void, unknown>' is missing the following properties from type 'ReadableStream<any>': locked, cancel, getReader, pipeThrough, and 3 more.",
-      },
-      {
-        code: 2345,
-        line: "index.ts:196:14",
-        message:
-          "Argument of type 'AsyncGenerator<Uint8Array<ArrayBuffer>, void, unknown>' is not assignable to parameter of type 'BodyInit | null | undefined'.\nType 'AsyncGenerator<Uint8Array<ArrayBuffer>, void, unknown>' is missing the following properties from type 'ReadableStream<any>': locked, cancel, getReader, pipeThrough, and 3 more.",
-      },
-      {
-        code: 2345,
-        line: "index.ts:322:29",
-        message:
-          "Argument of type '{ headers: { \"x-bun\": string; }; }' is not assignable to parameter of type 'number'.",
-      },
-      {
-        code: 2339,
-        line: "spawn.ts:62:38",
-        message: "Property 'text' does not exist on type 'ReadableStream<Uint8Array<ArrayBuffer>>'.",
-      },
-      {
-        code: 2339,
-        line: "spawn.ts:107:38",
-        message: "Property 'text' does not exist on type 'ReadableStream<Uint8Array<ArrayBuffer>>'.",
-      },
-      {
-        "code": 2769,
-        "line": "streams.ts:18:3",
-        "message":
-          "No overload matches this call.\nOverload 1 of 3, '(underlyingSource: UnderlyingByteSource, strategy?: { highWaterMark?: number | undefined; } | undefined): ReadableStream<Uint8Array<ArrayBuffer>>', gave the following error.\nType '\"direct\"' is not assignable to type '\"bytes\"'.",
-      },
-      {
-        "code": 2339,
-        "line": "streams.ts:20:16",
-        "message": "Property 'write' does not exist on type 'ReadableByteStreamController'.",
-      },
-      {
-        "code": 2339,
-        "line": "streams.ts:46:19",
-        "message": "Property 'json' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
-      },
-      {
-        "code": 2339,
-        "line": "streams.ts:47:19",
-        "message": "Property 'bytes' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
-      },
-      {
-        "code": 2339,
-        "line": "streams.ts:48:19",
-        "message": "Property 'text' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
-      },
-      {
-        "code": 2339,
-        "line": "streams.ts:49:19",
-        "message": "Property 'blob' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
-      },
-      {
-        code: 2353,
-        line: "websocket.ts:25:5",
-        message: "Object literal may only specify known properties, and 'protocols' does not exist in type 'string[]'.",
-      },
-      {
-        code: 2353,
-        line: "websocket.ts:30:5",
-        message: "Object literal may only specify known properties, and 'protocol' does not exist in type 'string[]'.",
-      },
-      {
-        code: 2353,
-        line: "websocket.ts:35:5",
-        message: "Object literal may only specify known properties, and 'protocol' does not exist in type 'string[]'.",
-      },
-      {
-        code: 2353,
-        line: "websocket.ts:43:5",
-        message: "Object literal may only specify known properties, and 'headers' does not exist in type 'string[]'.",
-      },
-      {
-        code: 2353,
-        line: "websocket.ts:51:5",
-        message: "Object literal may only specify known properties, and 'protocols' does not exist in type 'string[]'.",
-      },
-      {
-        code: 2554,
-        line: "websocket.ts:185:29",
-        message: "Expected 2 arguments, but got 0.",
-      },
-      {
-        code: 2551,
-        line: "websocket.ts:192:17",
-        message: "Property 'URL' does not exist on type 'WebSocket'. Did you mean 'url'?",
-      },
-      {
-        code: 2322,
-        line: "websocket.ts:196:3",
-        message: "Type '\"nodebuffer\"' is not assignable to type 'BinaryType'.",
-      },
-      {
-        code: 2339,
-        line: "websocket.ts:242:6",
-        message: "Property 'ping' does not exist on type 'WebSocket'.",
-      },
-      {
-        code: 2339,
-        line: "websocket.ts:245:6",
-        message: "Property 'ping' does not exist on type 'WebSocket'.",
-      },
-      {
-        code: 2339,
-        line: "websocket.ts:249:6",
-        message: "Property 'ping' does not exist on type 'WebSocket'.",
-      },
-      {
-        code: 2339,
-        line: "websocket.ts:253:6",
-        message: "Property 'ping' does not exist on type 'WebSocket'.",
-      },
-      {
-        code: 2339,
-        line: "websocket.ts:256:6",
-        message: "Property 'pong' does not exist on type 'WebSocket'.",
-      },
-      {
-        code: 2339,
-        line: "websocket.ts:259:6",
-        message: "Property 'pong' does not exist on type 'WebSocket'.",
-      },
-      {
-        code: 2339,
-        line: "websocket.ts:263:6",
-        message: "Property 'pong' does not exist on type 'WebSocket'.",
-      },
-      {
-        code: 2339,
-        line: "websocket.ts:267:6",
-        message: "Property 'pong' does not exist on type 'WebSocket'.",
-      },
-      {
-        code: 2339,
-        line: "websocket.ts:270:6",
-        message: "Property 'terminate' does not exist on type 'WebSocket'.",
-      },
-      {
-        code: 2339,
-        line: "worker.ts:23:11",
-        message: "Property 'ref' does not exist on type 'Worker'.",
-      },
-      {
-        code: 2339,
-        line: "worker.ts:24:11",
-        message: "Property 'unref' does not exist on type 'Worker'.",
-      },
-      {
-        code: 2339,
-        line: "worker.ts:25:11",
-        message: "Property 'threadId' does not exist on type 'Worker'.",
-      },
-    ]);
+    test("checks with lib.dom.d.ts", async () => {
+      const { diagnostics, emptyInterfaces } = await diagnose(TEMP_FIXTURE_DIR, {
+        options: {
+          lib: ["ESNext", "DOM", "DOM.Iterable", "DOM.AsyncIterable"].map(name => `lib.${name.toLowerCase()}.d.ts`),
+        },
+      });
+
+      expect(emptyInterfaces).toEqual(
+        new Set([
+          "ThisType",
+          "RTCAnswerOptions",
+          "RTCOfferAnswerOptions",
+          "RTCSetParameterOptions",
+          "EXT_color_buffer_float",
+          "EXT_float_blend",
+          "EXT_frag_depth",
+          "EXT_shader_texture_lod",
+          "FragmentDirective",
+          "MediaSourceHandle",
+          "OES_element_index_uint",
+          "OES_fbo_render_mipmap",
+          "OES_texture_float",
+          "OES_texture_float_linear",
+          "OES_texture_half_float_linear",
+          "PeriodicWave",
+          "RTCRtpScriptTransform",
+          "WebGLBuffer",
+          "WebGLFramebuffer",
+          "WebGLProgram",
+          "WebGLQuery",
+          "WebGLRenderbuffer",
+          "WebGLSampler",
+          "WebGLShader",
+          "WebGLSync",
+          "WebGLTexture",
+          "WebGLTransformFeedback",
+          "WebGLUniformLocation",
+          "WebGLVertexArrayObject",
+          "WebGLVertexArrayObjectOES",
+        ]),
+      );
+      expect(diagnostics).toEqual([
+        {
+          code: 2322,
+          line: "24154.ts:11:3",
+          message:
+            "Type 'Blob' is not assignable to type 'import(\"node:buffer\").Blob'.\nThe types returned by 'stream()' are incompatible between these types.\nType 'ReadableStream<Uint8Array<ArrayBuffer>>' is missing the following properties from type 'ReadableStream<NonSharedUint8Array>': blob, text, bytes, json",
+        },
+        {
+          code: 2769,
+          line: "fetch.ts:25:32",
+          message:
+            "No overload matches this call.\nOverload 1 of 3, '(input: string | Request | URL, init?: RequestInit | undefined): Promise<Response>', gave the following error.\nType 'AsyncGenerator<\"chunk1\" | \"chunk2\", void, unknown>' is not assignable to type 'BodyInit | null | undefined'.\nType 'AsyncGenerator<\"chunk1\" | \"chunk2\", void, unknown>' is missing the following properties from type 'ReadableStream<any>': locked, cancel, getReader, pipeThrough, and 3 more.\nOverload 2 of 3, '(input: string | Request | URL, init?: BunFetchRequestInit | undefined): Promise<Response>', gave the following error.\nType 'AsyncGenerator<\"chunk1\" | \"chunk2\", void, unknown>' is not assignable to type 'BodyInit | null | undefined'.\nType 'AsyncGenerator<\"chunk1\" | \"chunk2\", void, unknown>' is missing the following properties from type 'ReadableStream<any>': locked, cancel, getReader, pipeThrough, and 3 more.\nOverload 3 of 3, '(input: RequestInfo | URL, init?: RequestInit | undefined): Promise<Response>', gave the following error.\nType 'AsyncGenerator<\"chunk1\" | \"chunk2\", void, unknown>' is not assignable to type 'BodyInit | null | undefined'.\nType 'AsyncGenerator<\"chunk1\" | \"chunk2\", void, unknown>' is missing the following properties from type 'ReadableStream<any>': locked, cancel, getReader, pipeThrough, and 3 more.",
+        },
+        {
+          code: 2769,
+          line: "fetch.ts:33:32",
+          message:
+            "No overload matches this call.\nOverload 1 of 3, '(input: string | Request | URL, init?: RequestInit | undefined): Promise<Response>', gave the following error.\nType '{ [Symbol.asyncIterator](): AsyncGenerator<\"data1\" | \"data2\", void, unknown>; }' is not assignable to type 'BodyInit | null | undefined'.\nType '{ [Symbol.asyncIterator](): AsyncGenerator<\"data1\" | \"data2\", void, unknown>; }' is missing the following properties from type 'ReadableStream<any>': locked, cancel, getReader, pipeThrough, and 3 more.\nOverload 2 of 3, '(input: string | Request | URL, init?: BunFetchRequestInit | undefined): Promise<Response>', gave the following error.\nType '{ [Symbol.asyncIterator](): AsyncGenerator<\"data1\" | \"data2\", void, unknown>; }' is not assignable to type 'BodyInit | null | undefined'.\nType '{ [Symbol.asyncIterator](): AsyncGenerator<\"data1\" | \"data2\", void, unknown>; }' is missing the following properties from type 'ReadableStream<any>': locked, cancel, getReader, pipeThrough, and 3 more.\nOverload 3 of 3, '(input: RequestInfo | URL, init?: RequestInit | undefined): Promise<Response>', gave the following error.\nType '{ [Symbol.asyncIterator](): AsyncGenerator<\"data1\" | \"data2\", void, unknown>; }' is not assignable to type 'BodyInit | null | undefined'.\nType '{ [Symbol.asyncIterator](): AsyncGenerator<\"data1\" | \"data2\", void, unknown>; }' is missing the following properties from type 'ReadableStream<any>': locked, cancel, getReader, pipeThrough, and 3 more.",
+        },
+        {
+          code: 2769,
+          line: "fetch.ts:168:34",
+          message:
+            "No overload matches this call.\nOverload 1 of 3, '(input: string | Request | URL, init?: RequestInit | undefined): Promise<Response>', gave the following error.\nType 'SharedArrayBuffer' is not assignable to type 'BodyInit | null | undefined'.\nType 'SharedArrayBuffer' is missing the following properties from type 'ArrayBuffer': resizable, resize, detached, transfer, transferToFixedLength\nOverload 2 of 3, '(input: string | Request | URL, init?: BunFetchRequestInit | undefined): Promise<Response>', gave the following error.\nType 'SharedArrayBuffer' is not assignable to type 'BodyInit | null | undefined'.\nType 'SharedArrayBuffer' is missing the following properties from type 'ArrayBuffer': resizable, resize, detached, transfer, transferToFixedLength\nOverload 3 of 3, '(input: RequestInfo | URL, init?: RequestInit | undefined): Promise<Response>', gave the following error.\nType 'SharedArrayBuffer' is not assignable to type 'BodyInit | null | undefined'.\nType 'SharedArrayBuffer' is missing the following properties from type 'ArrayBuffer': resizable, resize, detached, transfer, transferToFixedLength",
+        },
+        {
+          code: 2353,
+          line: "globals.ts:307:5",
+          message: "Object literal may only specify known properties, and 'headers' does not exist in type 'string[]'.",
+        },
+        {
+          code: 2345,
+          line: "http.ts:43:24",
+          message:
+            "Argument of type '() => AsyncGenerator<Uint8Array<ArrayBuffer> | \"hey\", void, unknown>' is not assignable to parameter of type 'BodyInit | null | undefined'.",
+        },
+        {
+          code: 2345,
+          line: "http.ts:55:24",
+          message:
+            "Argument of type 'AsyncGenerator<Uint8Array<ArrayBuffer> | \"it works!\", void, unknown>' is not assignable to parameter of type 'BodyInit | null | undefined'.\nType 'AsyncGenerator<Uint8Array<ArrayBuffer> | \"it works!\", void, unknown>' is missing the following properties from type 'ReadableStream<any>': locked, cancel, getReader, pipeThrough, and 3 more.",
+        },
+        {
+          code: 2345,
+          line: "index.ts:196:14",
+          message:
+            "Argument of type 'AsyncGenerator<Uint8Array<ArrayBuffer>, void, unknown>' is not assignable to parameter of type 'BodyInit | null | undefined'.\nType 'AsyncGenerator<Uint8Array<ArrayBuffer>, void, unknown>' is missing the following properties from type 'ReadableStream<any>': locked, cancel, getReader, pipeThrough, and 3 more.",
+        },
+        {
+          code: 2345,
+          line: "index.ts:322:29",
+          message:
+            "Argument of type '{ headers: { \"x-bun\": string; }; }' is not assignable to parameter of type 'number'.",
+        },
+        {
+          code: 2339,
+          line: "spawn.ts:62:38",
+          message: "Property 'text' does not exist on type 'ReadableStream<Uint8Array<ArrayBuffer>>'.",
+        },
+        {
+          code: 2339,
+          line: "spawn.ts:107:38",
+          message: "Property 'text' does not exist on type 'ReadableStream<Uint8Array<ArrayBuffer>>'.",
+        },
+        {
+          "code": 2769,
+          "line": "streams.ts:18:3",
+          "message":
+            "No overload matches this call.\nOverload 1 of 3, '(underlyingSource: UnderlyingByteSource, strategy?: { highWaterMark?: number | undefined; } | undefined): ReadableStream<Uint8Array<ArrayBuffer>>', gave the following error.\nType '\"direct\"' is not assignable to type '\"bytes\"'.",
+        },
+        {
+          "code": 2339,
+          "line": "streams.ts:20:16",
+          "message": "Property 'write' does not exist on type 'ReadableByteStreamController'.",
+        },
+        {
+          "code": 2339,
+          "line": "streams.ts:46:19",
+          "message": "Property 'json' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
+        },
+        {
+          "code": 2339,
+          "line": "streams.ts:47:19",
+          "message": "Property 'bytes' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
+        },
+        {
+          "code": 2339,
+          "line": "streams.ts:48:19",
+          "message": "Property 'text' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
+        },
+        {
+          "code": 2339,
+          "line": "streams.ts:49:19",
+          "message": "Property 'blob' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
+        },
+        {
+          code: 2345,
+          line: "streams.ts:63:66",
+          message: "Argument of type '\"brotli\"' is not assignable to parameter of type 'CompressionFormat'.",
+        },
+        {
+          code: 2345,
+          line: "streams.ts:63:113",
+          message: "Argument of type '\"brotli\"' is not assignable to parameter of type 'CompressionFormat'.",
+        },
+        {
+          code: 2345,
+          line: "streams.ts:64:66",
+          message: "Argument of type '\"zstd\"' is not assignable to parameter of type 'CompressionFormat'.",
+        },
+        {
+          code: 2345,
+          line: "streams.ts:64:111",
+          message: "Argument of type '\"zstd\"' is not assignable to parameter of type 'CompressionFormat'.",
+        },
+        {
+          code: 2353,
+          line: "websocket.ts:25:5",
+          message:
+            "Object literal may only specify known properties, and 'protocols' does not exist in type 'string[]'.",
+        },
+        {
+          code: 2353,
+          line: "websocket.ts:30:5",
+          message:
+            "Object literal may only specify known properties, and 'protocol' does not exist in type 'string[]'.",
+        },
+        {
+          code: 2353,
+          line: "websocket.ts:35:5",
+          message:
+            "Object literal may only specify known properties, and 'protocol' does not exist in type 'string[]'.",
+        },
+        {
+          code: 2353,
+          line: "websocket.ts:43:5",
+          message: "Object literal may only specify known properties, and 'headers' does not exist in type 'string[]'.",
+        },
+        {
+          code: 2353,
+          line: "websocket.ts:51:5",
+          message:
+            "Object literal may only specify known properties, and 'protocols' does not exist in type 'string[]'.",
+        },
+        {
+          code: 2554,
+          line: "websocket.ts:185:29",
+          message: "Expected 2 arguments, but got 0.",
+        },
+        {
+          code: 2551,
+          line: "websocket.ts:192:17",
+          message: "Property 'URL' does not exist on type 'WebSocket'. Did you mean 'url'?",
+        },
+        {
+          code: 2322,
+          line: "websocket.ts:196:3",
+          message: "Type '\"nodebuffer\"' is not assignable to type 'BinaryType'.",
+        },
+        {
+          code: 2339,
+          line: "websocket.ts:242:6",
+          message: "Property 'ping' does not exist on type 'WebSocket'.",
+        },
+        {
+          code: 2339,
+          line: "websocket.ts:245:6",
+          message: "Property 'ping' does not exist on type 'WebSocket'.",
+        },
+        {
+          code: 2339,
+          line: "websocket.ts:249:6",
+          message: "Property 'ping' does not exist on type 'WebSocket'.",
+        },
+        {
+          code: 2339,
+          line: "websocket.ts:253:6",
+          message: "Property 'ping' does not exist on type 'WebSocket'.",
+        },
+        {
+          code: 2339,
+          line: "websocket.ts:256:6",
+          message: "Property 'pong' does not exist on type 'WebSocket'.",
+        },
+        {
+          code: 2339,
+          line: "websocket.ts:259:6",
+          message: "Property 'pong' does not exist on type 'WebSocket'.",
+        },
+        {
+          code: 2339,
+          line: "websocket.ts:263:6",
+          message: "Property 'pong' does not exist on type 'WebSocket'.",
+        },
+        {
+          code: 2339,
+          line: "websocket.ts:267:6",
+          message: "Property 'pong' does not exist on type 'WebSocket'.",
+        },
+        {
+          code: 2339,
+          line: "websocket.ts:270:6",
+          message: "Property 'terminate' does not exist on type 'WebSocket'.",
+        },
+        {
+          code: 2339,
+          line: "worker.ts:23:11",
+          message: "Property 'ref' does not exist on type 'Worker'.",
+        },
+        {
+          code: 2339,
+          line: "worker.ts:24:11",
+          message: "Property 'unref' does not exist on type 'Worker'.",
+        },
+        {
+          code: 2339,
+          line: "worker.ts:25:11",
+          message: "Property 'threadId' does not exist on type 'Worker'.",
+        },
+      ]);
+    });
   });
 });

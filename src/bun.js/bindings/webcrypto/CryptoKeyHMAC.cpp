@@ -64,7 +64,7 @@ CryptoKeyHMAC::CryptoKeyHMAC(const Vector<uint8_t>& key, CryptoAlgorithmIdentifi
 CryptoKeyHMAC::CryptoKeyHMAC(Vector<uint8_t>&& key, CryptoAlgorithmIdentifier hash, bool extractable, CryptoKeyUsageBitmap usage)
     : CryptoKey(CryptoAlgorithmIdentifier::HMAC, CryptoKeyType::Secret, extractable, usage)
     , m_hash(hash)
-    , m_key(WTFMove(key))
+    , m_key(WTF::move(key))
 {
 }
 
@@ -102,7 +102,7 @@ RefPtr<CryptoKeyHMAC> CryptoKeyHMAC::importRaw(size_t lengthBits, CryptoAlgorith
     if (lengthBits && lengthBits != length)
         return nullptr;
 
-    return adoptRef(new CryptoKeyHMAC(WTFMove(keyData), hash, extractable, usages));
+    return adoptRef(new CryptoKeyHMAC(WTF::move(keyData), hash, extractable, usages));
 }
 
 RefPtr<CryptoKeyHMAC> CryptoKeyHMAC::importJwk(size_t lengthBits, CryptoAlgorithmIdentifier hash, JsonWebKey&& keyData, bool extractable, CryptoKeyUsageBitmap usages, CheckAlgCallback&& callback)
@@ -123,7 +123,7 @@ RefPtr<CryptoKeyHMAC> CryptoKeyHMAC::importJwk(size_t lengthBits, CryptoAlgorith
     if (keyData.ext && !keyData.ext.value() && extractable)
         return nullptr;
 
-    return CryptoKeyHMAC::importRaw(lengthBits, hash, WTFMove(*octetSequence), extractable, usages);
+    return CryptoKeyHMAC::importRaw(lengthBits, hash, WTF::move(*octetSequence), extractable, usages);
 }
 
 JsonWebKey CryptoKeyHMAC::exportJwk() const

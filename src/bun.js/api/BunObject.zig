@@ -16,6 +16,7 @@ pub const BunObject = struct {
     pub const connect = toJSCallback(host_fn.wrapStaticMethod(api.Listener, "connect", false));
     pub const createParsedShellScript = toJSCallback(bun.shell.ParsedShellScript.createParsedShellScript);
     pub const createShellInterpreter = toJSCallback(bun.shell.Interpreter.createShellInterpreter);
+    pub const traceShellScript = toJSCallback(bun.shell.TraceInterpreter.traceShellScript);
     pub const deflateSync = toJSCallback(JSZlib.deflateSync);
     pub const file = toJSCallback(WebCore.Blob.constructBunFile);
     pub const gunzipSync = toJSCallback(JSZlib.gunzipSync);
@@ -48,6 +49,7 @@ pub const BunObject = struct {
     // --- Callbacks ---
 
     // --- Lazy property callbacks ---
+    pub const Archive = toJSLazyPropertyCallback(Bun.getArchiveConstructor);
     pub const CryptoHasher = toJSLazyPropertyCallback(Crypto.CryptoHasher.getter);
     pub const CSRF = toJSLazyPropertyCallback(Bun.getCSRFObject);
     pub const FFI = toJSLazyPropertyCallback(Bun.FFIObject.getter);
@@ -61,6 +63,7 @@ pub const BunObject = struct {
     pub const SHA384 = toJSLazyPropertyCallback(Crypto.SHA384.getter);
     pub const SHA512 = toJSLazyPropertyCallback(Crypto.SHA512.getter);
     pub const SHA512_256 = toJSLazyPropertyCallback(Crypto.SHA512_256.getter);
+    pub const JSONC = toJSLazyPropertyCallback(Bun.getJSONCObject);
     pub const TOML = toJSLazyPropertyCallback(Bun.getTOMLObject);
     pub const YAML = toJSLazyPropertyCallback(Bun.getYAMLObject);
     pub const Transpiler = toJSLazyPropertyCallback(Bun.getTranspilerConstructor);
@@ -77,6 +80,7 @@ pub const BunObject = struct {
     pub const s3 = toJSLazyPropertyCallback(Bun.getS3DefaultClient);
     pub const ValkeyClient = toJSLazyPropertyCallback(Bun.getValkeyClientConstructor);
     pub const valkey = toJSLazyPropertyCallback(Bun.getValkeyDefaultClient);
+    pub const Terminal = toJSLazyPropertyCallback(Bun.getTerminalConstructor);
     // --- Lazy property callbacks ---
 
     // --- Getters ---
@@ -113,6 +117,7 @@ pub const BunObject = struct {
         }
 
         // --- Lazy property callbacks ---
+        @export(&BunObject.Archive, .{ .name = lazyPropertyCallbackName("Archive") });
         @export(&BunObject.CryptoHasher, .{ .name = lazyPropertyCallbackName("CryptoHasher") });
         @export(&BunObject.CSRF, .{ .name = lazyPropertyCallbackName("CSRF") });
         @export(&BunObject.FFI, .{ .name = lazyPropertyCallbackName("FFI") });
@@ -125,7 +130,7 @@ pub const BunObject = struct {
         @export(&BunObject.SHA384, .{ .name = lazyPropertyCallbackName("SHA384") });
         @export(&BunObject.SHA512, .{ .name = lazyPropertyCallbackName("SHA512") });
         @export(&BunObject.SHA512_256, .{ .name = lazyPropertyCallbackName("SHA512_256") });
-
+        @export(&BunObject.JSONC, .{ .name = lazyPropertyCallbackName("JSONC") });
         @export(&BunObject.TOML, .{ .name = lazyPropertyCallbackName("TOML") });
         @export(&BunObject.YAML, .{ .name = lazyPropertyCallbackName("YAML") });
         @export(&BunObject.Glob, .{ .name = lazyPropertyCallbackName("Glob") });
@@ -143,6 +148,7 @@ pub const BunObject = struct {
         @export(&BunObject.s3, .{ .name = lazyPropertyCallbackName("s3") });
         @export(&BunObject.ValkeyClient, .{ .name = lazyPropertyCallbackName("ValkeyClient") });
         @export(&BunObject.valkey, .{ .name = lazyPropertyCallbackName("valkey") });
+        @export(&BunObject.Terminal, .{ .name = lazyPropertyCallbackName("Terminal") });
         // --- Lazy property callbacks ---
 
         // --- Callbacks ---
@@ -152,6 +158,7 @@ pub const BunObject = struct {
         @export(&BunObject.connect, .{ .name = callbackName("connect") });
         @export(&BunObject.createParsedShellScript, .{ .name = callbackName("createParsedShellScript") });
         @export(&BunObject.createShellInterpreter, .{ .name = callbackName("createShellInterpreter") });
+        @export(&BunObject.traceShellScript, .{ .name = callbackName("traceShellScript") });
         @export(&BunObject.deflateSync, .{ .name = callbackName("deflateSync") });
         @export(&BunObject.file, .{ .name = callbackName("file") });
         @export(&BunObject.gunzipSync, .{ .name = callbackName("gunzipSync") });
@@ -508,10 +515,10 @@ export fn Bun__inspect_singleline(globalThis: *JSGlobalObject, value: JSValue) b
 }
 
 pub fn getInspect(globalObject: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
-    const fun = jsc.createCallback(globalObject, ZigString.static("inspect"), 2, inspect);
+    const fun = jsc.JSFunction.create(globalObject, "inspect", inspect, 2, .{});
     var str = ZigString.init("nodejs.util.inspect.custom");
     fun.put(globalObject, ZigString.static("custom"), jsc.JSValue.symbolFor(globalObject, &str));
-    fun.put(globalObject, ZigString.static("table"), jsc.createCallback(globalObject, ZigString.static("table"), 3, inspectTable));
+    fun.put(globalObject, ZigString.static("table"), jsc.JSFunction.create(globalObject, "table", inspectTable, 3, .{}));
     return fun;
 }
 
@@ -755,11 +762,9 @@ pub fn sleepSync(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
     return .js_undefined;
 }
 
-pub fn gc(vm: *jsc.VirtualMachine, sync: bool) usize {
-    return vm.garbageCollect(sync);
-}
+pub const gc = Bun__gc;
 export fn Bun__gc(vm: *jsc.VirtualMachine, sync: bool) callconv(.c) usize {
-    return @call(.always_inline, gc, .{ vm, sync });
+    return vm.garbageCollect(sync);
 }
 
 pub fn shrink(globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
@@ -948,13 +953,8 @@ pub fn indexOfLine(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
 
     var offset: usize = 0;
     if (arguments.len > 1) {
-        offset = @as(
-            usize,
-            @intCast(@max(
-                arguments[1].to(u32),
-                0,
-            )),
-        );
+        const offset_value = try arguments[1].coerce(i64, globalThis);
+        offset = @intCast(@max(offset_value, 0));
     }
 
     const bytes = buffer.byteSlice();
@@ -1219,11 +1219,19 @@ pub fn mmapFile(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.
         }
 
         if (try opts.get(globalThis, "size")) |value| {
-            map_size = @as(usize, @intCast(value.toInt64()));
+            const size_value = try value.coerceToInt64(globalThis);
+            if (size_value < 0) {
+                return globalThis.throwInvalidArguments("size must be a non-negative integer", .{});
+            }
+            map_size = @intCast(size_value);
         }
 
         if (try opts.get(globalThis, "offset")) |value| {
-            offset = @as(usize, @intCast(value.toInt64()));
+            const offset_value = try value.coerceToInt64(globalThis);
+            if (offset_value < 0) {
+                return globalThis.throwInvalidArguments("offset must be a non-negative integer", .{});
+            }
+            offset = @intCast(offset_value);
             offset = std.mem.alignBackwardAnyAlign(usize, offset, std.heap.pageSize());
         }
     }
@@ -1256,12 +1264,19 @@ pub fn getHashObject(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSVa
     return HashObject.create(globalThis);
 }
 
+pub fn getJSONCObject(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
+    return JSONCObject.create(globalThis);
+}
 pub fn getTOMLObject(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
     return TOMLObject.create(globalThis);
 }
 
 pub fn getYAMLObject(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
     return YAMLObject.create(globalThis);
+}
+
+pub fn getArchiveConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
+    return jsc.API.Archive.js.getConstructor(globalThis);
 }
 
 pub fn getGlobConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
@@ -1312,6 +1327,10 @@ pub fn getValkeyDefaultClient(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject)
 
 pub fn getValkeyClientConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
     return jsc.API.Valkey.js.getConstructor(globalThis);
+}
+
+pub fn getTerminalConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
+    return api.Terminal.js.getConstructor(globalThis);
 }
 
 pub fn getEmbeddedFiles(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) bun.JSError!jsc.JSValue {
@@ -1377,13 +1396,13 @@ const CSRFObject = struct {
         object.put(
             globalThis,
             ZigString.static("generate"),
-            jsc.createCallback(globalThis, ZigString.static("generate"), 1, @import("../../csrf.zig").csrf__generate),
+            jsc.JSFunction.create(globalThis, "generate", @import("../../csrf.zig").csrf__generate, 1, .{}),
         );
 
         object.put(
             globalThis,
             ZigString.static("verify"),
-            jsc.createCallback(globalThis, ZigString.static("verify"), 1, @import("../../csrf.zig").csrf__verify),
+            jsc.JSFunction.create(globalThis, "verify", @import("../../csrf.zig").csrf__verify, 1, .{}),
         );
 
         return object;
@@ -2049,6 +2068,7 @@ const gen = bun.gen.BunObject;
 const api = bun.api;
 const FFIObject = bun.api.FFIObject;
 const HashObject = bun.api.HashObject;
+const JSONCObject = bun.api.JSONCObject;
 const TOMLObject = bun.api.TOMLObject;
 const UnsafeObject = bun.api.UnsafeObject;
 const YAMLObject = bun.api.YAMLObject;

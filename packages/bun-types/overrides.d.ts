@@ -23,16 +23,6 @@ interface BunConsumerConvenienceMethods {
    * Consume as JSON
    */
   json(): Promise<any>;
-
-  /**
-   * Consume as a FormData instance
-   */
-  formData(): Promise<FormData>;
-
-  /**
-   * Consume as an ArrayBuffer
-   */
-  arrayBuffer(): Promise<ArrayBuffer>;
 }
 
 declare module "stream/web" {
@@ -51,6 +41,21 @@ declare module "buffer" {
     // slightly different from just "copying in the methods" (the difference is
     // related to how type parameters are resolved)
     bytes(): Promise<Uint8Array<ArrayBuffer>>;
+
+    /**
+     * Consume the blob as a FormData instance
+     */
+    formData(): Promise<FormData>;
+
+    /**
+     * Consume the blob as an ArrayBuffer
+     */
+    arrayBuffer(): Promise<ArrayBuffer>;
+
+    /**
+     * Returns a readable stream of the blob's contents
+     */
+    stream(): ReadableStream<Uint8Array<ArrayBuffer>>;
   }
 }
 
@@ -81,7 +86,7 @@ declare global {
       reallyExit(code?: number): never;
       dlopen(module: { exports: any }, filename: string, flags?: number): void;
       _exiting: boolean;
-      noDeprecation: boolean;
+      noDeprecation?: boolean | undefined;
 
       binding(m: "constants"): {
         os: typeof import("node:os").constants;
@@ -303,11 +308,11 @@ declare global {
   }
 }
 
-declare module "fs/promises" {
+declare module "node:fs/promises" {
   function exists(path: Bun.PathLike): Promise<boolean>;
 }
 
-declare module "tls" {
+declare module "node:tls" {
   interface BunConnectionOptions extends Omit<ConnectionOptions, "key" | "ca" | "tls" | "cert"> {
     /**
      * Optionally override the trusted CA certificates. Default is to trust
@@ -353,4 +358,19 @@ declare module "tls" {
   }
 
   function connect(options: BunConnectionOptions, secureConnectListener?: () => void): TLSSocket;
+}
+
+declare module "console" {
+  interface Console {
+    /**
+     * Asynchronously read lines from standard input (fd 0)
+     *
+     * ```ts
+     * for await (const line of console) {
+     *   console.log(line);
+     * }
+     * ```
+     */
+    [Symbol.asyncIterator](): AsyncIterableIterator<string>;
+  }
 }

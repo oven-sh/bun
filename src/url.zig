@@ -815,6 +815,20 @@ pub const PercentEncoding = struct {
         return @call(bun.callmod_inline, decodeFaultTolerant, .{ Writer, writer, input, null, false });
     }
 
+    /// Decode percent-encoded input into allocated memory.
+    /// Caller owns the returned slice and must free it with the same allocator.
+    pub fn decodeAlloc(allocator: std.mem.Allocator, input: string) ![]u8 {
+        // Allocate enough space - decoded will be at most input.len bytes
+        const buf = try allocator.alloc(u8, input.len);
+        errdefer allocator.free(buf);
+
+        var stream = std.io.fixedBufferStream(buf);
+        const writer = stream.writer();
+        const len = try decode(@TypeOf(writer), writer, input);
+
+        return buf[0..len];
+    }
+
     pub fn decodeFaultTolerant(
         comptime Writer: type,
         writer: Writer,
@@ -984,7 +998,12 @@ pub const FormData = struct {
         switch (encoding) {
             .URLEncoded => {
                 var str = jsc.ZigString.fromUTF8(strings.withoutUTF8BOM(input));
-                return jsc.DOMFormData.createFromURLQuery(globalThis, &str);
+                const result = jsc.DOMFormData.createFromURLQuery(globalThis, &str);
+                // Check if an exception was thrown (e.g., string too long)
+                if (result == .zero) {
+                    return error.JSError;
+                }
+                return result;
             },
             .Multipart => |boundary| return toJSFromMultipartData(globalThis, input, boundary),
         }
@@ -1041,7 +1060,11 @@ pub const FormData = struct {
             return globalThis.throwInvalidArguments("input must be a string or ArrayBufferView", .{});
         }
 
-        return FormData.toJS(globalThis, input, encoding) catch |err| return globalThis.throwError(err, "while parsing FormData");
+        return FormData.toJS(globalThis, input, encoding) catch |err| {
+            if (err == error.JSError) return error.JSError;
+            if (err == error.JSTerminated) return error.JSTerminated;
+            return globalThis.throwError(err, "while parsing FormData");
+        };
     }
 
     comptime {

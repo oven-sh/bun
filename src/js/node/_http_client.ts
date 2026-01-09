@@ -354,25 +354,64 @@ function setupChunkResolverExecutor(self, resolve) {
   self[kResolveNextChunk] = resolveNextChunkCallback.bind(null, self, resolve);
 }
 
-// Module-scope async body generator
-async function* bodyIteratorClientRequest(self) {
-  while (self[kBodyChunks]?.length > 0) {
-    yield self[kBodyChunks].shift();
-  }
+// Module-scope ReadableStream factory for request body
+function bodyStreamClientRequest(self) {
+  return new ReadableStream({
+    async pull(controller) {
+      while (self[kBodyChunks]?.length > 0) {
+        controller.enqueue(self[kBodyChunks].shift());
+      }
 
-  if (self[kBodyChunks]?.length === 0) {
-    self.emit("drain");
-  }
+      if (self[kBodyChunks]?.length === 0) {
+        self.emit("drain");
+      }
 
-  while (!self.finished) {
-    yield new Promise(setupChunkResolverExecutor.bind(null, self));
+      if (self.finished) {
+        self[kHandleResponse]?.();
+        controller.close();
+        return;
+      }
 
-    if (self[kBodyChunks]?.length === 0) {
-      self.emit("drain");
-    }
-  }
+      const chunk = await new Promise(setupChunkResolverExecutor.bind(null, self));
+      if (chunk !== null) {
+        controller.enqueue(chunk);
+      }
 
-  self[kHandleResponse]?.();
+      if (self[kBodyChunks]?.length === 0) {
+        self.emit("drain");
+      }
+
+      if (self.finished) {
+        self[kHandleResponse]?.();
+        controller.close();
+      }
+    },
+  });
+}
+
+// Module-scope ReadableStream factory for upgrade body
+function upgradeBodyStreamClientRequest(upgradedPromise) {
+  let socketIter: AsyncIterator<any> | null = null;
+
+  return new ReadableStream({
+    async pull(controller) {
+      if (!socketIter) {
+        const socket = await upgradedPromise;
+        if (!socket) {
+          controller.close();
+          return;
+        }
+        socketIter = socket[kWrappedSocketWritable]()[Symbol.asyncIterator]();
+      }
+
+      const { value, done } = await socketIter.next();
+      if (done) {
+        controller.close();
+      } else {
+        controller.enqueue(value);
+      }
+    },
+  });
 }
 
 // Helper functions for startFetch
@@ -447,25 +486,12 @@ function goClientRequest(
   if (isUpgradeFromHeader) {
     const { promise: upgradedPromise, resolve } = Promise.withResolvers<WrappedSocket | null>();
     upgradedResponse = resolve;
-    fetchOptions.body = async function* () {
-      const socket = await upgradedPromise;
-      if (socket) {
-        const iter = socket[kWrappedSocketWritable]();
-        for await (const value of iter) {
-          yield value;
-        }
-      }
-    };
+    fetchOptions.body = upgradeBodyStreamClientRequest(upgradedPromise);
   } else if (method !== "GET" && method !== "HEAD" && method !== "OPTIONS") {
     if (customBody !== undefined) {
       fetchOptions.body = customBody;
     } else if (isDuplex) {
-      // Must use inline generator because fetch requires calling a generator function.
-      // This closure only captures `self`, not the entire constructor scope.
-      // All mutable state is stored in symbol properties on `self`.
-      fetchOptions.body = async function* () {
-        yield* bodyIteratorClientRequest(self);
-      };
+      fetchOptions.body = bodyStreamClientRequest(self);
     }
   }
 

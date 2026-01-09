@@ -32,6 +32,7 @@
 #include <wtf/HashMap.h>
 #include <wtf/CheckedRef.h>
 #include <wtf/Lock.h>
+#include <wtf/ThreadSafeWeakPtr.h>
 
 namespace WebCore {
 
@@ -52,13 +53,13 @@ public:
     WEBCORE_EXPORT void takeAllMessagesForPort(const MessagePortIdentifier&, CompletionHandler<void(Vector<MessageWithMessagePorts>&&, CompletionHandler<void()>&&)>&&);
     WEBCORE_EXPORT std::optional<MessageWithMessagePorts> tryTakeMessageForPort(const MessagePortIdentifier&);
 
-    WEBCORE_EXPORT MessagePortChannel* existingChannelContainingPort(const MessagePortIdentifier&);
+    WEBCORE_EXPORT RefPtr<MessagePortChannel> existingChannelContainingPort(const MessagePortIdentifier&);
 
     WEBCORE_EXPORT void messagePortChannelCreated(MessagePortChannel&);
     WEBCORE_EXPORT void messagePortChannelDestroyed(MessagePortChannel&);
 
 private:
-    UncheckedKeyHashMap<MessagePortIdentifier, WeakRef<MessagePortChannel>> m_openChannels WTF_GUARDED_BY_LOCK(m_lock);
+    UncheckedKeyHashMap<MessagePortIdentifier, ThreadSafeWeakPtr<MessagePortChannel>> m_openChannels WTF_GUARDED_BY_LOCK(m_lock);
     Lock m_lock;
 };
 

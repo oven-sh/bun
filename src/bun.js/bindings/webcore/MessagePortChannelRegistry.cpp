@@ -60,13 +60,13 @@ void MessagePortChannelRegistry::messagePortChannelCreated(MessagePortChannel& c
 
     Locker locker { m_lock };
 
-    // When a channel is destroyed, its WeakRef becomes null but the map entry may still exist.
+    // When a channel is destroyed, its ThreadSafeWeakPtr becomes null but the map entry may still exist.
     // Clean up any stale entries before adding new channels with the same port identifiers.
-    auto existingChannel1 = m_openChannels.get(channel.port1());
+    RefPtr existingChannel1 = m_openChannels.get(channel.port1()).get();
     if (!existingChannel1)
         m_openChannels.remove(channel.port1());
 
-    auto existingChannel2 = m_openChannels.get(channel.port2());
+    RefPtr existingChannel2 = m_openChannels.get(channel.port2()).get();
     if (!existingChannel2)
         m_openChannels.remove(channel.port2());
 
@@ -84,16 +84,16 @@ void MessagePortChannelRegistry::messagePortChannelDestroyed(MessagePortChannel&
     Locker locker { m_lock };
 
     // The channel might have already been removed from m_openChannels if both ports
-    // were closed in quick succession from different threads. With WeakRef, the entries
+    // were closed in quick succession from different threads. With ThreadSafeWeakPtr, the entries
     // may still exist but point to null, or may have been removed entirely.
     // We defensively remove the entries without asserting they match.
-    auto* existingChannel1 = m_openChannels.get(channel.port1());
-    auto* existingChannel2 = m_openChannels.get(channel.port2());
+    RefPtr existingChannel1 = m_openChannels.get(channel.port1()).get();
+    RefPtr existingChannel2 = m_openChannels.get(channel.port2()).get();
 
     // Only remove if the entry points to this channel (or is null/stale)
-    if (!existingChannel1 || existingChannel1 == &channel)
+    if (!existingChannel1 || existingChannel1.get() == &channel)
         m_openChannels.remove(channel.port1());
-    if (!existingChannel2 || existingChannel2 == &channel)
+    if (!existingChannel2 || existingChannel2.get() == &channel)
         m_openChannels.remove(channel.port2());
 
     // LOG(MessagePorts, "Registry: After removing channel %s there are %u channels left in the registry:", channel.logString().utf8().data(), m_openChannels.size());
@@ -107,7 +107,7 @@ void MessagePortChannelRegistry::didEntangleLocalToRemote(const MessagePortIdent
     RefPtr<MessagePortChannel> channel;
     {
         Locker locker { m_lock };
-        channel = m_openChannels.get(local);
+        channel = m_openChannels.get(local).get();
     }
 
     if (!channel)
@@ -126,7 +126,7 @@ void MessagePortChannelRegistry::didDisentangleMessagePort(const MessagePortIden
     RefPtr<MessagePortChannel> channel;
     {
         Locker locker { m_lock };
-        channel = m_openChannels.get(port);
+        channel = m_openChannels.get(port).get();
     }
 
     if (channel)
@@ -142,7 +142,7 @@ void MessagePortChannelRegistry::didCloseMessagePort(const MessagePortIdentifier
     RefPtr<MessagePortChannel> channel;
     {
         Locker locker { m_lock };
-        channel = m_openChannels.get(port);
+        channel = m_openChannels.get(port).get();
     }
 
     if (!channel)
@@ -169,7 +169,7 @@ bool MessagePortChannelRegistry::didPostMessageToRemote(MessageWithMessagePorts&
     RefPtr<MessagePortChannel> channel;
     {
         Locker locker { m_lock };
-        channel = m_openChannels.get(remoteTarget);
+        channel = m_openChannels.get(remoteTarget).get();
     }
 
     if (!channel) {
@@ -188,7 +188,7 @@ void MessagePortChannelRegistry::takeAllMessagesForPort(const MessagePortIdentif
     RefPtr<MessagePortChannel> channel;
     {
         Locker locker { m_lock };
-        channel = m_openChannels.get(port);
+        channel = m_openChannels.get(port).get();
     }
 
     if (!channel) {
@@ -209,7 +209,7 @@ std::optional<MessageWithMessagePorts> MessagePortChannelRegistry::tryTakeMessag
     RefPtr<MessagePortChannel> channel;
     {
         Locker locker { m_lock };
-        channel = m_openChannels.get(port);
+        channel = m_openChannels.get(port).get();
     }
 
     if (!channel)
@@ -218,12 +218,12 @@ std::optional<MessageWithMessagePorts> MessagePortChannelRegistry::tryTakeMessag
     return channel->tryTakeMessageForPort(port);
 }
 
-MessagePortChannel* MessagePortChannelRegistry::existingChannelContainingPort(const MessagePortIdentifier& port)
+RefPtr<MessagePortChannel> MessagePortChannelRegistry::existingChannelContainingPort(const MessagePortIdentifier& port)
 {
     // ASSERT(isMainThread());
 
     Locker locker { m_lock };
-    return m_openChannels.get(port);
+    return m_openChannels.get(port).get();
 }
 
 } // namespace WebCore

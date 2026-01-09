@@ -32,14 +32,15 @@
 #include <wtf/HashSet.h>
 #include <wtf/RefCounted.h>
 #include <wtf/text/WTFString.h>
-#include <wtf/RefCountedAndCanMakeWeakPtr.h>
+#include <wtf/ThreadSafeRefCounted.h>
+#include <wtf/ThreadSafeWeakPtr.h>
 #include <wtf/Lock.h>
 
 namespace WebCore {
 
 class MessagePortChannelRegistry;
 
-class MessagePortChannel : public RefCountedAndCanMakeWeakPtr<MessagePortChannel> {
+class MessagePortChannel : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<MessagePortChannel> {
 public:
     static Ref<MessagePortChannel> create(MessagePortChannelRegistry&, const MessagePortIdentifier& port1, const MessagePortIdentifier& port2);
 

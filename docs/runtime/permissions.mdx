@@ -15,11 +15,20 @@ By default, Bun allows all operations for backwards compatibility. Use `--secure
 # Default mode: everything is allowed
 bun script.js
 
-# Secure mode: permissions are denied by default
+# Secure mode: may prompt for permissions interactively
 bun --secure script.js
+
+# Secure mode without prompts: always deny unless explicitly allowed
+bun --secure --no-prompt script.js
 ```
 
-In secure mode, operations like file I/O, network access, and subprocess spawning will throw a `PermissionDenied` error unless explicitly granted. The error includes details about the denied permission type and the resource that was accessed.
+In secure mode, operations like file I/O, network access, and subprocess spawning require permission. By default, the user may be prompted interactively. With `--no-prompt`, operations throw an error unless explicitly granted.
+
+When permission is denied, the error message includes details about what's needed:
+
+```
+PermissionDenied: Requires read access to "/path/to/file", run with --allow-read
+```
 
 <Note>
 The `--allow-*` and `--deny-*` flags only take effect when `--secure` is specified. Without `--secure`, all operations are allowed regardless of permission flags.
@@ -82,6 +91,11 @@ bun --secure --allow-read=./src,./config,/tmp script.js
 # Allow writing only to ./dist
 bun --secure --allow-read --allow-write=./dist build.js
 ```
+
+Path matching notes:
+- Directory prefix matching: `--allow-read=/tmp` allows access to `/tmp/foo/bar`
+- Basename matching: `--deny-read=.env` blocks any file named `.env` in any directory
+- Both `/` and `\` separators are supported on Windows
 
 ### Network
 
@@ -231,9 +245,13 @@ The `prompt` state only exists when `--secure` is used without `--no-prompt`. In
 // System info
 { name: "sys", kind: "hostname" }
 
-// FFI
+// FFI (CLI supports --allow-ffi=<path>, but JS API is unscoped)
 { name: "ffi" }
 ```
+
+<Note>
+FFI permissions can be scoped to specific library paths via CLI (`--allow-ffi=/path/to/lib.so`), but the JavaScript API only supports unscoped FFI queries.
+</Note>
 
 ---
 

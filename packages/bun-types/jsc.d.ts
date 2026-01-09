@@ -9,6 +9,7 @@ declare module "bun:jsc" {
   function edenGC(): number;
   function heapSize(): number;
   function heapStats(): HeapStats;
+  function heapSpaceStats(): HeapSpaceStatistics[];
   function memoryUsage(): MemoryUsage;
   function getRandomSeed(): number;
   function setRandomSeed(value: number): void;
@@ -72,6 +73,15 @@ declare module "bun:jsc" {
     protectedGlobalObjectCount: number;
     objectTypeCounts: Record<string, number>;
     protectedObjectTypeCounts: Record<string, number>;
+  }
+
+  //https://bun.com/reference/node/v8/HeapSpaceStatistics
+  interface HeapSpaceStatistics {
+    spaceName: string;
+    spaceSize: number;
+    spaceUsedSize: number;
+    spaceAvailableSize: number;
+    physicalSpaceSize: number;
   }
 
   interface MemoryUsage {

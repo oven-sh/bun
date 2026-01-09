@@ -670,7 +670,7 @@ pub const StandaloneModuleGraph = struct {
                                 if (!tried_changing_abs_dir) {
                                     tried_changing_abs_dir = true;
                                     const zname_z = bun.strings.concat(bun.default_allocator, &.{
-                                        bun.fs.FileSystem.instance.fs.tmpdirPath(),
+                                        bun.fs.FileSystem.RealFS.tmpdirPath(),
                                         std.fs.path.sep_str,
                                         zname,
                                         &.{0},
@@ -1213,7 +1213,7 @@ pub const StandaloneModuleGraph = struct {
             }
         }
 
-        if (read_amount < trailer.len + @sizeOf(usize) + 32)
+        if (read_amount < trailer.len + @sizeOf(usize) + @sizeOf(Offsets))
             // definitely missing data
             return null;
 

@@ -522,13 +522,14 @@ pub fn isKeepAlivePossible(this: *HTTPClient) bool {
     if (comptime FeatureFlags.enable_keepalive) {
         // TODO keepalive for unix sockets
         if (this.unix_socket_path.length() > 0) return false;
-        // is not possible to reuse Proxy with TSL, so disable keepalive if url is tunneling HTTPS
+
+        // is not possible to reuse Proxy with TLS, so disable keepalive if url is tunneling HTTPS
         if (this.proxy_tunnel != null or (this.http_proxy != null and this.url.isHTTPS())) {
             log("Keep-Alive release (proxy tunneling https)", .{});
             return false;
         }
 
-        //check state
+        // check state
         if (this.state.flags.allow_keepalive and !this.flags.disable_keepalive) return true;
     }
     return false;
@@ -1290,7 +1291,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                         this.setTimeout(socket, 5);
 
                         const to_send = this.state.request_body;
-                        const sent = proxy.writeData(to_send) catch return; // just wait and retry when onWritable! if closed internally will call proxy.onClose
+                        const sent = proxy.write(to_send) catch return; // just wait and retry when onWritable! if closed internally will call proxy.onClose
 
                         this.state.request_sent_len += sent;
                         this.state.request_body = this.state.request_body[sent..];
@@ -1345,7 +1346,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                     assert(!socket.isShutdown());
                     assert(!socket.isClosed());
                 }
-                const amount = proxy.writeData(to_send) catch return; // just wait and retry when onWritable! if closed internally will call proxy.onClose
+                const amount = proxy.write(to_send) catch return; // just wait and retry when onWritable! if closed internally will call proxy.onClose
 
                 if (comptime is_first_call) {
                     if (amount == 0) {
@@ -1605,7 +1606,7 @@ pub fn onData(
     if (this.proxy_tunnel) |proxy| {
         // if we have a tunnel we dont care about the other stages, we will just tunnel the data
         this.setTimeout(socket, 5);
-        proxy.receiveData(incoming_data);
+        proxy.receive(incoming_data);
         return;
     }
 
@@ -2338,11 +2339,17 @@ pub fn handleResponseMetadata(
             return ShouldContinue.continue_streaming;
         }
 
-        //proxy denied connection so return proxy result (407, 403 etc)
+        // proxy denied connection so return proxy result (407, 403 etc)
         this.flags.proxy_tunneling = false;
+        this.flags.disable_keepalive = true;
     }
 
     const status_code = response.status_code;
+
+    if (status_code == 407) {
+        // If the request is being proxied and passes through the 407 status code, then let's also not do HTTP Keep-Alive.
+        this.flags.disable_keepalive = true;
+    }
 
     // if is no redirect or if is redirect == "manual" just proceed
     const is_redirect = status_code >= 300 and status_code <= 399;

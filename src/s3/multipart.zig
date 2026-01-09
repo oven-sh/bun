@@ -105,6 +105,7 @@ pub const MultiPartUpload = struct {
     options: MultiPartUploadOptions = .{},
     acl: ?ACL = null,
     storage_class: ?Storageclass = null,
+    request_payer: bool = false,
     credentials: *S3Credentials,
     poll_ref: bun.Async.KeepAlive = bun.Async.KeepAlive.init(),
     vm: *jsc.VirtualMachine,
@@ -239,6 +240,7 @@ pub const MultiPartUpload = struct {
                 .proxy_url = this.ctx.proxyUrl(),
                 .body = this.data,
                 .search_params = search_params,
+                .request_payer = this.ctx.request_payer,
             }, .{ .part = @ptrCast(&onPartResponse) }, this);
         }
         pub fn start(this: *@This()) bun.JSTerminated!void {
@@ -310,6 +312,7 @@ pub const MultiPartUpload = struct {
                         .content_disposition = this.content_disposition,
                         .acl = this.acl,
                         .storage_class = this.storage_class,
+                        .request_payer = this.request_payer,
                     }, .{ .upload = @ptrCast(&singleSendUploadResponse) }, this);
 
                     return;
@@ -565,6 +568,7 @@ pub const MultiPartUpload = struct {
             .proxy_url = this.proxyUrl(),
             .body = this.multipart_upload_list.slice(),
             .search_params = searchParams,
+            .request_payer = this.request_payer,
         }, .{ .commit = @ptrCast(&onCommitMultiPartRequest) }, this);
     }
     fn rollbackMultiPartRequest(this: *@This()) bun.JSTerminated!void {
@@ -580,6 +584,7 @@ pub const MultiPartUpload = struct {
             .proxy_url = this.proxyUrl(),
             .body = "",
             .search_params = search_params,
+            .request_payer = this.request_payer,
         }, .{ .upload = @ptrCast(&onRollbackMultiPartRequest) }, this);
     }
     fn enqueuePart(this: *@This(), chunk: []const u8, allocated_size: usize, needs_clone: bool) bun.JSTerminated!bool {
@@ -599,6 +604,7 @@ pub const MultiPartUpload = struct {
                 .content_disposition = this.content_disposition,
                 .acl = this.acl,
                 .storage_class = this.storage_class,
+                .request_payer = this.request_payer,
             }, .{ .download = @ptrCast(&startMultiPartRequestResult) }, this);
         } else if (this.state == .multipart_completed) {
             try part.start();
@@ -676,6 +682,7 @@ pub const MultiPartUpload = struct {
                 .content_disposition = this.content_disposition,
                 .acl = this.acl,
                 .storage_class = this.storage_class,
+                .request_payer = this.request_payer,
             }, .{ .upload = @ptrCast(&singleSendUploadResponse) }, this) catch {}; // TODO: properly propagate exception upwards
         } else {
             // we need to split

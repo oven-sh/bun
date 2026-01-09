@@ -11,7 +11,7 @@ pub fn createBinding(globalObject: *jsc.JSGlobalObject) JSValue {
     binding.put(
         globalObject,
         ZigString.static("createConnection"),
-        jsc.JSFunction.create(globalObject, "createQuery", PostgresSQLConnection.call, 2, .{}),
+        jsc.JSFunction.create(globalObject, "createConnection", PostgresSQLConnection.call, 2, .{}),
     );
 
     return binding;

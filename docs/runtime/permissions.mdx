@@ -1,0 +1,259 @@
+---
+title: Permissions
+description: Control what resources your code can access with Bun's permissions model
+---
+
+Bun includes a permissions model that lets you control what resources your code can access. This is useful for running untrusted code or hardening production applications.
+
+---
+
+## Security modes
+
+By default, Bun allows all operations for backwards compatibility. Use `--secure` to enable the security sandbox:
+
+```bash terminal icon="terminal"
+# Default mode: everything is allowed
+bun script.js
+
+# Secure mode: permissions are denied by default
+bun --secure script.js
+```
+
+In secure mode, operations like file I/O, network access, and subprocess spawning will throw a `PermissionDenied` error unless explicitly granted.
+
+---
+
+## Granting permissions
+
+Use `--allow-*` flags to grant specific permissions:
+
+```bash terminal icon="terminal"
+# Allow reading files
+bun --secure --allow-read script.js
+
+# Allow network access
+bun --secure --allow-net script.js
+
+# Allow multiple permission types
+bun --secure --allow-read --allow-net --allow-env script.js
+```
+
+To grant all permissions at once, use `-A` or `--allow-all`:
+
+```bash terminal icon="terminal"
+bun --secure -A script.js
+```
+
+---
+
+## Permission types
+
+| Permission | Flag | Description |
+|------------|------|-------------|
+| File Read | `--allow-read` | Read files and directories |
+| File Write | `--allow-write` | Write, create, or delete files |
+| Network | `--allow-net` | Make network requests and listen on ports |
+| Environment | `--allow-env` | Access environment variables |
+| Subprocess | `--allow-run` | Spawn child processes |
+| FFI | `--allow-ffi` | Load native libraries |
+| System Info | `--allow-sys` | Access system information |
+
+---
+
+## Granular permissions
+
+Each permission can be scoped to specific resources.
+
+### File system
+
+Restrict file access to specific paths:
+
+```bash terminal icon="terminal"
+# Allow reading only from ./src
+bun --secure --allow-read=./src script.js
+
+# Allow reading from multiple paths
+bun --secure --allow-read=./src,./config,/tmp script.js
+
+# Allow writing only to ./dist
+bun --secure --allow-read --allow-write=./dist build.js
+```
+
+### Network
+
+Restrict network access to specific hosts:
+
+```bash terminal icon="terminal"
+# Allow only api.example.com
+bun --secure --allow-net=api.example.com script.js
+
+# Allow localhost on any port
+bun --secure --allow-net=localhost script.js
+
+# Allow specific port
+bun --secure --allow-net=localhost:3000 script.js
+
+# Allow port range
+bun --secure --allow-net=localhost:3000-4000 script.js
+```
+
+#### Network wildcards
+
+Use wildcards to match multiple hosts:
+
+```bash terminal icon="terminal"
+# Single-segment wildcard: matches one subdomain level
+bun --secure --allow-net="*.example.com" script.js
+# Matches: api.example.com, www.example.com
+# Does NOT match: api.v2.example.com
+
+# Multi-segment wildcard: matches multiple subdomain levels
+bun --secure --allow-net="**.example.com" script.js
+# Matches: api.example.com, api.v2.example.com, a.b.c.example.com
+```
+
+### Environment variables
+
+Restrict access to specific variables:
+
+```bash terminal icon="terminal"
+# Allow only DATABASE_URL
+bun --secure --allow-env=DATABASE_URL script.js
+
+# Allow multiple variables
+bun --secure --allow-env=DATABASE_URL,API_KEY,NODE_ENV script.js
+
+# Allow variables matching a prefix
+bun --secure --allow-env=AWS_* script.js
+```
+
+### Subprocesses
+
+Restrict which commands can be spawned:
+
+```bash terminal icon="terminal"
+# Allow only git
+bun --secure --allow-run=git script.js
+
+# Allow multiple commands
+bun --secure --allow-run=git,npm,node script.js
+```
+
+---
+
+## Denying permissions
+
+Use `--deny-*` flags to explicitly block access, even when a broader permission is granted:
+
+```bash terminal icon="terminal"
+# Allow reading everything except .env files
+bun --secure --allow-read --deny-read=.env script.js
+
+# Allow network except internal hosts
+bun --secure --allow-net --deny-net=*.internal.corp script.js
+```
+
+Deny rules take precedence over allow rules.
+
+---
+
+## JavaScript API
+
+Query and manage permissions at runtime using `Bun.permissions`:
+
+```ts
+// Check permission state
+const status = Bun.permissions.querySync({ name: "read", path: "/tmp" });
+console.log(status.state); // "granted" | "denied" | "prompt"
+
+// Async query
+const netStatus = await Bun.permissions.query({
+  name: "net",
+  host: "example.com"
+});
+```
+
+### Permission descriptors
+
+```ts
+// File system
+{ name: "read", path: "/path/to/file" }
+{ name: "write", path: "/path/to/dir" }
+
+// Network
+{ name: "net", host: "example.com" }
+{ name: "net", host: "example.com:443" }
+
+// Environment
+{ name: "env", variable: "DATABASE_URL" }
+
+// Subprocess
+{ name: "run", command: "git" }
+
+// System info
+{ name: "sys", kind: "hostname" }
+
+// FFI
+{ name: "ffi" }
+```
+
+---
+
+## Examples
+
+### Web server
+
+```bash terminal icon="terminal"
+bun --secure \
+  --allow-read=./public,./views \
+  --allow-net=localhost:3000 \
+  --allow-env=PORT,NODE_ENV \
+  server.js
+```
+
+### API client
+
+```bash terminal icon="terminal"
+bun --secure \
+  --allow-net="https://*.api.example.com" \
+  --allow-env=API_KEY \
+  client.js
+```
+
+### Build script
+
+```bash terminal icon="terminal"
+bun --secure \
+  --allow-read=./src \
+  --allow-write=./dist \
+  --allow-run=esbuild,tsc \
+  --allow-env=NODE_ENV \
+  build.js
+```
+
+---
+
+## Workers
+
+Workers inherit permissions from their parent. If the main script has `--allow-read`, workers spawned from it also have read access.
+
+```ts
+// main.ts - run with: bun --secure --allow-read main.ts
+const worker = new Worker(new URL("./worker.ts", import.meta.url));
+// worker.ts automatically has --allow-read permission
+```
+
+---
+
+## Security model
+
+Bun's permissions follow a fail-closed design:
+
+- **Deny by default**: In `--secure` mode, all sensitive operations are denied unless explicitly allowed
+- **Deny takes precedence**: `--deny-*` rules override `--allow-*` rules
+- **Path matching**: `/tmp` allows access to `/tmp/foo/bar` (directory prefix matching)
+- **Invalid patterns fail closed**: Malformed permission patterns result in denied access
+
+<Note>
+Without the `--secure` flag, Bun runs in permissive mode for backwards compatibility. All operations are allowed by default.
+</Note>

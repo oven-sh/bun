@@ -160,6 +160,8 @@ namespace uWS
         std::map<std::string, unsigned short, std::less<>> *currentParameterOffsets = nullptr;
 
     public:
+        /* For CONNECT requests, this is any data pipelined after the headers */
+        std::string_view connectHead;
         bool isAncient()
         {
             return ancientHttp;
@@ -883,6 +885,8 @@ namespace uWS
             /* If returned socket is not what we put in we need
              * to break here as we either have upgraded to
              * WebSockets or otherwise closed the socket. */
+            /* For CONNECT requests, store the remaining data as the connect head */
+            req->connectHead = isConnectRequest ? std::string_view(data, length) : std::string_view();
             void *returnedUser = requestHandler(user, req);
             if (returnedUser != user) {
                 /* We are upgraded to WebSocket or otherwise broken */
@@ -928,9 +932,13 @@ namespace uWS
                     consumedTotal += emittable;
                 }
             } else if(isConnectRequest) {
-                // This only server to mark that the connect request read all headers
-                // and can starting emitting data
+                // This only serves to mark that the connect request read all headers
+                // and can start emitting data. Don't try to parse remaining data as HTTP -
+                // it's pipelined data that we've already captured in req->connectHead.
                 remainingStreamingBytes = STATE_IS_CHUNKED;
+                // Mark remaining data as consumed and break - it's not HTTP
+                consumedTotal += length;
+                break;
             } else {
                 /* If we came here without a body; emit an empty data chunk to signal no data */
                 dataHandler(user, {}, true);

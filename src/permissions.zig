@@ -255,13 +255,16 @@ fn matchesPattern(resource: []const u8, pattern: []const u8) bool {
         }
     }
 
-    // Directory prefix match for paths (e.g., "/foo" allows "/foo/bar")
+    // Directory prefix match for paths (e.g., "/foo" allows "/foo/bar", "/tmp/" allows "/tmp/foo")
     // Pattern must be a directory prefix of resource
-    if (pattern.len > 0 and (pattern[0] == '/' or pattern[0] == '.')) {
-        if (resource.len > pattern.len) {
-            if (std.mem.startsWith(u8, resource, pattern)) {
+    // Handle both POSIX (/...) and Windows (C:\...) absolute paths
+    if (pattern.len > 0 and (pattern[0] == '/' or pattern[0] == '.' or isWindowsDrivePath(pattern))) {
+        // Strip trailing separators from pattern for consistent matching
+        const trimmed_pattern = std.mem.trimRight(u8, pattern, "/\\");
+        if (resource.len > trimmed_pattern.len) {
+            if (std.mem.startsWith(u8, resource, trimmed_pattern)) {
                 // Check for path separator after pattern
-                if (resource[pattern.len] == '/' or resource[pattern.len] == '\\') {
+                if (resource[trimmed_pattern.len] == '/' or resource[trimmed_pattern.len] == '\\') {
                     return true;
                 }
             }
@@ -280,19 +283,46 @@ fn matchesPattern(resource: []const u8, pattern: []const u8) bool {
     }
 
     // Command basename matching for run permissions
-    // Pattern "cmd" matches "/usr/bin/cmd" or any path ending in "/cmd"
+    // Pattern "cmd" matches "/usr/bin/cmd" or "C:\bin\cmd.exe"
     // Only if pattern doesn't contain path separators
     if (std.mem.indexOfScalar(u8, pattern, '/') == null and
         std.mem.indexOfScalar(u8, pattern, '\\') == null)
     {
-        if (std.mem.lastIndexOfScalar(u8, resource, '/')) |last_slash| {
-            const basename = resource[last_slash + 1 ..];
+        // Find the last path separator (either / or \)
+        const last_sep_pos = blk: {
+            const last_slash = std.mem.lastIndexOfScalar(u8, resource, '/');
+            const last_backslash = std.mem.lastIndexOfScalar(u8, resource, '\\');
+            if (last_slash) |s| {
+                if (last_backslash) |b| {
+                    break :blk @max(s, b);
+                }
+                break :blk s;
+            }
+            break :blk last_backslash;
+        };
+        if (last_sep_pos) |pos| {
+            const basename = resource[pos + 1 ..];
             if (std.mem.eql(u8, basename, pattern)) {
                 return true;
             }
         }
     }
 
+    return false;
+}
+
+/// Check if a path is a Windows drive-letter absolute path (e.g., "C:\..." or "D:/...")
+fn isWindowsDrivePath(path: []const u8) bool {
+    if (path.len < 2) return false;
+    // Check for drive letter followed by colon
+    const first = path[0];
+    if ((first >= 'A' and first <= 'Z') or (first >= 'a' and first <= 'z')) {
+        if (path[1] == ':') {
+            // Optional check for separator after colon
+            if (path.len == 2) return true;
+            return path[2] == '/' or path[2] == '\\';
+        }
+    }
     return false;
 }
 
@@ -844,6 +874,44 @@ test "network wildcard - backward compatibility" {
 test "network wildcard - case insensitive" {
     try std.testing.expect(matchesPattern("API.Example.COM", "*.example.com"));
     try std.testing.expect(matchesPattern("api.example.com", "*.EXAMPLE.COM"));
+}
+
+test "path matching - trailing separator" {
+    // Pattern with trailing slash should match files in that directory
+    try std.testing.expect(matchesPattern("/tmp/foo", "/tmp/"));
+    try std.testing.expect(matchesPattern("/tmp/foo/bar", "/tmp/"));
+    // Pattern without trailing slash should also work
+    try std.testing.expect(matchesPattern("/tmp/foo", "/tmp"));
+    // Exact match should still work
+    try std.testing.expect(matchesPattern("/tmp/", "/tmp/"));
+}
+
+test "path matching - Windows drive paths" {
+    // Windows absolute paths
+    try std.testing.expect(matchesPattern("C:\\foo\\bar", "C:\\foo"));
+    try std.testing.expect(matchesPattern("C:\\foo\\bar\\baz", "C:\\foo"));
+    // With trailing backslash
+    try std.testing.expect(matchesPattern("C:\\foo\\bar", "C:\\foo\\"));
+    // Mixed separators (Windows allows both)
+    try std.testing.expect(matchesPattern("C:/foo/bar", "C:/foo"));
+}
+
+test "path matching - Windows basename" {
+    // Pattern without path separators should match Windows paths
+    try std.testing.expect(matchesPattern("C:\\Windows\\System32\\cmd.exe", "cmd.exe"));
+    try std.testing.expect(matchesPattern("D:\\bin\\node.exe", "node.exe"));
+    // POSIX paths should still work
+    try std.testing.expect(matchesPattern("/usr/bin/node", "node"));
+}
+
+test "isWindowsDrivePath" {
+    try std.testing.expect(isWindowsDrivePath("C:\\foo"));
+    try std.testing.expect(isWindowsDrivePath("D:/bar"));
+    try std.testing.expect(isWindowsDrivePath("c:\\lowercase"));
+    try std.testing.expect(isWindowsDrivePath("Z:\\"));
+    try std.testing.expect(!isWindowsDrivePath("/unix/path"));
+    try std.testing.expect(!isWindowsDrivePath("relative/path"));
+    try std.testing.expect(!isWindowsDrivePath("C")); // Too short
 }
 
 const bun = @import("bun");

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
 describe("Granular permissions", () => {
   describe.concurrent("env wildcards", () => {
@@ -101,7 +101,7 @@ describe("Granular permissions", () => {
       expect(exitCode).toBe(0);
     });
 
-    test("--allow-run=echo,ls allows both commands", async () => {
+    test.skipIf(isWindows)("--allow-run=echo,ls allows both commands", async () => {
       using dir = tempDir("perm-run-multi", {
         "test.ts": `
           const r1 = Bun.spawnSync(["echo", "hello"]);

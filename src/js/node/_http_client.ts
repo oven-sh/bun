@@ -1,5 +1,4 @@
 const { isIP, isIPv6 } = require("internal/net/isIP");
-
 const { checkIsHttpToken, validateFunction, validateInteger, validateBoolean } = require("internal/validators");
 const { urlToHttpOptions } = require("internal/url");
 const { isValidTLSArray } = require("internal/tls");
@@ -268,7 +267,7 @@ function ClientRequest(input, options, cb) {
     const method = this[kMethod];
 
     let keepalive = true;
-    const agentKeepalive = this[kAgent]?.keepAlive;
+    const agentKeepalive = this[kAgent]?.keepalive;
     if (agentKeepalive !== undefined) {
       keepalive = agentKeepalive;
     }
@@ -313,31 +312,60 @@ function ClientRequest(input, options, cb) {
         decompress: false,
         keepalive,
       };
+      const upgradeHeader = fetchOptions?.headers?.upgrade;
+      const isUpgrade = typeof upgradeHeader === "string" && upgradeHeader !== "h2" && upgradeHeader !== "h2c";
       let keepOpen = false;
       // no body and not finished
-      const isDuplex = customBody === undefined && !this.finished;
+      const isDuplex = isUpgrade || (customBody === undefined && !this.finished);
 
       if (isDuplex) {
         fetchOptions.duplex = "half";
         keepOpen = true;
       }
 
-      if (method !== "GET" && method !== "HEAD" && method !== "OPTIONS") {
+      let upgradedResponse: ((socket: any) => void) | undefined = undefined;
+      let kWrappedSocketWritable: symbol | undefined;
+      if (isUpgrade) {
+        const { promise: upgradedPromise, resolve } = Promise.withResolvers<any>();
+        upgradedResponse = resolve;
+        let socketIter: AsyncIterator<any> | null = null;
+        fetchOptions.body = new ReadableStream({
+          async pull(controller) {
+            if (!socketIter) {
+              const socket = await upgradedPromise;
+              if (!socket) {
+                controller.close();
+                return;
+              }
+              socketIter = socket[kWrappedSocketWritable!]()[Symbol.asyncIterator]();
+            }
+            const { value, done } = await socketIter!.next();
+            if (done) {
+              controller.close();
+            } else {
+              controller.enqueue(value);
+            }
+          },
+        });
+      } else if (method !== "GET" && method !== "HEAD" && method !== "OPTIONS") {
         const self = this;
         if (customBody !== undefined) {
           fetchOptions.body = customBody;
         } else if (isDuplex) {
-          fetchOptions.body = async function* () {
-            while (self[kBodyChunks]?.length > 0) {
-              yield self[kBodyChunks].shift();
-            }
-
-            if (self[kBodyChunks]?.length === 0) {
-              self.emit("drain");
-            }
-
-            while (!self.finished) {
-              yield await new Promise(resolve => {
+          fetchOptions.body = new ReadableStream({
+            async pull(controller) {
+              while (self[kBodyChunks]?.length > 0) {
+                controller.enqueue(self[kBodyChunks].shift());
+              }
+              if (self[kBodyChunks]?.length === 0) {
+                self.emit("drain");
+              }
+              if (self.finished) {
+                handleResponse?.();
+                controller.close();
+                return;
+              }
+              const chunk = await new Promise<any>(resolve => {
                 resolveNextChunk = end => {
                   resolveNextChunk = undefined;
                   if (end) {
@@ -347,14 +375,18 @@ function ClientRequest(input, options, cb) {
                   }
                 };
               });
-
+              if (chunk !== null && chunk !== undefined) {
+                controller.enqueue(chunk);
+              }
               if (self[kBodyChunks]?.length === 0) {
                 self.emit("drain");
               }
-            }
-
-            handleResponse?.();
-          };
+              if (self.finished) {
+                handleResponse?.();
+                controller.close();
+              }
+            },
+          });
         }
       }
 
@@ -379,6 +411,7 @@ function ClientRequest(input, options, cb) {
       //@ts-ignore
       this[kFetchRequest] = fetch(url, fetchOptions).then(response => {
         if (this.aborted) {
+          upgradedResponse?.(null);
           maybeEmitClose();
           return;
         }
@@ -423,6 +456,21 @@ function ClientRequest(input, options, cb) {
                 return;
               }
               try {
+                if (isUpgrade) {
+                  if (response.status === 101) {
+                    const {
+                      WrappedSocket,
+                      kWrappedSocketWritable: kSymbol,
+                    } = require("internal/http/WrappedUpgradeSocket");
+                    kWrappedSocketWritable = kSymbol;
+                    const socket = new WrappedSocket(response.body, res, maybeEmitClose);
+                    upgradedResponse!(socket);
+                    this.socket = socket;
+                    this.emit("upgrade", res, socket, Buffer.alloc(0));
+                    return;
+                  }
+                  upgradedResponse!(null);
+                }
                 if (self.aborted || !self.emit("response", res)) {
                   res._dump();
                 }

@@ -59,7 +59,7 @@ const sendHelper = $newZigFunction("node_cluster_binding.zig", "sendHelperChild"
 const kServerResponse = Symbol("ServerResponse");
 const kRejectNonStandardBodyWrites = Symbol("kRejectNonStandardBodyWrites");
 const GlobalPromise = globalThis.Promise;
-const kEmptyBuffer = Buffer.alloc(0);
+
 const ObjectKeys = Object.keys;
 const MathMin = Math.min;
 
@@ -537,7 +537,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             socket[kEnableStreaming](true);
             const { promise, resolve } = $newPromiseCapability(Promise);
             socket.once("close", resolve);
-            server.emit("connect", http_req, socket, kEmptyBuffer);
+            server.emit("connect", http_req, socket, Buffer.alloc(0));
             return promise;
           } else {
             // Node.js will close the socket and will NOT respond with 400 Bad Request
@@ -599,7 +599,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           http_res.end();
           socket.destroy();
         } else if (is_upgrade) {
-          server.emit("upgrade", http_req, socket, kEmptyBuffer);
+          server.emit("upgrade", http_req, socket, Buffer.alloc(0));
           if (!socket._httpMessage) {
             if (canUseInternalAssignSocket) {
               // ~10% performance improvement in JavaScriptCore due to avoiding .once("close", ...) and removing a listener

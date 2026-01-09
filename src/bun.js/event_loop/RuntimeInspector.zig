@@ -3,16 +3,24 @@
 /// Activates the inspector/debugger at runtime via `process._debugProcess(pid)`.
 ///
 /// On POSIX (macOS/Linux):
-///   - Dedicated thread waits for SIGUSR1 using sigwait()
-///   - When signal arrives, sets atomic flag and wakes event loop
-///   - Main thread checks flag on event loop tick and activates inspector
+///   - A "SignalInspector" thread sleeps on a semaphore
+///   - SIGUSR1 handler runs on the main thread but in signal context (only
+///     async-signal-safe functions allowed), posts to the semaphore
+///   - SignalInspector thread wakes in normal context, fires JSC debugger trap
+///   - Main thread checks flag on next tick and activates the inspector
 ///   - Usage: `kill -USR1 <pid>` to start debugger
 ///
 /// On Windows:
 ///   - Uses named file mapping mechanism (same as Node.js)
 ///   - Creates "bun-debug-handler-<pid>" shared memory with function pointer
 ///   - External tools use CreateRemoteThread() to call that function
+///   - The remote thread is already in normal context, so can call JSC APIs directly
 ///   - Usage: `process._debugProcess(pid)` from another Bun/Node process
+///
+/// Why a dedicated thread? Signal handlers can only call async-signal-safe functions.
+/// JSC's notifyNeedDebuggerBreak() is NOT async-signal-safe. The dedicated thread
+/// provides a normal execution context from which we can safely call JSC APIs.
+/// This is the same approach Node.js uses (see inspector_agent.cc).
 ///
 const RuntimeInspector = @This();
 
@@ -28,12 +36,18 @@ const inspector_port = "6499";
 var installed: std.atomic.Value(bool) = std.atomic.Value(bool).init(false);
 var inspector_activation_requested: std.atomic.Value(bool) = std.atomic.Value(bool).init(false);
 
+/// Called from the dedicated SignalInspector thread (POSIX) or remote thread (Windows).
+/// This runs in normal thread context, so it's safe to call JSC APIs.
 fn requestInspectorActivation() void {
-    // Note: This function may be called from signal handler context on POSIX,
-    // so we must only use async-signal-safe operations here.
     const vm = VirtualMachine.getMainThreadVM() orelse return;
 
     inspector_activation_requested.store(true, .release);
+
+    // Fire a JSC trap to interrupt JavaScript execution, even in infinite loops.
+    // Safe to call from another thread (see VMTraps.h in JSC).
+    vm.jsc_vm.notifyNeedDebuggerBreak();
+
+    // Also wake the event loop in case JS is waiting on I/O
     vm.eventLoop().wakeup();
 }
 
@@ -86,31 +100,55 @@ pub fn isInstalled() bool {
 }
 
 const posix = if (Environment.isPosix) struct {
+    var semaphore: ?Semaphore = null;
+    var thread: ?std.Thread = null;
+
     fn signalHandler(_: c_int) callconv(.c) void {
-        // This handler runs in signal context, so we can only do async-signal-safe operations.
-        // Set the atomic flag and wake the event loop.
-        requestInspectorActivation();
+        // Signal handlers can only call async-signal-safe functions.
+        // Semaphore.post() is async-signal-safe (uses Mach semaphores on macOS,
+        // POSIX semaphores on Linux).
+        if (semaphore) |sem| _ = sem.post();
+    }
+
+    /// Dedicated thread that waits on the semaphore.
+    /// When woken, it calls requestInspectorActivation() in normal thread context.
+    fn signalInspectorThread() void {
+        Output.Source.configureNamedThread("SignalInspector");
+
+        while (true) {
+            _ = semaphore.?.wait();
+            log("SignalInspector thread woke, activating inspector", .{});
+            requestInspectorActivation();
+        }
     }
 
     fn install() bool {
-        // Install a signal handler for SIGUSR1. This approach works regardless of
-        // which threads have SIGUSR1 blocked, because the handler runs in the
-        // context of whichever thread receives the signal.
+        semaphore = Semaphore.init() orelse {
+            log("semaphore init failed", .{});
+            return false;
+        };
+
+        // Spawn the SignalInspector thread
+        thread = std.Thread.spawn(.{
+            .stack_size = 512 * 1024,
+        }, signalInspectorThread, .{}) catch |err| {
+            log("thread spawn failed: {s}", .{@errorName(err)});
+            return false;
+        };
+
+        // Install SIGUSR1 handler
         var act: std.posix.Sigaction = .{
             .handler = .{ .handler = signalHandler },
             .mask = std.posix.sigemptyset(),
             .flags = std.posix.SA.RESTART,
         };
-
         std.posix.sigaction(std.posix.SIG.USR1, &act, null);
         return true;
     }
 
     fn uninstall() void {
-        // Note: We do NOT restore the previous signal handler here.
-        // This function is called when a user adds their own SIGUSR1 handler,
-        // and BunProcess.cpp has already set up the user's handler via sigaction().
-        // Restoring the previous handler would overwrite the user's handler.
+        // Don't restore signal handler - user handler has already been installed.
+        // The SignalInspector thread keeps running but won't receive any more wakeups.
     }
 } else struct {};
 
@@ -292,6 +330,7 @@ const std = @import("std");
 const bun = @import("bun");
 const Environment = bun.Environment;
 const Output = bun.Output;
+const Semaphore = @import("../../sync/Semaphore.zig");
 
 const jsc = bun.jsc;
 const Debugger = jsc.Debugger;

@@ -283,11 +283,79 @@ fn getRequiredPermission(comptime function_name: NodeFSFunctionEnum) ?struct { k
 }
 
 /// Check permission for a filesystem operation
-/// TODO: Implement granular path-based permission checks
 fn checkFsPermission(comptime function_name: NodeFSFunctionEnum, globalObject: *jsc.JSGlobalObject, args: anytype) bun.JSError!void {
-    _ = function_name;
-    _ = globalObject;
-    _ = args;
-    // FS permission checks are deferred for now due to complexity of path extraction
-    // Other permission types (env, net, sys, run, ffi) are checked elsewhere
+    const ArgsType = @TypeOf(args);
+
+    // Get the required permission for this operation
+    const required = comptime getRequiredPermission(function_name);
+    if (comptime required == null) {
+        return;
+    }
+
+    // If this is an FD-based operation, we can't easily check permissions
+    // because we'd need to track which FD was opened with which permissions
+    if (comptime !required.?.needs_path) {
+        return;
+    }
+
+    // Extract the path from the arguments
+    const path_slice: ?[]const u8 = blk: {
+        // Different argument types have different field names for the path
+        if (comptime @hasField(ArgsType, "path")) {
+            const path_field = args.path;
+            if (@TypeOf(path_field) == node.PathOrFileDescriptor) {
+                // PathOrFileDescriptor can be a path or file descriptor
+                if (path_field == .path) {
+                    break :blk path_field.path.slice();
+                }
+                // File descriptor - can't easily check permissions
+                break :blk null;
+            } else {
+                // PathLike or optional PathLike
+                if (@typeInfo(@TypeOf(path_field)) == .optional) {
+                    if (path_field) |p| {
+                        break :blk p.slice();
+                    }
+                    break :blk null;
+                } else {
+                    break :blk path_field.slice();
+                }
+            }
+        } else if (comptime @hasField(ArgsType, "file")) {
+            const file_field = args.file;
+            if (@TypeOf(file_field) == node.PathOrFileDescriptor) {
+                if (file_field == .path) {
+                    break :blk file_field.path.slice();
+                }
+                break :blk null;
+            }
+        }
+        break :blk null;
+    };
+
+    // If we couldn't extract a path (e.g., FD-based operation), skip check
+    if (path_slice == null) {
+        return;
+    }
+
+    // Resolve relative paths to absolute paths
+    const resolved_path: []const u8 = brk: {
+        const path = path_slice.?;
+        // If it's already an absolute path, use it directly
+        if (bun.path.Platform.auto.isAbsolute(path)) {
+            break :brk path;
+        }
+        // Otherwise, resolve it relative to the cwd
+        const cwd = globalObject.bunVM().transpiler.fs.top_level_dir;
+        break :brk bun.path.joinAbsStringBuf(cwd, &path_resolve_buf, &.{path}, .auto);
+    };
+
+    // Check the permission
+    switch (required.?.kind) {
+        .read => try permission_check.requireRead(globalObject, resolved_path),
+        .write => try permission_check.requireWrite(globalObject, resolved_path),
+        else => {},
+    }
 }
+
+threadlocal var path_resolve_buf: [bun.MAX_PATH_BYTES]u8 = undefined;

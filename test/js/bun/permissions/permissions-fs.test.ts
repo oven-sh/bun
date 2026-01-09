@@ -1,10 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
-// Note: FS permission checks are deferred due to complexity of path extraction from arguments.
-// These tests are skipped until granular FS permissions are implemented.
 describe("File system permissions", () => {
-  test.skip("fs.readFile denied in secure mode without --allow-read", async () => {
+  test("fs.readFile denied in secure mode without --allow-read", async () => {
     using dir = tempDir("perm-fs-test", {
       "test.ts": `
         import { readFileSync } from "fs";
@@ -55,7 +53,7 @@ describe("File system permissions", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.skip("fs.writeFile denied in secure mode without --allow-write", async () => {
+  test("fs.writeFile denied in secure mode without --allow-write", async () => {
     using dir = tempDir("perm-fs-write-test", {
       "test.ts": `
         import { writeFileSync } from "fs";
@@ -131,6 +129,7 @@ describe("File system permissions", () => {
     expect(exitCode).toBe(0);
   });
 
+  // TODO: Enable once --deny-* CLI flags are implemented
   test.skip("--deny-read takes precedence over --allow-read", async () => {
     using dir = tempDir("perm-fs-deny", {
       "test.ts": `

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 describe("Bun.permissions API", () => {
   test("Bun.permissions.query returns permission status", async () => {
@@ -61,10 +62,33 @@ describe("Bun.permissions API", () => {
     expect(status.state).toBeDefined();
   });
 
+  // Run revoke test in child process to avoid affecting other tests
   test("Bun.permissions.revoke returns denied status", async () => {
-    const status = await Bun.permissions.revoke({ name: "read", path: "/nonexistent/path/for/test" });
-    expect(status).toBeDefined();
-    // After revoke, the permission should be denied
-    expect(status.state).toBe("denied");
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const status = await Bun.permissions.revoke({ name: "read", path: "/nonexistent/path/for/test" });
+        if (!status) {
+          console.error("status is undefined");
+          process.exit(1);
+        }
+        if (status.state !== "denied") {
+          console.error("expected denied, got", status.state);
+          process.exit(1);
+        }
+        console.log("success");
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout.trim()).toBe("success");
+    expect(exitCode).toBe(0);
   });
 });

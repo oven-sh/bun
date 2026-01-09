@@ -59,14 +59,8 @@ fn Bindings(comptime function_name: NodeFSFunctionEnum) type {
                 return .zero;
             }
 
-            // Check permissions before executing the operation
-            if (comptime Arguments != void) {
-                checkFsPermission(function_name, globalObject, args) catch |err| {
-                    deinit = true;
-                    return err;
-                };
-            }
-
+            // Check abort signal before permissions to avoid surfacing permission errors
+            // for already-aborted operations (prevents leaking permission state info)
             const have_abort_signal = @hasField(Arguments, "signal");
             if (have_abort_signal) check_early_abort: {
                 const signal = args.signal orelse break :check_early_abort;
@@ -74,6 +68,14 @@ fn Bindings(comptime function_name: NodeFSFunctionEnum) type {
                     deinit = true;
                     return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalObject, reason.toJS(globalObject));
                 }
+            }
+
+            // Check permissions before executing the operation
+            if (comptime Arguments != void) {
+                checkFsPermission(function_name, globalObject, args) catch |err| {
+                    deinit = true;
+                    return err;
+                };
             }
 
             const Task = @field(node.fs.Async, @tagName(function_name));

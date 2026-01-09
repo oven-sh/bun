@@ -22,6 +22,7 @@ describe.concurrent("Network permission wildcards", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+      expect(stderr).toBe(""); // Verify no errors
       expect(stdout.trim()).toBe("granted");
       expect(exitCode).toBe(0);
     });
@@ -45,6 +46,7 @@ describe.concurrent("Network permission wildcards", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+      expect(stderr).toBe(""); // Verify no errors
       expect(stdout.trim()).toBe("denied");
       expect(exitCode).toBe(0);
     });
@@ -68,6 +70,7 @@ describe.concurrent("Network permission wildcards", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+      expect(stderr).toBe(""); // Verify no errors
       expect(stdout.trim()).toBe("denied");
       expect(exitCode).toBe(0);
     });
@@ -91,6 +94,7 @@ describe.concurrent("Network permission wildcards", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+      expect(stderr).toBe(""); // Verify no errors
       expect(stdout.trim()).toBe("granted");
       expect(exitCode).toBe(0);
     });
@@ -116,6 +120,7 @@ describe.concurrent("Network permission wildcards", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+      expect(stderr).toBe(""); // Verify no errors
       expect(stdout.trim()).toBe("granted");
       expect(exitCode).toBe(0);
     });
@@ -139,6 +144,7 @@ describe.concurrent("Network permission wildcards", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+      expect(stderr).toBe(""); // Verify no errors
       expect(stdout.trim()).toBe("granted");
       expect(exitCode).toBe(0);
     });
@@ -162,6 +168,7 @@ describe.concurrent("Network permission wildcards", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+      expect(stderr).toBe(""); // Verify no errors
       expect(stdout.trim()).toBe("denied");
       expect(exitCode).toBe(0);
     });
@@ -189,6 +196,7 @@ describe.concurrent("Network permission wildcards", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+      expect(stderr).toBe(""); // Verify no errors
       expect(stdout.trim()).toBe("granted granted granted");
       expect(exitCode).toBe(0);
     });
@@ -213,6 +221,7 @@ describe.concurrent("Network permission wildcards", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+      expect(stderr).toBe(""); // Verify no errors
       expect(stdout.trim()).toBe("granted denied");
       expect(exitCode).toBe(0);
     });
@@ -238,6 +247,7 @@ describe.concurrent("Network permission wildcards", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+      expect(stderr).toBe(""); // Verify no errors
       expect(stdout.trim()).toBe("granted granted denied");
       expect(exitCode).toBe(0);
     });
@@ -265,6 +275,7 @@ describe.concurrent("Network permission wildcards", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+      expect(stderr).toBe(""); // Verify no errors
       expect(stdout.trim()).toBe("granted granted granted denied denied");
       expect(exitCode).toBe(0);
     });
@@ -290,6 +301,7 @@ describe.concurrent("Network permission wildcards", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+      expect(stderr).toBe(""); // Verify no errors
       expect(stdout.trim()).toBe("granted");
       expect(exitCode).toBe(0);
     });
@@ -313,6 +325,7 @@ describe.concurrent("Network permission wildcards", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+      expect(stderr).toBe(""); // Verify no errors
       expect(stdout.trim()).toBe("granted");
       expect(exitCode).toBe(0);
     });
@@ -340,6 +353,7 @@ describe.concurrent("Network permission wildcards", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+      expect(stderr).toBe(""); // Verify no errors
       expect(stdout.trim()).toBe("granted denied denied");
       expect(exitCode).toBe(0);
     });
@@ -364,6 +378,7 @@ describe.concurrent("Network permission wildcards", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+      expect(stderr).toBe(""); // Verify no errors
       expect(stdout.trim()).toBe("granted granted");
       expect(exitCode).toBe(0);
     });
@@ -392,6 +407,7 @@ describe.concurrent("Network permission wildcards", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+      expect(stderr).toBe(""); // Verify no errors
       expect(stdout.trim()).toBe("granted granted granted denied");
       expect(exitCode).toBe(0);
     });
@@ -417,6 +433,7 @@ describe.concurrent("Network permission wildcards", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+      expect(stderr).toBe(""); // Verify no errors
       expect(stdout.trim()).toBe("granted granted denied");
       expect(exitCode).toBe(0);
     });
@@ -443,6 +460,7 @@ describe.concurrent("Network permission wildcards", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+      expect(stderr).toBe(""); // Verify no errors
       expect(stdout.trim()).toBe("granted granted");
       expect(exitCode).toBe(0);
     });
@@ -467,6 +485,7 @@ describe.concurrent("Network permission wildcards", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+      expect(stderr).toBe(""); // Verify no errors
       expect(stdout.trim()).toBe("granted denied");
       expect(exitCode).toBe(0);
     });
@@ -496,6 +515,7 @@ describe.concurrent("Network permission wildcards", () => {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       // *.com matches exactly one segment before .com
+      expect(stderr).toBe(""); // Verify no errors
       expect(stdout.trim()).toBe("granted granted denied denied");
       expect(exitCode).toBe(0);
     });
@@ -522,6 +542,7 @@ describe.concurrent("Network permission wildcards", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+      expect(stderr).toBe(""); // Verify no errors
       expect(stdout.trim()).toBe("granted granted granted denied");
       expect(exitCode).toBe(0);
     });
@@ -547,6 +568,7 @@ describe.concurrent("Network permission wildcards", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+      expect(stderr).toBe(""); // Verify no errors
       expect(stdout.trim()).toBe("granted");
       expect(exitCode).toBe(0);
     });
@@ -570,6 +592,7 @@ describe.concurrent("Network permission wildcards", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+      expect(stderr).toBe(""); // Verify no errors
       expect(stdout.trim()).toBe("granted");
       expect(exitCode).toBe(0);
     });
@@ -593,6 +616,7 @@ describe.concurrent("Network permission wildcards", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+      expect(stderr).toBe(""); // Verify no errors
       expect(stdout.trim()).toBe("granted");
       expect(exitCode).toBe(0);
     });
@@ -620,6 +644,7 @@ describe.concurrent("Network permission wildcards", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+      expect(stderr).toBe(""); // Verify no errors
       expect(stdout.trim()).toBe("granted granted denied");
       expect(exitCode).toBe(0);
     });
@@ -648,6 +673,7 @@ describe.concurrent("Network permission wildcards", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+      expect(stderr).toBe(""); // Verify no errors
       expect(stdout.trim()).toBe("granted granted granted denied");
       expect(exitCode).toBe(0);
     });
@@ -677,6 +703,7 @@ describe.concurrent("Network permission wildcards", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+      expect(stderr).toBe(""); // Verify no errors
       expect(stdout.trim()).toContain("BLOCKED");
       expect(exitCode).toBe(0);
     });
@@ -705,6 +732,7 @@ describe.concurrent("Network permission wildcards", () => {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       // Should get a status code, not be blocked
+      expect(stderr).toBe(""); // Verify no errors
       expect(stdout.trim()).toMatch(/STATUS: \d+/);
       expect(exitCode).toBe(0);
     });
@@ -736,6 +764,7 @@ describe.concurrent("Network permission wildcards", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+      expect(stderr).toBe(""); // Verify no errors
       expect(stdout.trim()).toContain("BLOCKED");
       expect(exitCode).toBe(0);
     });
@@ -768,6 +797,7 @@ describe.concurrent("Network permission wildcards", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+      expect(stderr).toBe(""); // Verify no errors
       expect(stdout.trim()).toMatch(/SERVER STARTED on port \d+/);
       expect(exitCode).toBe(0);
     });
@@ -794,6 +824,7 @@ describe.concurrent("Network permission wildcards", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+      expect(stderr).toBe(""); // Verify no errors
       expect(stdout.trim()).toBe("granted denied");
       expect(exitCode).toBe(0);
     });
@@ -819,6 +850,7 @@ describe.concurrent("Network permission wildcards", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+      expect(stderr).toBe(""); // Verify no errors
       expect(stdout.trim()).toBe("granted granted denied");
       expect(exitCode).toBe(0);
     });
@@ -842,6 +874,7 @@ describe.concurrent("Network permission wildcards", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+      expect(stderr).toBe(""); // Verify no errors
       expect(stdout.trim()).toBe("granted");
       expect(exitCode).toBe(0);
     });
@@ -867,6 +900,7 @@ describe.concurrent("Network permission wildcards", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+      expect(stderr).toBe(""); // Verify no errors
       expect(stdout.trim()).toBe("granted");
       expect(exitCode).toBe(0);
     });
@@ -890,6 +924,7 @@ describe.concurrent("Network permission wildcards", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+      expect(stderr).toBe(""); // Verify no errors
       expect(stdout.trim()).toBe("granted");
       expect(exitCode).toBe(0);
     });
@@ -915,6 +950,7 @@ describe.concurrent("Network permission wildcards", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+      expect(stderr).toBe(""); // Verify no errors
       expect(stdout.trim()).toBe("granted granted granted");
       expect(exitCode).toBe(0);
     });
@@ -939,6 +975,7 @@ describe.concurrent("Network permission wildcards", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+      expect(stderr).toBe(""); // Verify no errors
       expect(stdout.trim()).toBe("granted granted");
       expect(exitCode).toBe(0);
     });

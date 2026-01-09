@@ -183,10 +183,7 @@ pub fn requireFfi(global: *JSGlobalObject, path: []const u8) bun.JSError!void {
     return getChecker(global).requireFfi(path);
 }
 
-const std = @import("std");
 const bun = @import("bun");
 const permissions = @import("../permissions.zig");
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
-const JSValue = jsc.JSValue;
-const ZigString = jsc.ZigString;

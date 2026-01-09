@@ -12,7 +12,6 @@
 //! Use `--secure` flag to enable secure-by-default mode (like Deno).
 
 const std = @import("std");
-const Allocator = std.mem.Allocator;
 
 /// Permission types matching Deno's model
 pub const Kind = enum(u8) {
@@ -619,9 +618,6 @@ pub const Permissions = struct {
     /// Operating mode: true = secure by default, false = allow all by default
     secure_mode: bool = false,
 
-    /// Allocator for owned resource lists
-    allocator: ?Allocator = null,
-
     /// Initialize with default allow-all permissions (Bun's default mode)
     pub fn initAllowAll() Permissions {
         return .{
@@ -913,5 +909,3 @@ test "isWindowsDrivePath" {
     try std.testing.expect(!isWindowsDrivePath("relative/path"));
     try std.testing.expect(!isWindowsDrivePath("C")); // Too short
 }
-
-const bun = @import("bun");

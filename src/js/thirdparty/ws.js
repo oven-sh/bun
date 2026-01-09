@@ -22,7 +22,7 @@ const encoder = new TextEncoder();
  * @returns {{ tls: Object|null, proxy: string|Object|null }}
  */
 function extractAgentOptions(agent) {
-  const connectOpts = agent.connectOpts || agent.options || agent;
+  const connectOpts = agent?.connectOpts || agent?.options;
   let tls = null;
   let proxy = null;
 
@@ -58,11 +58,11 @@ function extractAgentOptions(agent) {
   }
 
   // Build proxy - check connectOpts.proxy first, then agent.proxy
-  const agentProxy = connectOpts?.proxy || agent.proxy;
+  const agentProxy = connectOpts?.proxy || agent?.proxy;
   if (agentProxy) {
     const proxyUrl = agentProxy?.href || agentProxy;
     // Get proxy headers from agent.proxyHeaders
-    if (agent.proxyHeaders) {
+    if (agent?.proxyHeaders) {
       const proxyHeaders = $isCallable(agent.proxyHeaders) ? agent.proxyHeaders.$call(agent) : agent.proxyHeaders;
       proxy = { url: proxyUrl, headers: proxyHeaders };
     } else {
@@ -206,7 +206,7 @@ class BunWebSocket extends EventEmitter {
         end: () => {
           if (!didCallEnd) {
             didCallEnd = true;
-            this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions, agent);
+            this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions);
           }
         },
         write() {},
@@ -235,31 +235,22 @@ class BunWebSocket extends EventEmitter {
       EventEmitter.$call(nodeHttpClientRequestSimulated);
       finishRequest(nodeHttpClientRequestSimulated);
       if (!didCallEnd) {
-        this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions, agent);
+        this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions);
       }
       return;
     }
 
-    this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions, agent);
+    this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions);
   }
 
-  #createWebSocket(url, protocols, headers, method, proxy, tls, agent) {
+  #createWebSocket(url, protocols, headers, method, proxy, tls) {
     let wsOptions;
-    if (headers || proxy || tls || agent) {
+    if (headers || proxy || tls) {
       wsOptions = { protocols };
       if (headers) wsOptions.headers = headers;
       if (method) wsOptions.method = method;
       if (proxy) wsOptions.proxy = proxy;
       if (tls) wsOptions.tls = tls;
-      else if ($isObject(agent)) {
-        const agentOpts = extractAgentOptions(agent);
-        if (agentOpts.proxy) {
-          wsOptions.proxy = agentOpts.proxy;
-        }
-        if (agentOpts.tls) {
-          wsOptions.tls = agentOpts.tls;
-        }
-      }
     } else {
       wsOptions = protocols;
     }

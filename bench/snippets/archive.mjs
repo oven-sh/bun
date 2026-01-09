@@ -372,21 +372,36 @@ group("write .tar.gz to disk (100 small files)", () => {
 async function getFilesArrayNodeTar(buffer) {
   return new Promise((resolve, reject) => {
     const files = new Map();
+    let pending = 0;
+    let closed = false;
+
+    const maybeResolve = () => {
+      if (closed && pending === 0) {
+        resolve(files);
+      }
+    };
+
     const unpack = new Unpack({
       onReadEntry: entry => {
         if (entry.type === "File") {
+          pending++;
           const chunks = [];
           entry.on("data", chunk => chunks.push(chunk));
           entry.on("end", () => {
             const content = Buffer.concat(chunks);
             // Create a File-like object similar to Bun.Archive.files()
             files.set(entry.path, new Blob([content]));
+            pending--;
+            maybeResolve();
           });
         }
         entry.resume(); // Drain the entry
       },
     });
-    unpack.on("end", () => resolve(files));
+    unpack.on("close", () => {
+      closed = true;
+      maybeResolve();
+    });
     unpack.on("error", reject);
     unpack.end(buffer);
   });

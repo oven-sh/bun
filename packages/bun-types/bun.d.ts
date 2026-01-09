@@ -7083,7 +7083,7 @@ declare module "bun" {
      * await Bun.Archive.write("output.tar.gz", files, "gzip");
      * ```
      */
-    static write(path: string, data: ArchiveInput, compress?: ArchiveCompression): Promise<void>;
+    static write(path: string, data: ArchiveInput | Archive, compress?: ArchiveCompression): Promise<void>;
 
     /**
      * Extract the archive contents to a directory on disk.
@@ -7141,7 +7141,7 @@ declare module "bun" {
      * const gzippedBytes = await archive.bytes("gzip");
      * ```
      */
-    bytes(compress?: ArchiveCompression): Promise<Uint8Array>;
+    bytes(compress?: ArchiveCompression): Promise<Uint8Array<ArrayBuffer>>;
 
     /**
      * Get the archive contents as a `Map` of `File` objects.

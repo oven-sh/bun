@@ -32,7 +32,8 @@ console.log(`Extracted ${fileCount} files`);
 **Read archive contents without extracting:**
 
 ```ts
-const archive = Bun.Archive.from(tarballBytes);
+const tarball = await Bun.file("package.tar.gz").bytes();
+const archive = Bun.Archive.from(tarball);
 const files = await archive.files();
 
 for (const [path, file] of files) {
@@ -56,7 +57,7 @@ File contents can be:
 
 - **Strings** - Text content
 - **Blobs** - Binary data
-- **TypedArrays** (e.g., `Uint8Array`) - Raw bytes
+- **ArrayBufferViews** (e.g., `Uint8Array`) - Raw bytes
 - **ArrayBuffers** - Raw binary data
 
 ```ts
@@ -303,5 +304,5 @@ class Archive {
   files(glob?: string): Promise<Map<string, File>>;
 }
 
-type ArchiveInput = Record<string, string | Blob | TypedArray | ArrayBuffer> | Blob | TypedArray | ArrayBuffer;
+type ArchiveInput = Record<string, string | Blob | ArrayBufferView | ArrayBuffer> | Blob | ArrayBufferView | ArrayBuffer;
 ```

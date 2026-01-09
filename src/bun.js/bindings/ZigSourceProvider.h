@@ -91,17 +91,14 @@ public:
     };
 
     // ESM bytecode cache support
-    // TODO: Add 'override' once oven-sh/WebKit bun-build-esm branch (4c8aa53fce5e)
-    // is merged and a release is built. That branch adds virtual methods to
-    // JSC::SourceProvider that these override.
-    bool hasCachedModuleMetadata() const
+    bool hasCachedModuleMetadata() const override
     {
         return m_cachedModuleMetadata.has_value();
     }
 
     JSC::JSModuleRecord* createModuleRecordFromCache(
         JSC::JSGlobalObject* globalObject,
-        const JSC::Identifier& moduleKey);
+        const JSC::Identifier& moduleKey) override;
 
     void updateCache(const UnlinkedFunctionExecutable* executable, const SourceCode&, CodeSpecializationKind kind, const UnlinkedFunctionCodeBlock* codeBlock);
     void cacheBytecode(const BytecodeCacheGenerator& generator);

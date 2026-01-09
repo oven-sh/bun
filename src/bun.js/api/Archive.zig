@@ -363,7 +363,7 @@ fn parsePatternArg(globalThis: *jsc.JSGlobalObject, arg: jsc.JSValue, name: []co
             const str_slice = try item.toSlice(globalThis, allocator);
             defer str_slice.deinit();
             const pattern = allocator.dupe(u8, str_slice.slice()) catch return error.OutOfMemory;
-            patterns.append(allocator, pattern) catch return error.OutOfMemory;
+            patterns.appendAssumeCapacity(pattern);
         }
 
         return patterns.toOwnedSlice(allocator) catch return error.OutOfMemory;
@@ -1009,10 +1009,14 @@ fn extractToDiskFiltered(
                 else
                     0o644;
 
-                // Create parent directories if needed
+                // Create parent directories if needed (ignore expected errors)
                 if (std.fs.path.dirname(pathname)) |parent_dir| {
                     dir.makePath(parent_dir) catch |err| switch (err) {
+                        // Expected: directory already exists
                         error.PathAlreadyExists => {},
+                        // Permission errors: skip this file, will fail at createFileZ
+                        error.AccessDenied => {},
+                        // Other errors: skip, will fail at createFileZ
                         else => {},
                     };
                 }

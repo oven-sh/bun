@@ -171,6 +171,8 @@ const count = await archive.extract("./output", {
 });
 ```
 
+**Note**: The `glob` and `ignore` options must not be empty arrays. To extract all files, omit the option or pass `undefined`.
+
 ## Reading Archive Contents
 
 ### Get All Files

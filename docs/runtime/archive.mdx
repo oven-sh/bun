@@ -138,6 +138,8 @@ console.log(`Extracted ${count} files`);
 
 The target directory is created automatically if it doesn't exist. Existing files are overwritten.
 
+**Note**: On Windows, symbolic links in archives are skipped during extraction since they require elevated privileges. On Linux and macOS, symlinks are extracted normally.
+
 ### Filtering Extracted Files
 
 Use glob patterns to extract only specific files:
@@ -204,13 +206,17 @@ try {
   const count = await archive.extract("./output");
   console.log(`Extracted ${count} files`);
 } catch (e: unknown) {
-  const error = e as { code?: string; message?: string };
-  if (error.code === "EACCES") {
-    console.error("Permission denied");
-  } else if (error.code === "ENOSPC") {
-    console.error("Disk full");
+  if (e instanceof Error) {
+    const error = e as Error & { code?: string };
+    if (error.code === "EACCES") {
+      console.error("Permission denied");
+    } else if (error.code === "ENOSPC") {
+      console.error("Disk full");
+    } else {
+      console.error("Archive error:", error.message);
+    }
   } else {
-    console.error("Archive error:", error.message);
+    console.error("Archive error:", String(e));
   }
 }
 ```

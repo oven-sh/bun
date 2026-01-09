@@ -6971,11 +6971,7 @@ declare module "bun" {
    * - A Blob containing existing archive data
    * - A TypedArray or ArrayBuffer containing existing archive data
    */
-  type ArchiveInput =
-    | Record<string, string | Blob | ArrayBufferView | ArrayBufferLike>
-    | Blob
-    | ArrayBufferView
-    | ArrayBufferLike;
+  type ArchiveInput = Record<string, BlobPart> | Blob | ArrayBufferView | ArrayBufferLike;
 
   /**
    * Compression format for archive output.

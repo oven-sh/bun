@@ -963,7 +963,7 @@ fn extractToDiskFiltered(
 
         switch (kind) {
             .directory => {
-                dir.makePath(pathname) catch {};
+                dir.makePath(pathname) catch continue;
                 count += 1;
             },
             .file => {
@@ -1012,6 +1012,8 @@ fn extractToDiskFiltered(
             },
             .sym_link => {
                 const link_target = entry.symlink();
+                // Symlinks are only extracted on POSIX systems (Linux/macOS).
+                // On Windows, symlinks are skipped since they require elevated privileges.
                 if (bun.Environment.isPosix) {
                     bun.sys.symlinkat(link_target, .fromNative(dir.fd), pathname).unwrap() catch |err| {
                         switch (err) {

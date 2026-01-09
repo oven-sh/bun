@@ -1,7 +1,7 @@
 import { spawn } from "bun";
-import { join, dirname } from "path";
-import { fileURLToPath } from "url";
 import * as net from "net";
+import { dirname, join } from "path";
+import { fileURLToPath } from "url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -16,7 +16,8 @@ export type ServiceName =
   | "redis_plain"
   | "redis_unified"
   | "minio"
-  | "autobahn";
+  | "autobahn"
+  | "squid";
 
 export interface ServiceInfo {
   host: string;
@@ -41,14 +42,14 @@ class DockerComposeHelper {
   private runningServices: Set<ServiceName> = new Set();
 
   constructor(options: DockerComposeOptions = {}) {
-    this.projectName = options.projectName ||
+    this.projectName =
+      options.projectName ||
       process.env.BUN_DOCKER_PROJECT_NAME ||
       process.env.COMPOSE_PROJECT_NAME ||
-      "bun-test-services";  // Default project name for all test services
+      "bun-test-services"; // Default project name for all test services
 
-    this.composeFile = options.composeFile ||
-      process.env.BUN_DOCKER_COMPOSE_FILE ||
-      join(__dirname, "docker-compose.yml");
+    this.composeFile =
+      options.composeFile || process.env.BUN_DOCKER_COMPOSE_FILE || join(__dirname, "docker-compose.yml");
 
     // Verify the compose file exists
     const fs = require("fs");
@@ -70,10 +71,7 @@ class DockerComposeHelper {
       stderr: "pipe",
     });
 
-    const [stdout, stderr] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-    ]);
+    const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
 
     const exitCode = await proc.exited;
 
@@ -151,12 +149,12 @@ class DockerComposeHelper {
       try {
         const socket = new net.Socket();
         await new Promise<void>((resolve, reject) => {
-          socket.once('connect', () => {
+          socket.once("connect", () => {
             socket.destroy();
             resolve();
           });
-          socket.once('error', reject);
-          socket.connect(port, '127.0.0.1');
+          socket.once("error", reject);
+          socket.connect(port, "127.0.0.1");
         });
         return;
       } catch {
@@ -255,6 +253,10 @@ class DockerComposeHelper {
         info.ports[9002] = await this.port(service, 9002);
         // Docker compose --wait should handle readiness
         break;
+
+      case "squid":
+        info.ports[3128] = await this.port(service, 3128);
+        break;
     }
 
     return info;
@@ -321,6 +323,12 @@ class DockerComposeHelper {
 
       case "autobahn":
         env.AUTOBAHN_URL = `ws://${info.host}:${info.ports[9002]}`;
+        break;
+
+      case "squid":
+        env.HTTP_PROXY = `http://${info.host}:${info.ports[3128]}`;
+        env.HTTPS_PROXY = `http://${info.host}:${info.ports[3128]}`;
+        env.PROXY_URL = `http://${info.host}:${info.ports[3128]}`;
         break;
     }
 
@@ -449,7 +457,7 @@ export async function prepareImages(): Promise<void> {
 // Higher-level wrappers for tests
 export async function withPostgres(
   opts: { variant?: "plain" | "tls" | "auth" },
-  fn: (info: ServiceInfo & { url: string }) => Promise<void>
+  fn: (info: ServiceInfo & { url: string }) => Promise<void>,
 ): Promise<void> {
   const variant = opts.variant || "plain";
   const serviceName = `postgres_${variant}` as ServiceName;
@@ -467,7 +475,7 @@ export async function withPostgres(
 
 export async function withMySQL(
   opts: { variant?: "plain" | "native_password" | "tls" },
-  fn: (info: ServiceInfo & { url: string }) => Promise<void>
+  fn: (info: ServiceInfo & { url: string }) => Promise<void>,
 ): Promise<void> {
   const variant = opts.variant || "plain";
   const serviceName = `mysql_${variant}` as ServiceName;
@@ -485,7 +493,7 @@ export async function withMySQL(
 
 export async function withRedis(
   opts: { variant?: "plain" | "unified" },
-  fn: (info: ServiceInfo & { url: string; tlsUrl?: string }) => Promise<void>
+  fn: (info: ServiceInfo & { url: string; tlsUrl?: string }) => Promise<void>,
 ): Promise<void> {
   const variant = opts.variant || "plain";
   const serviceName = `redis_${variant}` as ServiceName;
@@ -502,7 +510,7 @@ export async function withRedis(
 }
 
 export async function withMinio(
-  fn: (info: ServiceInfo & { endpoint: string; accessKeyId: string; secretAccessKey: string }) => Promise<void>
+  fn: (info: ServiceInfo & { endpoint: string; accessKeyId: string; secretAccessKey: string }) => Promise<void>,
 ): Promise<void> {
   const info = await ensure("minio");
 
@@ -518,15 +526,26 @@ export async function withMinio(
   }
 }
 
-export async function withAutobahn(
-  fn: (info: ServiceInfo & { url: string }) => Promise<void>
-): Promise<void> {
+export async function withAutobahn(fn: (info: ServiceInfo & { url: string }) => Promise<void>): Promise<void> {
   const info = await ensure("autobahn");
 
   try {
     await fn({
       ...info,
       url: `ws://${info.host}:${info.ports[9002]}`,
+    });
+  } finally {
+    // Services persist - no teardown
+  }
+}
+
+export async function withSquid(fn: (info: ServiceInfo & { proxyUrl: string }) => Promise<void>): Promise<void> {
+  const info = await ensure("squid");
+
+  try {
+    await fn({
+      ...info,
+      proxyUrl: `http://${info.host}:${info.ports[3128]}`,
     });
   } finally {
     // Services persist - no teardown

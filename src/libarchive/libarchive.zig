@@ -107,7 +107,7 @@ pub const BufferReadStream = struct {
 
         const proposed = pos + offset;
         const new_pos = @min(@max(proposed, 0), buflen - 1);
-        this.pos = @as(usize, @intCast(this.pos));
+        this.pos = @as(usize, @intCast(new_pos));
         return new_pos - pos;
     }
 

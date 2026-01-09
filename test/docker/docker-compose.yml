@@ -206,6 +206,25 @@ services:
         published: 0 # Dynamic port
         protocol: tcp
 
+  # Squid proxy for WebSocket proxy testing
+  squid:
+    image: ubuntu/squid:5.2-22.04_beta
+    volumes:
+      - ./config/squid.conf:/etc/squid/squid.conf:ro
+    ports:
+      - target: 3128
+        published: 0
+        protocol: tcp
+    # Use extra_hosts to allow connections back to host services via bridge network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep squid > /dev/null"]
+      interval: 1h
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+
 volumes:
   redis-unix:
   redis-data:

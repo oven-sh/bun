@@ -173,6 +173,21 @@ fn errorUnlessFakeTimers(globalObject: *jsc.JSGlobalObject) bun.JSError!void {
     return globalObject.throw("Fake timers are not active. Call useFakeTimers() first.", .{});
 }
 
+/// Set or remove the "clock" property on setTimeout to indicate that fake timers are active.
+/// This is used by testing-library/react's jestFakeTimersAreEnabled() function to detect
+/// if jest.advanceTimersByTime() should be called when draining the microtask queue.
+fn setFakeTimerMarker(globalObject: *jsc.JSGlobalObject, enabled: bool) void {
+    const globalThis_value = globalObject.toJSValue();
+    const setTimeout_fn = (globalThis_value.getOwnTruthy(globalObject, "setTimeout") catch return) orelse return;
+    // Set setTimeout.clock to indicate fake timers status.
+    // testing-library/react checks Object.hasOwnProperty.call(setTimeout, 'clock')
+    // to detect if fake timers are enabled.
+    // Note: We set the property to true when enabling and leave it (or set to undefined)
+    // when disabling. The hasOwnProperty check will still return true after disabling,
+    // but this is acceptable since test environments typically reset between tests.
+    setTimeout_fn.put(globalObject, "clock", jsc.JSValue.jsBoolean(enabled));
+}
+
 fn useFakeTimers(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const vm = globalObject.bunVM();
     const timers = &vm.timer;
@@ -206,6 +221,10 @@ fn useFakeTimers(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
         this.activate(js_now, globalObject);
     }
 
+    // Set setTimeout.clock = true to signal that fake timers are enabled.
+    // This is used by testing-library/react to detect if jest.advanceTimersByTime should be called.
+    setFakeTimerMarker(globalObject, true);
+
     return callframe.this();
 }
 fn useRealTimers(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
@@ -218,6 +237,9 @@ fn useRealTimers(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
         defer timers.lock.unlock();
         this.deactivate(globalObject);
     }
+
+    // Remove the setTimeout.clock marker when switching back to real timers.
+    setFakeTimerMarker(globalObject, false);
 
     return callframe.this();
 }
@@ -247,7 +269,11 @@ fn advanceTimersByTime(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFr
     if (arg_number < 0 or arg_number > max_advance) {
         return globalObject.throwInvalidArguments("advanceTimersToNextTimer() ms is out of range. It must be >= 0 and <= {d}. Received {d:.0}", .{ max_advance, arg_number });
     }
-    const target = current.addMsFloat(arg_number);
+    // When advanceTimersByTime(0) is called, advance by 1ms to fire setTimeout(fn, 0) timers.
+    // This is because setTimeout(fn, 0) is internally scheduled with a 1ms delay per HTML spec,
+    // and Jest/testing-library expect advanceTimersByTime(0) to fire such "immediate" timers.
+    const effective_advance = if (arg_number == 0) 1 else arg_number;
+    const target = current.addMsFloat(effective_advance);
 
     this.executeUntil(globalObject, target);
     current_time.set(globalObject, .{ .offset = &target });

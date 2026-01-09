@@ -220,6 +220,78 @@ An array of paths corresponding to the entrypoints of our application. One bundl
   </Tab>
 </Tabs>
 
+### files
+
+A map of file paths to their contents for in-memory bundling. This allows you to bundle virtual files that don't exist on disk, or override the contents of files that do exist. This option is only available in the JavaScript API.
+
+File contents can be provided as a `string`, `Blob`, `TypedArray`, or `ArrayBuffer`.
+
+#### Bundle entirely from memory
+
+You can bundle code without any files on disk by providing all sources via `files`:
+
+```ts title="build.ts" icon="/icons/typescript.svg"
+const result = await Bun.build({
+  entrypoints: ["/app/index.ts"],
+  files: {
+    "/app/index.ts": `
+      import { greet } from "./greet.ts";
+      console.log(greet("World"));
+    `,
+    "/app/greet.ts": `
+      export function greet(name: string) {
+        return "Hello, " + name + "!";
+      }
+    `,
+  },
+});
+
+const output = await result.outputs[0].text();
+console.log(output);
+```
+
+When all entrypoints are in the `files` map, the current working directory is used as the root.
+
+#### Override files on disk
+
+In-memory files take priority over files on disk. This lets you override specific files while keeping the rest of your codebase unchanged:
+
+```ts title="build.ts" icon="/icons/typescript.svg"
+// Assume ./src/config.ts exists on disk with development settings
+await Bun.build({
+  entrypoints: ["./src/index.ts"],
+  files: {
+    // Override config.ts with production values
+    "./src/config.ts": `
+      export const API_URL = "https://api.production.com";
+      export const DEBUG = false;
+    `,
+  },
+  outdir: "./dist",
+});
+```
+
+#### Mix disk and virtual files
+
+Real files on disk can import virtual files, and virtual files can import real files:
+
+```ts title="build.ts" icon="/icons/typescript.svg"
+// ./src/index.ts exists on disk and imports "./generated.ts"
+await Bun.build({
+  entrypoints: ["./src/index.ts"],
+  files: {
+    // Provide a virtual file that index.ts imports
+    "./src/generated.ts": `
+      export const BUILD_ID = "${crypto.randomUUID()}";
+      export const BUILD_TIME = ${Date.now()};
+    `,
+  },
+  outdir: "./dist",
+});
+```
+
+This is useful for code generation, injecting build-time constants, or testing with mock modules.
+
 ### outdir
 
 The directory where output files will be written.

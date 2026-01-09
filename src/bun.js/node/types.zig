@@ -33,7 +33,7 @@ pub const BlobOrStringOrBuffer = union(enum) {
 
     pub fn deinitAndUnprotect(this: *BlobOrStringOrBuffer) void {
         switch (this.*) {
-            .string_or_buffer => |sob| {
+            .string_or_buffer => |*sob| {
                 sob.deinitAndUnprotect();
             },
             .blob => |*blob| {
@@ -46,12 +46,20 @@ pub const BlobOrStringOrBuffer = union(enum) {
         return this.slice().len;
     }
 
-    pub fn fromJSMaybeFile(global: *jsc.JSGlobalObject, allocator: std.mem.Allocator, value: jsc.JSValue, allow_file: bool) JSError!?BlobOrStringOrBuffer {
+    pub fn fromJSMaybeFileMaybeAsync(global: *jsc.JSGlobalObject, allocator: std.mem.Allocator, value: jsc.JSValue, allow_file: bool, is_async: bool) JSError!?BlobOrStringOrBuffer {
         // Check StringOrBuffer first because it's more common and cheaper.
-        const str = try StringOrBuffer.fromJS(global, allocator, value) orelse {
+        const str = try StringOrBuffer.fromJSMaybeAsync(global, allocator, value, is_async, true) orelse {
             const blob = value.as(jsc.WebCore.Blob) orelse return null;
             if (allow_file and blob.needsToReadFile()) {
                 return global.throwInvalidArguments("File blob cannot be used here", .{});
+            }
+
+            if (is_async) {
+                // For async/cross-thread usage, copy the blob data to an owned slice
+                // rather than referencing the store which isn't thread-safe
+                const blob_data = blob.sharedView();
+                const owned_data = allocator.dupe(u8, blob_data) catch return error.OutOfMemory;
+                return .{ .string_or_buffer = .{ .encoded_slice = jsc.ZigString.Slice.init(allocator, owned_data) } };
             }
 
             if (blob.store) |store| {
@@ -63,8 +71,16 @@ pub const BlobOrStringOrBuffer = union(enum) {
         return .{ .string_or_buffer = str };
     }
 
+    pub fn fromJSMaybeFile(global: *jsc.JSGlobalObject, allocator: std.mem.Allocator, value: jsc.JSValue, allow_file: bool) JSError!?BlobOrStringOrBuffer {
+        return fromJSMaybeFileMaybeAsync(global, allocator, value, allow_file, false);
+    }
+
     pub fn fromJS(global: *jsc.JSGlobalObject, allocator: std.mem.Allocator, value: jsc.JSValue) JSError!?BlobOrStringOrBuffer {
         return fromJSMaybeFile(global, allocator, value, true);
+    }
+
+    pub fn fromJSAsync(global: *jsc.JSGlobalObject, allocator: std.mem.Allocator, value: jsc.JSValue) JSError!?BlobOrStringOrBuffer {
+        return fromJSMaybeFileMaybeAsync(global, allocator, value, true, true);
     }
 
     pub fn fromJSWithEncodingValue(global: *jsc.JSGlobalObject, allocator: std.mem.Allocator, value: jsc.JSValue, encoding_value: jsc.JSValue) bun.JSError!?BlobOrStringOrBuffer {

@@ -87,9 +87,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             if (!comptime ssl) {
                 @compileError("ssl only");
             }
-            var opts = client.tls_props.?.asUSockets();
-            opts.request_cert = 1;
-            opts.reject_unauthorized = 0;
+            const opts = client.tls_props.?.asUSocketsForClientVerification();
             try this.initWithOpts(&opts);
         }
 

@@ -111,23 +111,40 @@ fn createArchive(globalThis: *jsc.JSGlobalObject, data: []u8) jsc.JSValue {
 /// Shared helper that builds tarball bytes from a JS object
 fn buildTarballFromObject(globalThis: *jsc.JSGlobalObject, obj: jsc.JSValue) bun.JSError![]u8 {
     const allocator = bun.default_allocator;
+    const lib = libarchive.lib;
 
     const js_obj = obj.getObject() orelse {
         return globalThis.throwInvalidArguments("Expected an object", .{});
     };
 
-    // Collect entries first
-    var entries = bun.StringArrayHashMap([]u8).init(allocator);
-    defer {
-        var iter = entries.iterator();
-        while (iter.next()) |entry| {
-            allocator.free(entry.key_ptr.*);
-            allocator.free(entry.value_ptr.*);
-        }
-        entries.deinit();
+    // Set up archive first
+    var growing_buffer = lib.GrowingBuffer.init(allocator);
+    errdefer growing_buffer.deinit();
+
+    const archive = lib.Archive.writeNew();
+    defer _ = archive.writeFree();
+
+    if (archive.writeSetFormatPaxRestricted() != .ok) {
+        return globalThis.throwInvalidArguments("Failed to create tarball: ArchiveFormatError", .{});
     }
 
-    // Iterate over object properties
+    if (lib.archive_write_open2(
+        @ptrCast(archive),
+        @ptrCast(&growing_buffer),
+        &lib.GrowingBuffer.openCallback,
+        &lib.GrowingBuffer.writeCallback,
+        &lib.GrowingBuffer.closeCallback,
+        null,
+    ) != 0) {
+        return globalThis.throwInvalidArguments("Failed to create tarball: ArchiveOpenError", .{});
+    }
+
+    const entry = lib.Archive.Entry.new();
+    defer entry.free();
+
+    const now_secs: isize = @intCast(@divTrunc(std.time.milliTimestamp(), 1000));
+
+    // Iterate over object properties and write directly to archive
     const PropIterator = jsc.JSPropertyIterator(.{
         .skip_empty_name = true,
         .include_value = true,
@@ -140,34 +157,59 @@ fn buildTarballFromObject(globalThis: *jsc.JSGlobalObject, obj: jsc.JSValue) bun
         const value = iter.value;
         if (value == .zero) continue;
 
-        // Get the key as a string
+        // Get the key as a null-terminated string
         const key_slice = key.toUTF8(allocator);
         defer key_slice.deinit();
         const key_str = try allocator.dupeZ(u8, key_slice.slice());
-        errdefer allocator.free(key_str);
+        defer allocator.free(key_str);
 
-        // Get the value data - copy it immediately
-        const entry_data = try getEntryDataCopy(globalThis, value, allocator);
-        errdefer allocator.free(entry_data);
+        // Get data - use view for Blob/ArrayBuffer, convert for strings
+        const data_slice = try getEntryData(globalThis, value, allocator);
+        defer data_slice.deinit();
 
-        try entries.put(key_str, entry_data);
+        // Write entry to archive
+        const data = data_slice.slice();
+        _ = entry.clear();
+        entry.setPathnameUtf8(key_str);
+        entry.setSize(@intCast(data.len));
+        entry.setFiletype(@intFromEnum(lib.FileType.regular));
+        entry.setPerm(0o644);
+        entry.setMtime(now_secs, 0);
+
+        if (archive.writeHeader(entry) != .ok) {
+            return globalThis.throwInvalidArguments("Failed to create tarball: ArchiveHeaderError", .{});
+        }
+        if (archive.writeData(data) < 0) {
+            return globalThis.throwInvalidArguments("Failed to create tarball: ArchiveWriteError", .{});
+        }
+        if (archive.writeFinishEntry() != .ok) {
+            return globalThis.throwInvalidArguments("Failed to create tarball: ArchiveFinishEntryError", .{});
+        }
     }
 
-    // Build the tarball immediately
-    return buildTarballFromEntries(entries, false, allocator) catch |err| {
-        return globalThis.throwInvalidArguments("Failed to create tarball: {s}", .{@errorName(err)});
+    if (archive.writeClose() != .ok) {
+        return globalThis.throwInvalidArguments("Failed to create tarball: ArchiveCloseError", .{});
+    }
+
+    return growing_buffer.toOwnedSlice() catch {
+        return globalThis.throwInvalidArguments("Failed to create tarball: OutOfMemory", .{});
     };
 }
 
-fn getEntryDataCopy(globalThis: *jsc.JSGlobalObject, value: jsc.JSValue, allocator: std.mem.Allocator) bun.JSError![]u8 {
-    // Check for Blob first - copy immediately
+/// Returns data as a ZigString.Slice (handles ownership automatically via deinit)
+fn getEntryData(globalThis: *jsc.JSGlobalObject, value: jsc.JSValue, allocator: std.mem.Allocator) bun.JSError!jsc.ZigString.Slice {
+    // For Blob, use sharedView (no copy needed)
     if (value.as(jsc.WebCore.Blob)) |blob_ptr| {
-        return allocator.dupe(u8, blob_ptr.sharedView());
+        return jsc.ZigString.Slice.fromUTF8NeverFree(blob_ptr.sharedView());
     }
 
-    // Use StringOrBuffer.fromJSToOwnedSlice for strings and typed arrays
-    // This handles the conversion efficiently without unnecessary copies
-    return jsc.Node.StringOrBuffer.fromJSToOwnedSlice(globalThis, value, allocator);
+    // For ArrayBuffer/TypedArray, use view (no copy needed)
+    if (value.asArrayBuffer(globalThis)) |array_buffer| {
+        return jsc.ZigString.Slice.fromUTF8NeverFree(array_buffer.slice());
+    }
+
+    // For strings, convert (allocates)
+    return value.toSlice(globalThis, allocator);
 }
 
 /// Static method: Archive.write(path, data, compress?)
@@ -755,55 +797,6 @@ fn compressGzip(data: []const u8) ![]u8 {
     if (result.status != .success) return error.GzipCompressFailed;
 
     return bun.default_allocator.realloc(output, result.written) catch output[0..result.written];
-}
-
-fn buildTarballFromEntries(entries: bun.StringArrayHashMap([]u8), use_gzip: bool, allocator: std.mem.Allocator) ![]u8 {
-    const lib = libarchive.lib;
-    const GrowingBuffer = lib.GrowingBuffer;
-
-    var growing_buffer = GrowingBuffer.init(allocator);
-    errdefer growing_buffer.deinit();
-
-    const archive = lib.Archive.writeNew();
-    defer _ = archive.writeFree();
-
-    if (archive.writeSetFormatPaxRestricted() != .ok) return error.ArchiveFormatError;
-    if (use_gzip and archive.writeAddFilterGzip() != .ok) return error.ArchiveFilterError;
-
-    if (lib.archive_write_open2(
-        @ptrCast(archive),
-        @ptrCast(&growing_buffer),
-        &GrowingBuffer.openCallback,
-        &GrowingBuffer.writeCallback,
-        &GrowingBuffer.closeCallback,
-        null,
-    ) != 0) return error.ArchiveOpenError;
-
-    const entry = lib.Archive.Entry.new();
-    defer entry.free();
-
-    const now_secs: isize = @intCast(@divTrunc(std.time.milliTimestamp(), 1000));
-
-    var iter = entries.iterator();
-    while (iter.next()) |kv| {
-        const path = kv.key_ptr.*;
-        const value = kv.value_ptr.*;
-
-        _ = entry.clear();
-        entry.setPathnameUtf8(path.ptr[0..path.len :0]);
-        entry.setSize(@intCast(value.len));
-        entry.setFiletype(@intFromEnum(lib.FileType.regular));
-        entry.setPerm(0o644);
-        entry.setMtime(now_secs, 0);
-
-        if (archive.writeHeader(entry) != .ok) return error.ArchiveHeaderError;
-        if (archive.writeData(value) < 0) return error.ArchiveWriteError;
-        if (archive.writeFinishEntry() != .ok) return error.ArchiveFinishEntryError;
-    }
-
-    if (archive.writeClose() != .ok) return error.ArchiveCloseError;
-
-    return growing_buffer.toOwnedSlice();
 }
 
 const libarchive = @import("../../libarchive/libarchive.zig");

@@ -6977,7 +6977,11 @@ declare module "bun" {
    * Compression format for archive output.
    * - `"gzip"` - Compress with gzip
    * - `true` - Same as `"gzip"`
-   * - `false` or `undefined` - No compression
+   * - `false` - Explicitly disable compression (no compression)
+   * - `undefined` - No compression (default behavior when omitted)
+   *
+   * Both `false` and `undefined` result in no compression; `false` can be used
+   * to explicitly indicate "no compression" in code where the intent should be clear.
    */
   type ArchiveCompression = "gzip" | boolean;
 
@@ -6987,6 +6991,8 @@ declare module "bun" {
   interface ArchiveExtractOptions {
     /**
      * Glob pattern(s) to filter which entries are extracted.
+     * Uses the same syntax as {@link Bun.Glob}, including support for wildcards (`*`, `**`),
+     * character classes (`[abc]`), alternation (`{a,b}`), and negation (`!pattern`).
      *
      * - Positive patterns: Only entries matching at least one pattern will be extracted.
      * - Negative patterns (prefixed with `!`): Entries matching these patterns will be excluded.

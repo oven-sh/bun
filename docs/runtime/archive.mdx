@@ -289,13 +289,16 @@ const jsonFiles = await archive.files("**/*.json");
 const codeFiles = await archive.files(["**/*.ts", "**/*.js"]);
 ```
 
-Supported glob patterns:
+Supported glob patterns (subset of [Bun.Glob](/docs/api/glob) syntax):
 
 - `*` - Match any characters except `/`
 - `**` - Match any characters including `/`
 - `?` - Match single character
 - `[abc]` - Match character set
 - `{a,b}` - Match alternatives
+- `!pattern` - Exclude files matching pattern (negation)
+
+See [Bun.Glob](/docs/api/glob) for the full glob syntax including escaping and advanced patterns.
 
 ## Compression
 
@@ -332,7 +335,9 @@ const files: Record<string, string> = {};
 const glob = new Glob("src/**/*.ts");
 
 for await (const path of glob.scan(".")) {
-  files[path] = await Bun.file(path).text();
+  // Normalize path separators to forward slashes for cross-platform compatibility
+  const archivePath = path.replaceAll("\\", "/");
+  files[archivePath] = await Bun.file(path).text();
 }
 
 // Add package.json

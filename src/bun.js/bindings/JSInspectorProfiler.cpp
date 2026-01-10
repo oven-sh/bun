@@ -12,14 +12,14 @@ extern "C" void Bun__setCPUSamplingInterval(int intervalMicroseconds);
 extern "C" bool Bun__isCPUProfilerRunning();
 
 JSC_DECLARE_HOST_FUNCTION(jsFunction_startCPUProfiler);
-JSC_DEFINE_HOST_FUNCTION(jsFunction_startCPUProfiler, (JSGlobalObject* globalObject, CallFrame*))
+JSC_DEFINE_HOST_FUNCTION(jsFunction_startCPUProfiler, (JSGlobalObject * globalObject, CallFrame*))
 {
     Bun__startCPUProfiler(&globalObject->vm());
     return JSValue::encode(jsUndefined());
 }
 
 JSC_DECLARE_HOST_FUNCTION(jsFunction_stopCPUProfiler);
-JSC_DEFINE_HOST_FUNCTION(jsFunction_stopCPUProfiler, (JSGlobalObject* globalObject, CallFrame*))
+JSC_DEFINE_HOST_FUNCTION(jsFunction_stopCPUProfiler, (JSGlobalObject * globalObject, CallFrame*))
 {
     BunString result = Bun__stopCPUProfilerAndGetJSON(&globalObject->vm());
 
@@ -34,7 +34,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_stopCPUProfiler, (JSGlobalObject* globalObje
 }
 
 JSC_DECLARE_HOST_FUNCTION(jsFunction_setCPUSamplingInterval);
-JSC_DEFINE_HOST_FUNCTION(jsFunction_setCPUSamplingInterval, (JSGlobalObject* globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsFunction_setCPUSamplingInterval, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);

@@ -7032,15 +7032,16 @@ declare module "bun" {
    * **Extract an archive to disk:**
    * ```ts
    * const archive = Bun.Archive.from(tarballBytes);
-   * const fileCount = await archive.extract("./output");
+   * const entryCount = await archive.extract("./output");
+   * console.log(`Extracted ${entryCount} entries`);
    * ```
    *
    * @example
    * **Get archive contents as a Map of File objects:**
    * ```ts
    * const archive = Bun.Archive.from(tarballBytes);
-   * const files = await archive.files();
-   * for (const [path, file] of files) {
+   * const entries = await archive.files();
+   * for (const [path, file] of entries) {
    *   console.log(path, await file.text());
    * }
    * ```
@@ -7201,15 +7202,16 @@ declare module "bun" {
      * - Standard Blob methods (`text()`, `arrayBuffer()`, `stream()`, etc.)
      *
      * Only regular files are included; directories are not returned.
+     * File contents are loaded into memory, so for very large archives consider using `extract()` instead.
      *
      * @param glob - Optional glob pattern(s) to filter files (e.g., `"*.txt"`, `"src/**"`)
-     * @returns A promise that resolves with a Map where keys are file paths and values are File objects
+     * @returns A promise that resolves with a Map where keys are file paths (always using forward slashes `/` as separators) and values are File objects
      *
      * @example
      * **Get all files:**
      * ```ts
-     * const files = await archive.files();
-     * for (const [path, file] of files) {
+     * const entries = await archive.files();
+     * for (const [path, file] of entries) {
      *   console.log(`${path}: ${file.size} bytes`);
      * }
      * ```
@@ -7217,15 +7219,15 @@ declare module "bun" {
      * @example
      * **Filter by glob pattern:**
      * ```ts
-     * const tsFiles = await archive.files("src/*.ts");
+     * const tsFiles = await archive.files("**/*.ts");
      * const srcFiles = await archive.files(["src/**", "lib/**"]);
      * ```
      *
      * @example
      * **Read file contents:**
      * ```ts
-     * const files = await archive.files();
-     * const readme = files.get("README.md");
+     * const entries = await archive.files();
+     * const readme = entries.get("README.md");
      * if (readme) {
      *   console.log(await readme.text());
      * }

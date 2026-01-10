@@ -145,13 +145,14 @@ The target directory is created automatically if it doesn't exist. Existing file
 Use glob patterns to extract only specific files:
 
 ```ts
+const tarball = await Bun.file("package.tar.gz").bytes();
 const archive = Bun.Archive.from(tarball);
 
 // Extract only TypeScript files
-const tsCount = await archive.extract("./src", { glob: "**/*.ts" });
+const tsCount = await archive.extract("./extracted", { glob: "**/*.ts" });
 
 // Extract files from multiple directories
-const multiCount = await archive.extract("./output", {
+const multiCount = await archive.extract("./extracted", {
   glob: ["src/**", "lib/**"],
 });
 ```
@@ -160,12 +161,12 @@ Use negative patterns (prefixed with `!`) to exclude files:
 
 ```ts
 // Extract everything except node_modules
-const distCount = await archive.extract("./dist", {
+const distCount = await archive.extract("./extracted", {
   glob: ["**", "!node_modules/**"],
 });
 
 // Extract source files but exclude tests
-const srcCount = await archive.extract("./output", {
+const srcCount = await archive.extract("./extracted", {
   glob: ["src/**", "!**/*.test.ts", "!**/__tests__/**"],
 });
 ```
@@ -189,10 +190,12 @@ for (const [path, file] of files) {
 
 Each `File` object includes:
 
-- `name` - The file path within the archive
+- `name` - The file path within the archive (always uses forward slashes `/` as separators)
 - `size` - File size in bytes
 - `lastModified` - Modification timestamp
 - Standard `Blob` methods: `text()`, `arrayBuffer()`, `stream()`, etc.
+
+**Note**: `files()` loads file contents into memory. For very large archives, consider using `extract()` to write directly to disk instead.
 
 ### Error Handling
 

@@ -655,6 +655,10 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
     if (sampleValue.isNumber()) {
         unsigned sampleInterval = sampleValue.toUInt32(globalObject);
         samplingProfiler.setTimingInterval(Seconds::fromMicroseconds(sampleInterval));
+    } else {
+        // Reset to default interval (1000 microseconds) to ensure each profile()
+        // call is independent of previous calls
+        samplingProfiler.setTimingInterval(Seconds::fromMicroseconds(1000));
     }
 
     const auto report = [](JSC::VM& vm,

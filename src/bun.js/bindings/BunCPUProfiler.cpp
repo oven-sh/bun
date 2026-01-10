@@ -18,8 +18,6 @@
 
 extern "C" void Bun__startCPUProfiler(JSC::VM* vm);
 extern "C" BunString Bun__stopCPUProfilerAndGetJSON(JSC::VM* vm);
-extern "C" void Bun__setCPUSamplingInterval(int intervalMicroseconds);
-extern "C" bool Bun__isCPUProfilerRunning();
 
 namespace Bun {
 
@@ -347,14 +345,4 @@ extern "C" BunString Bun__stopCPUProfilerAndGetJSON(JSC::VM* vm)
 {
     WTF::String result = Bun::stopCPUProfilerAndGetJSON(*vm);
     return Bun::toStringRef(result);
-}
-
-extern "C" void Bun__setCPUSamplingInterval(int intervalMicroseconds)
-{
-    Bun::setSamplingInterval(intervalMicroseconds);
-}
-
-extern "C" bool Bun__isCPUProfilerRunning()
-{
-    return Bun::isCPUProfilerRunning();
 }

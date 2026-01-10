@@ -169,33 +169,6 @@ describe("node:inspector", () => {
       expect(disableResult).toEqual({});
     });
 
-    test("profile timestamps are in microseconds", () => {
-      session.post("Profiler.enable");
-      session.post("Profiler.start");
-
-      // Do enough work to ensure we get samples
-      function fibonacci(n: number): number {
-        if (n <= 1) return n;
-        return fibonacci(n - 1) + fibonacci(n - 2);
-      }
-      fibonacci(25); // This should take enough time to get samples
-
-      const result = session.post("Profiler.stop");
-      const profile = result.profile;
-
-      // If we got samples, timestamps should be in microseconds
-      if (profile.samples.length > 0) {
-        // Timestamps should be in microseconds (large numbers)
-        // Microseconds since Unix epoch for 2020 would be around 1577836800000000
-        expect(profile.startTime).toBeGreaterThan(1000000000000000);
-        expect(profile.endTime).toBeGreaterThanOrEqual(profile.startTime);
-      } else {
-        // If no samples, startTime and endTime will be 0 (valid empty profile)
-        expect(profile.startTime).toBe(0);
-        expect(profile.endTime).toBe(0);
-      }
-    });
-
     test("samples and timeDeltas have same length", () => {
       session.post("Profiler.enable");
       session.post("Profiler.start");

@@ -162,7 +162,7 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                         continue :start_over;
                     }
 
-                    const entry_kind = switch (linux_entry.type) {
+                    const entry_kind: Entry.Kind = switch (linux_entry.type) {
                         linux.DT.BLK => Entry.Kind.block_device,
                         linux.DT.CHR => Entry.Kind.character_device,
                         linux.DT.DIR => Entry.Kind.directory,
@@ -170,6 +170,9 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                         linux.DT.LNK => Entry.Kind.sym_link,
                         linux.DT.REG => Entry.Kind.file,
                         linux.DT.SOCK => Entry.Kind.unix_domain_socket,
+                        // DT_UNKNOWN: Some filesystems (e.g., bind mounts, FUSE, NFS)
+                        // don't provide d_type. Callers should use lstatat() to determine
+                        // the type when needed (lazy stat pattern for performance).
                         else => Entry.Kind.unknown,
                     };
                     return .{

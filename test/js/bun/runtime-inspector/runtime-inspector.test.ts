@@ -305,6 +305,69 @@ describe("Runtime inspector activation", () => {
       expect(exitCode).not.toBe(0);
       expect(stderr).toContain("requires a pid argument");
     });
+
+    test("can interrupt an infinite loop", async () => {
+      using dir = tempDir("debug-infinite-loop-test", {
+        "target.js": `
+          const fs = require("fs");
+          const path = require("path");
+
+          // Write PID so parent can find us
+          fs.writeFileSync(path.join(process.cwd(), "pid"), String(process.pid));
+
+          // Infinite loop - the inspector should be able to interrupt this
+          while (true) {}
+        `,
+      });
+
+      // Start target process with infinite loop
+      await using targetProc = spawn({
+        cmd: [bunExe(), "target.js"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      // Wait for PID file to be written
+      const pidPath = join(String(dir), "pid");
+      let pid: number | undefined;
+      for (let i = 0; i < 50; i++) {
+        try {
+          const pidText = await Bun.file(pidPath).text();
+          pid = parseInt(pidText, 10);
+          if (pid > 0) break;
+        } catch {
+          // File not ready yet
+        }
+        await Bun.sleep(100);
+      }
+      expect(pid).toBeGreaterThan(0);
+
+      // Use _debugProcess to activate inspector - this should interrupt the infinite loop
+      await using debugProc = spawn({
+        cmd: [bunExe(), "-e", `process._debugProcess(${pid})`],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [debugStderr, debugExitCode] = await Promise.all([debugProc.stderr.text(), debugProc.exited]);
+
+      expect(debugStderr).toBe("");
+      expect(debugExitCode).toBe(0);
+
+      // Wait for inspector to activate - this proves we interrupted the infinite loop
+      const { stderr: targetStderr, reader: stderrReader } = await waitForDebuggerListening(targetProc.stderr);
+      stderrReader.releaseLock();
+
+      // Kill target
+      targetProc.kill();
+      await targetProc.exited;
+
+      expect(targetStderr).toContain("Bun Inspector");
+      expect(targetStderr).toContain("ws://localhost:6499/");
+    });
   });
 });
 

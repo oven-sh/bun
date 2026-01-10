@@ -6,8 +6,9 @@
 ///   - A "SignalInspector" thread sleeps on a semaphore
 ///   - SIGUSR1 handler runs on the main thread but in signal context (only
 ///     async-signal-safe functions allowed), posts to the semaphore
-///   - SignalInspector thread wakes in normal context, fires JSC debugger trap
-///   - Main thread checks flag on next tick and activates the inspector
+///   - SignalInspector thread wakes in normal context, calls VMManager::requestStopAll
+///   - JSC stops all VMs at safe points and calls our StopTheWorld callback
+///   - Callback runs on main thread, activates inspector, then resumes all VMs
 ///   - Usage: `kill -USR1 <pid>` to start debugger
 ///
 /// On Windows:
@@ -17,10 +18,10 @@
 ///   - The remote thread is already in normal context, so can call JSC APIs directly
 ///   - Usage: `process._debugProcess(pid)` from another Bun/Node process
 ///
-/// Why a dedicated thread? Signal handlers can only call async-signal-safe functions.
-/// JSC's notifyNeedDebuggerBreak() is NOT async-signal-safe. The dedicated thread
-/// provides a normal execution context from which we can safely call JSC APIs.
-/// This is the same approach Node.js uses (see inspector_agent.cc).
+/// Why StopTheWorld? Unlike notifyNeedDebuggerBreak() which only works if a debugger
+/// is already attached, StopTheWorld guarantees a callback runs on the main thread
+/// at a safe point - even during `while(true) {}` loops. This allows us to CREATE
+/// the debugger before pausing.
 ///
 const RuntimeInspector = @This();
 
@@ -39,34 +40,52 @@ var inspector_activation_requested: std.atomic.Value(bool) = std.atomic.Value(bo
 /// Called from the dedicated SignalInspector thread (POSIX) or remote thread (Windows).
 /// This runs in normal thread context, so it's safe to call JSC APIs.
 fn requestInspectorActivation() void {
-    const vm = VirtualMachine.getMainThreadVM() orelse return;
-
     inspector_activation_requested.store(true, .release);
 
-    // Fire a JSC trap to interrupt JavaScript execution, even in infinite loops.
-    // Safe to call from another thread (see VMTraps.h in JSC).
-    vm.jsc_vm.notifyNeedDebuggerBreak();
+    // Two mechanisms work together to handle all cases:
+    //
+    // 1. StopTheWorld (for busy loops like `while(true){}`):
+    //    requestStopAll sets a trap that fires at the next JS safe point.
+    //    Our callback (Bun__jsDebuggerCallback) then activates the inspector.
+    //
+    // 2. Event loop wakeup (for idle VMs waiting on I/O):
+    //    The wakeup causes checkAndActivateInspector to run, which activates
+    //    the inspector and calls requestResumeAll to clear any pending trap.
+    //
+    // Both mechanisms check inspector_activation_requested and clear it atomically,
+    // so only one will actually activate the inspector.
 
-    // Also wake the event loop in case JS is waiting on I/O
-    vm.eventLoop().wakeup();
+    jsc.VMManager.requestStopAll(.JSDebugger);
+
+    if (VirtualMachine.getMainThreadVM()) |vm| {
+        vm.eventLoop().wakeup();
+    }
 }
 
 /// Called from main thread during event loop tick.
+/// This handles the case where the VM is idle (waiting on I/O).
+/// For active JS execution (including infinite loops), the StopTheWorld callback handles it.
 pub fn checkAndActivateInspector(vm: *VirtualMachine) void {
     if (!inspector_activation_requested.swap(false, .acq_rel)) {
         return;
     }
 
-    log("Processing inspector activation request on main thread", .{});
+    log("Processing inspector activation request on main thread (event loop path)", .{});
+
+    // Clear any pending StopTheWorld request. This is critical for idle VMs:
+    // When the VM was idle, requestStopAll set a trap but m_numberOfActiveVMs was 0.
+    // If we don't clear the trap here, the next JS execution would hit the trap
+    // and deadlock (m_numberOfStoppedVMs=1 != m_numberOfActiveVMs=0).
+    jsc.VMManager.requestResumeAll(.JSDebugger);
 
     if (vm.is_shutting_down) {
         log("VM is shutting down, ignoring inspector activation request", .{});
         return;
     }
 
-    // Check if debugger is already active (prevents double activation via SIGUSR1)
+    // Check if debugger is already active (prevents double activation)
     if (vm.debugger != null) {
-        log("Debugger already active, ignoring SIGUSR1", .{});
+        log("Debugger already active, ignoring activation request", .{});
         return;
     }
 
@@ -330,10 +349,47 @@ export fn Bun__Sigusr1Handler__uninstall() void {
     uninstallForUserHandler();
 }
 
+/// Called from C++ StopTheWorld callback to check if inspector activation was requested.
+export fn Bun__checkInspectorActivationRequest() bool {
+    return inspector_activation_requested.load(.acquire);
+}
+
+/// Called from C++ StopTheWorld callback to activate the inspector.
+/// This runs on the main thread at a safe point after all VMs have stopped.
+export fn Bun__activateInspector(global: ?*jsc.JSGlobalObject) void {
+    _ = global; // The C++ callback may pass nullptr if VM is idle (no entry scope)
+    const vm = VirtualMachine.get();
+
+    // Clear the flag and activate if it was set
+    if (!inspector_activation_requested.swap(false, .acq_rel)) {
+        return;
+    }
+
+    log("Activating inspector from StopTheWorld callback", .{});
+
+    if (vm.is_shutting_down) {
+        log("VM is shutting down, ignoring inspector activation request", .{});
+        return;
+    }
+
+    // Check if debugger is already active (prevents double activation)
+    if (vm.debugger != null) {
+        log("Debugger already active, ignoring activation request", .{});
+        return;
+    }
+
+    activateInspector(vm) catch |err| {
+        Output.prettyErrorln("Failed to activate inspector: {s}\n", .{@errorName(err)});
+        Output.flush();
+    };
+}
+
 comptime {
     if (Environment.isPosix) {
         _ = Bun__Sigusr1Handler__uninstall;
     }
+    _ = Bun__checkInspectorActivationRequest;
+    _ = Bun__activateInspector;
 }
 
 const Semaphore = @import("../../sync/Semaphore.zig");

@@ -569,8 +569,8 @@ restart:
 
         break;
       }
-    } else if (s->handshake_state == HANDSHAKE_RENEGOTIATION_PENDING) {
-      // renegotiation ended successfully call on_handshake
+    } else if (s->handshake_state != HANDSHAKE_COMPLETED && SSL_is_init_finished(s->ssl)) {
+      // handshake just completed during SSL_read, notify the application
       us_internal_trigger_handshake_callback(s, 1);
     }
 

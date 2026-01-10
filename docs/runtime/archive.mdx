@@ -116,13 +116,13 @@ Create an archive from existing tar/tar.gz data:
 ```ts
 // From a file
 const tarball = await Bun.file("package.tar.gz").bytes();
-const archive = Bun.Archive.from(tarball);
+const archiveFromFile = Bun.Archive.from(tarball);
 ```
 
 ```ts
 // From a fetch response
 const response = await fetch("https://example.com/archive.tar.gz");
-const archive = Bun.Archive.from(await response.blob());
+const archiveFromFetch = Bun.Archive.from(await response.blob());
 ```
 
 ### Extracting to Disk
@@ -148,10 +148,10 @@ Use glob patterns to extract only specific files:
 const archive = Bun.Archive.from(tarball);
 
 // Extract only TypeScript files
-const count = await archive.extract("./src", { glob: "**/*.ts" });
+const tsCount = await archive.extract("./src", { glob: "**/*.ts" });
 
 // Extract files from multiple directories
-const count = await archive.extract("./output", {
+const multiCount = await archive.extract("./output", {
   glob: ["src/**", "lib/**"],
 });
 ```
@@ -160,12 +160,12 @@ Use negative patterns (prefixed with `!`) to exclude files:
 
 ```ts
 // Extract everything except node_modules
-const count = await archive.extract("./dist", {
+const distCount = await archive.extract("./dist", {
   glob: ["**", "!node_modules/**"],
 });
 
 // Extract source files but exclude tests
-const count = await archive.extract("./output", {
+const srcCount = await archive.extract("./output", {
   glob: ["src/**", "!**/*.test.ts", "!**/__tests__/**"],
 });
 ```

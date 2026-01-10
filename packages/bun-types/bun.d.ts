@@ -7119,8 +7119,7 @@ declare module "bun" {
      *
      * @param path - The directory path to extract files to
      * @param options - Optional extraction options
-     * @param options.glob - Glob pattern(s) to include (only matching files are extracted)
-     * @param options.ignore - Glob pattern(s) to exclude (matching files are skipped)
+     * @param options.glob - Glob pattern(s) to filter files (positive patterns include, negative patterns starting with `!` exclude)
      * @returns A promise that resolves with the number of files extracted
      *
      * @example
@@ -7140,15 +7139,14 @@ declare module "bun" {
      * @example
      * **Extract everything except tests:**
      * ```ts
-     * const count = await archive.extract("./dist", { ignore: "**\/*.test.*" });
+     * const count = await archive.extract("./dist", { glob: ["**", "!**\/*.test.*"] });
      * ```
      *
      * @example
-     * **Combine glob and ignore patterns:**
+     * **Extract source files but exclude tests:**
      * ```ts
      * const count = await archive.extract("./output", {
-     *   glob: ["src/**", "lib/**"],
-     *   ignore: ["**\/*.test.ts", "**\/__tests__/**"]
+     *   glob: ["src/**", "lib/**", "!**\/*.test.ts", "!**\/__tests__/**"]
      * });
      * ```
      */

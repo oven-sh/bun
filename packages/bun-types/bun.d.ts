@@ -6986,33 +6986,29 @@ declare module "bun" {
    */
   interface ArchiveExtractOptions {
     /**
-     * Glob pattern(s) to include. Only files matching at least one pattern will be extracted.
-     * If not specified, all files are included (unless excluded by `ignore`).
+     * Glob pattern(s) to filter which files are extracted.
+     *
+     * - Positive patterns: Only files matching at least one pattern will be extracted.
+     * - Negative patterns (prefixed with `!`): Files matching these patterns will be excluded.
+     *
+     * If not specified, all files are extracted.
      *
      * @example
      * ```ts
      * // Extract only TypeScript files
-     * await archive.extract("./out", { glob: "src/*.ts" });
+     * await archive.extract("./out", { glob: "**\/*.ts" });
      *
      * // Extract files from multiple directories
      * await archive.extract("./out", { glob: ["src/**", "lib/**"] });
+     *
+     * // Exclude node_modules using negative pattern
+     * await archive.extract("./out", { glob: ["**", "!node_modules/**"] });
+     *
+     * // Extract source files but exclude tests
+     * await archive.extract("./out", { glob: ["src/**", "!**\/*.test.ts"] });
      * ```
      */
     glob?: string | readonly string[];
-
-    /**
-     * Glob pattern(s) to exclude. Files matching any pattern will be skipped.
-     *
-     * @example
-     * ```ts
-     * // Exclude test files
-     * await archive.extract("./out", { ignore: "*.test.*" });
-     *
-     * // Exclude multiple patterns
-     * await archive.extract("./out", { ignore: ["*.test.ts", "__tests__/**"] });
-     * ```
-     */
-    ignore?: string | readonly string[];
   }
 
   /**

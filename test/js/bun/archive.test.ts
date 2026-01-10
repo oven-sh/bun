@@ -1158,7 +1158,7 @@ describe("Bun.Archive", () => {
     });
   });
 
-  describe("extract with glob/ignore patterns", () => {
+  describe("extract with glob patterns", () => {
     test("extracts only files matching glob pattern", async () => {
       const archive = Bun.Archive.from({
         "src/index.ts": "export {}",
@@ -1200,7 +1200,7 @@ describe("Bun.Archive", () => {
       expect(await Bun.file(join(String(dir), "README.md")).exists()).toBe(false);
     });
 
-    test("excludes files matching ignore pattern", async () => {
+    test("excludes files matching negative pattern", async () => {
       const archive = Bun.Archive.from({
         "src/index.ts": "export {}",
         "src/index.test.ts": "test()",
@@ -1208,8 +1208,9 @@ describe("Bun.Archive", () => {
         "src/utils.test.ts": "test()",
       });
 
-      using dir = tempDir("archive-ignore-pattern", {});
-      const count = await archive.extract(String(dir), { ignore: "**/*.test.ts" });
+      using dir = tempDir("archive-negative-pattern", {});
+      // Use negative pattern to exclude test files
+      const count = await archive.extract(String(dir), { glob: ["**", "!**/*.test.ts"] });
 
       expect(count).toBe(2);
       expect(await Bun.file(join(String(dir), "src/index.ts")).exists()).toBe(true);
@@ -1218,7 +1219,7 @@ describe("Bun.Archive", () => {
       expect(await Bun.file(join(String(dir), "src/utils.test.ts")).exists()).toBe(false);
     });
 
-    test("excludes files matching any of multiple ignore patterns", async () => {
+    test("excludes files matching any of multiple negative patterns", async () => {
       const archive = Bun.Archive.from({
         "src/index.ts": "export {}",
         "src/index.test.ts": "test()",
@@ -1226,9 +1227,9 @@ describe("Bun.Archive", () => {
         "node_modules/pkg/index.js": "module",
       });
 
-      using dir = tempDir("archive-multi-ignore", {});
+      using dir = tempDir("archive-multi-negative", {});
       const count = await archive.extract(String(dir), {
-        ignore: ["**/*.test.ts", "__tests__/**", "node_modules/**"],
+        glob: ["**", "!**/*.test.ts", "!__tests__/**", "!node_modules/**"],
       });
 
       expect(count).toBe(1);
@@ -1238,7 +1239,7 @@ describe("Bun.Archive", () => {
       expect(await Bun.file(join(String(dir), "node_modules/pkg/index.js")).exists()).toBe(false);
     });
 
-    test("combines glob and ignore patterns", async () => {
+    test("combines positive and negative glob patterns", async () => {
       const archive = Bun.Archive.from({
         "src/index.ts": "export {}",
         "src/index.test.ts": "test()",
@@ -1248,10 +1249,9 @@ describe("Bun.Archive", () => {
         "README.md": "# Hello",
       });
 
-      using dir = tempDir("archive-glob-and-ignore", {});
+      using dir = tempDir("archive-glob-and-negative", {});
       const count = await archive.extract(String(dir), {
-        glob: ["src/**", "lib/**"],
-        ignore: "**/*.test.ts",
+        glob: ["src/**", "lib/**", "!**/*.test.ts"],
       });
 
       expect(count).toBe(3);

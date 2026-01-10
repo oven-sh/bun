@@ -286,8 +286,7 @@ fn parseCompressArg(globalThis: *jsc.JSGlobalObject, arg: jsc.JSValue) bun.JSErr
 /// Instance method: archive.extract(path, options?)
 /// Extracts the archive to the given path
 /// Options:
-///   - glob: string | string[] - Only extract files matching the glob pattern(s)
-///   - ignore: string | string[] - Exclude files matching the ignore pattern(s)
+///   - glob: string | string[] - Only extract files matching the glob pattern(s). Supports negative patterns with "!".
 /// Returns Promise<number> with count of extracted files
 pub fn extract(this: *Archive, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const path_arg, const options_arg = callframe.argumentsAsArray(2);
@@ -300,10 +299,8 @@ pub fn extract(this: *Archive, globalThis: *jsc.JSGlobalObject, callframe: *jsc.
 
     // Parse options
     var glob_patterns: ?[]const []const u8 = null;
-    var ignore_patterns: ?[]const []const u8 = null;
     errdefer {
         if (glob_patterns) |patterns| freePatterns(patterns);
-        if (ignore_patterns) |patterns| freePatterns(patterns);
     }
 
     if (!options_arg.isUndefinedOrNull()) {
@@ -315,14 +312,9 @@ pub fn extract(this: *Archive, globalThis: *jsc.JSGlobalObject, callframe: *jsc.
         if (try options_arg.getTruthy(globalThis, "glob")) |glob_val| {
             glob_patterns = try parsePatternArg(globalThis, glob_val, "glob");
         }
-
-        // Parse ignore option
-        if (try options_arg.getTruthy(globalThis, "ignore")) |ignore_val| {
-            ignore_patterns = try parsePatternArg(globalThis, ignore_val, "ignore");
-        }
     }
 
-    return startExtractTask(globalThis, this.store, path_slice.slice(), glob_patterns, ignore_patterns);
+    return startExtractTask(globalThis, this.store, path_slice.slice(), glob_patterns);
 }
 
 /// Parse a string or array of strings into a pattern list.
@@ -512,17 +504,15 @@ const ExtractContext = struct {
     store: *jsc.WebCore.Blob.Store,
     path: []const u8,
     glob_patterns: ?[]const []const u8,
-    ignore_patterns: ?[]const []const u8,
     result: Result = .{ .err = error.ReadError },
 
     fn run(this: *ExtractContext) Result {
-        // If we have glob or ignore patterns, use filtered extraction
-        if (this.glob_patterns != null or this.ignore_patterns != null) {
+        // If we have glob patterns, use filtered extraction
+        if (this.glob_patterns != null) {
             const count = extractToDiskFiltered(
                 this.store.sharedView(),
                 this.path,
                 this.glob_patterns,
-                this.ignore_patterns,
             ) catch return .{ .err = error.ReadError };
             return .{ .success = count };
         }
@@ -550,7 +540,6 @@ const ExtractContext = struct {
         this.store.deref();
         bun.default_allocator.free(this.path);
         if (this.glob_patterns) |patterns| freePatterns(patterns);
-        if (this.ignore_patterns) |patterns| freePatterns(patterns);
     }
 };
 
@@ -561,7 +550,6 @@ fn startExtractTask(
     store: *jsc.WebCore.Blob.Store,
     path: []const u8,
     glob_patterns: ?[]const []const u8,
-    ignore_patterns: ?[]const []const u8,
 ) bun.JSError!jsc.JSValue {
     const path_copy = try bun.default_allocator.dupe(u8, path);
     errdefer bun.default_allocator.free(path_copy);
@@ -573,7 +561,6 @@ fn startExtractTask(
         .store = store,
         .path = path_copy,
         .glob_patterns = glob_patterns,
-        .ignore_patterns = ignore_patterns,
     });
 
     const promise_js = task.promise.value();
@@ -940,12 +927,42 @@ fn isSafePath(pathname: []const u8) bool {
     return true;
 }
 
-/// Extract archive to disk with glob/ignore pattern filtering
+/// Match a path against multiple glob patterns with support for negative patterns.
+/// Positive patterns: at least one must match for the path to be included.
+/// Negative patterns (starting with "!"): if any matches, the path is excluded.
+/// Returns true if the path should be included, false if excluded.
+fn matchGlobPatterns(patterns: []const []const u8, pathname: []const u8) bool {
+    var has_positive_patterns = false;
+    var matches_positive = false;
+
+    for (patterns) |pattern| {
+        // Check if it's a negative pattern
+        if (pattern.len > 0 and pattern[0] == '!') {
+            // Negative pattern - if it matches, exclude the file
+            const neg_pattern = pattern[1..];
+            if (neg_pattern.len > 0 and bun.glob.match(neg_pattern, pathname).matches()) {
+                return false;
+            }
+        } else {
+            // Positive pattern - at least one must match
+            has_positive_patterns = true;
+            if (bun.glob.match(pattern, pathname).matches()) {
+                matches_positive = true;
+            }
+        }
+    }
+
+    // If there are no positive patterns, include everything (that wasn't excluded)
+    // If there are positive patterns, at least one must match
+    return !has_positive_patterns or matches_positive;
+}
+
+/// Extract archive to disk with glob pattern filtering.
+/// Supports negative patterns with "!" prefix (e.g., "!node_modules/**").
 fn extractToDiskFiltered(
     file_buffer: []const u8,
     root: []const u8,
     glob_patterns: ?[]const []const u8,
-    ignore_patterns: ?[]const []const u8,
 ) !u32 {
     const lib = libarchive.lib;
     const archive = lib.Archive.readNew();
@@ -977,28 +994,11 @@ fn extractToDiskFiltered(
         // Validate path safety (reject absolute paths, path traversal)
         if (!isSafePath(pathname)) continue;
 
-        // Apply glob pattern filtering (if patterns specified, at least one must match)
+        // Apply glob pattern filtering. Supports negative patterns with "!" prefix.
+        // Positive patterns: at least one must match
+        // Negative patterns: if any matches, the file is excluded
         if (glob_patterns) |patterns| {
-            var matches_any = false;
-            for (patterns) |pattern| {
-                if (bun.glob.match(pattern, pathname).matches()) {
-                    matches_any = true;
-                    break;
-                }
-            }
-            if (!matches_any) continue;
-        }
-
-        // Apply ignore pattern filtering (if any pattern matches, skip)
-        if (ignore_patterns) |patterns| {
-            var is_ignored = false;
-            for (patterns) |pattern| {
-                if (bun.glob.match(pattern, pathname).matches()) {
-                    is_ignored = true;
-                    break;
-                }
-            }
-            if (is_ignored) continue;
+            if (!matchGlobPatterns(patterns, pathname)) continue;
         }
 
         const filetype = entry.filetype();

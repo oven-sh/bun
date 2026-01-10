@@ -156,18 +156,17 @@ const count = await archive.extract("./output", {
 });
 ```
 
-Use ignore patterns to exclude files:
+Use negative patterns (prefixed with `!`) to exclude files:
 
 ```ts
-// Extract everything except test files
+// Extract everything except node_modules
 const count = await archive.extract("./dist", {
-  ignore: "**/*.test.*",
+  glob: ["**", "!node_modules/**"],
 });
 
-// Combine glob and ignore patterns
+// Extract source files but exclude tests
 const count = await archive.extract("./output", {
-  glob: "src/**",
-  ignore: ["**/*.test.ts", "**/__tests__/**"],
+  glob: ["src/**", "!**/*.test.ts", "!**/__tests__/**"],
 });
 ```
 
@@ -400,10 +399,8 @@ type ArchiveInput =
   | ArrayBufferLike;
 
 interface ArchiveExtractOptions {
-  /** Glob pattern(s) to include */
+  /** Glob pattern(s) to filter extraction. Supports negative patterns with "!" prefix. */
   glob?: string | readonly string[];
-  /** Glob pattern(s) to exclude */
-  ignore?: string | readonly string[];
 }
 
 class Archive {

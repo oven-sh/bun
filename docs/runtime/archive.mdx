@@ -25,8 +25,8 @@ await Bun.Archive.write("bundle.tar", archive);
 ```ts
 const tarball = await Bun.file("package.tar.gz").bytes();
 const archive = Bun.Archive.from(tarball);
-const fileCount = await archive.extract("./output");
-console.log(`Extracted ${fileCount} files`);
+const entryCount = await archive.extract("./output");
+console.log(`Extracted ${entryCount} entries`);
 ```
 
 **Read archive contents without extracting:**
@@ -133,10 +133,10 @@ Use `.extract()` to write all files to a directory:
 const tarball = await Bun.file("package.tar.gz").bytes();
 const archive = Bun.Archive.from(tarball);
 const count = await archive.extract("./extracted");
-console.log(`Extracted ${count} files`);
+console.log(`Extracted ${count} entries`);
 ```
 
-The target directory is created automatically if it doesn't exist. Existing files are overwritten.
+The target directory is created automatically if it doesn't exist. Existing files are overwritten. The returned count includes files, directories, and symlinks (on POSIX systems).
 
 **Note**: On Windows, symbolic links in archives are skipped during extraction since they require elevated privileges. On Linux and macOS, symlinks are extracted normally.
 
@@ -174,7 +174,7 @@ const srcCount = await archive.extract("./output", {
 
 ### Get All Files
 
-Use `.files()` to get archive contents as a `Map` of `File` objects without extracting to disk:
+Use `.files()` to get archive contents as a `Map` of `File` objects without extracting to disk. Unlike `extract()` which processes all entry types, `files()` returns only regular files (no directories):
 
 ```ts
 const tarball = await Bun.file("package.tar.gz").bytes();
@@ -203,7 +203,7 @@ try {
   const tarball = await Bun.file("package.tar.gz").bytes();
   const archive = Bun.Archive.from(tarball);
   const count = await archive.extract("./output");
-  console.log(`Extracted ${count} files`);
+  console.log(`Extracted ${count} entries`);
 } catch (e: unknown) {
   if (e instanceof Error) {
     const error = e as Error & { code?: string };
@@ -388,14 +388,12 @@ await Bun.Archive.write("my-project.tar.gz", archive, "gzip");
 ## Reference
 
 ```ts
-type ArrayBufferView = NodeJS.TypedArray | DataView;
-
 type ArchiveCompression = "gzip" | boolean;
 
 type ArchiveInput =
-  | Record<string, string | Blob | ArrayBufferView | ArrayBufferLike>
+  | Record<string, string | Blob | Bun.ArrayBufferView | ArrayBufferLike>
   | Blob
-  | ArrayBufferView
+  | Bun.ArrayBufferView
   | ArrayBufferLike;
 
 interface ArchiveExtractOptions {
@@ -431,7 +429,7 @@ class Archive {
   bytes(compress?: ArchiveCompression): Promise<Uint8Array<ArrayBuffer>>;
 
   /**
-   * Get archive contents as File objects
+   * Get archive contents as File objects (regular files only, no directories)
    */
   files(glob?: string | readonly string[]): Promise<Map<string, File>>;
 }

@@ -6986,17 +6986,17 @@ declare module "bun" {
    */
   interface ArchiveExtractOptions {
     /**
-     * Glob pattern(s) to filter which files are extracted.
+     * Glob pattern(s) to filter which entries are extracted.
      *
-     * - Positive patterns: Only files matching at least one pattern will be extracted.
-     * - Negative patterns (prefixed with `!`): Files matching these patterns will be excluded.
+     * - Positive patterns: Only entries matching at least one pattern will be extracted.
+     * - Negative patterns (prefixed with `!`): Entries matching these patterns will be excluded.
      *
-     * If not specified, all files are extracted.
+     * If not specified, all entries are extracted.
      *
      * @example
      * ```ts
      * // Extract only TypeScript files
-     * await archive.extract("./out", { glob: "**\/*.ts" });
+     * await archive.extract("./out", { glob: "**" + "/*.ts" });
      *
      * // Extract files from multiple directories
      * await archive.extract("./out", { glob: ["src/**", "lib/**"] });
@@ -7005,7 +7005,7 @@ declare module "bun" {
      * await archive.extract("./out", { glob: ["**", "!node_modules/**"] });
      *
      * // Extract source files but exclude tests
-     * await archive.extract("./out", { glob: ["src/**", "!**\/*.test.ts"] });
+     * await archive.extract("./out", { glob: ["src/**", "!**" + "/*.test.ts"] });
      * ```
      */
     glob?: string | readonly string[];
@@ -7117,36 +7117,36 @@ declare module "bun" {
      * Creates the target directory and any necessary parent directories if they don't exist.
      * Existing files will be overwritten.
      *
-     * @param path - The directory path to extract files to
+     * @param path - The directory path to extract to
      * @param options - Optional extraction options
-     * @param options.glob - Glob pattern(s) to filter files (positive patterns include, negative patterns starting with `!` exclude)
-     * @returns A promise that resolves with the number of files extracted
+     * @param options.glob - Glob pattern(s) to filter entries (positive patterns include, negative patterns starting with `!` exclude)
+     * @returns A promise that resolves with the number of entries extracted (files, directories, and symlinks)
      *
      * @example
-     * **Extract all files:**
+     * **Extract all entries:**
      * ```ts
      * const archive = Bun.Archive.from(tarballBytes);
      * const count = await archive.extract("./extracted");
-     * console.log(`Extracted ${count} files`);
+     * console.log(`Extracted ${count} entries`);
      * ```
      *
      * @example
      * **Extract only TypeScript files:**
      * ```ts
-     * const count = await archive.extract("./src", { glob: "**\/*.ts" });
+     * const count = await archive.extract("./src", { glob: "**" + "/*.ts" });
      * ```
      *
      * @example
      * **Extract everything except tests:**
      * ```ts
-     * const count = await archive.extract("./dist", { glob: ["**", "!**\/*.test.*"] });
+     * const count = await archive.extract("./dist", { glob: ["**", "!**" + "/*.test.*"] });
      * ```
      *
      * @example
      * **Extract source files but exclude tests:**
      * ```ts
      * const count = await archive.extract("./output", {
-     *   glob: ["src/**", "lib/**", "!**\/*.test.ts", "!**\/__tests__/**"]
+     *   glob: ["src/**", "lib/**", "!**" + "/*.test.ts", "!**" + "/__tests__/**"]
      * });
      * ```
      */

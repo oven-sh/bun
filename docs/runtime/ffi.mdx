@@ -358,7 +358,7 @@ Bun represents [pointers](<https://en.wikipedia.org/wiki/Pointer_(computer_progr
 
 **Why not `BigInt`?** `BigInt` is slower. JavaScript engines allocate a separate `BigInt` which means they can't fit into a regular JavaScript value. If you pass a `BigInt` to a function, it will be converted to a `number`
 
-**Windows Note**: The Windows API type HANDLE does not represent a virtual address, and using `ptr` for it will *not* work as expected. Use `u64` to safely represent HANDLE values.
+**Windows Note**: The Windows API type HANDLE does not represent a virtual address, and using `ptr` for it will _not_ work as expected. Use `u64` to safely represent HANDLE values.
 
 </Accordion>
 

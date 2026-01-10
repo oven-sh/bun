@@ -121,6 +121,7 @@
               "/runtime/file-io",
               "/runtime/streams",
               "/runtime/binary-data",
+              "/runtime/archive",
               "/runtime/sql",
               "/runtime/sqlite",
               "/runtime/s3",

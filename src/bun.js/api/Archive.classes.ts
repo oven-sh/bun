@@ -20,7 +20,7 @@ export default [
     proto: {
       extract: {
         fn: "extract",
-        length: 1,
+        length: 2,
       },
       blob: {
         fn: "blob",

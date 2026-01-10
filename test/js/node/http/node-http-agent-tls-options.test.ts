@@ -222,13 +222,18 @@ describe("https.request agent TLS options inheritance", () => {
     });
   });
 
-  describe("option precedence", () => {
-    test("direct options take precedence over agent.options", async () => {
+  describe("option precedence (matches Node.js)", () => {
+    // In Node.js, options are merged via spread in createSocket:
+    //   options = { __proto__: null, ...options, ...this.options };
+    // https://github.com/nodejs/node/blob/v23.6.0/lib/_http_agent.js#L365
+    // With spread, the last one wins, so agent.options overwrites request options.
+
+    test("agent.options takes precedence over direct options", async () => {
       await using httpsServer = exampleSite();
 
-      // Create an agent with wrong ca (should fail if used)
+      // Create an agent with correct CA
       const agent = new https.Agent({
-        ca: "wrong-ca-that-would-fail",
+        ca: httpsServer.ca, // Correct CA in agent.options - should be used
       });
 
       const { promise, resolve, reject } = Promise.withResolvers<void>();
@@ -239,7 +244,34 @@ describe("https.request agent TLS options inheritance", () => {
           path: "/",
           method: "GET",
           agent,
-          ca: httpsServer.ca, // Direct option should take precedence
+          ca: "wrong-ca-that-would-fail", // Wrong CA in request - should be ignored
+        },
+        res => {
+          res.on("data", () => {});
+          res.on("end", resolve);
+        },
+      );
+      req.on("error", reject);
+      req.end();
+
+      await promise;
+    });
+
+    test("direct options used when agent.options not set", async () => {
+      await using httpsServer = exampleSite();
+
+      // Create an agent without ca
+      const agent = new https.Agent({});
+
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      const req = https.request(
+        {
+          hostname: httpsServer.url.hostname,
+          port: httpsServer.url.port,
+          path: "/",
+          method: "GET",
+          agent,
+          ca: httpsServer.ca, // Direct option should be used since agent.options.ca is not set
         },
         res => {
           res.on("data", () => {});
@@ -257,10 +289,10 @@ describe("https.request agent TLS options inheritance", () => {
 
       // Simulate an agent with both options and connectOpts
       const agent = new https.Agent({
-        ca: httpsServer.ca, // Correct CA in options
+        ca: httpsServer.ca, // Correct CA in options - should be used
       }) as https.Agent & { connectOpts: Record<string, unknown> };
       agent.connectOpts = {
-        ca: "wrong-ca-that-would-fail", // Wrong CA in connectOpts
+        ca: "wrong-ca-that-would-fail", // Wrong CA in connectOpts - should be ignored
       };
 
       const { promise, resolve, reject } = Promise.withResolvers<void>();
@@ -271,7 +303,36 @@ describe("https.request agent TLS options inheritance", () => {
           path: "/",
           method: "GET",
           agent,
-          // NO ca here - agent.options.ca should be used over agent.connectOpts.ca
+        },
+        res => {
+          res.on("data", () => {});
+          res.on("end", resolve);
+        },
+      );
+      req.on("error", reject);
+      req.end();
+
+      await promise;
+    });
+
+    test("direct options takes precedence over agent.connectOpts", async () => {
+      await using httpsServer = exampleSite();
+
+      // Simulate an agent with only connectOpts (no options.ca)
+      const agent = new https.Agent({}) as https.Agent & { connectOpts: Record<string, unknown> };
+      agent.connectOpts = {
+        ca: "wrong-ca-that-would-fail", // Wrong CA in connectOpts - should be ignored
+      };
+
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      const req = https.request(
+        {
+          hostname: httpsServer.url.hostname,
+          port: httpsServer.url.port,
+          path: "/",
+          method: "GET",
+          agent,
+          ca: httpsServer.ca, // Correct CA in request - should be used over connectOpts
         },
         res => {
           res.on("data", () => {});

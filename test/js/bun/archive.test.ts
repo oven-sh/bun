@@ -1208,4 +1208,84 @@ describe("Bun.Archive", () => {
       expect(count).toBeGreaterThan(0);
     });
   });
+
+  describe("Bun.write with Archive", () => {
+    test("writes archive to local file", async () => {
+      const archive = Bun.Archive.from({
+        "hello.txt": "Hello, World!",
+        "data.json": JSON.stringify({ foo: "bar" }),
+      });
+
+      using dir = tempDir("archive-bunwrite", {});
+      const tarPath = join(String(dir), "test.tar");
+
+      const bytesWritten = await Bun.write(tarPath, archive);
+      expect(bytesWritten).toBeGreaterThan(0);
+
+      // Verify the file was written
+      expect(await Bun.file(tarPath).exists()).toBe(true);
+
+      // Read it back and verify contents
+      const readArchive = Bun.Archive.from(await Bun.file(tarPath).bytes());
+      const files = await readArchive.files();
+      expect(files.size).toBe(2);
+      expect(files.get("hello.txt")).toBeDefined();
+      expect(await files.get("hello.txt")!.text()).toBe("Hello, World!");
+      expect(await files.get("data.json")!.text()).toBe(JSON.stringify({ foo: "bar" }));
+    });
+
+    test("writes archive with nested directories", async () => {
+      const archive = Bun.Archive.from({
+        "root.txt": "root file",
+        "dir1/file1.txt": "file in dir1",
+        "dir1/dir2/file2.txt": "file in dir1/dir2",
+      });
+
+      using dir = tempDir("archive-bunwrite-nested", {});
+      const tarPath = join(String(dir), "nested.tar");
+
+      await Bun.write(tarPath, archive);
+
+      // Read it back
+      const readArchive = Bun.Archive.from(await Bun.file(tarPath).bytes());
+      const files = await readArchive.files();
+      expect(files.size).toBe(3);
+      expect(await files.get("dir1/dir2/file2.txt")!.text()).toBe("file in dir1/dir2");
+    });
+
+    test("writes archive with binary content", async () => {
+      const binaryData = new Uint8Array([0x00, 0x01, 0x02, 0xff, 0xfe, 0xfd]);
+      const archive = Bun.Archive.from({
+        "binary.bin": binaryData,
+      });
+
+      using dir = tempDir("archive-bunwrite-binary", {});
+      const tarPath = join(String(dir), "binary.tar");
+
+      await Bun.write(tarPath, archive);
+
+      // Read it back
+      const readArchive = Bun.Archive.from(await Bun.file(tarPath).bytes());
+      const files = await readArchive.files();
+      const extractedBinary = await files.get("binary.bin")!.bytes();
+      expect(extractedBinary).toEqual(binaryData);
+    });
+
+    test("writes archive to Bun.file()", async () => {
+      const archive = Bun.Archive.from({
+        "test.txt": "test content",
+      });
+
+      using dir = tempDir("archive-bunwrite-file", {});
+      const tarPath = join(String(dir), "test.tar");
+      const bunFile = Bun.file(tarPath);
+
+      await Bun.write(bunFile, archive);
+
+      expect(await bunFile.exists()).toBe(true);
+      const readArchive = Bun.Archive.from(await bunFile.bytes());
+      const files = await readArchive.files();
+      expect(await files.get("test.txt")!.text()).toBe("test content");
+    });
+  });
 });

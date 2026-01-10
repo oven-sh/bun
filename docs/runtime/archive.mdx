@@ -85,10 +85,7 @@ const archive = new Bun.Archive({
 await Bun.write("output.tar", archive);
 
 // Write gzipped tar
-const gzipped = new Bun.Archive(
-  { "src/index.ts": "console.log('Hello');" },
-  { gzip: true }
-);
+const gzipped = new Bun.Archive({ "src/index.ts": "console.log('Hello');" }, { gzip: true });
 await Bun.write("output.tar.gz", gzipped);
 ```
 
@@ -106,10 +103,7 @@ const bytes = await archive.bytes();
 const blob = await archive.blob();
 
 // With gzip compression (set at construction)
-const gzipped = new Bun.Archive(
-  { "hello.txt": "Hello, World!" },
-  { gzip: true }
-);
+const gzipped = new Bun.Archive({ "hello.txt": "Hello, World!" }, { gzip: true });
 const gzippedBytes = await gzipped.bytes();
 const gzippedBlob = await gzipped.blob();
 ```
@@ -313,17 +307,11 @@ const gzippedTarball = await Bun.file("archive.tar.gz").bytes();
 const archive = new Bun.Archive(gzippedTarball);
 
 // Writing: specify compression at construction time
-const gzipped = new Bun.Archive(
-  { "hello.txt": "Hello, World!" },
-  { gzip: true }
-);
+const gzipped = new Bun.Archive({ "hello.txt": "Hello, World!" }, { gzip: true });
 await Bun.write("output.tar.gz", gzipped);
 
 // Or with a specific compression level (1-12)
-const maxCompression = new Bun.Archive(
-  { "hello.txt": "Hello, World!" },
-  { gzip: 12 }
-);
+const maxCompression = new Bun.Archive({ "hello.txt": "Hello, World!" }, { gzip: 12 });
 ```
 
 The `gzip` option accepts:

@@ -88,7 +88,7 @@ await Bun.write("output.tar.gz", archive);
 // Write uncompressed tar (pass empty options)
 const uncompressed = new Bun.Archive(
   { "src/index.ts": "console.log('Hello');" },
-  {} // Empty options = no compression
+  {}, // Empty options = no compression
 );
 await Bun.write("output.tar", uncompressed);
 ```
@@ -107,10 +107,7 @@ const bytes = await archive.bytes();
 const blob = await archive.blob();
 
 // With gzip compression (set at construction)
-const gzipped = new Bun.Archive(
-  { "hello.txt": "Hello, World!" },
-  { compress: "gzip" }
-);
+const gzipped = new Bun.Archive({ "hello.txt": "Hello, World!" }, { compress: "gzip" });
 const gzippedBytes = await gzipped.bytes();
 const gzippedBlob = await gzipped.blob();
 ```
@@ -317,15 +314,12 @@ const gzippedTarball = await Bun.file("archive.tar.gz").bytes();
 const readArchive = new Bun.Archive(gzippedTarball);
 
 // Explicit gzip with custom level (1-12)
-const maxCompression = new Bun.Archive(
-  { "hello.txt": "Hello, World!" },
-  { compress: "gzip", level: 12 }
-);
+const maxCompression = new Bun.Archive({ "hello.txt": "Hello, World!" }, { compress: "gzip", level: 12 });
 
 // No compression (pass empty options)
 const uncompressed = new Bun.Archive(
   { "hello.txt": "Hello, World!" },
-  {} // Empty options = uncompressed tar
+  {}, // Empty options = uncompressed tar
 );
 ```
 

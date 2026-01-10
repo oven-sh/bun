@@ -956,15 +956,17 @@ fn extractToDiskFiltered(
         return error.ReadError;
     }
 
-    // Open/create target directory
-    const cwd = std.fs.cwd();
-    cwd.makePath(root) catch {};
-
-    var dir = if (std.fs.path.isAbsolute(root))
-        try std.fs.openDirAbsolute(root, .{})
-    else
-        try cwd.openDir(root, .{});
-    defer dir.close();
+    // Open/create target directory using bun.sys
+    const cwd = bun.FD.cwd();
+    cwd.makePath(u8, root) catch {};
+    const dir_fd: bun.FD = brk: {
+        if (std.fs.path.isAbsolute(root)) {
+            break :brk bun.sys.openA(root, bun.O.RDONLY | bun.O.DIRECTORY, 0).unwrap() catch return error.OpenError;
+        } else {
+            break :brk bun.sys.openatA(cwd, root, bun.O.RDONLY | bun.O.DIRECTORY, 0).unwrap() catch return error.OpenError;
+        }
+    };
+    defer _ = dir_fd.close();
 
     var count: u32 = 0;
     var entry: *lib.Archive.Entry = undefined;
@@ -1004,7 +1006,7 @@ fn extractToDiskFiltered(
 
         switch (kind) {
             .directory => {
-                dir.makePath(pathname) catch |err| switch (err) {
+                dir_fd.makePath(u8, pathname) catch |err| switch (err) {
                     // Directory already exists - don't count as extracted
                     error.PathAlreadyExists => continue,
                     else => continue,
@@ -1022,21 +1024,23 @@ fn extractToDiskFiltered(
 
                 // Create parent directories if needed (ignore expected errors)
                 if (std.fs.path.dirname(pathname)) |parent_dir| {
-                    dir.makePath(parent_dir) catch |err| switch (err) {
+                    dir_fd.makePath(u8, parent_dir) catch |err| switch (err) {
                         // Expected: directory already exists
                         error.PathAlreadyExists => {},
-                        // Permission errors: skip this file, will fail at createFileZ
+                        // Permission errors: skip this file, will fail at openat
                         error.AccessDenied => {},
-                        // Other errors: skip, will fail at createFileZ
+                        // Other errors: skip, will fail at openat
                         else => {},
                     };
                 }
 
-                // Create and write the file
-                const file = dir.createFileZ(pathname, .{
-                    .truncate = true,
-                    .mode = mode,
-                }) catch continue;
+                // Create and write the file using bun.sys
+                const file_fd: bun.FD = bun.sys.openat(
+                    dir_fd,
+                    pathname,
+                    bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC,
+                    mode,
+                ).unwrap() catch continue;
 
                 var write_success = true;
                 if (size > 0) {
@@ -1054,7 +1058,7 @@ fn extractToDiskFiltered(
                         // Write all bytes, handling partial writes
                         var written: usize = 0;
                         while (written < bytes_read) {
-                            const w = file.write(buf[written..bytes_read]) catch {
+                            const w = file_fd.write(buf[written..bytes_read]).unwrap() catch {
                                 write_success = false;
                                 break;
                             };
@@ -1068,13 +1072,13 @@ fn extractToDiskFiltered(
                         remaining -= bytes_read;
                     }
                 }
-                file.close();
+                _ = file_fd.close();
 
                 if (write_success) {
                     count += 1;
                 } else {
                     // Remove partial file on failure
-                    dir.deleteFile(pathname) catch {};
+                    _ = dir_fd.unlinkat(pathname);
                 }
             },
             .sym_link => {
@@ -1084,13 +1088,13 @@ fn extractToDiskFiltered(
                 // Symlinks are only extracted on POSIX systems (Linux/macOS).
                 // On Windows, symlinks are skipped since they require elevated privileges.
                 if (bun.Environment.isPosix) {
-                    bun.sys.symlinkat(link_target, .fromNative(dir.fd), pathname).unwrap() catch |err| {
+                    bun.sys.symlinkat(link_target, dir_fd, pathname).unwrap() catch |err| {
                         switch (err) {
                             error.EPERM, error.ENOENT => {
                                 if (std.fs.path.dirname(pathname)) |parent| {
-                                    dir.makePath(parent) catch {};
+                                    dir_fd.makePath(u8, parent) catch {};
                                 }
-                                _ = bun.sys.symlinkat(link_target, .fromNative(dir.fd), pathname).unwrap() catch continue;
+                                _ = bun.sys.symlinkat(link_target, dir_fd, pathname).unwrap() catch continue;
                             },
                             else => continue,
                         }

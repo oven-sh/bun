@@ -17,7 +17,7 @@ describe("Bun.file() permissions", () => {
       });
 
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "--secure", `${String(dir)}/test.ts`],
+        cmd: [bunExe(), "--secure", "test.ts"],
         env: bunEnv,
         cwd: String(dir),
         stdout: "pipe",
@@ -44,7 +44,7 @@ describe("Bun.file() permissions", () => {
       });
 
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "--secure", `--allow-read=${String(dir)}`, `${String(dir)}/test.ts`],
+        cmd: [bunExe(), "--secure", `--allow-read=${String(dir)}`, "test.ts"],
         env: bunEnv,
         cwd: String(dir),
         stdout: "pipe",
@@ -71,7 +71,7 @@ describe("Bun.file() permissions", () => {
       });
 
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "--secure", `${String(dir)}/test.ts`],
+        cmd: [bunExe(), "--secure", "test.ts"],
         env: bunEnv,
         cwd: String(dir),
         stdout: "pipe",
@@ -98,7 +98,7 @@ describe("Bun.file() permissions", () => {
       });
 
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "--secure", `--allow-read=${String(dir)}`, `${String(dir)}/test.ts`],
+        cmd: [bunExe(), "--secure", `--allow-read=${String(dir)}`, "test.ts"],
         env: bunEnv,
         cwd: String(dir),
         stdout: "pipe",
@@ -127,7 +127,7 @@ describe("Bun.file() permissions", () => {
       });
 
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "--secure", `${String(dir)}/test.ts`],
+        cmd: [bunExe(), "--secure", "test.ts"],
         env: bunEnv,
         cwd: String(dir),
         stdout: "pipe",
@@ -156,7 +156,7 @@ describe("Bun.file() permissions", () => {
       });
 
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "--secure", `--allow-read=${String(dir)}`, `${String(dir)}/test.ts`],
+        cmd: [bunExe(), "--secure", `--allow-read=${String(dir)}`, "test.ts"],
         env: bunEnv,
         cwd: String(dir),
         stdout: "pipe",
@@ -183,7 +183,7 @@ describe("Bun.file() permissions", () => {
       });
 
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "--secure", `${String(dir)}/test.ts`],
+        cmd: [bunExe(), "--secure", "test.ts"],
         env: bunEnv,
         cwd: String(dir),
         stdout: "pipe",
@@ -210,7 +210,7 @@ describe("Bun.file() permissions", () => {
       });
 
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "--secure", `--allow-read=${String(dir)}`, `${String(dir)}/test.ts`],
+        cmd: [bunExe(), "--secure", `--allow-read=${String(dir)}`, "test.ts"],
         env: bunEnv,
         cwd: String(dir),
         stdout: "pipe",
@@ -238,7 +238,7 @@ describe("Bun.file() permissions", () => {
       });
 
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "--secure", `${String(dir)}/test.ts`],
+        cmd: [bunExe(), "--secure", "test.ts"],
         env: bunEnv,
         cwd: String(dir),
         stdout: "pipe",
@@ -265,13 +265,7 @@ describe("Bun.file() permissions", () => {
       });
 
       await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "--secure",
-          `--allow-write=${String(dir)}`,
-          `--allow-read=${String(dir)}`,
-          `${String(dir)}/test.ts`,
-        ],
+        cmd: [bunExe(), "--secure", `--allow-write=${String(dir)}`, `--allow-read=${String(dir)}`, "test.ts"],
         env: bunEnv,
         cwd: String(dir),
         stdout: "pipe",
@@ -297,7 +291,7 @@ describe("Bun.file() permissions", () => {
       });
 
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "--secure", `${String(dir)}/test.ts`],
+        cmd: [bunExe(), "--secure", "test.ts"],
         env: bunEnv,
         cwd: String(dir),
         stdout: "pipe",
@@ -324,13 +318,7 @@ describe("Bun.file() permissions", () => {
       });
 
       await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "--secure",
-          `--allow-write=${String(dir)}`,
-          `--allow-read=${String(dir)}`,
-          `${String(dir)}/test.ts`,
-        ],
+        cmd: [bunExe(), "--secure", `--allow-write=${String(dir)}`, `--allow-read=${String(dir)}`, "test.ts"],
         env: bunEnv,
         cwd: String(dir),
         stdout: "pipe",
@@ -359,7 +347,7 @@ describe("Bun.file() permissions", () => {
       });
 
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "--secure", `${String(dir)}/test.ts`],
+        cmd: [bunExe(), "--secure", "test.ts"],
         env: bunEnv,
         cwd: String(dir),
         stdout: "pipe",
@@ -386,7 +374,7 @@ describe("Bun.file() permissions", () => {
       });
 
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "--secure", `--allow-read=${String(dir)}`, `${String(dir)}/test.ts`],
+        cmd: [bunExe(), "--secure", `--allow-read=${String(dir)}`, "test.ts"],
         env: bunEnv,
         cwd: String(dir),
         stdout: "pipe",
@@ -413,7 +401,7 @@ describe("Bun.file() permissions", () => {
       });
 
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "--secure", `${String(dir)}/test.ts`],
+        cmd: [bunExe(), "--secure", "test.ts"],
         env: bunEnv,
         cwd: String(dir),
         stdout: "pipe",
@@ -440,7 +428,7 @@ describe("Bun.file() permissions", () => {
       });
 
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "--secure", `--allow-read=${String(dir)}`, `${String(dir)}/test.ts`],
+        cmd: [bunExe(), "--secure", `--allow-read=${String(dir)}`, "test.ts"],
         env: bunEnv,
         cwd: String(dir),
         stdout: "pipe",

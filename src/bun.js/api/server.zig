@@ -976,6 +976,13 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 resp.writeStatus("101 Switching Protocols");
 
                 if (fetch_headers_to_use) |headers| {
+                    // Remove Sec-WebSocket-Protocol header before writing to response.
+                    // This header will be written by the upgrade() function to avoid
+                    // sending duplicate headers which would cause the client to reject
+                    // the connection (RFC 6455 requires at most one protocol header).
+                    // The protocol value has already been extracted above (line 948).
+                    headers.fastRemove(.SecWebSocketProtocol);
+
                     headers.toUWSResponse(comptime ssl_enabled, resp);
                 }
 

@@ -20,6 +20,7 @@ import fs, {
   mkdtempSync,
   openAsBlob,
   openSync,
+  opendirSync,
   promises,
   readdirSync,
   readFile,
@@ -570,6 +571,13 @@ describe("copyFileSync", () => {
       });
     });
   }
+});
+
+describe("opendirSync", () => {
+  it("should throw ENOENT on a nonexistent directory", () => {
+    const dirName = Math.random().toString(8);
+    expect(() => opendirSync(dirName)).toThrow("ENOENT");
+  })
 });
 
 describe("mkdirSync", () => {

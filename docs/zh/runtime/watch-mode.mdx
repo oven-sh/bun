@@ -1,0 +1,161 @@
+---
+title: "监视模式"
+description: "Bun 中使用 --watch 和 --hot 模式的自动重载"
+---
+
+Bun 支持通过 CLI 标志进行两种类型的自动重载：
+
+- `--watch` 模式，当导入的文件更改时，硬重启 Bun 的进程。
+- `--hot` 模式，当导入的文件更改时，软重载代码（不重启进程）。
+
+---
+
+## `--watch` 模式
+
+监视模式可用于 `bun test` 或运行 TypeScript、JSX 和 JavaScript 文件。
+
+要以 `--watch` 模式运行文件：
+
+```bash terminal icon="terminal"
+bun --watch index.tsx
+```
+
+要在 `--watch` 模式下运行测试：
+
+```bash terminal icon="terminal"
+bun --watch test
+```
+
+在 `--watch` 模式下，Bun 会跟踪所有导入的文件并监视它们的更改。当检测到更改时，Bun 会重启进程，保留初始运行中使用的相同 CLI 参数和环境变量。如果 Bun 崩溃，`--watch` 将尝试自动重启进程。
+
+<Note>
+
+**⚡️ 重载很快。** 你可能习惯的文件系统监视器有几个库层包装原生 API，或者更糟糕的是依赖轮询。
+
+相反，Bun 使用操作系统原生文件系统监视器 API，如 kqueue 或 inotify 来检测文件更改。Bun 还进行许多优化，使其能够扩展到更大的项目（例如为文件描述符设置高 rlimit、静态分配文件路径缓冲区、尽可能重用文件描述符等）。
+
+</Note>
+
+以下示例显示了 Bun 在编辑时实时重载文件，VSCode 配置为在[每次按键时](https://code.visualstudio.com/docs/editor/codebasics#_save-auto-save)保存文件。
+
+```sh terminal icon="terminal"
+bun run --watch watchy.tsx
+```
+
+```tsx title="watchy.tsx" icon="/icons/typescript.svg"
+import { serve } from "bun";
+
+console.log("I restarted at:", Date.now());
+
+serve({
+  port: 4003,
+  fetch(request) {
+    return new Response("Sup");
+  },
+});
+```
+
+在这个例子中，Bun 是
+
+<Frame>
+  ![bun watch gif](https://user-images.githubusercontent.com/709451/228439002-7b9fad11-0db2-4e48-b82d-2b88c8625625.gif)
+</Frame>
+
+在监视模式和启用 `save-on-keypress` 时运行 `bun test`：
+
+```bash terminal icon="terminal"
+bun --watch test
+```
+
+<Frame>
+  ![bun test gif](https://user-images.githubusercontent.com/709451/228396976-38a23864-4a1d-4c96-87cc-04e5181bf459.gif)
+</Frame>
+
+<Note>
+  **`--no-clear-screen`** 标志在你不希望终端清除的场景中很有用，例如当
+  同时使用 `concurrently` 等工具运行多个 `bun build --watch` 命令时。没有此标志，
+  一个实例的输出可能会清除其他实例的输出，可能将一个实例的错误隐藏在
+  另一个实例的输出下。`--no-clear-screen` 标志类似于 TypeScript 的 `--preserveWatchOutput`，可以防止此问题。
+  它可以与 `--watch` 结合使用，例如：`bun build --watch --no-clear-screen`。
+</Note>
+
+---
+
+## `--hot` 模式
+
+使用 `bun --hot` 在 Bun 中执行代码时启用热重载。这与 `--watch` 模式不同，因为 Bun 不会硬重启整个进程。相反，它检测代码更改并将新代码更新到其内部模块缓存中。
+
+<Note>
+  这与浏览器中的热重载不同！许多框架提供"热重载"体验，您
+  可以编辑和保存前端代码（比如，一个 React 组件）并在浏览器中看到更改
+  而无需刷新页面。Bun 的 `--hot` 是这种体验的服务器端等价物。要在
+  浏览器中获得热重载，请使用像 [Vite](https://vite.dev) 这样的框架。
+</Note>
+
+```bash terminal icon="terminal"
+bun --hot server.ts
+```
+
+从入口点（上面示例中的 `server.ts`）开始，Bun 构建所有导入源文件的注册表（不包括 `node_modules` 中的文件）并监视它们的更改。当检测到更改时，Bun 执行"软重载"。所有文件都会重新评估，但所有全局状态（特别是 `globalThis` 对象）会被保留。
+
+```ts title="server.ts" icon="/icons/typescript.svg"
+// 使 TypeScript 高兴
+declare global {
+  var count: number;
+}
+
+globalThis.count ??= 0;
+console.log(`Reloaded ${globalThis.count} times`);
+globalThis.count++;
+
+// 防止 `bun run` 退出
+setInterval(function () {}, 1000000);
+```
+
+如果您使用 `bun --hot server.ts` 运行此文件，您将看到每次保存文件时重载计数都会增加。
+
+```bash terminal icon="terminal"
+bun --hot index.ts
+```
+
+```txt
+Reloaded 1 times
+Reloaded 2 times
+Reloaded 3 times
+```
+
+传统的文件监视器如 `nodemon` 会重启整个进程，因此 HTTP 服务器和其他有状态对象会丢失。相比之下，`bun --hot` 能够在不重启进程的情况下反映更新的代码。
+
+### HTTP 服务器
+
+例如，这使得在不关闭服务器本身的情况下更新 HTTP 请求处理程序成为可能。当您保存文件时，您的 HTTP 服务器将使用更新的代码重新加载，而无需重启进程。这将带来极快的刷新速度。
+
+```ts title="server.ts" icon="/icons/typescript.svg"
+globalThis.count ??= 0;
+globalThis.count++;
+
+Bun.serve({
+  fetch(req: Request) {
+    return new Response(`Reloaded ${globalThis.count} times`);
+  },
+  port: 3000,
+});
+```
+
+<Note>
+**注意** — 在 Bun 的未来版本中，计划支持 Vite 的 `import.meta.hot` 以实现更好的热重载生命周期管理，并与生态系统对齐。
+
+</Note>
+
+<Accordion title="实现细节">
+
+在热重载时，Bun：
+
+- 重置内部 `require` 缓存和 ES 模块注册表（`Loader.registry`）
+- 同步运行垃圾收集器（以最小化内存泄漏，以运行时性能为代价）
+- 从头开始重新转译您的所有代码（包括源映射）
+- 使用 JavaScriptCore 重新评估代码
+
+这种实现并不是特别优化的。它会重新转译未更改的文件。它不会尝试增量编译。这是一个起点。
+
+</Accordion>

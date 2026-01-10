@@ -1,0 +1,333 @@
+---
+title: HTMLRewriter
+description: 使用 Bun 的 HTMLRewriter 通过 CSS 选择器转换 HTML 文档
+---
+
+HTMLRewriter 让您可以使用 CSS 选择器来转换 HTML 文档。它可以与 `Request`、`Response` 以及 `string` 一起使用。Bun 的实现在 Cloudflare 的 [lol-html](https://github.com/cloudflare/lol-html) 基础上。
+
+---
+
+## 用法
+
+一个常见的用例是重写 HTML 内容中的 URL。以下示例重写图像源和链接 URL 以使用 CDN 域：
+
+```ts
+// 将所有图像替换为 rickroll
+const rewriter = new HTMLRewriter().on("img", {
+  element(img) {
+    // 著名的 rickroll 视频缩略图
+    img.setAttribute("src", "https://img.youtube.com/vi/dQw4w9WgXcQ/maxresdefault.jpg");
+
+    // 将图像包装在视频链接中
+    img.before('<a href="https://www.youtube.com/watch?v=dQw4w9WgXcQ" target="_blank">', {
+      html: true,
+    });
+    img.after("</a>", { html: true });
+
+    // 添加一些有趣的 alt 文本
+    img.setAttribute("alt", "Definitely not a rickroll");
+  },
+});
+
+// 示例 HTML 文档
+const html = `
+<html>
+<body>
+  <img src="/cat.jpg">
+  <img src="dog.png">
+  <img src="https://example.com/bird.webp">
+</body>
+</html>
+`;
+
+const result = rewriter.transform(html);
+console.log(result);
+```
+
+这会将所有图像替换为 Rick Astley 的缩略图，并将每个 `<img>` 包装在链接中，产生如下差异：
+
+{/* prettier-ignore */}
+```html
+<html>
+  <body>
+    <img src="/cat.jpg" /> <!-- [!code --] -->
+    <img src="dog.png" /> <!-- [!code --] -->
+    <img src="https://example.com/bird.webp" /> <!-- [!code --] -->
+    <a href="https://www.youtube.com/watch?v=dQw4w9WgXcQ" target="_blank"> <!-- [!code ++] -->
+      <img src="https://img.youtube.com/vi/dQw4w9WgXcQ/maxresdefault.jpg" alt="Definitely not a rickroll" /> <!-- [!code ++] -->
+    </a> <!-- [!code ++] -->
+    <a href="https://www.youtube.com/watch?v=dQw4w9WgXcQ" target="_blank"> <!-- [!code ++] -->
+      <img src="https://img.youtube.com/vi/dQw4w9WgXcQ/maxresdefault.jpg" alt="Definitely not a rickroll" /> <!-- [!code ++] -->
+    </a> <!-- [!code ++] -->
+    <a href="https://www.youtube.com/watch?v=dQw4w9WgXcQ" target="_blank"> <!-- [!code ++] -->
+      <img src="https://img.youtube.com/vi/dQw4w9WgXcQ/maxresdefault.jpg" alt="Definitely not a rickroll" /> <!-- [!code ++] -->
+    </a> <!-- [!code ++] -->
+  </body>
+</html>
+```
+
+现在页面上的每个图像都将被替换为 Rick Astley 的缩略图，点击任何图像都会导致[一个非常著名的视频](https://www.youtube.com/watch?v=dQw4w9WgXcQ)。
+
+### 输入类型
+
+HTMLRewriter 可以转换来自各种源的 HTML。输入会根据其类型自动处理：
+
+```ts
+// 从 Response
+rewriter.transform(new Response("<div>content</div>"));
+
+// 从字符串
+rewriter.transform("<div>content</div>");
+
+// 从 ArrayBuffer
+rewriter.transform(new TextEncoder().encode("<div>content</div>").buffer);
+
+// 从 Blob
+rewriter.transform(new Blob(["<div>content</div>"]));
+
+// 从 File
+rewriter.transform(Bun.file("index.html"));
+```
+
+注意 Cloudflare Workers 的 HTMLRewriter 实现只支持 `Response` 对象。
+
+### 元素处理器
+
+`on(selector, handlers)` 方法允许您为匹配 CSS 选择器的 HTML 元素注册处理器。在解析过程中，处理器会被调用以处理每个匹配的元素：
+
+```ts
+rewriter.on("div.content", {
+  // 处理元素
+  element(element) {
+    element.setAttribute("class", "new-content");
+    element.append("<p>New content</p>", { html: true });
+  },
+  // 处理文本节点
+  text(text) {
+    text.replace("new text");
+  },
+  // 处理注释
+  comments(comment) {
+    comment.remove();
+  },
+});
+```
+
+处理器可以是异步的并返回 Promise。请注意，异步操作会阻塞转换直到完成：
+
+```ts
+rewriter.on("div", {
+  async element(element) {
+    await Bun.sleep(1000);
+    element.setInnerContent("<span>replace</span>", { html: true });
+  },
+});
+```
+
+### CSS 选择器支持
+
+`on()` 方法支持广泛的 CSS 选择器：
+
+```ts
+// 标签选择器
+rewriter.on("p", handler);
+
+// 类选择器
+rewriter.on("p.red", handler);
+
+// ID 选择器
+rewriter.on("h1#header", handler);
+
+// 属性选择器
+rewriter.on("p[data-test]", handler); // 有属性
+rewriter.on('p[data-test="one"]', handler); // 精确匹配
+rewriter.on('p[data-test="one" i]', handler); // 不区分大小写
+rewriter.on('p[data-test="one" s]', handler); // 区分大小写
+rewriter.on('p[data-test~="two"]', handler); // 单词匹配
+rewriter.on('p[data-test^="a"]', handler); // 以某字符开始
+rewriter.on('p[data-test$="1"]', handler); // 以某字符结束
+rewriter.on('p[data-test*="b"]', handler); // 包含
+rewriter.on('p[data-test|="a"]', handler); // 连字符分隔
+
+// 组合器
+rewriter.on("div span", handler); // 后代
+rewriter.on("div > span", handler); // 直接子元素
+
+// 伪类
+rewriter.on("p:nth-child(2)", handler);
+rewriter.on("p:first-child", handler);
+rewriter.on("p:nth-of-type(2)", handler);
+rewriter.on("p:first-of-type", handler);
+rewriter.on("p:not(:first-child)", handler);
+
+// 通用选择器
+rewriter.on("*", handler);
+```
+
+### 元素操作
+
+元素提供多种方法用于操作。所有修改方法都返回元素实例以支持链式调用：
+
+```ts
+rewriter.on("div", {
+  element(el) {
+    // 属性
+    el.setAttribute("class", "new-class").setAttribute("data-id", "123");
+
+    const classAttr = el.getAttribute("class"); // "new-class"
+    const hasId = el.hasAttribute("id"); // boolean
+    el.removeAttribute("class");
+
+    // 内容操作
+    el.setInnerContent("New content"); // 默认转义 HTML
+    el.setInnerContent("<p>HTML content</p>", { html: true }); // 解析 HTML
+    el.setInnerContent(""); // 清空内容
+
+    // 位置操作
+    el.before("Content before").after("Content after").prepend("First child").append("Last child");
+
+    // HTML 内容插入
+    el.before("<span>before</span>", { html: true })
+      .after("<span>after</span>", { html: true })
+      .prepend("<span>first</span>", { html: true })
+      .append("<span>last</span>", { html: true });
+
+    // 移除
+    el.remove(); // 移除元素和内容
+    el.removeAndKeepContent(); // 只移除元素标签
+
+    // 属性
+    console.log(el.tagName); // 小写标签名
+    console.log(el.namespaceURI); // 元素的命名空间 URI
+    console.log(el.selfClosing); // 元素是否自闭合（例如 <div />）
+    console.log(el.canHaveContent); // 元素是否可以包含内容（void 元素如 <br> 为 false）
+    console.log(el.removed); // 元素是否已被移除
+
+    // 属性迭代
+    for (const [name, value] of el.attributes) {
+      console.log(name, value);
+    }
+
+    // 结束标签处理
+    el.onEndTag(endTag => {
+      endTag.before("Before end tag");
+      endTag.after("After end tag");
+      endTag.remove(); // 移除结束标签
+      console.log(endTag.name); // 小写的标签名
+    });
+  },
+});
+```
+
+### 文本操作
+
+文本处理器提供文本操作方法。文本块表示文本内容的一部分，并提供关于它们在文本节点中位置的信息：
+
+```ts
+rewriter.on("p", {
+  text(text) {
+    // 内容
+    console.log(text.text); // 文本内容
+    console.log(text.lastInTextNode); // 是否为最后一个块
+    console.log(text.removed); // 文本是否已被移除
+
+    // 操作
+    text.before("Before text").after("After text").replace("New text").remove();
+
+    // HTML 内容插入
+    text
+      .before("<span>before</span>", { html: true })
+      .after("<span>after</span>", { html: true })
+      .replace("<span>replace</span>", { html: true });
+  },
+});
+```
+
+### 注释操作
+
+注释处理器允许注释操作，具有与文本节点类似的方法：
+
+```ts
+rewriter.on("*", {
+  comments(comment) {
+    // 内容
+    console.log(comment.text); // 注释文本
+    comment.text = "New comment text"; // 设置注释文本
+    console.log(comment.removed); // 注释是否已被移除
+
+    // 操作
+    comment.before("Before comment").after("After comment").replace("New comment").remove();
+
+    // HTML 内容插入
+    comment
+      .before("<span>before</span>", { html: true })
+      .after("<span>after</span>", { html: true })
+      .replace("<span>replace</span>", { html: true });
+  },
+});
+```
+
+### 文档处理器
+
+`onDocument(handlers)` 方法允许您处理文档级事件。这些处理器用于处理发生在文档级别而非特定元素内的事件：
+
+```ts
+rewriter.onDocument({
+  // 处理 doctype
+  doctype(doctype) {
+    console.log(doctype.name); // "html"
+    console.log(doctype.publicId); // 公共标识符（如果存在）
+    console.log(doctype.systemId); // 系统标识符（如果存在）
+  },
+  // 处理文本节点
+  text(text) {
+    console.log(text.text);
+  },
+  // 处理注释
+  comments(comment) {
+    console.log(comment.text);
+  },
+  // 处理文档结束
+  end(end) {
+    end.append("<!-- Footer -->", { html: true });
+  },
+});
+```
+
+### 响应处理
+
+转换 Response 时：
+
+- 状态码、头部和其他响应属性被保留
+- 在保持流功能的同时转换正文
+- 自动处理内容编码（如 gzip）
+- 转换后原始响应正文被标记为已使用
+- 头部被克隆到新响应中
+
+## 错误处理
+
+HTMLRewriter 操作在以下几种情况下可能抛出错误：
+
+- `on()` 方法中的选择器语法无效
+- 转换方法中的 HTML 内容无效
+- 处理响应正文时的流错误
+- 内存分配失败
+- 无效的输入类型（例如，传递 Symbol）
+- 正文已使用错误
+
+错误应被捕获并适当处理：
+
+```ts
+try {
+  const result = rewriter.transform(input);
+  // 处理结果
+} catch (error) {
+  console.error("HTMLRewriter error:", error);
+}
+```
+
+---
+
+## 参见
+
+您还可以阅读 [Cloudflare 文档](https://developers.cloudflare.com/workers/runtime-apis/html-rewriter/)，此 API 旨在与其兼容。

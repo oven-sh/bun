@@ -1,0 +1,1283 @@
+---
+name: 压缩器
+description: 使用Bun的JavaScript和TypeScript压缩器减小包大小
+---
+
+Bun包含一个快速的JavaScript和TypeScript压缩器，可以根据代码库的不同减少80％或更多的包大小，并使输出代码运行更快。压缩器执行数十种优化，包括常量折叠、死代码消除和语法转换。与其他压缩器不同，Bun的压缩器使`bun build`运行得更快，因为要打印的代码更少了。
+
+## CLI使用
+
+### 启用所有压缩
+
+使用`--minify`标志启用所有压缩模式：
+
+```bash
+bun build ./index.ts --minify --outfile=out.js
+```
+
+`--minify`标志自动启用：
+
+- 空白压缩
+- 语法压缩
+- 标识符压缩
+
+### 生产模式
+
+`--production`标志自动启用压缩：
+
+```bash
+bun build ./index.ts --production --outfile=out.js
+```
+
+`--production`标志还：
+
+- 将`process.env.NODE_ENV`设置为`production`
+- 启用生产模式的JSX导入和转换
+
+### 精细控制
+
+您可以单独启用特定的压缩模式：
+
+```bash
+# 仅移除空白
+bun build ./index.ts --minify-whitespace --outfile=out.js
+
+# 仅压缩语法
+bun build ./index.ts --minify-syntax --outfile=out.js
+
+# 仅压缩标识符
+bun build ./index.ts --minify-identifiers --outfile=out.js
+
+# 组合特定模式
+bun build ./index.ts --minify-whitespace --minify-syntax --outfile=out.js
+```
+
+## JavaScript API
+
+当以编程方式使用Bun的打包器时，通过`minify`选项配置压缩：
+
+```ts
+await Bun.build({
+  entrypoints: ["./index.ts"],
+  outdir: "./out",
+  minify: true, // 启用所有压缩模式
+});
+```
+
+对于精细控制，传入一个对象：
+
+```ts
+await Bun.build({
+  entrypoints: ["./index.ts"],
+  outdir: "./out",
+  minify: {
+    whitespace: true,
+    syntax: true,
+    identifiers: true,
+  },
+});
+```
+
+## 压缩模式
+
+Bun的压缩器有三个独立模式，可以单独或组合启用。
+
+### 空白压缩（`--minify-whitespace`）
+
+从输出中移除所有不必要的空白、换行和格式。
+
+### 语法压缩（`--minify-syntax`）
+
+将JavaScript语法重写为较短的等效形式，并执行常量折叠、死代码消除和其他优化。
+
+### 标识符压缩（`--minify-identifiers`）
+
+使用基于频率的优化将局部变量和函数名重命名为较短的标识符。
+
+## 所有转换
+
+### 布尔文字缩短
+
+**模式：** `--minify-syntax`
+
+将布尔文字转换为较短的表达式。
+
+```ts 输入
+true
+false
+```
+
+```js 输出
+!0
+!1
+```
+
+### 布尔代数优化
+
+**模式：** `--minify-syntax`
+
+使用逻辑规则简化布尔表达式。
+
+```ts 输入
+!!x
+x === true
+x && true
+x || false
+!true
+!false
+```
+
+```js 输出
+x
+x
+x
+x
+!1
+!0
+```
+
+### Undefined缩短
+
+**模式：** `--minify-syntax`
+
+用较短的等效项替换`undefined`。
+
+```ts 输入
+undefined
+let x = undefined;
+```
+
+```js 输出
+void 0
+let x=void 0;
+```
+
+### Undefined相等性优化
+
+**模式：** `--minify-syntax`
+
+优化与undefined的松散相等性检查。
+
+```ts 输入
+x == undefined
+x != undefined
+```
+
+```js 输出
+x == null
+x != null
+```
+
+### Infinity缩短
+
+**模式：** `--minify-syntax`
+
+将Infinity转换为数学表达式。
+
+```ts 输入
+Infinity
+-Infinity
+```
+
+```js 输出
+1/0
+-1/0
+```
+
+### 类型判断优化
+
+**模式：** `--minify-syntax`
+
+优化typeof比较并计算常量typeof表达式。
+
+```ts 输入
+typeof x === 'undefined'
+typeof x !== 'undefined'
+typeof require
+typeof null
+typeof true
+typeof 123
+typeof "str"
+typeof 123n
+```
+
+```js 输出
+typeof x>'u'
+typeof x<'u'
+"function"
+"object"
+"boolean"
+"number"
+"string"
+"bigint"
+```
+
+### 数字格式化
+
+**模式：** `--minify-syntax`
+
+以最紧凑的形式格式化数字。
+
+```ts 输入
+10000
+100000
+1000000
+1.0
+-42.0
+```
+
+```js 输出
+1e4
+1e5
+1e6
+1
+-42
+```
+
+### 算术常量折叠
+
+**模式：** `--minify-syntax`
+
+在编译时计算算术运算。
+
+```ts 输入
+1 + 2
+10 - 5
+3 * 4
+10 / 2
+10 % 3
+2 ** 3
+```
+
+```js 输出
+3
+5
+12
+5
+1
+8
+```
+
+### 按位常量折叠
+
+**模式：** `--minify-syntax`
+
+在编译时计算按位运算。
+
+```ts 输入
+5 & 3
+5 | 3
+5 ^ 3
+8 << 2
+32 >> 2
+~5
+```
+
+```js 输出
+1
+7
+6
+32
+8
+-6
+```
+
+### 字符串连接
+
+**模式：** `--minify-syntax`
+
+在编译时合并字符串字面量。
+
+```ts 输入
+"a" + "b"
+"x" + 123
+"foo" + "bar" + "baz"
+```
+
+```js 输出
+"ab"
+"x123"
+"foobarbaz"
+```
+
+### 字符串索引
+
+**模式：** `--minify-syntax`
+
+在编译时计算字符串字符访问。
+
+```ts 输入
+"foo"[2]
+"hello"[0]
+```
+
+```js 输出
+"o"
+"h"
+```
+
+### 模板字面量折叠
+
+**模式：** `--minify-syntax`
+
+计算具有常量表达式的模板字面量。
+
+```ts 输入
+`a${123}b`
+`result: ${5 + 10}`
+```
+
+```js 输出
+"a123b"
+"result: 15"
+```
+
+### 模板字面量到字符串转换
+
+**模式：** `--minify-syntax`
+
+将简单模板字面量转换为常规字符串。
+
+```ts 输入
+`Hello World`
+`Line 1
+Line 2`
+```
+
+```js 输出
+"Hello World"
+"Line 1\nLine 2"
+```
+
+### 字符串引号优化
+
+**模式：** `--minify-syntax`
+
+选择最佳引号字符以最小化转义。
+
+```ts 输入
+"It's a string"
+'He said "hello"'
+`Simple string`
+```
+
+```js 输出
+"It's a string"
+'He said "hello"'
+"Simple string"
+```
+
+### 数组展开内联
+
+**模式：** `--minify-syntax`
+
+使用常量数组内联数组展开操作。
+
+```ts 输入
+[1, ...[2, 3], 4]
+[...[a, b]]
+```
+
+```js 输出
+[1,2,3,4]
+[a,b]
+```
+
+### 数组索引
+
+**模式：** `--minify-syntax`
+
+在编译时计算常量数组访问。
+
+```ts 输入
+[x][0]
+['a', 'b', 'c'][1]
+['a', , 'c'][1]
+```
+
+```js 输出
+x
+'b'
+void 0
+```
+
+### 属性访问优化
+
+**模式：** `--minify-syntax`
+
+在可能时将括号表示法转换为点表示法。
+
+```ts 输入
+obj["property"]
+obj["validName"]
+obj["123"]
+obj["invalid-name"]
+```
+
+```js 输出
+obj.property
+obj.validName
+obj["123"]
+obj["invalid-name"]
+```
+
+### 比较折叠
+
+**模式：** `--minify-syntax`
+
+在编译时计算常量比较。
+
+```ts 输入
+3 < 5
+5 > 3
+3 <= 3
+5 >= 6
+"a" < "b"
+```
+
+```js 输出
+!0
+!0
+!0
+!1
+!0
+```
+
+### 逻辑运算折叠
+
+**模式：** `--minify-syntax`
+
+使用常量值简化逻辑运算。
+
+```ts 输入
+true && x
+false && x
+true || x
+false || x
+```
+
+```js 输出
+x
+!1
+!0
+x
+```
+
+### 空值合并折叠
+
+**模式：** `--minify-syntax`
+
+使用已知值计算空值合并。
+
+```ts 输入
+null ?? x
+undefined ?? x
+42 ?? x
+```
+
+```js 输出
+x
+x
+42
+```
+
+### 逗号表达式简化
+
+**模式：** `--minify-syntax`
+
+从逗号序列中移除无副作用的表达式。
+
+```ts 输入
+(0, x)
+(123, "str", x)
+```
+
+```js 输出
+x
+x
+```
+
+### 三元条件折叠
+
+**模式：** `--minify-syntax`
+
+计算具有常量条件的条件表达式。
+
+```ts 输入
+true ? a : b
+false ? a : b
+x ? true : false
+x ? false : true
+```
+
+```js 输出
+a
+b
+x ? !0 : !1
+x ? !1 : !0
+```
+
+### 一元表达式折叠
+
+**模式：** `--minify-syntax`
+
+简化一元运算。
+
+```ts 输入
++123
++"123"
+-(-x)
+~~x
+!!x
+```
+
+```js 输出
+123
+123
+x
+~~x
+x
+```
+
+### 双重否定移除
+
+**模式：** `--minify-syntax`
+
+移除不必要的双重否定。
+
+```ts 输入
+!!x
+!!!x
+```
+
+```js 输出
+x
+!x
+```
+
+### If语句优化
+
+**模式：** `--minify-syntax`
+
+优化具有常量条件的if语句。
+
+```ts 输入
+if (true) x;
+if (false) x;
+if (x) { a; }
+if (x) {} else y;
+```
+
+```js 输出
+x;
+// 移除
+if(x)a;
+if(!x)y;
+```
+
+### 死代码消除
+
+**模式：** `--minify-syntax`
+
+移除不可到达的代码和没有副作用的代码。
+
+```ts 输入
+if (false) {
+  unreachable();
+}
+function foo() {
+  return x;
+  deadCode();
+}
+```
+
+```js 输出
+function foo(){return x}
+```
+
+### 不可达分支移除
+
+**模式：** `--minify-syntax`
+
+移除永远无法执行的分支。
+
+```ts 输入
+while (false) {
+  neverRuns();
+}
+```
+
+```js 输出
+// 完全移除
+```
+
+### 空块移除
+
+**模式：** `--minify-syntax`
+
+移除空块和不必要的大括号。
+
+```ts 输入
+{ }
+if (x) { }
+```
+
+```js 输出
+;
+// 移除
+```
+
+### 单语句块解包
+
+**模式：** `--minify-syntax`
+
+移除单个语句周围的不必要大括号。
+
+```ts 输入
+if (condition) {
+  doSomething();
+}
+```
+
+```js 输出
+if(condition)doSomething();
+```
+
+### TypeScript枚举内联
+
+**模式：** `--minify-syntax`
+
+在编译时内联TypeScript枚举值。
+
+```ts 输入
+enum Color { Red, Green, Blue }
+const x = Color.Red;
+```
+
+```js 输出
+const x=0;
+```
+
+### 纯注释支持
+
+**模式：** 始终激活
+
+遵守`/*@__PURE__*/`注释以进行树摇。
+
+```ts 输入
+const x = /*@__PURE__*/ expensive();
+// 如果x未使用...
+```
+
+```js 输出
+// 完全移除
+```
+
+### 标识符重命名
+
+**模式：** `--minify-identifiers`
+
+根据使用频率将局部变量重命名为较短的名称。
+
+```ts 输入
+function calculateSum(firstNumber, secondNumber) {
+  const result = firstNumber + secondNumber;
+  return result;
+}
+```
+
+```js 输出
+function a(b,c){const d=b+c;return d}
+```
+
+**命名策略：**
+
+- 使用最频繁的标识符获得最短的名称（a, b, c...）
+- 单字母：a-z（26个名称）
+- 双字母：aa-zz（676个名称）
+- 三字母及以上根据需要
+
+**保留的标识符：**
+
+- JavaScript关键字和保留字
+- 全局标识符
+- 命名导出（以维护API）
+- CommonJS名称：`exports`, `module`
+
+### 空白移除
+
+**模式：** `--minify-whitespace`
+
+移除所有不必要的空白。
+
+```ts 输入
+function add(a, b) {
+    return a + b;
+}
+let x = 10;
+```
+
+```js 输出
+function add(a,b){return a+b;}let x=10;
+```
+
+### 分号优化
+
+**模式：** `--minify-whitespace`
+
+仅在必要时插入分号。
+
+```ts 输入
+let a = 1;
+let b = 2;
+return a + b;
+```
+
+```js 输出
+let a=1;let b=2;return a+b
+```
+
+### 操作符间距移除
+
+**模式：** `--minify-whitespace`
+
+移除操作符周围的空格。
+
+```ts 输入
+a + b
+x = y * z
+foo && bar || baz
+```
+
+```js 输出
+a+b
+x=y*z
+foo&&bar||baz
+```
+
+### 注释移除
+
+**模式：** `--minify-whitespace`
+
+移除注释，除了重要的许可证注释。
+
+```ts 输入
+// 此注释被移除
+/* 这个也是 */
+/*! 但这个许可证注释会被保留 */
+function test() { /* 内联注释 */ }
+```
+
+```js 输出
+/*! 但这个许可证注释会被保留 */
+function test(){}
+```
+
+### 对象和数组格式化
+
+**模式：** `--minify-whitespace`
+
+移除对象和数组字面量中的空白。
+
+```ts 输入
+const obj = {
+    name: "John",
+    age: 30
+};
+const arr = [1, 2, 3];
+```
+
+```js 输出
+const obj={name:"John",age:30};const arr=[1,2,3];
+```
+
+### 控制流格式化
+
+**模式：** `--minify-whitespace`
+
+移除控制结构中的空白。
+
+```ts 输入
+if (condition) {
+    doSomething();
+}
+for (let i = 0; i < 10; i++) {
+    console.log(i);
+}
+```
+
+```js 输出
+if(condition)doSomething();for(let i=0;i<10;i++)console.log(i);
+```
+
+### 函数格式化
+
+**模式：** `--minify-whitespace`
+
+移除函数声明中的空白。
+
+```ts 输入
+function myFunction(param1, param2) {
+    return param1 + param2;
+}
+const arrow = (a, b) => a + b;
+```
+
+```js 输出
+function myFunction(a,b){return a+b}const arrow=(a,b)=>a+b;
+```
+
+### 括号最小化
+
+**模式：** 始终激活
+
+仅在运算符优先级需要时添加括号。
+
+```ts 输入
+(a + b) * c
+a + (b * c)
+((x))
+```
+
+```js 输出
+(a+b)*c
+a+b*c
+x
+```
+
+### 属性混淆
+
+**模式：** `--minify-identifiers`（带配置）
+
+当配置时，将对象属性重命名为较短的名称。
+
+```ts 输入
+obj.longPropertyName
+```
+
+```js 输出（启用属性混淆）
+obj.a
+```
+
+### 模板字面量值折叠
+
+**模式：** `--minify-syntax`
+
+将非字符串插值值转换为字符串并折叠到模板中。
+
+``ts 输入
+`hello ${123}`
+`value: ${true}`
+`result: ${null}`
+`status: ${undefined}`
+`big: ${10n}`
+```
+
+```js 输出
+"hello 123"
+"value: true"
+"result: null"
+"status: undefined"
+"big: 10"
+```
+
+### 字符串长度常量折叠
+
+**模式：** `--minify-syntax`
+
+在编译时计算字符串字面量的`.length`属性。
+
+```ts 输入
+"hello world".length
+"test".length
+```
+
+```js 输出
+11
+4
+```
+
+### 构造函数调用简化
+
+**模式：** `--minify-syntax`
+
+简化内置类型的构造函数调用。
+
+``ts 输入
+new Object()
+new Object(null)
+new Object({a: 1})
+new Array()
+new Array(x, y)
+```
+
+```js 输出
+{}
+{}
+{a:1}
+[]
+[x,y]
+```
+
+### 单属性对象内联
+
+**模式：** `--minify-syntax`
+
+内联具有单个属性的对象的属性访问。
+
+``ts 输入
+({fn: () => console.log('hi')}).fn()
+```
+
+```js 输出
+(() => console.log('hi'))()
+```
+
+### 字符串charCodeAt常量折叠
+
+**模式：** 始终激活
+
+在编译时计算字符串字面量的`charCodeAt()`，适用于ASCII字符。
+
+``ts 输入
+"hello".charCodeAt(1)
+"A".charCodeAt(0)
+```
+
+```js 输出
+101
+65
+```
+
+### Void 0等于null等于
+
+**模式：** `--minify-syntax`
+
+将与`void 0`的松散相等性检查转换为`null`，因为它们是等价的。
+
+``ts 输入
+x == void 0
+x != void 0
+```
+
+```js 输出
+x == null
+x != null
+```
+
+### 否定运算符优化
+
+**模式：** `--minify-syntax`
+
+将否定运算符移动到逗号表达式中。
+
+``ts 输入
+-(a, b)
+-(x, y, z)
+```
+
+```js 输出
+a,-b
+x,y,-z
+```
+
+### Import.meta属性内联
+
+**模式：** 打包模式
+
+在构建时内联`import.meta`属性，当值已知时。
+
+``ts 输入
+import.meta.dir
+import.meta.file
+import.meta.path
+import.meta.url
+```
+
+```js 输出
+"/path/to/directory"
+"filename.js"
+"/full/path/to/file.js"
+"file:///full/path/to/file.js"
+```
+
+### 变量声明合并
+
+**模式：** `--minify-syntax`
+
+合并相邻的相同类型的变量声明。
+
+``ts 输入
+let a = 1;
+let b = 2;
+const c = 3;
+const d = 4;
+```
+
+```js 输出
+let a=1,b=2;
+const c=3,d=4;
+```
+
+### 表达式语句合并
+
+**模式：** `--minify-syntax`
+
+使用逗号运算符合并相邻的表达式语句。
+
+``ts 输入
+console.log(1);
+console.log(2);
+console.log(3);
+```
+
+```js 输出
+console.log(1),console.log(2),console.log(3);
+```
+
+### 返回语句合并
+
+**模式：** `--minify-syntax`
+
+使用逗号运算符合并返回前的表达式。
+
+``ts 输入
+console.log(x);
+return y;
+```
+
+```js 输出
+return console.log(x),y;
+```
+
+### 抛出语句合并
+
+**模式：** `--minify-syntax`
+
+使用逗号运算符合并抛出前的表达式。
+
+``ts 输入
+console.log(x);
+throw new Error();
+```
+
+```js 输出
+throw(console.log(x),new Error());
+```
+
+### TypeScript枚举跨模块内联
+
+**模式：** `--minify-syntax`（打包模式）
+
+在模块边界内联枚举值。
+
+``ts 输入 
+// lib.ts
+export enum Color { Red, Green, Blue }
+
+// Input (main.ts)
+import { Color } from './lib';
+const x = Color.Red;
+```
+
+```js 输出
+const x=0;
+```
+
+### 计算属性枚举内联
+
+**模式：** `--minify-syntax`
+
+内联用作计算对象属性的枚举值。
+
+``ts 输入
+enum Keys { FOO = 'foo' }
+const obj = { [Keys.FOO]: value }
+```
+
+```js 输出
+const obj={foo:value}
+```
+
+### 字符串数字到数字索引
+
+**模式：** `--minify-syntax`
+
+将字符串数字属性访问转换为数字索引。
+
+``ts 输入
+obj["0"]
+arr["5"]
+```
+
+```js 输出
+obj[0]
+arr[5]
+```
+
+### 箭头函数体缩短
+
+**模式：** 始终激活
+
+当箭头函数仅返回一个值时，使用表达式体语法。
+
+``ts 输入
+() => { return x; }
+(a) => { return a + 1; }
+```
+
+```js 输出
+() => x
+a => a + 1
+```
+
+### 对象属性简写
+
+**模式：** 始终激活
+
+当属性名和值标识符相同时，使用简写语法。
+
+``ts 输入
+{ x: x, y: y }
+{ name: name, age: age }
+```
+
+```js 输出
+{ x, y }
+{ name, age }
+```
+
+### 方法简写
+
+**模式：** 始终激活
+
+在对象字面量中使用方法简写语法。
+
+``ts 输入
+{
+  foo: function() {},
+  bar: async function() {}
+}
+```
+
+```js 输出
+{
+  foo() {},
+  async bar() {}
+}
+```
+
+### 移除debugger语句
+
+**模式：** `--drop=debugger`
+
+从代码中移除`debugger`语句。
+
+``ts 输入
+function test() {
+  debugger;
+  return x;
+}
+```
+
+```js 输出
+function test(){return x}
+```
+
+### 移除console调用
+
+**模式：** `--drop=console`
+
+从代码中移除所有`console.*`方法调用。
+
+``ts 输入
+console.log("debug");
+console.warn("warning");
+x = console.error("error");
+```
+
+```js 输出
+void 0;
+void 0;
+x=void 0;
+```
+
+### 移除自定义函数调用
+
+**模式：** `--drop=<name>`
+
+从代码中移除对指定全局函数或方法的调用。
+
+``ts 输入
+assert(condition);
+obj.assert(test);
+```
+
+```js 输出 with --drop=assert
+void 0;
+void 0;
+```
+
+## 保留名称
+
+在压缩标识符时，您可能希望为了调试目的保留原始函数和类名称。使用`--keep-names`标志：
+
+``bash
+bun build ./index.ts --minify --keep-names --outfile=out.js
+```
+
+或在JavaScript API中：
+
+``ts
+await Bun.build({
+  entrypoints: ["./index.ts"],
+  outdir: "./out",
+  minify: {
+    identifiers: true,
+    keepNames: true,
+  },
+});
+```
+
+这保留了函数和类的`.name`属性，同时仍然压缩代码中的实际标识符名称。
+
+## 结合示例
+
+同时使用所有三种压缩模式：
+
+``ts input.ts (158 bytes)
+const myVariable = 42;
+
+const myFunction = () => {
+  const isValid = true;
+  const result = undefined;
+  return isValid ? myVariable : result;
+};
+
+const output = myFunction();
+```
+
+```js output.js
+// Output with --minify (49 bytes, 69% reduction)
+const a=42,b=()=>{const c=!0,d=void 0;return c?a:d},e=b();
+```
+
+## 何时使用压缩
+
+**使用`--minify`用于：**
+
+- 生产包
+- 减少CDN带宽成本
+- 提高页面加载时间
+
+**使用单独模式用于：**
+
+- **`--minify-whitespace`:** 快速减小大小而无语义变化
+- **`--minify-syntax`:** 更小的输出，同时保留调试用的可读标识符
+- **`--minify-identifiers`:** 最大化减小大小（与`--keep-names`结合以获得更好的堆栈跟踪）
+
+**避免压缩用于：**
+
+- 开发构建（难以调试）
+- 当您需要可读的错误消息时
+- 消费者可能会阅读源代码的库

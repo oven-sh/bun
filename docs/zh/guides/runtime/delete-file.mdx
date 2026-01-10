@@ -1,0 +1,21 @@
+---
+title: 删除文件
+sidebarTitle: 删除文件
+mode: center
+---
+
+要删除文件，请使用 `Bun.file(path).delete()`。
+
+```ts delete-file.ts icon="/icons/typescript.svg"
+// 删除一个文件
+const file = Bun.file("path/to/file.txt");
+await file.delete();
+
+// 现在这个文件不存在了
+const exists = await file.exists();
+// => false
+```
+
+---
+
+请参阅 [文档 > API > 文件系统](/runtime/file-io) 了解更多的文件系统操作。

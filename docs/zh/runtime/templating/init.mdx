@@ -1,0 +1,58 @@
+---
+title: "bun init"
+description: "使用交互式 `bun init` 命令搭建一个空的 Bun 项目"
+---
+
+import Init from "/snippets/cli/init.mdx";
+
+通过使用 `bun init` 搭建一个新项目来开始使用 Bun。
+
+```bash terminal icon="terminal"
+bun init my-app
+```
+
+```txt
+? 选择一个项目模板 - 按回车提交。
+❯ 空白
+  React
+  库
+
+✓ 选择一个项目模板: 空白
+
+ + .gitignore
+ + CLAUDE.md
+ + .cursor/rules/use-bun-instead-of-node-vite-npm-pnpm.mdc -> CLAUDE.md
+ + index.ts
+ + tsconfig.json (用于编辑器自动补全)
+ + README.md
+```
+
+按 `enter` 接受每个提示的默认答案，或传递 `-y` 标志自动接受默认值。
+
+---
+
+`bun init` 是使用 Bun 启动空白项目的一种快捷方式。它使用合理的默认值进行猜测，多次运行时不会破坏现有文件。
+
+<Frame>
+  ![演示](https://user-images.githubusercontent.com/709451/183006613-271960a3-ff22-4f7c-83f5-5e18f684c836.gif)
+</Frame>
+
+它创建：
+
+- 一个 `package.json` 文件，名称默认为当前目录名称
+- 一个 `tsconfig.json` 文件或一个 `jsconfig.json` 文件，取决于入口点是否为 TypeScript 文件
+- 一个入口点，默认为 `index.ts`，除非存在 `index.{tsx, jsx, js, mts, mjs}` 中的任何一个，或者 `package.json` 指定了 `module` 或 `main` 字段
+- 一个 `README.md` 文件
+
+AI 代理规则（使用 `$BUN_AGENT_RULE_DISABLED=1` 禁用）：
+
+- 当检测到 Claude CLI 时创建一个 `CLAUDE.md` 文件（使用 `CLAUDE_CODE_AGENT_RULE_DISABLED` 环境变量禁用）
+- 一个 `.cursor/rules/*.mdc` 文件，用于指导 [Cursor AI](https://cursor.sh) 在检测到 Cursor 时使用 Bun 而不是 Node.js 和 npm
+
+如果您传递 `-y` 或 `--yes`，它会假定您希望在不询问问题的情况下继续。
+
+最后，它运行 `bun install` 来安装 `@types/bun`。
+
+---
+
+<Init />

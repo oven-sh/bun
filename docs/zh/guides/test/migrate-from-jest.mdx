@@ -1,0 +1,125 @@
+---
+title: 从 Jest 迁移到 Bun 的测试运行器
+sidebarTitle: 从 Jest 迁移
+mode: center
+---
+
+在许多情况下，Bun 的测试运行器可以在不修改代码的情况下运行 Jest 测试套件。只需运行 `bun test` 而不是 `npx jest`、`yarn test` 等。
+
+```sh terminal icon="terminal"
+npx jest # [!code --]
+yarn test # [!code --]
+bun test # [!code ++]
+```
+
+---
+
+通常不需要修改代码。
+
+- Bun 在内部将来自 `@jest/globals` 的导入重写为使用 `bun:test` 的等价物。
+- 如果您依赖 Jest 注入 `test`、`expect` 等作为全局变量，Bun 也这样做。
+
+但如果要切换到 `bun:test` 导入，也可以这样做。
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { test, expect } from "@jest/globals"; // [!code --]
+import { test, expect } from "bun:test"; // [!code ++]
+```
+
+---
+
+自 Bun v1.2.19 起，您可以使用单个三斜线指令为全局测试函数启用**TypeScript 支持**。这使得从 Jest 迁移更加容易，因为您只需要在整个项目中添加一次指令：
+
+在项目中的_单个文件_中添加此指令，例如：
+
+- 项目根目录中的 [global.d.ts] 文件
+- 您的测试 [preload.ts] 设置文件（如果在 bunfig.toml 中使用 `preload`）
+- TypeScript 编译中包含的任何单个 [.ts] 文件
+
+```ts title="global.d.ts" icon="/icons/typescript.svg"
+/// <reference types="bun-types/test-globals" />
+```
+
+---
+
+添加后，项目中的所有测试文件都会自动获得 Jest 全局变量的 TypeScript 支持：
+
+```ts math.test.ts icon="/icons/typescript.svg"
+describe("my test suite", () => {
+  test("should work", () => {
+    expect(1 + 1).toBe(2);
+  });
+
+  beforeAll(() => {
+    // setup code
+  });
+
+  afterEach(() => {
+    // cleanup code
+  });
+});
+```
+
+---
+
+Bun 实现了绝大多数 Jest 的匹配器，但兼容性尚未达到 100%。请参阅 [文档 > 测试运行器 > 编写测试](/test/writing-tests#matchers) 中的完整兼容性表格。
+
+一些显著的缺失功能：
+
+- `expect().toHaveReturned()`
+
+---
+
+如果您使用 `testEnvironment: "jsdom"` 在类似浏览器的环境中运行测试，您应该遵循 [使用 Bun 和 happy-dom 进行 DOM 测试](/guides/test/happy-dom) 指南将浏览器 API 注入全局作用域。该指南依赖于 [`happy-dom`](https://github.com/capricorn86/happy-dom)，这是 [`jsdom`](https://github.com/jsdom/jsdom) 的更轻量且更快的替代品。
+
+由于内部使用 V8 API，jsdom 目前在 Bun 中无法工作。请在此处跟踪支持情况 [链接](https://github.com/oven-sh/bun/issues/3554)。
+
+```toml bunfig.toml icon="settings"
+[test]
+preload = ["./happy-dom.ts"]
+```
+
+---
+
+在 Jest 配置中用 `--bail` CLI 标志替换 `bail`。
+
+```sh terminal icon="terminal"
+bun test --bail=3
+```
+
+---
+
+用 `--coverage` CLI 标志替换 `collectCoverage`。
+
+```sh terminal icon="terminal"
+bun test --coverage
+```
+
+---
+
+用 `--test-timeout` CLI 标志替换 `testTimeout`。
+
+```sh terminal icon="terminal"
+bun test --timeout 10000
+```
+
+---
+
+使用 `bun test` 时，许多其他标志变得无关紧要或过时。
+
+- `transform` — Bun 支持 TypeScript & JSX。其他文件类型可通过 [插件](/runtime/plugins) 配置。
+- `extensionsToTreatAsEsm`
+- `haste` — Bun 使用其自己的内部源映射
+- `watchman`、`watchPlugins`、`watchPathIgnorePatterns` — 使用 `--watch` 在监视模式下运行测试
+- `verbose` — 在 [`bunfig.toml`](/runtime/bunfig#loglevel) 中设置 `logLevel: "debug"`
+
+---
+
+此处未提及的设置不受支持或没有等价物。如果缺少重要内容，请[提交功能请求](https://github.com/oven-sh/bun)。
+
+---
+
+另请参阅：
+
+- [将测试标记为待办事项](/guides/test/todo-tests)
+- [文档 > 测试运行器 > 编写测试](/test/writing-tests)

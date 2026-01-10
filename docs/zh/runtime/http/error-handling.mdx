@@ -1,0 +1,40 @@
+---
+title: 错误处理
+description: 了解如何在Bun的开发服务器中处理错误
+---
+
+要激活开发模式，请设置 `development: true`。
+
+```ts title="server.ts" icon="/icons/typescript.svg"
+Bun.serve({
+  development: true, // [!code ++]
+  fetch(req) {
+    throw new Error("糟糕！");
+  },
+});
+```
+
+在开发模式下，Bun将在浏览器中显示错误，并提供内置的错误页面。
+
+<Frame>![Bun的内置500页面](/images/exception_page.png)</Frame>
+
+### `error` 回调
+
+要处理服务器端错误，请实现一个 `error` 处理程序。此函数应返回一个 `Response`，以便在发生错误时向客户端提供服务。此响应将在 `development` 模式下取代Bun的默认错误页面。
+
+```ts
+Bun.serve({
+  fetch(req) {
+    throw new Error("糟糕！");
+  },
+  error(error) {
+    return new Response(`<pre>${error}\n${error.stack}</pre>`, {
+      headers: {
+        "Content-Type": "text/html",
+      },
+    });
+  },
+});
+```
+
+<Info>[了解更多关于Bun调试的信息](/runtime/debugger)</Info>

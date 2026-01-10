@@ -1,0 +1,27 @@
+---
+title: 将 ArrayBuffer 转换为 Buffer
+sidebarTitle: "ArrayBuffer 到 Buffer"
+mode: center
+---
+
+Node.js [Buffer](https://nodejs.org/api/buffer.html) API 在 `ArrayBuffer` 引入到 JavaScript 语言之前就已经存在。Bun 同时实现了这两个功能。
+
+使用静态方法 `Buffer.from()` 从 `ArrayBuffer` 创建一个 `Buffer`。
+
+```ts
+const arrBuffer = new ArrayBuffer(64);
+const nodeBuffer = Buffer.from(arrBuffer);
+```
+
+---
+
+要创建一个只查看底层缓冲区一部分的 `Buffer`，请将偏移量和长度传递给构造函数。
+
+```ts
+const arrBuffer = new ArrayBuffer(64);
+const nodeBuffer = Buffer.from(arrBuffer, 0, 16); // 查看前16个字节
+```
+
+---
+
+参阅 [文档 > API > 二进制数据](/runtime/binary-data#conversion) 获取关于使用Bun操作二进制数据的完整文档。

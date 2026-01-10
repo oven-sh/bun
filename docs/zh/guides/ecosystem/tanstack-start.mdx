@@ -1,0 +1,792 @@
+---
+title: 在 Bun 中使用 TanStack Start
+sidebarTitle: TanStack Start 与 Bun
+mode: center
+---
+
+[TanStack Start](https://tanstack.com/start/latest) 是一个由 TanStack Router 驱动的全栈框架。它支持全文档 SSR、流式传输、服务器函数、打包等功能，由 TanStack Router 和 [Vite](https://vite.dev/) 驱动。
+
+---
+
+<Steps>
+  <Step title="创建一个新的 TanStack Start 应用">
+    使用交互式 CLI 创建一个新的 TanStack Start 应用。
+
+    ```sh terminal icon="terminal"
+    bun create @tanstack/start@latest my-tanstack-app
+    ```
+
+  </Step>
+  <Step title="启动开发服务器">
+    更改到项目目录并使用 Bun 运行开发服务器。
+
+    ```sh terminal icon="terminal"
+    cd my-tanstack-app
+    bun --bun run dev
+    ```
+
+    这将使用 Bun 启动 Vite 开发服务器。
+
+  </Step>
+  <Step title="更新 package.json 中的脚本">
+   通过在 Vite CLI 命令前缀加上 `bun --bun` 来修改 `package.json` 中的脚本字段。这确保了 Bun 为常见任务如 `dev`、`build` 和 `preview` 执行 Vite CLI。
+
+    ```json package.json icon="file-json"
+    {
+      "scripts": {
+        "dev": "bun --bun vite dev", // [!code ++]
+        "build": "bun --bun vite build", // [!code ++]
+        "serve": "bun --bun vite preview" // [!code ++]
+      }
+    }
+    ```
+
+  </Step>
+</Steps>
+
+---
+
+## 托管
+
+要托管您的 TanStack Start 应用，您可以使用 [Nitro](https://nitro.build/) 或自定义 Bun 服务器进行生产部署。
+
+<Tabs>
+  <Tab title="Nitro">
+    <Steps>
+      <Step title="向项目添加 Nitro">
+        向您的项目添加 [Nitro](https://nitro.build/)。这个工具允许您将 TanStack Start 应用部署到不同的平台。
+
+        ```sh terminal icon="terminal"
+        bun add nitro
+        ```
+
+      </Step>
+      <Step title={<span>更新您的 <code>vite.config.ts</code> 文件</span>}>
+        更新您的 [vite.config.ts] 文件以包含 Bun 的 TanStack Start 所需的必要插件。
+
+        ```ts vite.config.ts icon="/icons/typescript.svg"
+        // 其他导入...
+        import { nitro } from "nitro/vite"; // [!code ++]
+
+        const config = defineConfig({
+          plugins: [
+            tanstackStart(),
+            nitro({ preset: "bun" }), // [!code ++]
+            // 其他插件...
+          ],
+        });
+
+        export default config;
+        ```
+
+        <Note>
+          `bun` 预设是可选的，但它配置了专门针对 Bun 运行时的构建输出。
+        </Note>
+
+      </Step>
+      <Step title="更新启动命令">
+        确保 `build` 和 `start` 脚本存在于您的 [package.json] 文件中：
+
+        ```json package.json icon="file-json"
+          {
+            "scripts": {
+              "build": "bun --bun vite build", // [!code ++]
+              // 当您运行 `bun run build` 时，Nitro 会创建 .output 文件。
+              // 部署到 Vercel 时不需要。
+              "start": "bun run .output/server/index.mjs" // [!code ++]
+            }
+          }
+        ```
+
+        <Note>
+          <Note>
+          在部署到 Vercel 时，您**不需要**自定义 `start` 脚本。
+        </Note>
+
+      </Step>
+      <Step title="部署您的应用">
+        查看我们的指南之一，将您的应用部署到托管提供商。
+
+        <Note>
+          部署到 Vercel 时，您可以在 `vercel.json` 文件中添加 `"bunVersion": "1.x"`，或将其添加到 [vite.config.ts] 文件中的 `nitro` 配置中：
+
+          <Warning>
+            部署到 Vercel 时不要使用 `bun` Nitro 预设。
+          </Warning>
+
+          ```ts vite.config.ts icon="/icons/typescript.svg"
+          export default defineConfig({
+            plugins: [
+              tanstackStart(),
+              nitro({
+                preset: "bun", // [!code --]
+                vercel: { // [!code ++]
+                  functions: { // [!code ++]
+                    runtime: "bun1.x", // [!code ++]
+                  }, // [!code ++]
+              }, // [!code ++]
+              }),
+            ],
+          });
+          ```
+        </Note>
+      </Step>
+    </Steps>
+
+  </Tab>
+  <Tab title="自定义服务器">
+    <Note>
+      此自定义服务器实现基于 [TanStack 的 Bun 模板](https://github.com/TanStack/router/blob/main/examples/react/start-bun/server.ts)。它提供了对静态资产服务的细粒度控制，包括可配置的内存管理，该管理将小文件预加载到内存中以快速提供服务，而按需提供较大的文件。当您需要在生产部署中精确控制资源使用和资产加载行为时，这种方法非常有用。
+    </Note>
+
+    <Steps>
+      <Step title="创建生产服务器">
+        在您的项目根目录创建一个 [server.ts] 文件，其中包含以下自定义服务器实现：
+
+        ```ts server.ts icon="/icons/typescript.svg" expandable
+        /**
+        * 用于 Bun 的 TanStack Start 生产服务器
+        *
+        * 一个高性能的 TanStack Start 应用程序生产服务器，
+        * 实现了智能静态资产加载和可配置的内存管理。
+        *
+        * 功能:
+        * - 混合加载策略（预加载小文件，按需提供大文件）
+        * - 可配置的文件过滤，包括包含/排除模式
+        * - 内存高效的响应生成
+        * - 适合生产的缓存头
+        *
+        * 环境变量:
+        *
+        * PORT (number)
+        *   - 服务器端口号
+        *   - 默认值: 3000
+        *
+        * ASSET_PRELOAD_MAX_SIZE (number)
+        *   - 预加载到内存的最大文件大小（以字节为单位）
+        *   - 大于此大小的文件将从磁盘按需提供
+        *   - 默认值: 5242880 (5MB)
+        *   - 示例: ASSET_PRELOAD_MAX_SIZE=5242880 (5MB)
+        *
+        * ASSET_PRELOAD_INCLUDE_PATTERNS (string)
+        *   - 以逗号分隔的 glob 模式列表，用于要包含的文件
+        *   - 如果指定，则只有匹配的文件才有资格预加载
+        *   - 模式仅匹配文件名，而非完整路径
+        *   - 示例: ASSET_PRELOAD_INCLUDE_PATTERNS="*.js,*.css,*.woff2"
+        *
+        * ASSET_PRELOAD_EXCLUDE_PATTERNS (string)
+        *   - 以逗号分隔的 glob 模式列表，用于要排除的文件
+        *   - 在包含模式之后应用
+        *   - 模式仅匹配文件名，而非完整路径
+        *   - 示例: ASSET_PRELOAD_EXCLUDE_PATTERNS="*.map,*.txt"
+        *
+        * ASSET_PRELOAD_VERBOSE_LOGGING (boolean)
+        *   - 启用已加载和已跳过文件的详细日志记录
+        *   - 默认值: false
+        *   - 设置为 "true" 以启用详细输出
+        *
+        * ASSET_PRELOAD_ENABLE_ETAG (boolean)
+        *   - 为预加载的资产启用 ETag 生成
+        *   - 默认值: true
+        *   - 设置为 "false" 以禁用 ETag 支持
+        *
+        * ASSET_PRELOAD_ENABLE_GZIP (boolean)
+        *   - 为符合条件的资产启用 Gzip 压缩
+        *   - 默认值: true
+        *   - 设置为 "false" 以禁用 Gzip 压缩
+        *
+        * ASSET_PRELOAD_GZIP_MIN_SIZE (number)
+        *   - Gzip 压缩所需的最小文件大小（以字节为单位）
+        *   - 小于此大小的文件不会被压缩
+        *   - 默认值: 1024 (1KB)
+        *
+        * ASSET_PRELOAD_GZIP_MIME_TYPES (string)
+        *   - 有资格进行 Gzip 压缩的 MIME 类型列表，以逗号分隔
+        *   - 支持对以 "/" 结尾的类型进行部分匹配
+        *   - 默认值: text/,application/javascript,application/json,application/xml,image/svg+xml
+        *
+        * 用法:
+        *   bun run server.ts
+        */
+
+        import path from 'node:path'
+
+        // 配置
+        const SERVER_PORT = Number(process.env.PORT ?? 3000)
+        const CLIENT_DIRECTORY = './dist/client'
+        const SERVER_ENTRY_POINT = './dist/server/server.js'
+
+        // 专业输出的日志工具
+        const log = {
+          info: (message: string) => {
+            console.log(`[INFO] ${message}`)
+          },
+          success: (message: string) => {
+            console.log(`[SUCCESS] ${message}`)
+          },
+          warning: (message: string) => {
+            console.log(`[WARNING] ${message}`)
+          },
+          error: (message: string) => {
+            console.log(`[ERROR] ${message}`)
+          },
+          header: (message: string) => {
+            console.log(`\n${message}\n`)
+          },
+        }
+
+        // 从环境变量预加载配置
+        const MAX_PRELOAD_BYTES = Number(
+          process.env.ASSET_PRELOAD_MAX_SIZE ?? 5 * 1024 * 1024, // 5MB 默认值
+        )
+
+        // 解析以逗号分隔的包含模式（无默认值）
+        const INCLUDE_PATTERNS = (process.env.ASSET_PRELOAD_INCLUDE_PATTERNS ?? '')
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean)
+          .map((pattern: string) => convertGlobToRegExp(pattern))
+
+        // 解析以逗号分隔的排除模式（无默认值）
+        const EXCLUDE_PATTERNS = (process.env.ASSET_PRELOAD_EXCLUDE_PATTERNS ?? '')
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean)
+          .map((pattern: string) => convertGlobToRegExp(pattern))
+
+        // 详细日志记录标志
+        const VERBOSE = process.env.ASSET_PRELOAD_VERBOSE_LOGGING === 'true'
+
+        // 可选的 ETag 功能
+        const ENABLE_ETAG = (process.env.ASSET_PRELOAD_ENABLE_ETAG ?? 'true') === 'true'
+
+        // 可选的 Gzip 功能
+        const ENABLE_GZIP = (process.env.ASSET_PRELOAD_ENABLE_GZIP ?? 'true') === 'true'
+        const GZIP_MIN_BYTES = Number(process.env.ASSET_PRELOAD_GZIP_MIN_SIZE ?? 1024) // 1KB
+        const GZIP_TYPES = (
+          process.env.ASSET_PRELOAD_GZIP_MIME_TYPES ??
+          'text/,application/javascript,application/json,application/xml,image/svg+xml'
+        )
+          .split(',')
+          .map((v) => v.trim())
+          .filter(Boolean)
+
+        /**
+        * 将简单 glob 模式转换为正则表达式
+        * 支持 * 通配符以匹配任意字符
+        */
+        function convertGlobToRegExp(globPattern: string): RegExp {
+          // 转义除 * 以外的正则特殊字符，然后将 * 替换为 .*
+          const escapedPattern = globPattern
+            .replace(/[-/\\^$+?.()|[\]{}]/g, '\\$&')
+            .replace(/\*/g, '.*')
+          return new RegExp(`^${escapedPattern}$`, 'i')
+        }
+
+        /**
+        * 为给定的数据缓冲区计算 ETag
+        */
+        function computeEtag(data: Uint8Array): string {
+          const hash = Bun.hash(data)
+          return `W/"${hash.toString(16)}-${data.byteLength.toString()}"`
+        }
+
+        /**
+        * 预加载静态资产的元数据
+        */
+        interface AssetMetadata {
+          route: string
+          size: number
+          type: string
+        }
+
+        /**
+        * 内存中的资产，支持 ETag 和 Gzip
+        */
+        interface InMemoryAsset {
+          raw: Uint8Array
+          gz?: Uint8Array
+          etag?: string
+          type: string
+          immutable: boolean
+          size: number
+        }
+
+        /**
+        * 静态资产预加载过程的结果
+        */
+        interface PreloadResult {
+          routes: Record<string, (req: Request) => Response | Promise<Response>>
+          loaded: AssetMetadata[]
+          skipped: AssetMetadata[]
+        }
+
+        /**
+        * 根据配置的模式检查文件是否有资格预加载
+        */
+        function isFileEligibleForPreloading(relativePath: string): boolean {
+          const fileName = relativePath.split(/[/\\]/).pop() ?? relativePath
+
+          // 如果指定了包含模式，文件必须至少匹配一个
+          if (INCLUDE_PATTERNS.length > 0) {
+            if (!INCLUDE_PATTERNS.some((pattern) => pattern.test(fileName))) {
+              return false
+            }
+          }
+
+          // 如果指定了排除模式，文件不得匹配任何模式
+          if (EXCLUDE_PATTERNS.some((pattern) => pattern.test(fileName))) {
+            return false
+          }
+
+          return true
+        }
+
+        /**
+        * 检查 MIME 类型是否可压缩
+        */
+        function isMimeTypeCompressible(mimeType: string): boolean {
+          return GZIP_TYPES.some((type) =>
+            type.endsWith('/') ? mimeType.startsWith(type) : mimeType === type,
+          )
+        }
+
+        /**
+        * 根据大小和 MIME 类型有条件地压缩数据
+        */
+        function compressDataIfAppropriate(
+          data: Uint8Array,
+          mimeType: string,
+        ): Uint8Array | undefined {
+          if (!ENABLE_GZIP) return undefined
+          if (data.byteLength < GZIP_MIN_BYTES) return undefined
+          if (!isMimeTypeCompressible(mimeType)) return undefined
+          try {
+            return Bun.gzipSync(data.buffer as ArrayBuffer)
+          } catch {
+            return undefined
+          }
+        }
+
+        /**
+        * 创建具有 ETag 和 Gzip 支持的响应处理程序函数
+        */
+        function createResponseHandler(
+          asset: InMemoryAsset,
+        ): (req: Request) => Response {
+          return (req: Request) => {
+            const headers: Record<string, string> = {
+              'Content-Type': asset.type,
+              'Cache-Control': asset.immutable
+                ? 'public, max-age=31536000, immutable'
+                : 'public, max-age=3600',
+            }
+
+            if (ENABLE_ETAG && asset.etag) {
+              const ifNone = req.headers.get('if-none-match')
+              if (ifNone && ifNone === asset.etag) {
+                return new Response(null, {
+                  status: 304,
+                  headers: { ETag: asset.etag },
+                })
+              }
+              headers.ETag = asset.etag
+            }
+
+            if (
+              ENABLE_GZIP &&
+              asset.gz &&
+              req.headers.get('accept-encoding')?.includes('gzip')
+            ) {
+              headers['Content-Encoding'] = 'gzip'
+              headers['Content-Length'] = String(asset.gz.byteLength)
+              const gzCopy = new Uint8Array(asset.gz)
+              return new Response(gzCopy, { status: 200, headers })
+            }
+
+            headers['Content-Length'] = String(asset.raw.byteLength)
+            const rawCopy = new Uint8Array(asset.raw)
+            return new Response(rawCopy, { status: 200, headers })
+          }
+        }
+
+        /**
+        * 从包含模式创建复合 glob 模式
+        */
+        function createCompositeGlobPattern(): Bun.Glob {
+          const raw = (process.env.ASSET_PRELOAD_INCLUDE_PATTERNS ?? '')
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean)
+          if (raw.length === 0) return new Bun.Glob('**/*')
+          if (raw.length === 1) return new Bun.Glob(raw[0])
+          return new Bun.Glob(`{${raw.join(',')}}`)
+        }
+
+        /**
+        * 使用智能预加载策略初始化静态路由
+        * 小文件加载到内存中，大文件按需提供
+        */
+        async function initializeStaticRoutes(
+          clientDirectory: string,
+        ): Promise<PreloadResult> {
+          const routes: Record<string, (req: Request) => Response | Promise<Response>> =
+            {}
+          const loaded: AssetMetadata[] = []
+          const skipped: AssetMetadata[] = []
+
+          log.info(`从 ${clientDirectory} 加载静态资产...`)
+          if (VERBOSE) {
+            console.log(
+              `最大预加载大小: ${(MAX_PRELOAD_BYTES / 1024 / 1024).toFixed(2)} MB`,
+            )
+            if (INCLUDE_PATTERNS.length > 0) {
+              console.log(
+                `包含模式: ${process.env.ASSET_PRELOAD_INCLUDE_PATTERNS ?? ''}`,
+              )
+            }
+            if (EXCLUDE_PATTERNS.length > 0) {
+              console.log(
+                `排除模式: ${process.env.ASSET_PRELOAD_EXCLUDE_PATTERNS ?? ''}`,
+              )
+            }
+          }
+
+          let totalPreloadedBytes = 0
+
+          try {
+            const glob = createCompositeGlobPattern()
+            for await (const relativePath of glob.scan({ cwd: clientDirectory })) {
+              const filepath = path.join(clientDirectory, relativePath)
+              const route = `/${relativePath.split(path.sep).join(path.posix.sep)}`
+
+              try {
+                // 获取文件元数据
+                const file = Bun.file(filepath)
+
+                // 如果文件不存在或为空则跳过
+                if (!(await file.exists()) || file.size === 0) {
+                  continue
+                }
+
+                const metadata: AssetMetadata = {
+                  route,
+                  size: file.size,
+                  type: file.type || 'application/octet-stream',
+                }
+
+                // 确定文件是否应预加载
+                const matchesPattern = isFileEligibleForPreloading(relativePath)
+                const withinSizeLimit = file.size <= MAX_PRELOAD_BYTES
+
+                if (matchesPattern && withinSizeLimit) {
+                  // 预加载小文件到内存中，支持 ETag 和 Gzip
+                  const bytes = new Uint8Array(await file.arrayBuffer())
+                  const gz = compressDataIfAppropriate(bytes, metadata.type)
+                  const etag = ENABLE_ETAG ? computeEtag(bytes) : undefined
+                  const asset: InMemoryAsset = {
+                    raw: bytes,
+                    gz,
+                    etag,
+                    type: metadata.type,
+                    immutable: true,
+                    size: bytes.byteLength,
+                  }
+                  routes[route] = createResponseHandler(asset)
+
+                  loaded.push({ ...metadata, size: bytes.byteLength })
+                  totalPreloadedBytes += bytes.byteLength
+                } else {
+                  // 按需提供大文件或过滤的文件
+                  routes[route] = () => {
+                    const fileOnDemand = Bun.file(filepath)
+                    return new Response(fileOnDemand, {
+                      headers: {
+                        'Content-Type': metadata.type,
+                        'Cache-Control': 'public, max-age=3600',
+                      },
+                    })
+                  }
+
+                  skipped.push(metadata)
+                }
+              } catch (error: unknown) {
+                if (error instanceof Error && error.name !== 'EISDIR') {
+                  log.error(`加载 ${filepath} 失败: ${error.message}`)
+                }
+              }
+            }
+
+            // 仅在启用详细模式时显示详细文件概览
+            if (VERBOSE && (loaded.length > 0 || skipped.length > 0)) {
+              const allFiles = [...loaded, ...skipped].sort((a, b) =>
+                a.route.localeCompare(b.route),
+              )
+
+              // 计算最大路径长度以对齐
+              const maxPathLength = Math.min(
+                Math.max(...allFiles.map((f) => f.route.length)),
+                60,
+              )
+
+              // 使用 KB 和实际 gzip 大小格式化文件大小
+              const formatFileSize = (bytes: number, gzBytes?: number) => {
+                const kb = bytes / 1024
+                const sizeStr = kb < 100 ? kb.toFixed(2) : kb.toFixed(1)
+
+                if (gzBytes !== undefined) {
+                  const gzKb = gzBytes / 1024
+                  const gzStr = gzKb < 100 ? gzKb.toFixed(2) : gzKb.toFixed(1)
+                  return {
+                    size: sizeStr,
+                    gzip: gzStr,
+                  }
+                }
+
+                // 如果没有实际 gzip 数据，则粗略估算 gzip（通常 30-70% 压缩率）
+                const gzipKb = kb * 0.35
+                return {
+                  size: sizeStr,
+                  gzip: gzipKb < 100 ? gzipKb.toFixed(2) : gzipKb.toFixed(1),
+                }
+              }
+
+              if (loaded.length > 0) {
+                console.log('\n📁 预加载到内存:')
+                console.log(
+                  '路径                                            │    大小 │ Gzip 大小',
+                )
+                loaded
+                  .sort((a, b) => a.route.localeCompare(b.route))
+                  .forEach((file) => {
+                    const { size, gzip } = formatFileSize(file.size)
+                    const paddedPath = file.route.padEnd(maxPathLength)
+                    const sizeStr = `${size.padStart(7)} kB`
+                    const gzipStr = `${gzip.padStart(7)} kB`
+                    console.log(`${paddedPath} │ ${sizeStr} │  ${gzipStr}`)
+                  })
+              }
+
+              if (skipped.length > 0) {
+                console.log('\n💾 按需提供:')
+                console.log(
+                  '路径                                            │    大小 │ Gzip 大小',
+                )
+                skipped
+                  .sort((a, b) => a.route.localeCompare(b.route))
+                  .forEach((file) => {
+                    const { size, gzip } = formatFileSize(file.size)
+                    const paddedPath = file.route.padEnd(maxPathLength)
+                    const sizeStr = `${size.padStart(7)} kB`
+                    const gzipStr = `${gzip.padStart(7)} kB`
+                    console.log(`${paddedPath} │ ${sizeStr} │  ${gzipStr}`)
+                  })
+              }
+            }
+
+            // 如果启用了详细信息，则显示详细信息
+            if (VERBOSE) {
+              if (loaded.length > 0 || skipped.length > 0) {
+                const allFiles = [...loaded, ...skipped].sort((a, b) =>
+                  a.route.localeCompare(b.route),
+                )
+                console.log('\n📊 详细文件信息:')
+                console.log(
+                  '状态         │ 路径                            │ MIME 类型                    │ 原因',
+                )
+                allFiles.forEach((file) => {
+                  const isPreloaded = loaded.includes(file)
+                  const status = isPreloaded ? 'MEMORY' : 'ON-DEMAND'
+                  const reason =
+                    !isPreloaded && file.size > MAX_PRELOAD_BYTES
+                      ? '太大'
+                      : !isPreloaded
+                        ? '已过滤'
+                        : '已预加载'
+                  const route =
+                    file.route.length > 30
+                      ? file.route.substring(0, 27) + '...'
+                      : file.route
+                  console.log(
+                    `${status.padEnd(12)} │ ${route.padEnd(30)} │ ${file.type.padEnd(28)} │ ${reason.padEnd(10)}`,
+                  )
+                })
+              } else {
+                console.log('\n📊 没有找到要显示的文件')
+              }
+            }
+
+            // 在文件列表后记录摘要
+            console.log() // 空行用于分隔
+            if (loaded.length > 0) {
+              log.success(
+                `预加载 ${String(loaded.length)} 个文件 (${(totalPreloadedBytes / 1024 / 1024).toFixed(2)} MB) 到内存`,
+              )
+            } else {
+              log.info('没有文件预加载到内存')
+            }
+
+            if (skipped.length > 0) {
+              const tooLarge = skipped.filter((f) => f.size > MAX_PRELOAD_BYTES).length
+              const filtered = skipped.length - tooLarge
+              log.info(
+                `${String(skipped.length)} 个文件将按需提供 (${String(tooLarge)} 太大, ${String(filtered)} 已过滤)`,
+              )
+            }
+          } catch (error) {
+            log.error(
+              `从 ${clientDirectory} 加载静态文件失败: ${String(error)}`,
+            )
+          }
+
+          return { routes, loaded, skipped }
+        }
+
+        /**
+        * 初始化服务器
+        */
+        async function initializeServer() {
+          log.header('启动生产服务器')
+
+          // 加载 TanStack Start 服务器处理程序
+          let handler: { fetch: (request: Request) => Response | Promise<Response> }
+          try {
+            const serverModule = (await import(SERVER_ENTRY_POINT)) as {
+              default: { fetch: (request: Request) => Response | Promise<Response> }
+            }
+            handler = serverModule.default
+            log.success('TanStack Start 应用处理程序已初始化')
+          } catch (error) {
+            log.error(`加载服务器处理程序失败: ${String(error)}`)
+            process.exit(1)
+          }
+
+          // 使用智能预加载构建静态路由
+          const { routes } = await initializeStaticRoutes(CLIENT_DIRECTORY)
+
+          // 创建 Bun 服务器
+          const server = Bun.serve({
+            port: SERVER_PORT,
+
+            routes: {
+              // 提供静态资产（预加载或按需）
+              ...routes,
+
+              // 作为后备，将所有其他路由转发给 TanStack Start 处理程序
+              '/*': (req: Request) => {
+                try {
+                  return handler.fetch(req)
+                } catch (error) {
+                  log.error(`服务器处理程序错误: ${String(error)}`)
+                  return new Response('内部服务器错误', { status: 500 })
+                }
+              },
+            },
+
+            // 全局错误处理程序
+            error(error) {
+              log.error(
+                `未捕获的服务器错误: ${error instanceof Error ? error.message : String(error)}`,
+              )
+              return new Response('内部服务器错误', { status: 500 })
+            },
+          })
+
+          log.success(`服务器正在 http://localhost:${String(server.port)} 上监听`)
+        }
+
+        // 初始化服务器
+        initializeServer().catch((error: unknown) => {
+          log.error(`启动服务器失败: ${String(error)}`)
+          process.exit(1)
+        })
+        ```
+
+      </Step>
+      <Step title="更新 package.json 脚本">
+        添加一个 `start` 脚本来运行自定义服务器:
+
+        ```json package.json icon="file-json"
+        {
+          "scripts": {
+            "build": "bun --bun vite build",
+            "start": "bun run server.ts" // [!code ++]
+          }
+        }
+        ```
+
+      </Step>
+      <Step title="构建和运行">
+        构建您的应用并启动服务器:
+
+        ```sh terminal icon="terminal"
+        bun run build
+        bun run start
+        ```
+
+        服务器将默认在端口 3000 上启动（可通过 `PORT` 环境变量配置）。
+
+      </Step>
+    </Steps>
+
+  </Tab>
+</Tabs>
+
+<Columns cols={3}>
+  <Card title="Vercel" href="/guides/deployment/vercel" icon="/icons/ecosystem/vercel.svg">
+    部署到 Vercel
+  </Card>
+  <Card title="Render" href="/guides/deployment/render" icon="/icons/ecosystem/render.svg">
+    部署到 Render
+  </Card>
+  <Card title="Railway" href="/guides/deployment/railway" icon="/icons/ecosystem/railway.svg">
+    部署到 Railway
+  </Card>
+  <Card title="DigitalOcean" href="/guides/deployment/digital-ocean" icon="/icons/ecosystem/digitalocean.svg">
+    部署到 DigitalOcean
+  </Card>
+  <Card title="AWS Lambda" href="/guides/deployment/aws-lambda" icon="/icons/ecosystem/aws.svg">
+    部署到 AWS Lambda
+  </Card>
+  <Card title="Google Cloud Run" href="/guides/deployment/google-cloud-run" icon="/icons/ecosystem/gcp.svg">
+    部署到 Google Cloud Run
+  </Card>
+</Columns>
+
+---
+
+## 模板
+
+<Columns cols={2}>
+  <Card
+    title="使用 Tanstack + Bun 的待办应用"
+    img="/images/templates/bun-tanstack-todo.png"
+    href="https://github.com/bun-templates/bun-tanstack-todo"
+    arrow="true"
+    cta="转到模板"
+  >
+    一个使用 Bun、TanStack Start 和 PostgreSQL 构建的待办应用。
+  </Card>
+  <Card
+    title="Bun + TanStack Start 应用"
+    img="/images/templates/bun-tanstack-basic.png"
+    href="https://github.com/bun-templates/bun-tanstack-basic"
+    arrow="true"
+    cta="转到模板"
+  >
+    一个使用 Bun 的 TanStack Start 模板，支持 SSR 和基于文件的路由。
+  </Card>
+  <Card
+    title="基本 Bun + Tanstack 启动器"
+    img="/images/templates/bun-tanstack-start.png"
+    href="https://github.com/bun-templates/bun-tanstack-start"
+    arrow="true"
+    cta="转到模板"
+  >
+    使用 Bun 运行时和 Bun 文件 API 的基本 TanStack 启动器。
+  </Card>
+</Columns>
+
+---
+
+[→ 查看 TanStack Start 的官方文档](https://tanstack.com/start/latest/docs/framework/react/guide/hosting) 了解有关托管的更多信息。

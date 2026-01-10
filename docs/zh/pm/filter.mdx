@@ -1,0 +1,101 @@
+---
+title: "bun --filter"
+description: "在单一代码库中使用 --filter 标志通过模式选择包"
+---
+
+`--filter` (或 `-F`) 标志用于在单一代码库中通过模式选择包。模式可以用于匹配包名称或包路径，并完全支持 glob 语法。
+
+目前 `--filter` 由 `bun install` 和 `bun outdated` 支持，也可用于一次运行多个包的脚本。
+
+---
+
+## 匹配
+
+### 包名称 `--filter <pattern>`
+
+名称模式基于包名称选择包，如 [package.json] 中指定的那样。例如，如果你有包 `pkg-a`、`pkg-b` 和 `other`，你可以匹配所有包使用 `*`，只匹配 `pkg-a` 和 `pkg-b` 使用 `pkg*`，以及提供包的全名来匹配特定包。
+
+### 包路径 `--filter ./<glob>`
+
+路径模式通过以 `./` 开头指定模式，并将选择与模式匹配的目录中的所有包。例如，要匹配 `packages` 子目录中的所有包，你可以使用 `--filter './packages/**'`。要匹配位于 `packages/foo` 的包，使用 `--filter ./packages/foo`。
+
+---
+
+## `bun install` 和 `bun outdated`
+
+`bun install` 和 `bun outdated` 都支持 `--filter` 标志。
+
+`bun install` 默认会为单一代码库中的所有包安装依赖。要为特定包安装依赖，请使用 `--filter`。
+
+假设一个单一代码库，工作区 `pkg-a`、`pkg-b` 和 `pkg-c` 位于 `./packages` 下：
+
+```bash terminal icon="terminal"
+# 为除 `pkg-c` 外的所有工作区安装依赖
+bun install --filter '!pkg-c'
+
+# 为 `./packages` 中的包安装依赖 (`pkg-a`、`pkg-b`、`pkg-c`)
+bun install --filter './packages/*'
+
+# 与上述相同，但排除根 [package.json]
+bun install --filter '!./' --filter './packages/*'
+```
+
+同样，`bun outdated` 将显示单一代码库中所有包的过时依赖，可以使用 `--filter` 将命令限制为包的子集：
+
+```bash terminal icon="terminal"
+# 显示以 `pkg-` 开头的工作区的过时依赖
+bun outdated --filter 'pkg-*'
+
+# 仅显示根 [package.json] 的过时依赖
+bun outdated --filter './'
+```
+
+有关这两个命令的更多信息，请参见 [`bun install`](/pm/cli/install) 和 [`bun outdated`](/pm/cli/outdated)。
+
+---
+
+## 使用 `--filter` 运行脚本
+
+使用 `--filter` 标志一次在多个包中执行脚本：
+
+```bash terminal icon="terminal"
+bun --filter <pattern> <script>
+```
+
+假设你有一个有两个包的单一代码库：`packages/api` 和 `packages/frontend`，两者都有一个 `dev` 脚本，将启动本地开发服务器。通常，你必须打开两个单独的终端选项卡，进入每个包目录，然后运行 `bun dev`：
+
+```bash terminal icon="terminal"
+cd packages/api
+bun dev
+
+# 在另一个终端中
+cd packages/frontend
+bun dev
+```
+
+使用 `--filter`，你可以一次在两个包中运行 `dev` 脚本：
+
+```bash terminal icon="terminal"
+bun --filter '*' dev
+```
+
+两个命令将并行运行，你会看到一个漂亮的终端界面显示它们各自的输出：
+
+<Frame>![Terminal Output](https://github.com/oven-sh/bun/assets/48869301/2a103e42-9921-4c33-948f-a1ad6e6bac71)</Frame>
+
+### 在工作区中运行脚本
+
+过滤器会遵守你的[工作区配置](/pm/workspaces)：如果你有一个指定哪些包是工作区一部分的 [package.json] 文件，`--filter` 将仅限于这些包。此外，在工作区中，你可以使用 `--filter` 在工作区中任意位置的包中运行脚本：
+
+```bash terminal icon="terminal"
+# 包
+# src/foo
+# src/bar
+
+# 在 src/bar 中：在 src/foo 中运行 myscript，无需 cd！
+bun run --filter foo myscript
+```
+
+### 依赖顺序
+
+Bun 在运行脚本时会遵守包的依赖顺序。假设你有一个包 `foo` 依赖于工作区中的另一个包 `bar`，并且两个包都有一个 `build` 脚本。当你运行 `bun --filter '*' build` 时，你会发现 `foo` 只有在 `bar` 完成后才会开始运行。

@@ -1,0 +1,13 @@
+---
+title: 将 Node.js Readable 转换为 Uint8Array
+sidebarTitle: Readable 到 Uint8Array
+mode: center
+---
+
+要将 Node.js `Readable` 流在 Bun 中转换为 `Uint8Array`，您可以创建一个新的 `Response` 对象，将流作为主体，然后使用 `bytes()` 将流读入 `Uint8Array`。
+
+```ts
+import { Readable } from "stream";
+const stream = Readable.from(["Hello, ", "world!"]);
+const buf = await new Response(stream).bytes();
+```

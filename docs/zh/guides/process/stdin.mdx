@@ -1,0 +1,62 @@
+---
+title: 从 stdin 读取
+sidebarTitle: 从 stdin 读取
+mode: center
+---
+
+对于 CLI 工具来说，经常需要从 `stdin` 读取数据。在 Bun 中，`console` 对象是一个 `AsyncIterable`，它会产生来自 `stdin` 的行。
+
+```ts index.ts icon="/icons/typescript.svg"
+const prompt = "Type something: ";
+process.stdout.write(prompt);
+for await (const line of console) {
+  console.log(`You typed: ${line}`);
+  process.stdout.write(prompt);
+}
+```
+
+---
+
+运行此文件将产生一个永不停止的交互式提示，回显用户输入的任何内容。
+
+```sh terminal icon="terminal"
+bun run index.ts
+```
+
+```txt
+Type something: hello
+You typed: hello
+Type something: hello again
+You typed: hello again
+```
+
+---
+
+Bun 还通过 `Bun.stdin` 将 stdin 暴露为一个 `BunFile`。这对于逐步读取大量输入管道到 `bun` 进程中很有用。
+
+不能保证块会按行分割。
+
+```ts stdin.ts icon="/icons/typescript.svg"
+for await (const chunk of Bun.stdin.stream()) {
+  // chunk 是 Uint8Array
+  // 这会将其转换为文本（假设 ASCII 编码）
+  const chunkText = Buffer.from(chunk).toString();
+  console.log(`Chunk: ${chunkText}`);
+}
+```
+
+---
+
+这将打印输入到 `bun` 进程的输入。
+
+```sh terminal icon="terminal"
+echo "hello" | bun run stdin.ts
+```
+
+```txt
+Chunk: hello
+```
+
+---
+
+请参阅 [文档 > API > 工具](/runtime/utils) 了解更多的实用工具。

@@ -1,0 +1,104 @@
+---
+title: 导入 YAML 文件
+sidebarTitle: 导入 YAML
+mode: center
+---
+
+Bun 原生支持 `.yaml` 和 `.yml` 导入。
+
+```yaml config.yaml icon="file-code"
+database:
+  host: localhost
+  port: 5432
+  name: myapp
+
+server:
+  port: 3000
+  timeout: 30
+
+features:
+  auth: true
+  rateLimit: true
+```
+
+---
+
+像任何其他源文件一样导入该文件。
+
+```ts config.ts icon="/icons/typescript.svg"
+import config from "./config.yaml";
+
+config.database.host; // => "localhost"
+config.server.port; // => 3000
+config.features.auth; // => true
+```
+
+---
+
+您也可以使用命名导入来解构顶层属性：
+
+```ts config.ts icon="/icons/typescript.svg"
+import { database, server, features } from "./config.yaml";
+
+console.log(database.name); // => "myapp"
+console.log(server.timeout); // => 30
+console.log(features.rateLimit); // => true
+```
+
+---
+
+Bun 还支持 [导入属性](https://github.com/tc39/proposal-import-attributes) 语法：
+
+```ts config.ts icon="/icons/typescript.svg"
+import config from "./config.yaml" with { type: "yaml" };
+
+config.database.port; // => 5432
+```
+
+---
+
+要在运行时解析 YAML 字符串，请使用 `Bun.YAML.parse()`：
+
+```ts config.ts icon="/icons/typescript.svg"
+const yamlString = `
+name: John Doe
+age: 30
+hobbies:
+  - reading
+  - coding
+`;
+
+const data = Bun.YAML.parse(yamlString);
+console.log(data.name); // => "John Doe"
+console.log(data.hobbies); // => ["reading", "coding"]
+```
+
+---
+
+## TypeScript 支持
+
+要为您的 YAML 导入添加 TypeScript 支持，请创建一个声明文件，文件名以 `.d.ts` 结尾（例如，`config.yaml` → `config.yaml.d.ts`）；
+
+```ts config.yaml.d.ts icon="/icons/typescript.svg"
+const contents: {
+  database: {
+    host: string;
+    port: number;
+    name: string;
+  };
+  server: {
+    port: number;
+    timeout: number;
+  };
+  features: {
+    auth: boolean;
+    rateLimit: boolean;
+  };
+};
+
+export = contents;
+```
+
+---
+
+请参阅 [文档 > API > YAML](/runtime/yaml) 了解 Bun 中 YAML 支持的完整文档。

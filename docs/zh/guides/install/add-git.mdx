@@ -1,0 +1,40 @@
+---
+title: 添加 Git 依赖
+sidebarTitle: 添加 Git 依赖
+mode: center
+---
+
+Bun 支持直接添加 GitHub 仓库作为项目的依赖。
+
+```sh terminal icon="terminal"
+bun add github:lodash/lodash
+```
+
+---
+
+这会将以下行添加到您的 [package.json] 中：
+
+```json package.json icon="file-json"
+{
+  "dependencies": {
+    "lodash": "github:lodash/lodash"
+  }
+}
+```
+
+---
+
+Bun 支持多种协议来指定 Git 依赖。
+
+```sh terminal icon="terminal"
+bun add git+https://github.com/lodash/lodash.git
+bun add git+ssh://github.com/lodash/lodash.git#4.17.21
+bun add git@github.com:lodash/lodash.git
+bun add github:colinhacks/zod
+```
+
+**注意:** GitHub 依赖在可能的情况下通过 HTTP tarball 下载，以实现更快的安装。
+
+---
+
+请参阅 [文档 > 包管理器](/pm/cli/install) 以获取 Bun 包管理器的完整文档。

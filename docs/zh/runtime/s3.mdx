@@ -1,0 +1,863 @@
+---
+title: S3
+description: Bun 提供快速的原生绑定用于与 S3 兼容的对象存储服务交互。
+---
+
+生产服务器通常从 S3 兼容的对象存储服务而不是本地文件系统读取、上传和写入文件。历史上，这意味着您在开发中使用的本地文件系统 API 无法在生产环境中使用。当您使用 Bun 时，情况就不同了。
+
+### Bun 的 S3 API 很快
+
+<Frame caption="左侧: Bun v1.1.44. 右侧: Node.js v23.6.0">
+  <img src="/images/bun-s3-node.gif" alt="Bun 的 S3 API 很快" />
+</Frame>
+
+Bun 提供快速的原生绑定用于与 S3 兼容的对象存储服务交互。Bun 的 S3 API 设计简洁，感觉类似于 fetch 的 `Response` 和 `Blob` API（如 Bun 的本地文件系统 API）。
+
+```ts s3.ts icon="/icons/typescript.svg"
+import { s3, write, S3Client } from "bun";
+
+// Bun.s3 读取环境变量以获取凭据
+// file() 返回对 S3 上文件的惰性引用
+const metadata = s3.file("123.json");
+
+// 以 JSON 形式从 S3 下载
+const data = await metadata.json();
+
+// 上传到 S3
+await write(metadata, JSON.stringify({ name: "John", age: 30 }));
+
+// 预签名 URL（同步 - 无需网络请求）
+const url = metadata.presign({
+  acl: "public-read",
+  expiresIn: 60 * 60 * 24, // 1 天
+});
+
+// 删除文件
+await metadata.delete();
+```
+
+S3 是互联网的事实标准文件系统。Bun 的 S3 API 适用于 S3 兼容的存储服务，如：
+
+- AWS S3
+- Cloudflare R2
+- DigitalOcean Spaces
+- MinIO
+- Backblaze B2
+- ...以及任何其他 S3 兼容的存储服务
+
+## 基本用法
+
+有几种方法可以与 Bun 的 S3 API 交互。
+
+### `Bun.S3Client` & `Bun.s3`
+
+`Bun.s3` 等价于 `new Bun.S3Client()`，依赖环境变量获取凭据。
+
+要显式设置凭据，请将它们传递给 `Bun.S3Client` 构造函数。
+
+```ts s3.ts icon="/icons/typescript.svg"
+import { S3Client } from "bun";
+
+const client = new S3Client({
+  accessKeyId: "your-access-key",
+  secretAccessKey: "your-secret-key",
+  bucket: "my-bucket",
+  // sessionToken: "..."
+  // acl: "public-read",
+  // endpoint: "https://s3.us-east-1.amazonaws.com",
+  // endpoint: "https://<account-id>.r2.cloudflarestorage.com", // Cloudflare R2
+  // endpoint: "https://<region>.digitaloceanspaces.com", // DigitalOcean Spaces
+  // endpoint: "http://localhost:9000", // MinIO
+});
+
+// Bun.s3 是一个全局单例，等价于 `new Bun.S3Client()`
+```
+
+### 使用 S3 文件
+
+`S3Client` 中的 **`file`** 方法返回对 S3 上文件的**惰性引用**。
+
+```ts s3.ts icon="/icons/typescript.svg"
+// 对 S3 上文件的惰性引用
+const s3file: S3File = client.file("123.json");
+```
+
+与 `Bun.file(path)` 类似，`S3Client` 的 `file` 方法是同步的。在调用依赖网络请求的方法之前，它不会发出任何网络请求。
+
+### 从 S3 读取文件
+
+如果您使用过 `fetch` API，那么您就熟悉 `Response` 和 `Blob` API。`S3File` 扩展了 `Blob`。适用于 `Blob` 的相同方法也适用于 `S3File`。
+
+```ts s3.ts icon="/icons/typescript.svg"
+// 以文本形式读取 S3File
+const text = await s3file.text();
+
+// 以 JSON 形式读取 S3File
+const json = await s3file.json();
+
+// 以 ArrayBuffer 形式读取 S3File
+const buffer = await s3file.arrayBuffer();
+
+// 只获取前 1024 字节
+const partial = await s3file.slice(0, 1024).text();
+
+// 流式传输文件
+const stream = s3file.stream();
+for await (const chunk of stream) {
+  console.log(chunk);
+}
+```
+
+#### 内存优化
+
+像 `text()`、`json()`、`bytes()` 或 `arrayBuffer()` 这样的方法在可能的情况下避免复制字符串或字节到内存中。
+
+如果文本恰好是 ASCII，Bun 会直接将字符串传输到 JavaScriptCore（引擎）而不进行转码，也不会在内存中复制字符串。当您使用 `.bytes()` 或 `.arrayBuffer()` 时，它也会避免在内存中复制字节。
+
+这些辅助方法不仅简化了 API，还使其更快。
+
+### 向 S3 写入和上传文件
+
+写入 S3 同样简单。
+
+```ts s3.ts icon="/icons/typescript.svg"
+// 写入字符串（替换文件）
+await s3file.write("Hello World!");
+
+// 写入 Buffer（替换文件）
+await s3file.write(Buffer.from("Hello World!"));
+
+// 写入 Response（替换文件）
+await s3file.write(new Response("Hello World!"));
+
+// 使用内容类型写入
+await s3file.write(JSON.stringify({ name: "John", age: 30 }), {
+  type: "application/json",
+});
+
+// 使用 writer 写入（流式）
+const writer = s3file.writer({ type: "application/json" });
+writer.write("Hello");
+writer.write(" World!");
+await writer.end();
+
+// 使用 Bun.write 写入
+await Bun.write(s3file, "Hello World!");
+```
+
+### 处理大文件（流）
+
+Bun 自动处理大文件的多部分上传并提供流功能。适用于本地文件的相同 API 也适用于 S3 文件。
+
+```ts s3.ts icon="/icons/typescript.svg"
+// 写入大文件
+const bigFile = Buffer.alloc(10 * 1024 * 1024); // 10MB
+const writer = s3file.writer({
+  // 在网络错误时自动重试最多 3 次
+  retry: 3,
+
+  // 一次排队最多 10 个请求
+  queueSize: 10,
+
+  // 以 5 MB 块上传
+  partSize: 5 * 1024 * 1024,
+});
+for (let i = 0; i < 10; i++) {
+  writer.write(bigFile);
+  await writer.flush();
+}
+await writer.end();
+```
+
+---
+
+## 预签名 URL
+
+当您的生产服务需要让用户将文件上传到您的服务器时，让用户直接上传到 S3 而不是让您的服务器充当中间人通常更可靠。
+
+为了实现这一点，您可以为 S3 文件预签名 URL。这会生成一个带有签名的 URL，允许用户安全地将该特定文件上传到 S3，而不会暴露您的凭据或授予他们对您的存储桶的不必要访问权限。
+
+默认行为是生成一个 24 小时后过期的 `GET` URL。Bun 尝试从文件扩展名推断内容类型。如果无法推断，它将默认为 `application/octet-stream`。
+
+```ts s3.ts icon="/icons/typescript.svg"
+import { s3 } from "bun";
+
+// 生成一个 24 小时后过期的预签名 URL（默认）
+const download = s3.presign("my-file.txt"); // GET, text/plain, 24 小时后过期
+
+const upload = s3.presign("my-file", {
+  expiresIn: 3600, // 1 小时
+  method: "PUT",
+  type: "application/json", // 没有扩展名用于推断，所以我们指定内容类型为 JSON
+});
+
+// 您可以在文件引用上调用 .presign()，但除非您已经有引用（以避免内存使用），
+// 否则请避免这样做。
+const myFile = s3.file("my-file.txt");
+const presignedFile = myFile.presign({
+  expiresIn: 3600, // 1 小时
+});
+```
+
+### 设置 ACL
+
+要在预签名 URL 上设置 ACL（访问控制列表），传递 `acl` 选项：
+
+```ts s3.ts icon="/icons/typescript.svg"
+const url = s3file.presign({
+  acl: "public-read",
+  expiresIn: 3600,
+});
+```
+
+您可以传递以下任何 ACL：
+
+| ACL                           | 说明                                                         |
+| ----------------------------- | ------------------------------------------------------------ |
+| `"public-read"`               | 该对象可被公众读取。                                         |
+| `"private"`                   | 该对象只能由存储桶所有者读取。                               |
+| `"public-read-write"`         | 该对象可被公众读取和写入。                                   |
+| `"authenticated-read"`        | 该对象可由存储桶所有者和经过身份验证的用户读取。             |
+| `"aws-exec-read"`             | 该对象可由发起请求的 AWS 账户读取。                          |
+| `"bucket-owner-read"`         | 该对象可由存储桶所有者读取。                                 |
+| `"bucket-owner-full-control"` | 该对象可由存储桶所有者读取和写入。                           |
+| `"log-delivery-write"`        | 该对象可由用于日志传递的 AWS 服务写入。                      |
+
+### 过期 URL
+
+要为预签名 URL 设置过期时间，传递 `expiresIn` 选项。
+
+```ts s3.ts icon="/icons/typescript.svg"
+const url = s3file.presign({
+  // 秒
+  expiresIn: 3600, // 1 小时
+
+  // 访问控制列表
+  acl: "public-read",
+
+  // HTTP 方法
+  method: "PUT",
+});
+```
+
+### `method`
+
+要为预签名 URL 设置 HTTP 方法，传递 `method` 选项。
+
+```ts s3.ts icon="/icons/typescript.svg"
+const url = s3file.presign({
+  method: "PUT",
+  // method: "DELETE",
+  // method: "GET",
+  // method: "HEAD",
+  // method: "POST",
+  // method: "PUT",
+});
+```
+
+### `new Response(S3File)`
+
+要快速将用户重定向到 S3 文件的预签名 URL，将 `S3File` 实例作为正文传递给 `Response` 对象。
+
+这将自动将用户重定向到 S3 文件的预签名 URL，为您节省了将文件下载到服务器再发送回用户的内存、时间和带宽成本。
+
+```ts s3.ts icon="/icons/typescript.svg"
+const response = new Response(s3file);
+console.log(response);
+```
+
+```txt
+Response (0 KB) {
+  ok: false,
+  url: "",
+  status: 302,
+  statusText: "",
+  headers: Headers {
+    "location": "https://<account-id>.r2.cloudflarestorage.com/...",
+  },
+  redirected: true,
+  bodyUsed: false
+}
+```
+
+---
+
+## 对 S3 兼容服务的支持
+
+Bun 的 S3 实现适用于任何 S3 兼容的存储服务。只需指定适当的端点：
+
+### 将 Bun 的 S3Client 与 AWS S3 一起使用
+
+AWS S3 是默认选项。对于 AWS S3，您也可以传递 `region` 选项而不是 `endpoint` 选项。
+
+```ts s3.ts icon="/icons/typescript.svg"
+import { S3Client } from "bun";
+
+// AWS S3
+const s3 = new S3Client({
+  accessKeyId: "access-key",
+  secretAccessKey: "secret-key",
+  bucket: "my-bucket",
+  // endpoint: "https://s3.us-east-1.amazonaws.com",
+  // region: "us-east-1",
+});
+```
+
+### 将 Bun 的 S3Client 与 Google Cloud Storage 一起使用
+
+要将 Bun 的 S3 客户端与 [Google Cloud Storage](https://cloud.google.com/storage) 一起使用，在 `S3Client` 构造函数中将 `endpoint` 设置为 `"https://storage.googleapis.com"`。
+
+```ts s3.ts icon="/icons/typescript.svg" highlight={8}
+import { S3Client } from "bun";
+
+// Google Cloud Storage
+const gcs = new S3Client({
+  accessKeyId: "access-key",
+  secretAccessKey: "secret-key",
+  bucket: "my-bucket",
+  endpoint: "https://storage.googleapis.com",
+});
+```
+
+### 将 Bun 的 S3Client 与 Cloudflare R2 一起使用
+
+要将 Bun 的 S3 客户端与 [Cloudflare R2](https://developers.cloudflare.com/r2/) 一起使用，在 `S3Client` 构造函数中将 `endpoint` 设置为 R2 端点。R2 端点包含您的账户 ID。
+
+```ts s3.ts icon="/icons/typescript.svg" highlight={8}
+import { S3Client } from "bun";
+
+// CloudFlare R2
+const r2 = new S3Client({
+  accessKeyId: "access-key",
+  secretAccessKey: "secret-key",
+  bucket: "my-bucket",
+  endpoint: "https://<account-id>.r2.cloudflarestorage.com",
+});
+```
+
+### 将 Bun 的 S3Client 与 DigitalOcean Spaces 一起使用
+
+要将 Bun 的 S3 客户端与 [DigitalOcean Spaces](https://www.digitalocean.com/products/spaces/) 一起使用，在 `S3Client` 构造函数中将 `endpoint` 设置为 DigitalOcean Spaces 端点。
+
+```ts s3.ts icon="/icons/typescript.svg" highlight={8}
+import { S3Client } from "bun";
+
+const spaces = new S3Client({
+  accessKeyId: "access-key",
+  secretAccessKey: "secret-key",
+  bucket: "my-bucket",
+  // region: "nyc3",
+  endpoint: "https://<region>.digitaloceanspaces.com",
+});
+```
+
+### 将 Bun 的 S3Client 与 MinIO 一起使用
+
+要将 Bun 的 S3 客户端与 [MinIO](https://min.io/) 一起使用，在 `S3Client` 构造函数中将 `endpoint` 设置为 MinIO 运行的 URL。
+
+```ts s3.ts icon="/icons/typescript.svg" highlight={10}
+import { S3Client } from "bun";
+
+const minio = new S3Client({
+  accessKeyId: "access-key",
+  secretAccessKey: "secret-key",
+  bucket: "my-bucket",
+
+  // 确保使用正确的端点 URL
+  // 在生产环境中可能不是 localhost！
+  endpoint: "http://localhost:9000",
+});
+```
+
+### 将 Bun 的 S3Client 与 supabase 一起使用
+
+要将 Bun 的 S3 客户端与 [supabase](https://supabase.com/) 一起使用，在 `S3Client` 构造函数中将 `endpoint` 设置为 supabase 端点。supabase 端点包含您的账户 ID 和 /storage/v1/s3 路径。确保在 supabase 仪表板的 `https://supabase.com/dashboard/project/<account-id>/settings/storage` 中启用 S3 协议连接，并设置在同一部分中告知的区域。
+
+```ts s3.ts icon="/icons/typescript.svg" highlight={3-10}
+import { S3Client } from "bun";
+
+const supabase = new S3Client({
+  accessKeyId: "access-key",
+  secretAccessKey: "secret-key",
+  bucket: "my-bucket",
+  region: "us-west-1",
+  endpoint: "https://<account-id>.supabase.co/storage/v1/s3/storage",
+});
+```
+
+### 将 Bun 的 S3Client 与 S3 虚拟主机样式端点一起使用
+
+使用 S3 虚拟主机样式端点时，需要将 `virtualHostedStyle` 选项设置为 `true`。
+
+<Note>
+  - 如果您不指定端点，Bun 将根据提供的区域和
+  存储桶自动确定 AWS S3 端点。 - 如果未指定区域，Bun 默认为 us-east-1。 - 如果您明确提供端点，则
+  无需指定存储桶名称。
+</Note>
+
+```ts s3.ts icon="/icons/typescript.svg" highlight={17, 25}
+import { S3Client } from "bun";
+
+// 从区域和存储桶推断的 AWS S3 端点
+const s3 = new S3Client({
+  accessKeyId: "access-key",
+  secretAccessKey: "secret-key",
+  bucket: "my-bucket",
+  virtualHostedStyle: true, // [!code ++]
+  // endpoint: "https://my-bucket.s3.us-east-1.amazonaws.com",
+  // region: "us-east-1",
+});
+
+// AWS S3
+const s3WithEndpoint = new S3Client({
+  accessKeyId: "access-key",
+  secretAccessKey: "secret-key",
+  endpoint: "https://<bucket-name>.s3.<region>.amazonaws.com",
+  virtualHostedStyle: true, // [!code ++]
+});
+
+// Cloudflare R2
+const r2WithEndpoint = new S3Client({
+  accessKeyId: "access-key",
+  secretAccessKey: "secret-key",
+  endpoint: "https://<bucket-name>.<account-id>.r2.cloudflarestorage.com",
+  virtualHostedStyle: true, // [!code ++]
+});
+```
+
+---
+
+## 凭据
+
+凭据是使用 S3 最困难的部分之一，我们已尽力使其尽可能简单。默认情况下，Bun 从以下环境变量读取凭据。
+
+| 选项名称            | 环境变量              |
+| ----------------- | --------------------- |
+| `accessKeyId`     | `S3_ACCESS_KEY_ID`     |
+| `secretAccessKey` | `S3_SECRET_ACCESS_KEY` |
+| `region`          | `S3_REGION`            |
+| `endpoint`        | `S3_ENDPOINT`          |
+| `bucket`          | `S3_BUCKET`            |
+| `sessionToken`    | `S3_SESSION_TOKEN`     |
+
+如果未设置 `S3_*` 环境变量，Bun 还会为上述每个选项检查 `AWS_*` 环境变量。
+
+| 选项名称            | 后备环境变量            |
+| ----------------- | ----------------------- |
+| `accessKeyId`     | `AWS_ACCESS_KEY_ID`     |
+| `secretAccessKey` | `AWS_SECRET_ACCESS_KEY` |
+| `region`          | `AWS_REGION`            |
+| `endpoint`        | `AWS_ENDPOINT`          |
+| `bucket`          | `AWS_BUCKET`            |
+| `sessionToken`    | `AWS_SESSION_TOKEN`     |
+
+这些环境变量从 [.env 文件](/runtime/environment-variables) 或初始化时的进程环境读取（`process.env` 不用于此目的）。
+
+这些默认值会被您传递给 `s3.file(credentials)`、`new Bun.S3Client(credentials)` 或任何接受凭据的方法的选项所覆盖。因此，如果例如您对不同的存储桶使用相同的凭据，您可以在 .env 文件中设置一次凭据，然后传递 `bucket: "my-bucket"` 给 `s3.file()` 函数，而无需再次指定所有凭据。
+
+### `S3Client` 对象
+
+当您不使用环境变量或使用多个存储桶时，您可以创建一个 `S3Client` 对象来显式设置凭据。
+
+```ts s3.ts icon="/icons/typescript.svg" highlight={3-11}
+import { S3Client } from "bun";
+
+const client = new S3Client({
+  accessKeyId: "your-access-key",
+  secretAccessKey: "your-secret-key",
+  bucket: "my-bucket",
+  // sessionToken: "..."
+  endpoint: "https://s3.us-east-1.amazonaws.com",
+  // endpoint: "https://<account-id>.r2.cloudflarestorage.com", // Cloudflare R2
+  // endpoint: "http://localhost:9000", // MinIO
+});
+
+// 使用 Response 写入
+await file.write(new Response("Hello World!"));
+
+// 预签名 URL
+const url = file.presign({
+  expiresIn: 60 * 60 * 24, // 1 天
+  acl: "public-read",
+});
+
+// 删除文件
+await file.delete();
+```
+
+### `S3Client.prototype.write`
+
+要上传或写入文件到 S3，请在 `S3Client` 实例上调用 `write`。
+
+```ts s3.ts icon="/icons/typescript.svg" highlight={8, 9}
+const client = new Bun.S3Client({
+  accessKeyId: "your-access-key",
+  secretAccessKey: "your-secret-key",
+  endpoint: "https://s3.us-east-1.amazonaws.com",
+  bucket: "my-bucket",
+});
+
+await client.write("my-file.txt", "Hello World!");
+await client.write("my-file.txt", new Response("Hello World!"));
+
+// 等价于
+// await client.file("my-file.txt").write("Hello World!");
+```
+
+### `S3Client.prototype.delete`
+
+要从 S3 删除文件，请在 `S3Client` 实例上调用 `delete`。
+
+```ts s3.ts icon="/icons/typescript.svg" highlight={7}
+const client = new Bun.S3Client({
+  accessKeyId: "your-access-key",
+  secretAccessKey: "your-secret-key",
+  bucket: "my-bucket",
+});
+
+await client.delete("my-file.txt");
+// 等价于
+// await client.file("my-file.txt").delete();
+```
+
+### `S3Client.prototype.exists`
+
+要检查 S3 中是否存在文件，请在 `S3Client` 实例上调用 `exists`。
+
+```ts s3.ts icon="/icons/typescript.svg" highlight={7}
+const client = new Bun.S3Client({
+  accessKeyId: "your-access-key",
+  secretAccessKey: "your-secret-key",
+  bucket: "my-bucket",
+});
+
+const exists = await client.exists("my-file.txt");
+// 等价于
+// const exists = await client.file("my-file.txt").exists();
+```
+
+## `S3File`
+
+`S3File` 实例通过调用 `S3Client` 实例方法或 `s3.file()` 函数创建。与 `Bun.file()` 类似，`S3File` 实例是懒惰的。它们不一定指向创建时就存在的东西。这就是为什么所有不涉及网络请求的方法都是完全同步的原因。
+
+```ts Type Reference icon="/icons/typescript.svg" expandable
+interface S3File extends Blob {
+  slice(start: number, end?: number): S3File;
+  exists(): Promise<boolean>;
+  unlink(): Promise<void>;
+  presign(options: S3Options): string;
+  text(): Promise<string>;
+  json(): Promise<any>;
+  bytes(): Promise<Uint8Array>;
+  arrayBuffer(): Promise<ArrayBuffer>;
+  stream(options: S3Options): ReadableStream;
+  write(
+    data: string | Uint8Array | ArrayBuffer | Blob | ReadableStream | Response | Request,
+    options?: BlobPropertyBag,
+  ): Promise<number>;
+
+  exists(options?: S3Options): Promise<boolean>;
+  unlink(options?: S3Options): Promise<void>;
+  delete(options?: S3Options): Promise<void>;
+  presign(options?: S3Options): string;
+
+  stat(options?: S3Options): Promise<S3Stat>;
+  /**
+   * 大小不是同步可用的，因为它需要网络请求。
+   *
+   * @deprecated 使用 `stat()` 替代。
+   */
+  size: NaN;
+
+  // ... 更多省略以简洁起见
+}
+```
+
+与 `Bun.file()` 类似，`S3File` 扩展了 [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob)，因此所有在 `Blob` 上可用的方法在 `S3File` 上也可用。用于从本地文件读取数据的相同 API 也可用于从 S3 读取数据。
+
+| 方法                        | 输出             |
+| --------------------------- | ---------------- |
+| `await s3File.text()`       | `string`         |
+| `await s3File.bytes()`      | `Uint8Array`     |
+| `await s3File.json()`       | `JSON`           |
+| `await s3File.stream()`     | `ReadableStream` |
+| `await s3File.arrayBuffer()`| `ArrayBuffer`    |
+
+这意味着使用 `S3File` 实例与 `fetch()`、`Response` 和其他接受 `Blob` 实例的 Web API 一起使用即可。
+
+### 使用 `slice` 进行部分读取
+
+要读取文件的部分范围，您可以使用 `slice` 方法。
+
+```ts s3.ts icon="/icons/typescript.svg" highlight={1}
+const partial = s3file.slice(0, 1024);
+
+// 将部分范围作为 Uint8Array 读取
+const bytes = await partial.bytes();
+
+// 将部分范围作为字符串读取
+const text = await partial.text();
+```
+
+在内部，这通过使用 HTTP `Range` 头来仅请求您想要的字节来工作。此 `slice` 方法与 [`Blob.prototype.slice`](https://developer.mozilla.org/en-US/docs/Web/API/Blob/slice) 相同。
+
+### 从 S3 删除文件
+
+要从 S3 删除文件，您可以使用 `delete` 方法。
+
+```ts s3.ts icon="/icons/typescript.svg" highlight={1}
+await s3file.delete();
+// await s3File.unlink();
+```
+
+`delete` 与 `unlink` 相同。
+
+## 错误代码
+
+当 Bun 的 S3 API 抛出错误时，它将有一个 `code` 属性，与以下值之一匹配：
+
+- `ERR_S3_MISSING_CREDENTIALS`
+- `ERR_S3_INVALID_METHOD`
+- `ERR_S3_INVALID_PATH`
+- `ERR_S3_INVALID_ENDPOINT`
+- `ERR_S3_INVALID_SIGNATURE`
+- `ERR_S3_INVALID_SESSION_TOKEN`
+
+当 S3 对象存储服务返回错误（即，不是 Bun）时，它将是 `S3Error` 实例（名称为 `"S3Error"` 的 `Error` 实例）。
+
+## `S3Client` 静态方法
+
+`S3Client` 类提供了几个用于与 S3 交互的静态方法。
+
+### `S3Client.write`（静态）
+
+要直接写入数据到存储桶中的路径，您可以使用 `S3Client.write` 静态方法。
+
+```ts s3.ts icon="/icons/typescript.svg" highlight={12, 15-18, 22, 25-29}
+import { S3Client } from "bun";
+
+const credentials = {
+  accessKeyId: "your-access-key",
+  secretAccessKey: "your-secret-key",
+  bucket: "my-bucket",
+  // endpoint: "https://s3.us-east-1.amazonaws.com",
+  // endpoint: "https://<account-id>.r2.cloudflarestorage.com", // Cloudflare R2
+};
+
+// 写入字符串
+await S3Client.write("my-file.txt", "Hello World");
+
+// 写入带类型的 JSON
+await S3Client.write("data.json", JSON.stringify({ hello: "world" }), {
+  ...credentials,
+  type: "application/json",
+});
+
+// 从 fetch 写入
+const res = await fetch("https://example.com/data");
+await S3Client.write("data.bin", res, credentials);
+
+// 带 ACL 写入
+await S3Client.write("public.html", html, {
+  ...credentials,
+  acl: "public-read",
+  type: "text/html",
+});
+```
+
+这等价于调用 `new S3Client(credentials).write("my-file.txt", "Hello World")`。
+
+### `S3Client.presign`（静态）
+
+要为 S3 文件生成预签名 URL，您可以使用 `S3Client.presign` 静态方法。
+
+```ts s3.ts icon="/icons/typescript.svg" highlight={11-14}
+import { S3Client } from "bun";
+
+const credentials = {
+  accessKeyId: "your-access-key",
+  secretAccessKey: "your-secret-key",
+  bucket: "my-bucket",
+  // endpoint: "https://s3.us-east-1.amazonaws.com",
+  // endpoint: "https://<account-id>.r2.cloudflarestorage.com", // Cloudflare R2
+};
+
+const url = S3Client.presign("my-file.txt", {
+  ...credentials,
+  expiresIn: 3600,
+});
+```
+
+这等价于调用 `new S3Client(credentials).presign("my-file.txt", { expiresIn: 3600 })`。
+
+### `S3Client.list`（静态）
+
+要列出存储桶中的某些或全部（最多 1,000 个）对象，您可以使用 `S3Client.list` 静态方法。
+
+```ts s3.ts icon="/icons/typescript.svg" highlight={12, 15-20, 24-29}
+import { S3Client } from "bun";
+
+const credentials = {
+  accessKeyId: "your-access-key",
+  secretAccessKey: "your-secret-key",
+  bucket: "my-bucket",
+  // endpoint: "https://s3.us-east-1.amazonaws.com",
+  // endpoint: "https://<account-id>.r2.cloudflarestorage.com", // Cloudflare R2
+};
+
+// 列出存储桶中的（最多）1000 个对象
+const allObjects = await S3Client.list(null, credentials);
+
+// 列出 `uploads/` 前缀下的（最多）500 个对象，为每个对象获取所有者字段
+const uploads = await S3Client.list({
+  prefix: 'uploads/',
+  maxKeys: 500,
+  fetchOwner: true,
+}, credentials);
+
+// 检查是否有更多结果可用
+if (uploads.isTruncated) {
+  // 列出 `uploads/` 前缀下的下一批对象
+  const moreUploads = await S3Client.list({
+    prefix: 'uploads/',
+    maxKeys: 500,
+    startAfter: uploads.contents!.at(-1).key
+    fetchOwner: true,
+  }, credentials);
+}
+```
+
+这等价于调用 `new S3Client(credentials).list()`。
+
+### `S3Client.exists`（静态）
+
+要检查 S3 文件是否存在，您可以使用 `S3Client.exists` 静态方法。
+
+```ts s3.ts icon="/icons/typescript.svg" highlight={11}
+import { S3Client } from "bun";
+
+const credentials = {
+  accessKeyId: "your-access-key",
+  secretAccessKey: "your-secret-key",
+  bucket: "my-bucket",
+  // endpoint: "https://s3.us-east-1.amazonaws.com",
+  // endpoint: "https://<account-id>.r2.cloudflarestorage.com", // Cloudflare R2
+};
+
+const exists = await S3Client.exists("my-file.txt", credentials);
+```
+
+相同的方法也适用于 `S3File` 实例。
+
+```ts s3.ts icon="/icons/typescript.svg" highlight=7}
+import { s3 } from "bun";
+
+const s3file = s3.file("my-file.txt", {
+  // ...credentials,
+});
+
+const exists = await s3file.exists();
+```
+
+### `S3Client.size`（静态）
+
+要快速检查 S3 文件的大小而不下载它，您可以使用 `S3Client.size` 静态方法。
+
+```ts s3.ts icon="/icons/typescript.svg" highlight={11}
+import { S3Client } from "bun";
+
+const credentials = {
+  accessKeyId: "your-access-key",
+  secretAccessKey: "your-secret-key",
+  bucket: "my-bucket",
+  // endpoint: "https://s3.us-east-1.amazonaws.com",
+  // endpoint: "https://<account-id>.r2.cloudflarestorage.com", // Cloudflare R2
+};
+
+const bytes = await S3Client.size("my-file.txt", credentials);
+```
+
+这等价于调用 `new S3Client(credentials).size("my-file.txt")`。
+
+### `S3Client.stat`（静态）
+
+要获取 S3 文件的大小、etag 和其他元数据，您可以使用 `S3Client.stat` 静态方法。
+
+```ts s3.ts icon="/icons/typescript.svg"
+import { S3Client } from "bun";
+
+const credentials = {
+  accessKeyId: "your-access-key",
+  secretAccessKey: "your-secret-key",
+  bucket: "my-bucket",
+  // endpoint: "https://s3.us-east-1.amazonaws.com",
+  // endpoint: "https://<account-id>.r2.cloudflarestorage.com", // Cloudflare R2
+};
+
+const stat = await S3Client.stat("my-file.txt", credentials);
+```
+
+```txt
+{
+  etag: "\"7a30b741503c0b461cc14157e2df4ad8\"",
+  lastModified: 2025-01-07T00:19:10.000Z,
+  size: 1024,
+  type: "text/plain;charset=utf-8",
+}
+```
+
+### `S3Client.delete`（静态）
+
+要删除 S3 文件，您可以使用 `S3Client.delete` 静态方法。
+
+```ts s3.ts icon="/icons/typescript.svg" highlight={10, 15}
+import { S3Client } from "bun";
+
+const credentials = {
+  accessKeyId: "your-access-key",
+  secretAccessKey: "your-secret-key",
+  bucket: "my-bucket",
+  // endpoint: "https://s3.us-east-1.amazonaws.com",
+};
+
+await S3Client.delete("my-file.txt", credentials);
+// 等价于
+// await new S3Client(credentials).delete("my-file.txt");
+
+// S3Client.unlink 是 S3Client.delete 的别名
+await S3Client.unlink("my-file.txt", credentials);
+```
+
+## `s3://` 协议
+
+为了更轻松地使用本地文件和 S3 文件的相同代码，`s3://` 协议在 `fetch` 和 `Bun.file()` 中得到支持。
+
+```ts s3.ts icon="/icons/typescript.svg"
+const response = await fetch("s3://my-bucket/my-file.txt");
+const file = Bun.file("s3://my-bucket/my-file.txt");
+```
+
+您还可以将 `s3` 选项附加到 `fetch` 和 `Bun.file` 函数。
+
+```ts s3.ts icon="/icons/typescript.svg" highlight={2-6}
+const response = await fetch("s3://my-bucket/my-file.txt", {
+  s3: {
+    accessKeyId: "your-access-key",
+    secretAccessKey: "your-secret-key",
+    endpoint: "https://s3.us-east-1.amazonaws.com",
+  },
+  headers: {
+    range: "bytes=0-1023",
+  },
+});
+```
+
+### UTF-8、UTF-16 和 BOM（字节顺序标记）
+
+与 `Response` 和 `Blob` 类似，`S3File` 默认假定 UTF-8 编码。
+
+调用 `S3File` 的 `text()` 或 `json()` 方法之一时：
+
+- 检测到 UTF-16 字节顺序标记（BOM）时，它将被视为 UTF-16。JavaScriptCore 本机支持 UTF-16，因此它会跳过 UTF-8 转码过程（并剥离 BOM）。这通常是好的，但这确实意味着如果您的 UTF-16 字符串中有无效的代理对字符，它们将被传递给 JavaScriptCore（与源代码相同）。
+- 检测到 UTF-8 BOM 时，在将字符串传递给 JavaScriptCore 之前会将其剥离，并将无效的 UTF-8 代码点替换为 Unicode 替换字符（`\uFFFD`）。
+- 不支持 UTF-32。

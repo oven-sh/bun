@@ -1,0 +1,54 @@
+---
+title: 递增写入文件
+sidebarTitle: 递增写入
+mode: center
+---
+
+Bun 提供了一个 API 用于递增地写入文件。这对于写入大文件或在长时间内写入文件很有用。
+
+在 [BunFile] 上调用 `.writer()` 以检索 [FileSink] 实例。此实例可用于高效地缓冲数据并定期将其"刷新"到磁盘。您可以多次写入和刷新。
+
+```ts
+const file = Bun.file("/path/to/file.txt");
+const writer = file.writer();
+
+writer.write("lorem");
+writer.write("ipsum");
+writer.write("dolor");
+
+writer.flush();
+
+// 继续写入和刷新
+```
+
+---
+
+[.write()] 方法可以接受字符串或二进制数据。
+
+```ts
+w.write("hello");
+w.write(Buffer.from("there"));
+w.write(new Uint8Array([0, 255, 128]));
+writer.flush();
+```
+
+---
+
+当内部缓冲区满时，[FileSink] 也会自动刷新。您可以使用 [highWaterMark] 选项配置缓冲区大小。
+
+```ts
+const file = Bun.file("/path/to/file.txt");
+const writer = file.writer({ highWaterMark: 1024 * 1024 }); // 1MB
+```
+
+---
+
+当您完成文件写入后，调用 `.end()` 以自动刷新缓冲区并关闭文件。
+
+```ts
+writer.end();
+```
+
+---
+
+完整文档: [FileSink](/runtime/file-io#incremental-writing-with-filesink)。

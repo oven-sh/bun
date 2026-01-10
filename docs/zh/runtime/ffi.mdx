@@ -1,0 +1,566 @@
+---
+title: FFI
+description: 使用 Bun 的 FFI 模块高效地从 JavaScript 调用本地库
+---
+
+<Warning>
+  `bun:ffi` 是**实验性的**，存在已知错误和限制，不应在生产环境中依赖。从 Bun 与本地代码交互的最稳定方式是编写 [Node-API 模块](/runtime/node-api)。
+</Warning>
+
+使用内置的 `bun:ffi` 模块可以从 JavaScript 高效地调用本地库。它可以与支持 C ABI 的语言一起使用（Zig、Rust、C/C++、C#、Nim、Kotlin 等）。
+
+---
+
+## dlopen 用法 (`bun:ffi`)
+
+要打印 `sqlite3` 的版本号：
+
+```ts
+import { dlopen, FFIType, suffix } from "bun:ffi";
+
+// `suffix` 根据平台不同是 "dylib"、"so" 或 "dll"
+// 您不必使用 "suffix"，这只是为了方便
+const path = `libsqlite3.${suffix}`;
+
+const {
+  symbols: {
+    sqlite3_libversion, // 要调用的函数
+  },
+} = dlopen(
+  path, // 库名称或文件路径
+  {
+    sqlite3_libversion: {
+      // 无参数，返回字符串
+      args: [],
+      returns: FFIType.cstring,
+    },
+  },
+);
+
+console.log(`SQLite 3 版本: ${sqlite3_libversion()}`);
+```
+
+---
+
+## 性能
+
+根据 [我们的基准测试](https://github.com/oven-sh/bun/tree/main/bench/ffi)，`bun:ffi` 大约比通过 `Node-API` 的 Node.js FFI 快 2-6 倍。
+
+<Image src="/images/ffi.png" height="400" />
+
+Bun 生成并即时编译 C 绑定，高效地在 JavaScript 类型和本地类型之间转换值。为了编译 C，Bun 嵌入了 [TinyCC](https://github.com/TinyCC/tinycc)，这是一个小型且快速的 C 编译器。
+
+---
+
+## 用法
+
+### Zig
+
+```zig add.zig icon="file-code"
+pub export fn add(a: i32, b: i32) i32 {
+  return a + b;
+}
+```
+
+编译：
+
+```bash terminal icon="terminal"
+zig build-lib add.zig -dynamic -OReleaseFast
+```
+
+传递共享库的路径和要导入到 `dlopen` 中的符号映射：
+
+```ts
+import { dlopen, FFIType, suffix } from "bun:ffi";
+const { i32 } = FFIType;
+
+const path = `libadd.${suffix}`;
+
+const lib = dlopen(path, {
+  add: {
+    args: [i32, i32],
+    returns: i32,
+  },
+});
+
+console.log(lib.symbols.add(1, 2));
+```
+
+### Rust
+
+```rust
+// add.rs
+#[no_mangle]
+pub extern "C" fn add(a: i32, b: i32) -> i32 {
+    a + b
+}
+```
+
+编译：
+
+```bash
+rustc --crate-type cdylib add.rs
+```
+
+### C++
+
+```c
+#include <cstdint>
+
+extern "C" int32_t add(int32_t a, int32_t b) {
+    return a + b;
+}
+```
+
+编译：
+
+```bash
+zig build-lib add.cpp -dynamic -lc -lc++
+```
+
+---
+
+## FFI 类型
+
+支持以下 `FFIType` 值。
+
+| `FFIType`  | C 类型           | 别名                        |
+| ---------- | ---------------- | --------------------------- |
+| buffer     | `char*`          |                             |
+| cstring    | `char*`          |                             |
+| function   | `(void*)(*)()`   | `fn`, `callback`            |
+| ptr        | `void*`          | `pointer`, `void*`, `char*` |
+| i8         | `int8_t`         | `int8_t`                    |
+| i16        | `int16_t`        | `int16_t`                   |
+| i32        | `int32_t`        | `int32_t`, `int`            |
+| i64        | `int64_t`        | `int644_t`                  |
+| i64_fast   | `int64_t`        |                             |
+| u8         | `uint8_t`        | `uint8_t`                   |
+| u16        | `uint16_t`       | `uint16_t`                  |
+| u32        | `uint32_t`       | `uint32_t`                  |
+| u64        | `uint64_t`       | `uint64_t`                  |
+| u64_fast   | `uint64_t`       |                             |
+| f32        | `float`          | `float`                     |
+| f64        | `double`         | `double`                    |
+| bool       | `bool`           |                             |
+| char       | `char`           |                             |
+| napi_env   | `napi_env`       |                             |
+| napi_value | `napi_value`     |                             |
+
+注意：`buffer` 参数必须是 `TypedArray` 或 `DataView`。
+
+---
+
+## 字符串
+
+JavaScript 字符串和 C 类字符串是不同的，这使得在本地库中使用字符串变得复杂。
+
+<Accordion title="JavaScript 字符串和 C 字符串有什么区别？">
+JavaScript 字符串：
+
+- UTF16（每个字母 2 字节）或可能是 latin1，具体取决于 JavaScript 引擎和使用的字符
+- `length` 单独存储
+- 不可变
+
+C 字符串：
+
+- 通常是 UTF8（每个字母 1 字节）
+- 长度不存储。相反，字符串以 null 结尾，这意味着长度是找到的第一个 `\0` 的索引
+- 可变
+
+</Accordion>
+
+为了解决这个问题，`bun:ffi` 导出了 `CString`，它扩展了 JavaScript 的内置 `String` 以支持空终止字符串并添加了一些额外功能：
+
+```ts
+class CString extends String {
+  /**
+   * 给定一个 `ptr`，这将自动搜索结束的 `\0` 字符，并在必要时从 UTF-8 转码为 UTF-16。
+   */
+  constructor(ptr: number, byteOffset?: number, byteLength?: number): string;
+
+  /**
+   * 指向 C 字符串的 ptr
+   *
+   * 此 `CString` 实例是字符串的克隆，所以
+   * 在 `ptr` 被释放后继续使用此实例是安全的。
+   */
+  ptr: number;
+  byteOffset?: number;
+  byteLength?: number;
+}
+```
+
+从空终止字符串指针转换为 JavaScript 字符串：
+
+```ts
+const myString = new CString(ptr);
+```
+
+从具有已知长度的指针转换为 JavaScript 字符串：
+
+```ts
+const myString = new CString(ptr, 0, byteLength);
+```
+
+`new CString()` 构造函数克隆 C 字符串，所以在 `ptr` 被释放后继续使用 `myString` 是安全的。
+
+```ts
+my_library_free(myString.ptr);
+
+// 这是安全的，因为 myString 是一个克隆
+console.log(myString);
+```
+
+当在 `returns` 中使用时，`FFIType.cstring` 将指针强制转换为 JavaScript `string`。当在 `args` 中使用时，`FFIType.cstring` 与 `ptr` 相同。
+
+---
+
+## 函数指针
+
+<Note>异步函数尚不支持</Note>
+
+要从 JavaScript 调用函数指针，请使用 `CFunction`。如果在 Bun 中使用 Node-API (napi) 且已经加载了一些符号，这很有用。
+
+```ts
+import { CFunction } from "bun:ffi";
+
+let myNativeLibraryGetVersion = /* 以某种方式，您得到了这个指针 */
+
+const getVersion = new CFunction({
+  returns: "cstring",
+  args: [],
+  ptr: myNativeLibraryGetVersion,
+});
+getVersion();
+```
+
+如果您有多个函数指针，可以使用 `linkSymbols` 一次性定义它们：
+
+```ts
+import { linkSymbols } from "bun:ffi";
+
+// getVersionPtrs 在其他地方定义
+const [majorPtr, minorPtr, patchPtr] = getVersionPtrs();
+
+const lib = linkSymbols({
+  // 与 dlopen() 不同，这里的名称可以是任何您想要的
+  getMajor: {
+    returns: "cstring",
+    args: [],
+
+    // 由于这不使用 dlsym()，您必须提供一个有效的 ptr
+    // 该 ptr 可以是数字或 bigint
+    // 无效的指针会使您的程序崩溃。
+    ptr: majorPtr,
+  },
+  getMinor: {
+    returns: "cstring",
+    args: [],
+    ptr: minorPtr,
+  },
+  getPatch: {
+    returns: "cstring",
+    args: [],
+    ptr: patchPtr,
+  },
+});
+
+const [major, minor, patch] = [lib.symbols.getMajor(), lib.symbols.getMinor(), lib.symbols.getPatch()];
+```
+
+---
+
+## 回调
+
+使用 `JSCallback` 创建可以传递给 C/FFI 函数的 JavaScript 回调函数。C/FFI 函数可以调用 JavaScript/TypeScript 代码。这对于异步代码或任何时候您想从 C 调用 JavaScript 代码都很有用。
+
+```ts
+import { dlopen, JSCallback, ptr, CString } from "bun:ffi";
+
+const {
+  symbols: { search },
+  close,
+} = dlopen("libmylib", {
+  search: {
+    returns: "usize",
+    args: ["cstring", "callback"],
+  },
+});
+
+const searchIterator = new JSCallback((ptr, length) => /hello/.test(new CString(ptr, length)), {
+  returns: "bool",
+  args: ["ptr", "usize"],
+});
+
+const str = Buffer.from("wwutwutwutwutwutwutwutwutwutwutut\0", "utf8");
+if (search(ptr(str), searchIterator)) {
+  // 找到了匹配项！
+}
+
+// 之后的某个时候：
+setTimeout(() => {
+  searchIterator.close();
+  close();
+}, 5000);
+```
+
+当您完成使用 JSCallback 时，应该调用 `close()` 来释放内存。
+
+### 实验性线程安全回调
+
+`JSCallback` 对线程安全回调有实验性支持。如果您从其实例化上下文的不同线程传递回调函数，这将是必需的。您可以使用可选的 `threadsafe` 参数启用它。
+
+目前，线程安全回调最适合从运行 JavaScript 代码的另一个线程运行，例如 [`Worker`](/runtime/workers)。Bun 的未来版本将允许它们从任何线程调用（例如由您的本地库生成的 Bun 不知道的新线程）。
+
+```ts
+const searchIterator = new JSCallback((ptr, length) => /hello/.test(new CString(ptr, length)), {
+  returns: "bool",
+  args: ["ptr", "usize"],
+  threadsafe: true, // 可选。默认为 `false`
+});
+```
+
+<Note>
+**⚡️ 性能提示** — 为了稍好的性能提升，直接传递 `JSCallback.prototype.ptr` 而不是 `JSCallback` 对象：
+
+```ts
+const onResolve = new JSCallback(arg => arg === 42, {
+  returns: "bool",
+  args: ["i32"],
+});
+const setOnResolve = new CFunction({
+  returns: "bool",
+  args: ["function"],
+  ptr: myNativeLibrarySetOnResolve,
+});
+
+// 此代码运行略快：
+setOnResolve(onResolve.ptr);
+
+// 与之相比：
+setOnResolve(onResolve);
+```
+
+</Note>
+
+---
+
+## 指针
+
+Bun 在 JavaScript 中将 [指针](<https://en.wikipedia.org/wiki/Pointer_(computer_programming)>) 表示为 `number`。
+
+<Accordion title="64 位指针如何适合 JavaScript 数字？">
+
+64 位处理器支持高达 [52 位的可寻址空间](https://en.wikipedia.org/wiki/64-bit_computing#Limits_of_processors)。[JavaScript 数字](https://en.wikipedia.org/wiki/Double-precision_floating-point_format#IEEE_754_double-precision_binary_floating-point_format:_binary64) 支持 53 位可用空间，所以这给我们留下了大约 11 位的额外空间。
+
+**为什么不用 `BigInt`？** `BigInt` 更慢。JavaScript 引擎分配一个单独的 `BigInt`，这意味着它们无法放入常规 JavaScript 值中。如果您将 `BigInt` 传递给函数，它将被转换为 `number`
+
+**Windows 注意事项**: Windows API 类型 HANDLE 不表示虚拟地址，使用 `ptr` 将_不会_按预期工作。使用 `u64` 安全地表示 HANDLE 值。
+
+</Accordion>
+
+从 `TypedArray` 转换为指针：
+
+```ts
+import { ptr } from "bun:ffi";
+let myTypedArray = new Uint8Array(32);
+const myPtr = ptr(myTypedArray);
+```
+
+从指针转换为 `ArrayBuffer`：
+
+```ts
+import { ptr, toArrayBuffer } from "bun:ffi";
+let myTypedArray = new Uint8Array(32);
+const myPtr = ptr(myTypedArray);
+
+// toArrayBuffer 接受 `byteOffset` 和 `byteLength`
+// 如果未提供 `byteLength`，则假定为 null 终止指针
+myTypedArray = new Uint8Array(toArrayBuffer(myPtr, 0, 32), 0, 32);
+```
+
+要从指针读取数据，您有两个选项。对于长期存在的指针，使用 `DataView`：
+
+```ts
+import { toArrayBuffer } from "bun:ffi";
+let myDataView = new DataView(toArrayBuffer(myPtr, 0, 32));
+
+console.log(
+  myDataView.getUint8(0, true),
+  myDataView.getUint8(1, true),
+  myDataView.getUint8(2, true),
+  myDataView.getUint8(3, true),
+);
+```
+
+对于短期存在的指针，使用 `read`：
+
+```ts
+import { read } from "bun:ffi";
+
+console.log(
+  // ptr, byteOffset
+  read.u8(myPtr, 0),
+  read.u8(myPtr, 1),
+  read.u8(myPtr, 2),
+  read.u8(myPtr, 3),
+);
+```
+
+`read` 函数的行为类似于 `DataView`，但由于不需要创建 `DataView` 或 `ArrayBuffer`，通常更快。
+
+| `FFIType` | `read` 函数    |
+| --------- | -------------- |
+| ptr       | `read.ptr`     |
+| i8        | `read.i8`      |
+| i16       | `read.i16`     |
+| i32       | `read.i32`     |
+| i64       | `read.i64`     |
+| u8        | `read.u8`      |
+| u16       | `read.u16`     |
+| u32       | `read.u32`     |
+| u64       | `read.u64`     |
+| f32       | `read.f32`     |
+| f64       | `read.f64`     |
+
+### 内存管理
+
+`bun:ffi` 不为您管理内存。您必须在完成后释放内存。
+
+#### 从 JavaScript
+
+如果您想跟踪 `TypedArray` 何时不再从 JavaScript 使用，您可以使用 [FinalizationRegistry](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/FinalizationRegistry)。
+
+#### 从 C、Rust、Zig 等
+
+如果您想跟踪何时从 C 或 FFI 不再使用 `TypedArray`，您可以将回调和可选的上下文指针传递给 `toArrayBuffer` 或 `toBuffer`。一旦垃圾收集器释放底层的 `ArrayBuffer` JavaScript 对象，该函数会在稍后某个时间点被调用。
+
+预期签名与 [JavaScriptCore 的 C API](https://developer.apple.com/documentation/javascriptcore/jstypedarraybytesdeallocator?language=objc) 相同：
+
+```c
+typedef void (*JSTypedArrayBytesDeallocator)(void *bytes, void *deallocatorContext);
+```
+
+```ts
+import { toArrayBuffer } from "bun:ffi";
+
+// 使用 deallocatorContext：
+toArrayBuffer(
+  bytes,
+  byteOffset,
+
+  byteLength,
+
+  // 这是一个可选的回调指针
+  deallocatorContext,
+
+  // 这是指向函数的指针
+  jsTypedArrayBytesDeallocator,
+);
+
+// 不使用 deallocatorContext：
+toArrayBuffer(
+  bytes,
+  byteOffset,
+
+  byteLength,
+
+  // 这是指向函数的指针
+  jsTypedArrayBytesDeallocator,
+);
+```
+
+### 内存安全
+
+强烈不推荐在 FFI 之外使用原始指针。Bun 的未来版本可能会添加禁用 `bun:ffi` 的 CLI 标志。
+
+### 指针对齐
+
+如果 API 期望指针大小不同于 `char` 或 `u8`，请确保 `TypedArray` 也是该大小。由于对齐原因，`u64*` 与 `[8]u8*` 并不完全相同。
+
+### 传递指针
+
+当 FFI 函数期望指针时，传递同等大小的 `TypedArray`：
+
+```ts
+import { dlopen, FFIType } from "bun:ffi";
+
+const {
+  symbols: { encode_png },
+} = dlopen(myLibraryPath, {
+  encode_png: {
+    // FFIType 可以指定为字符串
+    args: ["ptr", "u32", "u32"],
+    returns: FFIType.ptr,
+  },
+});
+
+
+const pixels = new Uint8ClampedArray(128 * 128 * 4);
+pixels.fill(254);
+pixels.subarray(0, 32 * 32 * 2).fill(0);
+
+const out = encode_png(
+  // pixels 将作为指针传递
+  pixels,
+
+  128,
+  128,
+);
+```
+
+[自动生成的包装器](https://github.com/oven-sh/bun/blob/6a65631cbdcae75bfa1e64323a6ad613a922cd1a/src/bun.js/ffi.exports.js#L180-L182) 将指针转换为 `TypedArray`。
+
+<Accordion title="硬核模式">
+
+如果您不想要自动转换，或者您想要指向 `TypedArray` 内特定字节偏移的指针，您也可以直接获取 `TypedArray` 的指针：
+
+```ts
+import { dlopen, FFIType, ptr } from "bun:ffi";
+
+const {
+  symbols: { encode_png },
+} = dlopen(myLibraryPath, {
+  encode_png: {
+    // FFIType 可以指定为字符串
+    args: ["ptr", "u32", "u32"],
+    returns: FFIType.ptr,
+  },
+});
+
+const pixels = new Uint8ClampedArray(128 * 128 * 4);
+pixels.fill(254);
+
+// 这返回一个数字！不是 BigInt！
+const myPtr = ptr(pixels);
+
+const out = encode_png(
+  myPtr,
+
+  // 尺寸：
+  128,
+  128,
+);
+```
+
+</Accordion>
+
+### 读取指针
+
+```ts
+const out = encode_png(
+  // pixels 将作为指针传递
+  pixels,
+
+  // 尺寸：
+  128,
+  128,
+);
+
+// 假设它是 0 终止的，可以这样读取：
+let png = new Uint8Array(toArrayBuffer(out));
+
+// 保存到磁盘：
+await Bun.write("out.png", png);
+```

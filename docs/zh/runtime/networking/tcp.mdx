@@ -1,0 +1,239 @@
+---
+title: TCP
+description: 使用 Bun 的原生 TCP API 实现对性能敏感的系统，如数据库客户端、游戏服务器或任何需要通过 TCP（而不是 HTTP）通信的应用
+---
+
+这是一个低级 API，供库作者和高级用例使用。
+
+## 启动服务器 (`Bun.listen()`)
+
+要使用 `Bun.listen` 启动 TCP 服务器：
+
+```ts server.ts icon="/icons/typescript.svg"
+Bun.listen({
+  hostname: "localhost",
+  port: 8080,
+  socket: {
+    data(socket, data) {}, // 从客户端接收到的消息
+    open(socket) {}, // 套接字打开
+    close(socket, error) {}, // 套接字关闭
+    drain(socket) {}, // 套接字准备接收更多数据
+    error(socket, error) {}, // 错误处理程序
+  },
+});
+```
+
+<Accordion title="专为速度设计的 API">
+
+在 Bun 中，每个服务器只声明一组处理程序，而不是像 Node.js 的 `EventEmitters` 或 Web 标准的 `WebSocket` API 那样为每个套接字分配回调。
+
+```ts server.ts icon="/icons/typescript.svg"
+Bun.listen({
+  hostname: "localhost",
+  port: 8080,
+  socket: {
+    open(socket) {},
+    data(socket, data) {},
+    drain(socket) {},
+    close(socket, error) {},
+    error(socket, error) {},
+  },
+});
+```
+
+对于对性能敏感的服务器，为每个套接字分配监听器可能会造成显著的垃圾回收压力并增加内存使用。相比之下，Bun 只为每个事件分配一个处理函数并在所有套接字之间共享。这是一种小的优化，但效果会累积。
+
+</Accordion>
+
+上下文数据可以在 `open` 处理程序中附加到套接字。
+
+```ts server.ts icon="/icons/typescript.svg"
+type SocketData = { sessionId: string };
+
+Bun.listen<SocketData>({
+  hostname: "localhost",
+  port: 8080,
+  socket: {
+    data(socket, data) {
+      socket.write(`${socket.data.sessionId}: ack`); // [!code ++]
+    },
+    open(socket) {
+      socket.data = { sessionId: "abcd" }; // [!code ++]
+    },
+  },
+});
+```
+
+要启用 TLS，请传递一个包含 `key` 和 `cert` 字段的 `tls` 对象。
+
+```ts server.ts icon="/icons/typescript.svg"
+Bun.listen({
+  hostname: "localhost",
+  port: 8080,
+  socket: {
+    data(socket, data) {},
+  },
+  tls: {
+    // 可以是字符串、BunFile、TypedArray、Buffer 或以上类型的数组
+    key: Bun.file("./key.pem"), // [!code ++]
+    cert: Bun.file("./cert.pem"), // [!code ++]
+  },
+});
+```
+
+`key` 和 `cert` 字段期望的是 TLS 密钥和证书的_内容_。这可以是字符串、`BunFile`、`TypedArray` 或 `Buffer`。
+
+```ts server.ts icon="/icons/typescript.svg"
+Bun.listen({
+  // ...
+  tls: {
+    key: Bun.file("./key.pem"), // BunFile
+    key: fs.readFileSync("./key.pem"), // Buffer
+    key: fs.readFileSync("./key.pem", "utf8"), // string
+    key: [Bun.file("./key1.pem"), Bun.file("./key2.pem")], // 以上类型的数组
+  },
+});
+```
+
+`Bun.listen` 的结果是一个符合 `TCPSocket` 接口的服务器。
+
+```ts server.ts icon="/icons/typescript.svg"
+const server = Bun.listen({
+  /* config*/
+});
+
+// 停止监听
+// 参数决定是否关闭活动连接
+server.stop(true);
+
+// 即使服务器仍在监听也让 Bun 进程退出
+server.unref();
+```
+
+---
+
+## 创建连接 (`Bun.connect()`)
+
+使用 `Bun.connect` 连接到 TCP 服务器。使用 `hostname` 和 `port` 指定要连接的服务器。TCP 客户端可以定义与 `Bun.listen` 相同的一组处理程序，再加上一些特定于客户端的处理程序。
+
+```ts server.ts icon="/icons/typescript.svg"
+// 客户端
+const socket = await Bun.connect({
+  hostname: "localhost",
+  port: 8080,
+
+  socket: {
+    data(socket, data) {},
+    open(socket) {},
+    close(socket, error) {},
+    drain(socket) {},
+    error(socket, error) {},
+
+    // 特定于客户端的处理程序
+    connectError(socket, error) {}, // 连接失败
+    end(socket) {}, // 服务器关闭连接
+    timeout(socket) {}, // 连接超时
+  },
+});
+```
+
+要要求 TLS，请指定 `tls: true`。
+
+```ts
+// 客户端
+const socket = await Bun.connect({
+  // ... config
+  tls: true, // [!code ++]
+});
+```
+
+---
+
+## 热重载
+
+TCP 服务器和套接字都可以使用新的处理程序进行热重载。
+
+<CodeGroup>
+
+```ts server.ts icon="/icons/typescript.svg"
+const server = Bun.listen({
+  /* config */
+});
+
+// 为所有活动的服务器端套接字重新加载处理程序
+server.reload({
+  socket: {
+    data() {
+      // 新的 'data' 处理程序
+    },
+  },
+});
+```
+
+```ts client.ts icon="/icons/typescript.svg"
+const socket = await Bun.connect({
+  /* config */
+});
+
+socket.reload({
+  data() {
+    // 新的 'data' 处理程序
+  },
+});
+```
+
+</CodeGroup>
+
+---
+
+## 缓冲
+
+目前，Bun 中的 TCP 套接字不会缓冲数据。对于对性能敏感的代码，仔细考虑缓冲很重要。例如：
+
+```ts
+socket.write("h");
+socket.write("e");
+socket.write("l");
+socket.write("l");
+socket.write("o");
+```
+
+...的性能明显比这个差：
+
+```ts
+socket.write("hello");
+```
+
+为了简化这一点，可以考虑使用 Bun 的 `ArrayBufferSink` 与 `{stream: true}` 选项：
+
+```ts server.ts icon="/icons/typescript.svg"
+import { ArrayBufferSink } from "bun";
+
+const sink = new ArrayBufferSink();
+sink.start({
+  stream: true, // [!code ++]
+  highWaterMark: 1024,
+});
+
+sink.write("h");
+sink.write("e");
+sink.write("l");
+sink.write("l");
+sink.write("o");
+
+queueMicrotask(() => {
+  const data = sink.flush();
+  const wrote = socket.write(data);
+  if (wrote < data.byteLength) {
+    // 如果套接字满了就把它放回 sink
+    sink.write(data.subarray(wrote));
+  }
+});
+```
+
+<Note>
+**Corking**
+
+计划支持 corking，但与此同时必须使用 `drain` 处理程序手动管理背压。
+
+</Note>

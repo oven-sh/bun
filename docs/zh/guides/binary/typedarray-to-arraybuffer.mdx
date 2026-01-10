@@ -1,0 +1,27 @@
+---
+title: 将 Uint8Array 转换为 ArrayBuffer
+sidebarTitle: "Uint8Array 到 ArrayBuffer"
+mode: center
+---
+
+[Uint8Array](https://developer.mozilla.org/zh-CN/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array) 是一个_类型化数组_类，意味着它是查看底层 [ArrayBuffer](https://developer.mozilla.org/zh-CN/docs/Web/JavaScript/Reference/Global_Objects/ArrayBuffer) 中数据的一种机制。底层 [ArrayBuffer](https://developer.mozilla.org/zh-CN/docs/Web/JavaScript/Reference/Global_Objects/ArrayBuffer) 可通过 `buffer` 属性访问。
+
+```ts
+const arr = new Uint8Array(64);
+arr.buffer; // => ArrayBuffer(64)
+```
+
+---
+
+[Uint8Array](https://developer.mozilla.org/zh-CN/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array) 可能是在底层 [ArrayBuffer](https://developer.mozilla.org/zh-CN/docs/Web/JavaScript/Reference/Global_Objects/ArrayBuffer) 数据的一个_子集_上的视图。在这种情况下，`buffer` 属性将返回整个缓冲区，而 `byteOffset` 和 `byteLength` 属性将指示子集。
+
+```ts
+const arr = new Uint8Array(64, 16, 32);
+arr.buffer; // => ArrayBuffer(64)
+arr.byteOffset; // => 16
+arr.byteLength; // => 32
+```
+
+---
+
+参阅 [文档 > API > 二进制数据](/runtime/binary-data#conversion) 获取关于使用Bun操作二进制数据的完整文档。

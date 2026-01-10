@@ -1,0 +1,92 @@
+---
+title: 使用 Mongoose 和 Bun 读写 MongoDB 数据
+sidebarTitle: Mongoose 与 Bun
+mode: center
+---
+
+MongoDB 和 Mongoose 与 Bun 完美配合使用。本指南假设您已经安装了 MongoDB 并将其作为后台进程/服务在您的开发机器上运行。详细信息请参阅[本指南](https://www.mongodb.com/docs/manual/installation/)。
+
+---
+
+MongoDB 运行后，创建一个目录并使用 `bun init` 初始化它。
+
+```sh terminal icon="terminal"
+mkdir mongoose-app
+cd mongoose-app
+bun init
+```
+
+---
+
+然后添加 Mongoose 作为依赖项。
+
+```sh terminal icon="terminal"
+bun add mongoose
+```
+
+---
+
+在 [schema.ts] 中，我们将声明并导出一个简单的 `Animal` 模型。
+
+```ts schema.ts icon="/icons/typescript.svg"
+import * as mongoose from "mongoose";
+
+const animalSchema = new mongoose.Schema(
+  {
+    title: { type: String, required: true },
+    sound: { type: String, required: true },
+  },
+  {
+    methods: {
+      speak() {
+        console.log(`${this.sound}!`);
+      },
+    },
+  },
+);
+
+export type Animal = mongoose.InferSchemaType<typeof animalSchema>;
+export const Animal = mongoose.model("Animal", animalSchema);
+```
+
+---
+
+现在从 [index.ts] 我们可以导入 `Animal`，连接到 MongoDB，并向我们的数据库添加一些数据。
+
+```ts index.ts icon="/icons/typescript.svg"
+import * as mongoose from "mongoose";
+import { Animal } from "./schema";
+
+// 连接到数据库
+await mongoose.connect("mongodb://127.0.0.1:27017/mongoose-app");
+
+// 创建新动物
+const cow = new Animal({
+  title: "Cow",
+  sound: "Moo",
+});
+await cow.save(); // 保存到数据库
+
+// 读取所有动物
+const animals = await Animal.find();
+animals[0].speak(); // 输出 "Moo!"
+
+// 断开连接
+await mongoose.disconnect();
+```
+
+---
+
+让我们用 `bun run` 来运行这个程序。
+
+```bash terminal icon="terminal"
+bun run index.ts
+```
+
+```txt
+Moo!
+```
+
+---
+
+这是使用 TypeScript 和 Bun 与 Mongoose 的简单介绍。在构建应用程序时，请参阅官方[MongoDB](https://www.mongodb.com/docs)和[Mongoose](https://mongoosejs.com/docs/)网站获取完整文档。

@@ -1,0 +1,126 @@
+---
+title: 测试报告器
+description:
+---
+
+bun test 通过报告器支持不同的输出格式。本文档涵盖了内置报告器以及如何实现自己的自定义报告器。
+
+---
+
+## 内置报告器
+
+### 默认控制台报告器
+
+默认情况下，bun test 以人类可读的格式将结果输出到控制台：
+
+```sh terminal icon="terminal"
+test/package-json-lint.test.ts:
+✓ test/package.json [0.88ms]
+✓ test/js/third_party/grpc-js/package.json [0.18ms]
+✓ test/js/third_party/svelte/package.json [0.21ms]
+✓ test/js/third_party/express/package.json [1.05ms]
+
+ 4 pass
+ 0 fail
+ 4 expect() calls
+Ran 4 tests in 1.44ms
+```
+
+当终端不支持颜色时，输出会避免使用非 ASCII 字符：
+
+```sh terminal icon="terminal"
+test/package-json-lint.test.ts:
+(pass) test/package.json [0.48ms]
+(pass) test/js/third_party/grpc-js/package.json [0.10ms]
+(pass) test/js/third_party/svelte/package.json [0.04ms]
+(pass) test/js/third_party/express/package.json [0.04ms]
+
+ 4 pass
+ 0 fail
+ 4 expect() calls
+Ran 4 tests across 1 files. [0.66ms]
+```
+
+### 点状报告器
+
+点状报告器显示 `.` 表示通过的测试，`F` 表示失败的测试——适用于大型测试套件。
+
+```sh terminal icon="terminal"
+bun test --dots
+bun test --reporter=dots
+```
+
+### JUnit XML 报告器
+
+对于 CI/CD 环境，Bun 支持生成 JUnit XML 报告。JUnit XML 是一种广泛采用的测试结果格式，可以被许多 CI/CD 系统（包括 GitLab、Jenkins 和其他系统）解析。
+
+#### 使用 JUnit 报告器
+
+要生成 JUnit XML 报告，请使用 `--reporter=junit` 标志以及 `--reporter-outfile` 指定输出文件：
+
+```sh terminal icon="terminal"
+bun test --reporter=junit --reporter-outfile=./junit.xml
+```
+
+这将继续像往常一样输出到控制台，同时在测试运行结束时将 JUnit XML 报告写入指定路径。
+
+#### 通过 bunfig.toml 配置
+
+您还可以在 [bunfig.toml](file:///d:/code/mintlify-docs/bunfig.toml) 文件中配置 JUnit 报告器：
+
+```toml title="bunfig.toml" icon="settings"
+[test.reporter]
+junit = "path/to/junit.xml"  # JUnit XML 报告的输出路径
+```
+
+#### JUnit 报告中的环境变量
+
+JUnit 报告器会自动在 XML 输出中包含环境信息作为 `<properties>`。这在 CI 环境中跟踪测试运行时很有帮助。
+
+具体来说，它会在可用时包含以下环境变量：
+
+| 环境变量                                                              | 属性名称 | 描述                   |
+| --------------------------------------------------------------------- | -------- | ---------------------- |
+| `GITHUB_RUN_ID`, `GITHUB_SERVER_URL`, `GITHUB_REPOSITORY`, `CI_JOB_URL` | `ci`     | CI 构建信息            |
+| `GITHUB_SHA`, `CI_COMMIT_SHA`, `GIT_SHA`                              | `commit` | Git 提交标识符         |
+| 系统主机名                                                            | `hostname` | 机器主机名             |
+
+这使得更容易跟踪特定测试运行对应的环境和提交。
+
+#### 当前限制
+
+JUnit 报告器目前有一些限制，将在未来更新中解决：
+
+- 单个测试的 `stdout` 和 `stderr` 输出不会包含在报告中
+- 每个测试用例的精确时间戳字段不会包含在内
+
+### GitHub Actions 报告器
+
+Bun test 自动检测它是否在 GitHub Actions 内部运行，并直接将 GitHub Actions 注释发送到控制台。除了安装 Bun 并运行 `bun test` 外，无需特殊配置。
+
+有关 GitHub Actions 工作流配置示例，请参阅 CLI 文档中的 [CI/CD 集成](/pm/cli/install#ci%2Fcd) 部分。
+
+---
+
+## 自定义报告器
+
+Bun 允许开发人员通过扩展 WebKit 检查协议并添加额外的测试特定域来实现自定义测试报告器。
+
+### 用于测试的检查协议
+
+为了支持测试报告，Bun 使用两个自定义域扩展标准 WebKit 检查协议：
+
+1. **TestReporter**: 报告测试发现、执行开始和完成事件
+2. **LifecycleReporter**: 报告测试执行期间的错误和异常
+
+这些扩展允许您构建自定义报告工具，实时接收有关测试执行的详细信息。
+
+### 关键事件
+
+自定义报告器可以监听这些关键事件：
+
+- `TestReporter.found`: 发现测试时发出
+- `TestReporter.start`: 测试开始运行时发出
+- `TestReporter.end`: 测试完成时发出
+- `Console.messageAdded`: 测试期间出现控制台输出时发出
+- `LifecycleReporter.error`: 发生错误或异常时发出

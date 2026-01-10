@@ -1,0 +1,488 @@
+---
+title: HTML和静态网站
+description: 使用Bun的打包器构建静态网站、登录页面和Web应用程序
+---
+
+Bun的打包器对HTML有一流支持。零配置构建静态网站、登录页面和Web应用程序。只需将Bun指向您的HTML文件，它会处理其他所有内容。
+
+```html title="index.html" icon="file-code"
+<!doctype html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="./app.ts" type="module"></script>
+  </head>
+  <body>
+    <img src="./logo.png" />
+  </body>
+</html>
+```
+
+要开始，将HTML文件传递给`bun`。
+
+```bash terminal icon="terminal"
+bun ./index.html
+```
+
+```
+Bun v1.3.3
+ready in 6.62ms
+→ http://localhost:3000/
+Press h + Enter to show shortcuts
+```
+
+Bun的开发服务器提供了零配置的强大功能：
+
+- **自动打包** - 打包和提供您的HTML、JavaScript和CSS
+- **多入口支持** - 处理多个HTML入口点和通配符入口点
+- **现代JavaScript** - 开箱即用的TypeScript和JSX支持
+- **智能配置** - 读取`tsconfig.json`的路径、JSX选项、实验性装饰器等
+- **插件** - 用于TailwindCSS等的插件
+- **ESM和CommonJS** - 在JavaScript、TypeScript和JSX文件中使用ESM和CommonJS
+- **CSS打包和压缩** - 从`<link>`标签和`@import`语句打包CSS
+- **资源管理** - 图像和资源的自动复制和哈希；在JavaScript、CSS和HTML中重写资源路径
+
+## 单页应用(SPA)
+
+当您将单个[.html]文件传递给Bun时，Bun会将其用作所有路径的回退路由。这使其非常适合使用客户端路由的单页应用：
+
+```bash terminal icon="terminal"
+bun index.html
+```
+
+```
+Bun v1.3.3
+ready in 6.62ms
+→ http://localhost:3000/
+Press h + Enter to show shortcuts
+```
+
+您的React或其他SPA将开箱即用 - 无需配置。所有路由如`/about`、`/users/123`等都将提供相同的HTML文件，让您的客户端路由器处理导航。
+
+```html title="index.html" icon="file-code"
+<!doctype html>
+<html>
+  <head>
+    <title>My SPA</title>
+    <script src="./app.tsx" type="module"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>
+```
+
+## 多页应用(MPA)
+
+一些项目有几个单独的路由或HTML文件作为入口点。要支持多个入口点，将它们全部传递给`bun`：
+
+```bash terminal icon="terminal"
+bun ./index.html ./about.html
+```
+
+```txt
+Bun v1.3.3
+ready in 6.62ms
+→ http://localhost:3000/
+Routes:
+  / ./index.html
+  /about ./about.html
+Press h + Enter to show shortcuts
+```
+
+这将提供：
+
+- `index.html` 在 `/`
+- `about.html` 在 `/about`
+
+### 通配符模式
+
+要指定多个文件，您可以使用以[.html]结尾的通配符模式：
+
+```bash terminal icon="terminal"
+bun ./**/*.html
+```
+
+```
+Bun v1.3.3
+ready in 6.62ms
+→ http://localhost:3000/
+Routes:
+  / ./index.html
+  /about ./about.html
+Press h + Enter to show shortcuts
+```
+
+### 路径规范化
+
+基础路径从所有文件中最长的公共前缀中选择。
+
+```bash terminal icon="terminal"
+bun ./index.html ./about/index.html ./about/foo/index.html
+```
+
+```
+Bun v1.3.3
+ready in 6.62ms
+→ http://localhost:3000/
+Routes:
+  / ./index.html
+  /about ./about/index.html
+  /about/foo ./about/foo/index.html
+Press h + Enter to show shortcuts
+```
+
+## JavaScript、TypeScript和JSX
+
+Bun的转译器原生实现JavaScript、TypeScript和JSX支持。了解更多关于Bun中加载器的信息。
+
+<Note>Bun的转译器也在运行时使用。</Note>
+
+### ES模块和CommonJS
+
+您可以在JavaScript、TypeScript和JSX文件中使用ESM和CJS。Bun会自动处理转译和打包。
+
+没有预构建或单独的优化步骤。所有内容都同时完成。
+
+了解更多关于Bun中模块解析的信息。
+
+## CSS
+
+Bun的CSS解析器也是原生实现的（大约58,000行Zig代码）。
+
+它也是一个CSS打包器。您可以在CSS文件中使用`@import`来导入其他CSS文件。
+
+例如：
+
+<CodeGroup>
+
+```css styles.css icon="file-code"
+@import "./abc.css";
+
+.container {
+  background-color: blue;
+}
+```
+
+```css abc.css icon="file-code"
+body {
+  background-color: red;
+}
+```
+
+</CodeGroup>
+
+这输出：
+
+```css styles.css icon="file-code"
+body {
+  background-color: red;
+}
+
+.container {
+  background-color: blue;
+}
+```
+
+### 在CSS中引用本地资源
+
+您可以在CSS文件中引用本地资源。
+
+```css styles.css icon="file-code"
+body {
+  background-image: url("./logo.png");
+}
+```
+
+这将把`./logo.png`复制到输出目录，并在CSS文件中重写路径以包含内容哈希。
+
+```css styles.css icon="file-code"
+body {
+  background-image: url("./logo-[ABC123].png");
+}
+```
+
+### 在JavaScript中导入CSS
+
+要将CSS文件与JavaScript文件关联，您可以在JavaScript文件中导入它。
+
+```ts app.ts icon="/icons/typescript.svg"
+import "./styles.css";
+import "./more-styles.css";
+```
+
+这在输出目录中生成`./app.css`和`./app.js`。从JavaScript导入的所有CSS文件都将打包到每个入口点的单个CSS文件中。如果您从多个JavaScript文件导入相同的CSS文件，它将只在输出CSS文件中包含一次。
+
+## 插件
+
+开发服务器支持插件。
+
+### Tailwind CSS
+
+要使用TailwindCSS，安装`bun-plugin-tailwind`插件：
+
+```bash terminal icon="terminal"
+# 或任何npm客户端
+bun install --dev bun-plugin-tailwind
+```
+
+然后，将插件添加到您的`bunfig.toml`：
+
+```toml title="bunfig.toml" icon="settings"
+[serve.static]
+plugins = ["bun-plugin-tailwind"]
+```
+
+然后，在HTML中通过`<link>`标签、CSS中的`@import`或JavaScript中的导入引用TailwindCSS。
+
+<Tabs>
+  <Tab title="index.html">
+
+    ```html title="index.html" icon="file-code"
+    <!-- 在HTML中引用TailwindCSS -->
+    <link rel="stylesheet" href="tailwindcss" />
+    ```
+
+  </Tab>
+  <Tab title="styles.css">
+
+    ```css title="styles.css" icon="file-code"
+    @import "tailwindcss";
+    ```
+
+  </Tab>
+  <Tab title="app.ts">
+
+    ```ts title="app.ts" icon="/icons/typescript.svg"
+    import "tailwindcss";
+    ```
+
+  </Tab>
+</Tabs>
+
+<Info>只需要其中一种，而不是三种都需要。</Info>
+
+## 内联环境变量
+
+Bun可以在构建时将JavaScript和TypeScript中的`process.env.*`引用替换为它们的实际值。这对于将API URL或功能标志等配置注入到您的前端代码中很有用。
+
+### 开发服务器（运行时）
+
+在使用`bun ./index.html`时要内联环境变量，请在您的`bunfig.toml`中配置`env`选项：
+
+```toml title="bunfig.toml" icon="settings"
+[serve.static]
+env = "PUBLIC_*"  # 只内联以PUBLIC_开头的环境变量（推荐）
+# env = "inline"  # 内联所有环境变量
+# env = "disable" # 禁用环境变量替换（默认）
+```
+
+<Note>
+  这仅适用于字面量`process.env.FOO`引用，不适用于`import.meta.env`或间接访问如`const env =
+  process.env; env.FOO`。
+
+如果未设置环境变量，您可能会在浏览器中看到运行时错误，如`ReferenceError: process
+  is not defined`。
+
+</Note>
+
+然后运行开发服务器：
+
+```bash terminal icon="terminal"
+PUBLIC_API_URL=https://api.example.com bun ./index.html
+```
+
+### 构建生产版本
+
+在为生产构建静态HTML时，使用`env`选项内联环境变量：
+
+<Tabs>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    # 内联所有环境变量
+    bun build ./index.html --outdir=dist --env=inline
+
+    # 仅内联具有特定前缀的环境变量（推荐）
+    bun build ./index.html --outdir=dist --env=PUBLIC_*
+    ```
+
+  </Tab>
+  <Tab title="API">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    // 内联所有环境变量
+    await Bun.build({
+      entrypoints: ["./index.html"],
+      outdir: "./dist",
+      env: "inline", // [!code highlight]
+    });
+
+    // 仅内联具有特定前缀的环境变量（推荐）
+    await Bun.build({
+      entrypoints: ["./index.html"],
+      outdir: "./dist",
+      env: "PUBLIC_*", // [!code highlight]
+    });
+    ```
+
+  </Tab>
+</Tabs>
+
+### 示例
+
+给定此源文件：
+
+```ts title="app.ts" icon="/icons/typescript.svg"
+const apiUrl = process.env.PUBLIC_API_URL;
+console.log(`API URL: ${apiUrl}`);
+```
+
+并使用`PUBLIC_API_URL=https://api.example.com`运行：
+
+```bash terminal icon="terminal"
+PUBLIC_API_URL=https://api.example.com bun build ./index.html --outdir=dist --env=PUBLIC_*
+```
+
+打包的输出将包含：
+
+```js title="dist/app.js" icon="/icons/javascript.svg"
+const apiUrl = "https://api.example.com";
+console.log(`API URL: ${apiUrl}`);
+```
+
+## 从浏览器回显控制台日志到终端
+
+Bun的开发服务器支持将浏览器中的控制台日志流式传输到终端。
+
+要启用，请传递`--console` CLI标志。
+
+```bash terminal icon="terminal"
+bun ./index.html --console
+```
+
+```
+Bun v1.3.3
+ready in 6.62ms
+→ http://localhost:3000/
+Press h + Enter to show shortcuts
+```
+
+每次调用`console.log`或`console.error`都会广播到启动服务器的终端。这对于在运行服务器的同一位置查看浏览器中的错误很有用。这对于监视终端输出的AI代理也很有用。
+
+在内部，这重用热模块重载的现有WebSocket连接来发送日志。
+
+## 在浏览器中编辑文件
+
+Bun的前端开发服务器支持Chrome DevTools中的自动工作区文件夹，这使您可以在浏览器中保存对文件的编辑。
+
+## 键盘快捷键
+
+服务器运行时：
+
+- `o + Enter` - 在浏览器中打开
+- `c + Enter` - 清除控制台
+- `q + Enter` (或`Ctrl+C`) - 退出服务器
+
+## 构建生产版本
+
+准备部署时，使用`bun build`创建优化的生产包：
+
+<Tabs>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./index.html --minify --outdir=dist
+    ```
+  </Tab>
+  <Tab title="API">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ["./index.html"],
+      outdir: "./dist",
+      minify: true,
+    });
+    ```
+  </Tab>
+</Tabs>
+
+<Warning>
+  目前，插件仅通过`Bun.build`的API或通过前端开发服务器的`bunfig.toml`支持
+  - 尚未在`bun build`的CLI中支持。
+</Warning>
+
+### 监视模式
+
+您可以运行`bun build --watch`来监视更改并自动重新构建。这对于库开发非常有用。
+
+<Info>您从未见过如此快的监视模式。</Info>
+
+## 插件API
+
+需要更多控制？通过JavaScript API配置打包器，并使用Bun内置的`HTMLRewriter`预处理HTML。
+
+```ts title="build.ts" icon="/icons/typescript.svg"
+await Bun.build({
+  entrypoints: ["./index.html"],
+  outdir: "./dist",
+  minify: true,
+
+  plugins: [
+    {
+      // 一个使每个HTML标签小写的插件
+      name: "lowercase-html-plugin",
+      setup({ onLoad }) {
+        const rewriter = new HTMLRewriter().on("*", {
+          element(element) {
+            element.tagName = element.tagName.toLowerCase();
+          },
+          text(element) {
+            element.replace(element.text.toLowerCase());
+          },
+        });
+
+        onLoad({ filter: /\.html$/ }, async args => {
+          const html = await Bun.file(args.path).text();
+
+          return {
+            // Bun的打包器将扫描HTML中的<script>标签、<link rel="stylesheet">标签和其他资源
+            // 并自动打包它们
+            contents: rewriter.transform(html),
+            loader: "html",
+          };
+        });
+      },
+    },
+  ],
+});
+```
+
+## 处理了哪些内容？
+
+Bun自动处理所有常见Web资源：
+
+- **脚本** (`<script src>`) 通过Bun的JavaScript/TypeScript/JSX打包器运行
+- **样式表** (`<link rel="stylesheet">`) 通过Bun的CSS解析器和打包器运行
+- **图像** (`<img>`, `<picture>`) 被复制和哈希
+- **媒体** (`<video>`, `<audio>`, `<source>`) 被复制和哈希
+- 任何指向本地文件的带有`href`属性的`<link>`标签都会被重写为新路径，并进行哈希
+
+所有路径都相对于您的HTML文件解析，使您能够轻松地按任何方式组织您的项目。
+
+<Warning>
+**这是正在进行的工作**
+- 需要更多插件
+- 需要更多配置选项，如资源处理
+- 需要一种配置CORS、头部等的方法
+
+{/* todo: find the correct link to link to as this 404's and there isn't any similar files */}
+{/* 如果您想提交PR，大部分代码在[这里](https://github.com/oven-sh/bun/blob/main/src/bun.js/api/bun/html-rewriter.ts)。您甚至可以复制粘贴该文件到您的项目中并将其用作起点。 */}
+
+</Warning>
+
+## 工作原理
+
+这是围绕Bun对JavaScript中HTML导入支持的小包装。
+
+## 为前端添加后端
+
+要为前端添加后端，您可以使用`Bun.serve`中的"routes"选项。
+
+在全栈文档中了解更多信息。

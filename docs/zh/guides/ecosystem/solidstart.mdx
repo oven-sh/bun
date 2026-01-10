@@ -1,0 +1,62 @@
+---
+title: 使用 SolidStart 和 Bun 构建应用
+sidebarTitle: "SolidStart 与 Bun"
+mode: center
+---
+
+使用 `create-solid` 初始化一个 SolidStart 应用。您可以指定 `--solidstart` 标志来创建一个 SolidStart 项目，以及 `--ts` 以获得 TypeScript 支持。当提示选择模板时，选择 `basic` 以获得一个最小的启动应用。
+
+```sh terminal icon="terminal"
+bun create solid my-app --solidstart --ts
+```
+
+```txt
+┌
+ Create-Solid v0.6.11
+│
+◇  项目名称
+│  my-app
+│
+◇  您想使用哪个模板？
+│  basic
+│
+◇  项目已创建 🎉
+│
+◇  要开始，请运行： ─╮
+│                        │
+│  cd my-app             │
+│  bun install           │
+│  bun dev               │
+│                        │
+├────────────────────────╯
+```
+
+---
+
+按照 `create-solid` CLI 的指示，安装依赖项。
+
+```sh terminal icon="terminal"
+cd my-app
+bun install
+```
+
+然后使用 `bun dev` 运行开发服务器。
+
+```sh terminal icon="terminal"
+bun dev
+```
+
+```txt
+$ vinxi dev
+vinxi v0.5.8
+vinxi starting dev server
+
+  ➜ 本地:    http://localhost:3000/
+  ➜ 网络:  使用 --host 暴露
+```
+
+打开 [localhost:3000](http://localhost:3000)。您对 [src/routes/index.tsx] 的任何更改都将自动热重载。
+
+---
+
+请参阅 [SolidStart 网站](https://docs.solidjs.com/solid-start) 获取完整的框架文档。

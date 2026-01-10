@@ -1,0 +1,131 @@
+---
+title: Windows 构建
+description: 在 Windows 上构建 Bun
+---
+
+本文档描述了 Windows 的构建过程。如果您遇到问题，请加入我们的 Discord 上的 [#contributing 频道](http://bun.com/discord) 获取帮助。
+
+强烈建议使用 [PowerShell 7 (`pwsh.exe`)](https://learn.microsoft.com/en-us/powershell/scripting/install/installing-powershell-on-windows?view=powershell-7.4) 而不是默认的 `powershell.exe`。
+
+## 先决条件
+
+### 启用脚本
+
+默认情况下，运行未经验证的脚本会被阻止。
+
+```ps1
+Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy Unrestricted
+```
+
+### 系统依赖
+
+Bun v1.1 或更高版本。我们使用 Bun 来运行它自己的代码生成器。
+
+```ps1
+irm bun.sh/install.ps1 | iex
+```
+
+[Visual Studio](https://visualstudio.microsoft.com) 带有"使用 C++ 的桌面开发"工作负荷。安装时，请确保同时安装 Git，如果尚未安装 Git for Windows。
+
+Visual Studio 可以使用向导图形化安装，也可以通过 WinGet 安装：
+
+```ps1
+winget install "Visual Studio Community 2022" --override "--add Microsoft.VisualStudio.Workload.NativeDesktop Microsoft.VisualStudio.Component.Git " -s msstore
+```
+
+安装 Visual Studio 后，您还需要以下内容：
+
+- LLVM 19.1.7
+- Go
+- Rust
+- NASM
+- Perl
+- Ruby
+- Node.js
+
+<Note>Zig 编译器将由构建过程自动下载、安装和更新。</Note>
+
+[Scoop](https://scoop.sh) 可用于轻松安装这些剩余工具。
+
+```ps1 Scoop
+irm https://get.scoop.sh | iex
+scoop install nodejs-lts go rust nasm ruby perl ccache
+# 如果同时安装 llvm 和其他工具，scoop 似乎会有问题
+scoop install llvm@19.1.7
+```
+
+<Note>
+  请不要为此使用 WinGet/其他包管理器，因为您可能会安装 Strawberry Perl 而不是更精简的 Perl 安装。
+  Strawberry Perl 包含许多其他工具，它们会被安装到 `$Env:PATH` 中，这将与 MSVC 冲突并破坏构建。
+</Note>
+
+如果您打算在本地构建 WebKit（可选），您应该安装这些包：
+
+```ps1 Scoop
+scoop install make cygwin python
+```
+
+从这里开始，**期望您使用 PowerShell 终端并加载 `.\scripts\vs-shell.ps1`**。此脚本在 Bun 仓库中可用，可通过执行它来加载：
+
+```ps1
+.\scripts\vs-shell.ps1
+```
+
+要验证，您可以检查是否有 MSVC 专用的命令行工具，例如 `mt.exe`
+
+```ps1
+Get-Command mt
+```
+
+<Note>
+  不建议将 `ninja` / `cmake` 安装到您的全局路径中，因为您可能会遇到尝试在未加载 .\scripts\vs-shell.ps1 的情况下构建 bun 的情况。
+</Note>
+
+## 构建
+
+```ps1
+bun run build
+
+# 在初始的 `bun run build` 之后，您可以使用以下命令构建
+ninja -Cbuild/debug
+```
+
+如果成功，您应该在 `build/debug` 文件夹中有 `bun-debug.exe`。
+
+```ps1
+.\build\debug\bun-debug.exe --revision
+```
+
+您应该将其添加到 `$Env:PATH`。最简单的做法是打开开始菜单，输入"Path"，然后导航到环境变量菜单，将 `C:\.....\bun\build\debug` 添加到用户环境变量 `PATH`。然后您应该重启编辑器（如果仍未更新，请注销并重新登录）。
+
+## 额外路径
+
+- WebKit 解压到 `build/debug/cache/webkit/`
+- Zig 解压到 `build/debug/cache/zig/bin/zig.exe`
+
+## 测试
+
+您可以使用 `bun test <path>` 或使用包装脚本 `bun node:test <path>` 运行测试套件。`bun node:test` 命令在单独的 bun.exe 实例中运行每个测试文件，以防止测试运行程序崩溃停止整个套件。
+
+```ps1
+# 设置
+bun i --cwd packages\bun-internal-test
+
+# 使用报告器运行整个测试套件
+# package.json 脚本 "test" 默认使用 "build/debug/bun-debug.exe"
+bun run test
+
+# 运行单个测试文件：
+bun-debug test node\fs
+bun-debug test "C:\bun\test\js\bun\resolve\import-meta.test.js"
+```
+
+## 故障排除
+
+### .rc 文件构建失败
+
+`llvm-rc.exe` 很奇怪。不要使用它。使用 `rc.exe`，要做到这一点，请确保您在 Visual Studio 开发终端中，检查 `rc /?` 以确保它是 `Microsoft Resource Compiler`
+
+### failed to write output 'bun-debug.exe': permission denied
+
+如果 `bun-debug.exe` 已经打开，您无法覆盖它。您可能有一个正在运行的实例，也许在 VSCode 调试器中？

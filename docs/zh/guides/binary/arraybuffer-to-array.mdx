@@ -1,0 +1,29 @@
+---
+title: 将 ArrayBuffer 转换为数字数组
+sidebarTitle: "ArrayBuffer 到 Array"
+mode: center
+---
+
+要检索 [ArrayBuffer](https://developer.mozilla.org/zh-CN/docs/Web/JavaScript/Reference/Global_Objects/ArrayBuffer) 的内容作为数字数组，请在缓冲区上创建一个 [Uint8Array](https://developer.mozilla.org/zh-CN/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array)，并使用 [Array.from()](https://developer.mozilla.org/zh-CN/docs/Web/JavaScript/Reference/Global_Objects/Array/from) 方法将其转换为数组。
+
+```ts
+const buf = new ArrayBuffer(64);
+const arr = new Uint8Array(buf);
+arr.length; // 64
+arr[0]; // 0 (初始化时全为零)
+```
+
+---
+
+[Uint8Array](https://developer.mozilla.org/zh-CN/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array) 类支持数组索引和迭代。但是，如果要将实例转换为普通 [Array](https://developer.mozilla.org/zh-CN/docs/Web/JavaScript/Reference/Global_Objects/Array)，请使用 `Array.from()`。(这可能会比直接使用 [Uint8Array](https://developer.mozilla.org/zh-CN/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array) 慢。)
+
+```ts
+const buf = new ArrayBuffer(64);
+const uintArr = new Uint8Array(buf);
+const regularArr = Array.from(uintArr);
+// number[]
+```
+
+---
+
+参阅 [文档 > API > 二进制数据](/runtime/binary-data#conversion) 获取关于使用Bun操作二进制数据的完整文档。

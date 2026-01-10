@@ -1,0 +1,16 @@
+---
+title: 将 Buffer 转换为 Uint8Array
+sidebarTitle: "Buffer 到 Uint8Array"
+mode: center
+---
+
+Node.js [Buffer](https://nodejs.org/api/buffer.html) 类扩展自 [Uint8Array](https://developer.mozilla.org/zh-CN/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array)，因此无需转换。[Uint8Array](https://developer.mozilla.org/zh-CN/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array) 上的所有属性和方法在 [Buffer](https://nodejs.org/api/buffer.html) 上都可用。
+
+```ts
+const buf = Buffer.alloc(64);
+buf instanceof Uint8Array; // => true
+```
+
+---
+
+参阅 [文档 > API > 二进制数据](/runtime/binary-data#conversion) 获取关于使用Bun操作二进制数据的完整文档。

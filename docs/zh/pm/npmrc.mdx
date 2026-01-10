@@ -1,0 +1,245 @@
+---
+title: .npmrc 支持
+description:
+---
+
+Bun 支持从 [.npmrc] 文件加载配置选项，允许你重用现有的注册表/范围配置。
+
+<Note>
+  我们建议将你的 [.npmrc] 文件迁移到 Bun 的 [bunfig.toml] 格式，因为它提供了更多
+  灵活的选项，可以让你配置 Bun 特有的选项。
+</Note>
+
+---
+
+## 支持的选项
+
+### 设置默认注册表
+
+默认注册表用于解析包，默认值是 `npm` 的官方注册表 (`https://registry.npmjs.org/`)。
+
+要更改它，你可以在 [.npmrc] 中设置 `registry` 选项：
+
+```ini .npmrc icon="npm"
+registry=http://localhost:4873/
+```
+
+等效的 [bunfig.toml] 选项是 [install.registry]:
+
+```toml bunfig.toml icon="settings"
+install.registry = "http://localhost:4873/"
+```
+
+### 为特定范围设置注册表
+
+`@<scope>:registry` 允许你为特定范围设置注册表：
+
+```ini .npmrc icon="npm"
+@myorg:registry=http://localhost:4873/
+```
+
+等效的 [bunfig.toml] 选项是在 [install.scopes] 中添加一个键：
+
+```toml bunfig.toml icon="settings"
+[install.scopes]
+myorg = "http://localhost:4873/"
+```
+
+### 为特定注册表配置选项
+
+`//<registry_url>/:<key>=<value>` 允许你为特定注册表设置选项：
+
+```ini .npmrc icon="npm"
+# 为注册表设置认证令牌
+# ${...} 是环境变量的占位符
+//http://localhost:4873/:_authToken=${NPM_TOKEN}
+
+
+# 或者你可以设置用户名和密码
+# 注意密码是 base64 编码的
+//http://localhost:4873/:username=myusername
+
+//http://localhost:4873/:_password=${NPM_PASSWORD}
+
+# 或使用 _auth，它是你的用户名和密码
+# 组合成单个字符串，然后进行 base 64 编码
+//http://localhost:4873/:_auth=${NPM_AUTH}
+```
+
+支持以下选项：
+
+- `_authToken`
+- `username`
+- `_password` (base64 编码的密码)
+- `_auth` (base64 编码的用户名:密码，例如 `btoa(username + ":" + password)`)
+- `email`
+
+等效的 [bunfig.toml] 选项是在 [install.scopes] 中添加一个键：
+
+```toml bunfig.toml icon="settings"
+[install.scopes]
+myorg = { url = "http://localhost:4873/", username = "myusername", password = "$NPM_PASSWORD" }
+```
+
+### `link-workspace-packages`: 控制工作区包安装
+
+控制在本地可用时如何安装工作区包：
+
+```ini .npmrc icon="npm"
+link-workspace-packages=true
+```
+
+等效的 [bunfig.toml] 选项是 [install.linkWorkspacePackages]:
+
+```toml bunfig.toml icon="settings"
+[install]
+linkWorkspacePackages = true
+```
+
+### `save-exact`: 保存精确版本
+
+始终保存精确版本而不带 `^` 前缀：
+
+```ini .npmrc icon="npm"
+save-exact=true
+```
+
+等效的 [bunfig.toml] 选项是 [install.exact]:
+
+```toml bunfig.toml icon="settings"
+[install]
+exact = true
+```
+
+### `ignore-scripts`: 跳过生命周期脚本
+
+阻止在安装过程中运行生命周期脚本：
+
+```ini .npmrc icon="npm"
+ignore-scripts=true
+```
+
+这等同于在 `bun install` 中使用 `--ignore-scripts` 标志。
+
+### `dry-run`: 预览更改而不安装
+
+显示将要安装的内容而不实际安装：
+
+```ini .npmrc icon="npm"
+dry-run=true
+```
+
+等效的 [bunfig.toml] 选项是 [install.dryRun]:
+
+```toml bunfig.toml icon="settings"
+[install]
+dryRun = true
+```
+
+### `cache`: 配置缓存目录
+
+设置缓存目录路径，或禁用缓存：
+
+```ini .npmrc icon="npm"
+# 设置自定义缓存目录
+cache=/path/to/cache
+
+# 或禁用缓存
+cache=false
+```
+
+等效的 [bunfig.toml] 选项是 [install.cache]:
+
+```toml bunfig.toml icon="settings"
+[install.cache]
+# 设置自定义缓存目录
+dir = "/path/to/cache"
+
+# 或禁用缓存
+disable = true
+```
+
+### `ca` 和 `cafile`: 配置 CA 证书
+
+为注册表连接配置自定义 CA 证书：
+
+```ini .npmrc icon="npm"
+# 单个 CA 证书
+ca="-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----"
+
+# 多个 CA 证书
+ca[]="-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----"
+ca[]="-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----"
+
+# 或指定 CA 文件路径
+cafile=/path/to/ca-bundle.crt
+```
+
+### `omit` 和 `include`: 控制依赖类型
+
+控制安装哪些类型的依赖：
+
+```ini .npmrc icon="npm"
+# 忽略开发依赖
+omit=dev
+
+# 忽略多种类型
+omit[]=dev
+omit[]=optional
+
+# 包括特定类型（覆盖 omit）
+include=dev
+```
+
+有效值: `dev`, `peer`, `optional`
+
+### `install-strategy` 和 `node-linker`: 安装策略
+
+控制包在 [node_modules] 中的安装方式。Bun 支持两种不同的配置选项以与不同的包管理器兼容。
+
+**npm 的 `install-strategy`:**
+
+```ini .npmrc icon="npm"
+# 平坦的 node_modules 结构（默认）
+install-strategy=hoisted
+
+# 符号链接结构
+install-strategy=linked
+```
+
+**pnpm/yarn 的 `node-linker`:**
+
+`node-linker` 选项控制安装模式。Bun 支持来自 pnpm 和 yarn 的值：
+
+| 值             | 描述                                          | 接受方        |
+| -------------- | --------------------------------------------- | ----------- |
+| `isolated`     | 具有隔离依赖的符号链接结构                     | pnpm        |
+| `hoisted`      | 平坦的 node_modules 结构                       | pnpm        |
+| `pnpm`         | 符号链接结构（与 `isolated` 相同）             | yarn        |
+| `node-modules` | 平坦的 node_modules 结构（与 `hoisted` 相同）   | yarn        |
+
+```ini .npmrc icon="npm"
+# 符号链接/隔离模式
+node-linker=isolated
+node-linker=pnpm
+
+# 平坦/提升模式
+node-linker=hoisted
+node-linker=node-modules
+```
+
+### `public-hoist-pattern` 和 `hoist-pattern`: 控制提升
+
+控制哪些包被提升到根 [node_modules]:
+
+```ini .npmrc icon="npm"
+# 匹配此模式的包将被提升到根目录
+public-hoist-pattern=*eslint*
+
+# 多个模式
+public-hoist-pattern[]=*eslint*
+public-hoist-pattern[]=*prettier*
+
+# 控制一般提升行为
+hoist-pattern=*
+```

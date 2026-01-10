@@ -1,0 +1,182 @@
+---
+title: Glob
+description: 使用 Bun 快速的原生文件通配实现
+---
+
+## 快速入门
+
+**扫描目录以查找匹配 `*.ts` 的文件**：
+
+```ts
+import { Glob } from "bun";
+
+const glob = new Glob("**/*.ts");
+
+// 扫描当前工作目录及其每个子目录
+for await (const file of glob.scan(".")) {
+  console.log(file); // => "index.ts"
+}
+```
+
+**将字符串与通配模式匹配**：
+
+```ts
+import { Glob } from "bun";
+
+const glob = new Glob("*.ts");
+
+glob.match("index.ts"); // => true
+glob.match("index.js"); // => false
+```
+
+`Glob` 是一个实现以下接口的类：
+
+```ts
+class Glob {
+  scan(root: string | ScanOptions): AsyncIterable<string>;
+  scanSync(root: string | ScanOptions): Iterable<string>;
+
+  match(path: string): boolean;
+}
+
+interface ScanOptions {
+  /**
+   * 开始匹配的根目录。默认为 `process.cwd()`
+   */
+  cwd?: string;
+
+  /**
+   * 允许模式匹配以点（`.`）开头的条目。
+   *
+   * @default false
+   */
+  dot?: boolean;
+
+  /**
+   * 为条目返回绝对路径。
+   *
+   * @default false
+   */
+  absolute?: boolean;
+
+  /**
+   * 指示是否遍历符号链接目录的后代。
+   *
+   * @default false
+   */
+  followSymlinks?: boolean;
+
+  /**
+   * 符号链接损坏时抛出错误
+   *
+   * @default false
+   */
+  throwErrorOnBrokenSymlink?: boolean;
+
+  /**
+   * 仅返回文件。
+   *
+   * @default true
+   */
+  onlyFiles?: boolean;
+}
+```
+
+## 支持的通配模式
+
+Bun 支持以下通配模式：
+
+### `?` - 匹配任意单个字符
+
+```ts
+const glob = new Glob("???.ts");
+glob.match("foo.ts"); // => true
+glob.match("foobar.ts"); // => false
+```
+
+### `*` - 匹配零个或多个字符，但不包括路径分隔符（`/` 或 `\`）
+
+```ts
+const glob = new Glob("*.ts");
+
+glob.match("index.ts"); // => true
+glob.match("src/index.ts"); // => false
+```
+
+### `**` - 匹配任意数量的字符，包括 `/`
+
+```ts
+const glob = new Glob("**/*.ts");
+glob.match("index.ts"); // => true
+glob.match("src/index.ts"); // => true
+glob.match("src/index.js"); // => false
+```
+
+### `[ab]` - 匹配括号中包含的字符之一，以及字符范围
+
+```ts
+const glob = new Glob("ba[rz].ts");
+glob.match("bar.ts"); // => true
+glob.match("baz.ts"); // => true
+glob.match("bat.ts"); // => false
+```
+
+您可以使用字符范围（例如 `[0-9]`、`[a-z]`）以及否定运算符 `^` 或 `!` 来匹配除括号内字符之外的任何内容（例如 `[^ab]`、`[!a-z]`）
+
+```ts
+const glob = new Glob("ba[a-z][0-9][^4-9].ts");
+glob.match("bar01.ts"); // => true
+glob.match("baz83.ts"); // => true
+glob.match("bat22.ts"); // => true
+glob.match("bat24.ts"); // => false
+glob.match("ba0a8.ts"); // => false
+```
+
+### `{a,b,c}` - 匹配给定模式中的任何一个
+
+```ts
+const glob = new Glob("{a,b,c}.ts");
+glob.match("a.ts"); // => true
+glob.match("b.ts"); // => true
+glob.match("c.ts"); // => true
+glob.match("d.ts"); // => false
+```
+
+这些匹配模式可以深度嵌套（最多 10 层），并且可以包含上述任何通配符。
+
+### `!` - 否定模式开头的结果
+
+```ts
+const glob = new Glob("!index.ts");
+glob.match("index.ts"); // => false
+glob.match("foo.ts"); // => true
+```
+
+### `\` - 转义上述任何特殊字符
+
+```ts
+const glob = new Glob("\\!index.ts");
+glob.match("!index.ts"); // => true
+glob.match("index.ts"); // => false
+```
+
+## Node.js `fs.glob()` 兼容性
+
+Bun 还实现了 Node.js 的 `fs.glob()` 函数并增加了额外功能：
+
+```ts
+import { glob, globSync, promises } from "node:fs";
+
+// 模式数组
+const files = await promises.glob(["**/*.ts", "**/*.js"]);
+
+// 排除模式
+const filtered = await promises.glob("**/*", {
+  exclude: ["node_modules/**", "*.test.*"],
+});
+```
+
+所有三个函数（`fs.glob()`、`fs.globSync()`、`fs.promises.glob()`）都支持：
+
+- 模式数组作为第一个参数
+- `exclude` 选项来过滤结果

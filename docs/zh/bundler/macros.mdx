@@ -1,0 +1,326 @@
+---
+title: 宏
+description: 使用Bun宏在打包时运行JavaScript函数
+---
+
+宏是一种在打包时运行JavaScript函数的机制。这些函数返回的值直接内联到您的包中。
+
+作为一个简单的例子，考虑这个返回随机数的简单函数。
+
+```ts title="random.ts" icon="/icons/typescript.svg"
+export function random() {
+  return Math.random();
+}
+```
+
+这只是一个普通文件中的普通函数，但我们可以像这样将其用作宏：
+
+```tsx title="cli.tsx" icon="/icons/typescript.svg"
+import { random } from "./random.ts" with { type: "macro" };
+
+console.log(`Your random number is ${random()}`);
+```
+
+<Note>
+  宏使用导入属性语法表示。如果您之前没见过这种语法，它是Stage 3 TC39提案，可以让您向import语句附加额外元数据。
+</Note>
+
+现在我们将使用`bun build`打包此文件。打包的文件将打印到stdout。
+
+```bash terminal icon="terminal"
+bun build ./cli.tsx
+```
+
+```js
+console.log(`Your random number is ${0.6805550949689833}`);
+```
+
+如您所见，`random`函数的源代码在包中任何地方都不存在。相反，它在打包期间执行，函数调用（`random()`）被函数的结果替换。由于源代码永远不会包含在包中，宏可以安全地执行特权操作，如从数据库读取。
+
+## 何时使用宏
+
+如果您有几个用于小事物的构建脚本，而您本来会有一个一次性构建脚本，那么在构建时执行代码可能更容易维护。它与您的其余代码一起存在，与构建的其余部分一起运行，自动并行化，如果失败，构建也会失败。
+
+不过，如果您发现自己在运行大量构建时代码，请考虑运行服务器。
+
+## 导入属性
+
+Bun宏是使用以下方式注释的导入语句：
+
+- `with { type: 'macro' }` — 一个导入属性，一个Stage 3 ECMA Script提案
+- `assert { type: 'macro' }` — 一个导入断言，是导入属性的早期版本，现在已经废弃（但已被许多浏览器和运行时支持）
+
+## 安全考虑
+
+宏必须显式使用`{ type: "macro" }`导入才能在构建时执行。与常规JavaScript导入可能有副作用不同，这些导入如果不被调用则没有效果。
+
+您可以通过向Bun传递`--no-macros`标志完全禁用宏。它会产生这样的构建错误：
+
+```
+error: Macros are disabled
+
+foo();
+^
+./hello.js:3:1 53
+```
+
+为了减少恶意包的潜在攻击面，宏不能从`node_modules/**/*`内部调用。如果包试图调用宏，您会看到这样的错误：
+
+```
+error: For security reasons, macros cannot be run from node_modules.
+
+beEvil();
+^
+node_modules/evil/index.js:3:1 50
+```
+
+您的应用程序代码仍然可以从`node_modules`导入宏并调用它们。
+
+```ts title="cli.tsx" icon="/icons/typescript.svg"
+import { macro } from "some-package" with { type: "macro" };
+
+macro();
+```
+
+## 导出条件"macro"
+
+当发布包含宏的库到npm或其他包注册表时，使用"macro"导出条件为宏环境提供一个专门的包版本。
+
+```json title="package.json" icon="file-json"
+{
+  "name": "my-package",
+  "exports": {
+    "import": "./index.js",
+    "require": "./index.js",
+    "default": "./index.js",
+    "macro": "./index.macro.js"
+  }
+}
+```
+
+通过此配置，用户可以使用相同的导入标识符在运行时或构建时消费您的包：
+
+```ts title="index.ts" icon="/icons/typescript.svg"
+import pkg from "my-package"; // 运行时导入
+import { macro } from "my-package" with { type: "macro" }; // 宏导入
+```
+
+第一个导入将解析为`./node_modules/my-package/index.js`，而第二个将由Bun的打包器解析为`./node_modules/my-package/index.macro.js`。
+
+## 执行
+
+当Bun的转译器看到宏导入时，它使用Bun的JavaScript运行时在转译器内部调用函数，并将返回值从JavaScript转换为AST节点。这些JavaScript函数在构建时被调用，而不是运行时。
+
+宏在转译器的访问阶段同步执行——在插件之前和转译器生成AST之前。它们按导入的顺序执行。转译器将等待宏完成执行后再继续。转译器也将等待宏返回的任何Promise。
+
+Bun的打包器是多线程的。因此，宏在多个生成的JavaScript"worker"中并行执行。
+
+## 死代码消除
+
+打包器在运行和内联宏后执行死代码消除。因此，给定以下宏：
+
+```ts title="returnFalse.ts" icon="/icons/typescript.svg"
+export function returnFalse() {
+  return false;
+}
+```
+
+...然后打包以下文件将产生一个空包，前提是启用了缩小语法选项。
+
+```ts title="index.ts" icon="/icons/typescript.svg"
+import { returnFalse } from "./returnFalse.ts" with { type: "macro" };
+
+if (returnFalse()) {
+  console.log("This code is eliminated");
+}
+```
+
+## 可序列化性
+
+Bun的转译器需要能够序列化宏的结果，以便它可以内联到AST中。所有JSON兼容的数据结构都受支持：
+
+```ts title="macro.ts" icon="/icons/typescript.svg"
+export function getObject() {
+  return {
+    foo: "bar",
+    baz: 123,
+    array: [1, 2, { nested: "value" }],
+  };
+}
+```
+
+宏可以是异步的，或返回Promise实例。Bun的转译器将自动等待Promise并内联结果。
+
+```ts title="macro.ts" icon="/icons/typescript.svg"
+export async function getText() {
+  return "async value";
+}
+```
+
+转译器为序列化常见数据格式（如`Response`、`Blob`、`TypedArray`）实现了特殊逻辑。
+
+- **TypedArray**: 解析为base64编码的字符串。
+- **Response**: Bun将读取`Content-Type`并相应序列化；例如，类型为`application/json`的Response将自动解析为对象，`text/plain`将作为字符串内联。具有无法识别或未定义类型的Response将被base-64编码。
+- **Blob**: 与Response一样，序列化取决于`type`属性。
+
+`fetch`的结果是`Promise<Response>`，所以它可以被直接返回。
+
+```ts title="macro.ts" icon="/icons/typescript.svg"
+export function getObject() {
+  return fetch("https://bun.com");
+}
+```
+
+函数和大多数类的实例（除了上面提到的那些）是不可序列化的。
+
+```ts title="macro.ts" icon="/icons/typescript.svg"
+export function getText(url: string) {
+  // 这不起作用！
+  return () => {};
+}
+```
+
+## 参数
+
+宏可以接受输入，但仅限于有限的情况。值必须是静态已知的。例如，以下内容是不允许的：
+
+```ts title="index.ts" icon="/icons/typescript.svg"
+import { getText } from "./getText.ts" with { type: "macro" };
+
+export function howLong() {
+  // `foo`的值不能静态已知
+  const foo = Math.random() ? "foo" : "bar";
+
+  const text = getText(`https://example.com/${foo}`);
+  console.log("The page is ", text.length, " characters long");
+}
+```
+
+但是，如果`foo`的值在构建时已知（比如说，如果它是一个常量或其他宏的结果），那么这是允许的：
+
+```ts title="index.ts" icon="/icons/typescript.svg"
+import { getText } from "./getText.ts" with { type: "macro" };
+import { getFoo } from "./getFoo.ts" with { type: "macro" };
+
+export function howLong() {
+  // 这可以工作，因为getFoo()是静态已知的
+  const foo = getFoo();
+  const text = getText(`https://example.com/${foo}`);
+  console.log("The page is", text.length, "characters long");
+}
+```
+
+这输出：
+
+```js
+function howLong() {
+  console.log("The page is", 1322, "characters long");
+}
+export { howLong };
+```
+
+## 示例
+
+### 嵌入最新的git提交哈希
+
+```ts title="getGitCommitHash.ts" icon="/icons/typescript.svg"
+export function getGitCommitHash() {
+  const { stdout } = Bun.spawnSync({
+    cmd: ["git", "rev-parse", "HEAD"],
+    stdout: "pipe",
+  });
+
+  return stdout.toString();
+}
+```
+
+当我们构建时，`getGitCommitHash`被调用函数的结果替换：
+
+<CodeGroup>
+
+```ts input
+import { getGitCommitHash } from "./getGitCommitHash.ts" with { type: "macro" };
+
+console.log(`The current Git commit hash is ${getGitCommitHash()}`);
+```
+
+```ts output
+console.log(`The current Git commit hash is 3ee3259104e4507cf62c160f0ff5357ec4c7a7f8`);
+```
+
+</CodeGroup>
+
+<Info>
+  您可能在想"为什么不只使用`process.env.GIT_COMMIT_HASH`？"好吧，您也可以这样做。但是，您可以使用环境变量做到这一点吗？
+</Info>
+
+### 在构建时发出fetch()请求
+
+在此示例中，我们使用`fetch()`发出传出HTTP请求，使用`HTMLRewriter`解析HTML响应，并返回一个包含标题和meta标签的对象——全部在构建时。
+
+```ts title="meta.ts" icon="/icons/typescript.svg"
+export async function extractMetaTags(url: string) {
+  const response = await fetch(url);
+  const meta = {
+    title: "",
+  };
+  new HTMLRewriter()
+    .on("title", {
+      text(element) {
+        meta.title += element.text;
+      },
+    })
+    .on("meta", {
+      element(element) {
+        const name =
+          element.getAttribute("name") || element.getAttribute("property") || element.getAttribute("itemprop");
+
+        if (name) meta[name] = element.getAttribute("content");
+      },
+    })
+    .transform(response);
+
+  return meta;
+}
+```
+
+`extractMetaTags`函数在构建时被擦除并替换为函数调用的结果。这意味着fetch请求发生在构建时，结果被嵌入到包中。此外，抛出错误的分支也被消除了，因为它不可达。
+
+<CodeGroup>
+
+```jsx input
+import { extractMetaTags } from "./meta.ts" with { type: "macro" };
+
+export const Head = () => {
+  const headTags = extractMetaTags("https://example.com");
+
+  if (headTags.title !== "Example Domain") {
+    throw new Error("Expected title to be 'Example Domain'");
+  }
+
+  return (
+    <head>
+      <title>{headTags.title}</title>
+      <meta name="viewport" content={headTags.viewport} />
+    </head>
+  );
+};
+```
+
+```jsx output
+export const Head = () => {
+  const headTags = {
+    title: "Example Domain",
+    viewport: "width=device-width, initial-scale=1",
+  };
+
+  return (
+    <head>
+      <title>{headTags.title}</title>
+      <meta name="viewport" content={headTags.viewport} />
+    </head>
+  );
+};
+```
+
+</CodeGroup>

@@ -1,0 +1,100 @@
+# CLI 用法
+
+```bash
+bun test <patterns>
+```
+
+### 执行控制
+
+<ParamField path="--timeout" type="number" default="5000">
+  设置每个测试的超时时间（毫秒）（默认 5000）
+</ParamField>
+
+<ParamField path="--rerun-each" type="number">
+  重新运行每个测试文件 <code>NUMBER</code> 次，有助于捕获某些错误
+</ParamField>
+
+<ParamField path="--concurrent" type="boolean">
+  将所有测试视为 <code>test.concurrent()</code> 测试
+</ParamField>
+
+<ParamField path="--randomize" type="boolean">
+  随机顺序运行测试
+</ParamField>
+
+<ParamField path="--seed" type="number">
+  设置测试随机化的随机种子
+</ParamField>
+
+<ParamField path="--bail" type="number" default="1">
+  在 <code>NUMBER</code> 次失败后退出测试套件。如果您未指定数字，则默认为 1。
+</ParamField>
+
+<ParamField path="--max-concurrency" type="number" default="20">
+  同时执行的最大测试数（默认 20）
+</ParamField>
+
+### 测试过滤
+
+<ParamField path="--todo" type="boolean">
+  包括标记为 <code>test.todo()</code> 的测试
+</ParamField>
+
+<ParamField path="--test-name-pattern" type="string">
+  仅运行名称与给定正则表达式匹配的测试。别名：<code>-t</code>
+</ParamField>
+
+### 报告
+
+<ParamField path="--reporter" type="string">
+  测试输出报告格式。可用：<code>junit</code>（需要 --reporter-outfile）、<code>dots</code>。默认：
+  控制台输出。
+</ParamField>
+
+<ParamField path="--reporter-outfile" type="string">
+  报告格式的输出文件路径（与 --reporter 一起使用）
+</ParamField>
+
+<ParamField path="--dots" type="boolean">
+  启用点状报告。--reporter=dots 的简写
+</ParamField>
+
+### 覆盖率
+
+<ParamField path="--coverage" type="boolean">
+  生成覆盖率档案
+</ParamField>
+
+<ParamField path="--coverage-reporter" type="string" default="text">
+  以 <code>text</code> 和/或 <code>lcov</code> 报告覆盖率。默认为 <code>text</code>
+</ParamField>
+
+<ParamField path="--coverage-dir" type="string" default="coverage">
+  覆盖率文件的目录。默认为 <code>coverage</code>
+</ParamField>
+
+### 快照
+
+<ParamField path="--update-snapshots" type="boolean">
+  更新快照文件。别名：<code>-u</code>
+</ParamField>
+
+## 示例
+
+运行所有测试文件：
+
+```bash terminal icon="terminal"
+bun test
+```
+
+运行所有文件名中包含 "foo" 或 "bar" 的测试文件：
+
+```bash terminal icon="terminal"
+bun test foo bar
+```
+
+运行所有测试文件，但只包括名称中包含 "baz" 的测试：
+
+```bash terminal icon="terminal"
+bun test --test-name-pattern baz
+```

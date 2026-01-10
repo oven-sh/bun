@@ -1,0 +1,16 @@
+---
+title: 将 Blob 转换为 Uint8Array
+sidebarTitle: "Blob 到 Uint8Array"
+mode: center
+---
+
+[Blob](https://developer.mozilla.org/zh-CN/docs/Web/API/Blob) 类提供了多种方法以不同格式消费其内容。此代码片段将内容读取到 [ArrayBuffer](https://developer.mozilla.org/zh-CN/docs/Web/JavaScript/Reference/Global_Objects/ArrayBuffer) 中，然后从该缓冲区创建 [Uint8Array](https://developer.mozilla.org/zh-CN/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array)。
+
+```ts
+const blob = new Blob(["hello world"]);
+const arr = new Uint8Array(await blob.arrayBuffer());
+```
+
+---
+
+参阅 [文档 > API > 二进制数据](/runtime/binary-data#conversion) 获取关于使用Bun操作二进制数据的完整文档。

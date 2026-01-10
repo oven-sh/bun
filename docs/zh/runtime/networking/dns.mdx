@@ -1,0 +1,111 @@
+---
+title: DNS
+description: 使用 Bun 的 DNS 模块解析 DNS 记录
+---
+
+Bun 实现了它自己的 `dns` 模块和 `node:dns` 模块。
+
+```ts
+import * as dns from "node:dns";
+
+const addrs = await dns.promises.resolve4("bun.com", { ttl: true });
+console.log(addrs);
+// => [{ address: "172.67.161.226", family: 4, ttl: 0 }, ...]
+```
+
+```ts
+import { dns } from "bun";
+
+dns.prefetch("bun.com", 443);
+```
+
+---
+
+## Bun 中的 DNS 缓存
+
+Bun 支持 DNS 缓存。此缓存使对相同主机的重复连接更快。
+
+在撰写本文时，我们最多缓存 255 个条目，每个条目的最大缓存时间为 30 秒。如果任何到主机的连接失败，我们会从缓存中删除该条目。当同时对同一主机进行多个连接时，DNS 查找会被去重，以避免对同一主机发出多个请求。
+
+此缓存被以下组件自动使用：
+
+- `bun install`
+- `fetch()`
+- `node:http` (客户端)
+- `Bun.connect`
+- `node:net`
+- `node:tls`
+
+### 何时应该预取 DNS 条目？
+
+Web 浏览器公开了 [`<link rel="dns-prefetch">`](https://developer.mozilla.org/en-US/docs/Web/Performance/dns-prefetch) 以允许开发人员预取 DNS 条目。当您知道在不久的将来需要连接到主机并希望避免初始 DNS 查找时，这很有用。
+
+在 Bun 中，您可以使用 `dns.prefetch` API 来实现相同的效果。
+
+```ts
+import { dns } from "bun";
+
+dns.prefetch("my.database-host.com", 5432);
+```
+
+一个可能想使用此功能的示例是数据库驱动程序。当您的应用程序首次启动时，您可以预取数据库主机的 DNS 条目，这样到完成加载所有内容时，解析数据库主机的 DNS 查询可能已经完成。
+
+### `dns.prefetch`
+
+<Warning>此 API 是实验性的，将来可能会更改。</Warning>
+
+要预取 DNS 条目，您可以使用 `dns.prefetch` API。当您知道很快需要连接到主机并希望避免初始 DNS 查找时，此 API 很有用。
+
+```ts
+dns.prefetch(hostname: string, port: number): void;
+```
+
+这里是一个示例：
+
+```ts
+import { dns } from "bun";
+
+dns.prefetch("bun.com", 443);
+//
+// ... 一段时间后 ...
+await fetch("https://bun.com");
+```
+
+### `dns.getCacheStats()`
+
+<Warning>此 API 是实验性的，将来可能会更改。</Warning>
+
+要获取当前缓存统计信息，您可以使用 `dns.getCacheStats` API。此 API 返回一个具有以下属性的对象：
+
+```ts
+{
+  cacheHitsCompleted: number; // 已完成的缓存命中
+  cacheHitsInflight: number; // 正在处理的缓存命中
+  cacheMisses: number; // 缓存未命中
+  size: number; // DNS 缓存中的项目数量
+  errors: number; // 连接失败次数
+  totalCount: number; // 请求连接的总次数（包括缓存命中和未命中）
+}
+```
+
+示例：
+
+```ts
+import { dns } from "bun";
+
+const stats = dns.getCacheStats();
+console.log(stats);
+// => { cacheHitsCompleted: 0, cacheHitsInflight: 0, cacheMisses: 0, size: 0, errors: 0, totalCount: 0 }
+```
+
+### 配置 DNS 缓存 TTL
+
+Bun 默认将 DNS 缓存条目的 TTL 设置为 30 秒。要更改此设置，您可以设置环境变量 `$BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS`。例如，要将 TTL 设置为 5 秒：
+
+```sh
+BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS=5 bun run my-script.ts
+```
+
+#### 为什么默认值是 30 秒？
+
+不幸的是，底层系统 API（`getaddrinfo`）没有提供获取 DNS 条目 TTL 的方法。这意味着我们必须随意选择一个数字。我们选择 30 秒，因为它足够长以看到缓存的好处，又足够短以至于如果 DNS 条目更改也不太可能引起问题。[Amazon Web Services 建议 Java 虚拟机使用 5 秒](https://docs.aws.amazon.com/sdk-for-java/v1/developer-guide/jvm-ttl-dns.html)，然而 JVM 默认会无限期缓存。

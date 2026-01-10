@@ -1,0 +1,64 @@
+---
+title: "生命周期脚本"
+description: "Bun 如何安全地处理包生命周期脚本"
+---
+
+[npm] 上的包可以在其 [package.json] 中定义_生命周期脚本_。以下是一些最常见的，但还有[许多其他的](https://docs.npmjs.com/cli/v10/using-npm/scripts)。
+
+- `preinstall`: 在包安装之前运行
+- `postinstall`: 在包安装之后运行
+- `preuninstall`: 在包卸载之前运行
+- `prepublishOnly`: 在包发布之前运行
+
+这些脚本是任意的 shell 命令，包管理器应在适当的时间读取并执行。但执行任意脚本代表潜在的安全风险，所以—与其他 `npm` 客户端不同—Bun 默认不执行任意生命周期脚本。
+
+---
+
+## `postinstall`
+
+`postinstall` 脚本尤其重要。它被广泛用于为实现为[原生 Node.js 插件](https://nodejs.org/api/addons.html)的包构建或安装特定平台的二进制文件。例如，`node-sass` 是一个流行的包，使用 `postinstall` 为 Sass 构建原生二进制文件。
+
+```json package.json icon="file-json"
+{
+  "name": "my-app",
+  "version": "1.0.0",
+  "dependencies": {
+    "node-sass": "^6.0.1"
+  }
+}
+```
+
+---
+
+## `trustedDependencies`
+
+Bun 使用"默认安全"的方法，而不是执行任意脚本。你可以将某些包添加到白名单，Bun 将为这些包执行生命周期脚本。要告诉 Bun 允许特定包的生命周期脚本，请将包名添加到你的 [package.json] 中的 [trustedDependencies] 数组中。
+
+```json package.json icon="file-json"
+{
+  "name": "my-app",
+  "version": "1.0.0",
+  "trustedDependencies": ["node-sass"] // [!code ++]
+}
+```
+
+添加到 [trustedDependencies] 后，安装/重新安装包。Bun 将读取此字段并为 `my-trusted-package` 运行生命周期脚本。
+
+默认允许前 500 个具有生命周期脚本的 npm 包。你可以[在这里](https://github.com/oven-sh/bun/blob/main/src/install/default-trusted-dependencies.txt)查看完整列表。
+
+<Note>
+  默认受信任依赖列表仅适用于从 npm 安装的包。对于来自其他来源的包
+  （如 `file:`、`link:`、`git:` 或 `github:` 依赖），你必须明确将它们添加到 [trustedDependencies]
+  以运行其生命周期脚本，即使包名与默认列表中的条目匹配也是如此。这可以防止恶意
+  包通过本地文件路径或 Git 存储库伪造受信任包名。
+</Note>
+
+---
+
+## `--ignore-scripts`
+
+要禁用所有包的生命周期脚本，请使用 `--ignore-scripts` 标志。
+
+```bash terminal icon="terminal"
+bun install --ignore-scripts
+```

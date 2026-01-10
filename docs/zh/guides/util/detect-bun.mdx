@@ -1,0 +1,28 @@
+---
+title: 检测代码何时在 Bun 中执行
+sidebarTitle: 检测 Bun
+mode: center
+---
+
+推荐的方法是检查 `process.versions.bun` 来检测代码何时在 Bun 中执行。这在 JavaScript 和 TypeScript 中都可以使用，无需任何额外的类型定义。
+
+```ts
+if (process.versions.bun) {
+  // 此代码仅在文件使用 Bun 运行时执行
+}
+```
+
+---
+
+或者，您可以检查 `Bun` 全局变量的存在。这类似于检查 `window` 变量的存在以检测代码何时在浏览器中执行。
+
+<Note>
+  除非安装了 `@types/bun`，否则这种方法会在 TypeScript 中导致类型错误。你可以使用 `bun
+  add -d @types/bun` 安装它。
+</Note>
+
+```ts
+if (typeof Bun !== "undefined") {
+  // 此代码仅在文件使用 Bun 运行时执行
+}
+```

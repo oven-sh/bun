@@ -1,0 +1,46 @@
+---
+title: 配置 git 以对比 Bun 的 lockb 锁定文件
+sidebarTitle: 配置 git 以对比 Bun 的锁定文件
+mode: center
+---
+
+<Note>
+  Bun v1.1.39 引入了 [bun.lock]，一种 JSONC 格式的锁定文件。[bun.lock]是人类可读的，并且无需配置即可进行 git 对比，且不影响性能。在 1.2.0+ 版本中，它是新项目使用的默认格式。[**了解更多。**](/pm/lockfile#text-based-lockfile)
+</Note>
+
+---
+
+要让 `git` 学会如何生成 Bun 二进制锁定文件格式 (.lockb) 的人类可读对比，请将以下内容添加到您的本地或全局 [.gitattributes]文件中：
+
+```js gitattributes icon="file-code"
+*.lockb binary diff=lockb
+```
+
+---
+
+然后使用以下命令将以下内容添加到您的本地 git 配置中：
+
+```sh terminal icon="terminal"
+git config diff.lockb.textconv bun
+git config diff.lockb.binary true
+```
+
+---
+
+要全局配置 git 以对比 Bun 的锁定文件，请使用以下命令将以下内容添加到您的全局 git 配置中：
+
+```sh terminal icon="terminal"
+git config --global diff.lockb.textconv bun
+git config --global diff.lockb.binary true
+```
+
+---
+
+## 工作原理
+
+为什么这样有效：
+
+- `textconv` 告诉 git 在对比之前在文件上运行 bun
+- `binary` 告诉 git 将文件视为二进制文件（因此不会尝试逐行对比）
+
+在 Bun 中，您可以执行 Bun 的锁定文件 (`bun ./bun.lockb`) 以生成锁定文件的人类可读版本，然后 `git diff` 可以使用该版本生成人类可读的差异。

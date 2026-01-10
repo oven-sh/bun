@@ -1,0 +1,443 @@
+---
+title: 归档
+description: 使用 Bun 的快速原生实现创建和解压 tar 归档文件
+---
+
+Bun 通过 [Bun.Archive](file:///d:/code/mintlify-docs/zh/api/Bun.md#archive) 提供了用于处理 tar 归档文件的快速原生实现。它支持从内存数据创建归档文件、将归档文件解压到磁盘以及在不解压的情况下读取归档内容。
+
+## 快速开始
+
+**从文件创建归档:**
+
+```ts
+const archive = Bun.Archive.from({
+  "hello.txt": "Hello, World!",
+  "data.json": JSON.stringify({ foo: "bar" }),
+  "nested/file.txt": "Nested content",
+});
+
+// 写入磁盘
+await Bun.Archive.write("bundle.tar", archive);
+```
+
+**解压归档:**
+
+```ts
+const tarball = await Bun.file("package.tar.gz").bytes();
+const archive = Bun.Archive.from(tarball);
+const entryCount = await archive.extract("./output");
+console.log(`Extracted ${entryCount} entries`);
+```
+
+**在不解压的情况下读取归档内容:**
+
+```ts
+const tarball = await Bun.file("package.tar.gz").bytes();
+const archive = Bun.Archive.from(tarball);
+const files = await archive.files();
+
+for (const [path, file] of files) {
+  console.log(`${path}: ${await file.text()}`);
+}
+```
+
+## 创建归档
+
+使用 [Bun.Archive.from()](file:///d:/code/mintlify-docs/zh/api/Bun.md#from) 从一个对象创建归档，其中键是文件路径，值是文件内容:
+
+```ts
+const archive = Bun.Archive.from({
+  "README.md": "# My Project",
+  "src/index.ts": "console.log('Hello');",
+  "package.json": JSON.stringify({ name: "my-project" }),
+});
+```
+
+文件内容可以是:
+
+- **字符串** - 文本内容
+- **Blobs** - 二进制数据
+- **ArrayBufferViews** (例如 [Uint8Array](file:///d:/code/mintlify-docs/zh/api/globals.md#Uint8Array)) - 原始字节
+- **ArrayBuffers** - 原始二进制数据
+
+```ts
+const data = "binary data";
+const arrayBuffer = new ArrayBuffer(8);
+
+const archive = Bun.Archive.from({
+  "text.txt": "Plain text",
+  "blob.bin": new Blob([data]),
+  "bytes.bin": new Uint8Array([1, 2, 3, 4]),
+  "buffer.bin": arrayBuffer,
+});
+```
+
+### 将归档写入磁盘
+
+使用 [Bun.Archive.write()](file:///d:/code/mintlify-docs/zh/api/Bun.md#write) 一次性创建并写入归档:
+
+```ts
+// 写入未压缩的 tar
+await Bun.Archive.write("output.tar", {
+  "file1.txt": "content1",
+  "file2.txt": "content2",
+});
+
+// 写入 gzip 压缩的 tar
+const files = { "src/index.ts": "console.log('Hello');" };
+await Bun.Archive.write("output.tar.gz", files, "gzip");
+```
+
+### 获取归档字节
+
+将归档数据作为字节或 Blob 获取:
+
+```ts
+const files = { "hello.txt": "Hello, World!" };
+const archive = Bun.Archive.from(files);
+
+// 作为 Uint8Array
+const bytes = await archive.bytes();
+
+// 作为 Blob
+const blob = await archive.blob();
+
+// 使用 gzip 压缩
+const gzippedBytes = await archive.bytes("gzip");
+const gzippedBlob = await archive.blob("gzip");
+```
+
+## 解压归档
+
+### 从现有归档数据
+
+从现有的 tar/tar.gz 数据创建归档:
+
+```ts
+// 从文件
+const tarball = await Bun.file("package.tar.gz").bytes();
+const archiveFromFile = Bun.Archive.from(tarball);
+```
+
+```ts
+// 从 fetch 响应
+const response = await fetch("https://example.com/archive.tar.gz");
+const archiveFromFetch = Bun.Archive.from(await response.blob());
+```
+
+### 解压到磁盘
+
+使用 `.extract()` 将所有文件写入目录:
+
+```ts
+const tarball = await Bun.file("package.tar.gz").bytes();
+const archive = Bun.Archive.from(tarball);
+const count = await archive.extract("./extracted");
+console.log(`Extracted ${count} entries`);
+```
+
+如果目标目录不存在，将自动创建。现有文件将被覆盖。返回的计数包括文件、目录和符号链接（在 POSIX 系统上）。
+
+**注意**: 在 Windows 上，归档中的符号链接在解压过程中总是被跳过。Bun 不会尝试创建它们，无论权限级别如何。在 Linux 和 macOS 上，符号链接正常解压。
+
+**安全说明**: Bun.Archive 在解压期间验证路径，拒绝绝对路径（POSIX 的 `/`，Windows 驱动器字母如 `C:\` 或 `C:/`，以及 UNC 路径如 `\\server\share`）。路径遍历组件 (`..`) 会被规范化去除（例如，`dir/sub/../file` 变成 `dir/file`）以防止目录遍历攻击。
+
+### 过滤解压的文件
+
+使用 glob 模式仅解压特定文件。模式与使用正斜杠 (`/`) 标准化的归档条目路径匹配。正模式指定要包含的内容，负模式（以 `!` 为前缀）指定要排除的内容。负模式在正模式之后应用，所以**仅使用负模式将不匹配任何内容**（您必须先包含一个正模式如 `**`）：
+
+```ts
+const tarball = await Bun.file("package.tar.gz").bytes();
+const archive = Bun.Archive.from(tarball);
+
+// 仅解压 TypeScript 文件
+const tsCount = await archive.extract("./extracted", { glob: "**/*.ts" });
+
+// 从多个目录解压文件
+const multiCount = await archive.extract("./extracted", {
+  glob: ["src/**", "lib/**"],
+});
+```
+
+使用负模式（以 `!` 为前缀）排除文件。混合使用正模式和负模式时，条目必须至少匹配一个正模式且不匹配任何负模式：
+
+```ts
+// 解压除 node_modules 外的所有内容
+const distCount = await archive.extract("./extracted", {
+  glob: ["**", "!node_modules/**"],
+});
+
+// 解压源文件但排除测试
+const srcCount = await archive.extract("./extracted", {
+  glob: ["src/**", "!**/*.test.ts", "!**/__tests__/**"],
+});
+```
+
+## 读取归档内容
+
+### 获取所有文件
+
+使用 `.files()` 获取归档内容作为 `Map` 形式的 `File` 对象，而无需解压到磁盘。与处理所有条目类型的 `extract()` 不同，`files()` 仅返回常规文件（无目录）：
+
+```ts
+const tarball = await Bun.file("package.tar.gz").bytes();
+const archive = Bun.Archive.from(tarball);
+const files = await archive.files();
+
+for (const [path, file] of files) {
+  console.log(`${path}: ${file.size} bytes`);
+  console.log(await file.text());
+}
+```
+
+每个 `File` 对象包括:
+
+- `name` - 归档内的文件路径（始终使用正斜杠 `/` 作为分隔符）
+- `size` - 文件大小（以字节为单位）
+- `lastModified` - 修改时间戳
+- 标准 `Blob` 方法: `text()`、`arrayBuffer()`、`stream()` 等。
+
+**注意**: `files()` 将文件内容加载到内存中。对于大型归档，考虑使用 `extract()` 直接写入磁盘。
+
+### 错误处理
+
+归档操作可能由于损坏的数据、I/O 错误或无效路径而失败。使用 try/catch 处理这些情况:
+
+```ts
+try {
+  const tarball = await Bun.file("package.tar.gz").bytes();
+  const archive = Bun.Archive.from(tarball);
+  const count = await archive.extract("./output");
+  console.log(`Extracted ${count} entries`);
+} catch (e: unknown) {
+  if (e instanceof Error) {
+    const error = e as Error & { code?: string };
+    if (error.code === "EACCES") {
+      console.error("Permission denied");
+    } else if (error.code === "ENOSPC") {
+      console.error("Disk full");
+    } else {
+      console.error("Archive error:", error.message);
+    }
+  } else {
+    console.error("Archive error:", String(e));
+  }
+}
+```
+
+常见错误场景:
+
+- **损坏/截断的归档** - `Archive.from()` 加载归档数据；错误可能推迟到读取/解压操作
+- **权限被拒绝** - 如果目标目录不可写，`extract()` 会抛出错误
+- **磁盘空间不足** - 如果空间不足，`extract()` 会抛出错误
+- **无效路径** - 操作对格式错误的文件路径抛出错误
+
+`extract()` 返回的计数包括所有成功写入的条目（文件、目录和 POSIX 系统上的符号链接）。
+
+**安全说明**: Bun.Archive 在解压期间自动验证路径。绝对路径（POSIX 的 `/`，Windows 驱动器字母，UNC 路径）和不安全的符号链接目标被拒绝。路径遍历组件 (`..`) 被规范化去除以防止目录遍历。
+
+对于不受信任的归档，您可以在解压前枚举和验证路径：
+
+```ts
+const archive = Bun.Archive.from(untrustedData);
+const files = await archive.files();
+
+// 可选：自定义验证以进行额外检查
+for (const [path] of files) {
+  // 示例：拒绝隐藏文件
+  if (path.startsWith(".") || path.includes("/.")) {
+    throw new Error(`Hidden file rejected: ${path}`);
+  }
+  // 示例：列入白名单的特定目录
+  if (!path.startsWith("src/") && !path.startsWith("lib/")) {
+    throw new Error(`Unexpected path: ${path}`);
+  }
+}
+
+// 解压到受控目的地
+await archive.extract("./safe-output");
+```
+
+使用 glob 模式调用 `files()` 时，如果没有文件匹配，将返回一个空的 `Map`：
+
+```ts
+const matches = await archive.files("*.nonexistent");
+if (matches.size === 0) {
+  console.log("No matching files found");
+}
+```
+
+### 使用 Glob 模式过滤
+
+传递 glob 模式来过滤返回的文件:
+
+```ts
+// 仅获取 TypeScript 文件
+const tsFiles = await archive.files("**/*.ts");
+
+// 获取 src 目录中的文件
+const srcFiles = await archive.files("src/*");
+
+// 获取所有 JSON 文件（递归）
+const jsonFiles = await archive.files("**/*.json");
+
+// 使用模式数组获取多种文件类型
+const codeFiles = await archive.files(["**/*.ts", "**/*.js"]);
+```
+
+支持的 glob 模式（[Bun.Glob](file:///d:/code/mintlify-docs/zh/api/glob.md) 语法的子集）:
+
+- `*` - 匹配除 `/` 以外的任何字符
+- `**` - 匹配包括 `/` 在内的任何字符
+- `?` - 匹配单个字符
+- `[abc]` - 匹配字符集
+- `{a,b}` - 匹配替代项
+- `!pattern` - 排除匹配模式的文件（否定）。必须与正模式结合使用；仅使用负模式不匹配任何内容。
+
+参见 [Bun.Glob](file:///d:/code/mintlify-docs/zh/api/glob.md) 获取完整的 glob 语法，包括转义和高级模式。
+
+## 压缩
+
+Bun.Archive 同时支持读取和写入的 gzip 压缩:
+
+```ts
+// 读取：自动检测 gzip
+const gzippedTarball = await Bun.file("archive.tar.gz").bytes();
+const archive = Bun.Archive.from(gzippedTarball);
+
+// 写入：指定压缩
+const files = { "hello.txt": "Hello, World!" };
+await Bun.Archive.write("output.tar.gz", files, "gzip");
+
+// 获取字节：指定压缩
+const gzippedBytes = await archive.bytes("gzip");
+```
+
+压缩参数接受:
+
+- `"gzip"` - 启用 gzip 压缩
+- `true` - 与 `"gzip"` 相同
+- `false` 或 `undefined` - 无压缩
+
+## 示例
+
+### 打包项目文件
+
+```ts
+import { Glob } from "bun";
+
+// 收集源文件
+const files: Record<string, string> = {};
+const glob = new Glob("src/**/*.ts");
+
+for await (const path of glob.scan(".")) {
+  // 将路径分隔符标准化为正斜杠以实现跨平台兼容性
+  const archivePath = path.replaceAll("\\", "/");
+  files[archivePath] = await Bun.file(path).text();
+}
+
+// 添加 package.json
+files["package.json"] = await Bun.file("package.json").text();
+
+// 创建压缩归档
+await Bun.Archive.write("bundle.tar.gz", files, "gzip");
+```
+
+### 解压并处理 npm 包
+
+```ts
+const response = await fetch("https://registry.npmjs.org/lodash/-/lodash-4.17.21.tgz");
+const archive = Bun.Archive.from(await response.blob());
+
+// 获取 package.json
+const files = await archive.files("package/package.json");
+const packageJson = files.get("package/package.json");
+
+if (packageJson) {
+  const pkg = JSON.parse(await packageJson.text());
+  console.log(`Package: ${pkg.name}@${pkg.version}`);
+}
+```
+
+### 从目录创建归档
+
+```ts
+import { readdir } from "node:fs/promises";
+import { join } from "node:path";
+
+async function archiveDirectory(dir: string): Promise<Bun.Archive> {
+  const files: Record<string, Blob> = {};
+
+  async function walk(currentDir: string, prefix: string = "") {
+    const entries = await readdir(currentDir, { withFileTypes: true });
+
+    for (const entry of entries) {
+      const fullPath = join(currentDir, entry.name);
+      const archivePath = prefix ? `${prefix}/${entry.name}` : entry.name;
+
+      if (entry.isDirectory()) {
+        await walk(fullPath, archivePath);
+      } else {
+        files[archivePath] = Bun.file(fullPath);
+      }
+    }
+  }
+
+  await walk(dir);
+  return Bun.Archive.from(files);
+}
+
+const archive = await archiveDirectory("./my-project");
+await Bun.Archive.write("my-project.tar.gz", archive, "gzip");
+```
+
+## 参考
+
+> **注意**: 以下类型签名是为了文档目的而简化的。有关完整类型定义，请参见 [`packages/bun-types/bun.d.ts`](https://github.com/oven-sh/bun/blob/main/packages/bun-types/bun.d.ts)。
+
+```ts
+type ArchiveCompression = "gzip" | boolean;
+
+type ArchiveInput =
+  | Record<string, string | Blob | Bun.ArrayBufferView | ArrayBufferLike>
+  | Blob
+  | Bun.ArrayBufferView
+  | ArrayBufferLike;
+
+interface ArchiveExtractOptions {
+  /** 用于过滤解压的 Glob 模式。支持带 "!" 前缀的负模式。 */
+  glob?: string | readonly string[];
+}
+
+class Archive {
+  /**
+   * 从输入数据创建归档
+   */
+  static from(data: ArchiveInput): Archive;
+
+  /**
+   * 直接将归档写入磁盘
+   */
+  static write(path: string, data: ArchiveInput | Archive, compress?: ArchiveCompression): Promise<void>;
+
+  /**
+   * 将归档解压到目录
+   * @returns 解压的条目数（文件、目录和符号链接）
+   */
+  extract(path: string, options?: ArchiveExtractOptions): Promise<number>;
+
+  /**
+   * 将归档作为 Blob 获取
+   */
+  blob(compress?: ArchiveCompression): Promise<Blob>;
+
+  /**
+   * 将归档作为 Uint8Array 获取
+   */
+  bytes(compress?: ArchiveCompression): Promise<Uint8Array<ArrayBuffer>>;
+
+  /**
+   * 将归档内容作为 File 对象获取（仅常规文件，无目录）
+   */
+  files(glob?: string | readonly string[]): Promise<Map<string, File>>;
+}

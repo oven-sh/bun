@@ -1,0 +1,13 @@
+---
+title: 将 Node.js Readable 转换为 ArrayBuffer
+sidebarTitle: Readable 到 ArrayBuffer
+mode: center
+---
+
+要将 Node.js `Readable` 流在 Bun 中转换为 `ArrayBuffer`，您可以创建一个新的 `Response` 对象，将流作为主体，然后使用 `arrayBuffer()` 将流读入 `ArrayBuffer`。
+
+```ts
+import { Readable } from "stream";
+const stream = Readable.from(["Hello, ", "world!"]);
+const buf = await new Response(stream).arrayBuffer();
+```

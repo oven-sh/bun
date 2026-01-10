@@ -1,0 +1,47 @@
+---
+title: 使用 VS Code 扩展调试 Bun
+sidebarTitle: VS Code 调试器
+mode: center
+---
+
+<Note>
+  VSCode 扩展支持目前存在问题。我们建议暂时使用 [Web 调试器](/guides/runtime/web-debugger)。
+</Note>
+
+Bun 支持 [WebKit 检查协议](https://github.com/oven-sh/bun/blob/main/packages/bun-inspector-protocol/src/protocol/jsc/index.d.ts)，因此您可以使用交互式调试器调试代码。
+
+---
+
+要安装扩展，请访问 VS Code 市场网站上的 [Bun for Visual Studio Code](https://marketplace.visualstudio.com/items?itemName=oven.bun-vscode) 页面，然后点击安装。
+
+<Frame>![VS Code 扩展](https://github.com/oven-sh/bun/assets/3084745/7c8c80e6-d49e-457a-a45e-45ebed946d56)</Frame>
+
+---
+
+或者，在 VS Code 的扩展选项卡中搜索 `bun-vscode`。
+
+<Frame>![VS Code 扩展](https://github.com/oven-sh/bun/assets/3084745/664b4c40-944c-4076-a4c2-f812aebd3dc9)</Frame>
+
+---
+
+确保您安装的是由认证的 Oven 组织发布的扩展。
+
+<Frame>![VS Code 扩展](https://github.com/oven-sh/bun/assets/3084745/73e6b09f-9ff1-4d85-b725-c5eb7215b6ae)</Frame>
+
+---
+
+安装后，命令面板中会出现两个新的 Bun 特定命令。要打开面板，请单击查看 > 命令面板，或键入 `Ctrl+Shift+P`（Windows、Linux）或 `Cmd+Shift+P`（Mac）。
+
+---
+
+`Bun: 运行文件` 命令将执行您的代码并将输出打印到 VS Code 中的调试控制台。断点将被忽略；这类似于从命令行使用 `bun <file>` 执行文件。
+
+<Frame>![VS Code 扩展](https://github.com/oven-sh/bun/assets/3084745/1b2c7fd9-fbb9-486a-84d0-eb7ec135ded3)</Frame>
+
+---
+
+`Bun: 调试文件` 命令将执行您的代码并将输出打印到 VS Code 中的调试控制台。您可以通过单击行号左侧在代码中设置断点；应该会出现一个红点。
+
+当您使用 `Bun: 调试文件` 运行文件时，执行将在断点处暂停。您可以使用 VS Code 控件检查作用域中的变量并逐行逐步执行代码。
+
+<Frame>![VS Code 扩展](https://github.com/oven-sh/bun/assets/3084745/c579a36c-eb21-4a58-bc9c-74612aad82af)</Frame>

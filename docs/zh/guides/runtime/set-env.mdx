@@ -1,0 +1,51 @@
+---
+title: 设置环境变量
+sidebarTitle: 设置环境变量
+mode: center
+---
+
+当前环境变量可以通过 `process.env` 或 `Bun.env` 访问。
+
+```ts index.ts icon="/icons/typescript.svg"
+Bun.env.API_TOKEN; // => "secret"
+process.env.API_TOKEN; // => "secret"
+```
+
+---
+
+在 [.env] 文件中设置这些变量。
+
+Bun 会自动读取以下文件（按优先级递增顺序列出）。
+
+- [.env]
+- [.env.production]、[.env.development]、[.env.test]（取决于 `NODE_ENV` 的值）
+- [.env.local]（当 `NODE_ENV=test` 时不加载）
+
+```ini .env icon="settings"
+FOO=hello
+BAR=world
+```
+
+---
+
+变量也可以通过命令行设置。
+
+<CodeGroup>
+
+```sh Linux/macOS icon="terminal"
+FOO=helloworld bun run dev
+```
+
+```sh Windows icon="windows"
+# 使用 CMD
+set FOO=helloworld && bun run dev
+
+# 使用 PowerShell
+$env:FOO="helloworld"; bun run dev
+```
+
+</CodeGroup>
+
+---
+
+有关在 Bun 中使用环境变量的更多信息，请参阅 [文档 > 运行时 > 环境变量](/runtime/environment-variables)。

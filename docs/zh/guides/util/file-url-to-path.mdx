@@ -1,0 +1,16 @@
+---
+title: 将文件 URL 转换为绝对路径
+sidebarTitle: 文件 URL 到路径
+mode: center
+---
+
+使用 `Bun.fileURLToPath()` 将 `file://` URL 转换为绝对路径。
+
+```ts
+Bun.fileURLToPath("file:///path/to/file.txt");
+// => "/path/to/file.txt"
+```
+
+---
+
+请参阅 [文档 > API > 工具](/runtime/utils) 了解更多的实用工具。

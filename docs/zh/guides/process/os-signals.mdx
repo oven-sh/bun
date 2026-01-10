@@ -1,0 +1,31 @@
+---
+title: 监听操作系统信号
+sidebarTitle: 操作系统信号
+mode: center
+---
+
+Bun 支持 Node.js 的 `process` 全局对象，包括使用 `process.on()` 方法监听操作系统信号。
+
+```ts
+process.on("SIGINT", () => {
+  console.log("Received SIGINT");
+});
+```
+
+---
+
+如果您不知道要监听哪个信号，可以监听 [`"beforeExit"`](https://nodejs.org/api/process.html#event-beforeexit) 和 [`"exit"`](https://nodejs.org/api/process.html#event-exit) 事件。
+
+```ts
+process.on("beforeExit", code => {
+  console.log(`Event loop is empty!`);
+});
+
+process.on("exit", code => {
+  console.log(`Process is exiting with code ${code}`);
+});
+```
+
+---
+
+请参阅 [文档 > API > 工具](/runtime/utils) 了解更多的实用工具。

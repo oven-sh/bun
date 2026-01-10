@@ -1,0 +1,114 @@
+---
+title: 使用 systemd 以守护进程方式运行 Bun
+sidebarTitle: "systemd 与 Bun"
+mode: center
+---
+
+[systemd](https://systemd.io) 是一个 Linux 操作系统的初始化系统和服务管理器，用于管理系统进程和服务的启动和控制。
+
+---
+
+要使用**systemd**将 Bun 应用程序作为守护进程运行，您需要在 `/lib/systemd/system/` 中创建一个_服务文件_。
+
+```sh terminal icon="terminal"
+cd /lib/systemd/system
+touch my-app.service
+```
+
+---
+
+这是一个典型的在系统启动时运行应用程序的服务文件。您可以将其用作自己服务的模板。将 `YOUR_USER` 替换为您希望以之身份运行应用程序的用户名。要以 `root` 身份运行，请将 `YOUR_USER` 替换为 `root`，尽管出于安全原因，一般不推荐这样做。
+
+有关每个设置的更多信息，请参阅 [systemd 文档](https://www.freedesktop.org/software/systemd/man/systemd.service.html)。
+
+```ini my-app.service icon="file-code"
+[Unit]
+# 描述应用程序
+Description=My App
+# 在网络可用后启动应用程序
+After=network.target
+
+[Service]
+# 通常使用 'simple'
+# 选项为 https://www.freedesktop.org/software/systemd/man/systemd.service.html#Type=
+Type=simple
+# 启动应用程序时使用的用户
+User=YOUR_USER
+# 应用程序根目录的路径
+WorkingDirectory=/home/YOUR_USER/path/to/my-app
+# 启动应用程序的命令
+# 需要绝对路径
+ExecStart=/home/YOUR_USER/.bun/bin/bun run index.ts
+# 重启策略
+# 选项为 {no|on-success|on-failure|on-abnormal|on-watchdog|on-abort|always}
+Restart=always
+
+[Install]
+# 自动启动应用程序
+WantedBy=multi-user.target
+```
+
+---
+
+如果您的应用程序启动了 Web 服务器，请注意默认情况下非 `root` 用户无法监听端口 80 或 443。要永久允许非 `root` 用户执行时 Bun 监听这些端口，请使用以下命令。以 `root` 身份运行时不需要此步骤。
+
+```bash terminal icon="terminal"
+setcap CAP_NET_BIND_SERVICE=+eip ~/.bun/bin/bun
+```
+
+---
+
+配置好服务文件后，您现在可以_启用_该服务。启用后，它将在重启时自动启动。这需要 `sudo` 权限。
+
+```bash terminal icon="terminal"
+systemctl enable my-app
+```
+
+---
+
+要不重启就启动服务，您可以手动_启动_它。
+
+```bash terminal icon="terminal"
+systemctl start my-app
+```
+
+---
+
+使用 `systemctl status` 检查应用程序的状态。如果您已成功启动应用程序，您应该看到类似这样的内容：
+
+```bash terminal icon="terminal"
+systemctl status my-app
+```
+
+```txt
+● my-app.service - My App
+     Loaded: loaded (/lib/systemd/system/my-app.service; enabled; preset: enabled)
+     Active: active (running) since Thu 2023-10-12 11:34:08 UTC; 1h 8min ago
+   Main PID: 309641 (bun)
+      Tasks: 3 (limit: 503)
+     Memory: 40.9M
+        CPU: 1.093s
+     CGroup: /system.slice/my-app.service
+             └─309641 /home/YOUR_USER/.bun/bin/bun run /home/YOUR_USER/application/index.ts
+```
+
+---
+
+要更新服务，请编辑服务文件的内容，然后重新加载守护进程。
+
+```bash terminal icon="terminal"
+systemctl daemon-reload
+```
+
+---
+
+有关服务单元配置的完整指南，您可以查看[此页面](https://www.freedesktop.org/software/systemd/man/systemd.service.html)。或者参考此常用命令速查表：
+
+```bash terminal icon="terminal"
+systemctl daemon-reload # 告诉 systemd 一些文件已更改
+systemctl enable my-app # 启用应用程序（允许自动启动）
+systemctl disable my-app # 禁用应用程序（关闭自动启动）
+systemctl start my-app # 如果应用程序已停止则启动它
+systemctl stop my-app # 停止应用程序
+systemctl restart my-app # 重启应用程序
+```

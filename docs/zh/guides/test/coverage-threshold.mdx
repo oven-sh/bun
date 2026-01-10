@@ -1,0 +1,67 @@
+---
+title: 使用 Bun 测试运行器设置代码覆盖率阈值
+sidebarTitle: 覆盖率阈值
+mode: center
+---
+
+Bun 的测试运行器通过 `--coverage` 标志支持内置的代码覆盖率报告。
+
+```sh terminal icon="terminal"
+bun test --coverage
+```
+
+```txt
+test.test.ts:
+✓ math > add [0.71ms]
+✓ math > multiply [0.03ms]
+✓ random [0.13ms]
+-------------|---------|---------|-------------------
+File         | % Funcs | % Lines | Uncovered Line #s
+-------------|---------|---------|-------------------
+All files    |   66.67 |   77.78 |
+ math.ts     |   50.00 |   66.67 |
+ random.ts   |   50.00 |   66.67 |
+-------------|---------|---------|-------------------
+
+ 3 pass
+ 0 fail
+ 3 expect() calls
+```
+
+---
+
+要设置最小覆盖率阈值，请将以下行添加到您的 [bunfig.toml] 中。这要求您的代码库的 90％ 由测试覆盖。
+
+```toml bunfig.toml icon="settings"
+[test]
+# 要求 90% 的行级别和函数级别覆盖率
+coverageThreshold = 0.9
+```
+
+---
+
+如果您的测试套件未达到此阈值，`bun test` 将以非零退出代码退出以表示失败。
+
+```sh terminal icon="terminal"
+bun test --coverage
+```
+
+```txt
+<test output>
+$ echo $?
+1 # 这是上一个命令的退出代码
+```
+
+---
+
+可以为行级别和函数级别覆盖率设置不同的阈值。
+
+```toml bunfig.toml icon="settings"
+[test]
+# 为行和函数设置不同的阈值
+coverageThreshold = { lines = 0.5, functions = 0.7 }
+```
+
+---
+
+请参阅 [文档 > 测试运行器 > 覆盖率](/test/code-coverage) 了解 Bun 中代码覆盖率报告的完整文档。

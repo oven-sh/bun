@@ -1,0 +1,16 @@
+---
+title: 将 Buffer 转换为 blob
+sidebarTitle: "Buffer 到 Blob"
+mode: center
+---
+
+一个 [Blob](https://developer.mozilla.org/zh-CN/docs/Web/API/Blob) 可以由一组"块"构成，其中每个块可以是字符串、二进制数据结构（包括 `Buffer`）或其他 `Blob`。
+
+```ts
+const buf = Buffer.from("hello");
+const blob = new Blob([buf]);
+```
+
+---
+
+参阅 [文档 > API > 二进制数据](/runtime/binary-data#conversion) 获取关于使用Bun操作二进制数据的完整文档。

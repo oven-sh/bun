@@ -1,0 +1,79 @@
+---
+title: Cookies
+description: 使用Bun内置的Cookie API在HTTP请求和响应中处理cookie。
+---
+
+Bun提供了用于在HTTP请求和响应中处理cookie的内置API。[BunRequest](file:///Users/tianyufu/Desktop/mintlify_docs/docs/api/typescript/bun-request.md#L1-L1)对象包含一个[cookies](file:///Users/tianyufu/Desktop/mintlify_docs/docs/api/bun-server.md#L188-L188)属性，该属性提供了一个[CookieMap](file:///Users/tianyufu/Desktop/mintlify_docs/docs/api/typescript/cookie-map.md#L1-L1)用于轻松访问和操作cookie。使用[routes](file:///Users/tianyufu/Desktop/mintlify_docs/docs/runtime/router.md#L64-L64)时，[Bun.serve()](file:///Users/tianyufu/Desktop/mintlify_docs/docs/api/bun-server.md#L7-L7)会自动跟踪[request.cookies.set](file:///Users/tianyufu/Desktop/mintlify_docs/docs/api/bun-request.md#L189-L189)并将它们应用到响应中。
+
+## 读取cookies
+
+使用[BunRequest](file:///Users/tianyufu/Desktop/mintlify_docs/docs/api/typescript/bun-request.md#L1-L1)对象上的[cookies](file:///Users/tianyufu/Desktop/mintlify_docs/docs/api/bun-request.md#L188-L188)属性从传入的请求中读取cookie：
+
+```ts
+Bun.serve({
+  routes: {
+    "/profile": req => {
+      // 从请求中访问cookie
+      const userId = req.cookies.get("user_id");
+      const theme = req.cookies.get("theme") || "light";
+
+      return Response.json({
+        userId,
+        theme,
+        message: "个人资料页面",
+      });
+    },
+  },
+});
+```
+
+## 设置cookies
+
+要设置cookie，请使用[BunRequest](file:///Users/tianyufu/Desktop/mintlify_docs/docs/api/typescript/bun-request.md#L1-L1)对象的[CookieMap](file:///Users/tianyufu/Desktop/mintlify_docs/docs/api/typescript/cookie-map.md#L1-L1)上的[set](file:///Users/tianyufu/Desktop/mintlify_docs/docs/api/cookie-map.md#L22-L22)方法。
+
+```ts
+Bun.serve({
+  routes: {
+    "/login": req => {
+      const cookies = req.cookies;
+
+      // 使用各种选项设置cookie
+      cookies.set("user_id", "12345", {
+        maxAge: 60 * 60 * 24 * 7, // 1周
+        httpOnly: true,
+        secure: true,
+        path: "/",
+      });
+
+      // 添加主题偏好cookie
+      cookies.set("theme", "dark");
+
+      // 请求中修改的cookie会自动应用到响应中
+      return new Response("登录成功");
+    },
+  },
+});
+```
+
+[Bun.serve()](file:///Users/tianyufu/Desktop/mintlify_docs/docs/api/bun-server.md#L7-L7) 自动跟踪请求中修改的cookie并将它们应用到响应中。
+
+## 删除cookies
+
+要删除cookie，请在请求的[request.cookies](file:///Users/tianyufu/Desktop/mintlify_docs/docs/api/bun-request.md#L189-L189) ([CookieMap](file:///Users/tianyufu/Desktop/mintlify_docs/docs/api/typescript/cookie-map.md#L1-L1))对象上使用[delete](file:///Users/tianyufu/Desktop/mintlify_docs/docs/api/cookie-map.md#L45-L45)方法：
+
+```ts
+Bun.serve({
+  routes: {
+    "/logout": req => {
+      // 删除user_id cookie
+      req.cookies.delete("user_id", {
+        path: "/",
+      });
+
+      return new Response("退出成功");
+    },
+  },
+});
+```
+
+删除的cookie将成为响应上的`Set-Cookie`头，其中`maxAge`设置为`0`且[value](file:///Users/tianyufu/Desktop/mintlify_docs/docs/api/cookie-map.md#L15-L15)为空。

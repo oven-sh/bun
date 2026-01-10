@@ -1,0 +1,49 @@
+## 用法
+
+```bash
+bunx [flags] <package>[@version] [flags and arguments for the package]
+```
+
+执行一个 npm 包可执行文件（CLI），如果在 `node_modules` 中未安装，则自动安装到全局共享缓存中。
+
+### 标志
+
+<ParamField path="--bun" type="boolean">
+  强制命令使用 Bun 而不是 Node.js 运行，即使可执行文件包含 Node shebang（`#!/usr/bin/env
+  node`）
+</ParamField>
+
+<ParamField path="-p, --package" type="string">
+  指定要安装的包，当二进制名称与包名称不同时
+</ParamField>
+
+<ParamField path="--no-install" type="boolean">
+  如果包尚未安装，则跳过安装
+</ParamField>
+
+<ParamField path="--verbose" type="boolean">
+  在安装期间启用详细输出
+</ParamField>
+
+<ParamField path="--silent" type="boolean">
+  在安装期间抑制输出
+</ParamField>
+
+### 示例
+
+```bash terminal icon="terminal"
+# 运行 Prisma 迁移
+bunx prisma migrate
+
+# 使用 Prettier 格式化文件
+bunx prettier foo.js
+
+# 运行特定版本的包
+bunx uglify-js@3.14.0 app.js
+
+# 当二进制名称与包名称不同时使用 --package
+bunx -p @angular/cli ng new my-app
+
+# 强制使用 Bun 而不是 Node.js 运行，即使可执行文件包含 Node shebang
+bunx --bun vite dev foo.js
+```

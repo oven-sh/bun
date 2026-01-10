@@ -1,0 +1,151 @@
+---
+title: 使用 Docker 容器化 Bun 应用程序
+sidebarTitle: Docker 与 Bun
+mode: center
+---
+
+<Note>
+  本指南假定您已经安装了 [Docker Desktop](https://www.docker.com/products/docker-desktop/)。
+</Note>
+
+[Docker](https://www.docker.com) 是一个平台，用于将应用程序打包并作为轻量级、便携的_容器_运行，封装所有必要的依赖项。
+
+---
+
+要_容器化_我们的应用程序，我们定义一个 [Dockerfile]。该文件包含初始化容器、将我们的本地项目文件复制到其中、安装依赖项并启动应用程序的一系列指令。
+
+```docker Dockerfile icon="docker"
+# 使用官方 Bun 镜像
+# 查看 https://hub.docker.com/r/oven/bun/tags 上的所有版本
+FROM oven/bun:1 AS base
+WORKDIR /usr/src/app
+
+# 将依赖项安装到临时目录
+# 这将缓存它们并加快未来构建的速度
+FROM base AS install
+RUN mkdir -p /temp/dev
+COPY package.json bun.lock /temp/dev/
+RUN cd /temp/dev && bun install --frozen-lockfile
+
+# 使用 --production 安装（排除 devDependencies）
+RUN mkdir -p /temp/prod
+COPY package.json bun.lock /temp/prod/
+RUN cd /temp/prod && bun install --frozen-lockfile --production
+
+# 从临时目录复制 node_modules
+# 然后将所有（非忽略的）项目文件复制到镜像中
+FROM base AS prerelease
+COPY --from=install /temp/dev/node_modules node_modules
+COPY . .
+
+# [可选] 测试和构建
+ENV NODE_ENV=production
+RUN bun test
+RUN bun run build
+
+# 将生产依赖项和源代码复制到最终镜像中
+FROM base AS release
+COPY --from=install /temp/prod/node_modules node_modules
+COPY --from=prerelease /usr/src/app/index.ts .
+COPY --from=prerelease /usr/src/app/package.json .
+
+# 运行应用
+USER bun
+EXPOSE 3000/tcp
+ENTRYPOINT [ "bun", "run", "index.ts" ]
+```
+
+---
+
+现在您有了 Docker 镜像，让我们看看 [.dockerignore] 文件，它的语法与 [.gitignore] 相同，这里您需要指定在 Docker 构建的任何阶段都不应包含的文件/目录。一个示例忽略文件如下：
+
+```txt .dockerignore icon="docker"
+node_modules
+Dockerfile*
+docker-compose*
+.dockerignore
+.git
+.gitignore
+README.md
+LICENSE
+.vscode
+Makefile
+helm-charts
+.env
+.editorconfig
+.idea
+coverage*
+```
+
+---
+
+我们现在将使用 `docker build` 将此 [Dockerfile] 转换为_ Docker 镜像_，这是一个自包含的模板，包含运行应用程序所需的所有依赖项和配置。
+
+`-t` 标志让我们指定镜像的名称，`--pull` 告诉 Docker 自动下载最新版本的基础镜像（`oven/bun`）。初始构建将花费较长时间，因为 Docker 将下载所有基础镜像和依赖项。
+
+```bash terminal icon="terminal"
+docker build --pull -t bun-hello-world .
+```
+
+```txt
+[+] Building 0.9s (21/21) FINISHED
+ => [internal] load build definition from Dockerfile                                                                                     0.0s
+ => => transferring dockerfile: 37B                                                                                                      0.0s
+ => [internal] load .dockerignore                                                                                                        0.0s
+ => => transferring context: 35B                                                                                                         0.0s
+ => [internal] load metadata for docker.io/oven/bun:1                                                                                    0.8s
+ => [auth] oven/bun:pull token for registry-1.docker.io                                                                                  0.0s
+ => [base 1/2] FROM docker.io/oven/bun:1@sha256:373265748d3cd3624cb3f3ee6004f45b1fc3edbd07a622aeeec17566d2756997                         0.0s
+ => [internal] load build context                                                                                                        0.0s
+ => => transferring context: 155B                                                                                                        0.0s
+ # ...很多命令...
+ => exporting to image                                                                                                                   0.0s
+ => => exporting layers                                                                                                                  0.0s
+ => => writing image sha256:360663f7fdcd6f11e8e94761d5592e2e4dfc8d167f034f15cd5a863d5dc093c4                                             0.0s
+ => => naming to docker.io/library/bun-hello-world                                                                                       0.0s
+```
+
+---
+
+我们已经构建了一个新的_Docker 镜像_。现在让我们使用该镜像启动一个实际运行的_容器_。
+
+我们将使用 `docker run` 启动一个使用 `bun-hello-world` 镜像的新容器。它将在_分离_模式（`-d`）下运行，我们将容器的 3000 端口映射到我们本地机器的 3000 端口（`-p 3000:3000`）。
+
+`run` 命令打印表示_容器 ID_的字符串。
+
+```sh terminal icon="terminal"
+docker run -d -p 3000:3000 bun-hello-world
+```
+
+```txt
+7f03e212a15ede8644379bce11a13589f563d3909a9640446c5bbefce993678d
+```
+
+---
+
+容器现在在后台运行。访问 [localhost:3000](http://localhost:3000)。您应该看到 `Hello, World!` 消息。
+
+---
+
+要停止容器，我们将使用 `docker stop <container-id>`。
+
+```sh terminal icon="terminal"
+docker stop 7f03e212a15ede8644379bce11a13589f563d3909a9640446c5bbefce993678d
+```
+
+---
+
+如果您找不到容器 ID，可以使用 `docker ps` 列出所有正在运行的容器。
+
+```sh terminal icon="terminal"
+docker ps
+```
+
+```txt
+CONTAINER ID        IMAGE               COMMAND                  CREATED             STATUS              PORTS                    NAMES
+7f03e212a15e        bun-hello-world     "bun run index.ts"       2 minutes ago       Up 2 minutes        0.0.0.0:3000->3000/tcp   flamboyant_cerf
+```
+
+---
+
+就是这样！请参阅 [Docker 文档](https://docs.docker.com/) 了解更高级的用法。

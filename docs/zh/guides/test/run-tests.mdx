@@ -1,0 +1,116 @@
+---
+title: 使用 Bun 测试运行器运行您的测试
+sidebarTitle: 运行测试
+mode: center
+---
+
+Bun 有一个内置的 [测试运行器](/test)，具有类似 Jest 的 `expect` API。
+
+---
+
+要使用它，请从项目目录中运行 `bun test` 命令。测试运行器将递归搜索目录中匹配以下模式的所有文件并执行它们包含的测试。
+
+```txt File Tree icon="folder-tree"
+*.test.{js|jsx|ts|tsx}
+*_test.{js|jsx|ts|tsx}
+*.spec.{js|jsx|ts|tsx}
+*_spec.{js|jsx|ts|tsx}
+```
+
+---
+
+下面是典型测试运行的输出。在这种情况下，有三个测试文件（[test.test.js]、[test2.test.js] 和 [test3.test.js]），每个文件包含两个测试（`add` 和 `multiply`）。
+
+```sh terminal icon="terminal"
+bun test
+```
+
+```txt
+test.test.js:
+✓ add [0.87ms]
+✓ multiply [0.02ms]
+
+test2.test.js:
+✓ add [0.72ms]
+✓ multiply [0.01ms]
+
+test3.test.js:
+✓ add [0.54ms]
+✓ multiply [0.01ms]
+
+ 6 pass
+ 0 fail
+ 6 expect() calls
+Ran 6 tests across 3 files. [9.00ms]
+```
+
+---
+
+要仅运行某些测试文件，请向 `bun test` 传递位置参数。运行器只会在路径中包含该参数的文件中执行测试。
+
+```sh terminal icon="terminal"
+bun test test3
+```
+
+```txt
+test3.test.js:
+✓ add [1.40ms]
+✓ multiply [0.03ms]
+
+ 2 pass
+ 0 fail
+ 2 expect() calls
+Ran 2 tests across 1 files. [15.00ms]
+```
+
+---
+
+所有测试都有一个名称，使用传递给 `test` 函数的第一个参数定义。测试也可以使用 `describe` 分组到套件中。
+
+```ts
+import { test, expect, describe } from "bun:test";
+
+describe("math", () => {
+  test("add", () => {
+    expect(2 + 2).toEqual(4);
+  });
+
+  test("multiply", () => {
+    expect(2 * 2).toEqual(4);
+  });
+});
+```
+
+---
+
+要按名称筛选要执行的测试，请使用 `-t`/`--test-name-pattern` 标志。
+
+添加 `-t add` 将只运行名称中包含"add"的测试。这对于使用 `test` 定义的测试名称或使用 `describe` 定义的测试套件名称都有效。
+
+```sh terminal icon="terminal"
+bun test -t add
+```
+
+```txt
+test.test.js:
+✓ add [1.79ms]
+» multiply
+
+test2.test.js:
+✓ add [2.30ms]
+» multiply
+
+test3.test.js:
+✓ add [0.32ms]
+» multiply
+
+ 3 pass
+ 3 skip
+ 0 fail
+ 3 expect() calls
+Ran 6 tests across 3 files. [59.00ms]
+```
+
+---
+
+请参阅 [文档 > 测试运行器](/test) 了解测试运行器的完整文档。

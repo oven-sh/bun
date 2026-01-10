@@ -1,0 +1,290 @@
+---
+title: "目录"
+description: "在单一代码库中的多个包之间共享常见的依赖版本"
+---
+
+Bun 中的目录为在单一代码库(monorpo)中的多个包之间共享常见依赖版本提供了一种简单的方法。不必在每个工作空间包中重复指定相同的版本，而是在根 [package.json] 中定义一次，并在整个项目中一致地引用它们。
+
+## 概述
+
+与传统的依赖管理不同，传统方式中每个工作空间包都需要独立指定版本，目录让你可以：
+
+1. 在根 [package.json] 中定义版本目录
+2. 使用简单的 `catalog:` 协议引用这些版本
+3. 通过仅更改一个地方的版本来同时更新所有包
+
+这在大型单一代码库中特别有用，其中数十个包需要使用关键依赖的相同版本。
+
+## 如何使用目录
+
+### 目录结构示例
+
+考虑一个具有以下结构的单一代码库：
+
+```
+my-monorepo/
+├── package.json
+├── bun.lock
+└── packages/
+    ├── app/
+    │   └── package.json
+    ├── ui/
+    │   └── package.json
+    └── utils/
+        └── package.json
+```
+
+### 1. 在根 package.json 中定义目录
+
+在你的根级 [package.json] 中，在 [workspaces] 对象中添加一个 [catalog] 或 [catalogs] 字段：
+
+```json package.json icon="file-json"
+{
+  "name": "my-monorepo",
+  "workspaces": {
+    "packages": ["packages/*"],
+    "catalog": {
+      "react": "^19.0.0",
+      "react-dom": "^19.0.0"
+    },
+    "catalogs": {
+      "testing": {
+        "jest": "30.0.0",
+        "testing-library": "14.0.0"
+      }
+    }
+  }
+}
+```
+
+如果你将 [catalog] 或 [catalogs] 放在 [package.json] 文件的顶层，那也可以。
+
+### 2. 在工作空间包中引用目录版本
+
+在你的工作空间包中，使用 `catalog:` 协议来引用版本：
+
+```json packages/app/package.json icon="file-json"
+{
+  "name": "app",
+  "dependencies": {
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "jest": "catalog:testing"
+  }
+}
+```
+
+```json packages/ui/package.json icon="file-json"
+{
+  "name": "ui",
+  "dependencies": {
+    "react": "catalog:",
+    "react-dom": "catalog:"
+  },
+  "devDependencies": {
+    "jest": "catalog:testing",
+    "testing-library": "catalog:testing"
+  }
+}
+```
+
+### 3. 运行 Bun Install
+
+运行 `bun install` 根据目录版本安装所有依赖。
+
+## Catalog vs Catalogs
+
+Bun 支持两种定义目录的方式：
+
+1. **`catalog`** (单数): 用于常用依赖的单个默认目录
+
+   ```json package.json icon="file-json"
+   "catalog": {
+     "react": "^19.0.0",
+     "react-dom": "^19.0.0"
+   }
+   ```
+
+   简单地使用 `catalog:` 引用：
+
+   ```json packages/app/package.json icon="file-json"
+   "dependencies": {
+     "react": "catalog:"
+   }
+   ```
+
+2. **`catalogs`** (复数): 多个命名目录用于分组依赖
+
+   ```json package.json icon="file-json"
+   "catalogs": {
+     "testing": {
+       "jest": "30.0.0"
+     },
+     "ui": {
+       "tailwind": "4.0.0"
+     }
+   }
+   ```
+
+   使用 `catalog:<name>` 引用：
+
+   ```json packages/app/package.json icon="file-json"
+   "dependencies": {
+     "jest": "catalog:testing",
+     "tailwind": "catalog:ui"
+   }
+   ```
+
+## 使用目录的好处
+
+- **一致性**: 确保所有包使用关键依赖的相同版本
+- **维护性**: 在一个地方更新依赖版本，而不是跨多个 [package.json] 文件更新
+- **清晰性**: 明显看出哪些依赖在你的单一代码库中标准化
+- **简洁性**: 无需复杂的版本解决策略或外部工具
+
+## 实际示例
+
+这是一个更全面的 React 应用示例：
+
+**根 package.json**
+
+```json package.json icon="file-json"
+{
+  "name": "react-monorepo",
+  "workspaces": {
+    "packages": ["packages/*"],
+    "catalog": {
+      "react": "^19.0.0",
+      "react-dom": "^19.0.0",
+      "react-router-dom": "^6.15.0"
+    },
+    "catalogs": {
+      "build": {
+        "webpack": "5.88.2",
+        "babel": "7.22.10"
+      },
+      "testing": {
+        "jest": "29.6.2",
+        "react-testing-library": "14.0.0"
+      }
+    }
+  },
+  "devDependencies": {
+    "typescript": "5.1.6"
+  }
+}
+```
+
+```json packages/app/package.json icon="file-json"
+{
+  "name": "app",
+  "dependencies": {
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "react-router-dom": "catalog:",
+    "@monorepo/ui": "workspace:*",
+    "@monorepo/utils": "workspace:*"
+  },
+  "devDependencies": {
+    "webpack": "catalog:build",
+    "babel": "catalog:build",
+    "jest": "catalog:testing",
+    "react-testing-library": "catalog:testing"
+  }
+}
+```
+
+```json packages/ui/package.json icon="file-json"
+{
+  "name": "@monorepo/ui",
+  "dependencies": {
+    "react": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:"
+  },
+  "devDependencies": {
+    "jest": "catalog:testing",
+    "react-testing-library": "catalog:testing"
+  }
+}
+```
+
+```json packages/utils/package.json icon="file-json"
+{
+  "name": "@monorepo/utils",
+  "dependencies": {
+    "react": "catalog:"
+  },
+  "devDependencies": {
+    "jest": "catalog:testing"
+  }
+}
+```
+
+## 更新版本
+
+要跨所有包更新版本，只需在根 [package.json] 中更改版本：
+
+```json package.json icon="file-json"
+"catalog": {
+  "react": "^19.1.0",  // 从 ^19.0.0 更新
+  "react-dom": "^19.1.0"  // 从 ^19.0.0 更新
+}
+```
+
+然后运行 `bun install` 来更新所有包。
+
+## 锁定文件集成
+
+Bun 的锁定文件跟踪目录版本，使跨不同环境的安装保持一致变得简单。锁定文件包括：
+
+- 来自你的 [package.json] 的目录定义
+- 每个目录依赖的解析
+
+```json bun.lock(excerpt) icon="file-json"
+{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "react-monorepo",
+    },
+    "packages/app": {
+      "name": "app",
+      "dependencies": {
+        "react": "catalog:",
+        "react-dom": "catalog:",
+        ...
+      },
+    },
+    ...
+  },
+  "catalog": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    ...
+  },
+  "catalogs": {
+    "build": {
+      "webpack": "5.88.2",
+      ...
+    },
+    ...
+  },
+  "packages": {
+    ...
+  }
+}
+```
+
+## 限制和边缘情况
+
+- 目录引用必须匹配在 [catalog] 或命名 [catalogs] 中定义的依赖
+- 目录名称中的空字符串和空白字符被忽略（视为默认目录）
+- 目录中无效的依赖版本将在 `bun install` 期间解析失败
+- 目录仅在工作空间内可用；不能在单一代码库外使用
+
+Bun 的目录系统提供了一种强大而简单的方法来维护单一代码库的一致性，而不会为你的工作流程引入额外的复杂性。
+
+## 发布
+
+当你运行 `bun publish` 或 `bun pm pack` 时，Bun 会自动将你的 [package.json] 中的 `catalog:` 引用替换为解析后的版本号。发布的包包含常规的语义化版本字符串，不再依赖你的目录定义。

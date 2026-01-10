@@ -1,0 +1,24 @@
+---
+title: 固定毫秒数休眠
+sidebarTitle: 休眠
+mode: center
+---
+
+`Bun.sleep` 方法提供了一种便捷的方式，创建一个在固定毫秒数后解析的 void [Promise]。
+
+```ts
+// 休眠 1 秒
+await Bun.sleep(1000);
+```
+
+---
+
+在内部，这等价于使用 [`setTimeout`](https://developer.mozilla.org/en-US/docs/Web/API/WindowOrWorkerGlobalScope/setTimeout) 的以下代码片段。
+
+```ts
+await new Promise(resolve => setTimeout(resolve, ms));
+```
+
+---
+
+请参阅 [文档 > API > 工具](/runtime/utils) 了解更多的实用工具。

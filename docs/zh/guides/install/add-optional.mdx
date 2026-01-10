@@ -1,0 +1,27 @@
+---
+title: 添加可选依赖
+sidebarTitle: 添加可选依赖
+mode: center
+---
+
+要将 npm 包添加为可选依赖，请使用 `--optional` 标志。
+
+```sh terminal icon="terminal"
+bun add zod --optional
+```
+
+---
+
+这会将包添加到 [package.json] 中的 `optionalDependencies`。
+
+```json package.json icon="file-json"
+{
+  "optionalDependencies": {
+    "zod": "^3.0.0" // [!code ++]
+  }
+}
+```
+
+---
+
+请参阅 [文档 > 包管理器](/pm/cli/install) 以获取 Bun 包管理器的完整文档。

@@ -1,0 +1,637 @@
+---
+title: "模拟"
+description: "学习如何在 Bun 测试中创建和使用模拟函数、间谍和模块模拟"
+---
+
+模拟是测试的关键，因为它允许您用受控的实现替换依赖项。Bun 提供了全面的模拟功能，包括函数模拟、间谍和模块模拟。
+
+## 基础函数模拟
+
+使用 [mock](file:///d:/code/mintlify-docs/zh/api/globals.md#mock) 函数创建模拟。
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { test, expect, mock } from "bun:test";
+
+const random = mock(() => Math.random());
+
+test("random", () => {
+  const val = random();
+  expect(val).toBeGreaterThan(0);
+  expect(random).toHaveBeenCalled();
+  expect(random).toHaveBeenCalledTimes(1);
+});
+```
+
+### Jest 兼容性
+
+另外，您可以使用 Jest 中的 [jest.fn()](file:///d:/code/mintlify-docs/zh/api/globals.md#jestfn) 函数。它的行为完全相同。
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { test, expect, jest } from "bun:test";
+
+const random = jest.fn(() => Math.random());
+
+test("random", () => {
+  const val = random();
+  expect(val).toBeGreaterThan(0);
+  expect(random).toHaveBeenCalled();
+  expect(random).toHaveBeenCalledTimes(1);
+});
+```
+
+## 模拟函数属性
+
+[mock()](file:///d:/code/mintlify-docs/zh/api/globals.md#mock) 的结果是一个被添加了一些额外属性的新函数。
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { mock } from "bun:test";
+
+const random = mock((multiplier: number) => multiplier * Math.random());
+
+random(2);
+random(10);
+
+random.mock.calls;
+// [[ 2 ], [ 10 ]]
+
+random.mock.results;
+//  [
+//    { type: "return", value: 0.6533907460954099 },
+//    { type: "return", value: 0.6452713933037312 }
+//  ]
+```
+
+### 可用属性和方法
+
+以下属性和方法在模拟函数上实现：
+
+| 属性/方法                               | 描述                                         |
+| --------------------------------------- | -------------------------------------------- |
+| [mockFn.getMockName()](file:///d:/code/mintlify-docs/zh/api/globals.md#getMockName) | 返回模拟名称 |
+| [mockFn.mock.calls](file:///d:/code/mintlify-docs/zh/api/globals.md#calls) | 每次调用的参数数组 |
+| [mockFn.mock.results](file:///d:/code/mintlify-docs/zh/api/globals.md#results) | 每次调用的返回值数组 |
+| [mockFn.mock.instances](file:///d:/code/mintlify-docs/zh/api/globals.md#instances) | 每次调用的 `this` 上下文数组 |
+| [mockFn.mock.contexts](file:///d:/code/mintlify-docs/zh/api/globals.md#contexts) | 每次调用的 `this` 上下文数组 |
+| [mockFn.mock.lastCall](file:///d:/code/mintlify-docs/zh/api/globals.md#lastCall) | 最近一次调用的参数 |
+| [mockFn.mockClear()](file:///d:/code/mintlify-docs/zh/api/globals.md#mockClear) | 清除调用历史 |
+| [mockFn.mockReset()](file:///d:/code/mintlify-docs/zh/api/globals.md#mockReset) | 清除调用历史并删除实现 |
+| [mockFn.mockRestore()](file:///d:/code/mintlify-docs/zh/api/globals.md#mockRestore) | 恢复原始实现 |
+| [mockFn.mockImplementation(fn)](file:///d:/code/mintlify-docs/zh/api/globals.md#mockImplementation) | 设置新实现 |
+| [mockFn.mockImplementationOnce(fn)](file:///d:/code/mintlify-docs/zh/api/globals.md#mockImplementationOnce) | 仅为下次调用设置实现 |
+| [mockFn.mockName(name)](file:///d:/code/mintlify-docs/zh/api/globals.md#mockName) | 设置模拟名称 |
+| [mockFn.mockReturnThis()](file:///d:/code/mintlify-docs/zh/api/globals.md#mockReturnThis) | 设置返回值为 `this` |
+| [mockFn.mockReturnValue(value)](file:///d:/code/mintlify-docs/zh/api/globals.md#mockReturnValue) | 设置返回值 |
+| [mockFn.mockReturnValueOnce(value)](file:///d:/code/mintlify-docs/zh/api/globals.md#mockReturnValueOnce) | 仅为下次调用设置返回值 |
+| [mockFn.mockResolvedValue(value)](file:///d:/code/mintlify-docs/zh/api/globals.md#mockResolvedValue) | 设置解析的 Promise 值 |
+| [mockFn.mockResolvedValueOnce(value)](file:///d:/code/mintlify-docs/zh/api/globals.md#mockResolvedValueOnce) | 仅为下次调用设置解析的 Promise |
+| [mockFn.mockRejectedValue(value)](file:///d:/code/mintlify-docs/zh/api/globals.md#mockRejectedValue) | 设置拒绝的 Promise 值 |
+| [mockFn.mockRejectedValueOnce(value)](file:///d:/code/mintlify-docs/zh/api/globals.md#mockRejectedValueOnce) | 仅为下次调用设置拒绝的 Promise |
+| [mockFn.withImplementation(fn, callback)](file:///d:/code/mintlify-docs/zh/api/globals.md#withImplementation) | 临时更改实现 |
+
+### 实际示例
+
+#### 基础模拟用法
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { test, expect, mock } from "bun:test";
+
+test("mock function behavior", () => {
+  const mockFn = mock((x: number) => x * 2);
+
+  // 调用模拟
+  const result1 = mockFn(5);
+  const result2 = mockFn(10);
+
+  // 验证调用
+  expect(mockFn).toHaveBeenCalledTimes(2);
+  expect(mockFn).toHaveBeenCalledWith(5);
+  expect(mockFn).toHaveBeenLastCalledWith(10);
+
+  // 检查结果
+  expect(result1).toBe(10);
+  expect(result2).toBe(20);
+
+  // 检查调用历史
+  expect(mockFn.mock.calls).toEqual([[5], [10]]);
+  expect(mockFn.mock.results).toEqual([
+    { type: "return", value: 10 },
+    { type: "return", value: 20 },
+  ]);
+});
+```
+
+#### 动态模拟实现
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { test, expect, mock } from "bun:test";
+
+test("dynamic mock implementations", () => {
+  const mockFn = mock();
+
+  // 设置不同的实现
+  mockFn.mockImplementationOnce(() => "first");
+  mockFn.mockImplementationOnce(() => "second");
+  mockFn.mockImplementation(() => "default");
+
+  expect(mockFn()).toBe("first");
+  expect(mockFn()).toBe("second");
+  expect(mockFn()).toBe("default");
+  expect(mockFn()).toBe("default"); // 使用默认实现
+});
+```
+
+#### 异步模拟
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { test, expect, mock } from "bun:test";
+
+test("async mock functions", async () => {
+  const asyncMock = mock();
+
+  // 模拟解析值
+  asyncMock.mockResolvedValueOnce("first result");
+  asyncMock.mockResolvedValue("default result");
+
+  expect(await asyncMock()).toBe("first result");
+  expect(await asyncMock()).toBe("default result");
+
+  // 模拟拒绝值
+  const rejectMock = mock();
+  rejectMock.mockRejectedValue(new Error("Mock error"));
+
+  await expect(rejectMock()).rejects.toThrow("Mock error");
+});
+```
+
+## 使用 spyOn() 创建间谍
+
+可以跟踪函数调用而不将其替换为模拟。使用 [spyOn()](file:///d:/code/mintlify-docs/zh/api/globals.md#spyOn) 创建间谍；这些间谍可以传递给 [.toHaveBeenCalled()](file:///d:/code/mintlify-docs/zh/api/globals.md#toHaveBeenCalled) 和 [.toHaveBeenCalledTimes()](file:///d:/code/mintlify-docs/zh/api/globals.md#toHaveBeenCalledTimes)。
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { test, expect, spyOn } from "bun:test";
+
+const ringo = {
+  name: "Ringo",
+  sayHi() {
+    console.log(`Hello I'm ${this.name}`);
+  },
+};
+
+const spy = spyOn(ringo, "sayHi");
+
+test("spyon", () => {
+  expect(spy).toHaveBeenCalledTimes(0);
+  ringo.sayHi();
+  expect(spy).toHaveBeenCalledTimes(1);
+});
+```
+
+### 高级间谍用法
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { test, expect, spyOn, afterEach } from "bun:test";
+
+class UserService {
+  async getUser(id: string) {
+    // 原始实现
+    return { id, name: `User ${id}` };
+  }
+
+  async saveUser(user: any) {
+    // 原始实现
+    return { ...user, saved: true };
+  }
+}
+
+const userService = new UserService();
+
+afterEach(() => {
+  // 在每个测试后恢复所有间谍
+  jest.restoreAllMocks();
+});
+
+test("spy on service methods", async () => {
+  // 间谍而不更改实现
+  const getUserSpy = spyOn(userService, "getUser");
+  const saveUserSpy = spyOn(userService, "saveUser");
+
+  // 正常使用服务
+  const user = await userService.getUser("123");
+  await userService.saveUser(user);
+
+  // 验证调用
+  expect(getUserSpy).toHaveBeenCalledWith("123");
+  expect(saveUserSpy).toHaveBeenCalledWith(user);
+});
+
+test("spy with mock implementation", async () => {
+  // 间谍并覆盖实现
+  const getUserSpy = spyOn(userService, "getUser").mockResolvedValue({
+    id: "123",
+    name: "Mocked User",
+  });
+
+  const result = await userService.getUser("123");
+
+  expect(result.name).toBe("Mocked User");
+  expect(getUserSpy).toHaveBeenCalledWith("123");
+});
+```
+
+## 使用 mock.module() 模拟模块
+
+模块模拟允许您覆盖模块的行为。使用 `mock.module(path: string, callback: () => Object)` 来模拟模块。
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { test, expect, mock } from "bun:test";
+
+mock.module("./module", () => {
+  return {
+    foo: "bar",
+  };
+});
+
+test("mock.module", async () => {
+  const esm = await import("./module");
+  expect(esm.foo).toBe("bar");
+
+  const cjs = require("./module");
+  expect(cjs.foo).toBe("bar");
+});
+```
+
+与其他 Bun 功能一样，模块模拟同时支持 [import](file:///d:/code/mintlify-docs/zh/runtime/modules/cjs.md#import) 和 [require](file:///d:/code/mintlify-docs/zh/runtime/modules/cjs.md#require)。
+
+### 覆盖已导入的模块
+
+如果您需要覆盖已导入的模块，无需特殊操作。只需调用 `mock.module()`，模块就会被覆盖。
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { test, expect, mock } from "bun:test";
+
+// 我们要模拟的模块在这里：
+import { foo } from "./module";
+
+test("mock.module", async () => {
+  const cjs = require("./module");
+  expect(foo).toBe("bar");
+  expect(cjs.foo).toBe("bar");
+
+  // 我们在这里更新它：
+  mock.module("./module", () => {
+    return {
+      foo: "baz",
+    };
+  });
+
+  // 活跃绑定也被更新了。
+  expect(foo).toBe("baz");
+
+  // CJS 的模块也被更新了。
+  expect(cjs.foo).toBe("baz");
+});
+```
+
+### 提升和预加载
+
+如果您需要确保模块在导入前被模拟，应使用 `--preload` 在测试运行前加载您的模拟。
+
+```ts title="my-preload.ts" icon="/icons/typescript.svg"
+import { mock } from "bun:test";
+
+mock.module("./module", () => {
+  return {
+    foo: "bar",
+  };
+});
+```
+
+```bash terminal icon="terminal"
+bun test --preload ./my-preload
+```
+
+为了简化操作，您可以在 [bunfig.toml](file:///d:/code/mintlify-docs/bunfig.toml) 中放置预加载配置：
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+# 在运行测试前加载这些模块。
+preload = ["./my-preload"]
+```
+
+### 模块模拟最佳实践
+
+#### 何时使用预加载
+
+**如果我模拟一个已经被导入的模块会发生什么？**
+
+如果您模拟一个已被导入的模块，该模块将在模块缓存中被更新。这意味着任何导入该模块的模块将获得模拟版本，但是原始模块仍会被评估。这意味着原始模块的所有副作用仍将发生。
+
+如果您想阻止原始模块被评估，应使用 `--preload` 在测试运行前加载您的模拟。
+
+#### 实际模块模拟示例
+
+```ts title="api-client.test.ts" icon="/icons/typescript.svg"
+import { test, expect, mock, beforeEach } from "bun:test";
+
+// 模拟 API 客户端模块
+mock.module("./api-client", () => ({
+  fetchUser: mock(async (id: string) => ({ id, name: `User ${id}` })),
+  createUser: mock(async (user: any) => ({ ...user, id: "new-id" })),
+  updateUser: mock(async (id: string, user: any) => ({ ...user, id })),
+}));
+
+test("user service with mocked API", async () => {
+  const { fetchUser } = await import("./api-client");
+  const { UserService } = await import("./user-service");
+
+  const userService = new UserService();
+  const user = await userService.getUser("123");
+
+  expect(fetchUser).toHaveBeenCalledWith("123");
+  expect(user.name).toBe("User 123");
+});
+```
+
+#### 模拟外部依赖
+
+```ts title="database.test.ts" icon="/icons/typescript.svg"
+import { test, expect, mock } from "bun:test";
+
+// 模拟外部数据库库
+mock.module("pg", () => ({
+  Client: mock(function () {
+    return {
+      connect: mock(async () => {}),
+      query: mock(async (sql: string) => ({
+        rows: [{ id: 1, name: "Test User" }],
+      })),
+      end: mock(async () => {}),
+    };
+  }),
+}));
+
+test("database operations", async () => {
+  const { Database } = await import("./database");
+  const db = new Database();
+
+  const users = await db.getUsers();
+  expect(users).toHaveLength(1);
+  expect(users[0].name).toBe("Test User");
+});
+```
+
+## 全局模拟函数
+
+### 清除所有模拟
+
+重置所有模拟函数状态（调用、结果等），但不恢复其原始实现：
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { expect, mock, test } from "bun:test";
+
+const random1 = mock(() => Math.random());
+const random2 = mock(() => Math.random());
+
+test("clearing all mocks", () => {
+  random1();
+  random2();
+
+  expect(random1).toHaveBeenCalledTimes(1);
+  expect(random2).toHaveBeenCalledTimes(1);
+
+  mock.clearAllMocks();
+
+  expect(random1).toHaveBeenCalledTimes(0);
+  expect(random2).toHaveBeenCalledTimes(0);
+
+  // 注意：实现被保留
+  expect(typeof random1()).toBe("number");
+  expect(typeof random2()).toBe("number");
+});
+```
+
+这将重置所有模拟的 [.mock.calls](file:///d:/code/mintlify-docs/zh/api/globals.md#calls)、[.mock.instances](file:///d:/code/mintlify-docs/zh/api/globals.md#instances)、[.mock.contexts](file:///d:/code/mintlify-docs/zh/api/globals.md#contexts) 和 [.mock.results](file:///d:/code/mintlify-docs/zh/api/globals.md#results) 属性，但与 [mock.restore()](file:///d:/code/mintlify-docs/zh/api/globals.md#restore) 不同，它不会恢复原始实现。
+
+### 恢复所有模拟
+
+与其单独使用 [mockFn.mockRestore()](file:///d:/code/mintlify-docs/zh/api/globals.md#mockRestore) 恢复每个模拟，不如通过调用 [mock.restore()](file:///d:/code/mintlify-docs/zh/api/globals.md#restore) 用一条命令恢复所有模拟。这样做不会重置使用 `mock.module()` 覆盖的模块的值。
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { expect, mock, spyOn, test } from "bun:test";
+
+import * as fooModule from "./foo.ts";
+import * as barModule from "./bar.ts";
+import * as bazModule from "./baz.ts";
+
+test("foo, bar, baz", () => {
+  const fooSpy = spyOn(fooModule, "foo");
+  const barSpy = spyOn(barModule, "bar");
+  const bazSpy = spyOn(bazModule, "baz");
+
+  // 原始实现仍能正常工作
+  expect(fooModule.foo()).toBe("foo");
+  expect(barModule.bar()).toBe("bar");
+  expect(bazModule.baz()).toBe("baz");
+
+  // 模拟实现
+  fooSpy.mockImplementation(() => 42);
+  barSpy.mockImplementation(() => 43);
+  bazSpy.mockImplementation(() => 44);
+
+  expect(fooModule.foo()).toBe(42);
+  expect(barModule.bar()).toBe(43);
+  expect(bazModule.baz()).toBe(44);
+
+  // 恢复所有
+  mock.restore();
+
+  expect(fooModule.foo()).toBe("foo");
+  expect(barModule.bar()).toBe("bar");
+  expect(bazModule.baz()).toBe("baz");
+});
+```
+
+通过在每个测试文件的 [afterEach](file:///d:/code/mintlify-docs/zh/test/lifecycle.md#aftereach) 块中甚至在您的测试预加载代码中添加 [mock.restore()](file:///d:/code/mintlify-docs/zh/api/globals.md#restore)，可以减少测试中的代码量。
+
+## Vitest 兼容性
+
+为了增强针对 Vitest 编写的测试的兼容性，Bun 提供了 [vi](file:///d:/code/mintlify-docs/zh/api/globals.md#vi) 对象作为 Jest 模拟 API 部分功能的别名：
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { test, expect, vi } from "bun:test";
+
+// 使用类似 Vitest 的 'vi' 别名
+test("vitest compatibility", () => {
+  const mockFn = vi.fn(() => 42);
+
+  mockFn();
+  expect(mockFn).toHaveBeenCalled();
+
+  // 以下函数在 vi 对象上可用：
+  // vi.fn
+  // vi.spyOn
+  // vi.mock
+  // vi.restoreAllMocks
+  // vi.clearAllMocks
+});
+```
+
+这使得从 Vitest 到 Bun 的测试迁移更加容易，无需重写所有模拟。
+
+## 实现细节
+
+了解 `mock.module()` 如何工作有助于您更有效地使用它：
+
+### 缓存交互
+
+模块模拟与 ESM 和 CommonJS 模块缓存交互。
+
+### 惰性评估
+
+只有在实际导入或需要模块时才会评估模拟工厂回调。
+
+### 路径解析
+
+Bun 自动解析模块说明符，就像您在做导入一样，支持：
+
+- 相对路径 (`'./module'`)
+- 绝对路径 (`'/path/to/module'`)
+- 包名 (`'lodash'`)
+
+### 导入时机效果
+
+- **在首次导入前模拟**：原始模块不会产生副作用
+- **在导入后模拟**：原始模块的副作用已经发生
+
+因此，对于需要防止副作用的模拟，建议使用 `--preload`。
+
+### 活跃绑定
+
+模拟的 ESM 模块保持活跃绑定，因此更改模拟将更新所有现有导入。
+
+## 高级模式
+
+### 工厂函数
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { mock } from "bun:test";
+
+function createMockUser(overrides = {}) {
+  return {
+    id: "mock-id",
+    name: "Mock User",
+    email: "mock@example.com",
+    ...overrides,
+  };
+}
+
+const mockUserService = {
+  getUser: mock(async (id: string) => createMockUser({ id })),
+  createUser: mock(async (data: any) => createMockUser(data)),
+  updateUser: mock(async (id: string, data: any) => createMockUser({ id, ...data })),
+};
+```
+
+### 条件模拟
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { test, expect, mock } from "bun:test";
+
+const shouldUseMockApi = process.env.NODE_ENV === "test";
+
+if (shouldUseMockApi) {
+  mock.module("./api", () => ({
+    fetchData: mock(async () => ({ data: "mocked" })),
+  }));
+}
+
+test("conditional API usage", async () => {
+  const { fetchData } = await import("./api");
+  const result = await fetchData();
+
+  if (shouldUseMockApi) {
+    expect(result.data).toBe("mocked");
+  }
+});
+```
+
+### 模拟清理模式
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { afterEach, beforeEach } from "bun:test";
+
+beforeEach(() => {
+  // 设置通用模拟
+  mock.module("./logger", () => ({
+    log: mock(() => {}),
+    error: mock(() => {}),
+    warn: mock(() => {}),
+  }));
+});
+
+afterEach(() => {
+  // 清理所有模拟
+  mock.restore();
+  mock.clearAllMocks();
+});
+```
+
+## 最佳实践
+
+### 保持模拟简单
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+// 好：简单、专注的模拟
+const mockUserApi = {
+  getUser: mock(async id => ({ id, name: "Test User" })),
+};
+
+// 避免：过于复杂的模拟行为
+const complexMock = mock(input => {
+  if (input.type === "A") {
+    return processTypeA(input);
+  } else if (input.type === "B") {
+    return processTypeB(input);
+  }
+  // ... 大量复杂逻辑
+});
+```
+
+### 使用类型安全的模拟
+
+```ts
+interface UserService {
+  getUser(id: string): Promise<User>;
+  createUser(data: CreateUserData): Promise<User>;
+}
+
+const mockUserService: UserService = {
+  getUser: mock(async (id: string) => ({ id, name: "Test User" })),
+  createUser: mock(async data => ({ id: "new-id", ...data })),
+};
+```
+
+### 测试模拟行为
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+test("service calls API correctly", async () => {
+  const mockApi = { fetchUser: mock(async () => ({ id: "1" })) };
+
+  const service = new UserService(mockApi);
+  await service.getUser("123");
+
+  // 验证模拟被正确调用
+  expect(mockApi.fetchUser).toHaveBeenCalledWith("123");
+  expect(mockApi.fetchUser).toHaveBeenCalledTimes(1);
+});
+```
+
+## 注意事项
+
+### 自动模拟
+
+`__mocks__` 目录和自动模拟尚未支持。如果这阻碍您切换到 Bun，请 [提交问题](https://github.com/oven-sh/bun/issues)。
+
+### ESM vs CommonJS
+
+模块模拟对 ESM 和 CommonJS 模块有不同的实现。对于 ES 模块，Bun 在 JavaScriptCore 中添加了补丁，允许 Bun 在运行时覆盖导出值并递归更新活跃绑定。

@@ -1,0 +1,61 @@
+---
+title: 在 macOS 上对单文件 JavaScript 可执行文件进行代码签名
+description: 修复运行 JavaScript 可执行文件时出现的"由于来自未识别的开发者，无法打开"的 Gatekeeper 警告。
+sidebarTitle: 在 macOS 上代码签名
+mode: center
+---
+
+使用 `--compile` 标志编译您的可执行文件。
+
+```sh
+bun build --compile ./path/to/entry.ts --outfile myapp
+```
+
+---
+
+列出您可用的签名标识。其中一个是您传递给 `codesign` 命令的签名标识。此命令需要 macOS。
+
+```sh terminal icon="terminal"
+security find-identity -v -p codesigning
+```
+
+```txt
+1. XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX "Developer ID Application: Your Name (ZZZZZZZZZZ)"
+   1 valid identities found
+```
+
+---
+
+可选但推荐：创建一个 [entitlements.plist] 文件，其中包含 JavaScript 引擎正常工作所需的权限。
+
+```xml entitlements.plist icon="file-code"
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <key>com.apple.security.cs.disable-executable-page-protection</key>
+    <true/>
+    <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+    <true/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+</dict>
+</plist>
+```
+
+---
+
+使用 `codesign` 命令签署您的可执行文件并验证它是否正常工作。
+
+```bash terminal icon="terminal"
+codesign --entitlements entitlements.plist -vvvv --deep --sign "XXXXXXXXXX" ./myapp --force
+codesign -vvv --verify ./myapp
+```
+
+---
+
+有关 macOS 代码签名的更多信息，请参阅 [Apple 的代码签名文档](https://developer.apple.com/documentation/security/code_signing_services)。有关使用 Bun 创建单文件可执行文件的详细信息，请参见 [独立可执行文件](/bundler/executables)。此指南需要 Bun v1.2.4 或更高版本。

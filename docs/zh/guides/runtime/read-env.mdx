@@ -1,0 +1,37 @@
+---
+title: 读取环境变量
+sidebarTitle: 读取环境变量
+mode: center
+---
+
+当前环境变量可以通过 `process.env` 访问。
+
+```ts index.ts icon="/icons/typescript.svg"
+process.env.API_TOKEN; // => "secret"
+```
+
+---
+
+Bun 还通过 `Bun.env` 暴露这些变量，这是 `process.env` 的简单别名。
+
+```ts index.ts icon="/icons/typescript.svg"
+Bun.env.API_TOKEN; // => "secret"
+```
+
+---
+
+要将当前设置的所有环境变量打印到命令行，请运行 `bun --print process.env`。这对于调试很有用。
+
+```sh terminal icon="terminal"
+bun --print process.env
+```
+
+```txt
+BAZ=stuff
+FOOBAR=aaaaaa
+<lots more lines>
+```
+
+---
+
+有关在 Bun 中使用环境变量的更多信息，请参阅 [文档 > 运行时 > 环境变量](/runtime/environment-variables)。

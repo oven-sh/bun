@@ -1,0 +1,83 @@
+---
+title: "覆盖和解析"
+description: "使用 npm 覆盖和 Yarn 解析控制元依赖版本"
+---
+
+Bun 支持 [npm] 的 `"overrides"` 和 Yarn 的 `"resolutions"` 在 [package.json] 中。这些是为_元依赖_指定版本范围的机制——你的依赖的依赖。
+
+{/* prettier-ignore */}
+```json package.json icon="file-json"
+{
+  "name": "my-app",
+  "dependencies": {
+    "foo": "^2.0.0"
+  },
+  "overrides": { // [!code ++]
+    "bar": "~4.4.0" // [!code ++]
+  } // [!code ++]
+}
+```
+
+默认情况下，Bun 将根据每个包的 [package.json] 中指定的范围安装所有依赖和元依赖的最新版本。假设你有一个项目，它有一个依赖 `foo`，而 `foo` 又依赖于 `bar`。这意味着 `bar` 是我们项目的_元依赖_。
+
+```json package.json icon="file-json"
+{
+  "name": "my-app",
+  "dependencies": {
+    "foo": "^2.0.0"
+  }
+}
+```
+
+当你运行 `bun install` 时，Bun 将安装每个包的最新版本。
+
+```txt tree layout of node_modules icon="list-tree"
+node_modules
+├── foo@1.2.3
+└── bar@4.5.6
+```
+
+但如果 `bar@4.5.6` 中引入了安全漏洞怎么办？我们可能希望将 `bar` 固定到没有漏洞的旧版本。这就是 `"overrides"`/`"resolutions"` 的用武之地。
+
+---
+
+## `"overrides"`
+
+在 [package.json] 的 `"overrides"` 字段中添加 `bar`。当确定要安装哪个版本的 `bar` 时，无论是依赖还是元依赖，Bun 都会遵循指定的版本范围。
+
+<Note>
+  Bun 目前仅支持顶层 `"overrides"`。[嵌套
+  覆盖](https://docs.npmjs.com/cli/v9/configuring-npm/package-json#overrides) 不受支持。
+</Note>
+
+{/* prettier-ignore */}
+```json package.json icon="file-json"
+{
+  "name": "my-app",
+  "dependencies": {
+    "foo": "^2.0.0"
+  },
+  "overrides": { // [!code ++]
+    "bar": "~4.4.0" // [!code ++]
+  } // [!code ++]
+}
+```
+
+## `"resolutions"`
+
+语法与 `"resolutions"` 类似，这是 Yarn 对 `"overrides"` 的替代方案。Bun 支持此功能是为了让从 Yarn 迁移更容易。
+
+与 `"overrides"` 一样，_嵌套解析_目前不受支持。
+
+{/* prettier-ignore */}
+```json package.json icon="file-json"
+{
+  "name": "my-app",
+  "dependencies": {
+    "foo": "^2.0.0"
+  },
+  "resolutions": { // [!code ++]
+    "bar": "~4.4.0" // [!code ++]
+  } // [!code ++]
+}
+```

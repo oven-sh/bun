@@ -1,0 +1,73 @@
+---
+title: 使用 Bun 和 happy-dom 编写浏览器 DOM 测试
+sidebarTitle: DOM 测试
+mode: center
+---
+
+您可以使用 Bun 的测试运行器与 [Happy DOM](https://github.com/capricorn86/happy-dom) 结合编写和运行浏览器测试。Happy DOM 实现了浏览器 API（如 `document` 和 `location`）的模拟版本。
+
+---
+
+要开始使用，请安装 `happy-dom`。
+
+```sh terminal icon="terminal"
+bun add -d @happy-dom/global-registrator
+```
+
+---
+
+此模块导出一个"注册器"，将模拟的浏览器 API 注入到全局作用域。
+
+```ts happydom.ts icon="/icons/typescript.svg"
+import { GlobalRegistrator } from "@happy-dom/global-registrator";
+
+GlobalRegistrator.register();
+```
+
+---
+
+我们需要确保此文件在任何测试文件之前执行。这是 Bun 内置的[_预加载_]()功能的任务。在项目的根目录中创建一个 [bunfig.toml] 文件（如果尚不存在），并添加以下行。
+
+[./happydom.ts] 文件应包含上面的注册代码。
+
+```toml bunfig.toml icon="settings"
+[test]
+preload = "./happydom.ts"
+```
+
+---
+
+现在在我们的项目中运行 `bun test` 将自动首先执行 [happydom.ts]。我们可以开始编写使用浏览器 API 的测试。
+
+```ts dom.test.ts icon="/icons/typescript.svg"
+import { test, expect } from "bun:test";
+
+test("set button text", () => {
+  document.body.innerHTML = `<button>My button</button>`;
+  const button = document.querySelector("button");
+  expect(button?.innerText).toEqual("My button");
+});
+```
+
+---
+
+配置好 Happy DOM 后，此测试按预期运行。
+
+```sh terminal icon="terminal"
+bun test
+```
+
+```txt
+
+dom.test.ts:
+✓ set button text [0.82ms]
+
+ 1 pass
+ 0 fail
+ 1 expect() calls
+Ran 1 tests across 1 files. 1 total [125.00ms]
+```
+
+---
+
+请参阅 [Happy DOM 仓库](https://github.com/capricorn86/happy-dom) 和 [文档 > 测试运行器 > DOM](/test/dom) 了解使用 Bun 编写浏览器测试的完整文档。

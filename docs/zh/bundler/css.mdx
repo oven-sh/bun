@@ -1,0 +1,1023 @@
+---
+title: CSS
+description: Bun 的打包器具有内置的现代 CSS 功能支持
+---
+
+Bun 的打包器具有内置的 CSS 支持，具有以下功能：
+
+- 转译现代/未来功能以适用于所有浏览器（包括供应商前缀）
+- 压缩
+- CSS 模块
+- Tailwind（通过原生打包器插件）
+
+## 转译
+
+Bun 的 CSS 打包器让您使用现代/未来 CSS 功能，而无需担心浏览器兼容性 —— 这要归功于其默认启用的转译和供应商前缀功能。
+
+Bun 的 CSS 解析器和打包器是 LightningCSS 的直接 Rust → Zig 移植，其打包方式受到 esbuild 的启发。转译器将现代 CSS 语法转换为向后兼容的等效语法，适用于所有浏览器。
+
+<Note>非常感谢 LightningCSS 和 esbuild 作者的出色工作。</Note>
+
+## 浏览器兼容性
+
+默认情况下，Bun 的 CSS 打包器针对以下浏览器：
+
+- ES2020
+- Edge 88+
+- Firefox 78+
+- Chrome 87+
+- Safari 14+
+
+## 语法降级
+
+### 嵌套
+
+CSS 嵌套规范允许您通过在一个内部嵌套选择器来编写更简洁直观的样式表。您可以直接在父块中编写子样式，而不是在 CSS 文件中重复父选择器。
+
+```scss title="styles.css" icon="file-code"
+/* 使用嵌套 */
+.card {
+  background: white;
+  border-radius: 4px;
+
+  .title {
+    font-size: 1.2rem;
+    font-weight: bold;
+  }
+
+  .content {
+    padding: 1rem;
+  }
+}
+```
+
+Bun 的 CSS 打包器自动将这种嵌套语法转换为适用于所有浏览器的传统平面 CSS：
+
+```css title="styles.css" icon="file-code"
+/* 编译输出 */
+.card {
+  background: white;
+  border-radius: 4px;
+}
+
+.card .title {
+  font-size: 1.2rem;
+  font-weight: bold;
+}
+
+.card .content {
+  padding: 1rem;
+}
+```
+
+您还可以在选择器内部嵌套媒体查询和其他 at 规则，无需重复选择器模式：
+
+```scss title="styles.css" icon="file-code"
+.responsive-element {
+  display: block;
+
+  @media (min-width: 768px) {
+    display: flex;
+  }
+}
+```
+
+这编译为：
+
+```css title="styles.css" icon="file-code"
+.responsive-element {
+  display: block;
+}
+
+@media (min-width: 768px) {
+  .responsive-element {
+    display: flex;
+  }
+}
+```
+
+### 颜色混合
+
+`color-mix()` 函数为您提供一种简单的方法，根据指定比例在选定的颜色空间中混合两种颜色。这个强大功能让您可以创建颜色变体，而无需手动计算结果值。
+
+```scss title="styles.css" icon="file-code"
+.button {
+  /* 在 RGB 颜色空间中以 30/70 比例混合蓝色和红色 */
+  background-color: color-mix(in srgb, blue 30%, red);
+
+  /* 为悬停状态创建较亮的变体 */
+  &:hover {
+    background-color: color-mix(in srgb, blue 30%, red, white 20%);
+  }
+}
+```
+
+Bun 的 CSS 打包器在构建时评估这些颜色混合（当所有颜色值已知时，非 CSS 变量），生成适用于所有浏览器的静态颜色值：
+
+```css title="styles.css" icon="file-code"
+.button {
+  /* 计算为确切的结果颜色 */
+  background-color: #b31a1a;
+}
+
+.button:hover {
+  background-color: #c54747;
+}
+```
+
+此功能特别适用于创建颜色系统，具有程序生成的色调、明度和强调色，而无需预处理器或自定义工具。
+
+### 相对颜色
+
+CSS 现在允许您使用相对颜色语法修改颜色的各个组成部分。这个强大功能允许您通过调整特定属性（如亮度、饱和度或各个通道）来创建颜色变体，而无需重新计算整个颜色。
+
+```css title="styles.css" icon="file-code"
+.theme-color {
+  /* 从基础颜色开始并将亮度增加 15% */
+  --accent: lch(from purple calc(l + 15%) c h);
+
+  /* 采用我们的品牌蓝色并制作一个去饱和的版本 */
+  --subtle-blue: oklch(from var(--brand-blue) l calc(c * 0.8) h);
+}
+```
+
+Bun 的 CSS 打包器在构建时计算这些相对颜色修改（当不使用 CSS 变量时）并生成静态颜色值以确保浏览器兼容：
+
+```css
+.theme-color {
+  --accent: lch(69.32% 58.34 328.37);
+  --subtle-blue: oklch(60.92% 0.112 240.01);
+}
+```
+
+这种方法对于主题生成、创建可访问的颜色变体或基于数学关系而非硬编码每个值构建颜色刻度非常有用。
+
+### LAB 颜色
+
+现代 CSS 支持感知均匀的颜色空间，如 LAB、LCH、OKLAB 和 OKLCH，相比传统的 RGB 提供显著优势。这些颜色空间可以表示超出标准 RGB 色域的颜色，从而实现更加鲜艳和视觉一致的设计。
+
+```css title="styles.css" icon="file-code"
+.vibrant-element {
+  /* 超出 sRGB 色域边界的鲜艳红色 */
+  color: lab(55% 78 35);
+
+  /* 使用感知颜色空间的平滑渐变 */
+  background: linear-gradient(to right, oklch(65% 0.25 10deg), oklch(65% 0.25 250deg));
+}
+```
+
+Bun 的 CSS 打包器自动将这些高级颜色格式转换为不支持它们的浏览器的向后兼容替代方案：
+
+```css title="styles.css" icon="file-code"
+.vibrant-element {
+  /* 回退到最接近的 RGB 近似值 */
+  color: #ff0f52;
+  /* 为具有更广色域支持的浏览器提供 P3 回退 */
+  color: color(display-p3 1 0.12 0.37);
+  /* 为支持它的浏览器保留原始值 */
+  color: lab(55% 78 35);
+
+  background: linear-gradient(to right, #cd4e15, #3887ab);
+  background: linear-gradient(to right, oklch(65% 0.25 10deg), oklch(65% 0.25 250deg));
+}
+```
+
+这种分层方法确保在所有浏览器中都能获得最佳颜色渲染，同时允许您在设计中使用最新的颜色技术。
+
+### 颜色函数
+
+`color()` 函数提供了一种标准化的方式来指定各种预定义颜色空间中的颜色，扩展了您的设计选项，超越传统 RGB 空间。这允许您访问更广泛的色域并创建更鲜艳的设计。
+
+```css title="styles.css" icon="file-code"
+.vivid-element {
+  /* 使用 Display P3 颜色空间获得更广的色域颜色 */
+  color: color(display-p3 1 0.1 0.3);
+
+  /* 使用 A98 RGB 颜色空间 */
+  background-color: color(a98-rgb 0.44 0.5 0.37);
+}
+```
+
+对于尚不支持这些高级颜色函数的浏览器，Bun 的 CSS 打包器提供了适当的 RGB 回退：
+
+```css title="styles.css" icon="file-code"
+.vivid-element {
+  /* 首先使用 RGB 回退以获得最大兼容性 */
+  color: #fa1a4c;
+  /* 为支持它的浏览器保留原始值 */
+  color: color(display-p3 1 0.1 0.3);
+
+  background-color: #6a805d;
+  background-color: color(a98-rgb 0.44 0.5 0.37);
+}
+```
+
+此功能让您立即使用现代颜色空间，同时确保您的设计在所有浏览器中保持功能，支持浏览器显示最佳颜色，而在其他地方显示合理近似值。
+
+### HWB 颜色
+
+HWB（色调、白度、黑度）颜色模型提供了一种基于混合多少白色或黑色与纯色调来表达颜色的直观方式。许多设计师发现这种方法比操作 RGB 或 HSL 值更适合创建颜色变体。
+
+```css title="styles.css" icon="file-code"
+.easy-theming {
+  /* 不添加白色或黑色的纯青色 */
+  --primary: hwb(180 0% 0%);
+
+  /* 相同色调，但添加 20% 白色（色调） */
+  --primary-light: hwb(180 20% 0%);
+
+  /* 相同色调，但添加 30% 黑色（阴影） */
+  --primary-dark: hwb(180 0% 30%);
+
+  /* 添加白色和黑色的柔和版本 */
+  --primary-muted: hwb(180 30% 20%);
+}
+```
+
+Bun 的 CSS 打包器自动将 HWB 颜色转换为 RGB 以兼容所有浏览器：
+
+```css title="styles.css" icon="file-code"
+.easy-theming {
+  --primary: #00ffff;
+  --primary-light: #33ffff;
+  --primary-dark: #00b3b3;
+  --primary-muted: #339999;
+}
+```
+
+HWB 模型特别容易为设计系统创建系统化的颜色变体，提供比直接使用 RGB 或 HSL 值创建一致色调和阴影更直观的方法。
+
+### 颜色表示法
+
+现代 CSS 引入了更直观和简洁的表达颜色的方式。空格分隔的颜色语法消除了 RGB 和 HSL 值中的逗号需求，而带 Alpha 通道的十六进制颜色提供了一种指定透明度的紧凑方式。
+
+```css title="styles.css" icon="file-code"
+.modern-styling {
+  /* 空格分隔的 RGB 表示法（无逗号） */
+  color: rgb(50 100 200);
+
+  /* 带 Alpha 的空格分隔 RGB */
+  border-color: rgba(100 50 200 / 75%);
+
+  /* 带 Alpha 通道的十六进制（8 位数） */
+  background-color: #00aaff80;
+
+  /* 简化表示法的 HSL */
+  box-shadow: 0 5px 10px hsl(200 50% 30% / 40%);
+}
+```
+
+Bun 的 CSS 打包器自动转换这些现代颜色格式以确保与旧浏览器的兼容性：
+
+```css title="styles.css" icon="file-code"
+.modern-styling {
+  /* 转换为逗号格式以支持旧浏览器 */
+  color: rgb(50, 100, 200);
+
+  /* Alpha 通道适当处理 */
+  border-color: rgba(100, 50, 200, 0.75);
+
+  /* 需要时将十六进制+Alpha 转换为 rgba */
+  background-color: rgba(0, 170, 255, 0.5);
+
+  box-shadow: 0 5px 10px rgba(38, 115, 153, 0.4);
+}
+```
+
+此转换过程让您编写更清洁、更现代的 CSS，同时确保您的样式在所有浏览器中正确工作。
+
+### light-dark() 颜色函数
+
+`light-dark()` 函数为实现尊重用户系统偏好的配色方案提供了一个优雅的解决方案，无需复杂的媒体查询。此函数接受两个颜色值，并根据当前配色方案上下文自动选择适当的值。
+
+```css title="styles.css" icon="file-code"
+:root {
+  /* 定义配色方案支持 */
+  color-scheme: light dark;
+}
+
+.themed-component {
+  /* 根据系统偏好自动选择合适的颜色 */
+  background-color: light-dark(#ffffff, #121212);
+  color: light-dark(#333333, #eeeeee);
+  border-color: light-dark(#dddddd, #555555);
+}
+
+/* 需要时覆盖系统偏好 */
+.light-theme {
+  color-scheme: light;
+}
+
+.dark-theme {
+  color-scheme: dark;
+}
+```
+
+对于尚不支持此功能的浏览器，Bun 的 CSS 打包器将其转换为使用具有适当回退的 CSS 变量：
+
+```css title="styles.css" icon="file-code"
+:root {
+  --lightningcss-light: initial;
+  --lightningcss-dark: ;
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --lightningcss-light: ;
+    --lightningcss-dark: initial;
+  }
+}
+
+.light-theme {
+  --lightningcss-light: initial;
+  --lightningcss-dark: ;
+  color-scheme: light;
+}
+
+.dark-theme {
+  --lightningcss-light: ;
+  --lightningcss-dark: initial;
+  color-scheme: dark;
+}
+
+.themed-component {
+  background-color: var(--lightningcss-light, #ffffff) var(--lightningcss-dark, #121212);
+  color: var(--lightningcss-light, #333333) var(--lightningcss-dark, #eeeeee);
+  border-color: var(--lightningcss-light, #dddddd) var(--lightningcss-dark, #555555);
+}
+```
+
+这种方法为您提供了一种处理浅色和深色主题的简洁方式，无需复制样式或编写复杂的媒体查询，同时保持与尚不原生支持该功能的浏览器的兼容性。
+
+### 逻辑属性
+
+CSS 逻辑属性允许您根据文档的书写模式和文本方向定义布局、间距和尺寸，而不是物理屏幕方向。这对于创建自动适应不同书写系统的真正国际化布局至关重要。
+
+```css title="styles.css" icon="file-code"
+.multilingual-component {
+  /* 适应书写方向的边距 */
+  margin-inline-start: 1rem;
+
+  /* 与文本方向无关的内边距 */
+  padding-block: 1rem 2rem;
+
+  /* 顶部起始角的边框半径 */
+  border-start-start-radius: 4px;
+
+  /* 尊重书写模式的尺寸 */
+  inline-size: 80%;
+  block-size: auto;
+}
+```
+
+对于不完全支持逻辑属性的浏览器，Bun 的 CSS 打包器将其编译为具有适当方向调整的物理属性：
+
+```css title="styles.css" icon="file-code"
+/* 对于从左到右的语言 */
+.multilingual-component:dir(ltr) {
+  margin-left: 1rem;
+  padding-top: 1rem;
+  padding-bottom: 2rem;
+  border-top-left-radius: 4px;
+  width: 80%;
+  height: auto;
+}
+
+/* 对于从右到左的语言 */
+.multilingual-component:dir(rtl) {
+  margin-right: 1rem;
+  padding-top: 1rem;
+  padding-bottom: 2rem;
+  border-top-right-radius: 4px;
+  width: 80%;
+  height: auto;
+}
+```
+
+如果不支持 `:dir()` 选择器，还会自动生成额外的回退以确保您的布局在所有浏览器和书写系统中正常工作。这使得创建国际化设计变得更加简单，同时保持与旧浏览器的兼容性。
+
+### :dir() 选择器
+
+`:dir()` 伪类选择器允许您根据文本方向（RTL 或 LTR）来设置元素样式，为创建方向感知设计提供了一种强大的方法，而无需 JavaScript。此选择器根据由文档或显式方向属性确定的方向性匹配元素。
+
+```css title="styles.css" icon="file-code"
+/* 根据文本方向应用不同样式 */
+.nav-arrow:dir(ltr) {
+  transform: rotate(0deg);
+}
+
+.nav-arrow:dir(rtl) {
+  transform: rotate(180deg);
+}
+
+/* 根据文本流向定位元素 */
+.sidebar:dir(ltr) {
+  border-right: 1px solid #ddd;
+}
+
+.sidebar:dir(rtl) {
+  border-left: 1px solid #ddd;
+}
+```
+
+对于尚不支持 `:dir()` 选择器的浏览器，Bun 的 CSS 打包器将其转换为更广泛支持的 `:lang()` 选择器，并使用适当的语言映射：
+
+```css title="styles.css" icon="file-code"
+/* 转换为使用基于语言的选择器作为回退 */
+.nav-arrow:lang(en, fr, de, es, it, pt, nl) {
+  transform: rotate(0deg);
+}
+
+.nav-arrow:lang(ar, he, fa, ur) {
+  transform: rotate(180deg);
+}
+
+.sidebar:lang(en, fr, de, es, it, pt, nl) {
+  border-right: 1px solid #ddd;
+}
+
+.sidebar:lang(ar, he, fa, ur) {
+  border-left: 1px solid #ddd;
+}
+```
+
+此转换让您编写的方向感知 CSS 在浏览器中可靠地工作，即使那些尚未原生支持 `:dir()` 选择器的浏览器也是如此。如果 `:lang()` 不支持多个参数，将自动提供进一步的回退。
+
+### :lang() 选择器
+
+`:lang()` 伪类选择器允许您根据元素所属的语言来定位元素，轻松应用特定于语言的样式。现代 CSS 允许 `:lang()` 选择器接受多种语言代码，让您更有效地分组语言特定的规则。
+
+```css title="styles.css" icon="file-code"
+/* 针对 CJK 语言的排版调整 */
+:lang(zh, ja, ko) {
+  line-height: 1.8;
+  font-size: 1.05em;
+}
+
+/* 按语言组区分的引号样式 */
+blockquote:lang(fr, it, es, pt) {
+  font-style: italic;
+}
+
+blockquote:lang(de, nl, da, sv) {
+  font-weight: 500;
+}
+```
+
+对于不支持 `:lang()` 选择器中多个参数的浏览器，Bun 的 CSS 打包器将此语法转换为使用 `:is()` 选择器以保持相同的行为：
+
+```css title="styles.css" icon="file-code"
+/* 使用 :is() 分组多种语言以获得更好的浏览器支持 */
+:is(:lang(zh), :lang(ja), :lang(ko)) {
+  line-height: 1.8;
+  font-size: 1.05em;
+}
+
+blockquote:is(:lang(fr), :lang(it), :lang(es), :lang(pt)) {
+  font-style: italic;
+}
+
+blockquote:is(:lang(de), :lang(nl), :lang(da), :lang(sv)) {
+  font-weight: 500;
+}
+```
+
+如有必要，Bun 还可以为 `:is()` 提供额外的回退，确保您的语言特定样式在所有浏览器中都能工作。这种方法简化了为不同语言组创建具有独特排版和样式规则的国际化设计。
+
+### :is() 选择器
+
+`:is()` 伪类函数（以前称为 `:matches()`）允许您通过将多个选择器组合在一起创建更简洁易读的选择器。它接受一个选择器列表作为参数，如果列表中的任何选择器匹配则匹配，显著减少 CSS 中的重复。
+
+```css title="styles.css" icon="file-code"
+/* 不用分别写这些 */
+/* 
+.article h1,
+.article h2,
+.article h3 {
+  margin-top: 1.5em;
+}
+*/
+
+/* 你可以这样写 */
+.article :is(h1, h2, h3) {
+  margin-top: 1.5em;
+}
+
+/* 复杂示例包含多组 */
+:is(header, main, footer) :is(h1, h2, .title) {
+  font-family: "Heading Font", sans-serif;
+}
+```
+
+对于不支持 `:is()` 的浏览器，Bun 的 CSS 打包器提供使用供应商前缀的回退：
+
+```css
+/* 使用 -webkit-any 的回退 */
+.article :-webkit-any(h1, h2, h3) {
+  margin-top: 1.5em;
+}
+
+/* 使用 -moz-any 的回退 */
+.article :-moz-any(h1, h2, h3) {
+  margin-top: 1.5em;
+}
+
+/* 为现代浏览器保留原始 */
+.article :is(h1, h2, h3) {
+  margin-top: 1.5em;
+}
+
+/* 复杂示例的回退 */
+:-webkit-any(header, main, footer) :-webkit-any(h1, h2, .title) {
+  font-family: "Heading Font", sans-serif;
+}
+
+:-moz-any(header, main, footer) :-moz-any(h1, h2, .title) {
+  font-family: "Heading Font", sans-serif;
+}
+
+:is(header, main, footer) :is(h1, h2, .title) {
+  font-family: "Heading Font", sans-serif;
+}
+```
+
+<Warning>
+  供应商前缀版本相比标准化的 `:is()` 选择器有一些限制，特别是在
+  复杂选择器方面。Bun 智能地处理这些限制，只有在它们能
+  正确工作时才使用前缀版本。
+</Warning>
+
+### :not() 选择器
+
+`:not()` 伪类允许您排除匹配特定选择器的元素。此选择器的现代版本接受多个参数，让您可以使用单个简洁的选择器排除多个模式。
+
+```css title="styles.css" icon="file-code"
+/* 选择除主要和次要变体之外的所有按钮 */
+button:not(.primary, .secondary) {
+  background-color: #f5f5f5;
+  border: 1px solid #ddd;
+}
+
+/* 为不在侧边栏或页脚内的所有标题应用样式 */
+h2:not(.sidebar *, footer *) {
+  margin-top: 2em;
+}
+```
+
+对于不支持 `:not()` 中多个参数的浏览器，Bun 的 CSS 打包器将此语法转换为更兼容的形式，同时保持相同的行为：
+
+```css title="styles.css" icon="file-code"
+/* 转换为使用 :is() 的 :not() 以实现兼容性 */
+button:not(:is(.primary, .secondary)) {
+  background-color: #f5f5f5;
+  border: 1px solid #ddd;
+}
+
+h2:not(:is(.sidebar *, footer *)) {
+  margin-top: 2em;
+}
+```
+
+如果 `:is()` 不受支持，Bun 可以生成更多回退：
+
+```css title="styles.css" icon="file-code"
+/* 更多回退以实现最大兼容性 */
+button:not(:-webkit-any(.primary, .secondary)) {
+  background-color: #f5f5f5;
+  border: 1px solid #ddd;
+}
+
+button:not(:-moz-any(.primary, .secondary)) {
+  background-color: #f5f5f5;
+  border: 1px solid #ddd;
+}
+
+button:not(:is(.primary, .secondary)) {
+  background-color: #f5f5f5;
+  border: 1px solid #ddd;
+}
+```
+
+此转换确保您的负选择器在所有浏览器中正确工作，同时保持原始选择器的正确特异性和行为。
+
+### 数学函数
+
+CSS 现在包含丰富的数学函数集，可让您直接在样式表中执行复杂计算。这些包括标准数学函数（`round()`、`mod()`、`rem()`、`abs()`、`sign()`）、三角函数（`sin()`、`cos()`、`tan()`、`asin()`、`acos()`、`atan()`、`atan2()`）和指数函数（`pow()`、`sqrt()`、`exp()`、`log()`、`hypot()`）。
+
+```css title="styles.css" icon="file-code"
+.dynamic-sizing {
+  /* 将值限制在最小值和最大值之间 */
+  width: clamp(200px, 50%, 800px);
+
+  /* 四舍五入到最近的倍数 */
+  padding: round(14.8px, 5px);
+
+  /* 用于动画或布局的三角函数 */
+  transform: rotate(calc(sin(45deg) * 50deg));
+
+  /* 包含多个函数的复杂数学 */
+  --scale-factor: pow(1.25, 3);
+  font-size: calc(16px * var(--scale-factor));
+}
+```
+
+Bun 的 CSS 打包器在所有值已知常量（非变量）时在构建时评估这些数学表达式，生成优化的输出：
+
+```css title="styles.css" icon="file-code"
+.dynamic-sizing {
+  width: clamp(200px, 50%, 800px);
+  padding: 15px;
+  transform: rotate(35.36deg);
+  --scale-factor: 1.953125;
+  font-size: calc(16px * var(--scale-factor));
+}
+```
+
+这种方法让您编写更具表现力和可维护的 CSS，具有有意义的数学关系，然后编译为优化值以实现最大浏览器兼容性和性能。
+
+### 媒体查询范围
+
+现代 CSS 支持直观的范围语法进行媒体查询，允许您使用比较运算符（如 `<`、`>`、`<=` 和 `>=`）指定断点，而不是更冗长的 `min-` 和 `max-` 前缀。这种语法更易读，符合我们通常思考值和范围的方式。
+
+```css title="styles.css" icon="file-code"
+/* 使用比较运算符的现代语法 */
+@media (width >= 768px) {
+  .container {
+    max-width: 720px;
+  }
+}
+
+/* 使用 <= 和 >= 的包含范围 */
+@media (768px <= width <= 1199px) {
+  .sidebar {
+    display: flex;
+  }
+}
+
+/* 使用 < 和 > 的独占范围 */
+@media (width > 320px) and (width < 768px) {
+  .mobile-only {
+    display: block;
+  }
+}
+```
+
+Bun 的 CSS 打包器将这些现代范围查询转换为传统媒体查询语法以兼容所有浏览器：
+
+```css title="styles.css" icon="file-code"
+/* 转换为传统的 min/max 语法 */
+@media (min-width: 768px) {
+  .container {
+    max-width: 720px;
+  }
+}
+
+@media (min-width: 768px) and (max-width: 1199px) {
+  .sidebar {
+    display: flex;
+  }
+}
+
+@media (min-width: 321px) and (max-width: 767px) {
+  .mobile-only {
+    display: block;
+  }
+}
+```
+
+这使您可以编写更直观和数学化的媒体查询，同时确保您的样式表在所有浏览器中正确工作，包括不支持现代范围语法的浏览器。
+
+### 简写
+
+CSS 引入了几个现代简写属性，提高了代码可读性和可维护性。Bun 的 CSS 打包器确保这些便捷简写在所有浏览器上都能工作，必要时将它们转换为长格式。
+
+```css title="styles.css" icon="file-code"
+/* 对齐简写 */
+.flex-container {
+  /* align-items 和 justify-items 的简写 */
+  place-items: center start;
+
+  /* align-content 和 justify-content 的简写 */
+  place-content: space-between center;
+}
+
+.grid-item {
+  /* align-self 和 justify-self 的简写 */
+  place-self: end center;
+}
+
+/* 双值溢出 */
+.content-box {
+  /* 第一个值用于水平，第二个值用于垂直 */
+  overflow: hidden auto;
+}
+
+/* 增强的文本装饰 */
+.fancy-link {
+  /* 组合多个文本装饰属性 */
+  text-decoration: underline dotted blue 2px;
+}
+
+/* 双值显示语法 */
+.component {
+  /* 外部显示类型 + 内部显示类型 */
+  display: inline flex;
+}
+```
+
+对于不支持这些现代简写的浏览器，Bun 将它们转换为组件长格式属性：
+
+```css title="styles.css" icon="file-code"
+.flex-container {
+  /* 展开的对齐属性 */
+  align-items: center;
+  justify-items: start;
+
+  align-content: space-between;
+  justify-content: center;
+}
+
+.grid-item {
+  align-self: end;
+  justify-self: center;
+}
+
+.content-box {
+  /* 分离的溢出属性 */
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.fancy-link {
+  /* 单独的文本装饰属性 */
+  text-decoration-line: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: blue;
+  text-decoration-thickness: 2px;
+}
+
+.component {
+  /* 单值显示 */
+  display: inline-flex;
+}
+```
+
+此转换确保您的样式表保持清洁和可维护，同时提供最广泛的浏览器兼容性。
+
+### 双位置渐变
+
+双位置渐变语法是现代 CSS 功能，允许您通过在同一颜色处指定两个相邻位置来在渐变中创建硬色停止。这创建了一个尖锐过渡而不是平滑淡入，对于创建条纹、彩色带和其他多色设计很有用。
+
+```css title="styles.css" icon="file-code"
+.striped-background {
+  /* 在 30%-40% 处创建从绿色到红色的尖锐过渡 */
+  background: linear-gradient(
+    to right,
+    yellow 0%,
+    green 20%,
+    green 30%,
+    red 30%,
+    /* 双位置创建硬停止 */ red 70%,
+    blue 70%,
+    blue 100%
+  );
+}
+
+.progress-bar {
+  /* 创建明显的颜色区段 */
+  background: linear-gradient(
+    to right,
+    #4caf50 0% 25%,
+    /* 从 0% 到 25% 的绿色 */ #ffc107 25% 50%,
+    /* 从 25% 到 50% 的黄色 */ #2196f3 50% 75%,
+    /* 从 50% 到 75% 的蓝色 */ #9c27b0 75% 100% /* 从 75% 到 100% 的紫色 */
+  );
+}
+```
+
+对于不支持此语法的浏览器，Bun 的 CSS 打包器自动将其转换为传统格式，通过复制颜色停止：
+
+```css title="styles.css" icon="file-code"
+.striped-background {
+  background: linear-gradient(
+    to right,
+    yellow 0%,
+    green 20%,
+    green 30%,
+    red 30%,
+    /* 分割为两个颜色停止 */ red 70%,
+    blue 70%,
+    blue 100%
+  );
+}
+
+.progress-bar {
+  background: linear-gradient(
+    to right,
+    #4caf50 0%,
+    #4caf50 25%,
+    /* 绿色区段的两个停止点 */ #ffc107 25%,
+    #ffc107 50%,
+    /* 黄色区段的两个停止点 */ #2196f3 50%,
+    #2196f3 75%,
+    /* 蓝色区段的两个停止点 */ #9c27b0 75%,
+    #9c27b0 100% /* 紫色区段的两个停止点 */
+  );
+}
+```
+
+此转换允许您在源代码中使用更清晰的双位置语法，同时确保渐变在所有浏览器中正确显示。
+
+### system-ui 字体
+
+`system-ui` 通用字体系列让您使用设备的原生 UI 字体，创建感觉更集成到操作系统中的界面。这提供了更原生的外观和感觉，而无需为每个平台指定不同的字体栈。
+
+```css title="styles.css" icon="file-code"
+.native-interface {
+  /* 使用系统的默认 UI 字体 */
+  font-family: system-ui;
+}
+
+.fallback-aware {
+  /* 带显式回退的系统 UI 字体 */
+  font-family: system-ui, sans-serif;
+}
+```
+
+对于不支持 `system-ui` 的浏览器，Bun 的 CSS 打包器自动将其展开为全面的跨平台字体栈：
+
+```css title="styles.css" icon="file-code"
+.native-interface {
+  /* 展开以支持所有主要平台 */
+  font-family:
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    Roboto,
+    "Noto Sans",
+    Ubuntu,
+    Cantarell,
+    "Helvetica Neue";
+}
+
+.fallback-aware {
+  /* 在扩展栈后保留原始回退 */
+  font-family:
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    Roboto,
+    "Noto Sans",
+    Ubuntu,
+    Cantarell,
+    "Helvetica Neue",
+    sans-serif;
+}
+```
+
+这种方法让您在源代码中只需编写 `system-ui`，同时确保您的界面正确适应所有操作系统和浏览器。扩展的字体栈包括适用于 macOS/iOS、Windows、Android、Linux 和旧浏览器回退的适当系统字体。
+
+## CSS 模块
+
+Bun 的打包器还支持打包 CSS 模块，除了常规 CSS 外，还支持以下功能：
+
+- 自动检测 CSS 模块文件（`.module.css`）而无需配置
+- 组合（`composes` 属性）
+- 将 CSS 模块导入到 JSX/TSX
+- 对 CSS 模块的无效使用发出警告/错误
+
+CSS 模块是一个 CSS 文件（具有 `.module.css` 扩展名），其中所有类名和动画都限定在文件范围内。这有助于您避免类名冲突，因为 CSS 声明默认是全局范围的。
+
+在底层，Bun 的打包器将局部范围的类名转换为唯一标识符。
+
+### 入门
+
+创建一个具有 `.module.css` 扩展名的 CSS 文件：
+
+```css title="styles.module.css" icon="file-code"
+.button {
+  color: red;
+}
+```
+
+```css title="other-styles.module.css" icon="file-code"
+.button {
+  color: blue;
+}
+```
+
+然后您可以将此文件导入，例如导入到 TSX 文件中：
+
+```tsx title="app.tsx" icon="/icons/typescript.svg"
+import styles from "./styles.module.css";
+import otherStyles from "./other-styles.module.css";
+
+export default function App() {
+  return (
+    <>
+      <button className={styles.button}>红色按钮！</button>
+      <button className={otherStyles.button}>蓝色按钮！</button>
+    </>
+  );
+}
+```
+
+从导入 CSS 模块文件获得的 styles 对象将是一个对象，其中所有类名为键，其唯一标识符为值：
+
+```ts title="app.tsx" icon="/icons/typescript.svg"
+import styles from "./styles.module.css";
+import otherStyles from "./other-styles.module.css";
+
+console.log(styles);
+console.log(otherStyles);
+```
+
+这将输出：
+
+```ts title="app.tsx" icon="/icons/typescript.svg"
+{
+  button: "button_123";
+}
+
+{
+  button: "button_456";
+}
+```
+
+如您所见，类名对每个文件都是唯一的，避免了任何冲突！
+
+### 组合
+
+CSS 模块允许您将类选择器组合在一起。这允许您在多个类之间重用样式规则。
+
+例如：
+
+```css title="styles.module.css" icon="file-code"
+.button {
+  composes: background;
+  color: red;
+}
+
+.background {
+  background-color: blue;
+}
+```
+
+与编写以下内容相同：
+
+```css title="styles.module.css" icon="file-code"
+.button {
+  background-color: blue;
+  color: red;
+}
+
+.background {
+  background-color: blue;
+}
+```
+
+使用 `composes` 时有几个规则需要注意：
+
+<Info>
+  **组合规则：** - `composes` 属性必须在任何常规 CSS 属性或声明之前
+  - 您只能对具有单个类名的简单选择器使用 `composes`
+</Info>
+
+```css title="styles.module.css" icon="file-code"
+#button {
+  /* 无效！`#button` 不是类选择器 */
+  composes: background;
+}
+
+.button,
+.button-secondary {
+  /* 无效！`.button, .button-secondary` 不是简单选择器 */
+  composes: background;
+}
+```
+
+### 从单独的 CSS 模块文件组合
+
+您还可以从单独的 CSS 模块文件组合：
+
+```css title="background.module.css" icon="file-code"
+.background {
+  background-color: blue;
+}
+```
+
+```css title="styles.module.css" icon="file-code"
+.button {
+  composes: background from "./background.module.css";
+  color: red;
+}
+```
+
+<Warning>
+从单独文件组合类时，请确保它们不包含相同属性。
+
+CSS 模块规范指出，从包含冲突属性的单独文件组合类是未定义行为，这意味着输出可能不同且不可靠。
+</Warning>

@@ -1,0 +1,149 @@
+---
+title: 定义和替换静态全局变量和常量
+sidebarTitle: 定义常量
+mode: center
+---
+
+`--define` 标志允许您声明静态可分析的常量和全局变量。它将 JavaScript 或 TypeScript 文件中的标识符或属性的所有使用替换为常量值。此功能在运行时和 `bun build` 中都受支持。这有点类似于 C/C++ 中的 `#define`，但适用于 JavaScript。
+
+```sh terminal icon="terminal"
+bun --define process.env.NODE_ENV="'production'" src/index.ts # 运行时
+bun build --define process.env.NODE_ENV="'production'" src/index.ts # 构建
+```
+
+---
+
+Bun 使用这些静态已知的值进行死代码消除和其他优化。
+
+```ts
+if (process.env.NODE_ENV === "production") {
+  console.log("Production mode");
+} else {
+  console.log("Development mode");
+}
+```
+
+---
+
+在代码到达 JavaScript 引擎之前，Bun 将 `process.env.NODE_ENV` 替换为 `"production"`。
+
+{/* prettier-ignore */}
+```ts
+if ("production" === "production") { // [!code ++]
+  console.log("Production mode");
+} else {
+  console.log("Development mode");
+}
+```
+
+---
+
+不仅如此。Bun 的优化转译器足够智能，可以做一些基本的常量折叠。
+
+由于 `"production" === "production"` 总是 `true`，Bun 将整个表达式替换为 `true` 值。
+
+{/* prettier-ignore */}
+```ts
+if (true) { // [!code ++]
+  console.log("Production mode");
+} else {
+  console.log("Development mode");
+}
+```
+
+---
+
+最后，Bun 检测到 `else` 分支无法访问，并将其消除。
+
+```ts
+console.log("Production mode");
+```
+
+---
+
+## 支持哪些类型的值？
+
+值可以是字符串、标识符、属性或 JSON。
+
+### 替换全局标识符
+
+要使 `window` 的所有使用都变为 `undefined`，您可以使用以下命令。
+
+```sh
+bun --define window="undefined" src/index.ts
+```
+
+这在服务端渲染（SSR）或您想确保代码不依赖 `window` 对象时非常有用。
+
+```js
+if (typeof window !== "undefined") {
+  console.log("Client-side code");
+} else {
+  console.log("Server-side code");
+}
+```
+
+您还可以将值设置为另一个标识符。例如，要使 `global` 的所有使用都变为 `globalThis`，您可以使用以下命令。
+
+```sh
+bun --define global="globalThis" src/index.ts
+```
+
+`global` 是 Node.js 中的一个全局对象，但在 Web 浏览器中不是。因此，您可以使用此方法来修复某些代码假定 `global` 可用的情况。
+
+### 使用 JSON 替换值
+
+`--define` 还可用于使用 JSON 对象和数组替换值。
+
+要将 `AWS` 的所有使用替换为 JSON 对象 `{"ACCESS_KEY":"abc","SECRET_KEY":"def"}`，您可以使用以下命令。
+
+```sh
+# JSON
+bun --define AWS='{"ACCESS_KEY":"abc","SECRET_KEY":"def"}' src/index.ts
+```
+
+这些将被转换为相应的 JavaScript 代码。
+
+从：
+
+```ts
+console.log(AWS.ACCESS_KEY); // => "abc"
+```
+
+到：
+
+```ts
+console.log("abc");
+```
+
+### 使用其他属性替换值
+
+您还可以将属性传递给 `--define` 标志。
+
+例如，要将 `console.write` 的所有使用替换为 `console.log`，您可以使用以下命令
+
+```sh
+bun --define console.write=console.log src/index.ts
+```
+
+这将以下输入转换为：
+
+```ts
+console.write("Hello, world!");
+```
+
+到以下输出：
+
+```ts
+console.log("Hello, world!");
+```
+
+## 这与设置变量有何不同？
+
+您也可以在代码中将 `process.env.NODE_ENV` 设置为 `"production"`，但这对死代码消除没有帮助。在 JavaScript 中，属性访问可能有副作用。Getter & Setter 可以是函数，甚至可以动态定义（由于原型链和 Proxy）。即使您将 `process.env.NODE_ENV` 设置为 `"production"`，在下一行，对于静态分析工具来说，假设 `process.env.NODE_ENV` 是 `"production"` 也是不安全的。
+
+## 这与查找替换或字符串替换有何不同？
+
+`--define` 标志在 AST（抽象语法树）级别操作，而不是在文本级别操作。它发生在转译过程中，这意味着它可以用于死代码消除等优化。
+
+字符串替换工具往往有转义问题，并替换代码的非预期部分。

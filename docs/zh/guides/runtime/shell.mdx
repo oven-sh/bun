@@ -1,0 +1,42 @@
+---
+title: 运行 Shell 命令
+sidebarTitle: 运行 shell 命令
+mode: center
+---
+
+Bun Shell 是内置在 Bun 中的跨平台 bash 类似 shell。
+
+它提供了一种在 JavaScript 和 TypeScript 中运行 shell 命令的简单方法。要开始使用，请从 `bun` 包中导入 `$` 函数并使用它来运行 shell 命令。
+
+```ts foo.ts icon="/icons/typescript.svg"
+import { $ } from "bun";
+
+await $`echo Hello, world!`; // => "Hello, world!"
+```
+
+---
+
+`$` 函数是一个标记模板字面量，运行命令并返回一个承诺，该承诺解析为命令的输出。
+
+```ts foo.ts icon="/icons/typescript.svg"
+import { $ } from "bun";
+
+const output = await $`ls -l`.text();
+console.log(output);
+```
+
+---
+
+要将输出的每一行作为数组获取，请使用 `lines` 方法。
+
+```ts foo.ts icon="/icons/typescript.svg"
+import { $ } from "bun";
+
+for await (const line of $`ls -l`.lines()) {
+  console.log(line);
+}
+```
+
+---
+
+请参阅 [文档 > API > Shell](/runtime/shell) 了解完整文档。

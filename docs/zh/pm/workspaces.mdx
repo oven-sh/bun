@@ -1,0 +1,114 @@
+---
+title: "工作区"
+description: "使用多个独立包开发复杂的单一代码库"
+---
+
+Bun 支持 [package.json] 中的 [`workspaces`](https://docs.npmjs.com/cli/v9/using-npm/workspaces?v=true#description)。工作区使得将复杂的软件作为由几个独立包组成的_单一代码库_进行开发变得容易。
+
+单一代码库通常具有以下结构：
+
+```txt File Tree icon="folder-tree"
+<root>
+├── README.md
+├── bun.lock
+├── package.json
+├── tsconfig.json
+└── packages
+    ├── pkg-a
+    │   ├── index.ts
+    │   ├── package.json
+    │   └── tsconfig.json
+    ├── pkg-b
+    │   ├── index.ts
+    │   ├── package.json
+    │   └── tsconfig.json
+    └── pkg-c
+        ├── index.ts
+        ├── package.json
+        └── tsconfig.json
+```
+
+在根 [package.json] 中，`"workspaces"` 键用于表示哪些子目录应被视为单一代码库中的包/工作区。通常将所有工作区放在名为 `packages` 的目录中。
+
+```json package.json icon="file-json"
+{
+  "name": "my-project",
+  "version": "1.0.0",
+  "workspaces": ["packages/*"],
+  "devDependencies": {
+    "example-package-in-monorepo": "workspace:*"
+  }
+}
+```
+
+<Note>
+  **Glob 支持** — Bun 在 `"workspaces"` 中支持完整的 glob 语法，包括负向模式（例如
+  `!**/excluded/**`）。请参见[此处](/runtime/glob#supported-glob-patterns) 获取支持语法的完整列表。
+</Note>
+
+```json package.json icon="file-json"
+{
+  "name": "my-project",
+  "version": "1.0.0",
+  "workspaces": ["packages/**", "!packages/**/test/**", "!packages/**/template/**"]
+}
+```
+
+每个工作区都有自己的 [package.json]。在引用单一代码库中的其他包时，可以使用语义化版本或工作区协议（如 `workspace:*`）作为你的 [package.json] 中的版本字段。
+
+```json packages/pkg-a/package.json icon="file-json"
+{
+  "name": "pkg-a",
+  "version": "1.0.0",
+  "dependencies": {
+    "pkg-b": "workspace:*"
+  }
+}
+```
+
+`bun install` 将为单一代码库中的所有工作区安装依赖，如果可能的话去重包。如果只想为特定工作区安装依赖，可以使用 `--filter` 标志。
+
+```bash
+# 为除 `pkg-c` 外所有以 `pkg-` 开头的工作区安装依赖
+bun install --filter "pkg-*" --filter "!pkg-c"
+
+# 也可以使用路径。这等同于上面的命令。
+bun install --filter "./packages/pkg-*" --filter "!pkg-c" # 或 --filter "!./packages/pkg-c"
+```
+
+发布时，`workspace:` 版本将被包的 [package.json] 版本替换，
+
+```
+"workspace:*" -> "1.0.1"
+"workspace:^" -> "^1.0.1"
+"workspace:~" -> "~1.0.1"
+```
+
+设置特定版本优先于包的 [package.json] 版本，
+
+```
+"workspace:1.0.2" -> "1.0.2" // 即使当前版本是 1.0.1
+```
+
+工作区有几个主要好处。
+
+- **代码可以拆分为逻辑部分。** 如果一个包依赖于另一个包，你可以简单地将其添加为 [package.json] 中的依赖。如果包 `b` 依赖于 `a`，`bun install` 将把你的本地 `packages/a` 目录安装到 [node_modules] 中，而不是从 npm 注册表下载。
+- **依赖可以去重。** 如果 `a` 和 `b` 共享一个公共依赖，它将被_提升_到根 [node_modules] 目录。这减少了冗余磁盘使用，并最小化了因同时安装多个版本的包而导致的"依赖地狱"问题。
+- **在多个包中运行脚本。** 你可以使用 [`--filter` 标志](/pm/filter) 在工作区中的多个包中轻松运行 [package.json] 脚本，或使用 `--workspaces` 在所有工作区中运行脚本。
+
+## 使用目录共享版本
+
+当许多包需要相同的依赖版本时，目录允许你在根 [package.json] 中定义
+那些版本，并使用 `catalog:` 协议从你的工作区引用它们。更新目录会自动
+更新每个引用它的包。详情请参见
+[目录](/pm/catalogs)。
+
+<Note>
+⚡️ **速度** — 安装很快，即使是大型单一代码库。Bun 在 Linux 上大约用 `500ms` 安装 [Remix](https://github.com/remix-run/remix) 单一代码库。
+
+- 比 `npm install` 快 28 倍
+- 比 `yarn install` (v1) 快 12 倍
+- 比 `pnpm install` 快 8 倍
+
+<Image src="https://user-images.githubusercontent.com/709451/212829600-77df9544-7c9f-4d8d-a984-b2cd0fd2aa52.png" />
+</Note>

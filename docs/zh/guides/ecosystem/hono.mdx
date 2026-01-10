@@ -1,0 +1,47 @@
+---
+title: 使用 Hono 和 Bun 构建 HTTP 服务器
+sidebarTitle: Hono 与 Bun
+mode: center
+---
+
+[Hono](https://github.com/honojs/hono) 是一个轻量级超快速的 Web 框架，专为边缘计算设计。
+
+```ts server.ts icon="/icons/typescript.svg"
+import { Hono } from "hono";
+const app = new Hono();
+
+app.get("/", c => c.text("Hono!"));
+
+export default app;
+```
+
+---
+
+使用 `create-hono` 从 Hono 的项目模板开始。提示选择模板时请选择 `bun`。
+
+```sh terminal icon="terminal"
+bun create hono myapp
+```
+
+```txt
+✔ 您想使用哪个模板？› bun
+已将 honojs/starter#main 克隆到 /path/to/myapp
+✔ 已复制项目文件
+```
+
+```sh terminal icon="terminal"
+cd myapp
+bun install
+```
+
+---
+
+然后启动开发服务器并访问 [localhost:3000](http://localhost:3000)。
+
+```sh terminal icon="terminal"
+bun run dev
+```
+
+---
+
+有关更多信息，请参阅 Hono 的[使用 Bun 入门指南](https://hono.dev/getting-started/bun)。

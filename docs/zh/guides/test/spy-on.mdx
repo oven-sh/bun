@@ -1,0 +1,49 @@
+---
+title: 在 `bun test` 中监视方法
+sidebarTitle: 监视方法
+mode: center
+---
+
+使用 `spyOn` 实用工具来跟踪 Bun 测试运行器的方法调用。
+
+```ts
+import { test, expect, spyOn } from "bun:test";
+
+const leo = {
+  name: "Leonardo",
+  sayHi(thing: string) {
+    console.log(`Sup I'm ${this.name} and I like ${thing}`);
+  },
+};
+
+const spy = spyOn(leo, "sayHi");
+```
+
+---
+
+创建间谍后，它可以用来编写与方法调用相关的 `expect` 断言。
+
+{/* prettier-ignore */}
+```ts
+import { test, expect, spyOn } from "bun:test";
+
+const leo = {
+  name: "Leonardo",
+  sayHi(thing: string) {
+    console.log(`Sup I'm ${this.name} and I like ${thing}`);
+  },
+};
+
+const spy = spyOn(leo, "sayHi");
+
+test("turtles", () => { // [!code ++]
+  expect(spy).toHaveBeenCalledTimes(0); // [!code ++]
+  leo.sayHi("pizza"); // [!code ++]
+  expect(spy).toHaveBeenCalledTimes(1); // [!code ++]
+  expect(spy.mock.calls).toEqual([["pizza"]]); // [!code ++]
+}); // [!code ++]
+```
+
+---
+
+请参阅 [文档 > 测试运行器 > 模拟](/test/mocks) 了解使用 Bun 测试运行器进行模拟的完整文档。

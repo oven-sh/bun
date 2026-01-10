@@ -1,0 +1,32 @@
+---
+title: 在 HTTP 服务器上配置 TLS
+sidebarTitle: 配置 TLS
+mode: center
+---
+
+设置 `tls` 键来配置 TLS。`key` 和 `cert` 都是必需的。`key` 应该是您的私钥内容；`cert` 应该是您颁发证书的内容。使用 [`Bun.file()`](/runtime/file-io#reading-files-bun-file) 来读取内容。
+
+```ts server.ts icon="/icons/typescript.svg"
+const server = Bun.serve({
+  fetch: request => new Response("欢迎来到 Bun!"),
+  tls: {
+    cert: Bun.file("cert.pem"),
+    key: Bun.file("key.pem"),
+  },
+});
+```
+
+---
+
+默认情况下，Bun 信任由 Mozilla 精选的知名根证书颁发机构(CA)列表。要覆盖此列表，请将证书数组作为 `ca` 传递。
+
+```ts server.ts icon="/icons/typescript.svg"
+const server = Bun.serve({
+  fetch: request => new Response("欢迎来到 Bun!"),
+  tls: {
+    cert: Bun.file("cert.pem"),
+    key: Bun.file("key.pem"),
+    ca: [Bun.file("ca1.pem"), Bun.file("ca2.pem")],
+  },
+});
+```

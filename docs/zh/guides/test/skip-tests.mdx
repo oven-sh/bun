@@ -1,0 +1,43 @@
+---
+title: 使用 Bun 测试运行器跳过测试
+sidebarTitle: 跳过测试
+mode: center
+---
+
+要使用 Bun 测试运行器跳过测试，请使用 `test.skip` 函数。
+
+```ts test.ts icon="/icons/typescript.svg"
+import { test } from "bun:test";
+
+test.skip("unimplemented feature", () => {
+  expect(Bun.isAwesome()).toBe(true);
+});
+```
+
+---
+
+运行 `bun test` 将不会执行此测试。它将在终端输出中标记为跳过。
+
+```sh terminal icon="terminal"
+bun test
+```
+
+```txt
+test.test.ts:
+✓ add [0.03ms]
+✓ multiply [0.02ms]
+» unimplemented feature
+
+ 2 pass
+ 1 skip
+ 0 fail
+ 2 expect() calls
+Ran 3 tests across 1 files. [74.00ms]
+```
+
+---
+
+另请参阅：
+
+- [将测试标记为待办事项](/guides/test/todo-tests)
+- [文档 > 测试运行器 > 编写测试](/test/writing-tests)

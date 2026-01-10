@@ -1,0 +1,43 @@
+---
+title: 生成子进程
+sidebarTitle: 生成子进程
+mode: center
+---
+
+使用 [`Bun.spawn()`](/runtime/child-process) 来生成子进程。
+
+```ts
+const proc = Bun.spawn(["echo", "hello"]);
+
+// 等待完成
+await proc.exited;
+```
+
+---
+
+第二个参数接受一个配置对象。
+
+```ts
+const proc = Bun.spawn(["echo", "Hello, world!"], {
+  cwd: "/tmp",
+  env: { FOO: "bar" },
+  onExit(proc, exitCode, signalCode, error) {
+    // 退出处理程序
+  },
+});
+```
+
+---
+
+默认情况下，子进程的 `stdout` 可以使用 `proc.stdout` 作为 `ReadableStream` 来消费。
+
+```ts
+const proc = Bun.spawn(["echo", "hello"]);
+
+const output = await proc.stdout.text();
+output; // => "hello\n"
+```
+
+---
+
+请参阅 [文档 > API > 子进程](/runtime/child-process) 以获取完整文档。

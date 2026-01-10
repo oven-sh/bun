@@ -1,0 +1,24 @@
+---
+title: 转义 HTML 字符串
+sidebarTitle: 转义 HTML
+mode: center
+---
+
+`Bun.escapeHTML()` 实用工具可用于转义字符串中的 HTML 字符。将进行以下替换。
+
+- `"` 变为 `"&quot;"`
+- `&` 变为 `"&amp;"`
+- `'` 变为 `"&#x27;"`
+- `<` 变为 `"&lt;"`
+- `>` 变为 `"&gt;"`
+
+此函数针对大输入进行了优化。非字符串类型将在转义前转换为字符串。
+
+```ts
+Bun.escapeHTML("<script>alert('Hello World!')</script>");
+// &lt;script&gt;alert(&#x27;Hello World!&#x27;)&lt;&#x2F;script&gt;
+```
+
+---
+
+请参阅 [文档 > API > 工具](/runtime/utils) 了解更多的实用工具。

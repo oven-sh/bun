@@ -1,0 +1,49 @@
+---
+title: 使用异步迭代器的流式 HTTP 服务器
+sidebarTitle: 使用迭代器流式传输
+mode: center
+---
+
+在 Bun 中，[`Response`](https://developer.mozilla.org/en-US/docs/Web/API/Response) 对象可以接受一个异步生成器函数作为其主体。这使您可以在数据可用时将其流式传输到客户端，而不是等待整个响应准备好。
+
+```ts stream-iterator.ts icon="/icons/typescript.svg"
+Bun.serve({
+  port: 3000,
+  fetch(req) {
+    return new Response(
+      // 一个异步生成器函数
+      async function* () {
+        yield "Hello, ";
+        await Bun.sleep(100);
+        yield "world!";
+
+        // 您也可以产生一个 TypedArray 或 Buffer
+        yield new Uint8Array(["\n".charCodeAt(0)]);
+      },
+      { headers: { "Content-Type": "text/plain" } },
+    );
+  },
+});
+```
+
+---
+
+您可以将任何异步可迭代对象直接传递给 `Response`：
+
+```ts stream-iterator.ts icon="/icons/typescript.svg"
+Bun.serve({
+  port: 3000,
+  fetch(req) {
+    return new Response(
+      {
+        [Symbol.asyncIterator]: async function* () {
+          yield "Hello, ";
+          await Bun.sleep(100);
+          yield "world!";
+        },
+      },
+      { headers: { "Content-Type": "text/plain" } },
+    );
+  },
+});
+```

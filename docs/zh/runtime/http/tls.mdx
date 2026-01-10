@@ -1,0 +1,101 @@
+---
+title: TLS
+description: 在 Bun.serve 中启用 TLS
+---
+
+Bun 支持开箱即用的 TLS，由 [BoringSSL](https://boringssl.googlesource.com/boringssl) 提供支持。通过传入 `key` 和 `cert` 的值来启用 TLS；这两个都是启用 TLS 的必需项。
+
+```ts
+Bun.serve({
+  tls: {
+    key: Bun.file("./key.pem"), // [!code ++]
+    cert: Bun.file("./cert.pem"), // [!code ++]
+  },
+});
+```
+
+`key` 和 `cert` 字段期望的是 TLS 密钥和证书的_内容_，而不是指向它的路径。这可以是一个字符串、`BunFile`、`TypedArray` 或 `Buffer`。
+
+```ts
+Bun.serve({
+  tls: {
+    key: Bun.file("./key.pem"), // BunFile
+    key: fs.readFileSync("./key.pem"), // Buffer
+    key: fs.readFileSync("./key.pem", "utf8"), // string
+    key: [Bun.file("./key1.pem"), Bun.file("./key2.pem")], // 上述类型的数组
+  },
+});
+```
+
+### 密码短语
+
+如果您的私钥使用密码短语加密，请提供 `passphrase` 的值来解密它。
+
+```ts
+Bun.serve({
+  tls: {
+    key: Bun.file("./key.pem"),
+    cert: Bun.file("./cert.pem"),
+    passphrase: "my-secret-passphrase", // [!code ++]
+  },
+});
+```
+
+### CA 证书
+
+可选地，您可以通过传入 `ca` 的值来覆盖受信任的 CA 证书。默认情况下，服务器将信任由 Mozilla 策划的知名 CA 列表。当指定 `ca` 时，Mozilla 列表将被覆盖。
+
+```ts
+Bun.serve({
+  tls: {
+    key: Bun.file("./key.pem"), // TLS 密钥路径
+    cert: Bun.file("./cert.pem"), // TLS 证书路径
+    ca: Bun.file("./ca.pem"), // 根 CA 证书路径  // [!code ++]
+  },
+});
+```
+
+### Diffie-Hellman
+
+要覆盖 Diffie-Hellman 参数：
+
+```ts
+Bun.serve({
+  tls: {
+    dhParamsFile: "/path/to/dhparams.pem", // Diffie Hellman 参数路径 // [!code ++]
+  },
+});
+```
+
+---
+
+## 服务器名称指示 (SNI)
+
+要为服务器配置服务器名称指示 (SNI)，请在 `tls` 对象中设置 `serverName` 字段。
+
+```ts
+Bun.serve({
+  tls: {
+    serverName: "my-server.com", // SNI // [!code ++]
+  },
+});
+```
+
+要允许多个服务器名称，请向 `tls` 传递一个对象数组，每个对象都有一个 `serverName` 字段。
+
+```ts
+Bun.serve({
+  tls: [
+    {
+      key: Bun.file("./key1.pem"),
+      cert: Bun.file("./cert1.pem"),
+      serverName: "my-server1.com", // [!code ++]
+    },
+    {
+      key: Bun.file("./key2.pem"),
+      cert: Bun.file("./cert2.pem"),
+      serverName: "my-server2.com", // [!code ++]
+    },
+  ],
+});
+```

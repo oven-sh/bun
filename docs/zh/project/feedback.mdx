@@ -1,0 +1,20 @@
+---
+title: bun 反馈
+description: 分享反馈、错误报告和功能请求
+---
+
+import Feedback from "/snippets/cli/feedback.mdx";
+
+使用 `bun feedback` 直接与 Bun 团队分享反馈、错误报告和功能请求。
+
+```bash terminal icon="terminal"
+bun feedback "喜欢新版本！"
+bun feedback report.txt details.log
+echo "请记录 X 功能" | bun feedback --email you@example.com
+```
+
+您可以提供文本参数、文件路径或管道输入作为反馈。
+
+---
+
+<Feedback />

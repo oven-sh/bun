@@ -1,0 +1,137 @@
+---
+title: 使用 SvelteKit 和 Bun 构建应用
+sidebarTitle: "SvelteKit 与 Bun"
+mode: center
+---
+
+使用 SvelteKit CLI 的 `sv create my-app` 创建一个 SvelteKit 项目。回答提示以选择模板并设置开发环境。
+
+```sh terminal icon="terminal"
+bunx sv create my-app
+```
+
+```txt
+┌  欢迎使用 Svelte CLI! (v0.5.7)
+│
+◇  您想要哪个模板？
+│  SvelteKit demo
+│
+◇  使用 Typescript 添加类型检查？
+│  是的，使用 Typescript 语法
+│
+◆  项目已创建
+│
+◇  您想为项目添加什么？
+│  none
+│
+◇  您想使用哪个包管理器安装依赖？
+│  bun
+│
+◇  成功安装依赖
+│
+◇  项目后续步骤 ─────────────────────────────────────────────────────╮
+│                                                                          │
+│  1: cd my-app                                                            │
+│  2: git init && git add -A && git commit -m "Initial commit" (可选)  │
+│  3: bun run dev -- --open                                                │
+│                                                                          │
+│  要关闭开发服务器，请按 Ctrl-C                                     │
+│                                                                          │
+│  遇到问题？访问 https://svelte.dev/chat                              │
+│                                                                          │
+├──────────────────────────────────────────────────────────────────────────╯
+│
+└  您已准备就绪！
+```
+
+---
+
+项目初始化后，`cd` 进入新项目。您不需要运行 'bun install'，因为依赖项已经安装。
+
+然后使用 `bun --bun run dev` 启动开发服务器。
+
+要使用 Node.js 而不是 Bun 运行开发服务器，可以省略 `--bun` 标志。
+
+```sh terminal icon="terminal"
+cd my-app
+bun --bun run dev
+```
+
+```txt
+  $ vite dev
+  Forced re-optimization of dependencies
+
+    VITE v5.4.10  ready in 424 ms
+
+    ➜  本地:   http://localhost:5173/
+    ➜  网络: use --host to expose
+    ➜  按 h + enter 显示帮助
+```
+
+---
+
+在浏览器中访问 [http://localhost:5173](http://localhost:5173/) 查看模板应用。
+
+<Frame>
+  ![SvelteKit app running](https://github.com/oven-sh/bun/assets/3084745/7c76eae8-78f9-44fa-9f15-1bd3ca1a47c0)
+</Frame>
+
+---
+
+如果您编辑并保存 [src/routes/+page.svelte]，您应该能在浏览器中看到热重载的变化。
+
+---
+
+要构建生产版本，您需要添加正确的 SvelteKit 适配器。目前我们推荐
+
+`bun add -D svelte-adapter-bun`.
+
+现在，对您的 [svelte.config.js] 进行以下更改。
+
+```js svelte.config.js icon="file-code"
+import adapter from "@sveltejs/adapter-auto"; // [!code --]
+import adapter from "svelte-adapter-bun"; // [!code ++]
+import { vitePreprocess } from "@sveltejs/vite-plugin-svelte";
+
+/** @type {import('@sveltejs/kit').Config} */
+const config = {
+  // 有关预处理器的更多信息，请参阅 https://svelte.dev/docs/kit/integrations#preprocessors
+  preprocess: vitePreprocess(),
+
+  kit: {
+    // adapter-auto 仅支持某些环境，支持的环境列表请参见 https://svelte.dev/docs/kit/adapter-auto
+    // 如果您的环境不被支持，或您选择了特定环境，请更换适配器。
+    // 有关适配器的更多信息，请参见 https://svelte.dev/docs/kit/adapters
+    adapter: adapter(),
+  },
+};
+
+export default config;
+```
+
+---
+
+构建生产包：
+
+```sh terminal icon="terminal"
+bun --bun run build
+```
+
+```txt
+  $ vite build
+  vite v5.4.10 building SSR bundle for production...
+  "confetti" is imported from external module "@neoconfetti/svelte" but never used in "src/routes/sverdle/+page.svelte".
+  ✓ 130 modules transformed.
+  vite v5.4.10 building for production...
+  ✓ 148 modules transformed.
+  ...
+  ✓ built in 231ms
+  ...
+  ✓ built in 899ms
+
+  Run npm run preview to preview your production build locally.
+
+  > Using svelte-adapter-bun
+    ✔ Start server with: bun ./build/index.js
+    ✔ done
+```

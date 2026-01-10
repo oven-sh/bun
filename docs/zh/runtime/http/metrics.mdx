@@ -1,0 +1,36 @@
+---
+title: 指针
+description: 使用内置指针监控服务器活动
+---
+
+### `server.pendingRequests` 和 `server.pendingWebSockets`
+
+使用内置计数器监控服务器活动：
+
+```ts
+const server = Bun.serve({
+  fetch(req, server) {
+    return new Response(
+      `活跃请求: ${server.pendingRequests}\n` + `活跃WebSocket: ${server.pendingWebSockets}`,
+    );
+  },
+});
+```
+
+### `server.subscriberCount(topic)`
+
+获取WebSocket主题的订阅者数量：
+
+```ts
+const server = Bun.serve({
+  fetch(req, server) {
+    const chatUsers = server.subscriberCount("chat");
+    return new Response(`${chatUsers} 用户在聊天室中`);
+  },
+  websocket: {
+    message(ws) {
+      ws.subscribe("chat");
+    },
+  },
+});
+```

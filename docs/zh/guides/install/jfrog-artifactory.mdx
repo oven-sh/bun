@@ -1,0 +1,28 @@
+---
+title: 在 Artifactory 中使用 bun install
+sidebarTitle: JFrog Artifactory 与 Bun
+mode: center
+---
+
+[JFrog Artifactory](https://jfrog.com/artifactory/) 是一个用于 npm、Docker、Maven、NuGet、Ruby、Helm 等的包管理系统。它允许您托管自己的私有 npm 注册表、npm 包和其他类型的包。
+
+要在 `bun install` 中使用它，请在项目中添加一个 [bunfig.toml] 文件，并包含以下内容：
+
+---
+
+### 使用 bunfig.toml 配置
+
+请确保将 `MY_SUBDOMAIN` 替换为您的 JFrog Artifactory 子域名，例如 `jarred1234`，并将 MY_TOKEN 替换为您的 JFrog Artifactory 令牌。
+
+```toml bunfig.toml icon="settings"
+[install.registry]
+url = "https://MY_SUBDOMAIN.jfrog.io/artifactory/api/npm/npm/_auth=MY_TOKEN"
+# 您可以在这里使用环境变量
+# url = "$NPM_CONFIG_REGISTRY"
+```
+
+---
+
+### 使用 `$NPM_CONFIG_REGISTRY` 配置
+
+与 npm 一样，您可以使用 `NPM_CONFIG_REGISTRY` 环境变量来配置 JFrog Artifactory 与 bun install。

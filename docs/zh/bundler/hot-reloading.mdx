@@ -1,0 +1,226 @@
+---
+title: 热重载
+description: Bun开发服务器的热模块替换(HMR)
+---
+
+热模块替换(HMR)允许您在运行的应用程序中更新模块，而无需完全重新加载页面。这将保留应用程序状态并改善开发体验。
+
+<Note>使用Bun的全栈开发服务器时，默认启用HMR。</Note>
+
+## `import.meta.hot` API参考
+
+Bun实现了一个客户端HMR API，该API模仿了[Vite的`import.meta.hot` API](https://vite.dev/guide/api-hmr)。可以通过`if (import.meta.hot)`来检查它，并在生产环境中进行树摇(tree-shaking)。
+
+```ts title="index.ts" icon="/icons/typescript.svg"
+if (import.meta.hot) {
+  // HMR API可用。
+}
+```
+
+然而，通常不需要此检查，因为Bun在生产构建中会将所有HMR API的调用进行死代码消除。
+
+```ts title="index.ts" icon="/icons/typescript.svg"
+// 在生产环境中将完全删除整个函数调用！
+import.meta.hot.dispose(() => {
+  console.log("dispose");
+});
+```
+
+<Warning>
+要使其工作，Bun强制这些API必须直接调用，不能间接调用。这意味着以下内容不起作用：
+
+```ts title="index.ts" icon="/icons/typescript.svg"
+// 无效：将`hot`分配给变量
+const hot = import.meta.hot;
+hot.accept();
+
+// 无效：将`import.meta`分配给变量
+const meta = import.meta;
+meta.hot.accept();
+console.log(meta.hot.data);
+
+// 无效：传递给函数
+doSomething(import.meta.hot.dispose);
+
+// OK：必须直接调用完整短语"import.meta.hot.<API>"：
+import.meta.hot.accept();
+
+// OK：`data`可以传递给函数：
+doSomething(import.meta.hot.data);
+```
+
+</Warning>
+
+<Note>
+HMR API仍在开发中。某些功能缺失。可以在`Bun.serve`中通过设置开发选项为`{ hmr: false }`来禁用HMR。
+</Note>
+
+## API方法
+
+| 方法             | 状态 | 注释                                                                 |
+| ------------------ | ------ | --------------------------------------------------------------------- |
+| `hot.accept()`     | ✅     | 表明热更新可以被优雅地替换。                |
+| `hot.data`         | ✅     | 在模块评估之间持久化数据。                              |
+| `hot.dispose()`    | ✅     | 添加一个回调函数，当模块即将被替换时运行。 |
+| `hot.invalidate()` | ❌     |                                                                       |
+| `hot.on()`         | ✅     | 附加事件监听器                                              |
+| `hot.off()`        | ✅     | 从`on`中移除事件监听器。                                   |
+| `hot.send()`       | ❌     |                                                                       |
+| `hot.prune()`      | 🚧     | 注意：回调函数当前永远不会被调用。                             |
+| `hot.decline()`    | ✅     | 无操作以匹配Vite的`import.meta.hot`                               |
+
+## import.meta.hot.accept()
+
+`accept()`方法表明模块可以进行热替换。在不带参数调用时，表明此模块可以通过重新评估文件来简单地替换。热更新后，此模块的导入者将自动被修补。
+
+```ts title="index.ts" icon="/icons/typescript.svg"
+// index.ts
+import { getCount } from "./foo.ts";
+
+console.log("count is ", getCount());
+
+import.meta.hot.accept();
+
+export function getNegativeCount() {
+  return -getCount();
+}
+```
+
+这为所有`index.ts`导入的文件创建了一个热重载边界。这意味着每当`foo.ts`或其任何依赖项被保存时，更新将向上传播到`index.ts`并重新评估。导入`index.ts`的文件将被修补以导入新版本的`getNegativeCount()`。如果仅更新`index.ts`，则只有该文件将被重新评估，并且重用`foo.ts`中的计数器。
+
+这可以与`import.meta.hot.data`结合使用，将状态从先前的模块转移到新模块。
+
+<Info>
+  当没有模块调用`import.meta.hot.accept()`（并且没有React Fast Refresh或插件为您调用它）时，
+  页面将在文件更新时重新加载，并显示一个控制台警告，指示哪些文件被无效化。如果完全依赖页面重新加载更有意义，则可以安全地忽略此警告。
+</Info>
+
+### 带回调
+
+当提供一个回调时，`import.meta.hot.accept`将像在Vite中一样工作。它不会修补此模块的导入者，而是使用新模块调用回调。
+
+```ts title="index.ts" icon="/icons/typescript.svg"
+export const count = 0;
+
+import.meta.hot.accept(newModule => {
+  if (newModule) {
+    // 当发生SyntaxError时，newModule为undefined
+    console.log("updated: count is now ", newModule.count);
+  }
+});
+```
+
+<Tip>
+  建议使用不带参数的`import.meta.hot.accept()`，因为它通常使代码更容易理解。
+</Tip>
+
+### 接受其他模块
+
+```ts title="index.ts" icon="/icons/typescript.svg"
+import { count } from "./foo";
+
+import.meta.hot.accept("./foo", () => {
+  if (!newModule) return;
+
+  console.log("updated: count is now ", count);
+});
+```
+
+表示依赖模块可以被接受。当依赖项更新时，回调将使用新模块调用。
+
+### 带多个依赖项
+
+```ts title="index.ts" icon="/icons/typescript.svg"
+import.meta.hot.accept(["./foo", "./bar"], newModules => {
+  // newModules是一个数组，其中每个项目对应更新的模块
+  // 或者如果该模块有语法错误则为undefined
+});
+```
+
+表示可以接受多个依赖项的模块。此变体接受依赖项数组，回调将接收更新的模块，对于有错误的模块返回undefined。
+
+## import.meta.hot.data
+
+`import.meta.hot.data`在热替换期间保持模块实例之间的状态，使数据可以从先前版本传输到新版本。当写入`import.meta.hot.data`时，Bun还将此模块标记为能够自接受（相当于调用`import.meta.hot.accept()`）。
+
+```tsx title="index.tsx" icon="/icons/typescript.svg"
+import { createRoot } from "react-dom/client";
+import { App } from "./app";
+
+const root = (import.meta.hot.data.root ??= createRoot(elem));
+root.render(<App />); // 重用现有根节点
+```
+
+在生产环境中，`data`被内联为`{}`，这意味着它不能用作状态持有者。
+
+<Tip>
+  推荐上述模式用于有状态模块，因为Bun知道可以在生产环境中将`{}.prop ??= value`最小化为`value`。
+</Tip>
+
+## import.meta.hot.dispose()
+
+附加一个on-dispose回调。这将在以下情况下被调用：
+
+- 在模块被另一个副本替换之前（在加载下一个副本之前）
+- 在模块被分离后（移除对此模块的所有导入，参见`import.meta.hot.prune()`）
+
+```ts title="index.ts" icon="/icons/typescript.svg"
+const sideEffect = setupSideEffect();
+
+import.meta.hot.dispose(() => {
+  sideEffect.cleanup();
+});
+```
+
+<Warning>此回调在路由导航或浏览器标签页关闭时不会被调用。</Warning>
+
+返回一个Promise将在模块被处理后延迟模块替换。所有dispose回调将并行调用。
+
+## import.meta.hot.prune()
+
+附加一个on-prune回调。当此模块的所有导入都被移除时，但该模块之前已加载过，将调用此回调。
+
+这可以用于清理模块加载时创建的资源。与`import.meta.hot.dispose()`不同，这与`accept`和`data`更好地配合使用，以管理有状态资源。管理WebSocket的完整示例：
+
+```ts title="index.ts" icon="/icons/typescript.svg"
+import { something } from "./something";
+
+// 初始化或重用WebSocket连接
+export const ws = (import.meta.hot.data.ws ??= new WebSocket(location.origin));
+
+// 如果模块的导入被移除，清理WebSocket连接。
+import.meta.hot.prune(() => {
+  ws.close();
+});
+```
+
+<Info>
+  如果改用`dispose`，WebSocket将在每次热更新时关闭并重新打开。两个版本的代码都将在导入的文件更新时防止页面重新加载。
+</Info>
+
+## import.meta.hot.on()和off()
+
+`on()`和`off()`用于监听来自HMR运行时的事件。事件名称以前缀开头，以便插件之间不会冲突。
+
+```ts title="index.ts" icon="/icons/typescript.svg"
+import.meta.hot.on("bun:beforeUpdate", () => {
+  console.log("before a hot update");
+});
+```
+
+当文件被替换时，其所有事件监听器将自动被移除。
+
+### 内置事件
+
+| 事件                  | 发生时机                                                                                    |
+| ---------------------- | ----------------------------------------------------------------------------------------------- |
+| `bun:beforeUpdate`     | 在应用热更新之前。                                                                 |
+| `bun:afterUpdate`      | 在应用热更新之后。                                                                  |
+| `bun:beforeFullReload` | 在完全页面重新加载之前。                                                              |
+| `bun:beforePrune`      | 在调用prune回调之前。                                                              |
+| `bun:invalidate`       | 当使用`import.meta.hot.invalidate()`使模块无效时                                |
+| `bun:error`            | 当构建或运行时错误发生时                                                            |
+| `bun:ws:disconnect`    | 当HMR WebSocket连接丢失时。这可能表明开发服务器离线。 |
+| `bun:ws:connect`       | 当HMR WebSocket连接或重新连接时。                                                 |
+
+<Note>为与Vite兼容，上述事件也通过`vite:*`前缀而不是`bun:*`前缀提供。</Note>

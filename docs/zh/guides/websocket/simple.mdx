@@ -1,0 +1,38 @@
+---
+title: 构建一个简单的 WebSocket 服务器
+sidebarTitle: 简单服务器
+mode: center
+---
+
+使用 [`Bun.serve`](/runtime/http/server) 启动一个简单的 WebSocket 服务器。
+
+在 `fetch` 中，我们尝试将传入的 [ws:] 或 [wss:] 请求升级为 WebSocket 连接。
+
+```ts server.ts icon="/icons/typescript.svg"
+const server = Bun.serve({
+  fetch(req, server) {
+    const success = server.upgrade(req);
+    if (success) {
+      // Bun 自动返回 101 Switching Protocols
+      // 如果升级成功
+      return undefined;
+    }
+
+    // 正常处理 HTTP 请求
+    return new Response("Hello world!");
+  },
+  websocket: {
+    // TypeScript: 像这样指定 ws.data 的类型
+    data: {} as { authToken: string },
+
+    // 当收到消息时调用此函数
+    async message(ws, message) {
+      console.log(`Received ${message}`);
+      // 发送一条消息回去
+      ws.send(`You said: ${message}`);
+    },
+  },
+});
+
+console.log(`Listening on ${server.hostname}:${server.port}`);
+```

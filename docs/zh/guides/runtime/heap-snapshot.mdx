@@ -1,0 +1,28 @@
+---
+title: 使用 V8 堆快照检查内存使用情况
+sidebarTitle: 堆快照
+mode: center
+---
+
+Bun 实现了 V8 的堆快照 API，这允许您在运行时创建堆的快照。这有助于调试 JavaScript/TypeScript 应用程序中的内存泄漏。
+
+```ts snapshot.ts icon="/icons/typescript.svg"
+import v8 from "node:v8";
+
+// 创建一个具有自动生成名称的堆快照文件
+const snapshotPath = v8.writeHeapSnapshot();
+console.log(`Heap snapshot written to: ${snapshotPath}`);
+```
+
+---
+
+## 在 Chrome DevTools 中检查内存
+
+要在 Chrome DevTools 中查看 V8 堆快照：
+
+1. 打开 Chrome DevTools (F12 或右键单击并选择"检查")
+2. 转到"内存"标签页
+3. 点击"加载"按钮（文件夹图标）
+4. 选择您的 `.heapsnapshot` 文件
+
+<Frame>![Chrome DevTools 内存标签页](/images/chrome-devtools-memory.png)</Frame>

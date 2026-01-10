@@ -1,0 +1,15 @@
+---
+title: 获取当前文件的目录
+sidebarTitle: import.meta.dir
+mode: center
+---
+
+Bun 在 [`import.meta`](/runtime/module-resolution#import-meta) 对象上提供了一些模块特定的实用工具。
+
+```ts /a/b/c.ts icon="/icons/typescript.svg"
+import.meta.dir; // => "/a/b"
+```
+
+---
+
+请参阅 [文档 > API > import.meta](/runtime/module-resolution#import-meta) 获取完整文档。

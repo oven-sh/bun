@@ -1,0 +1,162 @@
+---
+title: 在 Bun 中使用 Prisma
+sidebarTitle: Prisma ORM 与 Bun
+mode: center
+---
+
+<Note>
+  **注意** — Prisma 的动态子命令加载系统目前需要在 Bun 旁边安装 npm。这会影响某些 CLI 命令，如 `prisma init`、`prisma migrate` 等。使用新的 `prisma-client` 生成器生成的代码与 Bun 完美配合。
+</Note>
+
+<Steps>
+	<Step title="创建新项目">
+		Prisma 与 Bun 完美配合使用。首先，创建一个目录并使用 `bun init` 初始化它。
+
+    	```bash terminal icon="terminal"
+    	mkdir prisma-app
+    	cd prisma-app
+    	bun init
+    	```
+    </Step>
+
+    <Step title="安装 Prisma 依赖项">
+    	然后安装 Prisma CLI (`prisma`)、Prisma Client (`@prisma/client`) 和 LibSQL 适配器作为依赖项。
+
+    	```bash terminal icon="terminal"
+    	bun add -d prisma
+    	bun add @prisma/client @prisma/adapter-libsql
+    	```
+    </Step>
+
+    <Step title="使用 SQLite 初始化 Prisma">
+    	我们将使用 `bunx` 与 Prisma CLI 初始化我们的模式和迁移目录。为简单起见，我们将使用内存中的 SQLite 数据库。
+
+    	```bash terminal icon="terminal"
+    	bunx --bun prisma init --datasource-provider sqlite
+    	```
+
+    	这将创建一个基本模式。我们需要更新它以使用新的无 Rust 客户端并针对 Bun 优化。打开 [prisma/schema.prisma] 并修改生成器块，然后添加一个简单的 `User` 模型。
+
+    	```prisma prisma/schema.prisma icon="/icons/ecosystem/prisma.svg"
+    	  generator client {
+    	    provider = "prisma-client" // [!code ++]
+    	    output = "./generated" // [!code ++]
+    	    engineType = "client" // [!code ++]
+    	    runtime = "bun" // [!code ++]
+    	  }
+
+    	  datasource db {
+    	    provider = "sqlite"
+    	    url      = env("DATABASE_URL")
+    	  }
+
+    	  model User { // [!code ++]
+    	    id    Int     @id @default(autoincrement()) // [!code ++]
+    	    email String  @unique // [!code ++]
+    	    name  String? // [!code ++]
+    	  } // [!code ++]
+    	```
+    </Step>
+
+    <Step title="创建并运行数据库迁移">
+    	然后生成并运行初始迁移。
+
+    	这将在 `prisma/migrations` 中生成一个 `.sql` 迁移文件，创建一个新的 SQLite 实例，并对新实例执行迁移。
+
+    	```bash terminal icon="terminal"
+    	 bunx --bun prisma migrate dev --name init
+    	 ```
+    	 ```txt
+    	从 .env 加载的环境变量
+    	从 prisma/schema.prisma 加载的 Prisma 模式
+    	数据源 "db": SQLite 数据库 "dev.db" 位于 "file:./dev.db"
+
+    	SQLite 数据库 dev.db 创建于 file:./dev.db
+
+    	应用迁移 `20251014141233_init`
+
+    	根据新的模式更改创建并应用了以下迁移：
+
+    	prisma/migrations/
+    	  └─ 20251014141233_init/
+    	    └─ migration.sql
+
+    	您的数据库现在与您的模式同步。
+
+    	✔ 在 18ms 内将 Prisma Client (6.17.1) 生成到 ./generated
+    	```
+    </Step>
+
+    <Step title="生成 Prisma Client">
+    	正如输出所示，每当我们执行新迁移时，Prisma 都会重新生成我们的_Prisma 客户端_。客户端为从数据库读写提供了完全类型化的 API。您可以使用 Prisma CLI 手动重新生成客户端。
+
+    	```sh terminal icon="terminal"
+    	bunx --bun prisma generate
+    	```
+    </Step>
+
+    <Step title="使用 LibSQL 初始化 Prisma Client">
+    	现在我们需要创建一个 Prisma 客户端实例。创建一个新文件 [prisma/db.ts] 以使用 LibSQL 适配器初始化 PrismaClient。
+
+    	```ts prisma/db.ts icon="/icons/typescript.svg"
+    	import { PrismaClient } from "./generated/client";
+    	import { PrismaLibSQL } from "@prisma/adapter-libsql";
+
+    	const adapter = new PrismaLibSQL({ url: process.env.DATABASE_URL || "" });
+    	export const prisma = new PrismaClient({ adapter });
+    	```
+    </Step>
+
+    <Step title="创建测试脚本">
+    	让我们编写一个简单的脚本来创建一个新用户，然后计算数据库中的用户数量。
+
+    	```ts index.ts icon="/icons/typescript.svg"
+    	import { prisma } from "./prisma/db";
+
+    	// 创建一个新用户
+    	await prisma.user.create({
+    	  data: {
+    	    name: "John Dough",
+    	    email: `john-${Math.random()}@example.com`,
+    	  },
+    	});
+
+    	// 计算用户数量
+    	const count = await prisma.user.count();
+    	console.log(`数据库中有 ${count} 个用户。`);
+    	```
+    </Step>
+
+    <Step title="运行并测试应用程序">
+    	让我们使用 `bun run` 运行此脚本。每次运行时，都会创建一个新用户。
+
+    	```bash terminal icon="terminal"
+    	bun run index.ts
+    	```
+    	```txg
+    	创建了 john-0.12802932895402364@example.com
+    	数据库中有 1 个用户。
+    	```
+
+    	```bash terminal icon="terminal"
+    	bun run index.ts
+    	```
+    	```txt
+    	创建了 john-0.8671308799782803@example.com
+    	数据库中有 2 个用户。
+    	```
+
+    	```bash terminal icon="terminal"
+    	bun run index.ts
+    	```
+    	```txt
+    	创建了 john-0.4465968383115295@example.com
+    	数据库中有 3 个用户。
+    	```
+    </Step>
+
+</Steps>
+
+---
+
+就是这样！现在您已经使用 Bun 设置了 Prisma，我们建议在继续开发应用程序时参考[官方 Prisma 文档](https://www.prisma.io/docs/orm/prisma-client)。

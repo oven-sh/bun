@@ -1,0 +1,78 @@
+---
+title: 许可证
+description: Bun 的许可证
+---
+
+Bun 本身采用 MIT 许可证。
+
+## JavaScriptCore
+
+Bun 静态链接了 JavaScriptCore（和 WebKit），这是 LGPL-2 许可的。来自 WebKit 的 WebCore 文件也根据 LGPL2 许可。根据 LGPL2：
+
+> (1) 如果您静态链接 LGPL 许可的库，您还必须以目标文件（不一定是源代码）格式提供您的应用程序，以便用户有机会修改库并重新链接应用程序。
+
+您可以在此处找到 Bun 使用的修补版 WebKit：https://github.com/oven-sh/webkit。如果您想使用更改重新链接 Bun：
+
+- `git submodule update --init --recursive`
+- `make jsc`
+- `zig build`
+
+这将编译 JavaScriptCore，编译 Bun 的 JavaScriptCore 的 `.cpp` 绑定（这些是使用 JavaScriptCore 的目标文件）并输出带有您的更改的新 `bun` 二进制文件。
+
+## 链接的库
+
+Bun 静态链接这些库：
+
+| 库                                                                                                                                               | 许可证                                                                                       |
+| ------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------- |
+| [`boringssl`](https://boringssl.googlesource.com/boringssl/)                                                                                     | [多种许可证](https://boringssl.googlesource.com/boringssl/+/refs/heads/master/LICENSE)        |
+| [`brotli`](https://github.com/google/brotli)                                                                                                     | MIT                                                                                          |
+| [`libarchive`](https://github.com/libarchive/libarchive)                                                                                         | [多种许可证](https://github.com/libarchive/libarchive/blob/master/COPYING)                     |
+| [`lol-html`](https://github.com/cloudflare/lol-html/tree/master/c-api)                                                                           | BSD 3-Clause                                                                                 |
+| [`mimalloc`](https://github.com/microsoft/mimalloc)                                                                                              | MIT                                                                                          |
+| [`picohttp`](https://github.com/h2o/picohttpparser)                                                                                              | 双重许可，根据 Perl 许可证或 MIT 许可证                                                      |
+| [`zstd`](https://github.com/facebook/zstd)                                                                                                       | 双重许可，根据 BSD 许可证或 GPLv2 许可证                                                     |
+| [`simdutf`](https://github.com/simdutf/simdutf)                                                                                                  | Apache 2.0                                                                                   |
+| [`tinycc`](https://github.com/tinycc/tinycc)                                                                                                     | LGPL v2.1                                                                                    |
+| [`uSockets`](https://github.com/uNetworking/uSockets)                                                                                            | Apache 2.0                                                                                   |
+| [`zlib-cloudflare`](https://github.com/cloudflare/zlib)                                                                                          | zlib                                                                                         |
+| [`c-ares`](https://github.com/c-ares/c-ares)                                                                                                     | MIT 许可                                                                                     |
+| [`libicu`](https://github.com/unicode-org/icu) 72                                                                                                | [许可证在这里](https://github.com/unicode-org/icu/blob/main/icu4c/LICENSE)                    |
+| [`libbase64`](https://github.com/aklomp/base64/blob/master/LICENSE)                                                                              | BSD 2-Clause                                                                                 |
+| [`libuv`](https://github.com/libuv/libuv) (在 Windows 上)                                                                                        | MIT                                                                                          |
+| [`libdeflate`](https://github.com/ebiggers/libdeflate)                                                                                           | MIT                                                                                          |
+| [`uWebsockets`](https://github.com/jarred-sumner/uwebsockets) 的一个分支                                                                         | Apache 2.0 许可                                                                              |
+| [Tigerbeetle 的 IO 代码](https://github.com/tigerbeetle/tigerbeetle/blob/532c8b70b9142c17e07737ab6d3da68d7500cbca/src/io/windows.zig#L1) 部分代码 | Apache 2.0 许可                                                                              |
+
+## 填充库
+
+出于兼容性原因，以下包被嵌入到 Bun 的二进制文件中，并在导入时注入。
+
+| 包                                                                                     | 许可证 |
+| -------------------------------------------------------------------------------------- | ------ |
+| [`assert`](https://npmjs.com/package/assert)                                           | MIT    |
+| [`browserify-zlib`](https://npmjs.com/package/browserify-zlib)                         | MIT    |
+| [`buffer`](https://npmjs.com/package/buffer)                                           | MIT    |
+| [`constants-browserify`](https://npmjs.com/package/constants-browserify)               | MIT    |
+| [`crypto-browserify`](https://npmjs.com/package/crypto-browserify)                     | MIT    |
+| [`domain-browser`](https://npmjs.com/package/domain-browser)                           | MIT    |
+| [`events`](https://npmjs.com/package/events)                                           | MIT    |
+| [`https-browserify`](https://npmjs.com/package/https-browserify)                       | MIT    |
+| [`os-browserify`](https://npmjs.com/package/os-browserify)                             | MIT    |
+| [`path-browserify`](https://npmjs.com/package/path-browserify)                         | MIT    |
+| [`process`](https://npmjs.com/package/process)                                         | MIT    |
+| [`punycode`](https://npmjs.com/package/punycode)                                       | MIT    |
+| [`querystring-es3`](https://npmjs.com/package/querystring-es3)                         | MIT    |
+| [`stream-browserify`](https://npmjs.com/package/stream-browserify)                     | MIT    |
+| [`stream-http`](https://npmjs.com/package/stream-http)                                 | MIT    |
+| [`string_decoder`](https://npmjs.com/package/string_decoder)                           | MIT    |
+| [`timers-browserify`](https://npmjs.com/package/timers-browserify)                     | MIT    |
+| [`tty-browserify`](https://npmjs.com/package/tty-browserify)                           | MIT    |
+| [`url`](https://npmjs.com/package/url)                                                 | MIT    |
+| [`util`](https://npmjs.com/package/util)                                               | MIT    |
+| [`vm-browserify`](https://npmjs.com/package/vm-browserify)                             | MIT    |
+
+## 额外鸣谢
+
+- Bun 的 JS 转译器、CSS 词法分析器和 Node.js 模块解析器源代码是 [@evanw](https://github.com/evanw) 的 [esbuild](https://github.com/evanw/esbuild) 项目的 Zig 移植版本。
+- 感谢 [@kipply](https://github.com/kipply) 提供 "Bun" 这个名字！

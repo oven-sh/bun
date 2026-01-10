@@ -1,0 +1,19 @@
+---
+title: 将文件写入标准输出
+sidebarTitle: 将文件写入标准输出
+mode: center
+---
+
+Bun 将 `stdout` 暴露为一个具有 `Bun.stdout` 属性的 [BunFile]。这可以用作 [`Bun.write()`](/runtime/file-io#writing-files-bun-write) 的目标。
+
+此代码将文件写入 `stdout`，类似于 Unix 中的 `cat` 命令。
+
+```ts cat.ts icon="/icons/typescript.svg"
+const path = "/path/to/file.txt";
+const file = Bun.file(path);
+await Bun.write(Bun.stdout, file);
+```
+
+---
+
+请参阅 [文档 > API > 文件 I/O](/runtime/file-io#writing-files-bun-write) 了解 `Bun.write()` 的完整文档。

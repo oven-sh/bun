@@ -1,0 +1,341 @@
+---
+title: "运行时行为"
+description: "了解 Bun 测试的运行时集成、环境变量、超时和错误处理"
+---
+
+`bun test` 与 Bun 运行时深度集成。这是让 `bun test` 快速且易于使用的原因之一。
+
+## 环境变量
+
+### NODE_ENV
+
+除非已在环境或 `.env` 文件中设置了 `$NODE_ENV`，否则 `bun test` 会自动将其设置为 `"test"`。这对于大多数测试运行器来说是标准行为，有助于确保测试行为的一致性。
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { test, expect } from "bun:test";
+
+test("NODE_ENV is set to test", () => {
+  expect(process.env.NODE_ENV).toBe("test");
+});
+```
+
+您可以通过显式设置 `NODE_ENV` 来覆盖此行为：
+
+```bash terminal icon="terminal"
+NODE_ENV=development bun test
+```
+
+### TZ（时区）
+
+默认情况下，除非被 `TZ` 环境变量覆盖，所有 `bun test` 运行都使用 UTC（`Etc/UTC`）作为时区。这确保了不同开发环境中日期和时间行为的一致性。
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { test, expect } from "bun:test";
+
+test("timezone is UTC by default", () => {
+  const date = new Date();
+  expect(date.getTimezoneOffset()).toBe(0);
+});
+```
+
+要在特定时区中测试：
+
+```bash terminal icon="terminal"
+TZ=America/New_York bun test
+```
+
+## 测试超时
+
+如果没有显式覆盖，每个测试都有 5000ms（5 秒）的默认超时。超出此超时的测试将失败。
+
+### 全局超时
+
+使用 `--timeout` 标志全局更改超时：
+
+```bash terminal icon="terminal"
+bun test --timeout 10000  # 10 秒
+```
+
+### 每个测试超时
+
+将超时设置为测试函数的第三个参数，以每个测试为基础：
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { test, expect } from "bun:test";
+
+test("fast test", () => {
+  expect(1 + 1).toBe(2);
+}, 1000); // 1 秒超时
+
+test("slow test", async () => {
+  await new Promise(resolve => setTimeout(resolve, 8000));
+}, 10000); // 10 秒超时
+```
+
+### 无限超时
+
+使用 `0` 或 `Infinity` 来禁用超时：
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+test("test without timeout", async () => {
+  // 此测试可以无限期运行
+  await someVeryLongOperation();
+}, 0);
+```
+
+## 错误处理
+
+### 未处理的错误
+
+`bun test` 跟踪测试之间发生的未处理的 Promise 拒绝和错误。如果发生此类错误，即使所有测试都通过，最终退出代码也将为非零（具体来说，是此类错误的数量）。
+
+这有助于捕获可能否则会被忽视的异步代码中的错误：
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { test } from "bun:test";
+
+test("test 1", () => {
+  // 此测试通过
+  expect(true).toBe(true);
+});
+
+// 此错误发生在任何测试之外
+setTimeout(() => {
+  throw new Error("Unhandled error");
+}, 0);
+
+test("test 2", () => {
+  // 此测试也通过
+  expect(true).toBe(true);
+});
+
+// 由于未处理的错误，测试运行仍将失败
+```
+
+### Promise 拒绝
+
+未处理的 Promise 拒绝也会被捕获：
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { test } from "bun:test";
+
+test("passing test", () => {
+  expect(1).toBe(1);
+});
+
+// 这将导致测试运行失败
+Promise.reject(new Error("Unhandled rejection"));
+```
+
+### 自定义错误处理
+
+您可以在测试设置中设置自定义错误处理器：
+
+```ts title="test-setup.ts" icon="/icons/typescript.svg"
+process.on("uncaughtException", error => {
+  console.error("Uncaught Exception:", error);
+  process.exit(1);
+});
+
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("Unhandled Rejection at:", promise, "reason:", reason);
+  process.exit(1);
+});
+```
+
+## CLI 标志集成
+
+几个 Bun CLI 标志可以与 `bun test` 一起使用以修改其行为：
+
+### 内存使用
+
+```bash terminal icon="terminal"
+# 减少测试运行器 VM 的内存使用
+bun test --smol
+```
+
+### 调试
+
+```bash terminal icon="terminal"
+# 将调试器附加到测试运行器进程
+bun test --inspect
+bun test --inspect-brk
+```
+
+### 模块加载
+
+```bash terminal icon="terminal"
+# 在测试文件之前运行脚本（对全局设置/模拟很有用）
+bun test --preload ./setup.ts
+
+# 设置编译时常量
+bun test --define "process.env.API_URL='http://localhost:3000'"
+
+# 配置自定义加载器
+bun test --loader .special:special-loader
+
+# 使用不同的 tsconfig
+bun test --tsconfig-override ./test-tsconfig.json
+
+# 为模块解析设置 package.json 条件
+bun test --conditions development
+
+# 为测试加载环境变量
+bun test --env-file .env.test
+```
+
+### 与安装相关的标志
+
+```bash
+# 影响测试执行期间的任何网络请求或自动安装
+bun test --prefer-offline
+bun test --frozen-lockfile
+```
+
+## 监视和热重载
+
+### 监视模式
+
+使用 `--watch` 标志运行 `bun test` 时，测试运行器将监视文件更改并重新运行受影响的测试。
+
+```bash terminal icon="terminal"
+bun test --watch
+```
+
+测试运行器会智能地决定重新运行哪些测试：
+
+```ts title="math.test.ts" icon="/icons/typescript.svg"
+import { add } from "./math.js";
+import { test, expect } from "bun:test";
+
+test("addition", () => {
+  expect(add(2, 3)).toBe(5);
+});
+```
+
+如果您修改 `math.js`，只会重新运行 `math.test.ts`，而不是所有测试。
+
+### 热重载
+
+`--hot` 标志提供类似的功能，但在尝试保留运行之间的状态方面更为积极：
+
+```bash terminal icon="terminal"
+bun test --hot
+```
+
+对于大多数测试场景，建议使用 `--watch`，因为它在测试运行之间提供了更好的隔离。
+
+## 全局变量
+
+以下全局变量在测试文件中无需导入即可自动使用（尽管如果需要，可以从 `bun:test` 导入）：
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+// 所有这些都可以全局使用
+test("global test function", () => {
+  expect(true).toBe(true);
+});
+
+describe("global describe", () => {
+  beforeAll(() => {
+    // 全局 beforeAll
+  });
+
+  it("global it function", () => {
+    // it 是 test 的别名
+  });
+});
+
+// Jest 兼容性
+jest.fn();
+
+// Vitest 兼容性
+vi.fn();
+```
+
+如果您愿意，也可以显式导入它们：
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { test, it, describe, expect, beforeAll, beforeEach, afterAll, afterEach, jest, vi } from "bun:test";
+```
+
+## 进程集成
+
+### 退出代码
+
+`bun test` 使用标准退出代码：
+
+- `0`：所有测试通过，无未处理错误
+- `1`：发生了测试失败
+- `>1`：未处理错误的数量（即使测试通过）
+
+### 信号处理
+
+测试运行器正确处理常见信号：
+
+```bash terminal icon="terminal"
+# 优雅地停止测试执行
+kill -SIGTERM <test-process-pid>
+
+# 立即停止测试执行
+kill -SIGKILL <test-process-pid>
+```
+
+### 环境检测
+
+Bun 自动检测某些环境并调整行为：
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+// GitHub Actions 检测
+if (process.env.GITHUB_ACTIONS) {
+  // Bun 自动发出 GitHub Actions 注释
+}
+
+// CI 检测
+if (process.env.CI) {
+  // 某些行为可能会为 CI 环境进行调整
+}
+```
+
+## 性能注意事项
+
+### 单进程
+
+测试运行器默认在单个进程中运行所有测试。这提供了：
+
+- **更快的启动** - 无需生成多个进程
+- **共享内存** - 高效的资源使用
+- **简单调试** - 所有测试都在一个进程中
+
+然而，这意味着：
+
+- 测试共享全局状态（使用生命周期钩子进行清理）
+- 一个测试崩溃可能会影响其他测试
+- 没有真正的单个测试并行化
+
+### 内存管理
+
+```bash terminal icon="terminal"
+# 监视内存使用情况
+bun test --smol  # 减少内存占用
+
+# 对于大型测试套件，考虑拆分文件
+bun test src/unit/
+bun test src/integration/
+```
+
+### 测试隔离
+
+由于测试在同一个进程中运行，请确保正确的清理：
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { afterEach } from "bun:test";
+
+afterEach(() => {
+  // 清理全局状态
+  global.myGlobalVar = undefined;
+  delete process.env.TEST_VAR;
+
+  // 如需要，重置模块
+  jest.resetModules();
+});
+```

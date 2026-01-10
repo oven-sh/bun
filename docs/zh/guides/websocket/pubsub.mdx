@@ -1,0 +1,43 @@
+---
+title: 构建发布-订阅 WebSocket 服务器
+sidebarTitle: 发布-订阅服务器
+mode: center
+---
+
+Bun 的服务端 `WebSocket` API 提供了原生的发布-订阅 API。可以使用 `socket.subscribe(<name>)` 订阅套接字到一组命名频道；可以使用 `socket.publish(<name>, <message>)` 向频道发布消息。
+
+此代码片段实现了一个简单的单频道聊天服务器。
+
+```ts server.ts icon="/icons/typescript.svg"
+const server = Bun.serve({
+  fetch(req, server) {
+    const cookies = req.headers.get("cookie");
+    const username = getUsernameFromCookies(cookies);
+    const success = server.upgrade(req, { data: { username } });
+    if (success) return undefined;
+
+    return new Response("Hello world");
+  },
+  websocket: {
+    // TypeScript: 像这样指定 ws.data 的类型
+    data: {} as { username: string },
+
+    open(ws) {
+      const msg = `${ws.data.username} has entered the chat`;
+      ws.subscribe("the-group-chat");
+      server.publish("the-group-chat", msg);
+    },
+    message(ws, message) {
+      // 服务器将收到的消息重新广播给所有人
+      server.publish("the-group-chat", `${ws.data.username}: ${message}`);
+    },
+    close(ws) {
+      const msg = `${ws.data.username} has left the chat`;
+      server.publish("the-group-chat", msg);
+      ws.unsubscribe("the-group-chat");
+    },
+  },
+});
+
+console.log(`Listening on ${server.hostname}:${server.port}`);
+```

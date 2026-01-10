@@ -1,0 +1,61 @@
+---
+title: "bun link"
+description: "链接本地包进行开发"
+---
+
+import Link from "/snippets/cli/link.mdx";
+
+在本地目录中使用 `bun link` 将当前包注册为"可链接"包。
+
+```bash terminal icon="terminal"
+cd /path/to/cool-pkg
+cat package.json
+bun link
+```
+
+```txt
+bun link v1.3.3 (7416672e)
+Success! Registered "cool-pkg"
+
+To use cool-pkg in a project, run:
+  bun link cool-pkg
+
+Or add it in dependencies in your package.json file:
+  "cool-pkg": "link:cool-pkg"
+```
+
+现在可以使用 `bun link cool-pkg` 将此包"链接"到其他项目中。这将在目标项目的 [node_modules] 目录中创建一个符号链接，指向本地目录。
+
+```bash terminal icon="terminal"
+cd /path/to/my-app
+bun link cool-pkg
+```
+
+另外，可以使用 `--save` 标志将 `cool-pkg` 添加到应用的 [package.json] 的 `dependencies` 字段中，使用特殊的版本说明符，告诉 Bun 从注册的本地目录加载，而不是从 `npm` 安装：
+
+```json package.json icon="file-json"
+{
+  "name": "my-app",
+  "version": "1.0.0",
+  "dependencies": {
+    "cool-pkg": "link:cool-pkg" // [!code ++]
+  }
+}
+```
+
+## 取消链接
+
+在根目录中使用 `bun unlink` 取消注册本地包。
+
+```bash terminal icon="terminal"
+cd /path/to/cool-pkg
+bun unlink
+```
+
+```txt
+bun unlink v1.3.3 (7416672e)
+```
+
+---
+
+<Link />

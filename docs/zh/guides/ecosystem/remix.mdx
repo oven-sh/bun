@@ -1,0 +1,96 @@
+---
+title: 使用 Remix 和 Bun 构建应用
+sidebarTitle: Remix 与 Bun
+mode: center
+---
+
+<Note>
+  目前 Remix 开发服务器 (`remix dev`) 依赖于 Bun 尚未实现的 Node.js API。下面的指南使用 Bun 初始化项目和安装依赖项，但使用 Node.js 运行开发服务器。
+</Note>
+
+---
+
+使用 `create-remix` 初始化一个 Remix 应用。
+
+```sh terminal icon="terminal"
+bun create remix
+```
+
+```txt
+ remix   v1.19.3 💿 让我们构建一个更好的网站...
+
+   dir   我们应该在何处创建您的新项目？
+         ./my-app
+
+      ◼  使用基本模板 请参阅 https://remix.run/docs/en/main/guides/templates#templates 了解更多信息
+      ✔  模板已复制
+
+   git   初始化一个新的 git 仓库？
+         是
+
+  deps   使用 bun 安装依赖项？
+         是
+
+      ✔  依赖项已安装
+      ✔  Git 已初始化
+
+  done   就是这样！
+         使用 cd ./my-app 进入您的项目目录
+         查看 README.md 了解开发和部署说明。
+```
+
+---
+
+要启动开发服务器，请从项目根目录运行 `bun run dev`。这将使用 `remix dev` 命令启动开发服务器。请注意，将使用 Node.js 运行开发服务器。
+
+```sh terminal icon="terminal"
+cd my-app
+bun run dev
+```
+
+```txt
+$ remix dev
+
+💿  remix dev
+
+info  构建中...
+info  已构建 (263ms)
+Remix 应用服务器启动于 http://localhost:3000 (http://172.20.0.143:3000)
+```
+
+---
+
+打开 [http://localhost:3000](http://localhost:3000) 查看应用。您对 [app/routes/_index.tsx] 进行的任何更改都将在浏览器中热重载。
+
+<Frame>
+  ![在 localhost 上运行的 Remix 应用](https://github.com/oven-sh/bun/assets/3084745/c26f1059-a5d4-4c0b-9a88-d9902472fd77)
+</Frame>
+
+---
+
+要构建和启动您的应用，请运行 `bun run build`
+
+```sh terminal icon="terminal"
+bun run build
+```
+
+```txt
+$ remix build
+info  构建中... (NODE_ENV=production)
+info  已构建 (158ms)
+```
+
+然后从项目根目录运行 `bun run start`。
+
+```sh terminal icon="terminal"
+bun start
+```
+
+```txt
+$ remix-serve ./build/index.js
+[remix-serve] http://localhost:3000 (http://192.168.86.237:3000)
+```
+
+---
+
+阅读 [Remix 文档](https://remix.run/) 了解如何使用 Remix 构建应用的更多信息。

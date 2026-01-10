@@ -1,0 +1,193 @@
+---
+title: 在 Google Cloud Run 上部署 Bun 应用程序
+sidebarTitle: 在 Google Cloud Run 上部署
+mode: center
+---
+
+[Google Cloud Run](https://cloud.google.com/run) 是一个用于部署和扩展无服务器应用程序的托管平台。Google 为您处理基础设施。
+
+在本指南中，我们将使用 [Dockerfile] 将 Bun HTTP 服务器部署到 Google Cloud Run。
+
+<Note>
+	在继续之前，请确保您已具备：
+
+    - 一个准备部署的 Bun 应用程序
+    - 一个启用计费的 [Google Cloud 账户](https://cloud.google.com/)
+    - 已安装并配置 [Google Cloud CLI](https://cloud.google.com/sdk/docs/install)
+
+</Note>
+
+---
+
+<Steps> 
+<Step title={<span>通过选择/创建项目初始化 <code>gcloud</code></span>}>
+
+确保您已初始化 Google Cloud CLI。此命令将您登录，并提示您选择现有项目或创建新项目。
+
+有关 Google Cloud CLI 的更多帮助，请参阅 [官方文档](https://docs.cloud.google.com/sdk/gcloud/reference/init)。
+
+```bash terminal icon="terminal"
+gcloud init
+```
+
+```txt
+Welcome! This command will take you through the configuration of gcloud.
+
+You must sign in to continue. Would you like to sign in (Y/n)? Y
+You are signed in as [email@example.com].
+
+Pick cloud project to use:
+ [1] existing-bun-app-1234
+ [2] Enter a project ID
+ [3] Create a new project
+Please enter numeric choice or text value (must exactly match list item): 3
+
+Enter a Project ID. my-bun-app
+Your current project has been set to: [my-bun-app]
+
+The Google Cloud CLI is configured and ready to use!
+```
+
+</Step>
+<Step title="（可选）将项目信息存储在环境变量中">
+为项目 ID 和编号设置变量，以便在后续步骤中更容易重用。
+
+```bash terminal icon="terminal"
+PROJECT_ID=$(gcloud projects list --format='value(projectId)' --filter='name="my bun app"')
+PROJECT_NUMBER=$(gcloud projects list --format='value(projectNumber)' --filter='name="my bun app"')
+
+echo $PROJECT_ID $PROJECT_NUMBER
+```
+
+```txt
+my-bun-app-... [PROJECT_NUMBER]
+```
+
+</Step> 
+<Step title="链接计费账户">
+列出您可用的计费账户并将其链接到您的项目：
+
+```bash terminal icon="terminal"
+gcloud billing accounts list
+```
+
+```txt
+ACCOUNT_ID            NAME                OPEN  MASTER_ACCOUNT_ID
+[BILLING_ACCOUNT_ID]  My Billing Account  True
+```
+
+将您的计费账户链接到项目。将 `[BILLING_ACCOUNT_ID]` 替换为您的计费账户 ID。
+
+```bash terminal icon="terminal"
+gcloud billing projects link $PROJECT_ID --billing-account=[BILLING_ACCOUNT_ID]
+```
+
+```txt
+billingAccountName: billingAccounts/[BILLING_ACCOUNT_ID]
+billingEnabled: true
+name: projects/my-bun-app-.../billingInfo
+projectId: my-bun-app-...
+```
+
+</Step> 
+<Step title="启用 API 并配置 IAM 角色"> 
+激活必要的服务并授予 Cloud Build 权限：
+
+```bash terminal icon="terminal"
+gcloud services enable run.googleapis.com cloudbuild.googleapis.com
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+  --member=serviceAccount:$PROJECT_NUMBER-compute@developer.gserviceaccount.com \
+  --role=roles/run.builder
+```
+
+<Note>  
+这些命令启用 Cloud Run (`run.googleapis.com`) 和 Cloud Build (`cloudbuild.googleapis.com`)，这是从源代码部署所必需的。Cloud Run 运行您的容器化应用程序，而 Cloud Build 处理构建和打包。
+
+IAM 绑定授予 Compute Engine 服务账户 (`$PROJECT_NUMBER-compute@developer.gserviceaccount.com`) 代表您构建和部署镜像的权限。
+
+</Note>
+
+</Step>
+<Step title="添加 Dockerfile">
+在项目根目录中创建一个新的 [Dockerfile]。此文件包含初始化容器、将本地项目文件复制到其中、安装依赖项并启动应用程序的指令。
+
+```docker Dockerfile icon="docker"
+# 使用官方 Bun 镜像运行应用程序
+FROM oven/bun:latest
+
+# 将 package.json 和 bun.lock 复制到容器中
+COPY package.json bun.lock ./
+
+# 安装依赖项
+# 安装依赖项
+RUN bun install --production --frozen-lockfile
+
+# 将应用程序的其余部分复制到容器中
+COPY . .
+
+# 运行应用程序
+CMD ["bun", "index.ts"]
+```
+
+<Note>
+  确保启动命令对应于应用程序的入口点。如果您的 [package.json] 中有启动脚本，也可以是 `CMD ["bun", "run", "start"]`。
+
+此镜像在容器内使用 Bun 安装依赖项并运行您的应用程序。如果您的应用程序没有依赖项，您可以省略 `RUN bun install --production --frozen-lockfile` 这一行。
+
+</Note>
+
+在项目根目录中创建一个新的 [.dockerignore] 文件。该文件包含应从容器镜像中_排除_的文件和目录，例如 [node_modules]。这使您的构建更快、更小：
+
+```docker .dockerignore icon="Docker"
+node_modules
+Dockerfile*
+.dockerignore
+.git
+.gitignore
+README.md
+LICENSE
+.vscode
+.env
+# 任何其他您想要排除的文件或目录
+```
+
+</Step>
+<Step title="部署您的服务"> 
+确保您在包含 [Dockerfile] 的目录中，然后从本地源代码直接部署：
+
+<Note>
+  更新 `--region` 标志为您的首选区域。您也可以省略此标志以获得交互式提示来选择区域。
+</Note>
+
+```bash terminal icon="terminal"
+gcloud run deploy my-bun-app --source . --region=us-west1 --allow-unauthenticated
+```
+
+```txt
+Deploying from source requires an Artifact Registry Docker repository to store built containers. A repository named
+[cloud-run-source-deploy] in region [us-west1] will be created.
+
+Do you want to continue (Y/n)? Y
+
+Building using Dockerfile and deploying container to Cloud Run service [my-bun-app] in project [my-bun-app-...] region [us-west1]
+✓ Building and deploying... Done.
+  ✓ Validating Service...
+  ✓ Uploading sources...
+  ✓ Building Container... Logs are available at [https://console.cloud.google.com/cloud-build/builds...].
+  ✓ Creating Revision...
+  ✓ Routing traffic...
+  ✓ Setting IAM Policy...
+Done.
+Service [my-bun-app] revision [my-bun-app-...] has been deployed and is serving 100 percent of traffic.
+Service URL: https://my-bun-app-....us-west1.run.app
+```
+
+</Step>
+<Step title="访问您的实时应用程序">
+
+🎉 您的 Bun 应用程序现在已上线！
+
+访问服务 URL (`https://my-bun-app-....us-west1.run.app`) 以确认一切正常运行。
+
+</Step>
+</Steps>

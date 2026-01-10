@@ -1,0 +1,25 @@
+---
+title: 以不同名称安装包
+sidebarTitle: 使用别名安装
+mode: center
+---
+
+要以别名安装 npm 包：
+
+```sh terminal icon="terminal"
+bun add my-custom-name@npm:zod
+```
+
+---
+
+现在 `zod` 包可以作为 `my-custom-name` 导入。
+
+```ts index.ts icon="/icons/typescript.svg"
+import { z } from "my-custom-name";
+
+z.string();
+```
+
+---
+
+请参阅 [文档 > 包管理器](/pm/cli/install) 以获取 Bun 包管理器的完整文档。

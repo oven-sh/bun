@@ -1,0 +1,94 @@
+---
+title: 使用 Nuxt 和 Bun 构建应用
+sidebarTitle: Nuxt 与 Bun
+mode: center
+---
+
+Bun 原生支持 [Nuxt](https://nuxt.com)。使用官方 `nuxi` CLI 初始化一个 Nuxt 应用。
+
+```sh terminal icon="terminal"
+bunx nuxi init my-nuxt-app
+```
+
+```txt
+✔ 您想使用哪个包管理器？
+bun
+◐ 安装依赖项...
+bun install v1.3.3 (16b4bf34)
+ + @nuxt/devtools@0.8.2
+ + nuxt@3.7.0
+ 785 packages installed [2.67s]
+✔ 安装完成。
+✔ 在 .nuxt 中生成了类型
+✨ Nuxt 项目已使用 v3 模板创建。下一步：
+ › cd my-nuxt-app
+ › 使用 bun run dev 启动开发服务器
+```
+
+---
+
+要启动开发服务器，请从项目根目录运行 `bun --bun run dev`。这将执行 `nuxt dev` 命令（在 [package.json] 的 `"dev"` 脚本中定义）。
+
+<Note>
+  `nuxt` CLI 默认使用 Node.js；传递 `--bun` 标志会强制开发服务器使用 Bun 运行时。
+</Note>
+
+```sh terminal icon="terminal"
+cd my-nuxt-app
+bun --bun run dev
+```
+
+```txt
+nuxt dev
+Nuxi 3.6.5
+Nuxt 3.6.5 with Nitro 2.5.2
+  > 本地:    http://localhost:3000/
+  > 网络:  http://192.168.0.21:3000/
+  > 网络:  http://[fd8a:d31d:481c:4883:1c64:3d90:9f83:d8a2]:3000/
+
+✔ Nuxt DevTools 已启用 v0.8.0 (实验性)
+ℹ Vite 客户端在 547ms 内预热
+✔ Nitro 在 244 ms 内构建
+```
+
+---
+
+一旦开发服务器启动，打开 [http://localhost:3000](http://localhost:3000) 查看应用。应用将渲染 Nuxt 内置的 `NuxtWelcome` 模板组件。
+
+要开始开发您的应用，请在 [app.vue] 中用您自己的 UI 替换 `<NuxtWelcome />`。
+
+<Frame>
+  ![在 localhost 上运行的 Nuxt 示例应用](https://github.com/oven-sh/bun/assets/3084745/2c683ecc-3298-4bb0-b8c0-cf4cfaea1daa)
+</Frame>
+
+---
+
+对于生产构建，虽然默认预设已经与 Bun 兼容，您也可以使用 [Bun 预设](https://nitro.build/deploy/runtimes/bun) 生成更优化的构建。
+
+```ts nuxt.config.ts icon="/icons/typescript.svg"
+export default defineNuxtConfig({
+  nitro: {
+    preset: "bun", // [!code ++]
+  },
+});
+```
+
+或者，您可以通过环境变量设置预设：
+
+```sh terminal icon="terminal"
+NITRO_PRESET=bun bun run build
+```
+
+<Note>
+  一些包提供特定于 Bun 的导出，Nitro 在使用默认预设时无法正确打包。在这种情况下，您需要使用 Bun 预设，以便这些包在生产构建中正确工作。
+</Note>
+
+使用 bun 构建后，运行：
+
+```sh terminal icon="terminal"
+bun run ./.output/server/index.mjs
+```
+
+---
+
+请参阅 [Nuxt 网站](https://nuxt.com/docs) 获取完整文档。

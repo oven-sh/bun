@@ -1,0 +1,67 @@
+---
+title: Console
+description: Bun 中的 console 对象
+---
+
+<Note>
+  Bun 提供了一个浏览器和 Node.js 兼容的 [console](https://developer.mozilla.org/en-US/docs/Web/API/console)
+  全局对象。此页面仅记录 Bun 原生 API。
+</Note>
+
+---
+
+## 对象检查深度
+
+Bun 允许您配置 `console.log()` 输出中嵌套对象的显示深度：
+
+- **CLI 标志**: 使用 `--console-depth <number>` 为单次运行设置深度
+- **配置**: 在 `bunfig.toml` 中设置 `console.depth` 以进行持久配置
+- **默认值**: 对象检查深度为 `2` 级别
+
+```js
+const nested = { a: { b: { c: { d: "deep" } } } };
+console.log(nested);
+// 默认（深度 2）：{ a: { b: [Object] } }
+// 深度 4：{ a: { b: { c: { d: 'deep' } } } }
+```
+
+CLI 标志优先于配置文件设置。
+
+---
+
+## 从 stdin 读取
+
+在 Bun 中，`console` 对象可以用作 `AsyncIterable` 来从 `process.stdin` 顺序读取行。
+
+```ts adder.ts icon="/icons/typescript.svg"
+for await (const line of console) {
+  console.log(line);
+}
+```
+
+这对于实现交互式程序很有用，比如下面的加法计算器。
+
+```ts adder.ts icon="/icons/typescript.svg"
+console.log(`让我们来加一些数字！`);
+console.write(`计数: 0\n> `);
+
+let count = 0;
+for await (const line of console) {
+  count += Number(line);
+  console.write(`计数: ${count}\n> `);
+}
+```
+
+要运行文件：
+
+```bash terminal icon="terminal"
+bun adder.ts
+让我们来加一些数字！
+计数: 0
+> 5
+计数: 5
+> 5
+计数: 10
+> 5
+计数: 15
+```

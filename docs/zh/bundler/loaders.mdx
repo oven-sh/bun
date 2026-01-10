@@ -1,0 +1,451 @@
+---
+title: 加载器
+description: Bun打包器和运行时的内置加载器
+---
+
+Bun打包器开箱即用地实现了一组默认加载器。
+
+> 作为经验法则：**打包器和运行时都开箱即用地支持相同的文件类型集。**
+
+[.js] [.cjs] [.mjs] [.mts] [.cts] [.ts] [.tsx] [.jsx] [.css] [.json] [.jsonc] [.toml] [.yaml] [.yml] [.txt] [.wasm] [.node] [.html] [.sh]
+
+Bun使用文件扩展名来确定应该使用哪个内置加载器来解析文件。每个加载器都有一个名称，比如`js`、`tsx`或`json`。这些名称用于构建使用自定义加载器扩展Bun的插件。
+
+您可以使用`'type'`导入属性显式指定要使用的加载器。
+
+```ts title="index.ts" icon="/icons/typescript.svg"
+import my_toml from "./my_file" with { type: "toml" };
+// 或使用动态导入
+const { default: my_toml } = await import("./my_file", { with: { type: "toml" } });
+```
+
+## 内置加载器
+
+### `js`
+
+**JavaScript加载器。** 默认用于[.cjs]和[.mjs]。
+
+解析代码并应用一组默认转换，如死代码消除和树摇。请注意，Bun目前不尝试降级转换语法。
+
+---
+
+### `jsx`
+
+**JavaScript + JSX加载器。** 默认用于[.js]和[.jsx]。
+
+与`js`加载器相同，但支持JSX语法。默认情况下，JSX被降级转换为普通JavaScript；具体如何完成取决于您`tsconfig.json`中的`jsx*`编译器选项。请参阅[TypeScript关于JSX的文档](https://www.typescriptlang.org/tsconfig#jsx)获取更多信息。
+
+---
+
+### `ts`
+
+**TypeScript加载器。** 默认用于[.ts]、[.mts]和[.cts]。
+
+剥离所有TypeScript语法，然后行为与`js`加载器相同。Bun不执行类型检查。
+
+---
+
+### `tsx`
+
+**TypeScript + JSX加载器。** 默认用于[.tsx]。
+
+将TypeScript和JSX都转译为普通JavaScript。
+
+---
+
+### `json`
+
+**JSON加载器。** 默认用于[.json]。
+
+JSON文件可以直接导入。
+
+```js
+import pkg from "./package.json";
+pkg.name; // => "my-package"
+```
+
+在打包过程中，解析的JSON被内联到包中作为一个JavaScript对象。
+
+```js
+const pkg = {
+  name: "my-package",
+  // ... 其他字段
+};
+
+pkg.name;
+```
+
+如果[.json]文件作为入口点传递给打包器，它将被转换为一个`.js`模块，该模块`export default`解析的对象。
+
+<CodeGroup>
+
+```json Input
+{
+  "name": "John Doe",
+  "age": 35,
+  "email": "johndoe@example.com"
+}
+```
+
+```js Output
+export default {
+  name: "John Doe",
+  age: 35,
+  email: "johndoe@example.com",
+};
+```
+
+</CodeGroup>
+
+---
+
+### `jsonc`
+
+**带注释的JSON加载器。** 默认用于[.jsonc]。
+
+JSONC（带注释的JSON）文件可以直接导入。Bun将解析它们，剥离注释和尾随逗号。
+
+```js
+import config from "./config.jsonc";
+console.log(config);
+```
+
+在打包过程中，解析的JSONC被内联到包中作为一个JavaScript对象，与`json`加载器相同。
+
+```js
+var config = {
+  option: "value",
+};
+```
+
+<Note>
+  Bun自动为`tsconfig.json`、`jsconfig.json`、`package.json`和`bun.lock`文件使用`jsonc`加载器。
+</Note>
+
+---
+
+### `toml`
+
+**TOML加载器。** 默认用于[.toml]。
+
+TOML文件可以直接导入。Bun将使用其快速的本机TOML解析器解析它们。
+
+```js
+import config from "./bunfig.toml";
+config.logLevel; // => "debug"
+
+// 通过导入属性:
+// import myCustomTOML from './my.config' with {type: "toml"};
+```
+
+在打包过程中，解析的TOML被内联到包中作为一个JavaScript对象。
+
+```js
+var config = {
+  logLevel: "debug",
+  // ...其他字段
+};
+config.logLevel;
+```
+
+如果[.toml]文件作为入口点传递，它将被转换为一个`.js`模块，该模块`export default`解析的对象。
+
+<CodeGroup>
+
+```toml Input
+name = "John Doe"
+age = 35
+email = "johndoe@example.com"
+```
+
+```js Output
+export default {
+  name: "John Doe",
+  age: 35,
+  email: "johndoe@example.com",
+};
+```
+
+</CodeGroup>
+
+---
+
+### `yaml`
+
+**YAML加载器。** 默认用于[.yaml]和[.yml]。
+
+YAML文件可以直接导入。Bun将使用其快速的本机YAML解析器解析它们。
+
+```js
+import config from "./config.yaml";
+console.log(config);
+
+// 通过导入属性:
+import data from "./data.txt" with { type: "yaml" };
+```
+
+在打包过程中，解析的YAML被内联到包中作为一个JavaScript对象。
+
+```js
+var config = {
+  name: "my-app",
+  version: "1.0.0",
+  // ...其他字段
+};
+```
+
+如果[.yaml]或[.yml]文件作为入口点传递，它将被转换为一个`.js`模块，该模块`export default`解析的对象。
+
+<CodeGroup>
+
+```yaml Input
+name: John Doe
+age: 35
+email: johndoe@example.com
+```
+
+```js Output
+export default {
+  name: "John Doe",
+  age: 35,
+  email: "johndoe@example.com",
+};
+```
+
+</CodeGroup>
+
+---
+
+### `text`
+
+**文本加载器。** 默认用于[.txt]。
+
+文本文件的内容被读取并内联到包中作为一个字符串。文本文件可以直接导入。文件被读取并作为字符串返回。
+
+```js
+import contents from "./file.txt";
+console.log(contents); // => "Hello, world!"
+
+// 要将html文件作为文本导入
+// "type"属性可用于覆盖默认加载器。
+import html from "./index.html" with { type: "text" };
+```
+
+在构建过程中引用时，内容被内联到包中作为一个字符串。
+
+```js
+var contents = `Hello, world!`;
+console.log(contents);
+```
+
+如果[.txt]文件作为入口点传递，它将被转换为一个`.js`模块，该模块`export default`文件内容。
+
+<CodeGroup>
+
+```txt Input
+Hello, world!
+```
+
+```js Output
+export default "Hello, world!";
+```
+
+</CodeGroup>
+
+---
+
+### `napi`
+
+**原生插件加载器。** 默认用于[.node]。
+
+在运行时，可以直接导入原生插件。
+
+```js
+import addon from "./addon.node";
+console.log(addon);
+```
+
+<Note>在打包器中，[.node]文件使用文件加载器处理。</Note>
+
+---
+
+### `sqlite`
+
+**SQLite加载器。** 需要`with { "type": "sqlite" }`导入属性。
+
+在运行时和打包器中，可以直接导入SQLite数据库。这将使用`bun:sqlite`加载数据库。
+
+```js
+import db from "./my.db" with { type: "sqlite" };
+```
+
+<Warning>这仅在目标为`bun`时支持。</Warning>
+
+默认情况下，数据库在包外部（以便您可以潜在地使用在别处加载的数据库），因此磁盘上的数据库文件不会被打包到最终输出中。
+
+您可以使用`"embed"`属性更改此行为：
+
+```js
+// 将数据库嵌入到包中
+import db from "./my.db" with { type: "sqlite", embed: "true" };
+```
+
+<Info>
+使用独立可执行文件时，数据库被嵌入到单文件可执行文件中。
+
+否则，要嵌入的数据库将被复制到`outdir`中，文件名为哈希值。
+
+</Info>
+
+---
+
+### `html`
+
+**HTML加载器。** 默认用于[.html]。
+
+`html`加载器处理HTML文件并打包任何引用的资源。它将：
+
+- 打包和哈希引用的JavaScript文件（`<script src="...">`）
+- 打包和哈希引用的CSS文件（`<link rel="stylesheet" href="...">`）
+- 哈希引用的图像（`<img src="...">`）
+- 保留外部URL（默认情况下，以`http://`或`https://`开头的任何内容）
+
+例如，给定这个HTML文件：
+
+```html title="src/index.html" icon="file-code"
+<!DOCTYPE html>
+<html>
+  <body>
+    <img src="./image.jpg" alt="Local image" />
+    <img src="https://example.com/image.jpg" alt="External image" />
+    <script type="module" src="./script.js"></script>
+  </body>
+</html>
+```
+
+它将输出一个带有打包资源的新HTML文件：
+
+```html title="dist/index.html" icon="file-code"
+<!DOCTYPE html>
+<html>
+  <body>
+    <img src="./image-HASHED.jpg" alt="Local image" />
+    <img src="https://example.com/image.jpg" alt="External image" />
+    <script type="module" src="./output-ALSO-HASHED.js"></script>
+  </body>
+</html>
+```
+
+在底层，它使用[`lol-html`](https://github.com/cloudflare/lol-html)提取脚本和链接标签作为入口点，其他资源作为外部资源。
+
+<Accordion title="支持的HTML选择器列表">
+目前，选择器列表是：
+
+- `audio[src]`
+- `iframe[src]`
+- `img[src]`
+- `img[srcset]`
+- `link:not([rel~='stylesheet']):not([rel~='modulepreload']):not([rel~='manifest']):not([rel~='icon']):not([rel~='apple-touch-icon'])[href]`
+- `link[as='font'][href], link[type^='font/'][href]`
+- `link[as='image'][href]`
+- `link[as='style'][href]`
+- `link[as='video'][href], link[as='audio'][href]`
+- `link[as='worker'][href]`
+- `link[rel='icon'][href], link[rel='apple-touch-icon'][href]`
+- `link[rel='manifest'][href]`
+- `link[rel='stylesheet'][href]`
+- `script[src]`
+- `source[src]`
+- `source[srcset]`
+- `video[poster]`
+- `video[src]`
+
+</Accordion>
+
+<Note>
+
+**不同上下文中的HTML加载器行为**
+
+`html`加载器的行为因使用方式而异：
+
+- 静态构建：当您运行`bun build ./index.html`时，Bun生成一个静态站点，所有资源都被打包和哈希。
+- 运行时：当您运行`bun run server.ts`（其中`server.ts`导入HTML文件）时，Bun在开发过程中动态打包资源，启用热模块替换等功能。
+- 全栈构建：当您运行`bun build --target=bun server.ts`（其中`server.ts`导入HTML文件）时，导入解析为一个清单对象，`Bun.serve`使用该对象在生产环境中高效地提供预打包的资源。
+
+</Note>
+
+---
+
+### `css`
+
+**CSS加载器。** 默认用于[.css]。
+
+CSS文件可以直接导入。打包器将解析和打包CSS文件，处理`@import`语句和`url()`引用。
+
+```js
+import "./styles.css";
+```
+
+在打包过程中，所有导入的CSS文件都被打包到输出目录中的单个[.css]文件中。
+
+```css
+.my-class {
+  background: url("./image.png");
+}
+```
+
+---
+
+### `sh`
+
+**Bun Shell加载器。** 默认用于[.sh]文件。
+
+此加载器用于解析Bun Shell脚本。它仅在启动Bun本身时支持，因此在打包器或运行时中不可用。
+
+```bash
+bun run ./script.sh
+```
+
+---
+
+### `file`
+
+**文件加载器。** 默认用于所有未识别的文件类型。
+
+文件加载器将导入解析为导入文件的路径/URL。它通常用于引用媒体或字体资源。
+
+```js
+// logo.ts
+import logo from "./logo.svg";
+console.log(logo);
+```
+
+在运行时，Bun检查`logo.svg`文件是否存在，并将其转换为`logo.svg`在磁盘上位置的绝对路径。
+
+```bash
+bun run logo.ts
+# Output: /path/to/project/logo.svg
+```
+
+在打包器中，情况略有不同。文件被原样复制到`outdir`中，导入被解析为指向复制文件的相对路径。
+
+```js
+// Output
+var logo = "./logo.svg";
+console.log(logo);
+```
+
+如果为`publicPath`指定了值，导入将使用该值作为前缀来构造绝对路径/URL。
+
+| 公共路径                  | 解析的导入                    |
+| ---------------------------- | ---------------------------------- |
+| `""` (默认)               | `/logo.svg`                        |
+| `"/assets"`                  | `/assets/logo.svg`                 |
+| `"https://cdn.example.com/"` | `https://cdn.example.com/logo.svg` |
+
+<Note>
+复制文件的位置和文件名由`naming.asset`的值确定。
+
+此加载器被原样复制到`outdir`中。复制文件的名称由`naming.asset`的值确定。
+
+</Note>

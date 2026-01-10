@@ -1,0 +1,146 @@
+---
+title: 使用 glob 模式选择性地并发运行测试
+sidebarTitle: 并发测试 glob
+mode: center
+description: 设置一个 glob 模式来决定哪些文件中的测试并行运行
+---
+
+本指南演示如何使用 `concurrentTestGlob` 选项根据文件命名模式选择性地并发运行测试。
+
+## 项目结构
+
+```sh title="Project Structure" icon="folder-tree"
+my-project/
+├── bunfig.toml
+├── tests/
+│   ├── unit/
+│   │   ├── math.test.ts          # 顺序执行
+│   │   └── utils.test.ts         # 顺序执行
+│   └── integration/
+│       ├── concurrent-api.test.ts     # 并发执行
+│       └── concurrent-database.test.ts # 并发执行
+```
+
+## 配置
+
+配置您的 [bunfig.toml] 以并发运行带有"concurrent-"前缀的测试文件：
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+# 并发运行所有带有"concurrent-"前缀的测试文件
+concurrentTestGlob = "**/concurrent-*.test.ts"
+```
+
+## 测试文件
+
+### 单元测试（顺序执行）
+
+顺序测试适用于共享状态或有特定排序要求的测试：
+
+```ts title="tests/unit/math.test.ts" icon="/icons/typescript.svg"
+import { test, expect } from "bun:test";
+
+// 这些测试默认顺序执行
+let sharedState = 0;
+
+test("addition", () => {
+  sharedState = 5 + 3;
+  expect(sharedState).toBe(8);
+});
+
+test("uses previous state", () => {
+  // 此测试依赖于前一个测试的状态
+  expect(sharedState).toBe(8);
+});
+```
+
+### 集成测试（并发执行）
+
+匹配 glob 模式的文件中的测试会自动并发执行：
+
+```ts title="tests/integration/concurrent-api.test.ts" icon="/icons/typescript.svg"
+import { test, expect } from "bun:test";
+
+// 由于文件名匹配 glob 模式，这些测试自动并发执行。
+// 当文件匹配 concurrentTestGlob 时，使用 test() 等同于 test.concurrent()。
+// 每个测试都是独立的，可以并行运行。
+
+test("fetch user data", async () => {
+  const response = await fetch("/api/user/1");
+  expect(response.ok).toBe(true);
+});
+
+// 也可以使用 test.concurrent() 明确标记为并发
+test.concurrent("fetch posts", async () => {
+  const response = await fetch("/api/posts");
+  expect(response.ok).toBe(true);
+});
+
+// 也可以使用 test.serial() 明确标记为顺序执行
+test.serial("fetch comments", async () => {
+  const response = await fetch("/api/comments");
+  expect(response.ok).toBe(true);
+});
+```
+
+## 运行测试
+
+```bash terminal icon="terminal"
+# 运行所有测试 - concurrent-*.test.ts 文件将并发运行
+bun test
+
+# 覆盖: 强制所有测试并发运行
+# 注意: 这会覆盖 bunfig.toml 并发运行所有测试，不管 glob 模式
+bun test --concurrent
+
+# 仅运行单元测试（顺序执行）
+bun test tests/unit
+
+# 仅运行集成测试（由于 glob 模式而并发执行）
+bun test tests/integration
+```
+
+## 优势
+
+1. **渐进迁移**: 通过重命名文件逐个迁移至并发测试
+2. **清晰组织**: 文件命名约定指示执行模式
+3. **性能**: 集成测试并行运行更快
+4. **安全性**: 单元测试在需要时保持顺序执行
+5. **灵活性**: 通过重命名文件轻松更改执行模式
+
+## 迁移策略
+
+将现有测试迁移到并发执行：
+
+1. **从独立的集成测试开始** - 这些通常不共享状态
+2. **重命名文件以匹配 glob 模式**: `mv api.test.ts concurrent-api.test.ts`
+3. **验证测试仍然通过** - 运行 `bun test` 以确保没有竞态条件
+4. **监控共享状态问题** - 观察是否有不稳定测试或意外失败
+5. **继续逐步迁移稳定测试** - 不要急于迁移
+
+## 提示
+
+- **使用描述性前缀**: `concurrent-`, `parallel-`, `async-`
+- **将相关的顺序测试保存在一起** 在同一目录中
+- **使用注释记录为什么某些测试必须保持顺序执行**
+- **在顺序文件中使用 `test.concurrent()` 进行细粒度控制**
+  (注意: 在由 `concurrentTestGlob` 匹配的文件中，普通的 `test()` 已经并发运行)
+
+## 多模式
+
+您可以为不同的测试类别指定多个模式：
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+concurrentTestGlob = [
+  "**/integration/*.test.ts",
+  "**/e2e/*.test.ts",
+  "**/concurrent-*.test.ts"
+]
+```
+
+此配置将在满足以下任一模式时并发运行测试：
+
+- `integration/` 目录中的所有测试
+- `e2e/` 目录中的所有测试
+- 项目中任何位置带有 `concurrent-` 前缀的所有测试

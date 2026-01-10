@@ -1,0 +1,93 @@
+---
+title: 将 Bun 升级到最新版本
+sidebarTitle: 升级 Bun
+mode: center
+---
+
+Bun 可以使用内置的 `bun upgrade` 命令升级自身。这是获取最新功能和错误修复的最快方式。
+
+```bash terminal icon="terminal"
+bun upgrade
+```
+
+这会下载并安装最新稳定版的 Bun，替换当前安装的版本。
+
+<Note>要查看当前 Bun 版本，请运行 `bun --version`。</Note>
+
+---
+
+## 验证升级
+
+升级后，验证新版本：
+
+```bash terminal icon="terminal"
+bun --version
+# Output: 1.x.y
+
+# 查看 Bun 二进制文件的确切提交
+bun --revision
+# Output: 1.x.y+abc123def
+```
+
+---
+
+## 升级到金丝雀构建版本
+
+金丝雀构建版本在每次提交到 `main` 分支时自动发布。这些版本未经测试，但对于尝试新功能或在正式发布前验证错误修复很有用。
+
+```bash terminal icon="terminal"
+bun upgrade --canary
+```
+
+<Warning>不建议在生产环境中使用金丝雀构建版本。它们可能包含错误或破坏性更改。</Warning>
+
+---
+
+## 切换回稳定版
+
+如果您正在使用金丝雀构建版本并想返回到最新的稳定发布版本：
+
+```bash terminal icon="terminal"
+bun upgrade --stable
+```
+
+---
+
+## 安装特定版本
+
+要安装特定版本的 Bun，请使用带有版本标签的安装脚本：
+
+<Tabs>
+  <Tab title="macOS & Linux">
+    ```bash terminal icon="terminal"
+    curl -fsSL https://bun.sh/install | bash -s "bun-v1.3.3"
+    ```
+  </Tab>
+  <Tab title="Windows">
+    ```powershell PowerShell icon="windows"
+    iex "& {$(irm https://bun.sh/install.ps1)} -Version 1.3.3"
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## 包管理器用户
+
+如果您通过包管理器安装了 Bun，请使用该包管理器进行升级，而不是使用 `bun upgrade` 以避免冲突。
+
+<Tip>
+**Homebrew 用户** <br />
+为避免与 Homebrew 冲突，请改用 `brew upgrade bun`。
+
+**Scoop 用户** <br />
+为避免与 Scoop 冲突，请改用 `scoop update bun`。
+
+</Tip>
+
+---
+
+## 另请参阅
+
+- [安装](/installation) — 首次安装 Bun
+- [更新包](/pm/cli/update) — 将依赖项更新到最新版本

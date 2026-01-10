@@ -1,0 +1,162 @@
+---
+title: 在 DigitalOcean 上部署 Bun 应用程序
+sidebarTitle: 在 DigitalOcean 上部署
+mode: center
+---
+
+[DigitalOcean](https://www.digitalocean.com/) 是一个云平台，为构建和部署应用程序提供一系列服务。
+
+在本指南中，我们将使用 [Dockerfile] 将 Bun HTTP 服务器部署到 DigitalOcean。
+
+<Note>
+	在继续之前，请确保您已具备：
+
+    - 一个准备部署的 Bun 应用程序
+    - 一个 [DigitalOcean 账户](https://www.digitalocean.com/)
+    - 已安装并配置 [DigitalOcean CLI](https://docs.digitalocean.com/reference/doctl/how-to/install/#step-1-install-doctl)
+    - 已安装 [Docker](https://docs.docker.com/get-started/get-docker/) 并添加到您的 `PATH`
+
+</Note>
+
+---
+
+<Steps>
+	<Step title="创建新的 DigitalOcean 容器注册表">
+		创建一个新的容器注册表来存储 Docker 镜像。
+
+    	<Tabs>
+    		<Tab title="通过 DigitalOcean 仪表板">
+    			在 DigitalOcean 仪表板中，转到 [**容器注册表**](https://cloud.digitalocean.com/registry)，并输入新注册表的详细信息。
+
+    			<Frame>
+    				![DigitalOcean registry dashboard](/images/guides/digitalocean-7.png)
+    			</Frame>
+
+    			确保详细信息正确，然后单击 **创建注册表**。
+    		</Tab>
+    		<Tab title="通过 DigitalOcean CLI">
+
+    			```bash terminal icon="terminal"
+    			doctl registry create bun-digitalocean-demo
+    			```
+    			```txt
+    			Name                     Endpoint                                           Region slug
+    			bun-digitalocean-demo    registry.digitalocean.com/bun-digitalocean-demo    sfo2
+    			```
+
+    		</Tab>
+    	</Tabs>
+
+    	您应该在 [**DigitalOcean 注册表仪表板**](https://cloud.digitalocean.com/registry) 中看到新注册表：
+
+    	<Frame>
+    		![DigitalOcean registry dashboard](/images/guides/digitalocean-1.png)
+    	</Frame>
+    </Step>
+    <Step title="创建新的 Dockerfile">
+    	确保您在包含项目的目录中，然后在项目的根目录中创建一个新的 [Dockerfile]。此文件包含初始化容器、将本地项目文件复制到其中、安装依赖项并启动应用程序的指令。
+
+    	```docker Dockerfile icon="docker"
+    	# 使用官方 Bun 镜像运行应用程序
+    	FROM oven/bun:debian
+
+    	# 将工作目录设置为 `/app`
+    	WORKDIR /app
+
+    	# 将 package.json 和 bun.lock 复制到容器中
+    	COPY package.json bun.lock ./
+
+    	# 安装依赖项
+    	RUN bun install --production --frozen-lockfile
+
+    	# 将应用程序的其余部分复制到容器中
+    	COPY . .
+
+    	# 暴露端口 (DigitalOcean 将设置 PORT 环境变量)
+    	EXPOSE 8080
+
+    	# 运行应用程序
+    	CMD ["bun", "index.ts"]
+    	```
+
+    	<Note>
+    		确保启动命令对应于应用程序的入口点。如果您的 [package.json] 中有启动脚本，也可以是 `CMD ["bun", "run", "start"]`。
+
+    		此镜像在容器内使用 Bun 安装依赖项并运行您的应用程序。如果您的应用程序没有依赖项，您可以省略 `RUN bun install --production --frozen-lockfile` 这一行。
+    	</Note>
+
+    	在项目根目录中创建一个新的 [.dockerignore] 文件。该文件包含应从容器镜像中_排除_的文件和目录，例如 [node_modules]。这使您的构建更快、更小：
+
+    	```docker .dockerignore icon="Docker"
+    	node_modules
+    	Dockerfile*
+    	.dockerignore
+    	.git
+    	.gitignore
+    	README.md
+    	LICENSE
+    	.vscode
+    	.env
+    	# 任何其他您想要排除的文件或目录
+    	```
+    	```
+    </Step>
+    <Step title="使用 DigitalOcean 注册表对 Docker 进行身份验证">
+    	在构建和推送 Docker 镜像之前，使用 DigitalOcean 容器注册表对 Docker 进行身份验证：
+
+    	```bash terminal icon="terminal"
+    	doctl registry login
+    	```
+    	```txt
+    	Successfully authenticated with registry.digitalocean.com
+    	```
+
+    	<Note>
+    		此命令使用您的 DigitalOcean 凭据对 Docker 与 DigitalOcean 的注册表进行身份验证。没有此步骤，构建和推送命令将失败并出现 401 身份验证错误。
+    	</Note>
+    </Step>
+    <Step title="构建并将 Docker 镜像推送到 DigitalOcean 注册表">
+    	确保您在包含 [Dockerfile] 的目录中，然后在一个命令中构建并将 Docker 镜像推送到 DigitalOcean 注册表：
+
+    	```bash terminal icon="terminal"
+    	docker buildx build --platform=linux/amd64 -t registry.digitalocean.com/bun-digitalocean-demo/bun-digitalocean-demo:latest --push .
+    	```
+
+    	<Note>
+    		如果您在 ARM Mac (M1/M2) 上构建，则必须使用 `docker buildx` 和 `--platform=linux/amd64` 以确保与 DigitalOcean 基础设施的兼容性。使用 `docker build` 而不带平台标志将创建一个在 DigitalOcean 上无法运行的 ARM64 镜像。
+    	</Note>
+
+    	镜像推送后，您应该在 [**DigitalOcean 注册表仪表板**](https://cloud.digitalocean.com/registry) 中看到它：
+
+    	<Frame>
+    		![DigitalOcean registry dashboard](/images/guides/digitalocean-2.png)
+    	</Frame>
+    </Step>
+    <Step title="创建新的 DigitalOcean App Platform 项目">
+    	在 DigitalOcean 仪表板中，转到 [**App Platform**](https://cloud.digitalocean.com/apps) > **创建应用**。我们可以直接从容器镜像创建一个项目。
+
+    	<Frame>
+    		![DigitalOcean App Platform project dashboard](/images/guides/digitalocean-3.png)
+    	</Frame>
+
+    	确保详细信息正确，然后单击 **下一步**。
+
+    	<Frame>
+    		![DigitalOcean App Platform service dashboard](/images/guides/digitalocean-4.png)
+    	</Frame>
+
+    	查看并配置资源设置，然后单击 **创建应用**。
+
+    	<Frame>
+    		![DigitalOcean App Platform service dashboard](/images/guides/digitalocean-6.png)
+    	</Frame>
+    </Step>
+    <Step title="访问您的实时应用程序">
+    	🥳 您的应用现在已上线！应用创建后，您应该在 App Platform 仪表板中看到它以及公共 URL。
+
+    	<Frame>
+    		![DigitalOcean App Platform app dashboard](/images/guides/digitalocean-5.png)
+    	</Frame>
+    </Step>
+
+</Steps>

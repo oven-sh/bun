@@ -1,0 +1,314 @@
+---
+title: 哈希
+description: Bun 提供了一组用于使用各种密码学安全算法进行哈希和验证密码的实用函数
+---
+
+<Note>
+  除了下面记录的 Bun 原生 API 外，Bun 还实现了来自 [`node:crypto`](https://nodejs.org/api/crypto.html) 的 `createHash` 和 `createHmac` 函数。
+</Note>
+
+---
+
+## `Bun.password`
+
+`Bun.password` 是一组用于使用各种密码学安全算法进行哈希和验证密码的实用函数集合。
+
+```ts
+const password = "super-secure-pa$$word";
+
+const hash = await Bun.password.hash(password);
+// => $argon2id$v=19$m=65536,t=2,p=1$tFq+9AVr1bfPxQdh6E8DQRhEXg/M/SqYCNu6gVdRRNs$GzJ8PuBi+K+BVojzPfS5mjnC8OpLGtv8KJqF99eP6a4
+
+const isMatch = await Bun.password.verify(password, hash);
+// => true
+```
+
+`Bun.password.hash` 的第二个参数接受一个参数对象，让您选择和配置哈希算法。
+
+```ts
+const password = "super-secure-pa$$word";
+
+// 使用 argon2 (默认)
+const argonHash = await Bun.password.hash(password, {
+  algorithm: "argon2id", // "argon2id" | "argon2i" | "argon2d"
+  memoryCost: 4, // 内存使用量，单位为 kibibytes
+  timeCost: 3, // 迭代次数
+});
+
+// 使用 bcrypt
+const bcryptHash = await Bun.password.hash(password, {
+  algorithm: "bcrypt",
+  cost: 4, // 4-31 之间的数字
+});
+```
+
+用于创建哈希的算法存储在哈希本身中。使用 `bcrypt` 时，返回的哈希值采用 [Modular Crypt Format](https://passlib.readthedocs.io/en/stable/modular_crypt_format.html) 编码，以兼容大多数现有的 `bcrypt` 实现；使用 `argon2` 时，结果采用较新的 [PHC 格式](https://github.com/P-H-C/phc-string-format/blob/master/phc-sf-spec.md) 编码。
+
+`verify` 函数会根据输入哈希值自动检测算法并使用正确的验证方法。它可以从 PHC 或 MCF 编码的哈希值正确推断算法。
+
+```ts
+const password = "super-secure-pa$$word";
+
+const hash = await Bun.password.hash(password, {
+  /* config */
+});
+
+const isMatch = await Bun.password.verify(password, hash);
+// => true
+```
+
+所有函数的同步版本也可用。请记住，这些函数计算成本较高，因此使用阻塞 API 可能会降低应用程序性能。
+
+```ts
+const password = "super-secure-pa$$word";
+
+const hash = Bun.password.hashSync(password, {
+  /* config */
+});
+
+const isMatch = Bun.password.verifySync(password, hash);
+// => true
+```
+
+### Salt
+
+当您使用 `Bun.password.hash` 时，会自动生成 salt 并包含在哈希中。
+
+### bcrypt - Modular Crypt Format
+
+在以下 [Modular Crypt Format](https://passlib.readthedocs.io/en/stable/modular_crypt_format.html) 哈希（由 `bcrypt` 使用）中：
+
+输入：
+
+```ts
+await Bun.password.hash("hello", {
+  algorithm: "bcrypt",
+});
+```
+
+输出：
+
+```sh
+$2b$10$Lyj9kHYZtiyfxh2G60TEfeqs7xkkGiEFFDi3iJGc50ZG/XJ1sxIFi;
+```
+
+格式组成：
+
+- `bcrypt`: `$2b`
+- `rounds`: `$10` - 轮数（实际轮数的 log10）
+- `salt`: `$Lyj9kHYZtiyfxh2G60TEfeqs7xkkGiEFFDi3iJGc50ZG/XJ1sxIFi`
+- `hash`: `$GzJ8PuBi+K+BVojzPfS5mjnC8OpLGtv8KJqF99eP6a4`
+
+默认情况下，bcrypt 库会截断超过 72 字节的密码。在 Bun 中，如果您传递给 `Bun.password.hash` 的密码长度超过 72 字节并使用 `bcrypt` 算法，密码将在传递给 bcrypt 之前通过 SHA-512 进行哈希。
+
+```ts
+await Bun.password.hash("hello".repeat(100), {
+  algorithm: "bcrypt",
+});
+```
+
+因此，Bun 不会向 bcrypt 发送静默截断为 72 字节的 500 字节密码，而是使用 SHA-512 对密码进行哈希，然后将哈希后的密码发送给 bcrypt（仅当超过 72 字节时）。这是一种更安全的默认行为。
+
+### argon2 - PHC format
+
+在以下 [PHC format](https://github.com/P-H-C/phc-string-format/blob/master/phc-sf-spec.md) 哈希（由 `argon2` 使用）中：
+
+输入：
+
+```ts
+await Bun.password.hash("hello", {
+  algorithm: "argon2id",
+});
+```
+
+输出：
+
+```sh
+$argon2id$v=19$m=65536,t=2,p=1$xXnlSvPh4ym5KYmxKAuuHVlDvy2QGHBNuI6bJJrRDOs$2YY6M48XmHn+s5NoBaL+ficzXajq2Yj8wut3r0vnrwI
+```
+
+格式组成：
+
+- `algorithm`: `$argon2id`
+- `version`: `$v=19`
+- `memory cost`: `65536`
+- `iterations`: `t=2`
+- `parallelism`: `p=1`
+- `salt`: `$xXnlSvPh4ym5KYmxKAuuHVlDvy2QGHBNuI6bJJrRDOs`
+- `hash`: `$2YY6M48XmHn+s5NoBaL+ficzXajq2Yj8wut3r0vnrwI`
+
+---
+
+## `Bun.hash`
+
+`Bun.hash` 是一组用于_非加密_哈希的实用工具。非加密哈希算法针对计算速度进行了优化，而不是冲突抵抗或安全性。
+
+标准的 `Bun.hash` 函数使用 [Wyhash](https://github.com/wangyi-fudan/wyhash) 从任意大小的输入生成 64 位哈希。
+
+```ts
+Bun.hash("some data here");
+// 11562320457524636935n
+```
+
+输入可以是字符串、`TypedArray`、`DataView`、`ArrayBuffer` 或 `SharedArrayBuffer`。
+
+```ts
+const arr = new Uint8Array([1, 2, 3, 4]);
+
+Bun.hash("some data here");
+Bun.hash(arr);
+Bun.hash(arr.buffer);
+Bun.hash(new DataView(arr.buffer));
+```
+
+可选地，可以将整数种子作为第二个参数指定。对于 64 位哈希，高于 `Number.MAX_SAFE_INTEGER` 的种子应作为 BigInt 提供，以避免精度损失。
+
+```ts
+Bun.hash("some data here", 1234);
+// 15724820720172937558n
+```
+
+`Bun.hash` 上的属性还提供了其他哈希算法。每个算法的 API 都相同，只是 32 位哈希返回数字，64 位哈希返回 bigint。
+
+```ts
+Bun.hash.wyhash("data", 1234); // 等同于 Bun.hash()
+Bun.hash.crc32("data", 1234);
+Bun.hash.adler32("data", 1234);
+Bun.hash.cityHash32("data", 1234);
+Bun.hash.cityHash64("data", 1234);
+Bun.hash.xxHash32("data", 1234);
+Bun.hash.xxHash64("data", 1234);
+Bun.hash.xxHash3("data", 1234);
+Bun.hash.murmur32v3("data", 1234);
+Bun.hash.murmur32v2("data", 1234);
+Bun.hash.murmur64v2("data", 1234);
+Bun.hash.rapidhash("data", 1234);
+```
+
+---
+
+## `Bun.CryptoHasher`
+
+`Bun.CryptoHasher` 是一个通用实用类，允许您使用一系列加密哈希算法逐步计算字符串或二进制数据的哈希。支持以下算法：
+
+- `"blake2b256"`
+- `"blake2b512"`
+- `"md4"`
+- `"md5"`
+- `"ripemd160"`
+- `"sha1"`
+- `"sha224"`
+- `"sha256"`
+- `"sha384"`
+- `"sha512"`
+- `"sha512-224"`
+- `"sha512-256"`
+- `"sha3-224"`
+- `"sha3-256"`
+- `"sha3-384"`
+- `"sha3-512"`
+- `"shake128"`
+- `"shake256"`
+
+```ts
+const hasher = new Bun.CryptoHasher("sha256");
+hasher.update("hello world");
+hasher.digest();
+// Uint8Array(32) [ <byte>, <byte>, ... ]
+```
+
+初始化后，可以使用 `.update()` 方法逐步将数据馈送到哈希器。此方法接受 `string`、`TypedArray` 和 `ArrayBuffer`。
+
+```ts
+const hasher = new Bun.CryptoHasher("sha256");
+
+hasher.update("hello world");
+hasher.update(new Uint8Array([1, 2, 3]));
+hasher.update(new ArrayBuffer(10));
+```
+
+如果传入 `string`，可选的第二个参数可用于指定编码（默认为 `'utf-8'`）。支持以下编码：
+
+| 分类                   | 编码                                   |
+| -------------------------- | ------------------------------------------- |
+| 二进制编码           | `"base64"` `"base64url"` `"hex"` `"binary"` |
+| 字符编码        | `"utf8"` `"utf-8"` `"utf16le"` `"latin1"`   |
+| 传统字符编码 | `"ascii"` `"binary"` `"ucs2"` `"ucs-2"`     |
+
+```ts
+hasher.update("hello world"); // 默认为 utf8
+hasher.update("hello world", "hex");
+hasher.update("hello world", "base64");
+hasher.update("hello world", "latin1");
+```
+
+在数据被馈送到哈希器后，可以使用 `.digest()` 计算最终哈希。默认情况下，此方法返回包含哈希的 `Uint8Array`。
+
+```ts
+const hasher = new Bun.CryptoHasher("sha256");
+hasher.update("hello world");
+
+hasher.digest();
+// => Uint8Array(32) [ 185, 77, 39, 185, 147, ... ]
+```
+
+`.digest()` 方法可以选择将哈希作为字符串返回。为此，请指定编码：
+
+```ts
+hasher.digest("base64");
+// => "uU0nuZNNPgilLlLX2n2r+sSE7+N6U4DukIj3rOLvzek="
+
+hasher.digest("hex");
+// => "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+```
+
+或者，该方法可以将哈希写入预先存在的 `TypedArray` 实例中。在某些对性能敏感的应用程序中，这可能是可取的。
+
+```ts
+const arr = new Uint8Array(32);
+
+hasher.digest(arr);
+
+console.log(arr);
+// => Uint8Array(32) [ 185, 77, 39, 185, 147, ... ]
+```
+
+### `Bun.CryptoHasher` 中的 HMAC
+
+`Bun.CryptoHasher` 可用于计算 HMAC 摘要。为此，请将密钥传递给构造函数。
+
+```ts
+const hasher = new Bun.CryptoHasher("sha256", "secret-key");
+hasher.update("hello world");
+console.log(hasher.digest("hex"));
+// => "095d5a21fe6d0646db223fdf3de6436bb8dfb2fab0b51677ecf6441fcf5f2a67"
+```
+
+使用 HMAC 时，支持的算法集较为有限：
+
+- `"blake2b512"`
+- `"md5"`
+- `"sha1"`
+- `"sha224"`
+- `"sha256"`
+- `"sha384"`
+- `"sha512-224"`
+- `"sha512-256"`
+- `"sha512"`
+
+与非 HMAC 的 `Bun.CryptoHasher` 不同，HMAC `Bun.CryptoHasher` 实例在调用 `.digest()` 后不会重置，尝试再次使用同一实例将引发错误。
+
+其他方法如 `.copy()` 和 `.update()` 是受支持的（只要在 `.digest()` 之前），但像 `.digest()` 这样终结哈希器的方法则不受支持。
+
+```ts
+const hasher = new Bun.CryptoHasher("sha256", "secret-key");
+hasher.update("hello world");
+
+const copy = hasher.copy();
+copy.update("!");
+console.log(copy.digest("hex"));
+// => "3840176c3d8923f59ac402b7550404b28ab11cb0ef1fa199130a5c37864b5497"
+
+console.log(hasher.digest("hex"));
+// => "095d5a21fe6d0646db223fdf3de6436bb8dfb2fab0b51677ecf6441fcf5f2a67"
+```

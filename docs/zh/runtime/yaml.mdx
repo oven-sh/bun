@@ -1,0 +1,469 @@
+---
+title: YAML
+description: 通过运行时 API 和打包器集成，使用 Bun 内置的 YAML 文件支持
+---
+
+在 Bun 中，YAML 与 JSON 和 TOML 一样是一等公民。你可以：
+
+- 使用 `Bun.YAML.parse` 解析 YAML 字符串
+- 在运行时作为模块 `import` & `require` YAML 文件（包括热重载和监视模式支持）
+- 通过 bun 的打包器在前端应用中 `import` & `require` YAML 文件
+
+---
+
+## 一致性
+
+Bun 的 YAML 解析器目前通过了官方 YAML 测试套件的 90% 以上。虽然我们正在积极努力实现 100% 的一致性，但当前的实现涵盖了绝大多数现实世界中的用例。解析器使用 Zig 编写以获得最佳性能，并且正在持续改进。
+
+---
+
+## 运行时 API
+
+### `Bun.YAML.parse()`
+
+将 YAML 字符串解析为 JavaScript 对象。
+
+```ts
+import { YAML } from "bun";
+const text = `
+name: John Doe
+age: 30
+email: john@example.com
+hobbies:
+  - reading
+  - coding
+  - hiking
+`;
+
+const data = YAML.parse(text);
+console.log(data);
+// {
+//   name: "John Doe",
+//   age: 30,
+//   email: "john@example.com",
+//   hobbies: ["reading", "coding", "hiking"]
+// }
+```
+
+#### 多文档 YAML
+
+解析具有多个文档的 YAML（以 `---` 分隔）时，`Bun.YAML.parse()` 返回一个数组：
+
+```ts
+const multiDoc = `
+---
+name: Document 1
+---
+name: Document 2
+---
+name: Document 3
+`;
+
+const docs = Bun.YAML.parse(multiDoc);
+console.log(docs);
+// [
+//   { name: "Document 1" },
+//   { name: "Document 2" },
+//   { name: "Document 3" }
+// ]
+```
+
+#### 支持的 YAML 特性
+
+Bun 的 YAML 解析器支持完整的 YAML 1.2 规范，包括：
+
+- **标量**: 字符串、数字、布尔值、空值
+- **集合**: 序列（数组）和映射（对象）
+- **锚点和别名**: 使用 `&` 和 `*` 的可重用节点
+- **标签**: 类型提示，如 `!!str`、`!!int`、`!!float`、`!!bool`、`!!null`
+- **多行字符串**: 字面量（`|`）和折叠（`>`）标量
+- **注释**: 使用 `#`
+- **指令**: `%YAML` 和 `%TAG`
+
+```ts
+const yaml = `
+# Employee record
+employee: &emp
+  name: Jane Smith
+  department: Engineering
+  skills:
+    - JavaScript
+    - TypeScript
+    - React
+
+manager: *emp  # Reference to employee
+
+config: !!str 123  # Explicit string type
+
+description: |
+  This is a multi-line
+  literal string that preserves
+  line breaks and spacing.
+
+summary: >
+  This is a folded string
+  that joins lines with spaces
+  unless there are blank lines.
+`;
+
+const data = Bun.YAML.parse(yaml);
+```
+
+#### 错误处理
+
+如果 YAML 无效，`Bun.YAML.parse()` 会抛出一个 `SyntaxError`：
+
+```ts
+try {
+  Bun.YAML.parse("invalid: yaml: content:");
+} catch (error) {
+  console.error("Failed to parse YAML:", error.message);
+}
+```
+
+---
+
+## 模块导入
+
+### ES 模块
+
+你可以直接将 YAML 文件作为 ES 模块导入。YAML 内容会被解析并作为默认和命名导出提供：
+
+```yaml config.yaml
+database:
+  host: localhost
+  port: 5432
+  name: myapp
+
+redis:
+  host: localhost
+  port: 6379
+
+features:
+  auth: true
+  rateLimit: true
+  analytics: false
+```
+
+#### 默认导入
+
+```ts app.ts icon="/icons/typescript.svg"
+import config from "./config.yaml";
+
+console.log(config.database.host); // "localhost"
+console.log(config.redis.port); // 6379
+```
+
+#### 命名导入
+
+你可以将顶级 YAML 属性解构为命名导入：
+
+```ts app.ts icon="/icons/typescript.svg"
+import { database, redis, features } from "./config.yaml";
+
+console.log(database.host); // "localhost"
+console.log(redis.port); // 6379
+console.log(features.auth); // true
+```
+
+或结合使用：
+
+```ts app.ts icon="/icons/typescript.svg"
+import config, { database, features } from "./config.yaml";
+
+// 使用完整的配置对象
+console.log(config);
+
+// 或使用特定部分
+if (features.rateLimit) {
+  setupRateLimiting(database);
+}
+```
+
+### CommonJS
+
+YAML 文件也可以在 CommonJS 中引入：
+
+```ts app.ts icon="/icons/typescript.svg"
+const config = require("./config.yaml");
+console.log(config.database.name); // "myapp"
+
+// 解构也有效
+const { database, redis } = require("./config.yaml");
+console.log(database.port); // 5432
+```
+
+---
+
+## YAML 热重载
+
+Bun 的 YAML 支持最强大的特性之一是热重载。当您使用 `bun --hot` 运行应用程序时，YAML 文件的更改会自动检测并重载，而无需关闭连接
+
+### 配置热重载
+
+```yaml config.yaml
+server:
+  port: 3000
+  host: localhost
+
+features:
+  debug: true
+  verbose: false
+```
+
+```ts server.ts icon="/icons/typescript.svg"
+import { server, features } from "./config.yaml";
+
+console.log(`Starting server on ${server.host}:${server.port}`);
+
+if (features.debug) {
+  console.log("Debug mode enabled");
+}
+
+// 您的服务器代码
+Bun.serve({
+  port: server.port,
+  hostname: server.host,
+  fetch(req) {
+    if (features.verbose) {
+      console.log(`${req.method} ${req.url}`);
+    }
+    return new Response("Hello World");
+  },
+});
+```
+
+使用热重载运行：
+
+```bash terminal icon="terminal"
+bun --hot server.ts
+```
+
+现在当您修改 `config.yaml` 时，更改会立即反映在您的运行应用程序中。这对于：
+
+- 在开发过程中调整配置
+- 无需重启即可测试不同设置
+- 使用配置更改进行实时调试
+- 功能标志切换
+
+---
+
+## 配置管理
+
+### 基于环境的配置
+
+YAML 在管理不同环境的配置方面表现出色：
+
+```yaml config.yaml
+defaults: &defaults
+  timeout: 5000
+  retries: 3
+  cache:
+    enabled: true
+    ttl: 3600
+
+development:
+  <<: *defaults
+  api:
+    url: http://localhost:4000
+    key: dev_key_12345
+  logging:
+    level: debug
+    pretty: true
+
+staging:
+  <<: *defaults
+  api:
+    url: https://staging-api.example.com
+    key: ${STAGING_API_KEY}
+  logging:
+    level: info
+    pretty: false
+
+production:
+  <<: *defaults
+  api:
+    url: https://api.example.com
+    key: ${PROD_API_KEY}
+  cache:
+    enabled: true
+    ttl: 86400
+  logging:
+    level: error
+    pretty: false
+```
+
+```ts app.ts icon="/icons/typescript.svg"
+import configs from "./config.yaml";
+
+const env = process.env.NODE_ENV || "development";
+const config = configs[env];
+
+// YAML 值中的环境变量可以被插值
+function interpolateEnvVars(obj: any): any {
+  if (typeof obj === "string") {
+    return obj.replace(/\${(\w+)}/g, (_, key) => process.env[key] || "");
+  }
+  if (typeof obj === "object") {
+    for (const key in obj) {
+      obj[key] = interpolateEnvVars(obj[key]);
+    }
+  }
+  return obj;
+}
+
+export default interpolateEnvVars(config);
+```
+
+### 功能标志配置
+
+```yaml features.yaml
+features:
+  newDashboard:
+    enabled: true
+    rolloutPercentage: 50
+    allowedUsers:
+      - admin@example.com
+      - beta@example.com
+
+  experimentalAPI:
+    enabled: false
+    endpoints:
+      - /api/v2/experimental
+      - /api/v2/beta
+
+  darkMode:
+    enabled: true
+    default: auto # auto, light, dark
+```
+
+```ts feature-flags.ts icon="/icons/typescript.svg"
+import { features } from "./features.yaml";
+
+export function isFeatureEnabled(featureName: string, userEmail?: string): boolean {
+  const feature = features[featureName];
+
+  if (!feature?.enabled) {
+    return false;
+  }
+
+  // 检查发布百分比
+  if (feature.rolloutPercentage < 100) {
+    const hash = hashCode(userEmail || "anonymous");
+    if (hash % 100 >= feature.rolloutPercentage) {
+      return false;
+    }
+  }
+
+  // 检查允许的用户
+  if (feature.allowedUsers && userEmail) {
+    return feature.allowedUsers.includes(userEmail);
+  }
+
+  return true;
+}
+
+// 使用热重载来实时切换功能
+if (isFeatureEnabled("newDashboard", user.email)) {
+  renderNewDashboard();
+} else {
+  renderLegacyDashboard();
+}
+```
+
+### 数据库配置
+
+```yaml database.yaml icon="yaml"
+connections:
+  primary:
+    type: postgres
+    host: ${DB_HOST:-localhost}
+    port: ${DB_PORT:-5432}
+    database: ${DB_NAME:-myapp}
+    username: ${DB_USER:-postgres}
+    password: ${DB_PASS}
+    pool:
+      min: 2
+      max: 10
+      idleTimeout: 30000
+
+  cache:
+    type: redis
+    host: ${REDIS_HOST:-localhost}
+    port: ${REDIS_PORT:-6379}
+    password: ${REDIS_PASS}
+    db: 0
+
+  analytics:
+    type: clickhouse
+    host: ${ANALYTICS_HOST:-localhost}
+    port: 8123
+    database: analytics
+
+migrations:
+  autoRun: ${AUTO_MIGRATE:-false}
+  directory: ./migrations
+
+seeds:
+  enabled: ${SEED_DB:-false}
+  directory: ./seeds
+```
+
+```ts db.ts icon="/icons/typescript.svg"
+import { connections, migrations } from "./database.yaml";
+import { createConnection } from "./database-driver";
+
+// 解析环境变量并设置默认值
+function parseConfig(config: any) {
+  return JSON.parse(
+    JSON.stringify(config).replace(
+      /\${([^:-]+)(?::([^}]+))?}/g,
+      (_, key, defaultValue) => process.env[key] || defaultValue || "",
+    ),
+  );
+}
+
+const dbConfig = parseConfig(connections);
+
+export const db = await createConnection(dbConfig.primary);
+export const cache = await createConnection(dbConfig.cache);
+export const analytics = await createConnection(dbConfig.analytics);
+
+// 如果配置了则自动运行迁移
+if (parseConfig(migrations).autoRun === "true") {
+  await runMigrations(db, migrations.directory);
+}
+```
+
+### 打包器集成
+
+当您在应用程序中导入 YAML 文件并通过 Bun 打包时，YAML 会在构建时被解析并作为 JavaScript 模块包含：
+
+```bash terminal icon="terminal"
+bun build app.ts --outdir=dist
+```
+
+这意味着：
+
+- 生产环境中零运行时 YAML 解析开销
+- 更小的包大小
+- 对未使用的配置（命名导入）的摇树支持
+
+### 动态导入
+
+YAML 文件可以动态导入，对于按需加载配置很有用：
+
+```ts 基于环境加载配置
+const env = process.env.NODE_ENV || "development";
+const config = await import(`./configs/${env}.yaml`);
+
+// 加载用户特定设置
+async function loadUserSettings(userId: string) {
+  try {
+    const settings = await import(`./users/${userId}/settings.yaml`);
+    return settings.default;
+  } catch {
+    return await import("./users/default-settings.yaml");
+  }
+}
+```

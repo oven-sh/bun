@@ -1,0 +1,179 @@
+---
+title: UDP
+description: 使用 Bun 的 UDP API 实现具有高级实时要求的服务，例如语音聊天。
+---
+
+## 绑定 UDP 套接字 (`Bun.udpSocket()`)
+
+要创建一个新的（已绑定的）UDP 套接字：
+
+```ts
+const socket = await Bun.udpSocket({});
+console.log(socket.port); // 由操作系统分配
+```
+
+指定一个端口：
+
+```ts
+const socket = await Bun.udpSocket({
+  port: 41234, // [!code ++]
+});
+
+console.log(socket.port); // 41234
+```
+
+### 发送数据报
+
+指定要发送的数据以及目标端口和地址。
+
+```ts
+socket.send("Hello, world!", 41234, "127.0.0.1");
+```
+
+请注意，地址必须是有效的 IP 地址 - `send` 不执行
+DNS 解析，因为它旨在用于低延迟操作。
+
+### 接收数据报
+
+创建套接字时，添加一个回调函数以指定接收到数据包时应执行的操作：
+
+```ts server.ts icon="/icons/typescript.svg"
+const server = await Bun.udpSocket({
+  socket: {
+    data(socket, buf, port, addr) {
+      console.log(`来自 ${addr}:${port} 的消息:`);
+      console.log(buf.toString());
+    },
+  },
+});
+
+const client = await Bun.udpSocket({});
+client.send("Hello!", server.port, "127.0.0.1");
+```
+
+### 连接
+
+虽然 UDP 没有连接的概念，但许多 UDP 通信（尤其是作为客户端）仅涉及一个对等方。
+在这种情况下，将套接字连接到该对等方可能是有益的，这指定了所有数据包发送到的地址
+并将传入数据包限制为仅来自该对等方。
+
+```ts server.ts icon="/icons/typescript.svg"
+const server = await Bun.udpSocket({
+  socket: {
+    data(socket, buf, port, addr) {
+      console.log(`来自 ${addr}:${port} 的消息:`);
+      console.log(buf.toString());
+    },
+  },
+});
+
+const client = await Bun.udpSocket({
+  connect: {
+    port: server.port,
+    hostname: "127.0.0.1",
+  },
+});
+
+client.send("Hello");
+```
+
+由于连接是在操作系统级别实现的，您也可能观察到性能提升。
+
+### 使用 `sendMany()` 一次发送多个数据包
+
+如果您想一次发送大量数据包，将它们全部批处理在一起是有意义的，以避免
+每次进行系统调用的开销。这可以通过 `sendMany()` API 实现：
+
+对于未连接的套接字，`sendMany` 以一个数组作为其唯一参数。每三个数组元素描述一个数据包：
+第一项是要发送的数据，第二项是目标端口，最后一项是目标地址。
+
+```ts server.ts icon="/icons/typescript.svg"
+const socket = await Bun.udpSocket({});
+
+// 在单个操作中发送 'Hello' 到 127.0.0.1:41234，以及 'foo' 到 1.1.1.1:53
+socket.sendMany(["Hello", 41234, "127.0.0.1", "foo", 53, "1.1.1.1"]);
+```
+
+对于已连接的套接字，`sendMany` 只需一个数组，其中每个元素代表要发送到对等方的数据。
+
+```ts server.ts icon="/icons/typescript.svg"
+const socket = await Bun.udpSocket({
+  connect: {
+    port: 41234,
+    hostname: "localhost",
+  },
+});
+
+socket.sendMany(["foo", "bar", "baz"]);
+```
+
+`sendMany` 返回成功发送的数据包数量。与 `send` 一样，`sendMany` 仅接受有效的 IP 地址
+作为目标，因为它不执行 DNS 解析。
+
+### 处理背压
+
+您发送的数据包可能不适合操作系统的数据包缓冲区。您可以通过以下方式检测到这种情况：
+
+- `send` 返回 `false`
+- `sendMany` 返回一个小于您指定的数据包数量的数字。在这种情况下，一旦套接字再次变为可写，将调用 `drain` 套接字处理程序：
+
+```ts
+const socket = await Bun.udpSocket({
+  socket: {
+    drain(socket) {
+      // 继续发送数据
+    },
+  },
+});
+```
+
+### 套接字选项
+
+UDP 套接字支持设置各种套接字选项：
+
+```ts
+const socket = await Bun.udpSocket({});
+
+// 启用广播以向广播地址发送数据包
+socket.setBroadcast(true);
+
+// 为传出数据包设置 IP TTL（生存时间）
+socket.setTTL(64);
+```
+
+### 多播
+
+Bun 支持 UDP 套接字的多播操作。使用 `addMembership` 和 `dropMembership` 加入和离开多播组：
+
+```ts
+const socket = await Bun.udpSocket({});
+
+// 加入一个多播组
+socket.addMembership("224.0.0.1");
+
+// 使用特定接口加入
+socket.addMembership("224.0.0.1", "192.168.1.100");
+
+// 离开一个多播组
+socket.dropMembership("224.0.0.1");
+```
+
+额外的多播选项：
+
+```ts
+// 为多播数据包设置 TTL（网络跳数）
+socket.setMulticastTTL(2);
+
+// 控制多播数据包是否循环回到本地套接字
+socket.setMulticastLoopback(true);
+
+// 指定用于传出多播数据包的接口
+socket.setMulticastInterface("192.168.1.100");
+```
+
+对于源特定多播 (SSM)，使用 `addSourceSpecificMembership` 和 `dropSourceSpecificMembership`：
+
+```ts
+socket.addSourceSpecificMembership("10.0.0.1", "232.0.0.1");
+socket.dropSourceSpecificMembership("10.0.0.1", "232.0.0.1");
+```

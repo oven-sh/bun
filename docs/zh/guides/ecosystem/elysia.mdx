@@ -1,0 +1,31 @@
+---
+title: 使用 Elysia 和 Bun 构建 HTTP 服务器
+sidebarTitle: Elysia 与 Bun
+mode: center
+---
+
+[Elysia](https://elysiajs.com) 是一个以 Bun 为先、注重性能的 Web 框架，充分利用了 Bun 的 HTTP、文件系统和热重载 API。使用 `bun create` 开始。
+
+```bash terminal icon="terminal"
+bun create elysia myapp
+cd myapp
+bun run dev
+```
+
+---
+
+使用 Elysia 定义一个简单的 HTTP 路由并启动服务器：
+
+```ts server.ts icon="/icons/typescript.svg"
+import { Elysia } from "elysia";
+
+const app = new Elysia().get("/", () => "Hello Elysia").listen(8080);
+
+console.log(`🦊 Elysia 正在端口 ${app.server?.port} 上运行...`);
+```
+
+---
+
+Elysia 是一个功能齐全的服务器框架，具有类似 Express 的语法、类型推断、中间件、文件上传以及用于 JWT 身份验证、tRPC 等的插件。它也是[最快的 Bun Web 框架之一](https://github.com/SaltyAom/bun-http-framework-benchmark)。
+
+请参阅 Elysia [文档](https://elysiajs.com/quick-start.html) 了解更多信息。

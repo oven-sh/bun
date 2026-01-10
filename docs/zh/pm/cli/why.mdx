@@ -1,0 +1,84 @@
+---
+title: "bun why"
+description: "解释为什么一个包被安装"
+---
+
+`bun why` 命令通过显示导致其安装的依赖链来解释为什么一个包被安装在你的项目中。
+
+## 用法
+
+```bash terminal icon="terminal"
+bun why <package>
+```
+
+## 参数
+
+- `<package>`: 要解释的包名。支持通配符模式，如 `@org/*` 或 `*-lodash`。
+
+## 选项
+
+- `--top`: 显示仅顶级依赖而不是完整的依赖树。
+- `--depth <number>`: 要显示的依赖树的最大深度。
+
+## 示例
+
+检查为什么安装特定包：
+
+```bash terminal icon="terminal"
+bun why react
+```
+
+```txt
+react@18.2.0
+  └─ my-app@1.0.0 (requires ^18.0.0)
+```
+
+检查为什么安装具有特定模式的所有包：
+
+```bash terminal icon="terminal"
+bun why "@types/*"
+```
+
+```txt
+@types/react@18.2.15
+  └─ dev my-app@1.0.0 (requires ^18.0.0)
+
+@types/react-dom@18.2.7
+  └─ dev my-app@1.0.0 (requires ^18.0.0)
+```
+
+仅显示顶级依赖：
+
+```bash terminal icon="terminal"
+bun why express --top
+```
+
+```txt
+express@4.18.2
+  └─ my-app@1.0.0 (requires ^4.18.2)
+```
+
+限制依赖树深度：
+
+```bash terminal icon="terminal"
+bun why express --depth 2
+```
+
+```txt
+express@4.18.2
+  └─ express-pollyfill@1.20.1 (requires ^4.18.2)
+     └─ body-parser@1.20.1 (requires ^1.20.1)
+     └─ accepts@1.3.8 (requires ^1.3.8)
+        └─ (deeper dependencies hidden)
+```
+
+## 理解输出
+
+输出显示：
+
+- 正在查询的包名和版本
+- 导致其安装的依赖链
+- 依赖类型（dev、peer、optional 或生产）
+- 在每个包的依赖中指定的版本要求
+
+对于嵌套依赖，默认情况下命令显示完整的依赖树，缩进表示关系层次结构。

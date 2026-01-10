@@ -1,0 +1,509 @@
+---
+title: "测试配置"
+description: "了解如何使用 bunfig.toml 和命令行选项配置 Bun 测试行为"
+---
+
+通过 `bunfig.toml` 文件和命令行选项配置 `bun test`。此页面记录了 `bun test` 的可用配置选项。
+
+## 配置文件
+
+您可以通过向 `bunfig.toml` 文件添加 `[test]` 部分来配置 `bun test` 行为：
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+# 选项放在这里
+```
+
+## 测试发现
+
+### root
+
+`root` 选项指定测试发现的根目录，覆盖从项目根目录扫描的默认行为。
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+root = "src"  # 仅在 src 目录中扫描测试
+```
+
+这在以下情况下很有用：
+
+- 限制测试发现到特定目录
+- 从测试扫描中排除项目的某些部分
+- 在特定子目录结构中组织测试
+
+#### 示例
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+# 仅运行 src 目录中的测试
+root = "src"
+
+# 在特定测试目录中运行测试
+root = "tests"
+
+# 在多个特定目录中运行测试（当前不支持 - 使用模式代替）
+# root = ["src", "lib"]  # 此语法不支持
+```
+
+### 预加载脚本
+
+使用 `preload` 选项在运行测试之前加载脚本：
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+preload = ["./test-setup.ts", "./global-mocks.ts"]
+```
+
+这等同于在命令行上使用 `--preload`：
+
+```bash terminal icon="terminal"
+bun test --preload ./test-setup.ts --preload ./global-mocks.ts
+```
+
+#### 常见预加载用例
+
+```ts title="test-setup.ts" icon="/icons/typescript.svg"
+// 全局测试设置
+import { beforeAll, afterAll } from "bun:test";
+
+beforeAll(() => {
+  // 设置测试数据库
+  setupTestDatabase();
+});
+
+afterAll(() => {
+  // 清理
+  cleanupTestDatabase();
+});
+```
+
+```ts title="global-mocks.ts" icon="/icons/typescript.svg"
+// 全局模拟
+import { mock } from "bun:test";
+
+// 模拟环境变量
+process.env.NODE_ENV = "test";
+process.env.API_URL = "http://localhost:3001";
+
+// 模拟外部依赖
+mock.module("./external-api", () => ({
+  fetchData: mock(() => Promise.resolve({ data: "test" })),
+}));
+```
+
+## 超时
+
+### 默认超时
+
+为所有测试设置默认超时：
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+timeout = 10000  # 10 秒（默认为 5000ms）
+```
+
+除非被单个测试超时覆盖，否则这适用于所有测试：
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+// 此测试将使用 bunfig.toml 中的默认超时
+test("uses default timeout", () => {
+  // 测试实现
+});
+
+// 此测试覆盖默认超时
+test("custom timeout", () => {
+  // 测试实现
+}, 30000); // 30 秒
+```
+
+## 报告器
+
+### JUnit 报告器
+
+直接在配置文件中配置 JUnit 报告器输出文件路径：
+
+```toml title="bunfig.toml" icon="settings"
+[test.reporter]
+junit = "path/to/junit.xml"  # JUnit XML 报告的输出路径
+```
+
+这补充了 `--reporter=junit` 和 `--reporter-outfile` CLI 标志：
+
+```bash terminal icon="terminal"
+# 等效命令行用法
+bun test --reporter=junit --reporter-outfile=./junit.xml
+```
+
+#### 多个报告器
+
+您可以同时使用多个报告器：
+
+```bash terminal icon="terminal"
+# CLI 方法
+bun test --reporter=junit --reporter-outfile=./junit.xml
+
+# 配置文件方法
+```
+
+```toml title="bunfig.toml" icon="settings"
+[test.reporter]
+junit = "./reports/junit.xml"
+
+[test]
+# 同时启用覆盖率报告
+coverage = true
+coverageReporter = ["text", "lcov"]
+```
+
+## 内存使用
+
+### smol 模式
+
+为测试运行器专门启用 `--smol` 内存节省模式：
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+smol = true  # 减少测试运行期间的内存使用
+```
+
+这等同于在命令行上使用 `--smol` 标志：
+
+```bash terminal icon="terminal"
+bun test --smol
+```
+
+`smol` 模式通过以下方式减少内存使用：
+
+- 为 JavaScript 堆使用较少内存
+- 更积极地进行垃圾回收
+- 在可能的情况下减少缓冲区大小
+
+这对以下情况很有用：
+
+- 内存有限的 CI 环境
+- 消耗大量内存的大型测试套件
+- 内存受限的开发环境
+
+## 测试执行
+
+### concurrentTestGlob
+
+自动运行匹配 glob 模式的测试文件，并启用并发测试执行。这对于逐步迁移到并发执行或将特定类型的测试并发运行很有用。
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+concurrentTestGlob = "**/concurrent-*.test.ts"  # 并发运行匹配此模式的文件
+```
+
+匹配此模式的测试文件将表现得好像传递了 `--concurrent` 标志，同时运行这些文件内的所有测试。这允许您：
+
+- 逐步将测试套件迁移到并发执行
+- 在保持单元测试顺序的同时并发运行集成测试
+- 将快速并发测试与需要顺序执行的测试分开
+
+指定 `--concurrent` CLI 标志时将覆盖此设置，强制所有测试并发运行，不管 glob 模式如何。
+
+#### randomize
+
+以随机顺序运行测试以识别具有隐藏依赖关系的测试：
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+randomize = true
+```
+
+#### seed
+
+为可重现的随机测试顺序指定种子。需要 `randomize = true`：
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+randomize = true
+seed = 2444615283
+```
+
+#### rerunEach
+
+多次重新运行每个测试文件以识别不稳定测试：
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+rerunEach = 3
+```
+
+## 覆盖率选项
+
+### 基本覆盖率设置
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+# 默认启用覆盖率
+coverage = true
+
+# 设置覆盖率报告器
+coverageReporter = ["text", "lcov"]
+
+# 设置覆盖率输出目录
+coverageDir = "./coverage"
+```
+
+### 从覆盖率中跳过测试文件
+
+从覆盖率报告中排除匹配测试模式的文件（例如 `*.test.ts`）：
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+coverageSkipTestFiles = true  # 从覆盖率报告中排除测试文件
+```
+
+### 覆盖率阈值
+
+覆盖率阈值可以指定为数字或具有特定阈值的对象：
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+# 简单阈值 - 适用于行、函数和语句
+coverageThreshold = 0.8
+
+# 详细阈值
+coverageThreshold = { lines = 0.9, functions = 0.8, statements = 0.85 }
+```
+
+设置其中任何一个都会启用 `fail_on_low_coverage`，如果覆盖率低于阈值，会导致测试运行失败。
+
+#### 阈值示例
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+# 要求 90% 全面覆盖率
+coverageThreshold = 0.9
+
+# 不同指标的不同要求
+coverageThreshold = {
+  lines = 0.85,      # 85% 行覆盖率
+  functions = 0.90,  # 90% 函数覆盖率
+  statements = 0.80  # 80% 语句覆盖率
+}
+```
+
+### 覆盖率路径忽略模式
+
+使用 glob 模式从覆盖率报告中排除特定文件或文件模式：
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+# 单个模式
+coveragePathIgnorePatterns = "**/*.spec.ts"
+
+# 多个模式
+coveragePathIgnorePatterns = [
+  "**/*.spec.ts",
+  "**/*.test.ts",
+  "src/utils/**",
+  "*.config.js",
+  "generated/**",
+  "vendor/**"
+]
+```
+
+匹配其中任一模式的文件将从覆盖率计算和报告中排除。有关更多详细信息和示例，请参见 [覆盖率文档](/test/code-coverage)。
+
+#### 常见忽略模式
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+coveragePathIgnorePatterns = [
+  # 测试文件
+  "**/*.test.ts",
+  "**/*.spec.ts",
+  "**/*.e2e.ts",
+
+  # 配置文件
+  "*.config.js",
+  "*.config.ts",
+  "webpack.config.*",
+  "vite.config.*",
+
+  # 构建输出
+  "dist/**",
+  "build/**",
+  ".next/**",
+
+  # 生成的代码
+  "generated/**",
+  "**/*.generated.ts",
+
+  # 供应商/第三方
+  "vendor/**",
+  "third-party/**",
+
+  # 不需要测试的工具
+  "src/utils/constants.ts",
+  "src/types/**"
+]
+```
+
+### 源映射处理
+
+在内部，Bun 转换每个文件。这意味着代码覆盖率也必须通过源映射才能报告。我们将其作为一个标志公开，允许您选择退出此行为，但这会令人困惑，因为在转译过程中，Bun 可能会移动代码并更改变量名。此选项主要用于调试覆盖率问题。
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+coverageIgnoreSourcemaps = true  # 不使用源映射进行覆盖率分析
+```
+
+<Warning>
+  使用此选项时，您可能希望在源文件顶部添加 `// @bun` 注释以选择退出
+  转换过程。
+</Warning>
+
+## 安装设置继承
+
+`bun test` 命令从 `bunfig.toml` 的 `[install]` 部分继承相关的网络和安装配置（registry、cafile、prefer、exact 等）。如果测试需要与私有注册表交互或需要在测试运行期间触发的特定安装行为，这一点很重要。
+
+```toml title="bunfig.toml" icon="settings"
+[install]
+# 这些设置由 bun test 继承
+registry = "https://npm.company.com/"
+exact = true
+prefer = "offline"
+
+[test]
+# 测试特定配置
+coverage = true
+timeout = 10000
+```
+
+## 环境变量
+
+测试的环境变量应使用 `.env` 文件设置。Bun 自动从项目根目录加载 `.env` 文件。对于测试特定变量，请创建 `.env.test` 文件：
+
+```ini title=".env.test" icon="settings"
+NODE_ENV=test
+DATABASE_URL=postgresql://localhost:5432/test_db
+LOG_LEVEL=error
+```
+
+然后使用 `--env-file` 加载它：
+
+```bash terminal icon="terminal"
+bun test --env-file=.env.test
+```
+
+## 完整配置示例
+
+这是一个全面的示例，展示了所有可用的测试配置选项：
+
+```toml title="bunfig.toml" icon="settings"
+[install]
+# 测试继承的安装设置
+registry = "https://registry.npmjs.org/"
+exact = true
+
+[test]
+# 测试发现
+root = "src"
+preload = ["./test-setup.ts", "./global-mocks.ts"]
+
+# 执行设置
+timeout = 10000
+smol = true
+
+# 覆盖率配置
+coverage = true
+coverageReporter = ["text", "lcov"]
+coverageDir = "./coverage"
+coverageThreshold = { lines = 0.85, functions = 0.90, statements = 0.80 }
+coverageSkipTestFiles = true
+coveragePathIgnorePatterns = [
+  "**/*.spec.ts",
+  "src/utils/**",
+  "*.config.js",
+  "generated/**"
+]
+
+# 高级覆盖率设置
+coverageIgnoreSourcemaps = false
+
+# 报告器配置
+[test.reporter]
+junit = "./reports/junit.xml"
+```
+
+## CLI 覆盖行为
+
+命令行选项始终覆盖配置文件设置：
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+timeout = 5000
+coverage = false
+```
+
+```bash terminal icon="terminal"
+# 这些 CLI 标志覆盖配置文件
+bun test --timeout 10000 --coverage
+# timeout 将是 10000ms 并且覆盖率将被启用
+```
+
+## 条件配置
+
+您可以为不同环境使用不同配置：
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+# 默认测试配置
+coverage = false
+timeout = 5000
+
+# 为 CI 环境覆盖
+[test.ci]
+coverage = true
+coverageThreshold = 0.8
+timeout = 30000
+```
+
+然后在 CI 中：
+
+```bash terminal icon="terminal"
+# 使用 CI 特定设置
+bun test --config=ci
+```
+
+## 验证和故障排除
+
+### 无效配置
+
+Bun 将警告无效的配置选项：
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+invalidOption = true  # 这将生成警告
+```
+
+### 常见配置问题
+
+1. **路径解析**：配置中的相对路径相对于配置文件位置解析
+2. **模式匹配**：Glob 模式使用标准 glob 语法
+3. **类型不匹配**：确保数值未加引号，除非它们应该是字符串
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+# 正确
+timeout = 10000
+
+# 不正确 - 将被视为字符串
+timeout = "10000"
+```
+
+### 调试配置
+
+要查看正在使用的配置：
+
+```bash terminal icon="terminal"
+# 显示有效配置
+bun test --dry-run
+
+# 详细输出以查看配置加载
+bun test --verbose
+```

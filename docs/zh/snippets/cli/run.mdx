@@ -1,0 +1,293 @@
+# CLI 用法
+
+```bash
+bun run <file or script>
+```
+
+### 通用执行选项
+
+<ParamField path="--silent" type="boolean">
+  不打印脚本命令
+</ParamField>
+
+<ParamField path="--if-present" type="boolean">
+  如果入口点不存在，则不报错退出
+</ParamField>
+
+<ParamField path="--eval" type="string">
+  将参数作为脚本求值。别名：<code>-e</code>
+</ParamField>
+
+<ParamField path="--print" type="string">
+  将参数作为脚本求值并打印结果。别名：<code>-p</code>
+</ParamField>
+
+<ParamField path="--help" type="boolean">
+  显示此菜单并退出。别名：<code>-h</code>
+</ParamField>
+
+### 工作区管理
+
+<ParamField path="--elide-lines" type="number" default="10">
+  使用 --filter 时显示的脚本输出行数（默认：10）。设置为 0 以显示所有行
+</ParamField>
+
+<ParamField path="--filter" type="string">
+  在所有匹配模式的工作区包中运行脚本。别名：<code>-F</code>
+</ParamField>
+
+<ParamField path="--workspaces" type="boolean">
+  在所有工作区包中运行脚本（来自 <code>package.json</code> 中的 <code>workspaces</code> 字段）
+</ParamField>
+
+### 运行时和进程控制
+
+<ParamField path="--bun" type="boolean">
+  强制脚本或包使用 Bun 的运行时而不是 Node.js（通过符号链接 node）。别名：<code>-b</code>
+</ParamField>
+
+<ParamField path="--shell" type="string">
+  控制用于 <code>package.json</code> 脚本的 shell。支持 <code>bun</code> 或 <code>system</code>
+</ParamField>
+
+<ParamField path="--smol" type="boolean">
+  使用更少的内存，但更频繁地运行垃圾回收
+</ParamField>
+
+<ParamField path="--expose-gc" type="boolean">
+  在全局对象上暴露 <code>gc()</code>。对 <code>Bun.gc()</code> 没有效果
+</ParamField>
+
+<ParamField path="--no-deprecation" type="boolean">
+  抑制所有自定义弃用报告
+</ParamField>
+
+<ParamField path="--throw-deprecation" type="boolean">
+  确定弃用警告是否导致错误
+</ParamField>
+
+<ParamField path="--title" type="string">
+  设置进程标题
+</ParamField>
+
+<ParamField path="--zero-fill-buffers" type="boolean">
+  布尔值，强制 <code>Buffer.allocUnsafe(size)</code> 被零填充
+</ParamField>
+
+<ParamField path="--no-addons" type="boolean">
+  如果调用 <code>process.dlopen</code>，则抛出错误，并禁用导出条件 <code>node-addons</code>
+</ParamField>
+
+<ParamField path="--unhandled-rejections" type="string">
+  以下之一：<code>strict</code>、<code>throw</code>、<code>warn</code>、<code>none</code> 或{" "}
+  <code>warn-with-error-code</code>
+</ParamField>
+
+<ParamField path="--console-depth" type="number" default="2">
+  设置 <code>console.log</code> 对象检查的默认深度（默认：2）
+</ParamField>
+
+### 开发工作流程
+
+<ParamField path="--watch" type="boolean">
+  在文件更改时自动重启进程
+</ParamField>
+
+<ParamField path="--hot" type="boolean">
+  在 Bun 运行时、测试运行器或打包器中启用自动重载
+</ParamField>
+
+<ParamField path="--no-clear-screen" type="boolean">
+  启用 --hot 或 --watch 时，禁用重新加载时清除终端屏幕
+</ParamField>
+
+### 调试
+
+<ParamField path="--inspect" type="string">
+  激活 Bun 的调试器
+</ParamField>
+
+<ParamField path="--inspect-wait" type="string">
+  激活 Bun 的调试器，等待连接后再执行
+</ParamField>
+
+<ParamField path="--inspect-brk" type="string">
+  激活 Bun 的调试器，在代码第一行设置断点并等待
+</ParamField>
+
+### 依赖和模块解析
+
+<ParamField path="--preload" type="string">
+  在其他模块加载之前导入一个模块。别名：<code>-r</code>
+</ParamField>
+
+<ParamField path="--require" type="string">
+  --preload 的别名，用于 Node.js 兼容性
+</ParamField>
+
+<ParamField path="--import" type="string">
+  --preload 的别名，用于 Node.js 兼容性
+</ParamField>
+
+<ParamField path="--no-install" type="boolean">
+  在 Bun 运行时中禁用自动安装
+</ParamField>
+
+<ParamField path="--install" type="string" default="auto">
+  配置自动安装行为。以下之一：<code>auto</code>（默认，当没有 node_modules 时自动安装）、{" "}
+  <code>fallback</code>（仅缺失包）、<code>force</code>（总是）
+</ParamField>
+
+<ParamField path="-i" type="boolean">
+  在执行期间自动安装依赖。相当于 --install=fallback
+</ParamField>
+
+<ParamField path="--prefer-offline" type="boolean">
+  在 Bun 运行时中跳过包的陈旧检查，并从磁盘解析
+</ParamField>
+
+<ParamField path="--prefer-latest" type="boolean">
+  在 Bun 运行时中使用最新的匹配版本的包，始终检查 npm
+</ParamField>
+
+<ParamField path="--conditions" type="string">
+  传递自定义条件进行解析
+</ParamField>
+
+<ParamField path="--main-fields" type="string">
+  在 <code>package.json</code> 中查找的主要字段。默认为 --target 依赖
+</ParamField>
+
+<ParamField path="--preserve-symlinks" type="boolean">
+  解析文件时保留符号链接
+</ParamField>
+
+<ParamField path="--preserve-symlinks-main" type="boolean">
+  解析主入口点时保留符号链接
+</ParamField>
+
+<ParamField path="--extension-order" type="string" default=".tsx,.ts,.jsx,.js,.json">
+  默认值：<code>.tsx,.ts,.jsx,.js,.json</code>
+</ParamField>
+
+### 转译和语言特性
+
+<ParamField path="--tsconfig-override" type="string">
+  指定自定义 <code>tsconfig.json</code>。默认 <code>$cwd/tsconfig.json</code>
+</ParamField>
+
+<ParamField path="--define" type="string">
+  解析时替换 K:V，例如：<code>--define process.env.NODE_ENV:"development"</code>。值被解析为
+  JSON。别名：<code>-d</code>
+</ParamField>
+
+<ParamField path="--drop" type="string">
+  删除函数调用，例如：<code>--drop=console</code> 删除所有 <code>console.*</code> 调用
+</ParamField>
+
+<ParamField path="--loader" type="string">
+  使用 <code>.ext:loader</code> 解析文件，例如：<code>--loader .js:jsx</code>。有效加载器：<code>js</code>、{" "}
+  <code>jsx</code>、<code>ts</code>、<code>tsx</code>、<code>json</code>、<code>toml</code>、<code>text</code>、{" "}
+  <code>file</code>、<code>wasm</code>、<code>napi</code>。别名：<code>-l</code>
+</ParamField>
+
+<ParamField path="--no-macros" type="boolean">
+  在打包器、转译器和运行时中禁用宏的执行
+</ParamField>
+
+<ParamField path="--jsx-factory" type="string">
+  更改使用经典 JSX 运行时编译 JSX 元素时调用的函数
+</ParamField>
+
+<ParamField path="--jsx-fragment" type="string">
+  更改编译 JSX 片段时调用的函数
+</ParamField>
+
+<ParamField path="--jsx-import-source" type="string" default="react">
+  声明用于导入 jsx 和 jsxs 工厂函数的模块说明符。默认：<code>react</code>
+</ParamField>
+
+<ParamField path="--jsx-runtime" type="string" default="automatic">
+  <code>automatic</code>（默认）或 <code>classic</code>
+</ParamField>
+
+<ParamField path="--jsx-side-effects" type="boolean">
+  将 JSX 元素视为具有副作用（禁用纯注释）
+</ParamField>
+
+<ParamField path="--ignore-dce-annotations" type="boolean">
+  忽略树摇注释，如 <code>@__PURE__</code>
+</ParamField>
+
+### 网络和安全
+
+<ParamField path="--port" type="number">
+  为 <code>Bun.serve</code> 设置默认端口
+</ParamField>
+
+<ParamField path="--fetch-preconnect" type="string">
+  在代码加载时预连接到 URL
+</ParamField>
+
+<ParamField path="--max-http-header-size" type="number" default="16384">
+  设置 HTTP 头的最大大小（以字节为单位）。默认值为 16KiB
+</ParamField>
+
+<ParamField path="--dns-result-order" type="string" default="verbatim">
+  设置 DNS 查找结果的默认顺序。有效顺序：<code>verbatim</code>（默认）、<code>ipv4first</code>、{" "}
+  <code>ipv6first</code>
+</ParamField>
+
+<ParamField path="--use-system-ca" type="boolean">
+  使用系统的受信任证书颁发机构
+</ParamField>
+
+<ParamField path="--use-openssl-ca" type="boolean">
+  使用 OpenSSL 的默认 CA 存储
+</ParamField>
+
+<ParamField path="--use-bundled-ca" type="boolean">
+  使用捆绑的 CA 存储
+</ParamField>
+
+<ParamField path="--redis-preconnect" type="boolean">
+  启动时预连接到 <code>$REDIS_URL</code>
+</ParamField>
+
+<ParamField path="--sql-preconnect" type="boolean">
+  启动时预连接到 PostgreSQL
+</ParamField>
+
+<ParamField path="--user-agent" type="string">
+  设置 HTTP 请求的默认 User-Agent 头
+</ParamField>
+
+### 全局配置和上下文
+
+<ParamField path="--env-file" type="string">
+  从指定文件加载环境变量
+</ParamField>
+
+<ParamField path="--cwd" type="string">
+  从中解析文件和入口点的绝对路径。这只是更改进程的 cwd
+</ParamField>
+
+<ParamField path="--config" type="string">
+  指定 Bun 配置文件路径。默认 <code>$cwd/bunfig.toml</code>。别名：<code>-c</code>
+</ParamField>
+
+## 示例
+
+运行 JavaScript 或 TypeScript 文件：
+
+```bash
+bun run ./index.js
+bun run ./index.tsx
+```
+
+运行 package.json 脚本：
+
+```bash
+bun run dev
+bun run lint
+```

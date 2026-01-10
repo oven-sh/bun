@@ -1,0 +1,15 @@
+---
+title: 将 HTML 文件作为文本导入
+sidebarTitle: 导入 HTML
+mode: center
+---
+
+要在 Bun 中将 `.html` 文件作为文本文件导入，使用导入语句中的 `type: "text"` 属性。
+
+```ts file.ts icon="/icons/typescript.svg"
+import html from "./file.html" with { type: "text" };
+
+console.log(html); // <!DOCTYPE html><html><head>...
+```
+
+这也可在热模块重载和/或监视模式下使用，以强制 Bun 在 `./file.html` 文件更改时重新加载。

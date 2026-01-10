@@ -1,0 +1,24 @@
+---
+title: 将文件作为字符串读取
+sidebarTitle: 作为字符串读取
+mode: center
+---
+
+`Bun.file()` 函数接受一个路径并返回一个 [BunFile] 实例。[BunFile] 类扩展了 `Blob` 并允许您以多种格式延迟读取文件。使用 `.text()` 将内容读取为字符串。
+
+```ts
+const path = "/path/to/file.txt";
+const file = Bun.file(path);
+
+const text = await file.text();
+// string
+```
+
+---
+
+任何相对路径都将相对于项目根目录（包含 [package.json] 文件的最近目录）解析。
+
+```ts
+const path = "./file.txt";
+const file = Bun.file(path);
+```

@@ -1,0 +1,17 @@
+---
+title: 获取可执行文件的路径
+sidebarTitle: 查找可执行文件路径
+mode: center
+---
+
+`Bun.which` 是一个用于查找可执行文件绝对路径的实用函数。它类似于类 Unix 系统中的 `which` 命令。
+
+```ts foo.ts icon="/icons/typescript.svg"
+Bun.which("sh"); // => "/bin/sh"
+Bun.which("notfound"); // => null
+Bun.which("bun"); // => "/home/user/.bun/bin/bun"
+```
+
+---
+
+请参阅 [文档 > API > 工具](/runtime/utils#bun-which) 了解完整文档。

@@ -1,0 +1,18 @@
+---
+title: 将 Uint8Array 转换为字符串
+sidebarTitle: "Uint8Array 到 字符串"
+mode: center
+---
+
+Bun 实现了 Web 标准的 [TextDecoder](https://developer.mozilla.org/zh-CN/docs/Web/API/TextDecoder) 类，用于将二进制数据类型（如 [Uint8Array](https://developer.mozilla.org/zh-CN/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array)）转换为字符串。
+
+```ts
+const arr = new Uint8Array([104, 101, 108, 108, 111]);
+const decoder = new TextDecoder();
+const str = decoder.decode(arr);
+// => "hello"
+```
+
+---
+
+参阅 [文档 > API > 二进制数据](/runtime/binary-data#conversion) 获取关于使用Bun操作二进制数据的完整文档。

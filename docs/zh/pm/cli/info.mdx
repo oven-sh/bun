@@ -1,0 +1,70 @@
+---
+title: "bun info"
+description: "显示来自 npm 注册表的包元数据"
+---
+
+`bun info` 显示来自 npm 注册表的包元数据。
+
+## 用法
+
+```bash terminal icon="terminal"
+bun info react
+```
+
+这将显示关于 `react` 包的信息，包括其最新版本、描述、主页、依赖等。
+
+## 查看特定版本
+
+要查看特定版本的信息：
+
+```bash terminal icon="terminal"
+bun info react@18.0.0
+```
+
+## 查看特定属性
+
+你还可以从包元数据中查询特定属性：
+
+```bash terminal icon="terminal"
+bun info react version
+bun info react dependencies
+bun info react repository.url
+```
+
+## JSON 输出
+
+要以 JSON 格式获取输出，请使用 `--json` 标志：
+
+```bash terminal icon="terminal"
+bun info react --json
+```
+
+## 别名
+
+`bun pm view` 是 `bun info` 的别名：
+
+```bash terminal icon="terminal"
+bun pm view react  # 等同于: bun info react
+```
+
+## 示例
+
+```bash terminal icon="terminal"
+# 查看基本包信息
+bun info is-number
+
+# 查看特定版本
+bun info is-number@7.0.0
+
+# 查看所有可用版本
+bun info is-number versions
+
+# 查看包依赖
+bun info express dependencies
+
+# 查看包主页
+bun info lodash homepage
+
+# 获取 JSON 输出
+bun info react --json
+```

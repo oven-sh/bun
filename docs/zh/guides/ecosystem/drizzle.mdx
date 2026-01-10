@@ -1,0 +1,195 @@
+---
+title: 在 Bun 中使用 Drizzle ORM
+sidebarTitle: Drizzle 与 Bun
+mode: center
+---
+
+Drizzle 是一个 ORM，同时支持类似 SQL 的"查询构建器"API 和类似 ORM 的[查询 API](https://orm.drizzle.team/docs/rqb)。它支持 `bun:sqlite` 内置模块。
+
+---
+
+让我们通过使用 `bun init` 创建一个新项目并安装 Drizzle 来开始。
+
+```sh terminal icon="terminal"
+bun init -y
+bun add drizzle-orm
+bun add -D drizzle-kit
+```
+
+---
+
+然后我们将使用 `bun:sqlite` 模块连接到 SQLite 数据库并创建 Drizzle 数据库实例。
+
+```ts db.ts icon="/icons/typescript.svg"
+import { drizzle } from "drizzle-orm/bun-sqlite";
+import { Database } from "bun:sqlite";
+
+const sqlite = new Database("sqlite.db");
+export const db = drizzle(sqlite);
+```
+
+---
+
+要查看数据库的实际运行情况，请在 [index.ts] 中添加这些行。
+
+```ts index.ts icon="/icons/typescript.svg"
+import { db } from "./db";
+import { sql } from "drizzle-orm";
+
+const query = sql`select "hello world" as text`;
+const result = db.get<{ text: string }>(query);
+console.log(result);
+```
+
+---
+
+然后使用 Bun 运行 [index.ts]。Bun 将自动创建 `sqlite.db` 并执行查询。
+
+```sh terminal icon="terminal"
+bun run index.ts
+```
+
+```txt
+{
+  text: "hello world"
+}
+```
+
+---
+
+让我们给我们的数据库一个合适的模式。创建一个 [schema.ts]( 文件并定义一个 `movies` 表。
+
+```ts schema.ts icon="/icons/typescript.svg"
+import { sqliteTable, text, integer } from "drizzle-orm/sqlite-core";
+
+export const movies = sqliteTable("movies", {
+  id: integer("id").primaryKey(),
+  title: text("name"),
+  releaseYear: integer("release_year"),
+});
+```
+
+---
+
+我们可以使用 `drizzle-kit` CLI 生成初始 SQL 迁移。
+
+```sh terminal icon="terminal"
+bunx drizzle-kit generate --dialect sqlite --schema ./schema.ts
+```
+
+---
+
+这将创建一个新的 `drizzle` 目录，其中包含一个 `.sql` 迁移文件和 `meta` 目录。
+
+```txt File Tree icon="folder-tree"
+drizzle
+├── 0000_ordinary_beyonder.sql
+└── meta
+    ├── 0000_snapshot.json
+    └── _journal.json
+```
+
+---
+
+我们可以使用一个简单的 [migrate.ts] 脚本来执行这些迁移。
+
+此脚本创建一个新的 SQLite 数据库连接，将数据写入 `sqlite.db`，然后执行 `drizzle` 目录中的所有未执行的迁移。
+
+```ts migrate.ts icon="/icons/typescript.svg"
+import { migrate } from "drizzle-orm/bun-sqlite/migrator";
+
+import { drizzle } from "drizzle-orm/bun-sqlite";
+import { Database } from "bun:sqlite";
+
+const sqlite = new Database("sqlite.db");
+const db = drizzle(sqlite);
+migrate(db, { migrationsFolder: "./drizzle" });
+```
+
+---
+
+我们可以使用 `bun` 运行此脚本来执行迁移。
+
+```sh terminal icon="terminal"
+bun run migrate.ts
+```
+
+---
+
+现在我们有了一个数据库，让我们向其中添加一些数据。创建一个 [seed.ts] 文件，内容如下。
+
+```ts seed.ts icon="/icons/typescript.svg"
+import { db } from "./db";
+import * as schema from "./schema";
+
+await db.insert(schema.movies).values([
+  {
+    title: "The Matrix",
+    releaseYear: 1999,
+  },
+  {
+    title: "The Matrix Reloaded",
+    releaseYear: 2003,
+  },
+  {
+    title: "The Matrix Revolutions",
+    releaseYear: 2003,
+  },
+]);
+
+console.log(`播种完成。`);
+```
+
+---
+
+然后运行此文件。
+
+```sh terminal icon="terminal"
+bun run seed.ts
+```
+
+```txt
+播种完成。
+```
+
+---
+
+我们终于有了一个带有模式和一些示例数据的数据库。让我们使用 Drizzle 来查询它。将 [index.ts] 的内容替换为以下内容。
+
+```ts index.ts icon="/icons/typescript.svg"
+import * as schema from "./schema";
+import { db } from "./db";
+
+const result = await db.select().from(schema.movies);
+console.log(result);
+```
+
+---
+
+然后运行该文件。您应该能看到我们插入的三部电影。
+
+```sh terminal icon="terminal"
+bun run index.ts
+```
+
+```txt
+[
+  {
+    id: 1,
+    title: "The Matrix",
+    releaseYear: 1999
+  }, {
+    id: 2,
+    title: "The Matrix Reloaded",
+    releaseYear: 2003
+  }, {
+    id: 3,
+    title: "The Matrix Revolutions",
+    releaseYear: 2003
+  }
+]
+```
+
+---
+
+请参阅 [Drizzle 网站](https://orm.drizzle.team/docs/overview) 获取完整文档。

@@ -1,0 +1,75 @@
+---
+title: 反馈
+description: 分享反馈、错误报告和功能请求
+mode: center
+---
+
+无论您发现了错误、遇到了性能问题，还是想提出改进建议，以下是提交有效问题的方法：
+
+<Callout icon="discord">对于一般性问题，请加入我们的 [Discord](https://bun.com/discord)。</Callout>
+
+## 报告问题
+
+<Steps>
+	<Step title="升级 Bun">
+		尝试使用 `bun upgrade` 将 Bun 升级到最新版本。这可能会在不需提交问题的情况下解决您的问题。
+
+    	```bash terminal icon="terminal"
+    	bun upgrade
+    	```
+
+    	您也可以尝试最新的预览版，其中包含了最新的更改和错误修复，这些尚未在稳定版本中发布。
+
+    	```bash terminal icon="terminal"
+    	bun upgrade --canary
+
+    	# 恢复到稳定版
+    	bun upgrade --stable
+    	```
+
+    	如果升级后问题仍然存在，请继续下一步。
+    </Step>
+    <Step title="查看已有问题">
+    	首先花点时间检查该问题是否已经被报告过。如果已经报告过，请不要打开新问题，这样可以节省每个人的时间，帮助我们更快地解决问题。
+
+    	- 🔍 [**搜索已有问题**](https://github.com/oven-sh/bun/issues)
+    	- 💬 [**查看讨论**](https://github.com/oven-sh/bun/discussions)
+
+    	如果您找到了相关问题，请添加 👍 表情符号或评论补充细节，而不是开启新问题。
+    </Step>
+    <Step title="报告问题">
+    	如果没有人为该问题提交报告，请开启一个新问题或建议改进。
+
+    	- 🐞 [**报告错误**](https://github.com/oven-sh/bun/issues/new?template=2-bug-report.yml)
+    	- ⚡ [**建议改进**](https://github.com/oven-sh/bun/issues/new?template=4-feature-request.yml)
+
+    	请尽可能提供更多详细信息，包括：
+    	- 清晰简洁的标题
+    	- 代码示例或重现问题的步骤
+    	- 您使用的 Bun 版本（运行 `bun --version`）
+    	- 问题的详细描述（发生了什么，您期望发生什么，实际发生了什么）
+    	- 您正在使用的操作系统和版本
+    		<Note>
+    			- 对于 macOS 和 Linux：复制 `uname -mprs` 命令的输出
+    		  - 对于 Windows：在 PowerShell 控制台中复制此命令的输出：
+    				`"$([Environment]::OSVersion | ForEach-Object VersionString) $(if ([Environment]::Is64BitOperatingSystem) { "x64" } else { "x86" })"`
+    		</Note>
+    </Step>
+
+</Steps>
+
+Bun 团队将审查问题并尽快回复您！
+
+---
+
+## 使用 `bun feedback`
+
+或者，您可以使用 `bun feedback` 直接向 Bun 团队分享反馈、错误报告和功能请求。
+
+```bash terminal icon="terminal"
+bun feedback "喜欢新版本！"
+bun feedback report.txt details.log
+echo "请记录 X 功能" | bun feedback --email you@example.com
+```
+
+您可以提供文本参数、文件路径或管道输入的方式反馈。

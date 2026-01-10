@@ -1,0 +1,605 @@
+---
+title: "bun install"
+description: "使用 Bun 的快速包管理器安装包"
+---
+
+import Install from "/snippets/cli/install.mdx";
+
+## 基本用法
+
+```bash terminal icon="terminal"
+bun install react
+bun install react@19.1.1 # 特定版本
+bun install react@latest # 特定标签
+```
+
+`bun` CLI 包含一个与 Node.js 兼容的包管理器，旨在成为 `npm`、`yarn` 和 `pnpm` 的大幅更快的替代品。它是一个独立的工具，可以在现有的 Node.js 项目中工作；如果你的项目有 [package.json]，`bun install` 可以帮助你加快工作流程。
+
+<Note>
+
+**⚡️ 25倍更快** — 在任何 Node.js 项目中从 `npm install` 切换到 `bun install`，可使你的安装速度提高最多 25 倍。
+
+<Frame>
+  ![Bun 安装速度比较](https://user-images.githubusercontent.com/709451/147004342-571b6123-17a9-49a2-8bfd-dcfc5204047e.png)
+</Frame>
+
+</Note>
+
+<Accordion title="对于 Linux 用户">
+推荐的最低 Linux 内核版本是 5.6。如果你使用的是 Linux 内核 5.1 - 5.5，`bun install` 仍然可以工作，但由于缺乏对 io_uring 的 `connect()` 操作的支持，HTTP 请求会变慢。
+
+如果你使用的是 Ubuntu 20.04，以下是安装[更新内核](https://wiki.ubuntu.com/Kernel/LTSEnablementStack)的方法：
+
+```bash terminal icon="terminal"
+# 如果这返回的版本 >= 5.6，你不需要做任何事情
+uname -r
+
+# 安装官方 Ubuntu 硬件支持内核
+sudo apt install --install-recommends linux-generic-hwe-20.04
+```
+
+</Accordion>
+
+要安装项目的所有依赖：
+
+```bash terminal icon="terminal"
+bun install
+```
+
+运行 `bun install` 将：
+
+- **安装** 所有 `dependencies`、`devDependencies` 和 `optionalDependencies`。Bun 默认会安装 `peerDependencies`。
+- **运行** 你的项目的 `{pre|post}install` 和 `{pre|post}prepare` 脚本。出于安全原因，Bun _不会执行_ 安装依赖的生命周期脚本。
+- **写入** 一个 [bun.lock] 锁定文件到项目根目录。
+
+---
+
+## 日志记录
+
+要修改日志详细程度：
+
+```bash terminal icon="terminal"
+bun install --verbose # 调试日志
+bun install --silent  # 无日志
+```
+
+---
+
+## 生命周期脚本
+
+与其他 npm 客户端不同，Bun 不为已安装的依赖执行任意生命周期脚本，如 `postinstall`。执行任意脚本代表潜在的安全风险。
+
+要告诉 Bun 允许特定包的生命周期脚本，请在你的 [package.json] 中将包添加到 [trustedDependencies]。
+
+```json package.json icon="file-json"
+{
+  "name": "my-app",
+  "version": "1.0.0",
+  "trustedDependencies": ["my-trusted-package"] // [!code ++]
+}
+```
+
+然后重新安装包。Bun 将读取此字段并为 `my-trusted-package` 运行生命周期脚本。
+
+生命周期脚本将在安装期间并行运行。要调整并发脚本的最大数量，请使用 `--concurrent-scripts` 标志。默认值是报告的 CPU 数量或 GOMAXPROCS 的两倍。
+
+```bash terminal icon="terminal"
+bun install --concurrent-scripts 5
+```
+
+Bun 通过确定哪些脚本需要运行，自动优化流行包（如 `esbuild`、`sharp` 等）的 postinstall 脚本。要禁用这些优化：
+
+```bash terminal icon="terminal"
+BUN_FEATURE_FLAG_DISABLE_NATIVE_DEPENDENCY_LINKER=1 bun install
+BUN_FEATURE_FLAG_DISABLE_IGNORE_SCRIPTS=1 bun install
+```
+
+---
+
+## 工作区
+
+Bun 支持 [package.json] 中的 `"workspaces"`。完整文档请参见 [包管理器 > 工作区](/pm/workspaces)。
+
+```json package.json icon="file-json"
+{
+  "name": "my-app",
+  "version": "1.0.0",
+  "workspaces": ["packages/*"], // [!code ++]
+  "dependencies": {
+    "preact": "^10.5.13"
+  }
+}
+```
+
+---
+
+## 为特定包安装依赖
+
+在单一代码库中，你可以使用 `--filter` 标志为包的子集安装依赖。
+
+```bash terminal icon="terminal"
+# 为除 `pkg-c` 外的所有工作区安装依赖
+bun install --filter '!pkg-c'
+
+# 仅为 `./packages/pkg-a` 中的 `pkg-a` 安装依赖
+bun install --filter './packages/pkg-a'
+```
+
+有关使用 `bun install` 过滤的更多信息，请参见 [包管理器 > 过滤](/pm/filter#bun-install-and-bun-outdated)
+
+---
+
+## 覆盖和解析
+
+Bun 支持 [package.json] 中 npm 的 `"overrides"` 和 Yarn 的 `"resolutions"`。这些是指定_元依赖_版本范围的机制——你依赖的依赖。请参见 [包管理器 > 覆盖和解析](/pm/overrides) 以获取完整文档。
+
+{/* prettier-ignore */}
+```json package.json icon="file-json"
+{
+  "name": "my-app",
+  "dependencies": {
+    "foo": "^2.0.0"
+  },
+  "overrides": { // [!code ++]
+    "bar": "~4.4.0" // [!code ++]
+  } // [!code ++]
+}
+```
+
+---
+
+## 全局包
+
+要全局安装包，请使用 `-g`/`--global` 标志。通常这用于安装命令行工具。
+
+```bash terminal icon="terminal"
+bun install --global cowsay # 或 `bun install -g cowsay`
+cowsay "Bun!"
+```
+
+```txt
+ ______
+< Bun! >
+ ------
+        \   ^__^
+         \  (oo)\_______
+            (__)\       )\/\
+                ||----w |
+                ||     ||
+```
+
+---
+
+## 生产模式
+
+要在生产模式下安装（即不包括 `devDependencies` 或 `optionalDependencies`）：
+
+```bash terminal icon="terminal"
+bun install --production
+```
+
+为了可重现的安装，请使用 `--frozen-lockfile`。这将安装锁定文件中指定的每个包的确切版本。如果 `package.json` 与 [bun.lock] 不符，Bun 将以错误退出。锁定文件不会被更新。
+
+```bash terminal icon="terminal"
+bun install --frozen-lockfile
+```
+
+有关 Bun 的锁定文件 [bun.lock] 的更多信息，请参见 [包管理器 > 锁定文件](/pm/lockfile)。
+
+---
+
+## 省略依赖
+
+要省略 dev、peer 或可选依赖，请使用 `--omit` 标志。
+
+```bash terminal icon="terminal"
+# 从安装中排除 "devDependencies"。这将应用于
+# 根包和工作区（如果存在）。传递依赖
+# 将不会有 "devDependencies"。
+bun install --omit dev
+
+# 仅安装来自 "dependencies" 的依赖
+bun install --omit=dev --omit=peer --omit=optional
+```
+
+---
+
+## 空运行
+
+要执行空运行（即实际上不安装任何东西）：
+
+```bash terminal icon="terminal"
+bun install --dry-run
+```
+
+---
+
+## 非 npm 依赖
+
+Bun 支持从 Git、GitHub 和本地或远程托管的 tarball 安装依赖。完整文档请参见 [包管理器 > Git、GitHub 和 tarball 依赖](/pm/cli/add)。
+
+```json package.json icon="file-json"
+{
+  "dependencies": {
+    "dayjs": "git+https://github.com/iamkun/dayjs.git",
+    "lodash": "git+ssh://github.com/lodash/lodash.git#4.17.21",
+    "moment": "git@github.com:moment/moment.git",
+    "zod": "github:colinhacks/zod",
+    "react": "https://registry.npmjs.org/react/-/react-18.2.0.tgz",
+    "bun-types": "npm:@types/bun"
+  }
+}
+```
+
+---
+
+## 安装策略
+
+Bun 支持两种包安装策略，决定依赖如何在 [node_modules] 中组织：
+
+### 提升安装
+
+传统的 npm/Yarn 方法，将依赖扁平化到共享的 [node_modules] 目录中：
+
+```bash terminal icon="terminal"
+bun install --linker hoisted
+```
+
+### 隔离安装
+
+类似 pnpm 的方法，创建严格的依赖隔离以防止幽灵依赖：
+
+```bash terminal icon="terminal"
+bun install --linker isolated
+```
+
+隔离安装在 [node_modules/.bun/] 中创建中央包存储，并在顶级 [node_modules] 中创建符号链接。这确保包只能访问其声明的依赖。
+
+### 默认策略
+
+默认链接器策略取决于你是从头开始还是已有项目：
+
+- **新工作区/单一代码库**：`isolated`（防止幽灵依赖）
+- **新单包项目**：`hoisted`（传统的 npm 行为）
+- **现有项目（v1.3.2 之前创建）**：`hoisted`（保持向后兼容性）
+
+默认值由你的锁定文件中的 [configVersion] 字段控制。有关详细解释，请参见 [包管理器 > 隔离安装](/pm/isolated-installs)。
+
+---
+
+## 最小发布年龄
+
+为了防范恶意包快速发布的供应链攻击，你可以为 npm 包配置最小年龄要求。发布日期比指定阈值（以秒为单位）更近的包版本将在安装期间被过滤掉。
+
+```bash terminal icon="terminal"
+# 仅安装至少 3 天前发布的包版本
+bun add @types/bun --minimum-release-age 259200 # 秒
+```
+
+你也可以在 [bunfig.toml] 中配置此选项：
+
+```toml bunfig.toml icon="settings"
+[install]
+# 仅安装至少 3 天前发布的包版本
+minimumReleaseAge = 259200 # 秒
+
+# 从年龄网关中排除受信任的包
+minimumReleaseAgeExcludes = ["@types/node", "typescript"]
+```
+
+当最小年龄过滤器激活时：
+
+- 仅影响新包解析 - `bun.lock` 中的现有包保持不变
+- 所有依赖（直接和传递）在解析时都被过滤以满足年龄要求
+- 当版本被年龄网关阻止时，稳定性检查会检测快速修复模式
+  - 如果在你的年龄网关附近发布了多个版本，它会扩展过滤器以跳过这些可能不稳定的版本并选择更老、更成熟的版本
+  - 搜索年龄网关后最多 7 天，但如果仍在发现快速发布，则忽略稳定性检查
+  - 精确版本请求（如 `package@1.1.1`）仍尊重年龄网关，但绕过稳定性检查
+- 没有 `time` 字段的版本被视为通过年龄检查（npm 注册表应始终提供时间戳）
+
+有关更高级的安全扫描，包括与服务和自定义过滤的集成，请参见 [包管理器 > 安全扫描器 API](/pm/security-scanner-api)。
+
+---
+
+## 配置
+
+### 使用 [bunfig.toml] 配置 `bun install`
+
+在 `bun install`、`bun remove` 和 `bun add` 时，会在以下路径中搜索 [bunfig.toml]：
+
+1. `$XDG_CONFIG_HOME/.bunfig.toml` 或 `$HOME/.bunfig.toml`
+2. `./bunfig.toml`
+
+如果两者都找到，结果将合并在一起。
+
+使用 [bunfig.toml] 进行配置是可选的。Bun 通常试图实现零配置，但这并不总是可能的。`bun install` 的默认行为可以在 [bunfig.toml] 中配置。默认值如下所示。
+
+```toml bunfig.toml icon="settings"
+[install]
+
+# 是否安装 optionalDependencies
+optional = true
+
+# 是否安装 devDependencies
+dev = true
+
+# 是否安装 peerDependencies
+peer = true
+
+# 等效于 `--production` 标志
+production = false
+
+# 等效于 `--save-text-lockfile` 标志
+saveTextLockfile = false
+
+# 等效于 `--frozen-lockfile` 标志
+frozenLockfile = false
+
+# 等效于 `--dry-run` 标志
+dryRun = false
+
+# 等效于 `--concurrent-scripts` 标志
+concurrentScripts = 16 # (CPU 数量或 GOMAXPROCS) x2
+
+# 安装策略："hoisted" 或 "isolated"
+# 默认取决于锁定文件 configVersion 和工作区：
+# - configVersion = 1: 如果使用工作区，则为 "isolated"，否则为 "hoisted"
+# - configVersion = 0: "hoisted"
+linker = "hoisted"
+
+
+# 最小年龄配置
+minimumReleaseAge = 259200 # 秒
+minimumReleaseAgeExcludes = ["@types/node", "typescript"]
+```
+
+### 使用环境变量配置
+
+环境变量的优先级高于 [bunfig.toml]。
+
+| 名称                               | 描述                                                   |
+| ---------------------------------- | ------------------------------------------------------ |
+| `BUN_CONFIG_REGISTRY`              | 设置 npm 注册表（默认：https://registry.npmjs.org）     |
+| `BUN_CONFIG_TOKEN`                 | 设置认证令牌（当前不起作用）                           |
+| `BUN_CONFIG_YARN_LOCKFILE`         | 保存 Yarn v1 风格的 yarn.lock                          |
+| `BUN_CONFIG_LINK_NATIVE_BINS`      | 将 package.json 中的 `bin` 指向特定平台的依赖           |
+| `BUN_CONFIG_SKIP_SAVE_LOCKFILE`    | 不保存锁定文件                                         |
+| `BUN_CONFIG_SKIP_LOAD_LOCKFILE`    | 不加载锁定文件                                         |
+| `BUN_CONFIG_SKIP_INSTALL_PACKAGES` | 不安装任何包                                           |
+
+Bun 总是尝试使用目标平台最快的可用安装方法。在 macOS 上，那是 `clonefile`，而在 Linux 上，那是 `hardlink`。你可以使用 `--backend` 标志更改使用的安装方法。当不可用或出错时，`clonefile` 和 `hardlink` 会回退到特定平台的文件复制实现。
+
+Bun 将从 npm 安装的包存储在 `~/.bun/install/cache/${name}@${version}` 中。请注意，如果语义化版本有 `build` 或 `pre` 标签，它会被该值的哈希替换。这是为了减少长文件路径错误的可能性，但不幸的是，这使确定包在磁盘上的安装位置变得更加复杂。
+
+当 [node_modules] 文件夹存在时，在安装之前，Bun 会检查预期 [node_modules] 文件夹中的 `package/package.json` 中的 `"name"` 和 `"version"` 是否与预期的 `name` 和 `version` 匹配。这是它如何确定是否应该安装。它使用自定义 JSON 解析器，一旦找到 `"name"` 和 `"version"` 就停止解析。
+
+当 [bun.lock] 不存在或 [package.json] 有更改的依赖时，tarball 会在解析时急切地下载和提取。
+
+当 [bun.lock] 存在且 [package.json] 没有更改时，Bun 会延迟下载缺失的依赖。如果具有匹配 `name` 和 `version` 的包已存在于 [node_modules] 中的预期位置，Bun 将不会尝试下载 tarball。
+
+## CI/CD
+
+在 GitHub Actions 流水线中使用官方 [`oven-sh/setup-bun`](https://github.com/oven-sh/setup-bun) 操作安装 `bun`：
+
+```yaml .github/workflows/release.yml icon="file-code"
+name: bun-types
+jobs:
+  build:
+    name: build-app
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+      - name: Install bun
+        uses: oven-sh/setup-bun@v2
+      - name: Install dependencies
+        run: bun install
+      - name: Build app
+        run: bun run build
+```
+
+对于想要强制执行可重现构建的 CI/CD 环境，请使用 `bun ci` 在 [package.json] 与锁定文件不同步时使构建失败：
+
+```bash terminal icon="terminal"
+bun ci
+```
+
+这等同于 `bun install --frozen-lockfile`。它从 [bun.lock] 安装确切版本，如果 [package.json] 与锁定文件不匹配则失败。要使用 `bun ci` 或 `bun install --frozen-lockfile`，你必须将 [bun.lock] 提交到版本控制。
+
+而不是运行 `bun install`，运行 `bun ci`。
+
+```yaml .github/workflows/release.yml icon="file-code"
+name: bun-types
+jobs:
+  build:
+    name: build-app
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+      - name: Install bun
+        uses: oven-sh/setup-bun@v2
+      - name: Install dependencies
+        run: bun ci
+      - name: Build app
+        run: bun run build
+```
+
+## 特定平台的依赖？
+
+bun 将 npm 的规范化 `cpu` 和 `os` 值存储在锁定文件中，以及解析的包。它会跳过在运行时为当前目标禁用的包的下载、提取和安装。这意味着即使最终安装的包确实发生变化，锁定文件也不会在平台/架构之间改变。
+
+### `--cpu` 和 `--os` 标志
+
+你可以覆盖包选择的目标平台：
+
+```bash
+bun install --cpu=x64 --os=linux
+```
+
+这为指定的平台安装包，而不是当前系统。对跨平台构建或准备部署到不同环境很有用。
+
+**`--cpu` 的接受值**：`arm64`、`x64`、`ia32`、`ppc64`、`s390x`
+
+**`--os` 的接受值**：`linux`、`darwin`、`win32`、`freebsd`、`openbsd`、`sunos`、`aix`
+
+## 同级依赖？
+
+同级依赖的处理方式类似于 yarn。`bun install` 将自动安装同级依赖。如果依赖在 `peerDependenciesMeta` 中标记为可选，则尽可能会选择现有依赖。
+
+## 锁定文件
+
+[bun.lock] 是 Bun 的锁定文件格式。请参见[我们关于文本锁定文件的博客文章](https://bun.com/blog/bun-lock-text-lockfile)。
+
+在 Bun 1.2 之前，锁定文件是二进制的，名为 [bun.lockb]。通过运行 `bun install --save-text-lockfile --frozen-lockfile --lockfile-only`，然后删除 [bun.lockb]，可以将旧的锁定文件升级到新格式。
+
+## 缓存
+
+要删除缓存：
+
+```bash
+bun pm cache rm
+# 或
+rm -rf ~/.bun/install/cache
+```
+
+## 特定平台的后端
+
+`bun install` 根据平台使用不同的系统调用来安装依赖。这是一种性能优化。你可以使用 `--backend` 标志强制使用特定后端。
+
+**`hardlink`** 是 Linux 上的默认后端。基准测试显示它在 Linux 上最快。
+
+```bash
+rm -rf node_modules
+bun install --backend hardlink
+```
+
+**`clonefile`** 是 macOS 上的默认后端。基准测试显示它在 macOS 上最快。仅在 macOS 上可用。
+
+```bash
+rm -rf node_modules
+bun install --backend clonefile
+```
+
+**`clonefile_each_dir`** 类似于 `clonefile`，不同之处在于它按目录单独克隆每个文件。仅在 macOS 上可用，通常比 `clonefile` 性能较差。与 `clonefile` 不同，这不会在一个系统调用中递归克隆子目录。
+
+```bash
+rm -rf node_modules
+bun install --backend clonefile_each_dir
+```
+
+**`copyfile`** 是上述方法失败时使用的后备方案，也是最慢的。在 macOS 上，它使用 `fcopyfile()`，在 Linux 上它使用 `copy_file_range()`。
+
+```bash
+rm -rf node_modules
+bun install --backend copyfile
+```
+
+**`symlink`** 通常仅在内部用于 `file:` 依赖（最终用于 `link:`）。为防止无限循环，它会跳过 [node_modules] 文件夹的符号链接。
+
+如果你使用 `--backend=symlink` 安装，Node.js 不会解析依赖的 [node_modules]，除非每个依赖都有自己的 [node_modules] 文件夹，或者你向 `node` 或 `bun` 传递 `--preserve-symlinks`。请参见 [Node.js 关于 `--preserve-symlinks` 的文档](https://nodejs.org/api/cli.html#--preserve-symlinks)。
+
+```bash
+rm -rf node_modules
+bun install --backend symlink
+bun --preserve-symlinks ./my-file.js
+node --preserve-symlinks ./my-file.js # https://nodejs.org/api/cli.html#--preserve-symlinks
+```
+
+## npm 注册表元数据
+
+Bun 使用二进制格式缓存 NPM 注册表响应。这比 JSON 加载快得多，并且在磁盘上通常更小。
+你会在 `~/.bun/install/cache/*.npm` 中看到这些文件。文件名模式是 `${hash(packageName)}.npm`。它是一个哈希，这样就不需要为作用域包创建额外的目录。
+
+Bun 对 `Cache-Control` 的使用忽略了 `Age`。这提高了性能，但意味着 bun 可能会大约落后 5 分钟才能接收来自 npm 的最新包版本元数据。
+
+## pnpm 迁移
+
+Bun 自动将项目从 pnpm 迁移到 bun。当检测到 [pnpm-lock.yaml] 文件且不存在 [bun.lock] 文件时，Bun 将在安装期间自动将锁定文件迁移到 [bun.lock]。原始 [pnpm-lock.yaml] 文件保持不变。
+
+```bash terminal icon="terminal"
+bun install
+```
+
+**注意**：迁移仅在 [bun.lock] 不存在时运行。目前没有用于 pnpm 迁移的退出选项。
+
+迁移过程处理：
+
+### 锁定文件迁移
+
+- 将 [pnpm-lock.yaml] 转换为 [bun.lock] 格式
+- 保留包版本和解析信息
+- 维护依赖关系和同级依赖
+- 处理带有完整性哈希的补丁依赖
+
+### 工作区配置
+
+当存在 [pnpm-workspace.yaml] 文件时，Bun 将工作区设置迁移到你的根 [package.json]：
+
+```yaml pnpm-workspace.yaml icon="file-code"
+packages:
+  - "apps/*"
+  - "packages/*"
+
+catalog:
+  react: ^18.0.0
+  typescript: ^5.0.0
+
+catalogs:
+  build:
+    webpack: ^5.0.0
+    babel: ^7.0.0
+```
+
+工作区包列表和目录移动到 [package.json] 中的 [workspaces] 字段：
+
+```json package.json icon="file-json"
+{
+  "workspaces": {
+    "packages": ["apps/*", "packages/*"],
+    "catalog": {
+      "react": "^18.0.0",
+      "typescript": "^5.0.0"
+    },
+    "catalogs": {
+      "build": {
+        "webpack": "^5.0.0",
+        "babel": "^7.0.0"
+      }
+    }
+  }
+}
+```
+
+### 目录依赖
+
+使用 pnpm 的 `catalog:` 协议的依赖被保留：
+
+```json package.json icon="file-json"
+{
+  "dependencies": {
+    "react": "catalog:",
+    "webpack": "catalog:build"
+  }
+}
+```
+
+### 配置迁移
+
+以下 pnpm 配置从 [pnpm-lock.yaml] 和 [pnpm-workspace.yaml] 迁移：
+
+- **覆盖**：从 `pnpm.overrides` 移动到 [package.json] 的根级 `overrides`
+- **补丁依赖**：从 `pnpm.patchedDependencies` 移动到 [package.json] 的根级 `patchedDependencies`
+- **工作区覆盖**：从 [pnpm-workspace.yaml] 应用到根 [package.json]
+
+### 要求
+
+- 需要 pnpm 锁定文件版本 7 或更高
+- 工作区包必须在他们的 [package.json] 中有 `name` 字段
+- 依赖引用的所有目录条目必须存在于目录定义中
+
+迁移后，你可以安全地删除 [pnpm-lock.yaml]和 [pnpm-workspace.yaml] 文件。
+
+---
+
+<Install />

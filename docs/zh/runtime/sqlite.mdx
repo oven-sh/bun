@@ -1,0 +1,719 @@
+---
+title: SQLite
+description: Bun 原生实现了高性能的 SQLite3 驱动程序。
+---
+
+Bun 原生实现了高性能的 [SQLite3](https://www.sqlite.org/) 驱动程序。要使用它，请从内置的 `bun:sqlite` 模块导入。
+
+```ts db.ts icon="/icons/typescript.svg"
+import { Database } from "bun:sqlite";
+
+const db = new Database(":memory:");
+const query = db.query("select 'Hello world' as message;");
+query.get();
+```
+
+```txt
+{ message: "Hello world" }
+```
+
+API 简单、同步且快速。感谢 [better-sqlite3](https://github.com/JoshuaWise/better-sqlite3) 及其贡献者，为 `bun:sqlite` 的 API 提供了灵感。
+
+功能包括：
+
+- 事务
+- 参数（命名和位置）
+- 预处理语句
+- 数据类型转换（`BLOB` 变成 `Uint8Array`）
+- 将查询结果映射到类而无需 ORM - `query.as(MyClass)`
+- 任何 JavaScript 的 SQLite 驱动程序中最快的性能
+- `bigint` 支持
+- 多查询语句（例如 `SELECT 1; SELECT 2;`）在单次调用 database.run(query) 中
+
+`bun:sqlite` 模块在读取查询方面比 `better-sqlite3` 快大约 3-6 倍，比 `deno.land/x/sqlite` 快 8-9 倍。每个驱动程序都针对 [Northwind Traders](https://github.com/jpwhite3/northwind-SQLite3/blob/46d5f8a64f396f87cd374d1600dbf521523980e8/Northwind_large.sqlite.zip) 数据集进行了基准测试。查看并运行 [基准测试源码](https://github.com/oven-sh/bun/tree/main/bench/sqlite)。
+
+<Frame caption="在运行 macOS 12.3.1 的 M1 MacBook Pro（64GB）上进行基准测试">
+  ![Bun、better-sqlite3 和 deno.land/x/sqlite 的 SQLite 基准测试](https://user-images.githubusercontent.com/709451/168459263-8cd51ca3-a924-41e9-908d-cf3478a3b7f3.png)
+</Frame>
+
+---
+
+## Database
+
+要打开或创建 SQLite3 数据库：
+
+```ts db.ts icon="/icons/typescript.svg"
+import { Database } from "bun:sqlite";
+
+const db = new Database("mydb.sqlite");
+```
+
+要打开内存数据库：
+
+```ts db.ts icon="/icons/typescript.svg"
+import { Database } from "bun:sqlite";
+
+// 所有这些都做同样的事情
+const db = new Database(":memory:");
+const db = new Database();
+const db = new Database("");
+```
+
+要在只读模式下打开：
+
+```ts db.ts icon="/icons/typescript.svg" highlight={2}
+import { Database } from "bun:sqlite";
+const db = new Database("mydb.sqlite", { readonly: true });
+```
+
+如果文件不存在则创建数据库：
+
+```ts db.ts icon="/icons/typescript.svg" highlight={2}
+import { Database } from "bun:sqlite";
+const db = new Database("mydb.sqlite", { create: true });
+```
+
+### 严格模式
+
+默认情况下，`bun:sqlite` 要求绑定参数包含 `$`、`:` 或 `@` 前缀，如果缺少参数也不报错。
+
+要在缺少参数时抛出错误并允许不带前缀的绑定，请在 `Database` 构造函数上设置 `strict: true`：
+
+```ts db.ts icon="/icons/typescript.svg" highlight={3}
+import { Database } from "bun:sqlite";
+
+const strict = new Database(":memory:", { strict: true });
+
+// 因为拼写错误抛出错误：
+const query = strict.query("SELECT $message;").all({ messag: "Hello world" });
+
+const notStrict = new Database(":memory:");
+// 不抛出错误：
+notStrict.query("SELECT $message;").all({ messag: "Hello world" });
+```
+
+### 通过 ES 模块导入加载
+
+您也可以使用导入属性来加载数据库。
+
+```ts db.ts icon="/icons/typescript.svg" highlight={1}
+import db from "./mydb.sqlite" with { type: "sqlite" };
+
+console.log(db.query("select * from users LIMIT 1").get());
+```
+
+这相当于以下内容：
+
+```ts db.ts icon="/icons/typescript.svg"
+import { Database } from "bun:sqlite";
+const db = new Database("./mydb.sqlite");
+```
+
+### `.close(throwOnError: boolean = false)`
+
+要关闭数据库连接，但允许现有查询完成，请调用 `.close(false)`：
+
+```ts db.ts icon="/icons/typescript.svg" highlight={3}
+const db = new Database();
+// ... 做些事情
+db.close(false);
+```
+
+要关闭数据库并在有任何待处理查询时抛出错误，请调用 `.close(true)`：
+
+```ts db.ts icon="/icons/typescript.svg" highlight={3}
+const db = new Database();
+// ... 做些事情
+db.close(true);
+```
+
+<Note>
+  数据库被垃圾回收时会自动调用 `close(false)`。可以多次调用，但第一次之后没有效果。
+</Note>
+
+### `using` 语句
+
+您可以使用 `using` 语句确保在退出 `using` 块时关闭数据库连接。
+
+```ts db.ts icon="/icons/typescript.svg" highlight={4, 5}
+import { Database } from "bun:sqlite";
+
+{
+  using db = new Database("mydb.sqlite");
+  using query = db.query("select 'Hello world' as message;");
+  console.log(query.get());
+}
+```
+
+```txt
+{ message: "Hello world" }
+```
+
+### `.serialize()`
+
+`bun:sqlite` 支持 SQLite 内置的 [序列化](https://www.sqlite.org/c3ref/serialize.html) 和 [反序列化](https://www.sqlite.org/c3ref/deserialize.html) 数据库到和从内存的机制。
+
+```ts db.ts icon="/icons/typescript.svg" highlight={2}
+const olddb = new Database("mydb.sqlite");
+const contents = olddb.serialize(); // => Uint8Array
+const newdb = Database.deserialize(contents);
+```
+
+在内部，`.serialize()` 调用 [`sqlite3_serialize`](https://www.sqlite.org/c3ref/serialize.html)。
+
+### `.query()`
+
+在 `Database` 实例上使用 `db.query()` 方法来 [准备](https://www.sqlite.org/c3ref/prepare.html) 一个 SQL 查询。结果是一个 `Statement` 实例，它将被缓存在 `Database` 实例上。_查询不会被执行。_
+
+```ts db.ts icon="/icons/typescript.svg"
+const query = db.query(`select "Hello world" as message`);
+```
+
+<Note>
+**"缓存"是什么意思？**
+
+缓存指的是**编译后的预处理语句**（SQL 字节码），而不是查询结果。当您多次使用相同的 SQL 字符串调用 `db.query()` 时，Bun 返回相同的缓存 `Statement` 对象，而不是重新编译 SQL。
+
+使用不同的参数值重用缓存的语句是完全安全的：
+
+```ts
+const query = db.query("SELECT * FROM users WHERE id = ?");
+query.get(1); // ✓ 有效
+query.get(2); // ✓ 也有效 - 每次都会重新绑定参数
+query.get(3); // ✓ 仍然有效
+```
+
+当您想要一个不被缓存的新鲜 `Statement` 实例时，请使用 `.prepare()` 而不是 `.query()`，例如，如果您正在动态生成 SQL 并且不想用一次性查询填满缓存。
+
+```ts
+// 编译预处理语句但不缓存
+const query = db.prepare("SELECT * FROM foo WHERE bar = ?");
+```
+
+</Note>
+
+---
+
+## WAL 模式
+
+SQLite 支持 [预写日志模式](https://www.sqlite.org/wal.html)（WAL），这大大提高了性能，特别是在多个并发读者和单个写入者的情况下。强烈建议在大多数典型应用程序中启用 WAL 模式。
+
+要启用 WAL 模式，请在应用程序开始时运行此 PRAGMA 查询：
+
+```ts db.ts icon="/icons/typescript.svg"
+db.run("PRAGMA journal_mode = WAL;");
+```
+
+<Accordion title="什么是 WAL 模式？">
+在 WAL 模式下，对数据库的写入直接写入到称为"WAL 文件"（预写日志）的单独文件中。此文件稍后将集成到主数据库文件中。可以将其视为待处理写入的缓冲区。有关更详细的概述，请参阅 [SQLite 文档](https://www.sqlite.org/wal.html)。
+
+在 macOS 上，WAL 文件可能默认是持久的。这不是错误，而是 macOS 如何配置系统版本的 SQLite。
+
+</Accordion>
+
+---
+
+## 语句
+
+`Statement` 是一个_预处理查询_，这意味着它已经被解析并编译成高效的二进制形式。它可以多次以高效的方式执行。
+
+使用 `Database` 实例上的 `.query` 方法创建一个语句。
+
+```ts db.ts icon="/icons/typescript.svg"
+const query = db.query(`select "Hello world" as message`);
+```
+
+查询可以包含参数。这些可以是数值的（`?1`）或命名的（`$param` 或 `:param` 或 `@param`）。
+
+```ts db.ts icon="/icons/typescript.svg"
+const query = db.query(`SELECT ?1, ?2;`);
+const query = db.query(`SELECT $param1, $param2;`);
+```
+
+当查询执行时，值被绑定到这些参数。`Statement` 可以用几种不同的方法执行，每种方法以不同的形式返回结果。
+
+### 绑定值
+
+要将值绑定到语句，请将对象传递给 `.all()`、`.get()`、`.run()` 或 `.values()` 方法。
+
+```ts db.ts icon="/icons/typescript.svg" highlight={2}
+const query = db.query(`select $message;`);
+query.all({ $message: "Hello world" });
+```
+
+您也可以使用位置参数绑定：
+
+```ts db.ts icon="/icons/typescript.svg"
+const query = db.query(`select ?1;`);
+query.all("Hello world");
+```
+
+#### `strict: true` 允许您在不使用前缀的情况下绑定值
+
+默认情况下，使用 `$`、`:` 和 `@` 前缀来绑定命名参数。要在不使用这些前缀的情况下绑定，请在 `Database` 构造函数中使用 `strict` 选项。
+
+```ts db.ts icon="/icons/typescript.svg"
+import { Database } from "bun:sqlite";
+
+const db = new Database(":memory:", {
+  // 不使用前缀绑定值
+  strict: true, // [!code ++]
+});
+
+const query = db.query(`select $message;`);
+
+// strict: true
+query.all({ message: "Hello world" });
+
+// strict: false
+// query.all({ $message: "Hello world" });
+```
+
+### `.all()`
+
+使用 `.all()` 来运行查询并以对象数组的形式获取结果。
+
+```ts db.ts icon="/icons/typescript.svg" highlight={2}
+const query = db.query(`select $message;`);
+query.all({ $message: "Hello world" });
+```
+
+```txt
+[{ message: "Hello world" }]
+```
+
+在内部，这调用 [`sqlite3_reset`](https://www.sqlite.org/capi3ref.html#sqlite3_reset) 并反复调用 [`sqlite3_step`](https://www.sqlite.org/capi3ref.html#sqlite3_step) 直到返回 `SQLITE_DONE`。
+
+### `.get()`
+
+使用 `.get()` 来运行查询并以对象的形式获取第一个结果。
+
+```ts db.ts icon="/icons/typescript.svg" highlight={2}
+const query = db.query(`select $message;`);
+query.get({ $message: "Hello world" });
+```
+
+```txt
+{ $message: "Hello world" }
+```
+
+在内部，这调用 [`sqlite3_reset`](https://www.sqlite.org/capi3ref.html#sqlite3_reset) 后跟 [`sqlite3_step`](https://www.sqlite.org/capi3ref.html#sqlite3_step) 直到不再返回 `SQLITE_ROW`。如果查询没有返回行，则返回 `undefined`。
+
+### `.run()`
+
+使用 `.run()` 来运行查询并获取包含执行元数据的对象。这对于模式修改查询（例如 `CREATE TABLE`）或批量写入操作很有用。
+
+```ts db.ts icon="/icons/typescript.svg" highlight={2}
+const query = db.query(`create table foo;`);
+query.run();
+```
+
+```txt
+{
+  lastInsertRowid: 0,
+  changes: 0,
+}
+```
+
+在内部，这调用 [`sqlite3_reset`](https://www.sqlite.org/capi3ref.html#sqlite3_reset) 并调用一次 [`sqlite3_step`](https://www.sqlite.org/capi3ref.html#sqlite3_step)。当您不关心结果时，遍历所有行是没有必要的。
+
+`lastInsertRowid` 属性返回最后插入到数据库中的行的 ID。`changes` 属性是受查询影响的行数。
+
+### `.as(Class)` - 将查询结果映射到类
+
+使用 `.as(Class)` 来运行查询并将结果作为类的实例获取。这允许您将方法和 getter/setter 添加到结果中。
+
+```ts db.ts icon="/icons/typescript.svg" highlight={10}
+class Movie {
+  title: string;
+  year: number;
+
+  get isMarvel() {
+    return this.title.includes("Marvel");
+  }
+}
+
+const query = db.query("SELECT title, year FROM movies").as(Movie);
+const movies = query.all();
+const first = query.get();
+
+console.log(movies[0].isMarvel);
+console.log(first.isMarvel);
+```
+
+```txt
+true
+true
+```
+
+作为性能优化，类构造函数不会被调用，不会运行默认初始化器，私有字段不可访问。这更像是使用 `Object.create` 而不是 `new`。类的原型被分配给对象，方法被附加，getter/setter 被设置，但构造函数不被调用。
+
+数据库列被设置为类实例的属性。
+
+### `.iterate()` (`@@iterator`)
+
+使用 `.iterate()` 来运行查询并增量返回结果。这对于大型结果集很有用，您希望逐行处理，而不会将所有结果加载到内存中。
+
+```ts db.ts icon="/icons/typescript.svg" highlight={2}
+const query = db.query("SELECT * FROM foo");
+for (const row of query.iterate()) {
+  console.log(row);
+}
+```
+
+您也可以使用 `@@iterator` 协议：
+
+```ts db.ts icon="/icons/typescript.svg" highlight={2}
+const query = db.query("SELECT * FROM foo");
+for (const row of query) {
+  console.log(row);
+}
+```
+
+### `.values()`
+
+使用 `values()` 来运行查询并以数组的数组形式获取所有结果。
+
+```ts db.ts icon="/icons/typescript.svg" highlight={3, 4}
+const query = db.query(`select $message;`);
+
+query.values({ $message: "Hello world" });
+query.values(2);
+```
+
+```txt
+[
+  [ "Iron Man", 2008 ],
+  [ "The Avengers", 2012 ],
+  [ "Ant-Man: Quantumania", 2023 ],
+]
+```
+
+在内部，这调用 [`sqlite3_reset`](https://www.sqlite.org/capi3ref.html#sqlite3_reset) 并反复调用 [`sqlite3_step`](https://www.sqlite.org/capi3ref.html#sqlite3_step) 直到返回 `SQLITE_DONE`。
+
+### `.finalize()`
+
+使用 `.finalize()` 来销毁 `Statement` 并释放与其关联的任何资源。一旦终结，`Statement` 不能再被执行。通常，垃圾收集器会为您执行此操作，但在性能敏感的应用程序中显式终结可能很有用。
+
+```ts db.ts icon="/icons/typescript.svg" highlight={3}
+const query = db.query("SELECT title, year FROM movies");
+const movies = query.all();
+query.finalize();
+```
+
+### `.toString()`
+
+在 `Statement` 实例上调用 `toString()` 打印展开的 SQL 查询。这对于调试很有用。
+
+```ts db.ts icon="/icons/typescript.svg" highlight={6, 9, 12}
+import { Database } from "bun:sqlite";
+
+// 设置
+const query = db.query("SELECT $param;");
+
+console.log(query.toString()); // => "SELECT NULL"
+
+query.run(42);
+console.log(query.toString()); // => "SELECT 42"
+
+query.run(365);
+console.log(query.toString()); // => "SELECT 365"
+```
+
+在内部，这调用 [`sqlite3_expanded_sql`](https://www.sqlite.org/capi3ref.html#sqlite3_expanded_sql)。参数使用最近绑定的值展开。
+
+## 参数
+
+查询可以包含参数。这些可以是数值的（`?1`）或命名的（`$param` 或 `:param` 或 `@param`）。在执行查询时将值绑定到这些参数：
+
+```ts title="query.ts" icon="/icons/typescript.svg"
+const query = db.query("SELECT * FROM foo WHERE bar = $bar");
+const results = query.all({
+  $bar: "bar",
+});
+```
+
+```txt
+[{ "$bar": "bar" }]
+```
+
+编号（位置）参数也可以：
+
+```ts db.ts icon="/icons/typescript.svg"
+const query = db.query("SELECT ?1, ?2");
+const results = query.all("hello", "goodbye");
+```
+
+```txt
+[
+	{
+		"?1": "hello",
+		"?2": "goodbye",
+	},
+];
+```
+
+---
+
+## 整数
+
+sqlite 支持有符号 64 位整数，但 JavaScript 只支持有符号 52 位整数或任意精度整数 `bigint`。
+
+`bigint` 输入在任何地方都受支持，但默认情况下 `bun:sqlite` 将整数作为 `number` 类型返回。如果您需要处理大于 2^53 的整数，请在创建 `Database` 实例时将 `safeIntegers` 选项设置为 `true`。这也验证传递给 `bun:sqlite` 的 `bigint` 不超过 64 位。
+
+默认情况下，`bun:sqlite` 将整数作为 `number` 类型返回。如果您需要处理大于 2^53 的整数，您可以使用 `bigint` 类型。
+
+### `safeIntegers: true`
+
+当 `safeIntegers` 为 `true` 时，`bun:sqlite` 将以 `bigint` 类型返回整数：
+
+```ts db.ts icon="/icons/typescript.svg" highlight={3}
+import { Database } from "bun:sqlite";
+
+const db = new Database(":memory:", { safeIntegers: true });
+const query = db.query(`SELECT ${BigInt(Number.MAX_SAFE_INTEGER) + 102n} as max_int`);
+const result = query.get();
+
+console.log(result.max_int);
+```
+
+```txt
+9007199254741093n
+```
+
+当 `safeIntegers` 为 `true` 时，如果绑定参数中的 `bigint` 值超过 64 位，`bun:sqlite` 将抛出错误：
+
+```ts db.ts icon="/icons/typescript.svg" highlight={3}
+import { Database } from "bun:sqlite";
+
+const db = new Database(":memory:", { safeIntegers: true });
+db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, value INTEGER)");
+
+const query = db.query("INSERT INTO test (value) VALUES ($value)");
+
+try {
+  query.run({ $value: BigInt(Number.MAX_SAFE_INTEGER) ** 2n });
+} catch (e) {
+  console.log(e.message);
+}
+```
+
+```txt
+BigInt value '81129638414606663681390495662081' is out of range
+```
+
+### `safeIntegers: false`（默认）
+
+当 `safeIntegers` 为 `false` 时，`bun:sqlite` 将以 `number` 类型返回整数，并截断超过 53 位的任何位：
+
+```ts db.ts icon="/icons/typescript.svg" highlight={3}
+import { Database } from "bun:sqlite";
+
+const db = new Database(":memory:", { safeIntegers: false });
+const query = db.query(`SELECT ${BigInt(Number.MAX_SAFE_INTEGER) + 102n} as max_int`);
+const result = query.get();
+console.log(result.max_int);
+```
+
+```txt
+9007199254741092
+```
+
+---
+
+## 事务
+
+事务是一种以_原子_方式执行多个查询的机制；也就是说，要么所有查询成功，要么都不成功。使用 `db.transaction()` 方法创建事务：
+
+```ts db.ts icon="/icons/typescript.svg" highlight={2}
+const insertCat = db.prepare("INSERT INTO cats (name) VALUES ($name)");
+const insertCats = db.transaction(cats => {
+  for (const cat of cats) insertCat.run(cat);
+});
+```
+
+在这个阶段，我们还没有插入任何猫！调用 `db.transaction()` 返回一个新函数（`insertCats`），它_包装_执行查询的函数。
+
+要执行事务，请调用此函数。所有参数都将传递给包装的函数；包装函数的返回值将由事务函数返回。包装函数还可以访问在执行事务时定义的 `this` 上下文。
+
+```ts db.ts icon="/icons/typescript.svg" highlight={3}
+const insert = db.prepare("INSERT INTO cats (name) VALUES ($name)");
+const insertCats = db.transaction(cats => {
+  for (const cat of cats) insert.run(cat);
+  return cats.length;
+});
+
+const count = insertCats([{ $name: "Keanu" }, { $name: "Salem" }, { $name: "Crookshanks" }]);
+
+console.log(`Inserted ${count} cats`);
+```
+
+当调用 `insertCats` 时，驱动程序将自动 [`begin`](https://www.sqlite.org/lang_transaction.html) 一个事务，并在包装函数返回时 `commit` 它。如果抛出异常，事务将回滚。异常将照常传播；它不会被捕获。
+
+<Note>
+**嵌套事务** — 事务函数可以从其他事务函数内部调用。这样做时，内部事务成为 [保存点](https://www.sqlite.org/lang_savepoint.html)。
+
+<Accordion title="查看嵌套事务示例">
+
+```ts db.ts icon="/icons/typescript.svg"
+// 设置
+import { Database } from "bun:sqlite";
+const db = Database.open(":memory:");
+db.run("CREATE TABLE expenses (id INTEGER PRIMARY KEY AUTOINCREMENT, note TEXT, dollars INTEGER);");
+db.run("CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, age INTEGER)");
+const insertExpense = db.prepare("INSERT INTO expenses (note, dollars) VALUES (?, ?)");
+const insert = db.prepare("INSERT INTO cats (name, age) VALUES ($name, $age)");
+const insertCats = db.transaction(cats => {
+  for (const cat of cats) insert.run(cat);
+});
+
+const adopt = db.transaction(cats => {
+  insertExpense.run("adoption fees", 20);
+  insertCats(cats); // 嵌套事务
+});
+
+adopt([
+  { $name: "Joey", $age: 2 },
+  { $name: "Sally", $age: 4 },
+  { $name: "Junior", $age: 1 },
+]);
+```
+
+</Accordion>
+</Note>
+
+事务还附带 `deferred`、`immediate` 和 `exclusive` 版本。
+
+```ts
+insertCats(cats); // 使用 "BEGIN"
+insertCats.deferred(cats); // 使用 "BEGIN DEFERRED"
+insertCats.immediate(cats); // 使用 "BEGIN IMMEDIATE"
+insertCats.exclusive(cats); // 使用 "BEGIN EXCLUSIVE"
+```
+
+### `.loadExtension()`
+
+要加载 [SQLite 扩展](https://www.sqlite.org/loadext.html)，请在您的 `Database` 实例上调用 `.loadExtension(name)`
+
+```ts db.ts icon="/icons/typescript.svg" highlight={4}
+import { Database } from "bun:sqlite";
+
+const db = new Database();
+db.loadExtension("myext");
+```
+
+<Note>
+**MacOS 用户** 默认情况下，macOS 随附 Apple 专有的 SQLite 构建版本，它不支持扩展。要使用扩展，您需要安装一个标准的 SQLite 构建版本。
+
+```bash terminal icon="terminal"
+brew install sqlite
+which sqlite # 获取二进制文件路径
+```
+
+要将 `bun:sqlite` 指向新构建，请在创建任何 `Database` 实例之前调用 `Database.setCustomSQLite(path)`。（在其他操作系统上，这是无操作。）传入 SQLite `.dylib` 文件的路径，_不是_可执行文件。使用较新版本的 Homebrew，这类似于 `/opt/homebrew/Cellar/sqlite/<version>/libsqlite3.dylib`。
+
+```ts db.ts icon="/icons/typescript.svg" highlight={3}
+import { Database } from "bun:sqlite";
+
+Database.setCustomSQLite("/path/to/libsqlite.dylib");
+
+const db = new Database();
+db.loadExtension("myext");
+```
+
+</Note>
+
+### `.fileControl(cmd: number, value: any)`
+
+要使用高级 `sqlite3_file_control` API，请在您的 `Database` 实例上调用 `.fileControl(cmd, value)`。
+
+```ts db.ts icon="/icons/typescript.svg" highlight={6}
+import { Database, constants } from "bun:sqlite";
+
+const db = new Database();
+// 确保 WAL 模式不是持久的
+// 这可以防止数据库关闭后 WAL 文件滞留
+db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, 0);
+```
+
+`value` 可以是：
+
+- `number`
+- `TypedArray`
+- `undefined` 或 `null`
+
+---
+
+## 参考
+
+```ts Type Reference icon="/icons/typescript.svg" expandable
+class Database {
+  constructor(
+    filename: string,
+    options?:
+      | number
+      | {
+          readonly?: boolean;
+          create?: boolean;
+          readwrite?: boolean;
+          safeIntegers?: boolean;
+          strict?: boolean;
+        },
+  );
+
+  query<ReturnType, ParamsType>(sql: string): Statement<ReturnType, ParamsType>;
+  prepare<ReturnType, ParamsType>(sql: string): Statement<ReturnType, ParamsType>;
+  run(sql: string, params?: SQLQueryBindings): { lastInsertRowid: number; changes: number };
+  exec = this.run;
+
+  transaction(insideTransaction: (...args: any) => void): CallableFunction & {
+    deferred: (...args: any) => void;
+    immediate: (...args: any) => void;
+    exclusive: (...args: any) => void;
+  };
+
+  close(throwOnError?: boolean): void;
+}
+
+class Statement<ReturnType, ParamsType> {
+  all(...params: ParamsType[]): ReturnType[];
+  get(...params: ParamsType[]): ReturnType | null;
+  run(...params: ParamsType[]): {
+    lastInsertRowid: number;
+    changes: number;
+  };
+  values(...params: ParamsType[]): unknown[][];
+
+  finalize(): void; // 销毁语句并清理资源
+  toString(): string; // 序列化为 SQL
+
+  columnNames: string[]; // 结果集的列名
+  columnTypes: string[]; // 基于第一行的实际值的类型（先调用 .get()/.all()）
+  declaredTypes: (string | null)[]; // 来自 CREATE TABLE 模式的类型（先调用 .get()/.all()）
+  paramsCount: number; // 语句期望的参数数量
+  native: any; // 表示语句的原生对象
+
+  as<T>(Class: new (...args: any[]) => T): Statement<T, ParamsType>;
+}
+
+type SQLQueryBindings =
+  | string
+  | bigint
+  | TypedArray
+  | number
+  | boolean
+  | null
+  | Record<string, string | bigint | TypedArray | number | boolean | null>;
+```
+
+### 数据类型
+
+| JavaScript 类型 | SQLite 类型 |
+| --------------- | ----------- |
+| `string` | `TEXT` |
+| `number` | `INTEGER` 或 `DECIMAL` |
+| `boolean` | `INTEGER`（1 或 0） |
+| `Uint8Array` | `BLOB` |
+| `Buffer` | `BLOB` |
+| `bigint` | `INTEGER` |
+| `null` | `NULL` |

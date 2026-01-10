@@ -1,0 +1,16 @@
+---
+title: 将 Buffer 转换为 ArrayBuffer
+sidebarTitle: "Buffer 到 ArrayBuffer"
+mode: center
+---
+
+Node.js [Buffer](https://nodejs.org/api/buffer.html) 类提供了一种查看和操作底层 [ArrayBuffer](https://developer.mozilla.org/zh-CN/docs/Web/JavaScript/Reference/Global_Objects/ArrayBuffer) 中数据的方法，可通过 `buffer` 属性获取。
+
+```ts
+const nodeBuf = Buffer.alloc(64);
+const arrBuf = nodeBuf.buffer;
+```
+
+---
+
+参阅 [文档 > API > 二进制数据](/runtime/binary-data#conversion) 获取关于使用Bun操作二进制数据的完整文档。

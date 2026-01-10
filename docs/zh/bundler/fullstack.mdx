@@ -1,0 +1,1084 @@
+---
+title: "全栈开发服务器"
+description: "使用Bun的集成开发服务器构建全栈应用程序，该服务器打包前端资源并处理API路由"
+---
+
+要开始，导入HTML文件并将它们传递给`Bun.serve()`中的`routes`选项。
+
+```ts title="app.ts" icon="/icons/typescript.svg"
+import { serve } from "bun";
+import dashboard from "./dashboard.html";
+import homepage from "./index.html";
+
+const server = serve({
+  routes: {
+    // ** HTML导入 **
+    // 将index.html打包并路由到"/"。这使用HTMLRewriter扫描
+    // HTML中的`<script>`和`<link>`标签，运行Bun的JavaScript
+    // 和CSS打包器，转译任何TypeScript、JSX和TSX，
+    // 使用Bun的CSS解析器降级CSS，并提供结果。
+    "/": homepage,
+    // 将dashboard.html打包并路由到"/dashboard"
+    "/dashboard": dashboard,
+
+    // ** API端点 ** (需要Bun v1.2.3+)
+    "/api/users": {
+      async GET(req) {
+        const users = await sql`SELECT * FROM users`;
+        return Response.json(users);
+      },
+      async POST(req) {
+        const { name, email } = await req.json();
+        const [user] = await sql`INSERT INTO users (name, email) VALUES (${name}, ${email})`;
+        return Response.json(user);
+      },
+    },
+    "/api/users/:id": async req => {
+      const { id } = req.params;
+      const [user] = await sql`SELECT * FROM users WHERE id = ${id}`;
+      return Response.json(user);
+    },
+  },
+
+  // 启用开发模式以获得：
+  // - 详细的错误消息
+  // - 热重载（需要Bun v1.2.3+）
+  development: true,
+});
+
+console.log(`Listening on ${server.url}`);
+```
+
+```bash terminal icon="terminal"
+bun run app.ts
+```
+
+## HTML路由
+
+### HTML导入作为路由
+
+Web从HTML开始，Bun的全栈开发服务器也是如此。
+
+要指定前端的入口点，请将HTML文件导入到JavaScript/TypeScript/TSX/JSX文件中。
+
+```ts title="app.ts" icon="/icons/typescript.svg"
+import dashboard from "./dashboard.html";
+import homepage from "./index.html";
+```
+
+这些HTML文件用作Bun开发服务器中的路由，您可以传递给`Bun.serve()`。
+
+```ts title="app.ts" icon="/icons/typescript.svg"
+Bun.serve({
+  routes: {
+    "/": homepage,
+    "/dashboard": dashboard,
+  },
+
+  fetch(req) {
+    // ... api请求
+  },
+});
+```
+
+当您请求`/dashboard`或`/`时，Bun会自动打包HTML文件中的`<script>`和`<link>`标签，将它们作为静态路由暴露，并提供结果。
+
+### HTML处理示例
+
+像这样的`index.html`文件：
+
+``html title="index.html" icon="file-code"
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Home</title>
+    <link rel="stylesheet" href="./reset.css" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./sentry-and-preloads.ts"></script>
+    <script type="module" src="./my-app.tsx"></script>
+  </body>
+</html>
+```
+
+变成类似这样的内容：
+
+``html title="index.html" icon="file-code"
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Home</title>
+    <link rel="stylesheet" href="/index-[hash].css" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/index-[hash].js"></script>
+  </body>
+</html>
+```
+
+## React集成
+
+要在客户端代码中使用React，请导入`react-dom/client`并渲染您的应用。
+
+<CodeGroup>
+```ts title="src/backend.ts" icon="/icons/typescript.svg"
+import dashboard from "../public/dashboard.html";
+import { serve } from "bun";
+
+serve({
+routes: {
+"/": dashboard,
+},
+async fetch(req) {
+// ...api请求
+return new Response("hello world");
+},
+});
+
+````
+
+```tsx title="src/frontend.tsx" icon="/icons/typescript.svg"
+import { createRoot } from 'react-dom/client';
+import App from './app';
+
+const container = document.getElementById('root');
+const root = createRoot(container!);
+root.render(<App />);
+````
+
+```html title="public/dashboard.html" icon="file-code"
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Dashboard</title>
+    <link rel="stylesheet" href="../src/styles.css" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="../src/frontend.tsx"></script>
+  </body>
+</html>
+```
+
+```tsx title="src/app.tsx" icon="/icons/typescript.svg"
+import { useState } from "react";
+
+export default function App() {
+  const [count, setCount] = useState(0);
+
+  return (
+    <div>
+      <h1>Dashboard</h1>
+      <button onClick={() => setCount(count + 1)}>Count: {count}</button>
+    </div>
+  );
+}
+```
+
+</CodeGroup>
+
+## 开发模式
+
+在本地构建时，通过在`Bun.serve()`中设置`development: true`来启用开发模式。
+
+```ts title="src/backend.ts" icon="/icons/typescript.svg"
+import homepage from "./index.html";
+import dashboard from "./dashboard.html";
+
+Bun.serve({
+  routes: {
+    "/": homepage,
+    "/dashboard": dashboard,
+  },
+
+  development: true,
+
+  fetch(req) {
+    // ... api请求
+  },
+});
+```
+
+### 开发模式特性
+
+当`development`为`true`时，Bun将：
+
+- 在响应中包含SourceMap头，以便devtools可以显示原始源代码
+- 禁用压缩
+- 在每次请求`.html`文件时重新打包资源
+- 启用热模块重载（除非设置了`hmr: false`）
+- 将浏览器的控制台日志回显到终端
+
+### 高级开发配置
+
+`Bun.serve()`支持将浏览器的控制台日志回显到终端。
+
+要启用此功能，请在`Bun.serve()`的开发对象中传递`console: true`。
+
+```ts title="src/backend.ts" icon="/icons/typescript.svg"
+import homepage from "./index.html";
+
+Bun.serve({
+  // development也可以是一个对象。
+  development: {
+    // 启用热模块重载
+    hmr: true,
+
+    // 将浏览器的控制台日志回显到终端
+    console: true,
+  },
+
+  routes: {
+    "/": homepage,
+  },
+});
+```
+
+当设置`console: true`时，Bun将从浏览器流式传输控制台日志到终端。这重用HMR的现有WebSocket连接来发送日志。
+
+### 开发与生产
+
+| 特性             | 开发           | 生产  |
+| ------------------- | --------------------- | ----------- |
+| **源映射**     | ✅ 启用            | ❌ 禁用 |
+| **压缩**    | ❌ 禁用           | ✅ 启用  |
+| **热重载**   | ✅ 启用            | ❌ 禁用 |
+| **资源打包**  | 🔄 每个请求    | 💾 缓存   |
+| **控制台日志** | 🖥️ 浏览器 → 终端 | ❌ 禁用 |
+| **错误详情**   | 📝 详细           | 🔒 最小  |
+
+## 生产模式
+
+热重载和`development: true`帮助您快速迭代，但在生产环境中，您的服务器应该尽可能快，并且外部依赖尽可能少。
+
+### 预先打包（推荐）
+
+从Bun v1.2.17开始，您可以使用`Bun.build`或`bun build`预先打包全栈应用程序。
+
+```bash terminal icon="terminal"
+bun build --target=bun --production --outdir=dist ./src/index.ts
+```
+
+当Bun的打包器看到服务器端代码中的HTML导入时，它会将引用的JavaScript/TypeScript/TSX/JSX和CSS文件打包到一个清单对象中，`Bun.serve()`可以使用该对象来提供资源。
+
+```ts title="src/backend.ts" icon="/icons/typescript.svg"
+import { serve } from "bun";
+import index from "./index.html";
+
+serve({
+  routes: { "/": index },
+});
+```
+
+### 运行时打包
+
+当添加构建步骤过于复杂时，您可以在`Bun.serve()`中设置`development: false`。
+
+这将：
+
+- 启用打包资源的内存缓存。Bun将在第一次请求`.html`文件时延迟打包资源，并将结果缓存在内存中，直到服务器重启。
+- 启用`Cache-Control`头和`ETag`头
+- 压缩JavaScript/TypeScript/TSX/JSX文件
+
+```ts title="src/backend.ts" icon="/icons/typescript.svg"
+import { serve } from "bun";
+import homepage from "./index.html";
+
+serve({
+  routes: {
+    "/": homepage,
+  },
+
+  // 生产模式
+  development: false,
+});
+```
+
+## API路由
+
+### HTTP方法处理器
+
+使用HTTP方法处理器定义API端点：
+
+```ts title="src/backend.ts" icon="/icons/typescript.svg"
+import { serve } from "bun";
+
+serve({
+  routes: {
+    "/api/users": {
+      async GET(req) {
+        // 处理GET请求
+        const users = await getUsers();
+        return Response.json(users);
+      },
+
+      async POST(req) {
+        // 处理POST请求
+        const userData = await req.json();
+        const user = await createUser(userData);
+        return Response.json(user, { status: 201 });
+      },
+
+      async PUT(req) {
+        // 处理PUT请求
+        const userData = await req.json();
+        const user = await updateUser(userData);
+        return Response.json(user);
+      },
+
+      async DELETE(req) {
+        // 处理DELETE请求
+        await deleteUser(req.params.id);
+        return new Response(null, { status: 204 });
+      },
+    },
+  },
+});
+```
+
+### 动态路由
+
+在路由中使用URL参数：
+
+```ts title="src/backend.ts" icon="/icons/typescript.svg"
+serve({
+  routes: {
+    // 单个参数
+    "/api/users/:id": async req => {
+      const { id } = req.params;
+      const user = await getUserById(id);
+      return Response.json(user);
+    },
+
+    // 多个参数
+    "/api/users/:userId/posts/:postId": async req => {
+      const { userId, postId } = req.params;
+      const post = await getPostByUser(userId, postId);
+      return Response.json(post);
+    },
+
+    // 通配符路由
+    "/api/files/*": async req => {
+      const filePath = req.params["*"];
+      const file = await getFile(filePath);
+      return new Response(file);
+    },
+  },
+});
+```
+
+### 请求处理
+
+``ts title="src/backend.ts" icon="/icons/typescript.svg"
+serve({
+  routes: {
+    "/api/data": {
+      async POST(req) {
+        // 解析JSON主体
+        const body = await req.json();
+
+        // 访问头
+        const auth = req.headers.get("Authorization");
+
+        // 访问URL参数
+        const { id } = req.params;
+
+        // 访问查询参数
+        const url = new URL(req.url);
+        const page = url.searchParams.get("page") || "1";
+
+        // 返回响应
+        return Response.json({
+          message: "Data processed",
+          page: parseInt(page),
+          authenticated: !!auth,
+        });
+      },
+    },
+  },
+});
+```
+
+## 插件
+
+在打包静态路由时，也支持Bun的打包器插件。
+
+要为`Bun.serve`配置插件，请在`bunfig.toml`的`[serve.static]`部分添加一个`plugins`数组。
+
+### TailwindCSS插件
+
+您可以通过安装并添加`tailwindcss`包和`bun-plugin-tailwind`插件来使用TailwindCSS。
+
+```bash terminal icon="terminal"
+bun add tailwindcss bun-plugin-tailwind
+```
+
+```toml title="bunfig.toml" icon="settings"
+[serve.static]
+plugins = ["bun-plugin-tailwind"]
+```
+
+这将允许您在HTML和CSS文件中使用TailwindCSS实用类。您只需要在某处导入`tailwindcss`：
+
+``html title="index.html" icon="file-code"
+<!doctype html>
+<html>
+  <head>
+    <!-- [!code ++] -->
+    <link rel="stylesheet" href="tailwindcss" />
+  </head>
+  <!-- the rest of your HTML... -->
+</html>
+```
+
+或者，您可以在CSS文件中导入TailwindCSS：
+
+``css title="style.css" icon="file-code"
+@import "tailwindcss";
+
+.custom-class {
+  @apply bg-red-500 text-white;
+}
+```
+
+```html index.html icon="file-code"
+<!doctype html>
+<html>
+  <head>
+    <!-- [!code ++] -->
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <!-- the rest of your HTML... -->
+</html>
+```
+
+### 自定义插件
+
+任何导出有效打包器插件对象（本质上是一个具有`name`和`setup`字段的对象）的JS文件或模块都可以放在插件数组中：
+
+``toml title="bunfig.toml" icon="settings"
+[serve.static]
+plugins = ["./my-plugin-implementation.ts"]
+```
+
+```ts title="my-plugin-implementation.ts" icon="/icons/typescript.svg"
+import type { BunPlugin } from "bun";
+
+const myPlugin: BunPlugin = {
+  name: "my-custom-plugin",
+  setup(build) {
+    // 插件实现
+    build.onLoad({ filter: /\.custom$/ }, async args => {
+      const text = await Bun.file(args.path).text();
+      return {
+        contents: `export default ${JSON.stringify(text)};`,
+        loader: "js",
+      };
+    });
+  },
+};
+
+export default myPlugin;
+```
+
+Bun将延迟解析和加载每个插件，并使用它们来打包您的路由。
+
+<Note>
+  目前这在`bunfig.toml`中，以便在我们最终将此功能与`bun build` CLI集成时，可以静态地知道使用了哪些插件。这些插件在`Bun.build()`的JS API中工作，但CLI中尚不支持。
+</Note>
+
+## 内联环境变量
+
+Bun可以在构建时将前端JavaScript和TypeScript中的`process.env.*`引用替换为它们的实际值。在`bunfig.toml`中配置`env`选项：
+
+``toml title="bunfig.toml" icon="settings"
+[serve.static]
+env = "PUBLIC_*"  # 只内联以PUBLIC_开头的环境变量（推荐）
+# env = "inline"  # 内联所有环境变量
+# env = "disable" # 禁用环境变量替换（默认）
+```
+
+<Note>
+  这仅适用于字面量`process.env.FOO`引用，不适用于`import.meta.env`或间接访问如`const env =
+  process.env; env.FOO`。
+
+如果未设置环境变量，您可能会在浏览器中看到运行时错误，如`ReferenceError: process
+  is not defined`。
+
+</Note>
+
+有关构建时配置和示例的更多详细信息，请参见[HTML和静态站点文档](/bundler/html-static#inline-environment-variables)。
+
+## 工作原理
+
+Bun使用`HTMLRewriter`扫描HTML文件中的`<script>`和`<link>`标签，将它们用作Bun打包器的入口点，为JavaScript/TypeScript/TSX/JSX和CSS文件生成优化的包，并提供结果。
+
+### 处理流水线
+
+<Steps>
+<Step title="1. <script> 处理">
+- 转译`<script>`标签中的TypeScript、JSX和TSX
+- 打包导入的依赖项
+- 生成源映射以进行调试
+- 当`Bun.serve()`中`development`不为`true`时进行压缩
+
+```html title="index.html" icon="file-code"
+<script type="module" src="./counter.tsx"></script>
+```
+
+</Step>
+<Step title="2. <link> 处理">
+- 处理CSS导入和`<link>`标签
+- 连接CSS文件
+- 重写URL和资源路径，以便在URL中包含内容可寻址哈希
+
+```html title="index.html" icon="file-code"
+<link rel="stylesheet" href="./styles.css" />
+```
+
+</Step>
+<Step title="3. <img> 和资源处理">
+- 重写资源链接，以便在URL中包含内容可寻址哈希
+- CSS文件中的小资源被内联到`data:` URL中，减少了传输的HTTP请求数量
+</Step>
+<Step title="4. HTML重写">
+- 将所有`<script>`标签合并为一个包含URL中内容可寻址哈希的`<script>`标签
+- 将所有`<link>`标签合并为一个包含URL中内容可寻址哈希的`<link>`标签
+- 输出新的HTML文件
+</Step>
+<Step title="5. 提供服务">
+- 打包器的所有输出文件都作为静态路由暴露，使用与将Response对象传递给`Bun.serve()`中的`static`时相同的内部机制。
+- 这类似于`Bun.build`如何处理HTML文件。
+</Step>
+</Steps>
+
+## 完整示例
+
+这是一个完整的全栈应用程序示例：
+
+``ts title="server.ts" icon="/icons/typescript.svg"
+import { serve } from "bun";
+import { Database } from "bun:sqlite";
+import homepage from "./public/index.html";
+import dashboard from "./public/dashboard.html";
+
+// 初始化数据库
+const db = new Database("app.db");
+db.exec(`
+  CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    email TEXT UNIQUE NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )
+`);
+
+const server = serve({
+  routes: {
+    // 前端路由
+    "/": homepage,
+    "/dashboard": dashboard,
+
+    // API路由
+    "/api/users": {
+      async GET() {
+        const users = db.query("SELECT * FROM users").all();
+        return Response.json(users);
+      },
+
+      async POST(req) {
+        const { name, email } = await req.json();
+
+        try {
+          const result = db.query("INSERT INTO users (name, email) VALUES (?, ?) RETURNING *").get(name, email);
+
+          return Response.json(result, { status: 201 });
+        } catch (error) {
+          return Response.json({ error: "Email already exists" }, { status: 400 });
+        }
+      },
+    },
+
+    "/api/users/:id": {
+      async GET(req) {
+        const { id } = req.params;
+        const user = db.query("SELECT * FROM users WHERE id = ?").get(id);
+
+        if (!user) {
+          return Response.json({ error: "User not found" }, { status: 404 });
+        }
+
+        return Response.json(user);
+      },
+
+      async DELETE(req) {
+        const { id } = req.params;
+        const result = db.query("DELETE FROM users WHERE id = ?").run(id);
+
+        if (result.changes === 0) {
+          return Response.json({ error: "User not found" }, { status: 404 });
+        }
+
+        return new Response(null, { status: 204 });
+      },
+    },
+
+    // 健康检查端点
+    "/api/health": {
+      GET() {
+        return Response.json({
+          status: "ok",
+          timestamp: new Date().toISOString(),
+        });
+      },
+    },
+  },
+
+  // 启用开发模式
+  development: {
+    hmr: true,
+    console: true,
+  },
+
+  // 未匹配路由的回退
+  fetch(req) {
+    return new Response("Not Found", { status: 404 });
+  },
+});
+
+console.log(`🚀 Server running on ${server.url}`);
+```
+
+```html title="public/index.html" icon="file-code"
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Fullstack Bun App</title>
+    <link rel="stylesheet" href="../src/styles.css" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="../src/main.tsx"></script>
+  </body>
+</html>
+```
+
+```tsx title="src/main.tsx"
+import { createRoot } from "react-dom/client";
+import { App } from "./App";
+
+const container = document.getElementById("root")!;
+const root = createRoot(container);
+root.render(<App />);
+```
+
+```tsx title="src/App.tsx"
+import { useState, useEffect } from "react";
+
+interface User {
+  id: number;
+  name: string;
+  email: string;
+  created_at: string;
+}
+
+export function App() {
+  const [users, setUsers] = useState<User[]>([]);
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const fetchUsers = async () => {
+    const response = await fetch("/api/users");
+    const data = await response.json();
+    setUsers(data);
+  };
+
+  const createUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+
+    try {
+      const response = await fetch("/api/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, email }),
+      });
+
+      if (response.ok) {
+        setName("");
+        setEmail("");
+        await fetchUsers();
+      } else {
+        const error = await response.json();
+        alert(error.error);
+      }
+    } catch (error) {
+      alert("Failed to create user");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const deleteUser = async (id: number) => {
+    if (!confirm("Are you sure?")) return;
+
+    try {
+      const response = await fetch(`/api/users/${id}`, {
+        method: "DELETE",
+      });
+
+      if (response.ok) {
+        await fetchUsers();
+      }
+    } catch (error) {
+      alert("Failed to delete user");
+    }
+  };
+
+  useEffect(() => {
+    fetchUsers();
+  }, []);
+
+  return (
+    <div className="container">
+      <h1>User Management</h1>
+
+      <form onSubmit={createUser} className="form">
+        <input type="text" placeholder="Name" value={name} onChange={e => setName(e.target.value)} required />
+        <input type="email" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} required />
+        <button type="submit" disabled={loading}>
+          {loading ? "Creating..." : "Create User"}
+        </button>
+      </form>
+
+      <div className="users">
+        <h2>Users ({users.length})</h2>
+        {users.map(user => (
+          <div key={user.id} className="user-card">
+            <div>
+              <strong>{user.name}</strong>
+              <br />
+              <span>{user.email}</span>
+            </div>
+            <button onClick={() => deleteUser(user.id)} className="delete-btn">
+              Delete
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+```
+
+```css title="src/styles.css" icon="file-code"
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+  background: #f5f5f5;
+  color: #333;
+}
+
+.container {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 2rem;
+}
+
+h1 {
+  color: #2563eb;
+  margin-bottom: 2rem;
+}
+
+.form {
+  background: white;
+  padding: 1.5rem;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  margin-bottom: 2rem;
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.form input {
+  flex: 1;
+  min-width: 200px;
+  padding: 0.75rem;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+}
+
+.form button {
+  padding: 0.75rem 1.5rem;
+  background: #2563eb;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.form button:hover {
+  background: #1d4ed8;
+}
+
+.form button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.users {
+  background: white;
+  padding: 1.5rem;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.user-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem;
+  border-bottom: 1px solid #eee;
+}
+
+.user-card:last-child {
+  border-bottom: none;
+}
+
+.delete-btn {
+  padding: 0.5rem 1rem;
+  background: #dc2626;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.delete-btn:hover {
+  background: #b91c1c;
+}
+```
+
+## 最佳实践
+
+### 项目结构
+
+```
+my-app/
+├── src/
+│   ├── components/
+│   │   ├── Header.tsx
+│   │   └── UserList.tsx
+│   ├── styles/
+│   │   ├── globals.css
+│   │   └── components.css
+│   ├── utils/
+│   │   └── api.ts
+│   ├── App.tsx
+│   └── main.tsx
+├── public/
+│   ├── index.html
+│   ├── dashboard.html
+│   └── favicon.ico
+├── server/
+│   ├── routes/
+│   │   ├── users.ts
+│   │   └── auth.ts
+│   ├── db/
+│   │   └── schema.sql
+│   └── index.ts
+├── bunfig.toml
+└── package.json
+```
+
+### 基于环境的配置
+
+``ts title="server/config.ts" icon="/icons/typescript.svg"
+export const config = {
+  development: process.env.NODE_ENV !== "production",
+  port: process.env.PORT || 3000,
+  database: {
+    url: process.env.DATABASE_URL || "./dev.db",
+  },
+  cors: {
+    origin: process.env.CORS_ORIGIN || "*",
+  },
+};
+```
+
+### 错误处理
+
+``ts title="server/middleware.ts" icon="/icons/typescript.svg"
+export function errorHandler(error: Error, req: Request) {
+  console.error("Server error:", error);
+
+  if (process.env.NODE_ENV === "production") {
+    return Response.json({ error: "Internal server error" }, { status: 500 });
+  }
+
+  return Response.json(
+    {
+      error: error.message,
+      stack: error.stack,
+    },
+    { status: 500 },
+  );
+}
+```
+
+### API响应辅助
+
+``ts title="server/utils.ts" icon="/icons/typescript.svg"
+export function json(data: any, status = 200) {
+  return Response.json(data, { status });
+}
+
+export function error(message: string, status = 400) {
+  return Response.json({ error: message }, { status });
+}
+
+export function notFound(message = "Not found") {
+  return error(message, 404);
+}
+
+export function unauthorized(message = "Unauthorized") {
+  return error(message, 401);
+}
+```
+
+### 类型安全
+
+``ts title="types/api.ts" icon="/icons/typescript.svg"
+export interface User {
+  id: number;
+  name: string;
+  email: string;
+  created_at: string;
+}
+
+export interface CreateUserRequest {
+  name: string;
+  email: string;
+}
+
+export interface ApiResponse<T> {
+  data?: T;
+  error?: string;
+}
+```
+
+## 部署
+
+### 生产构建
+
+``bash terminal icon="terminal"
+# Build for production
+bun build --target=bun --production --outdir=dist ./server/index.ts
+
+# Run production server
+NODE_ENV=production bun dist/index.js
+```
+
+### Docker部署
+
+``dockerfile title="Dockerfile" icon="docker"
+FROM oven/bun:1 as base
+WORKDIR /usr/src/app
+
+# Install dependencies
+COPY package.json bun.lockb ./
+RUN bun install --frozen-lockfile
+
+# Copy source code
+COPY . .
+
+# Build application
+RUN bun build --target=bun --production --outdir=dist ./server/index.ts
+
+# Production stage
+FROM oven/bun:1-slim
+WORKDIR /usr/src/app
+COPY --from=base /usr/src/app/dist ./
+COPY --from=base /usr/src/app/public ./public
+
+EXPOSE 3000
+CMD ["bun", "index.js"]
+```
+
+### 环境变量
+
+``ini title=".env.production" icon="file-code"
+NODE_ENV=production
+PORT=3000
+DATABASE_URL=postgresql://user:pass@localhost:5432/myapp
+CORS_ORIGIN=https://myapp.com
+```
+
+## 从其他框架迁移
+
+### 从Express + Webpack
+
+``ts title="server.ts" icon="/icons/typescript.svg"
+// Before (Express + Webpack)
+app.use(express.static("dist"));
+app.get("/api/users", (req, res) => {
+  res.json(users);
+});
+
+// After (Bun fullstack)
+serve({
+  routes: {
+    "/": homepage, // Replaces express.static
+    "/api/users": {
+      GET() {
+        return Response.json(users);
+      },
+    },
+  },
+});
+```
+
+### 从Next.js API Routes
+
+``ts title="server.ts" icon="/icons/typescript.svg"
+// Before (Next.js)
+export default function handler(req, res) {
+  if (req.method === 'GET') {
+    res.json(users);
+  }
+}
+
+// After (Bun)
+"/api/users": {
+  GET() { return Response.json(users); }
+}
+```
+
+## 限制和未来计划
+
+### 当前限制
+
+- `bun build` CLI集成尚未可用于全栈应用程序
+- API路由的自动发现尚未实现
+- 服务器端渲染（SSR）不是内置的
+
+### 计划中的功能
+
+- 与`bun build` CLI集成
+- 基于文件的API端点路由
+- 内置SSR支持
+- 增强的插件生态系统
+
+<Note>Bun正在开发中。随着Bun的不断发展，功能和API可能会发生变化。</Note>

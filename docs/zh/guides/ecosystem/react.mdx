@@ -1,0 +1,52 @@
+---
+title: 使用 Bun 构建 React 应用
+sidebarTitle: React 与 Bun
+mode: center
+---
+
+Bun 开箱即用地支持 `.jsx` 和 `.tsx` 文件。React 只需与 Bun 配合即可使用。
+
+使用 `bun init --react` 创建一个新的 React 应用。这为您提供了一个模板，其中包含一个简单的 React 应用和一个简单的 API 服务器，组成一个全栈应用。
+
+```bash terminal icon="terminal"
+# 创建一个新的 React 应用
+bun init --react
+
+# 在开发模式下运行应用
+bun dev
+
+# 构建为静态站点以供生产
+bun run build
+
+# 在生产环境中运行服务器
+bun start
+```
+
+---
+
+### 热重载
+
+运行 `bun dev` 在开发模式下启动应用。这将启动 API 服务器和具有热重载功能的 React 应用。
+
+### 全栈应用
+
+运行 `bun start` 在一个进程中一起启动 API 服务器和前端。
+
+### 静态站点
+
+运行 `bun run build` 将应用构建为静态站点。这将创建一个 [dist] 目录，其中包含构建后的应用和所有资源。
+
+```txt File Tree icon="folder-tree"
+├── src/
+│   ├── index.tsx       # 服务器入口点，含 API 路由
+│   ├── frontend.tsx    # React 应用入口点，含 HMR
+│   ├── App.tsx         # 主 React 组件
+│   ├── APITester.tsx   # 用于测试 API 端点的组件
+│   ├── index.html      # HTML 模板
+│   ├── index.css       # 样式
+│   └── *.svg           # 静态资源
+├── package.json        # 依赖和脚本
+├── tsconfig.json       # TypeScript 配置
+├── bunfig.toml         # Bun 配置
+└── bun.lock            # 锁定文件
+```

@@ -1,0 +1,230 @@
+---
+title: 从 npm install 迁移到 bun install
+sidebarTitle: 从 npm 迁移到 bun
+mode: center
+---
+
+`bun install` 是一个与 Node.js 兼容的 npm 客户端，旨在成为 npm 的超快继任者。
+
+我们投入了很多精力来确保从 `npm install` 到 `bun install` 的迁移路径尽可能简单，只需运行 `bun install` 而不是 `npm install` 即可。
+
+- **为 Node.js 和 Bun 设计**: `bun install` 安装一个与 Node.js 兼容的 [node_modules] 文件夹。您可以在 Node.js 项目中代替 `npm install` 使用它，无需任何代码更改，也无需使用 Bun 的运行时。
+- **自动转换 `package-lock.json`** 为 bun 的 [bun.lock] 锁定文件格式，保留您现有的已解析依赖版本，无需您进行任何手动操作。您可以在工作中秘密地使用 `bun install` 代替 `npm install`，而没有人会注意到。
+- **兼容 `.npmrc`**: bun install 从 npm 的 `.npmrc` 读取 npm 注册表配置，因此您可以为 npm 和 Bun 使用相同的配置。
+- **硬链接**: 在 Windows 和 Linux 上，`bun install` 使用硬链接来节省磁盘空间和安装时间。
+
+```bash terminal icon="terminal"
+# 只需一个命令即可迁移
+bun i
+
+# 添加依赖项：
+bun i @types/bun
+
+# 添加开发依赖项：
+bun i -d @types/bun
+
+# 删除依赖项：
+bun rm @types/bun
+```
+
+---
+
+## 更快地运行 package.json 脚本
+
+运行来自 package.json 的脚本、来自 [node_modules/.bin] 的可执行文件（类似于 `npx`）以及 JavaScript/TypeScript 文件（就像 `node` 一样）- 全部来自一个简单的命令。
+
+| NPM                | Bun              |
+| ------------------ | ---------------- |
+| `npm run <script>` | `bun <script>`   |
+| `npm exec <bin>`   | `bun <bin>`      |
+| `node <file>`      | `bun <file>`     |
+| `npx <package>`    | `bunx <package>` |
+
+当您使用 `bun run <executable>` 时，它会选择本地安装的可执行文件
+
+```sh terminal icon="terminal"
+# 运行 package.json 脚本：
+bun my-script
+bun run my-script
+
+# 运行 node_modules/.bin 中的可执行文件：
+bun my-executable # 如 tsc、esbuild 等
+bun run my-executable
+
+# 运行 JavaScript/TypeScript 文件：
+bun ./index.ts
+```
+
+---
+
+## 工作区？是的。
+
+`bun install` 类似于 npm，支持工作区，具有更多功能。
+
+在 [package.json] 中，您可以将 `"workspaces"` 设置为相对路径数组。
+
+```json package.json icon="file-json"
+{
+  "name": "my-app",
+  "workspaces": ["packages/*", "apps/*"]
+}
+```
+
+---
+
+### 按工作区名称筛选脚本
+
+在 Bun 中，`--filter` 标志接受一个 glob 模式，并将并发运行所有名称匹配该模式的工作区包的命令，遵守依赖顺序。
+
+```sh terminal icon="terminal"
+bun --filter 'lib-*' my-script
+# 而不是：
+# npm run --workspace lib-foo --workspace lib-bar my-script
+```
+
+---
+
+## 更新依赖项
+
+要更新依赖项，您可以使用 `bun update <package>`。这会将依赖项更新到满足 package.json 中指定的语义化版本范围的最新版本。
+
+```sh terminal icon="terminal"
+# 更新单个依赖项
+bun update @types/bun
+
+# 更新所有依赖项
+bun update
+
+# 忽略语义化版本，更新到最新版本
+bun update @types/bun --latest
+
+# 将依赖项更新到特定版本
+bun update @types/bun@1.3.3
+
+# 将所有依赖项更新到最新版本
+bun update --latest
+```
+
+---
+
+### 查看过时的依赖项
+
+要查看过时的依赖项，请运行 `bun outdated`。这类似于 `npm outdated`，但输出更紧凑。
+
+```sh terminal icon="terminal"
+bun outdated
+```
+
+```txt
+┌────────────────────────────────────────┬─────────┬────────┬────────┐
+│ 包                                     │ 当前版本 │ 更新版本 │ 最新版本 │
+├────────────────────────────────────────┼─────────┼────────┼────────┤
+│ @types/bun (dev)                       │ 1.1.6   │ 1.1.10 │ 1.1.10 │
+├────────────────────────────────────────┼─────────┼────────┼────────┤
+│ @types/react (dev)                     │ 18.3.3  │ 18.3.8 │ 18.3.8 │
+├────────────────────────────────────────┼─────────┼────────┼────────┤
+│ @typescript-eslint/eslint-plugin (dev) │ 7.16.1  │ 7.18.0 │ 8.6.0  │
+├────────────────────────────────────────┼─────────┼────────┼────────┤
+│ @typescript-eslint/parser (dev)        │ 7.16.1  │ 7.18.0 │ 8.6.0  │
+├────────────────────────────────────────┼─────────┼────────┼────────┤
+│ @vscode/debugadapter (dev)             │ 1.66.0  │ 1.67.0 │ 1.67.0 │
+├────────────────────────────────────────┼─────────┼────────┼────────┤
+│ esbuild (dev)                          │ 0.21.5  │ 0.21.5 │ 0.24.0 │
+├────────────────────────────────────────┼─────────┼────────┼────────┤
+│ eslint (dev)                           │ 9.7.0   │ 9.11.0 │ 9.11.0 │
+├────────────────────────────────────────┼─────────┼────────┼────────┤
+│ mitata (dev)                           │ 0.1.11  │ 0.1.14 │ 1.0.2  │
+├────────────────────────────────────────┼─────────┼────────┼────────┤
+│ prettier-plugin-organize-imports (dev) │ 4.0.0   │ 4.1.0  │ 4.1.0  │
+├────────────────────────────────────────┼─────────┼────────┼────────┤
+│ source-map-js (dev)                    │ 1.2.0   │ 1.2.1  │ 1.2.1  │
+├────────────────────────────────────────┼─────────┼────────┼────────┤
+│ typescript (dev)                       │ 5.5.3   │ 5.6.2  │ 5.6.2  │
+└────────────────────────────────────────┴─────────┴────────┴────────┘
+```
+
+---
+
+## 列出已安装的包
+
+要列出已安装的包，您可以使用 `bun pm ls`。这将使用 Bun 的锁定文件作为真实来源列出 [node_modules] 文件夹中安装的所有包。您可以传递 `-a` 标志来列出所有已安装的包，包括传递性依赖。
+
+```sh terminal icon="terminal"
+# 列出顶级已安装的包：
+bun pm ls
+```
+
+```txt
+my-pkg node_modules (781)
+├── @types/node@20.16.5
+├── @types/react@18.3.8
+├── @types/react-dom@18.3.0
+├── eslint@8.57.1
+├── eslint-config-next@14.2.8
+...
+```
+
+```sh terminal icon="terminal"
+# 列出所有已安装的包：
+bun pm ls -a
+```
+
+```txt
+my-pkg node_modules
+├── @alloc/quick-lru@5.2.0
+├── @isaacs/cliui@8.0.2
+│   └── strip-ansi@7.1.0
+│       └── ansi-regex@6.1.0
+├── @jridgewell/gen-mapping@0.3.5
+├── @jridgewell/resolve-uri@3.1.2
+...
+```
+
+---
+
+## 创建包的 tarball
+
+要创建包的 tarball，您可以使用 `bun pm pack`。这将在当前目录中创建一个包的 tarball。
+
+```sh terminal icon="terminal"
+# 创建一个 tarball
+bun pm pack
+```
+
+```txt
+总文件数: 46
+Shasum: 2ee19b6f0c6b001358449ca0eadead703f326216
+完整性: sha512-ZV0lzWTEkGAMz[...]Gl4f8lA9sl97g==
+未压缩大小: 0.41MB
+压缩大小: 117.50KB
+```
+
+---
+
+## Shebang
+
+如果包在 `#!/usr/bin/env node` shebang 中引用 `node`，`bun run` 默认会尊重它并使用系统中的 `node` 可执行文件。您可以通过向 `bun run` 传递 `--bun` 参数强制它使用 Bun 的 `node`。
+
+当您向 `bun run` 传递 `--bun` 时，我们会在临时目录中创建一个指向本地安装的 Bun 可执行文件的符号链接，命名为 `"node"`，并在脚本执行期间将其添加到您的 `PATH` 中。
+
+```sh terminal icon="terminal"
+# 强制使用 Bun 的运行时而不是 node
+bun --bun my-script
+
+# 这样也可以：
+bun run --bun my-script
+```
+
+---
+
+## 全局安装
+
+您可以使用 `bun i -g <package>` 全局安装包。默认情况下，这会安装到主目录内的 `.bun/install/global/node_modules` 文件夹中。
+
+```sh terminal icon="terminal"
+# 全局安装一个包
+bun i -g eslint
+
+# 运行全局安装的包，无需 `bun run` 前缀
+eslint --init
+```

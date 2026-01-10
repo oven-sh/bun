@@ -1,0 +1,33 @@
+---
+title: 为 WebSocket 消息启用压缩
+sidebarTitle: 启用压缩
+mode: center
+---
+
+可以通过 `perMessageDeflate` 参数启用逐消息压缩。当设置后，所有消息将使用 [permessage-deflate](https://tools.ietf.org/html/rfc7692) WebSocket 扩展进行压缩。
+
+```ts server.ts icon="/icons/typescript.svg"
+Bun.serve({
+  // ...
+  websocket: {
+    // 启用压缩
+    perMessageDeflate: true,
+  },
+});
+```
+
+---
+
+要为单个消息启用压缩，请将 `true` 作为第二个参数传递给 `ws.send()`。
+
+```ts server.ts icon="/icons/typescript.svg"
+Bun.serve({
+  // ...
+  websocket: {
+    async message(ws, message) {
+      // 发送压缩消息
+      ws.send(message, true);
+    },
+  },
+});
+```

@@ -1,0 +1,204 @@
+---
+title: C 编译器
+description: 以低开销从 JavaScript 编译和运行 C
+---
+
+`bun:ffi` 实验性地支持以低开销从 JavaScript 编译和运行 C。
+
+---
+
+## 用法 (cc in `bun:ffi`)
+
+更多信息请参见 [介绍博客文章](https://bun.com/blog/compile-and-run-c-in-js)。
+
+JavaScript:
+
+```ts hello.ts icon="file-code"
+import { cc } from "bun:ffi";
+import source from "./hello.c" with { type: "file" };
+
+const {
+  symbols: { hello },
+} = cc({
+  source,
+  symbols: {
+    hello: {
+      args: [],
+      returns: "int",
+    },
+  },
+});
+
+console.log("What is the answer to the universe?", hello());
+```
+
+C 源码:
+
+```c hello.c
+int hello() {
+  return 42;
+}
+```
+
+当你运行 `hello.js` 时，它将打印:
+
+```sh terminal icon="terminal"
+bun hello.js
+What is the answer to the universe? 42
+```
+
+在底层，`cc` 使用 [TinyCC](https://bellard.org/tcc/) 编译 C 代码，然后将其与 JavaScript 运行时链接，有效地就地转换类型。
+
+### 基本类型
+
+在 [`dlopen`](/runtime/ffi) 中支持的相同 `FFIType` 值在 `cc` 中也受支持。
+
+| `FFIType`  | C 类型           | 别名                        |
+| ---------- | ---------------- | --------------------------- |
+| cstring    | `char*`          |                             |
+| function   | `(void*)(*)()`   | `fn`, `callback`            |
+| ptr        | `void*`          | `pointer`, `void*`, `char*` |
+| i8         | `int8_t`         | `int8_t`                    |
+| i16        | `int16_t`        | `int16_t`                   |
+| i32        | `int32_t`        | `int32_t`, `int`            |
+| i64        | `int64_t`        | `int64_t`                   |
+| i64_fast   | `int64_t`        |                             |
+| u8         | `uint8_t`        | `uint8_t`                   |
+| u16        | `uint16_t`       | `uint16_t`                  |
+| u32        | `uint32_t`       | `uint32_t`                  |
+| u64        | `uint64_t`       | `uint64_t`                  |
+| u64_fast   | `uint64_t`       |                             |
+| f32        | `float`          | `float`                     |
+| f64        | `double`         | `double`                    |
+| bool       | `bool`           |                             |
+| char       | `char`           |                             |
+| napi_env   | `napi_env`       |                             |
+| napi_value | `napi_value`     |                             |
+
+### 字符串、对象和非基本类型
+
+为了更容易处理字符串、对象和其他不能一对一映射到 C 类型的非基本类型，`cc` 支持 N-API。
+
+要从 C 函数传递或接收 JavaScript 值而不进行任何类型转换，可以使用 `napi_value`。
+
+还可以传递 `napi_env` 来接收用于调用 JavaScript 函数的 N-API 环境。
+
+#### 将 C 字符串返回到 JavaScript
+
+例如，如果你在 C 中有一个字符串，你可以像这样将其返回给 JavaScript：
+
+```ts hello.ts
+import { cc } from "bun:ffi";
+import source from "./hello.c" with { type: "file" };
+
+const {
+  symbols: { hello },
+} = cc({
+  source,
+  symbols: {
+    hello: {
+      args: ["napi_env"],
+      returns: "napi_value",
+    },
+  },
+});
+
+const result = hello();
+```
+
+C 代码:
+
+```c hello.c
+#include <node/node_api.h>
+
+napi_value hello(napi_env env) {
+  napi_value result;
+  napi_create_string_utf8(env, "Hello, Napi!", NAPI_AUTO_LENGTH, &result);
+  return result;
+}
+```
+
+你也可以使用它来返回其他类型，如对象和数组:
+
+```c hello.c
+#include <node/node_api.h>
+
+napi_value hello(napi_env env) {
+  napi_value result;
+  napi_create_object(env, &result);
+  return result;
+}
+```
+
+### `cc` 参考
+
+#### `library: string[]`
+
+`library` 数组用于指定应该与 C 代码链接的库。
+
+```ts
+type Library = string[];
+
+cc({
+  source: "hello.c",
+  library: ["sqlite3"],
+});
+```
+
+#### `symbols`
+
+`symbols` 对象用于指定应该暴露给 JavaScript 的函数和变量。
+
+```ts
+type Symbols = {
+  [key: string]: {
+    args: FFIType[];
+    returns: FFIType;
+  };
+};
+```
+
+#### `source`
+
+`source` 是应该被编译并与 JavaScript 运行时链接的 C 代码的文件路径。
+
+```ts
+type Source = string | URL | BunFile;
+
+cc({
+  source: "hello.c",
+  symbols: {
+    hello: {
+      args: [],
+      returns: "int",
+    },
+  },
+});
+```
+
+#### `flags: string | string[]`
+
+`flags` 是一个可选的字符串数组，应该传递给 TinyCC 编译器。
+
+```ts
+type Flags = string | string[];
+```
+
+这些是像 `-I` 用于包含目录和 `-D` 用于预处理器定义的标志。
+
+#### `define: Record<string, string>`
+
+`define` 是一个可选对象，应该传递给 TinyCC 编译器。
+
+```ts
+type Defines = Record<string, string>;
+
+cc({
+  source: "hello.c",
+  define: {
+    NDEBUG: "1",
+  },
+});
+```
+
+这些是传递给 TinyCC 编译器的预处理器定义。

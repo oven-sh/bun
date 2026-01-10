@@ -1,0 +1,25 @@
+---
+title: 生成 UUID
+sidebarTitle: 生成 UUID
+mode: center
+---
+
+使用 `crypto.randomUUID()` 生成 UUID v4。此 API 在 Bun、Node.js 和浏览器中都可以工作。它不需要任何依赖项。
+
+```ts
+crypto.randomUUID();
+// => "123e4567-e89b-42d3-a456-426614174000"
+```
+
+---
+
+在 Bun 中，您还可以使用 `Bun.randomUUIDv7()` 生成 [UUID v7](https://www.ietf.org/archive/id/draft-peabody-dispatch-new-uuid-format-01.html)。
+
+```ts
+Bun.randomUUIDv7();
+// => "0196a000-bb12-7000-905e-8039f5d5b206"
+```
+
+---
+
+请参阅 [文档 > API > 工具](/runtime/utils) 了解更多的实用工具。

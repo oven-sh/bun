@@ -1,0 +1,75 @@
+---
+title: 在 Azure Artifacts npm 注册表中使用 bun install
+sidebarTitle: Azure Artifacts 与 Bun
+mode: center
+---
+
+<Note>
+  在 [Azure
+  Artifact's](https://learn.microsoft.com/en-us/azure/devops/artifacts/npm/npmrc?view=azure-devops&tabs=windows%2Cclassic)
+  的 `.npmrc` 指南中，他们说要对密码进行 base64 编码。对于 `bun install` 不要这样做。Bun 会在需要时自动为您 base64 编码密码。
+</Note>
+
+[Azure Artifacts](https://azure.microsoft.com/en-us/products/devops/artifacts) 是 Azure DevOps 的包管理系统。它允许您托管自己的私有 npm 注册表、npm 包和其他类型的包。
+
+---
+
+### 使用 bunfig.toml 配置
+
+---
+
+要在 `bun install` 中使用它，请在项目中添加一个 [bunfig.toml] 文件，并包含以下内容。请确保将 `my-azure-artifacts-user` 替换为您的 Azure Artifacts 用户名，例如 `jarred1234`。
+
+```toml bunfig.toml icon="settings"
+[install.registry]
+url = "https://pkgs.dev.azure.com/my-azure-artifacts-user/_packaging/my-azure-artifacts-user/npm/registry"
+username = "my-azure-artifacts-user"
+# 您可以在这里使用环境变量
+password = "$NPM_PASSWORD"
+```
+
+---
+
+然后将您的 Azure 个人访问令牌分配给 `NPM_PASSWORD` 环境变量。Bun [自动读取](/runtime/environment-variables) [.env] 文件，所以在您的项目根目录创建一个名为 [.env] 的文件。无需对这个令牌进行 base-64 编码！Bun 会为您完成这项工作。
+
+```ini .env icon="settings"
+NPM_PASSWORD=<粘贴令牌到这里>
+```
+
+---
+
+### 使用环境变量配置
+
+---
+
+要在不使用 [bunfig.toml] 的情况下配置 Azure Artifacts，您可以设置 `NPM_CONFIG_REGISTRY` 环境变量。URL 应该包含 `:username` 和 `:_password` 作为查询参数。将 `<USERNAME>` 和 `<PASSWORD>` 替换为适当的值。
+
+```bash terminal icon="terminal"
+NPM_CONFIG_REGISTRY=https://pkgs.dev.azure.com/my-azure-artifacts-user/_packaging/my-azure-artifacts-user/npm/registry/:username=<USERNAME>:_password=<PASSWORD>
+```
+
+---
+
+### 不要对密码进行 base64 编码
+
+---
+
+在 [Azure Artifact's](https://learn.microsoft.com/en-us/azure/devops/artifacts/npm/npmrc?view=azure-devops&tabs=windows%2Cclassic) 的 `.npmrc` 指南中，他们说要对密码进行 base64 编码。对于 `bun install` 不要这样做。Bun 会在需要时自动为您 base64 编码密码。
+
+<Note>**提示** — 如果它以 `==` 结尾，那可能是 base64 编码的。</Note>
+
+---
+
+要解码 base64 编码的密码，在您的浏览器控制台中运行：
+
+```js browser icon="computer"
+atob("<base64编码的密码>");
+```
+
+---
+
+或者，使用 `base64` 命令行工具，但这样做意味着它可能会保存在终端历史记录中，这是不推荐的：
+
+```bash terminal icon="terminal"
+echo "base64编码的密码" | base64 --decode
+```

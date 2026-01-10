@@ -1,0 +1,18 @@
+---
+title: 将 Uint8Array 转换为 Blob
+sidebarTitle: "Uint8Array 到 Blob"
+mode: center
+---
+
+一个 [Blob](https://developer.mozilla.org/zh-CN/docs/Web/API/Blob) 可以由一组"块"构成，其中每个块可以是字符串、二进制数据结构（包括 `Uint8Array`）或其他 `Blob`。
+
+```ts
+const arr = new Uint8Array([0x68, 0x65, 0x6c, 0x6c, 0x6f]);
+const blob = new Blob([arr]);
+console.log(await blob.text());
+// => "hello"
+```
+
+---
+
+参阅 [文档 > API > 二进制数据](/runtime/binary-data#conversion) 获取关于使用Bun操作二进制数据的完整文档。

@@ -1,0 +1,16 @@
+---
+title: 将 ReadableStream 转换为 JSON
+sidebarTitle: ReadableStream 转换为 JSON
+mode: center
+---
+
+Bun 提供了许多便利函数，用于将 [`ReadableStream`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStream) 的内容读取为不同格式。
+
+```ts
+const stream = new ReadableStream();
+const json = await stream.json();
+```
+
+---
+
+请参阅 [文档 > API > 工具](/runtime/utils#bun-readablestreamto) 了解 Bun 的其他 `ReadableStream` 转换函数的文档。

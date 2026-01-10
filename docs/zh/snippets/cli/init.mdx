@@ -1,0 +1,83 @@
+## CLI 用法
+
+```bash terminal icon="terminal"
+bun init <folder?>
+```
+
+### 初始化选项
+
+<ParamField path="--yes" type="boolean">
+  {" "}
+  接受所有默认提示而不询问问题。别名：<code>-y</code>{" "}
+</ParamField>
+<ParamField path="--minimal" type="boolean">
+  {" "}
+  仅初始化类型定义（跳过应用程序脚手架）。别名：<code>-m</code>{" "}
+</ParamField>
+
+### 项目模板
+
+<ParamField path="--react" type="string|boolean">
+  {" "}
+  搭建一个 React 项目。使用时不带值时，创建一个基础 React 应用。
+  <br /> 接受预设值：{" "}
+  <ul>
+    {" "}
+    <li>
+      <code>tailwind</code> – 预配置了 Tailwind CSS 的 React 应用
+    </li>{" "}
+    <li>
+      <code>shadcn</code> – 带有 <code>@shadcn/ui</code> 和 Tailwind CSS 的 React 应用
+    </li>{" "}
+  </ul>{" "}
+  示例：{" "}
+  <pre>
+    <code>bun init --react bun init --react=tailwind bun init --react=shadcn</code>
+  </pre>{" "}
+</ParamField>
+
+### 输出和文件
+
+<ParamField path="(result)" type="info">
+  {" "}
+  为所选选项初始化项目文件和配置（例如，创建基本配置文件和入门目录结构）。确切的文件因模板而异。{" "}
+</ParamField>
+
+### 全局配置和上下文
+
+<ParamField path="--cwd" type="string">
+  {" "}
+  就像在不同的工作目录中启动一样运行 <code>bun init</code>（在脚本中有用）。{" "}
+</ParamField>
+
+### 帮助
+
+<ParamField path="--help" type="boolean">
+  {" "}
+  打印此帮助菜单。别名：<code>-h</code>{" "}
+</ParamField>
+
+### 示例
+
+- 接受所有默认值
+
+  ```bash terminal icon="terminal"
+  bun init -y
+  ```
+
+- React
+
+  ```bash terminal icon="terminal"
+  bun init --react
+  ```
+
+- React + Tailwind CSS
+
+  ```bash terminal icon="terminal"
+  bun init --react=tailwind
+  ```
+
+- React + @shadcn/ui
+  ```bash terminal icon="terminal"
+  bun init --react=shadcn
+  ```

@@ -1,0 +1,54 @@
+---
+title: 为 Bun 应用添加 Sentry
+sidebarTitle: Sentry 与 Bun
+mode: center
+---
+
+[Sentry](https://sentry.io) 是一个以开发者为中心的错误跟踪和性能监控平台。Sentry 为 Bun 提供了一流的 SDK，`@sentry/bun`，它可以监控您的 Bun 应用程序，自动收集错误和性能数据。
+
+还没有账户和 Sentry 项目？请前往 [sentry.io](https://sentry.io/signup/) 注册，然后回到此页面。
+
+---
+
+要开始在 Bun 中使用 Sentry，首先安装 Sentry Bun SDK。
+
+```sh terminal icon="terminal"
+bun add @sentry/bun
+```
+
+---
+
+然后，在您应用的入口文件中使用 Sentry DSN 初始化 Sentry SDK。您可以在 Sentry 项目设置中找到您的 DSN。
+
+```ts sentry.ts icon="/icons/typescript.svg"
+import * as Sentry from "@sentry/bun";
+
+// 确保在导入任何其他模块之前调用此方法！
+Sentry.init({
+  dsn: "__SENTRY_DSN__",
+
+  // 通过设置 tracesSampleRate 添加性能监控
+  // 我们建议在生产环境中调整此值
+  tracesSampleRate: 1.0,
+});
+```
+
+---
+
+您可以通过捕获一个测试错误来验证 Sentry 是否正常工作：
+
+```ts sentry.ts icon="/icons/typescript.svg"
+setTimeout(() => {
+  try {
+    foo();
+  } catch (e) {
+    Sentry.captureException(e);
+  }
+}, 99);
+```
+
+要查看和解决记录的错误，请登录 [sentry.io](https://sentry.io/) 并打开您的项目。点击错误的标题将打开一个页面，在那里您可以查看详细信息并将其标记为已解决。
+
+---
+
+要了解更多关于 Sentry 和使用 Sentry Bun SDK 的信息，请查看 [Sentry 文档](https://docs.sentry.io/platforms/javascript/guides/bun)。

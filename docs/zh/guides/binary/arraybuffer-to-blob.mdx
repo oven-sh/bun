@@ -1,0 +1,26 @@
+---
+title: 将 ArrayBuffer 转换为 Blob
+sidebarTitle: "ArrayBuffer 到 Blob"
+mode: center
+---
+
+一个 [Blob](https://developer.mozilla.org/zh-CN/docs/Web/API/Blob) 可以由一组"块"构成，其中每个块可以是字符串、二进制数据结构或其他 `Blob`。
+
+```ts
+const buf = new ArrayBuffer(64);
+const blob = new Blob([buf]);
+```
+
+---
+
+默认情况下，结果 [Blob](https://developer.mozilla.org/zh-CN/docs/Web/API/Blob) 的 `type` 将未设置。这可以手动设置。
+
+```ts
+const buf = new ArrayBuffer(64);
+const blob = new Blob([buf], { type: "application/octet-stream" });
+blob.type; // => "application/octet-stream"
+```
+
+---
+
+参阅 [文档 > API > 二进制数据](/runtime/binary-data#conversion) 获取关于使用Bun操作二进制数据的完整文档。

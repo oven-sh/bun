@@ -1,0 +1,17 @@
+---
+title: 编码和解码 base64 字符串
+sidebarTitle: Base64 编码
+mode: center
+---
+
+Bun 实现了 Web 标准的 [`atob`](https://developer.mozilla.org/en-US/docs/Web/API/WindowOrWorkerGlobalScope/atob) 和 [`btoa`](https://developer.mozilla.org/en-US/docs/Web/API/WindowOrWorkerGlobalScope/btoa) 函数，用于编码和解码 base64 字符串。
+
+```ts
+const data = "hello world";
+const encoded = btoa(data); // => "aGVsbG8gd29ybGQ="
+const decoded = atob(encoded); // => "hello world"
+```
+
+---
+
+请参阅 [文档 > Web APIs](/runtime/web-apis) 了解 Bun 中实现的 Web APIs 的完整说明。

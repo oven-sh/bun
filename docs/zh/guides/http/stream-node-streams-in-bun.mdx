@@ -1,0 +1,22 @@
+---
+title: 使用 Node.js 流的流式 HTTP 服务器
+sidebarTitle: 与 Node.js 一起流式传输
+mode: center
+---
+
+在 Bun 中，[`Response`](https://developer.mozilla.org/en-US/docs/Web/API/Response) 对象可以接受一个 Node.js [`Readable`](https://nodejs.org/api/stream.html#stream_readable_streams)。
+
+这是可行的，因为 Bun 的 `Response` 对象允许任何异步可迭代对象作为其主体。Node.js 流是异步可迭代对象，因此您可以直接将它们传递给 `Response`。
+
+```ts server.ts icon="/icons/typescript.svg"
+import { Readable } from "stream";
+import { serve } from "bun";
+serve({
+  port: 3000,
+  fetch(req) {
+    return new Response(Readable.from(["Hello, ", "world!"]), {
+      headers: { "Content-Type": "text/plain" },
+    });
+  },
+});
+```

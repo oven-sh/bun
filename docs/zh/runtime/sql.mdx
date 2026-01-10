@@ -1,0 +1,1404 @@
+---
+title: SQL
+description: Bun 提供原生绑定，通过统一的基于 Promise 的 API 与 SQL 数据库进行交互，支持 PostgreSQL、MySQL 和 SQLite。
+---
+
+接口设计简单且高性能，使用标签模板字面量进行查询，并提供连接池、事务和预处理语句等功能。
+
+```ts title="db.ts" icon="/icons/typescript.svg"
+import { sql, SQL } from "bun";
+
+// PostgreSQL (默认)
+const users = await sql`
+  SELECT * FROM users
+  WHERE active = ${true}
+  LIMIT ${10}
+`;
+
+// 使用 MySQL
+const mysql = new SQL("mysql://user:pass@localhost:3306/mydb");
+const mysqlResults = await mysql`
+  SELECT * FROM users 
+  WHERE active = ${true}
+`;
+
+// 使用 SQLite
+const sqlite = new SQL("sqlite://myapp.db");
+const sqliteResults = await sqlite`
+  SELECT * FROM users 
+  WHERE active = ${1}
+`;
+```
+
+### 功能
+
+- 标签模板字面量防止 SQL 注入
+- 事务
+- 命名和位置参数
+- 连接池
+- `BigInt` 支持
+- SASL 认证支持 (SCRAM-SHA-256)、MD5 和明文
+- 连接超时
+- 以数据对象、数组或缓冲区的形式返回行
+- 二进制协议支持使其更快
+- TLS 支持（和认证模式）
+- 使用环境变量自动配置
+
+---
+
+## 数据库支持
+
+`Bun.SQL` 为多个数据库系统提供统一 API：
+
+### PostgreSQL
+
+在以下情况下使用 PostgreSQL：
+
+- 连接字符串不匹配 SQLite 或 MySQL 模式（它是后备适配器）
+- 连接字符串明确使用 `postgres://` 或 `postgresql://` 协议
+- 没有提供连接字符串且环境变量指向 PostgreSQL
+
+```ts title="db.ts" icon="/icons/typescript.svg"
+import { sql } from "bun";
+// 如果未设置 DATABASE_URL 或是 PostgreSQL URL，则使用 PostgreSQL
+await sql`SELECT ...`;
+
+import { SQL } from "bun";
+const pg = new SQL("postgres://user:pass@localhost:5432/mydb");
+await pg`SELECT ...`;
+```
+
+### MySQL
+
+MySQL 支持内置在 Bun.SQL 中，提供相同的标签模板字面量接口，完全兼容 MySQL 5.7+ 和 MySQL 8.0+：
+
+```ts title="db.ts" icon="/icons/typescript.svg"
+import { SQL } from "bun";
+
+// MySQL 连接
+const mysql = new SQL("mysql://user:password@localhost:3306/database");
+const mysql2 = new SQL("mysql2://user:password@localhost:3306/database"); // mysql2 协议也有效
+
+// 使用选项对象
+const mysql3 = new SQL({
+  adapter: "mysql",
+  hostname: "localhost",
+  port: 3306,
+  database: "myapp",
+  username: "dbuser",
+  password: "secretpass",
+});
+
+// 使用参数 - 自动使用预处理语句
+const users = await mysql`SELECT * FROM users WHERE id = ${userId}`;
+
+// 事务与 PostgreSQL 相同
+await mysql.begin(async tx => {
+  await tx`INSERT INTO users (name) VALUES (${"Alice"})`;
+  await tx`UPDATE accounts SET balance = balance - 100 WHERE user_id = ${userId}`;
+});
+
+// 批量插入
+const newUsers = [
+  { name: "Alice", email: "alice@example.com" },
+  { name: "Bob", email: "bob@example.com" },
+];
+await mysql`INSERT INTO users ${mysql(newUsers)}`;
+```
+
+<Accordion title="MySQL 连接字符串格式">
+
+MySQL 接受各种 URL 格式作为连接字符串：
+
+```ts
+// 标准 mysql:// 协议
+new SQL("mysql://user:pass@localhost:3306/database");
+new SQL("mysql://user:pass@localhost/database"); // 默认端口 3306
+
+// mysql2:// 协议（与 mysql2 npm 包兼容）
+new SQL("mysql2://user:pass@localhost:3306/database");
+
+// 带查询参数
+new SQL("mysql://user:pass@localhost/db?ssl=true");
+
+// Unix 套接字连接
+new SQL("mysql://user:pass@/database?socket=/var/run/mysqld/mysqld.sock");
+```
+
+</Accordion>
+
+<Accordion title="MySQL 特定功能">
+
+MySQL 数据库支持：
+
+- **预处理语句**: 自动为参数化查询创建带有语句缓存的预处理语句
+- **二进制协议**: 用于更好的预处理语句性能和准确的类型处理
+- **多结果集**: 支持存储过程返回多个结果集
+- **认证插件**: 支持 mysql_native_password、caching_sha2_password（MySQL 8.0 默认）和 sha256_password
+- **SSL/TLS 连接**: 可配置的 SSL 模式，类似于 PostgreSQL
+- **连接属性**: 发送到服务器的客户端信息以供监控
+- **查询管道**: 执行多个预处理语句而无需等待响应
+
+</Accordion>
+
+### SQLite
+
+SQLite 支持内置在 Bun.SQL 中，提供相同的标签模板字面量接口：
+
+```ts
+import { SQL } from "bun";
+
+// 内存数据库
+const memory = new SQL(":memory:");
+const memory2 = new SQL("sqlite://:memory:");
+
+// 基于文件的数据库
+const sql1 = new SQL("sqlite://myapp.db");
+
+// 使用选项对象
+const sql2 = new SQL({
+  adapter: "sqlite",
+  filename: "./data/app.db",
+});
+
+// 对于简单文件名，明确指定适配器
+const sql3 = new SQL("myapp.db", { adapter: "sqlite" });
+```
+
+<Accordion title="SQLite 连接字符串格式">
+
+SQLite 接受各种 URL 格式作为连接字符串：
+
+```ts
+// 标准 sqlite:// 协议
+new SQL("sqlite://path/to/database.db");
+new SQL("sqlite:path/to/database.db"); // 无斜杠
+
+// file:// 协议（也识别为 SQLite）
+new SQL("file://path/to/database.db");
+new SQL("file:path/to/database.db");
+
+// 特殊 :memory: 数据库
+new SQL(":memory:");
+new SQL("sqlite://:memory:");
+new SQL("file://:memory:");
+
+// 相对和绝对路径
+new SQL("sqlite://./local.db"); // 相对于当前目录
+new SQL("sqlite://../parent/db.db"); // 父目录
+new SQL("sqlite:///absolute/path.db"); // 绝对路径
+
+// 带查询参数
+new SQL("sqlite://data.db?mode=ro"); // 只读模式
+new SQL("sqlite://data.db?mode=rw"); // 读写模式（无创建）
+new SQL("sqlite://data.db?mode=rwc"); // 读写创建模式（默认）
+```
+
+    <Note>
+    没有协议的简单文件名（如 `"myapp.db"`）需要明确指定 `{ adapter: "sqlite" }` 以避免与 PostgreSQL 混淆。
+    </Note>
+
+</Accordion>
+
+<Accordion title="SQLite 特定选项">
+
+SQLite 数据库支持额外的配置选项：
+
+```ts
+const sql = new SQL({
+  adapter: "sqlite",
+  filename: "app.db",
+
+  // SQLite 特定选项
+  readonly: false, // 以只读模式打开
+  create: true, // 如果不存在则创建数据库
+  readwrite: true, // 以读写模式打开
+
+  // 额外的 Bun:sqlite 选项
+  strict: true, // 启用严格模式
+  safeIntegers: false, // 使用 JavaScript 数字表示整数
+});
+```
+
+URL 中的查询参数被解析以设置这些选项：
+
+- `?mode=ro` → `readonly: true`
+- `?mode=rw` → `readonly: false, create: false`
+- `?mode=rwc` → `readonly: false, create: true`（默认）
+
+</Accordion>
+
+## 插入数据
+
+您可以直接将 JavaScript 值传递给 SQL 模板字面量，转义将为您处理。
+
+```ts
+import { sql } from "bun";
+
+// 使用直接值的基本插入
+const [user] = await sql`
+  INSERT INTO users (name, email) 
+  VALUES (${name}, ${email})
+  RETURNING *
+`;
+
+// 使用对象辅助器以获得更清晰的语法
+const userData = {
+  name: "Alice",
+  email: "alice@example.com",
+};
+
+const [newUser] = await sql`
+  INSERT INTO users ${sql(userData)}
+  RETURNING *
+`;
+// 展开为: INSERT INTO users (name, email) VALUES ('Alice', 'alice@example.com')
+```
+
+### 批量插入
+
+您也可以将对象数组传递给 SQL 模板字面量，它将扩展为 `INSERT INTO ... VALUES ...` 语句。
+
+```ts
+const users = [
+  { name: "Alice", email: "alice@example.com" },
+  { name: "Bob", email: "bob@example.com" },
+  { name: "Charlie", email: "charlie@example.com" },
+];
+
+await sql`INSERT INTO users ${sql(users)}`;
+```
+
+### 选择要插入的列
+
+您可以使用 `sql(object, ...string)` 来选择要插入的列。每个列都必须在对象上定义。
+
+```ts
+const user = {
+  name: "Alice",
+  email: "alice@example.com",
+  age: 25,
+};
+
+await sql`INSERT INTO users ${sql(user, "name", "email")}`;
+// 只插入 name 和 email 列，忽略其他字段
+```
+
+---
+
+## 查询结果
+
+默认情况下，Bun 的 SQL 客户端返回查询结果作为对象数组，其中每个对象代表一行，列名作为键。但是，在某些情况下，您可能希望数据采用不同格式。客户端为此目的提供了两种附加方法。
+
+### `sql``.values()` 格式
+
+`sql``.values()` 方法将行作为值数组而不是对象返回。每行成为一个数组，其中值的顺序与查询中列的顺序相同。
+
+```ts
+const rows = await sql`SELECT * FROM users`.values();
+console.log(rows);
+```
+
+这返回类似这样的内容：
+
+```ts
+[
+  ["Alice", "alice@example.com"],
+  ["Bob", "bob@example.com"],
+];
+```
+
+`sql``.values()` 在查询结果中返回重复列名时特别有用。使用对象（默认）时，最后一个列名用作对象中的键，这意味着重复列名会相互覆盖 —— 但使用 `sql``.values()` 时，每个列都在数组中，因此您可以通过索引访问重复列的值。
+
+### `sql``.raw()` 格式
+
+`.raw()` 方法将行作为 `Buffer` 对象数组返回。这对于处理二进制数据或出于性能原因可能很有用。
+
+```ts
+const rows = await sql`SELECT * FROM users`.raw();
+console.log(rows); // [[Buffer, Buffer], [Buffer, Buffer], [Buffer, Buffer]]
+```
+
+---
+
+## SQL 片段
+
+数据库应用程序中的常见需求是根据运行时条件动态构建查询的能力。Bun 提供了安全的方法来实现这一点，而不会冒 SQL 注入的风险。
+
+### 动态表名
+
+当您需要动态引用表或模式时，使用 `sql()` 辅助器确保适当的转义：
+
+```ts
+// 安全地动态引用表
+await sql`SELECT * FROM ${sql("users")}`;
+
+// 带模式限定
+await sql`SELECT * FROM ${sql("public.users")}`;
+```
+
+### 条件查询
+
+您可以使用 `sql()` 辅助器构建带有条件子句的查询。这允许您创建适应应用程序需求的灵活查询：
+
+```ts
+// 可选的 WHERE 子句
+const filterAge = true;
+const minAge = 21;
+const ageFilter = sql`AND age > ${minAge}`;
+await sql`
+  SELECT * FROM users
+  WHERE active = ${true}
+  ${filterAge ? ageFilter : sql``}
+`;
+```
+
+### 更新中的动态列
+
+您可以使用 `sql(object, ...string)` 来选择要更新的列。每个列都必须在对象上定义。如果未指定列，则将使用对象的所有键来更新行。
+
+```ts
+await sql`UPDATE users SET ${sql(user, "name", "email")} WHERE id = ${user.id}`;
+// 使用对象的所有键来更新行
+await sql`UPDATE users SET ${sql(user)} WHERE id = ${user.id}`;
+```
+
+### 动态值和 `where in`
+
+值列表也可以动态创建，使 where in 查询变得简单。可选择传递对象数组并告知使用哪个键来创建列表。
+
+```ts
+await sql`SELECT * FROM users WHERE id IN ${sql([1, 2, 3])}`;
+
+const users = [
+  { id: 1, name: "Alice" },
+  { id: 2, name: "Bob" },
+  { id: 3, name: "Charlie" },
+];
+await sql`SELECT * FROM users WHERE id IN ${sql(users, "id")}`;
+```
+
+### `sql.array` 辅助器
+
+`sql.array` 辅助器从 JavaScript 数组创建 PostgreSQL 数组字面量：
+
+```ts
+// 为 PostgreSQL 创建数组字面量
+await sql`INSERT INTO tags (items) VALUES (${sql.array(["red", "blue", "green"])})`;
+// 生成: INSERT INTO tags (items) VALUES (ARRAY['red', 'blue', 'green'])
+
+// 同样适用于数字数组
+await sql`SELECT * FROM products WHERE ids = ANY(${sql.array([1, 2, 3])})`;
+// 生成: SELECT * FROM products WHERE ids = ANY(ARRAY[1, 2, 3])
+```
+
+<Note>`sql.array` 仅适用于 PostgreSQL。多维数组和 NULL 元素可能尚未支持。</Note>
+
+---
+
+## `sql``.simple()`
+
+PostgreSQL 线协议支持两种类型的查询："简单"和"扩展"。简单查询可以包含多个语句但不支持参数，而扩展查询（默认）支持参数但只允许一个语句。
+
+要在单个查询中运行多个语句，请使用 `sql``.simple()`：
+
+```ts
+// 一个查询中的多个语句
+await sql`
+  SELECT 1;
+  SELECT 2;
+`.simple();
+```
+
+简单查询通常对数据库迁移和设置脚本很有用。
+
+请注意，简单查询不能使用参数 (`${value}`)。如果需要参数，必须将查询拆分为单独的语句。
+
+### 文件中的查询
+
+您可以使用 `sql.file` 方法从文件读取查询并执行它，如果文件包含 $1、$2 等，您可以向查询传递参数。如果没有使用参数，它可以在每个文件中执行多个命令。
+
+```ts
+const result = await sql.file("query.sql", [1, 2, 3]);
+```
+
+### 不安全查询
+
+您可以使用 `sql.unsafe` 函数执行原始 SQL 字符串。请谨慎使用，因为它不会转义用户输入。如果未使用参数，则允许每个查询执行多个命令。
+
+```ts
+// 没有参数的多个命令
+const result = await sql.unsafe(`
+  SELECT ${userColumns} FROM users;
+  SELECT ${accountColumns} FROM accounts;
+`);
+
+// 使用参数（只允许一个命令）
+const result = await sql.unsafe("SELECT " + dangerous + " FROM users WHERE id = $1", [id]);
+```
+
+### 执行和取消查询
+
+Bun 的 SQL 是惰性的，这意味着它只在等待或使用 `.execute()` 执行时才开始执行。
+您可以通过在查询对象上调用 `cancel()` 方法来取消当前正在执行的查询。
+
+```ts
+const query = sql`SELECT * FROM users`.execute();
+setTimeout(() => query.cancel(), 100);
+await query;
+```
+
+---
+
+## 数据库环境变量
+
+`sql` 连接参数可以使用环境变量配置。客户端按特定的优先级顺序检查这些变量，并根据连接字符串格式自动检测数据库类型。
+
+### 自动数据库检测
+
+使用不带参数的 `Bun.sql()` 或带连接字符串的 `new SQL()` 时，适配器根据 URL 格式自动检测：
+
+#### MySQL 自动检测
+
+当连接字符串匹配这些模式时，自动选择 MySQL：
+
+- `mysql://...` - MySQL 协议 URL
+- `mysql2://...` - MySQL2 协议 URL（兼容性别名）
+
+```ts
+// 这些都自动使用 MySQL（不需要适配器）
+const sql1 = new SQL("mysql://user:pass@localhost/mydb");
+const sql2 = new SQL("mysql2://user:pass@localhost:3306/mydb");
+
+// 与 DATABASE_URL 环境变量配合使用
+DATABASE_URL="mysql://user:pass@localhost/mydb" bun run app.js
+DATABASE_URL="mysql2://user:pass@localhost:3306/mydb" bun run app.js
+```
+
+#### SQLite 自动检测
+
+当连接字符串匹配这些模式时，自动选择 SQLite：
+
+- `:memory:` - 内存数据库
+- `sqlite://...` - SQLite 协议 URL
+- `sqlite:...` - 无斜杠的 SQLite 协议
+- `file://...` - 文件协议 URL
+- `file:...` - 无斜杠的文件协议
+
+```ts
+// 这些都自动使用 SQLite（不需要适配器）
+const sql1 = new SQL(":memory:");
+const sql2 = new SQL("sqlite://app.db");
+const sql3 = new SQL("file://./database.db");
+
+// 与 DATABASE_URL 环境变量配合使用
+DATABASE_URL=":memory:" bun run app.js
+DATABASE_URL="sqlite://myapp.db" bun run app.js
+DATABASE_URL="file://./data/app.db" bun run app.js
+```
+
+#### PostgreSQL 自动检测
+
+PostgreSQL 是连接字符串的默认选择，这些字符串不匹配 MySQL 或 SQLite 模式：
+
+```bash
+# 检测到这些模式为 PostgreSQL
+DATABASE_URL="postgres://user:pass@localhost:5432/mydb" bun run app.js
+DATABASE_URL="postgresql://user:pass@localhost:5432/mydb" bun run app.js
+
+# 或任何不匹配 MySQL 或 SQLite 模式的 URL
+DATABASE_URL="localhost:5432/mydb" bun run app.js
+```
+
+### MySQL 环境变量
+
+MySQL 连接可以通过环境变量配置：
+
+```bash
+# 主连接 URL（首先检查）
+MYSQL_URL="mysql://user:pass@localhost:3306/mydb"
+
+# 替代方案：带 MySQL 协议的 DATABASE_URL
+DATABASE_URL="mysql://user:pass@localhost:3306/mydb"
+DATABASE_URL="mysql2://user:pass@localhost:3306/mydb"
+```
+
+如果没有提供连接 URL，MySQL 检查这些单独的参数：
+
+| 环境变量 | 默认值 | 描述 |
+| ------------------------ | ------------- | -------------------------------- |
+| `MYSQL_HOST` | `localhost` | 数据库主机 |
+| `MYSQL_PORT` | `3306` | 数据库端口 |
+| `MYSQL_USER` | `root` | 数据库用户 |
+| `MYSQL_PASSWORD` | (empty) | 数据库密码 |
+| `MYSQL_DATABASE` | `mysql` | 数据库名称 |
+| `MYSQL_URL` | (empty) | MySQL 的主连接 URL |
+| `TLS_MYSQL_DATABASE_URL` | (empty) | SSL/TLS 启用的连接 URL |
+
+### PostgreSQL 环境变量
+
+以下环境变量可用于定义 PostgreSQL 连接：
+
+| 环境变量 | 描述 |
+| --------------------------- | ------------------------------------------ |
+| `POSTGRES_URL` | PostgreSQL 的主连接 URL |
+| `DATABASE_URL` | 替代连接 URL（自动检测） |
+| `PGURL` | 替代连接 URL |
+| `PG_URL` | 替代连接 URL |
+| `TLS_POSTGRES_DATABASE_URL` | SSL/TLS 启用的连接 URL |
+| `TLS_DATABASE_URL` | 替代 SSL/TLS 启用的连接 URL |
+
+如果没有提供连接 URL，系统会检查以下单独的参数：
+
+| 环境变量 | 后备变量 | 默认值 | 描述 |
+| -------------------- | ---------------------------- | ------------- | ----------------- |
+| `PGHOST` | - | `localhost` | 数据库主机 |
+| `PGPORT` | - | `5432` | 数据库端口 |
+| `PGUSERNAME` | `PGUSER`, `USER`, `USERNAME` | `postgres` | 数据库用户 |
+| `PGPASSWORD` | - | (empty) | 数据库密码 |
+| `PGDATABASE` | - | username | 数据库名称 |
+
+### SQLite 环境变量
+
+当 `DATABASE_URL` 包含 SQLite 兼容 URL 时，可以通过环境变量配置 SQLite 连接：
+
+```bash
+# 这些都被识别为 SQLite
+DATABASE_URL=":memory:"
+DATABASE_URL="sqlite://./app.db"
+DATABASE_URL="file:///absolute/path/to/db.sqlite"
+```
+
+**注意:** 使用 SQLite 时会忽略 PostgreSQL 特定的环境变量（`POSTGRES_URL`、`PGHOST` 等）。
+
+---
+
+## 运行时预连接
+
+Bun 可以在启动时预连接到 PostgreSQL 以通过在应用程序代码运行之前建立数据库连接来提高性能。这对于减少首次数据库查询的连接延迟很有用。
+
+```bash
+# 启用 PostgreSQL 预连接
+bun --sql-preconnect index.js
+
+# 与 DATABASE_URL 环境变量配合使用
+DATABASE_URL=postgres://user:pass@localhost:5432/db bun --sql-preconnect index.js
+
+# 可以与其他运行时标志结合使用
+bun --sql-preconnect --hot index.js
+```
+
+`--sql-preconnect` 标志将在启动时使用您配置的环境变量自动建立 PostgreSQL 连接。如果连接失败，它不会崩溃您的应用程序 - 错误将被优雅处理。
+
+---
+
+## 连接选项
+
+您可以通过向 SQL 构造函数传递选项来手动配置数据库连接。选项根据数据库适配器而有所不同：
+
+### MySQL 选项
+
+```ts
+import { SQL } from "bun";
+
+const sql = new SQL({
+  // 使用选项对象时 MySQL 必需
+  adapter: "mysql",
+
+  // 连接详情
+  hostname: "localhost",
+  port: 3306,
+  database: "myapp",
+  username: "dbuser",
+  password: "secretpass",
+
+  // Unix 套接字连接（替代 hostname/port）
+  // socket: "/var/run/mysqld/mysqld.sock",
+
+  // 连接池设置
+  max: 20, // 池中的最大连接数（默认：10）
+  idleTimeout: 30, // 30 秒后关闭空闲连接
+  maxLifetime: 0, // 连接生存时间（秒）（0 = 永久）
+  connectionTimeout: 30, // 建立新连接的超时时间
+
+  // SSL/TLS 选项
+  ssl: "prefer", // 或 "disable", "require", "verify-ca", "verify-full"
+  // tls: {
+  //   rejectUnauthorized: true,
+  //   ca: "path/to/ca.pem",
+  //   key: "path/to/key.pem",
+  //   cert: "path/to/cert.pem",
+  // },
+
+  // 回调
+  onconnect: client => {
+    console.log("连接到 MySQL");
+  },
+  onclose: (client, err) => {
+    if (err) {
+      console.error("MySQL 连接错误:", err);
+    } else {
+      console.log("MySQL 连接已关闭");
+    }
+  },
+});
+```
+
+### PostgreSQL 选项
+
+```ts
+import { SQL } from "bun";
+
+const sql = new SQL({
+  // 连接详情（适配器自动检测为 PostgreSQL）
+  url: "postgres://user:pass@localhost:5432/dbname",
+
+  // 替代连接参数
+  hostname: "localhost",
+  port: 5432,
+  database: "myapp",
+  username: "dbuser",
+  password: "secretpass",
+
+  // 连接池设置
+  max: 20, // 池中的最大连接数
+  idleTimeout: 30, // 30 秒后关闭空闲连接
+  maxLifetime: 0, // 连接生存时间（秒）（0 = 永久）
+  connectionTimeout: 30, // 建立新连接的超时时间
+
+  // SSL/TLS 选项
+  tls: true,
+  // tls: {
+  //   rejectUnauthorized: true,
+  //   requestCert: true,
+  //   ca: "path/to/ca.pem",
+  //   key: "path/to/key.pem",
+  //   cert: "path/to/cert.pem",
+  //   checkServerIdentity(hostname, cert) {
+  //     ...
+  //   },
+  // },
+
+  // 回调
+  onconnect: client => {
+    console.log("连接到 PostgreSQL");
+  },
+  onclose: client => {
+    console.log("PostgreSQL 连接已关闭");
+  },
+});
+```
+
+### SQLite 选项
+
+```ts
+import { SQL } from "bun";
+
+const sql = new SQL({
+  // SQLite 必需
+  adapter: "sqlite",
+  filename: "./data/app.db", // 或 ":memory:" 用于内存数据库
+
+  // SQLite 特定的访问模式
+  readonly: false, // 以只读模式打开
+  create: true, // 如果不存在则创建数据库
+  readwrite: true, // 允许读写操作
+
+  // SQLite 数据处理
+  strict: true, // 启用严格模式以获得更好的类型安全
+  safeIntegers: false, // 对超出 JS 数字范围的整数使用 BigInt
+
+  // 回调
+  onconnect: client => {
+    console.log("SQLite 数据库已打开");
+  },
+  onclose: client => {
+    console.log("SQLite 数据库已关闭");
+  },
+});
+```
+
+<Accordion title="SQLite 连接说明">
+
+- **连接池**: SQLite 不使用连接池，因为它是基于文件的数据库。每个 `SQL` 实例代表单个连接。
+- **事务**: SQLite 通过保存点支持嵌套事务，类似于 PostgreSQL。
+- **并发访问**: SQLite 通过文件锁定处理并发访问。使用 WAL 模式以获得更好的并发性。
+- **内存数据库**: 使用 `:memory:` 创建仅存在于连接生命周期内的临时数据库。
+
+</Accordion>
+
+---
+
+## 动态密码
+
+当客户端需要使用替代认证方案（如访问令牌）或连接到具有轮换密码的数据库时，请提供同步或异步函数，该函数将在连接时解析动态密码值。
+
+```ts
+import { SQL } from "bun";
+
+const sql = new SQL(url, {
+  // 其他连接配置
+  ...
+  // 数据库用户的密码函数
+  password: async () => await signer.getAuthToken(),
+});
+```
+
+---
+
+## SQLite 特定功能
+
+### 查询执行
+
+SQLite 同步执行查询，而 PostgreSQL 使用异步 I/O。但是，API 保持一致，使用 Promise：
+
+```ts
+const sqlite = new SQL("sqlite://app.db");
+
+// 与 PostgreSQL 相同，但在底层同步执行
+const users = await sqlite`SELECT * FROM users`;
+
+// 参数工作方式相同
+const user = await sqlite`SELECT * FROM users WHERE id = ${userId}`;
+```
+
+### SQLite Pragmas
+
+您可以使用 PRAGMA 语句配置 SQLite 行为：
+
+```ts
+const sqlite = new SQL("sqlite://app.db");
+
+// 启用外键
+await sqlite`PRAGMA foreign_keys = ON`;
+
+// 将日志模式设置为 WAL 以获得更好的并发性
+await sqlite`PRAGMA journal_mode = WAL`;
+
+// 检查完整性
+const integrity = await sqlite`PRAGMA integrity_check`;
+```
+
+### 数据类型差异
+
+SQLite 比 PostgreSQL 有更灵活的类型系统：
+
+```ts
+// SQLite 在 5 个存储类中存储数据：NULL、INTEGER、REAL、TEXT、BLOB
+const sqlite = new SQL("sqlite://app.db");
+
+// SQLite 对类型更宽松
+await sqlite`
+  CREATE TABLE flexible (
+    id INTEGER PRIMARY KEY,
+    data TEXT,        -- 可以将数字存储为字符串
+    value NUMERIC,    -- 可以存储整数、实数或文本
+    blob BLOB         -- 二进制数据
+  )
+`;
+
+// JavaScript 值自动转换
+await sqlite`INSERT INTO flexible VALUES (${1}, ${"text"}, ${123.45}, ${Buffer.from("binary")})`;
+```
+
+---
+
+## 事务
+
+要开始新事务，请使用 `sql.begin`。此方法适用于 PostgreSQL 和 SQLite。对于 PostgreSQL，它从池中保留专用连接。对于 SQLite，它在单个连接上开始事务。
+
+`BEGIN` 命令会自动发送，包括您指定的任何可选配置。如果事务期间发生错误，将触发 `ROLLBACK` 以确保进程顺利进行。
+
+### 基本事务
+
+```ts
+await sql.begin(async tx => {
+  // 此函数中的所有查询都在事务中运行
+  await tx`INSERT INTO users (name) VALUES (${"Alice"})`;
+  await tx`UPDATE accounts SET balance = balance - 100 WHERE user_id = 1`;
+
+  // 如果没有抛出错误，事务自动提交
+  // 如果发生任何错误则回滚
+});
+```
+
+如果需要，也可以在事务中通过从回调函数返回包含查询的数组来流水线请求：
+
+```ts
+await sql.begin(async tx => {
+  return [
+    tx`INSERT INTO users (name) VALUES (${"Alice"})`,
+    tx`UPDATE accounts SET balance = balance - 100 WHERE user_id = 1`,
+  ];
+});
+```
+
+### 保存点
+
+SQL 中的保存点在事务内创建中间检查点，允许部分回滚而不影响整个操作。它们在复杂事务中很有用，允许错误恢复并保持一致的结果。
+
+```ts
+await sql.begin(async tx => {
+  await tx`INSERT INTO users (name) VALUES (${"Alice"})`;
+
+  await tx.savepoint(async sp => {
+    // 此部分可以单独回滚
+    await sp`UPDATE users SET status = 'active'`;
+    if (someCondition) {
+      throw new Error("回滚到保存点");
+    }
+  });
+
+  // 即使保存点回滚，继续事务
+  await tx`INSERT INTO audit_log (action) VALUES ('user_created')`;
+});
+```
+
+### 分布式事务
+
+两阶段提交 (2PC) 是一种分布式事务协议，其中第一阶段协调器通过确保数据已写入并准备提交来准备节点，而第二阶段根据协调器的决定最终确定节点的提交或回滚。此过程确保数据持久性和适当的锁管理。
+
+在 PostgreSQL 和 MySQL 中，分布式事务在原始会话之外持久存在，允许特权用户或协调器稍后提交或回滚它们。这支持强大的分布式事务、恢复过程和管理操作。
+
+每个数据库系统以不同方式实现分布式事务：
+
+PostgreSQL 通过预处理事务原生支持它们，而 MySQL 使用 XA 事务。
+
+如果分布式事务期间发生任何异常且未被捕获，系统将自动回滚所有更改。当一切正常进行时，您保持稍后提交或回滚事务的灵活性。
+
+```ts
+// 开始分布式事务
+await sql.beginDistributed("tx1", async tx => {
+  await tx`INSERT INTO users (name) VALUES (${"Alice"})`;
+});
+
+// 稍后提交或回滚
+await sql.commitDistributed("tx1");
+// 或
+await sql.rollbackDistributed("tx1");
+```
+
+---
+
+## 认证
+
+Bun 支持 SCRAM-SHA-256 (SASL)、MD5 和明文认证。建议使用 SASL 以获得更好的安全性。查看 [Postgres SASL 认证](https://www.postgresql.org/docs/current/sasl-authentication.html) 了解更多信息。
+
+### SSL 模式概述
+
+PostgreSQL 支持不同的 SSL/TLS 模式以控制如何建立安全连接。这些模式确定连接时的行为和执行的证书验证级别。
+
+```ts
+const sql = new SQL({
+  hostname: "localhost",
+  username: "user",
+  password: "password",
+  ssl: "disable", // | "prefer" | "require" | "verify-ca" | "verify-full"
+});
+```
+
+| SSL 模式 | 描述 |
+| ------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `disable` | 不使用 SSL/TLS。如果服务器需要 SSL，连接将失败。 |
+| `prefer` | 首先尝试 SSL，如果 SSL 失败则回退到非 SSL。如果未指定则为默认模式。 |
+| `require` | 需要 SSL 但不验证证书。如果无法建立 SSL，则失败。 |
+| `verify-ca` | 验证服务器证书由受信任的 CA 签名。如果验证失败则失败。 |
+| `verify-full` | 最安全的模式。验证证书和主机名匹配。防止不受信任的证书和中间人攻击。 |
+
+### 使用连接字符串
+
+SSL 模式也可以在连接字符串中指定：
+
+```ts
+// 使用 prefer 模式
+const sql = new SQL("postgres://user:password@localhost/mydb?sslmode=prefer");
+
+// 使用 verify-full 模式
+const sql = new SQL("postgres://user:password@localhost/mydb?sslmode=verify-full");
+```
+
+---
+
+## 连接池
+
+Bun 的 SQL 客户端自动管理连接池，这是一个用于多个查询的数据库连接池。这有助于减少为每个查询建立和关闭连接的开销，还有助于管理到数据库的并发连接数。
+
+```ts
+const sql = new SQL({
+  // 池配置
+  max: 20, // 最大 20 个并发连接
+  idleTimeout: 30, // 30 秒后关闭空闲连接
+  maxLifetime: 3600, // 最大连接生存时间 1 小时
+  connectionTimeout: 10, // 连接超时 10 秒
+});
+```
+
+在进行查询之前不会建立任何连接。
+
+```ts
+const sql = Bun.SQL(); // 不创建连接
+
+await sql`...`; // 池在达到最大值之前启动，使用第一个可用连接
+await sql`...`; // 重用之前的连接
+
+// 现在同时使用两个连接
+await Promise.all([
+  sql`INSERT INTO users ${sql({ name: "Alice" })}`,
+  sql`UPDATE users SET name = ${user.name} WHERE id = ${user.id}`,
+]);
+
+await sql.close(); // 等待所有查询完成并关闭池中的所有连接
+await sql.close({ timeout: 5 }); // 等待 5 秒并关闭池中的所有连接
+await sql.close({ timeout: 0 }); // 立即关闭池中的所有连接
+```
+
+---
+
+## 预留连接
+
+Bun 允许您从池中预留连接，并返回包装单个连接的客户端。这可用于在隔离连接上运行查询。
+
+```ts
+// 从池中获取独占连接
+const reserved = await sql.reserve();
+
+try {
+  await reserved`INSERT INTO users (name) VALUES (${"Alice"})`;
+} finally {
+  // 重要：将连接释放回池中
+  reserved.release();
+}
+
+// 或使用 Symbol.dispose
+{
+  using reserved = await sql.reserve();
+  await reserved`SELECT 1`;
+} // 自动释放
+```
+
+---
+
+## 预处理语句
+
+默认情况下，Bun 的 SQL 客户端为可以推断查询是静态的查询自动创建命名预处理语句。这提供更好的性能。但是，您可以通过在连接选项中设置 `prepare: false` 来更改此行为：
+
+```ts
+const sql = new SQL({
+  // ... 其他选项 ...
+  prepare: false, // 禁用在服务器上持久化命名预处理语句
+});
+```
+
+当设置 `prepare: false` 时：
+
+查询仍使用"扩展"协议执行，但它们使用[未命名预处理语句](https://www.postgresql.org/docs/current/protocol-flow.html#PROTOCOL-FLOW-EXT-QUERY)执行，未命名预处理语句仅持续到发出指定未命名语句作为目标的下一个 Parse 语句。
+
+- 参数绑定仍然对 SQL 注入安全
+- 每个查询都由服务器从头开始解析和规划
+- 查询不会[流水线化](https://www.postgresql.org/docs/current/protocol-flow.html#PROTOCOL-FLOW-PIPELINING)
+
+您可能希望在以下情况下使用 `prepare: false`：
+
+- 在事务模式下使用 PGBouncer（尽管自 PGBouncer 1.21.0 起，当正确配置时，协议级命名预处理语句已受支持）
+- 调试查询执行计划
+- 使用动态 SQL，其中查询计划需要频繁重新生成
+- 每个查询将不支持多个命令（除非您使用 `sql``.simple()`）
+
+请注意，禁用预处理语句可能会影响频繁使用不同参数执行的查询的性能，因为服务器需要从头开始解析和规划每个查询。
+
+---
+
+## 错误处理
+
+客户端为不同的失败场景提供类型化的错误。错误是数据库特定的，从基础错误类扩展：
+
+### 错误类
+
+```ts
+import { SQL } from "bun";
+
+try {
+  await sql`SELECT * FROM users`;
+} catch (error) {
+  if (error instanceof SQL.PostgresError) {
+    // PostgreSQL 特定错误
+    console.log(error.code); // PostgreSQL 错误代码
+    console.log(error.detail); // 详细错误消息
+    console.log(error.hint); // 来自 PostgreSQL 的有用提示
+  } else if (error instanceof SQL.SQLiteError) {
+    // SQLite 特定错误
+    console.log(error.code); // SQLite 错误代码（例如，"SQLITE_CONSTRAINT"）
+    console.log(error.errno); // SQLite 错误号
+    console.log(error.byteOffset); // SQL 语句中的字节偏移（如果可用）
+  } else if (error instanceof SQL.SQLError) {
+    // 通用 SQL 错误（基类）
+    console.log(error.message);
+  }
+}
+```
+
+<Accordion title="PostgreSQL 特定错误代码">
+
+### PostgreSQL 连接错误
+
+| 连接错误 | 描述 |
+| --------------------------------- | ---------------------------------------------------- |
+| `ERR_POSTGRES_CONNECTION_CLOSED` | 连接已终止或从未建立 |
+| `ERR_POSTGRES_CONNECTION_TIMEOUT` | 在超时期限内未能建立连接 |
+| `ERR_POSTGRES_IDLE_TIMEOUT` | 由于不活动而关闭连接 |
+| `ERR_POSTGRES_LIFETIME_TIMEOUT` | 连接超过最大生存时间 |
+| `ERR_POSTGRES_TLS_NOT_AVAILABLE` | SSL/TLS 连接不可用 |
+| `ERR_POSTGRES_TLS_UPGRADE_FAILED` | 升级连接到 SSL/TLS 失败 |
+
+### 认证错误
+
+| 认证错误 | 描述 |
+| ------------------------------------------------ | ---------------------------------------- |
+| `ERR_POSTGRES_AUTHENTICATION_FAILED_PBKDF2` | 密码认证失败 |
+| `ERR_POSTGRES_UNKNOWN_AUTHENTICATION_METHOD` | 服务器请求未知的认证方法 |
+| `ERR_POSTGRES_UNSUPPORTED_AUTHENTICATION_METHOD` | 服务器请求不支持的认证方法 |
+| `ERR_POSTGRES_INVALID_SERVER_KEY` | 认证期间的无效服务器密钥 |
+| `ERR_POSTGRES_INVALID_SERVER_SIGNATURE` | 无效服务器签名 |
+| `ERR_POSTGRES_SASL_SIGNATURE_INVALID_BASE64` | 无效的 SASL 签名编码 |
+| `ERR_POSTGRES_SASL_SIGNATURE_MISMATCH` | SASL 签名验证失败 |
+
+### 查询错误
+
+| 查询错误 | 描述 |
+| ------------------------------------ | ------------------------------------------ |
+| `ERR_POSTGRES_SYNTAX_ERROR` | 无效 SQL 语法（扩展 `SyntaxError`） |
+| `ERR_POSTGRES_SERVER_ERROR` | 来自 PostgreSQL 服务器的一般错误 |
+| `ERR_POSTGRES_INVALID_QUERY_BINDING` | 无效参数绑定 |
+| `ERR_POSTGRES_QUERY_CANCELLED` | 查询已取消 |
+| `ERR_POSTGRES_NOT_TAGGED_CALL` | 查询未使用标记调用调用 |
+
+### 数据类型错误
+
+| 数据类型错误 | 描述 |
+| ------------------------------------------------------- | ------------------------------------- |
+| `ERR_POSTGRES_INVALID_BINARY_DATA` | 无效二进制数据格式 |
+| `ERR_POSTGRES_INVALID_BYTE_SEQUENCE` | 无效字节序列 |
+| `ERR_POSTGRES_INVALID_BYTE_SEQUENCE_FOR_ENCODING` | 编码错误 |
+| `ERR_POSTGRES_INVALID_CHARACTER` | 数据中的无效字符 |
+| `ERR_POSTGRES_OVERFLOW` | 数值溢出 |
+| `ERR_POSTGRES_UNSUPPORTED_BYTEA_FORMAT` | 不支持的二进制格式 |
+| `ERR_POSTGRES_UNSUPPORTED_INTEGER_SIZE` | 不支持的整数大小 |
+| `ERR_POSTGRES_MULTIDIMENSIONAL_ARRAY_NOT_SUPPORTED_YET` | 不支持多维数组 |
+| `ERR_POSTGRES_NULLS_IN_ARRAY_NOT_SUPPORTED_YET` | 数组中不支持 NULL 值 |
+
+### 协议错误
+
+| 协议错误 | 描述 |
+| --------------------------------------- | --------------------------- |
+| `ERR_POSTGRES_EXPECTED_REQUEST` | 预期客户端请求 |
+| `ERR_POSTGRES_EXPECTED_STATEMENT` | 预期预处理语句 |
+| `ERR_POSTGRES_INVALID_BACKEND_KEY_DATA` | 无效后端键数据 |
+| `ERR_POSTGRES_INVALID_MESSAGE` | 无效协议消息 |
+| `ERR_POSTGRES_INVALID_MESSAGE_LENGTH` | 无效消息长度 |
+| `ERR_POSTGRES_UNEXPECTED_MESSAGE` | 意外消息类型 |
+
+### 事务错误
+
+| 事务错误 | 描述 |
+| ---------------------------------------- | ------------------------------------- |
+| `ERR_POSTGRES_UNSAFE_TRANSACTION` | 检测到不安全的事务操作 |
+| `ERR_POSTGRES_INVALID_TRANSACTION_STATE` | 无效事务状态 |
+
+</Accordion>
+
+### SQLite 特定错误
+
+SQLite 错误提供与 SQLite 标准错误代码对应的错误代码和数字：
+
+<Accordion title="常见 SQLite 错误代码">
+
+| 错误代码 | errno | 描述 |
+| ------------------- | ----- | ---------------------------------------------------- |
+| `SQLITE_CONSTRAINT` | 19 | 约束违反（UNIQUE、CHECK、NOT NULL 等） |
+| `SQLITE_BUSY` | 5 | 数据库被锁定 |
+| `SQLITE_LOCKED` | 6 | 数据库中的表被锁定 |
+| `SQLITE_READONLY` | 8 | 尝试写入只读数据库 |
+| `SQLITE_IOERR` | 10 | 磁盘 I/O 错误 |
+| `SQLITE_CORRUPT` | 11 | 数据库磁盘映像是格式错误的 |
+| `SQLITE_FULL` | 13 | 数据库或磁盘已满 |
+| `SQLITE_CANTOPEN` | 14 | 无法打开数据库文件 |
+| `SQLITE_PROTOCOL` | 15 | 数据库锁定协议错误 |
+| `SQLITE_SCHEMA` | 17 | 数据库模式已更改 |
+| `SQLITE_TOOBIG` | 18 | 字符串或 BLOB 超出大小限制 |
+| `SQLITE_MISMATCH` | 20 | 数据类型不匹配 |
+| `SQLITE_MISUSE` | 21 | 库使用不正确 |
+| `SQLITE_AUTH` | 23 | 授权被拒绝 |
+
+错误处理示例：
+
+```ts
+const sqlite = new SQL("sqlite://app.db");
+
+try {
+  await sqlite`INSERT INTO users (id, name) VALUES (1, 'Alice')`;
+  await sqlite`INSERT INTO users (id, name) VALUES (1, 'Bob')`; // 重复 ID
+} catch (error) {
+  if (error instanceof SQL.SQLiteError) {
+    if (error.code === "SQLITE_CONSTRAINT") {
+      console.log("约束违反:", error.message);
+      // 处理唯一约束违反
+    }
+  }
+}
+```
+
+</Accordion>
+
+---
+
+## 数字和 BigInt
+
+Bun 的 SQL 客户端包括对超出 53 位整数范围的大数字的特殊处理。以下是其工作原理：
+
+```ts
+import { sql } from "bun";
+
+const [{ x, y }] = await sql`SELECT 9223372036854777 as x, 12345 as y`;
+
+console.log(typeof x, x); // "string" "9223372036854777"
+console.log(typeof y, y); // "number" 12345
+```
+
+---
+
+## BigInt 代替字符串
+
+如果您需要将大数字作为 BigInt 而不是字符串，您可以通过在初始化 SQL 客户端时将 `bigint` 选项设置为 `true` 来启用此功能：
+
+```ts
+const sql = new SQL({
+  bigint: true,
+});
+
+const [{ x }] = await sql`SELECT 9223372036854777 as x`;
+
+console.log(typeof x, x); // "bigint" 9223372036854777n
+```
+
+---
+
+## 路线图
+
+还有一些我们尚未完成的事情。
+
+- 通过 `--db-preconnect` Bun CLI 标志进行连接预加载
+- 列名转换（例如，`snake_case` 到 `camelCase`）。这主要受 C++ 中使用 WebKit 的 `WTF::String` 实现区分大小写的 Unicode 感知实现的阻碍。
+- 列类型转换
+
+---
+
+## 数据库特定功能
+
+#### 认证方法
+
+MySQL 支持多种认证插件，这些插件会自动协商：
+
+- **`mysql_native_password`** - 传统的 MySQL 认证，广泛兼容
+- **`caching_sha2_password`** - MySQL 8.0+ 中的默认值，使用 RSA 密钥交换更安全
+- **`sha256_password`** - 基于 SHA-256 的认证
+
+客户端在服务器请求时自动处理认证插件切换，包括非 SSL 连接上的安全密码交换。
+
+#### 预处理语句和性能
+
+MySQL 为所有参数化查询使用服务器端预处理语句：
+
+```ts
+// 这在服务器上自动创建预处理语句
+const user = await mysql`SELECT * FROM users WHERE id = ${userId}`;
+
+// 预处理语句被缓存并为相同查询重用
+for (const id of userIds) {
+  // 重用相同的预处理语句
+  await mysql`SELECT * FROM users WHERE id = ${id}`;
+}
+
+// 查询流水线 - 发送多个语句而无需等待
+const [users, orders, products] = await Promise.all([
+  mysql`SELECT * FROM users WHERE active = ${true}`,
+  mysql`SELECT * FROM orders WHERE status = ${"pending"}`,
+  mysql`SELECT * FROM products WHERE in_stock = ${true}`,
+]);
+```
+
+#### 多结果集
+
+MySQL 可以从多语句查询返回多个结果集：
+
+```ts
+const mysql = new SQL("mysql://user:pass@localhost/mydb");
+
+// 使用 simple() 方法的多语句查询
+const multiResults = await mysql`
+  SELECT * FROM users WHERE id = 1;
+  SELECT * FROM orders WHERE user_id = 1;
+`.simple();
+```
+
+#### 字符集和排序规则
+
+Bun.SQL 自动为 MySQL 连接使用 `utf8mb4` 字符集，确保完全的 Unicode 支持，包括表情符号。这是现代 MySQL 应用程序推荐的字符集。
+
+#### 连接属性
+
+Bun 自动向 MySQL 发送客户端信息以供更好的监控：
+
+```ts
+// 这些属性自动发送：
+// _client_name: "Bun"
+// _client_version: <bun version>
+// 您可以在 MySQL 的 performance_schema.session_connect_attrs 中看到这些
+```
+
+#### 类型处理
+
+MySQL 类型自动转换为 JavaScript 类型：
+
+| MySQL 类型 | JavaScript 类型 | 注意事项 |
+| --------------------------------------- | ------------------------ | ---------------------------------------------------------------------------------------------------- |
+| INT, TINYINT, MEDIUMINT | number | 在安全整数范围内 |
+| BIGINT | string, number 或 BigInt | 如果值适合 i32/u32 大小则为 number，否则为 string 或 BigInt 基于 `bigint` 选项 |
+| DECIMAL, NUMERIC | string | 以保持精度 |
+| FLOAT, DOUBLE | number | |
+| DATE | Date | JavaScript Date 对象 |
+| DATETIME, TIMESTAMP | Date | 带时区处理 |
+| TIME | number | 总的微秒数 |
+| YEAR | number | |
+| CHAR, VARCHAR, VARSTRING, STRING | string | |
+| TINY TEXT, MEDIUM TEXT, TEXT, LONG TEXT | string | |
+| TINY BLOB, MEDIUM BLOB, BLOG, LONG BLOB | string | BLOB 类型是 TEXT 类型的别名 |
+| JSON | object/array | 自动解析 |
+| BIT(1) | boolean | MySQL 中的 BIT(1) |
+| GEOMETRY | string | 几何数据 |
+
+#### 与 PostgreSQL 的差异
+
+虽然 API 是统一的，但有一些行为差异：
+
+1. **参数占位符**: MySQL 内部使用 `?`，但 Bun 自动转换 `$1, $2` 样式
+2. **RETURNING 子句**: MySQL 不支持 RETURNING；使用 `result.lastInsertRowid` 或单独的 SELECT
+3. **数组类型**: MySQL 没有像 PostgreSQL 那样的原生数组类型
+
+### MySQL 特定功能
+
+我们尚未实现 `LOAD DATA INFILE` 支持
+
+### PostgreSQL 特定功能
+
+我们尚未实现这些：
+
+- `COPY` 支持
+- `LISTEN` 支持
+- `NOTIFY` 支持
+
+我们也没有实现一些不太常见的功能，如：
+
+- GSSAPI 认证
+- `SCRAM-SHA-256-PLUS` 支持
+- Point & PostGIS 类型
+- 所有多维整数数组类型（仅支持几种类型）
+
+---
+
+## 常见模式和最佳实践
+
+### 使用 MySQL 结果集
+
+```ts
+// INSERT 后获取插入 ID
+const result = await mysql`INSERT INTO users (name) VALUES (${"Alice"})`;
+console.log(result.lastInsertRowid); // MySQL 的 LAST_INSERT_ID()
+
+// 处理受影响的行
+const updated = await mysql`UPDATE users SET active = ${false} WHERE age < ${18}`;
+console.log(updated.affectedRows); // 更新的行数
+
+// 使用 MySQL 特定函数
+const now = await mysql`SELECT NOW() as current_time`;
+const uuid = await mysql`SELECT UUID() as id`;
+```
+
+### MySQL 错误处理
+
+```ts
+try {
+  await mysql`INSERT INTO users (email) VALUES (${"duplicate@email.com"})`;
+} catch (error) {
+  if (error.code === "ER_DUP_ENTRY") {
+    console.log("检测到重复条目");
+  } else if (error.code === "ER_ACCESS_DENIED_ERROR") {
+    console.log("访问被拒绝");
+  } else if (error.code === "ER_BAD_DB_ERROR") {
+    console.log("数据库不存在");
+  }
+  // MySQL 错误代码与 mysql/mysql2 包兼容
+}
+```
+
+### MySQL 性能提示
+
+1. **使用连接池**: 根据工作负载设置适当的 `max` 池大小
+2. **启用预处理语句**: 它们默认启用并提高性能
+3. **在批量操作中使用事务**: 在事务中分组相关查询
+4. **正确索引**: MySQL 严重依赖索引进行查询性能
+5. **使用 `utf8mb4` 字符集**: 它默认设置并处理所有 Unicode 字符
+
+---
+
+## 常见问题
+
+<AccordionGroup>
+	<Accordion title="为什么是 `Bun.sql` 而不是 `Bun.postgres`？">
+		计划将来添加更多数据库驱动程序。现在添加了 MySQL 支持，此统一 API 支持 PostgreSQL、MySQL 和 SQLite。
+	</Accordion>
+	<Accordion title="我如何知道正在使用哪个数据库适配器？">
+		适配器从连接字符串自动检测：
+
+    	- 以 `mysql://` 或 `mysql2://` 开头的 URL 使用 MySQL
+    	- 匹配 SQLite 模式（`:memory:`、`sqlite://`、`file://`）的 URL 使用 SQLite
+    	- 其他所有内容默认为 PostgreSQL
+    </Accordion>
+    <Accordion title="MySQL 存储过程是否受支持？">
+    	是的，完全支持存储过程，包括 OUT 参数和多结果集：
+
+    	```ts
+    	// 调用存储过程
+    	const results = await mysql`CALL GetUserStats(${userId}, @total_orders)`;
+
+    	// 获取 OUT 参数
+    	const outParam = await mysql`SELECT @total_orders as total`;
+    	```
+    </Accordion>
+    <Accordion title="我可以使用 MySQL 特定的 SQL 语法吗？">
+    	是的，您可以使用任何 MySQL 特定语法：
+
+    	```ts
+    	// MySQL 特定语法工作正常
+    	await mysql`SET @user_id = ${userId}`;
+    	await mysql`SHOW TABLES`;
+    	await mysql`DESCRIBE users`;
+    	await mysql`EXPLAIN SELECT * FROM users WHERE id = ${id}`;
+    	```
+    </Accordion>
+
+</AccordionGroup>
+
+---
+
+## 为什么不只使用现有库？
+
+像 postgres.js、pg 和 node-postgres 这样的 npm 包也可以在 Bun 中使用。它们是很好的选择。
+
+两个原因：
+
+1. 我们认为对开发人员来说，在 Bun 中内置数据库驱动程序更简单。您花在库购物上的时间可以用来构建您的应用。
+2. 我们利用一些 JavaScriptCore 引擎内部来创建库难以实现的对象
+
+## 致谢
+
+非常感谢 [@porsager](https://github.com/porsager) 的 [postgres.js](https://github.com/porsager/postgres) 为 API 接口提供的灵感。

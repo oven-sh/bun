@@ -1,0 +1,69 @@
+---
+title: "bun patch"
+description: "以一种对 Git 友好的方式持久地修补 node_modules 包"
+---
+
+import Patch from "/snippets/cli/patch.mdx";
+
+`bun patch` 让你可以以一种可维护、对 Git 友好的方式持久地修补 [node_modules]。
+
+有时，你需要对 [node_modules/] 中的包做一些小改动来修复错误或添加功能。`bun patch` 让你可以轻松地做到这一点，而无需将整个包复制到项目中，并且可以在多个安装、多个项目和多台机器之间重用补丁。
+
+功能：
+
+- 生成在安装时应用到 [node_modules] 中依赖的 `.patch` 文件
+- `.patch` 文件可以提交到你的仓库，在多个安装、项目和机器之间重用
+- [package.json] 中的 `"patchedDependencies"` 跟踪打过补丁的包
+- `bun patch` 让你修补 [node_modules/] 中的包，同时保持 Bun 的[全局缓存](/pm/global-cache)完整性
+- 在使用 `bun patch --commit <pkg>` 提交更改之前，可以在本地测试你的更改
+- 为了节省磁盘空间并保持 `bun install` 的速度，打过补丁的包会被提交到全局缓存并在可能的情况下在项目间共享
+
+#### 步骤 1. 准备要打补丁的包
+
+要开始，请使用 `bun patch <pkg>` 准备要打补丁的包：
+
+```bash terminal icon="terminal"
+# 你可以提供包名
+bun patch react
+
+# ...以及精确版本号（以防安装了多个版本）
+bun patch react@17.0.2
+
+# 或包的路径
+bun patch node_modules/react
+```
+
+<Note>
+不要忘记调用 `bun patch <pkg>`！这确保 [node_modules/] 中的包文件夹包含一个没有符号链接/硬链接到 Bun 缓存的新鲜副本。
+
+如果你忘记了，你可能会全局编辑缓存中的包！
+
+</Note>
+
+#### 步骤 2. 在本地测试你的更改
+
+`bun patch <pkg>` 让你可以安全地直接编辑 [node_modules/] 中的 `<pkg>`，同时保持 Bun 的[全局缓存](/pm/global-cache)完整性。这是通过在 [node_modules/]中重新创建一个未链接的包副本并与全局缓存中的原始包进行差异比较来实现的。
+
+#### 步骤 3. 提交你的更改
+
+一旦你对更改满意，运行 `bun patch --commit <path or pkg>`。
+
+Bun 将在 `patches/` 中生成一个补丁文件，更新你的 [package.json] 和锁定文件，然后 Bun 将开始使用打过补丁的包：
+
+```bash terminal icon="terminal"
+# 你可以提供打过补丁的包的路径
+bun patch --commit node_modules/react
+
+# ... 或包名和可选的版本号
+bun patch --commit react@17.0.2
+
+# 选择存储补丁文件的目录
+bun patch --commit react --patches-dir=mypatches
+
+# `patch-commit` 为了与 pnpm 兼容而提供
+bun patch-commit react
+```
+
+---
+
+<Patch />

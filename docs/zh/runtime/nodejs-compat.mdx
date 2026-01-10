@@ -1,0 +1,468 @@
+---
+title: "Node.js 兼容性"
+description: "Bun 与 Node.js API、模块和全局对象的兼容性状态"
+---
+
+每一天，Bun 都越来越接近 100% 的 Node.js API 兼容性。今天，像 Next.js、Express 这样的流行框架以及数百万为 Node 设计的 `npm` 包都可以与 Bun 正常工作。为确保兼容性，我们在每次 Bun 发布前都会运行数千个来自 Node.js 测试套件的测试。
+
+**如果一个包在 Node.js 中可以工作但在 Bun 中不行，我们认为这是 Bun 的一个 bug。** 请 [提交一个问题](https://bun.com/issues) 我们会修复它。
+
+此页面定期更新以反映 Bun 最新版本的兼容性状态。以下信息反映了 Bun 与 _Node.js v23_ 的兼容性。
+
+## 内置 Node.js 模块
+
+### [`node:assert`](https://nodejs.org/api/assert.html)
+
+🟢 完全实现。
+
+### [`node:buffer`](https://nodejs.org/api/buffer.html)
+
+🟢 完全实现。
+
+### [`node:console`](https://nodejs.org/api/console.html)
+
+🟢 完全实现。
+
+### [`node:dgram`](https://nodejs.org/api/dgram.html)
+
+🟢 完全实现。> 90% 的 Node.js 测试套件通过。
+
+### [`node:diagnostics_channel`](https://nodejs.org/api/diagnostics_channel.html)
+
+🟢 完全实现。
+
+### [`node:dns`](https://nodejs.org/api/dns.html)
+
+🟢 完全实现。> 90% 的 Node.js 测试套件通过。
+
+### [`node:events`](https://nodejs.org/api/events.html)
+
+🟢 完全实现。100% 的 Node.js 测试套件通过。`EventEmitterAsyncResource` 在底层使用 `AsyncResource`。
+
+### [`node:fs`](https://nodejs.org/api/fs.html)
+
+🟢 完全实现。92% 的 Node.js 测试套件通过。
+
+### [`node:http`](https://nodejs.org/api/http.html)
+
+🟢 已实现 API。传出客户端请求体当前被缓冲而不是流式传输。
+
+### [`node:https`](https://nodejs.org/api/https.html)
+
+🟢 已实现 API，但 `Agent` 还没有总是被使用。
+
+### [`node:os`](https://nodejs.org/api/os.html)
+
+🟢 完全实现。100% 的 Node.js 测试套件通过。
+
+### [`node:path`](https://nodejs.org/api/path.html)
+
+🟢 完全实现。100% 的 Node.js 测试套件通过。
+
+### [`node:punycode`](https://nodejs.org/api/punycode.html)
+
+🟢 完全实现。100% 的 Node.js 测试套件通过，_被 Node.js 弃用_。
+
+### [`node:querystring`](https://nodejs.org/api/querystring.html)
+
+🟢 完全实现。100% 的 Node.js 测试套件通过。
+
+### [`node:readline`](https://nodejs.org/api/readline.html)
+
+🟢 完全实现。
+
+### [`node:stream`](https://nodejs.org/api/stream.html)
+
+🟢 完全实现。
+
+### [`node:string_decoder`](https://nodejs.org/api/string_decoder.html)
+
+🟢 完全实现。100% 的 Node.js 测试套件通过。
+
+### [`node:timers`](https://nodejs.org/api/timers.html)
+
+🟢 建议使用全局的 `setTimeout` 等。
+
+### [`node:tty`](https://nodejs.org/api/tty.html)
+
+🟢 完全实现。
+
+### [`node:url`](https://nodejs.org/api/url.html)
+
+🟢 完全实现。
+
+### [`node:zlib`](https://nodejs.org/api/zlib.html)
+
+🟢 完全实现。98% 的 Node.js 测试套件通过。
+
+### [`node:async_hooks`](https://nodejs.org/api/async_hooks.html)
+
+🟡 `AsyncLocalStorage` 和 `AsyncResource` 已实现。v8 promise hooks 没有被调用，且其使用被 [强烈反对](https://nodejs.org/docs/latest/api/async_hooks.html#async-hooks)。
+
+### [`node:child_process`](https://nodejs.org/api/child_process.html)
+
+🟡 缺少 `proc.gid` `proc.uid`。`Stream` 类未导出。IPC 不能发送 socket 句柄。Node.js ↔ Bun IPC 可以使用 JSON 序列化。
+
+### [`node:cluster`](https://nodejs.org/api/cluster.html)
+
+🟡 句柄和文件描述符不能在 worker 之间传递，这意味着跨进程的 HTTP 请求负载均衡目前仅在 Linux 上受支持（通过 `SO_REUSEPORT`）。否则已实现，但未经充分测试。
+
+### [`node:crypto`](https://nodejs.org/api/crypto.html)
+
+🟡 缺少 `secureHeapUsed` `setEngine` `setFips`
+
+### [`node:domain`](https://nodejs.org/api/domain.html)
+
+🟡 缺少 `Domain` `active`
+
+### [`node:http2`](https://nodejs.org/api/http2.html)
+
+🟡 客户端和服务端已实现（95.25% 的 gRPC 测试套件通过）。缺少 `options.allowHTTP1`、`options.enableConnectProtocol`、ALTSVC 扩展和 `http2stream.pushStream`。
+
+### [`node:module`](https://nodejs.org/api/module.html)
+
+🟡 缺少 `syncBuiltinESMExports`、`Module#load()`。支持覆盖 ESM & CJS 模块的 `require.cache`。`module._extensions`、`module._pathCache`、`module._cache` 无操作。`module.register` 未实现，我们建议同时使用 [`Bun.plugin`](/runtime/plugins)。
+
+### [`node:net`](https://nodejs.org/api/net.html)
+
+🟢 完全实现。
+
+### [`node:perf_hooks`](https://nodejs.org/api/perf_hooks.html)
+
+🟡 已实现 API，但 Node.js 测试套件尚未通过此模块。
+
+### [`node:process`](https://nodejs.org/api/process.html)
+
+🟡 参见 [`process`](#process) 全局对象。
+
+### [`node:sys`](https://nodejs.org/api/util.html)
+
+🟡 参见 [`node:util`](#node-util)。
+
+### [`node:tls`](https://nodejs.org/api/tls.html)
+
+🟡 缺少 `tls.createSecurePair`。
+
+### [`node:util`](https://nodejs.org/api/util.html)
+
+🟡 缺少 `getCallSite` `getCallSites` `getSystemErrorMap` `getSystemErrorMessage` `transferableAbortSignal` `transferableAbortController`
+
+### [`node:v8`](https://nodejs.org/api/v8.html)
+
+🟡 `writeHeapSnapshot` 和 `getHeapSnapshot` 已实现。`serialize` 和 `deserialize` 使用 JavaScriptCore 的线格式而不是 V8 的。其他方法未实现。对于性能分析，请使用 [`bun:jsc`](/project/benchmarking#javascript-heap-stats)。
+
+### [`node:vm`](https://nodejs.org/api/vm.html)
+
+🟡 核心功能和 ES 模块已实现，包括 `vm.Script`、`vm.createContext`、`vm.runInContext`、`vm.runInNewContext`、`vm.runInThisContext`、`vm.compileFunction`、`vm.isContext`、`vm.Module`、`vm.SourceTextModule`、`vm.SyntheticModule` 和 `importModuleDynamically` 支持。`timeout` 和 `breakOnSigint` 等选项完全支持。缺少 `vm.measureMemory` 和一些 `cachedData` 功能。
+
+### [`node:wasi`](https://nodejs.org/api/wasi.html)
+
+🟡 部分实现。
+
+### [`node:worker_threads`](https://nodejs.org/api/worker_threads.html)
+
+🟡 `Worker` 不支持以下选项：`stdin` `stdout` `stderr` `trackedUnmanagedFds` `resourceLimits`。缺少 `markAsUntransferable` `moveMessagePortToContext`。
+
+### [`node:inspector`](https://nodejs.org/api/inspector.html)
+
+🔴 未实现。
+
+### [`node:repl`](https://nodejs.org/api/repl.html)
+
+🔴 未实现。
+
+### [`node:sqlite`](https://nodejs.org/api/sqlite.html)
+
+🔴 未实现。
+
+### [`node:test`](https://nodejs.org/api/test.html)
+
+🟡 部分实现。缺少 mocks、snapshots、timers。请改用 [`bun:test`](/test)。
+
+### [`node:trace_events`](https://nodejs.org/api/tracing.html)
+
+🔴 未实现。
+
+## Node.js 全局对象
+
+下表列出了 Node.js 实现的所有全局对象以及 Bun 的当前兼容性状态。
+
+### [`AbortController`](https://developer.mozilla.org/en-US/docs/Web/API/AbortController)
+
+🟢 完全实现。
+
+### [`AbortSignal`](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal)
+
+🟢 完全实现。
+
+### [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob)
+
+🟢 完全实现。
+
+### [`Buffer`](https://nodejs.org/api/buffer.html#class-buffer)
+
+🟢 完全实现。
+
+### [`ByteLengthQueuingStrategy`](https://developer.mozilla.org/en-US/docs/Web/API/ByteLengthQueuingStrategy)
+
+🟢 完全实现。
+
+### [`__dirname`](https://nodejs.org/api/globals.html#__dirname)
+
+🟢 完全实现。
+
+### [`__filename`](https://nodejs.org/api/globals.html#__filename)
+
+🟢 完全实现。
+
+### [`atob()`](https://developer.mozilla.org/en-US/docs/Web/API/atob)
+
+🟢 完全实现。
+
+### [`Atomics`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Atomics)
+
+🟢 完全实现。
+
+### [`BroadcastChannel`](https://developer.mozilla.org/en-US/docs/Web/API/BroadcastChannel)
+
+🟢 完全实现。
+
+### [`btoa()`](https://developer.mozilla.org/en-US/docs/Web/API/btoa)
+
+🟢 完全实现。
+
+### [`clearImmediate()`](https://developer.mozilla.org/en-US/docs/Web/API/Window/clearImmediate)
+
+🟢 完全实现。
+
+### [`clearInterval()`](https://developer.mozilla.org/en-US/docs/Web/API/Window/clearInterval)
+
+🟢 完全实现。
+
+### [`clearTimeout()`](https://developer.mozilla.org/en-US/docs/Web/API/Window/clearTimeout)
+
+🟢 完全实现。
+
+### [`CompressionStream`](https://developer.mozilla.org/en-US/docs/Web/API/CompressionStream)
+
+🟢 完全实现。
+
+### [`console`](https://developer.mozilla.org/en-US/docs/Web/API/console)
+
+🟢 完全实现。
+
+### [`CountQueuingStrategy`](https://developer.mozilla.org/en-US/docs/Web/API/CountQueuingStrategy)
+
+🟢 完全实现。
+
+### [`Crypto`](https://developer.mozilla.org/en-US/docs/Web/API/Crypto)
+
+🟢 完全实现。
+
+### [`SubtleCrypto (crypto)`](https://developer.mozilla.org/en-US/docs/Web/API/crypto)
+
+🟢 完全实现。
+
+### [`CryptoKey`](https://developer.mozilla.org/en-US/docs/Web/API/CryptoKey)
+
+🟢 完全实现。
+
+### [`CustomEvent`](https://developer.mozilla.org/en-US/docs/Web/API/CustomEvent)
+
+🟢 完全实现。
+
+### [`DecompressionStream`](https://developer.mozilla.org/en-US/docs/Web/API/DecompressionStream)
+
+🟢 完全实现。
+
+### [`Event`](https://developer.mozilla.org/en-US/docs/Web/API/Event)
+
+🟢 完全实现。
+
+### [`EventTarget`](https://developer.mozilla.org/en-US/docs/Web/API/EventTarget)
+
+🟢 完全实现。
+
+### [`exports`](https://nodejs.org/api/globals.html#exports)
+
+🟢 完全实现。
+
+### [`fetch`](https://developer.mozilla.org/en-US/docs/Web/API/fetch)
+
+🟢 完全实现。
+
+### [`FormData`](https://developer.mozilla.org/en-US/docs/Web/API/FormData)
+
+🟢 完全实现。
+
+### [`global`](https://nodejs.org/api/globals.html#global)
+
+🟢 已实现。这是一个包含全局命名空间中所有对象的对象。很少直接引用它，因为其内容可在无需额外前缀的情况下访问，例如 `__dirname` 而不是 `global.__dirname`。
+
+### [`globalThis`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/globalThis)
+
+🟢 别名为 `global`。
+
+### [`Headers`](https://developer.mozilla.org/en-US/docs/Web/API/Headers)
+
+🟢 完全实现。
+
+### [`MessageChannel`](https://developer.mozilla.org/en-US/docs/Web/API/MessageChannel)
+
+🟢 完全实现。
+
+### [`MessageEvent`](https://developer.mozilla.org/en-US/docs/Web/API/MessageEvent)
+
+🟢 完全实现。
+
+### [`MessagePort`](https://developer.mozilla.org/en-US/docs/Web/API/MessagePort)
+
+🟢 完全实现。
+
+### [`module`](https://nodejs.org/api/globals.html#module)
+
+🟢 完全实现。
+
+### [`PerformanceEntry`](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceEntry)
+
+🟢 完全实现。
+
+### [`PerformanceMark`](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceMark)
+
+🟢 完全实现。
+
+### [`PerformanceMeasure`](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceMeasure)
+
+🟢 完全实现。
+
+### [`PerformanceObserver`](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceObserver)
+
+🟢 完全实现。
+
+### [`PerformanceObserverEntryList`](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceObserverEntryList)
+
+🟢 完全实现。
+
+### [`PerformanceResourceTiming`](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceResourceTiming)
+
+🟢 完全实现。
+
+### [`performance`](https://developer.mozilla.org/en-US/docs/Web/API/performance)
+
+🟢 完全实现。
+
+### [`process`](https://nodejs.org/api/process.html)
+
+🟡 大部分已实现。`process.binding`（一些包依赖的内部 Node.js 绑定）部分实现。`process.title` 目前在 macOS & Linux 上是无操作。`getActiveResourcesInfo` `setActiveResourcesInfo`、`getActiveResources` 和 `setSourceMapsEnabled` 是存根。较新的 API 如 `process.loadEnvFile` 和 `process.getBuiltinModule` 还未实现。
+
+### [`queueMicrotask()`](https://developer.mozilla.org/en-US/docs/Web/API/queueMicrotask)
+
+🟢 完全实现。
+
+### [`ReadableByteStreamController`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableByteStreamController)
+
+🟢 完全实现。
+
+### [`ReadableStream`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStream)
+
+🟢 完全实现。
+
+### [`ReadableStreamBYOBReader`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStreamBYOBReader)
+
+🟢 完全实现。
+
+### [`ReadableStreamBYOBRequest`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStreamBYOBRequest)
+
+🟢 完全实现。
+
+### [`ReadableStreamDefaultController`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStreamDefaultController)
+
+🟢 完全实现。
+
+### [`ReadableStreamDefaultReader`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStreamDefaultReader)
+
+🟢 完全实现。
+
+### [`require()`](https://nodejs.org/api/globals.html#require)
+
+🟢 完全实现，包括 [`require.main`](https://nodejs.org/api/modules.html#requiremain)、[`require.cache`](https://nodejs.org/api/modules.html#requirecache)、[`require.resolve`](https://nodejs.org/api/modules.html#requireresolverequest-options)。
+
+### [`Response`](https://developer.mozilla.org/en-US/docs/Web/API/Response)
+
+🟢 完全实现。
+
+### [`Request`](https://developer.mozilla.org/en-US/docs/Web/API/Request)
+
+🟢 完全实现。
+
+### [`setImmediate()`](https://developer.mozilla.org/en-US/docs/Web/API/Window/setImmediate)
+
+🟢 完全实现。
+
+### [`setInterval()`](https://developer.mozilla.org/en-US/docs/Web/API/Window/setInterval)
+
+🟢 完全实现。
+
+### [`setTimeout()`](https://developer.mozilla.org/en-US/docs/Web/API/Window/setTimeout)
+
+🟢 完全实现。
+
+### [`structuredClone()`](https://developer.mozilla.org/en-US/docs/Web/API/structuredClone)
+
+🟢 完全实现。
+
+### [`SubtleCrypto`](https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto)
+
+🟢 完全实现。
+
+### [`DOMException`](https://developer.mozilla.org/en-US/docs/Web/API/DOMException)
+
+🟢 完全实现。
+
+### [`TextDecoder`](https://developer.mozilla.org/en-US/docs/Web/API/TextDecoder)
+
+🟢 完全实现。
+
+### [`TextDecoderStream`](https://developer.mozilla.org/en-US/docs/Web/API/TextDecoderStream)
+
+🟢 完全实现。
+
+### [`TextEncoder`](https://developer.mozilla.org/en-US/docs/Web/API/TextEncoder)
+
+🟢 完全实现。
+
+### [`TextEncoderStream`](https://developer.mozilla.org/en-US/docs/Web/API/TextEncoderStream)
+
+🟢 完全实现。
+
+### [`TransformStream`](https://developer.mozilla.org/en-US/docs/Web/API/TransformStream)
+
+🟢 完全实现。
+
+### [`TransformStreamDefaultController`](https://developer.mozilla.org/en-US/docs/Web/API/TransformStreamDefaultController)
+
+🟢 完全实现。
+
+### [`URL`](https://developer.mozilla.org/en-US/docs/Web/API/URL)
+
+🟢 完全实现。
+
+### [`URLSearchParams`](https://developer.mozilla.org/en-US/docs/Web/API/URLSearchParams)
+
+🟢 完全实现。
+
+### [`WebAssembly`](https://nodejs.org/api/globals.html#webassembly)
+
+🟢 完全实现。
+
+### [`WritableStream`](https://developer.mozilla.org/en-US/docs/Web/API/WritableStream)
+
+🟢 完全实现。
+
+### [`WritableStreamDefaultController`](https://developer.mozilla.org/en-US/docs/Web/API/WritableStreamDefaultController)
+
+🟢 完全实现。
+
+### [`WritableStreamDefaultWriter`](https://developer.mozilla.org/en-US/docs/Web/API/WritableStreamDefaultWriter)
+
+🟢 完全实现。

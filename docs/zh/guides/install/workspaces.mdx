@@ -1,0 +1,70 @@
+---
+title: 使用工作区配置单体仓库
+sidebarTitle: Bun 的工作区
+mode: center
+---
+
+Bun 的包管理器支持 npm `"workspaces"`。这允许您将代码库拆分为多个独立的"包"，它们位于同一个仓库中，可以相互依赖，并且（在可能的情况下）共享一个 [node_modules] 目录。
+
+克隆 [这个示例项目](https://github.com/colinhacks/bun-workspaces) 来试验工作区。
+
+---
+
+根目录的 [package.json] 不应包含任何 `"dependencies"`、`"devDependencies"` 等。每个单独的包应该是自包含的，并声明自己的依赖项。同样，通常声明 `"private": true` 以避免意外地将根包发布到 `npm`。
+
+```json package.json icon="file-json"
+{
+  "name": "my-monorepo",
+  "private": true,
+  "workspaces": ["packages/*"]
+}
+```
+
+---
+
+通常将所有包放在一个 [packages] 目录中。[package.json] 中的 `"workspaces"` 字段支持 glob 模式，因此您可以使用 `packages/*` 来表示 [packages] 的每个子目录都应该被视为单独的_包_（也称为工作区）。
+
+```txt File Tree icon="folder-tree"
+.
+├── package.json
+├── node_modules
+└── packages
+    ├── stuff-a
+    │   └── package.json
+    └── stuff-b
+        └── package.json
+```
+
+---
+
+要在工作区间添加依赖关系，请使用 `"workspace:*"` 语法。这里我们将 `stuff-a` 添加为 `stuff-b` 的依赖项。
+
+```json packages/stuff-b/package.json icon="file-json"
+{
+  "name": "stuff-b",
+  "dependencies": {
+    "stuff-a": "workspace:*" // [!code ++]
+  }
+}
+```
+
+---
+
+添加后，从项目根目录运行 `bun install` 为所有工作区安装依赖项。
+
+```sh terminal icon="terminal"
+bun install
+```
+
+---
+
+要向特定工作区添加 npm 依赖项，只需 `cd` 到相应目录并照常运行 `bun add` 命令。Bun 将检测到您处于工作区中，并根据需要提升依赖项。
+
+```sh terminal icon="terminal"
+cd packages/stuff-a
+bun add zod
+```
+
+---
+
+请参阅 [文档 > 包管理器](/pm/cli/install) 以获取 Bun 包管理器的完整文档。

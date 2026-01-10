@@ -1,0 +1,32 @@
+---
+title: 导入 TOML 文件
+sidebarTitle: 导入 TOML
+mode: center
+---
+
+Bun 原生支持导入 `.toml` 文件。
+
+```toml data.toml icon="file-code"
+name = "bun"
+version = "1.0.0"
+
+[author]
+name = "John Dough"
+email = "john@dough.com"
+```
+
+---
+
+像任何其他源文件一样导入该文件。
+
+```ts data.ts icon="/icons/typescript.svg"
+import data from "./data.toml";
+
+data.name; // => "bun"
+data.version; // => "1.0.0"
+data.author.name; // => "John Dough"
+```
+
+---
+
+有关在 Bun 中使用 TypeScript 的更多信息，请参阅 [文档 > 运行时 > TypeScript](/runtime/typescript)。

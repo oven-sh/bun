@@ -1,0 +1,113 @@
+---
+title: "使用 bun test 导入、require 和测试 Svelte 组件"
+sidebarTitle: 测试 Svelte
+mode: center
+---
+
+Bun 的 [插件 API](/runtime/plugins) 允许您向项目添加自定义加载器。[bunfig.toml] 中的 `test.preload` 选项允许您配置加载器在测试运行前启动。
+
+首先，安装 `@testing-library/svelte`、`svelte` 和 `@happy-dom/global-registrator`。
+
+```bash terminal icon="terminal"
+bun add @testing-library/svelte svelte@4 @happy-dom/global-registrator
+```
+
+然后，将此插件保存在您的项目中。
+
+```ts svelte-loader.ts icon="/icons/typescript.svg"
+import { plugin } from "bun";
+import { compile } from "svelte/compiler";
+import { readFileSync } from "fs";
+import { beforeEach, afterEach } from "bun:test";
+import { GlobalRegistrator } from "@happy-dom/global-registrator";
+
+beforeEach(async () => {
+  await GlobalRegistrator.register();
+});
+
+afterEach(async () => {
+  await GlobalRegistrator.unregister();
+});
+
+plugin({
+  title: "svelte loader",
+  setup(builder) {
+    builder.onLoad({ filter: /\.svelte(\?[^.]+)?$/ }, ({ path }) => {
+      try {
+        const source = readFileSync(path.substring(0, path.includes("?") ? path.indexOf("?") : path.length), "utf-8");
+
+        const result = compile(source, {
+          filetitle: path,
+          generate: "client",
+          dev: false,
+        });
+
+        return {
+          contents: result.js.code,
+          loader: "js",
+        };
+      } catch (err) {
+        throw new Error(`Failed to compile Svelte component: ${err.message}`);
+      }
+    });
+  },
+});
+```
+
+---
+
+将此内容添加到 [bunfig.toml] 中，告诉 Bun 预加载插件，这样它会在测试运行前加载。
+
+```toml bunfig.toml icon="settings"
+[test]
+# 告诉 Bun 在运行测试前加载此插件
+preload = ["./svelte-loader.ts"]
+
+# 这也可以:
+# test.preload = ["./svelte-loader.ts"]
+```
+
+---
+
+在您的项目中添加一个示例 [.svelte] 文件。
+
+```html Counter.svelte icon="file-code"
+<script>
+  export let initialCount = 0;
+  let count = initialCount;
+</script>
+
+<button on:click={() => (count += 1)}>+1</button>
+```
+
+---
+
+现在您可以在测试中 `import` 或 `require` [*.svelte] 文件，它将把 Svelte 组件作为 JavaScript 模块加载。
+
+```ts hello-svelte.test.ts icon="/icons/typescript.svg"
+import { test, expect } from "bun:test";
+import { render, fireEvent } from "@testing-library/svelte";
+import Counter from "./Counter.svelte";
+
+test("Counter increments when clicked", async () => {
+  const { getByText, component } = render(Counter);
+  const button = getByText("+1");
+
+  // 初始状态
+  expect(component.$$.ctx[0]).toBe(0); // initialCount 是第一个 prop
+
+  // 点击增加按钮
+  await fireEvent.click(button);
+
+  // 检查新状态
+  expect(component.$$.ctx[0]).toBe(1);
+});
+```
+
+---
+
+使用 `bun test` 运行您的测试。
+
+```bash terminal icon="terminal"
+bun test
+```

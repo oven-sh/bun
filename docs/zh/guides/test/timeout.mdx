@@ -1,0 +1,17 @@
+---
+title: 使用 Bun 测试运行器设置每个测试的超时时间
+sidebarTitle: 测试超时
+mode: center
+---
+
+使用 `--timeout` 标志设置每个测试的超时时间（以毫秒为单位）。如果任何测试超过此超时时间，它将被标记为失败。
+
+默认超时时间为 `5000`（5 秒）。
+
+```sh terminal icon="terminal"
+bun test --timeout 3000 # 3 秒
+```
+
+---
+
+请参阅 [文档 > 测试运行器](/test) 了解 `bun test` 的完整文档。

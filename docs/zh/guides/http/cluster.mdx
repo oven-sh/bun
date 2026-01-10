@@ -1,0 +1,68 @@
+---
+title: 启动一组 HTTP 服务器集群
+description: 通过 "reusePort" 选项同时运行多个 HTTP 服务器，以跨多个进程共享同一端口
+sidebarTitle: 启动一组 HTTP 服务器集群
+mode: center
+---
+
+要同时运行多个 HTTP 服务器，请在 `Bun.serve()` 中使用 `reusePort` 选项，该选项可在多个进程间共享同一端口。
+
+这会自动在 Bun 的多个实例之间平衡传入的请求负载。
+
+```ts server.ts icon="/icons/typescript.svg"
+import { serve } from "bun";
+
+const id = Math.random().toString(36).slice(2);
+
+serve({
+  port: process.env.PORT || 8080,
+  development: false,
+
+  // 在多个进程间共享同一端口
+  // 这是重要部分！
+  reusePort: true,
+
+  async fetch(request) {
+    return new Response("来自 Bun #" + id + " 的问候！\n");
+  },
+});
+```
+
+---
+
+<Note>
+  **仅限 Linux** &mdash; Windows 和 macOS 会忽略 `reusePort` 选项。不幸的是，这是操作系统在 `SO_REUSEPORT` 方面的限制。
+</Note>
+
+保存文件后，在同一端口上启动您的服务器。
+
+在内部，这使用了 Linux 的 `SO_REUSEPORT` 和 `SO_REUSEADDR` 套接字选项，以确保在多个进程间公平地负载均衡。[了解更多关于 `SO_REUSEPORT` 和 `SO_REUSEADDR` 的信息](https://lwn.net/Articles/542629/)
+
+```ts cluster.ts icon="/icons/typescript.svg"
+import { spawn } from "bun";
+
+const cpus = navigator.hardwareConcurrency; // CPU 核心数
+const buns = new Array(cpus);
+
+for (let i = 0; i < cpus; i++) {
+  buns[i] = spawn({
+    cmd: ["bun", "./server.ts"],
+    stdout: "inherit",
+    stderr: "inherit",
+    stdin: "inherit",
+  });
+}
+
+function kill() {
+  for (const bun of buns) {
+    bun.kill();
+  }
+}
+
+process.on("SIGINT", kill);
+process.on("exit", kill);
+```
+
+---
+
+Bun 也实现了 `node:cluster` 模块，但这是一个更快、更简单且有限的替代方案。

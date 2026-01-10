@@ -1,0 +1,97 @@
+---
+title: 使用 FormData 通过 HTTP 上传文件
+sidebarTitle: 使用 FormData 通过 HTTP 上传文件
+mode: center
+---
+
+要使用 Bun 通过 HTTP 上传文件，请使用 [`FormData`](https://developer.mozilla.org/en-US/docs/Web/API/FormData) API。让我们从一个提供简单 HTML 网页表单的 HTTP 服务器开始。
+
+```ts index.ts icon="/icons/typescript.svg"
+const server = Bun.serve({
+  port: 4000,
+  async fetch(req) {
+    const url = new URL(req.url);
+
+    // 为根路径返回 index.html
+    if (url.pathname === "/")
+      return new Response(Bun.file("index.html"), {
+        headers: {
+          "Content-Type": "text/html",
+        },
+      });
+
+    return new Response("未找到", { status: 404 });
+  },
+});
+
+console.log(`监听 http://localhost:${server.port}`);
+```
+
+---
+
+我们可以在另一个文件中定义我们的 HTML 表单，`index.html`。
+
+```html index.html icon="file-code"
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>表单</title>
+  </head>
+  <body>
+    <form action="/action" method="post" enctype="multipart/form-data">
+      <input type="text" name="name" placeholder="姓名" />
+      <input type="file" name="profilePicture" />
+      <input type="submit" value="提交" />
+    </form>
+  </body>
+</html>
+```
+
+---
+
+此时，我们可以运行服务器并访问 [`localhost:4000`](http://localhost:4000) 查看我们的表单。
+
+```bash
+bun run index.ts
+监听 http://localhost:4000
+```
+
+---
+
+我们的表单将向 `/action` 端点发送一个带有表单数据的 `POST` 请求。让我们在服务器中处理该请求。
+
+首先我们在传入的 `Request` 上使用 [.formData()](https://developer.mozilla.org/en-US/docs/Web/API/Request/formData) 方法异步解析其内容到 `FormData` 实例。然后我们可以使用 [.get()](https://developer.mozilla.org/en-US/docs/Web/API/FormData/get) 方法提取 `name` 和 `profilePicture` 字段的值。这里 `name` 对应一个 `string`，而 `profilePicture` 是一个 `Blob`。
+
+最后，我们使用 [`Bun.write()`](/runtime/file-io#writing-files-bun-write) 将 `Blob` 写入磁盘。
+
+{/* prettier-ignore */}
+```ts index.ts icon="/icons/typescript.svg"
+const server = Bun.serve({
+  port: 4000,
+  async fetch(req) {
+    const url = new URL(req.url);
+
+    // 为根路径返回 index.html
+    if (url.pathname === "/")
+      return new Response(Bun.file("index.html"), {
+        headers: {
+          "Content-Type": "text/html",
+        },
+      });
+
+    // 在 /action 解析表单数据 // [!code ++]
+    if (url.pathname === "/action") { // [!code ++]
+      const formdata = await req.formData(); // [!code ++]
+      const name = formdata.get("name"); // [!code ++]
+      const profilePicture = formdata.get("profilePicture"); // [!code ++]
+      if (!profilePicture) throw new Error("必须上传个人资料照片。"); // [!code ++]
+      // 将个人资料照片写入磁盘 // [!code ++]
+      await Bun.write("profilePicture.png", profilePicture); // [!code ++]
+      return new Response("成功"); // [!code ++]
+    } // [!code ++]
+
+    return new Response("未找到", { status: 404 });
+  },
+});
+```

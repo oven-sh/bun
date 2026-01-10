@@ -1,0 +1,19 @@
+---
+title: Node-API
+description: 使用 Bun 的 Node-API 模块构建 Node.js 的原生插件
+---
+
+Node-API 是一个用于构建 Node.js 原生插件的接口。Bun 从头开始实现了这个接口的 95%，所以大多数现有的 Node-API 扩展都可以在 Bun 中开箱即用。在 [此问题](https://github.com/oven-sh/bun/issues/158) 中跟踪它的完成状态。
+
+与 Node.js 中一样，`.node` 文件（Node-API 模块）可以直接在 Bun 中 require。
+
+```js
+const napi = require("./my-node-module.node");
+```
+
+或者，使用 `process.dlopen`：
+
+```js
+let mod = { exports: {} };
+process.dlopen(mod, "./my-node-module.node");
+```

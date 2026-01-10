@@ -1,0 +1,132 @@
+---
+title: 欢迎来到 Bun
+description: Bun 是一个用于开发现代 JavaScript/TypeScript 应用的一体化工具包。
+mode: center
+---
+
+<CardGroup>
+  <Card
+    icon="cog"
+    title="Bun 运行时"
+    href="/runtime"
+    cta={
+      <span>
+        通过 <code>bun run</code> 开始
+      </span>
+    }
+  >
+    一款快速的 JavaScript 运行时，旨在作为 Node.js 的直接替代品
+  </Card>
+  <Card
+    icon="box"
+    title="Bun 包管理器"
+    href="/pm/cli/install"
+    cta={
+      <span>
+        通过 <code>bun install</code> 开始
+      </span>
+    }
+  >
+    使用全局缓存和工作区，可将包安装速度提升至 30 倍
+  </Card>
+  <Card
+    icon="flask-conical"
+    title="Bun 测试运行器"
+    href="/test"
+    cta={
+      <span>
+        通过 <code>bun test</code> 开始
+      </span>
+    }
+  >
+    兼容 Jest、以 TypeScript 优先的测试，支持快照、DOM 和监听模式
+  </Card>
+  <Card
+    icon="combine"
+    title="Bun 打包器"
+    href="/bundler"
+    cta={
+      <span>
+        通过 <code>bun build</code> 开始
+      </span>
+    }
+  >
+    为浏览器和服务器原生打包 TypeScript、JSX、React 和 CSS
+  </Card>
+</CardGroup>
+
+---
+
+## 快速开始
+
+Bun 作为一个单一的、无依赖的二进制文件发布，包括运行时、包管理器、测试运行器和打包器。初次使用 Bun？
+
+<CardGroup>
+  <Card icon="download" title="安装 Bun" href="/installation">
+    支持的平台和所有安装方法。
+  </Card>
+  <Card icon="zap" title="快速入门" href="/quickstart">
+    使用 Bun.serve 在几分钟内实现 Hello world。
+  </Card>
+</CardGroup>
+
+---
+
+## 内容介绍
+
+- 运行时：执行 JavaScript/TypeScript 文件和包脚本，几乎零开销。
+- 包管理器：快速安装、工作区、覆盖和审核，通过 `bun install` 实现。
+- 测试运行器：兼容 Jest、以 TypeScript 优先的测试，支持快照、DOM 和监听模式。
+- 打包器：原生 JS/TS/JSX 打包，支持拆分、插件和 HTML 导入。
+
+使用上面的卡片浏览每个部分。每个部分都包含概述、快速示例、参考文档以及最佳实践，方便快速浏览和深入学习。
+
+---
+
+## 什么是 Bun?
+
+Bun 是一个用于 JavaScript 和 TypeScript 应用的一体化工具包。它作为一个名为 `bun` 的单一可执行文件发布。
+
+其核心是 _Bun 运行时_，这是一个快速的 JavaScript 运行时，设计为 **Node.js 的直接替代品**。它使用 Zig 编写，并在底层使用 JavaScriptCore，显著减少启动时间和内存使用。
+
+```bash terminal icon="terminal"
+bun run index.tsx  # 原生支持 TS 和 JSX
+```
+
+[Truncated]`bun` 命令行工具还实现了测试运行器、脚本运行器和与 Node.js 兼容的包管理器，所有这些都比现有工具快得多，并且可以在现有的 Node.js 项目中使用，几乎不需要任何更改。
+
+```bash terminal icon="terminal"
+bun run start                 # 运行 `start` 脚本
+bun install <pkg>             # 安装一个包
+bun build ./index.tsx         # 将项目打包用于浏览器
+bun test                      # 运行测试
+bunx cowsay 'Hello, world!'   # 执行一个包
+```
+
+## 什么是运行时？
+
+JavaScript（或更正式地称为 ECMAScript）只是一种 _规范_，用于编程语言。任何人都可以编写 JavaScript _引擎_ 来接收并执行有效的 JavaScript 程序。目前最流行的两个 JavaScript 引擎是 V8（由 Google 开发）和 JavaScriptCore（由 Apple 开发）。两者都是开源的。
+
+但大多数 JavaScript 程序并不是孤立运行的。它们需要一种访问外部世界的方法来执行有用的任务。这就是 _运行时_ 的作用。它们实现附加的 API，然后提供给正在执行的 JavaScript 程序使用。
+
+### 浏览器
+
+值得注意的是，浏览器配备了 JavaScript 运行时，实现了一组通过全局 [window](<>) 对象暴露的特定于 Web 的 API。在浏览器中执行的任何 JavaScript 代码都可以使用这些 API 在当前网页上下文中实现交互式或动态行为。
+
+### Node.js
+
+同样，Node.js 是一个可在非浏览器环境中使用的 JavaScript 运行时，例如服务器。通过 Node.js 执行的 JavaScript 程序可以访问一组 Node.js 特定的 [全局对象](https://nodejs.org/api/globals.html)，如 [Buffer](<>)、[process](<>) 和 [__dirname](<>)，以及内置模块，用于执行操作系统级别的任务，如读写文件（[node:fs](<>)）、网络（[node:net](<>)、[node:http](<>)）。Node.js 还实现了一个基于 CommonJS 的模块系统和解析算法，这早于 JavaScript 的原生模块系统。
+
+Bun 被设计为 Node.js 更快、更轻量、更现代化的替代品。
+
+## 设计目标
+
+Bun 从头开始设计，考虑了当今的 JavaScript 生态系统。
+
+- **速度**。Bun 进程启动 [比 Node.js 快 4 倍](https://twitter.com/jarredsumner/status/1499225725492076544)（自己试试看！）
+- **TypeScript & JSX 支持**。您可以直接执行 [.jsx](<>)、[.ts](<>) 和 [.tsx](<>) 文件；Bun 的转译器会将这些转换为普通 JavaScript 后再执行。
+- **ESM & CommonJS 兼容性**。世界正在向 ES 模块（ESM）发展，但 npm 上仍有数百万个包需要 CommonJS。Bun 推荐使用 ES 模块，但也支持 CommonJS。
+- **Web 标准 API**。Bun 实现了标准 Web API，如 [fetch](<>)、[WebSocket](<>) 和 [ReadableStream](<>)。Bun 由 JavaScriptCore 引擎驱动，这是苹果为 Safari 开发的，因此一些 API 如 [`Headers`](https://developer.mozilla.org/en-US/docs/Web/API/Headers) 和 [`URL`](https://developer.mozilla.org/en-US/docs/Web/API/URL) 直接使用 [Safari 的实现](https://github.com/oven-sh/bun/blob/HEAD/src/bun.js/bindings/webcore/JSFetchHeaders.cpp)。
+- **Node.js 兼容性**。除了支持 Node 风格的模块解析，Bun 旨在实现与 Node.js 内置全局变量（[process](<>)、[Buffer](<>)）和模块（[path](<>)、[fs](<>)、[http](<>) 等）的完全兼容。_这是一个正在进行的工作，尚未完成。_ 请参阅 [兼容性页面](/runtime/nodejs-compat) 获取当前状态。
+
+Bun 不仅仅是一个运行时。长期目标是成为一个构建 JavaScript/TypeScript 应用的凝聚性基础设施工具包，包括包管理器、转译器、打包器、脚本运行器、测试运行器等。

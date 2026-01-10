@@ -1,0 +1,197 @@
+---
+title: "bun outdated"
+description: "检查过时的依赖"
+---
+
+import Outdated from "/snippets/cli/outdated.mdx";
+
+使用 `bun outdated` 检查项目中过时的依赖。此命令显示具有可用新版本的依赖表格。
+
+```sh terminal icon="terminal"
+bun outdated
+```
+
+```txt
+| Package                        | Current | Update    | Latest     |
+| ------------------------------ | ------- | --------- | ---------- |
+| @sinclair/typebox              | 0.34.15 | 0.34.16   | 0.34.16    |
+| @types/bun (dev)               | 1.3.0   | 1.3.3     | 1.3.3      |
+| eslint (dev)                   | 8.57.1  | 8.57.1    | 9.20.0     |
+| eslint-plugin-security (dev)   | 2.1.1   | 2.1.1     | 3.0.1      |
+| eslint-plugin-sonarjs (dev)    | 0.23.0  | 0.23.0    | 3.0.1      |
+| expect-type (dev)              | 0.16.0  | 0.16.0    | 1.1.0      |
+| prettier (dev)                 | 3.4.2   | 3.5.0     | 3.5.0      |
+| tsup (dev)                     | 8.3.5   | 8.3.6     | 8.3.6      |
+| typescript (dev)               | 5.7.2   | 5.7.3     | 5.7.3      |
+
+```
+
+## 版本信息
+
+输出表格显示三个版本列：
+
+- **Current**: 当前安装的版本
+- **Update**: 满足你的 package.json 版本范围的最新版本
+- **Latest**: 注册表中发布的最新版本
+
+### 依赖过滤器
+
+`bun outdated` 支持通过包名称和 glob 模式搜索过时的依赖。
+
+要检查特定依赖是否过时，请将包名称作为位置参数传递：
+
+```sh terminal icon="terminal"
+bun outdated eslint-plugin-security eslint-plugin-sonarjs
+```
+
+```txt
+| Package                        | Current | Update | Latest    |
+| ------------------------------ | ------- | ------ | --------- |
+| eslint-plugin-security (dev)   | 2.1.1   | 2.1.1  | 3.0.1     |
+| eslint-plugin-sonarjs (dev)    | 0.23.0  | 0.23.0 | 3.0.1     |
+
+```
+
+你也可以传递 glob 模式来检查过时的包：
+
+```sh terminal icon="terminal"
+bun outdated 'eslint*'
+```
+
+```txt
+| Package                        | Current | Update | Latest     |
+| ------------------------------ | ------- | ------ | ---------- |
+| eslint (dev)                   | 8.57.1  | 8.57.1 | 9.20.0     |
+| eslint-plugin-security (dev)   | 2.1.1   | 2.1.1  | 3.0.1      |
+| eslint-plugin-sonarjs (dev)    | 0.23.0  | 0.23.0 | 3.0.1      |
+```
+
+例如，检查过时的 `@types/*` 包：
+
+```sh terminal icon="terminal"
+bun outdated '@types/*'
+```
+
+```txt
+| Package            | Current | Update | Latest |
+| ------------------ | ------- | ------ | ------ |
+| @types/bun (dev)   | 1.3.0   | 1.3.3  | 1.3.3 |
+```
+
+或者排除所有 `@types/*` 包：
+
+```sh terminal icon="terminal"
+bun outdated '!@types/*'
+```
+
+```txt
+| Package                        | Current | Update    | Latest     |
+| ------------------------------ | ------- | --------- | ---------- |
+| @sinclair/typebox              | 0.34.15 | 0.34.16   | 0.34.16    |
+| eslint (dev)                   | 8.57.1  | 8.57.1    | 9.20.0     |
+| eslint-plugin-security (dev)   | 2.1.1   | 2.1.1     | 3.0.1      |
+| eslint-plugin-sonarjs (dev)    | 0.23.0  | 0.23.0    | 3.0.1      |
+| expect-type (dev)              | 0.16.0  | 0.16.0    | 1.1.0      |
+| prettier (dev)                 | 3.4.2   | 3.5.0     | 3.5.0      |
+| tsup (dev)                     | 8.3.5   | 8.3.6     | 8.3.6      |
+| typescript (dev)               | 5.7.2   | 5.7.3     | 5.7.3      |
+```
+
+### 工作区过滤器
+
+使用 `--filter` 标志检查不同工作区包中的过时依赖：
+
+```sh terminal icon="terminal"
+bun outdated --filter='@monorepo/types'
+```
+
+```txt
+| Package            | Current | Update | Latest |
+| ------------------ | ------- | ------ | ------ |
+| tsup (dev)         | 8.3.5   | 8.3.6  | 8.3.6  |
+| typescript (dev)   | 5.7.2   | 5.7.3  | 5.7.3  |
+```
+
+你可以传递多个 `--filter` 标志来检查多个工作区：
+
+```sh terminal icon="terminal"
+bun outdated --filter @monorepo/types --filter @monorepo/cli
+```
+
+```txt
+| Package                        | Current | Update | Latest     |
+| ------------------------------ | ------- | ------ | ---------- |
+| eslint (dev)                 	 | 8.57.1  | 8.57.1 | 9.20.0     |
+| eslint-plugin-security (dev)   | 2.1.1   | 2.1.1  | 3.0.1      |
+| eslint-plugin-sonarjs (dev)    | 0.23.0  | 0.23.0 | 3.0.1      |
+| expect-type (dev)              | 0.16.0  | 0.16.0 | 1.1.0      |
+| tsup (dev)                     | 8.3.5   | 8.3.6  | 8.3.6      |
+| typescript (dev)               | 5.7.2   | 5.7.3  | 5.7.3      |
+```
+
+你也可以传递 glob 模式来按工作区名称过滤：
+
+```sh terminal icon="terminal"
+bun outdated --filter='@monorepo/{types,cli}'
+```
+
+```txt
+| Package                        | Current | Update | Latest     |
+| ------------------------------ | ------- | ------ | ---------- |
+| eslint (dev)                   | 8.57.1  | 8.57.1 | 9.20.0     |
+| eslint-plugin-security (dev)   | 2.1.1   | 2.1.1  | 3.0.1      |
+| eslint-plugin-sonarjs (dev)    | 0.23.0  | 0.23.0 | 3.0.1      |
+| expect-type (dev)              | 0.16.0  | 0.16.0 | 1.1.0      |
+| tsup (dev)                     | 8.3.5   | 8.3.6  | 8.3.6      |
+| typescript (dev)               | 5.7.2   | 5.7.3  | 5.7.3      |
+```
+
+### 目录依赖
+
+`bun outdated` 支持检查 [package.json] 中定义的目录依赖：
+
+```sh terminal icon="terminal"
+bun outdated -r
+```
+
+```txt
+┌────────────────────┬─────────┬─────────┬─────────┬────────────────────────────────┐
+│ Package            │ Current │ Update  │ Latest  │ Workspace                      │
+├────────────────────┼─────────┼─────────┼─────────┼────────────────────────────────┤
+│ body-parser        │ 1.19.0  │ 1.19.0  │ 2.2.0   │ @test/shared                   │
+├────────────────────┼─────────┼─────────┼─────────┼────────────────────────────────┤
+│ cors               │ 2.8.0   │ 2.8.0   │ 2.8.5   │ @test/shared                   │
+├────────────────────┼─────────┼─────────┼─────────┼────────────────────────────────┤
+│ chalk              │ 4.0.0   │ 4.0.0   │ 5.6.2   │ @test/utils                    │
+├────────────────────┼─────────┼─────────┼─────────┼────────────────────────────────┤
+│ uuid               │ 8.0.0   │ 8.0.0   │ 13.0.0  │ @test/utils                    │
+├────────────────────┼─────────┼─────────┼─────────┼────────────────────────────────┤
+│ axios              │ 0.21.0  │ 0.21.0  │ 1.12.2  │ catalog (@test/app)            │
+├────────────────────┼─────────┼─────────┼─────────┼────────────────────────────────┤
+│ lodash             │ 4.17.15 │ 4.17.15 │ 4.17.21 │ catalog (@test/app, @test/app) │
+├────────────────────┼─────────┼─────────┼─────────┼────────────────────────────────┤
+│ react              │ 17.0.0  │ 17.0.0  │ 19.1.1  │ catalog (@test/app)            │
+├────────────────────┼─────────┼─────────┼─────────┼────────────────────────────────┤
+│ react-dom          │ 17.0.0  │ 17.0.0  │ 19.1.1  │ catalog (@test/app)            │
+├────────────────────┼─────────┼─────────┼─────────┼────────────────────────────────┤
+│ express            │ 4.17.0  │ 4.17.0  │ 5.1.0   │ catalog (@test/shared)         │
+├────────────────────┼─────────┼─────────┼─────────┼────────────────────────────────┤
+│ moment             │ 2.24.0  │ 2.24.0  │ 2.30.1  │ catalog (@test/utils)          │
+├────────────────────┼─────────┼─────────┼─────────┼────────────────────────────────┤
+│ @types/node (dev)  │ 14.0.0  │ 14.0.0  │ 24.5.2  │ @test/shared                   │
+├────────────────────┼─────────┼─────────┼─────────┼────────────────────────────────┤
+│ @types/react (dev) │ 17.0.0  │ 17.0.0  │ 19.1.15 │ catalog:testing (@test/app)    │
+├────────────────────┼─────────┼─────────┼─────────┼────────────────────────────────┤
+│ eslint (dev)       │ 7.0.0   │ 7.0.0   │ 9.36.0  │ catalog:testing (@test/app)    │
+├────────────────────┼─────────┼─────────┼─────────┼────────────────────────────────┤
+│ typescript (dev)   │ 4.9.5   │ 4.9.5   │ 5.9.2   │ catalog:build (@test/app)      │
+├────────────────────┼─────────┼─────────┼─────────┼────────────────────────────────┤
+│ jest (dev)         │ 26.0.0  │ 26.0.0  │ 30.2.0  │ catalog:testing (@test/shared) │
+├────────────────────┼─────────┼─────────┼─────────┼────────────────────────────────┤
+│ prettier (dev)     │ 2.0.0   │ 2.0.0   │ 3.6.2   │ catalog:build (@test/utils)    │
+└────────────────────┴─────────┴─────────┴─────────┴────────────────────────────────┘
+```
+
+---
+
+<Outdated />

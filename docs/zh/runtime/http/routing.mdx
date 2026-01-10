@@ -1,0 +1,289 @@
+---
+title: 路由
+description: 在 `Bun.serve` 中使用静态路径、参数和通配符定义路由
+---
+
+您可以通过使用 `routes` 属性（用于静态路径、参数和通配符）或使用 [`fetch`](#fetch) 方法处理未匹配的请求来向 `Bun.serve()` 添加路由。
+
+`Bun.serve()` 的路由器基于 uWebSocket 的[基于树的方法](https://github.com/oven-sh/bun/blob/0d1a00fa0f7830f8ecd99c027fce8096c9d459b6/packages/bun-uws/src/HttpRouter.h#L57-L64) 构建，添加了[SIMD加速的路由参数解码](https://github.com/oven-sh/bun/blob/main/src/bun.js/bindings/decodeURIComponentSIMD.cpp#L21-L271)和[JavaScriptCore结构缓存](https://github.com/oven-sh/bun/blob/main/src/bun.js/bindings/ServerRouteList.cpp#L100-L101)，以推动现代硬件允许的性能极限。
+
+## 基本设置
+
+```ts title="server.ts" icon="/icons/typescript.svg"
+Bun.serve({
+  routes: {
+    "/": () => new Response("首页"),
+    "/api": () => Response.json({ success: true }),
+    "/users": async () => Response.json({ users: [] }),
+  },
+  fetch() {
+    return new Response("未匹配的路由");
+  },
+});
+```
+
+`Bun.serve()` 中的路由接收一个 `BunRequest`（扩展了 [`Request`](https://developer.mozilla.org/en-US/docs/Web/API/Request)）并返回一个 [`Response`](https://developer.mozilla.org/en-US/docs/Web/API/Response) 或 `Promise<Response>`。这使得发送和接收HTTP请求的代码更容易复用。
+
+```ts
+// 为简洁起见简化
+interface BunRequest<T extends string> extends Request {
+  params: Record<T, string>;
+  readonly cookies: CookieMap;
+}
+```
+
+## 异步路由
+
+### Async/await
+
+您可以在路由处理程序中使用 async/await 来返回 `Promise<Response>`。
+
+```ts
+import { sql, serve } from "bun";
+
+serve({
+  port: 3001,
+  routes: {
+    "/api/version": async () => {
+      const [version] = await sql`SELECT version()`;
+      return Response.json(version);
+    },
+  },
+});
+```
+
+### Promise
+
+您也可以从路由处理程序返回 `Promise<Response>`。
+
+```ts
+import { sql, serve } from "bun";
+
+serve({
+  routes: {
+    "/api/version": () => {
+      return new Promise(resolve => {
+        setTimeout(async () => {
+          const [version] = await sql`SELECT version()`;
+          resolve(Response.json(version));
+        }, 100);
+      });
+    },
+  },
+});
+```
+
+---
+
+## 路由优先级
+
+路由按特异性顺序匹配：
+
+1. 精确路由 (`/users/all`)
+2. 参数路由 (`/users/:id`)
+3. 通配符路由 (`/users/*`)
+4. 全局通配 (`/*`)
+
+```ts
+Bun.serve({
+  routes: {
+    // 最具体的优先
+    "/api/users/me": () => new Response("当前用户"),
+    "/api/users/:id": req => new Response(`用户 ${req.params.id}`),
+    "/api/*": () => new Response("API 通配"),
+    "/*": () => new Response("全局通配"),
+  },
+});
+```
+
+---
+
+## 类型安全的路由参数
+
+TypeScript 会解析作为字符串字面量传递的路由参数，以便您的编辑器在访问 `request.params` 时显示自动完成。
+
+```ts title="index.ts" icon="/icons/typescript.svg"
+import type { BunRequest } from "bun";
+
+Bun.serve({
+  routes: {
+    // 当作为字符串字面量传递时，TypeScript 知道 params 的结构
+    "/orgs/:orgId/repos/:repoId": req => {
+      const { orgId, repoId } = req.params;
+      return Response.json({ orgId, repoId });
+    },
+
+    "/orgs/:orgId/repos/:repoId/settings": (
+      // 可选：您可以显式地为 BunRequest 传递一个类型：
+      req: BunRequest<"/orgs/:orgId/repos/:repoId/settings">,
+    ) => {
+      const { orgId, repoId } = req.params;
+      return Response.json({ orgId, repoId });
+    },
+  },
+});
+```
+
+百分号编码的路由参数值会自动解码。支持 Unicode 字符。无效的 Unicode 将被 Unicode 替换字符 `&0xFFFD;` 替换。
+
+### 静态响应
+
+路由也可以是 `Response` 对象（没有处理函数）。Bun.serve() 对其进行零分配调度优化 - 非常适合健康检查、重定向和固定内容：
+
+```ts
+Bun.serve({
+  routes: {
+    // 健康检查
+    "/health": new Response("OK"),
+    "/ready": new Response("Ready", {
+      headers: {
+        // 传递自定义头部
+        "X-Ready": "1",
+      },
+    }),
+
+    // 重定向
+    "/blog": Response.redirect("https://bun.com/blog"),
+
+    // API 响应
+    "/api/config": Response.json({
+      version: "1.0.0",
+      env: "production",
+    }),
+  },
+});
+```
+
+静态响应在初始化后不会分配额外内存。通常您可以期望比手动返回 `Response` 对象至少 15% 的性能提升。
+
+静态路由响应在服务器对象的整个生命周期内被缓存。要重新加载静态路由，请调用 `server.reload(options)`。
+
+### 文件响应与静态响应
+
+在路由中提供文件时，根据您是缓冲文件内容还是直接提供文件，有两种不同的行为：
+
+```ts
+Bun.serve({
+  routes: {
+    // 静态路由 - 内容在启动时缓冲在内存中
+    "/logo.png": new Response(await Bun.file("./logo.png").bytes()),
+
+    // 文件路由 - 每个请求都从文件系统读取内容
+    "/download.zip": new Response(Bun.file("./download.zip")),
+  },
+});
+```
+
+**静态路由** (`new Response(await file.bytes())`) 在启动时缓冲内容到内存：
+
+- **零文件系统I/O** - 请求期间内容完全从内存提供
+- **ETag 支持** - 自动为缓存生成和验证ETags
+- **If-None-Match** - 当客户端ETag匹配时返回 `304 Not Modified`
+- **无 404 处理** - 缺失文件导致启动错误，而不是运行时 404
+- **内存使用** - 完整文件内容存储在RAM中
+- **最佳用于**: 小静态资源、API响应、频繁访问的文件
+
+**文件路由** (`new Response(Bun.file(path))`) 每次请求都从文件系统读取：
+
+- **文件系统读取** - 每次请求检查文件是否存在并读取内容
+- **内置 404 处理** - 如果文件不存在或无法访问则返回 `404 Not Found`
+- **Last-Modified 支持** - 使用文件修改时间处理 `If-Modified-Since` 头部
+- **If-Modified-Since** - 当文件自客户端缓存版本以来未更改时返回 `304 Not Modified`
+- **范围请求支持** - 自动使用 `Content-Range` 头部处理部分内容请求
+- **流式传输** - 使用带反压处理的缓冲读取器以实现高效的内存使用
+- **内存高效** - 只在传输期间缓冲小块，而不是整个文件
+- **最佳用于**: 大文件、动态内容、用户上传、频繁更改的文件
+
+---
+
+## 流式传输文件
+
+要流式传输文件，返回一个以 `BunFile` 对象作为正文的 `Response` 对象。
+
+```ts
+Bun.serve({
+  fetch(req) {
+    return new Response(Bun.file("./hello.txt"));
+  },
+});
+```
+
+<Info>
+  ⚡️ **速度** — Bun 在可能的情况下自动使用 [`sendfile(2)`](https://man7.org/linux/man-pages/man2/sendfile.2.html)
+  系统调用，实现内核中的零拷贝文件传输 - 这是发送文件的最快方式。
+</Info>
+
+您可以使用 `Bun.file` 对象上的 [`slice(start, end)`](https://developer.mozilla.org/en-US/docs/Web/API/Blob/slice) 方法发送文件的一部分。这会自动在 `Response` 对象上设置 `Content-Range` 和 `Content-Length` 头部。
+
+```ts
+Bun.serve({
+  fetch(req) {
+    // 解析 `Range` 头部
+    const [start = 0, end = Infinity] = req.headers
+      .get("Range") // Range: bytes=0-100
+      .split("=") // ["Range: bytes", "0-100"]
+      .at(-1) // "0-100"
+      .split("-") // ["0", "100"]
+      .map(Number); // [0, 100]
+
+    // 返回文件的切片
+    const bigFile = Bun.file("./big-video.mp4");
+    return new Response(bigFile.slice(start, end));
+  },
+});
+```
+
+---
+
+## `fetch` 请求处理器
+
+`fetch` 处理器处理未被任何路由匹配的传入请求。它接收一个 [`Request`](https://developer.mozilla.org/en-US/docs/Web/API/Request) 对象并返回一个 [`Response`](https://developer.mozilla.org/en-US/docs/Web/API/Response) 或 [`Promise<Response>`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise)。
+
+```ts
+Bun.serve({
+  fetch(req) {
+    const url = new URL(req.url);
+    if (url.pathname === "/") return new Response("首页!");
+    if (url.pathname === "/blog") return new Response("博客!");
+    return new Response("404!");
+  },
+});
+```
+
+`fetch` 处理器支持 async/await：
+
+```ts
+import { sleep, serve } from "bun";
+
+serve({
+  async fetch(req) {
+    const start = performance.now();
+    await sleep(10);
+    const end = performance.now();
+    return new Response(`休眠了 ${end - start}ms`);
+  },
+});
+```
+
+也支持基于Promise的响应：
+
+```ts
+Bun.serve({
+  fetch(req) {
+    // 将请求转发到另一个服务器。
+    return fetch("https://example.com");
+  },
+});
+```
+
+您还可以从 `fetch` 处理器访问 `Server` 对象。它是作为第二个参数传递给 `fetch` 函数的。
+
+```ts
+// `server` 作为第二个参数传递给 `fetch`。
+const server = Bun.serve({
+  fetch(req, server) {
+    const ip = server.requestIP(req);
+    return new Response(`您的IP是 ${ip.address}`);
+  },
+});
+```

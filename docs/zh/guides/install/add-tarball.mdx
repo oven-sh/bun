@@ -1,0 +1,35 @@
+---
+title: 添加 tarball 依赖
+sidebarTitle: 添加 tarball 依赖
+mode: center
+---
+
+Bun 的包管理器可以将任何公开可用的 tarball URL 作为项目依赖进行安装。
+
+```sh terminal icon="terminal"
+bun add zod@https://registry.npmjs.org/zod/-/zod-3.21.4.tgz
+```
+
+---
+
+运行此命令将下载、解压并将 tarball 安装到您项目的 [node_modules] 目录中。它还将以下行添加到您的 [package.json] 中：
+
+```json package.json icon="file-json"
+{
+  "dependencies": {
+    "zod": "https://registry.npmjs.org/zod/-/zod-3.21.4.tgz" // [!code ++]
+  }
+}
+```
+
+---
+
+现在可以像平常一样导入包 `"zod"`。
+
+```ts
+import { z } from "zod";
+```
+
+---
+
+请参阅 [文档 > 包管理器](/pm/cli/install) 以获取 Bun 包管理器的完整文档。

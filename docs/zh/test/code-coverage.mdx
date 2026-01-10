@@ -1,0 +1,409 @@
+---
+title: "代码覆盖率"
+description: "学习如何使用 Bun 内置的代码覆盖率报告功能来跟踪测试覆盖率并在代码库中找到未测试的区域"
+---
+
+Bun 的测试运行器现在支持内置的代码覆盖率报告。这使得很容易看到代码库中有多少被测试覆盖，以及找到目前测试不足的区域。
+
+## 启用覆盖率
+
+`bun:test` 支持查看哪些代码行被测试覆盖。要使用此功能，请在 CLI 中传入 `--coverage`。它将在控制台打印覆盖率报告：
+
+```bash terminal icon="terminal"
+bun test --coverage
+
+-------------|---------|---------|-------------------
+文件         | % 函数 | % 行数 | 未覆盖行号
+-------------|---------|---------|-------------------
+所有文件    |   38.89 |   42.11 |
+ index-0.ts  |   33.33 |   36.84 | 10-15,19-24
+ index-1.ts  |   33.33 |   36.84 | 10-15,19-24
+ index-10.ts |   33.33 |   36.84 | 10-15,19-24
+ index-2.ts  |   33.33 |   36.84 | 10-15,19-24
+ index-3.ts  |   33.33 |   36.84 | 10-15,19-24
+ index-4.ts  |   33.33 |   36.84 | 10-15,19-24
+ index-5.ts  |   33.33 |   36.84 | 10-15,19-24
+ index-6.ts  |   33.33 |   36.84 | 10-15,19-24
+ index-7.ts  |   33.33 |   36.84 | 10-15,19-24
+ index-8.ts  |   33.33 |   36.84 | 10-15,19-24
+ index-9.ts  |   33.33 |   36.84 | 10-15,19-24
+ index.ts    |  100.00 |  100.00 |
+-------------|---------|---------|-------------------
+```
+
+### 默认启用
+
+要始终默认启用覆盖率报告，请在 `bunfig.toml` 中添加以下行：
+
+```toml title="bunfig.toml"
+[test]
+# 始终启用覆盖率
+coverage = true
+```
+
+默认情况下，覆盖率报告将包含测试文件并排除源映射。这通常是您想要的，但也可以在 `bunfig.toml` 中进行配置。
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+coverageSkipTestFiles = true  # 默认 false
+```
+
+## 覆盖率阈值
+
+可以在 `bunfig.toml` 中指定覆盖率阈值。如果您的测试套件未达到或超过此阈值，`bun test` 将以非零退出代码退出以指示失败。
+
+### 简单阈值
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+# 要求 90% 的行级别和函数级别覆盖率
+coverageThreshold = 0.9
+```
+
+### 详细阈值
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+# 为行和函数设置不同阈值
+coverageThreshold = { lines = 0.9, functions = 0.9, statements = 0.9 }
+```
+
+设置这些阈值中的任何一个都会启用 `fail_on_low_coverage`，如果覆盖率低于阈值，会导致测试运行失败。
+
+## 覆盖率报告器
+
+默认情况下，覆盖率报告将打印到控制台。
+
+对于 CI 环境中的持久代码覆盖率报告和其他工具，您可以传递 `--coverage-reporter=lcov` CLI 选项或在 `bunfig.toml` 中使用 `coverageReporter` 选项。
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+coverageReporter = ["text", "lcov"]  # 默认 ["text"]
+coverageDir = "path/to/somewhere"    # 默认 "coverage"
+```
+
+### 可用报告器
+
+| 报告器 | 描述 |
+| -------- | ---- |
+| `text` | 在控制台打印覆盖率的文本摘要 |
+| `lcov` | 以 lcov 格式保存覆盖率 |
+
+### LCOV 覆盖率报告器
+
+要生成 lcov 报告，您可以使用 lcov 报告器。这将在覆盖率目录中生成一个 `lcov.info` 文件。
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+coverageReporter = "lcov"
+```
+
+```bash terminal icon="terminal"
+# 或通过 CLI
+bun test --coverage --coverage-reporter=lcov
+```
+
+LCOV 格式被各种工具和服务广泛支持：
+
+- **代码编辑器**：VS Code 扩展可以内联显示覆盖率
+- **CI/CD 服务**：GitHub Actions、GitLab CI、CircleCI
+- **覆盖率服务**：Codecov、Coveralls
+- **IDE**：WebStorm、IntelliJ IDEA
+
+#### 在 GitHub Actions 中使用 LCOV
+
+```yaml title=".github/workflows/test.yml" icon="file-code"
+name: 测试覆盖率
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install
+      - run: bun test --coverage --coverage-reporter=lcov
+      - name: 上传覆盖率到 Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage/lcov.info
+```
+
+## 从覆盖率中排除文件
+
+### 跳过测试文件
+
+默认情况下，测试文件本身包含在覆盖率报告中。您可以使用以下方法将其排除：
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+coverageSkipTestFiles = true  # 默认 false
+```
+
+这将排除匹配测试模式的文件（例如，`*.test.ts`、`*.spec.js`）从覆盖率报告中。
+
+### 忽略特定路径和模式
+
+您可以使用 `coveragePathIgnorePatterns` 从覆盖率报告中排除特定文件或文件模式：
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+# 单一模式
+coveragePathIgnorePatterns = "**/*.spec.ts"
+
+# 多种模式
+coveragePathIgnorePatterns = [
+  "**/*.spec.ts",
+  "**/*.test.ts",
+  "src/utils/**",
+  "*.config.js"
+]
+```
+
+此选项接受 glob 模式，其工作方式类似于 Jest 的 `collectCoverageFrom` 忽略模式。匹配其中任一模式的文件将在文本和 LCOV 输出中从覆盖率计算和报告中排除。
+
+#### 常见使用案例
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+coveragePathIgnorePatterns = [
+  # 排除实用程序文件
+  "src/utils/**",
+
+  # 排除配置文件
+  "*.config.js",
+  "webpack.config.ts",
+  "vite.config.ts",
+
+  # 排除特定测试模式
+  "**/*.spec.ts",
+  "**/*.e2e.ts",
+
+  # 排除构建产物
+  "dist/**",
+  "build/**",
+
+  # 排除生成的文件
+  "src/generated/**",
+  "**/*.generated.ts",
+
+  # 排除供应商/第三方代码
+  "vendor/**",
+  "third-party/**"
+]
+```
+
+## 源码映射
+
+在内部，Bun 默认转换所有文件，因此 Bun 自动生成内部源映射，将原始源代码的行映射到 Bun 的内部表示。如果出于任何原因您想禁用此功能，请将 `test.coverageIgnoreSourcemaps` 设置为 `true`；在高级用例之外很少需要这样做。
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+coverageIgnoreSourcemaps = true  # 默认 false
+```
+
+<Warning>
+  使用此选项时，您可能希望在源文件顶部添加 `// @bun` 注释以选择退出
+  转换过程。
+</Warning>
+
+## 覆盖率默认设置
+
+默认情况下，覆盖率报告：
+
+- **排除** `node_modules` 目录
+- **排除** 通过非 JS/TS 加载器加载的文件（例如，`.css`、`.txt`）除非指定了自定义 JS 加载器
+- **包含** 测试文件本身（可通过 `coverageSkipTestFiles = true` 禁用）
+- 可使用 `coveragePathIgnorePatterns` 排除附加文件
+
+## 高级配置
+
+### 自定义覆盖率目录
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+coverageDir = "coverage-reports"  # 默认 "coverage"
+```
+
+### 多个报告器
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+coverageReporter = ["text", "lcov"]
+```
+
+### 具有特定测试模式的覆盖率
+
+```bash terminal icon="terminal"
+# 仅对特定测试文件运行覆盖率
+bun test --coverage src/components/*.test.ts
+
+# 使用名称模式运行覆盖率
+bun test --coverage --test-name-pattern="API"
+```
+
+## CI/CD 集成
+
+### GitHub Actions 示例
+
+```yaml title=".github/workflows/coverage.yml" icon="file-code"
+name: 覆盖率报告
+on: [push, pull_request]
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Run tests with coverage
+        run: bun test --coverage --coverage-reporter=lcov
+
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage/lcov.info
+          fail_ci_if_error: true
+```
+
+### GitLab CI 示例
+
+```yaml title=".gitlab-ci.yml"
+test:coverage:
+  stage: test
+  script:
+    - bun install
+    - bun test --coverage --coverage-reporter=lcov
+  coverage: '/Lines\s*:\s*(\d+.\d+)%/'
+  artifacts:
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage/lcov.info
+```
+
+## 解释覆盖率报告
+
+### 文本输出解释
+
+```
+-------------|---------|---------|-------------------
+文件         | % 函数 | % 行数 | 未覆盖行号
+-------------|---------|---------|-------------------
+所有文件    |   85.71 |   90.48 |
+ src/        |   85.71 |   90.48 |
+  utils.ts   |  100.00 |  100.00 |
+  api.ts     |   75.00 |   85.71 | 15-18,25
+  main.ts    |   80.00 |   88.89 | 42,50-52
+-------------|---------|---------|-------------------
+```
+
+- **% 函数**: 在测试期间被调用的函数百分比
+- **% 行数**: 在测试期间运行的可执行行百分比
+- **未覆盖行号**: 未执行的具体行号
+
+### 目标设定
+
+- **80%+ 整体覆盖率**: 通常被认为是好的
+- **90%+ 关键路径**: 重要业务逻辑应该得到良好测试
+- **100% 实用函数**: 纯函数和实用程序很容易完全测试
+- **UI 组件较低覆盖率**: 通常可以接受，因为它们可能需要集成测试
+
+## 最佳实践
+
+### 专注于质量，不仅仅是数量
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+// 好：测试实际功能
+test("calculateTax should handle different tax rates", () => {
+  expect(calculateTax(100, 0.08)).toBe(8);
+  expect(calculateTax(100, 0.1)).toBe(10);
+  expect(calculateTax(0, 0.08)).toBe(0);
+});
+
+// 避免：只是为了覆盖率而触及代码行
+test("calculateTax exists", () => {
+  calculateTax(100, 0.08); // 没有断言！
+});
+```
+
+### 测试边界情况
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+test("user input validation", () => {
+  // 测试正常情况
+  expect(validateEmail("user@example.com")).toBe(true);
+
+  // 测试边界情况，这些情况有意义地提高覆盖率
+  expect(validateEmail("")).toBe(false);
+  expect(validateEmail("invalid")).toBe(false);
+  expect(validateEmail(null)).toBe(false);
+});
+```
+
+### 使用覆盖率查找缺失的测试
+
+```bash terminal icon="terminal"
+# 运行覆盖率以识别未测试的代码
+bun test --coverage
+
+# 查看需要关注的特定文件
+bun test --coverage src/critical-module.ts
+```
+
+### 结合其他质量指标
+
+覆盖率只是其中一个指标。还要考虑：
+
+- **代码审查质量**
+- **集成测试覆盖率**
+- **错误处理测试**
+- **性能测试**
+- **类型安全性**
+
+## 故障排除
+
+### 某些文件未显示覆盖率
+
+如果文件没有出现在覆盖率报告中，它们可能未被测试导入。覆盖率仅追踪实际加载的文件。
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+// 确保导入要测试的模块
+import { myFunction } from "../src/my-module";
+
+test("my function works", () => {
+  expect(myFunction()).toBeDefined();
+});
+```
+
+### 虚假覆盖率报告
+
+如果您看到的覆盖率报告与预期不符：
+
+1. 检查源映射是否正常工作
+2. 验证 `coveragePathIgnorePatterns` 中的文件模式
+3. 确保测试文件确实导入了要测试的代码
+
+### 大型代码库的性能问题
+
+对于大型项目，覆盖率收集可能会减慢测试速度：
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+# 排除不需要覆盖率的大目录
+coveragePathIgnorePatterns = [
+  "node_modules/**",
+  "vendor/**",
+  "generated/**"
+]
+```
+
+考虑仅在 CI 或特定分支上运行覆盖率，而不是在开发期间的每次测试运行中都运行。

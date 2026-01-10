@@ -1,0 +1,28 @@
+---
+title: 添加开发依赖
+sidebarTitle: 添加开发依赖
+mode: center
+---
+
+要将 npm 包添加为开发依赖，请使用 `bun add --development`。
+
+```sh terminal icon="terminal"
+bun add zod --dev
+bun add zod -d # 简写
+```
+
+---
+
+这会将包添加到 [package.json] 中的 `devDependencies`。
+
+```json
+{
+  "devDependencies": {
+    "zod": "^3.0.0" // [!code ++]
+  }
+}
+```
+
+---
+
+请参阅 [文档 > 包管理器](/pm/cli/install) 以获取 Bun 包管理器的完整文档。

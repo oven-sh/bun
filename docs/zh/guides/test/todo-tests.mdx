@@ -1,0 +1,74 @@
+---
+title: 使用 Bun 测试运行器将测试标记为"待办"
+sidebarTitle: 待办测试
+mode: center
+---
+
+要提醒自己稍后编写测试，请使用 `test.todo` 函数。无需提供测试实现。
+
+```ts test.ts icon="/icons/typescript.svg"
+import { test, expect } from "bun:test";
+
+// 稍后编写此测试
+test.todo("unimplemented feature");
+```
+
+---
+
+`bun test` 的输出显示遇到了多少个 `todo` 测试。
+
+```sh terminal icon="terminal"
+bun test
+```
+
+```txt
+test.test.ts:
+✓ add [0.03ms]
+✓ multiply [0.02ms]
+✎ unimplemented feature
+
+ 2 pass
+ 1 todo
+ 0 fail
+ 2 expect() calls
+Ran 3 tests across 1 files. [74.00ms]
+```
+
+---
+
+可选地，您可以提供一个测试实现。
+
+```ts
+import { test, expect } from "bun:test";
+
+test.todo("unimplemented feature", () => {
+  expect(Bun.isAwesome()).toBe(true);
+});
+```
+
+---
+
+如果提供了实现，则除非传递 `--todo` 标志，否则不会运行。如果传递了 `--todo` 标志，测试将被执行，并且测试运行器_期望它失败_！如果待办测试通过了，`bun test` 运行将返回非零退出代码以表示失败。
+
+```sh terminal icon="terminal"
+bun test --todo
+```
+
+```txt
+my.test.ts:
+✗ unimplemented feature
+  ^ this test is marked as todo but passes. Remove `.todo` or check that test is correct.
+
+ 0 pass
+ 1 fail
+ 1 expect() calls
+$ echo $?
+1 # this is the exit code of the previous command
+```
+
+---
+
+另请参阅：
+
+- [跳过测试](/guides/test/skip-tests)
+- [文档 > 测试运行器 > 编写测试](/test/writing-tests)

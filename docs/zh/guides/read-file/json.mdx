@@ -1,0 +1,19 @@
+---
+title: 读取 JSON 文件
+sidebarTitle: 读取 JSON 文件
+mode: center
+---
+
+`Bun.file()` 函数接受一个路径并返回一个 [BunFile] 实例。[BunFile] 类扩展了 `Blob` 并允许您以多种格式延迟读取文件。使用 `.json()` 读取并解析 `.json` 文件的内容为普通对象。
+
+[BunFile] 的 MIME 类型将相应设置。
+
+```ts index.ts icon="/icons/typescript.svg"
+const path = "/path/to/package.json";
+const file = Bun.file(path);
+
+const contents = await file.json();
+// { name: "my-package" }
+
+file.type; // => "application/json;charset=utf-8";
+```

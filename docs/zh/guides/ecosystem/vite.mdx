@@ -1,0 +1,77 @@
+---
+title: 使用 Vite 和 Bun 构建前端
+sidebarTitle: "Vite 与 Bun"
+mode: center
+---
+
+<Note>
+  您可以将 Vite 与 Bun 一起使用，但许多项目通过切换到 [HTML
+  imports](/bundler/html-static) 来获得更快的构建速度并减少数百个依赖项。
+</Note>
+
+---
+
+Vite 与 Bun 完美配合使用。使用 Vite 的模板开始。
+
+```bash terminal icon="terminal"
+bun create vite my-app
+```
+
+```txt
+✔ 选择一个框架: › React
+✔ 选择一个变体: › TypeScript + SWC
+在 /path/to/my-app 中搭建项目...
+```
+
+---
+
+然后 `cd` 进入项目目录并安装依赖。
+
+```bash terminal icon="terminal"
+cd my-app
+bun install
+```
+
+---
+
+使用 `bunx` 和 `vite` CLI 启动开发服务器。
+
+`--bun` 标志告诉 Bun 使用 `bun` 而不是 `node` 来运行 Vite 的 CLI；默认情况下，Bun 遵循 Vite 的 `#!/usr/bin/env node` [shebang 行](<https://en.wikipedia.org/wiki/Shebang_(Unix)>)。
+
+```bash terminal icon="terminal"
+bunx --bun vite
+```
+
+---
+
+为简化此命令，请将 [package.json] 中的 `"dev"` 脚本更新为以下内容。
+
+```json package.json icon="file-json"
+  "scripts": {
+    "dev": "vite", // [!code --]
+    "dev": "bunx --bun vite", // [!code ++]
+    "build": "vite build",
+    "serve": "vite preview"
+  },
+  // ...
+```
+
+---
+
+现在您可以使用 `bun run dev` 启动开发服务器。
+
+```bash terminal icon="terminal"
+bun run dev
+```
+
+---
+
+以下命令将为生产环境构建您的应用。
+
+```sh terminal icon="terminal"
+bunx --bun vite build
+```
+
+---
+
+这是一个简化的指南，帮助您开始使用 Vite + Bun。更多信息，请参阅 [Vite 文档](https://vite.dev/guide/)。

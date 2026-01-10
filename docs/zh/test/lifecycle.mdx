@@ -1,0 +1,366 @@
+---
+title: "生命周期钩子"
+description: "了解如何在 Bun 测试中使用 beforeAll、beforeEach、afterEach 和 afterAll 生命周期钩子"
+---
+
+测试运行器支持以下生命周期钩子。这对于加载测试固件、模拟数据和配置测试环境很有用。
+
+| 钩子             | 描述                                                     |
+| ---------------- | -------------------------------------------------------- |
+| `beforeAll`      | 在所有测试之前运行一次。                                 |
+| `beforeEach`     | 在每个测试之前运行。                                     |
+| `afterEach`      | 在每个测试之后运行。                                     |
+| `afterAll`       | 在所有测试之后运行一次。                                 |
+| `onTestFinished` | 在单个测试完成后运行（在所有 `afterEach` 之后）。        |
+
+## 每个测试的设置和清理
+
+使用 `beforeEach` 和 `afterEach` 执行每个测试的设置和清理逻辑。
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { beforeEach, afterEach, test } from "bun:test";
+
+beforeEach(() => {
+  console.log("正在运行测试。");
+});
+
+afterEach(() => {
+  console.log("测试完成。");
+});
+
+// 测试...
+test("example test", () => {
+  // 此测试将在运行前执行 beforeEach
+  // 并在之后执行 afterEach
+});
+```
+
+## 每个作用域的设置和清理
+
+使用 `beforeAll` 和 `afterAll` 执行每个作用域的设置和清理逻辑。作用域由钩子定义的位置确定。
+
+### 作用域到特定 describe 块
+
+将钩子作用域限定到特定的 describe 块：
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { describe, beforeAll, afterAll, test } from "bun:test";
+
+describe("test group", () => {
+  beforeAll(() => {
+    // 此 describe 块的设置
+    console.log("设置测试组");
+  });
+
+  afterAll(() => {
+    // 此 describe 块的清理
+    console.log("清理测试组");
+  });
+
+  test("test 1", () => {
+    // 测试实现
+  });
+
+  test("test 2", () => {
+    // 测试实现
+  });
+});
+```
+
+### 作用域到测试文件
+
+将钩子作用域限定到整个测试文件：
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { describe, beforeAll, afterAll, test } from "bun:test";
+
+beforeAll(() => {
+  // 整个文件的设置
+  console.log("设置测试文件");
+});
+
+afterAll(() => {
+  // 整个文件的清理
+  console.log("清理测试文件");
+});
+
+describe("test group", () => {
+  test("test 1", () => {
+    // 测试实现
+  });
+});
+```
+
+### `onTestFinished`
+
+使用 `onTestFinished` 在单个测试完成后运行回调。它在所有 `afterEach` 钩子之后运行。
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { test, onTestFinished } from "bun:test";
+
+test("cleanup after test", () => {
+  onTestFinished(() => {
+    // 在所有 afterEach 钩子之后运行
+    console.log("测试完成");
+  });
+});
+```
+
+不支持在并发测试中使用；请改用 `test.serial`。
+
+## 全局设置和清理
+
+要将钩子作用域限定到整个多文件测试运行，请在单独的文件中定义钩子。
+
+```ts title="setup.ts" icon="/icons/typescript.svg"
+import { beforeAll, afterAll } from "bun:test";
+
+beforeAll(() => {
+  // 全局设置
+  console.log("全局测试设置");
+  // 初始化数据库连接，启动服务器等。
+});
+
+afterAll(() => {
+  // 全局清理
+  console.log("全局测试清理");
+  // 关闭数据库连接，停止服务器等。
+});
+```
+
+然后使用 `--preload` 在任何测试文件之前运行设置脚本。
+
+```bash terminal icon="terminal"
+bun test --preload ./setup.ts
+```
+
+为了避免每次运行测试时都输入 `--preload`，可以将其添加到 `bunfig.toml` 中：
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+preload = ["./setup.ts"]
+```
+
+## 实际示例
+
+### 数据库设置
+
+```ts title="database-setup.ts" icon="/icons/typescript.svg"
+import { beforeAll, afterAll, beforeEach, afterEach } from "bun:test";
+import { createConnection, closeConnection, clearDatabase } from "./db";
+
+let connection;
+
+beforeAll(async () => {
+  // 连接到测试数据库
+  connection = await createConnection({
+    host: "localhost",
+    database: "test_db",
+  });
+});
+
+afterAll(async () => {
+  // 关闭数据库连接
+  await closeConnection(connection);
+});
+
+beforeEach(async () => {
+  // 每个测试都以干净的数据库开始
+  await clearDatabase(connection);
+});
+```
+
+### API 服务器设置
+
+```ts title="server-setup.ts" icon="/icons/typescript.svg"
+import { beforeAll, afterAll } from "bun:test";
+import { startServer, stopServer } from "./server";
+
+let server;
+
+beforeAll(async () => {
+  // 启动测试服务器
+  server = await startServer({
+    port: 3001,
+    env: "test",
+  });
+});
+
+afterAll(async () => {
+  // 停止测试服务器
+  await stopServer(server);
+});
+```
+
+### 模拟设置
+
+```ts title="mock-setup.ts" icon="/icons/typescript.svg"
+import { beforeEach, afterEach } from "bun:test";
+import { mock } from "bun:test";
+
+beforeEach(() => {
+  // 设置通用模拟
+  mock.module("./api-client", () => ({
+    fetchUser: mock(() => Promise.resolve({ id: 1, name: "Test User" })),
+    createUser: mock(() => Promise.resolve({ id: 2 })),
+  }));
+});
+
+afterEach(() => {
+  // 在每个测试后清除所有模拟
+  mock.restore();
+});
+```
+
+## 异步生命周期钩子
+
+所有生命周期钩子都支持异步函数：
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { beforeAll, afterAll, test } from "bun:test";
+
+beforeAll(async () => {
+  // 异步设置
+  await new Promise(resolve => setTimeout(resolve, 100));
+  console.log("异步设置完成");
+});
+
+afterAll(async () => {
+  // 异步清理
+  await new Promise(resolve => setTimeout(resolve, 100));
+  console.log("异步清理完成");
+});
+
+test("async test", async () => {
+  // 测试将等待 beforeAll 完成
+  await expect(Promise.resolve("test")).resolves.toBe("test");
+});
+```
+
+## 嵌套钩子
+
+钩子可以嵌套并按适当顺序运行：
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { describe, beforeAll, beforeEach, afterEach, afterAll, test } from "bun:test";
+
+beforeAll(() => console.log("文件 beforeAll"));
+afterAll(() => console.log("文件 afterAll"));
+
+describe("outer describe", () => {
+  beforeAll(() => console.log("外部 beforeAll"));
+  beforeEach(() => console.log("外部 beforeEach"));
+  afterEach(() => console.log("外部 afterEach"));
+  afterAll(() => console.log("外部 afterAll"));
+
+  describe("inner describe", () => {
+    beforeAll(() => console.log("内部 beforeAll"));
+    beforeEach(() => console.log("内部 beforeEach"));
+    afterEach(() => console.log("内部 afterEach"));
+    afterAll(() => console.log("内部 afterAll"));
+
+    test("nested test", () => {
+      console.log("测试运行中");
+    });
+  });
+});
+```
+
+```txt
+// 输出顺序：
+// 文件 beforeAll
+// 外部 beforeAll
+// 内部 beforeAll
+// 外部 beforeEach
+// 内部 beforeEach
+// 测试运行中
+// 内部 afterEach
+// 外部 afterEach
+// 内部 afterAll
+// 外部 afterAll
+// 文件 afterAll
+```
+
+## 错误处理
+
+如果生命周期钩子抛出错误，将影响测试执行：
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { beforeAll, test } from "bun:test";
+
+beforeAll(() => {
+  // 如果这抛出异常，此作用域中的所有测试都将被跳过
+  throw new Error("设置失败");
+});
+
+test("this test will be skipped", () => {
+  // 这不会运行，因为 beforeAll 失败了
+});
+```
+
+为了更好的错误处理：
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { beforeAll, test, expect } from "bun:test";
+
+beforeAll(async () => {
+  try {
+    await setupDatabase();
+  } catch (error) {
+    console.error("数据库设置失败：", error);
+    throw error; // 重新抛出以使测试套件失败
+  }
+});
+```
+
+## 最佳实践
+
+### 保持钩子简单
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+// 好：简单、专注的设置
+beforeEach(() => {
+  clearLocalStorage();
+  resetMocks();
+});
+
+// 避免：钩子中的复杂逻辑
+beforeEach(async () => {
+  // 太多复杂逻辑使测试难以调试
+  const data = await fetchComplexData();
+  await processData(data);
+  await setupMultipleServices(data);
+});
+```
+
+### 使用适当的作用域
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+// 好：文件级别的共享资源设置
+beforeAll(async () => {
+  await startTestServer();
+});
+
+// 好：测试级别的特定测试状态设置
+beforeEach(() => {
+  user = createTestUser();
+});
+```
+
+### 清理资源
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { afterAll, afterEach } from "bun:test";
+
+afterEach(() => {
+  // 清理每个测试之后
+  document.body.innerHTML = "";
+  localStorage.clear();
+});
+
+afterAll(async () => {
+  // 清理昂贵的资源
+  await closeDatabase();
+  await stopServer();
+});
+```

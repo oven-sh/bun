@@ -1,0 +1,48 @@
+---
+title: 常见的 HTTP 服务器用法
+sidebarTitle: 使用 Bun 的 HTTP 服务器
+mode: center
+---
+
+这将启动一个在端口 `3000` 上监听的 HTTP 服务器。它演示了基本路由和一些常见响应，还处理来自标准表单或 JSON 格式的 POST 数据。
+
+详情请参见 [`Bun.serve`](/runtime/http/server)。
+
+```ts server.ts icon="/icons/typescript.svg"
+const server = Bun.serve({
+  async fetch(req) {
+    const path = new URL(req.url).pathname;
+
+    // 返回 text/html 响应
+    if (path === "/") return new Response("欢迎来到 Bun!");
+
+    // 重定向
+    if (path === "/abc") return Response.redirect("/source", 301);
+
+    // 发送回一个文件（在此情况下，是*这个*文件）
+    if (path === "/source") return new Response(Bun.file(import.meta.path));
+
+    // 返回 JSON 响应
+    if (path === "/api") return Response.json({ some: "buns", for: "you" });
+
+    // 接收 POST 请求的 JSON 数据
+    if (req.method === "POST" && path === "/api/post") {
+      const data = await req.json();
+      console.log("收到 JSON:", data);
+      return Response.json({ success: true, data });
+    }
+
+    // 从表单接收 POST 数据
+    if (req.method === "POST" && path === "/form") {
+      const data = await req.formData();
+      console.log(data.get("someField"));
+      return new Response("成功");
+    }
+
+    // 404s
+    return new Response("页面未找到", { status: 404 });
+  },
+});
+
+console.log(`监听 ${server.url}`);
+```

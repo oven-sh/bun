@@ -1,0 +1,64 @@
+---
+title: "锁定文件"
+description: "Bun 的锁定文件格式和配置"
+---
+
+运行 `bun install` 将创建一个名为 `bun.lock` 的锁定文件。
+
+#### 应该提交到 git 吗？
+
+是的
+
+#### 在不安装的情况下生成锁定文件？
+
+要在不安装到 [node_modules] 的情况下生成锁定文件，你可以使用 `--lockfile-only` 标志。即使锁定文件与项目 [package.json] 保持最新，锁定文件也将始终保存到磁盘。
+
+```bash terminal icon="terminal"
+bun install --lockfile-only
+```
+
+<Note>
+  使用 `--lockfile-only` 仍将使用注册表元数据和 git/tarball
+  依赖填充全局安装缓存。
+</Note>
+
+#### 可以选择退出吗？
+
+要在不创建锁定文件的情况下安装：
+
+```bash terminal icon="terminal"
+bun install --no-save
+```
+
+除了 [bun.lock] 之外，还要安装 Yarn 锁定文件。
+
+<CodeGroup>
+
+```bash terminal icon="terminal"
+bun install --yarn
+```
+
+```toml bunfig.toml icon="settings"
+[install.lockfile]
+# 是否在 bun.lock 旁边保存非 Bun 锁定文件
+# 仅支持 "yarn"
+print = "yarn"
+```
+
+</CodeGroup>
+
+#### 基于文本的锁定文件
+
+Bun v1.2 将默认锁定文件格式更改为基于文本的 [bun.lock]。通过运行 `bun install --save-text-lockfile --frozen-lockfile --lockfile-only` 并删除 [bun.lockb]，可以将现有的二进制 [bun.lockb] 锁定文件迁移到新格式。
+
+关于新锁定文件格式的更多信息可以在[我们的博客文章](https://bun.com/blog/bun-lock-text-lockfile)上找到。
+
+#### 自动锁定文件迁移
+
+在没有 [bun.lock] 的项目中运行 `bun install` 时，Bun 会自动迁移现有锁定文件：
+
+- [yarn.lock] (v1)
+- [package-lock.json] (npm)
+- [pnpm-lock.yaml] (pnpm)
+
+原始锁定文件将被保留，可在验证后手动删除。

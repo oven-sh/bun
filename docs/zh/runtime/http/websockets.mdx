@@ -1,0 +1,414 @@
+---
+title: WebSockets
+description: Bun中的服务端WebSockets
+---
+
+`Bun.serve()` 支持服务端WebSockets，具有即时压缩、TLS支持和Bun原生的发布-订阅API。
+
+<Info>
+
+**⚡️ 7倍更高的吞吐量**
+
+Bun的WebSockets很快。对于Linux x64上的[简单聊天室](https://github.com/oven-sh/bun/tree/main/bench/websocket-server/README.md)，Bun每秒可以处理比Node.js + [`"ws"`](https://github.com/websockets/ws)多7倍的请求。
+
+| **每秒发送的消息数** | **运行时** | **客户端** |
+| ---------------------------- | ------------------------------ | ----------- |
+| ~700,000 | (`Bun.serve`) Bun v0.2.1 (x64) | 16 |
+| ~100,000 | (`ws`) Node v18.10.0 (x64) | 16 |
+
+Bun的WebSocket内部实现基于[uWebSockets](https://github.com/uNetworking/uWebSockets)。
+
+</Info>
+
+---
+
+## 启动WebSocket服务器
+
+下面是一个使用`Bun.serve`构建的简单WebSocket服务器，其中所有传入的请求都在`fetch`处理器中被[升级](https://developer.mozilla.org/en-US/docs/Web/HTTP/Protocol_upgrade_mechanism)为WebSocket连接。套接字处理器在`websocket`参数中声明。
+
+```ts server.ts icon="/icons/typescript.svg"
+Bun.serve({
+  fetch(req, server) {
+    // 将请求升级为WebSocket
+    if (server.upgrade(req)) {
+      return; // 不返回Response
+    }
+    return new Response("升级失败", { status: 500 });
+  },
+  websocket: {}, // 处理器
+});
+```
+
+支持以下WebSocket事件处理器：
+
+```ts server.ts icon="/icons/typescript.svg"
+Bun.serve({
+  fetch(req, server) {}, // 升级逻辑
+  websocket: {
+    message(ws, message) {}, // 收到消息
+    open(ws) {}, // 套接字打开
+    close(ws, code, message) {}, // 套接字关闭
+    drain(ws) {}, // 套接字准备好接收更多数据
+  },
+});
+```
+
+<Accordion title="专为速度设计的API">
+
+在Bun中，处理器在每个服务器上只声明一次，而不是每个套接字。
+
+`ServerWebSocket`期望您将一个`WebSocketHandler`对象传递给`Bun.serve()`方法，该对象包含`open`、`message`、`close`、`drain`和`error`的方法。这与客户端的`WebSocket`类不同，该类继承自`EventTarget`（onmessage、onopen、onclose）。
+
+客户端往往不会有太多的套接字连接，所以基于事件的API是有意义的。
+
+但是服务器往往有**许多**套接字连接打开，这意味着：
+
+- 每个连接添加/移除事件监听器所花费的时间会累积起来
+- 每个连接存储回调函数引用所消耗的额外内存
+- 通常，人们为每个连接创建新函数，这也意味着更多的内存
+
+因此，不使用基于事件的API，`ServerWebSocket`希望您在`Bun.serve()`中传递一个包含每个事件方法的单一对象，并且它会被每个连接重用。
+
+这导致更少的内存使用和更少的时间花在添加/移除事件监听器上。
+
+</Accordion>
+
+每个处理器的第一个参数是处理事件的`ServerWebSocket`实例。`ServerWebSocket`类是[`WebSocket`](https://developer.mozilla.org/en-US/docs/Web/API/WebSocket)的快速、Bun原生实现，带有一些附加功能。
+
+```ts server.ts icon="/icons/typescript.svg"
+Bun.serve({
+  fetch(req, server) {}, // 升级逻辑
+  websocket: {
+    message(ws, message) {
+      ws.send(message); // 回显消息
+    },
+  },
+});
+```
+
+### 发送消息
+
+每个`ServerWebSocket`实例都有一个`.send()`方法用于向客户端发送消息。它支持多种输入类型。
+
+```ts server.ts icon="/icons/typescript.svg" focus={4-6}
+Bun.serve({
+  fetch(req, server) {}, // 升级逻辑
+  websocket: {
+    message(ws, message) {
+      ws.send("Hello world"); // 字符串
+      ws.send(response.arrayBuffer()); // ArrayBuffer
+      ws.send(new Uint8Array([1, 2, 3])); // TypedArray | DataView
+    },
+  },
+});
+```
+
+### Headers
+
+一旦升级成功，Bun将按照[规范](https://developer.mozilla.org/en-US/docs/Web/HTTP/Protocol_upgrade_mechanism)发送一个`101 Switching Protocols`响应。可以在调用`server.upgrade()`时将附加的`headers`附加到此`Response`。
+
+{/* prettier-ignore */}
+```ts server.ts icon="/icons/typescript.svg"
+Bun.serve({
+  fetch(req, server) {
+    const sessionId = await generateSessionId();
+    server.upgrade(req, {
+      headers: { // [!code ++]
+        "Set-Cookie": `SessionId=${sessionId}`, // [!code ++]
+      }, // [!code ++]
+    });
+  },
+  websocket: {}, // 处理器
+});
+```
+
+### 上下文数据
+
+上下文`data`可以附加到新的WebSocket中的`.upgrade()`调用。这些数据在WebSocket处理器内的`ws.data`属性上可用。
+
+为了强类型化`ws.data`，请在`websocket`处理器对象上添加一个`data`属性。这会在所有生命周期钩子中键入`ws.data`。
+
+```ts server.ts icon="/icons/typescript.svg"
+type WebSocketData = {
+  createdAt: number;
+  channelId: string;
+  authToken: string;
+};
+
+Bun.serve({
+  fetch(req, server) {
+    const cookies = new Bun.CookieMap(req.headers.get("cookie")!);
+
+    server.upgrade(req, {
+      // 此对象必须符合WebSocketData
+      data: {
+        createdAt: Date.now(),
+        channelId: new URL(req.url).searchParams.get("channelId"),
+        authToken: cookies.get("X-Token"),
+      },
+    });
+
+    return undefined;
+  },
+  websocket: {
+    // TypeScript: 像这样指定ws.data的类型
+    data: {} as WebSocketData,
+    // 收到消息时调用的处理器
+    async message(ws, message) {
+      // ws.data现在被正确键入为WebSocketData
+      const user = getUserFromToken(ws.data.authToken);
+
+      await saveMessageToDatabase({
+        channel: ws.data.channelId,
+        message: String(message),
+        userId: user.id,
+      });
+    },
+  },
+});
+```
+
+<Info>
+**注意：** 以前，您可以使用`Bun.serve`上的类型参数来指定`ws.data`的类型，例如`Bun.serve<MyData>({...})`。由于[TypeScript的一个限制](https://github.com/microsoft/TypeScript/issues/26242)，这种模式已被移除，转而使用上面所示的`data`属性。
+</Info>
+
+要从浏览器连接到此服务器，请创建一个新的`WebSocket`。
+
+```js browser.js icon="file-code"
+const socket = new WebSocket("ws://localhost:3000/chat");
+
+socket.addEventListener("message", event => {
+  console.log(event.data);
+});
+```
+
+<Info>
+**识别用户**
+
+当前页面上设置的cookie将随WebSocket升级请求一起发送，并可在`fetch`处理器中的`req.headers`中获得。解析这些cookie以确定连接用户的标识，并相应地设置`data`的值。
+
+</Info>
+
+### 发布/订阅
+
+Bun的`ServerWebSocket`实现为基于主题的广播实现了原生的发布-订阅API。各个套接字可以`.subscribe()`到一个主题（用字符串标识指定）并`.publish()`消息给该主题的所有其他订阅者（排除自身）。这种基于主题的广播API类似于[MQTT](https://en.wikipedia.org/wiki/MQTT)和[Redis Pub/Sub](https://redis.io/topics/pubsub)。
+
+```ts server.ts icon="/icons/typescript.svg"
+const server = Bun.serve({
+  fetch(req, server) {
+    const url = new URL(req.url);
+    if (url.pathname === "/chat") {
+      console.log(`升级！`);
+      const username = getUsernameFromReq(req);
+      const success = server.upgrade(req, { data: { username } });
+      return success ? undefined : new Response("WebSocket升级错误", { status: 400 });
+    }
+
+    return new Response("Hello world");
+  },
+  websocket: {
+    // TypeScript: 像这样指定ws.data的类型
+    data: {} as { username: string },
+    open(ws) {
+      const msg = `${ws.data.username} 进入了聊天室`;
+      ws.subscribe("群聊");
+      server.publish("群聊", msg);
+    },
+    message(ws, message) {
+      // 这是一个群聊
+      // 所以服务器将收到的消息重新广播给每个人
+      server.publish("群聊", `${ws.data.username}: ${message}`);
+
+      // 检查当前订阅
+      console.log(ws.subscriptions); // ["群聊"]
+    },
+    close(ws) {
+      const msg = `${ws.data.username} 离开了聊天室`;
+      ws.unsubscribe("群聊");
+      server.publish("群聊", msg);
+    },
+  },
+});
+
+console.log(`监听在 ${server.hostname}:${server.port}`);
+```
+
+调用`.publish(data)`将向主题的所有订阅者发送消息，_除了_调用`.publish()`的套接字。要向主题的所有订阅者发送消息，请使用`Server`实例上的`.publish()`方法。
+
+```ts
+const server = Bun.serve({
+  websocket: {
+    // ...
+  },
+});
+
+// 监听某些外部事件
+server.publish("群聊", "Hello world");
+```
+
+### 压缩
+
+可以通过`perMessageDeflate`参数启用逐消息[压缩](https://websockets.readthedocs.io/en/stable/topics/compression.html)。
+
+```ts server.ts icon="/icons/typescript.svg"
+Bun.serve({
+  websocket: {
+    perMessageDeflate: true, // [!code ++]
+  },
+});
+```
+
+可以通过将布尔值作为第二个参数传递给`.send()`来为单个消息启用压缩。
+
+```ts
+ws.send("Hello world", true);
+```
+
+有关压缩特性的细粒度控制，请参阅[参考](#reference)。
+
+### 反压
+
+`ServerWebSocket`的`.send(message)`方法返回一个表示操作结果的`number`。
+
+- `-1` — 消息已排队但存在反压
+- `0` — 消息因连接问题而被丢弃
+- `1+` — 发送的字节数
+
+这使您能够更好地控制服务器中的反压。
+
+### 超时和限制
+
+默认情况下，如果WebSocket连接空闲120秒，Bun将关闭它。这可以通过`idleTimeout`参数配置。
+
+```ts
+Bun.serve({
+  fetch(req, server) {}, // 升级逻辑
+  websocket: {
+    idleTimeout: 60, // 60秒  // [!code ++]
+  },
+});
+```
+
+如果Bun收到大于16MB的消息，它也会关闭WebSocket连接。这可以通过`maxPayloadLength`参数配置。
+
+```ts
+Bun.serve({
+  fetch(req, server) {}, // 升级逻辑
+  websocket: {
+    maxPayloadLength: 1024 * 1024, // 1 MB  // [!code ++]
+  },
+});
+```
+
+---
+
+## 连接到 `Websocket` 服务器
+
+Bun实现了`WebSocket`类。要创建连接到`ws://`或`wss://`服务器的WebSocket客户端，就像在浏览器中一样创建一个`WebSocket`实例。
+
+```ts
+const socket = new WebSocket("ws://localhost:3000");
+
+// 带子协议协商
+const socket2 = new WebSocket("ws://localhost:3000", ["soap", "wamp"]);
+```
+
+在浏览器中，当前页面上设置的cookie将随WebSocket升级请求一起发送。这是`WebSocket` API的标准功能。
+
+为方便起见，Bun允许您直接在构造函数中设置自定义header。这是Bun对`WebSocket`标准的特定扩展。_这在浏览器中不起作用。_
+
+```ts
+const socket = new WebSocket("ws://localhost:3000", {
+  headers: {
+    /* 自定义header */
+  }, // [!code ++]
+});
+```
+
+要向套接字添加事件监听器：
+
+```ts
+// 收到消息
+socket.addEventListener("message", event => {});
+
+// 套接字打开
+socket.addEventListener("open", event => {});
+
+// 套接字关闭
+socket.addEventListener("close", event => {});
+
+// 错误处理器
+socket.addEventListener("error", event => {});
+```
+
+---
+
+## 参考
+
+```ts 查看Typescript定义 展开
+namespace Bun {
+  export function serve(params: {
+    fetch: (req: Request, server: Server) => Response | Promise<Response>;
+    websocket?: {
+      message: (ws: ServerWebSocket, message: string | ArrayBuffer | Uint8Array) => void;
+      open?: (ws: ServerWebSocket) => void;
+      close?: (ws: ServerWebSocket, code: number, reason: string) => void;
+      error?: (ws: ServerWebSocket, error: Error) => void;
+      drain?: (ws: ServerWebSocket) => void;
+
+      maxPayloadLength?: number; // 默认值: 16 * 1024 * 1024 = 16 MB
+      idleTimeout?: number; // 默认值: 120 (秒)
+      backpressureLimit?: number; // 默认值: 1024 * 1024 = 1 MB
+      closeOnBackpressureLimit?: boolean; // 默认值: false
+      sendPings?: boolean; // 默认值: true
+      publishToSelf?: boolean; // 默认值: false
+
+      perMessageDeflate?:
+        | boolean
+        | {
+            compress?: boolean | Compressor;
+            decompress?: boolean | Compressor;
+          };
+    };
+  }): Server;
+}
+
+type Compressor =
+  | `"disable"`
+  | `"shared"`
+  | `"dedicated"`
+  | `"3KB"`
+  | `"4KB"`
+  | `"8KB"`
+  | `"16KB"`
+  | `"32KB"`
+  | `"64KB"`
+  | `"128KB"`
+  | `"256KB"`;
+
+interface Server {
+  pendingWebSockets: number;
+  publish(topic: string, data: string | ArrayBufferView | ArrayBuffer, compress?: boolean): number;
+  upgrade(
+    req: Request,
+    options?: {
+      headers?: HeadersInit;
+      data?: any;
+    },
+  ): boolean;
+}
+
+interface ServerWebSocket {
+  readonly data: any;
+  readonly readyState: number;
+  readonly remoteAddress: string;
+  readonly subscriptions: string[];
+  send(message: string | ArrayBuffer | Uint8Array, compress?: boolean): number;
+  close(code?: number, reason?: string): void;
+  subscribe(topic: string): void;
+  unsubscribe(topic: string): void;
+  publish(topic: string, message: string | ArrayBuffer | Uint8Array): void;
+  isSubscribed(topic: string): boolean;
+  cork(cb: (ws: ServerWebSocket) => void): void;
+}
+```

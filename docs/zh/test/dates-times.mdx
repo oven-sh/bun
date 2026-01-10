@@ -1,0 +1,129 @@
+---
+title: "日期和时间"
+description: "学习如何使用 setSystemTime 和 Jest 兼容函数在您的 Bun 测试中操作时间和日期"
+---
+
+`bun:test` 允许您更改测试中的时间。
+
+这适用于以下任何一项：
+
+- `Date.now`
+- `new Date()`
+- `new Intl.DateTimeFormat().format()`
+
+<Note>定时器尚未受到影响，但可能在未来的 Bun 版本中支持。</Note>
+
+## setSystemTime
+
+要更改系统时间，请使用 `setSystemTime`：
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { setSystemTime, beforeAll, test, expect } from "bun:test";
+
+beforeAll(() => {
+  setSystemTime(new Date("2020-01-01T00:00:00.000Z"));
+});
+
+test("it is 2020", () => {
+  expect(new Date().getFullYear()).toBe(2020);
+});
+```
+
+为了支持使用 Jest 的 `useFakeTimers` 和 `useRealTimers` 的现有测试，您可以使用 `useFakeTimers` 和 `useRealTimers`：
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+test("just like in jest", () => {
+  jest.useFakeTimers();
+  jest.setSystemTime(new Date("2020-01-01T00:00:00.000Z"));
+  expect(new Date().getFullYear()).toBe(2020);
+  jest.useRealTimers();
+  expect(new Date().getFullYear()).toBeGreaterThan(2020);
+});
+
+test("unlike in jest", () => {
+  const OriginalDate = Date;
+  jest.useFakeTimers();
+  if (typeof Bun === "undefined") {
+    // In Jest, the Date constructor changes
+    // That can cause all sorts of bugs because suddenly Date !== Date before the test.
+    expect(Date).not.toBe(OriginalDate);
+    expect(Date.now).not.toBe(OriginalDate.now);
+  } else {
+    // In bun:test, Date constructor does not change when you useFakeTimers
+    expect(Date).toBe(OriginalDate);
+    expect(Date.now).toBe(OriginalDate.now);
+  }
+});
+```
+
+<Warning>
+  **定时器** — 请注意，我们尚未实现对模拟定时器的内置支持，但这已在路线图上。
+</Warning>
+
+## 重置系统时间
+
+要重置系统时间，请向 `setSystemTime` 传递无参数：
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { setSystemTime, expect, test } from "bun:test";
+
+test("it was 2020, for a moment.", () => {
+  // Set it to something!
+  setSystemTime(new Date("2020-01-01T00:00:00.000Z"));
+  expect(new Date().getFullYear()).toBe(2020);
+
+  // reset it!
+  setSystemTime();
+
+  expect(new Date().getFullYear()).toBeGreaterThan(2020);
+});
+```
+
+## 使用 jest.now() 获取模拟时间
+
+当您使用模拟时间（使用 `setSystemTime` 或 `useFakeTimers`）时，您可以使用 `jest.now()` 来获取当前模拟的时间戳：
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { test, expect, jest } from "bun:test";
+
+test("get the current mocked time", () => {
+  jest.useFakeTimers();
+  jest.setSystemTime(new Date("2020-01-01T00:00:00.000Z"));
+
+  expect(Date.now()).toBe(1577836800000); // Jan 1, 2020 timestamp
+  expect(jest.now()).toBe(1577836800000); // Same value
+
+  jest.useRealTimers();
+});
+```
+
+当您需要直接访问模拟时间而无需创建新 Date 对象时，这很有用。
+
+## 设置时区
+
+默认情况下，除非被覆盖，所有 `bun test` 运行的时区设置为 UTC (`Etc/UTC`)。要更改时区，可以在 `bun test` 中传递 `$TZ` 环境变量：
+
+```bash terminal icon="terminal"
+TZ=America/Los_Angeles bun test
+```
+
+或者在运行时设置 `process.env.TZ`：
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { test, expect } from "bun:test";
+
+test("Welcome to California!", () => {
+  process.env.TZ = "America/Los_Angeles";
+  expect(new Date().getTimezoneOffset()).toBe(420);
+  expect(new Intl.DateTimeFormat().resolvedOptions().timeZone).toBe("America/Los_Angeles");
+});
+
+test("Welcome to New York!", () => {
+  // Unlike in Jest, you can set the timezone multiple times at runtime and it will work.
+  process.env.TZ = "America/New_York";
+  expect(new Date().getTimezoneOffset()).toBe(240);
+  expect(new Intl.DateTimeFormat().resolvedOptions().timeZone).toBe("America/New_York");
+});
+```
+
+<Info>与 Jest 不同，您可以在运行时多次设置时区，它会生效。</Info>

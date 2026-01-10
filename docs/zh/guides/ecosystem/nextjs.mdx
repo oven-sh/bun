@@ -1,0 +1,103 @@
+---
+title: 使用 Next.js 和 Bun 构建应用
+sidebarTitle: Next.js 与 Bun
+mode: center
+---
+
+[Next.js](https://nextjs.org/) 是一个用于构建全栈 Web 应用程序的 React 框架。它支持服务器端渲染、静态站点生成、API 路由等。Bun 提供快速包安装并可以运行 Next.js 开发和生产服务器。
+
+---
+
+<Steps>
+  <Step title="创建一个新的 Next.js 应用">
+    使用交互式 CLI 创建一个新的 Next.js 应用。这将搭建一个新的 Next.js 项目并自动安装依赖项。
+
+    ```sh terminal icon="terminal"
+    bun create next-app@latest my-bun-app
+    ```
+
+  </Step>
+  <Step title="启动开发服务器">
+    更改到项目目录并使用 Bun 运行开发服务器。
+
+    ```sh terminal icon="terminal"
+    cd my-bun-app
+    bun --bun run dev
+    ```
+
+    这将使用 Bun 的运行时启动 Next.js 开发服务器。
+
+    在浏览器中打开 [`http://localhost:3000`](http://localhost:3000) 查看结果。您对 [app/page.tsx] 进行的任何更改都会在浏览器中热重载。
+
+  </Step>
+  <Step title="更新 package.json 中的脚本">
+    通过在 Next.js CLI 命令前缀加上 `bun --bun` 来修改 `package.json` 中的脚本字段。这确保了 Bun 为常见的任务如 `dev`、`build` 和 `start` 执行 Next.js CLI。
+
+    ```json package.json icon="file-json"
+    {
+      "scripts": {
+        "dev": "bun --bun next dev", // [!code ++]
+        "build": "bun --bun next build", // [!code ++]
+        "start": "bun --bun next start", // [!code ++]
+      }
+    }
+    ```
+
+  </Step>
+</Steps>
+
+---
+
+## 托管
+
+Bun 上的 Next.js 应用程序可以部署到各种平台。
+
+<Columns cols={3}>
+  <Card title="Vercel" href="/guides/deployment/vercel" icon="/icons/ecosystem/vercel.svg">
+    部署到 Vercel
+  </Card>
+  <Card title="Railway" href="/guides/deployment/railway" icon="/icons/ecosystem/railway.svg">
+    部署到 Railway
+  </Card>
+  <Card title="DigitalOcean" href="/guides/deployment/digital-ocean" icon="/icons/ecosystem/digitalocean.svg">
+    部署到 DigitalOcean
+  </Card>
+  <Card title="AWS Lambda" href="/guides/deployment/aws-lambda" icon="/icons/ecosystem/aws.svg">
+    部署到 AWS Lambda
+  </Card>
+  <Card title="Google Cloud Run" href="/guides/deployment/google-cloud-run" icon="/icons/ecosystem/gcp.svg">
+    部署到 Google Cloud Run
+  </Card>
+  <Card title="Render" href="/guides/deployment/render" icon="/icons/ecosystem/render.svg">
+    部署到 Render
+  </Card>
+</Columns>
+
+---
+
+## 模板
+
+<Columns cols={2}>
+  <Card
+    title="Bun + Next.js 基础启动器"
+    img="/images/templates/bun-nextjs-basic.png"
+    href="https://github.com/bun-templates/bun-nextjs-basic"
+    arrow="true"
+    cta="转到模板"
+  >
+    一个简单的 App Router 启动器，包含 Bun、Next.js 和 Tailwind CSS。
+  </Card>
+  <Card
+    title="使用 Next.js + Bun 的待办事项应用"
+    img="/images/templates/bun-nextjs-todo.png"
+    href="https://github.com/bun-templates/bun-nextjs-todo"
+    arrow="true"
+    cta="转到模板"
+  >
+    一个使用 Bun、Next.js 和 PostgreSQL 构建的全栈待办事项应用程序。
+  </Card>
+</Columns>
+
+---
+
+[→ 查看 Next.js 的官方文档](https://nextjs.org/docs) 了解更多关于构建和部署 Next.js 应用程序的信息。

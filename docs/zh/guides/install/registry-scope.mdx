@@ -1,0 +1,40 @@
+---
+title: 为组织范围配置私有注册表与 bun install
+sidebarTitle: 配置作用域注册表
+mode: center
+---
+
+私有注册表可以使用 [.npmrc] 或 [bunfig.toml] 进行配置。虽然两者都受支持，但我们建议使用 **bunfig.toml** 以获得增强的灵活性和特定于 Bun 的选项。
+
+要为特定 npm 作用域配置注册表：
+
+```toml bunfig.toml icon="settings"
+[install.scopes]
+# 作为一个字符串
+"@myorg1" = "https://usertitle:password@registry.myorg.com/"
+
+# 作为一个包含用户名/密码的对象
+# 您可以引用环境变量
+"@myorg2" = {
+  username = "myusername",
+  password = "$npm_pass",
+  url = "https://registry.myorg.com/"
+}
+
+# 作为一个包含令牌的对象
+"@myorg3" = { token = "$npm_token", url = "https://registry.myorg.com/" }
+
+```
+
+---
+
+您的 [bunfig.toml] 可以引用环境变量。Bun 会自动从 [.env.local]、`.env.[NODE_ENV]` 和 [.env] 加载环境变量。更多信息，请参见 [文档 > 环境变量](/runtime/environment-variables)。
+
+```toml bunfig.toml icon="settings"
+[install.scopes]
+"@myorg3" = { token = "$npm_token", url = "https://registry.myorg.com/" }
+```
+
+---
+
+请参阅 [文档 > 包管理器](/pm/cli/install) 以获取 Bun 包管理器的完整文档。

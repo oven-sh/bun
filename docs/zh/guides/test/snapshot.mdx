@@ -1,0 +1,102 @@
+---
+title: 在 `bun test` 中使用快照测试
+sidebarTitle: 快照测试
+mode: center
+---
+
+Bun 的测试运行器通过 `.toMatchSnapshot()` 支持 Jest 风格的快照测试。
+
+```ts snap.test.ts icon="/icons/typescript.svg"
+import { test, expect } from "bun:test";
+
+test("snapshot", () => {
+  expect({ foo: "bar" }).toMatchSnapshot();
+});
+```
+
+---
+
+第一次执行此测试时，Bun 将评估传入 `expect()` 的值，并将其写入磁盘中名为 `__snapshots__` 的目录中，该目录与测试文件在同一级。(请注意输出中的 `snapshots: +1 added` 行。)
+
+```sh terminal icon="terminal"
+bun test test/snap
+```
+
+```txt
+test/snap.test.ts:
+✓ snapshot [1.48ms]
+
+ 1 pass
+ 0 fail
+ snapshots: +1 added
+ 1 expect() calls
+Ran 1 tests across 1 files. [82.00ms]
+```
+
+---
+
+`__snapshots__` 目录为目录中的每个测试文件包含一个 [.snap] 文件。
+
+```txt File Tree icon="folder-tree"
+test
+├── __snapshots__
+│   └── snap.test.ts.snap
+└── snap.test.ts
+```
+
+---
+
+[snap.test.ts.snap] 文件是一个 JavaScript 文件，导出传入 `expect()` 的值的序列化版本。`{foo: "bar"}` 对象已被序列化为 JSON。
+
+```js snap.test.ts.snap icon="file-code"
+// Bun Snapshot v1, https://bun.com/docs/test/snapshots
+
+exports[`snapshot 1`] = `
+{
+  "foo": "bar",
+}
+`;
+```
+
+---
+
+之后，当再次执行此测试文件时，Bun 将读取快照文件并与传入 `expect()` 的值进行比较。如果值不同，测试将失败。
+
+```sh terminal icon="terminal"
+bun test
+```
+
+```txt
+bun test v1.3.3 (9c68abdb)
+test/snap.test.ts:
+✓ snapshot [1.05ms]
+
+ 1 pass
+ 0 fail
+ 1 snapshots, 1 expect() calls
+Ran 1 tests across 1 files. [101.00ms]
+```
+
+---
+
+要更新快照，请使用 `--update-snapshots` 标志。
+
+```sh terminal icon="terminal"
+bun test --update-snapshots
+```
+
+```txt
+bun test v1.3.3 (9c68abdb)
+test/snap.test.ts:
+✓ snapshot [0.86ms]
+
+ 1 pass
+ 0 fail
+ snapshots: +1 added  # the snapshot was regenerated
+ 1 expect() calls
+Ran 1 tests across 1 files. [102.00ms]
+```
+
+---
+
+请参阅 [文档 > 测试运行器 > 快照](/test/snapshots) 了解 Bun 测试运行器快照的完整文档。

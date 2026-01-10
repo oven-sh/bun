@@ -1,0 +1,16 @@
+---
+title: 将 Uint8Array 转换为 DataView
+sidebarTitle: "Uint8Array 到 DataView"
+mode: center
+---
+
+[Uint8Array](https://developer.mozilla.org/zh-CN/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array) 是一个_类型化数组_类，意味着它是查看底层 [ArrayBuffer](https://developer.mozilla.org/zh-CN/docs/Web/JavaScript/Reference/Global_Objects/ArrayBuffer) 中数据的一种机制。以下代码片段创建一个 [DataView](https://developer.mozilla.org/zh-CN/docs/Web/JavaScript/Reference/Global_Objects/DataView) 实例，覆盖与 [Uint8Array](https://developer.mozilla.org/zh-CN/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array) 相同的数据范围。
+
+```ts
+const arr: Uint8Array = ...
+const dv = new DataView(arr.buffer, arr.byteOffset, arr.byteLength);
+```
+
+---
+
+参阅 [文档 > API > 二进制数据](/runtime/binary-data#conversion) 获取关于使用Bun操作二进制数据的完整文档。

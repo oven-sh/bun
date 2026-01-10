@@ -1,0 +1,51 @@
+---
+title: 为 Bun 安装 TypeScript 声明
+sidebarTitle: TypeScript 类型
+mode: center
+---
+
+要在您的项目中为 Bun 的内置 API 安装 TypeScript 定义，请安装 `@types/bun`。
+
+```sh terminal icon="terminal"
+bun add -d @types/bun # 开发依赖
+```
+
+---
+
+以下是 Bun 项目的推荐 `compilerOptions` 完整集合。使用此 [tsconfig.json]，您可以使用顶级 await、带扩展名或无扩展名的导入，以及 JSX。
+
+```json tsconfig.json icon="file-json"
+{
+  "compilerOptions": {
+    // 环境设置和最新功能
+    "lib": ["ESNext"],
+    "target": "ESNext",
+    "module": "Preserve",
+    "moduleDetection": "force",
+    "jsx": "react-jsx",
+    "allowJs": true,
+
+    // 打包器模式
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+
+    // 最佳实践
+    "strict": true,
+    "skipLibCheck": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+
+    // 一些更严格的标志（默认禁用）
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "noPropertyAccessFromIndexSignature": false
+  }
+}
+```
+
+---
+
+请参阅 [生态系统 > TypeScript](/runtime/typescript) 了解 Bun 中 TypeScript 支持的完整指南。

@@ -1,0 +1,17 @@
+---
+title: 将 Blob 转换为字符串
+sidebarTitle: "Blob 到 字符串"
+mode: center
+---
+
+[Blob](https://developer.mozilla.org/zh-CN/docs/Web/API/Blob) 类提供了多种方法以不同格式消费其内容，包括 `.text()`。
+
+```ts
+const blob = new Blob(["hello world"]);
+const str = await blob.text();
+// => "hello world"
+```
+
+---
+
+参阅 [文档 > API > 二进制数据](/runtime/binary-data#conversion) 获取关于使用Bun操作二进制数据的完整文档。

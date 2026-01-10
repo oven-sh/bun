@@ -1,0 +1,140 @@
+---
+title: "bun update"
+description: "将依赖更新到最新版本"
+---
+
+import Update from "/snippets/cli/update.mdx";
+
+<Note>要升级你的 Bun CLI 版本，请参见 [`bun upgrade`](/installation#upgrading)。</Note>
+
+要将所有依赖更新到最新版本：
+
+```sh terminal icon="terminal"
+bun update
+```
+
+要将特定依赖更新到最新版本：
+
+```sh terminal icon="terminal"
+bun update [package]
+```
+
+## `--interactive`
+
+为了获得更受控制的更新体验，使用 `--interactive` 标志来选择要更新的包：
+
+```sh terminal icon="terminal"
+bun update --interactive
+bun update -i
+```
+
+这将启动一个交互式终端界面，显示所有过时的包及其当前和目标版本。然后你可以选择要更新的包。
+
+### 交互式界面
+
+界面显示按依赖类型分组的包：
+
+```txt
+? Select packages to update - Space to toggle, Enter to confirm, a to select all, n to select none, i to invert, l to toggle latest
+
+  dependencies                Current  Target   Latest
+    □ react                   17.0.2   18.2.0   18.3.1
+    □ lodash                  4.17.20  4.17.21  4.17.21
+
+  devDependencies             Current  Target   Latest
+    □ typescript              4.8.0    5.0.0    5.3.3
+    □ @types/node             16.11.7  18.0.0   20.11.5
+
+  optionalDependencies        Current  Target   Latest
+    □ some-optional-package   1.0.0    1.1.0    1.2.0
+```
+
+**章节：**
+
+- 包在章节标题下分组：`dependencies`、`devDependencies`、`peerDependencies`、`optionalDependencies`
+- 每个章节显示与包数据对齐的列标题
+
+**列：**
+
+- **Package**: 包名（可能有后缀如 ` dev`、` peer`、` optional` 以增加清晰度）
+- **Current**: 当前安装的版本
+- **Target**: 将要安装的版本（遵守 semver 约束）
+- **Latest**: 最新可用版本
+
+### 键盘控制
+
+**选择：**
+
+- **Space**: 切换包的选择状态
+- **Enter**: 确认选择并更新
+- **a/A**: 选择所有包
+- **n/N**: 全部不选
+- **i/I**: 反向选择
+
+**导航：**
+
+- **↑/↓ 箭头键** 或 **j/k**: 移动光标
+- **l/L**: 在当前包的目标版本和最新版本之间切换
+
+**退出：**
+
+- **Ctrl+C** 或 **Ctrl+D**: 取消更新
+
+### 视觉指示
+
+- **☑** 已选择的包（将被更新）
+- **□** 未选择的包
+- **>** 当前光标位置
+- **颜色**: 红色（重大版本）、黄色（次要版本）、绿色（补丁版本）变化
+- **下划线**: 当前选定的更新目标
+
+### 包分组
+
+包按依赖类型在章节中组织：
+
+- **dependencies** - 常规运行时依赖
+- **devDependencies** - 开发依赖
+- **peerDependencies** - 同级依赖
+- **optionalDependencies** - 可选依赖
+
+在每个章节内，单个包可能有额外的后缀（` dev`、` peer`、` optional`）以增加清晰度。
+
+## `--recursive`
+
+将 `--interactive` 与 `--recursive` 标志一起使用，以在单一代码库中的所有工作区中更新依赖：
+
+```sh terminal icon="terminal"
+bun update --interactive --recursive
+bun update -i -r
+```
+
+这会显示一个额外的 "Workspace" 列，显示每个依赖所属的工作区。
+
+## `--latest`
+
+默认情况下，`bun update` 将更新到满足你在 [package.json] 中指定的版本范围的最新版本。
+
+要更新到最新版本，不管是否与当前版本范围兼容，请使用 `--latest` 标志：
+
+```sh terminal icon="terminal"
+bun update --latest
+```
+
+在交互模式下，你可以使用 **l** 键在单个包的目标版本（遵守 semver）和最新版本之间切换。
+
+例如，对于以下 [package.json]：
+
+```json package.json icon="file-json"
+{
+  "dependencies": {
+    "react": "^17.0.2"
+  }
+}
+```
+
+- `bun update` 将更新到匹配 `17.x` 的版本。
+- `bun update --latest` 将更新到匹配 `18.x` 或更高版本。
+
+---
+
+<Update />

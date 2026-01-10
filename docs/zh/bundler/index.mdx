@@ -1,0 +1,1745 @@
+---
+title: 打包器（Bundler）
+description: 针对 JavaScript、TypeScript、JSX 等的快速原生 Bun 打包器
+---
+
+import Build from "/snippets/cli/build.mdx";
+
+Bun 的快速原生打包器可以通过 `bun build` 命令行工具或 `Bun.build()` JavaScript API 使用。
+
+### 概览
+
+- JS API: `await Bun.build({ entrypoints, outdir })`
+- CLI: `bun build <entry> --outdir ./out`
+- 监听模式: `--watch` 用于增量重建
+- 目标: `--target browser|bun|node`
+- 格式: `--format esm|cjs|iife` (cjs/iife 功能实验性)
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ['./index.tsx'],
+      outdir: './build',
+    });
+    ```
+  </Tab>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./index.tsx --outdir ./build
+    ```
+  </Tab>
+</Tabs>
+
+它很快。以下数字代表在 esbuild 的 [three.js 基准测试](https://github.com/oven-sh/bun/tree/main/bench/bundle) 中的性能表现。
+
+<Frame>
+  <img
+    src="/images/bundler-speed.png"
+    caption="捆绑 10 个 three.js 副本，包含源映射和压缩"
+  />
+</Frame>
+
+## 为什么要打包？
+
+打包器是 JavaScript 生态系统中的关键基础设施。简单概述为什么打包如此重要：
+
+- **减少 HTTP 请求。** 一个 `node_modules` 中的包可能由数百个文件组成，大型应用程序可能有几十个这样的依赖项。单独加载每个文件会很快变得不可行，所以使用打包器将应用程序源代码转换为少量自包含的"包"，可以单个请求加载。
+- **代码转换。** 现代应用通常使用像 TypeScript、JSX 和 CSS 模块等语言或工具构建，所有这些都必须转换为纯 JavaScript 和 CSS 后才能被浏览器消费。打包器是配置这些转换的自然位置。
+- **框架功能。** 框架依赖打包器插件和代码转换来实现常见模式，如文件系统路由、客户端-服务器端代码共存（想想 `getServerSideProps` 或 Remix 加载器）以及服务端组件。
+- **全栈应用程序。** Bun 的打包器可以在单个命令中处理服务端和客户端代码，实现优化的生产构建和单文件可执行文件。通过构建时 HTML 导入，您可以将整个应用程序——前端资源和后端服务器——打包成单个可部署单元。
+
+让我们深入了解打包器 API。
+
+<Note>Bun 打包器不打算替代 `tsc` 进行类型检查或生成类型声明。</Note>
+
+## 基础示例
+
+让我们构建我们的第一个包。你有两个文件，它们实现了一个简单的客户端渲染 React 应用程序。
+
+<CodeGroup>
+
+```tsx index.tsx icon="/icons/typescript.svg"
+import * as ReactDOM from "react-dom/client";
+import { Component } from "./Component";
+
+const root = ReactDOM.createRoot(document.getElementById("root")!);
+root.render(<Component message="Sup!" />);
+```
+
+```tsx Component.tsx icon="/icons/typescript.svg"
+export function Component(props: { message: string }) {
+  return <h1>{props.message}</h1>;
+}
+```
+
+</CodeGroup>
+
+这里，`index.tsx` 是我们应用程序的"入口点"。通常，这将是一个执行某些副作用的脚本，比如启动服务器或在这种情况下——初始化 React 根节点。由于我们使用了 TypeScript & JSX，我们需要在发送到浏览器之前打包我们的代码。
+
+要创建我们的包：
+
+<CodeGroup>
+
+```ts build.ts icon="/icons/typescript.svg"
+await Bun.build({
+  entrypoints: ["./index.tsx"],
+  outdir: "./out",
+});
+```
+
+```bash terminal icon="terminal"
+bun build ./index.tsx --outdir ./out
+```
+
+</CodeGroup>
+
+对于 [entrypoints](#entrypoints) 中指定的每个文件，Bun 将生成一个新包。此包将写入磁盘到 `./out` 目录（从当前工作目录解析）。运行构建后，文件系统如下所示：
+
+```text title="file system" icon="folder-tree"
+.
+├── index.tsx
+├── Component.tsx
+└── out
+    └── index.js
+```
+
+`out/index.js` 的内容看起来像这样：
+
+```js title="out/index.js" icon="/icons/javascript.svg"
+// out/index.js
+// ...
+// ~20k 行代码
+// 包含 `react-dom/client` 及其所有依赖的内容
+// 这里定义了 $jsxDEV 和 $createRoot 函数
+
+// Component.tsx
+function Component(props) {
+  return $jsxDEV(
+    "p",
+    {
+      children: props.message,
+    },
+    undefined,
+    false,
+    undefined,
+    this,
+  );
+}
+
+// index.tsx
+var rootNode = document.getElementById("root");
+var root = $createRoot(rootNode);
+root.render(
+  $jsxDEV(
+    Component,
+    {
+      message: "Sup!",
+    },
+    undefined,
+    false,
+    undefined,
+    this,
+  ),
+);
+```
+
+## 监听模式
+
+与运行时和测试运行器一样，打包器也原生支持监听模式。
+
+```bash terminal icon="terminal"
+bun build ./index.tsx --outdir ./out --watch
+```
+
+## 内容类型
+
+与 Bun 运行时一样，打包器开箱即用地支持一系列文件类型。下表分解了打包器的一组标准"加载器"。请参考 [打包器 > 文件类型](/bundler/loaders) 获取完整文档。
+
+| 扩展名 | 详情 |
+| --- | --- |
+| `.js` `.jsx` `.cjs` `.mjs` `.mts` `.cts` `.ts` `.tsx` | 使用 Bun 的内置转译器解析文件并将 TypeScript/JSX 语法转换为普通 JavaScript。打包器执行一组默认转换，包括死代码消除和树摇。目前 Bun 不尝试向下转换语法；如果您使用最近的 ECMAScript 语法，这将在打包代码中体现出来。 |
+| `.json` | JSON 文件被解析并内联到包中作为 JavaScript 对象。<br/><br/>`js<br/>import pkg from "./package.json";<br/>pkg.name; // => "my-package"<br/>` |
+| `.jsonc` | 带注释的 JSON。文件被解析并内联到包中作为 JavaScript 对象。<br/><br/>`js<br/>import config from "./config.jsonc";<br/>config.name; // => "my-config"<br/>` |
+| `.toml` | TOML 文件被解析并内联到包中作为 JavaScript 对象。<br/><br/>`js<br/>import config from "./bunfig.toml";<br/>config.logLevel; // => "debug"<br/>` |
+| `.yaml` `.yml` | YAML 文件被解析并内联到包中作为 JavaScript 对象。<br/><br/>`js<br/>import config from "./config.yaml";<br/>config.name; // => "my-app"<br/>` |
+| `.txt` | 文本文件的内容被读取并内联到包中作为字符串。<br/><br/>`js<br/>import contents from "./file.txt";<br/>console.log(contents); // => "Hello, world!"<br/>` |
+| `.html` | HTML 文件被处理，任何引用的资产（脚本、样式表、图像）都被打包。 |
+| `.css` | CSS 文件被打包到输出目录中的单个 `.css` 文件中。 |
+| `.node` `.wasm` | 这些文件由 Bun 运行时支持，但在打包期间它们被视为资产。 |
+
+### 资产
+
+如果打包器遇到具有未识别扩展名的导入，它会将导入的文件视为外部文件。引用的文件会按原样复制到 [outdir](#outdir) 中，并且导入会被解析为该文件的路径。
+
+<CodeGroup>
+
+```ts 输入 icon="/icons/typescript.svg"
+// 打包入口点
+import logo from "./logo.svg";
+console.log(logo);
+```
+
+```ts 输出 icon="/icons/javascript.svg"
+// 打包输出
+var logo = "./logo-a7305bdef.svg";
+console.log(logo);
+```
+
+</CodeGroup>
+
+文件加载器的确切行为还受 [naming](#naming) 和 [publicPath](#publicpath) 影响。
+
+<Info>请参阅 [打包器 > 加载器](/bundler/loaders) 页面获取文件加载器的更完整文档。</Info>
+
+### 插件
+
+此表中描述的行为可以通过插件覆盖或扩展。请参阅 [打包器 > 加载器](/bundler/loaders) 页面获取完整文档。
+
+## API
+
+### entrypoints
+
+<Badge>必需</Badge>
+
+对应于我们应用程序入口点的路径数组。每个入口点将生成一个包。
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    const result = await Bun.build({
+      entrypoints: ["./index.ts"],
+    });
+    // => { success: boolean, outputs: BuildArtifact[], logs: BuildMessage[] }
+    ```
+  </Tab>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./index.ts
+    ```
+  </Tab>
+</Tabs>
+
+### files
+
+用于内存打包的文件路径到其内容的映射。这允许您打包虚拟文件（这些文件不存在于磁盘上），或覆盖实际存在的文件内容。此选项仅在 JavaScript API 中可用。
+
+文件内容可以作为 `string`、`Blob`、`TypedArray` 或 `ArrayBuffer` 提供。
+
+#### 完全从内存中打包
+
+您可以通过 `files` 提供所有来源，在没有磁盘上的任何文件的情况下进行打包：
+
+```ts title="build.ts" icon="/icons/typescript.svg"
+const result = await Bun.build({
+  entrypoints: ["/app/index.ts"],
+  files: {
+    "/app/index.ts": `
+      import { greet } from "./greet.ts";
+      console.log(greet("World"));
+    `,
+    "/app/greet.ts": `
+      export function greet(name: string) {
+        return "Hello, " + name + "!";
+      }
+    `,
+  },
+});
+
+const output = await result.outputs[0].text();
+console.log(output);
+```
+
+当所有入口点都在 `files` 映射中时，当前工作目录用作根目录。
+
+#### 覆盖磁盘上的文件
+
+内存中的文件优先于磁盘上的文件。这使您可以覆盖特定文件，同时保持代码库的其余部分不变：
+
+```ts title="build.ts" icon="/icons/typescript.svg"
+// 假设 ./src/config.ts 在磁盘上存在，带有开发设置
+await Bun.build({
+  entrypoints: ["./src/index.ts"],
+  files: {
+    // 使用生产值覆盖 config.ts
+    "./src/config.ts": `
+      export const API_URL = "https://api.production.com";
+      export const DEBUG = false;
+    `,
+  },
+  outdir: "./dist",
+});
+```
+
+#### 混合磁盘和虚拟文件
+
+磁盘上的真实文件可以导入虚拟文件，而虚拟文件也可以导入真实文件：
+
+```ts title="build.ts" icon="/icons/typescript.svg"
+// ./src/index.ts 存在于磁盘并导入 "./generated.ts"
+await Bun.build({
+  entrypoints: ["./src/index.ts"],
+  files: {
+    // 提供 index.ts 导入的虚拟文件
+    "./src/generated.ts": `
+      export const BUILD_ID = "${crypto.randomUUID()}";
+      export const BUILD_TIME = ${Date.now()};
+    `,
+  },
+  outdir: "./dist",
+});
+```
+
+这对于代码生成、注入构建时常量或使用模拟模块测试很有用。
+
+### outdir
+
+输出文件将写入的目录。
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    const result = await Bun.build({
+      entrypoints: ['./index.ts'],
+      outdir: './out'
+    });
+    // => { success: boolean, outputs: BuildArtifact[], logs: BuildMessage[] }
+    ```
+  </Tab>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./index.ts --outdir ./out
+    ```
+  </Tab>
+</Tabs>
+
+如果 JavaScript API 中未传递 [outdir](#outdir)，则不会将打包的代码写入磁盘。打包的文件将以 `BuildArtifact` 对象数组形式返回。这些对象是带有额外属性的 Blob；请参阅 [输出](#outputs) 获取完整文档。
+
+```ts title="build.ts" icon="/icons/typescript.svg"
+const result = await Bun.build({
+  entrypoints: ["./index.ts"],
+});
+
+for (const res of result.outputs) {
+  // 可以作为 blob 使用
+  await res.text();
+
+  // Bun 将设置 Content-Type 和 Etag 头
+  new Response(res);
+
+  // 可以手动写入，但这种情况下应该使用 `outdir`。
+  Bun.write(path.join("out", res.path), res);
+}
+```
+
+当设置 [outdir](#outdir) 时，`BuildArtifact` 上的 [path](#path) 属性将是写入位置的绝对路径。
+
+### target
+
+包的目标执行环境。
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ['./index.ts'],
+      outdir: './out',
+      target: 'browser', // 默认
+    })
+    ```
+  </Tab>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./index.ts --outdir ./out --target browser
+    ```
+  </Tab>
+</Tabs>
+
+根据目标的不同，Bun 将应用不同的模块解析规则和优化。
+
+<Card title="browser" icon="globe">
+  **默认。** 用于生成旨在由浏览器执行的包。解析导入时优先考虑 `"browser"` 导出条件。导入任何内置模块，如 `node:events` 或 `node:path` 将正常工作，但调用某些函数，如 `fs.readFile` 将不起作用。
+</Card>
+
+<Card title="bun" icon="server">
+用于生成旨在由 Bun 运行时运行的包。在许多情况下，无需打包服务器端代码；可以直接执行源代码而无需修改。然而，打包服务器代码可以减少启动时间并提高运行性能。这是用于构建全栈应用程序的目标，其中服务器和客户端代码一起打包。使用构建时 HTML 导入。
+
+使用 `target: "bun"` 生成的所有包都会标记特殊的 `// @bun` 伪指令，表明 Bun 运行时无需重新转译文件即可执行。
+
+如果任何入口点包含 Bun shebang（`#!/usr/bin/env bun`），打包器将默认使用 `target: "bun"` 而不是 `"browser"`。
+
+当使用 `target: "bun"` 和 `format: "cjs"` 时，将添加 `// @bun @bun-cjs` 伪指令，CommonJS 包装函数与 Node.js 不兼容。
+
+</Card>
+
+<Card title="node" icon="node">
+  用于生成旨在由 Node.js 运行的包。解析导入时优先考虑 `"node"` 导出条件，并输出 `.mjs`。将来，这将自动填充 Bun 全局变量和其他内置的 `bun:*` 模块，尽管这尚未实现。
+</Card>
+
+### format
+
+指定在生成的包中使用的模块格式。
+
+Bun 默认使用 `"esm"`，并提供对 `"cjs"` 和 `"iife"` 的实验性支持。
+
+#### format: "esm" - ES 模块
+
+这是默认格式，支持 ES 模块语法，包括顶层 await、`import.meta` 等。
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ['./index.tsx'],
+      outdir: './out',
+      format: "esm",
+    })
+    ```
+  </Tab>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./index.tsx --outdir ./out --format esm
+    ```
+  </Tab>
+</Tabs>
+
+要在浏览器中使用 ES 模块语法，请将 [format](#format) 设置为 `"esm"` 并确保您的 `<script type="module">` 标签设置了 `type="module"`。
+
+#### format: "cjs" - CommonJS
+
+要构建 CommonJS 模块，请将 [format](#format) 设置为 `"cjs"`。选择 `"cjs"` 时，默认目标从 `"browser"`（esm）变为 `"node"`（cjs）。使用 `format: "cjs"`、`target: "node"` 转换的 CommonJS 模块可以在 Bun 和 Node.js 中执行（假设两个环境中都支持所使用的 API）。
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ['./index.tsx'],
+      outdir: './out',
+      format: "cjs",
+    })
+    ```
+  </Tab>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./index.tsx --outdir ./out --format cjs
+    ```
+  </Tab>
+</Tabs>
+
+#### format: "iife" - IIFE
+
+TODO：一旦我们支持 globalNames，再记录 IIFE。
+
+### `jsx`
+
+配置 JSX 转换行为。允许精细控制 JSX 如何编译。
+
+**经典运行时示例**（使用 [factory](#factory) 和 [fragment](#fragment)）：
+
+<CodeGroup>
+
+```ts index.ts icon="/icons/typescript.svg"
+await Bun.build({
+  entrypoints: ["./app.tsx"],
+  outdir: "./out",
+  jsx: {
+    factory: "h",
+    fragment: "Fragment",
+    runtime: "classic",
+  },
+});
+```
+
+```bash terminal icon="terminal"
+# JSX 配置通过 bunfig.toml 或 tsconfig.json 处理
+bun build ./app.tsx --outdir ./out
+```
+
+</CodeGroup>
+
+**自动运行时示例**（使用 [importSource](#importsource)）：
+
+<CodeGroup>
+
+```ts index.ts icon="/icons/typescript.svg"
+await Bun.build({
+  entrypoints: ["./app.tsx"],
+  outdir: "./out",
+  jsx: {
+    importSource: "preact",
+    runtime: "automatic",
+  },
+});
+```
+
+```bash terminal icon="terminal"
+# JSX 配置通过 bunfig.toml 或 tsconfig.json 处理
+bun build ./app.tsx --outdir ./out
+```
+
+</CodeGroup>
+
+### splitting
+
+是否启用代码分割。
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ['./index.tsx'],
+      outdir: './out',
+      splitting: false, // 默认
+    })
+    ```
+  </Tab>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./index.tsx --outdir ./out --splitting
+    ```
+  </Tab>
+</Tabs>
+
+当为 `true` 时，打包器将启用代码分割。当多个入口点都导入相同的文件、模块或一组文件/模块时，将共享代码拆分为单独的包通常是有用的。这种共享包被称为块。考虑以下文件：
+
+<CodeGroup>
+
+```ts entry-a.ts icon="/icons/typescript.svg"
+import { shared } from "./shared.ts";
+```
+
+```ts entry-b.ts icon="/icons/typescript.svg"
+import { shared } from "./shared.ts";
+```
+
+```ts shared.ts icon="/icons/typescript.svg"
+export const shared = "shared";
+```
+
+</CodeGroup>
+
+要对 `entry-a.ts` 和 `entry-b.ts` 启用代码分割进行打包：
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ['./entry-a.ts', './entry-b.ts'],
+      outdir: './out',
+      splitting: true,
+    })
+    ```
+  </Tab>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./entry-a.ts ./entry-b.ts --outdir ./out --splitting
+    ```
+  </Tab>
+</Tabs>
+
+运行此构建将产生以下文件：
+
+```text title="file system" icon="folder-tree"
+.
+├── entry-a.tsx
+├── entry-b.tsx
+├── shared.tsx
+└── out
+    ├── entry-a.js
+    ├── entry-b.js
+    └── chunk-2fce6291bf86559d.js
+```
+
+生成的 `chunk-2fce6291bf86559d.js` 文件包含共享代码。为了避免冲突，默认情况下文件名自动包含内容哈希。这可以通过 [naming](#naming) 自定义。
+
+### plugins
+
+打包期间使用的插件列表。
+
+```ts title="build.ts" icon="/icons/typescript.svg"
+await Bun.build({
+  entrypoints: ["./index.tsx"],
+  outdir: "./out",
+  plugins: [
+    /* ... */
+  ],
+});
+```
+
+Bun 为 Bun 运行时和打包器实现了一个通用插件系统。请参阅 [插件文档](/bundler/plugins) 获取完整文档。
+
+### env
+
+控制打包期间如何处理环境变量。在内部，这使用 [define](#define) 将环境变量注入到包中，但使其更容易指定要注入的环境变量。
+
+#### env: "inline"
+
+将环境变量内联到打包输出中，通过将 `process.env.FOO` 引用转换为包含实际环境变量值的字符串字面量。
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ['./index.tsx'],
+      outdir: './out',
+      env: "inline",
+    })
+    ```
+  </Tab>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./index.tsx --outdir ./out --env inline
+    ```
+  </Tab>
+</Tabs>
+
+对于下面的输入：
+
+```js title="input.js" icon="/icons/javascript.svg"
+// input.js
+console.log(process.env.FOO);
+console.log(process.env.BAZ);
+```
+
+生成的包将包含以下代码：
+
+```js title="output.js" icon="/icons/javascript.svg"
+// output.js
+console.log("bar");
+console.log("123");
+```
+
+#### env: "PUBLIC\_\*" (前缀)
+
+内联匹配给定前缀（`*` 字符之前的那部分）的环境变量，将 `process.env.FOO` 替换为实际环境变量值。这对于有选择地内联环境变量很有用，例如面向公众的 URL 或客户端令牌，而不必担心将私有凭证注入输出包。
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ['./index.tsx'],
+      outdir: './out',
+      
+      // 内联所有以 "ACME_PUBLIC_" 开头的环境变量
+      env: "ACME_PUBLIC_*",
+    })
+    ```
+  </Tab>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./index.tsx --outdir ./out --env ACME_PUBLIC_*
+    ```
+  </Tab>
+</Tabs>
+
+例如，给定以下环境变量：
+
+```bash terminal icon="terminal"
+FOO=bar BAZ=123 ACME_PUBLIC_URL=https://acme.com
+```
+
+和源代码：
+
+```tsx index.tsx icon="/icons/typescript.svg"
+console.log(process.env.FOO);
+console.log(process.env.ACME_PUBLIC_URL);
+console.log(process.env.BAZ);
+```
+
+生成的包将包含以下代码：
+
+```js title="output.js" icon="/icons/javascript.svg"
+console.log(process.env.FOO);
+console.log("https://acme.com");
+console.log(process.env.BAZ);
+```
+
+#### env: "disable"
+
+完全禁用环境变量注入。
+
+### sourcemap
+
+指定要生成的源映射类型。
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ['./index.tsx'],
+      outdir: './out',
+      sourcemap: 'linked', // 默认 'none'
+    })
+    ```
+  </Tab>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./index.tsx --outdir ./out --sourcemap linked
+    ```
+  </Tab>
+</Tabs>
+
+| 值 | 描述 |
+| --- | --- |
+| `"none"` | 默认。不生成源映射。 |
+| `"linked"` | 创建一个单独的 `*.js.map` 文件与每个 `*.js` 包放在同一位置，使用 `//# sourceMappingURL` 注释链接两者。需要设置 `--outdir`。基础 URL 可以用 `--public-path` 自定义。<br/><br/>`js<br/>// <bundled code here><br/><br/>//# sourceMappingURL=bundle.js.map<br/>` |
+| `"external"` | 创建一个单独的 `*.js.map` 文件与每个 `*.js` 包放在同一位置，不插入 `//# sourceMappingURL` 注释。<br/><br/>生成的包包含一个调试 ID，可用于关联包与其对应的源映射。此 `debugId` 作为注释添加到文件底部。<br/><br/>`js<br/>// <generated bundle code><br/><br/>//# debugId=<DEBUG ID><br/>` |
+| `"inline"` | 生成源映射并将其作为 base64 载荷附加到生成包的末尾。<br/><br/>`js<br/>// <bundled code here><br/><br/>//# sourceMappingURL=data:application/json;base64,<encoded sourcemap here><br/>` |
+
+相关的 `*.js.map` 源映射将是包含等效 `debugId` 属性的 JSON 文件。
+
+### minify
+
+是否启用压缩。默认 `false`。
+
+<Note>当目标为 `bun` 时，默认情况下标识符将被压缩。</Note>
+
+要启用所有压缩选项：
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ['./index.tsx'],
+      outdir: './out',
+      minify: true, // 默认 false
+    })
+    ```
+  </Tab>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./index.tsx --outdir ./out --minify
+    ```
+  </Tab>
+</Tabs>
+
+要细粒度地启用某些压缩：
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ['./index.tsx'],
+      outdir: './out',
+      minify: {
+        whitespace: true,
+        identifiers: true,
+        syntax: true,
+      },
+    })
+    ```
+  </Tab>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./index.tsx --outdir ./out --minify-whitespace --minify-identifiers --minify-syntax
+    ```
+  </Tab>
+</Tabs>
+
+### external
+
+被视为外部的导入路径列表。默认为 `[]`。
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ['./index.tsx'],
+      outdir: './out',
+      external: ["lodash", "react"], // 默认: []
+    })
+    ```
+  </Tab>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./index.tsx --outdir ./out --external lodash --external react
+    ```
+  </Tab>
+</Tabs>
+
+外部导入是指不会包含在最终包中的导入。相反，导入语句将保持不变，以便在运行时解析。
+
+例如，考虑以下入口点文件：
+
+```tsx index.tsx icon="/icons/typescript.svg"
+import _ from "lodash";
+import { z } from "zod";
+
+const value = z.string().parse("Hello world!");
+console.log(_.upperCase(value));
+```
+
+通常，打包 `index.tsx` 将生成一个包含 "zod" 包完整源代码的包。如果相反，我们要将导入语句保留为原样，我们可以将其标记为外部：
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ['./index.tsx'],
+      outdir: './out',
+      external: ['zod'],
+    })
+    ```
+  </Tab>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./index.tsx --outdir ./out --external zod
+    ```
+  </Tab>
+</Tabs>
+
+生成的包将类似于：
+
+```js title="out/index.js" icon="/icons/javascript.svg"
+import { z } from "zod";
+
+// ...
+// "lodash" 包的内容
+// 包括 `_.upperCase` 函数
+
+var value = z.string().parse("Hello world!");
+console.log(_.upperCase(value));
+```
+
+要将所有导入标记为外部，请使用通配符 `*`：
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ['./index.tsx'],
+      outdir: './out',
+      external: ['*'],
+    })
+    ```
+  </Tab>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./index.tsx --outdir ./out --external '*'
+    ```
+  </Tab>
+</Tabs>
+
+### packages
+
+控制是否将包依赖项包含到包中。可能的值：`bundle`（默认）、`external`。Bun 将任何不以 `.`, `..` 或 `/` 开头的导入视为包。
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ['./index.ts'],
+      packages: 'external',
+    })
+    ```
+  </Tab>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./index.ts --packages external
+    ```
+  </Tab>
+</Tabs>
+
+### naming
+
+自定义生成的文件名。默认为 `./[dir]/[name].[ext]`。
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ['./index.tsx'],
+      outdir: './out',
+      naming: "[dir]/[name].[ext]", // 默认
+    })
+    ```
+  </Tab>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./index.tsx --outdir ./out --entry-naming "[dir]/[name].[ext]"
+    ```
+  </Tab>
+</Tabs>
+
+默认情况下，生成的包名称基于相关入口点文件的名称。
+
+```text title="file system" icon="folder-tree"
+.
+├── index.tsx
+└── out
+    └── index.js
+```
+
+使用多个入口点时，生成的文件层次结构将反映入口点的目录结构。
+
+```text title="file system" icon="folder-tree"
+.
+├── index.tsx
+└── nested
+    └── index.tsx
+└── out
+    ├── index.js
+    └── nested
+        └── index.js
+```
+
+可以使用 [naming](#naming) 字段自定义生成文件的名称和位置。此字段接受模板字符串，用于为所有对应入口点的包生成文件名，其中以下标记被替换为其相应值：
+
+- `[name]` - 入口点文件的名称，不带扩展名。
+- `[ext]` - 生成包的扩展名。
+- `[hash]` - 包内容的哈希。
+- `[dir]` - 从项目根目录到源文件父目录的相对路径。
+
+例如：
+
+| 标记 | `[name]` | `[ext]` | `[hash]` | `[dir]` |
+| --- | --- | --- | --- | --- |
+| `./index.tsx` | `index` | `js` | `a1b2c3d4` | `""`（空字符串） |
+| `./nested/entry.ts` | `entry` | `js` | `c3d4e5f6` | `"nested"` |
+
+我们可以组合这些标记创建模板字符串。例如，要在生成的包名称中包含哈希：
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ['./index.tsx'],
+      outdir: './out',
+      naming: 'files/[dir]/[name]-[hash].[ext]',
+    })
+    ```
+  </Tab>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./index.tsx --outdir ./out --entry-naming 'files/[dir]/[name]-[hash].[ext]'
+    ```
+  </Tab>
+</Tabs>
+
+此构建将导致以下文件结构：
+
+```text title="file system" icon="folder-tree"
+.
+├── index.tsx
+└── out
+    └── files
+        └── index-a1b2c3d4.js
+```
+
+当为 [naming](#naming) 字段提供字符串时，它仅用于与入口点对应的包。块和复制资产的名称不受影响。使用 JavaScript API，可以为每种生成的文件类型指定单独的模板字符串。
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ['./index.tsx'],
+      outdir: './out',
+      naming: {
+        // 默认值
+        entry: '[dir]/[name].[ext]',
+        chunk: '[name]-[hash].[ext]',
+        asset: '[name]-[hash].[ext]',
+      },
+    })
+    ```
+  </Tab>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./index.tsx --outdir ./out \
+      --entry-naming '[dir]/[name].[ext]' \
+      --chunk-naming '[name]-[hash].[ext]' \
+      --asset-naming '[name]-[hash].[ext]'
+    ```
+  </Tab>
+</Tabs>
+
+### root
+
+项目根目录。
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ['./pages/a.tsx', './pages/b.tsx'],
+      outdir: './out',
+      root: '.',
+    })
+    ```
+  </Tab>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./pages/a.tsx ./pages/b.tsx --outdir ./out --root .
+    ```
+  </Tab>
+</Tabs>
+
+如果未指定，则计算为所有入口点文件的第一个公共祖先。考虑以下文件结构：
+
+```text title="file system" icon="folder-tree"
+.
+└── pages
+  └── index.tsx
+  └── settings.tsx
+```
+
+我们可以在 `pages` 目录中构建两个入口点：
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```js
+    await Bun.build({
+      entrypoints: ['./pages/index.tsx', './pages/settings.tsx'],
+      outdir: './out',
+    })
+    ```
+  </Tab>
+  <Tab title="CLI">
+    ```bash
+    bun build ./pages/index.tsx ./pages/settings.tsx --outdir ./out
+    ```
+  </Tab>
+</Tabs>
+
+这将导致以下文件结构：
+
+```text title="file system" icon="folder-tree"
+.
+└── pages
+  └── index.tsx
+  └── settings.tsx
+└── out
+  └── index.js
+  └── settings.js
+```
+
+由于 `pages` 目录是入口点文件的第一个公共祖先，因此被认为是项目根目录。这意味着生成的包位于 `out` 目录的顶层；没有 `out/pages` 目录。
+
+可以通过指定 [root](#root) 选项覆盖此行为：
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```js
+    await Bun.build({
+      entrypoints: ['./pages/index.tsx', './pages/settings.tsx'],
+      outdir: './out',
+      root: '.',
+    })
+    ```
+  </Tab>
+  <Tab title="CLI">
+    ```bash
+    bun build ./pages/index.tsx ./pages/settings.tsx --outdir ./out --root .
+    ```
+  </Tab>
+</Tabs>
+
+通过指定 `.` 作为 [root](#root)，生成的文件结构如下所示：
+
+```
+.
+└── pages
+  └── index.tsx
+  └── settings.tsx
+└── out
+  └── pages
+    └── index.js
+    └── settings.js
+```
+
+### publicPath
+
+添加到打包代码中任何导入路径的前缀。
+
+在许多情况下，生成的包将不包含任何导入语句。毕竟，打包的目标是将所有代码合并到单个文件中。但是，有一些情况生成的包将包含导入语句。
+
+- **资产导入** — 当导入无法识别的文件类型如 `*.svg` 时，打包器会转而使用文件加载器，将文件复制到 [outdir](#outdir) 中。导入转换为变量
+- **外部模块** — 文件和模块可以标记为外部，在这种情况下，它们不会包含在包中。相反，导入语句将保留在最终包中。
+- **分块。** 启用 [splitting](#splitting) 时，打包器可能会生成单独的"块"文件，表示多个入口点之间共享的代码。
+
+在任何这些情况下，最终包可能包含指向其他文件的路径。默认情况下，这些导入是相对的。下面是一个简单的资产导入示例：
+
+<CodeGroup>
+
+```ts 输入 icon="/icons/typescript.svg"
+import logo from "./logo.svg";
+console.log(logo);
+```
+
+```ts 输出 icon="/icons/javascript.svg"
+var logo = "./logo-a7305bdef.svg";
+console.log(logo);
+```
+
+</CodeGroup>
+
+设置 [publicPath](#publicpath) 将为所有文件路径加上指定的前缀。
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ['./index.tsx'],
+      outdir: './out',
+      publicPath: 'https://cdn.example.com/', // 默认值未定义
+    })
+    ```
+  </Tab>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./index.tsx --outdir ./out --public-path 'https://cdn.example.com/'
+    ```
+  </Tab>
+</Tabs>
+
+输出文件现在看起来像这样。
+
+```js title="out/index.js" icon="/icons/javascript.svg"
+var logo = "https://cdn.example.com/logo-a7305bdef.svg";
+```
+
+### define
+
+在构建时替换的全局标识符映射。此对象的键是标识符名称，值是要内联的 JSON 字符串。
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ['./index.tsx'],
+      outdir: './out',
+      define: {
+        STRING: JSON.stringify("value"),
+        "nested.boolean": "true",
+      },
+    })
+    ```
+  </Tab>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./index.tsx --outdir ./out --define STRING='"value"' --define nested.boolean=true
+    ```
+  </Tab>
+</Tabs>
+
+### loader
+
+文件扩展名到内置加载器名称的映射。这可用于快速自定义特定文件的加载方式。
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ['./index.tsx'],
+      outdir: './out',
+      loader: {
+        ".png": "dataurl",
+        ".txt": "file",
+      },
+    })
+    ```
+  </Tab>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./index.tsx --outdir ./out --loader .png:dataurl --loader .txt:file
+    ```
+  </Tab>
+</Tabs>
+
+### banner
+
+添加到最终包中的横幅，这可以是像 `"use client"` 用于 React 的指令，或者像许可证之类的注释块。
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ['./index.tsx'],
+      outdir: './out',
+      banner: '"use client";'
+    })
+    ```
+  </Tab>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./index.tsx --outdir ./out --banner '"use client";'
+    ```
+  </Tab>
+</Tabs>
+
+### footer
+
+添加到最终包中的页脚，这可以是像许可证之类的注释块，或只是一个有趣的复活节彩蛋。
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ['./index.tsx'],
+      outdir: './out',
+      footer: '// built with love in SF'
+    })
+    ```
+  </Tab>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./index.tsx --outdir ./out --footer '// built with love in SF'
+    ```
+  </Tab>
+</Tabs>
+
+### drop
+
+从包中删除函数调用。例如，`--drop=console` 将删除所有对 `console.log` 的调用。调用的参数也将被删除，无论这些参数是否可能产生副作用。删除 `debugger` 将移除所有 `debugger` 语句。
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ['./index.tsx'],
+      outdir: './out',
+      drop: ["console", "debugger", "anyIdentifier.or.propertyAccess"],
+    })
+    ```
+  </Tab>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./index.tsx --outdir ./out --drop console --drop debugger
+    ```
+  </Tab>
+</Tabs>
+
+### features
+
+启用编译时功能标志以进行死代码消除。这提供了一种在包时有条件地包含或排除代码路径的方法，使用 `import { feature } from "bun:bundle"`。
+
+```ts title="app.ts" icon="/icons/typescript.svg"
+import { feature } from "bun:bundle";
+
+if (feature("PREMIUM")) {
+  // 仅在启用 PREMIUM 标志时包含
+  initPremiumFeatures();
+}
+
+if (feature("DEBUG")) {
+  // 仅在启用 DEBUG 标志时包含
+  console.log("Debug mode");
+}
+```
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ['./app.ts'],
+      outdir: './out',
+      features: ["PREMIUM"],  // PREMIUM=true, DEBUG=false
+    })
+    ```
+  </Tab>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./app.ts --outdir ./out --feature PREMIUM
+    ```
+  </Tab>
+</Tabs>
+
+`feature()` 函数在包时被替换为 `true` 或 `false`。结合压缩，不可达的代码将被消除：
+
+```ts title="Input" icon="/icons/typescript.svg"
+import { feature } from "bun:bundle";
+const mode = feature("PREMIUM") ? "premium" : "free";
+```
+
+```js title="Output (with --feature PREMIUM --minify)" icon="/icons/javascript.svg"
+var mode = "premium";
+```
+
+```js title="Output (without --feature PREMIUM, with --minify)" icon="icons/javascript.svg"
+var mode = "free";
+```
+
+**主要行为：**
+
+- `feature()` 需要字符串字面量参数 — 不支持动态值
+- `bun:bundle` 导入完全从输出中移除
+- 适用于 `bun build`、`bun run` 和 `bun test`
+- 可以启用多个标志：`--feature FLAG_A --feature FLAG_B`
+- 为了类型安全，增强 `Registry` 接口以限制 `feature()` 到已知标志（见下文）
+
+**用例：**
+
+- 平台特定代码（`feature("SERVER")` vs `feature("CLIENT")`）
+- 环境基础的功能（`feature("DEVELOPMENT")`）
+- 渐进式功能发布
+- A/B 测试变体
+- 付费功能
+
+**类型安全：** 默认情况下，`feature()` 接受任何字符串。要获得自动完成并在编译时捕获拼写错误，请创建一个 `env.d.ts` 文件（或添加到现有 `.d.ts` 文件中）并增强 `Registry` 接口：
+
+```ts title="env.d.ts" icon="/icons/typescript.svg"
+declare module "bun:bundle" {
+  interface Registry {
+    features: "DEBUG" | "PREMIUM" | "BETA_FEATURES";
+  }
+}
+```
+
+确保文件包含在你的 `tsconfig.json` 中（例如，`"include": ["src", "env.d.ts"]`）。现在 `feature()` 只接受那些标志，并且无效字符串如 `feature("TYPO")` 会成为类型错误。
+
+### metafile
+
+以结构化格式生成有关构建的元数据。元数据文件包含有关所有输入文件、输出文件及其大小、导入和导出的信息。这对于：
+
+- **包分析**：了解什么导致了包大小
+- **可视化**：提供给诸如 [esbuild 的包分析器](https://esbuild.github.io/analyze/) 或其他可视化工具
+- **依赖跟踪**：查看应用程序的完整导入图
+- **CI 集成**：跟踪随时间变化的包大小
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    const result = await Bun.build({
+      entrypoints: ['./src/index.ts'],
+      outdir: './dist',
+      metafile: true,
+    });
+
+    if (result.metafile) {
+      // 分析输入
+      for (const [path, meta] of Object.entries(result.metafile.inputs)) {
+        console.log(`${path}: ${meta.bytes} bytes`);
+      }
+
+      // 分析输出
+      for (const [path, meta] of Object.entries(result.metafile.outputs)) {
+        console.log(`${path}: ${meta.bytes} bytes`);
+      }
+
+      // 保存供外部分析工具使用
+      await Bun.write('./dist/meta.json', JSON.stringify(result.metafile));
+    }
+    ```
+
+  </Tab>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./src/index.ts --outdir ./dist --metafile ./dist/meta.json
+    ```
+  </Tab>
+</Tabs>
+
+元数据文件结构包含：
+
+```ts
+interface BuildMetafile {
+  inputs: {
+    [path: string]: {
+      bytes: number;
+      imports: Array<{
+        path: string;
+        kind: ImportKind;
+        original?: string; // 解析前的原始说明符
+        external?: boolean;
+      }>;
+      format?: "esm" | "cjs" | "json" | "css";
+    };
+  };
+  outputs: {
+    [path: string]: {
+      bytes: number;
+      inputs: {
+        [path: string]: { bytesInOutput: number };
+      };
+      imports: Array<{ path: string; kind: ImportKind }>;
+      exports: string[];
+      entryPoint?: string;
+      cssBundle?: string; // JS 入口点的关联 CSS 文件
+    };
+  };
+}
+```
+
+## 输出
+
+`Bun.build` 函数返回一个 `Promise<BuildOutput>`，定义为：
+
+```ts title="build.ts" icon="/icons/typescript.svg"
+interface BuildOutput {
+  outputs: BuildArtifact[];
+  success: boolean;
+  logs: Array<object>; // 查看文档了解详情
+  metafile?: BuildMetafile; // 仅当 metafile: true 时
+}
+
+interface BuildArtifact extends Blob {
+  kind: "entry-point" | "chunk" | "asset" | "sourcemap";
+  path: string;
+  loader: Loader;
+  hash: string | null;
+  sourcemap: BuildArtifact | null;
+}
+```
+
+`outputs` 数组包含构建生成的所有文件。每个构件实现 Blob 接口。
+
+```ts title="build.ts" icon="/icons/typescript.svg"
+const build = await Bun.build({
+  /* */
+});
+
+for (const output of build.outputs) {
+  await output.arrayBuffer(); // => ArrayBuffer
+  await output.bytes(); // => Uint8Array
+  await output.text(); // string
+}
+```
+
+每个构件还包含以下属性：
+
+| 属性 | 描述 |
+| --- | --- |
+| `kind` | 此文件是什么类型的构建输出。构建生成打包入口点、代码分割"块"、源映射、字节码和复制的资产（如图像）。 |
+| `path` | 磁盘上文件的绝对路径 |
+| `loader` | 用于解释文件的加载器。请参阅 [打包器 > 加载器](/bundler/loaders) 了解 Bun 如何将文件扩展名映射到适当的内置加载器。 |
+| `hash` | 文件内容的哈希。对于资产总是定义的。 |
+| `sourcemap` | 此文件对应的源映射文件（如果生成）。仅对入口点和块定义。 |
+
+类似于 `BunFile`，`BuildArtifact` 对象可以直接传递到 `new Response()` 中。
+
+```ts title="build.ts" icon="/icons/typescript.svg"
+const build = await Bun.build({
+  /* */
+});
+
+const artifact = build.outputs[0];
+
+// Content-Type 头自动设置
+return new Response(artifact);
+```
+
+Bun 运行时实现了 `BuildArtifact` 对象的特殊漂亮打印，以简化调试。
+
+<CodeGroup>
+
+```ts build.ts icon="/icons/typescript.svg"
+// build.ts
+const build = await Bun.build({
+  /* */
+});
+
+const artifact = build.outputs[0];
+console.log(artifact);
+```
+
+```bash Shell output
+bun run build.ts
+
+BuildArtifact (entry-point) {
+  path: "./index.js",
+  loader: "tsx",
+  kind: "entry-point",
+  hash: "824a039620219640",
+  Blob (74756 bytes) {
+    type: "text/javascript;charset=utf-8"
+  },
+  sourcemap: BuildArtifact (sourcemap) {
+    path: "./index.js.map",
+    loader: "file",
+    kind: "sourcemap",
+    hash: "e7178cda3e72e301",
+    Blob (24765 bytes) {
+      type: "application/json;charset=utf-8"
+    },
+    sourcemap: null
+  }
+}
+```
+
+</CodeGroup>
+
+## 字节码
+
+`bytecode: boolean` 选项可用于为任何 JavaScript/TypeScript 入口点生成字节码。这可以大大提高大型应用程序的启动时间。仅支持 `"cjs"` 格式，仅支持 `"target": "bun"`，并且依赖于匹配版本的 Bun。这为每个入口点添加相应的 `.jsc` 文件。
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ["./index.tsx"],
+      outdir: "./out",
+      bytecode: true,
+    })
+    ```
+  </Tab>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./index.tsx --outdir ./out --bytecode
+    ```
+  </Tab>
+</Tabs>
+
+## 可执行文件
+
+Bun 支持将 JavaScript/TypeScript 入口点"编译"为独立可执行文件。此可执行文件包含 Bun 二进制文件的副本。
+
+```bash terminal icon="terminal"
+bun build ./cli.tsx --outfile mycli --compile
+./mycli
+```
+
+请参阅 [打包器 > 可执行文件](/bundler/executables) 获取完整文档。
+
+## 日志和错误
+
+失败时，`Bun.build` 返回一个带有 `AggregateError` 的拒绝承诺。这可以打印到控制台以漂亮地打印错误列表，或使用 try/catch 块编程读取。
+
+```ts title="build.ts" icon="/icons/typescript.svg"
+try {
+  const result = await Bun.build({
+    entrypoints: ["./index.tsx"],
+    outdir: "./out",
+  });
+} catch (e) {
+  // TypeScript 不允许在 catch 子句上注解
+  const error = e as AggregateError;
+  console.error("Build Failed");
+
+  // 示例：使用内置格式化程序
+  console.error(error);
+
+  // 示例：将失败序列化为 JSON 字符串。
+  console.error(JSON.stringify(error, null, 2));
+}
+```
+
+大多数时候，不需要显式的 try/catch，因为 Bun 会整齐地打印未捕获的异常。只需在 `Bun.build` 调用上使用顶层 await 就足够了。
+
+`error.errors` 中的每一项都是 `BuildMessage` 或 `ResolveMessage` 的实例（`Error` 的子类），包含每个错误的详细信息。
+
+```ts title="build.ts" icon="/icons/typescript.svg"
+class BuildMessage {
+  name: string;
+  position?: Position;
+  message: string;
+  level: "error" | "warning" | "info" | "debug" | "verbose";
+}
+
+class ResolveMessage extends BuildMessage {
+  code: string;
+  referrer: string;
+  specifier: string;
+  importKind: ImportKind;
+}
+```
+
+构建成功时，返回的对象包含一个 `logs` 属性，其中包含打包器警告和信息消息。
+
+```ts title="build.ts" icon="/icons/typescript.svg"
+const result = await Bun.build({
+  entrypoints: ["./index.tsx"],
+  outdir: "./out",
+});
+
+if (result.logs.length > 0) {
+  console.warn("Build succeeded with warnings:");
+  for (const message of result.logs) {
+    // Bun 将漂亮地打印消息对象
+    console.warn(message);
+  }
+}
+```
+
+## 参考
+
+```ts Typescript 定义 icon="/icons/typescript.svg" expandable
+interface Bun {
+  build(options: BuildOptions): Promise<BuildOutput>;
+}
+
+interface BuildConfig {
+  entrypoints: string[]; // 文件路径列表
+  outdir?: string; // 输出目录
+  target?: Target; // 默认: "browser"
+  /**
+   * 输出模块格式。顶层 await 仅支持 `"esm"`。
+   *
+   * 可以为：
+   * - `"esm"`
+   * - `"cjs"` (**实验性**)
+   * - `"iife"` (**实验性**)
+   *
+   * @default "esm"
+   */
+  format?: "esm" | "cjs" | "iife";
+  /**
+   * JSX 配置对象，用于控制 JSX 转换行为
+   */
+  jsx?: {
+    runtime?: "automatic" | "classic";
+    importSource?: string;
+    factory?: string;
+    fragment?: string;
+    sideEffects?: boolean;
+    development?: boolean;
+  };
+  naming?:
+    | string
+    | {
+        chunk?: string;
+        entry?: string;
+        asset?: string;
+      };
+  root?: string; // 项目根目录
+  splitting?: boolean; // 默认 true, 启用代码分割
+  plugins?: BunPlugin[];
+  external?: string[];
+  packages?: "bundle" | "external";
+  publicPath?: string;
+  define?: Record<string, string>;
+  loader?: { [k in string]: Loader };
+  sourcemap?: "none" | "linked" | "inline" | "external" | boolean; // 默认: "none", true -> "inline"
+  /**
+   * 解析导入时使用的 package.json `exports` 条件
+   *
+   * 等同于 `bun build` 或 `bun run` 中的 `--conditions`。
+   *
+   * https://nodejs.org/api/packages.html#exports
+   */
+  conditions?: Array<string> | string;
+
+  /**
+   * 控制打包期间如何处理环境变量。
+   *
+   * 可以为：
+   * - `"inline"`: 将环境变量注入到打包输出中，通过将 `process.env.FOO`
+   *   引用转换为包含实际环境变量值的字符串字面量
+   * - `"disable"`: 完全禁用环境变量注入
+   * - 以 `*` 结尾的字符串: 内联匹配给定前缀的环境变量。
+   *   例如，`"MY_PUBLIC_*"` 将只包含以 "MY_PUBLIC_" 开头的环境变量
+   */
+  env?: "inline" | "disable" | `${string}*`;
+  minify?:
+    | boolean
+    | {
+        whitespace?: boolean;
+        syntax?: boolean;
+        identifiers?: boolean;
+      };
+  /**
+   * 忽略死代码消除/树摇注释，如 @__PURE__ 和 package.json
+   * "sideEffects" 字段。这只应作为临时解决方法用于库中的错误注释。
+   */
+  ignoreDCEAnnotations?: boolean;
+  /**
+   * 即使 minify.whitespace 为 true，也强制发出 @__PURE__ 注释。
+   */
+  emitDCEAnnotations?: boolean;
+
+  /**
+   * 为输出生成字节码。这可以显著改善冷启动
+   * 时间，但会使最终输出更大并稍微增加
+   * 内存使用。
+   *
+   * 字节码目前仅支持 CommonJS (`format: "cjs"`)。
+   *
+   * 必须是 `target: "bun"`
+   * @default false
+   */
+  bytecode?: boolean;
+  /**
+   * 向打包代码添加横幅，如 "use client";
+   */
+  banner?: string;
+  /**
+   * 向打包代码添加页脚，如注释块
+   *
+   * `// made with bun!`
+   */
+  footer?: string;
+
+  /**
+   * 删除对匹配属性访问的函数调用。
+   */
+  drop?: string[];
+
+  /**
+   * - 当设置为 `true` 时，当发生构建失败时，返回的承诺将以 AggregateError 拒绝。
+   * - 当设置为 `false` 时，返回一个 {@link BuildOutput} 与 `{success: false}`
+   *
+   * @default true
+   */
+  throw?: boolean;
+
+  /**
+   * 自定义 tsconfig.json 文件路径，用于路径解析。
+   * 等同于 CLI 中的 `--tsconfig-override`。
+   */
+  tsconfig?: string;
+
+  outdir?: string;
+}
+
+interface BuildOutput {
+  outputs: BuildArtifact[];
+  success: boolean;
+  logs: Array<BuildMessage | ResolveMessage>;
+}
+
+interface BuildArtifact extends Blob {
+  path: string;
+  loader: Loader;
+  hash: string | null;
+  kind: "entry-point" | "chunk" | "asset" | "sourcemap" | "bytecode";
+  sourcemap: BuildArtifact | null;
+}
+
+type Loader =
+  | "js"
+  | "jsx"
+  | "ts"
+  | "tsx"
+  | "css"
+  | "json"
+  | "jsonc"
+  | "toml"
+  | "yaml"
+  | "text"
+  | "file"
+  | "napi"
+  | "wasm"
+  | "html";
+
+interface BuildOutput {
+  outputs: BuildArtifact[];
+  success: boolean;
+  logs: Array<BuildMessage | ResolveMessage>;
+}
+
+declare class ResolveMessage {
+  readonly name: "ResolveMessage";
+  readonly position: Position | null;
+  readonly code: string;
+  readonly message: string;
+  readonly referrer: string;
+  readonly specifier: string;
+  readonly importKind:
+    | "entry_point"
+    | "stmt"
+    | "require"
+    | "import"
+    | "dynamic"
+    | "require_resolve"
+    | "at"
+    | "at_conditional"
+    | "url"
+    | "internal";
+  readonly level: "error" | "warning" | "info" | "debug" | "verbose";
+
+  toString(): string;
+}
+```
+
+---
+
+<Build />

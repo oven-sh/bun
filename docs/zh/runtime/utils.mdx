@@ -1,0 +1,918 @@
+---
+title: Utils
+description: 使用 Bun 的实用函数与运行时交互
+---
+
+## `Bun.version`
+
+一个包含当前运行的 `bun` CLI 版本的 `string`。
+
+```ts terminal icon="terminal"
+Bun.version;
+// => "1.3.3"
+```
+
+## `Bun.revision`
+
+编译创建当前 `bun` CLI 的 [Bun](https://github.com/oven-sh/bun) 的 git 提交。
+
+```ts terminal icon="terminal"
+Bun.revision;
+// => "f02561530fda1ee9396f51c8bc99b38716e38296"
+```
+
+## `Bun.env`
+
+`process.env` 的别名。
+
+## `Bun.main`
+
+当前程序入口点的绝对路径（使用 `bun run` 执行的文件）。
+
+```ts script.ts
+Bun.main;
+// /path/to/script.ts
+```
+
+这对于确定脚本是否被直接执行特别有用，而不是被另一个脚本导入。
+
+```ts
+if (import.meta.path === Bun.main) {
+  // 此脚本正在直接执行
+} else {
+  // 此文件正被另一个脚本导入
+}
+```
+
+这类似于 Node.js 中的 [`require.main = module` 技巧](https://stackoverflow.com/questions/6398196/detect-if-called-through-require-or-directly-by-command-line)。
+
+## `Bun.sleep()`
+
+`Bun.sleep(ms: number)`
+
+在给定的毫秒数后返回一个解决的 `Promise`。
+
+```ts
+console.log("hello");
+await Bun.sleep(1000);
+console.log("hello one second later!");
+```
+
+或者，传递一个 `Date` 对象以接收在该时间点解决的 `Promise`。
+
+```ts
+const oneSecondInFuture = new Date(Date.now() + 1000);
+
+console.log("hello");
+await Bun.sleep(oneSecondInFuture);
+console.log("hello one second later!");
+```
+
+## `Bun.sleepSync()`
+
+`Bun.sleepSync(ms: number)`
+
+`Bun.sleep` 的阻塞同步版本。
+
+```ts
+console.log("hello");
+Bun.sleepSync(1000); // 阻塞线程一秒钟
+console.log("hello one second later!");
+```
+
+## `Bun.which()`
+
+`Bun.which(bin: string)`
+
+返回可执行文件的路径，类似于在终端中输入 `which`。
+
+```ts
+const ls = Bun.which("ls");
+console.log(ls); // "/usr/bin/ls"
+```
+
+默认情况下，Bun 查看当前的 `PATH` 环境变量来确定路径。要配置 `PATH`：
+
+```ts
+const ls = Bun.which("ls", {
+  PATH: "/usr/local/bin:/usr/bin:/bin",
+});
+console.log(ls); // "/usr/bin/ls"
+```
+
+传递一个 `cwd` 选项以从特定目录解析可执行文件。
+
+```ts
+const ls = Bun.which("ls", {
+  cwd: "/tmp",
+  PATH: "",
+});
+
+console.log(ls); // null
+```
+
+你可以将此视为 [`which`](https://www.npmjs.com/package/which) npm 包的内置替代品。
+
+## `Bun.randomUUIDv7()`
+
+`Bun.randomUUIDv7()` 返回一个 [UUID v7](https://www.ietf.org/archive/id/draft-peabody-dispatch-new-uuid-format-01.html#name-uuidv7-layout-and-bit-order)，这是单调的，适用于排序和数据库。
+
+```ts
+import { randomUUIDv7 } from "bun";
+
+const id = randomUUIDv7();
+// => "0192ce11-26d5-7dc3-9305-1426de888c5a"
+```
+
+UUID v7 是一个 128 位值，编码了当前时间戳、随机值和计数器。时间戳使用最低 48 位编码，随机值和计数器使用剩余位编码。
+
+`timestamp` 参数默认为当前时间（以毫秒为单位）。当时间戳改变时，计数器将重置为包装到 4096 的伪随机整数。这个计数器是原子的且线程安全的，这意味着在同一时间戳下在同一个进程中运行的许多 Worker 中使用 `Bun.randomUUIDv7()` 不会有冲突的计数器值。
+
+UUID 的最后 8 字节是加密安全的随机值。它使用与 `crypto.randomUUID()` 相同的随机数生成器（来自 BoringSSL，而后者又来自平台特定的系统随机数生成器，通常由底层硬件提供）。
+
+```ts
+namespace Bun {
+  function randomUUIDv7(encoding?: "hex" | "base64" | "base64url" = "hex", timestamp?: number = Date.now()): string;
+  /**
+   * 如果传递 "buffer"，你会得到一个 16 字节的缓冲区而不是字符串。
+   */
+  function randomUUIDv7(encoding: "buffer", timestamp?: number = Date.now()): Buffer;
+
+  // 如果只传递时间戳，你会得到十六进制字符串
+  function randomUUIDv7(timestamp?: number = Date.now()): string;
+}
+```
+
+你可以选择将编码设置为 `"buffer"` 以获得 16 字节缓冲区而不是字符串。这有时可以避免字符串转换开销。
+
+```ts buffer.ts
+const buffer = Bun.randomUUIDv7("buffer");
+```
+
+当你想要稍微短一点的字符串时，还支持 `base64` 和 `base64url` 编码。
+
+```ts base64.ts
+const base64 = Bun.randomUUIDv7("base64");
+const base64url = Bun.randomUUIDv7("base64url");
+```
+
+## `Bun.peek()`
+
+`Bun.peek(prom: Promise)`
+
+读取 Promise 的结果而无需 `await` 或 `.then`，但这只有在 Promise 已经完成或拒绝时才有效。
+
+```ts
+import { peek } from "bun";
+
+const promise = Promise.resolve("hi");
+
+// 无需 await!
+const result = peek(promise);
+console.log(result); // "hi"
+```
+
+这在尝试减少性能敏感代码中不必要的微任务时很重要。这是一个高级 API，如果你不知道自己在做什么，可能不应该使用它。
+
+```ts
+import { peek } from "bun";
+import { expect, test } from "bun:test";
+
+test("peek", () => {
+  const promise = Promise.resolve(true);
+
+  // 无需 await!
+  expect(peek(promise)).toBe(true);
+
+  // 如果我们再次 peek，它会返回相同的值
+  const again = peek(promise);
+  expect(again).toBe(true);
+
+  // 如果我们 peek 一个非 Promise，它会返回该值
+  const value = peek(42);
+  expect(value).toBe(42);
+
+  // 如果我们 peek 一个待定的 Promise，它会再次返回 Promise
+  const pending = new Promise(() => {});
+  expect(peek(pending)).toBe(pending);
+
+  // 如果我们 peek 一个被拒绝的 Promise，它：
+  // - 返回错误
+  // - 不标记 Promise 为已处理
+  const rejected = Promise.reject(new Error("Successfully tested promise rejection"));
+  expect(peek(rejected).message).toBe("Successfully tested promise rejection");
+});
+```
+
+`peek.status` 函数让你在不解决 Promise 的情况下读取其状态。
+
+```ts
+import { peek } from "bun";
+import { expect, test } from "bun:test";
+
+test("peek.status", () => {
+  const promise = Promise.resolve(true);
+  expect(peek.status(promise)).toBe("fulfilled");
+
+  const pending = new Promise(() => {});
+  expect(peek.status(pending)).toBe("pending");
+
+  const rejected = Promise.reject(new Error("oh nooo"));
+  expect(peek.status(rejected)).toBe("rejected");
+});
+```
+
+## `Bun.openInEditor()`
+
+在你的默认编辑器中打开一个文件。Bun 通过 `$VISUAL` 或 `$EDITOR` 环境变量自动检测你的编辑器。
+
+```ts
+const currentFile = import.meta.url;
+Bun.openInEditor(currentFile);
+```
+
+你可以在 [`bunfig.toml`](/runtime/bunfig) 的 `debug.editor` 设置中覆盖此行为。
+
+```toml bunfig.toml icon="settings"
+[debug] # [!code ++]
+editor = "code" # [!code ++]
+```
+
+或者使用 `editor` 参数指定编辑器。你还可以指定行号和列号。
+
+```ts
+Bun.openInEditor(import.meta.url, {
+  editor: "vscode", // 或 "subl"
+  line: 10,
+  column: 5,
+});
+```
+
+## `Bun.deepEquals()`
+
+递归检查两个对象是否相等。这在 `bun:test` 中的 `expect().toEqual()` 内部使用。
+
+```ts
+const foo = { a: 1, b: 2, c: { d: 3 } };
+
+// true
+Bun.deepEquals(foo, { a: 1, b: 2, c: { d: 3 } });
+
+// false
+Bun.deepEquals(foo, { a: 1, b: 2, c: { d: 4 } });
+```
+
+第三个布尔参数可用于启用"严格"模式。测试运行器中的 `expect().toStrictEqual()` 使用此模式。
+
+```ts
+const a = { entries: [1, 2] };
+const b = { entries: [1, 2], extra: undefined };
+
+Bun.deepEquals(a, b); // => true
+Bun.deepEquals(a, b, true); // => false
+```
+
+在严格模式下，以下被视为不相等：
+
+```ts
+// undefined 值
+Bun.deepEquals({}, { a: undefined }, true); // false
+
+// 数组中的 undefined
+Bun.deepEquals(["asdf"], ["asdf", undefined], true); // false
+
+// 稀疏数组
+Bun.deepEquals([, 1], [undefined, 1], true); // false
+
+// 对象字面量 vs 实例，即使有相同属性
+class Foo {
+  a = 1;
+}
+Bun.deepEquals(new Foo(), { a: 1 }, true); // false
+```
+
+## `Bun.escapeHTML()`
+
+`Bun.escapeHTML(value: string | object | number | boolean): string`
+
+从输入字符串中转义以下字符：
+
+- `"` 变成 `&quot;`
+- `&` 变成 `&amp;`
+- `'` 变成 `&#x27;`
+- `<` 变成 `&lt;`
+- `>` 变成 `&gt;`
+
+此函数针对大输入进行了优化。在 M1X 上，它的处理速度为 480 MB/s - 20 GB/s，具体取决于要转义的数据量和是否存在非 ASCII 文本。非字符串类型将在转义前转换为字符串。
+
+## `Bun.stringWidth()`
+
+<Note>约 6,756 倍 `string-width` 替代方案</Note>
+
+获取字符串在终端中显示的列数。
+支持 ANSI 转义码、emoji 和宽字符。
+
+示例用法：
+
+```ts
+Bun.stringWidth("hello"); // => 5
+Bun.stringWidth("\u001b[31mhello\u001b[0m"); // => 5
+Bun.stringWidth("\u001b[31mhello\u001b[0m", { countAnsiEscapeCodes: true }); // => 12
+```
+
+这在以下情况中很有用：
+
+- 在终端中对齐文本
+- 快速检查字符串是否包含 ANSI 转义码
+- 测量字符串在终端中的宽度
+
+此 API 设计为匹配流行的 "string-width" 包，以便现有代码可以轻松迁移到 Bun，反之亦然。
+
+[在此基准测试中](https://github.com/oven-sh/bun/blob/5147c0ba7379d85d4d1ed0714b84d6544af917eb/bench/snippets/string-width.mjs#L13)，对于大于约 500 个字符的输入，`Bun.stringWidth` 比 `string-width` npm 包快约 6,756 倍。非常感谢 [sindresorhus](https://github.com/sindresorhus) 在 `string-width` 方面的工作！
+
+```ts
+❯ bun string-width.mjs
+cpu: 13th Gen Intel(R) Core(TM) i9-13900
+runtime: bun 1.0.29 (x64-linux)
+
+benchmark                                          time (avg)             (min … max)       p75       p99      p995
+------------------------------------------------------------------------------------- -----------------------------
+Bun.stringWidth     500 chars ascii              37.09 ns/iter   (36.77 ns … 41.11 ns)  37.07 ns  38.84 ns  38.99 ns
+
+❯ node string-width.mjs
+
+benchmark                                          time (avg)             (min … max)       p75       p99      p995
+------------------------------------------------------------------------------------- -----------------------------
+npm/string-width    500 chars ascii             249,710 ns/iter (239,970 ns … 293,180 ns) 250,930 ns  276,700 ns 281,450 ns
+```
+
+为了让 `Bun.stringWidth` 快速，我们使用 Zig 实现了它，并使用了优化的 SIMD 指令，考虑了 Latin1、UTF-16 和 UTF-8 编码。它通过 `string-width` 的测试。
+
+<Accordion title="查看完整基准测试">
+
+提醒一下，1 纳秒 (ns) 是十亿分之一秒。以下是单位转换的快速参考：
+
+| 单位 | 1 毫秒 |
+| ---- | ------------- |
+| ns   | 1,000,000     |
+| µs   | 1,000         |
+| ms   | 1             |
+
+```bash terminal icon="terminal"
+❯ bun string-width.mjs
+cpu: 13th Gen Intel(R) Core(TM) i9-13900
+runtime: bun 1.0.29 (x64-linux)
+
+benchmark                                          time (avg)             (min … max)       p75       p99      p995
+------------------------------------------------------------------------------------- -----------------------------
+Bun.stringWidth      5 chars ascii              16.45 ns/iter   (16.27 ns … 19.71 ns)  16.48 ns  16.93 ns  17.21 ns
+Bun.stringWidth     50 chars ascii              19.42 ns/iter   (18.61 ns … 27.85 ns)  19.35 ns   21.7 ns  22.31 ns
+Bun.stringWidth    500 chars ascii              37.09 ns/iter   (36.77 ns … 41.11 ns)  37.07 ns  38.84 ns  38.99 ns
+Bun.stringWidth  5,000 chars ascii              216.9 ns/iter  (215.8 ns … 228.54 ns) 216.23 ns 228.52 ns 228.53 ns
+Bun.stringWidth 25,000 chars ascii               1.01 µs/iter     (1.01 µs … 1.01 µs)   1.01 µs   1.01 µs   1.01 µs
+Bun.stringWidth      7 chars ascii+emoji         54.2 ns/iter   (53.36 ns … 58.19 ns)  54.23 ns  57.55 ns  57.94 ns
+Bun.stringWidth     70 chars ascii+emoji       354.26 ns/iter (350.51 ns … 363.96 ns) 355.93 ns 363.11 ns 363.96 ns
+Bun.stringWidth    700 chars ascii+emoji          3.3 µs/iter      (3.27 µs … 3.4 µs)    3.3 µs    3.4 µs    3.4 µs
+Bun.stringWidth  7,000 chars ascii+emoji        32.69 µs/iter   (32.22 µs … 45.27 µs)   32.7 µs  34.57 µs  34.68 µs
+Bun.stringWidth 35,000 chars ascii+emoji       163.35 µs/iter (161.17 µs … 170.79 µs) 163.82 µs 169.66 µs 169.93 µs
+Bun.stringWidth      8 chars ansi+emoji         66.15 ns/iter   (65.17 ns … 69.97 ns)  66.12 ns   69.8 ns  69.87 ns
+Bun.stringWidth     80 chars ansi+emoji        492.95 ns/iter  (488.05 ns … 499.5 ns)  494.8 ns 498.58 ns  499.5 ns
+Bun.stringWidth    800 chars ansi+emoji          4.73 µs/iter     (4.71 µs … 4.88 µs)   4.72 µs   4.88 µs   4.88 µs
+Bun.stringWidth  8,000 chars ansi+emoji         47.02 µs/iter   (46.37 µs … 67.44 µs)  46.96 µs  49.57 µs  49.63 µs
+Bun.stringWidth 40,000 chars ansi+emoji        234.45 µs/iter (231.78 µs … 240.98 µs) 234.92 µs 236.34 µs 236.62 µs
+Bun.stringWidth     19 chars ansi+emoji+ascii  135.46 ns/iter (133.67 ns … 143.26 ns) 135.32 ns 142.55 ns 142.77 ns
+Bun.stringWidth    190 chars ansi+emoji+ascii    1.17 µs/iter     (1.16 µs … 1.17 µs)   1.17 µs   1.17 µs   1.17 µs
+Bun.stringWidth  1,900 chars ansi+emoji+ascii   11.45 µs/iter   (11.26 µs … 20.41 µs)  11.45 µs  12.08 µs  12.11 µs
+Bun.stringWidth 19,000 chars ansi+emoji+ascii  114.06 µs/iter (112.86 µs … 120.06 µs) 114.25 µs 115.86 µs 116.15 µs
+Bun.stringWidth 95,000 chars ansi+emoji+ascii  572.69 µs/iter (565.52 µs … 607.22 µs) 572.45 µs 604.86 µs 605.21 µs
+```
+
+```bash terminal icon="terminal"
+❯ node string-width.mjs
+cpu: 13th Gen Intel(R) Core(TM) i9-13900
+runtime: node v21.4.0 (x64-linux)
+
+benchmark                                           time (avg)             (min … max)       p75       p99      p995
+-------------------------------------------------------------------------------------- -----------------------------
+npm/string-width      5 chars ascii               3.19 µs/iter     (3.13 µs … 3.48 µs)   3.25 µs   3.48 µs   3.48 µs
+npm/string-width     50 chars ascii              20.09 µs/iter  (18.93 µs … 435.06 µs)  19.49 µs  21.89 µs  22.59 µs
+npm/string-width    500 chars ascii             249.71 µs/iter (239.97 µs … 293.18 µs) 250.93 µs  276.7 µs  281.45 µs
+npm/string-width  5,000 chars ascii               6.69 ms/iter     (6.58 ms … 6.76 ms)   6.72 ms   6.76 ms   6.76 ms
+npm/string-width 25,000 chars ascii             139.57 ms/iter (137.17 ms … 143.28 ms) 140.49 ms 143.28 ms 143.28 ms
+npm/string-width      7 chars ascii+emoji          3.7 µs/iter     (3.62 µs … 3.94 µs)   3.73 µs   3.94 µs   3.94 µs
+npm/string-width     70 chars ascii+emoji        23.93 µs/iter   (22.44 µs … 331.2 µs)  23.15 µs  25.98 µs   30.2 µs
+npm/string-width    700 chars ascii+emoji       251.65 µs/iter (237.78 µs … 444.69 µs) 252.92 µs 325.89 µs 354.08 µs
+npm/string-width  7,000 chars ascii+emoji         4.95 ms/iter     (4.82 ms … 5.19 ms)      5 ms   5.04 ms   5.19 ms
+npm/string-width 35,000 chars ascii+emoji        96.93 ms/iter  (94.39 ms … 102.58 ms)  97.68 ms 102.58 ms 102.58 ms
+npm/string-width      8 chars ansi+emoji          3.92 µs/iter     (3.45 µs … 4.57 µs)   4.09 µs   4.57 µs   4.57 µs
+npm/string-width     80 chars ansi+emoji         24.46 µs/iter     (22.87 µs … 4.2 ms)  23.54 µs  25.89 µs  27.41 µs
+npm/string-width    800 chars ansi+emoji        259.62 µs/iter (246.76 µs … 480.12 µs) 258.65 µs 349.84 µs 372.55 µs
+npm/string-width  8,000 chars ansi+emoji          5.46 ms/iter     (5.41 ms … 5.57 ms)   5.48 ms   5.55 ms   5.57 ms
+npm/string-width 40,000 chars ansi+emoji        108.91 ms/iter  (107.55 ms … 109.5 ms) 109.25 ms  109.5 ms  109.5 ms
+npm/string-width     19 chars ansi+emoji+ascii    6.53 µs/iter     (6.35 µs … 6.75 µs)   6.54 µs   6.75 µs   6.75 µs
+npm/string-width    190 chars ansi+emoji+ascii   55.52 µs/iter  (52.59 µs … 352.73 µs)  54.19 µs  80.77 µs 167.21 µs
+npm/string-width  1,900 chars ansi+emoji+ascii  701.71 µs/iter (653.94 µs … 893.78 µs)  715.3 µs 855.37 µs  872.9 µs
+npm/string-width 19,000 chars ansi+emoji+ascii   27.19 ms/iter   (26.89 ms … 27.41 ms)  27.28 ms  27.41 ms  27.41 ms
+npm/string-width 95,000 chars ansi+emoji+ascii     3.68 s/iter        (3.66 s … 3.7 s)    3.69 s     3.7 s     3.7 s
+```
+
+</Accordion>
+
+TypeScript 定义：
+
+```ts expandable
+namespace Bun {
+  export function stringWidth(
+    /**
+     * 要测量的字符串
+     */
+    input: string,
+    options?: {
+      /**
+       * 如果为 `true`，将 ANSI 转义码计入字符串宽度。如果为 `false`，计算字符串宽度时会忽略 ANSI 转义码。
+       *
+       * @default false
+       */
+      countAnsiEscapeCodes?: boolean;
+      /**
+       * 当它模糊且为 `true` 时，将 emoji 计为 1 个字符宽。如果为 `false`，emoji 将被计为 2 个字符宽。
+       *
+       * @default true
+       */
+      ambiguousIsNarrow?: boolean;
+    },
+  ): number;
+}
+```
+
+---
+
+## `Bun.fileURLToPath()`
+
+将 `file://` URL 转换为绝对路径。
+
+```ts
+const path = Bun.fileURLToPath(new URL("file:///foo/bar.txt"));
+console.log(path); // "/foo/bar.txt"
+```
+
+---
+
+## `Bun.pathToFileURL()`
+
+将绝对路径转换为 `file://` URL。
+
+```ts
+const url = Bun.pathToFileURL("/foo/bar.txt");
+console.log(url); // "file:///foo/bar.txt"
+```
+
+---
+
+## `Bun.gzipSync()`
+
+使用 zlib 的 GZIP 算法压缩 `Uint8Array`。
+
+```ts
+const buf = Buffer.from("hello".repeat(100)); // Buffer 扩展了 Uint8Array
+const compressed = Bun.gzipSync(buf);
+
+buf; // => Uint8Array(500)
+compressed; // => Uint8Array(30)
+```
+
+可选地，将参数对象作为第二个参数传递：
+
+<Accordion title="zlib 压缩选项">
+
+```ts expandable
+export type ZlibCompressionOptions = {
+  /**
+   * 要使用的压缩级别。必须在 `-1` 和 `9` 之间。
+   * - 值为 `-1` 使用默认压缩级别（当前为 `6`）
+   * - 值为 `0` 不进行压缩
+   * - 值为 `1` 压缩率最低，速度最快
+   * - 值为 `9` 压缩率最高，速度最慢
+   */
+  level?: -1 | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+  /**
+   * 为内部压缩状态分配多少内存。
+   *
+   * 值为 `1` 使用最少内存但速度慢且降低压缩比。
+   *
+   * 值为 `9` 使用最大内存以获得最佳速度。默认值为 `8`。
+   */
+  memLevel?: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+  /**
+   * 窗口大小（历史缓冲区大小）的以 2 为底的对数。
+   *
+   * 此参数的较大值会产生更好的压缩效果，但会增加内存使用量。
+   *
+   * 支持以下值范围：
+   * - `9..15`：输出将有 zlib 头和尾（Deflate）
+   * - `-9..-15`：输出将**没有**zlib 头或尾（Raw Deflate）
+   * - `25..31` (16+`9..15`)：输出将有 gzip 头和尾（gzip）
+   *
+   * gzip 头将没有文件名、额外数据、注释、修改时间（设为零）和头 CRC。
+   */
+  windowBits?:
+    | -9
+    | -10
+    | -11
+    | -12
+    | -13
+    | -14
+    | -15
+    | 9
+    | 10
+    | 11
+    | 12
+    | 13
+    | 14
+    | 15
+    | 25
+    | 26
+    | 27
+    | 28
+    | 29
+    | 30
+    | 31;
+  /**
+   * 调优压缩算法。
+   *
+   * - `Z_DEFAULT_STRATEGY`：用于普通数据 **(默认)**
+   * - `Z_FILTERED`：用于过滤器或预测器产生的数据
+   * - `Z_HUFFMAN_ONLY`：仅强制使用霍夫曼编码（无字符串匹配）
+   * - `Z_RLE`：限制匹配距离为 1（游程编码）
+   * - `Z_FIXED` 防止使用动态霍夫曼编码
+   *
+   * `Z_RLE` 设计为几乎与 `Z_HUFFMAN_ONLY` 一样快，但对 PNG 图像数据有更好的压缩效果。
+   *
+   * `Z_FILTERED` 强制更多的霍夫曼编码和更少的字符串匹配，它介于 `Z_DEFAULT_STRATEGY` 和 `Z_HUFFMAN_ONLY` 之间。
+   * 过滤数据主要由具有某种随机分布的小值组成。
+   */
+  strategy?: number;
+};
+```
+
+</Accordion>
+
+---
+
+## `Bun.gunzipSync()`
+
+使用 zlib 的 GUNZIP 算法解压 `Uint8Array`。
+
+```ts
+const buf = Buffer.from("hello".repeat(100)); // Buffer 扩展了 Uint8Array
+const compressed = Bun.gzipSync(buf);
+
+const dec = new TextDecoder();
+const uncompressed = Bun.gunzipSync(compressed);
+dec.decode(uncompressed);
+// => "hellohellohello..."
+```
+
+---
+
+## `Bun.deflateSync()`
+
+使用 zlib 的 DEFLATE 算法压缩 `Uint8Array`。
+
+```ts
+const buf = Buffer.from("hello".repeat(100));
+const compressed = Bun.deflateSync(buf);
+
+buf; // => Buffer(500)
+compressed; // => Uint8Array(12)
+```
+
+第二个参数支持与 [`Bun.gzipSync`](#bun-gzipsync) 相同的一组配置选项。
+
+---
+
+## `Bun.inflateSync()`
+
+使用 zlib 的 INFLATE 算法解压 `Uint8Array`。
+
+```ts
+const buf = Buffer.from("hello".repeat(100));
+const compressed = Bun.deflateSync(buf);
+
+const dec = new TextDecoder();
+const decompressed = Bun.inflateSync(compressed);
+dec.decode(decompressed);
+// => "hellohellohello..."
+```
+
+---
+
+## `Bun.zstdCompress()` / `Bun.zstdCompressSync()`
+
+使用 Zstandard 算法压缩 `Uint8Array`。
+
+```ts
+const buf = Buffer.from("hello".repeat(100));
+
+// 同步
+const compressedSync = Bun.zstdCompressSync(buf);
+// 异步
+const compressedAsync = await Bun.zstdCompress(buf);
+
+// 使用压缩级别（1-22，默认：3）
+const compressedLevel = Bun.zstdCompressSync(buf, { level: 6 });
+```
+
+## `Bun.zstdDecompress()` / `Bun.zstdDecompressSync()`
+
+使用 Zstandard 算法解压 `Uint8Array`。
+
+```ts
+const buf = Buffer.from("hello".repeat(100));
+const compressed = Bun.zstdCompressSync(buf);
+
+// 同步
+const decompressedSync = Bun.zstdDecompressSync(compressed);
+// 异步
+const decompressedAsync = await Bun.zstdDecompress(compressed);
+
+const dec = new TextDecoder();
+dec.decode(decompressedSync);
+// => "hellohellohello..."
+```
+
+---
+
+## `Bun.inspect()`
+
+将对象序列化为 `string`，就像它被 `console.log` 打印一样。
+
+```ts
+const obj = { foo: "bar" };
+const str = Bun.inspect(obj);
+// => '{\nfoo: "bar" \n}'
+
+const arr = new Uint8Array([1, 2, 3]);
+const str = Bun.inspect(arr);
+// => "Uint8Array(3) [ 1, 2, 3 ]"
+```
+
+### `Bun.inspect.custom`
+
+这是 Bun 用来实现 `Bun.inspect` 的符号。你可以覆盖此符号来自定义对象的打印方式。它与 Node.js 中的 `util.inspect.custom` 相同。
+
+```ts
+class Foo {
+  [Bun.inspect.custom]() {
+    return "foo";
+  }
+}
+
+const foo = new Foo();
+console.log(foo); // => "foo"
+```
+
+### `Bun.inspect.table(tabularData, properties, options)`
+
+将表格数据格式化为字符串。类似于 [`console.table`](https://developer.mozilla.org/en-US/docs/Web/API/console/table_static)，但它返回字符串而不是打印到控制台。
+
+```ts
+console.log(
+  Bun.inspect.table([
+    { a: 1, b: 2, c: 3 },
+    { a: 4, b: 5, c: 6 },
+    { a: 7, b: 8, c: 9 },
+  ]),
+);
+//
+// ┌───┬───┬───┬───┐
+// │   │ a │ b │ c │
+// ├───┼───┼───┼───┤
+// │ 0 │ 1 │ 2 │ 3 │
+// │ 1 │ 4 │ 5 │ 6 │
+// │ 2 │ 7 │ 8 │ 9 │
+// └───┴───┴───┴───┘
+```
+
+此外，你可以传递一个属性名称数组，只显示部分属性。
+
+```ts
+console.log(
+  Bun.inspect.table(
+    [
+      { a: 1, b: 2, c: 3 },
+      { a: 4, b: 5, c: 6 },
+    ],
+    ["a", "c"],
+  ),
+);
+//
+// ┌───┬───┬───┐
+// │   │ a │ c │
+// ├───┼───┼───┤
+// │ 0 │ 1 │ 3 │
+// │ 1 │ 4 │ 6 │
+// └───┴───┴───┘
+```
+
+你还可以通过传递 `{ colors: true }` 来有条件地启用 ANSI 颜色。
+
+```ts
+console.log(
+  Bun.inspect.table(
+    [
+      { a: 1, b: 2, c: 3 },
+      { a: 4, b: 5, c: 6 },
+    ],
+    {
+      colors: true,
+    },
+  ),
+);
+```
+
+---
+
+## `Bun.nanoseconds()`
+
+返回当前 `bun` 进程启动以来的纳秒数，作为一个 `number`。对于高精度计时和基准测试很有用。
+
+```ts
+Bun.nanoseconds();
+// => 7288958
+```
+
+---
+
+## `Bun.readableStreamTo*()`
+
+Bun 实现了一组便利函数，用于异步消费 `ReadableStream` 的主体，并将其转换为各种二进制格式。
+
+```ts
+const stream = (await fetch("https://bun.com")).body;
+stream; // => ReadableStream
+
+await Bun.readableStreamToArrayBuffer(stream);
+// => ArrayBuffer
+
+await Bun.readableStreamToBytes(stream);
+// => Uint8Array
+
+await Bun.readableStreamToBlob(stream);
+// => Blob
+
+await Bun.readableStreamToJSON(stream);
+// => object
+
+await Bun.readableStreamToText(stream);
+// => string
+
+// 返回所有块作为数组
+await Bun.readableStreamToArray(stream);
+// => unknown[]
+
+// 返回所有块作为 FormData 对象（编码为 x-www-form-urlencoded）
+await Bun.readableStreamToFormData(stream);
+
+// 返回所有块作为 FormData 对象（编码为 multipart/form-data）
+await Bun.readableStreamToFormData(stream, multipartFormBoundary);
+```
+
+---
+
+## `Bun.resolveSync()`
+
+使用 Bun 的内部模块解析算法解析文件路径或模块标识符。第一个参数是要解析的路径，第二个参数是"根"。如果找不到匹配项，则抛出 `Error`。
+
+```ts
+Bun.resolveSync("./foo.ts", "/path/to/project");
+// => "/path/to/project/foo.ts"
+
+Bun.resolveSync("zod", "/path/to/project");
+// => "/path/to/project/node_modules/zod/index.ts"
+```
+
+要相对于当前工作目录解析，请将 `process.cwd()` 或 `"."` 作为根目录传递。
+
+```ts
+Bun.resolveSync("./foo.ts", process.cwd());
+Bun.resolveSync("./foo.ts", "/path/to/project");
+```
+
+要相对于包含当前文件的目录解析，请传递 `import.meta.dir`。
+
+```ts
+Bun.resolveSync("./foo.ts", import.meta.dir);
+```
+
+---
+
+## `Bun.stripANSI()`
+
+<Note>约 6-57 倍更快的 `strip-ansi` 替代方案</Note>
+
+`Bun.stripANSI(text: string): string`
+
+从字符串中去除 ANSI 转义码。这在去除终端输出的颜色和格式时很有用。
+
+```ts
+const coloredText = "\u001b[31mHello\u001b[0m \u001b[32mWorld\u001b[0m";
+const plainText = Bun.stripANSI(coloredText);
+console.log(plainText); // => "Hello World"
+
+// 适用于各种 ANSI 代码
+const formatted = "\u001b[1m\u001b[4mBold and underlined\u001b[0m";
+console.log(Bun.stripANSI(formatted)); // => "Bold and underlined"
+```
+
+`Bun.stripANSI` 比流行的 [`strip-ansi`](https://www.npmjs.com/package/strip-ansi) npm 包明显更快：
+
+```bash terminal icon="terminal"
+bun bench/snippets/strip-ansi.mjs
+```
+
+```txt
+cpu: Apple M3 Max
+runtime: bun 1.2.21 (arm64-darwin)
+
+benchmark                               avg (min … max) p75 / p99
+------------------------------------------------------- ----------
+Bun.stripANSI      11 chars no-ansi        8.13 ns/iter   8.27 ns
+                                   (7.45 ns … 33.59 ns)  10.29 ns
+
+Bun.stripANSI      13 chars ansi          51.68 ns/iter  52.51 ns
+                                 (46.16 ns … 113.71 ns)  57.71 ns
+
+Bun.stripANSI  16,384 chars long-no-ansi 298.39 ns/iter 305.44 ns
+                                (281.50 ns … 331.65 ns) 320.70 ns
+
+Bun.stripANSI 212,992 chars long-ansi    227.65 µs/iter 234.50 µs
+                                (216.46 µs … 401.92 µs) 262.25 µs
+```
+
+```bash terminal icon="terminal"
+node bench/snippets/strip-ansi.mjs
+```
+
+```txt
+cpu: Apple M3 Max
+runtime: node 24.6.0 (arm64-darwin)
+
+benchmark                                avg (min … max) p75 / p99
+-------------------------------------------------------- ---------
+npm/strip-ansi      11 chars no-ansi      466.79 ns/iter 468.67 ns
+                                 (454.08 ns … 570.67 ns) 543.67 ns
+
+npm/strip-ansi      13 chars ansi         546.77 ns/iter 550.23 ns
+                                 (532.74 ns … 651.08 ns) 590.35 ns
+
+npm/strip-ansi  16,384 chars long-no-ansi   4.85 µs/iter   4.89 µs
+                                     (4.71 µs … 5.00 µs)   4.98 µs
+
+npm/strip-ansi 212,992 chars long-ansi      1.36 ms/iter   1.38 ms
+                                     (1.27 ms … 1.73 ms)   1.49 ms
+
+```
+
+---
+
+## `serialize` & `deserialize` in `bun:jsc`
+
+要将 JavaScript 值保存到 ArrayBuffer 并还原，请使用 `"bun:jsc"` 模块中的 `serialize` 和 `deserialize`。
+
+```js
+import { serialize, deserialize } from "bun:jsc";
+
+const buf = serialize({ foo: "bar" });
+const obj = deserialize(buf);
+console.log(obj); // => { foo: "bar" }
+```
+
+在内部，[`structuredClone`](https://developer.mozilla.org/en-US/docs/Web/API/structuredClone) 和 [`postMessage`](https://developer.mozilla.org/en-US/docs/Web/API/Window/postMessage) 以相同方式序列化和反序列化。这将底层的 [HTML 结构化克隆算法](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Structured_clone_algorithm) 暴露给 JavaScript 作为 ArrayBuffer。
+
+---
+
+## `estimateShallowMemoryUsageOf` in `bun:jsc`
+
+`estimateShallowMemoryUsageOf` 函数返回对象内存使用量的最佳估算（以字节为单位），不包括其属性或其他引用对象的内存使用量。要获得准确的每个对象内存使用量，请使用 `Bun.generateHeapSnapshot`。
+
+```js
+import { estimateShallowMemoryUsageOf } from "bun:jsc";
+
+const obj = { foo: "bar" };
+const usage = estimateShallowMemoryUsageOf(obj);
+console.log(usage); // => 16
+
+const buffer = Buffer.alloc(1024 * 1024);
+estimateShallowMemoryUsageOf(buffer);
+// => 1048624
+
+const req = new Request("https://bun.com");
+estimateShallowMemoryUsageOf(req);
+// => 167
+
+const array = Array(1024).fill({ a: 1 });
+// 数组通常不会在内存中连续存储，所以这不会返回有用的值（这不是 bug）。
+estimateShallowMemoryUsageOf(array);
+// => 16
+```

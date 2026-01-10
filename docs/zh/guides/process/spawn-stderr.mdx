@@ -1,0 +1,34 @@
+---
+title: 从子进程中读取 stderr
+sidebarTitle: 读取 stderr
+mode: center
+---
+
+当使用 [`Bun.spawn()`](/runtime/child-process) 时，子进程继承了创建进程的 `stderr`。如果您想要读取和处理 `stderr`，请将 `stderr` 选项设置为 `"pipe"`。
+
+```ts
+const proc = Bun.spawn(["echo", "hello"], {
+  stderr: "pipe",
+});
+
+proc.stderr; // => ReadableStream
+```
+
+---
+
+要读取 `stderr` 直到子进程退出，请使用 .text()
+
+```ts
+const proc = Bun.spawn(["echo", "hello"], {
+  stderr: "pipe",
+});
+
+const errors: string = await proc.stderr.text();
+if (errors) {
+  // 处理错误
+}
+```
+
+---
+
+请参阅 [文档 > API > 子进程](/runtime/child-process) 以获取完整文档。

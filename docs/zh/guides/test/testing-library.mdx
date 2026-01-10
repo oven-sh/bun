@@ -1,0 +1,93 @@
+---
+title: 在 Bun 中使用 Testing Library
+sidebarTitle: Testing Library
+mode: center
+---
+
+您可以将 [Testing Library](https://testing-library.com/) 与 Bun 的测试运行器一起使用。
+
+---
+
+使用 Testing Library 的前提是您需要安装 [Happy Dom](https://github.com/capricorn86/happy-dom)。（[请参阅 Bun 的 Happy DOM 指南了解更多信息](/guides/test/happy-dom)）。
+
+```sh terminal icon="terminal"
+bun add -D @happy-dom/global-registrator
+```
+
+---
+
+接下来，您应该安装计划使用的 Testing Library 包。例如，如果您正在为 React 设置测试，您的安装可能如下所示。您还需要安装 `@testing-library/jest-dom` 以便稍后让匹配器正常工作。
+
+```sh terminal icon="terminal"
+bun add -D @testing-library/react @testing-library/dom @testing-library/jest-dom
+```
+
+---
+
+接下来，您需要为 Happy DOM 和 Testing Library 创建一个预加载脚本。有关 Happy DOM 设置脚本的更多详细信息，请参见 [Bun 的 Happy DOM 指南](/guides/test/happy-dom)。
+
+```ts happydom.ts icon="/icons/typescript.svg"
+import { GlobalRegistrator } from "@happy-dom/global-registrator";
+
+GlobalRegistrator.register();
+```
+
+---
+
+对于 Testing Library，您需要使用 Testing Library 的匹配器扩展 Bun 的 `expect` 函数。另外，为了更好地匹配 Jest 等测试运行器的行为，您可能希望在每次测试后运行清理。
+
+```ts testing-library.ts icon="/icons/typescript.svg"
+import { afterEach, expect } from "bun:test";
+import { cleanup } from "@testing-library/react";
+import * as matchers from "@testing-library/jest-dom/matchers";
+
+expect.extend(matchers);
+
+// 可选：在每次测试后清理 `render`
+afterEach(() => {
+  cleanup();
+});
+```
+
+---
+
+接下来，将这些预加载脚本添加到您的 [bunfig.toml] 中（如果您愿意，也可以在一个 [preload.ts] 脚本中完成所有操作）。
+
+```toml bunfig.toml icon="settings"
+[test]
+preload = ["./happydom.ts", "./testing-library.ts"]
+```
+
+---
+
+如果您使用 TypeScript，您还需要使用声明合并以便在编辑器中显示新的匹配器类型。为此，创建一个扩展 `Matchers` 的类型声明文件，如下所示。
+
+```ts matchers.d.ts icon="/icons/typescript.svg"
+import { TestingLibraryMatchers } from "@testing-library/jest-dom/matchers";
+import { Matchers, AsymmetricMatchers } from "bun:test";
+
+declare module "bun:test" {
+  interface Matchers<T> extends TestingLibraryMatchers<typeof expect.stringContaining, T> {}
+  interface AsymmetricMatchers extends TestingLibraryMatchers {}
+}
+```
+
+---
+
+现在您应该能够在测试中使用 Testing Library
+
+```tsx myComponent.test.tsx icon="/icons/typescript.svg"
+import { test, expect } from "bun:test";
+import { screen, render } from "@testing-library/react";
+import { MyComponent } from "./myComponent";
+
+test("Can use Testing Library", () => {
+  render(MyComponent);
+  const myComponent = screen.getByTestId("my-component");
+  expect(myComponent).toBeInTheDocument();
+});
+```
+
+---
+
+请参阅 [Testing Library 文档](https://testing-library.com/)、[Happy DOM 仓库](https://github.com/capricorn86/happy-dom) 和 [文档 > 测试运行器 > DOM](/test/dom) 了解使用 Bun 编写浏览器测试的完整文档。

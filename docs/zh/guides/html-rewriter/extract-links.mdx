@@ -1,0 +1,71 @@
+---
+title: 使用 HTMLRewriter 从网页中提取链接
+sidebarTitle: 使用 HTMLRewriter 提取链接
+mode: center
+---
+
+## 从网页中提取链接
+
+Bun 的 [HTMLRewriter](/runtime/html-rewriter) API 可用于高效地从 HTML 内容中提取链接。它通过链式连接 CSS 选择器来匹配您要处理的元素、文本和属性。这是关于如何从网页中提取链接的简单示例。您可以向 `.transform` 传递 `Response`、`Blob` 或 `string`。
+
+```ts extract-links.ts icon="/icons/typescript.svg"
+async function extractLinks(url: string) {
+  const links = new Set<string>();
+  const response = await fetch(url);
+
+  const rewriter = new HTMLRewriter().on("a[href]", {
+    element(el) {
+      const href = el.getAttribute("href");
+      if (href) {
+        links.add(href);
+      }
+    },
+  });
+
+  // 等待响应处理完成
+  await rewriter.transform(response).blob();
+  console.log([...links]); // ["https://bun.com", "/docs", ...]
+}
+
+// 从 Bun 网站提取所有链接
+await extractLinks("https://bun.com");
+```
+
+---
+
+## 将相对 URL 转换为绝对 URL
+
+在抓取网站时，通常需要将相对 URL（如 `/docs`）转换为绝对 URL。以下是处理 URL 解析的方法：
+
+{/* prettier-ignore */}
+```ts extract-links.ts icon="/icons/typescript.svg"
+async function extractLinksFromURL(url: string) {
+  const response = await fetch(url);
+  const links = new Set<string>();
+
+  const rewriter = new HTMLRewriter().on("a[href]", {
+    element(el) {
+      const href = el.getAttribute("href");
+      if (href) {
+        // 将相对 URL 转换为绝对 URL // [!code ++]
+        try { // [!code ++]
+          const absoluteURL = new URL(href, url).href; // [!code ++]
+          links.add(absoluteURL);
+        } catch { // [!code ++]
+          links.add(href); // [!code ++]
+        } // [!code ++]
+      }
+    },
+  });
+
+  // 等待响应处理完成
+  await rewriter.transform(response).blob();
+  return [...links];
+}
+
+const websiteLinks = await extractLinksFromURL("https://example.com");
+```
+
+---
+
+查看 [文档 > API > HTMLRewriter](/runtime/html-rewriter) 以获取有关使用 Bun 进行 HTML 转换的完整文档。

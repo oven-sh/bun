@@ -1,7 +1,7 @@
 (function () {
   function normalizeInternalLinks() {
     const selectors = [
-      'a[href*="bun.com/docs/installation"]',
+      'a[href*="/installation"]',
       'a[href="https://bun.com/reference"]',
       'a[href="https://bun.com/blog"]',
     ];

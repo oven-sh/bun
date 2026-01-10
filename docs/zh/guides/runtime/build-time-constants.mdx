@@ -1,0 +1,295 @@
+---
+title: 使用 --define 设置构建时常量
+sidebarTitle: 构建时常量
+mode: center
+---
+
+`--define` 标志可以与 `bun build` 和 `bun build --compile` 一起使用，将构建时的常量注入到应用程序中。这对于直接将构建版本、时间戳或配置标志等元数据嵌入到编译后的可执行文件中特别有用。
+
+```sh terminal icon="terminal"
+bun build --compile --define BUILD_VERSION='"1.2.3"' --define BUILD_TIME='"2024-01-15T10:30:00Z"' src/index.ts --outfile myapp
+```
+
+---
+
+## 为什么要使用构建时常量？
+
+构建时常量直接嵌入到编译后的代码中，使它们具有：
+
+- **零运行时开销** - 无需环境变量查找或文件读取
+- **不可变** - 值在编译时就被固化到二进制文件中
+- **可优化** - 死代码消除可以移除未使用的分支
+- **安全** - 无需管理外部依赖或配置文件
+
+这类似于 C/C++ 中的 `gcc -D` 或 `#define`，但适用于 JavaScript/TypeScript。
+
+---
+
+## 基本用法
+
+### 与 `bun build` 配合使用
+
+```sh terminal icon="terminal"
+# 使用构建时常量进行打包
+bun build --define BUILD_VERSION='"1.0.0"' --define NODE_ENV='"production"' src/index.ts --outdir ./dist
+```
+
+### 与 `bun build --compile` 配合使用
+
+```sh terminal icon="terminal"
+# 编译成带有构建时常量的可执行文件
+bun build --compile --define BUILD_VERSION='"1.0.0"' --define BUILD_TIME='"2024-01-15T10:30:00Z"' src/cli.ts --outfile mycli
+```
+
+### JavaScript API
+
+```ts build.ts icon="/icons/typescript.svg"
+await Bun.build({
+  entrypoints: ["./src/index.ts"],
+  outdir: "./dist",
+  define: {
+    BUILD_VERSION: '"1.0.0"',
+    BUILD_TIME: '"2024-01-15T10:30:00Z"',
+    DEBUG: "false",
+  },
+});
+```
+
+---
+
+## 常见用例
+
+### 版本信息
+
+直接将版本和构建元数据嵌入到可执行文件中：
+
+<CodeGroup>
+
+```ts src/version.ts icon="/icons/typescript.svg"
+// 这些常量在构建时被替换
+declare const BUILD_VERSION: string;
+declare const BUILD_TIME: string;
+declare const GIT_COMMIT: string;
+
+export function getVersion() {
+  return {
+    version: BUILD_VERSION,
+    buildTime: BUILD_TIME,
+    commit: GIT_COMMIT,
+  };
+}
+```
+
+```sh Build command
+bun build --compile \
+  --define BUILD_VERSION='"1.2.3"' \
+  --define BUILD_TIME='"2024-01-15T10:30:00Z"' \
+  --define GIT_COMMIT='"abc123"' \
+  src/cli.ts --outfile mycli
+```
+
+</CodeGroup>
+
+### 功能标志
+
+使用构建时常量启用/禁用功能：
+
+```ts src/version.ts icon="/icons/typescript.svg"
+// 在构建时被替换
+declare const ENABLE_ANALYTICS: boolean;
+declare const ENABLE_DEBUG: boolean;
+
+function trackEvent(event: string) {
+  if (ENABLE_ANALYTICS) {
+    // 如果 ENABLE_ANALYTICS 为 false，则整个块都会被删除
+    console.log("Tracking:", event);
+  }
+}
+
+if (ENABLE_DEBUG) {
+  console.log("Debug mode enabled");
+}
+```
+
+```sh
+# 生产构建 - 启用分析，禁用调试
+bun build --compile --define ENABLE_ANALYTICS=true --define ENABLE_DEBUG=false src/app.ts --outfile app-prod
+
+# 开发构建 - 两者都启用
+bun build --compile --define ENABLE_ANALYTICS=false --define ENABLE_DEBUG=true src/app.ts --outfile app-dev
+```
+
+### 配置
+
+在构建时替换配置对象：
+
+```ts src/version.ts icon="/icons/typescript.svg"
+declare const CONFIG: {
+  apiUrl: string;
+  timeout: number;
+  retries: number;
+};
+
+// CONFIG 在构建时被替换为实际对象
+const response = await fetch(CONFIG.apiUrl, {
+  timeout: CONFIG.timeout,
+});
+```
+
+```sh
+bun build --compile --define 'CONFIG={"apiUrl":"https://api.example.com","timeout":5000,"retries":3}' src/app.ts --outfile app
+```
+
+---
+
+## 高级模式
+
+### 环境特定构建
+
+为不同环境创建不同的可执行文件：
+
+```json
+{
+  "scripts": {
+    "build:dev": "bun build --compile --define NODE_ENV='\"development\"' --define API_URL='\"http://localhost:3000\"' src/app.ts --outfile app-dev",
+    "build:staging": "bun build --compile --define NODE_ENV='\"staging\"' --define API_URL='\"https://staging.example.com\"' src/app.ts --outfile app-staging",
+    "build:prod": "bun build --compile --define NODE_ENV='\"production\"' --define API_URL='\"https://api.example.com\"' src/app.ts --outfile app-prod"
+  }
+}
+```
+
+### 使用 shell 命令生成动态值
+
+从 shell 命令生成构建时常量：
+
+```sh
+# 使用 git 获取当前提交和时间戳
+bun build --compile \
+  --define BUILD_VERSION="\"$(git describe --tags --always)\"" \
+  --define BUILD_TIME="\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"" \
+  --define GIT_COMMIT="\"$(git rev-parse HEAD)\"" \
+  src/cli.ts --outfile mycli
+```
+
+### 构建自动化脚本
+
+创建一个构建脚本，自动注入构建元数据：
+
+```ts
+// build.ts
+import { $ } from "bun";
+
+const version = await $`git describe --tags --always`.text();
+const buildTime = new Date().toISOString();
+const gitCommit = await $`git rev-parse HEAD`.text();
+
+await Bun.build({
+  entrypoints: ["./src/cli.ts"],
+  outdir: "./dist",
+  define: {
+    BUILD_VERSION: JSON.stringify(version.trim()),
+    BUILD_TIME: JSON.stringify(buildTime),
+    GIT_COMMIT: JSON.stringify(gitCommit.trim()),
+  },
+});
+
+console.log(`Built with version ${version.trim()}`);
+```
+
+---
+
+## 重要注意事项
+
+### 值的格式
+
+值必须是有效的 JSON，将被解析并内联为 JavaScript 表达式：
+
+```sh
+# ✅ 字符串必须是 JSON 引用的
+--define VERSION='"1.0.0"'
+
+# ✅ 数字是 JSON 字面量
+--define PORT=3000
+
+# ✅ 布尔值是 JSON 字面量
+--define DEBUG=true
+
+# ✅ 对象和数组（使用单引号包装 JSON）
+--define 'CONFIG={"host":"localhost","port":3000}'
+
+# ✅ 数组也能工作
+--define 'FEATURES=["auth","billing","analytics"]'
+
+# ❌ 这样不行 - 字符串周围缺少引号
+--define VERSION=1.0.0
+```
+
+### 属性键
+
+您可以使用属性访问模式作为键，而不只是简单的标识符：
+
+```sh
+# ✅ 将 process.env.NODE_ENV 替换为 "production"
+--define 'process.env.NODE_ENV="production"'
+
+# ✅ 将 process.env.API_KEY 替换为实际密钥
+--define 'process.env.API_KEY="abc123"'
+
+# ✅ 替换嵌套属性
+--define 'window.myApp.version="1.0.0"'
+
+# ✅ 替换数组访问
+--define 'process.argv[2]="--production"'
+```
+
+这对于环境变量特别有用：
+
+```ts
+// 编译前
+if (process.env.NODE_ENV === "production") {
+  console.log("Production mode");
+}
+
+// 使用 --define 'process.env.NODE_ENV="production"' 编译后
+if ("production" === "production") {
+  console.log("Production mode");
+}
+
+// 优化后
+console.log("Production mode");
+```
+
+### TypeScript 声明
+
+对于 TypeScript 项目，声明您的常量以避免类型错误：
+
+```ts
+// types/build-constants.d.ts
+declare const BUILD_VERSION: string;
+declare const BUILD_TIME: string;
+declare const NODE_ENV: "development" | "staging" | "production";
+declare const DEBUG: boolean;
+```
+
+### 跨平台兼容性
+
+在多个平台上构建时，常量的工作方式相同：
+
+```sh
+# Linux
+bun build --compile --target=bun-linux-x64 --define PLATFORM='"linux"' src/app.ts --outfile app-linux
+
+# macOS
+bun build --compile --target=bun-darwin-x64 --define PLATFORM='"darwin"' src/app.ts --outfile app-macos
+
+# Windows
+bun build --compile --target=bun-windows-x64 --define PLATFORM='"windows"' src/app.ts --outfile app-windows.exe
+```
+
+---
+
+## 相关内容
+
+- [在运行时定义常量](/guides/runtime/define-constant) - 将 `--define` 与 `bun run` 一起使用
+- [构建可执行文件](/bundler/executables) - `bun build --compile` 完整指南
+- [打包器 API](/bundler) - 完整打包器文档，包括 `define` 选项

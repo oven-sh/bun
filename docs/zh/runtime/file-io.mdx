@@ -1,0 +1,306 @@
+---
+title: 文件 I/O
+description: Bun 提供了一组优化的 API 用于读写文件。
+---
+
+<Note>
+
+此页面上记录的 `Bun.file` 和 `Bun.write` API 经过了大量优化，代表了使用 Bun 执行文件系统任务的推荐方式。对于 `Bun.file` 尚未提供的操作，例如 `mkdir` 或 `readdir`，您可以使用 Bun 的 [几乎完整的](/runtime/nodejs-compat#node-fs) [`node:fs`](https://nodejs.org/api/fs.html) 模块实现。
+
+</Note>
+
+---
+
+## 读取文件 (`Bun.file()`)
+
+`Bun.file(path): BunFile`
+
+使用 `Bun.file(path)` 函数创建一个 `BunFile` 实例。一个 `BunFile` 代表一个延迟加载的文件；初始化它并不会真正从磁盘读取文件。
+
+```ts
+const foo = Bun.file("foo.txt"); // 相对于当前工作目录
+foo.size; // 字节数
+foo.type; // MIME 类型
+```
+
+该引用符合 [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob) 接口，因此可以以各种格式读取内容。
+
+```ts
+const foo = Bun.file("foo.txt");
+
+await foo.text(); // 内容作为字符串
+await foo.json(); // 内容作为 JSON 对象
+await foo.stream(); // 内容作为 ReadableStream
+await foo.arrayBuffer(); // 内容作为 ArrayBuffer
+await foo.bytes(); // 内容作为 Uint8Array
+```
+
+文件引用也可以使用数值 [文件描述符](https://en.wikipedia.org/wiki/File_descriptor) 或 `file://` URL 创建。
+
+```ts
+Bun.file(1234);
+Bun.file(new URL(import.meta.url)); // 引用当前文件
+```
+
+一个 `BunFile` 可以指向磁盘上不存在文件的位置。
+
+```ts
+const notreal = Bun.file("notreal.txt");
+notreal.size; // 0
+notreal.type; // "text/plain;charset=utf-8"
+const exists = await notreal.exists(); // false
+```
+
+默认 MIME 类型是 `text/plain;charset=utf-8`，但可以通过向 `Bun.file` 传递第二个参数来覆盖。
+
+```ts
+const notreal = Bun.file("notreal.json", { type: "application/json" });
+notreal.type; // => "application/json;charset=utf-8"
+```
+
+为方便起见，Bun 将 `stdin`、`stdout` 和 `stderr` 暴露为 `BunFile` 的实例。
+
+```ts
+Bun.stdin; // 只读
+Bun.stdout;
+Bun.stderr;
+```
+
+### 删除文件 (`file.delete()`)
+
+您可以通过调用 `.delete()` 函数来删除文件。
+
+```ts
+await Bun.file("logs.json").delete();
+```
+
+---
+
+## 写入文件 (`Bun.write()`)
+
+`Bun.write(destination, data): Promise<number>`
+
+`Bun.write` 函数是一个多功能工具，用于将各种负载写入磁盘。
+
+第一个参数是 `destination`，可以是以下类型之一：
+
+- `string`: 文件系统上位置的路径。使用 `"path"` 模块来操作路径。
+- `URL`: 一个 `file://` 描述符。
+- `BunFile`: 一个文件引用。
+
+第二个参数是要写入的数据。它可以是以下任何一种：
+
+- `string`
+- `Blob` (包括 `BunFile`)
+- `ArrayBuffer` 或 `SharedArrayBuffer`
+- `TypedArray` (`Uint8Array` 等)
+- `Response`
+
+所有可能的排列都使用当前平台上可用的最快系统调用来处理。
+
+<Accordion title="查看系统调用">
+
+| 输出                 | 输入           | 系统调用                      | 平台     |
+| -------------------- | -------------- | ----------------------------- | -------- |
+| file                 | file           | copy_file_range               | Linux    |
+| file                 | pipe           | sendfile                      | Linux    |
+| pipe                 | pipe           | splice                        | Linux    |
+| terminal             | file           | sendfile                      | Linux    |
+| terminal             | terminal       | sendfile                      | Linux    |
+| socket               | file 或 pipe   | sendfile (如果是 http，非 https) | Linux    |
+| file (不存在)        | file (path)    | clonefile                     | macOS    |
+| file (存在)          | file           | fcopyfile                     | macOS    |
+| file                 | Blob 或 string | write                         | macOS    |
+| file                 | Blob 或 string | write                         | Linux    |
+
+</Accordion>
+
+将字符串写入磁盘：
+
+```ts
+const data = `It was the best of times, it was the worst of times.`;
+await Bun.write("output.txt", data);
+```
+
+将文件复制到磁盘上的另一个位置：
+
+```ts
+const input = Bun.file("input.txt");
+const output = Bun.file("output.txt"); // 尚不存在！
+await Bun.write(output, input);
+```
+
+将字节数组写入磁盘：
+
+```ts
+const encoder = new TextEncoder();
+const data = encoder.encode("datadatadata"); // Uint8Array
+await Bun.write("output.txt", data);
+```
+
+将文件写入 `stdout`：
+
+```ts
+const input = Bun.file("input.txt");
+await Bun.write(Bun.stdout, input);
+```
+
+将 HTTP 响应体写入磁盘：
+
+```ts
+const response = await fetch("https://bun.com");
+await Bun.write("index.html", response);
+```
+
+---
+
+## 使用 `FileSink` 增量写入
+
+Bun 提供了一个称为 `FileSink` 的原生增量文件写入 API。要从 `BunFile` 检索 `FileSink` 实例：
+
+```ts
+const file = Bun.file("output.txt");
+const writer = file.writer();
+```
+
+要增量写入文件，请调用 `.write()`。
+
+```ts
+const file = Bun.file("output.txt");
+const writer = file.writer();
+
+writer.write("it was the best of times\n");
+writer.write("it was the worst of times\n");
+```
+
+这些块将在内部缓冲。要将缓冲区刷新到磁盘，请使用 `.flush()`。这将返回刷新的字节数。
+
+```ts
+writer.flush(); // 将缓冲区写入磁盘
+```
+
+当 `FileSink` 的_高水位标记_达到时，缓冲区也将自动刷新；也就是说，当其内部缓冲区满时。这个值是可以配置的。
+
+```ts
+const file = Bun.file("output.txt");
+const writer = file.writer({ highWaterMark: 1024 * 1024 }); // 1MB
+```
+
+要刷新缓冲区并关闭文件：
+
+```ts
+writer.end();
+```
+
+请注意，默认情况下，`bun` 进程将保持活动状态，直到此 `FileSink` 通过 `.end()` 显式关闭。要选择退出此行为，您可以"取消引用"实例。
+
+```ts
+writer.unref();
+
+// 稍后"重新引用"它
+writer.ref();
+```
+
+---
+
+## 目录
+
+Bun 的 `node:fs` 实现是快速的，我们尚未实现专门用于读取目录的 Bun 特定 API。目前，您应该在 Bun 中使用 `node:fs` 来处理目录。
+
+### 读取目录 (readdir)
+
+要在 Bun 中读取目录，请使用 `node:fs` 中的 `readdir`。
+
+```ts
+import { readdir } from "node:fs/promises";
+
+// 读取当前目录中的所有文件
+const files = await readdir(import.meta.dir);
+```
+
+#### 递归读取目录
+
+要在 Bun 中递归读取目录，请使用带有 `recursive: true` 的 `readdir`。
+
+```ts
+import { readdir } from "node:fs/promises";
+
+// 递归读取当前目录中的所有文件
+const files = await readdir("../", { recursive: true });
+```
+
+### 创建目录 (mkdir)
+
+要递归创建目录，请使用 `node:fs` 中的 `mkdir`：
+
+```ts
+import { mkdir } from "node:fs/promises";
+
+await mkdir("path/to/dir", { recursive: true });
+```
+
+---
+
+## 基准测试
+
+以下是 Linux `cat` 命令的 3 行实现。
+
+```ts cat.ts icon="/icons/typescript.svg"
+// 用法
+// bun ./cat.ts ./path-to-file
+
+import { resolve } from "path";
+
+const path = resolve(process.argv.at(-1));
+await Bun.write(Bun.stdout, Bun.file(path));
+```
+
+运行文件：
+
+```bash terminal icon="terminal"
+bun ./cat.ts ./path-to-file
+```
+
+对于 Linux 上的大文件，它比 GNU `cat` 快 2 倍。
+
+<Frame>![Cat 截图](/images/cat.jpg)</Frame>
+
+---
+
+## 参考
+
+```ts
+interface Bun {
+  stdin: BunFile;
+  stdout: BunFile;
+  stderr: BunFile;
+
+  file(path: string | number | URL, options?: { type?: string }): BunFile;
+
+  write(
+    destination: string | number | BunFile | URL,
+    input: string | Blob | ArrayBuffer | SharedArrayBuffer | TypedArray | Response,
+  ): Promise<number>;
+}
+
+interface BunFile {
+  readonly size: number;
+  readonly type: string;
+
+  text(): Promise<string>;
+  stream(): ReadableStream;
+  arrayBuffer(): Promise<ArrayBuffer>;
+  json(): Promise<any>;
+  writer(params: { highWaterMark?: number }): FileSink;
+  exists(): Promise<boolean>;
+}
+
+export interface FileSink {
+  write(chunk: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer): number;
+  flush(): number | Promise<number>;
+  end(error?: Error): number | Promise<number>;
+  start(options?: { highWaterMark?: number }): void;
+  ref(): void;
+  unref(): void;
+}
+```

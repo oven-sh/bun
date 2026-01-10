@@ -1,0 +1,32 @@
+---
+title: 为 bun install 覆盖默认 npm 注册表
+sidebarTitle: 覆盖默认 npm 注册表
+mode: center
+---
+
+默认注册表是 `registry.npmjs.org`。这可以在 [bunfig.toml] 中全局配置。
+
+```toml bunfig.toml icon="settings"
+[install]
+# 设置默认注册表为字符串
+registry = "https://registry.npmjs.org"
+
+# 如需要，设置一个令牌
+registry = { url = "https://registry.npmjs.org", token = "123456" }
+
+# 如需要，设置用户名/密码
+registry = "https://usertitle:password@registry.npmjs.org"
+```
+
+---
+
+您的 [bunfig.toml] 可以引用环境变量。Bun 会自动从 [.env.local]、`.env.[NODE_ENV]` 和 [.env] 加载环境变量。更多信息，请参见 [文档 > 环境变量](/runtime/environment-variables)。
+
+```toml bunfig.toml icon="settings"
+[install]
+registry = { url = "https://registry.npmjs.org", token = "$npm_token" }
+```
+
+---
+
+请参阅 [文档 > 包管理器](/pm/cli/install) 以获取 Bun 包管理器的完整文档。

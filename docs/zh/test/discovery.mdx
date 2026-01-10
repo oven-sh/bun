@@ -1,0 +1,90 @@
+---
+title: "查找测试"
+description: "了解 Bun 的测试运行器如何在您的项目中发现和筛选测试文件"
+---
+
+bun test 的文件发现机制决定哪些文件作为测试运行。了解它的工作原理有助于您有效地构建测试文件。
+
+## 默认发现逻辑
+
+默认情况下，`bun test` 递归搜索项目目录中匹配特定模式的文件：
+
+- `*.test.{js|jsx|ts|tsx}` - 以 `.test.js`、`.test.jsx`、`.test.ts` 或 `.test.tsx` 结尾的文件
+- `*_test.{js|jsx|ts|tsx}` - 以 `_test.js`、`_test.jsx`、`_test.ts` 或 `_test.tsx` 结尾的文件
+- `*.spec.{js|jsx|ts|tsx}` - 以 `.spec.js`、`.spec.jsx`、`.spec.ts` 或 `.spec.tsx` 结尾的文件
+- `*_spec.{js|jsx|ts|tsx}` - 以 `_spec.js`、`_spec.jsx`、`_spec.ts` 或 `_spec.tsx` 结尾的文件
+
+## 排除项
+
+默认情况下，Bun 测试会忽略：
+
+- `node_modules` 目录
+- 隐藏目录（以句点 `.` 开头的目录）
+- 没有 JavaScript 类扩展名的文件（基于可用加载器）
+
+## 自定义测试发现
+
+### 位置参数作为筛选器
+
+您可以通过向 `bun test` 传递额外的位置参数来筛选要运行的测试文件：
+
+```bash terminal icon="terminal"
+bun test <filter> <filter> ...
+```
+
+任何路径中包含筛选器之一的测试文件都将运行。这些筛选器是简单的子字符串匹配，而不是 glob 模式。
+
+例如，要运行 `utils` 目录中的所有测试：
+
+```bash terminal icon="terminal"
+bun test utils
+```
+
+这将匹配像 `src/utils/string.test.ts` 和 `lib/utils/array_test.js` 这样的文件。
+
+### 指定确切的文件路径
+
+要在测试运行器中运行特定文件，请确保路径以 `./` 或 `/` 开头，以便与筛选器名称区分开：
+
+```bash terminal icon="terminal"
+bun test ./test/specific-file.test.ts
+```
+
+### 按测试名称筛选
+
+要按名称而非文件路径筛选测试，请使用 `-t`/`--test-name-pattern` 标志配合正则表达式模式：
+
+```sh terminal icon="terminal"
+# 运行所有名称中包含 "addition" 的测试
+bun test --test-name-pattern addition
+```
+
+该模式与一个连接的字符串匹配，该字符串由测试名称和其所有父 describe 块的标签组成，以空格分隔。例如，这样定义的测试：
+
+```ts title="math.test.ts" icon="/icons/typescript.svg"
+describe("Math", () => {
+  describe("operations", () => {
+    test("should add correctly", () => {
+      // ...
+    });
+  });
+});
+```
+
+将与字符串 "Math operations should add correctly" 进行匹配。
+
+### 更改根目录
+
+默认情况下，Bun 从当前工作目录开始查找测试文件。您可以在 `bunfig.toml` 中使用 `root` 选项更改此设置：
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+root = "src"  # 仅在 src 目录中扫描测试
+```
+
+## 执行顺序
+
+测试按以下顺序运行：
+
+1. 测试文件按顺序执行（非并行）
+2. 在每个文件中，测试根据其定义顺序按顺序运行

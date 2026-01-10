@@ -1,0 +1,261 @@
+---
+title: 在 Bun 中使用 Gel
+sidebarTitle: Gel 与 Bun
+mode: center
+---
+
+Gel（原名 EdgeDB）是一个图关系型数据库，底层基于 Postgres。它提供了声明式模式语言、迁移系统和面向对象的查询语言，此外还支持原始 SQL 查询。它在数据库层解决了对象关系映射问题，消除了在应用程序代码中需要 ORM 库的需求。
+
+---
+
+首先，如果还没有安装的话，请[安装 Gel](https://docs.geldata.com/learn/installation)。
+
+<CodeGroup>
+
+```sh Linux/macOS terminal icon="terminal"
+curl https://www.geldata.com/sh --proto "=https" -sSf1 | sh
+```
+
+```sh Windows terminal icon="windows"
+irm https://www.geldata.com/ps1 | iex
+```
+
+```sh Homebrew terminal icon="terminal"
+brew install geldata/tap/gel-cli
+```
+
+</CodeGroup>
+
+---
+
+使用 `bun init` 创建一个新项目。
+
+```sh terminal icon="terminal"
+mkdir my-edgedb-app
+cd my-edgedb-app
+bun init -y
+```
+
+---
+
+我们将使用 Gel CLI 为我们的项目初始化一个 Gel 实例。这会在我们的项目根目录创建一个 [gel.toml] 文件。
+
+```sh terminal icon="terminal"
+gel project init
+```
+
+```txt
+在 `/Users/colinmcd94/Documents/bun/fun/examples/my-gel-app` 或其上级目录未找到 `gel.toml`
+是否要初始化一个新项目？[Y/n]
+> Y
+指定要与此项目一起使用的 Gel 实例名称 [默认: my_gel_app]:
+> my_gel_app
+正在检查 Gel 版本...
+指定要与此项目一起使用的 Gel 版本 [默认: x.y]:
+> x.y
+┌─────────────────────┬──────────────────────────────────────────────────────────────────┐
+│ 项目目录             │ /Users/colinmcd94/Documents/bun/fun/examples/my-gel-app          │
+│ 项目配置             │ /Users/colinmcd94/Documents/bun/fun/examples/my-gel-app/gel.toml │
+│ 模式目录（空）       │ /Users/colinmcd94/Documents/bun/fun/examples/my-gel-app/dbschema  │
+│ 安装方法             │ portable package                                                 │
+│ 版本                 │ x.y+6d5921b                                                      │
+│ 实例名称             │ my_gel_app                                                       │
+└─────────────────────┴──────────────────────────────────────────────────────────────────┘
+版本 x.y+6d5921b 已经下载
+正在初始化 Gel 实例...
+正在应用迁移...
+所有内容都是最新的。修订版本 initial
+项目已初始化。
+要连接到 my_gel_app，请运行 `gel`
+```
+
+---
+
+要查看数据库是否正在运行，让我们打开一个 REPL 并运行一个简单查询。
+
+```sh terminal icon="terminal"
+gel
+gel> select 1 + 1;
+```
+
+```txt
+2
+```
+
+然后运行 `\quit` 退出 REPL。
+
+```sh terminal icon="terminal"
+gel> \quit
+```
+
+---
+
+项目初始化后，我们可以定义一个模式。`gel project init` 命令已经创建了一个 `dbschema/default.esdl` 文件来包含我们的模式。
+
+```txt File Tree icon="folder-tree"
+dbschema
+├── default.esdl
+└── migrations
+```
+
+---
+
+打开该文件并粘贴以下内容。
+
+```ts default.esdl icon="file-code"
+module default {
+  type Movie {
+    required title: str;
+    releaseYear: int64;
+  }
+};
+```
+
+---
+
+然后生成并应用一个初始迁移。
+
+```sh terminal icon="terminal"
+gel migration create
+```
+
+```txt
+Created /Users/colinmcd94/Documents/bun/fun/examples/my-gel-app/dbschema/migrations/00001.edgeql, id: m1uwekrn4ni4qs7ul7hfar4xemm5kkxlpswolcoyqj3xdhweomwjrq
+```
+
+```sh terminal icon="terminal"
+gel migrate
+```
+
+```txt
+Applied m1uwekrn4ni4qs7ul7hfar4xemm5kkxlpswolcoyqj3xdhweomwjrq (00001.edgeql)
+```
+
+---
+
+模式应用后，让我们使用 Gel 的 JavaScript 客户端库执行一些查询。我们将安装客户端库和 Gel 的代码生成 CLI，并创建一个 [seed.ts] 文件。
+
+```sh terminal icon="terminal"
+bun add gel
+bun add -D @gel/generate
+touch seed.ts
+```
+
+---
+
+将以下代码粘贴到 [seed.ts] 中。
+
+客户端自动连接到数据库。我们使用 `.execute()` 方法插入一些电影。我们将使用 EdgeQL 的 `for` 表达式将此批量插入转换为单个优化查询。
+
+```ts seed.ts icon="/icons/typescript.svg"
+import { createClient } from "gel";
+
+const client = createClient();
+
+const INSERT_MOVIE = `
+  with movies := <array<tuple<title: str, year: int64>>>$movies
+  for movie in array_unpack(movies) union (
+    insert Movie {
+      title := movie.title,
+      releaseYear := movie.year,
+    }
+  )
+`;
+
+const movies = [
+  { title: "The Matrix", year: 1999 },
+  { title: "The Matrix Reloaded", year: 2003 },
+  { title: "The Matrix Revolutions", year: 2003 },
+];
+
+await client.execute(INSERT_MOVIE, { movies });
+
+console.log(`播种完成。`);
+process.exit();
+```
+
+---
+
+然后使用 Bun 运行此文件。
+
+```sh terminal icon="terminal"
+bun run seed.ts
+```
+
+```txt
+播种完成。
+```
+
+---
+
+Gel 实现了许多用于 TypeScript 的代码生成工具。为了以类型安全的方式查询我们刚填充的数据库，我们将使用 `@gel/generate` 来代码生成 EdgeQL 查询构建器。
+
+```sh terminal icon="terminal"
+bunx @gel/generate edgeql-js
+```
+
+```txt
+正在生成查询构建器...
+检测到 tsconfig.json，正在生成 TypeScript 文件。
+   要覆盖此行为，请使用 --target 标志。
+   运行 `npx @edgedb/generate --help` 获取完整选项。
+正在检查数据库模式...
+正在将文件写入 ./dbschema/edgeql-js
+生成完成！🤘
+不建议将生成的查询构建器检入版本控制
+您是否想更新 .gitignore 以忽略
+查询构建器目录？以下行将被添加：
+
+   dbschema/edgeql-js
+
+[y/n] （留空表示 "y"）
+> y
+```
+
+---
+
+在 [index.ts] 中，我们可以从 `./dbschema/edgeql-js` 导入生成的查询构建器并编写一个简单的选择查询。
+
+```ts index.ts icon="/icons/typescript.svg"
+import { createClient } from "gel";
+import e from "./dbschema/edgeql-js";
+
+const client = createClient();
+
+const query = e.select(e.Movie, () => ({
+  title: true,
+  releaseYear: true,
+}));
+
+const results = await query.run(client);
+console.log(results);
+
+results; // { title: string, releaseYear: number | null }[]
+```
+
+---
+
+使用 Bun 运行该文件，我们可以看到我们插入的电影列表。
+
+```sh terminal icon="terminal"
+bun run index.ts
+```
+
+```txt
+[
+  {
+    title: "The Matrix",
+    releaseYear: 1999
+  }, {
+    title: "The Matrix Reloaded",
+    releaseYear: 2003
+  }, {
+    title: "The Matrix Revolutions",
+    releaseYear: 2003
+  }
+]
+```
+
+---
+
+有关完整文档，请参阅 [Gel 文档](https://docs.geldata.com/)。

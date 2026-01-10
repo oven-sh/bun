@@ -1,0 +1,145 @@
+---
+title: 在 Railway 上部署 Bun 应用程序
+description: 使用本逐步指南在 Railway 上部署 Bun 应用程序，涵盖 CLI 和仪表板方法、可选的 PostgreSQL 设置和自动 SSL 配置。
+sidebarTitle: 在 Railway 上部署
+mode: center
+---
+
+Railway 是一个基础设施平台，您可以在其中配置基础设施，在本地使用该基础设施进行开发，然后部署到云端。它支持从 GitHub 零配置即时部署、自动 SSL 和内置数据库配置。
+
+本指南介绍了如何部署带有 PostgreSQL 数据库（可选）的 Bun 应用程序，这正是下面模板所提供的。
+
+您可以按本指南逐步操作，或只需单击一次部署预配置的模板：
+
+<a
+  href="https://railway.com/deploy/bun-react-postgres?referralCode=Bun&utm_medium=integration&utm_source=template&utm_campaign=bun"
+  target="_blank"
+>
+  <img src="https://railway.com/button.svg" alt="Deploy on Railway" />
+</a>
+
+---
+
+**先决条件**:
+
+- 一个准备部署的 Bun 应用程序
+- 一个 [Railway 账户](https://railway.app/)
+- Railway CLI（用于 CLI 部署方法）
+- 一个 GitHub 账户（用于仪表板部署方法）
+
+---
+
+## 方法 1: 通过 CLI 部署
+
+<Steps>
+<Step title="第 1 步">
+确保您已安装 Railway CLI。
+
+```bash terminal icon="terminal"
+bun install -g @railway/cli
+```
+
+</Step>
+<Step title="第 2 步">
+登录到您的 Railway 账户。
+
+```bash terminal icon="terminal"
+railway login
+```
+
+</Step>
+<Step title="第 3 步">
+成功认证后，初始化一个新项目。
+
+```bash terminal icon="terminal"
+railway init
+```
+
+</Step>
+<Step title="第 4 步">
+初始化项目后，添加一个新的数据库和服务。
+
+<Note>第 4 步仅在您的应用程序使用数据库时是必需的。如果您不需要 PostgreSQL，请跳到第 5 步。</Note>
+
+```bash terminal icon="terminal"
+# 添加 PostgreSQL 数据库。请确保先添加这个！
+railway add --database postgres
+
+# 添加您的应用程序服务。
+railway add --service bun-react-db --variables DATABASE_URL=\${{Postgres.DATABASE_URL}}
+```
+
+</Step>
+<Step title="第 5 步">
+创建和连接服务后，将应用程序部署到 Railway。默认情况下，服务只能在 Railway 的私有网络内访问。要使您的应用程序公开访问，您需要生成公共域名。
+
+```bash terminal icon="terminal"
+# 部署您的应用程序
+railway up
+
+# 生成公共域名
+railway domain
+```
+
+</Step>
+</Steps>
+
+您的应用程序现在已上线！Railway 会在每次 GitHub 推送时自动部署。
+
+---
+
+## 方法 2: 通过仪表板部署
+
+<Steps>
+<Step title="第 1 步">
+创建一个新项目
+
+1. 访问 [Railway 仪表板](http://railway.com/dashboard?utm_medium=integration&utm_source=docs&utm_campaign=bun)
+2. 点击 **"+ New"** → **"GitHub repo"**
+3. 选择您的仓库
+
+</Step>
+<Step title="第 2 步">
+添加 PostgreSQL 数据库，并将此数据库连接到服务
+
+<Note>第 2 步仅在您的应用程序使用数据库时是必需的。如果您不需要 PostgreSQL，请跳到第 3 步。</Note>
+
+1. 点击 **"+ New"** → **"Database"** → **"Add PostgreSQL"**
+2. 数据库创建后，选择您的服务（不是数据库）
+3. 进入 **"Variables"** 选项卡
+4. 点击 **"+ New Variable"** → **"Add Reference"**
+5. 从 postgres 中选择 `DATABASE_URL`
+
+</Step>
+<Step title="第 3 步">
+生成公共域名
+
+1. 选择您的服务
+2. 进入 **"Settings"** 选项卡
+3. 在 **"Networking"** 下，点击 **"Generate Domain"**
+
+</Step>
+</Steps>
+
+您的应用程序现在已上线！Railway 会在每次 GitHub 推送时自动部署。
+
+---
+
+## 配置（可选）
+
+默认情况下，Railway 使用 [Nixpacks](https://docs.railway.com/guides/build-configuration#nixpacks-options) 自动检测和构建您的 Bun 应用程序，无需配置。
+
+但是，使用 [Railpack](https://docs.railway.com/guides/build-configuration#railpack) 应用构建器提供更好的 Bun 支持，并且将始终支持最新版本的 Bun。预配置的模板默认使用 Railpack。
+
+要在自定义项目中启用 Railpack，请将以下内容添加到您的 [railway.json] 中：
+
+```json railway.json icon="file-json"
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "build": {
+    "builder": "RAILPACK"
+  }
+}
+```
+
+有关更多构建配置设置，请查看 [Railway 文档](https://docs.railway.com/guides/build-configuration)。

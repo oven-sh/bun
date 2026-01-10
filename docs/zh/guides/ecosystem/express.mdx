@@ -1,0 +1,42 @@
+---
+title: 使用 Express 和 Bun 构建 HTTP 服务器
+sidebarTitle: Express 与 Bun
+mode: center
+---
+
+Express 和其他主流 Node.js HTTP 库应该可以开箱即用。Bun 实现了这些库所依赖的 [`node:http`](https://nodejs.org/api/http.html) 和 [`node:https`](https://nodejs.org/api/https.html) 模块。
+
+<Note>
+  有关更详细的兼容性信息，请参阅 [运行时 > Node.js API](/runtime/nodejs-compat#node-http) 页面。
+</Note>
+
+```sh terminal icon="terminal"
+bun add express
+```
+
+---
+
+使用 Express 定义一个简单的 HTTP 路由并启动服务器：
+
+```ts server.ts icon="/icons/typescript.svg"
+import express from "express";
+
+const app = express();
+const port = 8080;
+
+app.get("/", (req, res) => {
+  res.send("Hello World!");
+});
+
+app.listen(port, () => {
+  console.log(`监听端口 ${port}...`);
+});
+```
+
+---
+
+要在 `localhost` 上启动服务器：
+
+```sh terminal icon="terminal"
+bun server.ts
+```

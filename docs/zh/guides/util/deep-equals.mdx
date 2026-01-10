@@ -1,0 +1,41 @@
+---
+title: 检查两个对象是否深度相等
+sidebarTitle: 深度相等
+mode: center
+---
+
+检查两个对象是否深度相等。这在 Bun 的 [测试运行器](/test/writing-tests) 中被 [expect().toEqual()] 内部使用。
+
+```ts index.ts icon="/icons/typescript.svg"
+const a = { a: 1, b: 2, c: { d: 3 } };
+const b = { a: 1, b: 2, c: { d: 3 } };
+
+Bun.deepEquals(a, b); // true
+```
+
+---
+
+传递 `true` 作为第三个参数以启用严格模式。这在 Bun 的 [测试运行器](/test/writing-tests) 中被 [expect().toStrictEqual()] 内部使用。
+
+以下示例在非严格模式下返回 `true`，但在严格模式下返回 `false`。
+
+```ts index.ts icon="/icons/typescript.svg"
+// undefined 值
+Bun.deepEquals({}, { a: undefined }, true); // false
+
+// 数组中的 undefined
+Bun.deepEquals(["asdf"], ["asdf", undefined], true); // false
+
+// 稀疏数组
+Bun.deepEquals([, 1], [undefined, 1], true); // false
+
+// 对象字面量与实例 w/ 相同属性
+class Foo {
+  a = 1;
+}
+Bun.deepEquals(new Foo(), { a: 1 }, true); // false
+```
+
+---
+
+请参阅 [文档 > API > 工具](/runtime/utils) 了解更多的实用工具。

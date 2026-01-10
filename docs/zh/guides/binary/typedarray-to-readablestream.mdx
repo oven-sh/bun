@@ -1,0 +1,43 @@
+---
+title: 将 Uint8Array 转换为 ReadableStream
+sidebarTitle: "Uint8Array 到 ReadableStream"
+mode: center
+---
+
+从 [Uint8Array](https://developer.mozilla.org/zh-CN/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array) 创建 [ReadableStream](https://developer.mozilla.org/zh-CN/docs/Web/API/ReadableStream) 的简单方法是使用 [ReadableStream](https://developer.mozilla.org/zh-CN/docs/Web/API/ReadableStream) 构造函数并将整个数组作为单个块入队。对于较大的块，这可能是不理想的，因为它实际上并没有"流式传输"数据。
+
+```ts
+const arr = new Uint8Array(64);
+const stream = new ReadableStream({
+  start(controller) {
+    controller.enqueue(arr);
+    controller.close();
+  },
+});
+```
+
+---
+
+要将数据以较小的块流式传输，首先从 [Uint8Array](https://developer.mozilla.org/zh-CN/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array) 创建一个 [Blob](https://developer.mozilla.org/zh-CN/docs/Web/API/Blob) 实例。然后使用 [Blob.stream()](https://developer.mozilla.org/zh-CN/docs/Web/API/Blob/stream) 方法创建一个 [ReadableStream](https://developer.mozilla.org/zh-CN/docs/Web/API/ReadableStream)，它将数据以指定大小的块进行流式传输。
+
+```ts
+const arr = new Uint8Array(64);
+const blob = new Blob([arr]);
+const stream = blob.stream();
+```
+
+---
+
+可以通过向 `.stream()` 方法传递一个数字来设置块大小。
+
+```ts
+const arr = new Uint8Array(64);
+const blob = new Blob([arr]);
+
+// 设置 1024 字节的块大小
+const stream = blob.stream(1024);
+```
+
+---
+
+参阅 [文档 > API > 二进制数据](/runtime/binary-data#conversion) 获取关于使用Bun操作二进制数据的完整文档。

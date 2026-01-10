@@ -1,0 +1,17 @@
+---
+title: 将 ArrayBuffer 转换为字符串
+sidebarTitle: "ArrayBuffer 到 字符串"
+mode: center
+---
+
+Bun 实现了 Web 标准的 [TextDecoder](https://developer.mozilla.org/zh-CN/docs/Web/API/TextDecoder) 类，用于在二进制数据类型和字符串之间进行转换。
+
+```ts
+const buf = new ArrayBuffer(64);
+const decoder = new TextDecoder();
+const str = decoder.decode(buf);
+```
+
+---
+
+参阅 [文档 > API > 二进制数据](/runtime/binary-data#conversion) 获取关于使用Bun操作二进制数据的完整文档。

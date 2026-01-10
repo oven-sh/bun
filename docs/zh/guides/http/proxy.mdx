@@ -1,0 +1,50 @@
+---
+title: 使用 fetch() 代理 HTTP 请求
+sidebarTitle: 使用 fetch() 代理 HTTP 请求
+mode: center
+---
+
+在 Bun 中，`fetch` 支持通过 HTTP 或 HTTPS 代理发送请求。这在企业网络中很有用，或者当您需要确保请求通过特定 IP 地址发送时。
+
+```ts proxy.ts icon="/icons/typescript.svg"
+await fetch("https://example.com", {
+  // 代理服务器的 URL
+  proxy: "https://username:password@proxy.example.com:8080",
+});
+```
+
+---
+
+`proxy` 选项可以是 URL 字符串或具有 `url` 和可选 `headers` 的对象。如果代理需要认证，URL 可以包含用户名和密码。它可以是 `http://` 或 `https://`。
+
+---
+
+## 自定义代理头
+
+要向代理服务器发送自定义头（对于代理认证令牌、自定义路由等很有用），请使用对象格式：
+
+```ts proxy-headers.ts icon="/icons/typescript.svg"
+await fetch("https://example.com", {
+  proxy: {
+    url: "https://proxy.example.com:8080",
+    headers: {
+      "Proxy-Authorization": "Bearer my-token",
+      "X-Proxy-Region": "us-east-1",
+    },
+  },
+});
+```
+
+`headers` 属性接受普通对象或 `Headers` 实例。这些头在 `CONNECT` 请求（用于 HTTPS 目标）或代理请求（用于 HTTP 目标）中直接发送到代理服务器。
+
+如果您提供 `Proxy-Authorization` 头，它将覆盖代理 URL 中指定的任何凭据。
+
+---
+
+## 环境变量
+
+您还可以将 `$HTTP_PROXY` 或 `$HTTPS_PROXY` 环境变量设置为代理 URL。当您希望对所有请求使用相同代理时，这很有用。
+
+```sh terminal icon="terminal"
+HTTPS_PROXY=https://username:password@proxy.example.com:8080 bun run index.ts
+```

@@ -1,0 +1,49 @@
+---
+title: 在 `bun test` 中更新快照
+sidebarTitle: 更新快照
+mode: center
+---
+
+Bun 的测试运行器通过 `.toMatchSnapshot()` 支持 Jest 风格的快照测试。
+
+```ts snap.test.ts icon="/icons/typescript.svg"
+import { test, expect } from "bun:test";
+
+test("snapshot", () => {
+  expect({ foo: "bar" }).toMatchSnapshot();
+});
+```
+
+---
+
+第一次执行此测试时，Bun 将快照文件写入磁盘中名为 `__snapshots__` 的目录中，该目录与测试文件在同一级。
+
+```txt File Tree icon="folder-tree"
+test
+├── __snapshots__
+│   └── snap.test.ts.snap
+└── snap.test.ts
+```
+
+---
+
+要重新生成快照，请使用 `--update-snapshots` 标志。
+
+```sh terminal icon="terminal"
+bun test --update-snapshots
+```
+
+```txt
+test/snap.test.ts:
+✓ snapshot [0.86ms]
+
+ 1 pass
+ 0 fail
+ snapshots: +1 added # the snapshot was regenerated
+ 1 expect() calls
+Ran 1 tests across 1 files. [102.00ms]
+```
+
+---
+
+请参阅 [文档 > 测试运行器 > 快照](/test/snapshots) 了解 Bun 测试运行器快照的完整文档。

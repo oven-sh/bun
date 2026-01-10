@@ -1,0 +1,241 @@
+---
+title: 基准测试
+description: 如何对 Bun 进行基准测试
+---
+
+Bun 为速度而设计。热路径经过广泛的分析和基准测试。Bun 所有公共基准测试的源代码可以在 Bun 仓库的 [`/bench`](https://github.com/oven-sh/bun/tree/main/bench) 目录中找到。
+
+## 测量时间
+
+要精确测量时间，Bun 提供了两个运行时 API 函数：
+
+1. Web 标准的 [`performance.now()`](https://developer.mozilla.org/en-US/docs/Web/API/Performance/now) 函数
+2. `Bun.nanoseconds()` 与 `performance.now()` 类似，不同之处在于它返回自应用程序启动以来的纳秒时间。您可以使用 `performance.timeOrigin` 将其转换为 Unix 时间戳。
+
+## 基准测试工具
+
+在编写自己的基准测试时，选择正确的工具非常重要。
+
+- 对于微基准测试，一个优秀的通用工具是 [`mitata`](https://github.com/evanwashere/mitata)。
+- 对于负载测试，您必须使用至少与 `Bun.serve()` 一样快的 HTTP 基准测试工具，否则结果会出现偏差。一些流行的基于 Node.js 的基准测试工具（如 [`autocannon`](https://github.com/mcollina/autocannon)）不够快。我们推荐以下之一：
+  - [`bombardier`](https://github.com/codesenberg/bombardier)
+  - [`oha`](https://github.com/hatoo/oha)
+  - [`http_load_test`](https://github.com/uNetworking/uSockets/blob/master/examples/http_load_test.c)
+- 对于基准测试脚本或 CLI 命令，我们推荐 [`hyperfine`](https://github.com/sharkdp/hyperfine)。
+
+## 测量内存使用情况
+
+Bun 有两个堆。一个堆用于 JavaScript 运行时，另一个堆用于其他所有内容。
+
+### JavaScript 堆统计
+
+`bun:jsc` 模块公开了一些用于测量内存使用的函数：
+
+```ts
+import { heapStats } from "bun:jsc";
+console.log(heapStats());
+```
+
+<Accordion title="查看示例统计数据">
+
+```ts
+{
+  heapSize: 1657575,
+  heapCapacity: 2872775,
+  extraMemorySize: 598199,
+  objectCount: 13790,
+  protectedObjectCount: 62,
+  globalObjectCount: 1,
+  protectedGlobalObjectCount: 1,
+  // 堆中每种对象类型的计数
+  objectTypeCounts: {
+    CallbackObject: 25,
+    FunctionExecutable: 2078,
+    AsyncGeneratorFunction: 2,
+    'RegExp String Iterator': 1,
+    FunctionCodeBlock: 188,
+    ModuleProgramExecutable: 13,
+    String: 1,
+    UnlinkedModuleProgramCodeBlock: 13,
+    JSON: 1,
+    AsyncGenerator: 1,
+    Symbol: 1,
+    GetterSetter: 68,
+    ImportMeta: 10,
+    DOMAttributeGetterSetter: 1,
+    UnlinkedFunctionCodeBlock: 174,
+    RegExp: 52,
+    ModuleLoader: 1,
+    Intl: 1,
+    WeakMap: 4,
+    Generator: 2,
+    PropertyTable: 95,
+    'Array Iterator': 1,
+    JSLexicalEnvironment: 75,
+    UnlinkedFunctionExecutable: 2067,
+    WeakSet: 1,
+    console: 1,
+    Map: 23,
+    SparseArrayValueMap: 14,
+    StructureChain: 19,
+    Set: 18,
+    'String Iterator': 1,
+    FunctionRareData: 3,
+    JSGlobalLexicalEnvironment: 1,
+    Object: 481,
+    BigInt: 2,
+    StructureRareData: 55,
+    Array: 179,
+    AbortController: 2,
+    ModuleNamespaceObject: 11,
+    ShadowRealm: 1,
+    'Immutable Butterfly': 103,
+    Primordials: 1,
+    'Set Iterator': 1,
+    JSGlobalProxy: 1,
+    AsyncFromSyncIterator: 1,
+    ModuleRecord: 13,
+    FinalizationRegistry: 1,
+    AsyncIterator: 1,
+    InternalPromise: 22,
+    Iterator: 1,
+    CustomGetterSetter: 65,
+    Promise: 19,
+    WeakRef: 1,
+    InternalPromisePrototype: 1,
+    Function: 2381,
+    AsyncFunction: 2,
+    GlobalObject: 1,
+    ArrayBuffer: 2,
+    Boolean: 1,
+    Math: 1,
+    CallbackConstructor: 1,
+    Error: 2,
+    JSModuleEnvironment: 13,
+    WebAssembly: 1,
+    HashMapBucket: 300,
+    Callee: 3,
+    symbol: 37,
+    string: 2484,
+    Performance: 1,
+    ModuleProgramCodeBlock: 12,
+    JSSourceCode: 13,
+    JSPropertyNameEnumerator: 3,
+    NativeExecutable: 290,
+    Number: 1,
+    Structure: 1550,
+    SymbolTable: 108,
+    GeneratorFunction: 2,
+    'Map Iterator': 1
+  },
+  protectedObjectTypeCounts: {
+    CallbackConstructor: 1,
+    BigInt: 1,
+    RegExp: 2,
+    GlobalObject: 1,
+    UnlinkedModuleProgramCodeBlock: 13,
+    HashMapBucket: 2,
+    Structure: 41,
+    JSPropertyNameEnumerator: 1
+  }
+}
+```
+
+</Accordion>
+
+JavaScript 是一种垃圾回收语言，而不是引用计数语言。在所有情况下对象不被立即释放是正常的和正确的，尽管对象永远不会被释放是不正常的。
+
+要手动强制进行垃圾回收：
+
+```ts
+Bun.gc(true); // 同步
+Bun.gc(false); // 异步
+```
+
+堆快照让您能够检查哪些对象未被释放。您可以使用 `bun:jsc` 模块获取堆快照，然后使用 Safari 或 WebKit GTK 开发工具查看。要生成堆快照：
+
+```ts
+import { generateHeapSnapshot } from "bun";
+
+const snapshot = generateHeapSnapshot();
+await Bun.write("heap.json", JSON.stringify(snapshot, null, 2));
+```
+
+要查看快照，请在 Safari 的开发工具（或 WebKit GTK）中打开 `heap.json` 文件
+
+1. 打开开发工具
+2. 点击"时间线"
+3. 点击左侧菜单中的"JavaScript 分配"。在点击铅笔图标显示所有时间线之前，它可能不可见
+4. 点击"导入"并选择您的堆快照 JSON
+
+<Frame>
+  <img
+    src="https://user-images.githubusercontent.com/709451/204428943-ba999e8f-8984-4f23-97cb-b4e3e280363e.png"
+    alt="导入堆快照"
+  />
+</Frame>
+
+导入后，您应该会看到如下内容：
+
+<Frame>
+  <img
+    alt="在 Safari 中查看堆快照"
+    src="https://user-images.githubusercontent.com/709451/204429337-b0d8935f-3509-4071-b991-217794d1fb27.png"
+    caption="在 Safari 开发工具中查看堆快照"
+  />
+</Frame>
+
+> [Web 调试器](/runtime/debugger#inspect) 还提供时间线功能，允许您跟踪和检查正在调试会话的内存使用情况。
+
+### 本地堆统计
+
+Bun 为另一个堆使用 mimalloc。要报告非 JavaScript 内存使用的摘要，请设置 `MIMALLOC_SHOW_STATS=1` 环境变量，统计信息将在退出时打印。
+
+```sh terminal icon="terminal"
+MIMALLOC_SHOW_STATS=1 bun script.js
+```
+
+```txt
+堆统计：    峰值      总计      已释放    当前       单位      计数
+  预留：   64.0 MiB   64.0 MiB      0       64.0 MiB                        未全部释放！
+ 提交：   64.0 MiB   64.0 MiB      0       64.0 MiB                        未全部释放！
+     重置：      0          0          0          0                            ok
+   触摸：  128.5 KiB  128.5 KiB    5.4 MiB   -5.3 MiB                        ok
+  段：      1          1          0          1                            未全部释放！
+-废弃：      0          0          0          0                            ok
+   -缓存：      0          0          0          0                            ok
+     页：      0          0         53        -53                            ok
+-废弃：      0          0          0          0                            ok
+ -扩展：      0
+ -不退休：      0
+     mmap：      0
+   提交：      0
+   线程：      0          0          0          0                            ok
+  搜索：     0.0 平均
+NUMA 节点：       1
+   经过时间：       0.068 s
+   进程： 用户：0.061 s，系统：0.014 s，故障：0，rss：57.4 MiB，提交：64.0 MiB
+```
+
+## CPU 分析
+
+使用 `--cpu-prof` 标志分析 JavaScript 执行以识别性能瓶颈。
+
+```sh terminal icon="terminal"
+bun --cpu-prof script.js
+```
+
+这会生成一个 `.cpuprofile` 文件，您可以在 Chrome 开发工具（性能标签 → 加载配置文件）或 VS Code 的 CPU 分析器中打开。
+
+### 选项
+
+```sh terminal icon="terminal"
+bun --cpu-prof --cpu-prof-name my-profile.cpuprofile script.js
+bun --cpu-prof --cpu-prof-dir ./profiles script.js
+```
+
+| 标志                         | 描述                |
+| ---------------------------- | ------------------- |
+| `--cpu-prof`                 | 启用分析            |
+| `--cpu-prof-name <filename>` | 设置输出文件名      |
+| `--cpu-prof-dir <dir>`       | 设置输出目录        |

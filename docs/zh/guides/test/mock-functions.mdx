@@ -1,0 +1,70 @@
+---
+title: 在 `bun test` 中模拟函数
+sidebarTitle: 模拟函数
+mode: center
+---
+
+使用来自 `bun:test` 的 `mock` 函数创建模拟。
+
+```ts test.ts icon="/icons/typescript.svg"
+import { test, expect, mock } from "bun:test";
+
+const random = mock(() => Math.random());
+```
+
+---
+
+模拟函数可以接受参数。
+
+```ts test.ts icon="/icons/typescript.svg"
+import { test, expect, mock } from "bun:test";
+
+const random = mock((multiplier: number) => multiplier * Math.random());
+```
+
+---
+
+`mock()` 的结果是一个新函数，它被装饰了一些额外的属性。
+
+```ts test.ts icon="/icons/typescript.svg"
+import { mock } from "bun:test";
+
+const random = mock((multiplier: number) => multiplier * Math.random());
+
+random(2);
+random(10);
+
+random.mock.calls;
+// [[ 2 ], [ 10 ]]
+
+random.mock.results;
+//  [
+//    { type: "return", value: 0.6533907460954099 },
+//    { type: "return", value: 0.6452713933037312 }
+//  ]
+```
+
+---
+
+这些额外的属性使得可以编写关于模拟函数使用情况的 `expect` 断言，包括被调用了多少次、参数以及返回值。
+
+```ts test.ts icon="/icons/typescript.svg"
+import { test, expect, mock } from "bun:test";
+
+const random = mock((multiplier: number) => multiplier * Math.random());
+
+test("random", async () => {
+  const a = random(1);
+  const b = random(2);
+  const c = random(3);
+
+  expect(random).toHaveBeenCalled();
+  expect(random).toHaveBeenCalledTimes(3);
+  expect(random.mock.calls).toEqual([[1], [2], [3]]);
+  expect(random.mock.results[0]).toEqual({ type: "return", value: a });
+});
+```
+
+---
+
+请参阅 [文档 > 测试运行器 > 模拟](/test/mocks) 了解使用 Bun 测试运行器进行模拟的完整文档。

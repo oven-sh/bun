@@ -1,0 +1,55 @@
+---
+title: 使用 PM2 以守护进程方式运行 Bun
+sidebarTitle: PM2 与 Bun
+mode: center
+---
+
+[PM2](https://pm2.keymetrics.io/) 是一个流行的进程管理器，可将您的应用程序作为守护进程（后台进程）进行管理和运行。
+
+它提供了进程监控、自动重启和轻松扩展等功能。在云托管虚拟专用服务器 (VPS) 上部署 Bun 应用程序时，使用进程管理器很常见，因为它：
+
+- 让您的 Node.js 应用程序持续运行。
+- 确保应用程序的高可用性和可靠性。
+- 轻松监控和管理多个进程。
+- 简化部署过程。
+
+---
+
+您可以使用两种方式将 PM2 与 Bun 结合使用：作为 CLI 选项或在配置文件中使用。
+
+### 使用 `--interpreter`
+
+要使用 PM2 启动您的应用程序并将 Bun 作为解释器，请打开终端并运行以下命令：
+
+```bash terminal icon="terminal"
+pm2 start --interpreter ~/.bun/bin/bun index.ts
+```
+
+---
+
+### 使用配置文件
+
+或者，您可以创建一个 PM2 配置文件。在项目目录中创建一个名为 [pm2.config.js] 的文件并添加以下内容。
+
+```js pm2.config.js icon="file-code"
+module.exports = {
+  name: "app", // 您的应用程序名称
+  script: "index.ts", // 您的应用程序入口点
+  interpreter: "bun", // Bun 解释器
+  env: {
+    PATH: `${process.env.HOME}/.bun/bin:${process.env.PATH}`, // 将"~/.bun/bin/bun"添加到 PATH
+  },
+};
+```
+
+---
+
+保存文件后，您可以使用 PM2 启动您的应用程序
+
+```bash terminal icon="terminal"
+pm2 start pm2.config.js
+```
+
+---
+
+就是这样！您的 JavaScript/TypeScript Web 服务器现在作为守护进程在 PM2 中运行，使用 Bun 作为解释器。

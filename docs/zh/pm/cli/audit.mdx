@@ -1,0 +1,60 @@
+---
+title: "bun audit"
+description: "检查你已安装的包是否存在已知的安全漏洞"
+---
+
+在一个有 [bun.lock] 文件的项目中运行命令：
+
+```bash terminal icon="terminal"
+bun audit
+```
+
+Bun 将已安装的包及版本列表发送到 NPM，并打印发现的任何漏洞报告。从非默认注册表安装的包将被跳过。
+
+如果没有发现漏洞，命令将打印：
+
+```
+No vulnerabilities found
+```
+
+当检测到漏洞时，每个受影响的包都会连同严重程度、简短描述和公告链接一起列出。在报告末尾，Bun 会打印摘要和更新提示：
+
+```
+3 vulnerabilities (1 high, 2 moderate)
+要将所有依赖项更新到最新的兼容版本：
+  bun update
+要将所有依赖项更新到最新版本（包括破坏性变更）：
+  bun update --latest
+```
+
+### 过滤选项
+
+**`--audit-level=<low|moderate|high|critical>`** - 仅显示此严重级别或更高的漏洞：
+
+```bash terminal icon="terminal"
+bun audit --audit-level=high
+```
+
+**`--prod`** - 仅审计生产依赖（排除 devDependencies）：
+
+```bash terminal icon="terminal"
+bun audit --prod
+```
+
+**`--ignore <CVE>`** - 忽略特定 CVE（可多次使用）：
+
+```bash terminal icon="terminal"
+bun audit --ignore CVE-2022-25883 --ignore CVE-2023-26136
+```
+
+### `--json`
+
+使用 `--json` 标志打印注册表的原始 JSON 响应，而不是格式化的报告：
+
+```bash terminal icon="terminal"
+bun audit --json
+```
+
+### 退出代码
+
+如果未发现漏洞，`bun audit` 将以代码 `0` 退出，如果报告列出任何漏洞，则以 `1` 退出。即使传递了 `--json` 也会发生这种情况。

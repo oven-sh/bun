@@ -1,0 +1,87 @@
+---
+title: 使用 Bun Redis 与 Upstash
+sidebarTitle: Upstash 与 Bun
+mode: center
+---
+
+[Upstash](https://upstash.com/) 是一个完全托管的 Redis 数据库服务。Upstash 支持 Redis® API，这意味着您可以使用 Bun 的原生 Redis 客户端连接到您的 Upstash 数据库。
+
+<Note>所有 Upstash Redis 数据库默认启用 TLS。</Note>
+
+---
+
+<Steps>
+  <Step title="创建新项目">
+    通过运行 `bun init` 创建一个新项目：
+    
+    ```sh terminal icon="terminal"
+    bun init bun-upstash-redis
+    cd bun-upstash-redis
+    ```
+  </Step>
+  <Step title="创建一个 Upstash Redis 数据库">
+    前往 [Upstash 控制面板](https://console.upstash.com/) 并创建一个新的 Redis 数据库。完成 [入门指南](https://upstash.com/docs/redis/overall/getstarted) 后，您将看到带有连接信息的数据库页面。
+
+    数据库页面显示两种连接方法；HTTP 和 TLS。对于 Bun 的 Redis 客户端，您需要 **TLS** 连接详细信息。此 URL 以 `rediss://` 开头。
+
+    	<Frame>
+    		![Upstash Redis 数据库页面](/images/guides/upstash-1.png)
+    	</Frame>
+
+  </Step>
+  <Step title="使用 Bun 的 Redis 客户端连接">
+		您可以通过使用 Bun 的默认 `redis` 客户端设置环境变量来连接到 Upstash。
+
+    在您的 [.env] 文件中使用 Redis 端点（不是 REST URL）设置 `REDIS_URL` 环境变量：
+
+    ```ini .env icon="settings"
+    REDIS_URL=rediss://********@********.upstash.io:6379
+    ```
+
+    Bun 的 Redis 客户端默认从 `REDIS_URL` 读取连接信息：
+
+    ```ts index.ts icon="/icons/typescript.svg"
+    import { redis } from "bun";
+
+    // 自动从 process.env.REDIS_URL 读取
+    await redis.set("counter", "0"); // [!code ++]
+    ```
+
+    或者，您可以使用 `RedisClient` 创建自定义客户端：
+
+    ```ts index.ts icon="/icons/typescript.svg"
+    import { RedisClient } from "bun";
+
+    const redis = new RedisClient(process.env.REDIS_URL); // [!code ++]
+    ```
+
+  </Step>
+	<Step title="使用 Redis 客户端">
+		您现在可以使用 Redis 客户端与您的 Upstash Redis 数据库进行交互：
+
+    	```ts index.ts icon="/icons/typescript.svg"
+    	import { redis } from "bun";
+
+    	// 获取一个值
+    	let counter = await redis.get("counter");
+
+    	// 如果值不存在则设置一个值
+    	if (!counter) {
+    		await redis.set("counter", "0");
+    	}
+
+    	// 递增计数器
+    	await redis.incr("counter");
+
+    	// 获取更新后的值
+    	counter = await redis.get("counter");
+    	console.log(counter);
+    	```
+    	```txt
+    	1
+    	```
+
+    	Redis 客户端在后台自动处理连接。对于基本操作，无需手动连接或断开连接。
+    </Step>
+
+</Steps>

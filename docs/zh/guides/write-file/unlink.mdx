@@ -1,0 +1,18 @@
+---
+title: 删除文件
+sidebarTitle: 删除文件
+mode: center
+---
+
+`Bun.file()` 函数接受一个路径并返回一个 [BunFile] 实例。使用 `.delete()` 方法删除文件。
+
+```ts
+const path = "/path/to/file.txt";
+const file = Bun.file(path);
+
+await file.delete();
+```
+
+---
+
+请参阅 [文档 > API > 文件 I/O](/runtime/file-io#reading-files-bun-file) 了解 `Bun.file()` 的完整文档。

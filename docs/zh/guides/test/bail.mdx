@@ -1,0 +1,24 @@
+---
+title: 使用 Bun 测试运行器提前终止
+sidebarTitle: 提前终止
+mode: center
+---
+
+使用 `--bail` 标志在单次失败后终止测试运行。这对于在持续集成环境中尽快中止测试非常有用。
+
+```sh terminal icon="terminal"
+bun test --bail
+```
+
+---
+
+要在达到一定数量的失败后终止，可以在标志后选择性地指定一个数字。
+
+```sh terminal icon="terminal"
+# 在 10 次失败后终止
+bun test --bail=10
+```
+
+---
+
+请参阅 [文档 > 测试运行器](/test) 了解 `bun test` 的完整文档。

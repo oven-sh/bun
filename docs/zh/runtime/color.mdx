@@ -1,0 +1,267 @@
+---
+title: Color
+description: 将颜色格式化为 CSS、ANSI、数字、十六进制字符串等等
+---
+
+`Bun.color(input, outputFormat?)` 利用 Bun 的 CSS 解析器来解析、标准化并将颜色从用户输入转换为各种输出格式，包括：
+
+| 格式         | 示例                             |
+| ------------ | -------------------------------- |
+| `"css"`      | `"red"`                          |
+| `"ansi"`     | `"\x1b[38;2;255;0;0m"`           |
+| `"ansi-16"`  | `"\x1b[38;5;\tm"`                |
+| `"ansi-256"` | `"\x1b[38;5;196m"`               |
+| `"ansi-16m"` | `"\x1b[38;2;255;0;0m"`           |
+| `"number"`   | `0x1a2b3c`                       |
+| `"rgb"`      | `"rgb(255, 99, 71)"`             |
+| `"rgba"`     | `"rgba(255, 99, 71, 0.5)"`       |
+| `"hsl"`      | `"hsl(120, 50%, 50%)"`           |
+| `"hex"`      | `"#1a2b3c"`                      |
+| `"HEX"`      | `"#1A2B3C"`                      |
+| `"{rgb}"`    | `{ r: 255, g: 99, b: 71 }`       |
+| `"{rgba}"`   | `{ r: 255, g: 99, b: 71, a: 1 }` |
+| `"[rgb]"`    | `[ 255, 99, 71 ]`                |
+| `"[rgba]"`   | `[ 255, 99, 71, 255]`            |
+
+有许多不同的方式使用这个 API：
+
+- 验证和标准化颜色以保存在数据库中（`number` 是最友好的数据库格式）
+- 将颜色转换为不同格式
+- 彩色日志记录，超越今天很多人使用的 16 种颜色（如果您不想弄清楚用户的终端支持什么，请使用 `ansi`，否则使用 `ansi-16`、`ansi-256` 或 `ansi-16m` 来适应终端支持的颜色数量）
+- 格式化用于注入 HTML 的 CSS 颜色
+- 从 CSS 颜色字符串获取 `r`、`g`、`b` 和 `a` 颜色组件作为 JavaScript 对象或数字
+
+您可以将其视为流行的 npm 包 [`color`](https://github.com/Qix-/color) 和 [`tinycolor2`](https://github.com/bgrins/TinyColor) 的替代品，只是完全支持解析 CSS 颜色字符串，并且零依赖直接内置到 Bun 中。
+
+### 灵活的输入
+
+您可以传入以下任何一项：
+
+- 标准 CSS 颜色名称，如 `"red"`
+- 数字，如 `0xff0000`
+- 十六进制字符串，如 `"#f00"`
+- RGB 字符串，如 `"rgb(255, 0, 0)"`
+- RGBA 字符串，如 `"rgba(255, 0, 0, 1)"`
+- HSL 字符串，如 `"hsl(0, 100%, 50%)"`
+- HSLA 字符串，如 `"hsla(0, 100%, 50%, 1)"`
+- RGB 对象，如 `{ r: 255, g: 0, b: 0 }`
+- RGBA 对象，如 `{ r: 255, g: 0, b: 0, a: 1 }`
+- RGB 数组，如 `[255, 0, 0]`
+- RGBA 数组，如 `[255, 0, 0, 255]`
+- LAB 字符串，如 `"lab(50% 50% 50%)"`
+- ... CSS 可以解析为单个颜色值的任何其他内容
+
+### 将颜色格式化为 CSS
+
+`"css"` 格式输出有效的 CSS，用于样式表、内联样式、CSS 变量、css-in-js 等。它以字符串形式返回最紧凑的颜色表示。
+
+```ts
+Bun.color("red", "css"); // "red"
+Bun.color(0xff0000, "css"); // "#f000"
+Bun.color("#f00", "css"); // "red"
+Bun.color("#ff0000", "css"); // "red"
+Bun.color("rgb(255, 0, 0)", "css"); // "red"
+Bun.color("rgba(255, 0, 0, 1)", "css"); // "red"
+Bun.color("hsl(0, 100%, 50%)", "css"); // "red"
+Bun.color("hsla(0, 100%, 50%, 1)", "css"); // "red"
+Bun.color({ r: 255, g: 0, b: 0 }, "css"); // "red"
+Bun.color({ r: 255, g: 0, b: 0, a: 1 }, "css"); // "red"
+Bun.color([255, 0, 0], "css"); // "red"
+Bun.color([255, 0, 0, 255], "css"); // "red"
+```
+
+如果输入未知或解析失败，`Bun.color` 返回 `null`。
+
+### 将颜色格式化为 ANSI（用于终端）
+
+`"ansi"` 格式输出 ANSI 转义码，用于在终端中使文本变得多彩。
+
+```ts
+Bun.color("red", "ansi"); // "\u001b[38;2;255;0;0m"
+Bun.color(0xff0000, "ansi"); // "\u001b[38;2;255;0;0m"
+Bun.color("#f00", "ansi"); // "\u001b[38;2;255;0;0m"
+Bun.color("#ff0000", "ansi"); // "\u001b[38;2;255;0;0m"
+Bun.color("rgb(255, 0, 0)", "ansi"); // "\u001b[38;2;255;0;0m"
+Bun.color("rgba(255, 0, 0, 1)", "ansi"); // "\u001b[38;2;255;0;0m"
+Bun.color("hsl(0, 100%, 50%)", "ansi"); // "\u001b[38;2;255;0;0m"
+Bun.color("hsla(0, 100%, 50%, 1)", "ansi"); // "\u001b[38;2;255;0;0m"
+Bun.color({ r: 255, g: 0, b: 0 }, "ansi"); // "\u001b[38;2;255;0;0m"
+Bun.color({ r: 255, g: 0, b: 0, a: 1 }, "ansi"); // "\u001b[38;2;255;0;0m"
+Bun.color([255, 0, 0], "ansi"); // "\u001b[38;2;255;0;0m"
+Bun.color([255, 0, 0, 255], "ansi"); // "\u001b[38;2;255;0;0m"
+```
+
+这获取 stdout 的颜色深度并根据环境变量自动选择 `"ansi-16m"`、`"ansi-256"`、`"ansi-16"` 之一。如果 stdout 不支持任何形式的 ANSI 颜色，则返回空字符串。与 Bun 的其余颜色 API 一样，如果输入未知或解析失败，则返回 `null`。
+
+#### 24 位 ANSI 颜色 (`ansi-16m`)
+
+`"ansi-16m"` 格式输出 24 位 ANSI 颜色，用于在终端中使文本变得多彩。24 位颜色意味着您可以在支持的终端上显示 1600 万种颜色，并需要支持它的现代终端。
+
+这将输入颜色转换为 RGBA，然后将其输出为 ANSI 颜色。
+
+```ts
+Bun.color("red", "ansi-16m"); // "\x1b[38;2;255;0;0m"
+Bun.color(0xff0000, "ansi-16m"); // "\x1b[38;2;255;0;0m"
+Bun.color("#f00", "ansi-16m"); // "\x1b[38;2;255;0;0m"
+Bun.color("#ff0000", "ansi-16m"); // "\x1b[38;2;255;0;0m"
+```
+
+#### 256 ANSI 颜色 (`ansi-256`)
+
+`"ansi-256"` 格式将输入颜色近似到某些终端支持的 256 种 ANSI 颜色中最接近的一种。
+
+```ts
+Bun.color("red", "ansi-256"); // "\u001b[38;5;196m"
+Bun.color(0xff0000, "ansi-256"); // "\u001b[38;5;196m"
+Bun.color("#f00", "ansi-256"); // "\u001b[38;5;196m"
+Bun.color("#ff0000", "ansi-256"); // "\u001b[38;5;196m"
+```
+
+要从 RGBA 转换为 256 种 ANSI 颜色之一，我们移植了 [`tmux` 使用的算法](https://github.com/tmux/tmux/blob/dae2868d1227b95fd076fb4a5efa6256c7245943/colour.c#L44-L55)。
+
+#### 16 ANSI 颜色 (`ansi-16`)
+
+`"ansi-16"` 格式将输入颜色近似到大多数终端支持的 16 种 ANSI 颜色中最接近的一种。
+
+```ts
+Bun.color("red", "ansi-16"); // "\u001b[38;5;\tm"
+Bun.color(0xff0000, "ansi-16"); // "\u001b[38;5;\tm"
+Bun.color("#f00", "ansi-16"); // "\u001b[38;5;\tm"
+Bun.color("#ff0000", "ansi-16"); // "\u001b[38;5;\tm"
+```
+
+这首先将输入转换为 24 位 RGB 颜色空间，然后转换为 `ansi-256`，然后将该颜色转换为最接近的 16 种 ANSI 颜色。
+
+### 将颜色格式化为数字
+
+`"number"` 格式输出一个 24 位数字，用于数据库、配置或任何其他需要紧凑颜色表示的用例。
+
+```ts
+Bun.color("red", "number"); // 16711680
+Bun.color(0xff0000, "number"); // 16711680
+Bun.color({ r: 255, g: 0, b: 0 }, "number"); // 16711680
+Bun.color([255, 0, 0], "number"); // 16711680
+Bun.color("rgb(255, 0, 0)", "number"); // 16711680
+Bun.color("rgba(255, 0, 0, 1)", "number"); // 16711680
+Bun.color("hsl(0, 100%, 50%)", "number"); // 16711680
+Bun.color("hsla(0, 100%, 50%, 1)", "number"); // 16711680
+```
+
+### 获取红色、绿色、蓝色和透明度通道
+
+您可以使用 `"{rgba}"`、`"{rgb}"`、`"[rgba]"` 和 `"[rgb]"` 格式将红色、绿色、蓝色和透明度通道作为对象或数组获取。
+
+#### `{rgba}` 对象
+
+`"{rgba}"` 格式输出一个包含红色、绿色、蓝色和透明度通道的对象。
+
+```ts
+type RGBAObject = {
+  // 0 - 255
+  r: number;
+  // 0 - 255
+  g: number;
+  // 0 - 255
+  b: number;
+  // 0 - 1
+  a: number;
+};
+```
+
+示例：
+
+```ts
+Bun.color("hsl(0, 0%, 50%)", "{rgba}"); // { r: 128, g: 128, b: 128, a: 1 }
+Bun.color("red", "{rgba}"); // { r: 255, g: 0, b: 0, a: 1 }
+Bun.color(0xff0000, "{rgba}"); // { r: 255, g: 0, b: 0, a: 1 }
+Bun.color({ r: 255, g: 0, b: 0 }, "{rgba}"); // { r: 255, g: 0, b: 0, a: 1 }
+Bun.color([255, 0, 0], "{rgba}"); // { r: 255, g: 0, b: 0, a: 1 }
+```
+
+为了与 CSS 类似，`a` 通道是介于 `0` 和 `1` 之间的十进制数。
+
+`"{rgb}"` 格式类似，但它不包含透明度通道。
+
+```ts
+Bun.color("hsl(0, 0%, 50%)", "{rgb}"); // { r: 128, g: 128, b: 128 }
+Bun.color("red", "{rgb}"); // { r: 255, g: 0, b: 0 }
+Bun.color(0xff0000, "{rgb}"); // { r: 255, g: 0, b: 0 }
+Bun.color({ r: 255, g: 0, b: 0 }, "{rgb}"); // { r: 255, g: 0, b: 0 }
+Bun.color([255, 0, 0], "{rgb}"); // { r: 255, g: 0, b: 0 }
+```
+
+#### `[rgba]` 数组
+
+`"[rgba]"` 格式输出一个包含红色、绿色、蓝色和透明度通道的数组。
+
+```ts
+// 所有值都在 0 - 255 范围内
+type RGBAArray = [number, number, number, number];
+```
+
+示例：
+
+```ts
+Bun.color("hsl(0, 0%, 50%)", "[rgba]"); // [128, 128, 128, 255]
+Bun.color("red", "[rgba]"); // [255, 0, 0, 255]
+Bun.color(0xff0000, "[rgba]"); // [255, 0, 0, 255]
+Bun.color({ r: 255, g: 0, b: 0 }, "[rgba]"); // [255, 0, 0, 255]
+Bun.color([255, 0, 0], "[rgba]"); // [255, 0, 0, 255]
+```
+
+与 `"{rgba}"` 格式不同，透明度通道是介于 `0` 和 `255` 之间的整数。这在每通道必须是相同底层类型的类型化数组中有用。
+
+`"[rgb]"` 格式类似，但它不包含透明度通道。
+
+```ts
+Bun.color("hsl(0, 0%, 50%)", "[rgb]"); // [128, 128, 128]
+Bun.color("red", "[rgb]"); // [255, 0, 0]
+Bun.color(0xff0000, "[rgb]"); // [255, 0, 0]
+Bun.color({ r: 255, g: 0, b: 0 }, "[rgb]"); // [255, 0, 0]
+Bun.color([255, 0, 0], "[rgb]"); // [255, 0, 0]
+```
+
+### 将颜色格式化为十六进制字符串
+
+`"hex"` 格式输出小写十六进制字符串，用于 CSS 或其他上下文。
+
+```ts
+Bun.color("hsl(0, 0%, 50%)", "hex"); // "#808080"
+Bun.color("red", "hex"); // "#ff0000"
+Bun.color(0xff0000, "hex"); // "#ff0000"
+Bun.color({ r: 255, g: 0, b: 0 }, "hex"); // "#ff0000"
+Bun.color([255, 0, 0], "hex"); // "#ff0000"
+```
+
+`"HEX"` 格式类似，但它输出大写字母的十六进制字符串而不是小写字母。
+
+```ts
+Bun.color("hsl(0, 0%, 50%)", "HEX"); // "#808080"
+Bun.color("red", "HEX"); // "#FF0000"
+Bun.color(0xff0000, "HEX"); // "#FF0000"
+Bun.color({ r: 255, g: 0, b: 0 }, "HEX"); // "#FF0000"
+Bun.color([255, 0, 0], "HEX"); // "#FF0000"
+```
+
+### 打包时客户端颜色格式化
+
+与 Bun 的许多 API 一样，您可以使用宏在打包时调用 `Bun.color` 以用于客户端 JavaScript 构建：
+
+```ts 客户端.ts
+import { color } from "bun" with { type: "macro" };
+
+console.log(color("#f00", "css"));
+```
+
+然后，构建客户端代码：
+
+```sh
+bun build ./client-side.ts
+```
+
+这将以下内容输出到 `client-side.js`：
+
+```js
+// client-side.ts
+console.log("red");
+```

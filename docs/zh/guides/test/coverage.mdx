@@ -1,0 +1,49 @@
+---
+title: 使用 Bun 测试运行器生成代码覆盖率报告
+sidebarTitle: 覆盖率报告
+mode: center
+---
+
+Bun 的测试运行器支持内置的_代码覆盖率报告_。这使得很容易看到代码库中有多少代码被测试覆盖，以及找到当前测试不足的区域。
+
+---
+
+传递 `--coverage` 标志给 `bun test` 来启用此功能。这将在测试运行后打印覆盖率报告。
+
+覆盖率报告列出了在测试运行期间执行的源文件、执行的函数和行的百分比，以及在运行期间未执行的行范围。
+
+```sh terminal icon="terminal"
+bun test --coverage
+```
+
+```txt
+
+test.test.ts:
+✓ math > add [0.71ms]
+✓ math > multiply [0.03ms]
+✓ random [0.13ms]
+-------------|---------|---------|-------------------
+File         | % Funcs | % Lines | Uncovered Line #s
+-------------|---------|---------|-------------------
+All files    |   66.67 |   77.78 |
+ math.ts     |   50.00 |   66.67 |
+ random.ts   |   50.00 |   66.67 |
+-------------|---------|---------|-------------------
+
+ 3 pass
+ 0 fail
+ 3 expect() calls
+```
+
+---
+
+要始终默认启用覆盖率报告，请将以下行添加到您的 [bunfig.toml] 中：
+
+```toml bunfig.toml icon="settings"
+[test]
+coverage = true # 始终启用覆盖率
+```
+
+---
+
+请参阅 [文档 > 测试运行器 > 覆盖率](/test/code-coverage) 了解 Bun 中代码覆盖率报告的完整文档。

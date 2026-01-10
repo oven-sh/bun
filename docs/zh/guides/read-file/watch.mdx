@@ -1,0 +1,66 @@
+---
+title: 监视目录变化
+sidebarTitle: 监视目录
+mode: center
+---
+
+Bun 实现了 `node:fs` 模块，包括用于监听文件系统变化的 `fs.watch` 函数。
+
+此代码块监听当前目录中文件的变化。默认情况下，此操作是_浅层_的，意味着不会检测到子目录中文件的变化。
+
+```ts
+import { watch } from "fs";
+
+const watcher = watch(import.meta.dir, (event, filename) => {
+  console.log(`Detected ${event} in ${filename}`);
+});
+```
+
+---
+
+要监听子目录中的变化，请向 `fs.watch` 传递 `recursive: true` 选项。
+
+```ts
+import { watch } from "fs";
+
+const watcher = watch(import.meta.dir, { recursive: true }, (event, relativePath) => {
+  console.log(`Detected ${event} in ${relativePath}`);
+});
+```
+
+---
+
+使用 `node:fs/promises` 模块，您可以使用 `for await...of` 而不是回调函数来监听变化。
+
+```ts
+import { watch } from "fs/promises";
+
+const watcher = watch(import.meta.dir);
+for await (const event of watcher) {
+  console.log(`Detected ${event.eventType} in ${event.filename}`);
+}
+```
+
+---
+
+要停止监听变化，请调用 `watcher.close()`。通常在进程接收到 `SIGINT` 信号时（例如用户按下 Ctrl-C）执行此操作。
+
+```ts
+import { watch } from "fs";
+
+const watcher = watch(import.meta.dir, (event, filename) => {
+  console.log(`Detected ${event} in ${filename}`);
+});
+
+process.on("SIGINT", () => {
+  // 按下 Ctrl-C 时关闭监视器
+  console.log("Closing watcher...");
+  watcher.close();
+
+  process.exit(0);
+});
+```
+
+---
+
+有关在 Bun 中使用 `Uint8Array` 和其他二进制数据格式的更多信息，请参阅 [API > 二进制数据 > 类型化数组](/runtime/binary-data#typedarray)。

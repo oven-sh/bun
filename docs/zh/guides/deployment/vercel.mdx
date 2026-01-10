@@ -1,0 +1,95 @@
+---
+title: 在 Vercel 上部署 Bun 应用程序
+sidebarTitle: 在 Vercel 上部署
+mode: center
+---
+
+[Vercel](https://vercel.com/) 是一个云平台，让您可以构建、部署和扩展您的应用程序。
+
+<Warning>
+  Bun 运行时处于 Beta 阶段；某些功能（例如，自动源映射、字节码缓存、`node:http/https` 的指标）尚未支持。
+</Warning>
+
+<Note>
+  `Bun.serve` 目前在 Vercel Functions 中不被支持。请使用 Vercel 支持的框架与 Bun 配合使用，如 Next.js、Express、Hono 或 Nitro。
+</Note>
+
+---
+
+<Steps>
+	<Step title="在 vercel.json 中配置 Bun">
+		要为您的 Functions 启用 Bun 运行时，请在您的 [vercel.json] 文件中添加一个 `bunVersion` 字段：
+
+    	```json vercel.json icon="file-json"
+    	{
+    		"bunVersion": "1.x" // [!code ++]
+    	}
+    	```
+
+    	Vercel 会自动检测此配置并在 Bun 上运行您的应用程序。该值必须是 `"1.x"`，Vercel 在内部处理次要版本。
+
+    	为获得最佳效果，请将本地 Bun 版本与 Vercel 使用的版本匹配。
+    </Step>
+
+    <Step title="Next.js 配置">
+    	如果您正在部署 **Next.js** 项目（包括 ISR），请更新您的 [package.json]脚本以使用 Bun 运行时：
+
+    	```json package.json icon="file-json"
+    	{
+    		"scripts": {
+    			"dev": "bun --bun next dev", // [!code ++]
+    			"build": "bun --bun next build" // [!code ++]
+    		}
+    	}
+    	```
+
+    	<Note>
+    		`--bun` 标志在 Bun 下运行 Next.js CLI。捆绑（通过 Turbopack 或 Webpack）保持不变，但所有命令都在 Bun 运行时内执行。
+    	</Note>
+
+    	这确保本地开发和构建都使用 Bun。
+    </Step>
+
+    <Step title="部署您的应用程序">
+    	将您的仓库连接到 Vercel，或从 CLI 部署：
+
+    	```bash terminal icon="terminal"
+    	# 使用 bunx（无需全局安装）
+    	bunx vercel login
+    	bunx vercel deploy
+    	```
+
+    	或全局安装 Vercel CLI：
+
+    	```bash terminal icon="terminal"
+    	bun i -g vercel
+    	vercel login
+    	vercel deploy
+    	```
+
+    	[在 Vercel Deploy CLI 文档中了解更多信息 →](https://vercel.com/docs/cli/deploy)
+    </Step>
+
+    <Step title="验证运行时">
+    	要确认您的部署使用 Bun，请记录 Bun 版本：
+
+    	```ts index.ts icon="/icons/typescript.svg"
+    	console.log("runtime", process.versions.bun);
+    	```
+    	```txt
+    	runtime 1.3.3
+    	```
+
+    	[查看 Vercel Bun 运行时文档了解功能支持 →](https://vercel.com/docs/functions/runtimes/bun#feature-support)
+    </Step>
+
+</Steps>
+
+---
+
+- [Fluid compute](https://vercel.com/docs/fluid-compute): Bun 和 Node.js 运行时都在 Fluid compute 上运行，并支持相同的 Vercel Functions 核心功能。
+- [Middleware](https://vercel.com/docs/routing-middleware): 要使用 Bun 运行路由中间件，请将运行时设置为 `nodejs`：
+
+```ts middleware.ts icon="/icons/typescript.svg"
+export const config = { runtime: "nodejs" }; // [!code ++]
+```

@@ -1,0 +1,90 @@
+---
+title: "bunx"
+description: "运行来自 npm 的包"
+---
+
+import Bunx from "/snippets/cli/bunx.mdx";
+
+<Note>`bunx` 是 `bun x` 的别名。当你安装 `bun` 时，`bunx` CLI 将自动安装。</Note>
+
+使用 `bunx` 从 `npm` 自动安装并运行包。它是 Bun 的 `npx` 或 `yarn dlx` 等价物。
+
+```bash terminal icon="terminal"
+bunx cowsay "Hello world!"
+```
+
+<Note>
+  ⚡️ **速度** — 使用 Bun 的快速启动时间，对于本地安装的包，`bunx` [大约比 `npx` 快 100 倍](https://twitter.com/jarredsumner/status/1606163655527059458)。
+</Note>
+
+包可以在其 [package.json] 的 `"bin"` 字段中声明可执行文件。这些被称为_包可执行文件_或_包二进制文件_。
+
+```json package.json icon="file-json"
+{
+  // ... 其他字段
+  "name": "my-cli",
+  "bin": {
+    "my-cli": "dist/index.js"
+  }
+}
+```
+
+这些可执行文件通常是用 [shebang 行](<https://en.wikipedia.org/wiki/Shebang_(Unix)>) 标记的普通 JavaScript 文件，以指示应使用哪个程序来执行它们。以下文件表明它应该使用 `node` 执行。
+
+```js dist/index.js icon="/icons/javascript.svg"
+#!/usr/bin/env node
+
+console.log("Hello world!");
+```
+
+这些可执行文件可以用 `bunx` 运行，
+
+```bash terminal icon="terminal"
+bunx my-cli
+```
+
+与 `npx` 一样，`bunx` 首先会检查本地安装的包，然后回退到从 `npm` 自动安装包。已安装的包将存储在 Bun 的全局缓存中以供将来使用。
+
+## 参数和标志
+
+要将附加的命令行标志和参数传递给可执行文件，请将它们放在可执行文件名称之后。
+
+```bash terminal icon="terminal"
+bunx my-cli --foo bar
+```
+
+---
+
+## Shebangs
+
+默认情况下，Bun 尊重 shebang。如果可执行文件标记为 `#!/usr/bin/env node`，Bun 将启动一个 `node` 进程来执行该文件。但是，在某些情况下，即使可执行文件另有指示，也可能希望使用 Bun 的运行时来运行可执行文件。为此，请包含 `--bun` 标志。
+
+```bash terminal icon="terminal"
+bunx --bun my-cli
+```
+
+`--bun` 标志必须出现在可执行文件名称_之前_。出现在名称_之后_的标志将传递给可执行文件。
+
+```bash terminal icon="terminal"
+bunx --bun my-cli # 好
+bunx my-cli --bun # 坏
+```
+
+## 包标志
+
+**`--package <pkg>` 或 `-p <pkg>`** - 从特定包运行二进制文件。当二进制文件名与包名不同时很有用：
+
+```bash terminal icon="terminal"
+bunx -p renovate renovate-config-validator
+bunx --package @angular/cli ng
+```
+
+要强制 bun 始终与脚本一起使用，请使用 shebang。
+
+```js dist/index.js icon="/icons/javascript.svg"
+#!/usr/bin/env bun
+```
+
+---
+
+<Bunx />

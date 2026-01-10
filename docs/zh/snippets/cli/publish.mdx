@@ -1,0 +1,198 @@
+## CLI 用法
+
+```bash terminal icon="terminal"
+bun publish dist
+```
+
+### 发布选项
+
+<ParamField path="--access" type="string">
+  `--access` 标志可用于设置正在发布的包的访问级别。访问级别可以是 `public` 或 `restricted` 之一。无作用域的包始终是公共的，尝试使用 `--access restricted` 发布无作用域的包将导致错误。
+
+```sh terminal icon="terminal"
+bun publish --access public
+```
+
+`--access` 也可以在 `package.json` 的 `publishConfig` 字段中设置。
+
+```json package.json icon="file-json"
+{
+  "publishConfig": {
+    "access": "restricted" // [!code ++]
+  }
+}
+```
+
+</ParamField>
+
+<ParamField path="--tag" type="string" default="latest">
+设置正在发布的包版本的标签。默认情况下，标签是 `latest`。包的初始版本除了指定的标签外，总是被赋予 `latest` 标签。
+
+```sh terminal icon="terminal"
+bun publish --tag alpha
+```
+
+`--tag` 也可以在 `package.json` 的 `publishConfig` 字段中设置。
+
+```json package.json icon="file-json"
+{
+  "publishConfig": {
+    "tag": "next" // [!code ++]
+  }
+}
+```
+
+</ParamField>
+
+<ParamField path="--dry-run=<val>" type="string">
+`--dry-run` 标志可用于模拟发布过程而不实际发布包。这对于在不实际发布包的情况下验证发布包的内容很有用。
+
+```sh
+bun publish --dry-run
+```
+
+</ParamField>
+
+<ParamField path="--gzip-level" type="string" default="9">
+  指定打包包时使用的 gzip 压缩级别。仅适用于没有 tarball 路径参数的 `bun publish`
+  值的范围是 `0` 到 `9`（默认值为 `9`）。
+</ParamField>
+
+<ParamField path="--auth-type" type="string" default="web">
+
+如果您的 npm 账户启用了两步验证，`bun publish` 将提示您输入一次性密码。这可以通过浏览器或 CLI 完成。`--auth-type` 标志可用于告诉 npm 注册表您偏好的方法。可能的值是 `web` 和 `legacy`，默认值是 `web`。
+
+```sh terminal icon="terminal"
+bun publish --auth-type legacy
+...
+此操作需要一次性密码。
+输入 OTP: 123456
+...
+```
+
+</ParamField>
+
+<ParamField path="--otp" type="string" default="web">
+
+直接向 CLI 提供一次性密码。如果密码有效，这将在发布前跳过额外的一次性密码提示。示例用法：
+
+```sh terminal icon="terminal"
+bun publish --otp 123456
+```
+
+<Note>
+  `bun publish` 尊重 `NPM_CONFIG_TOKEN` 环境变量，该变量可以在 github actions
+  或自动化工作流中发布时使用。
+</Note>
+
+</ParamField>
+
+### 注册表配置
+
+#### 自定义注册表
+
+<ParamField path="--registry" type="string">
+  指定注册表 URL，覆盖 .npmrc 和 bunfig.toml
+</ParamField>
+
+```bash
+bun publish --registry https://my-private-registry.com
+```
+
+#### SSL 证书
+
+<ParamField path="--ca" type="string">
+  提供证书颁发机构签名证书
+</ParamField>
+
+<ParamField path="--cafile" type="string">
+  证书颁发机构证书文件的路径
+</ParamField>
+
+<CodeGroup>
+```bash 内联证书
+bun publish --ca "-----BEGIN CERTIFICATE-----..."
+```
+
+```bash 证书文件
+bun publish --cafile ./ca-cert.pem
+```
+
+</CodeGroup>
+
+### 发布选项
+
+#### 依赖管理
+
+<ParamField path="-p, --production" type="boolean">
+  不安装 devDependencies
+</ParamField>
+
+<ParamField path="--omit" type="string">
+  排除依赖类型：`dev`、`optional` 或 `peer`
+</ParamField>
+
+<ParamField path="-f, --force" type="boolean">
+  始终从注册表请求最新版本并重新安装所有依赖
+</ParamField>
+
+#### 脚本控制
+
+<ParamField path="--ignore-scripts" type="boolean">
+  在打包和发布期间跳过生命周期脚本
+</ParamField>
+
+<ParamField path="--trust" type="boolean">
+  将包添加到 trustedDependencies 并运行它们的脚本
+</ParamField>
+
+<Note>
+  **生命周期脚本** — 提供预构建的 tarball 时，不会执行生命周期脚本（prepublishOnly、prepack 等）。
+  只有当 Bun 自己打包包时才运行脚本。
+</Note>
+
+#### 文件管理
+
+<ParamField path="--no-save" type="boolean">
+  不更新 package.json 或锁文件
+</ParamField>
+
+<ParamField path="--frozen-lockfile" type="boolean">
+  禁止更改锁文件
+</ParamField>
+
+<ParamField path="--yarn" type="boolean">
+  生成 yarn.lock 文件（与 yarn v1 兼容）
+</ParamField>
+
+#### 性能
+
+<ParamField path="--backend" type="string">
+  平台优化：`clonefile`（默认）、`hardlink`、`symlink` 或 `copyfile`
+</ParamField>
+
+<ParamField path="--network-concurrency" type="number" default="48">
+  最大并发网络请求
+</ParamField>
+
+<ParamField path="--concurrent-scripts" type="number" default="5">
+  最大并发生命周期脚本
+</ParamField>
+
+#### 输出控制
+
+<ParamField path="--silent" type="boolean">
+  抑制所有输出
+</ParamField>
+
+<ParamField path="--verbose" type="boolean">
+  显示详细日志
+</ParamField>
+
+<ParamField path="--no-progress" type="boolean">
+  隐藏进度条
+</ParamField>
+
+<ParamField path="--no-summary" type="boolean">
+  不打印发布摘要
+</ParamField>

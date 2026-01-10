@@ -1,0 +1,1277 @@
+---
+title: "单文件可执行程序"
+description: "使用 Bun 从 TypeScript 或 JavaScript 文件生成独立可执行程序"
+---
+
+Bun 的打包器实现了一个 `--compile` 标志，用于从 TypeScript 或 JavaScript 文件生成独立的二进制文件。
+
+<Tabs>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./cli.ts --compile --outfile mycli
+    ```
+  </Tab>
+  <Tab title="JavaScript">
+    ```ts build.ts icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ["./cli.ts"],
+      compile: {
+        outfile: "./mycli",
+      },
+    });
+    ```
+  </Tab>
+</Tabs>
+
+```ts cli.ts icon="/icons/typescript.svg"
+console.log("Hello world!");
+```
+
+这会将 `cli.ts` 打包成一个可以直接执行的可执行程序：
+
+```bash terminal icon="terminal"
+./mycli
+```
+
+```txt
+Hello world!
+```
+
+所有导入的文件和包都被打包到可执行文件中，还包括一份 Bun 运行时的副本。所有内置的 Bun 和 Node.js API 都得到支持。
+
+---
+
+## 交叉编译到其他平台
+
+`--target` 标志让你将独立的可执行文件编译为不同于运行 `bun build` 机器的操作系统、架构或 Bun 版本。
+
+要构建 Linux x64 (大多数服务器)：
+
+<Tabs>
+  <Tab title="CLI">
+    ```bash icon="terminal" terminal
+    bun build --compile --target=bun-linux-x64 ./index.ts --outfile myapp
+
+    # 要支持2013年以前的CPU，请使用基础版本 (nehalem)
+    bun build --compile --target=bun-linux-x64-baseline ./index.ts --outfile myapp
+
+    # 要明确仅支持2013年及以后的CPU，请使用现代版本 (haswell)
+    # 现代版本更快，但基础版本兼容性更好。
+    bun build --compile --target=bun-linux-x64-modern ./index.ts --outfile myapp
+    ```
+
+  </Tab>
+  <Tab title="JavaScript">
+    ```ts build.ts icon="/icons/typescript.svg"
+    // 标准 Linux x64
+    await Bun.build({
+      entrypoints: ["./index.ts"],
+      compile: {
+        target: "bun-linux-x64",
+        outfile: "./myapp",
+      },
+    });
+
+    // 基础版 (2013年以前的CPU)
+    await Bun.build({
+      entrypoints: ["./index.ts"],
+      compile: {
+        target: "bun-linux-x64-baseline",
+        outfile: "./myapp",
+      },
+    });
+
+    // 现代版 (2013年+的CPU，更快)
+    await Bun.build({
+      entrypoints: ["./index.ts"],
+      compile: {
+        target: "bun-linux-x64-modern",
+        outfile: "./myapp",
+      },
+    });
+    ```
+
+  </Tab>
+</Tabs>
+
+要构建 Linux ARM64 (例如 Graviton 或 Raspberry Pi)：
+
+<Tabs>
+  <Tab title="CLI">
+    ```bash icon="terminal" terminal
+    # 注意：如果没有指定架构，默认架构是 x64。
+    bun build --compile --target=bun-linux-arm64 ./index.ts --outfile myapp
+    ```
+  </Tab>
+  <Tab title="JavaScript">
+    ```ts build.ts icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ["./index.ts"],
+      compile: {
+        target: "bun-linux-arm64",
+        outfile: "./myapp",
+      },
+    });
+    ```
+  </Tab>
+</Tabs>
+
+要构建 Windows x64：
+
+<Tabs>
+  <Tab title="CLI">
+    ```bash icon="terminal" terminal
+    bun build --compile --target=bun-windows-x64 ./path/to/my/app.ts --outfile myapp
+
+    # 要支持2013年以前的CPU，请使用基础版本 (nehalem)
+    bun build --compile --target=bun-windows-x64-baseline ./path/to/my/app.ts --outfile myapp
+
+    # 要明确仅支持2013年及以后的CPU，请使用现代版本 (haswell)
+    bun build --compile --target=bun-windows-x64-modern ./path/to/my/app.ts --outfile myapp
+
+    # 注意：如果没有提供 .exe 扩展名，Bun 会自动为 Windows 可执行文件添加它
+    ```
+
+  </Tab>
+  <Tab title="JavaScript">
+    ```ts build.ts icon="/icons/typescript.svg"
+    // 标准 Windows x64
+    await Bun.build({
+      entrypoints: ["./path/to/my/app.ts"],
+      compile: {
+        target: "bun-windows-x64",
+        outfile: "./myapp", // .exe 自动添加
+      },
+    });
+
+    // 基础版或现代版变体
+    await Bun.build({
+      entrypoints: ["./path/to/my/app.ts"],
+      compile: {
+        target: "bun-windows-x64-baseline",
+        outfile: "./myapp",
+      },
+    });
+    ```
+
+  </Tab>
+</Tabs>
+
+要构建 macOS arm64：
+
+<Tabs>
+  <Tab title="CLI">
+    ```bash icon="terminal" terminal
+    bun build --compile --target=bun-darwin-arm64 ./path/to/my/app.ts --outfile myapp
+    ```
+  </Tab>
+  <Tab title="JavaScript">
+    ```ts build.ts icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ["./path/to/my/app.ts"],
+      compile: {
+        target: "bun-darwin-arm64",
+        outfile: "./myapp",
+      },
+    });
+    ```
+  </Tab>
+</Tabs>
+
+要构建 macOS x64：
+
+<Tabs>
+  <Tab title="CLI">
+    ```bash icon="terminal" terminal
+    bun build --compile --target=bun-darwin-x64 ./path/to/my/app.ts --outfile myapp
+    ```
+  </Tab>
+  <Tab title="JavaScript">
+    ```ts build.ts icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ["./path/to/my/app.ts"],
+      compile: {
+        target: "bun-darwin-x64",
+        outfile: "./myapp",
+      },
+    });
+    ```
+  </Tab>
+</Tabs>
+
+### 支持的目标
+
+`--target` 标志的顺序无关紧要，只要它们用 `-` 分隔即可。
+
+| --target | 操作系统 | 架构 | 现代版 | 基础版 | Libc |
+| --------------------- | ---------------- | ------------ | ------ | -------- | ----- |
+| bun-linux-x64 | Linux | x64 | ✅ | ✅ | glibc |
+| bun-linux-arm64 | Linux | arm64 | ✅ | N/A | glibc |
+| bun-windows-x64 | Windows | x64 | ✅ | ✅ | - |
+| ~~bun-windows-arm64~~ | ~~Windows~~ | ~~arm64~~ | ❌ | ❌ | - |
+| bun-darwin-x64 | macOS | x64 | ✅ | ✅ | - |
+| bun-darwin-arm64 | macOS | arm64 | ✅ | N/A | - |
+| bun-linux-x64-musl | Linux | x64 | ✅ | ✅ | musl |
+| bun-linux-arm64-musl | Linux | arm64 | ✅ | N/A | musl |
+
+<Warning>
+  在 x64 平台上，Bun 使用 SIMD 优化，这需要支持 AVX2 指令的现代 CPU。Bun 的 `-baseline`
+  版本适用于不支持这些优化的旧 CPU。通常，当你安装 Bun 时，我们会自动
+  检测要使用哪个版本，但这在交叉编译时可能更难做到，因为你可能不知道目标 CPU。
+  你通常不需要担心 Darwin x64，但对于 Windows x64 和 Linux x64 则是相关的。如果你或
+  你的用户看到 `"Illegal instruction"` 错误，你可能需要使用基础版本。
+</Warning>
+
+---
+
+## 构建时常量
+
+使用 `--define` 标志将构建时常量注入到你的可执行文件中，例如版本号、构建时间戳或配置值：
+
+<Tabs>
+  <Tab title="CLI">
+    ```bash icon="terminal" terminal
+    bun build --compile --define BUILD_VERSION='"1.2.3"' --define BUILD_TIME='"2024-01-15T10:30:00Z"' src/cli.ts --outfile mycli
+    ```
+  </Tab>
+  <Tab title="JavaScript">
+    ```ts build.ts icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ["./src/cli.ts"],
+      compile: {
+        outfile: "./mycli",
+      },
+      define: {
+        BUILD_VERSION: JSON.stringify("1.2.3"),
+        BUILD_TIME: JSON.stringify("2024-01-15T10:30:00Z"),
+      },
+    });
+    ```
+  </Tab>
+</Tabs>
+
+这些常量直接嵌入到你的编译二进制文件中，提供零运行时开销并启用死代码消除优化。
+
+<Note>
+  有关综合示例和高级模式，请参阅 [构建时常量
+  指南](/guides/runtime/build-time-constants)。
+</Note>
+
+---
+
+## 部署到生产环境
+
+编译的可执行文件减少了内存使用并提高了 Bun 的启动时间。
+
+通常，Bun 在 `import` 和 `require` 时读取和转译 JavaScript 和 TypeScript 文件。这是使 Bun 的很多功能"正常工作"的一部分，但这不是免费的。读取磁盘上的文件、解析文件路径、解析、转译和打印源代码都需要时间和内存。
+
+使用编译的可执行文件，你可以将该成本从运行时转移到构建时。
+
+部署到生产环境时，我们建议以下做法：
+
+<Tabs>
+  <Tab title="CLI">
+    ```bash icon="terminal" terminal
+    bun build --compile --minify --sourcemap ./path/to/my/app.ts --outfile myapp
+    ```
+  </Tab>
+  <Tab title="JavaScript">
+    ```ts build.ts icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ["./path/to/my/app.ts"],
+      compile: {
+        outfile: "./myapp",
+      },
+      minify: true,
+      sourcemap: "linked",
+    });
+    ```
+  </Tab>
+</Tabs>
+
+### 字节码编译
+
+要提升启动速度，请启用字节码编译：
+
+<Tabs>
+  <Tab title="CLI">
+    ```bash icon="terminal" terminal
+    bun build --compile --minify --sourcemap --bytecode ./path/to/my/app.ts --outfile myapp
+    ```
+  </Tab>
+  <Tab title="JavaScript">
+    ```ts build.ts icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ["./path/to/my/app.ts"],
+      compile: {
+        outfile: "./myapp",
+      },
+      minify: true,
+      sourcemap: "linked",
+      bytecode: true,
+    });
+    ```
+  </Tab>
+</Tabs>
+
+使用字节码编译，`tsc` 启动速度提升 2 倍：
+
+<Frame>
+  ![字节码性能比较](https://github.com/user-attachments/assets/dc8913db-01d2-48f8-a8ef-ac4e984f9763)
+</Frame>
+
+字节码编译将大输入文件的解析开销从运行时移到了构建时。你的应用程序启动更快，作为交换，`bun build` 命令会稍慢一些。它不会混淆源代码。
+
+<Warning>
+  **实验性功能：** 字节码编译是一个实验性功能。仅支持 `cjs` 格式（这意味着没有
+  顶层等待）。如果遇到任何问题，请告诉我们！
+</Warning>
+
+### 这些标志的作用是什么？
+
+`--minify` 参数优化转译输出代码的大小。如果你有一个大型应用程序，这可以节省数兆的空间。对于较小的应用程序，它可能仍然稍微提高启动时间。
+
+`--sourcemap` 参数嵌入使用 zstd 压缩的源映射，这样错误和堆栈跟踪会指向它们的原始位置而不是转译后的位置。Bun 会在错误发生时自动解压缩和解析源映射。
+
+`--bytecode` 参数启用字节码编译。每次你在 Bun 中运行 JavaScript 代码时，JavaScriptCore（引擎）都会将你的源代码编译成字节码。我们可以将这个解析工作从运行时移到构建时，为你节省启动时间。
+
+---
+
+## 嵌入运行时参数
+
+**`--compile-exec-argv="args"`** - 嵌入可通过 `process.execArgv` 访问的运行时参数：
+
+<Tabs>
+  <Tab title="CLI">
+    ```bash icon="terminal" terminal
+    bun build --compile --compile-exec-argv="--smol --user-agent=MyBot" ./app.ts --outfile myapp
+    ```
+  </Tab>
+  <Tab title="JavaScript">
+    ```ts build.ts icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ["./app.ts"],
+      compile: {
+        execArgv: ["--smol", "--user-agent=MyBot"],
+        outfile: "./myapp",
+      },
+    });
+    ```
+  </Tab>
+</Tabs>
+
+```ts app.ts icon="/icons/typescript.svg"
+// 在编译的应用程序中
+console.log(process.execArgv); // ["--smol", "--user-agent=MyBot"]
+```
+
+---
+
+## 自动配置加载
+
+独立可执行文件可以自动从运行目录加载配置文件。默认情况下：
+
+- **`tsconfig.json`** 和 **`package.json`** 加载是 **禁用的** — 这些通常只在开发时需要，打包器在编译时已经使用它们
+- **`.env`** 和 **`bunfig.toml`** 加载是 **启用的** — 这些通常包含可能因部署而异的运行时配置
+
+<Note>
+  在未来的 Bun 版本中，`.env` 和 `bunfig.toml` 可能也会默认禁用，以获得更确定性的行为。
+</Note>
+
+### 在运行时启用配置加载
+
+如果您的可执行文件需要在运行时读取 `tsconfig.json` 或 `package.json`，您可以使用新的 CLI 标志来选择加入：
+
+```bash icon="terminal" terminal
+# 启用 tsconfig.json 运行时加载
+bun build --compile --compile-autoload-tsconfig ./app.ts --outfile myapp
+
+# 启用 package.json 运行时加载
+bun build --compile --compile-autoload-package-json ./app.ts --outfile myapp
+
+# 同时启用
+bun build --compile --compile-autoload-tsconfig --compile-autoload-package-json ./app.ts --outfile myapp
+```
+
+### 在运行时禁用配置加载
+
+要为确定性执行禁用 `.env` 或 `bunfig.toml` 加载：
+
+<Tabs>
+  <Tab title="CLI">
+    ```bash icon="terminal" terminal
+    # 禁用 .env 加载
+    bun build --compile --no-compile-autoload-dotenv ./app.ts --outfile myapp
+
+    # 禁用 bunfig.toml 加载
+    bun build --compile --no-compile-autoload-bunfig ./app.ts --outfile myapp
+
+    # 禁用所有配置加载
+    bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig ./app.ts --outfile myapp
+    ```
+
+  </Tab>
+  <Tab title="JavaScript">
+    ```ts build.ts icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ["./app.ts"],
+      compile: {
+        // tsconfig.json 和 package.json 默认被禁用
+        autoloadTsconfig: true, // 启用 tsconfig.json 加载
+        autoloadPackageJson: true, // 启用 package.json 加载
+
+        // .env 和 bunfig.toml 默认启用
+        autoloadDotenv: false, // 禁用 .env 加载
+        autoloadBunfig: false, // 禁用 bunfig.toml 加载
+        outfile: "./myapp",
+      },
+    });
+    ```
+
+  </Tab>
+</Tabs>
+
+---
+
+## 作为 Bun CLI 运行
+
+<Note>Bun v1.2.16 新增</Note>
+
+通过设置 `BUN_BE_BUN=1` 环境变量，您可以将独立可执行文件作为 `bun` CLI 本身运行。当设置此变量时，可执行文件将忽略其打包的入口点，而是公开 Bun CLI 的所有功能。
+
+例如，考虑从一个简单脚本编译的可执行文件：
+
+```bash icon="terminal" terminal
+echo "console.log(\"你不应该看到这个\");" > such-bun.js
+bun build --compile ./such-bun.js
+```
+
+```txt
+[3ms] bundle 1 modules
+[89ms] compile such-bun
+```
+
+通常，使用参数运行 `./such-bun` 将执行脚本。
+
+```bash icon="terminal" terminal
+# 可执行文件默认运行其自己的入口点
+./such-bun install
+```
+
+```txt
+you shouldn't see this
+```
+
+但是，使用 `BUN_BE_BUN=1` 环境变量，它就像 `bun` 二进制文件一样工作：
+
+```bash icon="terminal" terminal
+# 使用环境变量，可执行文件表现得像 `bun` CLI
+BUN_BE_BUN=1 ./such-bun install
+```
+
+```txt
+bun install v1.2.16-canary.1 (1d1db811)
+Checked 63 installs across 64 packages (no changes) [5.00ms]
+```
+
+这对于构建基于 Bun 的 CLI 工具非常有用，这些工具可能需要安装包、捆绑依赖项、运行不同或本地文件等，而无需下载单独的二进制文件或安装 bun。
+
+---
+
+## 全栈可执行文件
+
+<Note>Bun v1.2.17 新增</Note>
+
+Bun 的 `--compile` 标志可以创建包含服务器和客户端代码的独立可执行文件，使其非常适合全栈应用程序。当您在服务器代码中导入 HTML 文件时，Bun 会自动捆绑所有前端资源（JavaScript、CSS 等）并将其嵌入到可执行文件中。当 Bun 在服务器上看到 HTML 导入时，它会启动前端构建过程以捆绑 JavaScript、CSS 和其他资源。
+
+<CodeGroup>
+
+```ts server.ts icon="/icons/typescript.svg"
+import { serve } from "bun";
+import index from "./index.html";
+
+const server = serve({
+  routes: {
+    "/": index,
+    "/api/hello": { GET: () => Response.json({ message: "Hello from API" }) },
+  },
+});
+
+console.log(`Server running at http://localhost:${server.port}`);
+```
+
+```html index.html icon="file-code"
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>My App</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <h1>Hello World</h1>
+    <script src="./app.ts"></script>
+  </body>
+</html>
+```
+
+```ts app.ts icon="file-code"
+console.log("Hello from the client!");
+```
+
+```css styles.css icon="file-code"
+body {
+  background-color: #f0f0f0;
+}
+```
+
+</CodeGroup>
+
+将此构建为单个可执行文件：
+
+<Tabs>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build --compile ./server.ts --outfile myapp
+    ```
+  </Tab>
+  <Tab title="JavaScript">
+    ```ts build.ts icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ["./server.ts"],
+      compile: {
+        outfile: "./myapp",
+      },
+    });
+    ```
+  </Tab>
+</Tabs>
+
+这将创建一个自包含的二进制文件，其中包括：
+
+- 您的服务器代码
+- Bun 运行时
+- 所有前端资源（HTML、CSS、JavaScript）
+- 您的服务器使用的所有 npm 包
+
+结果是一个可以部署到任何地方的单个文件，无需安装 Node.js、Bun 或任何依赖项。只需运行：
+
+```bash terminal icon="terminal"
+./myapp
+```
+
+Bun 自动处理使用正确的 MIME 类型和缓存头提供前端资源。HTML 导入被替换为一个清单对象，`Bun.serve` 使用它来高效地提供预捆绑的资源。
+
+有关使用 Bun 构建全栈应用程序的更多详情，请参阅 [全栈指南](/bundler/fullstack)。
+
+---
+
+## Worker
+
+要在独立可执行文件中使用 worker，请将 worker 的入口点添加到构建中：
+
+<Tabs>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build --compile ./index.ts ./my-worker.ts --outfile myapp
+    ```
+  </Tab>
+  <Tab title="JavaScript">
+    ```ts build.ts icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ["./index.ts", "./my-worker.ts"],
+      compile: {
+        outfile: "./myapp",
+      },
+    });
+    ```
+  </Tab>
+</Tabs>
+
+然后，在您的代码中引用 worker：
+
+```ts index.ts icon="/icons/typescript.svg"
+console.log("Hello from Bun!");
+
+// 以下任一方式都可以：
+new Worker("./my-worker.ts");
+new Worker(new URL("./my-worker.ts", import.meta.url));
+new Worker(new URL("./my-worker.ts", import.meta.url).href);
+```
+
+当您向独立可执行文件添加多个入口点时，它们将被分别捆绑到可执行文件中。
+
+未来，我们可能会自动检测 [new Worker(path)] 中静态已知路径的使用，然后将这些捆绑到可执行文件中，但现在，您需要像上面的示例一样手动将它添加到 shell 命令中。
+
+如果您使用相对路径引用独立可执行文件中未包含的文件，它将尝试从进程当前工作目录相对路径加载该路径（如果不存在则报错）。
+
+---
+
+## SQLite
+
+您可以使用 `bun:sqlite` 导入配合 `bun build --compile`。
+
+默认情况下，数据库相对于进程的当前工作目录解析。
+
+```ts index.ts icon="/icons/typescript.svg"
+import db from "./my.db" with { type: "sqlite" };
+
+console.log(db.query("select * from users LIMIT 1").get());
+```
+
+这意味着如果可执行文件位于 `/usr/bin/hello`，用户的终端位于 `/home/me/Desktop`，它将查找 `/home/me/Desktop/my.db`。
+
+```bash terminal icon="terminal"
+cd /home/me/Desktop
+./hello
+```
+
+---
+
+## 嵌入资源和文件
+
+独立可执行文件支持直接将文件嵌入到二进制文件中。这可以让您分发一个包含图像、JSON 配置、模板或应用程序所需的任何其他资源的单一可执行文件。
+
+### 工作原理
+
+使用 [import attribute]（`with { type: "file" }`）来嵌入文件：
+
+```ts index.ts icon="/icons/typescript.svg"
+import icon from "./icon.png" with { type: "file" };
+
+console.log(icon);
+// 开发过程中："./icon.png"
+// 编译后："$bunfs/icon-a1b2c3d4.png"（内部路径）
+```
+
+导入返回一个指向嵌入文件的**路径字符串**。在构建时，Bun：
+
+1. 读取文件内容
+2. 将数据嵌入到可执行文件中
+3. 用内部路径（以 `$bunfs/` 为前缀）替换导入
+
+然后您可以使用 `Bun.file()` 或 Node.js `fs` API 读取此嵌入文件。
+
+### 使用 Bun.file() 读取嵌入文件
+
+`Bun.file()` 是读取嵌入文件的推荐方式：
+
+```ts index.ts icon="/icons/typescript.svg"
+import icon from "./icon.png" with { type: "file" };
+import { file } from "bun";
+
+// 以不同类型获取文件内容
+const bytes = await file(icon).arrayBuffer(); // ArrayBuffer
+const text = await file(icon).text(); // string（用于文本文件）
+const blob = file(icon); // Blob
+
+// 在响应中流式传输文件
+export default {
+  fetch(req) {
+    return new Response(file(icon), {
+      headers: { "Content-Type": "image/png" },
+    });
+  },
+};
+```
+
+### 使用 Node.js fs 读取嵌入文件
+
+嵌入文件与 Node.js 文件系统 API 无缝协作：
+
+```ts index.ts icon="/icons/typescript.svg"
+import icon from "./icon.png" with { type: "file" };
+import config from "./config.json" with { type: "file" };
+import { readFileSync, promises as fs } from "node:fs";
+
+// 同步读取
+const iconBuffer = readFileSync(icon);
+
+// 异步读取
+const configData = await fs.readFile(config, "utf-8");
+const parsed = JSON.parse(configData);
+
+// 检查文件统计信息
+const stats = await fs.stat(icon);
+console.log(`图标大小: ${stats.size} 字节`);
+```
+
+### 实际示例
+
+#### 嵌入 JSON 配置文件
+
+```ts index.ts icon="/icons/typescript.svg"
+import configPath from "./default-config.json" with { type: "file" };
+import { file } from "bun";
+
+// 加载嵌入的默认配置
+const defaultConfig = await file(configPath).json();
+
+// 如果存在则合并用户配置
+const userConfig = await file("./user-config.json")
+  .json()
+  .catch(() => ({}));
+const config = { ...defaultConfig, ...userConfig };
+```
+
+#### 在 HTTP 服务器中提供静态资源
+
+在 `Bun.serve()` 中使用 `static` 路由实现高效的静态文件服务：
+
+```ts server.ts icon="/icons/typescript.svg"
+import favicon from "./favicon.ico" with { type: "file" };
+import logo from "./logo.png" with { type: "file" };
+import styles from "./styles.css" with { type: "file" };
+import { file, serve } from "bun";
+
+serve({
+  static: {
+    "/favicon.ico": file(favicon),
+    "/logo.png": file(logo),
+    "/styles.css": file(styles),
+  },
+  fetch(req) {
+    return new Response("未找到", { status: 404 });
+  },
+});
+```
+
+Bun 自动为静态路由处理 Content-Type 头和缓存。
+
+#### 嵌入模板
+
+```ts index.ts icon="/icons/typescript.svg"
+import templatePath from "./email-template.html" with { type: "file" };
+import { file } from "bun";
+
+async function sendWelcomeEmail(user: { name: string; email: string }) {
+  const template = await file(templatePath).text();
+  const html = template.replace("{{name}}", user.name).replace("{{email}}", user.email);
+
+  // 使用渲染后的模板发送邮件...
+}
+```
+
+#### 嵌入二进制文件
+
+```ts index.ts icon="/icons/typescript.svg"
+import wasmPath from "./processor.wasm" with { type: "file" };
+import fontPath from "./font.ttf" with { type: "file" };
+import { file } from "bun";
+
+// 加载 WebAssembly 模块
+const wasmBytes = await file(wasmPath).arrayBuffer();
+const wasmModule = await WebAssembly.instantiate(wasmBytes);
+
+// 读取二进制字体数据
+const fontData = await file(fontPath).bytes();
+```
+
+### 嵌入 SQLite 数据库
+
+如果您的应用程序希望将 SQLite 数据库嵌入到编译的可执行文件中，请在导入属性中将 `type` 设置为 `"sqlite"`，并将 `embed` 属性设置为 `"true"`。
+
+数据库文件必须已经存在于磁盘上。然后在代码中导入它：
+
+```ts index.ts icon="/icons/typescript.svg"
+import myEmbeddedDb from "./my.db" with { type: "sqlite", embed: "true" };
+
+console.log(myEmbeddedDb.query("select * from users LIMIT 1").get());
+```
+
+最后，将其编译为独立可执行文件：
+
+```bash terminal icon="terminal"
+bun build --compile ./index.ts --outfile mycli
+```
+
+<Note>
+  运行 `bun build --compile` 时，数据库文件必须存在于磁盘上。`embed: "true"` 属性告诉
+  打包器将数据库内容包含在编译的可执行文件中。使用 `bun run` 正常运行时，
+  数据库文件从磁盘加载，就像常规 SQLite 导入一样。
+</Note>
+
+在编译的可执行文件中，嵌入的数据库是可读写的，但所有更改在可执行文件退出时都会丢失（因为它存储在内存中）。
+
+### 嵌入 N-API 插件
+
+您可以将 `.node` 文件嵌入到可执行文件中。
+
+```ts index.ts icon="/icons/typescript.svg"
+const addon = require("./addon.node");
+
+console.log(addon.hello());
+```
+
+不幸的是，如果您使用 `@mapbox/node-pre-gyp` 或其他类似工具，您需要确保 `.node` 文件被直接引用，否则它不会正确打包。
+
+### 嵌入目录
+
+要使用 `bun build --compile` 嵌入一个目录，请在构建中包含文件模式：
+
+<Tabs>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build --compile ./index.ts ./public/**/*.png
+    ```
+  </Tab>
+  <Tab title="JavaScript">
+    ```ts build.ts icon="/icons/typescript.svg"
+    import { Glob } from "bun";
+
+    // 展开通配符模式为文件列表
+    const glob = new Glob("./public/**/*.png");
+    const pngFiles = Array.from(glob.scanSync("."));
+
+    await Bun.build({
+      entrypoints: ["./index.ts", ...pngFiles],
+      compile: {
+        outfile: "./myapp",
+      },
+    });
+    ```
+
+  </Tab>
+</Tabs>
+
+然后，您可以在代码中引用这些文件：
+
+```ts index.ts icon="/icons/typescript.svg"
+import icon from "./public/assets/icon.png" with { type: "file" };
+import { file } from "bun";
+
+export default {
+  fetch(req) {
+    // 嵌入的文件可以从 Response 对象流式传输
+    return new Response(file(icon));
+  },
+};
+```
+
+这实际上是一种变通方法，我们期望在未来用更直接的 API 来改进这一点。
+
+### 列出嵌入文件
+
+`Bun.embeddedFiles` 让您可以将所有嵌入文件作为 `Blob` 对象访问：
+
+```ts index.ts icon="/icons/typescript.svg"
+import "./icon.png" with { type: "file" };
+import "./data.json" with { type: "file" };
+import "./template.html" with { type: "file" };
+import { embeddedFiles } from "bun";
+
+// 列出所有嵌入文件
+for (const blob of embeddedFiles) {
+  console.log(`${blob.name} - ${blob.size} 字节`);
+}
+// 输出：
+//   icon-a1b2c3d4.png - 4096 字节
+//   data-e5f6g7h8.json - 256 字节
+//   template-i9j0k1l2.html - 1024 字节
+```
+
+`Bun.embeddedFiles` 中的每一项都是具有 `name` 属性的 `Blob`：
+
+```ts
+embeddedFiles: ReadonlyArray<Blob>;
+```
+
+这对于使用 `static` 路由动态提供所有嵌入资产很有用：
+
+```ts server.ts icon="/icons/typescript.svg"
+import "./public/favicon.ico" with { type: "file" };
+import "./public/logo.png" with { type: "file" };
+import "./public/styles.css" with { type: "file" };
+import { embeddedFiles, serve } from "bun";
+
+// 从所有嵌入文件构建静态路由
+const staticRoutes: Record<string, Blob> = {};
+for (const blob of embeddedFiles) {
+  // 从文件名中移除哈希："icon-a1b2c3d4.png" -> "icon.png"
+  const name = blob.name.replace(/-[a-f0-9]+\./, ".");
+  staticRoutes[`/${name}`] = blob;
+}
+
+serve({
+  static: staticRoutes,
+  fetch(req) {
+    return new Response("未找到", { status: 404 });
+  },
+});
+```
+
+<Note>
+  `Bun.embeddedFiles` 排除了捆绑的源代码（`.ts`、`.js` 等），以帮助保护应用程序的源代码。
+</Note>
+
+#### 内容哈希
+
+默认情况下，嵌入文件的名称附加了内容哈希。这对于您想要从 URL 或 CDN 服务文件且希望减少缓存失效问题的情况很有用。但有时，这可能出乎意料，您可能更想要原始名称：
+
+要禁用内容哈希，请配置资产命名：
+
+<Tabs>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build --compile --asset-naming="[name].[ext]" ./index.ts
+    ```
+  </Tab>
+  <Tab title="JavaScript">
+    ```ts build.ts icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ["./index.ts"],
+      compile: {
+        outfile: "./myapp",
+      },
+      naming: {
+        asset: "[name].[ext]",
+      },
+    });
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## 压缩
+
+要减小可执行文件的大小，请启用压缩：
+
+<Tabs>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build --compile --minify ./index.ts --outfile myapp
+    ```
+  </Tab>
+  <Tab title="JavaScript">
+    ```ts build.ts icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ["./index.ts"],
+      compile: {
+        outfile: "./myapp",
+      },
+      minify: true, // 启用所有压缩
+    });
+
+    // 或细粒度控制：
+    await Bun.build({
+      entrypoints: ["./index.ts"],
+      compile: {
+        outfile: "./myapp",
+      },
+      minify: {
+        whitespace: true,
+        syntax: true,
+        identifiers: true,
+      },
+    });
+    ```
+
+  </Tab>
+</Tabs>
+
+这使用 Bun 的压缩器来减小代码大小。不过总体而言，Bun 的二进制文件仍然太大，我们需要让它变得更小。
+
+---
+
+## Windows 特定标志
+
+在 Windows 上编译独立可执行文件时，有一些特定于平台的选项来定制生成的 `.exe` 文件的元数据：
+
+<Tabs>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    # 自定义图标
+    bun build --compile --windows-icon=path/to/icon.ico ./app.ts --outfile myapp
+
+    # 隐藏控制台窗口（用于 GUI 应用）
+    bun build --compile --windows-hide-console ./app.ts --outfile myapp
+    ```
+
+  </Tab>
+  <Tab title="JavaScript">
+    ```ts build.ts icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ["./app.ts"],
+      compile: {
+        outfile: "./myapp",
+        windows: {
+          icon: "./path/to/icon.ico",
+          hideConsole: true,
+          // 其他 Windows 元数据：
+          title: "我的应用程序",
+          publisher: "我的公司",
+          version: "1.0.0",
+          description: "一个独立的 Windows 应用程序",
+          copyright: "版权所有 2024",
+        },
+      },
+    });
+    ```
+  </Tab>
+</Tabs>
+
+可用的 Windows 选项：
+
+- `icon` - 可执行文件图标的 `.ico` 文件路径
+- `hideConsole` - 禁用后台终端（用于 GUI 应用）
+- `title` - 文件属性中的应用程序标题
+- `publisher` - 文件属性中的发布者名称
+- `version` - 文件属性中的版本字符串
+- `description` - 文件属性中的描述
+- `copyright` - 文件属性中的版权通知
+
+<Warning>这些标志目前不能在交叉编译时使用，因为它们依赖于 Windows API。</Warning>
+
+---
+
+## macOS 上的代码签名
+
+要对 macOS 上的独立可执行文件进行代码签名（修复 Gatekeeper 警告），请使用 `codesign` 命令。
+
+```bash terminal icon="terminal"
+codesign --deep --force -vvvv --sign "XXXXXXXXXX" ./myapp
+```
+
+我们建议包含一个带有 JIT 权限的 `entitlements.plist` 文件。
+
+```xml icon="xml" title="info.plist"
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <key>com.apple.security.cs.disable-executable-page-protection</key>
+    <true/>
+    <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+    <true/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+</dict>
+</plist>
+```
+
+要使用 JIT 支持进行代码签名，请将 `--entitlements` 标志传递给 `codesign`。
+
+```bash terminal icon="terminal"
+codesign --deep --force -vvvv --sign "XXXXXXXXXX" --entitlements entitlements.plist ./myapp
+```
+
+代码签名后，验证可执行文件：
+
+```bash terminal icon="terminal"
+codesign -vvv --verify ./myapp
+./myapp: valid on disk
+./myapp: satisfies its Designated Requirement
+```
+
+<Warning>代码签名支持需要 Bun v1.2.4 或更高版本。</Warning>
+
+---
+
+## 代码拆分
+
+独立可执行文件支持代码拆分。使用 `--compile` 和 `--splitting` 创建一个在运行时加载代码拆分块的可执行文件。
+
+<Tabs>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build --compile --splitting ./src/entry.ts --outdir ./build
+    ```
+  </Tab>
+  <Tab title="JavaScript">
+    ```ts build.ts icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ["./src/entry.ts"],
+      compile: true,
+      splitting: true,
+      outdir: "./build",
+    });
+    ```
+  </Tab>
+</Tabs>
+
+<CodeGroup>
+
+```ts src/entry.ts icon="/icons/typescript.svg"
+console.log("入口点已加载");
+const lazy = await import("./lazy.ts");
+lazy.hello();
+```
+
+```ts src/lazy.ts icon="/icons/typescript.svg"
+export function hello() {
+  console.log("延迟模块已加载");
+}
+```
+
+</CodeGroup>
+
+```bash terminal icon="terminal"
+./build/entry
+```
+
+```txt
+入口点已加载
+延迟模块已加载
+```
+
+---
+
+## 使用插件
+
+插件可与独立可执行文件一起工作，允许您在构建过程中转换文件：
+
+```ts build.ts icon="/icons/typescript.svg"
+import type { BunPlugin } from "bun";
+
+const envPlugin: BunPlugin = {
+  name: "env-loader",
+  setup(build) {
+    build.onLoad({ filter: /\.env\.json$/ }, async args => {
+      // 将 .env.json 文件转换为验证的配置对象
+      const env = await Bun.file(args.path).json();
+
+      return {
+        contents: `export default ${JSON.stringify(env)};`,
+        loader: "js",
+      };
+    });
+  },
+};
+
+await Bun.build({
+  entrypoints: ["./cli.ts"],
+  compile: {
+    outfile: "./mycli",
+  },
+  plugins: [envPlugin],
+});
+```
+
+使用案例示例 - 在构建时嵌入环境配置：
+
+```ts cli.ts icon="/icons/typescript.svg"
+import config from "./config.env.json";
+
+console.log(`正在 ${config.environment} 模式下运行`);
+console.log(`API 端点: ${config.apiUrl}`);
+```
+
+插件可以执行任何转换：编译 YAML/TOML 配置、内联 SQL 查询、生成类型安全的 API 客户端或预处理模板。有关更多详情，请参阅 [插件文档](/bundler/plugins)。
+
+---
+
+## 不支持的 CLI 参数
+
+目前，`--compile` 标志一次只能接受单个入口点，不支持以下标志：
+
+- `--outdir` — 请改用 `outfile`（除非与 `--splitting` 一起使用）。
+- `--public-path`
+- `--target=node` 或 `--target=browser`
+- `--no-bundle` - 我们始终将所有内容捆绑到可执行文件中。
+
+---
+
+## API 参考
+
+`Bun.build()` 中的 `compile` 选项接受三种形式：
+
+```ts title="types" icon="/icons/typescript.svg"
+interface BuildConfig {
+  entrypoints: string[];
+  compile: boolean | Bun.Build.Target | CompileBuildOptions;
+  // ... 其他 BuildConfig 选项（minify, sourcemap, define, plugins 等）
+}
+
+interface CompileBuildOptions {
+  target?: Bun.Build.Target; // 交叉编译目标
+  outfile?: string; // 输出可执行文件路径
+  execArgv?: string[]; // 运行时参数（process.execArgv）
+  autoloadTsconfig?: boolean; // 加载 tsconfig.json（默认：false）
+  autoloadPackageJson?: boolean; // 加载 package.json（默认：false）
+  autoloadDotenv?: boolean; // 加载 .env 文件（默认：true）
+  autoloadBunfig?: boolean; // 加载 bunfig.toml（默认：true）
+  windows?: {
+    icon?: string; // .ico 文件路径
+    hideConsole?: boolean; // 隐藏控制台窗口
+    title?: string; // 应用程序标题
+    publisher?: string; // 发布者名称
+    version?: string; // 版本字符串
+    description?: string; // 描述
+    copyright?: string; // 版权声明
+  };
+}
+```
+
+使用形式：
+
+```ts icon="/icons/typescript.svg"
+// 简单布尔值 - 为当前平台编译（使用入口点名称作为输出）
+compile: true
+
+// 目标字符串 - 交叉编译（使用入口点名称作为输出）
+compile: "bun-linux-x64"
+
+// 完整选项对象 - 指定输出文件和其他选项
+compile: {
+  target: "bun-linux-x64",
+  outfile: "./myapp",
+}
+```
+
+### 支持的目标
+
+```ts title="Bun.Build.Target" icon="/icons/typescript.svg"
+type Target =
+  | "bun-darwin-x64"
+  | "bun-darwin-x64-baseline"
+  | "bun-darwin-arm64"
+  | "bun-linux-x64"
+  | "bun-linux-x64-baseline"
+  | "bun-linux-x64-modern"
+  | "bun-linux-arm64"
+  | "bun-linux-x64-musl"
+  | "bun-linux-arm64-musl"
+  | "bun-windows-x64"
+  | "bun-windows-x64-baseline"
+  | "bun-windows-x64-modern";
+```
+
+### 完整示例
+
+```ts build.ts icon="/icons/typescript.svg"
+import type { BunPlugin } from "bun";
+
+const myPlugin: BunPlugin = {
+  name: "my-plugin",
+  setup(build) {
+    // 插件实现
+  },
+};
+
+const result = await Bun.build({
+  entrypoints: ["./src/cli.ts"],
+  compile: {
+    target: "bun-linux-x64",
+    outfile: "./dist/mycli",
+    execArgv: ["--smol"],
+    autoloadDotenv: false,
+    autoloadBunfig: false,
+  },
+  minify: true,
+  sourcemap: "linked",
+  bytecode: true,
+  define: {
+    "process.env.NODE_ENV": JSON.stringify("production"),
+    VERSION: JSON.stringify("1.0.0"),
+  },
+  plugins: [myPlugin],
+});
+
+if (result.success) {
+  console.log("构建成功:", result.outputs[0].path);
+}
+```

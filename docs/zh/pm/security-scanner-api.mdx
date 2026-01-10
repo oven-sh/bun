@@ -1,0 +1,95 @@
+---
+title: 安全扫描器 API
+description:
+---
+
+Bun 的包管理器可以在安装前扫描包的安全漏洞，帮助保护你的应用程序免受供应链攻击和已知漏洞的影响。
+
+---
+
+## 快速开始
+
+在你的 [bunfig.toml] 中配置安全扫描器：
+
+```toml bunfig.toml icon="settings"
+[install.security]
+scanner = "@acme/bun-security-scanner"
+```
+
+配置后，Bun 将：
+
+- 在安装前扫描所有包
+- 显示安全警告和公告
+- 如果发现严重漏洞则取消安装
+- 自动为安全禁用自动安装
+
+---
+
+## 工作原理
+
+安全扫描器在 `bun install`、`bun add` 和其他包操作期间分析包。它们可以检测：
+
+- 已知安全漏洞 (CVEs)
+- 恶意包
+- 许可合规性问题
+- ...等等！
+
+### 安全级别
+
+扫描器以两个严重级别报告问题：
+
+- **`fatal`** - 安装立即停止，以非零代码退出
+- **`warn`** - 在交互式终端中，提示继续；在 CI 中，立即退出
+
+---
+
+## 使用预构建扫描器
+
+许多安全公司发布 Bun 安全扫描器作为 npm 包，你可以安装并立即使用。
+
+### 安装扫描器
+
+从 npm 安装安全扫描器：
+
+```bash terminal icon="terminal"
+bun add -d @acme/bun-security-scanner
+```
+
+<Note>
+  请查阅你的安全扫描器文档以获取其具体包名和安装说明。大多数
+  扫描器将使用 `bun add` 安装。
+</Note>
+
+### 配置扫描器
+
+安装后，在你的 [bunfig.toml] 中配置它：
+
+```toml bunfig.toml icon="settings"
+[install.security]
+scanner = "@acme/bun-security-scanner"
+```
+
+### 企业配置
+
+一些企业扫描器可能通过环境变量支持身份验证和/或配置：
+
+```bash terminal icon="terminal"
+# 这可能在 ~/.bashrc 中，例如
+export SECURITY_API_KEY="your-api-key"
+
+# 扫描器现在将自动使用这些凭据
+bun install
+```
+
+请查阅你的安全扫描器文档，了解要设置哪些环境变量以及是否需要任何额外配置。
+
+### 编写你自己的扫描器
+
+有关带测试和 CI 设置的完整示例，请参见官方模板：
+[github.com/oven-sh/security-scanner-template](https://github.com/oven-sh/security-scanner-template)
+
+## 相关
+
+- [配置 (bunfig.toml)](/runtime/bunfig#install-security-scanner)
+- [包管理器](/installation)
+- [安全扫描器模板](https://github.com/oven-sh/security-scanner-template)

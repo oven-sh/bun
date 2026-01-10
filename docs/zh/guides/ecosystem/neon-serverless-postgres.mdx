@@ -1,0 +1,60 @@
+---
+title: 在 Bun 中使用 Neon 的无服务器 Postgres
+sidebarTitle: Neon 无服务器 Postgres 与 Bun
+mode: center
+---
+
+[Neon](https://neon.tech/) 是一个完全托管的无服务器 Postgres。Neon 分离了计算和存储，以提供现代开发人员功能，如自动缩放、分支、无限存储等。
+
+---
+
+通过创建项目目录，使用 `bun init` 初始化目录，并将 [Neon 无服务器驱动程序](https://github.com/neondatabase/serverless/) 作为项目依赖项添加来开始。
+
+```sh terminal icon="terminal"
+mkdir bun-neon-postgres
+cd bun-neon-postgres
+bun init -y
+bun add @neondatabase/serverless
+```
+
+---
+
+创建一个 [.env.local] 文件并添加您的 [Neon Postgres 连接字符串](https://neon.tech/docs/connect/connect-from-any-app)。
+
+```ini .env.local icon="settings"
+DATABASE_URL=postgresql://usertitle:password@ep-adj-noun-guid.us-east-1.aws.neon.tech/neondb?sslmode=require
+```
+
+---
+
+将以下代码粘贴到项目的 [index.ts] 文件中。
+
+```ts index.ts icon="/icons/typescript.svg"
+import { neon } from "@neondatabase/serverless";
+
+// Bun 自动从 .env.local 加载 DATABASE_URL
+// 详情请参阅：https://bun.com/docs/runtime/environment-variables
+const sql = neon(process.env.DATABASE_URL);
+
+const rows = await sql`SELECT version()`;
+
+console.log(rows[0].version);
+```
+
+---
+
+使用 `bun ./index.ts` 启动程序。Postgres 版本应该被打印到控制台。
+
+```sh terminal icon="terminal"
+bun ./index.ts
+```
+
+```txt
+PostgreSQL 16.2 on x86_64-pc-linux-gnu, compiled by gcc (Debian 10.2.1-6) 10.2.1 20210110, 64-bit
+```
+
+---
+
+此示例使用了 Neon 无服务器驱动程序的基于 HTTP 的 SQL 功能。Neon 的无服务器驱动程序还公开了 `Client` 和 `Pool` 构造函数，以启用会话、交互式事务和 node-postgres 兼容性。
+
+有关无服务器驱动程序的完整概述，请参阅 [Neon 的文档](https://neon.tech/docs/serverless/serverless-driver)。

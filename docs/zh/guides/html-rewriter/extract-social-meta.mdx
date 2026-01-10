@@ -1,0 +1,97 @@
+---
+title: 提取社交分享图片和开放图谱标签
+sidebarTitle: OpenGraph 标签
+mode: center
+---
+
+## 提取社交分享图片和开放图谱标签
+
+Bun 的 [HTMLRewriter](/runtime/html-rewriter) API 可用于高效地从 HTML 内容中提取社交分享图片和开放图谱元数据。这对于构建链接预览功能、社交媒体卡片或网络爬虫特别有用。我们可以使用 HTMLRewriter 来匹配 CSS 选择器到我们想要处理的 HTML 元素、文本和属性。
+
+```ts extract-social-meta.ts icon="/icons/typescript.svg"
+interface SocialMetadata {
+  title?: string;
+  description?: string;
+  image?: string;
+  url?: string;
+  siteName?: string;
+  type?: string;
+}
+
+async function extractSocialMetadata(url: string): Promise<SocialMetadata> {
+  const metadata: SocialMetadata = {};
+  const response = await fetch(url);
+
+  const rewriter = new HTMLRewriter()
+    // 提取开放图谱元标签
+    .on('meta[property^="og:"]', {
+      element(el) {
+        const property = el.getAttribute("property");
+        const content = el.getAttribute("content");
+        if (property && content) {
+          // 将"og:image"转换为"image"等
+          const key = property.replace("og:", "") as keyof SocialMetadata;
+          metadata[key] = content;
+        }
+      },
+    })
+    // 提取 Twitter 卡片元标签作为备选
+    .on('meta[name^="twitter:"]', {
+      element(el) {
+        const name = el.getAttribute("name");
+        const content = el.getAttribute("content");
+        if (name && content) {
+          const key = name.replace("twitter:", "") as keyof SocialMetadata;
+          // 仅在没有 OG 数据时才使用 Twitter 卡片数据
+          if (!metadata[key]) {
+            metadata[key] = content;
+          }
+        }
+      },
+    })
+    // 备选常规元标签
+    .on('meta[name="description"]', {
+      element(el) {
+        const content = el.getAttribute("content");
+        if (content && !metadata.description) {
+          metadata.description = content;
+        }
+      },
+    })
+    // 备选标题标签
+    .on("title", {
+      text(text) {
+        if (!metadata.title) {
+          metadata.title = text.text;
+        }
+      },
+    });
+
+  // 处理响应
+  await rewriter.transform(response).blob();
+
+  // 将相对图片 URL 转换为绝对 URL
+  if (metadata.image && !metadata.image.startsWith("http")) {
+    try {
+      metadata.image = new URL(metadata.image, url).href;
+    } catch {
+      // 如果解析失败则保留原始 URL
+    }
+  }
+
+  return metadata;
+}
+```
+
+```ts 示例用法 icon="/icons/typescript.svg"
+// 示例用法
+const metadata = await extractSocialMetadata("https://bun.com");
+console.log(metadata);
+// {
+//   title: "Bun — 一个快速的一体化 JavaScript 运行时",
+//   description: "打包、转译、安装和运行 JavaScript & TypeScript 项目 — 全都在 Bun 中。Bun 是一个快速的一体化 JavaScript 运行时和工具包，旨在提高速度，完全配备打包器、测试运行器和与 Node.js 兼容的包管理器。",
+//   image: "https://bun.com/share.jpg",
+//   type: "website",
+//   ...
+// }
+```

@@ -1,0 +1,645 @@
+---
+title: 服务器
+description: 使用 `Bun.serve` 在Bun中启动高性能HTTP服务器
+---
+
+## 基本设置
+
+```ts title="index.ts" icon="/icons/typescript.svg"
+const server = Bun.serve({
+  // `routes` 需要 Bun v1.2.3+
+  routes: {
+    // 静态路由
+    "/api/status": new Response("OK"),
+
+    // 动态路由
+    "/users/:id": req => {
+      return new Response(`Hello User ${req.params.id}!`);
+    },
+
+    // 按HTTP方法处理
+    "/api/posts": {
+      GET: () => new Response("列出文章"),
+      POST: async req => {
+        const body = await req.json();
+        return Response.json({ created: true, ...body });
+      },
+    },
+
+    // 通配符路由，匹配所有以 "/api/" 开头且未被其他路由匹配的路径
+    "/api/*": Response.json({ message: "未找到" }, { status: 404 }),
+
+    // 从 /blog/hello 重定向到 /blog/hello/world
+    "/blog/hello": Response.redirect("/blog/hello/world"),
+
+    // 通过懒加载方式提供文件服务
+    "/favicon.ico": Bun.file("./favicon.ico"),
+  },
+
+  // (可选) 未匹配路由的回退处理：
+  // 如果Bun版本 < 1.2.3 则必需
+  fetch(req) {
+    return new Response("未找到", { status: 404 });
+  },
+});
+
+console.log(`服务器运行在 ${server.url}`);
+```
+
+---
+
+## HTML 导入
+
+Bun支持直接将HTML文件导入到服务器代码中，从而实现包含服务端和客户端代码的全栈应用程序。HTML导入有两种模式：
+
+**开发模式 (`bun --hot`):** 资源在运行时按需打包，支持热模块替换(HMR)，提供快速迭代的开发体验。当您更改前端代码时，浏览器会自动更新而无需完全重新加载页面。
+
+**生产环境 (`bun build`):** 使用 `bun build --target=bun` 构建时，`import index from "./index.html"` 语句解析为一个预构建的清单对象，其中包含所有已打包的客户端资产。`Bun.serve` 消费这个清单来提供优化的资产，零运行时打包开销。这非常适合部署到生产环境。
+
+```ts
+import myReactSinglePageApp from "./index.html";
+
+Bun.serve({
+  routes: {
+    "/": myReactSinglePageApp,
+  },
+});
+```
+
+HTML导入不仅提供HTML —— 它是一个功能齐全的前端打包器、转译器和工具包，使用Bun的[打包器](/bundler)、JavaScript转译器和CSS解析器构建。您可以使用它来构建带有React、TypeScript、Tailwind CSS等的全功能前端。
+
+有关使用HTML导入构建全栈应用程序的完整指南，包括详细示例和最佳实践，请参见 [/docs/bundler/fullstack](/bundler/fullstack)。
+
+---
+
+## 配置
+
+### 更改 `port` 和 `hostname`
+
+要配置服务器监听的端口和主机名，请在选项对象中设置 `port` 和 `hostname`。
+
+```ts
+Bun.serve({
+  port: 8080, // 默认为 $BUN_PORT, $PORT, $NODE_PORT 否则为 3000 // [!code ++]
+  hostname: "mydomain.com", // 默认为 "0.0.0.0" // [!code ++]
+  fetch(req) {
+    return new Response("404!");
+  },
+});
+```
+
+要随机选择一个可用端口，将 `port` 设置为 `0`。
+
+```ts
+const server = Bun.serve({
+  port: 0, // 随机端口 // [!code ++]
+  fetch(req) {
+    return new Response("404!");
+  },
+});
+
+// server.port 是随机选择的端口
+console.log(server.port);
+```
+
+您可以通过访问服务器对象上的 `port` 属性或访问 `url` 属性来查看所选端口。
+
+```ts
+console.log(server.port); // 3000
+console.log(server.url); // http://localhost:3000
+```
+
+### 配置默认端口
+
+Bun支持多个选项和环境变量来配置默认端口。当未设置 `port` 选项时，将使用默认端口。
+
+- `--port` CLI 参数
+
+```sh
+bun --port=4002 server.ts
+```
+
+- `BUN_PORT` 环境变量
+
+```sh
+BUN_PORT=4002 bun server.ts
+```
+
+- `PORT` 环境变量
+
+```sh terminal icon="terminal"
+PORT=4002 bun server.ts
+```
+
+- `NODE_PORT` 环境变量
+
+```sh terminal icon="terminal"
+NODE_PORT=4002 bun server.ts
+```
+
+---
+
+## Unix域套接字
+
+要在 [unix域套接字](https://en.wikipedia.org/wiki/Unix_domain_socket) 上监听，请使用套接字路径传递 `unix` 选项。
+
+```ts
+Bun.serve({
+  unix: "/tmp/my-socket.sock", // 套接字路径
+  fetch(req) {
+    return new Response(`404!`);
+  },
+});
+```
+
+### 抽象命名空间套接字
+
+Bun支持Linux抽象命名空间套接字。要使用抽象命名空间套接字，请在 `unix` 路径前加上空字节。
+
+```ts
+Bun.serve({
+  unix: "\0my-abstract-socket", // 抽象命名空间套接字
+  fetch(req) {
+    return new Response(`404!`);
+  },
+});
+```
+
+与unix域套接字不同，抽象命名空间套接字不绑定到文件系统，当最后一个对套接字的引用关闭时会自动删除。
+
+---
+
+## idleTimeout
+
+要配置空闲超时，请在 Bun.serve 中设置 `idleTimeout` 字段。
+
+```ts
+Bun.serve({
+  // 10 秒：
+  idleTimeout: 10,
+
+  fetch(req) {
+    return new Response("Bun!");
+  },
+});
+```
+
+这是允许连接处于空闲状态的最大时间，直到服务器关闭它。如果未发送或接收任何数据，则连接处于空闲状态。
+
+---
+
+## export default 语法
+
+到目前为止，本页的示例都使用了显式的 `Bun.serve` API。Bun还支持另一种语法。
+
+```ts server.ts
+import type { Serve } from "bun";
+
+export default {
+  fetch(req) {
+    return new Response("Bun!");
+  },
+} satisfies Serve.Options<undefined>;
+```
+
+类型参数 `<undefined>` 表示WebSocket数据 — 如果您通过 `server.upgrade(req, { data: ... })` 添加带有自定义数据的 `websocket` 处理程序，请将 `undefined` 替换为您的数据类型。
+
+与其将服务器选项传递给 `Bun.serve`，不如使用 `export default`。这个文件可以直接执行；当Bun看到一个包含 `fetch` 处理程序的 `default` 导出的文件时，它会在后台将其传递给 `Bun.serve`。
+
+---
+
+## 热路由重载
+
+使用 `server.reload()` 更新路由而无需重启服务器：
+
+```ts
+const server = Bun.serve({
+  routes: {
+    "/api/version": () => Response.json({ version: "1.0.0" }),
+  },
+});
+
+// 零停机部署新路由
+server.reload({
+  routes: {
+    "/api/version": () => Response.json({ version: "2.0.0" }),
+  },
+});
+```
+
+---
+
+## 服务器生命周期方法
+
+### `server.stop()`
+
+要停止服务器接受新连接：
+
+```ts
+const server = Bun.serve({
+  fetch(req) {
+    return new Response("Hello!");
+  },
+});
+
+// 优雅地停止服务器（等待正在进行的请求完成）
+await server.stop();
+
+// 强制停止并关闭所有活动连接
+await server.stop(true);
+```
+
+默认情况下，`stop()` 允许正在进行的请求和WebSocket连接完成。传入 `true` 立即终止所有连接。
+
+### `server.ref()` 和 `server.unref()`
+
+控制服务器是否使Bun进程保持活动状态：
+
+```ts
+// 如果服务器是唯一运行的服务，则不保持进程活动
+server.unref();
+
+// 恢复默认行为 - 保持进程活动
+server.ref();
+```
+
+### `server.reload()`
+
+在不重启的情况下更新服务器的处理程序：
+
+```ts
+const server = Bun.serve({
+  routes: {
+    "/api/version": Response.json({ version: "v1" }),
+  },
+  fetch(req) {
+    return new Response("v1");
+  },
+});
+
+// 更新到新处理程序
+server.reload({
+  routes: {
+    "/api/version": Response.json({ version: "v2" }),
+  },
+  fetch(req) {
+    return new Response("v2");
+  },
+});
+```
+
+这对于开发和热重载很有用。只有 `fetch`、`error` 和 `routes` 可以被更新。
+
+---
+
+## 每个请求的控制
+
+### `server.timeout(Request, seconds)`
+
+为单个请求设置自定义空闲超时：
+
+```ts
+const server = Bun.serve({
+  async fetch(req, server) {
+    // 为此请求设置60秒超时
+    server.timeout(req, 60);
+
+    // 如果他们在60秒内没有发送正文，请求将被中止
+    await req.text();
+
+    return new Response("完成!");
+  },
+});
+```
+
+传入 `0` 禁用请求的超时。
+
+### `server.requestIP(Request)`
+
+获取客户端IP和端口信息：
+
+```ts
+const server = Bun.serve({
+  fetch(req, server) {
+    const address = server.requestIP(req);
+    if (address) {
+      return new Response(`客户端IP: ${address.address}, 端口: ${address.port}`);
+    }
+    return new Response("未知客户端");
+  },
+});
+```
+
+对于已关闭的请求或Unix域套接字返回 `null`。
+
+---
+
+## 服务器指标
+
+### `server.pendingRequests` 和 `server.pendingWebSockets`
+
+使用内置计数器监控服务器活动：
+
+```ts
+const server = Bun.serve({
+  fetch(req, server) {
+    return new Response(
+      `活动请求: ${server.pendingRequests}\n` + `活动WebSockets: ${server.pendingWebSockets}`,
+    );
+  },
+});
+```
+
+### `server.subscriberCount(topic)`
+
+获取WebSocket主题的订阅者数量：
+
+```ts
+const server = Bun.serve({
+  fetch(req, server) {
+    const chatUsers = server.subscriberCount("chat");
+    return new Response(`${chatUsers} 用户在聊天室中`);
+  },
+  websocket: {
+    message(ws) {
+      ws.subscribe("chat");
+    },
+  },
+});
+```
+
+---
+
+## 基准测试
+
+以下是Bun和Node.js实现的简单HTTP服务器，该服务器对每个传入的请求响应"Bun!"。
+
+```ts Bun
+Bun.serve({
+  fetch(req: Request) {
+    return new Response("Bun!");
+  },
+  port: 3000,
+});
+```
+
+```ts
+require("http")
+  .createServer((req, res) => res.end("Bun!"))
+  .listen(8080);
+```
+
+`Bun.serve` 服务器每秒可以处理的请求数大约是Linux上Node.js的2.5倍。
+
+| 运行时 | 每秒请求数 |
+| ------- | ------------------- |
+| Node 16 | ~64,000 |
+| Bun | ~160,000 |
+
+<Frame>
+  ![image](https://user-images.githubusercontent.com/709451/162389032-fc302444-9d03-46be-ba87-c12bd8ce89a0.png)
+</Frame>
+
+---
+
+## 实际示例：REST API
+
+这是一个使用Bun路由器的基本数据库支持的REST API，不依赖任何第三方库：
+
+<CodeGroup>
+
+```ts server.ts expandable icon="file-code"
+import type { Post } from "./types.ts";
+import { Database } from "bun:sqlite";
+
+const db = new Database("posts.db");
+db.exec(`
+  CREATE TABLE IF NOT EXISTS posts (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  )
+`);
+
+Bun.serve({
+  routes: {
+    // 列出文章
+    "/api/posts": {
+      GET: () => {
+        const posts = db.query("SELECT * FROM posts").all();
+        return Response.json(posts);
+      },
+
+      // 创建文章
+      POST: async req => {
+        const post: Omit<Post, "id" | "created_at"> = await req.json();
+        const id = crypto.randomUUID();
+
+        db.query(
+          `INSERT INTO posts (id, title, content, created_at)
+           VALUES (?, ?, ?, ?)`,
+        ).run(id, post.title, post.content, new Date().toISOString());
+
+        return Response.json({ id, ...post }, { status: 201 });
+      },
+    },
+
+    // 按ID获取文章
+    "/api/posts/:id": req => {
+      const post = db.query("SELECT * FROM posts WHERE id = ?").get(req.params.id);
+
+      if (!post) {
+        return new Response("未找到", { status: 404 });
+      }
+
+      return Response.json(post);
+    },
+  },
+
+  error(error) {
+    console.error(error);
+    return new Response("内部服务器错误", { status: 500 });
+  },
+});
+```
+
+```ts types.ts icon="/icons/typescript.svg"
+export interface Post {
+  id: string;
+  title: string;
+  content: string;
+  created_at: string;
+}
+```
+
+</CodeGroup>
+
+---
+
+## 参考
+
+```ts 展开 查看TypeScript定义
+interface Server extends Disposable {
+  /**
+   * 停止服务器接受新连接。
+   * @param closeActiveConnections 如果为true，立即终止所有连接
+   * @returns 服务器停止时解析的Promise
+   */
+  stop(closeActiveConnections?: boolean): Promise<void>;
+
+  /**
+   * 在不重启服务器的情况下更新处理程序。
+   * 只能更新fetch和error处理程序。
+   */
+  reload(options: Serve): void;
+
+  /**
+   * 向正在运行的服务器发出请求。
+   * 对于测试或内部路由很有用。
+   */
+  fetch(request: Request | string): Response | Promise<Response>;
+
+  /**
+   * 将HTTP请求升级为WebSocket连接。
+   * @returns 如果升级成功返回true，否则返回false
+   */
+  upgrade<T = undefined>(
+    request: Request,
+    options?: {
+      headers?: Bun.HeadersInit;
+      data?: T;
+    },
+  ): boolean;
+
+  /**
+   * 向订阅某个主题的所有WebSocket客户端发布消息。
+   * @returns 发送的字节数，如果丢弃则为0，如果应用反压则为-1
+   */
+  publish(
+    topic: string,
+    data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
+    compress?: boolean,
+  ): ServerWebSocketSendStatus;
+
+  /**
+   * 获取订阅某个主题的WebSocket客户端数量。
+   */
+  subscriberCount(topic: string): number;
+
+  /**
+   * 获取客户端IP地址和端口。
+   * @returns 对于已关闭的请求或Unix套接字返回null
+   */
+  requestIP(request: Request): SocketAddress | null;
+
+  /**
+   * 为请求设置自定义空闲超时。
+   * @param seconds 超时时间（秒），0表示禁用
+   */
+  timeout(request: Request, seconds: number): void;
+
+  /**
+   * 服务器运行时保持进程活动。
+   */
+  ref(): void;
+
+  /**
+   * 如果服务器是唯一运行的服务，则允许进程退出。
+   */
+  unref(): void;
+
+  /** 正在处理的HTTP请求数 */
+  readonly pendingRequests: number;
+
+  /** 活跃的WebSocket连接数 */
+  readonly pendingWebSockets: number;
+
+  /** 包含协议、主机名和端口的服务器URL */
+  readonly url: URL;
+
+  /** 服务器监听的端口 */
+  readonly port: number;
+
+  /** 服务器绑定的主机名 */
+  readonly hostname: string;
+
+  /** 服务器是否处于开发模式 */
+  readonly development: boolean;
+
+  /** 服务器实例标识符 */
+  readonly id: string;
+}
+
+interface WebSocketHandler<T = undefined> {
+  /** 最大WebSocket消息大小（字节） */
+  maxPayloadLength?: number;
+
+  /** 应用反压之前排队消息的字节数 */
+  backpressureLimit?: number;
+
+  /** 达到反压限制时是否关闭连接 */
+  closeOnBackpressureLimit?: boolean;
+
+  /** 反压缓解时调用 */
+  drain?(ws: ServerWebSocket<T>): void | Promise<void>;
+
+  /** 空闲超时秒数 */
+  idleTimeout?: number;
+
+  /** 启用每消息deflate压缩 */
+  perMessageDeflate?:
+    | boolean
+    | {
+        compress?: WebSocketCompressor | boolean;
+        decompress?: WebSocketCompressor | boolean;
+      };
+
+  /** 发送ping帧以保持连接活动 */
+  sendPings?: boolean;
+
+  /** 服务器是否接收自己的发布消息 */
+  publishToSelf?: boolean;
+
+  /** 连接打开时调用 */
+  open?(ws: ServerWebSocket<T>): void | Promise<void>;
+
+  /** 收到消息时调用 */
+  message(ws: ServerWebSocket<T>, message: string | Buffer): void | Promise<void>;
+
+  /** 连接关闭时调用 */
+  close?(ws: ServerWebSocket<T>, code: number, reason: string): void | Promise<void>;
+
+  /** 收到ping帧时调用 */
+  ping?(ws: ServerWebSocket<T>, data: Buffer): void | Promise<void>;
+
+  /** 收到pong帧时调用 */
+  pong?(ws: ServerWebSocket<T>, data: Buffer): void | Promise<void>;
+}
+
+interface TLSOptions {
+  /** 证书颁发机构链 */
+  ca?: string | Buffer | BunFile | Array<string | Buffer | BunFile>;
+
+  /** 服务器证书 */
+  cert?: string | Buffer | BunFile | Array<string | Buffer | BunFile>;
+
+  /** DH参数文件路径 */
+  dhParamsFile?: string;
+
+  /** 私钥 */
+  key?: string | Buffer | BunFile | Array<string | Buffer | BunFile>;
+
+  /** 减少TLS内存使用 */
+  lowMemoryMode?: boolean;
+
+  /** 私钥密码 */
+  passphrase?: string;
+
+  /** OpenSSL选项标志 */
+  secureOptions?: number;
+
+  /** SNI的服务器名称 */
+  serverName?: string;
+}
+```

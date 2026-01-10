@@ -1,0 +1,45 @@
+---
+title: 添加对等依赖
+sidebarTitle: 添加对等依赖
+mode: center
+---
+
+要将 npm 包添加为对等依赖，请使用 `--peer` 标志。
+
+```sh terminal icon="terminal"
+bun add @types/bun --peer
+```
+
+---
+
+这会将包添加到 [package.json] 中的 `peerDependencies`。
+
+```json package.json icon="file-json"
+{
+  "peerDependencies": {
+    "@types/bun": "^1.3.3" // [!code ++]
+  }
+}
+```
+
+---
+
+运行 `bun install` 默认会安装对等依赖，除非在 `peerDependenciesMeta` 中标记为可选。
+
+{/* prettier-ignore */}
+```json package.json icon="file-json"
+{
+  "peerDependencies": {
+    "@types/bun": "^1.3.3"
+  },
+  "peerDependenciesMeta": {
+    "@types/bun": { // [!code ++]
+      "optional": true // [!code ++]
+    } // [!code ++]
+  }
+}
+```
+
+---
+
+请参阅 [文档 > 包管理器](/pm/cli/install) 以获取 Bun 包管理器的完整文档。

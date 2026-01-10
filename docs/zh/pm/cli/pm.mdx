@@ -1,0 +1,323 @@
+---
+title: "bun pm"
+description: "包管理器实用工具"
+---
+
+`bun pm` 命令组提供了一组用于使用 Bun 的包管理器的实用工具。
+
+## pack
+
+要创建当前工作区的 tarball：
+
+```bash terminal icon="terminal"
+bun pm pack
+```
+
+此命令创建一个包含所有将发布到 npm 的文件的 `.tgz` 文件，遵循与 `npm pack` 相同的规则。
+
+## 示例
+
+基本用法：
+
+```bash terminal icon="terminal"
+bun pm pack
+# 在当前目录创建 my-package-1.0.0.tgz
+```
+
+脚本的静默模式：
+
+```bash terminal icon="terminal"
+TARBALL=$(bun pm pack --quiet)
+echo "Created: $TARBALL"
+```
+
+```txt
+Created: my-package-1.0.0.tgz
+```
+
+自定义目标：
+
+```bash terminal icon="terminal"
+bun pm pack --destination ./dist
+# 将 tarball 保存在 ./dist/ 目录中
+```
+
+## 选项
+
+- `--dry-run`: 执行除将 tarball 写入磁盘之外的所有任务。显示将包含的内容。
+- `--destination <dir>`: 指定保存 tarball 的目录。
+- `--filename <name>`: 指定要保存的 tarball 的确切文件名。
+- `--ignore-scripts`: 跳过运行 pre/postpack 和 prepare 脚本。
+- `--gzip-level <0-9>`: 设置 gzip 的自定义压缩级别，范围从 0 到 9（默认为 9）。
+- `--quiet`: 仅输出 tarball 文件名，抑制详细输出。适合脚本和自动化。
+
+> **注意：** `--filename` 和 `--destination` 不能同时使用。
+
+## 输出模式
+
+**默认输出：**
+
+```bash terminal icon="terminal"
+bun pm pack
+```
+
+```txt
+bun pack v1.2.19
+
+packed 131B package.json
+packed 40B index.js
+
+my-package-1.0.0.tgz
+
+Total files: 2
+Shasum: f2451d6eb1e818f500a791d9aace80b394258a90
+Unpacked size: 171B
+Packed size: 249B
+```
+
+**静默输出：**
+
+```bash terminal icon="terminal"
+bun pm pack --quiet
+```
+
+```txt
+my-package-1.0.0.tgz
+```
+
+`--quiet` 标志特别适用于自动化工作流，其中你需要捕获生成的 tarball 文件名以进行进一步处理。
+
+## bin
+
+要打印本地项目 `bin` 目录的路径：
+
+```bash terminal icon="terminal"
+bun pm bin
+```
+
+```txt
+/path/to/current/project/node_modules/.bin
+```
+
+要打印全局 `bin` 目录的路径：
+
+```bash terminal icon="terminal"
+bun pm bin -g
+```
+
+```txt
+<$HOME>/.bun/bin
+```
+
+## ls
+
+要打印当前项目中安装的依赖及其解析版本的列表，不包括它们的依赖。
+
+```bash terminal icon="terminal"
+bun pm ls
+# 或
+bun list
+```
+
+```txt
+/path/to/project node_modules (135)
+├── eslint@8.38.0
+├── react@18.2.0
+├── react-dom@18.2.0
+├── typescript@5.0.4
+└── zod@3.21.4
+```
+
+要打印所有已安装的依赖，包括 n 阶依赖。
+
+```bash terminal icon="terminal"
+bun pm ls --all
+# 或
+bun list --all
+```
+
+```txt
+/path/to/project node_modules (135)
+├── @eslint-community/eslint-utils@4.4.0
+├── @eslint-community/regexpp@4.5.0
+├── @eslint/eslintrc@2.0.2
+├── @eslint/js@8.38.0
+├── @nodelib/fs.scandir@2.1.5
+├── @nodelib/fs.stat@2.0.5
+├── @nodelib/fs.walk@1.2.8
+├── acorn@8.8.2
+├── acorn-jsx@5.3.2
+├── ajv@6.12.6
+├── ansi-regex@5.0.1
+├── ...
+```
+
+## whoami
+
+打印你的 npm 用户名。需要你已登录（`bunx npm login`）且凭据在 [bunfig.toml] 或 [.npmrc] 中：
+
+```bash terminal icon="terminal"
+bun pm whoami
+```
+
+## hash
+
+要生成并打印当前锁定文件的哈希：
+
+```bash terminal icon="terminal"
+bun pm hash
+```
+
+要打印用于对锁定文件进行哈希的字符串：
+
+```bash terminal icon="terminal"
+bun pm hash-string
+```
+
+要打印当前锁定文件中存储的哈希：
+
+```bash terminal icon="terminal"
+bun pm hash-print
+```
+
+## cache
+
+要打印 Bun 的全局模块缓存路径：
+
+```bash terminal icon="terminal"
+bun pm cache
+```
+
+要清除 Bun 的全局模块缓存：
+
+```bash terminal icon="terminal"
+bun pm cache rm
+```
+
+## migrate
+
+要迁移另一个包管理器的锁定文件而不安装任何内容：
+
+```bash terminal icon="terminal"
+bun pm migrate
+```
+
+## untrusted
+
+要打印当前具有脚本的不受信任的依赖：
+
+```bash terminal icon="terminal"
+bun pm untrusted
+```
+
+```txt
+./node_modules/@biomejs/biome @1.8.3
+ » [postinstall]: node scripts/postinstall.js
+
+这些依赖在安装期间其生命周期脚本被阻止。
+```
+
+## trust
+
+要为不受信任的依赖运行脚本并添加到 [trustedDependencies]：
+
+```bash terminal icon="terminal"
+bun pm trust <names>
+```
+
+`trust` 命令的选项：
+
+- `--all`: 信任所有不受信任的依赖。
+
+## default-trusted
+
+要打印默认受信任的依赖列表：
+
+```bash terminal icon="terminal"
+bun pm default-trusted
+```
+
+在 GitHub 上查看当前列表[这里](https://github.com/oven-sh/bun/blob/main/src/install/default-trusted-dependencies.txt)
+
+## version
+
+要显示当前包版本和帮助：
+
+```bash terminal icon="terminal"
+bun pm version
+```
+
+```txt
+bun pm version v1.3.3 (ca7428e9)
+Current package version: v1.0.0
+
+Increment:
+  patch      1.0.0 → 1.0.1
+  minor      1.0.0 → 1.1.0
+  major      1.0.0 → 2.0.0
+  prerelease 1.0.0 → 1.0.1-0
+  prepatch   1.0.0 → 1.0.1-0
+  preminor   1.0.0 → 1.1.0-0
+  premajor   1.0.0 → 2.0.0-0
+  from-git   Use version from latest git tag
+  1.2.3      Set specific version
+
+Options:
+  --no-git-tag-version Skip git operations
+  --allow-same-version Prevents throwing error if version is the same
+  --message=<val>, -m  Custom commit message, use %s for version substitution
+  --preid=<val>        Prerelease identifier (i.e beta → 1.0.1-beta.0)
+  --force, -f          Bypass dirty git history check
+
+Examples:
+  bun pm version patch
+  bun pm version 1.2.3 --no-git-tag-version
+  bun pm version prerelease --preid beta --message "Release beta: %s"
+```
+
+要增加 [package.json] 中的版本：
+
+```bash terminal icon="terminal"
+bun pm version patch
+```
+
+```txt
+v1.0.1
+```
+
+支持 `patch`、`minor`、`major`、`premajor`、`preminor`、`prepatch`、`prerelease`、`from-git` 或特定版本如 `1.2.3`。默认情况下创建 git 提交和标签，除非使用了 `--no-git-tag-version` 来跳过。
+
+## pkg
+
+使用 get、set、delete 和 fix 操作管理 [package.json] 数据。
+
+所有命令都支持点和括号表示法：
+
+```bash terminal icon="terminal"
+scripts.build              # 点表示法
+contributors[0]            # 数组访问
+workspaces.0               # 点与数字索引
+scripts[test:watch]        # 括号用于特殊字符
+```
+
+示例：
+
+```bash terminal icon="terminal"
+# get
+bun pm pkg get name                               # 单个属性
+bun pm pkg get name version                       # 多个属性
+bun pm pkg get                                    # 整个 package.json
+bun pm pkg get scripts.build                      # 嵌套属性
+
+# set
+bun pm pkg set name="my-package"                  # 简单属性
+bun pm pkg set scripts.test="jest" version=2.0.0  # 多个属性
+bun pm pkg set {"private":"true"} --json          # JSON 值与 --json 标志
+
+# delete
+bun pm pkg delete description                     # 单个属性
+bun pm pkg delete scripts.test contributors[0]    # 多个/嵌套
+
+# fix
+bun pm pkg fix                                    # 自动修复常见问题
+```

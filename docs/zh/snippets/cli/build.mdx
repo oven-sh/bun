@@ -1,0 +1,195 @@
+## CLI 用法
+
+```bash
+bun build <entry points>
+```
+
+### 通用配置
+
+<ParamField path="--production" type="boolean">
+  设置 <code>NODE_ENV=production</code> 并启用压缩
+</ParamField>
+
+<ParamField path="--bytecode" type="boolean">
+  编译时使用字节码缓存
+</ParamField>
+
+<ParamField path="--target" type="string" default="browser">
+  捆绑包的目标执行环境。以下之一：<code>browser</code>、<code>bun</code> 或 <code>node</code>
+</ParamField>
+
+<ParamField path="--conditions" type="string">
+  传递自定义解析条件
+</ParamField>
+
+<ParamField path="--env" type="string" default="disable">
+  将环境变量内联到捆绑包中作为 <code>process.env.${name}</code>。要内联匹配前缀的变量，请使用类似 <code>FOO_PUBLIC_*</code> 的通配符
+</ParamField>
+
+### 输出和文件处理
+
+<ParamField path="--outdir" type="string" default="dist">
+  输出目录（用于构建多个入口点时）
+</ParamField>
+
+<ParamField path="--outfile" type="string">
+  将输出写入特定文件
+</ParamField>
+
+<ParamField path="--sourcemap" type="string" default="none">
+  生成源映射。以下之一：<code>linked</code>、<code>inline</code>、<code>external</code> 或 <code>none</code>
+</ParamField>
+
+<ParamField path="--banner" type="string">
+  向输出添加横幅（例如 <code>"use client"</code> 用于 React 服务器组件）
+</ParamField>
+
+<ParamField path="--footer" type="string">
+  向输出添加页脚（例如 <code>// built with bun!</code>）
+</ParamField>
+
+<ParamField path="--format" type="string" default="esm">
+  输出捆绑包的模块格式。以下之一：<code>esm</code>、<code>cjs</code> 或 <code>iife</code>
+</ParamField>
+
+### 文件命名
+
+<ParamField path="--entry-naming" type="string" default="[dir]/[name].[ext]">
+  自定义入口点文件名
+</ParamField>
+
+<ParamField path="--chunk-naming" type="string" default="[name]-[hash].[ext]">
+  自定义代码块文件名
+</ParamField>
+
+<ParamField path="--asset-naming" type="string" default="[name]-[hash].[ext]">
+  自定义资源文件名
+</ParamField>
+
+### 捆绑选项
+
+<ParamField path="--root" type="string">
+  捆绑多个入口点时使用的根目录
+</ParamField>
+
+<ParamField path="--splitting" type="boolean">
+  为共享模块启用代码分割
+</ParamField>
+
+<ParamField path="--public-path" type="string">
+  要添加到捆绑代码中导入路径的前缀
+</ParamField>
+
+<ParamField path="--external" type="string">
+  从捆绑包中排除模块（支持通配符）。别名：<code>-e</code>
+</ParamField>
+
+<ParamField path="--packages" type="string" default="bundle">
+  如何处理依赖项：<code>external</code> 或 <code>bundle</code>
+</ParamField>
+
+<ParamField path="--no-bundle" type="boolean">
+  仅转译 — 不捆绑
+</ParamField>
+
+<ParamField path="--css-chunking" type="boolean">
+  将 CSS 文件组合在一起以减少重复（仅当多个入口点导入 CSS 时）
+</ParamField>
+
+### 压缩和优化
+
+<ParamField path="--emit-dce-annotations" type="boolean" default="true">
+  重新发出死代码消除注释。使用 <code>--minify-whitespace</code> 时禁用
+</ParamField>
+
+<ParamField path="--minify" type="boolean">
+  启用所有压缩选项
+</ParamField>
+
+<ParamField path="--minify-syntax" type="boolean">
+  压缩语法和内联常量
+</ParamField>
+
+<ParamField path="--minify-whitespace" type="boolean">
+  压缩空白
+</ParamField>
+
+<ParamField path="--minify-identifiers" type="boolean">
+  压缩变量和函数标识符
+</ParamField>
+
+<ParamField path="--keep-names" type="boolean">
+  压缩时保留原始函数和类名
+</ParamField>
+
+### 开发功能
+
+<ParamField path="--watch" type="boolean">
+  文件更改时自动重建
+</ParamField>
+
+<ParamField path="--no-clear-screen" type="boolean">
+  使用 <code>--watch</code> 重建时不清除终端
+</ParamField>
+
+<ParamField path="--react-fast-refresh" type="boolean">
+  启用 React Fast Refresh 转换（用于开发测试）
+</ParamField>
+
+### 独立可执行文件
+
+<ParamField path="--compile" type="boolean">
+  生成包含捆绑包的独立 Bun 可执行文件。隐含 <code>--production</code>
+</ParamField>
+
+<ParamField path="--compile-exec-argv" type="string">
+  在独立可执行文件的 <code>execArgv</code> 前添加参数
+</ParamField>
+
+### Windows 可执行文件详情
+
+<ParamField path="--windows-hide-console" type="boolean">
+  运行编译的 Windows 可执行文件时防止控制台窗口打开
+</ParamField>
+
+<ParamField path="--windows-icon" type="string">
+  为 Windows 可执行文件设置图标
+</ParamField>
+
+<ParamField path="--windows-title" type="string">
+  设置 Windows 可执行产品名称
+</ParamField>
+
+<ParamField path="--windows-publisher" type="string">
+  设置 Windows 可执行公司名称
+</ParamField>
+
+<ParamField path="--windows-version" type="string">
+  设置 Windows 可执行版本（例如 <code>1.2.3.4</code>）
+</ParamField>
+
+<ParamField path="--windows-description" type="string">
+  设置 Windows 可执行描述
+</ParamField>
+
+<ParamField path="--windows-copyright" type="string">
+  设置 Windows 可执行版权通知
+</ParamField>
+
+### 实验性和应用构建
+
+<ParamField path="--app" type="boolean">
+  <b>（实验性）</b> 使用 Bun Bake 构建生产用的 Web 应用
+</ParamField>
+
+<ParamField path="--server-components" type="boolean">
+  <b>（实验性）</b> 启用 React 服务器组件
+</ParamField>
+
+<ParamField path="--debug-dump-server-files" type="boolean">
+  设置 <code>--app</code> 时，即使对于静态构建也将所有服务器文件转储到磁盘
+</ParamField>
+
+<ParamField path="--debug-no-minify" type="boolean">
+  设置 <code>--app</code> 时，禁用所有压缩
+</ParamField>

@@ -1,0 +1,23 @@
+---
+title: 写入标准输出
+sidebarTitle: 写入标准输出
+mode: center
+---
+
+`console.log` 函数写入 `stdout`。它会在打印的数据末尾自动添加换行符。
+
+```ts
+console.log("Lorem ipsum");
+```
+
+---
+
+对于更高级的用例，Bun 通过 `Bun.stdout` 属性将 `stdout` 暴露为一个 [BunFile]。这可以用作 [`Bun.write()`](/runtime/file-io#writing-files-bun-write) 的目标。
+
+```ts
+await Bun.write(Bun.stdout, "Lorem ipsum");
+```
+
+---
+
+请参阅 [文档 > API > 文件 I/O](/runtime/file-io#writing-files-bun-write) 了解 `Bun.write()` 的完整文档。

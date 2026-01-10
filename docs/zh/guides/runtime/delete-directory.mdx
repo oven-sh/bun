@@ -1,0 +1,39 @@
+---
+title: 删除目录
+sidebarTitle: 删除目录
+mode: center
+---
+
+要递归删除目录及其所有内容，请使用 `node:fs/promises` 中的 `rm`。这类似于在 JavaScript 中运行 `rm -rf`。
+
+```ts delete-directory.ts icon="/icons/typescript.svg"
+import { rm } from "node:fs/promises";
+
+// 删除目录及其所有内容
+await rm("path/to/directory", { recursive: true, force: true });
+```
+
+---
+
+这些选项配置删除行为：
+
+- `recursive: true` - 删除子目录及其内容
+- `force: true` - 如果目录不存在时不抛出错误
+
+您也可以在没有 `force` 的情况下使用它以确保目录存在：
+
+```ts delete-directory.ts icon="/icons/typescript.svg"
+try {
+  await rm("path/to/directory", { recursive: true });
+} catch (error) {
+  if (error.code === "ENOENT") {
+    console.log("Directory doesn't exist");
+  } else {
+    throw error;
+  }
+}
+```
+
+---
+
+请参阅 [文档 > API > 文件系统](/runtime/file-io) 了解更多的文件系统操作。

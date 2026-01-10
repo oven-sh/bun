@@ -1,0 +1,14 @@
+---
+title: 将 Node.js Readable 转换为字符串
+sidebarTitle: Readable 到字符串
+mode: center
+---
+
+要将 Node.js `Readable` 流在 Bun 中转换为字符串，您可以创建一个新的 [`Response`](https://developer.mozilla.org/en-US/docs/Web/API/Response) 对象，将流作为主体，然后使用 [`response.text()`](https://developer.mozilla.org/en-US/docs/Web/API/Response/text) 将流读入字符串。
+
+```ts
+import { Readable } from "stream";
+const stream = Readable.from([Buffer.from("Hello, world!")]);
+const text = await new Response(stream).text();
+console.log(text); // "Hello, world!"
+```

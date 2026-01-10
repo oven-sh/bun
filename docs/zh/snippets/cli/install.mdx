@@ -1,0 +1,173 @@
+## CLI 用法
+
+```sh terminal icon="terminal"
+bun install <name>@<version>
+```
+
+### 通用配置
+
+<ParamField path="--config" type="string">
+  指定配置文件路径 (bunfig.toml)
+</ParamField>
+
+<ParamField path="--cwd" type="string">
+  设置特定的当前工作目录
+</ParamField>
+
+### 依赖范围和管理
+
+<ParamField path="--production" type="boolean">
+  不安装 devDependencies
+</ParamField>
+
+<ParamField path="--no-save" type="boolean">
+  不更新 package.json 或保存锁定文件
+</ParamField>
+
+<ParamField path="--save" type="boolean" default="true">
+  保存到 package.json
+</ParamField>
+
+<ParamField path="--omit" type="string">
+  从安装中排除 'dev', 'optional' 或 'peer' 依赖项
+</ParamField>
+
+<ParamField path="--only-missing" type="boolean">
+  只有当依赖项不存在时才添加到 package.json
+</ParamField>
+
+### 依赖类型和版本
+
+<ParamField path="--dev" type="boolean">
+  将依赖项添加到 "devDependencies"
+</ParamField>
+
+<ParamField path="--optional" type="boolean">
+  将依赖项添加到 "optionalDependencies"
+</ParamField>
+
+<ParamField path="--peer" type="boolean">
+  将依赖项添加到 "peerDependencies"
+</ParamField>
+
+<ParamField path="--exact" type="boolean">
+  添加确切版本而不是 ^范围
+</ParamField>
+
+### 锁定文件控制
+
+<ParamField path="--yarn" type="boolean">
+  写入 yarn.lock 文件 (yarn v1)
+</ParamField>
+
+<ParamField path="--frozen-lockfile" type="boolean">
+  禁止更改锁定文件
+</ParamField>
+
+<ParamField path="--save-text-lockfile" type="boolean">
+  保存基于文本的锁定文件
+</ParamField>
+
+<ParamField path="--lockfile-only" type="boolean">
+  生成锁定文件但不安装依赖项
+</ParamField>
+
+### 网络和注册表设置
+
+<ParamField path="--ca" type="string">
+  提供证书颁发机构签名证书
+</ParamField>
+
+<ParamField path="--cafile" type="string">
+  证书颁发机构签名证书的文件路径
+</ParamField>
+
+<ParamField path="--registry" type="string">
+  使用特定的注册表，默认覆盖 .npmrc, bunfig.toml 和环境变量
+</ParamField>
+
+### 安装过程控制
+
+<ParamField path="--dry-run" type="boolean">
+  不安装任何东西
+</ParamField>
+
+<ParamField path="--force" type="boolean">
+  始终从注册表请求最新版本并重新安装所有依赖项
+</ParamField>
+
+<ParamField path="--global" type="boolean">
+  全局安装
+</ParamField>
+
+<ParamField path="--backend" type="string" default="clonefile">
+  平台特定的优化："clonefile", "hardlink", "symlink", "copyfile"
+</ParamField>
+
+<ParamField path="--filter" type="string">
+  为匹配的工作区安装包
+</ParamField>
+
+<ParamField path="--analyze" type="boolean">
+  分析并递归安装作为参数传递的文件的所有依赖项
+</ParamField>
+
+### 缓存选项
+
+<ParamField path="--cache-dir" type="string">
+  从特定目录路径存储和加载缓存数据
+</ParamField>
+
+<ParamField path="--no-cache" type="boolean">
+  完全忽略清单缓存
+</ParamField>
+
+### 输出和日志
+
+<ParamField path="--silent" type="boolean">
+  不记录任何内容
+</ParamField>
+
+<ParamField path="--verbose" type="boolean">
+  过度详细的日志记录
+</ParamField>
+
+<ParamField path="--no-progress" type="boolean">
+  禁用进度条
+</ParamField>
+
+<ParamField path="--no-summary" type="boolean">
+  不打印摘要
+</ParamField>
+
+### 安全和完整性
+
+<ParamField path="--no-verify" type="boolean">
+  跳过验证新下载包的完整性
+</ParamField>
+
+<ParamField path="--trust" type="boolean">
+  添加到项目 package.json 中的 trustedDependencies 并安装包
+</ParamField>
+
+### 并发和性能
+
+<ParamField path="--concurrent-scripts" type="number" default="5">
+  生命周期脚本的最大并发作业数
+</ParamField>
+
+<ParamField path="--network-concurrency" type="number" default="48">
+  最大并发网络请求数
+</ParamField>
+
+### 生命周期脚本管理
+
+<ParamField path="--ignore-scripts" type="boolean">
+  跳过项目 package.json 中的生命周期脚本（依赖项脚本永远不会运行）
+</ParamField>
+
+### 帮助信息
+
+<ParamField path="--help" type="boolean">
+  打印此帮助菜单
+</ParamField>

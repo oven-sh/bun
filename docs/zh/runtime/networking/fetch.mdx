@@ -1,0 +1,484 @@
+---
+title: Fetch
+description: 使用 Bun 的 fetch API 发送 HTTP 请求
+---
+
+Bun 实现了 WHATWG `fetch` 标准，并有一些扩展以满足服务器端 JavaScript 的需求。
+
+Bun 还实现了 `node:http`，但通常建议使用 `fetch`。
+
+## 发送 HTTP 请求
+
+要发送 HTTP 请求，请使用 `fetch`
+
+```ts
+const response = await fetch("http://example.com");
+
+console.log(response.status); // => 200
+
+const text = await response.text(); // 或 response.json(), response.formData() 等
+```
+
+`fetch` 也适用于 HTTPS URL。
+
+```ts
+const response = await fetch("https://example.com");
+```
+
+您还可以将 `fetch` 与 [`Request`](https://developer.mozilla.org/en-US/docs/Web/API/Request) 对象一起使用。
+
+```ts
+const request = new Request("http://example.com", {
+  method: "POST",
+  body: "Hello, world!",
+});
+
+const response = await fetch(request);
+```
+
+### 发送 POST 请求
+
+要发送 POST 请求，请传递一个对象，其中 `method` 属性设置为 `"POST"`。
+
+```ts
+const response = await fetch("http://example.com", {
+  method: "POST",
+  body: "Hello, world!",
+});
+```
+
+`body` 可以是字符串、`FormData` 对象、`ArrayBuffer`、`Blob` 等。更多信息请参见 [MDN 文档](https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API/Using_Fetch#setting_a_body)。
+
+### 代理请求
+
+要代理请求，请传递一个对象，其中 `proxy` 属性设置为 URL 字符串：
+
+```ts
+const response = await fetch("http://example.com", {
+  proxy: "http://proxy.com",
+});
+```
+
+您也可以使用对象格式向代理服务器发送自定义头：
+
+```ts
+const response = await fetch("http://example.com", {
+  proxy: {
+    url: "http://proxy.com",
+    headers: {
+      "Proxy-Authorization": "Bearer my-token",
+      "X-Custom-Proxy-Header": "value",
+    },
+  },
+});
+```
+
+`headers` 在 `CONNECT` 请求（针对 HTTPS 目标）或代理请求（针对 HTTP 目标）中直接发送到代理。如果您提供 `Proxy-Authorization` 头，它将覆盖代理 URL 中的任何凭据。
+
+### 自定义头
+
+要设置自定义头，请传递一个对象，其中 `headers` 属性设置为对象。
+
+```ts
+const response = await fetch("http://example.com", {
+  headers: {
+    "X-Custom-Header": "value",
+  },
+});
+```
+
+您也可以使用 [Headers](https://developer.mozilla.org/en-US/docs/Web/API/Headers) 对象设置头。
+
+```ts
+const headers = new Headers();
+headers.append("X-Custom-Header", "value");
+
+const response = await fetch("http://example.com", {
+  headers,
+});
+```
+
+### 响应体
+
+要读取响应体，请使用以下方法之一：
+
+- `response.text(): Promise<string>`: 返回一个以字符串形式解析响应体的 promise。
+- `response.json(): Promise<any>`: 返回一个以 JSON 对象形式解析响应体的 promise。
+- `response.formData(): Promise<FormData>`: 返回一个以 `FormData` 对象形式解析响应体的 promise。
+- `response.bytes(): Promise<Uint8Array>`: 返回一个以 `Uint8Array` 形式解析响应体的 promise。
+- `response.arrayBuffer(): Promise<ArrayBuffer>`: 返回一个以 `ArrayBuffer` 形式解析响应体的 promise。
+- `response.blob(): Promise<Blob>`: 返回一个以 `Blob` 形式解析响应体的 promise。
+
+#### 流式响应体
+
+您可以使用异步迭代器来流式传输响应体。
+
+```ts
+const response = await fetch("http://example.com");
+
+for await (const chunk of response.body) {
+  console.log(chunk);
+}
+```
+
+您也可以更直接地访问 `ReadableStream` 对象。
+
+```ts
+const response = await fetch("http://example.com");
+
+const stream = response.body;
+
+const reader = stream.getReader();
+const { value, done } = await reader.read();
+```
+
+### 流式请求体
+
+您还可以使用 `ReadableStream` 在请求体中流式传输数据：
+
+```ts
+const stream = new ReadableStream({
+  start(controller) {
+    controller.enqueue("Hello");
+    controller.enqueue(" ");
+    controller.enqueue("World");
+    controller.close();
+  },
+});
+
+const response = await fetch("http://example.com", {
+  method: "POST",
+  body: stream,
+});
+```
+
+使用 HTTP(S) 时：
+
+- 数据直接流式传输到网络，而不在内存中缓冲整个主体
+- 如果连接丢失，流将被取消
+- 除非流具有已知大小，否则不会自动设置 `Content-Length` 头
+
+使用 S3 时：
+
+- 对于 PUT/POST 请求，Bun 自动使用多部分上传
+- 流以块的形式消费并并行上传
+- 可以通过 S3 选项监视进度
+
+### 带超时的获取 URL
+
+要使用超时获取 URL，请使用 `AbortSignal.timeout`：
+
+```ts
+const response = await fetch("http://example.com", {
+  signal: AbortSignal.timeout(1000),
+});
+```
+
+#### 取消请求
+
+要取消请求，请使用 `AbortController`：
+
+```ts
+const controller = new AbortController();
+
+const response = await fetch("http://example.com", {
+  signal: controller.signal,
+});
+
+controller.abort();
+```
+
+### Unix 域套接字
+
+要使用 Unix 域套接字获取 URL，请使用 `unix: string` 选项：
+
+```ts
+const response = await fetch("https://hostname/a/path", {
+  unix: "/var/run/path/to/unix.sock",
+  method: "POST",
+  body: JSON.stringify({ message: "Hello from Bun!" }),
+  headers: {
+    "Content-Type": "application/json",
+  },
+});
+```
+
+### TLS
+
+要使用客户端证书，请使用 `tls` 选项：
+
+```ts
+await fetch("https://example.com", {
+  tls: {
+    key: Bun.file("/path/to/key.pem"),
+    cert: Bun.file("/path/to/cert.pem"),
+    // ca: [Bun.file("/path/to/ca.pem")],
+  },
+});
+```
+
+#### 自定义 TLS 验证
+
+要自定义 TLS 验证，请在 `tls` 中使用 `checkServerIdentity` 选项
+
+```ts
+await fetch("https://example.com", {
+  tls: {
+    checkServerIdentity: (hostname, peerCertificate) => {
+      // 如果证书无效，返回一个 Error
+    },
+  },
+});
+```
+
+这类似于 Node 的 `net` 模块中的工作方式。
+
+#### 禁用 TLS 验证
+
+要禁用 TLS 验证，请将 `rejectUnauthorized` 设置为 `false`：
+
+```ts
+await fetch("https://example.com", {
+  tls: {
+    rejectUnauthorized: false,
+  },
+});
+```
+
+这对于避免使用自签名证书时出现 SSL 错误特别有用，但这会禁用 TLS 验证，应谨慎使用。
+
+### 请求选项
+
+除了标准的 fetch 选项外，Bun 还提供了一些扩展：
+
+```ts
+const response = await fetch("http://example.com", {
+  // 控制自动响应解压缩（默认值：true）
+  // 支持 gzip, deflate, brotli (br) 和 zstd
+  decompress: true,
+
+  // 为此请求禁用连接重用
+  keepalive: false,
+
+  // 调试日志级别
+  verbose: true, // 或 "curl" 以获得更详细的输出
+});
+```
+
+### 协议支持
+
+除了 HTTP(S) 之外，Bun 的 fetch 还支持几种额外的协议：
+
+#### S3 URLs - `s3://`
+
+Bun 支持直接从 S3 存储桶获取。
+
+```ts
+// 使用环境变量进行身份验证
+const response = await fetch("s3://my-bucket/path/to/object");
+
+// 或显式传递凭据
+const response = await fetch("s3://my-bucket/path/to/object", {
+  s3: {
+    accessKeyId: "YOUR_ACCESS_KEY",
+    secretAccessKey: "YOUR_SECRET_KEY",
+    region: "us-east-1",
+  },
+});
+```
+
+注意：使用 S3 时，只有 PUT 和 POST 方法支持请求体。对于上传，Bun 自动对流式主体使用多部分上传。
+
+您可以在 [S3](/runtime/s3) 文档中阅读更多关于 Bun 的 S3 支持的信息。
+
+#### 文件 URL - `file://`
+
+您可以使用 `file:` 协议获取本地文件：
+
+```ts
+const response = await fetch("file:///path/to/file.txt");
+const text = await response.text();
+```
+
+在 Windows 上，路径会自动规范化：
+
+```ts
+// 在 Windows 上都能工作
+const response = await fetch("file:///C:/path/to/file.txt");
+const response2 = await fetch("file:///c:/path\\to/file.txt");
+```
+
+#### 数据 URL - `data:`
+
+Bun 支持 `data:` URL 方案：
+
+```ts
+const response = await fetch("data:text/plain;base64,SGVsbG8sIFdvcmxkIQ==");
+const text = await response.text(); // "Hello, World!"
+```
+
+#### Blob URLs - `blob:`
+
+您可以使用 `URL.createObjectURL()` 创建的 URL 获取 blob：
+
+```ts
+const blob = new Blob(["Hello, World!"], { type: "text/plain" });
+const url = URL.createObjectURL(blob);
+const response = await fetch(url);
+```
+
+### 错误处理
+
+Bun 的 fetch 实现包括几个特定的错误情况：
+
+- 使用 GET/HEAD 方法与请求体会抛出错误（这是 fetch API 的预期行为）
+- 尝试同时使用 `proxy` 和 `unix` 选项会抛出错误
+- 当 `rejectUnauthorized` 为 true（或未定义）时 TLS 证书验证失败
+- S3 操作可能会抛出与身份验证或权限相关的特定错误
+
+### Content-Type 处理
+
+当未明确提供时，Bun 会自动为请求体设置 `Content-Type` 头：
+
+- 对于 `Blob` 对象，使用 blob 的 `type`
+- 对于 `FormData`，设置适当的多部分边界
+
+## 调试
+
+为了帮助调试，您可以向 `fetch` 传递 `verbose: true`：
+
+```ts
+const response = await fetch("http://example.com", {
+  verbose: true,
+});
+```
+
+这将在终端中打印请求和响应头：
+
+```sh
+[fetch] > HTTP/1.1 GET http://example.com/
+[fetch] > Connection: keep-alive
+[fetch] > User-Agent: Bun/1.3.3
+[fetch] > Accept: */*
+[fetch] > Host: example.com
+[fetch] > Accept-Encoding: gzip, deflate, br, zstd
+
+[fetch] < 200 OK
+[fetch] < Content-Encoding: gzip
+[fetch] < Age: 201555
+[fetch] < Cache-Control: max-age=604800
+[fetch] < Content-Type: text/html; charset=UTF-8
+[fetch] < Date: Sun, 21 Jul 2024 02:41:14 GMT
+[fetch] < Etag: "3147526947+gzip"
+[fetch] < Expires: Sun, 28 Jul 2024 02:41:14 GMT
+[fetch] < Last-Modified: Thu, 17 Oct 2019 07:18:26 GMT
+[fetch] < Server: ECAcc (sac/254F)
+[fetch] < Vary: Accept-Encoding
+[fetch] < X-Cache: HIT
+[fetch] < Content-Length: 648
+```
+
+注意：`verbose: boolean` 不是 Web 标准 `fetch` API 的一部分，而是 Bun 特有的。
+
+## 性能
+
+在发送 HTTP 请求之前，必须执行 DNS 查询。这可能需要相当长的时间，特别是在 DNS 服务器缓慢或网络连接不佳的情况下。
+
+DNS 查询之后，必须连接 TCP 套接字，可能还需要执行 TLS 握手。这也可能需要相当长的时间。
+
+请求完成后，消费响应体也可能需要相当长的时间和内存。
+
+在每一步，Bun 都提供 API 来帮助您优化应用程序的性能。
+
+### DNS 预取
+
+要预取 DNS 条目，您可以使用 `dns.prefetch` API。当您知道很快需要连接到主机并希望避免初始 DNS 查询时，此 API 很有用。
+
+```ts
+import { dns } from "bun";
+
+dns.prefetch("bun.com");
+```
+
+#### DNS 缓存
+
+默认情况下，Bun 在内存中缓存并去重 DNS 查询，最长可达 30 秒。您可以通过调用 `dns.getCacheStats()` 查看缓存统计信息：
+
+要了解有关 Bun 中 DNS 缓存的更多信息，请参见 [DNS 缓存](/runtime/networking/dns) 文档。
+
+### 预连接到主机
+
+要预连接到主机，您可以使用 `fetch.preconnect` API。当您知道很快需要连接到主机并希望提前开始初始 DNS 查询、TCP 套接字连接和 TLS 握手时，此 API 很有用。
+
+```ts
+import { fetch } from "bun";
+
+fetch.preconnect("https://bun.com");
+```
+
+注意：在 `fetch.preconnect` 之后立即调用 `fetch` 不会使您的请求更快。只有当您知道很快需要连接到主机但尚未准备好发起请求时，预连接才有帮助。
+
+#### 启动时预连接
+
+要在启动时预连接到主机，您可以传递 `--fetch-preconnect`：
+
+```sh
+bun --fetch-preconnect https://bun.com ./my-script.ts
+```
+
+这有点像 HTML 中的 `<link rel="preconnect">`。
+
+此功能尚未在 Windows 上实现。如果您有兴趣在 Windows 上使用此功能，请提交问题，我们可以为 Windows 实现支持。
+
+### 连接池和 HTTP keep-alive
+
+Bun 自动重用到同一主机的连接。这被称为连接池。这可以显著减少建立连接所需的时间。您无需执行任何操作来启用此功能；它是自动的。
+
+#### 同时连接限制
+
+默认情况下，Bun 将同时 `fetch` 请求的最大数量限制为 256。我们这样做有几个原因：
+
+- 它提高了整体系统稳定性。操作系统对同时打开的 TCP 套接字数量有一个上限，通常在几千以内。接近此限制会导致整个计算机行为异常。应用程序挂起和崩溃。
+- 它鼓励 HTTP Keep-Alive 连接重用。对于短期 HTTP 请求，最慢的步骤通常是初始连接设置。重用连接可以节省大量时间。
+
+当超出限制时，请求将被排队，并在下一个请求结束时立即发送。
+
+您可以通过 `BUN_CONFIG_MAX_HTTP_REQUESTS` 环境变量增加同时连接的最大数量：
+
+```sh
+BUN_CONFIG_MAX_HTTP_REQUESTS=512 bun ./my-script.ts
+```
+
+此限制的最大值目前设置为 65,336。最大端口号是 65,535，因此任何一台计算机都很难超过此限制。
+
+### 响应缓冲
+
+Bun 致力于优化读取响应体的性能。读取响应体的最快方法是使用以下方法之一：
+
+- `response.text(): Promise<string>`
+- `response.json(): Promise<any>`
+- `response.formData(): Promise<FormData>`
+- `response.bytes(): Promise<Uint8Array>`
+- `response.arrayBuffer(): Promise<ArrayBuffer>`
+- `response.blob(): Promise<Blob>`
+
+您也可以使用 `Bun.write` 将响应体写入磁盘上的文件：
+
+```ts
+import { write } from "bun";
+
+await write("output.txt", response);
+```
+
+### 实现细节
+
+- 连接池默认启用，但可以通过 `keepalive: false` 为每个请求禁用。`"Connection: close"` 头也可以用来禁用 keep-alive。
+- 在特定条件下，大型文件上传使用操作系统的 `sendfile` 系统调用进行优化：
+  - 文件必须大于 32KB
+  - 请求不得使用代理
+  - 在 macOS 上，只有常规文件（不是管道、套接字或设备）可以使用 `sendfile`
+  - 当不满足这些条件时，或者使用 S3/流式上传时，Bun 会回退到将文件读入内存
+  - 此优化在 HTTP（非 HTTPS）请求中特别有效，因为文件可以从内核直接发送到网络堆栈
+- S3 操作自动处理签名请求和合并认证头
+
+注意：许多这些功能是标准 fetch API 的 Bun 特定扩展。

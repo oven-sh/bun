@@ -1,0 +1,27 @@
+---
+title: 将 Buffer 转换为字符串
+sidebarTitle: "Buffer 到 字符串"
+mode: center
+---
+
+[Buffer](https://nodejs.org/api/buffer.html) 类提供了一个内置的 `.toString()` 方法，将 `Buffer` 转换为字符串。
+
+```ts
+const buf = Buffer.from("hello");
+const str = buf.toString();
+// => "hello"
+```
+
+---
+
+您可以选择指定编码和字节范围。
+
+```ts
+const buf = Buffer.from("hello world!");
+const str = buf.toString("utf8", 0, 5);
+// => "hello"
+```
+
+---
+
+参阅 [文档 > API > 二进制数据](/runtime/binary-data#conversion) 获取关于使用Bun操作二进制数据的完整文档。

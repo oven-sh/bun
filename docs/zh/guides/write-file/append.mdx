@@ -1,0 +1,54 @@
+---
+title: 向文件追加内容
+sidebarTitle: 追加到文件
+mode: center
+---
+
+Bun 实现了 `node:fs` 模块，其中包括 `fs.appendFile` 和 `fs.appendFileSync` 函数，用于向文件追加内容。
+
+---
+
+您可以使用 `fs.appendFile` 异步地向文件追加数据，如果文件不存在则会创建文件。内容可以是字符串或 [Buffer]。
+
+```ts
+import { appendFile } from "node:fs/promises";
+
+await appendFile("message.txt", "data to append");
+```
+
+---
+
+要使用非 [Promise] API：
+
+```ts
+import { appendFile } from "node:fs";
+
+appendFile("message.txt", "data to append", err => {
+  if (err) throw err;
+  console.log('The "data to append" was appended to file!');
+});
+```
+
+---
+
+要指定内容的编码：
+
+```js
+import { appendFile } from "node:fs";
+
+appendFile("message.txt", "data to append", "utf8", callback);
+```
+
+---
+
+要同步追加数据，请使用 `fs.appendFileSync`：
+
+```ts
+import { appendFileSync } from "node:fs";
+
+appendFileSync("message.txt", "data to append", "utf8");
+```
+
+---
+
+有关更多信息，请参阅 [Node.js 文档](https://nodejs.org/api/fs.html#fspromisesappendfilepath-data-options)。

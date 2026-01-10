@@ -1,0 +1,35 @@
+---
+title: 在 Bun 中使用 Unix 域套接字进行 fetch
+sidebarTitle: 使用 Unix 域套接字进行 Fetch
+mode: center
+---
+
+在 Bun 中，`fetch()` 中的 `unix` 选项允许您通过 [Unix 域套接字](https://en.wikipedia.org/wiki/Unix_domain_socket) 发送 HTTP 请求。
+
+```ts fetch-unix.ts icon="/icons/typescript.svg"
+const unix = "/var/run/docker.sock";
+
+const response = await fetch("http://localhost/info", { unix });
+
+const body = await response.json();
+console.log(body); // { ... }
+```
+
+---
+
+`unix` 选项是一个字符串，指定 Unix 域套接字的本地文件路径。`fetch()` 函数将使用套接字向服务器发送请求，而不是使用 TCP 网络连接。通过在 URL 中使用 `https://` 协议而不是 `http://`，也支持 `https`。
+
+要通过 Unix 域套接字向 API 端点发送 `POST` 请求：
+
+```ts fetch-unix.ts icon="/icons/typescript.svg"
+const response = await fetch("https://hostname/a/path", {
+  unix: "/var/run/path/to/unix.sock",
+  method: "POST",
+  body: JSON.stringify({ message: "Hello from Bun!" }),
+  headers: {
+    "Content-Type": "application/json",
+  },
+});
+
+const body = await response.json();
+```

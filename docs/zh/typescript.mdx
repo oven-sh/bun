@@ -1,0 +1,54 @@
+---
+title: TypeScript
+description: 在Bun中使用TypeScript，包括类型定义和编译器选项
+---
+
+要安装Bun内置API的TypeScript定义，请安装 `@types/bun`。
+
+```zsh terminal icon="terminal"
+bun add -d @types/bun # dev dependency
+```
+
+此时，你应该能够在你的TypeScript文件中引用 `Bun` 全局变量，而不会在编辑器中看到错误。
+
+## 推荐的 `compilerOptions`
+
+Bun支持一些功能，如顶层await、JSX和带扩展名的`.ts`导入，而TypeScript默认情况下不允许这些功能。下面是Bun项目的推荐[compilerOptions](file:///Users/tianyufu/Desktop/mintlify_docs/docs/compiler-options.md#L3)，这样你就可以使用这些功能而不必看到来自TypeScript的编译警告。
+
+```json tsconfig.json icon="file-json"
+{
+  "compilerOptions": {
+    // 环境设置与最新功能
+    "lib": ["ESNext"],
+    "target": "ESNext",
+    "module": "Preserve",
+    "moduleDetection": "force",
+    "jsx": "react-jsx",
+    "allowJs": true,
+
+    // 打包器模式
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+
+    // 最佳实践
+    "strict": true,
+    "skipLibCheck": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+
+    // 一些更严格的标志（默认禁用）
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "noPropertyAccessFromIndexSignature": false
+  }
+}
+```
+
+如果你在一个新目录中运行 `bun init`，将为你生成此 `tsconfig.json`。（更严格的标志默认是禁用的。）
+
+```sh terminal icon="terminal"
+bun init
+```

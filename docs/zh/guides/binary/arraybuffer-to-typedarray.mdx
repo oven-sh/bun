@@ -1,0 +1,41 @@
+---
+title: 将 ArrayBuffer 转换为 Uint8Array
+sidebarTitle: "ArrayBuffer 到 Uint8Array"
+mode: center
+---
+
+[Uint8Array](https://developer.mozilla.org/zh-CN/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array) 是一种_类型化数组_，意味着它是用于查看底层 [ArrayBuffer](https://developer.mozilla.org/zh-CN/docs/Web/JavaScript/Reference/Global_Objects/ArrayBuffer) 中数据的一种机制。
+
+```ts
+const buffer = new ArrayBuffer(64);
+const arr = new Uint8Array(buffer);
+```
+
+---
+
+其他类型化数组实例可以类似方式创建。
+
+```ts
+const buffer = new ArrayBuffer(64);
+
+const arr1 = new Uint8Array(buffer);
+const arr2 = new Uint16Array(buffer);
+const arr3 = new Uint32Array(buffer);
+const arr4 = new Float32Array(buffer);
+const arr5 = new Float64Array(buffer);
+const arr6 = new BigInt64Array(buffer);
+const arr7 = new BigUint64Array(buffer);
+```
+
+---
+
+要创建一个只查看底层缓冲区一部分的类型化数组，请将偏移量和长度传递给构造函数。
+
+```ts
+const buffer = new ArrayBuffer(64);
+const arr = new Uint8Array(buffer, 0, 16); // 查看前16个字节
+```
+
+---
+
+请参阅 [文档 > API > 工具](/runtime/utils) 获取更多有用的工具。

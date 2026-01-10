@@ -339,12 +339,11 @@ describe.skipIf(isWindows)("Runtime inspector SIGUSR1 activation", () => {
       stderr: "pipe",
     });
 
-    // Wait for standard "Bun Inspector" message in stderr
     const reader = proc.stderr.getReader();
     const decoder = new TextDecoder();
     let stderr = "";
 
-    while (!stderr.includes("Bun Inspector")) {
+    while ((stderr.match(/Bun Inspector/g) || []).length < 2) {
       const { value, done } = await reader.read();
       if (done) break;
       stderr += decoder.decode(value, { stream: true });
@@ -384,12 +383,11 @@ describe.skipIf(isWindows)("Runtime inspector SIGUSR1 activation", () => {
       stderr: "pipe",
     });
 
-    // Wait for standard "Bun Inspector" message in stderr
     const reader = proc.stderr.getReader();
     const decoder = new TextDecoder();
     let stderr = "";
 
-    while (!stderr.includes("Bun Inspector")) {
+    while ((stderr.match(/Bun Inspector/g) || []).length < 2) {
       const { value, done } = await reader.read();
       if (done) break;
       stderr += decoder.decode(value, { stream: true });

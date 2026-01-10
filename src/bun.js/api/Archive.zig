@@ -283,11 +283,13 @@ fn parseCompressArg(globalThis: *jsc.JSGlobalObject, arg: jsc.JSValue) bun.JSErr
     return globalThis.throwInvalidArguments("Archive: compress argument must be 'gzip', a boolean, or undefined", .{});
 }
 
-/// Instance method: archive.extract(path)
+/// Instance method: archive.extract(path, options?)
 /// Extracts the archive to the given path
+/// Options:
+///   - glob: string | string[] - Only extract files matching the glob pattern(s). Supports negative patterns with "!".
 /// Returns Promise<number> with count of extracted files
 pub fn extract(this: *Archive, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    const path_arg = callframe.argumentsAsArray(1)[0];
+    const path_arg, const options_arg = callframe.argumentsAsArray(2);
     if (path_arg == .zero or !path_arg.isString()) {
         return globalThis.throwInvalidArguments("Archive.extract requires a path argument", .{});
     }
@@ -295,7 +297,86 @@ pub fn extract(this: *Archive, globalThis: *jsc.JSGlobalObject, callframe: *jsc.
     const path_slice = try path_arg.toSlice(globalThis, bun.default_allocator);
     defer path_slice.deinit();
 
-    return startExtractTask(globalThis, this.store, path_slice.slice());
+    // Parse options
+    var glob_patterns: ?[]const []const u8 = null;
+    errdefer {
+        if (glob_patterns) |patterns| freePatterns(patterns);
+    }
+
+    if (!options_arg.isUndefinedOrNull()) {
+        if (!options_arg.isObject()) {
+            return globalThis.throwInvalidArguments("Archive.extract: second argument must be an options object", .{});
+        }
+
+        // Parse glob option
+        if (try options_arg.getTruthy(globalThis, "glob")) |glob_val| {
+            glob_patterns = try parsePatternArg(globalThis, glob_val, "Archive.extract", "glob");
+        }
+    }
+
+    return startExtractTask(globalThis, this.store, path_slice.slice(), glob_patterns);
+}
+
+/// Parse a string or array of strings into a pattern list.
+/// Returns null for empty strings or empty arrays (treated as "no filter").
+fn parsePatternArg(globalThis: *jsc.JSGlobalObject, arg: jsc.JSValue, api_name: []const u8, name: []const u8) bun.JSError!?[]const []const u8 {
+    const allocator = bun.default_allocator;
+
+    // Single string
+    if (arg.isString()) {
+        const str_slice = try arg.toSlice(globalThis, allocator);
+        defer str_slice.deinit();
+        // Empty string = no filter
+        if (str_slice.len == 0) return null;
+        const pattern = allocator.dupe(u8, str_slice.slice()) catch return error.OutOfMemory;
+        errdefer allocator.free(pattern);
+        const patterns = allocator.alloc([]const u8, 1) catch return error.OutOfMemory;
+        patterns[0] = pattern;
+        return patterns;
+    }
+
+    // Array of strings
+    if (arg.jsType() == .Array) {
+        const len = try arg.getLength(globalThis);
+        // Empty array = no filter
+        if (len == 0) return null;
+
+        var patterns = std.ArrayList([]const u8).initCapacity(allocator, @intCast(len)) catch return error.OutOfMemory;
+        errdefer {
+            for (patterns.items) |p| allocator.free(p);
+            patterns.deinit(allocator);
+        }
+
+        // Use index-based iteration for safety (avoids issues if array mutates)
+        var i: u32 = 0;
+        while (i < len) : (i += 1) {
+            const item = try arg.getIndex(globalThis, i);
+            if (!item.isString()) {
+                return globalThis.throwInvalidArguments("{s}: {s} array must contain only strings", .{ api_name, name });
+            }
+            const str_slice = try item.toSlice(globalThis, allocator);
+            defer str_slice.deinit();
+            // Skip empty strings in array
+            if (str_slice.len == 0) continue;
+            const pattern = allocator.dupe(u8, str_slice.slice()) catch return error.OutOfMemory;
+            patterns.appendAssumeCapacity(pattern);
+        }
+
+        // If all strings were empty, treat as no filter
+        if (patterns.items.len == 0) {
+            patterns.deinit(allocator);
+            return null;
+        }
+
+        return patterns.toOwnedSlice(allocator) catch return error.OutOfMemory;
+    }
+
+    return globalThis.throwInvalidArguments("{s}: {s} must be a string or array of strings", .{ api_name, name });
+}
+
+fn freePatterns(patterns: []const []const u8) void {
+    for (patterns) |p| bun.default_allocator.free(p);
+    bun.default_allocator.free(patterns);
 }
 
 /// Instance method: archive.blob(compress?)
@@ -319,19 +400,14 @@ pub fn bytes(this: *Archive, globalThis: *jsc.JSGlobalObject, callframe: *jsc.Ca
 pub fn files(this: *Archive, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const glob_arg = callframe.argument(0);
 
-    var glob_pattern: ?[]const u8 = null;
+    var glob_patterns: ?[]const []const u8 = null;
+    errdefer if (glob_patterns) |patterns| freePatterns(patterns);
 
     if (!glob_arg.isUndefinedOrNull()) {
-        if (!glob_arg.isString()) {
-            return globalThis.throwInvalidArguments("Archive.files: argument must be a string glob pattern or undefined", .{});
-        }
-        const glob_slice = try glob_arg.toSlice(globalThis, bun.default_allocator);
-        defer glob_slice.deinit();
-        glob_pattern = try bun.default_allocator.dupe(u8, glob_slice.slice());
+        glob_patterns = try parsePatternArg(globalThis, glob_arg, "Archive.files", "glob");
     }
-    errdefer if (glob_pattern) |p| bun.default_allocator.free(p);
 
-    return startFilesTask(globalThis, this.store, glob_pattern);
+    return startFilesTask(globalThis, this.store, glob_patterns);
 }
 
 // ============================================================================
@@ -427,9 +503,21 @@ const ExtractContext = struct {
 
     store: *jsc.WebCore.Blob.Store,
     path: []const u8,
+    glob_patterns: ?[]const []const u8,
     result: Result = .{ .err = error.ReadError },
 
     fn run(this: *ExtractContext) Result {
+        // If we have glob patterns, use filtered extraction
+        if (this.glob_patterns != null) {
+            const count = extractToDiskFiltered(
+                this.store.sharedView(),
+                this.path,
+                this.glob_patterns,
+            ) catch return .{ .err = error.ReadError };
+            return .{ .success = count };
+        }
+
+        // Otherwise use the fast path without filtering
         const count = libarchive.Archiver.extractToDisk(
             this.store.sharedView(),
             this.path,
@@ -451,12 +539,18 @@ const ExtractContext = struct {
     fn deinit(this: *ExtractContext) void {
         this.store.deref();
         bun.default_allocator.free(this.path);
+        if (this.glob_patterns) |patterns| freePatterns(patterns);
     }
 };
 
 pub const ExtractTask = AsyncTask(ExtractContext);
 
-fn startExtractTask(globalThis: *jsc.JSGlobalObject, store: *jsc.WebCore.Blob.Store, path: []const u8) bun.JSError!jsc.JSValue {
+fn startExtractTask(
+    globalThis: *jsc.JSGlobalObject,
+    store: *jsc.WebCore.Blob.Store,
+    path: []const u8,
+    glob_patterns: ?[]const []const u8,
+) bun.JSError!jsc.JSValue {
     const path_copy = try bun.default_allocator.dupe(u8, path);
     errdefer bun.default_allocator.free(path_copy);
 
@@ -466,6 +560,7 @@ fn startExtractTask(globalThis: *jsc.JSGlobalObject, store: *jsc.WebCore.Blob.St
     const task = try ExtractTask.create(globalThis, .{
         .store = store,
         .path = path_copy,
+        .glob_patterns = glob_patterns,
     });
 
     const promise_js = task.promise.value();
@@ -652,7 +747,7 @@ const FilesContext = struct {
     };
 
     store: *jsc.WebCore.Blob.Store,
-    glob_pattern: ?[]const u8,
+    glob_patterns: ?[]const []const u8,
     result: Result = .{ .err = error.ReadError },
 
     fn cloneErrorString(archive: *libarchive.lib.Archive) ?[*:0]u8 {
@@ -685,8 +780,9 @@ const FilesContext = struct {
             if (entry.filetype() != @intFromEnum(lib.FileType.regular)) continue;
 
             const pathname = entry.pathnameUtf8();
-            if (this.glob_pattern) |pattern| {
-                if (!bun.glob.match(pattern, pathname).matches()) continue;
+            // Apply glob pattern filtering (supports both positive and negative patterns)
+            if (this.glob_patterns) |patterns| {
+                if (!matchGlobPatterns(patterns, pathname)) continue;
             }
 
             const size: usize = @intCast(@max(entry.size(), 0));
@@ -747,20 +843,21 @@ const FilesContext = struct {
     fn deinit(this: *FilesContext) void {
         this.result.deinit();
         this.store.deref();
-        if (this.glob_pattern) |p| bun.default_allocator.free(p);
+        if (this.glob_patterns) |patterns| freePatterns(patterns);
     }
 };
 
 pub const FilesTask = AsyncTask(FilesContext);
 
-fn startFilesTask(globalThis: *jsc.JSGlobalObject, store: *jsc.WebCore.Blob.Store, glob_pattern: ?[]const u8) bun.JSError!jsc.JSValue {
+fn startFilesTask(globalThis: *jsc.JSGlobalObject, store: *jsc.WebCore.Blob.Store, glob_patterns: ?[]const []const u8) bun.JSError!jsc.JSValue {
     store.ref();
     errdefer store.deref();
-    errdefer if (glob_pattern) |p| bun.default_allocator.free(p);
+    // Ownership: On error, caller's errdefer frees glob_patterns.
+    // On success, ownership transfers to FilesContext, which frees them in deinit().
 
     const task = try FilesTask.create(globalThis, .{
         .store = store,
-        .glob_pattern = glob_pattern,
+        .glob_patterns = glob_patterns,
     });
 
     const promise_js = task.promise.value();
@@ -797,6 +894,213 @@ fn compressGzip(data: []const u8) ![]u8 {
     if (result.status != .success) return error.GzipCompressFailed;
 
     return bun.default_allocator.realloc(output, result.written) catch output[0..result.written];
+}
+
+/// Check if a path is safe (no absolute paths or path traversal)
+fn isSafePath(pathname: []const u8) bool {
+    // Reject empty paths
+    if (pathname.len == 0) return false;
+
+    // Reject absolute paths
+    if (pathname[0] == '/' or pathname[0] == '\\') return false;
+
+    // Check for Windows drive letters (e.g., "C:")
+    if (pathname.len >= 2 and pathname[1] == ':') return false;
+
+    // Reject paths with ".." components
+    var iter = std.mem.splitScalar(u8, pathname, '/');
+    while (iter.next()) |component| {
+        if (std.mem.eql(u8, component, "..")) return false;
+        // Also check Windows-style separators
+        var win_iter = std.mem.splitScalar(u8, component, '\\');
+        while (win_iter.next()) |win_component| {
+            if (std.mem.eql(u8, win_component, "..")) return false;
+        }
+    }
+
+    return true;
+}
+
+/// Match a path against multiple glob patterns with support for negative patterns.
+/// Positive patterns: at least one must match for the path to be included.
+/// Negative patterns (starting with "!"): if any matches, the path is excluded.
+/// Returns true if the path should be included, false if excluded.
+fn matchGlobPatterns(patterns: []const []const u8, pathname: []const u8) bool {
+    var has_positive_patterns = false;
+    var matches_positive = false;
+
+    for (patterns) |pattern| {
+        // Check if it's a negative pattern
+        if (pattern.len > 0 and pattern[0] == '!') {
+            // Negative pattern - if it matches, exclude the file
+            const neg_pattern = pattern[1..];
+            if (neg_pattern.len > 0 and bun.glob.match(neg_pattern, pathname).matches()) {
+                return false;
+            }
+        } else {
+            // Positive pattern - at least one must match
+            has_positive_patterns = true;
+            if (bun.glob.match(pattern, pathname).matches()) {
+                matches_positive = true;
+            }
+        }
+    }
+
+    // If there are no positive patterns, include everything (that wasn't excluded)
+    // If there are positive patterns, at least one must match
+    return !has_positive_patterns or matches_positive;
+}
+
+/// Extract archive to disk with glob pattern filtering.
+/// Supports negative patterns with "!" prefix (e.g., "!node_modules/**").
+fn extractToDiskFiltered(
+    file_buffer: []const u8,
+    root: []const u8,
+    glob_patterns: ?[]const []const u8,
+) !u32 {
+    const lib = libarchive.lib;
+    const archive = lib.Archive.readNew();
+    defer _ = archive.readFree();
+    configureArchiveReader(archive);
+
+    if (archive.readOpenMemory(file_buffer) != .ok) {
+        return error.ReadError;
+    }
+
+    // Open/create target directory using bun.sys
+    const cwd = bun.FD.cwd();
+    cwd.makePath(u8, root) catch {};
+    const dir_fd: bun.FD = brk: {
+        if (std.fs.path.isAbsolute(root)) {
+            break :brk bun.sys.openA(root, bun.O.RDONLY | bun.O.DIRECTORY, 0).unwrap() catch return error.OpenError;
+        } else {
+            break :brk bun.sys.openatA(cwd, root, bun.O.RDONLY | bun.O.DIRECTORY, 0).unwrap() catch return error.OpenError;
+        }
+    };
+    defer _ = dir_fd.close();
+
+    var count: u32 = 0;
+    var entry: *lib.Archive.Entry = undefined;
+
+    while (archive.readNextHeader(&entry) == .ok) {
+        const pathname = entry.pathnameUtf8();
+
+        // Validate path safety (reject absolute paths, path traversal)
+        if (!isSafePath(pathname)) continue;
+
+        // Apply glob pattern filtering. Supports negative patterns with "!" prefix.
+        // Positive patterns: at least one must match
+        // Negative patterns: if any matches, the file is excluded
+        if (glob_patterns) |patterns| {
+            if (!matchGlobPatterns(patterns, pathname)) continue;
+        }
+
+        const filetype = entry.filetype();
+        const kind = bun.sys.kindFromMode(filetype);
+
+        switch (kind) {
+            .directory => {
+                dir_fd.makePath(u8, pathname) catch |err| switch (err) {
+                    // Directory already exists - don't count as extracted
+                    error.PathAlreadyExists => continue,
+                    else => continue,
+                };
+                count += 1;
+            },
+            .file => {
+                const size: usize = @intCast(@max(entry.size(), 0));
+                // Sanitize permissions: use entry perms masked to 0o777, or default 0o644
+                const entry_perm = entry.perm();
+                const mode: bun.Mode = if (entry_perm != 0)
+                    @intCast(entry_perm & 0o777)
+                else
+                    0o644;
+
+                // Create parent directories if needed (ignore expected errors)
+                if (std.fs.path.dirname(pathname)) |parent_dir| {
+                    dir_fd.makePath(u8, parent_dir) catch |err| switch (err) {
+                        // Expected: directory already exists
+                        error.PathAlreadyExists => {},
+                        // Permission errors: skip this file, will fail at openat
+                        error.AccessDenied => {},
+                        // Other errors: skip, will fail at openat
+                        else => {},
+                    };
+                }
+
+                // Create and write the file using bun.sys
+                const file_fd: bun.FD = bun.sys.openat(
+                    dir_fd,
+                    pathname,
+                    bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC,
+                    mode,
+                ).unwrap() catch continue;
+
+                var write_success = true;
+                if (size > 0) {
+                    // Read archive data and write to file
+                    var remaining = size;
+                    var buf: [64 * 1024]u8 = undefined;
+                    while (remaining > 0) {
+                        const to_read = @min(remaining, buf.len);
+                        const read = archive.readData(buf[0..to_read]);
+                        if (read <= 0) {
+                            write_success = false;
+                            break;
+                        }
+                        const bytes_read: usize = @intCast(read);
+                        // Write all bytes, handling partial writes
+                        var written: usize = 0;
+                        while (written < bytes_read) {
+                            const w = file_fd.write(buf[written..bytes_read]).unwrap() catch {
+                                write_success = false;
+                                break;
+                            };
+                            if (w == 0) {
+                                write_success = false;
+                                break;
+                            }
+                            written += w;
+                        }
+                        if (!write_success) break;
+                        remaining -= bytes_read;
+                    }
+                }
+                _ = file_fd.close();
+
+                if (write_success) {
+                    count += 1;
+                } else {
+                    // Remove partial file on failure
+                    _ = dir_fd.unlinkat(pathname);
+                }
+            },
+            .sym_link => {
+                const link_target = entry.symlink();
+                // Validate symlink target is also safe
+                if (!isSafePath(link_target)) continue;
+                // Symlinks are only extracted on POSIX systems (Linux/macOS).
+                // On Windows, symlinks are skipped since they require elevated privileges.
+                if (bun.Environment.isPosix) {
+                    bun.sys.symlinkat(link_target, dir_fd, pathname).unwrap() catch |err| {
+                        switch (err) {
+                            error.EPERM, error.ENOENT => {
+                                if (std.fs.path.dirname(pathname)) |parent| {
+                                    dir_fd.makePath(u8, parent) catch {};
+                                }
+                                _ = bun.sys.symlinkat(link_target, dir_fd, pathname).unwrap() catch continue;
+                            },
+                            else => continue,
+                        }
+                    };
+                    count += 1;
+                }
+            },
+            else => {},
+        }
+    }
+
+    return count;
 }
 
 const libarchive = @import("../../libarchive/libarchive.zig");

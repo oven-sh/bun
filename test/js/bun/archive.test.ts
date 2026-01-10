@@ -1158,6 +1158,138 @@ describe("Bun.Archive", () => {
     });
   });
 
+  describe("extract with glob patterns", () => {
+    test("extracts only files matching glob pattern", async () => {
+      const archive = Bun.Archive.from({
+        "src/index.ts": "export {}",
+        "src/utils.ts": "export {}",
+        "src/types.d.ts": "declare {}",
+        "test/index.test.ts": "test()",
+        "README.md": "# Hello",
+        "package.json": "{}",
+      });
+
+      using dir = tempDir("archive-glob-pattern", {});
+      const count = await archive.extract(String(dir), { glob: "**/*.ts" });
+
+      // Should extract 4 .ts files (including .d.ts and .test.ts)
+      expect(count).toBe(4);
+      expect(await Bun.file(join(String(dir), "src/index.ts")).exists()).toBe(true);
+      expect(await Bun.file(join(String(dir), "src/utils.ts")).exists()).toBe(true);
+      expect(await Bun.file(join(String(dir), "src/types.d.ts")).exists()).toBe(true);
+      expect(await Bun.file(join(String(dir), "test/index.test.ts")).exists()).toBe(true);
+      expect(await Bun.file(join(String(dir), "README.md")).exists()).toBe(false);
+      expect(await Bun.file(join(String(dir), "package.json")).exists()).toBe(false);
+    });
+
+    test("extracts files matching any of multiple glob patterns", async () => {
+      const archive = Bun.Archive.from({
+        "src/index.ts": "export {}",
+        "lib/utils.js": "module.exports = {}",
+        "test/test.ts": "test()",
+        "README.md": "# Hello",
+      });
+
+      using dir = tempDir("archive-multi-glob", {});
+      const count = await archive.extract(String(dir), { glob: ["src/**", "lib/**"] });
+
+      expect(count).toBe(2);
+      expect(await Bun.file(join(String(dir), "src/index.ts")).exists()).toBe(true);
+      expect(await Bun.file(join(String(dir), "lib/utils.js")).exists()).toBe(true);
+      expect(await Bun.file(join(String(dir), "test/test.ts")).exists()).toBe(false);
+      expect(await Bun.file(join(String(dir), "README.md")).exists()).toBe(false);
+    });
+
+    test("excludes files matching negative pattern", async () => {
+      const archive = Bun.Archive.from({
+        "src/index.ts": "export {}",
+        "src/index.test.ts": "test()",
+        "src/utils.ts": "export {}",
+        "src/utils.test.ts": "test()",
+      });
+
+      using dir = tempDir("archive-negative-pattern", {});
+      // Use negative pattern to exclude test files
+      const count = await archive.extract(String(dir), { glob: ["**", "!**/*.test.ts"] });
+
+      expect(count).toBe(2);
+      expect(await Bun.file(join(String(dir), "src/index.ts")).exists()).toBe(true);
+      expect(await Bun.file(join(String(dir), "src/utils.ts")).exists()).toBe(true);
+      expect(await Bun.file(join(String(dir), "src/index.test.ts")).exists()).toBe(false);
+      expect(await Bun.file(join(String(dir), "src/utils.test.ts")).exists()).toBe(false);
+    });
+
+    test("excludes files matching any of multiple negative patterns", async () => {
+      const archive = Bun.Archive.from({
+        "src/index.ts": "export {}",
+        "src/index.test.ts": "test()",
+        "__tests__/helper.ts": "helper",
+        "node_modules/pkg/index.js": "module",
+      });
+
+      using dir = tempDir("archive-multi-negative", {});
+      const count = await archive.extract(String(dir), {
+        glob: ["**", "!**/*.test.ts", "!__tests__/**", "!node_modules/**"],
+      });
+
+      expect(count).toBe(1);
+      expect(await Bun.file(join(String(dir), "src/index.ts")).exists()).toBe(true);
+      expect(await Bun.file(join(String(dir), "src/index.test.ts")).exists()).toBe(false);
+      expect(await Bun.file(join(String(dir), "__tests__/helper.ts")).exists()).toBe(false);
+      expect(await Bun.file(join(String(dir), "node_modules/pkg/index.js")).exists()).toBe(false);
+    });
+
+    test("combines positive and negative glob patterns", async () => {
+      const archive = Bun.Archive.from({
+        "src/index.ts": "export {}",
+        "src/index.test.ts": "test()",
+        "src/utils.ts": "export {}",
+        "lib/helper.ts": "helper",
+        "lib/helper.test.ts": "test()",
+        "README.md": "# Hello",
+      });
+
+      using dir = tempDir("archive-glob-and-negative", {});
+      const count = await archive.extract(String(dir), {
+        glob: ["src/**", "lib/**", "!**/*.test.ts"],
+      });
+
+      expect(count).toBe(3);
+      expect(await Bun.file(join(String(dir), "src/index.ts")).exists()).toBe(true);
+      expect(await Bun.file(join(String(dir), "src/utils.ts")).exists()).toBe(true);
+      expect(await Bun.file(join(String(dir), "lib/helper.ts")).exists()).toBe(true);
+      expect(await Bun.file(join(String(dir), "src/index.test.ts")).exists()).toBe(false);
+      expect(await Bun.file(join(String(dir), "lib/helper.test.ts")).exists()).toBe(false);
+      expect(await Bun.file(join(String(dir), "README.md")).exists()).toBe(false);
+    });
+
+    test("extracts all files when no patterns are provided", async () => {
+      const archive = Bun.Archive.from({
+        "file1.txt": "content1",
+        "file2.txt": "content2",
+      });
+
+      using dir = tempDir("archive-no-patterns", {});
+      const count = await archive.extract(String(dir), {});
+
+      expect(count).toBe(2);
+      expect(await Bun.file(join(String(dir), "file1.txt")).exists()).toBe(true);
+      expect(await Bun.file(join(String(dir), "file2.txt")).exists()).toBe(true);
+    });
+
+    test("returns 0 when no files match glob pattern", async () => {
+      const archive = Bun.Archive.from({
+        "file.txt": "content",
+        "other.md": "markdown",
+      });
+
+      using dir = tempDir("archive-no-match", {});
+      const count = await archive.extract(String(dir), { glob: "**/*.ts" });
+
+      expect(count).toBe(0);
+    });
+  });
+
   describe("concurrent operations", () => {
     test("multiple extract operations run correctly", async () => {
       const archive = Bun.Archive.from({

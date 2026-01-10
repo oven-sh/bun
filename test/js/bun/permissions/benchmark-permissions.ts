@@ -19,7 +19,15 @@ interface BenchResult {
   opsPerSec: number;
 }
 
-async function bench(name: string, fn: () => void | Promise<void>): Promise<BenchResult> {
+function computeResult(name: string, totalNs: number): BenchResult {
+  const totalMs = totalNs / 1_000_000;
+  const avgNs = totalNs / ITERATIONS;
+  const opsPerSec = Math.round(1_000_000_000 / avgNs);
+  return { name, totalMs, avgNs, opsPerSec };
+}
+
+/** Benchmark for async operations */
+async function benchAsync(name: string, fn: () => Promise<void>): Promise<BenchResult> {
   // Warmup
   for (let i = 0; i < WARMUP; i++) {
     await fn();
@@ -32,12 +40,24 @@ async function bench(name: string, fn: () => void | Promise<void>): Promise<Benc
   }
   const end = Bun.nanoseconds();
 
-  const totalNs = end - start;
-  const totalMs = totalNs / 1_000_000;
-  const avgNs = totalNs / ITERATIONS;
-  const opsPerSec = Math.round(1_000_000_000 / avgNs);
+  return computeResult(name, end - start);
+}
 
-  return { name, totalMs, avgNs, opsPerSec };
+/** Benchmark for sync operations - avoids Promise/await overhead */
+function benchSync(name: string, fn: () => void): BenchResult {
+  // Warmup
+  for (let i = 0; i < WARMUP; i++) {
+    fn();
+  }
+
+  // Benchmark
+  const start = Bun.nanoseconds();
+  for (let i = 0; i < ITERATIONS; i++) {
+    fn();
+  }
+  const end = Bun.nanoseconds();
+
+  return computeResult(name, end - start);
 }
 
 async function runBenchmarks() {
@@ -72,80 +92,83 @@ async function runBenchmarks() {
   await Bun.write(`${tempDir}/test.txt`, "hello world");
   await Bun.write(`${tempDir}/test.json`, '{"key": "value"}');
 
-  // Benchmark 1: Bun.file().text() - file read
+  // Async benchmarks
+  // Benchmark 1: Bun.file().text() - file read (async)
   results.push(
-    await bench("Bun.file().text()", async () => {
+    await benchAsync("Bun.file().text()", async () => {
       await Bun.file(`${tempDir}/test.txt`).text();
     }),
   );
 
-  // Benchmark 2: Bun.file().exists()
+  // Benchmark 2: Bun.file().exists() (async)
   results.push(
-    await bench("Bun.file().exists()", async () => {
+    await benchAsync("Bun.file().exists()", async () => {
       await Bun.file(`${tempDir}/test.txt`).exists();
     }),
   );
 
-  // Benchmark 3: Bun.file().size (sync property)
+  // Benchmark 3: Bun.file().json() (async)
   results.push(
-    await bench("Bun.file().size", () => {
-      const _ = Bun.file(`${tempDir}/test.txt`).size;
-    }),
-  );
-
-  // Benchmark 4: Bun.file().json()
-  results.push(
-    await bench("Bun.file().json()", async () => {
+    await benchAsync("Bun.file().json()", async () => {
       await Bun.file(`${tempDir}/test.json`).json();
     }),
   );
 
-  // Benchmark 5: Bun.write()
+  // Benchmark 4: Bun.write() (async)
   results.push(
-    await bench("Bun.write()", async () => {
+    await benchAsync("Bun.write()", async () => {
       await Bun.write(`${tempDir}/output.txt`, "test content");
     }),
   );
 
-  // Benchmark 6: fs.readFileSync (node:fs)
+  // Sync benchmarks - no await overhead
   const fs = await import("node:fs");
+
+  // Benchmark 5: Bun.file().size (sync property)
   results.push(
-    await bench("fs.readFileSync()", () => {
+    benchSync("Bun.file().size", () => {
+      const _ = Bun.file(`${tempDir}/test.txt`).size;
+    }),
+  );
+
+  // Benchmark 6: fs.readFileSync (sync)
+  results.push(
+    benchSync("fs.readFileSync()", () => {
       fs.readFileSync(`${tempDir}/test.txt`, "utf8");
     }),
   );
 
-  // Benchmark 7: fs.writeFileSync (node:fs)
+  // Benchmark 7: fs.writeFileSync (sync)
   results.push(
-    await bench("fs.writeFileSync()", () => {
+    benchSync("fs.writeFileSync()", () => {
       fs.writeFileSync(`${tempDir}/output2.txt`, "test content");
     }),
   );
 
-  // Benchmark 8: fs.existsSync (node:fs)
+  // Benchmark 8: fs.existsSync (sync)
   results.push(
-    await bench("fs.existsSync()", () => {
+    benchSync("fs.existsSync()", () => {
       fs.existsSync(`${tempDir}/test.txt`);
     }),
   );
 
-  // Benchmark 9: fs.statSync (node:fs)
+  // Benchmark 9: fs.statSync (sync)
   results.push(
-    await bench("fs.statSync()", () => {
+    benchSync("fs.statSync()", () => {
       fs.statSync(`${tempDir}/test.txt`);
     }),
   );
 
-  // Benchmark 10: process.env access
+  // Benchmark 10: process.env access (sync)
   results.push(
-    await bench("process.env.HOME", () => {
+    benchSync("process.env.HOME", () => {
       const _ = process.env.HOME;
     }),
   );
 
-  // Benchmark 11: Bun.env access
+  // Benchmark 11: Bun.env access (sync)
   results.push(
-    await bench("Bun.env.HOME", () => {
+    benchSync("Bun.env.HOME", () => {
       const _ = Bun.env.HOME;
     }),
   );

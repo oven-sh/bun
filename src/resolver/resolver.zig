@@ -1011,7 +1011,7 @@ pub const Resolver = struct {
 
             if (dir.getEntries(r.generation)) |entries| {
                 if (entries.get(path.name.filename)) |query| {
-                    const symlink_path = query.entry.symlink(&r.fs.fs, r.store_fd);
+                    const symlink_path = query.entry.symlink(r.fs, r.store_fd);
                     if (symlink_path.len > 0) {
                         path.setRealpath(symlink_path);
                         if (!result.file_fd.isValid()) result.file_fd = query.entry.cache.fd;
@@ -1037,7 +1037,7 @@ pub const Resolver = struct {
                         }
 
                         defer {
-                            if (r.fs.fs.needToCloseFiles()) {
+                            if (r.fs.needToCloseFiles()) {
                                 if (query.entry.cache.fd.isValid()) {
                                     var file = query.entry.cache.fd.stdFile();
                                     file.close();
@@ -1661,7 +1661,7 @@ pub const Resolver = struct {
     /// See `assertValidCacheKey` for requirements on the input
     pub fn bustDirCache(r: *ThisResolver, path: string) bool {
         assertValidCacheKey(path);
-        const first_bust = r.fs.fs.bustEntriesCache(path);
+        const first_bust = r.fs.bustEntriesCache(path);
         const second_bust = r.dir_cache.remove(path);
         dev("Bust {s} = {}, {}", .{ path, first_bust, second_bust });
         return first_bust or second_bust;
@@ -2193,10 +2193,10 @@ pub const Resolver = struct {
             // we've already looked up this package before
             return r.dir_cache.atIndex(dir_cache_info_result.index).?;
         }
-        var rfs = &r.fs.fs;
+        var rfs = r.fs;
         var cached_dir_entry_result = bun.handleOom(rfs.entries.getOrPut(dir_path));
 
-        var dir_entries_option: *Fs.FileSystem.RealFS.EntriesOption = undefined;
+        var dir_entries_option: *Fs.FileSystem.EntriesOption = undefined;
         var needs_iter = true;
         var in_place: ?*Fs.FileSystem.DirEntry = null;
         const open_dir = bun.openDirForIteration(FD.cwd(), dir_path).unwrap() catch |err| {
@@ -2446,7 +2446,7 @@ pub const Resolver = struct {
                     return null;
                 };
 
-                if (entry_query.entry.kind(&r.fs.fs, r.store_fd) == .dir) {
+                if (entry_query.entry.kind(r.fs, r.store_fd) == .dir) {
                     const ends_with_star = esm_resolution.status == .ExactEndsWithStar;
                     esm_resolution.status = .UnsupportedDirectoryImport;
 
@@ -2460,7 +2460,7 @@ pub const Resolver = struct {
                                     var file_name = bufs(.load_as_file)[0 .. index.len + ext.len];
                                     bun.copy(u8, file_name[index.len..], ext);
                                     const index_query = dir_entries.get(file_name);
-                                    if (index_query != null and index_query.?.entry.kind(&r.fs.fs, r.store_fd) == .file) {
+                                    if (index_query != null and index_query.?.entry.kind(r.fs, r.store_fd) == .file) {
                                         if (r.debug_logs) |*debug| {
                                             missing_suffix = std.fmt.allocPrint(r.allocator, "/{s}", .{file_name}) catch unreachable;
                                             defer r.allocator.free(missing_suffix);
@@ -2698,7 +2698,7 @@ pub const Resolver = struct {
             path[0..1];
         assertValidCacheKey(root_path);
 
-        const rfs = &r.fs.fs;
+        const rfs = r.fs;
 
         rfs.entries_mutex.lock();
         defer rfs.entries_mutex.unlock();
@@ -2765,7 +2765,7 @@ pub const Resolver = struct {
 
         // When this function halts, any item not processed means it's not found.
         defer {
-            if (open_dir_count > 0 and (!r.store_fd or r.fs.fs.needToCloseFiles())) {
+            if (open_dir_count > 0 and (!r.store_fd or r.fs.needToCloseFiles())) {
                 const open_dirs = bufs(.open_dirs)[0..open_dir_count];
                 for (open_dirs) |open_dir| {
                     open_dir.close();
@@ -2903,7 +2903,7 @@ pub const Resolver = struct {
 
             var cached_dir_entry_result = rfs.entries.getOrPut(dir_path) catch unreachable;
 
-            var dir_entries_option: *Fs.FileSystem.RealFS.EntriesOption = undefined;
+            var dir_entries_option: *Fs.FileSystem.EntriesOption = undefined;
             var needs_iter: bool = true;
             var in_place: ?*Fs.FileSystem.DirEntry = null;
 
@@ -3502,7 +3502,7 @@ pub const Resolver = struct {
     }
 
     fn loadIndexWithExtension(r: *ThisResolver, dir_info: *DirInfo, ext: string) ?MatchResult {
-        const rfs = &r.fs.fs;
+        const rfs = r.fs;
 
         var ext_buf = bufs(.extension_path);
 
@@ -3771,7 +3771,7 @@ pub const Resolver = struct {
     }
 
     pub fn loadAsFile(r: *ThisResolver, path: string, extension_order: []const string) ?LoadResult {
-        const rfs: *Fs.FileSystem.RealFS = &r.fs.fs;
+        const rfs: *Fs.FileSystem = r.fs;
 
         if (r.debug_logs) |*debug| {
             debug.addNoteFmt("Attempting to load \"{s}\" as a file", .{path});
@@ -3785,7 +3785,7 @@ pub const Resolver = struct {
 
         const dir_path = bun.strings.withoutTrailingSlashWindowsPath(Dirname.dirname(path));
 
-        const dir_entry: *Fs.FileSystem.RealFS.EntriesOption = rfs.readDirectory(
+        const dir_entry: *Fs.FileSystem.EntriesOption = rfs.readDirectory(
             dir_path,
             null,
             r.generation,
@@ -3794,7 +3794,7 @@ pub const Resolver = struct {
             return null;
         };
 
-        if (@as(Fs.FileSystem.RealFS.EntriesOption.Tag, dir_entry.*) == .err) {
+        if (@as(Fs.FileSystem.EntriesOption.Tag, dir_entry.*) == .err) {
             switch (dir_entry.err.original_err) {
                 error.ENOENT, error.FileNotFound, error.ENOTDIR, error.NotDir => {},
                 else => {
@@ -3942,7 +3942,7 @@ pub const Resolver = struct {
     }
 
     fn loadExtension(r: *ThisResolver, base: string, path: string, ext: string, entries: *Fs.FileSystem.DirEntry) ?LoadResult {
-        const rfs: *Fs.FileSystem.RealFS = &r.fs.fs;
+        const rfs: *Fs.FileSystem = r.fs;
         const buffer = bufs(.load_as_file)[0 .. path.len + ext.len];
         bun.copy(u8, buffer[path.len..], ext);
         const file_name = buffer[path.len - base.len .. buffer.len];
@@ -3981,7 +3981,7 @@ pub const Resolver = struct {
         r: *ThisResolver,
         info: *DirInfo,
         path: string,
-        _entries: *Fs.FileSystem.RealFS.EntriesOption,
+        _entries: *Fs.FileSystem.EntriesOption,
         _result: allocators.Result,
         dir_entry_index: allocators.IndexType,
         parent: ?*DirInfo,
@@ -3991,7 +3991,7 @@ pub const Resolver = struct {
     ) anyerror!void {
         const result = _result;
 
-        const rfs: *Fs.FileSystem.RealFS = &r.fs.fs;
+        const rfs: *Fs.FileSystem = r.fs;
         var entries = _entries.entries;
 
         info.* = DirInfo{

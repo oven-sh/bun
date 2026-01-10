@@ -198,6 +198,7 @@ declare module "bun:test" {
     getTimerCount: typeof jest.getTimerCount;
     clearAllTimers: typeof jest.clearAllTimers;
     isFakeTimers: typeof jest.isFakeTimers;
+    setSystemTime: typeof jest.setSystemTime;
   };
 
   interface FunctionLike {

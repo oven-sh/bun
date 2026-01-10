@@ -81,15 +81,21 @@ fn countFilesInArchive(data: []const u8) u32 {
 /// - An object { [path: string]: Blob | string | ArrayBufferView | ArrayBufferLike }
 /// - A Blob, ArrayBufferView, or ArrayBufferLike (assumes it's already a valid archive)
 /// Options:
-/// - gzip: { level?: number } - Enable gzip compression with optional level (1-12, default 6)
+/// - compress: "gzip" - Enable gzip compression
+/// - level: number (1-12) - Compression level (default 6)
+/// When no options are provided, defaults to gzip level 6 compression
 pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!*Archive {
     const data_arg, const options_arg = callframe.argumentsAsArray(2);
     if (data_arg == .zero) {
         return globalThis.throwInvalidArguments("new Archive() requires an argument", .{});
     }
 
-    // Parse compression options
-    const compress = try parseCompressionOptions(globalThis, options_arg);
+    // Parse compression options, defaulting to gzip level 6 when no options provided
+    const parsed_compress = try parseCompressionOptions(globalThis, options_arg);
+    const compress: Compression = if (parsed_compress == .none and options_arg.isUndefinedOrNull())
+        .{ .gzip = .{ .level = 6 } }
+    else
+        parsed_compress;
 
     // For Blob/Archive, ref the existing store (zero-copy)
     if (data_arg.as(jsc.WebCore.Blob)) |blob_ptr| {
@@ -115,8 +121,9 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
 }
 
 /// Parse compression options from JS value
-/// Accepts: undefined, { gzip: number | { level?: number } }
+/// Returns .none if no compression specified, caller must handle defaults
 fn parseCompressionOptions(globalThis: *jsc.JSGlobalObject, options_arg: jsc.JSValue) bun.JSError!Compression {
+    // No options provided means no compression (caller handles defaults)
     if (options_arg.isUndefinedOrNull()) {
         return .none;
     }
@@ -125,45 +132,37 @@ fn parseCompressionOptions(globalThis: *jsc.JSGlobalObject, options_arg: jsc.JSV
         return globalThis.throwInvalidArguments("Archive: options must be an object", .{});
     }
 
-    // Check for gzip option
-    if (try options_arg.getTruthy(globalThis, "gzip")) |gzip_val| {
-        // gzip can be:
-        // - true (use default level 6)
-        // - a number (compression level 1-12)
-        // - an object { level?: number }
-        if (gzip_val.isBoolean()) {
-            if (gzip_val.toBoolean()) {
-                return .{ .gzip = .{ .level = 6 } };
-            }
-            return .none;
+    // Check for compress option
+    if (try options_arg.getTruthy(globalThis, "compress")) |compress_val| {
+        // compress must be "gzip"
+        if (!compress_val.isString()) {
+            return globalThis.throwInvalidArguments("Archive: compress option must be a string", .{});
         }
 
-        if (gzip_val.isNumber()) {
-            const level_num = gzip_val.toInt64();
+        const compress_str = try compress_val.toSlice(globalThis, bun.default_allocator);
+        defer compress_str.deinit();
+
+        if (!bun.strings.eqlComptime(compress_str.slice(), "gzip")) {
+            return globalThis.throwInvalidArguments("Archive: compress option must be \"gzip\"", .{});
+        }
+
+        // Parse level option (1-12, default 6)
+        var level: u8 = 6;
+        if (try options_arg.getTruthy(globalThis, "level")) |level_val| {
+            if (!level_val.isNumber()) {
+                return globalThis.throwInvalidArguments("Archive: level must be a number", .{});
+            }
+            const level_num = level_val.toInt64();
             if (level_num < 1 or level_num > 12) {
-                return globalThis.throwInvalidArguments("Archive: gzip level must be between 1 and 12", .{});
+                return globalThis.throwInvalidArguments("Archive: level must be between 1 and 12", .{});
             }
-            return .{ .gzip = .{ .level = @intCast(level_num) } };
+            level = @intCast(level_num);
         }
 
-        if (gzip_val.isObject()) {
-            var level: u8 = 6; // Default compression level
-            if (try gzip_val.getTruthy(globalThis, "level")) |level_val| {
-                if (!level_val.isNumber()) {
-                    return globalThis.throwInvalidArguments("Archive: gzip.level must be a number", .{});
-                }
-                const level_num = level_val.toInt64();
-                if (level_num < 1 or level_num > 12) {
-                    return globalThis.throwInvalidArguments("Archive: gzip.level must be between 1 and 12", .{});
-                }
-                level = @intCast(level_num);
-            }
-            return .{ .gzip = .{ .level = level } };
-        }
-
-        return globalThis.throwInvalidArguments("Archive: gzip option must be true, a number (1-12), or an object", .{});
+        return .{ .gzip = .{ .level = level } };
     }
 
+    // No compress option specified in options object means no compression
     return .none;
 }
 

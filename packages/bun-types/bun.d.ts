@@ -6986,41 +6986,38 @@ declare module "bun" {
   type ArchiveCompression = "gzip" | boolean;
 
   /**
-   * Options for gzip compression level.
-   */
-  interface ArchiveGzipOptions {
-    /**
-     * Compression level (1-12).
-     * - 1: Fastest compression, lowest ratio
-     * - 6: Default balance of speed and ratio
-     * - 12: Best compression ratio, slowest
-     *
-     * @default 6
-     */
-    level?: number;
-  }
-
-  /**
    * Options for creating an Archive instance.
+   *
+   * @example
+   * ```ts
+   * // Enable gzip with default level (6)
+   * new Bun.Archive(data, { compress: "gzip" });
+   *
+   * // Specify compression level
+   * new Bun.Archive(data, { compress: "gzip", level: 9 });
+   * ```
    */
-  interface ArchiveOptions {
-    /**
-     * Enable gzip compression for the archive output.
-     *
-     * @example
-     * ```ts
-     * // Enable with default level (6)
-     * new Bun.Archive(data, { gzip: true });
-     *
-     * // Specify compression level directly
-     * new Bun.Archive(data, { gzip: 9 });
-     *
-     * // Specify compression level with options object
-     * new Bun.Archive(data, { gzip: { level: 12 } });
-     * ```
-     */
-    gzip?: boolean | number | ArchiveGzipOptions;
-  }
+  type ArchiveOptions =
+    | {
+        /**
+         * Compression algorithm to use.
+         * Currently only "gzip" is supported.
+         */
+        compress: "gzip";
+        /**
+         * Compression level (1-12).
+         * - 1: Fastest compression, lowest ratio
+         * - 6: Default balance of speed and ratio
+         * - 12: Best compression ratio, slowest
+         *
+         * @default 6
+         */
+        level?: number;
+      }
+    | {
+        compress?: never;
+        level?: never;
+      };
 
   /**
    * Options for extracting archive contents.
@@ -7117,13 +7114,17 @@ declare module "bun" {
     /**
      * Create an `Archive` instance from input data.
      *
+     * By default, archives are gzip-compressed at level 6 when no options are provided.
+     * Pass `{}` (empty object) for no compression.
+     *
      * @param data - The input data for the archive:
      *   - **Object**: Creates a new tarball with the object's keys as file paths and values as file contents
      *   - **Blob/TypedArray/ArrayBuffer**: Wraps existing archive data (tar or tar.gz)
-     * @param options - Optional archive options including compression settings
+     * @param options - Optional archive options including compression settings.
+     *   Defaults to gzip level 6 if omitted. Pass `{}` for no compression.
      *
      * @example
-     * **From an object (creates new tarball):**
+     * **From an object (creates gzip-compressed tarball by default):**
      * ```ts
      * const archive = new Bun.Archive({
      *   "hello.txt": "Hello, World!",
@@ -7132,11 +7133,15 @@ declare module "bun" {
      * ```
      *
      * @example
-     * **With gzip compression:**
+     * **With explicit gzip compression level:**
      * ```ts
-     * const archive = new Bun.Archive(data, { gzip: true });
-     * const archive = new Bun.Archive(data, { gzip: 9 }); // level 1-12
-     * const archive = new Bun.Archive(data, { gzip: { level: 12 } });
+     * const archive = new Bun.Archive(data, { compress: "gzip", level: 12 });
+     * ```
+     *
+     * @example
+     * **Uncompressed tar (pass empty options):**
+     * ```ts
+     * const archive = new Bun.Archive(data, {});
      * ```
      *
      * @example

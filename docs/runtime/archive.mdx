@@ -43,9 +43,10 @@ for (const [path, file] of files) {
 
 ## Creating Archives
 
-Use `new Bun.Archive()` to create an archive from an object where keys are file paths and values are file contents:
+Use `new Bun.Archive()` to create an archive from an object where keys are file paths and values are file contents. By default, archives are gzip-compressed at level 6:
 
 ```ts
+// Creates a gzip-compressed archive (default)
 const archive = new Bun.Archive({
   "README.md": "# My Project",
   "src/index.ts": "console.log('Hello');",
@@ -77,16 +78,19 @@ const archive = new Bun.Archive({
 Use `Bun.write()` to write an archive to disk:
 
 ```ts
-// Write uncompressed tar
+// Write gzipped tar (default - no options needed)
 const archive = new Bun.Archive({
   "file1.txt": "content1",
   "file2.txt": "content2",
 });
-await Bun.write("output.tar", archive);
+await Bun.write("output.tar.gz", archive);
 
-// Write gzipped tar
-const gzipped = new Bun.Archive({ "src/index.ts": "console.log('Hello');" }, { gzip: true });
-await Bun.write("output.tar.gz", gzipped);
+// Write uncompressed tar (pass empty options)
+const uncompressed = new Bun.Archive(
+  { "src/index.ts": "console.log('Hello');" },
+  {} // Empty options = no compression
+);
+await Bun.write("output.tar", uncompressed);
 ```
 
 ### Getting Archive Bytes
@@ -103,7 +107,10 @@ const bytes = await archive.bytes();
 const blob = await archive.blob();
 
 // With gzip compression (set at construction)
-const gzipped = new Bun.Archive({ "hello.txt": "Hello, World!" }, { gzip: true });
+const gzipped = new Bun.Archive(
+  { "hello.txt": "Hello, World!" },
+  { compress: "gzip" }
+);
 const gzippedBytes = await gzipped.bytes();
 const gzippedBlob = await gzipped.blob();
 ```
@@ -299,27 +306,35 @@ See [Bun.Glob](/docs/api/glob) for the full glob syntax including escaping and a
 
 ## Compression
 
-Bun.Archive supports gzip compression for both reading and writing:
+Bun.Archive uses gzip compression by default. When no options are provided, archives are compressed at level 6:
 
 ```ts
+// Default: gzip level 6 compression
+const archive = new Bun.Archive({ "hello.txt": "Hello, World!" });
+
 // Reading: automatically detects gzip
 const gzippedTarball = await Bun.file("archive.tar.gz").bytes();
-const archive = new Bun.Archive(gzippedTarball);
+const readArchive = new Bun.Archive(gzippedTarball);
 
-// Writing: specify compression at construction time
-const gzipped = new Bun.Archive({ "hello.txt": "Hello, World!" }, { gzip: true });
-await Bun.write("output.tar.gz", gzipped);
+// Explicit gzip with custom level (1-12)
+const maxCompression = new Bun.Archive(
+  { "hello.txt": "Hello, World!" },
+  { compress: "gzip", level: 12 }
+);
 
-// Or with a specific compression level (1-12)
-const maxCompression = new Bun.Archive({ "hello.txt": "Hello, World!" }, { gzip: 12 });
+// No compression (pass empty options)
+const uncompressed = new Bun.Archive(
+  { "hello.txt": "Hello, World!" },
+  {} // Empty options = uncompressed tar
+);
 ```
 
-The `gzip` option accepts:
+The options accept:
 
-- `true` - Enable gzip compression with default level (6)
-- A number `1`-`12` - Compression level (1 = fastest, 12 = smallest)
-- `{ level: number }` - Object with explicit level
-- `false` or `undefined` - No compression
+- No options - Default gzip compression at level 6
+- `{}` (empty object) - No compression (uncompressed tar)
+- `compress: "gzip"` - Enable gzip compression
+- `level: number` - Compression level 1-12 (1 = fastest, 12 = smallest, default 6)
 
 ## Examples
 
@@ -342,7 +357,7 @@ for await (const path of glob.scan(".")) {
 files["package.json"] = await Bun.file("package.json").text();
 
 // Create compressed archive and write to disk
-const archive = new Bun.Archive(files, { gzip: true });
+const archive = new Bun.Archive(files, { compress: "gzip" });
 await Bun.write("bundle.tar.gz", archive);
 ```
 
@@ -368,7 +383,7 @@ if (packageJson) {
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 
-async function archiveDirectory(dir: string, gzip = false): Promise<Bun.Archive> {
+async function archiveDirectory(dir: string, compress = false): Promise<Bun.Archive> {
   const files: Record<string, Blob> = {};
 
   async function walk(currentDir: string, prefix: string = "") {
@@ -387,7 +402,7 @@ async function archiveDirectory(dir: string, gzip = false): Promise<Bun.Archive>
   }
 
   await walk(dir);
-  return new Bun.Archive(files, { gzip });
+  return new Bun.Archive(files, compress ? { compress: "gzip" } : undefined);
 }
 
 const archive = await archiveDirectory("./my-project", true);
@@ -405,10 +420,18 @@ type ArchiveInput =
   | Bun.ArrayBufferView
   | ArrayBufferLike;
 
-interface ArchiveOptions {
-  /** Enable gzip compression. Can be true, a level 1-12, or { level: number } */
-  gzip?: boolean | number | { level?: number };
-}
+type ArchiveOptions =
+  | {
+      /** Compression algorithm. Currently only "gzip" is supported. */
+      compress: "gzip";
+      /** Compression level 1-12 (default 6). */
+      level?: number;
+    }
+  | {
+      /** Pass empty object for no compression (uncompressed tar). */
+      compress?: never;
+      level?: never;
+    };
 
 interface ArchiveExtractOptions {
   /** Glob pattern(s) to filter extraction. Supports negative patterns with "!" prefix. */
@@ -419,7 +442,8 @@ class Archive {
   /**
    * Create an Archive from input data
    * @param data - Files to archive (as object) or existing archive data (as bytes/blob)
-   * @param options - Compression options
+   * @param options - Compression options. Defaults to gzip level 6 if omitted.
+   *                  Pass {} for no compression.
    */
   constructor(data: ArchiveInput, options?: ArchiveOptions);
 

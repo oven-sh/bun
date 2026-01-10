@@ -133,11 +133,11 @@ describe("Bun.Archive", () => {
 
     test("converts non-string/buffer values to strings", async () => {
       // @ts-expect-error - testing runtime behavior
-      const archive = new Bun.Archive({ "file.txt": 123 });
+      const archive = new Bun.Archive({ "file.txt": 123 }, {});
       // The archive should be created successfully - number is converted to string
       expect(archive).toBeDefined();
       const bytes = await archive.bytes();
-      // Should contain "123" somewhere in the tarball
+      // Should contain "123" somewhere in the tarball (use {} to get uncompressed tar)
       expect(new TextDecoder().decode(bytes)).toContain("123");
     });
   });
@@ -164,14 +164,17 @@ describe("Bun.Archive", () => {
     });
 
     test("with gzip option returns gzipped blob", async () => {
-      const regularArchive = new Bun.Archive({
-        "hello.txt": "Hello, World!",
-      });
+      const regularArchive = new Bun.Archive(
+        {
+          "hello.txt": "Hello, World!",
+        },
+        {}, // Empty options = no compression
+      );
       const gzipArchive = new Bun.Archive(
         {
           "hello.txt": "Hello, World!",
         },
-        { gzip: {} },
+        { compress: "gzip" },
       );
 
       const regularBlob = await regularArchive.blob();
@@ -184,14 +187,17 @@ describe("Bun.Archive", () => {
 
     test("gzip is smaller for larger repetitive data", async () => {
       const largeContent = Buffer.alloc(13000, "Hello, World!");
-      const regularArchive = new Bun.Archive({
-        "large.txt": largeContent,
-      });
+      const regularArchive = new Bun.Archive(
+        {
+          "large.txt": largeContent,
+        },
+        {}, // Empty options = no compression
+      );
       const gzipArchive = new Bun.Archive(
         {
           "large.txt": largeContent,
         },
-        { gzip: {} },
+        { compress: "gzip" },
       );
 
       const regularBlob = await regularArchive.blob();
@@ -203,8 +209,8 @@ describe("Bun.Archive", () => {
 
     test("gzip level affects compression ratio", async () => {
       const largeContent = Buffer.alloc(50000, "Hello, World!");
-      const level1Archive = new Bun.Archive({ "large.txt": largeContent }, { gzip: { level: 1 } });
-      const level12Archive = new Bun.Archive({ "large.txt": largeContent }, { gzip: { level: 12 } });
+      const level1Archive = new Bun.Archive({ "large.txt": largeContent }, { compress: "gzip", level: 1 });
+      const level12Archive = new Bun.Archive({ "large.txt": largeContent }, { compress: "gzip", level: 12 });
 
       const level1Blob = await level1Archive.blob();
       const level12Blob = await level12Archive.blob();
@@ -213,13 +219,39 @@ describe("Bun.Archive", () => {
       expect(level12Blob.size).toBeLessThan(level1Blob.size);
     });
 
+    test("defaults to gzip level 6 when no options provided", async () => {
+      const largeContent = Buffer.alloc(13000, "Hello, World!");
+
+      // No options = gzip level 6
+      const defaultArchive = new Bun.Archive({
+        "large.txt": largeContent,
+      });
+
+      // Explicit gzip level 6
+      const explicitLevel6Archive = new Bun.Archive({ "large.txt": largeContent }, { compress: "gzip", level: 6 });
+
+      // Uncompressed with empty options
+      const uncompressedArchive = new Bun.Archive({ "large.txt": largeContent }, {});
+
+      const defaultBlob = await defaultArchive.blob();
+      const explicitLevel6Blob = await explicitLevel6Archive.blob();
+      const uncompressedBlob = await uncompressedArchive.blob();
+
+      // Default should match explicit level 6
+      expect(defaultBlob.size).toBe(explicitLevel6Blob.size);
+
+      // Both should be smaller than uncompressed
+      expect(defaultBlob.size).toBeLessThan(uncompressedBlob.size);
+      expect(explicitLevel6Blob.size).toBeLessThan(uncompressedBlob.size);
+    });
+
     test("throws with invalid gzip level", () => {
       expect(() => {
-        new Bun.Archive({ "hello.txt": "Hello, World!" }, { gzip: { level: 0 } });
+        new Bun.Archive({ "hello.txt": "Hello, World!" }, { compress: "gzip", level: 0 });
       }).toThrow();
 
       expect(() => {
-        new Bun.Archive({ "hello.txt": "Hello, World!" }, { gzip: { level: 13 } });
+        new Bun.Archive({ "hello.txt": "Hello, World!" }, { compress: "gzip", level: 13 });
       }).toThrow();
     });
   });
@@ -246,14 +278,17 @@ describe("Bun.Archive", () => {
     });
 
     test("with gzip option returns gzipped bytes", async () => {
-      const regularArchive = new Bun.Archive({
-        "hello.txt": "Hello, World!",
-      });
+      const regularArchive = new Bun.Archive(
+        {
+          "hello.txt": "Hello, World!",
+        },
+        {}, // Empty options = no compression
+      );
       const gzipArchive = new Bun.Archive(
         {
           "hello.txt": "Hello, World!",
         },
-        { gzip: true },
+        { compress: "gzip" },
       );
 
       const regularBytes = await regularArchive.bytes();
@@ -266,14 +301,17 @@ describe("Bun.Archive", () => {
 
     test("gzip is smaller for larger repetitive data", async () => {
       const largeContent = Buffer.alloc(13000, "Hello, World!");
-      const regularArchive = new Bun.Archive({
-        "large.txt": largeContent,
-      });
+      const regularArchive = new Bun.Archive(
+        {
+          "large.txt": largeContent,
+        },
+        {}, // Empty options = no compression
+      );
       const gzipArchive = new Bun.Archive(
         {
           "large.txt": largeContent,
         },
-        { gzip: true },
+        { compress: "gzip" },
       );
 
       const regularBytes = await regularArchive.bytes();
@@ -603,7 +641,7 @@ describe("Bun.Archive", () => {
           {
             "hello.txt": largeContent,
           },
-          { gzip: true },
+          { compress: "gzip" },
         ),
       );
 
@@ -611,11 +649,17 @@ describe("Bun.Archive", () => {
       const file = Bun.file(archivePath);
       expect(await file.exists()).toBe(true);
 
-      // Compare with uncompressed
+      // Compare with uncompressed (use empty options to disable default gzip)
       const uncompressedPath = join(String(dir), "test.tar");
-      await Bun.Archive.write(uncompressedPath, {
-        "hello.txt": largeContent,
-      });
+      await Bun.Archive.write(
+        uncompressedPath,
+        new Bun.Archive(
+          {
+            "hello.txt": largeContent,
+          },
+          {}, // Empty options = no compression
+        ),
+      );
 
       expect(file.size).toBeLessThan(Bun.file(uncompressedPath).size);
     });
@@ -680,11 +724,17 @@ describe("Bun.Archive", () => {
       const archivePath = join(String(dir), "test.tar");
 
       await expect(async () => {
-        await Bun.Archive.write(archivePath, new Bun.Archive({ "file.txt": "content" }, { gzip: { level: 0 } }));
+        await Bun.Archive.write(
+          archivePath,
+          new Bun.Archive({ "file.txt": "content" }, { compress: "gzip", level: 0 }),
+        );
       }).toThrow();
 
       await expect(async () => {
-        await Bun.Archive.write(archivePath, new Bun.Archive({ "file.txt": "content" }, { gzip: { level: 13 } }));
+        await Bun.Archive.write(
+          archivePath,
+          new Bun.Archive({ "file.txt": "content" }, { compress: "gzip", level: 13 }),
+        );
       }).toThrow();
     });
   });
@@ -1045,7 +1095,7 @@ describe("Bun.Archive", () => {
         {
           "hello.txt": "Hello from gzip!",
         },
-        { gzip: true },
+        { compress: "gzip" },
       );
 
       const gzippedBlob = await sourceArchive.blob();
@@ -1441,6 +1491,53 @@ describe("Bun.Archive", () => {
       const readArchive = new Bun.Archive(await bunFile.bytes());
       const files = await readArchive.files();
       expect(await files.get("test.txt")!.text()).toBe("test content");
+    });
+  });
+
+  describe("TypeScript types", () => {
+    test("valid archive options", () => {
+      const files = { "hello.txt": "Hello, World!" };
+
+      // Valid: no options (defaults to gzip level 6)
+      new Bun.Archive(files);
+
+      // Valid: empty options (no compression)
+      new Bun.Archive(files, {});
+
+      // Valid: explicit gzip compression
+      new Bun.Archive(files, { compress: "gzip" });
+
+      // Valid: gzip with level
+      new Bun.Archive(files, { compress: "gzip", level: 9 });
+    });
+
+    test("invalid archive options throw TypeScript errors", () => {
+      // This test verifies that invalid options produce TypeScript errors
+      // The @ts-expect-error directives are checked at compile time
+      // We use a never-executed function to avoid runtime errors for "zstd"
+      const _typeCheck = () => {
+        const files = { "hello.txt": "Hello, World!" };
+        // @ts-expect-error - invalid compression type (this throws at runtime)
+        new Bun.Archive(files, { compress: "zstd", level: 9 });
+      };
+      // Just verify the type checks pass - don't actually run the code
+      expect(_typeCheck).toBeDefined();
+    });
+
+    test("level without compress is TypeScript error but no runtime error", async () => {
+      const files = { "hello.txt": "Hello, World!" };
+
+      // @ts-expect-error - level without compress is a TypeScript error
+      const archive = new Bun.Archive(files, { level: 9 });
+
+      // Should not throw at runtime - level is silently ignored, no compression used
+      expect(archive).toBeInstanceOf(Bun.Archive);
+
+      // Verify it produces uncompressed output (same as empty options)
+      const uncompressedArchive = new Bun.Archive(files, {});
+      const bytes = await archive.bytes();
+      const uncompressedBytes = await uncompressedArchive.bytes();
+      expect(bytes.length).toBe(uncompressedBytes.length);
     });
   });
 });

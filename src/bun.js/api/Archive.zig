@@ -859,7 +859,7 @@ pub const FilesTask = AsyncTask(FilesContext);
 fn startFilesTask(globalThis: *jsc.JSGlobalObject, store: *jsc.WebCore.Blob.Store, glob_patterns: ?[]const []const u8) bun.JSError!jsc.JSValue {
     store.ref();
     errdefer store.deref();
-    errdefer if (glob_patterns) |patterns| freePatterns(patterns);
+    // Note: glob_patterns cleanup is handled by the caller's errdefer
 
     const task = try FilesTask.create(globalThis, .{
         .store = store,

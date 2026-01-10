@@ -2,7 +2,6 @@ pub const interpret = @import("./interpreter.zig");
 pub const subproc = @import("./subproc.zig");
 
 pub const AllocScope = @import("./AllocScope.zig");
-pub const TraceInterpreter = @import("./TraceInterpreter.zig");
 
 pub const EnvMap = interpret.EnvMap;
 pub const EnvStr = interpret.EnvStr;

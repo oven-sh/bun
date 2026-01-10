@@ -468,7 +468,7 @@ pub const BuildCommand = struct {
                     this_transpiler.options.output_format,
                     ctx.bundler_options.windows,
                     ctx.bundler_options.compile_exec_argv orelse "",
-                    null,
+                    ctx.bundler_options.compile_executable_path,
                     .{
                         .disable_default_env_files = !ctx.bundler_options.compile_autoload_dotenv,
                         .disable_autoload_bunfig = !ctx.bundler_options.compile_autoload_bunfig,

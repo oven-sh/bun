@@ -3,6 +3,7 @@
 
 // --- Getters ---
 #define FOR_EACH_GETTER(macro) \
+    macro(Archive) \
     macro(CSRF) \
     macro(CryptoHasher) \
     macro(FFI) \
@@ -70,7 +71,6 @@
     macro(spawn) \
     macro(spawnSync) \
     macro(stringWidth) \
-    macro(traceShellScript) \
     macro(udpSocket) \
     macro(which) \
     macro(write) \

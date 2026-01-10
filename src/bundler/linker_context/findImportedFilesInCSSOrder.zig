@@ -112,7 +112,7 @@ pub fn findImportedFilesInCSSOrder(this: *LinkerContext, temp_allocator: std.mem
                     }
 
                     // Record external depednencies
-                    if (!record.is_internal) {
+                    if (!record.flags.is_internal) {
                         var all_conditions = wrapping_conditions.deepCloneInfallible(visitor.allocator);
                         var all_import_records = bun.handleOom(wrapping_import_records.clone(visitor.allocator));
                         // If this import has conditions, append it to the list of overall

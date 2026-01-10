@@ -327,7 +327,7 @@ pub fn ParseStmt(
 
                     if (comptime track_symbol_usage_during_parse_pass) {
                         // In the scan pass, we need _some_ way of knowing *not* to mark as unused
-                        p.import_records.items[import_record_index].calls_runtime_re_export_fn = true;
+                        p.import_records.items[import_record_index].flags.calls_runtime_re_export_fn = true;
                     }
 
                     try p.lexer.expectOrInsertSemicolon();
@@ -381,7 +381,7 @@ pub fn ParseStmt(
 
                         if (comptime track_symbol_usage_during_parse_pass) {
                             // In the scan pass, we need _some_ way of knowing *not* to mark as unused
-                            p.import_records.items[import_record_index].calls_runtime_re_export_fn = true;
+                            p.import_records.items[import_record_index].flags.calls_runtime_re_export_fn = true;
                         }
                         p.current_scope.is_after_const_local_prefix = true;
                         p.has_es_module_syntax = true;

@@ -108,8 +108,8 @@ async function build(args) {
   await startGroup("CMake Build", () => spawn("cmake", buildArgs, { env }));
 
   if (ciCppBuild) {
-    await startGroup("sccache stats", () => {
-      spawn("sccache", ["--show-stats"], { env });
+    await startGroup("ccache stats", () => {
+      spawn("ccache", ["--show-stats"], { env });
     });
   }
 

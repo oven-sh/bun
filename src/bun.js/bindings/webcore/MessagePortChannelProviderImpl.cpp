@@ -61,19 +61,19 @@ void MessagePortChannelProviderImpl::messagePortClosed(const MessagePortIdentifi
 
 void MessagePortChannelProviderImpl::postMessageToRemote(MessageWithMessagePorts&& message, const MessagePortIdentifier& remoteTarget)
 {
-    if (m_registry.didPostMessageToRemote(WTFMove(message), remoteTarget))
+    if (m_registry.didPostMessageToRemote(WTF::move(message), remoteTarget))
         MessagePort::notifyMessageAvailable(remoteTarget);
 }
 
 void MessagePortChannelProviderImpl::takeAllMessagesForPort(const MessagePortIdentifier& port, CompletionHandler<void(Vector<MessageWithMessagePorts>&&, CompletionHandler<void()>&&)>&& outerCallback)
 {
     // It is the responsibility of outerCallback to get itself to the appropriate thread (e.g. WebWorker thread)
-    auto callback = [outerCallback = WTFMove(outerCallback)](Vector<MessageWithMessagePorts>&& messages, CompletionHandler<void()>&& messageDeliveryCallback) mutable {
+    auto callback = [outerCallback = WTF::move(outerCallback)](Vector<MessageWithMessagePorts>&& messages, CompletionHandler<void()>&& messageDeliveryCallback) mutable {
         // ASSERT(isMainThread());
-        outerCallback(WTFMove(messages), WTFMove(messageDeliveryCallback));
+        outerCallback(WTF::move(messages), WTF::move(messageDeliveryCallback));
     };
 
-    m_registry.takeAllMessagesForPort(port, WTFMove(callback));
+    m_registry.takeAllMessagesForPort(port, WTF::move(callback));
 }
 
 std::optional<MessageWithMessagePorts> MessagePortChannelProviderImpl::tryTakeMessageForPort(const MessagePortIdentifier& port)

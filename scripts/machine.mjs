@@ -387,9 +387,6 @@ const aws = {
         owner = "amazon";
         name = `Windows_Server-${release || "*"}-English-Full-Base-*`;
       }
-    } else if (os === "freebsd") {
-      owner = "782442783595"; // upstream member of FreeBSD team, likely Colin Percival
-      name = `FreeBSD ${release}-STABLE-${{ "aarch64": "arm64", "x64": "amd64" }[arch] ?? "amd64"}-* UEFI-PREFERRED cloud-init UFS`;
     }
 
     if (!name) {
@@ -675,10 +672,6 @@ function getCloudInit(cloudInit) {
     case "linux":
     case "windows":
       // handled above
-      break;
-    case "freebsd":
-      sftpPath = "/usr/libexec/openssh/sftp-server";
-      shell = "/bin/csh";
       break;
     default:
       throw new Error(`Unsupported os: ${cloudInit["os"]}`);
@@ -1071,7 +1064,7 @@ function getCloud(name) {
 }
 
 /**
- * @typedef {"linux" | "darwin" | "windows" | "freebsd"} Os
+ * @typedef {"linux" | "darwin" | "windows"} Os
  * @typedef {"aarch64" | "x64"} Arch
  * @typedef {"macos" | "windowsserver" | "debian" | "ubuntu" | "alpine" | "amazonlinux"} Distro
  */

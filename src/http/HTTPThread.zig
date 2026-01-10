@@ -103,6 +103,11 @@ pub const LibdeflateState = struct {
     shared_buffer: [512 * 1024]u8 = undefined,
 
     pub const new = bun.TrivialNew(@This());
+
+    pub fn deinit(this: *@This()) void {
+        this.decompressor.deinit();
+        bun.TrivialDeinit(@This())(this);
+    }
 };
 
 const request_body_send_stack_buffer_size = 32 * 1024;

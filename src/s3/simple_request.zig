@@ -358,6 +358,7 @@ pub const S3SimpleRequestOptions = struct {
     range: ?[]const u8 = null,
     acl: ?ACL = null,
     storage_class: ?StorageClass = null,
+    request_payer: bool = false,
 };
 
 pub fn executeSimpleS3Request(
@@ -373,6 +374,7 @@ pub fn executeSimpleS3Request(
         .content_disposition = options.content_disposition,
         .acl = options.acl,
         .storage_class = options.storage_class,
+        .request_payer = options.request_payer,
     }, false, null) catch |sign_err| {
         if (options.range) |range_| bun.default_allocator.free(range_);
         const error_code_and_message = getSignErrorCodeAndMessage(sign_err);

@@ -19,6 +19,7 @@
 #include <uv.h>
 #include <windows.h>
 #include <corecrt_io.h>
+#include <atomic>
 #endif // !OS(WINDOWS)
 #include <lshpack.h>
 
@@ -427,12 +428,97 @@ extern "C" void onExitSignal(int sig)
 
 #if OS(WINDOWS)
 extern "C" void Bun__restoreWindowsStdio();
+
+// Track active Bun Shell subprocesses (bun run scripts / Bun.$). When > 0,
+// ignore Ctrl+C in the parent so the child can handle CTRL_C_EVENT directly.
+static std::atomic<int64_t> Bun__activeSubprocessCount{0};
+
+// Track if we absorbed a Ctrl+C while subprocess was active
+// so parent can exit after subprocess exits
+static std::atomic<bool> Bun__pendingCtrlC{false};
+
+// When stdin is in raw mode, treat Ctrl+C as a keypress (no SIGINT).
+static std::atomic<bool> Bun__stdinRawMode{false};
+
+BOOL WINAPI Ctrlhandler(DWORD signal);
+
+extern "C" void Bun__setStdinRawMode(bool raw)
+{
+    Bun__stdinRawMode.store(raw, std::memory_order_relaxed);
+
+    // Ensure our handler runs before libuv's Ctrl handler when raw mode
+    // is enabled. Windows calls handlers in reverse registration order.
+    if (raw) {
+        SetConsoleCtrlHandler(Ctrlhandler, FALSE);
+        SetConsoleCtrlHandler(Ctrlhandler, TRUE);
+    }
+}
+
+extern "C" void Bun__incrementActiveSubprocess()
+{
+    Bun__activeSubprocessCount.fetch_add(1, std::memory_order_relaxed);
+}
+
+extern "C" void Bun__decrementActiveSubprocess()
+{
+    Bun__activeSubprocessCount.fetch_sub(1, std::memory_order_relaxed);
+}
+
+extern "C" bool Bun__hasPendingCtrlC()
+{
+    return Bun__pendingCtrlC.load(std::memory_order_relaxed);
+}
+
+extern "C" void Bun__clearPendingCtrlC()
+{
+    Bun__pendingCtrlC.store(false, std::memory_order_relaxed);
+}
+
+extern "C" void Bun__setPendingCtrlC()
+{
+    Bun__pendingCtrlC.store(true, std::memory_order_relaxed);
+}
+
+extern "C" int64_t Bun__getActiveSubprocessCount()
+{
+    return Bun__activeSubprocessCount.load(std::memory_order_relaxed);
+}
+
 BOOL WINAPI Ctrlhandler(DWORD signal)
 {
-
     if (signal == CTRL_C_EVENT) {
+        // When stdin is in raw mode, Ctrl+C should behave like a keypress.
+        // This avoids delivering SIGINT to JS while a TUI is running.
+        if (Bun__stdinRawMode.load(std::memory_order_relaxed)) {
+            // Best effort: inject Ctrl+C as input so it can be handled by
+            // userland key handlers.
+            HANDLE input = CreateFileW(L"CONIN$", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+            if (input != INVALID_HANDLE_VALUE) {
+                INPUT_RECORD record{};
+                record.EventType = KEY_EVENT;
+                record.Event.KeyEvent.bKeyDown = TRUE;
+                record.Event.KeyEvent.wRepeatCount = 1;
+                record.Event.KeyEvent.wVirtualKeyCode = 'C';
+                record.Event.KeyEvent.wVirtualScanCode = static_cast<WORD>(MapVirtualKeyW('C', MAPVK_VK_TO_VSC));
+                record.Event.KeyEvent.uChar.UnicodeChar = 3;
+                record.Event.KeyEvent.dwControlKeyState = LEFT_CTRL_PRESSED;
+
+                DWORD written = 0;
+                WriteConsoleInputW(input, &record, 1, &written);
+                CloseHandle(input);
+            }
+
+            return TRUE;
+        }
+
+        // When running a foreground shell subprocess, ignore Ctrl+C in the
+        // parent so the child can handle CTRL_C_EVENT directly.
+        if (Bun__activeSubprocessCount.load(std::memory_order_relaxed) > 0) {
+            Bun__pendingCtrlC.store(true, std::memory_order_relaxed);
+            return TRUE;
+        }
+
         Bun__restoreWindowsStdio();
-        SetConsoleCtrlHandler(Ctrlhandler, FALSE);
     }
 
     return FALSE;
@@ -872,6 +958,37 @@ extern "C" void Bun__unregisterSignalsForForwarding()
     FOR_EACH_SIGNAL(UNREGISTER_SIGNAL)
     memset(previous_actions, 0, sizeof(previous_actions));
 #undef UNREGISTER_SIGNAL
+}
+
+#endif
+
+// Handle signals in bun.spawnSync on Windows.
+// On Windows, Ctrl+C sends CTRL_C_EVENT to all processes in the console group.
+// We disable Ctrl+C handling before spawning so cmd.exe and child processes
+// can handle SIGINT properly without being killed by the parent or intermediate shell.
+#if OS(WINDOWS)
+
+// Note: We only ever use bun.spawnSync on the main thread.
+extern "C" int64_t Bun__currentSyncPID = 0;
+
+extern "C" void Bun__registerSignalsForForwarding()
+{
+    // Disable Ctrl+C handling for this process. Child processes will inherit this,
+    // but they can re-enable it themselves (which bun does via SigintWatcher).
+    // This prevents cmd.exe (used as shell wrapper) from terminating on Ctrl+C.
+    SetConsoleCtrlHandler(NULL, TRUE);
+}
+
+extern "C" void Bun__unregisterSignalsForForwarding()
+{
+    Bun__currentSyncPID = 0;
+    // Re-enable default Ctrl+C handling
+    SetConsoleCtrlHandler(NULL, FALSE);
+}
+
+extern "C" void Bun__sendPendingSignalIfNecessary()
+{
+    // Not needed on Windows - child receives CTRL_C_EVENT directly from Windows
 }
 
 #endif

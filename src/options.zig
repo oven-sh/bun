@@ -1812,6 +1812,7 @@ pub const BundleOptions = struct {
     debugger: bool = false,
 
     compile: bool = false,
+    metafile: bool = false,
 
     /// Set when bake.DevServer is bundling.
     dev_server: ?*bun.bake.DevServer = null,

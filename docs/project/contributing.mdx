@@ -28,23 +28,23 @@ Using your system's package manager, install Bun's dependencies:
 <CodeGroup>
 
 ```bash macOS (Homebrew)
-$ brew install automake ccache cmake coreutils gnu-sed go icu4c libiconv libtool ninja pkg-config rust ruby
+brew install automake ccache cmake coreutils gnu-sed go icu4c libiconv libtool ninja pkg-config rust ruby
 ```
 
 ```bash Ubuntu/Debian
-$ sudo apt install curl wget lsb-release software-properties-common cargo cmake git golang libtool ninja-build pkg-config rustc ruby-full xz-utils
+sudo apt install curl wget lsb-release software-properties-common cargo cmake git golang libtool ninja-build pkg-config rustc ruby-full xz-utils
 ```
 
 ```bash Arch
-$ sudo pacman -S base-devel cmake git go libiconv libtool make ninja pkg-config python rust sed unzip ruby
+sudo pacman -S base-devel cmake git go libiconv libtool make ninja pkg-config python rust sed unzip ruby
 ```
 
 ```bash Fedora
-$ sudo dnf install cargo clang19 llvm19 lld19 cmake git golang libtool ninja-build pkg-config rustc ruby libatomic-static libstdc++-static sed unzip which libicu-devel 'perl(Math::BigInt)'
+sudo dnf install cargo clang19 llvm19 lld19 cmake git golang libtool ninja-build pkg-config rustc ruby libatomic-static libstdc++-static sed unzip which libicu-devel 'perl(Math::BigInt)'
 ```
 
 ```bash openSUSE Tumbleweed
-$ sudo zypper install go cmake ninja automake git icu rustup && rustup toolchain install stable
+sudo zypper install go cmake ninja automake git icu rustup && rustup toolchain install stable
 ```
 
 </CodeGroup>
@@ -56,16 +56,16 @@ Before starting, you will need to already have a release build of Bun installed,
 <CodeGroup>
 
 ```bash Native
-$ curl -fsSL https://bun.com/install | bash
+curl -fsSL https://bun.com/install | bash
 ```
 
 ```bash npm
-$ npm install -g bun
+npm install -g bun
 ```
 
 ```bash Homebrew
-$ brew tap oven-sh/bun
-$ brew install bun
+brew tap oven-sh/bun
+brew install bun
 ```
 
 </CodeGroup>
@@ -76,19 +76,19 @@ ccache is used to cache compilation artifacts, significantly speeding up builds:
 
 ```bash
 # For macOS
-$ brew install ccache
+brew install ccache
 
 # For Ubuntu/Debian
-$ sudo apt install ccache
+sudo apt install ccache
 
 # For Arch
-$ sudo pacman -S ccache
+sudo pacman -S ccache
 
 # For Fedora
-$ sudo dnf install ccache
+sudo dnf install ccache
 
 # For openSUSE
-$ sudo zypper install ccache
+sudo zypper install ccache
 ```
 
 Our build scripts will automatically detect and use `ccache` if available. You can check cache statistics with `ccache --show-stats`.
@@ -100,24 +100,24 @@ Bun requires LLVM 19 (`clang` is part of LLVM). This version requirement is to m
 <CodeGroup>
 
 ```bash macOS (Homebrew)
-$ brew install llvm@19
+brew install llvm@19
 ```
 
 ```bash Ubuntu/Debian
-$ # LLVM has an automatic installation script that is compatible with all versions of Ubuntu
-$ wget https://apt.llvm.org/llvm.sh -O - | sudo bash -s -- 19 all
+# LLVM has an automatic installation script that is compatible with all versions of Ubuntu
+wget https://apt.llvm.org/llvm.sh -O - | sudo bash -s -- 19 all
 ```
 
 ```bash Arch
-$ sudo pacman -S llvm clang lld
+sudo pacman -S llvm clang lld
 ```
 
 ```bash Fedora
-$ sudo dnf install llvm clang lld-devel
+sudo dnf install llvm clang lld-devel
 ```
 
 ```bash openSUSE Tumbleweed
-$ sudo zypper install clang19 lld19 llvm19
+sudo zypper install clang19 lld19 llvm19
 ```
 
 </CodeGroup>
@@ -127,7 +127,7 @@ If none of the above solutions apply, you will have to install it [manually](htt
 Make sure Clang/LLVM 19 is in your path:
 
 ```bash
-$ which clang-19
+which clang-19
 ```
 
 If not, run this to manually add it:
@@ -137,12 +137,12 @@ If not, run this to manually add it:
 ```bash macOS (Homebrew)
 # use fish_add_path if you're using fish
 # use path+="$(brew --prefix llvm@19)/bin" if you are using zsh
-$ export PATH="$(brew --prefix llvm@19)/bin:$PATH"
+export PATH="$(brew --prefix llvm@19)/bin:$PATH"
 ```
 
 ```bash Arch
 # use fish_add_path if you're using fish
-$ export PATH="$PATH:/usr/lib/llvm19/bin"
+export PATH="$PATH:/usr/lib/llvm19/bin"
 ```
 
 </CodeGroup>
@@ -162,7 +162,7 @@ bun run build
 The binary will be located at `./build/debug/bun-debug`. It is recommended to add this to your `$PATH`. To verify the build worked, let's print the version number on the development build of Bun.
 
 ```bash
-$ build/debug/bun-debug --version
+build/debug/bun-debug --version
 x.y.z_debug
 ```
 
@@ -261,17 +261,17 @@ WebKit is not cloned by default (to save time and disk space). To clone and buil
 
 ```bash
 # Clone WebKit into ./vendor/WebKit
-$ git clone https://github.com/oven-sh/WebKit vendor/WebKit
+git clone https://github.com/oven-sh/WebKit vendor/WebKit
 
 # Check out the commit hash specified in `set(WEBKIT_VERSION <commit_hash>)` in cmake/tools/SetupWebKit.cmake
-$ git -C vendor/WebKit checkout <commit_hash>
+git -C vendor/WebKit checkout <commit_hash>
 
 # Make a debug build of JSC. This will output build artifacts in ./vendor/WebKit/WebKitBuild/Debug
 # Optionally, you can use `bun run jsc:build` for a release build
 bun run jsc:build:debug && rm vendor/WebKit/WebKitBuild/Debug/JavaScriptCore/DerivedSources/inspector/InspectorProtocolObjects.h
 
 # After an initial run of `make jsc-debug`, you can rebuild JSC with:
-$ cmake --build vendor/WebKit/WebKitBuild/Debug --target jsc && rm vendor/WebKit/WebKitBuild/Debug/JavaScriptCore/DerivedSources/inspector/InspectorProtocolObjects.h
+cmake --build vendor/WebKit/WebKitBuild/Debug --target jsc && rm vendor/WebKit/WebKitBuild/Debug/JavaScriptCore/DerivedSources/inspector/InspectorProtocolObjects.h
 
 # Build bun with the local JSC build
 bun run build:local
@@ -322,20 +322,20 @@ is not able to compile a simple test program.
 To fix the error, we need to update the GCC version to 11. To do this, we'll need to check if the latest version is available in the distribution's official repositories or use a third-party repository that provides GCC 11 packages. Here are general steps:
 
 ```bash
-$ sudo apt update
-$ sudo apt install gcc-11 g++-11
+sudo apt update
+sudo apt install gcc-11 g++-11
 # If the above command fails with `Unable to locate package gcc-11` we need
 # to add the APT repository
-$ sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
+sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
 # Now run `apt install` again
-$ sudo apt install gcc-11 g++-11
+sudo apt install gcc-11 g++-11
 ```
 
 Now, we need to set GCC 11 as the default compiler:
 
 ```bash
-$ sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 100
-$ sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-11 100
+sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 100
+sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-11 100
 ```
 
 ### libarchive
@@ -343,7 +343,7 @@ $ sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-11 100
 If you see an error on macOS when compiling `libarchive`, run:
 
 ```bash
-$ brew install pkg-config
+brew install pkg-config
 ```
 
 ### macOS `library not found for -lSystem`
@@ -351,7 +351,7 @@ $ brew install pkg-config
 If you see this error when compiling, run:
 
 ```bash
-$ xcode-select --install
+xcode-select --install
 ```
 
 ### Cannot find `libatomic.a`

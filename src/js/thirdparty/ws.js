@@ -15,6 +15,64 @@ const kBunInternals = Symbol.for("::bunternal::");
 const readyStates = ["CONNECTING", "OPEN", "CLOSING", "CLOSED"];
 
 const encoder = new TextEncoder();
+
+/**
+ * Extracts TLS and proxy options from an agent object.
+ * @param {Object} agent The agent object to extract options from
+ * @returns {{ tls: Object|null, proxy: string|Object|null }}
+ */
+function extractAgentOptions(agent) {
+  const connectOpts = agent?.connectOpts || agent?.options;
+  let tls = null;
+  let proxy = null;
+
+  if ($isObject(connectOpts)) {
+    // Build TLS options
+    const newTlsOptions = {};
+    let hasTlsOptions = false;
+
+    if (connectOpts.rejectUnauthorized !== undefined) {
+      newTlsOptions.rejectUnauthorized = connectOpts.rejectUnauthorized;
+      hasTlsOptions = true;
+    }
+    if (connectOpts.ca) {
+      newTlsOptions.ca = connectOpts.ca;
+      hasTlsOptions = true;
+    }
+    if (connectOpts.cert) {
+      newTlsOptions.cert = connectOpts.cert;
+      hasTlsOptions = true;
+    }
+    if (connectOpts.key) {
+      newTlsOptions.key = connectOpts.key;
+      hasTlsOptions = true;
+    }
+    if (connectOpts.passphrase) {
+      newTlsOptions.passphrase = connectOpts.passphrase;
+      hasTlsOptions = true;
+    }
+
+    if (hasTlsOptions) {
+      tls = newTlsOptions;
+    }
+  }
+
+  // Build proxy - check connectOpts.proxy first, then agent.proxy
+  const agentProxy = connectOpts?.proxy || agent?.proxy;
+  if (agentProxy) {
+    const proxyUrl = agentProxy?.href || agentProxy;
+    // Get proxy headers from agent.proxyHeaders
+    if (agent?.proxyHeaders) {
+      const proxyHeaders = $isCallable(agent.proxyHeaders) ? agent.proxyHeaders.$call(agent) : agent.proxyHeaders;
+      proxy = { url: proxyUrl, headers: proxyHeaders };
+    } else {
+      proxy = proxyUrl;
+    }
+  }
+
+  return { tls, proxy };
+}
+
 const eventIds = {
   open: 1,
   close: 2,
@@ -89,9 +147,26 @@ class BunWebSocket extends EventEmitter {
 
     let headers;
     let method = "GET";
+    let proxy;
+    let tlsOptions;
+    let agent;
     // https://github.com/websockets/ws/blob/0d1b5e6c4acad16a6b1a1904426eb266a5ba2f72/lib/websocket.js#L741-L747
     if ($isObject(options)) {
       headers = options?.headers;
+      proxy = options?.proxy;
+      tlsOptions = options?.tls;
+
+      // Extract from agent if provided (like HttpsProxyAgent)
+      agent = options?.agent;
+      if ($isObject(agent)) {
+        const agentOpts = extractAgentOptions(agent);
+        if (!proxy && agentOpts.proxy) {
+          proxy = agentOpts.proxy;
+        }
+        if (!tlsOptions && agentOpts.tls) {
+          tlsOptions = agentOpts.tls;
+        }
+      }
     }
 
     const finishRequest = options?.finishRequest;
@@ -131,7 +206,7 @@ class BunWebSocket extends EventEmitter {
         end: () => {
           if (!didCallEnd) {
             didCallEnd = true;
-            this.#createWebSocket(url, protocols, headers, method);
+            this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions);
           }
         },
         write() {},
@@ -160,16 +235,26 @@ class BunWebSocket extends EventEmitter {
       EventEmitter.$call(nodeHttpClientRequestSimulated);
       finishRequest(nodeHttpClientRequestSimulated);
       if (!didCallEnd) {
-        this.#createWebSocket(url, protocols, headers, method);
+        this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions);
       }
       return;
     }
 
-    this.#createWebSocket(url, protocols, headers, method);
+    this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions);
   }
 
-  #createWebSocket(url, protocols, headers, method) {
-    let ws = (this.#ws = new WebSocket(url, headers ? { headers, method, protocols } : protocols));
+  #createWebSocket(url, protocols, headers, method, proxy, tls) {
+    let wsOptions;
+    if (headers || proxy || tls) {
+      wsOptions = { protocols };
+      if (headers) wsOptions.headers = headers;
+      if (method) wsOptions.method = method;
+      if (proxy) wsOptions.proxy = proxy;
+      if (tls) wsOptions.tls = tls;
+    } else {
+      wsOptions = protocols;
+    }
+    let ws = (this.#ws = new WebSocket(url, wsOptions));
     ws.binaryType = "nodebuffer";
 
     return ws;

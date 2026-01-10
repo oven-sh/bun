@@ -1,4 +1,5 @@
 pub const Classes = struct {
+    pub const Archive = api.Archive;
     pub const Blob = webcore.Blob;
     pub const HTMLRewriter = api.HTMLRewriter.HTMLRewriter;
     pub const Element = api.HTMLRewriter.Element;

@@ -28,6 +28,7 @@ console.log("Reading linker files...");
 const linkerLds = await Bun.file(join(repoRoot, "src", "linker.lds")).text();
 const symbolsDyn = await Bun.file(join(repoRoot, "src", "symbols.dyn")).text();
 const symbolsTxt = await Bun.file(join(repoRoot, "src", "symbols.txt")).text();
+const symbolsDef = await Bun.file(join(repoRoot, "src", "symbols.def")).text();
 
 // Create metadata JSON with link command included
 const metadata = {
@@ -41,6 +42,7 @@ const metadata = {
   linker_lds: linkerLds,
   symbols_dyn: symbolsDyn,
   symbols_txt: symbolsTxt,
+  symbols_def: symbolsDef,
 };
 
 const metadataPath = join(buildPath, "link-metadata.json");

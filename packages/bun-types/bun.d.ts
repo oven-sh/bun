@@ -7202,9 +7202,9 @@ declare module "bun" {
      * - Standard Blob methods (`text()`, `arrayBuffer()`, `stream()`, etc.)
      *
      * Only regular files are included; directories are not returned.
-     * File contents are loaded into memory, so for very large archives consider using `extract()` instead.
+     * File contents are loaded into memory, so for large archives consider using `extract()` instead.
      *
-     * @param glob - Optional glob pattern(s) to filter files (e.g., `"*.txt"`, `"src/**"`)
+     * @param glob - Optional glob pattern(s) to filter files (e.g., `"*.txt"`, `"src" + "/**"`)
      * @returns A promise that resolves with a Map where keys are file paths (always using forward slashes `/` as separators) and values are File objects
      *
      * @example
@@ -7219,7 +7219,7 @@ declare module "bun" {
      * @example
      * **Filter by glob pattern:**
      * ```ts
-     * const tsFiles = await archive.files("**/*.ts");
+     * const tsFiles = await archive.files("**" + "/*.ts");
      * const srcFiles = await archive.files(["src/**", "lib/**"]);
      * ```
      *

@@ -140,6 +140,8 @@ The target directory is created automatically if it doesn't exist. Existing file
 
 **Note**: On Windows, symbolic links in archives are skipped during extraction since they require elevated privileges. On Linux and macOS, symlinks are extracted normally.
 
+**Security note**: Bun.Archive validates paths during extraction, rejecting absolute paths (POSIX `/`, Windows drive letters like `C:\` or `C:/`, and UNC paths like `\\server\share`) as well as path traversal attempts containing `..` components.
+
 ### Filtering Extracted Files
 
 Use glob patterns to extract only specific files:
@@ -195,7 +197,7 @@ Each `File` object includes:
 - `lastModified` - Modification timestamp
 - Standard `Blob` methods: `text()`, `arrayBuffer()`, `stream()`, etc.
 
-**Note**: `files()` loads file contents into memory. For very large archives, consider using `extract()` to write directly to disk instead.
+**Note**: `files()` loads file contents into memory. For large archives, consider using `extract()` to write directly to disk instead.
 
 ### Error Handling
 
@@ -234,7 +236,7 @@ The count returned by `extract()` includes all successfully written entries (fil
 
 **Security note**: Bun.Archive automatically validates paths during extraction, rejecting:
 
-- Absolute paths (starting with `/` or `\`)
+- Absolute paths (POSIX `/`, Windows drive letters like `C:\` or `C:/`, UNC paths like `\\server\share`)
 - Path traversal attempts (containing `..` components)
 - Unsafe symlink targets
 
@@ -389,6 +391,8 @@ await Bun.Archive.write("my-project.tar.gz", archive, "gzip");
 ```
 
 ## Reference
+
+> **Note**: The following type signatures are simplified for documentation purposes. See [`packages/bun-types/bun.d.ts`](https://github.com/oven-sh/bun/blob/main/packages/bun-types/bun.d.ts) for the full type definitions.
 
 ```ts
 type ArchiveCompression = "gzip" | boolean;

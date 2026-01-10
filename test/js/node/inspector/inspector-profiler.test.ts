@@ -310,14 +310,14 @@ describe("node:inspector", () => {
       session.disconnect();
     });
 
-    test("coverage APIs return empty result", () => {
+    test("coverage APIs throw not supported", () => {
       const session = new inspector.Session();
       session.connect();
       session.post("Profiler.enable");
-      expect(session.post("Profiler.getBestEffortCoverage")).toEqual({});
-      expect(session.post("Profiler.startPreciseCoverage")).toEqual({});
-      expect(session.post("Profiler.stopPreciseCoverage")).toEqual({});
-      expect(session.post("Profiler.takePreciseCoverage")).toEqual({});
+      expect(() => session.post("Profiler.getBestEffortCoverage")).toThrow("not supported");
+      expect(() => session.post("Profiler.startPreciseCoverage")).toThrow("not supported");
+      expect(() => session.post("Profiler.stopPreciseCoverage")).toThrow("not supported");
+      expect(() => session.post("Profiler.takePreciseCoverage")).toThrow("not supported");
       session.disconnect();
     });
   });

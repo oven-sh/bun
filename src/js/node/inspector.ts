@@ -1,5 +1,5 @@
 // Hardcoded module "node:inspector" and "node:inspector/promises"
-// This is a stub! None of this is actually implemented yet.
+// Profiler APIs are implemented; other inspector APIs are stubs.
 const { hideFromStack, throwNotImplemented } = require("internal/shared");
 const EventEmitter = require("node:events");
 
@@ -127,7 +127,7 @@ class Session extends EventEmitter {
       case "Profiler.startPreciseCoverage":
       case "Profiler.stopPreciseCoverage":
       case "Profiler.takePreciseCoverage":
-        return {};
+        return new Error("Coverage APIs are not supported");
 
       default:
         return new Error(`Inspector method "${method}" is not supported`);

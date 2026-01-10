@@ -15,6 +15,64 @@ const kBunInternals = Symbol.for("::bunternal::");
 const readyStates = ["CONNECTING", "OPEN", "CLOSING", "CLOSED"];
 
 const encoder = new TextEncoder();
+
+/**
+ * Extracts TLS and proxy options from an agent object.
+ * @param {Object} agent The agent object to extract options from
+ * @returns {{ tls: Object|null, proxy: string|Object|null }}
+ */
+function extractAgentOptions(agent) {
+  const connectOpts = agent?.connectOpts || agent?.options;
+  let tls = null;
+  let proxy = null;
+
+  if ($isObject(connectOpts)) {
+    // Build TLS options
+    const newTlsOptions = {};
+    let hasTlsOptions = false;
+
+    if (connectOpts.rejectUnauthorized !== undefined) {
+      newTlsOptions.rejectUnauthorized = connectOpts.rejectUnauthorized;
+      hasTlsOptions = true;
+    }
+    if (connectOpts.ca) {
+      newTlsOptions.ca = connectOpts.ca;
+      hasTlsOptions = true;
+    }
+    if (connectOpts.cert) {
+      newTlsOptions.cert = connectOpts.cert;
+      hasTlsOptions = true;
+    }
+    if (connectOpts.key) {
+      newTlsOptions.key = connectOpts.key;
+      hasTlsOptions = true;
+    }
+    if (connectOpts.passphrase) {
+      newTlsOptions.passphrase = connectOpts.passphrase;
+      hasTlsOptions = true;
+    }
+
+    if (hasTlsOptions) {
+      tls = newTlsOptions;
+    }
+  }
+
+  // Build proxy - check connectOpts.proxy first, then agent.proxy
+  const agentProxy = connectOpts?.proxy || agent?.proxy;
+  if (agentProxy) {
+    const proxyUrl = agentProxy?.href || agentProxy;
+    // Get proxy headers from agent.proxyHeaders
+    if (agent?.proxyHeaders) {
+      const proxyHeaders = $isCallable(agent.proxyHeaders) ? agent.proxyHeaders.$call(agent) : agent.proxyHeaders;
+      proxy = { url: proxyUrl, headers: proxyHeaders };
+    } else {
+      proxy = proxyUrl;
+    }
+  }
+
+  return { tls, proxy };
+}
+
 const eventIds = {
   open: 1,
   close: 2,
@@ -101,48 +159,12 @@ class BunWebSocket extends EventEmitter {
       // Extract from agent if provided (like HttpsProxyAgent)
       agent = options?.agent;
       if ($isObject(agent)) {
-        // Get proxy from agent.proxy (can be URL object or string)
-        if (!proxy && agent.proxy) {
-          const agentProxy = agent.proxy?.href || agent.proxy;
-          // Get proxy headers from agent.proxyHeaders
-          if (agent.proxyHeaders) {
-            const proxyHeaders = $isCallable(agent.proxyHeaders) ? agent.proxyHeaders.$call(agent) : agent.proxyHeaders;
-            proxy = { url: agentProxy, headers: proxyHeaders };
-          } else {
-            proxy = agentProxy;
-          }
+        const agentOpts = extractAgentOptions(agent);
+        if (!proxy && agentOpts.proxy) {
+          proxy = agentOpts.proxy;
         }
-        // Get TLS options from agent.connectOpts or agent.options
-        // Only extract specific TLS options we support (not ALPNProtocols, etc.)
-        if (!tlsOptions) {
-          const agentOpts = agent.connectOpts || agent.options;
-          if ($isObject(agentOpts)) {
-            const newTlsOptions = {};
-            let hasTlsOptions = false;
-            if (agentOpts.rejectUnauthorized !== undefined) {
-              newTlsOptions.rejectUnauthorized = agentOpts.rejectUnauthorized;
-              hasTlsOptions = true;
-            }
-            if (agentOpts.ca) {
-              newTlsOptions.ca = agentOpts.ca;
-              hasTlsOptions = true;
-            }
-            if (agentOpts.cert) {
-              newTlsOptions.cert = agentOpts.cert;
-              hasTlsOptions = true;
-            }
-            if (agentOpts.key) {
-              newTlsOptions.key = agentOpts.key;
-              hasTlsOptions = true;
-            }
-            if (agentOpts.passphrase) {
-              newTlsOptions.passphrase = agentOpts.passphrase;
-              hasTlsOptions = true;
-            }
-            if (hasTlsOptions) {
-              tlsOptions = newTlsOptions;
-            }
-          }
+        if (!tlsOptions && agentOpts.tls) {
+          tlsOptions = agentOpts.tls;
         }
       }
     }
@@ -184,7 +206,7 @@ class BunWebSocket extends EventEmitter {
         end: () => {
           if (!didCallEnd) {
             didCallEnd = true;
-            this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions, agent);
+            this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions);
           }
         },
         write() {},
@@ -213,23 +235,22 @@ class BunWebSocket extends EventEmitter {
       EventEmitter.$call(nodeHttpClientRequestSimulated);
       finishRequest(nodeHttpClientRequestSimulated);
       if (!didCallEnd) {
-        this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions, agent);
+        this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions);
       }
       return;
     }
 
-    this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions, agent);
+    this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions);
   }
 
-  #createWebSocket(url, protocols, headers, method, proxy, tls, agent) {
+  #createWebSocket(url, protocols, headers, method, proxy, tls) {
     let wsOptions;
-    if (headers || proxy || tls || agent) {
+    if (headers || proxy || tls) {
       wsOptions = { protocols };
       if (headers) wsOptions.headers = headers;
       if (method) wsOptions.method = method;
       if (proxy) wsOptions.proxy = proxy;
       if (tls) wsOptions.tls = tls;
-      if (agent) wsOptions.agent = agent;
     } else {
       wsOptions = protocols;
     }

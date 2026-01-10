@@ -30,6 +30,7 @@
 #include <algorithm>
 #include <climits>
 #include <string_view>
+#include <span>
 #include <map>
 #include "MoveOnlyFunction.h"
 #include "ChunkedEncoding.h"
@@ -165,8 +166,7 @@ namespace uWS
          * pass this as the 'head' Buffer parameter.
          * WARNING: This points to data in the receive buffer and may be stack-allocated.
          * Must be cloned before the request handler returns. */
-        const char* headData = nullptr;
-        unsigned int headLength = 0;
+        std::span<const char> head;
 
         bool isAncient()
         {
@@ -892,8 +892,7 @@ namespace uWS
              * to break here as we either have upgraded to
              * WebSockets or otherwise closed the socket. */
             /* Store any remaining data as head for Node.js compat (connect/upgrade events) */
-            req->headData = data;
-            req->headLength = length;
+            req->head = std::span<const char>(data, length);
             void *returnedUser = requestHandler(user, req);
             if (returnedUser != user) {
                 /* We are upgraded to WebSocket or otherwise broken */

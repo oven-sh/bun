@@ -3,9 +3,9 @@ import { tempDir } from "harness";
 import { join } from "path";
 
 describe("Bun.Archive", () => {
-  describe("Archive.from", () => {
+  describe("new Archive()", () => {
     test("creates archive from object with string values", async () => {
-      const archive = Bun.Archive.from({
+      const archive = new Bun.Archive({
         "hello.txt": "Hello, World!",
         "data.json": JSON.stringify({ foo: "bar" }),
       });
@@ -14,7 +14,7 @@ describe("Bun.Archive", () => {
     });
 
     test("creates archive from object with Blob values", async () => {
-      const archive = Bun.Archive.from({
+      const archive = new Bun.Archive({
         "blob1.txt": new Blob(["Hello from Blob"]),
         "blob2.txt": new Blob(["Another Blob"]),
       });
@@ -24,7 +24,7 @@ describe("Bun.Archive", () => {
 
     test("creates archive from object with Uint8Array values", async () => {
       const encoder = new TextEncoder();
-      const archive = Bun.Archive.from({
+      const archive = new Bun.Archive({
         "bytes1.txt": encoder.encode("Hello from Uint8Array"),
         "bytes2.txt": encoder.encode("Another Uint8Array"),
       });
@@ -34,7 +34,7 @@ describe("Bun.Archive", () => {
 
     test("creates archive from object with ArrayBuffer values", async () => {
       const encoder = new TextEncoder();
-      const archive = Bun.Archive.from({
+      const archive = new Bun.Archive({
         "buffer1.txt": encoder.encode("Hello from ArrayBuffer").buffer,
         "buffer2.txt": encoder.encode("Another ArrayBuffer").buffer,
       });
@@ -44,7 +44,7 @@ describe("Bun.Archive", () => {
 
     test("creates archive from object with mixed value types", async () => {
       const encoder = new TextEncoder();
-      const archive = Bun.Archive.from({
+      const archive = new Bun.Archive({
         "string.txt": "String content",
         "blob.txt": new Blob(["Blob content"]),
         "uint8.txt": encoder.encode("Uint8Array content"),
@@ -56,7 +56,7 @@ describe("Bun.Archive", () => {
 
     test("creates archive from Blob", async () => {
       // First create an archive with some content
-      const sourceArchive = Bun.Archive.from({
+      const sourceArchive = new Bun.Archive({
         "test.txt": "test content",
       });
 
@@ -64,35 +64,35 @@ describe("Bun.Archive", () => {
       expect(blob).toBeInstanceOf(Blob);
 
       // Create new archive from the blob
-      const archive = Bun.Archive.from(blob);
+      const archive = new Bun.Archive(blob);
       expect(archive).toBeInstanceOf(Bun.Archive);
     });
 
     test("creates archive from ArrayBuffer", async () => {
-      const sourceArchive = Bun.Archive.from({
+      const sourceArchive = new Bun.Archive({
         "test.txt": "test content",
       });
 
       const bytes = await sourceArchive.bytes();
       const buffer = bytes.buffer;
 
-      const archive = Bun.Archive.from(buffer);
+      const archive = new Bun.Archive(buffer);
       expect(archive).toBeInstanceOf(Bun.Archive);
     });
 
     test("creates archive from Uint8Array", async () => {
-      const sourceArchive = Bun.Archive.from({
+      const sourceArchive = new Bun.Archive({
         "test.txt": "test content",
       });
 
       const bytes = await sourceArchive.bytes();
 
-      const archive = Bun.Archive.from(bytes);
+      const archive = new Bun.Archive(bytes);
       expect(archive).toBeInstanceOf(Bun.Archive);
     });
 
     test("creates archive with nested directory structure", async () => {
-      const archive = Bun.Archive.from({
+      const archive = new Bun.Archive({
         "root.txt": "Root file",
         "dir1/file1.txt": "File in dir1",
         "dir1/dir2/file2.txt": "File in dir1/dir2",
@@ -103,7 +103,7 @@ describe("Bun.Archive", () => {
     });
 
     test("creates archive with empty string value", async () => {
-      const archive = Bun.Archive.from({
+      const archive = new Bun.Archive({
         "empty.txt": "",
       });
 
@@ -113,27 +113,27 @@ describe("Bun.Archive", () => {
     test("throws with no arguments", () => {
       expect(() => {
         // @ts-expect-error - testing runtime behavior
-        Bun.Archive.from();
+        new Bun.Archive();
       }).toThrow();
     });
 
     test("throws with invalid input type (number)", () => {
       expect(() => {
         // @ts-expect-error - testing runtime behavior
-        Bun.Archive.from(123);
+        new Bun.Archive(123);
       }).toThrow();
     });
 
     test("throws with invalid input type (null)", () => {
       expect(() => {
         // @ts-expect-error - testing runtime behavior
-        Bun.Archive.from(null);
+        new Bun.Archive(null);
       }).toThrow();
     });
 
     test("converts non-string/buffer values to strings", async () => {
       // @ts-expect-error - testing runtime behavior
-      const archive = Bun.Archive.from({ "file.txt": 123 });
+      const archive = new Bun.Archive({ "file.txt": 123 });
       // The archive should be created successfully - number is converted to string
       expect(archive).toBeDefined();
       const bytes = await archive.bytes();
@@ -144,7 +144,7 @@ describe("Bun.Archive", () => {
 
   describe("archive.blob()", () => {
     test("returns a Blob", async () => {
-      const archive = Bun.Archive.from({
+      const archive = new Bun.Archive({
         "hello.txt": "Hello, World!",
       });
 
@@ -154,7 +154,7 @@ describe("Bun.Archive", () => {
     });
 
     test("returns consistent output for same input", async () => {
-      const archive = Bun.Archive.from({
+      const archive = new Bun.Archive({
         "hello.txt": "Hello, World!",
       });
 
@@ -163,13 +163,19 @@ describe("Bun.Archive", () => {
       expect(blob1.size).toBe(blob2.size);
     });
 
-    test("with gzip returns gzipped blob", async () => {
-      const archive = Bun.Archive.from({
+    test("with gzip option returns gzipped blob", async () => {
+      const regularArchive = new Bun.Archive({
         "hello.txt": "Hello, World!",
       });
+      const gzipArchive = new Bun.Archive(
+        {
+          "hello.txt": "Hello, World!",
+        },
+        { gzip: {} },
+      );
 
-      const regularBlob = await archive.blob();
-      const gzippedBlob = await archive.blob("gzip");
+      const regularBlob = await regularArchive.blob();
+      const gzippedBlob = await gzipArchive.blob();
 
       expect(gzippedBlob).toBeInstanceOf(Blob);
       // Gzipped should be different size
@@ -178,32 +184,49 @@ describe("Bun.Archive", () => {
 
     test("gzip is smaller for larger repetitive data", async () => {
       const largeContent = Buffer.alloc(13000, "Hello, World!");
-      const archive = Bun.Archive.from({
+      const regularArchive = new Bun.Archive({
         "large.txt": largeContent,
       });
+      const gzipArchive = new Bun.Archive(
+        {
+          "large.txt": largeContent,
+        },
+        { gzip: {} },
+      );
 
-      const regularBlob = await archive.blob();
-      const gzippedBlob = await archive.blob("gzip");
+      const regularBlob = await regularArchive.blob();
+      const gzippedBlob = await gzipArchive.blob();
 
       // For large repetitive data, gzip should be smaller
       expect(gzippedBlob.size).toBeLessThan(regularBlob.size);
     });
 
-    test("throws with invalid compress argument", async () => {
-      const archive = Bun.Archive.from({
-        "hello.txt": "Hello, World!",
-      });
+    test("gzip level affects compression ratio", async () => {
+      const largeContent = Buffer.alloc(50000, "Hello, World!");
+      const level1Archive = new Bun.Archive({ "large.txt": largeContent }, { gzip: { level: 1 } });
+      const level12Archive = new Bun.Archive({ "large.txt": largeContent }, { gzip: { level: 12 } });
 
-      await expect(async () => {
-        // @ts-expect-error - testing runtime behavior
-        await archive.blob("invalid");
+      const level1Blob = await level1Archive.blob();
+      const level12Blob = await level12Archive.blob();
+
+      // Level 12 should produce smaller output than level 1
+      expect(level12Blob.size).toBeLessThan(level1Blob.size);
+    });
+
+    test("throws with invalid gzip level", () => {
+      expect(() => {
+        new Bun.Archive({ "hello.txt": "Hello, World!" }, { gzip: { level: 0 } });
+      }).toThrow();
+
+      expect(() => {
+        new Bun.Archive({ "hello.txt": "Hello, World!" }, { gzip: { level: 13 } });
       }).toThrow();
     });
   });
 
   describe("archive.bytes()", () => {
     test("returns a Uint8Array", async () => {
-      const archive = Bun.Archive.from({
+      const archive = new Bun.Archive({
         "hello.txt": "Hello, World!",
       });
 
@@ -213,7 +236,7 @@ describe("Bun.Archive", () => {
     });
 
     test("returns consistent output for same input", async () => {
-      const archive = Bun.Archive.from({
+      const archive = new Bun.Archive({
         "hello.txt": "Hello, World!",
       });
 
@@ -222,13 +245,19 @@ describe("Bun.Archive", () => {
       expect(bytes1.length).toBe(bytes2.length);
     });
 
-    test("with gzip returns gzipped bytes", async () => {
-      const archive = Bun.Archive.from({
+    test("with gzip option returns gzipped bytes", async () => {
+      const regularArchive = new Bun.Archive({
         "hello.txt": "Hello, World!",
       });
+      const gzipArchive = new Bun.Archive(
+        {
+          "hello.txt": "Hello, World!",
+        },
+        { gzip: true },
+      );
 
-      const regularBytes = await archive.bytes();
-      const gzippedBytes = await archive.bytes("gzip");
+      const regularBytes = await regularArchive.bytes();
+      const gzippedBytes = await gzipArchive.bytes();
 
       expect(gzippedBytes).toBeInstanceOf(Uint8Array);
       // Gzipped should be different size
@@ -237,19 +266,25 @@ describe("Bun.Archive", () => {
 
     test("gzip is smaller for larger repetitive data", async () => {
       const largeContent = Buffer.alloc(13000, "Hello, World!");
-      const archive = Bun.Archive.from({
+      const regularArchive = new Bun.Archive({
         "large.txt": largeContent,
       });
+      const gzipArchive = new Bun.Archive(
+        {
+          "large.txt": largeContent,
+        },
+        { gzip: true },
+      );
 
-      const regularBytes = await archive.bytes();
-      const gzippedBytes = await archive.bytes("gzip");
+      const regularBytes = await regularArchive.bytes();
+      const gzippedBytes = await gzipArchive.bytes();
 
       // For large repetitive data, gzip should be smaller
       expect(gzippedBytes.length).toBeLessThan(regularBytes.length);
     });
 
     test("bytes match blob content", async () => {
-      const archive = Bun.Archive.from({
+      const archive = new Bun.Archive({
         "hello.txt": "Hello, World!",
       });
 
@@ -262,24 +297,13 @@ describe("Bun.Archive", () => {
         expect(bytes[i]).toBe(blobBytes[i]);
       }
     });
-
-    test("throws with invalid compress argument", async () => {
-      const archive = Bun.Archive.from({
-        "hello.txt": "Hello, World!",
-      });
-
-      await expect(async () => {
-        // @ts-expect-error - testing runtime behavior
-        await archive.bytes("deflate");
-      }).toThrow();
-    });
   });
 
   describe("archive.extract()", () => {
     test("extracts to directory and returns file count", async () => {
       using dir = tempDir("archive-extract-test", {});
 
-      const archive = Bun.Archive.from({
+      const archive = new Bun.Archive({
         "hello.txt": "Hello, World!",
         "subdir/nested.txt": "Nested content",
       });
@@ -295,7 +319,7 @@ describe("Bun.Archive", () => {
     test("extracts nested directory structure", async () => {
       using dir = tempDir("archive-extract-nested", {});
 
-      const archive = Bun.Archive.from({
+      const archive = new Bun.Archive({
         "root.txt": "Root file",
         "dir1/file1.txt": "File in dir1",
         "dir1/dir2/file2.txt": "File in dir1/dir2",
@@ -316,7 +340,7 @@ describe("Bun.Archive", () => {
       using dir = tempDir("archive-extract-binary", {});
 
       const binaryData = new Uint8Array([0, 1, 2, 255, 254, 253, 128, 127]);
-      const archive = Bun.Archive.from({
+      const archive = new Bun.Archive({
         "binary.bin": binaryData,
       });
 
@@ -333,13 +357,13 @@ describe("Bun.Archive", () => {
       using dir = tempDir("archive-extract-from-blob", {});
 
       // Create original archive
-      const sourceArchive = Bun.Archive.from({
+      const sourceArchive = new Bun.Archive({
         "test.txt": "test content",
       });
 
       // Get as blob and create new archive
       const blob = await sourceArchive.blob();
-      const archive = Bun.Archive.from(blob);
+      const archive = new Bun.Archive(blob);
 
       const count = await archive.extract(String(dir));
       expect(count).toBeGreaterThan(0);
@@ -352,13 +376,13 @@ describe("Bun.Archive", () => {
       using dir = tempDir("archive-extract-from-bytes", {});
 
       // Create original archive
-      const sourceArchive = Bun.Archive.from({
+      const sourceArchive = new Bun.Archive({
         "test.txt": "test content",
       });
 
       // Get as bytes and create new archive
       const bytes = await sourceArchive.bytes();
-      const archive = Bun.Archive.from(bytes);
+      const archive = new Bun.Archive(bytes);
 
       const count = await archive.extract(String(dir));
       expect(count).toBeGreaterThan(0);
@@ -368,7 +392,7 @@ describe("Bun.Archive", () => {
     });
 
     test("throws with missing path argument", async () => {
-      const archive = Bun.Archive.from({
+      const archive = new Bun.Archive({
         "hello.txt": "Hello, World!",
       });
 
@@ -379,7 +403,7 @@ describe("Bun.Archive", () => {
     });
 
     test("throws with non-string path argument", async () => {
-      const archive = Bun.Archive.from({
+      const archive = new Bun.Archive({
         "hello.txt": "Hello, World!",
       });
 
@@ -393,7 +417,7 @@ describe("Bun.Archive", () => {
       using dir = tempDir("archive-extract-create-dir", {});
       const newDir = join(String(dir), "new-subdir", "nested");
 
-      const archive = Bun.Archive.from({
+      const archive = new Bun.Archive({
         "hello.txt": "Hello, World!",
       });
 
@@ -410,7 +434,7 @@ describe("Bun.Archive", () => {
         "existing-file.txt": "I am a file",
       });
 
-      const archive = Bun.Archive.from({
+      const archive = new Bun.Archive({
         "hello.txt": "Hello, World!",
       });
 
@@ -425,7 +449,7 @@ describe("Bun.Archive", () => {
     test("throws when extracting corrupted archive data", async () => {
       // Create garbage data that's not a valid archive
       const corruptedData = new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
-      const archive = Bun.Archive.from(corruptedData);
+      const archive = new Bun.Archive(corruptedData);
 
       using dir = tempDir("archive-corrupted", {});
 
@@ -436,14 +460,14 @@ describe("Bun.Archive", () => {
 
     test("throws when extracting truncated archive", async () => {
       // Create a valid archive then truncate it
-      const validArchive = Bun.Archive.from({
+      const validArchive = new Bun.Archive({
         "file.txt": "Hello, World!",
       });
       const bytes = await validArchive.bytes();
 
       // Truncate to only first 10 bytes - definitely incomplete
       const truncated = bytes.slice(0, 10);
-      const archive = Bun.Archive.from(truncated);
+      const archive = new Bun.Archive(truncated);
 
       using dir = tempDir("archive-truncated", {});
 
@@ -459,7 +483,7 @@ describe("Bun.Archive", () => {
         randomBytes[i] = Math.floor(Math.random() * 256);
       }
 
-      const archive = Bun.Archive.from(randomBytes);
+      const archive = new Bun.Archive(randomBytes);
 
       using dir = tempDir("archive-random", {});
 
@@ -471,7 +495,7 @@ describe("Bun.Archive", () => {
     test("handles empty archive gracefully", async () => {
       // Empty data
       const emptyData = new Uint8Array(0);
-      const archive = Bun.Archive.from(emptyData);
+      const archive = new Bun.Archive(emptyData);
 
       using dir = tempDir("archive-empty", {});
 
@@ -487,7 +511,7 @@ describe("Bun.Archive", () => {
 
   describe("path safety", () => {
     test("normalizes paths with redundant separators", async () => {
-      const archive = Bun.Archive.from({
+      const archive = new Bun.Archive({
         "dir//subdir///file.txt": "content",
       });
 
@@ -500,7 +524,7 @@ describe("Bun.Archive", () => {
     });
 
     test("handles paths with dots correctly", async () => {
-      const archive = Bun.Archive.from({
+      const archive = new Bun.Archive({
         "dir/./file.txt": "content1",
         "dir/subdir/../file2.txt": "content2",
       });
@@ -516,7 +540,7 @@ describe("Bun.Archive", () => {
     test("handles very long filenames", async () => {
       // Create a filename that's quite long but within reasonable limits
       const longName = "a".repeat(200) + ".txt";
-      const archive = Bun.Archive.from({
+      const archive = new Bun.Archive({
         [longName]: "content",
       });
 
@@ -535,7 +559,7 @@ describe("Bun.Archive", () => {
     test("handles deeply nested paths", async () => {
       // Create a deeply nested path
       const deepPath = Array(50).fill("dir").join("/") + "/file.txt";
-      const archive = Bun.Archive.from({
+      const archive = new Bun.Archive({
         [deepPath]: "deep content",
       });
 
@@ -575,10 +599,12 @@ describe("Bun.Archive", () => {
 
       await Bun.Archive.write(
         archivePath,
-        {
-          "hello.txt": largeContent,
-        },
-        "gzip",
+        new Bun.Archive(
+          {
+            "hello.txt": largeContent,
+          },
+          { gzip: true },
+        ),
       );
 
       // Verify file exists and is smaller than uncompressed
@@ -599,7 +625,7 @@ describe("Bun.Archive", () => {
       const archivePath = join(String(dir), "test.tar");
 
       // Create archive and get blob
-      const sourceArchive = Bun.Archive.from({
+      const sourceArchive = new Bun.Archive({
         "test.txt": "test content",
       });
       const blob = await sourceArchive.blob();
@@ -625,7 +651,7 @@ describe("Bun.Archive", () => {
 
       // Extract it
       const blob = await Bun.file(archivePath).bytes();
-      const archive = Bun.Archive.from(blob);
+      const archive = new Bun.Archive(blob);
       require("fs").mkdirSync(extractDir, { recursive: true });
       const count = await archive.extract(extractDir);
       expect(count).toBeGreaterThan(0);
@@ -649,29 +675,23 @@ describe("Bun.Archive", () => {
       }).toThrow();
     });
 
-    test("throws with invalid compress argument", async () => {
-      using dir = tempDir("archive-write-invalid-compress", {});
+    test("throws with invalid gzip option", async () => {
+      using dir = tempDir("archive-write-invalid-gzip", {});
       const archivePath = join(String(dir), "test.tar");
 
       await expect(async () => {
-        // @ts-expect-error - testing runtime behavior
-        await Bun.Archive.write(archivePath, { "file.txt": "content" }, "invalid");
+        await Bun.Archive.write(archivePath, new Bun.Archive({ "file.txt": "content" }, { gzip: { level: 0 } }));
       }).toThrow();
-    });
-  });
 
-  describe("new Archive()", () => {
-    test("throws when constructed directly", () => {
-      expect(() => {
-        // @ts-expect-error - testing runtime behavior
-        new Bun.Archive();
-      }).toThrow("Archive cannot be constructed directly");
+      await expect(async () => {
+        await Bun.Archive.write(archivePath, new Bun.Archive({ "file.txt": "content" }, { gzip: { level: 13 } }));
+      }).toThrow();
     });
   });
 
   describe("GC safety", () => {
     test("archive remains valid after GC", async () => {
-      const archive = Bun.Archive.from({
+      const archive = new Bun.Archive({
         "hello.txt": "Hello, World!",
       });
 
@@ -690,7 +710,7 @@ describe("Bun.Archive", () => {
         entries[`file${i}.txt`] = `Content for file ${i}`;
       }
 
-      const archive = Bun.Archive.from(entries);
+      const archive = new Bun.Archive(entries);
 
       // Force GC multiple times
       Bun.gc(true);
@@ -705,7 +725,7 @@ describe("Bun.Archive", () => {
 
     test("original data mutation doesn't affect archive", async () => {
       const data = new Uint8Array([1, 2, 3, 4, 5]);
-      const archive = Bun.Archive.from({
+      const archive = new Bun.Archive({
         "data.bin": data,
       });
 
@@ -728,12 +748,12 @@ describe("Bun.Archive", () => {
     test("blob source mutation doesn't affect archive", async () => {
       const original = new Uint8Array([1, 2, 3, 4, 5]);
       const blob = new Blob([original]);
-      const sourceArchive = Bun.Archive.from({
+      const sourceArchive = new Bun.Archive({
         "data.bin": blob,
       });
 
       const archiveBlob = await sourceArchive.blob();
-      const archive = Bun.Archive.from(archiveBlob);
+      const archive = new Bun.Archive(archiveBlob);
 
       // Force GC
       Bun.gc(true);
@@ -757,7 +777,7 @@ describe("Bun.Archive", () => {
       using dir = tempDir("archive-gc-no-ref", {});
 
       // Create promise without keeping archive reference
-      const promise = Bun.Archive.from({
+      const promise = new Bun.Archive({
         "test.txt": "Hello from GC test!",
       }).extract(String(dir));
 
@@ -776,7 +796,7 @@ describe("Bun.Archive", () => {
 
     test("blob() works even if archive is not referenced", async () => {
       // Get blob promise without keeping archive reference
-      const promise = Bun.Archive.from({
+      const promise = new Bun.Archive({
         "file.txt": "Blob GC test content",
       }).blob();
 
@@ -791,7 +811,7 @@ describe("Bun.Archive", () => {
 
     test("bytes() works even if archive is not referenced", async () => {
       // Get bytes promise without keeping archive reference
-      const promise = Bun.Archive.from({
+      const promise = new Bun.Archive({
         "file.txt": "Bytes GC test content",
       }).bytes();
 
@@ -808,7 +828,7 @@ describe("Bun.Archive", () => {
   describe("large archives", () => {
     test("handles large file content", async () => {
       const largeContent = Buffer.alloc(1024 * 1024, "x"); // 1MB
-      const archive = Bun.Archive.from({
+      const archive = new Bun.Archive({
         "large.txt": largeContent,
       });
 
@@ -825,7 +845,7 @@ describe("Bun.Archive", () => {
         entries[`file${i.toString().padStart(4, "0")}.txt`] = `Content ${i}`;
       }
 
-      const archive = Bun.Archive.from(entries);
+      const archive = new Bun.Archive(entries);
 
       using dir = tempDir("archive-many-files", {});
       const count = await archive.extract(String(dir));
@@ -835,7 +855,7 @@ describe("Bun.Archive", () => {
 
   describe("special characters", () => {
     test("handles filenames with spaces", async () => {
-      const archive = Bun.Archive.from({
+      const archive = new Bun.Archive({
         "file with spaces.txt": "content",
       });
 
@@ -849,7 +869,7 @@ describe("Bun.Archive", () => {
     test("handles special characters in filenames", async () => {
       // Note: Some unicode characters may not be supported by all tar formats
       // Using ASCII-only special characters
-      const archive = Bun.Archive.from({
+      const archive = new Bun.Archive({
         "file-with-dash.txt": "content1",
         "file_with_underscore.txt": "content2",
         "file.with.dots.txt": "content3",
@@ -864,7 +884,7 @@ describe("Bun.Archive", () => {
     });
 
     test("handles unicode content", async () => {
-      const archive = Bun.Archive.from({
+      const archive = new Bun.Archive({
         "unicode.txt": "Hello, 世界! Привет! Γειά σου!",
       });
 
@@ -878,7 +898,7 @@ describe("Bun.Archive", () => {
 
   describe("archive.files()", () => {
     test("returns a Map of File objects", async () => {
-      const archive = Bun.Archive.from({
+      const archive = new Bun.Archive({
         "hello.txt": "Hello, World!",
         "data.json": JSON.stringify({ foo: "bar" }),
       });
@@ -899,14 +919,14 @@ describe("Bun.Archive", () => {
     });
 
     test("returns empty Map for empty archive", async () => {
-      const archive = Bun.Archive.from({});
+      const archive = new Bun.Archive({});
       const files = await archive.files();
       expect(files).toBeInstanceOf(Map);
       expect(files.size).toBe(0);
     });
 
     test("handles nested directory structure", async () => {
-      const archive = Bun.Archive.from({
+      const archive = new Bun.Archive({
         "root.txt": "Root file",
         "dir1/file1.txt": "File in dir1",
         "dir1/dir2/file2.txt": "File in dir1/dir2",
@@ -921,7 +941,7 @@ describe("Bun.Archive", () => {
     });
 
     test("filters files with glob pattern", async () => {
-      const archive = Bun.Archive.from({
+      const archive = new Bun.Archive({
         "file1.txt": "Text file 1",
         "file2.txt": "Text file 2",
         "file1.json": "JSON file 1",
@@ -937,7 +957,7 @@ describe("Bun.Archive", () => {
     });
 
     test("filters with ** glob pattern", async () => {
-      const archive = Bun.Archive.from({
+      const archive = new Bun.Archive({
         "file1.txt": "Text file 1",
         "subdir/file2.txt": "Text file 2",
         "subdir/deep/file3.txt": "Text file 3",
@@ -953,7 +973,7 @@ describe("Bun.Archive", () => {
     });
 
     test("filters with directory pattern", async () => {
-      const archive = Bun.Archive.from({
+      const archive = new Bun.Archive({
         "src/index.js": "source 1",
         "src/util.js": "source 2",
         "test/index.test.js": "test 1",
@@ -967,7 +987,7 @@ describe("Bun.Archive", () => {
     });
 
     test("returns empty Map when no files match glob", async () => {
-      const archive = Bun.Archive.from({
+      const archive = new Bun.Archive({
         "file1.txt": "Text file",
         "file2.json": "JSON file",
       });
@@ -979,7 +999,7 @@ describe("Bun.Archive", () => {
 
     test("handles binary data correctly", async () => {
       const binaryData = new Uint8Array([0, 1, 2, 255, 254, 253, 128, 127]);
-      const archive = Bun.Archive.from({
+      const archive = new Bun.Archive({
         "binary.bin": binaryData,
       });
 
@@ -997,7 +1017,7 @@ describe("Bun.Archive", () => {
     test("File objects have lastModified property", async () => {
       // Tar archives store mtime in seconds, so round down to nearest second
       const beforeTime = Math.floor(Date.now() / 1000) * 1000;
-      const archive = Bun.Archive.from({
+      const archive = new Bun.Archive({
         "file.txt": "content",
       });
 
@@ -1010,7 +1030,7 @@ describe("Bun.Archive", () => {
     });
 
     test("throws with non-string glob argument", async () => {
-      const archive = Bun.Archive.from({
+      const archive = new Bun.Archive({
         "file.txt": "content",
       });
 
@@ -1021,12 +1041,15 @@ describe("Bun.Archive", () => {
     });
 
     test("works with gzipped archive source", async () => {
-      const sourceArchive = Bun.Archive.from({
-        "hello.txt": "Hello from gzip!",
-      });
+      const sourceArchive = new Bun.Archive(
+        {
+          "hello.txt": "Hello from gzip!",
+        },
+        { gzip: true },
+      );
 
-      const gzippedBlob = await sourceArchive.blob("gzip");
-      const archive = Bun.Archive.from(gzippedBlob);
+      const gzippedBlob = await sourceArchive.blob();
+      const archive = new Bun.Archive(gzippedBlob);
 
       const files = await archive.files();
       expect(files.size).toBe(1);
@@ -1034,7 +1057,7 @@ describe("Bun.Archive", () => {
     });
 
     test("concurrent files() operations work correctly", async () => {
-      const archive = Bun.Archive.from({
+      const archive = new Bun.Archive({
         "file.txt": "content",
       });
 
@@ -1046,7 +1069,7 @@ describe("Bun.Archive", () => {
     });
 
     test("files() works even if archive is not referenced (GC safety)", async () => {
-      const promise = Bun.Archive.from({
+      const promise = new Bun.Archive({
         "test.txt": "GC test content",
       }).files();
 
@@ -1069,7 +1092,7 @@ describe("Bun.Archive", () => {
       using dir = tempDir("sparse-small", {});
 
       const tarData = await Bun.file(join(fixturesDir, "small-hole.tar")).bytes();
-      const archive = Bun.Archive.from(tarData);
+      const archive = new Bun.Archive(tarData);
       await archive.extract(String(dir));
 
       const extracted = await Bun.file(join(String(dir), "small-hole.bin")).bytes();
@@ -1085,7 +1108,7 @@ describe("Bun.Archive", () => {
       using dir = tempDir("sparse-1block", {});
 
       const tarData = await Bun.file(join(fixturesDir, "one-block-hole.tar")).bytes();
-      const archive = Bun.Archive.from(tarData);
+      const archive = new Bun.Archive(tarData);
       await archive.extract(String(dir));
 
       const extracted = await Bun.file(join(String(dir), "one-block-hole.bin")).bytes();
@@ -1101,7 +1124,7 @@ describe("Bun.Archive", () => {
       using dir = tempDir("sparse-multi", {});
 
       const tarData = await Bun.file(join(fixturesDir, "multi-block-hole.tar")).bytes();
-      const archive = Bun.Archive.from(tarData);
+      const archive = new Bun.Archive(tarData);
       await archive.extract(String(dir));
 
       const extracted = await Bun.file(join(String(dir), "multi-block-hole.bin")).bytes();
@@ -1116,7 +1139,7 @@ describe("Bun.Archive", () => {
       using dir = tempDir("sparse-leading", {});
 
       const tarData = await Bun.file(join(fixturesDir, "leading-hole.tar")).bytes();
-      const archive = Bun.Archive.from(tarData);
+      const archive = new Bun.Archive(tarData);
       await archive.extract(String(dir));
 
       const extracted = await Bun.file(join(String(dir), "leading-hole.bin")).bytes();
@@ -1131,7 +1154,7 @@ describe("Bun.Archive", () => {
       using dir = tempDir("sparse-trailing", {});
 
       const tarData = await Bun.file(join(fixturesDir, "trailing-hole.tar")).bytes();
-      const archive = Bun.Archive.from(tarData);
+      const archive = new Bun.Archive(tarData);
       await archive.extract(String(dir));
 
       const extracted = await Bun.file(join(String(dir), "trailing-hole.bin")).bytes();
@@ -1146,7 +1169,7 @@ describe("Bun.Archive", () => {
       using dir = tempDir("sparse-large", {});
 
       const tarData = await Bun.file(join(fixturesDir, "large-hole.tar")).bytes();
-      const archive = Bun.Archive.from(tarData);
+      const archive = new Bun.Archive(tarData);
       await archive.extract(String(dir));
 
       const extracted = await Bun.file(join(String(dir), "large-hole.bin")).bytes();
@@ -1160,7 +1183,7 @@ describe("Bun.Archive", () => {
 
   describe("extract with glob patterns", () => {
     test("extracts only files matching glob pattern", async () => {
-      const archive = Bun.Archive.from({
+      const archive = new Bun.Archive({
         "src/index.ts": "export {}",
         "src/utils.ts": "export {}",
         "src/types.d.ts": "declare {}",
@@ -1183,7 +1206,7 @@ describe("Bun.Archive", () => {
     });
 
     test("extracts files matching any of multiple glob patterns", async () => {
-      const archive = Bun.Archive.from({
+      const archive = new Bun.Archive({
         "src/index.ts": "export {}",
         "lib/utils.js": "module.exports = {}",
         "test/test.ts": "test()",
@@ -1201,7 +1224,7 @@ describe("Bun.Archive", () => {
     });
 
     test("excludes files matching negative pattern", async () => {
-      const archive = Bun.Archive.from({
+      const archive = new Bun.Archive({
         "src/index.ts": "export {}",
         "src/index.test.ts": "test()",
         "src/utils.ts": "export {}",
@@ -1220,7 +1243,7 @@ describe("Bun.Archive", () => {
     });
 
     test("excludes files matching any of multiple negative patterns", async () => {
-      const archive = Bun.Archive.from({
+      const archive = new Bun.Archive({
         "src/index.ts": "export {}",
         "src/index.test.ts": "test()",
         "__tests__/helper.ts": "helper",
@@ -1240,7 +1263,7 @@ describe("Bun.Archive", () => {
     });
 
     test("combines positive and negative glob patterns", async () => {
-      const archive = Bun.Archive.from({
+      const archive = new Bun.Archive({
         "src/index.ts": "export {}",
         "src/index.test.ts": "test()",
         "src/utils.ts": "export {}",
@@ -1264,7 +1287,7 @@ describe("Bun.Archive", () => {
     });
 
     test("extracts all files when no patterns are provided", async () => {
-      const archive = Bun.Archive.from({
+      const archive = new Bun.Archive({
         "file1.txt": "content1",
         "file2.txt": "content2",
       });
@@ -1278,7 +1301,7 @@ describe("Bun.Archive", () => {
     });
 
     test("returns 0 when no files match glob pattern", async () => {
-      const archive = Bun.Archive.from({
+      const archive = new Bun.Archive({
         "file.txt": "content",
         "other.md": "markdown",
       });
@@ -1292,7 +1315,7 @@ describe("Bun.Archive", () => {
 
   describe("concurrent operations", () => {
     test("multiple extract operations run correctly", async () => {
-      const archive = Bun.Archive.from({
+      const archive = new Bun.Archive({
         "file.txt": "content",
       });
 
@@ -1316,7 +1339,7 @@ describe("Bun.Archive", () => {
     });
 
     test("multiple blob operations run correctly", async () => {
-      const archive = Bun.Archive.from({
+      const archive = new Bun.Archive({
         "file.txt": "content",
       });
 
@@ -1327,7 +1350,7 @@ describe("Bun.Archive", () => {
     });
 
     test("mixed operations run correctly", async () => {
-      const archive = Bun.Archive.from({
+      const archive = new Bun.Archive({
         "file.txt": "content",
       });
 
@@ -1343,7 +1366,7 @@ describe("Bun.Archive", () => {
 
   describe("Bun.write with Archive", () => {
     test("writes archive to local file", async () => {
-      const archive = Bun.Archive.from({
+      const archive = new Bun.Archive({
         "hello.txt": "Hello, World!",
         "data.json": JSON.stringify({ foo: "bar" }),
       });
@@ -1358,7 +1381,7 @@ describe("Bun.Archive", () => {
       expect(await Bun.file(tarPath).exists()).toBe(true);
 
       // Read it back and verify contents
-      const readArchive = Bun.Archive.from(await Bun.file(tarPath).bytes());
+      const readArchive = new Bun.Archive(await Bun.file(tarPath).bytes());
       const files = await readArchive.files();
       expect(files.size).toBe(2);
       expect(files.get("hello.txt")).toBeDefined();
@@ -1367,7 +1390,7 @@ describe("Bun.Archive", () => {
     });
 
     test("writes archive with nested directories", async () => {
-      const archive = Bun.Archive.from({
+      const archive = new Bun.Archive({
         "root.txt": "root file",
         "dir1/file1.txt": "file in dir1",
         "dir1/dir2/file2.txt": "file in dir1/dir2",
@@ -1379,7 +1402,7 @@ describe("Bun.Archive", () => {
       await Bun.write(tarPath, archive);
 
       // Read it back
-      const readArchive = Bun.Archive.from(await Bun.file(tarPath).bytes());
+      const readArchive = new Bun.Archive(await Bun.file(tarPath).bytes());
       const files = await readArchive.files();
       expect(files.size).toBe(3);
       expect(await files.get("dir1/dir2/file2.txt")!.text()).toBe("file in dir1/dir2");
@@ -1387,7 +1410,7 @@ describe("Bun.Archive", () => {
 
     test("writes archive with binary content", async () => {
       const binaryData = new Uint8Array([0x00, 0x01, 0x02, 0xff, 0xfe, 0xfd]);
-      const archive = Bun.Archive.from({
+      const archive = new Bun.Archive({
         "binary.bin": binaryData,
       });
 
@@ -1397,14 +1420,14 @@ describe("Bun.Archive", () => {
       await Bun.write(tarPath, archive);
 
       // Read it back
-      const readArchive = Bun.Archive.from(await Bun.file(tarPath).bytes());
+      const readArchive = new Bun.Archive(await Bun.file(tarPath).bytes());
       const files = await readArchive.files();
       const extractedBinary = await files.get("binary.bin")!.bytes();
       expect(extractedBinary).toEqual(binaryData);
     });
 
     test("writes archive to Bun.file()", async () => {
-      const archive = Bun.Archive.from({
+      const archive = new Bun.Archive({
         "test.txt": "test content",
       });
 
@@ -1415,7 +1438,7 @@ describe("Bun.Archive", () => {
       await Bun.write(bunFile, archive);
 
       expect(await bunFile.exists()).toBe(true);
-      const readArchive = Bun.Archive.from(await bunFile.bytes());
+      const readArchive = new Bun.Archive(await bunFile.bytes());
       const files = await readArchive.files();
       expect(await files.get("test.txt")!.text()).toBe("test content");
     });

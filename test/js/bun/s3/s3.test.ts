@@ -1516,7 +1516,7 @@ describe.skipIf(!minioCredentials)("Archive with S3", () => {
 
   it("writes archive to S3 via S3Client.write()", async () => {
     const client = new Bun.S3Client(credentials);
-    const archive = Bun.Archive.from({
+    const archive = new Bun.Archive({
       "hello.txt": "Hello from Archive!",
       "data.json": JSON.stringify({ test: true }),
     });
@@ -1526,7 +1526,7 @@ describe.skipIf(!minioCredentials)("Archive with S3", () => {
 
     // Verify by downloading and reading back
     const downloaded = await client.file(key).bytes();
-    const readArchive = Bun.Archive.from(downloaded);
+    const readArchive = new Bun.Archive(downloaded);
     const files = await readArchive.files();
 
     expect(files.size).toBe(2);
@@ -1538,7 +1538,7 @@ describe.skipIf(!minioCredentials)("Archive with S3", () => {
   });
 
   it("writes archive to S3 via Bun.write() with s3:// URL", async () => {
-    const archive = Bun.Archive.from({
+    const archive = new Bun.Archive({
       "file1.txt": "content1",
       "dir/file2.txt": "content2",
     });
@@ -1553,7 +1553,7 @@ describe.skipIf(!minioCredentials)("Archive with S3", () => {
     // Verify by downloading
     const s3File = Bun.file(s3Url, credentials);
     const downloaded = await s3File.bytes();
-    const readArchive = Bun.Archive.from(downloaded);
+    const readArchive = new Bun.Archive(downloaded);
     const files = await readArchive.files();
 
     expect(files.size).toBe(2);
@@ -1567,7 +1567,7 @@ describe.skipIf(!minioCredentials)("Archive with S3", () => {
   it("writes archive with binary content to S3", async () => {
     const client = new Bun.S3Client(credentials);
     const binaryData = new Uint8Array([0x00, 0x01, 0x02, 0xff, 0xfe, 0xfd, 0x80, 0x7f]);
-    const archive = Bun.Archive.from({
+    const archive = new Bun.Archive({
       "binary.bin": binaryData,
     });
 
@@ -1576,7 +1576,7 @@ describe.skipIf(!minioCredentials)("Archive with S3", () => {
 
     // Verify binary data is preserved
     const downloaded = await client.file(key).bytes();
-    const readArchive = Bun.Archive.from(downloaded);
+    const readArchive = new Bun.Archive(downloaded);
     const files = await readArchive.files();
     const extractedBinary = await files.get("binary.bin")!.bytes();
 
@@ -1594,14 +1594,14 @@ describe.skipIf(!minioCredentials)("Archive with S3", () => {
     for (let i = 0; i < 50; i++) {
       entries[`file${i.toString().padStart(3, "0")}.txt`] = `Content for file ${i}`;
     }
-    const archive = Bun.Archive.from(entries);
+    const archive = new Bun.Archive(entries);
 
     const key = randomUUIDv7() + ".tar";
     await client.write(key, archive);
 
     // Verify
     const downloaded = await client.file(key).bytes();
-    const readArchive = Bun.Archive.from(downloaded);
+    const readArchive = new Bun.Archive(downloaded);
     const files = await readArchive.files();
 
     expect(files.size).toBe(50);
@@ -1614,7 +1614,7 @@ describe.skipIf(!minioCredentials)("Archive with S3", () => {
 
   it("writes archive via s3File.write()", async () => {
     const client = new Bun.S3Client(credentials);
-    const archive = Bun.Archive.from({
+    const archive = new Bun.Archive({
       "test.txt": "Hello via s3File.write()!",
     });
 
@@ -1624,7 +1624,7 @@ describe.skipIf(!minioCredentials)("Archive with S3", () => {
 
     // Verify
     const downloaded = await s3File.bytes();
-    const readArchive = Bun.Archive.from(downloaded);
+    const readArchive = new Bun.Archive(downloaded);
     const files = await readArchive.files();
 
     expect(files.size).toBe(1);

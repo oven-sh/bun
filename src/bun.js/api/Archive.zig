@@ -5,8 +5,19 @@ pub const toJS = js.toJS;
 pub const fromJS = js.fromJS;
 pub const fromJSDirect = js.fromJSDirect;
 
+/// Compression options for the archive
+pub const Compression = union(enum) {
+    none,
+    gzip: struct {
+        /// Compression level: 1 (fastest) to 12 (maximum compression). Default is 6.
+        level: u8 = 6,
+    },
+};
+
 /// The underlying data for the archive - uses Blob.Store for thread-safe ref counting
 store: *jsc.WebCore.Blob.Store,
+/// Compression settings for this archive
+compress: Compression = .none,
 
 pub fn finalize(this: *Archive) void {
     jsc.markBinding(@src());
@@ -65,47 +76,100 @@ fn countFilesInArchive(data: []const u8) u32 {
     return count;
 }
 
-/// Constructor: new Archive() - throws an error since users should use Archive.from()
-pub fn constructor(globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!*Archive {
-    return globalThis.throwInvalidArguments("Archive cannot be constructed directly. Use Archive.from() instead.", .{});
-}
-
-/// Static method: Archive.from(data)
+/// Constructor: new Archive(data, options?)
 /// Creates an Archive from either:
 /// - An object { [path: string]: Blob | string | ArrayBufferView | ArrayBufferLike }
 /// - A Blob, ArrayBufferView, or ArrayBufferLike (assumes it's already a valid archive)
-pub fn from(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    const arg = callframe.argumentsAsArray(1)[0];
-    if (arg == .zero) {
-        return globalThis.throwInvalidArguments("Archive.from requires an argument", .{});
+/// Options:
+/// - gzip: { level?: number } - Enable gzip compression with optional level (1-12, default 6)
+pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!*Archive {
+    const data_arg, const options_arg = callframe.argumentsAsArray(2);
+    if (data_arg == .zero) {
+        return globalThis.throwInvalidArguments("new Archive() requires an argument", .{});
     }
 
+    // Parse compression options
+    const compress = try parseCompressionOptions(globalThis, options_arg);
+
     // For Blob/Archive, ref the existing store (zero-copy)
-    if (arg.as(jsc.WebCore.Blob)) |blob_ptr| {
+    if (data_arg.as(jsc.WebCore.Blob)) |blob_ptr| {
         if (blob_ptr.store) |store| {
             store.ref();
-            return bun.new(Archive, .{ .store = store }).toJS(globalThis);
+            return bun.new(Archive, .{ .store = store, .compress = compress });
         }
     }
 
     // For ArrayBuffer/TypedArray, copy the data
-    if (arg.asArrayBuffer(globalThis)) |array_buffer| {
+    if (data_arg.asArrayBuffer(globalThis)) |array_buffer| {
         const data = try bun.default_allocator.dupe(u8, array_buffer.slice());
-        return createArchive(globalThis, data);
+        return createArchive(data, compress);
     }
 
     // For plain objects, build a tarball
-    if (arg.isObject()) {
-        const data = try buildTarballFromObject(globalThis, arg);
-        return createArchive(globalThis, data);
+    if (data_arg.isObject()) {
+        const data = try buildTarballFromObject(globalThis, data_arg);
+        return createArchive(data, compress);
     }
 
     return globalThis.throwInvalidArguments("Expected an object, Blob, TypedArray, or ArrayBuffer", .{});
 }
 
-fn createArchive(globalThis: *jsc.JSGlobalObject, data: []u8) jsc.JSValue {
+/// Parse compression options from JS value
+/// Accepts: undefined, { gzip: number | { level?: number } }
+fn parseCompressionOptions(globalThis: *jsc.JSGlobalObject, options_arg: jsc.JSValue) bun.JSError!Compression {
+    if (options_arg.isUndefinedOrNull()) {
+        return .none;
+    }
+
+    if (!options_arg.isObject()) {
+        return globalThis.throwInvalidArguments("Archive: options must be an object", .{});
+    }
+
+    // Check for gzip option
+    if (try options_arg.getTruthy(globalThis, "gzip")) |gzip_val| {
+        // gzip can be:
+        // - true (use default level 6)
+        // - a number (compression level 1-12)
+        // - an object { level?: number }
+        if (gzip_val.isBoolean()) {
+            if (gzip_val.toBoolean()) {
+                return .{ .gzip = .{ .level = 6 } };
+            }
+            return .none;
+        }
+
+        if (gzip_val.isNumber()) {
+            const level_num = gzip_val.toInt64();
+            if (level_num < 1 or level_num > 12) {
+                return globalThis.throwInvalidArguments("Archive: gzip level must be between 1 and 12", .{});
+            }
+            return .{ .gzip = .{ .level = @intCast(level_num) } };
+        }
+
+        if (gzip_val.isObject()) {
+            var level: u8 = 6; // Default compression level
+            if (try gzip_val.getTruthy(globalThis, "level")) |level_val| {
+                if (!level_val.isNumber()) {
+                    return globalThis.throwInvalidArguments("Archive: gzip.level must be a number", .{});
+                }
+                const level_num = level_val.toInt64();
+                if (level_num < 1 or level_num > 12) {
+                    return globalThis.throwInvalidArguments("Archive: gzip.level must be between 1 and 12", .{});
+                }
+                level = @intCast(level_num);
+            }
+            return .{ .gzip = .{ .level = level } };
+        }
+
+        return globalThis.throwInvalidArguments("Archive: gzip option must be true, a number (1-12), or an object", .{});
+    }
+
+    return .none;
+}
+
+fn createArchive(data: []u8, compress: Compression) *Archive {
     const store = jsc.WebCore.Blob.Store.init(data, bun.default_allocator);
-    return bun.new(Archive, .{ .store = store }).toJS(globalThis);
+    return bun.new(Archive, .{ .store = store, .compress = compress });
 }
 
 /// Shared helper that builds tarball bytes from a JS object
@@ -212,12 +276,15 @@ fn getEntryData(globalThis: *jsc.JSGlobalObject, value: jsc.JSValue, allocator: 
     return value.toSlice(globalThis, allocator);
 }
 
-/// Static method: Archive.write(path, data, compress?)
-/// Creates and writes an archive to disk in one operation
+/// Static method: Archive.write(path, data, options?)
+/// Creates and writes an archive to disk in one operation.
+/// For Archive instances, uses the archive's compression settings unless overridden by options.
+/// Options:
+///   - gzip: { level?: number } - Override compression settings
 pub fn write(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    const path_arg, const data_arg, const compress_arg = callframe.argumentsAsArray(3);
+    const path_arg, const data_arg, const options_arg = callframe.argumentsAsArray(3);
     if (data_arg == .zero) {
-        return globalThis.throwInvalidArguments("Archive.write requires at least 2 arguments (path, data)", .{});
+        return globalThis.throwInvalidArguments("Archive.write requires 2 arguments (path, data)", .{});
     }
 
     // Get the path
@@ -228,59 +295,35 @@ pub fn write(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
     const path_slice = try path_arg.toSlice(globalThis, bun.default_allocator);
     defer path_slice.deinit();
 
-    // Determine compression
-    const use_gzip = try parseCompressArg(globalThis, compress_arg);
+    // Parse options for compression override
+    const options_compress = try parseCompressionOptions(globalThis, options_arg);
 
-    // Try to use store reference (zero-copy) for Archive/Blob
+    // For Archive instances, use options override or archive's compression settings
     if (fromJS(data_arg)) |archive| {
-        return startWriteTask(globalThis, .{ .store = archive.store }, path_slice.slice(), use_gzip);
+        const compress = if (options_compress != .none) options_compress else archive.compress;
+        return startWriteTask(globalThis, .{ .store = archive.store }, path_slice.slice(), compress);
     }
 
+    // For Blobs, use store reference with options compression
     if (data_arg.as(jsc.WebCore.Blob)) |blob_ptr| {
         if (blob_ptr.store) |store| {
-            return startWriteTask(globalThis, .{ .store = store }, path_slice.slice(), use_gzip);
+            return startWriteTask(globalThis, .{ .store = store }, path_slice.slice(), options_compress);
         }
     }
 
-    // Fall back to copying data for ArrayBuffer/TypedArray/objects
-    const archive_data = try getArchiveData(globalThis, data_arg);
-    return startWriteTask(globalThis, .{ .owned = archive_data }, path_slice.slice(), use_gzip);
-}
-
-/// Get archive data from a value, returning owned bytes
-fn getArchiveData(globalThis: *jsc.JSGlobalObject, arg: jsc.JSValue) bun.JSError![]u8 {
-    // Check if it's a typed array, ArrayBuffer, or similar
-    if (arg.asArrayBuffer(globalThis)) |array_buffer| {
-        return bun.default_allocator.dupe(u8, array_buffer.slice());
+    // For ArrayBuffer/TypedArray, copy the data with options compression
+    if (data_arg.asArrayBuffer(globalThis)) |array_buffer| {
+        const data = try bun.default_allocator.dupe(u8, array_buffer.slice());
+        return startWriteTask(globalThis, .{ .owned = data }, path_slice.slice(), options_compress);
     }
 
-    // Check if it's an object with entries (plain object) - build tarball
-    if (arg.isObject()) {
-        return buildTarballFromObject(globalThis, arg);
+    // For plain objects, build a tarball with options compression
+    if (data_arg.isObject()) {
+        const data = try buildTarballFromObject(globalThis, data_arg);
+        return startWriteTask(globalThis, .{ .owned = data }, path_slice.slice(), options_compress);
     }
 
     return globalThis.throwInvalidArguments("Expected an object, Blob, TypedArray, ArrayBuffer, or Archive", .{});
-}
-
-fn parseCompressArg(globalThis: *jsc.JSGlobalObject, arg: jsc.JSValue) bun.JSError!bool {
-    if (arg.isUndefinedOrNull()) {
-        return false;
-    }
-
-    if (arg.isBoolean()) {
-        return arg.toBoolean();
-    }
-
-    if (arg.isString()) {
-        const str = try arg.toSlice(globalThis, bun.default_allocator);
-        defer str.deinit();
-        if (std.mem.eql(u8, str.slice(), "gzip")) {
-            return true;
-        }
-        return globalThis.throwInvalidArguments("Archive: compress argument must be 'gzip', a boolean, or undefined", .{});
-    }
-
-    return globalThis.throwInvalidArguments("Archive: compress argument must be 'gzip', a boolean, or undefined", .{});
 }
 
 /// Instance method: archive.extract(path, options?)
@@ -379,20 +422,16 @@ fn freePatterns(patterns: []const []const u8) void {
     bun.default_allocator.free(patterns);
 }
 
-/// Instance method: archive.blob(compress?)
-/// Returns Promise<Blob> with the archive data
-pub fn blob(this: *Archive, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    const compress_arg = callframe.argumentsAsArray(1)[0];
-    const use_gzip = try parseCompressArg(globalThis, compress_arg);
-    return startBlobTask(globalThis, this.store, use_gzip, .blob);
+/// Instance method: archive.blob()
+/// Returns Promise<Blob> with the archive data (compressed if gzip was set in options)
+pub fn blob(this: *Archive, globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    return startBlobTask(globalThis, this.store, this.compress, .blob);
 }
 
-/// Instance method: archive.bytes(compress?)
-/// Returns Promise<Uint8Array> with the archive data
-pub fn bytes(this: *Archive, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    const compress_arg = callframe.argumentsAsArray(1)[0];
-    const use_gzip = try parseCompressArg(globalThis, compress_arg);
-    return startBlobTask(globalThis, this.store, use_gzip, .bytes);
+/// Instance method: archive.bytes()
+/// Returns Promise<Uint8Array> with the archive data (compressed if gzip was set in options)
+pub fn bytes(this: *Archive, globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    return startBlobTask(globalThis, this.store, this.compress, .bytes);
 }
 
 /// Instance method: archive.files(glob?)
@@ -578,15 +617,17 @@ const BlobContext = struct {
     };
 
     store: *jsc.WebCore.Blob.Store,
-    use_gzip: bool,
+    compress: Compression,
     output_type: OutputType,
     result: Result = .{ .uncompressed = {} },
 
     fn run(this: *BlobContext) Result {
-        if (this.use_gzip) {
-            return .{ .compressed = compressGzip(this.store.sharedView()) catch |e| return .{ .err = e } };
+        switch (this.compress) {
+            .gzip => |opts| {
+                return .{ .compressed = compressGzip(this.store.sharedView(), opts.level) catch |e| return .{ .err = e } };
+            },
+            .none => return .{ .uncompressed = {} },
         }
-        return .{ .uncompressed = {} };
     }
 
     fn runFromJS(this: *BlobContext, globalThis: *jsc.JSGlobalObject) bun.JSError!PromiseResult {
@@ -617,13 +658,13 @@ const BlobContext = struct {
 
 pub const BlobTask = AsyncTask(BlobContext);
 
-fn startBlobTask(globalThis: *jsc.JSGlobalObject, store: *jsc.WebCore.Blob.Store, use_gzip: bool, output_type: BlobContext.OutputType) bun.JSError!jsc.JSValue {
+fn startBlobTask(globalThis: *jsc.JSGlobalObject, store: *jsc.WebCore.Blob.Store, compress: Compression, output_type: BlobContext.OutputType) bun.JSError!jsc.JSValue {
     store.ref();
     errdefer store.deref();
 
     const task = try BlobTask.create(globalThis, .{
         .store = store,
-        .use_gzip = use_gzip,
+        .compress = compress,
         .output_type = output_type,
     });
 
@@ -646,7 +687,7 @@ const WriteContext = struct {
 
     data: Data,
     path: [:0]const u8,
-    use_gzip: bool,
+    compress: Compression,
     result: Result = .{ .success = {} },
 
     fn run(this: *WriteContext) Result {
@@ -654,11 +695,11 @@ const WriteContext = struct {
             .owned => |d| d,
             .store => |s| s.sharedView(),
         };
-        const data_to_write = if (this.use_gzip)
-            compressGzip(source_data) catch |e| return .{ .err = e }
-        else
-            source_data;
-        defer if (this.use_gzip) bun.default_allocator.free(data_to_write);
+        const data_to_write = switch (this.compress) {
+            .gzip => |opts| compressGzip(source_data, opts.level) catch |e| return .{ .err = e },
+            .none => source_data,
+        };
+        defer if (this.compress != .none) bun.default_allocator.free(data_to_write);
 
         const file = switch (bun.sys.File.openat(.cwd(), this.path, bun.O.CREAT | bun.O.WRONLY | bun.O.TRUNC, 0o644)) {
             .err => |err| return .{ .sys_err = err.clone(bun.default_allocator) },
@@ -699,7 +740,7 @@ fn startWriteTask(
     globalThis: *jsc.JSGlobalObject,
     data: WriteContext.Data,
     path: []const u8,
-    use_gzip: bool,
+    compress: Compression,
 ) bun.JSError!jsc.JSValue {
     const path_z = try bun.default_allocator.dupeZ(u8, path);
     errdefer bun.default_allocator.free(path_z);
@@ -714,7 +755,7 @@ fn startWriteTask(
     const task = try WriteTask.create(globalThis, .{
         .data = data,
         .path = path_z,
-        .use_gzip = use_gzip,
+        .compress = compress,
     });
 
     const promise_js = task.promise.value();
@@ -869,10 +910,10 @@ fn startFilesTask(globalThis: *jsc.JSGlobalObject, store: *jsc.WebCore.Blob.Stor
 // Helpers
 // ============================================================================
 
-fn compressGzip(data: []const u8) ![]u8 {
+fn compressGzip(data: []const u8, level: u8) ![]u8 {
     libdeflate.load();
 
-    const compressor = libdeflate.Compressor.alloc(6) orelse return error.GzipInitFailed;
+    const compressor = libdeflate.Compressor.alloc(@intCast(level)) orelse return error.GzipInitFailed;
     defer compressor.deinit();
 
     const max_size = compressor.maxBytesNeeded(data, .gzip);

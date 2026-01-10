@@ -750,7 +750,7 @@ declare module "bun" {
    */
   function write(
     destination: BunFile | S3File | PathLike,
-    input: Blob | NodeJS.TypedArray | ArrayBufferLike | string | BlobPart[],
+    input: Blob | NodeJS.TypedArray | ArrayBufferLike | string | BlobPart[] | Archive,
     options?: {
       /**
        * If writing to a PathLike, set the permissions of the file.
@@ -6986,6 +6986,43 @@ declare module "bun" {
   type ArchiveCompression = "gzip" | boolean;
 
   /**
+   * Options for gzip compression level.
+   */
+  interface ArchiveGzipOptions {
+    /**
+     * Compression level (1-12).
+     * - 1: Fastest compression, lowest ratio
+     * - 6: Default balance of speed and ratio
+     * - 12: Best compression ratio, slowest
+     *
+     * @default 6
+     */
+    level?: number;
+  }
+
+  /**
+   * Options for creating an Archive instance.
+   */
+  interface ArchiveOptions {
+    /**
+     * Enable gzip compression for the archive output.
+     *
+     * @example
+     * ```ts
+     * // Enable with default level (6)
+     * new Bun.Archive(data, { gzip: true });
+     *
+     * // Specify compression level directly
+     * new Bun.Archive(data, { gzip: 9 });
+     *
+     * // Specify compression level with options object
+     * new Bun.Archive(data, { gzip: { level: 12 } });
+     * ```
+     */
+    gzip?: boolean | number | ArchiveGzipOptions;
+  }
+
+  /**
    * Options for extracting archive contents.
    */
   interface ArchiveExtractOptions {
@@ -7031,7 +7068,7 @@ declare module "bun" {
    * @example
    * **Create an archive from an object:**
    * ```ts
-   * const archive = Bun.Archive.from({
+   * const archive = new Bun.Archive({
    *   "hello.txt": "Hello, World!",
    *   "data.json": JSON.stringify({ foo: "bar" }),
    *   "binary.bin": new Uint8Array([1, 2, 3, 4]),
@@ -7039,9 +7076,20 @@ declare module "bun" {
    * ```
    *
    * @example
+   * **Create a gzipped archive:**
+   * ```ts
+   * const archive = new Bun.Archive({
+   *   "hello.txt": "Hello, World!",
+   * }, { gzip: true });
+   *
+   * // Or with a specific compression level (1-12)
+   * const archive = new Bun.Archive(data, { gzip: 9 });
+   * ```
+   *
+   * @example
    * **Extract an archive to disk:**
    * ```ts
-   * const archive = Bun.Archive.from(tarballBytes);
+   * const archive = new Bun.Archive(tarballBytes);
    * const entryCount = await archive.extract("./output");
    * console.log(`Extracted ${entryCount} entries`);
    * ```
@@ -7049,7 +7097,7 @@ declare module "bun" {
    * @example
    * **Get archive contents as a Map of File objects:**
    * ```ts
-   * const archive = Bun.Archive.from(tarballBytes);
+   * const archive = new Bun.Archive(tarballBytes);
    * const entries = await archive.files();
    * for (const [path, file] of entries) {
    *   console.log(path, await file.text());
@@ -7072,26 +7120,33 @@ declare module "bun" {
      * @param data - The input data for the archive:
      *   - **Object**: Creates a new tarball with the object's keys as file paths and values as file contents
      *   - **Blob/TypedArray/ArrayBuffer**: Wraps existing archive data (tar or tar.gz)
-     *
-     * @returns A new `Archive` instance
+     * @param options - Optional archive options including compression settings
      *
      * @example
      * **From an object (creates new tarball):**
      * ```ts
-     * const archive = Bun.Archive.from({
+     * const archive = new Bun.Archive({
      *   "hello.txt": "Hello, World!",
      *   "nested/file.txt": "Nested content",
      * });
      * ```
      *
      * @example
+     * **With gzip compression:**
+     * ```ts
+     * const archive = new Bun.Archive(data, { gzip: true });
+     * const archive = new Bun.Archive(data, { gzip: 9 }); // level 1-12
+     * const archive = new Bun.Archive(data, { gzip: { level: 12 } });
+     * ```
+     *
+     * @example
      * **From existing archive data:**
      * ```ts
      * const response = await fetch("https://example.com/package.tar.gz");
-     * const archive = Bun.Archive.from(await response.blob());
+     * const archive = new Bun.Archive(await response.blob());
      * ```
      */
-    static from(data: ArchiveInput): Archive;
+    constructor(data: ArchiveInput, options?: ArchiveOptions);
 
     /**
      * Create and write an archive directly to disk in one operation.
@@ -7166,42 +7221,48 @@ declare module "bun" {
     /**
      * Get the archive contents as a `Blob`.
      *
-     * @param compress - Optional compression: `"gzip"`, `true` for gzip, or `false`/`undefined` for none
+     * Uses the compression settings specified when the Archive was created.
+     *
      * @returns A promise that resolves with the archive data as a Blob
      *
      * @example
-     * **Get uncompressed tarball:**
+     * **Get tarball as Blob:**
      * ```ts
+     * const archive = new Bun.Archive(data);
      * const blob = await archive.blob();
      * ```
      *
      * @example
-     * **Get gzipped tarball:**
+     * **Get gzipped tarball as Blob:**
      * ```ts
-     * const gzippedBlob = await archive.blob("gzip");
+     * const archive = new Bun.Archive(data, { gzip: true });
+     * const gzippedBlob = await archive.blob();
      * ```
      */
-    blob(compress?: ArchiveCompression): Promise<Blob>;
+    blob(): Promise<Blob>;
 
     /**
      * Get the archive contents as a `Uint8Array`.
      *
-     * @param compress - Optional compression: `"gzip"`, `true` for gzip, or `false`/`undefined` for none
+     * Uses the compression settings specified when the Archive was created.
+     *
      * @returns A promise that resolves with the archive data as a Uint8Array
      *
      * @example
-     * **Get uncompressed tarball bytes:**
+     * **Get tarball bytes:**
      * ```ts
+     * const archive = new Bun.Archive(data);
      * const bytes = await archive.bytes();
      * ```
      *
      * @example
      * **Get gzipped tarball bytes:**
      * ```ts
-     * const gzippedBytes = await archive.bytes("gzip");
+     * const archive = new Bun.Archive(data, { gzip: true });
+     * const gzippedBytes = await archive.bytes();
      * ```
      */
-    bytes(compress?: ArchiveCompression): Promise<Uint8Array<ArrayBuffer>>;
+    bytes(): Promise<Uint8Array<ArrayBuffer>>;
 
     /**
      * Get the archive contents as a `Map` of `File` objects.

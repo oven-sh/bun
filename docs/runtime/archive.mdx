@@ -138,13 +138,13 @@ console.log(`Extracted ${count} entries`);
 
 The target directory is created automatically if it doesn't exist. Existing files are overwritten. The returned count includes files, directories, and symlinks (on POSIX systems).
 
-**Note**: On Windows, symbolic links in archives are skipped during extraction since they require elevated privileges. On Linux and macOS, symlinks are extracted normally.
+**Note**: On Windows, symbolic links in archives are always skipped during extraction. Bun does not attempt to create them regardless of privilege level. On Linux and macOS, symlinks are extracted normally.
 
-**Security note**: Bun.Archive validates paths during extraction, rejecting absolute paths (POSIX `/`, Windows drive letters like `C:\` or `C:/`, and UNC paths like `\\server\share`) as well as path traversal attempts containing `..` components.
+**Security note**: Bun.Archive validates paths during extraction, rejecting absolute paths (POSIX `/`, Windows drive letters like `C:\` or `C:/`, and UNC paths like `\\server\share`). When using glob filters, paths containing `..` components are rejected; without filters, `..` components are normalized away (e.g., `dir/sub/../file` becomes `dir/file`).
 
 ### Filtering Extracted Files
 
-Use glob patterns to extract only specific files:
+Use glob patterns to extract only specific files. Patterns are matched against archive entry paths normalized to use forward slashes (`/`). Positive patterns specify what to include, and negative patterns (prefixed with `!`) specify what to exclude. Negative patterns are applied after positive patterns:
 
 ```ts
 const tarball = await Bun.file("package.tar.gz").bytes();
@@ -159,7 +159,7 @@ const multiCount = await archive.extract("./extracted", {
 });
 ```
 
-Use negative patterns (prefixed with `!`) to exclude files:
+Use negative patterns (prefixed with `!`) to exclude files. When mixing positive and negative patterns, entries must match at least one positive pattern and not match any negative pattern:
 
 ```ts
 // Extract everything except node_modules

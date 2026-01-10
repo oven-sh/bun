@@ -6994,8 +6994,12 @@ declare module "bun" {
      * Uses the same syntax as {@link Bun.Glob}, including support for wildcards (`*`, `**`),
      * character classes (`[abc]`), alternation (`{a,b}`), and negation (`!pattern`).
      *
+     * Patterns are matched against archive entry paths normalized to use forward slashes (`/`),
+     * regardless of the host operating system. Always write patterns using `/` as the separator.
+     *
      * - Positive patterns: Only entries matching at least one pattern will be extracted.
      * - Negative patterns (prefixed with `!`): Entries matching these patterns will be excluded.
+     *   Negative patterns are applied after positive patterns.
      *
      * If not specified, all entries are extracted.
      *
@@ -7210,7 +7214,9 @@ declare module "bun" {
      * Only regular files are included; directories are not returned.
      * File contents are loaded into memory, so for large archives consider using `extract()` instead.
      *
-     * @param glob - Optional glob pattern(s) to filter files (e.g., `"*.txt"`, `"src" + "/**"`)
+     * @param glob - Optional glob pattern(s) to filter files. Supports the same syntax as {@link Bun.Glob},
+     *   including negation patterns (prefixed with `!`). Patterns are matched against paths normalized
+     *   to use forward slashes (`/`).
      * @returns A promise that resolves with a Map where keys are file paths (always using forward slashes `/` as separators) and values are File objects
      *
      * @example
@@ -7227,6 +7233,13 @@ declare module "bun" {
      * ```ts
      * const tsFiles = await archive.files("**" + "/*.ts");
      * const srcFiles = await archive.files(["src/**", "lib/**"]);
+     * ```
+     *
+     * @example
+     * **Exclude files with negative patterns:**
+     * ```ts
+     * // Get all source files except tests
+     * const srcFiles = await archive.files(["src/**", "!**" + "/*.test.ts"]);
      * ```
      *
      * @example

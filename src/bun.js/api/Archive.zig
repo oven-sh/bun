@@ -780,16 +780,9 @@ const FilesContext = struct {
             if (entry.filetype() != @intFromEnum(lib.FileType.regular)) continue;
 
             const pathname = entry.pathnameUtf8();
-            // Apply glob pattern filtering (if patterns specified, at least one must match)
+            // Apply glob pattern filtering (supports both positive and negative patterns)
             if (this.glob_patterns) |patterns| {
-                var matches_any = false;
-                for (patterns) |pattern| {
-                    if (bun.glob.match(pattern, pathname).matches()) {
-                        matches_any = true;
-                        break;
-                    }
-                }
-                if (!matches_any) continue;
+                if (!matchGlobPatterns(patterns, pathname)) continue;
             }
 
             const size: usize = @intCast(@max(entry.size(), 0));

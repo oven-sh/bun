@@ -940,7 +940,7 @@ namespace uWS
             } else if(isConnectRequest) {
                 // This only serves to mark that the connect request read all headers
                 // and can start emitting data. Don't try to parse remaining data as HTTP -
-                // it's pipelined data that we've already captured in req->connectHead.
+                // it's pipelined data that we've already captured in req->head.
                 remainingStreamingBytes = STATE_IS_CHUNKED;
                 // Mark remaining data as consumed and break - it's not HTTP
                 consumedTotal += length;

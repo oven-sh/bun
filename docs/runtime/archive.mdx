@@ -140,11 +140,11 @@ The target directory is created automatically if it doesn't exist. Existing file
 
 **Note**: On Windows, symbolic links in archives are always skipped during extraction. Bun does not attempt to create them regardless of privilege level. On Linux and macOS, symlinks are extracted normally.
 
-**Security note**: Bun.Archive validates paths during extraction, rejecting absolute paths (POSIX `/`, Windows drive letters like `C:\` or `C:/`, and UNC paths like `\\server\share`). When using glob filters, paths containing `..` components are rejected; without filters, `..` components are normalized away (e.g., `dir/sub/../file` becomes `dir/file`).
+**Security note**: Bun.Archive validates paths during extraction, rejecting absolute paths (POSIX `/`, Windows drive letters like `C:\` or `C:/`, and UNC paths like `\\server\share`). Path traversal components (`..`) are normalized away (e.g., `dir/sub/../file` becomes `dir/file`) to prevent directory escape attacks.
 
 ### Filtering Extracted Files
 
-Use glob patterns to extract only specific files. Patterns are matched against archive entry paths normalized to use forward slashes (`/`). Positive patterns specify what to include, and negative patterns (prefixed with `!`) specify what to exclude. Negative patterns are applied after positive patterns:
+Use glob patterns to extract only specific files. Patterns are matched against archive entry paths normalized to use forward slashes (`/`). Positive patterns specify what to include, and negative patterns (prefixed with `!`) specify what to exclude. Negative patterns are applied after positive patterns, so **using only negative patterns will match nothing** (you must include a positive pattern like `**` first):
 
 ```ts
 const tarball = await Bun.file("package.tar.gz").bytes();
@@ -234,11 +234,7 @@ Common error scenarios:
 
 The count returned by `extract()` includes all successfully written entries (files, directories, and symlinks on POSIX systems).
 
-**Security note**: Bun.Archive automatically validates paths during extraction, rejecting:
-
-- Absolute paths (POSIX `/`, Windows drive letters like `C:\` or `C:/`, UNC paths like `\\server\share`)
-- Path traversal attempts (containing `..` components)
-- Unsafe symlink targets
+**Security note**: Bun.Archive automatically validates paths during extraction. Absolute paths (POSIX `/`, Windows drive letters, UNC paths) and unsafe symlink targets are rejected. Path traversal components (`..`) are normalized away to prevent directory escape.
 
 For additional security with untrusted archives, you can enumerate and validate paths before extraction:
 
@@ -296,7 +292,7 @@ Supported glob patterns (subset of [Bun.Glob](/docs/api/glob) syntax):
 - `?` - Match single character
 - `[abc]` - Match character set
 - `{a,b}` - Match alternatives
-- `!pattern` - Exclude files matching pattern (negation)
+- `!pattern` - Exclude files matching pattern (negation). Must be combined with positive patterns; using only negative patterns matches nothing.
 
 See [Bun.Glob](/docs/api/glob) for the full glob syntax including escaping and advanced patterns.
 

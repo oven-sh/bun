@@ -310,7 +310,7 @@ pub fn extract(this: *Archive, globalThis: *jsc.JSGlobalObject, callframe: *jsc.
 
         // Parse glob option
         if (try options_arg.getTruthy(globalThis, "glob")) |glob_val| {
-            glob_patterns = try parsePatternArg(globalThis, glob_val, "glob");
+            glob_patterns = try parsePatternArg(globalThis, glob_val, "Archive.extract", "glob");
         }
     }
 
@@ -319,7 +319,7 @@ pub fn extract(this: *Archive, globalThis: *jsc.JSGlobalObject, callframe: *jsc.
 
 /// Parse a string or array of strings into a pattern list.
 /// Returns null for empty strings or empty arrays (treated as "no filter").
-fn parsePatternArg(globalThis: *jsc.JSGlobalObject, arg: jsc.JSValue, name: []const u8) bun.JSError!?[]const []const u8 {
+fn parsePatternArg(globalThis: *jsc.JSGlobalObject, arg: jsc.JSValue, api_name: []const u8, name: []const u8) bun.JSError!?[]const []const u8 {
     const allocator = bun.default_allocator;
 
     // Single string
@@ -352,7 +352,7 @@ fn parsePatternArg(globalThis: *jsc.JSGlobalObject, arg: jsc.JSValue, name: []co
         while (i < len) : (i += 1) {
             const item = try arg.getIndex(globalThis, i);
             if (!item.isString()) {
-                return globalThis.throwInvalidArguments("Archive.extract: {s} array must contain only strings", .{name});
+                return globalThis.throwInvalidArguments("{s}: {s} array must contain only strings", .{ api_name, name });
             }
             const str_slice = try item.toSlice(globalThis, allocator);
             defer str_slice.deinit();
@@ -371,7 +371,7 @@ fn parsePatternArg(globalThis: *jsc.JSGlobalObject, arg: jsc.JSValue, name: []co
         return patterns.toOwnedSlice(allocator) catch return error.OutOfMemory;
     }
 
-    return globalThis.throwInvalidArguments("Archive.extract: {s} must be a string or array of strings", .{name});
+    return globalThis.throwInvalidArguments("{s}: {s} must be a string or array of strings", .{ api_name, name });
 }
 
 fn freePatterns(patterns: []const []const u8) void {
@@ -404,7 +404,7 @@ pub fn files(this: *Archive, globalThis: *jsc.JSGlobalObject, callframe: *jsc.Ca
     errdefer if (glob_patterns) |patterns| freePatterns(patterns);
 
     if (!glob_arg.isUndefinedOrNull()) {
-        glob_patterns = try parsePatternArg(globalThis, glob_arg, "glob");
+        glob_patterns = try parsePatternArg(globalThis, glob_arg, "Archive.files", "glob");
     }
 
     return startFilesTask(globalThis, this.store, glob_patterns);
@@ -852,7 +852,8 @@ pub const FilesTask = AsyncTask(FilesContext);
 fn startFilesTask(globalThis: *jsc.JSGlobalObject, store: *jsc.WebCore.Blob.Store, glob_patterns: ?[]const []const u8) bun.JSError!jsc.JSValue {
     store.ref();
     errdefer store.deref();
-    // Note: glob_patterns cleanup is handled by the caller's errdefer
+    // Ownership: On error, caller's errdefer frees glob_patterns.
+    // On success, ownership transfers to FilesContext, which frees them in deinit().
 
     const task = try FilesTask.create(globalThis, .{
         .store = store,

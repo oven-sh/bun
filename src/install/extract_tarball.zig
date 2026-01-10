@@ -59,12 +59,23 @@ pub fn buildURLWithPrinter(
     const registry = std.mem.trimRight(u8, registry_, "/");
     const full_name = full_name_.slice();
 
+    // Check if this is a GitLab registry by parsing the URL and checking the hostname
+    const is_gitlab_registry = blk: {
+        const url = bun.URL.parse(registry);
+        if (url.host.len == 0) break :blk false;
+        const host_buf = bun.default_allocator.alloc(u8, url.host.len) catch break :blk false;
+        defer bun.default_allocator.free(host_buf);
+        const host = bun.strings.copyLowercase(url.host, host_buf);
+        break :blk bun.strings.indexOf(host, "gitlab") != null;
+    };
+    
     var name = full_name;
-    if (name[0] == '@') {
+    if (name[0] == '@' and !is_gitlab_registry) {
         if (strings.indexOfChar(name, '/')) |i| {
             name = name[i + 1 ..];
         }
     }
+    // For GitLab registries, keep the full scoped name
 
     const default_format = "{s}/{s}/-/";
 

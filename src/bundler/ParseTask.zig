@@ -636,6 +636,16 @@ fn getCodeForParseTaskWithoutPlugins(
             const trace = bun.perf.trace("Bundler.readFile");
             defer trace.end();
 
+            // Check FileMap for in-memory files first
+            if (task.ctx.file_map) |file_map| {
+                if (file_map.get(file_path.text)) |file_contents| {
+                    break :brk .{
+                        .contents = file_contents,
+                        .fd = bun.invalid_fd,
+                    };
+                }
+            }
+
             if (strings.eqlComptime(file_path.namespace, "node")) lookup_builtin: {
                 if (task.ctx.framework) |f| {
                     if (f.built_in_modules.get(file_path.text)) |file| {

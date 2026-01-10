@@ -575,7 +575,14 @@ BUN_DECLARE_HOST_FUNCTION(NetworkSink__write);
 #ifdef __cplusplus
 
 ZIG_DECL void Bun__WebSocketHTTPClient__cancel(WebSocketHTTPClient* arg0);
-ZIG_DECL WebSocketHTTPClient* Bun__WebSocketHTTPClient__connect(JSC::JSGlobalObject* arg0, void* arg1, CppWebSocket* arg2, const ZigString* arg3, uint16_t arg4, const ZigString* arg5, const ZigString* arg6, ZigString* arg7, ZigString* arg8, size_t arg9);
+ZIG_DECL WebSocketHTTPClient* Bun__WebSocketHTTPClient__connect(
+    JSC::JSGlobalObject* globalObject, void* socketContext, CppWebSocket* websocket,
+    const ZigString* host, uint16_t port, const ZigString* path, const ZigString* protocols,
+    ZigString* headerNames, ZigString* headerValues, size_t headerCount,
+    const ZigString* proxyHost, uint16_t proxyPort,
+    const ZigString* proxyAuthorization,
+    ZigString* proxyHeaderNames, ZigString* proxyHeaderValues, size_t proxyHeaderCount,
+    void* sslConfig, bool targetIsSecure);
 ZIG_DECL void Bun__WebSocketHTTPClient__register(JSC::JSGlobalObject* arg0, void* arg1, void* arg2);
 ZIG_DECL size_t Bun__WebSocketHTTPClient__memoryCost(WebSocketHTTPClient* arg0);
 #endif
@@ -583,9 +590,19 @@ ZIG_DECL size_t Bun__WebSocketHTTPClient__memoryCost(WebSocketHTTPClient* arg0);
 #ifdef __cplusplus
 
 ZIG_DECL void Bun__WebSocketHTTPSClient__cancel(WebSocketHTTPSClient* arg0);
-ZIG_DECL WebSocketHTTPSClient* Bun__WebSocketHTTPSClient__connect(JSC::JSGlobalObject* arg0, void* arg1, CppWebSocket* arg2, const ZigString* arg3, uint16_t arg4, const ZigString* arg5, const ZigString* arg6, ZigString* arg7, ZigString* arg8, size_t arg9);
+ZIG_DECL WebSocketHTTPSClient* Bun__WebSocketHTTPSClient__connect(
+    JSC::JSGlobalObject* globalObject, void* socketContext, CppWebSocket* websocket,
+    const ZigString* host, uint16_t port, const ZigString* path, const ZigString* protocols,
+    ZigString* headerNames, ZigString* headerValues, size_t headerCount,
+    const ZigString* proxyHost, uint16_t proxyPort,
+    const ZigString* proxyAuthorization,
+    ZigString* proxyHeaderNames, ZigString* proxyHeaderValues, size_t proxyHeaderCount,
+    void* sslConfig, bool targetIsSecure);
 ZIG_DECL void Bun__WebSocketHTTPSClient__register(JSC::JSGlobalObject* arg0, void* arg1, void* arg2);
 ZIG_DECL size_t Bun__WebSocketHTTPSClient__memoryCost(WebSocketHTTPSClient* arg0);
+
+// Parse TLS options from JavaScript object using SSLConfig.fromJS
+ZIG_DECL void* Bun__WebSocket__parseSSLConfig(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue tlsValue);
 #endif
 
 #ifdef __cplusplus
@@ -593,7 +610,7 @@ ZIG_DECL size_t Bun__WebSocketHTTPSClient__memoryCost(WebSocketHTTPSClient* arg0
 ZIG_DECL void Bun__WebSocketClient__cancel(WebSocketClient* arg0);
 ZIG_DECL void Bun__WebSocketClient__close(WebSocketClient* arg0, uint16_t arg1, const ZigString* arg2);
 ZIG_DECL void Bun__WebSocketClient__finalize(WebSocketClient* arg0);
-ZIG_DECL void* Bun__WebSocketClient__init(CppWebSocket* arg0, void* arg1, void* arg2, JSC::JSGlobalObject* arg3, unsigned char* arg4, size_t arg5, const PerMessageDeflateParams* arg6);
+ZIG_DECL void* Bun__WebSocketClient__init(CppWebSocket* arg0, void* arg1, void* arg2, JSC::JSGlobalObject* arg3, unsigned char* arg4, size_t arg5, const PerMessageDeflateParams* arg6, void* customSSLCtx);
 ZIG_DECL void Bun__WebSocketClient__register(JSC::JSGlobalObject* arg0, void* arg1, void* arg2);
 ZIG_DECL void Bun__WebSocketClient__writeBinaryData(WebSocketClient* arg0, const unsigned char* arg1, size_t arg2, unsigned char arg3);
 ZIG_DECL void Bun__WebSocketClient__writeString(WebSocketClient* arg0, const ZigString* arg1, unsigned char arg2);
@@ -606,7 +623,7 @@ ZIG_DECL size_t Bun__WebSocketClient__memoryCost(WebSocketClient* arg0);
 ZIG_DECL void Bun__WebSocketClientTLS__cancel(WebSocketClientTLS* arg0);
 ZIG_DECL void Bun__WebSocketClientTLS__close(WebSocketClientTLS* arg0, uint16_t arg1, const ZigString* arg2);
 ZIG_DECL void Bun__WebSocketClientTLS__finalize(WebSocketClientTLS* arg0);
-ZIG_DECL void* Bun__WebSocketClientTLS__init(CppWebSocket* arg0, void* arg1, void* arg2, JSC::JSGlobalObject* arg3, unsigned char* arg4, size_t arg5, const PerMessageDeflateParams* arg6);
+ZIG_DECL void* Bun__WebSocketClientTLS__init(CppWebSocket* arg0, void* arg1, void* arg2, JSC::JSGlobalObject* arg3, unsigned char* arg4, size_t arg5, const PerMessageDeflateParams* arg6, void* customSSLCtx);
 ZIG_DECL void Bun__WebSocketClientTLS__register(JSC::JSGlobalObject* arg0, void* arg1, void* arg2);
 ZIG_DECL void Bun__WebSocketClientTLS__writeBinaryData(WebSocketClientTLS* arg0, const unsigned char* arg1, size_t arg2, unsigned char arg3);
 ZIG_DECL void Bun__WebSocketClientTLS__writeString(WebSocketClientTLS* arg0, const ZigString* arg1, unsigned char arg2);

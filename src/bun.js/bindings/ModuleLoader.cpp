@@ -79,8 +79,7 @@ static JSC::JSInternalPromise* resolvedInternalPromise(JSC::JSGlobalObject* glob
 {
     auto& vm = JSC::getVM(globalObject);
     JSInternalPromise* promise = JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
-    promise->internalField(JSC::JSPromise::Field::ReactionsOrResult).set(vm, promise, value);
-    promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, jsNumber(promise->internalField(JSC::JSPromise::Field::Flags).get().asUInt32AsAnyInt() | JSC::JSPromise::isFirstResolvingFunctionCalledFlag | static_cast<unsigned>(JSC::JSPromise::Status::Fulfilled)));
+    promise->fulfill(vm, globalObject, value);
     return promise;
 }
 
@@ -678,8 +677,7 @@ JSValue fetchCommonJSModule(
             JSPromise* promise = jsCast<JSPromise*>(promiseOrCommonJSModule);
             switch (promise->status()) {
             case JSPromise::Status::Rejected: {
-                uint32_t promiseFlags = promise->internalField(JSPromise::Field::Flags).get().asUInt32AsAnyInt();
-                promise->internalField(JSPromise::Field::Flags).set(vm, promise, jsNumber(promiseFlags | JSPromise::isHandledFlag));
+                promise->markAsHandled();
                 JSC::throwException(globalObject, scope, promise->result());
                 RELEASE_AND_RETURN(scope, JSValue {});
             }
@@ -729,8 +727,7 @@ JSValue fetchCommonJSModule(
             JSPromise* promise = jsCast<JSPromise*>(promiseOrCommonJSModule);
             switch (promise->status()) {
             case JSPromise::Status::Rejected: {
-                uint32_t promiseFlags = promise->internalField(JSPromise::Field::Flags).get().asUInt32AsAnyInt();
-                promise->internalField(JSPromise::Field::Flags).set(vm, promise, jsNumber(promiseFlags | JSPromise::isHandledFlag));
+                promise->markAsHandled();
                 JSC::throwException(globalObject, scope, promise->result());
                 RELEASE_AND_RETURN(scope, JSValue {});
             }

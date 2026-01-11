@@ -3663,7 +3663,7 @@ pub fn writeMemoryVisualizerMessage(dev: *DevServer, payload: *std.array_list.Ma
         system_total: u32,
     };
     const cost = dev.memoryCostDetailed();
-    const system_total = bun.api.node.os.totalmem();
+    const system_total = bun.api.node.os.totalmemImpl();
     try w.writeStruct(Fields{
         .incremental_graph_client = @truncate(cost.incremental_graph_client),
         .incremental_graph_server = @truncate(cost.incremental_graph_server),
@@ -3676,7 +3676,7 @@ pub fn writeMemoryVisualizerMessage(dev: *DevServer, payload: *std.array_list.Ma
         else
             0,
         .process_used = @truncate(bun.sys.selfProcessMemoryUsage() orelse 0),
-        .system_used = @truncate(system_total -| bun.api.node.os.freemem()),
+        .system_used = @truncate(system_total -| bun.api.node.os.freememImpl()),
         .system_total = @truncate(system_total),
     });
 

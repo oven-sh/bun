@@ -393,6 +393,60 @@ pub const Command = struct {
             name: []const u8 = "",
             dir: []const u8 = "",
         } = .{},
+        /// Permission options for Deno-compatible security model
+        permissions: PermissionOptions = .{},
+    };
+
+    /// Deno-compatible permission options
+    pub const PermissionOptions = struct {
+        /// Enable secure-by-default mode (like Deno)
+        secure_mode: bool = false,
+        /// Allow all permissions (--allow-all / -A)
+        allow_all: bool = false,
+        /// Disable interactive prompts (--no-prompt)
+        no_prompt: bool = false,
+        /// Allowed paths for read access (null = all if allow_all or not secure_mode)
+        allow_read: ?[]const []const u8 = null,
+        /// Allowed paths for write access
+        allow_write: ?[]const []const u8 = null,
+        /// Allowed hosts for network access (format: host:port or host)
+        allow_net: ?[]const []const u8 = null,
+        /// Allowed environment variable names/patterns
+        allow_env: ?[]const []const u8 = null,
+        /// Allowed system info kinds
+        allow_sys: ?[]const []const u8 = null,
+        /// Allowed commands for subprocess spawning
+        allow_run: ?[]const []const u8 = null,
+        /// Allowed paths for FFI/native addon loading
+        allow_ffi: ?[]const []const u8 = null,
+        /// Denied paths for read access (takes precedence over allow)
+        deny_read: ?[]const []const u8 = null,
+        /// Denied paths for write access
+        deny_write: ?[]const []const u8 = null,
+        /// Denied hosts for network access
+        deny_net: ?[]const []const u8 = null,
+        /// Denied environment variable names/patterns
+        deny_env: ?[]const []const u8 = null,
+        /// Denied system info kinds
+        deny_sys: ?[]const []const u8 = null,
+        /// Denied commands for subprocess spawning
+        deny_run: ?[]const []const u8 = null,
+        /// Denied paths for FFI/native addon loading
+        deny_ffi: ?[]const []const u8 = null,
+        /// Read permission flag was explicitly passed (--allow-read with no value)
+        has_allow_read: bool = false,
+        /// Write permission flag was explicitly passed
+        has_allow_write: bool = false,
+        /// Net permission flag was explicitly passed
+        has_allow_net: bool = false,
+        /// Env permission flag was explicitly passed
+        has_allow_env: bool = false,
+        /// Sys permission flag was explicitly passed
+        has_allow_sys: bool = false,
+        /// Run permission flag was explicitly passed
+        has_allow_run: bool = false,
+        /// FFI permission flag was explicitly passed
+        has_allow_ffi: bool = false,
     };
 
     var global_cli_ctx: Context = undefined;

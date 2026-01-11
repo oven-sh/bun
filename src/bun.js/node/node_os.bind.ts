@@ -9,7 +9,9 @@ export const cpus = fn({
   ret: t.any,
 });
 export const freemem = fn({
-  args: {},
+  args: {
+    global: t.globalObject,
+  },
   ret: t.u64,
 });
 export const getPriority = fn({
@@ -48,7 +50,9 @@ export const release = fn({
   ret: t.DOMString,
 });
 export const totalmem = fn({
-  args: {},
+  args: {
+    global: t.globalObject,
+  },
   ret: t.u64,
 });
 export const uptime = fn({

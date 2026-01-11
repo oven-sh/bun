@@ -50,6 +50,8 @@ smol: bool = false,
 dns_result_order: DNSResolver.Order = .verbatim,
 cpu_profiler_config: ?CPUProfilerConfig = null,
 counters: Counters = .{},
+/// Deno-compatible permission system
+permissions: *permissions_module.Permissions = undefined,
 
 hot_reload: bun.cli.Command.HotReload = .none,
 jsc_vm: *VM = undefined,
@@ -1074,6 +1076,9 @@ pub fn initWithModuleGraph(
     vm.configureDebugger(opts.debugger);
     vm.body_value_hive_allocator = Body.Value.HiveAllocator.init(bun.typedAllocator(jsc.WebCore.Body.Value));
 
+    // Initialize permissions with default allow-all mode for standalone module graphs
+    vm.permissions = try initDefaultPermissions(allocator);
+
     return vm;
 }
 
@@ -1100,9 +1105,133 @@ pub const Options = struct {
     /// Worker VMs are always destroyed on exit, regardless of this setting. Setting this to
     /// true may expose bugs that would otherwise only occur using Workers.
     destruct_main_thread_on_exit: bool = false,
+    /// Permission options for Deno-compatible security model
+    permission_options: ?*const bun.cli.Command.PermissionOptions = null,
 };
 
 pub var is_smol_mode = false;
+
+/// Initialize permissions from CLI options
+fn initPermissionsFromOptions(opts: ?*const bun.cli.Command.PermissionOptions) permissions_module.Permissions {
+    if (opts == null) {
+        // Default: allow all (backwards compatibility)
+        return permissions_module.Permissions.initAllowAll();
+    }
+
+    const perm_opts = opts.?;
+
+    // If --allow-all is set or not in secure mode, grant all permissions
+    // but still apply no_prompt and deny flags
+    if (perm_opts.allow_all or !perm_opts.secure_mode) {
+        var perms = permissions_module.Permissions.initAllowAll();
+        perms.no_prompt = perm_opts.no_prompt;
+
+        // Apply any deny flags even in allow-all mode (deny takes precedence)
+        if (perm_opts.deny_read) |denied| {
+            perms.denyResources(.read, denied);
+        }
+        if (perm_opts.deny_write) |denied| {
+            perms.denyResources(.write, denied);
+        }
+        if (perm_opts.deny_net) |denied| {
+            perms.denyResources(.net, denied);
+        }
+        if (perm_opts.deny_env) |denied| {
+            perms.denyResources(.env, denied);
+        }
+        if (perm_opts.deny_sys) |denied| {
+            perms.denyResources(.sys, denied);
+        }
+        if (perm_opts.deny_run) |denied| {
+            perms.denyResources(.run, denied);
+        }
+        if (perm_opts.deny_ffi) |denied| {
+            perms.denyResources(.ffi, denied);
+        }
+
+        return perms;
+    }
+
+    // Secure mode: start with all permissions denied/prompt
+    var perms = permissions_module.Permissions.initSecure();
+    perms.no_prompt = perm_opts.no_prompt;
+
+    // Apply allow flags
+    if (perm_opts.has_allow_read) {
+        if (perm_opts.allow_read) |allowed| {
+            perms.grantWithResources(.read, allowed);
+        } else {
+            perms.grant(.read);
+        }
+    }
+    if (perm_opts.has_allow_write) {
+        if (perm_opts.allow_write) |allowed| {
+            perms.grantWithResources(.write, allowed);
+        } else {
+            perms.grant(.write);
+        }
+    }
+    if (perm_opts.has_allow_net) {
+        if (perm_opts.allow_net) |allowed| {
+            perms.grantWithResources(.net, allowed);
+        } else {
+            perms.grant(.net);
+        }
+    }
+    if (perm_opts.has_allow_env) {
+        if (perm_opts.allow_env) |allowed| {
+            perms.grantWithResources(.env, allowed);
+        } else {
+            perms.grant(.env);
+        }
+    }
+    if (perm_opts.has_allow_sys) {
+        if (perm_opts.allow_sys) |allowed| {
+            perms.grantWithResources(.sys, allowed);
+        } else {
+            perms.grant(.sys);
+        }
+    }
+    if (perm_opts.has_allow_run) {
+        if (perm_opts.allow_run) |allowed| {
+            perms.grantWithResources(.run, allowed);
+        } else {
+            perms.grant(.run);
+        }
+    }
+    if (perm_opts.has_allow_ffi) {
+        if (perm_opts.allow_ffi) |allowed| {
+            perms.grantWithResources(.ffi, allowed);
+        } else {
+            perms.grant(.ffi);
+        }
+    }
+
+    // Apply deny flags (take precedence over allow)
+    if (perm_opts.deny_read) |denied| {
+        perms.denyResources(.read, denied);
+    }
+    if (perm_opts.deny_write) |denied| {
+        perms.denyResources(.write, denied);
+    }
+    if (perm_opts.deny_net) |denied| {
+        perms.denyResources(.net, denied);
+    }
+    if (perm_opts.deny_env) |denied| {
+        perms.denyResources(.env, denied);
+    }
+    if (perm_opts.deny_sys) |denied| {
+        perms.denyResources(.sys, denied);
+    }
+    if (perm_opts.deny_run) |denied| {
+        perms.denyResources(.run, denied);
+    }
+    if (perm_opts.deny_ffi) |denied| {
+        perms.denyResources(.ffi, denied);
+    }
+
+    return perms;
+}
 
 pub fn init(opts: Options) !*VirtualMachine {
     jsc.markBinding(@src());
@@ -1195,6 +1324,10 @@ pub fn init(opts: Options) !*VirtualMachine {
     vm.smol = opts.smol;
     vm.dns_result_order = opts.dns_result_order;
 
+    // Initialize permissions
+    vm.permissions = try allocator.create(permissions_module.Permissions);
+    vm.permissions.* = initPermissionsFromOptions(opts.permission_options);
+
     if (opts.smol)
         is_smol_mode = opts.smol;
 
@@ -1202,6 +1335,14 @@ pub fn init(opts: Options) !*VirtualMachine {
     vm.body_value_hive_allocator = Body.Value.HiveAllocator.init(bun.typedAllocator(jsc.WebCore.Body.Value));
 
     return vm;
+}
+
+/// Initialize permissions with default allow-all mode.
+/// Used by VM constructors that don't have permission options.
+fn initDefaultPermissions(allocator: std.mem.Allocator) !*permissions_module.Permissions {
+    const perms = try allocator.create(permissions_module.Permissions);
+    perms.* = permissions_module.Permissions.initAllowAll();
+    return perms;
 }
 
 pub inline fn assertOnJSThread(vm: *const VirtualMachine) void {
@@ -1360,6 +1501,10 @@ pub fn initWorker(
     vm.transpiler.setAllocator(allocator);
     vm.body_value_hive_allocator = Body.Value.HiveAllocator.init(bun.typedAllocator(jsc.WebCore.Body.Value));
 
+    // Workers inherit permissions from their parent VM
+    vm.permissions = try allocator.create(permissions_module.Permissions);
+    vm.permissions.* = worker.parent.permissions.*;
+
     return vm;
 }
 
@@ -1450,6 +1595,9 @@ pub fn initBake(opts: Options) anyerror!*VirtualMachine {
 
     vm.configureDebugger(opts.debugger);
     vm.body_value_hive_allocator = Body.Value.HiveAllocator.init(bun.typedAllocator(jsc.WebCore.Body.Value));
+
+    // Initialize permissions with default allow-all mode for bake
+    vm.permissions = try initDefaultPermissions(allocator);
 
     return vm;
 }
@@ -1961,6 +2109,10 @@ pub fn deinit(this: *VirtualMachine) void {
         rare_data.deinit();
     }
     this.overridden_main.deinit();
+
+    // Clean up permissions
+    this.allocator.destroy(this.permissions);
+
     this.has_terminated = true;
 }
 
@@ -3771,3 +3923,5 @@ const ServerEntryPoint = bun.transpiler.EntryPoints.ServerEntryPoint;
 
 const webcore = bun.webcore;
 const Body = webcore.Body;
+
+const permissions_module = @import("../permissions.zig");

@@ -73,6 +73,7 @@ pub const BunObject = struct {
     pub const hash = toJSLazyPropertyCallback(Bun.getHashObject);
     pub const inspect = toJSLazyPropertyCallback(Bun.getInspect);
     pub const origin = toJSLazyPropertyCallback(Bun.getOrigin);
+    pub const permissions = toJSLazyPropertyCallback(Bun.getPermissionsObject);
     pub const semver = toJSLazyPropertyCallback(Bun.getSemver);
     pub const unsafe = toJSLazyPropertyCallback(Bun.getUnsafe);
     pub const S3Client = toJSLazyPropertyCallback(Bun.getS3ClientConstructor);
@@ -140,6 +141,7 @@ pub const BunObject = struct {
         @export(&BunObject.hash, .{ .name = lazyPropertyCallbackName("hash") });
         @export(&BunObject.inspect, .{ .name = lazyPropertyCallbackName("inspect") });
         @export(&BunObject.origin, .{ .name = lazyPropertyCallbackName("origin") });
+        @export(&BunObject.permissions, .{ .name = lazyPropertyCallbackName("permissions") });
         @export(&BunObject.unsafe, .{ .name = lazyPropertyCallbackName("unsafe") });
         @export(&BunObject.semver, .{ .name = lazyPropertyCallbackName("semver") });
         @export(&BunObject.embeddedFiles, .{ .name = lazyPropertyCallbackName("embeddedFiles") });
@@ -1012,6 +1014,22 @@ pub fn serve(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.J
         break :brk config;
     };
 
+    // Check net permission for server binding
+    {
+        var buf: [128]u8 = undefined;
+        const host_str: []const u8 = switch (config.address) {
+            .tcp => |tcp| blk: {
+                const hostname = if (tcp.hostname) |h| bun.sliceTo(h, 0) else "0.0.0.0";
+                break :blk std.fmt.bufPrint(&buf, "{s}:{d}", .{ hostname, tcp.port }) catch hostname;
+            },
+            .unix => |unix| unix,
+        };
+        bun.permission_check.requireNet(globalObject, host_str) catch {
+            config.deinit();
+            return .zero;
+        };
+    }
+
     const vm = globalObject.bunVM();
 
     if (config.allow_hot) {
@@ -1407,6 +1425,185 @@ const CSRFObject = struct {
     }
 };
 
+pub fn getPermissionsObject(globalObject: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
+    return PermissionsObject.create(globalObject);
+}
+
+const PermissionsObject = struct {
+    pub fn create(globalThis: *jsc.JSGlobalObject) jsc.JSValue {
+        const object = JSValue.createEmptyObject(globalThis, 4);
+
+        object.put(
+            globalThis,
+            ZigString.static("query"),
+            jsc.JSFunction.create(globalThis, "query", permissionsQuery, 1, .{}),
+        );
+
+        object.put(
+            globalThis,
+            ZigString.static("querySync"),
+            jsc.JSFunction.create(globalThis, "querySync", permissionsQuerySync, 1, .{}),
+        );
+
+        object.put(
+            globalThis,
+            ZigString.static("request"),
+            jsc.JSFunction.create(globalThis, "request", permissionsRequest, 1, .{}),
+        );
+
+        object.put(
+            globalThis,
+            ZigString.static("revoke"),
+            jsc.JSFunction.create(globalThis, "revoke", permissionsRevoke, 1, .{}),
+        );
+
+        return object;
+    }
+
+    const ParsedDescriptor = struct {
+        kind: bun.permissions.Kind,
+        resource: ?[]const u8,
+        resource_slice: ?ZigString.Slice,
+
+        pub fn deinit(self: *ParsedDescriptor) void {
+            if (self.resource_slice) |*slice| {
+                slice.deinit();
+            }
+        }
+    };
+
+    fn parseDescriptor(globalThis: *jsc.JSGlobalObject, descriptor: jsc.JSValue) !ParsedDescriptor {
+        if (descriptor.isEmptyOrUndefinedOrNull() or !descriptor.isObject()) {
+            return globalThis.throwInvalidArguments("Expected a permission descriptor object", .{});
+        }
+
+        const name_value = try descriptor.get(globalThis, "name") orelse {
+            return globalThis.throwInvalidArguments("Permission descriptor must have a 'name' property", .{});
+        };
+
+        const name_str = try name_value.getZigString(globalThis);
+        var slice = name_str.toSlice(bun.default_allocator);
+        defer slice.deinit();
+
+        const kind: bun.permissions.Kind = if (std.mem.eql(u8, slice.slice(), "read"))
+            .read
+        else if (std.mem.eql(u8, slice.slice(), "write"))
+            .write
+        else if (std.mem.eql(u8, slice.slice(), "net"))
+            .net
+        else if (std.mem.eql(u8, slice.slice(), "env"))
+            .env
+        else if (std.mem.eql(u8, slice.slice(), "sys"))
+            .sys
+        else if (std.mem.eql(u8, slice.slice(), "run"))
+            .run
+        else if (std.mem.eql(u8, slice.slice(), "ffi"))
+            .ffi
+        else {
+            return globalThis.throwInvalidArguments("Unknown permission name: {s}", .{slice.slice()});
+        };
+
+        // Get optional path/host/variable/command
+        // The resource_slice owns the memory and must be cleaned up by the caller
+        var resource: ?[]const u8 = null;
+        var resource_slice: ?ZigString.Slice = null;
+        if (try descriptor.get(globalThis, "path")) |path_value| {
+            if (!path_value.isEmptyOrUndefinedOrNull()) {
+                const path_str = try path_value.getZigString(globalThis);
+                resource_slice = path_str.toSlice(bun.default_allocator);
+                resource = resource_slice.?.slice();
+            }
+        } else if (try descriptor.get(globalThis, "host")) |host_value| {
+            if (!host_value.isEmptyOrUndefinedOrNull()) {
+                const host_str = try host_value.getZigString(globalThis);
+                resource_slice = host_str.toSlice(bun.default_allocator);
+                resource = resource_slice.?.slice();
+            }
+        } else if (try descriptor.get(globalThis, "variable")) |var_value| {
+            if (!var_value.isEmptyOrUndefinedOrNull()) {
+                const var_str = try var_value.getZigString(globalThis);
+                resource_slice = var_str.toSlice(bun.default_allocator);
+                resource = resource_slice.?.slice();
+            }
+        } else if (try descriptor.get(globalThis, "command")) |cmd_value| {
+            if (!cmd_value.isEmptyOrUndefinedOrNull()) {
+                const cmd_str = try cmd_value.getZigString(globalThis);
+                resource_slice = cmd_str.toSlice(bun.default_allocator);
+                resource = resource_slice.?.slice();
+            }
+        } else if (try descriptor.get(globalThis, "kind")) |kind_value| {
+            if (!kind_value.isEmptyOrUndefinedOrNull()) {
+                const kind_str = try kind_value.getZigString(globalThis);
+                resource_slice = kind_str.toSlice(bun.default_allocator);
+                resource = resource_slice.?.slice();
+            }
+        }
+
+        return .{ .kind = kind, .resource = resource, .resource_slice = resource_slice };
+    }
+
+    fn createPermissionStatus(globalThis: *jsc.JSGlobalObject, state: bun.permissions.State) jsc.JSValue {
+        const result = JSValue.createEmptyObject(globalThis, 1);
+        const state_str = switch (state) {
+            .granted, .granted_partial => "granted",
+            .prompt => "prompt",
+            .denied, .denied_partial => "denied",
+        };
+        result.put(globalThis, ZigString.static("state"), ZigString.init(state_str).withEncoding().toJS(globalThis));
+        return result;
+    }
+
+    fn permissionsQuerySync(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        const args = callframe.arguments_old(1);
+        if (args.len < 1) {
+            return globalThis.throwInvalidArguments("Expected a permission descriptor", .{});
+        }
+
+        const descriptor = args.ptr[0];
+        var parsed = try parseDescriptor(globalThis, descriptor);
+        defer parsed.deinit();
+        const vm = globalThis.bunVM();
+        const state = vm.permissions.check(parsed.kind, parsed.resource);
+        return createPermissionStatus(globalThis, state);
+    }
+
+    fn permissionsQuery(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        // For now, query is synchronous wrapped in a resolved promise
+        const result = try permissionsQuerySync(globalThis, callframe);
+        return jsc.JSPromise.resolvedPromiseValue(globalThis, result);
+    }
+
+    fn permissionsRequest(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        // For now, request is the same as query (prompts are disabled)
+        // In the future, this could prompt the user
+        const result = try permissionsQuerySync(globalThis, callframe);
+        return jsc.JSPromise.resolvedPromiseValue(globalThis, result);
+    }
+
+    fn permissionsRevoke(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        const args = callframe.arguments_old(1);
+        if (args.len < 1) {
+            return globalThis.throwInvalidArguments("Expected a permission descriptor", .{});
+        }
+
+        const descriptor = args.ptr[0];
+        var parsed = try parseDescriptor(globalThis, descriptor);
+        defer parsed.deinit();
+        const vm = globalThis.bunVM();
+
+        // Revoke the permission by denying the entire permission type.
+        // Note: This denies the entire permission type, not just the specific resource.
+        // For example, calling revoke({ name: "env", variable: "HOME" }) will deny ALL
+        // env access, not just access to the HOME variable. This matches the behavior
+        // of transitioning from any state to a more restrictive state.
+        vm.permissions.deny(parsed.kind);
+
+        // Return the new state
+        const state = vm.permissions.check(parsed.kind, parsed.resource);
+        return jsc.JSPromise.resolvedPromiseValue(globalThis, createPermissionStatus(globalThis, state));
+    }
+};
+
 // This is aliased to Bun.env
 pub const EnvironmentVariables = struct {
     pub export fn Bun__getEnvCount(globalObject: *jsc.JSGlobalObject, ptr: *[*][]const u8) usize {
@@ -1422,6 +1619,15 @@ pub const EnvironmentVariables = struct {
     }
 
     pub export fn Bun__getEnvValue(globalObject: *jsc.JSGlobalObject, name: *ZigString, value: *ZigString) bool {
+        // Check env permission
+        const vm = globalObject.bunVM();
+        const name_slice = name.toSlice(vm.allocator);
+        defer name_slice.deinit();
+
+        bun.permission_check.requireEnv(globalObject, name_slice.slice()) catch {
+            return false; // Exception was thrown
+        };
+
         if (getEnvValue(globalObject, name.*)) |val| {
             value.* = val;
             return true;

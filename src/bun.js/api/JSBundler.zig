@@ -240,6 +240,7 @@ pub const JSBundler = struct {
         packages: options.PackagesOption = .bundle,
         format: options.Format = .esm,
         bytecode: bool = false,
+        experimental_esm_bytecode: bool = false,
         banner: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         footer: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         css_chunking: bool = false,
@@ -542,8 +543,6 @@ pub const JSBundler = struct {
                 this.bytecode = bytecode;
 
                 if (bytecode) {
-                    // Default to CJS for bytecode, since esm doesn't really work yet.
-                    this.format = .cjs;
                     if (did_set_target and this.target != .bun and this.bytecode) {
                         return globalThis.throwInvalidArguments("target must be 'bun' when bytecode is true", .{});
                     }
@@ -553,6 +552,21 @@ pub const JSBundler = struct {
 
             if (try config.getBooleanLoose(globalThis, "reactFastRefresh")) |react_fast_refresh| {
                 this.react_fast_refresh = react_fast_refresh;
+            }
+
+            if (try config.getBooleanLoose(globalThis, "experimentalEsmBytecode")) |experimental_esm_bytecode| {
+                this.experimental_esm_bytecode = experimental_esm_bytecode;
+
+                if (experimental_esm_bytecode) {
+                    // Default to ESM format for ESM bytecode cache
+                    this.format = .esm;
+
+                    // Must target bun
+                    if (did_set_target and this.target != .bun and this.experimental_esm_bytecode) {
+                        return globalThis.throwInvalidArguments("target must be 'bun' when experimentalEsmBytecode is true", .{});
+                    }
+                    this.target = .bun;
+                }
             }
 
             var has_out_dir = false;
@@ -670,8 +684,8 @@ pub const JSBundler = struct {
             if (try config.getOptionalEnum(globalThis, "format", options.Format)) |format| {
                 this.format = format;
 
-                if (this.bytecode and format != .cjs) {
-                    return globalThis.throwInvalidArguments("format must be 'cjs' when bytecode is true. Eventually we'll add esm support as well.", .{});
+                if (this.experimental_esm_bytecode and format != .esm) {
+                    return globalThis.throwInvalidArguments("format must be 'esm' when experimentalEsmBytecode is true", .{});
                 }
             }
 

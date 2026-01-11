@@ -77,7 +77,7 @@ pub fn calculateOutputFileListCapacity(c: *const bun.bundle_v2.LinkerContext, ch
         }
         break :brk count;
     } else 0;
-    const bytecode_count = if (c.options.generate_bytecode_cache) bytecode_count: {
+    const bytecode_count = if (c.options.generate_bytecode_cache or c.options.experimental_esm_bytecode_cache) bytecode_count: {
         var bytecode_count: usize = 0;
         for (chunks) |*chunk| {
             const loader: bun.options.Loader = if (chunk.entry_point.is_entry_point)

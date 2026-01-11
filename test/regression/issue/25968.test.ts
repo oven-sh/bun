@@ -1,3 +1,4 @@
+// https://github.com/oven-sh/bun/issues/25968
 // FileSink should truncate existing files when opening with writer()
 
 import { expect, test } from "bun:test";

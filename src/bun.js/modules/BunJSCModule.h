@@ -655,6 +655,10 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
     if (sampleValue.isNumber()) {
         unsigned sampleInterval = sampleValue.toUInt32(globalObject);
         samplingProfiler.setTimingInterval(Seconds::fromMicroseconds(sampleInterval));
+    } else {
+        // Reset to default interval (1000 microseconds) to ensure each profile()
+        // call is independent of previous calls
+        samplingProfiler.setTimingInterval(Seconds::fromMicroseconds(1000));
     }
 
     const auto report = [](JSC::VM& vm,
@@ -670,7 +674,14 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
 
         JSValue stackTraces = JSONParse(globalObject, samplingProfiler.stackTracesAsJSON()->toJSONString());
 
-        samplingProfiler.shutdown();
+        // Use pause() instead of shutdown() to allow the profiler to be restarted
+        // shutdown() sets m_isShutDown=true which is never reset, making the profiler unusable
+        {
+            auto& lock = samplingProfiler.getLock();
+            WTF::Locker locker { lock };
+            samplingProfiler.pause();
+            samplingProfiler.clearData();
+        }
         RETURN_IF_EXCEPTION(throwScope, {});
 
         JSObject* result = constructEmptyObject(globalObject, globalObject->objectPrototype(), 3);
@@ -682,8 +693,9 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
     };
     const auto reportFailure = [](JSC::VM& vm) -> JSC::JSValue {
         if (auto* samplingProfiler = vm.samplingProfiler()) {
+            auto& lock = samplingProfiler->getLock();
+            WTF::Locker locker { lock };
             samplingProfiler->pause();
-            samplingProfiler->shutdown();
             samplingProfiler->clearData();
         }
 

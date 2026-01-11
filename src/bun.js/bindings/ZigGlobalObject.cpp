@@ -1076,7 +1076,7 @@ JSC_DEFINE_HOST_FUNCTION(functionQueueMicrotask,
     // BunPerformMicrotaskJob accepts a variable number of arguments (up to: performMicrotask, job, asyncContext, arg0, arg1).
     // The runtime inspects argumentCount to determine which arguments are present, so callers may pass only the subset they need.
     // Here we pass: function, callback, asyncContext.
-    JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::BunPerformMicrotaskJob, globalObject, function, callback, asyncContext };
+    JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::BunPerformMicrotaskJob, 0, globalObject, function, callback, asyncContext };
     globalObject->vm().queueMicrotask(WTF::move(task));
 
     return JSC::JSValue::encode(JSC::jsUndefined());
@@ -3107,7 +3107,7 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskCallback(Zig::GlobalObject* g
 
     // Do not use JSCell* here because the GC will try to visit it.
     // Use BunInvokeJobWithArguments to pass the two arguments (ptr and callback) to the trampoline function
-    JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::BunInvokeJobWithArguments, globalObject, function, JSValue(std::bit_cast<double>(reinterpret_cast<uintptr_t>(ptr))), JSValue(std::bit_cast<double>(reinterpret_cast<uintptr_t>(callback))) };
+    JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::BunInvokeJobWithArguments, 0, globalObject, function, JSValue(std::bit_cast<double>(reinterpret_cast<uintptr_t>(ptr))), JSValue(std::bit_cast<double>(reinterpret_cast<uintptr_t>(callback))) };
     globalObject->vm().queueMicrotask(WTF::move(task));
 }
 

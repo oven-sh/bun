@@ -1994,7 +1994,8 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
         heapSpaces->putDirect(vm, JSC::Identifier::fromString(vm, "shared_large_object_space"_s), JSC::constructEmptyObject(globalObject), 0);
         RETURN_IF_EXCEPTION(scope, {});
 
-        heap->putDirect(vm, JSC::Identifier::fromString(vm, "totalMemory"_s), JSC::jsNumber(JSC::Options::forceRAMSize() ? JSC::Options::forceRAMSize() : WTF::ramSize()), 0);
+        size_t ramSize = JSC::Options::forceRAMSize();
+        heap->putDirect(vm, JSC::Identifier::fromString(vm, "totalMemory"_s), JSC::jsNumber(ramSize ? ramSize : WTF::ramSize()), 0);
         heap->putDirect(vm, JSC::Identifier::fromString(vm, "executableMemory"_s), jsNumber(0), 0);
         heap->putDirect(vm, JSC::Identifier::fromString(vm, "totalCommittedMemory"_s), jsNumber(0), 0);
         heap->putDirect(vm, JSC::Identifier::fromString(vm, "availableMemory"_s), jsNumber(0), 0);
@@ -3083,8 +3084,8 @@ static Process* getProcessObject(JSC::JSGlobalObject* lexicalGlobalObject, JSVal
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionConstrainedMemory, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    size_t memSize = JSC::Options::forceRAMSize() ? JSC::Options::forceRAMSize() : WTF::ramSize();
-    return JSValue::encode(jsNumber(memSize));
+    size_t ramSize = JSC::Options::forceRAMSize();
+    return JSValue::encode(jsNumber(ramSize ? ramSize : WTF::ramSize()));
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionResourceUsage, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

@@ -730,13 +730,18 @@ JSC::ScriptExecutionStatus Zig::GlobalObject::scriptExecutionStatus(JSC::JSGloba
 
 void unsafeEvalNoop(JSGlobalObject*, const WTF::String&) {}
 
+static void queueMicrotaskToEventLoop(JSGlobalObject& globalObject, QueuedTask&& task)
+{
+    globalObject.vm().queueMicrotask(WTF::move(task));
+}
+
 const JSC::GlobalObjectMethodTable& GlobalObject::globalObjectMethodTable()
 {
     static const JSC::GlobalObjectMethodTable table = {
         &supportsRichSourceInfo,
         &shouldInterruptScript,
         &javaScriptRuntimeFlags,
-        nullptr, // &queueMicrotaskToEventLoop, // queueTaskToEventLoop
+        &queueMicrotaskToEventLoop,
         nullptr, // &shouldInterruptScriptBeforeTimeout,
         &moduleLoaderImportModule, // moduleLoaderImportModule
         &moduleLoaderResolve, // moduleLoaderResolve
@@ -765,8 +770,7 @@ const JSC::GlobalObjectMethodTable& EvalGlobalObject::globalObjectMethodTable()
         &supportsRichSourceInfo,
         &shouldInterruptScript,
         &javaScriptRuntimeFlags,
-        // &queueMicrotaskToEventLoop, // queueTaskToEventLoop
-        nullptr,
+        &queueMicrotaskToEventLoop,
         nullptr, // &shouldInterruptScriptBeforeTimeout,
         &moduleLoaderImportModule, // moduleLoaderImportModule
         &moduleLoaderResolve, // moduleLoaderResolve

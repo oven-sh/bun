@@ -219,9 +219,12 @@ pub const Jest = struct {
         const restoreAllMocks = jsc.JSFunction.create(globalObject, "restoreAllMocks", JSMock__jsRestoreAllMocks, 2, .{});
         const clearAllMocks = jsc.JSFunction.create(globalObject, "clearAllMocks", JSMock__jsClearAllMocks, 2, .{});
         const mockModuleFn = jsc.JSFunction.create(globalObject, "module", JSMock__jsModuleMock, 2, .{});
+        const restoreMocks = jsc.JSFunction.create(globalObject, "restore", jsRestoreMocks, 1, .{});
+        const restoreModuleMock = jsc.JSFunction.create(globalObject, "restoreModule", JSMock__jsRestoreModuleMock, 1, .{});
         module.put(globalObject, ZigString.static("mock"), mockFn);
         mockFn.put(globalObject, ZigString.static("module"), mockModuleFn);
-        mockFn.put(globalObject, ZigString.static("restore"), restoreAllMocks);
+        mockFn.put(globalObject, ZigString.static("restore"), restoreMocks);
+        mockFn.put(globalObject, ZigString.static("restoreModule"), restoreModuleMock);
         mockFn.put(globalObject, ZigString.static("clearAllMocks"), clearAllMocks);
 
         const jest = JSValue.createEmptyObject(globalObject, 9 + bun_test.FakeTimers.timerFnsCount);
@@ -254,11 +257,26 @@ pub const Jest = struct {
     extern fn Bun__Jest__testModuleObject(*JSGlobalObject) JSValue;
     extern fn JSMock__jsMockFn(*JSGlobalObject, *CallFrame) callconv(jsc.conv) JSValue;
     extern fn JSMock__jsModuleMock(*JSGlobalObject, *CallFrame) callconv(jsc.conv) JSValue;
+    extern fn JSMock__jsRestoreModuleMock(*JSGlobalObject, *CallFrame) callconv(jsc.conv) JSValue;
     extern fn JSMock__jsNow(*JSGlobalObject, *CallFrame) callconv(jsc.conv) JSValue;
     extern fn JSMock__jsSetSystemTime(*JSGlobalObject, *CallFrame) callconv(jsc.conv) JSValue;
     extern fn JSMock__jsRestoreAllMocks(*JSGlobalObject, *CallFrame) callconv(jsc.conv) JSValue;
     extern fn JSMock__jsClearAllMocks(*JSGlobalObject, *CallFrame) callconv(jsc.conv) JSValue;
     extern fn JSMock__jsSpyOn(*JSGlobalObject, *CallFrame) callconv(jsc.conv) JSValue;
+
+    fn jsRestoreMocks(globalObject: *JSGlobalObject, callframe: *CallFrame) callconv(jsc.conv) JSValue {
+        const restoreAllResult = JSMock__jsRestoreAllMocks(globalObject, callframe);
+        if (restoreAllResult == .zero) {
+            return restoreAllResult;
+        }
+
+        const restoreModuleResult = JSMock__jsRestoreModuleMock(globalObject, callframe);
+        if (restoreModuleResult == .zero) {
+            return restoreModuleResult;
+        }
+
+        return JSValue.js_undefined;
+    }
 
     pub fn call(
         globalObject: *JSGlobalObject,

@@ -13,6 +13,8 @@ test("S3 presigned URL should have correct query parameter order", () => {
     method: "PUT",
     acl: "public-read",
     expiresIn: 300,
+    contentDisposition: 'attachment; filename="test.txt"',
+    type: "text/plain",
   });
 
   // Parse the URL to get query parameters
@@ -20,6 +22,9 @@ test("S3 presigned URL should have correct query parameter order", () => {
   const params = Array.from(urlObj.searchParams.keys());
 
   console.log("Query parameters order:", params);
+
+  expect(urlObj.searchParams.get("response-content-disposition")).toBe('attachment; filename="test.txt"');
+  expect(urlObj.searchParams.get("response-content-type")).toBe("text/plain");
 
   // Verify alphabetical order (after URL decoding)
   const expected = params.slice().sort();

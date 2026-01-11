@@ -413,6 +413,8 @@ pub const S3Credentials = struct {
 
     pub const SignQueryOptions = struct {
         expires: usize = 86400,
+        response_content_disposition: ?[]const u8 = null,
+        response_content_type: ?[]const u8 = null,
     };
     pub const SignOptions = struct {
         path: []const u8,
@@ -687,13 +689,28 @@ pub const S3Credentials = struct {
                     encoded_content_md5 = encodeURIComponent(content_md5_value, &content_md5_encoded_buffer, true) catch return error.FailedToGenerateSignature;
                 }
 
+                const response_content_disposition = if (signQueryOption) |options| options.response_content_disposition else null;
+                const response_content_type = if (signQueryOption) |options| options.response_content_type else null;
+
+                var response_content_disposition_buffer: [4096]u8 = undefined;
+                var encoded_response_content_disposition: ?[]const u8 = null;
+                if (response_content_disposition) |value| {
+                    encoded_response_content_disposition = encodeURIComponent(value, &response_content_disposition_buffer, true) catch return error.FailedToGenerateSignature;
+                }
+
+                var response_content_type_buffer: [1024]u8 = undefined;
+                var encoded_response_content_type: ?[]const u8 = null;
+                if (response_content_type) |value| {
+                    encoded_response_content_type = encodeURIComponent(value, &response_content_type_buffer, true) catch return error.FailedToGenerateSignature;
+                }
+
                 // Build query parameters in alphabetical order for AWS Signature V4 canonical request
                 const canonical = brk_canonical: {
                     var stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
                     const allocator = stack_fallback.get();
-                    var query_parts: bun.BoundedArray([]const u8, 11) = .{};
+                    var query_parts: bun.BoundedArray([]const u8, 13) = .{};
 
-                    // Add parameters in alphabetical order: Content-MD5, X-Amz-Acl, X-Amz-Algorithm, X-Amz-Credential, X-Amz-Date, X-Amz-Expires, X-Amz-Security-Token, X-Amz-SignedHeaders, x-amz-request-payer, x-amz-storage-class
+                    // Add parameters in alphabetical order: Content-MD5, X-Amz-Acl, X-Amz-Algorithm, X-Amz-Credential, X-Amz-Date, X-Amz-Expires, X-Amz-Security-Token, X-Amz-SignedHeaders, response-content-disposition, response-content-type, x-amz-request-payer, x-amz-storage-class
 
                     if (encoded_content_md5) |encoded_content_md5_value| {
                         try query_parts.append(try std.fmt.allocPrint(allocator, "Content-MD5={s}", .{encoded_content_md5_value}));
@@ -716,6 +733,14 @@ pub const S3Credentials = struct {
                     }
 
                     try query_parts.append(try std.fmt.allocPrint(allocator, "X-Amz-SignedHeaders=host", .{}));
+
+                    if (encoded_response_content_disposition) |value| {
+                        try query_parts.append(try std.fmt.allocPrint(allocator, "response-content-disposition={s}", .{value}));
+                    }
+
+                    if (encoded_response_content_type) |value| {
+                        try query_parts.append(try std.fmt.allocPrint(allocator, "response-content-type={s}", .{value}));
+                    }
 
                     if (request_payer) {
                         try query_parts.append(try std.fmt.allocPrint(allocator, "x-amz-request-payer=requester", .{}));
@@ -746,9 +771,9 @@ pub const S3Credentials = struct {
                 // Build final URL with query parameters in alphabetical order to match canonical request
                 var url_stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
                 const url_allocator = url_stack_fallback.get();
-                var url_query_parts: bun.BoundedArray([]const u8, 12) = .{};
+                var url_query_parts: bun.BoundedArray([]const u8, 14) = .{};
 
-                // Add parameters in alphabetical order: Content-MD5, X-Amz-Acl, X-Amz-Algorithm, X-Amz-Credential, X-Amz-Date, X-Amz-Expires, X-Amz-Security-Token, X-Amz-Signature, X-Amz-SignedHeaders, x-amz-request-payer, x-amz-storage-class
+                // Add parameters in alphabetical order: Content-MD5, X-Amz-Acl, X-Amz-Algorithm, X-Amz-Credential, X-Amz-Date, X-Amz-Expires, X-Amz-Security-Token, X-Amz-Signature, X-Amz-SignedHeaders, response-content-disposition, response-content-type, x-amz-request-payer, x-amz-storage-class
 
                 if (encoded_content_md5) |encoded_content_md5_value| {
                     try url_query_parts.append(try std.fmt.allocPrint(url_allocator, "Content-MD5={s}", .{encoded_content_md5_value}));
@@ -773,6 +798,14 @@ pub const S3Credentials = struct {
                 try url_query_parts.append(try std.fmt.allocPrint(url_allocator, "X-Amz-Signature={s}", .{std.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower)}));
 
                 try url_query_parts.append(try std.fmt.allocPrint(url_allocator, "X-Amz-SignedHeaders=host", .{}));
+
+                if (encoded_response_content_disposition) |value| {
+                    try url_query_parts.append(try std.fmt.allocPrint(url_allocator, "response-content-disposition={s}", .{value}));
+                }
+
+                if (encoded_response_content_type) |value| {
+                    try url_query_parts.append(try std.fmt.allocPrint(url_allocator, "response-content-type={s}", .{value}));
+                }
 
                 if (request_payer) {
                     try url_query_parts.append(try std.fmt.allocPrint(url_allocator, "x-amz-request-payer=requester", .{}));

@@ -418,7 +418,9 @@ export async function bundleBuiltinFunctions({ requireTransformer }: BundleBuilt
     #include "JSDOMGlobalObject.h"
     #include "WebCoreJSClientData.h"
     #include <JavaScriptCore/JSObjectInlines.h>
+    #include <JavaScriptCore/CustomGetterSetter.h>
     #include "BunBuiltinNames.h"
+    #include "ZigGlobalObject.h"
 
     namespace WebCore {
         static const Latin1Character combinedSourceCodeBuffer[${combinedSourceCodeLength + 1}] = { ${combinedSourceCodeChars}, 0 };
@@ -517,7 +519,28 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
     template void JSBuiltinInternalFunctions::visit(AbstractSlotVisitor&);
     template void JSBuiltinInternalFunctions::visit(SlotVisitor&);
 
-    SUPPRESS_ASAN void JSBuiltinInternalFunctions::initialize(Zig::GlobalObject& globalObject)
+`;
+
+  // Generate getter functions for each internal builtin function
+  for (const { basename, internal, functions } of files) {
+    if (internal) {
+      for (const fn of functions) {
+        bundledCPP += `JSC_DEFINE_CUSTOM_GETTER(${low(basename)}_${fn.name}_getter,
+    (JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
+{
+    UNUSED_PARAM(thisValue);
+    Zig::GlobalObject* globalObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    return JSC::JSValue::encode(
+        globalObject->builtinInternalFunctions().${low(basename)}()
+            .m_${fn.name}Function.get(globalObject));
+}
+
+`;
+      }
+    }
+  }
+
+  bundledCPP += `    SUPPRESS_ASAN void JSBuiltinInternalFunctions::initialize(Zig::GlobalObject& globalObject)
     {
         UNUSED_PARAM(globalObject);
     `;
@@ -530,23 +553,21 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
 
   bundledCPP += `
         JSVMClientData& clientData = *static_cast<JSVMClientData*>(m_vm.clientData);
-        Zig::GlobalObject::GlobalPropertyInfo staticGlobals[] = {
     `;
 
-  for (const { basename, internal } of files) {
+  for (const { basename, internal, functions } of files) {
     if (internal) {
-      bundledCPP += `#define DECLARE_GLOBAL_STATIC(name) \\
-        Zig::GlobalObject::GlobalPropertyInfo( \\
-            clientData.builtinFunctions().${low(basename)}Builtins().name##PrivateName(), ${low(basename)}().m_##name##Function.get() , JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly),
-        WEBCORE_FOREACH_${basename.toUpperCase()}_BUILTIN_FUNCTION_NAME(DECLARE_GLOBAL_STATIC)
-      #undef DECLARE_GLOBAL_STATIC
-      `;
+      for (const fn of functions) {
+        bundledCPP += `    globalObject.putDirectCustomAccessor(m_vm,
+            clientData.builtinFunctions().${low(basename)}Builtins().${fn.name}PrivateName(),
+            JSC::CustomGetterSetter::create(m_vm, ${low(basename)}_${fn.name}_getter, nullptr),
+            JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor);
+`;
+      }
     }
   }
 
   bundledCPP += `
-        };
-        globalObject.addStaticGlobals(staticGlobals, std::size(staticGlobals));
         UNUSED_PARAM(clientData);
     }
 
@@ -565,6 +586,8 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
     #include <JavaScriptCore/UnlinkedFunctionExecutable.h>
     #include <JavaScriptCore/VM.h>
     #include <JavaScriptCore/WeakInlines.h>
+    #include <JavaScriptCore/LazyProperty.h>
+    #include <JavaScriptCore/LazyPropertyInlines.h>
 
     namespace JSC {
     class FunctionExecutable;
@@ -671,15 +694,19 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
         [[maybe_unused]] JSC::VM& m_vm;
 
     #define DECLARE_BUILTIN_SOURCE_MEMBERS(functionName) \\
-        JSC::WriteBarrier<JSC::JSFunction> m_##functionName##Function;
+        JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSFunction> m_##functionName##Function;
         WEBCORE_FOREACH_${basename.toUpperCase()}_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_SOURCE_MEMBERS)
     #undef DECLARE_BUILTIN_SOURCE_MEMBERS
     };
 
     inline void ${basename}BuiltinFunctions::init(JSC::JSGlobalObject& globalObject)
     {
+        UNUSED_PARAM(globalObject);
     #define EXPORT_FUNCTION(codeName, functionName, overriddenName, length) \\
-        m_##functionName##Function.set(m_vm, &globalObject, JSC::JSFunction::create(m_vm, &globalObject, codeName##Generator(m_vm), &globalObject));
+        m_##functionName##Function.initLater( \\
+            [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSFunction>::Initializer& init) { \\
+                init.set(JSC::JSFunction::create(init.vm, init.owner, codeName##Generator(init.vm), init.owner)); \\
+            });
         WEBCORE_FOREACH_${basename.toUpperCase()}_BUILTIN_CODE(EXPORT_FUNCTION)
     #undef EXPORT_FUNCTION
     }
@@ -687,7 +714,7 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
     template<typename Visitor>
     inline void ${basename}BuiltinFunctions::visit(Visitor& visitor)
     {
-    #define VISIT_FUNCTION(name) visitor.append(m_##name##Function);
+    #define VISIT_FUNCTION(name) m_##name##Function.visit(visitor);
         WEBCORE_FOREACH_${basename.toUpperCase()}_BUILTIN_FUNCTION_NAME(VISIT_FUNCTION)
     #undef VISIT_FUNCTION
     }

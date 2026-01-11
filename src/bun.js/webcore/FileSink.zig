@@ -49,7 +49,6 @@ pub const Poll = IOWriter;
 pub const Options = struct {
     chunk_size: Blob.SizeType = 1024,
     input_path: webcore.PathOrFileDescriptor,
-    truncate: bool = true,
     close: bool = false,
     mode: bun.Mode = 0o664,
 
@@ -196,8 +195,10 @@ pub fn onWrite(this: *FileSink, amount: usize, status: bun.io.WriteStatus) void 
 
         if (this.done and status == .drained) {
             // if we call end/endFromJS and we have some pending returned from .flush() we should call writer.end()
+            this.truncateFdToWritten();
             this.writer.end();
         } else if (ended_and_done and !has_pending_data) {
+            this.truncateFdToWritten();
             this.writer.close();
         }
     }
@@ -319,6 +320,7 @@ pub fn setup(this: *FileSink, options: *const FileSink.Options) bun.sys.Maybe(vo
         },
         .result => |fd| fd,
     };
+    this.fd = fd;
 
     if (comptime Environment.isWindows) {
         if (this.force_sync) {
@@ -426,7 +428,8 @@ pub fn onAutoFlush(this: *FileSink) bool {
 
     const amount_buffered = this.writer.outgoing.size();
 
-    switch (this.writer.flush()) {
+    const flush_result = this.writer.flush();
+    switch (flush_result) {
         .err, .done => {
             this.updateRef(false);
             this.runPendingLater();
@@ -437,12 +440,10 @@ pub fn onAutoFlush(this: *FileSink) bool {
                 this.runPendingLater();
             }
         },
-        else => {
-            return true;
-        },
+        .pending => {},
     }
 
-    const is_registered = !this.writer.hasPendingData();
+    const is_registered = this.writer.hasPendingData();
     this.auto_flusher.registered = is_registered;
     return is_registered;
 }
@@ -462,25 +463,10 @@ pub fn flushFromJS(this: *FileSink, globalThis: *JSGlobalObject, wait: bool) bun
         return .initResult(.js_undefined);
     }
 
-    const rc = this.writer.flush();
-    switch (rc) {
-        .done => |written| {
-            this.written += @truncate(written);
-        },
-        .pending => |written| {
-            this.written += @truncate(written);
-        },
-        .wrote => |written| {
-            this.written += @truncate(written);
-        },
-        .err => |err| {
-            return .{ .err = err };
-        },
-    }
-    return switch (this.toResult(rc)) {
-        .err => unreachable,
-        else => |result| .initResult(result.toJS(globalThis)),
-    };
+    const flush_result = this.writer.flush();
+    const result = this.toResult(flush_result);
+    if (result == .err) return .{ .err = result.err };
+    return .initResult(result.toJS(globalThis));
 }
 
 pub fn finalize(this: *FileSink) void {
@@ -543,10 +529,12 @@ pub fn end(this: *FileSink, _: ?bun.sys.Error) bun.sys.Maybe(void) {
     if (this.done) {
         return .success;
     }
+    this.done = true;
 
-    switch (this.writer.flush()) {
-        .done => |written| {
-            this.written += @truncate(written);
+    const flush_result = this.writer.flush();
+    switch (flush_result) {
+        .done, .wrote => {
+            this.truncateFdToWritten();
             this.writer.end();
             return .success;
         },
@@ -554,18 +542,8 @@ pub fn end(this: *FileSink, _: ?bun.sys.Error) bun.sys.Maybe(void) {
             this.writer.close();
             return .{ .err = e };
         },
-        .pending => |written| {
-            this.written += @truncate(written);
-            if (!this.must_be_kept_alive_until_eof) {
-                this.must_be_kept_alive_until_eof = true;
-                this.ref();
-            }
-            this.done = true;
-            return .success;
-        },
-        .wrote => |written| {
-            this.written += @truncate(written);
-            this.writer.end();
+        .pending => {
+            _ = this.toResult(flush_result);
             return .success;
         },
     }
@@ -598,35 +576,27 @@ pub fn endFromJS(this: *FileSink, globalThis: *JSGlobalObject) bun.sys.Maybe(JSV
 
         return .{ .result = JSValue.jsNumber(this.written) };
     }
+    this.done = true;
 
     const flush_result = this.writer.flush();
-
     switch (flush_result) {
-        .done => |written| {
+        .done, .wrote => {
             this.updateRef(false);
+            this.truncateFdToWritten();
             this.writer.end();
-            return .{ .result = JSValue.jsNumber(written) };
+            return .{ .result = JSValue.jsNumber(this.written) };
         },
         .err => |err| {
             this.writer.close();
             return .{ .err = err };
         },
-        .pending => |pending_written| {
-            this.written += @truncate(pending_written);
-            if (!this.must_be_kept_alive_until_eof) {
-                this.must_be_kept_alive_until_eof = true;
-                this.ref();
-            }
-            this.done = true;
-            this.pending.result = .{ .owned = @truncate(pending_written) };
+        .pending => {
+            const result = this.toResult(flush_result);
+            this.pending.result = result;
 
             const promise_result = this.pending.promise(globalThis);
 
             return .{ .result = promise_result.toJS() };
-        },
-        .wrote => |written| {
-            this.writer.end();
-            return .{ .result = JSValue.jsNumber(written) };
         },
     }
 }
@@ -640,6 +610,12 @@ pub fn updateRef(this: *FileSink, value: bool) void {
         this.writer.enableKeepingProcessAlive(this.event_loop_handle);
     } else {
         this.writer.disableKeepingProcessAlive(this.event_loop_handle);
+    }
+}
+
+pub fn truncateFdToWritten(this: *FileSink) void {
+    if (this.fd != bun.invalid_fd and !this.is_socket) {
+        _ = bun.sys.ftruncate(this.fd, @as(isize, @intCast(this.written)));
     }
 }
 

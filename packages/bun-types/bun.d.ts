@@ -6066,6 +6066,69 @@ declare module "bun" {
        * @default undefined (no limit)
        */
       maxBuffer?: number;
+
+      /**
+       * Platform-specific process sandboxing options.
+       *
+       * You can specify options for multiple platforms - options for other
+       * platforms are silently ignored. This allows writing cross-platform
+       * code that sandboxes on all supported platforms.
+       *
+       * Currently supports:
+       * - **Linux**: seccomp-BPF filters (`sandbox.linux`)
+       * - **macOS**: Coming soon (`sandbox.darwin`)
+       * - **Windows**: Coming soon (`sandbox.windows`)
+       *
+       * @example
+       * ```ts
+       * // Cross-platform sandboxing (options for other platforms are ignored)
+       * const proc = Bun.spawn({
+       *   cmd: ["./untrusted-program"],
+       *   sandbox: {
+       *     linux: linuxBpfFilter,
+       *     // darwin: macOsSbplProfile,  // Coming soon
+       *     // windows: { ... },          // Coming soon
+       *   },
+       * });
+       *
+       * // Detect if seccomp killed the process (Linux)
+       * if (proc.signalCode === "SIGSYS") {
+       *   console.log("Process was killed by seccomp filter");
+       * }
+       * ```
+       */
+      sandbox?: {
+        /**
+         * Linux seccomp-BPF filter. A compiled BPF program that restricts
+         * which system calls the subprocess can make.
+         *
+         * Silently ignored on non-Linux platforms.
+         *
+         * The buffer must contain valid BPF bytecode. Each BPF instruction
+         * is 8 bytes:
+         * - 2 bytes: opcode
+         * - 1 byte: jump-true offset
+         * - 1 byte: jump-false offset
+         * - 4 bytes: k value
+         *
+         * **Important**: Your BPF program MUST check the architecture
+         * (`seccomp_data.arch`) before checking syscall numbers, as syscall
+         * numbers differ between architectures (x86_64, arm64, etc.).
+         *
+         * The filter is applied after `fork()` but before `execve()`, and
+         * persists across `execve()`. Child processes inherit the filter.
+         *
+         * Bun automatically calls `prctl(PR_SET_NO_NEW_PRIVS, 1)` before
+         * applying the filter.
+         *
+         * If the filter kills the process (via `SECCOMP_RET_KILL`), the
+         * subprocess will have `exitCode: null` and `signalCode: "SIGSYS"`.
+         *
+         * @see https://man7.org/linux/man-pages/man2/seccomp.2.html
+         * @platform linux
+         */
+        linux?: ArrayBufferView | ArrayBuffer;
+      };
     }
 
     interface SpawnSyncOptions<In extends Writable, Out extends Readable, Err extends Readable>

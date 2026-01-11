@@ -95,6 +95,9 @@ pub const BunSpawn = struct {
         pty_slave_fd: i32 = -1,
         flags: u16 = 0,
         reset_signals: bool = false,
+        /// Seccomp BPF filter bytecode (Linux only).
+        /// Must be a multiple of 8 bytes (sizeof(struct sock_filter)).
+        seccomp_filter: ?[]const u8 = null,
 
         pub fn init() !Attr {
             return Attr{};
@@ -270,6 +273,9 @@ pub const PosixSpawn = struct {
         detached: bool = false,
         actions: ActionsList = .{},
         pty_slave_fd: i32 = -1,
+        // Seccomp BPF filter (Linux only)
+        seccomp_filter: ?[*]const u8 = null,
+        seccomp_filter_len: usize = 0,
 
         const ActionsList = extern struct {
             ptr: ?[*]const BunSpawn.Action = null,
@@ -334,6 +340,7 @@ pub const PosixSpawn = struct {
         const use_bun_spawn = Environment.isLinux or (Environment.isMac and pty_slave_fd >= 0);
 
         if (use_bun_spawn) {
+            const seccomp = if (attr) |a| a.seccomp_filter else null;
             return BunSpawnRequest.spawn(
                 path,
                 .{
@@ -347,6 +354,8 @@ pub const PosixSpawn = struct {
                     .chdir_buf = if (actions) |a| a.chdir_buf else null,
                     .detached = detached,
                     .pty_slave_fd = pty_slave_fd,
+                    .seccomp_filter = if (seccomp) |s| s.ptr else null,
+                    .seccomp_filter_len = if (seccomp) |s| s.len else 0,
                 },
                 argv,
                 envp,

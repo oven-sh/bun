@@ -15,6 +15,9 @@
 
 #if OS(LINUX)
 #include <sys/syscall.h>
+#include <sys/prctl.h>
+#include <linux/seccomp.h>
+#include <linux/filter.h>
 #endif
 
 extern char** environ;
@@ -99,6 +102,9 @@ typedef struct bun_spawn_request_t {
     bool detached;
     bun_spawn_file_action_list_t actions;
     int pty_slave_fd; // -1 if not using PTY, otherwise the slave fd to set as controlling terminal
+    // Seccomp BPF filter (Linux only)
+    const void* seccomp_filter;      // Pointer to BPF bytecode (array of sock_filter structs)
+    size_t seccomp_filter_len;       // Length in bytes (must be multiple of 8)
 } bun_spawn_request_t;
 
 // Raw exit syscall that doesn't go through libc.
@@ -283,6 +289,33 @@ extern "C" ssize_t posix_spawn_bun(
 
         // Close all fds > current_max_fd, preferring cloexec if available
         closeRangeOrLoop(current_max_fd + 1, INT_MAX, true);
+
+#if OS(LINUX)
+        // Apply seccomp filter if provided (Linux only)
+        if (request->seccomp_filter && request->seccomp_filter_len > 0) {
+            // Validate filter length (must be multiple of sizeof(sock_filter) = 8)
+            if (request->seccomp_filter_len % sizeof(struct sock_filter) != 0) {
+                errno = EINVAL;
+                return childFailed();
+            }
+
+            // Set no_new_privs (required for seccomp without CAP_SYS_ADMIN)
+            if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) == -1) {
+                return childFailed();
+            }
+
+            // Construct sock_fprog
+            struct sock_fprog prog = {
+                .len = static_cast<unsigned short>(request->seccomp_filter_len / sizeof(struct sock_filter)),
+                .filter = static_cast<struct sock_filter*>(const_cast<void*>(request->seccomp_filter)),
+            };
+
+            // Apply the filter using prctl (more portable than seccomp syscall)
+            if (prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &prog) == -1) {
+                return childFailed();
+            }
+        }
+#endif
 
         if (execve(path, argv, envp) == -1) {
             return childFailed();

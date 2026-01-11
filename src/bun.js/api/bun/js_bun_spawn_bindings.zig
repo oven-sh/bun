@@ -157,6 +157,7 @@ pub fn spawnMaybeSync(
     var terminal_info: ?Terminal.CreateResult = null;
     var existing_terminal: ?*Terminal = null; // Existing terminal passed by user
     var terminal_js_value: jsc.JSValue = .zero;
+    var seccomp_filter: ?[]const u8 = null;
     defer {
         if (abort_signal) |signal| {
             signal.unref();
@@ -420,6 +421,38 @@ pub fn spawnMaybeSync(
                     stdio[2] = .{ .fd = slave_fd };
                 }
             }
+
+            // Parse sandbox option
+            if (try args.getTruthy(globalThis, "sandbox")) |sandbox_val| {
+                // Parse sandbox.linux (seccomp BPF filter) - only on Linux, ignored on other platforms
+                if (comptime Environment.isLinux) {
+                    if (try sandbox_val.getTruthy(globalThis, "linux")) |linux_val| {
+                        // Get ArrayBuffer or TypedArray bytes
+                        if (linux_val.asArrayBuffer(globalThis)) |array_buffer| {
+                            const slice = array_buffer.slice();
+                            if (slice.len > 0) {
+                                // Validate length is multiple of 8 (sizeof(sock_filter))
+                                if (slice.len % 8 != 0) {
+                                    return globalThis.throwInvalidArguments(
+                                        "sandbox.linux filter must be a multiple of 8 bytes (each BPF instruction is 8 bytes)",
+                                        .{},
+                                    );
+                                }
+                                // Copy to arena allocator to ensure lifetime
+                                seccomp_filter = try allocator.dupe(u8, slice);
+                            }
+                        } else {
+                            return globalThis.throwInvalidArgumentType(
+                                "spawn",
+                                "sandbox.linux",
+                                "ArrayBuffer or TypedArray",
+                            );
+                        }
+                    }
+                }
+                // TODO: Parse sandbox.darwin (macOS SBPL profile)
+                // TODO: Parse sandbox.windows (Windows sandbox options)
+            }
         } else {
             try getArgv(globalThis, cmd_value, PATH, cwd, &argv0, allocator, &argv);
         }
@@ -577,6 +610,9 @@ pub fn spawnMaybeSync(
             if (terminal_info) |ti| break :blk ti.terminal.getSlaveFd().native();
             break :blk -1;
         } else {},
+
+        // Seccomp filter (Linux only)
+        .seccomp_filter = if (Environment.isLinux) seccomp_filter else null,
 
         .windows = if (Environment.isWindows) .{
             .hide_window = windows_hide,

@@ -996,6 +996,9 @@ pub const PosixSpawnOptions = struct {
     no_sigpipe: bool = true,
     /// PTY slave fd for controlling terminal setup (-1 if not using PTY).
     pty_slave_fd: i32 = -1,
+    /// Seccomp BPF filter bytecode (Linux only).
+    /// Must be a multiple of 8 bytes (sizeof(struct sock_filter)).
+    seccomp_filter: ?[]const u8 = null,
 
     pub const Stdio = union(enum) {
         path: []const u8,
@@ -1263,6 +1266,9 @@ pub fn spawnProcessPosix(
 
     // Pass PTY slave fd to attr for controlling terminal setup
     attr.pty_slave_fd = options.pty_slave_fd;
+
+    // Pass seccomp filter to attr (Linux only)
+    attr.seccomp_filter = options.seccomp_filter;
 
     if (options.cwd.len > 0) {
         try actions.chdir(options.cwd);

@@ -3,6 +3,8 @@
 #include "ZigGlobalObject.h"
 
 #include <JavaScriptCore/InspectorFrontendChannel.h>
+#include <JavaScriptCore/StopTheWorldCallback.h>
+#include <JavaScriptCore/VMManager.h>
 #include <JavaScriptCore/JSGlobalObjectDebuggable.h>
 #include <JavaScriptCore/JSGlobalObjectDebugger.h>
 #include <JavaScriptCore/Debugger.h>
@@ -658,4 +660,56 @@ extern "C" void Debugger__willDispatchAsyncCall(JSGlobalObject* globalObject, As
 
     agent->willDispatchAsyncCall(getCallType(callType), callbackId);
 }
+}
+
+// StopTheWorld callback for SIGUSR1 debugger activation.
+// This runs on the main thread at a safe point when VMManager::requestStopAll(JSDebugger) is called.
+//
+// Note: These APIs require the updated oven-sh/WebKit with StopReason::JSDebugger support.
+// Until WebKit is updated, these will cause build errors.
+
+extern "C" bool Bun__checkInspectorActivationRequest();
+extern "C" void Bun__activateInspector(JSC::JSGlobalObject*);
+
+#include <JavaScriptCore/VMEntryScope.h>
+
+// This callback is registered with VMManager::setJSDebuggerCallback() and called
+// when VMManager::requestStopAll(JSDebugger) is invoked. It cannot have C linkage
+// because it returns a C++ type (std::pair).
+//
+// This handles the case where JS is actively executing (including infinite loops).
+// For idle VMs, RuntimeInspector::checkAndActivateInspector handles it via event loop.
+JSC::StopTheWorldStatus Bun__jsDebuggerCallback(JSC::VM& vm, JSC::StopTheWorldEvent event)
+{
+    using namespace JSC;
+
+    // Only handle VMStopped events - this is when all VMs have stopped and we can safely activate
+    if (event != StopTheWorldEvent::VMStopped)
+        return STW_CONTINUE();
+
+    // Check if this is a debugger activation request from SIGUSR1
+    if (!Bun__checkInspectorActivationRequest())
+        return STW_RESUME_ALL();
+
+    // Activate the inspector/debugger
+    // Note: Bun__activateInspector uses thread-local VM, so globalObject param is unused.
+    Bun__activateInspector(nullptr);
+
+    // Fire the debugger break trap - now that the debugger exists, this will work
+    vm.notifyNeedDebuggerBreak();
+
+    return STW_RESUME_ALL();
+}
+
+// Zig binding for VMManager::requestStopAll
+// Note: StopReason is a bitmask (uint32_t), not sequential values
+extern "C" void VMManager__requestStopAll(uint32_t reason)
+{
+    JSC::VMManager::requestStopAll(static_cast<JSC::VMManager::StopReason>(reason));
+}
+
+// Zig binding for VMManager::requestResumeAll
+extern "C" void VMManager__requestResumeAll(uint32_t reason)
+{
+    JSC::VMManager::requestResumeAll(static_cast<JSC::VMManager::StopReason>(reason));
 }

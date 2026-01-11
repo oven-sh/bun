@@ -1074,6 +1074,8 @@ pub fn initWithModuleGraph(
     vm.configureDebugger(opts.debugger);
     vm.body_value_hive_allocator = Body.Value.HiveAllocator.init(bun.typedAllocator(jsc.WebCore.Body.Value));
 
+    configureSigusr1Handler(vm, opts);
+
     return vm;
 }
 
@@ -1100,7 +1102,25 @@ pub const Options = struct {
     /// Worker VMs are always destroyed on exit, regardless of this setting. Setting this to
     /// true may expose bugs that would otherwise only occur using Workers.
     destruct_main_thread_on_exit: bool = false,
+    /// Disable SIGUSR1 handler for runtime debugger activation (matches Node.js).
+    disable_sigusr1: bool = false,
 };
+
+/// Configure SIGUSR1 handling for runtime debugger activation (main thread only).
+fn configureSigusr1Handler(vm: *const VirtualMachine, opts: Options) void {
+    if (!opts.is_main_thread) return;
+
+    if (opts.disable_sigusr1) {
+        // User requested --disable-sigusr1, set SIGUSR1 to default action (terminate)
+        jsc.EventLoop.RuntimeInspector.setDefaultSigusr1Action();
+    } else if (vm.debugger != null) {
+        // Debugger already enabled via CLI flags, ignore SIGUSR1
+        jsc.EventLoop.RuntimeInspector.ignoreSigusr1();
+    } else {
+        // Install RuntimeInspector signal handler for runtime activation
+        jsc.EventLoop.RuntimeInspector.installIfNotAlready();
+    }
+}
 
 pub var is_smol_mode = false;
 
@@ -1200,6 +1220,8 @@ pub fn init(opts: Options) !*VirtualMachine {
 
     vm.configureDebugger(opts.debugger);
     vm.body_value_hive_allocator = Body.Value.HiveAllocator.init(bun.typedAllocator(jsc.WebCore.Body.Value));
+
+    configureSigusr1Handler(vm, opts);
 
     return vm;
 }
@@ -1450,6 +1472,8 @@ pub fn initBake(opts: Options) anyerror!*VirtualMachine {
 
     vm.configureDebugger(opts.debugger);
     vm.body_value_hive_allocator = Body.Value.HiveAllocator.init(bun.typedAllocator(jsc.WebCore.Body.Value));
+
+    configureSigusr1Handler(vm, opts);
 
     return vm;
 }

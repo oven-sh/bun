@@ -1,0 +1,9 @@
+{
+  "lsp": {
+    "zls": {
+      "settings": {
+        "build_on_save_args": ["-Dgenerated-code=./build/debug/codegen", "--watch", "-fincremental"],
+      },
+    },
+  },
+}

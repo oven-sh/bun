@@ -728,53 +728,58 @@ function ClientRequest(input, options, cb) {
     throw new Error("pfx is not supported");
   }
 
-  if (options.rejectUnauthorized !== undefined) this._ensureTls().rejectUnauthorized = options.rejectUnauthorized;
-  else {
-    let agentRejectUnauthorized = agent?.options?.rejectUnauthorized;
-    if (agentRejectUnauthorized !== undefined) this._ensureTls().rejectUnauthorized = agentRejectUnauthorized;
-    else {
-      // popular https-proxy-agent uses connectOpts
-      agentRejectUnauthorized = agent?.connectOpts?.rejectUnauthorized;
-      if (agentRejectUnauthorized !== undefined) this._ensureTls().rejectUnauthorized = agentRejectUnauthorized;
-    }
+  // Merge TLS options using spread operator, matching Node.js behavior in createSocket:
+  //   options = { __proto__: null, ...options, ...this.options };
+  // https://github.com/nodejs/node/blob/v23.6.0/lib/_http_agent.js#L242
+  // With spread, the last one wins, so agent.options overwrites request options.
+  //
+  // agent.options: Stored by Node.js Agent constructor
+  // https://github.com/nodejs/node/blob/v23.6.0/lib/_http_agent.js#L96
+  //
+  // agent.connectOpts: Used by https-proxy-agent for TLS connection options (lowest priority)
+  // https://github.com/TooTallNate/proxy-agents/blob/main/packages/https-proxy-agent/src/index.ts#L110-L117
+  const mergedTlsOptions = { ...agent?.connectOpts, ...options, ...agent?.options };
+
+  if (mergedTlsOptions.rejectUnauthorized !== undefined) {
+    this._ensureTls().rejectUnauthorized = mergedTlsOptions.rejectUnauthorized;
   }
-  if (options.ca) {
-    if (!isValidTLSArray(options.ca))
+  if (mergedTlsOptions.ca) {
+    if (!isValidTLSArray(mergedTlsOptions.ca))
       throw new TypeError(
         "ca argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
       );
-    this._ensureTls().ca = options.ca;
+    this._ensureTls().ca = mergedTlsOptions.ca;
   }
-  if (options.cert) {
-    if (!isValidTLSArray(options.cert))
+  if (mergedTlsOptions.cert) {
+    if (!isValidTLSArray(mergedTlsOptions.cert))
       throw new TypeError(
         "cert argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
       );
-    this._ensureTls().cert = options.cert;
+    this._ensureTls().cert = mergedTlsOptions.cert;
   }
-  if (options.key) {
-    if (!isValidTLSArray(options.key))
+  if (mergedTlsOptions.key) {
+    if (!isValidTLSArray(mergedTlsOptions.key))
       throw new TypeError(
         "key argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
       );
-    this._ensureTls().key = options.key;
+    this._ensureTls().key = mergedTlsOptions.key;
   }
-  if (options.passphrase) {
-    if (typeof options.passphrase !== "string") throw new TypeError("passphrase argument must be a string");
-    this._ensureTls().passphrase = options.passphrase;
+  if (mergedTlsOptions.passphrase) {
+    if (typeof mergedTlsOptions.passphrase !== "string") throw new TypeError("passphrase argument must be a string");
+    this._ensureTls().passphrase = mergedTlsOptions.passphrase;
   }
-  if (options.ciphers) {
-    if (typeof options.ciphers !== "string") throw new TypeError("ciphers argument must be a string");
-    this._ensureTls().ciphers = options.ciphers;
+  if (mergedTlsOptions.ciphers) {
+    if (typeof mergedTlsOptions.ciphers !== "string") throw new TypeError("ciphers argument must be a string");
+    this._ensureTls().ciphers = mergedTlsOptions.ciphers;
   }
-  if (options.servername) {
-    if (typeof options.servername !== "string") throw new TypeError("servername argument must be a string");
-    this._ensureTls().servername = options.servername;
+  if (mergedTlsOptions.servername) {
+    if (typeof mergedTlsOptions.servername !== "string") throw new TypeError("servername argument must be a string");
+    this._ensureTls().servername = mergedTlsOptions.servername;
   }
-
-  if (options.secureOptions) {
-    if (typeof options.secureOptions !== "number") throw new TypeError("secureOptions argument must be a string");
-    this._ensureTls().secureOptions = options.secureOptions;
+  if (mergedTlsOptions.secureOptions) {
+    if (typeof mergedTlsOptions.secureOptions !== "number")
+      throw new TypeError("secureOptions argument must be a number");
+    this._ensureTls().secureOptions = mergedTlsOptions.secureOptions;
   }
   this[kPath] = options.path || "/";
   if (cb) {

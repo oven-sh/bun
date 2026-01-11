@@ -43,7 +43,7 @@ namespace WebCore {
 
 using NavigationTimingFunction = unsigned long long (PerformanceTiming::*)() const;
 
-static constexpr std::array<std::pair<ComparableASCIILiteral, NavigationTimingFunction>, 21> restrictedMarkMappings { {
+static constexpr SortedArrayMap restrictedMarkFunctions { std::to_array<std::pair<ComparableASCIILiteral, NavigationTimingFunction>>({
     { "connectEnd"_s, &PerformanceTiming::connectEnd },
     { "connectStart"_s, &PerformanceTiming::connectStart },
     { "domComplete"_s, &PerformanceTiming::domComplete },
@@ -65,8 +65,7 @@ static constexpr std::array<std::pair<ComparableASCIILiteral, NavigationTimingFu
     { "secureConnectionStart"_s, &PerformanceTiming::secureConnectionStart },
     { "unloadEventEnd"_s, &PerformanceTiming::unloadEventEnd },
     { "unloadEventStart"_s, &PerformanceTiming::unloadEventStart },
-} };
-static constexpr SortedArrayMap restrictedMarkFunctions { restrictedMarkMappings };
+}) };
 
 bool PerformanceUserTiming::isRestrictedMarkName(const String& markName)
 {

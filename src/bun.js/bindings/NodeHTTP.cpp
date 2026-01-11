@@ -474,6 +474,15 @@ static EncodedJSValue NodeHTTPServer__onRequest(
     }
     args.append(jsBoolean(request->isAncient()));
 
+    // Pass pipelined data (head buffer) for Node.js compat (connect/upgrade events)
+    if (!request->head.empty()) {
+        JSC::JSUint8Array* headBuffer = WebCore::createBuffer(globalObject, std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(request->head.data()), request->head.size()));
+        RETURN_IF_EXCEPTION(scope, {});
+        args.append(headBuffer);
+    } else {
+        args.append(jsUndefined());
+    }
+
     JSValue returnValue = AsyncContextFrame::profiledCall(globalObject, callbackObject, jsUndefined(), args);
     RETURN_IF_EXCEPTION(scope, {});
 

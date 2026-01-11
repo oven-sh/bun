@@ -1,6 +1,13 @@
 // Tests which apply to both dev and prod. They are run twice.
 import { devAndProductionTest, devTest, emptyHtmlFile } from "./bake-harness";
 
+const hmrSelfAcceptingModule = (label: string) => `
+  console.log(${JSON.stringify(label)});
+  if (import.meta.hot) {
+    import.meta.hot.accept();
+  }
+`;
+
 devAndProductionTest("define config via bunfig.toml", {
   files: {
     "index.html": emptyHtmlFile({
@@ -86,7 +93,7 @@ devAndProductionTest("missing all meta tags works fine", {
     "public/index.html": `
       <title>Dashboard</title>
       <link rel="stylesheet" href="../src/app/styles.css"></link>
-        
+
       <div id="root" />
       <script type="module" src="../src/app/index.tsx"></script>
     `,
@@ -192,5 +199,79 @@ devTest("using runtime import", {
           ]
         : []),
     );
+  },
+});
+devTest("hmr handles rapid consecutive edits", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": hmrSelfAcceptingModule("render 1"),
+  },
+  async test(dev) {
+    await using client = await dev.client("/");
+    await client.expectMessage("render 1");
+
+    // Regression coverage for https://github.com/oven-sh/bun/issues/19736.
+    await client.js`
+      const tracked = [];
+      globalThis.__hmrErrors = tracked;
+
+      const maybeRecord = value => {
+        const message =
+          typeof value === "string"
+            ? value
+            : value?.message ?? value?.reason ?? "";
+        if (typeof message === "string" && message.includes("Unknown HMR script")) {
+          console.log("HMR_ERROR: " + message);
+          tracked.push(message);
+          return true;
+        }
+        return false;
+      };
+
+      window.addEventListener("error", event => {
+        if (maybeRecord(event.error ?? event.message)) {
+          event.preventDefault();
+        }
+      });
+
+      window.addEventListener("unhandledrejection", event => {
+        if (maybeRecord(event.reason)) {
+          event.preventDefault();
+        }
+      });
+
+      const hmrSymbol = Symbol.for("bun:hmr");
+      const originalHmr = globalThis[hmrSymbol];
+      if (typeof originalHmr === "function") {
+        globalThis[hmrSymbol] = function (...args) {
+          try {
+            return originalHmr.apply(this, args);
+          } catch (error) {
+            maybeRecord(error);
+          }
+        };
+      }
+    `;
+
+    for (let i = 2; i <= 10; i++) {
+      await Bun.write(dev.join("index.ts"), hmrSelfAcceptingModule(`render ${i}`));
+      await Bun.sleep(1);
+    }
+
+    const finalRender = "render 10";
+    while (true) {
+      const message = await client.getStringMessage();
+      if (message === finalRender) break;
+      if (typeof message === "string" && message.includes("HMR_ERROR")) {
+        throw new Error("Unexpected HMR error message: " + message);
+      }
+    }
+
+    const hmrErrors = await client.js`return globalThis.__hmrErrors ? [...globalThis.__hmrErrors] : [];`;
+    if (hmrErrors.length > 0) {
+      throw new Error("Unexpected HMR errors: " + hmrErrors.join(", "));
+    }
   },
 });

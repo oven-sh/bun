@@ -609,7 +609,17 @@ declare module "bun" {
      *     });
      */
     write(
-      data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer | Request | Response | BunFile | S3File | Blob,
+      data:
+        | string
+        | ArrayBufferView
+        | ArrayBuffer
+        | SharedArrayBuffer
+        | Request
+        | Response
+        | BunFile
+        | S3File
+        | Blob
+        | Archive,
       options?: S3Options,
     ): Promise<number>;
 
@@ -920,7 +930,8 @@ declare module "bun" {
         | BunFile
         | S3File
         | Blob
-        | File,
+        | File
+        | Archive,
       options?: S3Options,
     ): Promise<number>;
 
@@ -970,7 +981,8 @@ declare module "bun" {
         | BunFile
         | S3File
         | Blob
-        | File,
+        | File
+        | Archive,
       options?: S3Options,
     ): Promise<number>;
 

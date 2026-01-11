@@ -8,10 +8,6 @@ export default [
     configurable: false,
     JSType: "0b11101110",
     klass: {
-      from: {
-        fn: "from",
-        length: 1,
-      },
       write: {
         fn: "write",
         length: 2,

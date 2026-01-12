@@ -667,7 +667,7 @@ pub const PathWatcherManager = struct {
             return;
         }
 
-        this.main_watcher.deinit(false);
+        this.main_watcher.deinit(.{ .close_descriptors = false, .join_thread = false });
 
         if (this.watcher_count > 0) {
             while (this.watchers.pop()) |watcher| {

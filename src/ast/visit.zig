@@ -810,7 +810,12 @@ pub fn Visit(
                                 // This is only done for function declarations that are not generators
                                 // or async functions, since this is a backwards-compatibility hack from
                                 // Annex B of the JavaScript standard.
+                                //
+                                // However, function declarations inside labeled statements should NOT
+                                // be treated as block-level functions. Per ECMAScript Annex B, they
+                                // should hoist like regular function declarations in sloppy mode.
                                 !p.current_scope.kindStopsHoisting() and
+                                    p.current_scope.kind != .label and
                                     p.symbols.items[data.func.name.?.ref.?.innerIndex()].kind == .hoisted_function)
                                 {
                                     break :list_getter &before;

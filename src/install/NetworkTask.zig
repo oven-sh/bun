@@ -73,8 +73,6 @@ fn countAuth(header_builder: *HeaderBuilder, scope: *const Npm.Registry.Scope) v
     header_builder.count("npm-auth-type", "legacy");
 }
 
-const registry_utils = @import("./registry_utils.zig");
-
 const ForManifestError = OOM || error{
     InvalidURL,
 };
@@ -352,3 +350,5 @@ const FileSystem = Fs.FileSystem;
 const HTTP = bun.http;
 const AsyncHTTP = HTTP.AsyncHTTP;
 const HeaderBuilder = HTTP.HeaderBuilder;
+
+const registry_utils = @import("./registry_utils.zig");

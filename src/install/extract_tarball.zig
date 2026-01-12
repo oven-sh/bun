@@ -61,14 +61,14 @@ pub fn buildURLWithPrinter(
 
     // Check if this is a GitLab registry by parsing the URL and checking the hostname
     const is_gitlab_registry = registry_utils.isGitLabRegistry(registry);
-    
+
     var name = full_name;
+    // For GitLab registries, keep the full scoped name
     if (name[0] == '@' and !is_gitlab_registry) {
         if (strings.indexOfChar(name, '/')) |i| {
             name = name[i + 1 ..];
         }
     }
-    // For GitLab registries, keep the full scoped name
 
     const default_format = "{s}/{s}/-/";
 

@@ -1528,6 +1528,16 @@ pub const TestCommand = struct {
             // Randomize the order of test files if --randomize flag is set
             if (random) |rand| {
                 rand.shuffle(PathString, test_files);
+            } else {
+                // Sort test files alphabetically by path for consistent ordering.
+                // This ensures the same execution order regardless of how files are
+                // specified (explicit paths vs directory scanning) or filesystem
+                // directory entry ordering. See: https://github.com/oven-sh/bun/issues/25797
+                std.mem.sort(PathString, test_files, {}, struct {
+                    fn lessThan(_: void, a: PathString, b: PathString) bool {
+                        return strings.order(a.slice(), b.slice()) == .lt;
+                    }
+                }.lessThan);
             }
 
             vm.hot_reload = ctx.debug.hot_reload;

@@ -2095,7 +2095,7 @@ pub fn expandTilde(allocator: std.mem.Allocator, path: []const u8) ?[]const u8 {
         const rest = path[2..]; // Skip ~/
         const result = allocator.alloc(u8, home_dir.len + 1 + rest.len) catch return null;
         @memcpy(result[0..home_dir.len], home_dir);
-        result[home_dir.len] = '/';
+        result[home_dir.len] = std.fs.path.sep;
         @memcpy(result[home_dir.len + 1 ..], rest);
         return result;
     }

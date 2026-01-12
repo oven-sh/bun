@@ -37,12 +37,21 @@ globalBinDir = "~/.bun/bin"
       stderr: "pipe",
     });
 
-    await proc.exited;
+    // Read output before awaiting exited for better error messages
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
 
     // The key assertion: a literal "~" directory should NOT be created in cwd
     // If the bug exists, it would create a directory literally named "~"
     const literalTildeDir = join(String(dir), "~");
     expect(existsSync(literalTildeDir)).toBe(false);
+
+    // Positive assertion: the expanded path under fake home should be used
+    const expandedBinDir = join(fakeHome, ".bun", "bin");
+    expect(existsSync(expandedBinDir)).toBe(true);
   });
 
   test("globalDir with tilde expands to home directory", async () => {
@@ -71,11 +80,20 @@ globalDir = "~/.bun/install/global"
       stderr: "pipe",
     });
 
-    await proc.exited;
+    // Read output before awaiting exited for better error messages
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
 
     // No literal "~" directory should be created
     const literalTildeDir = join(String(dir), "~");
     expect(existsSync(literalTildeDir)).toBe(false);
+
+    // Positive assertion: the expanded path under fake home should be used
+    const expandedGlobalDir = join(fakeHome, ".bun", "install", "global");
+    expect(existsSync(expandedGlobalDir)).toBe(true);
   });
 
   test("cache.dir with tilde expands to home directory", async () => {
@@ -104,11 +122,20 @@ dir = "~/.bun/install/cache"
       stderr: "pipe",
     });
 
-    await proc.exited;
+    // Read output before awaiting exited for better error messages
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
 
     // No literal "~" directory should be created
     const literalTildeDir = join(String(dir), "~");
     expect(existsSync(literalTildeDir)).toBe(false);
+
+    // Positive assertion: the expanded path under fake home should be used
+    const expandedCacheDir = join(fakeHome, ".bun", "install", "cache");
+    expect(existsSync(expandedCacheDir)).toBe(true);
   });
 
   test("cache shorthand with tilde expands to home directory", async () => {
@@ -136,10 +163,19 @@ cache = "~/.bun/install/cache"
       stderr: "pipe",
     });
 
-    await proc.exited;
+    // Read output before awaiting exited for better error messages
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
 
     // No literal "~" directory should be created
     const literalTildeDir = join(String(dir), "~");
     expect(existsSync(literalTildeDir)).toBe(false);
+
+    // Positive assertion: the expanded path under fake home should be used
+    const expandedCacheDir = join(fakeHome, ".bun", "install", "cache");
+    expect(existsSync(expandedCacheDir)).toBe(true);
   });
 });

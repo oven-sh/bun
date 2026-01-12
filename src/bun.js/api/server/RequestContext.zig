@@ -1201,7 +1201,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     streamLog("returned a promise", .{});
                     this.drainMicrotasks();
 
-                    switch (promise.status(globalThis.vm())) {
+                    switch (promise.status()) {
                         .pending => {
                             streamLog("promise still Pending", .{});
                             if (!this.flags.has_written_status) {
@@ -1479,7 +1479,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         const path = blob.store.?.data.s3.path();
                         const env = globalThis.bunVM().transpiler.env;
 
-                        S3.stat(credentials, path, @ptrCast(&onS3SizeResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null) catch {}; // TODO: properly propagate exception upwards
+                        S3.stat(credentials, path, @ptrCast(&onS3SizeResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null, blob.store.?.data.s3.request_payer) catch {}; // TODO: properly propagate exception upwards
                         return;
                     }
                     this.renderMetadata();

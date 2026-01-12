@@ -1825,6 +1825,36 @@ static napi_value test_napi_empty_buffer_info(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+// Test for napi_typeof with boxed primitive objects (String, Number, Boolean)
+// See: https://github.com/oven-sh/bun/issues/25351
+static napi_value napi_get_typeof(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+
+  if (info.Length() < 1) {
+    printf("FAIL: Expected 1 argument\n");
+    return env.Undefined();
+  }
+
+  napi_value value = info[0];
+  napi_valuetype type;
+  napi_status status = napi_typeof(env, value, &type);
+
+  if (status != napi_ok) {
+    printf("FAIL: napi_typeof failed with status %d\n", status);
+    return env.Undefined();
+  }
+
+  napi_value result;
+  status = napi_create_int32(env, static_cast<int32_t>(type), &result);
+
+  if (status != napi_ok) {
+    printf("FAIL: napi_create_int32 failed\n");
+    return env.Undefined();
+  }
+
+  return result;
+}
+
 void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_issue_7685);
   REGISTER_FUNCTION(env, exports, test_issue_11949);
@@ -1857,6 +1887,7 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_napi_freeze_seal_indexed);
   REGISTER_FUNCTION(env, exports, test_napi_create_external_buffer_empty);
   REGISTER_FUNCTION(env, exports, test_napi_empty_buffer_info);
+  REGISTER_FUNCTION(env, exports, napi_get_typeof);
 }
 
 } // namespace napitests

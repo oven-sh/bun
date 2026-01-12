@@ -115,6 +115,26 @@ Currently we do not collect telemetry and this setting is only used for enabling
 telemetry = false
 ```
 
+### `env`
+
+Configure automatic `.env` file loading. By default, Bun automatically loads `.env` files. To disable this behavior:
+
+```toml title="bunfig.toml" icon="settings"
+# Disable automatic .env file loading
+env = false
+```
+
+You can also use object syntax with the `file` property:
+
+```toml title="bunfig.toml" icon="settings"
+[env]
+file = false
+```
+
+This is useful in production environments or CI/CD pipelines where you want to rely solely on system environment variables.
+
+Note: Explicitly provided environment files via `--env-file` will still be loaded even when default loading is disabled.
+
 ### `console`
 
 Configure console output behavior.

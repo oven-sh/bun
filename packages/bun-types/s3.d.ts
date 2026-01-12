@@ -282,6 +282,24 @@ declare module "bun" {
     type?: string;
 
     /**
+     * The Content-Disposition header value.
+     * Controls how the file is presented when downloaded.
+     *
+     * @example
+     *    // Setting attachment disposition with filename
+     *     const file = s3.file("report.pdf", {
+     *       contentDisposition: "attachment; filename=\"quarterly-report.pdf\""
+     *     });
+     *
+     * @example
+     *    // Setting inline disposition
+     *     await s3.write("image.png", imageData, {
+     *       contentDisposition: "inline"
+     *     });
+     */
+    contentDisposition?: string | undefined;
+
+    /**
      * By default, Amazon S3 uses the STANDARD Storage Class to store newly created objects.
      *
      * @example
@@ -302,6 +320,30 @@ declare module "bun" {
       | "REDUCED_REDUNDANCY"
       | "SNOW"
       | "STANDARD_IA";
+
+    /**
+     * When set to `true`, confirms that the requester knows they will be charged
+     * for the request and data transfer costs. Required for accessing objects
+     * in Requester Pays buckets.
+     *
+     * @see https://docs.aws.amazon.com/AmazonS3/latest/userguide/RequesterPaysBuckets.html
+     *
+     * @example
+     *    // Accessing a file in a Requester Pays bucket
+     *     const file = s3.file("data.csv", {
+     *       bucket: "requester-pays-bucket",
+     *       requestPayer: true
+     *     });
+     *     const content = await file.text();
+     *
+     * @example
+     *    // Uploading to a Requester Pays bucket
+     *     await s3.write("output.json", data, {
+     *       bucket: "requester-pays-bucket",
+     *       requestPayer: true
+     *     });
+     */
+    requestPayer?: boolean;
 
     /**
      * @deprecated The size of the internal buffer in bytes. Defaults to 5 MiB. use `partSize` and `queueSize` instead.

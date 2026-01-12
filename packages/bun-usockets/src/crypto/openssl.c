@@ -396,7 +396,7 @@ void us_internal_update_handshake(struct us_internal_ssl_socket_t *s) {
   }
 
   int result = SSL_do_handshake(s->ssl);
-
+  
   if (SSL_get_shutdown(s->ssl) & SSL_RECEIVED_SHUTDOWN) {
     us_internal_ssl_socket_close(s, 0, NULL);
     return;
@@ -417,7 +417,7 @@ void us_internal_update_handshake(struct us_internal_ssl_socket_t *s) {
     }
     s->handshake_state = HANDSHAKE_PENDING;
     s->ssl_write_wants_read = 1;
-
+    s->s.flags.last_write_failed = 1;
     return;
   }
   // success
@@ -434,6 +434,7 @@ ssl_on_close(struct us_internal_ssl_socket_t *s, int code, void *reason) {
   struct us_internal_ssl_socket_t * ret = context->on_close(s, code, reason);
   SSL_free(s->ssl); // free SSL after on_close
   s->ssl = NULL; // set to NULL
+
   return ret;
 }
 
@@ -1855,15 +1856,16 @@ void us_internal_ssl_socket_shutdown(struct us_internal_ssl_socket_t *s) {
 
 struct us_internal_ssl_socket_t *us_internal_ssl_socket_context_adopt_socket(
     struct us_internal_ssl_socket_context_t *context,
-    struct us_internal_ssl_socket_t *s, int ext_size) {
+    struct us_internal_ssl_socket_t *s, int old_ext_size, int ext_size) {
   // todo: this is completely untested
+  int new_old_ext_size = sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t) + old_ext_size;
   int new_ext_size = ext_size;
   if (ext_size != -1) {
     new_ext_size = sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t) + ext_size;
   }
   return (struct us_internal_ssl_socket_t *)us_socket_context_adopt_socket(
       0, &context->sc, &s->s,
-      new_ext_size);
+      new_old_ext_size, new_ext_size);
 }
 
 struct us_internal_ssl_socket_t *
@@ -1920,10 +1922,11 @@ ssl_wrapped_context_on_data(struct us_internal_ssl_socket_t *s, char *data,
   struct us_wrapped_socket_context_t *wrapped_context =
       (struct us_wrapped_socket_context_t *)us_internal_ssl_socket_context_ext(
           context);
-  // raw data if needed
+          // raw data if needed
   if (wrapped_context->old_events.on_data) {
     wrapped_context->old_events.on_data((struct us_socket_t *)s, data, length);
   }
+  
   // ssl wrapped data
   return ssl_on_data(s, data, length);
 }
@@ -2028,7 +2031,7 @@ us_internal_ssl_socket_open(struct us_internal_ssl_socket_t *s, int is_client,
   // already opened
   if (s->ssl)
     return s;
-
+  
   // start SSL open
   return ssl_on_open(s, is_client, ip, ip_length, NULL);
 }
@@ -2040,6 +2043,7 @@ struct us_socket_t *us_socket_upgrade_to_tls(us_socket_r s, us_socket_context_r 
   struct us_internal_ssl_socket_t *socket =
       (struct us_internal_ssl_socket_t *)us_socket_context_adopt_socket(
           0, new_context, s,
+          sizeof(void*),
           (sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t)) + sizeof(void*));
   socket->ssl = NULL;
   socket->ssl_write_wants_read = 0;
@@ -2058,7 +2062,7 @@ struct us_socket_t *us_socket_upgrade_to_tls(us_socket_r s, us_socket_context_r 
 
 struct us_internal_ssl_socket_t *us_internal_ssl_socket_wrap_with_tls(
     struct us_socket_t *s, struct us_bun_socket_context_options_t options,
-    struct us_socket_events_t events, int socket_ext_size) {
+    struct us_socket_events_t events, int old_socket_ext_size, int socket_ext_size) {
   /* Cannot wrap a closed socket */
   if (us_socket_is_closed(0, s)) {
     return NULL;
@@ -2163,6 +2167,7 @@ us_socket_context_on_socket_connect_error(
   struct us_internal_ssl_socket_t *socket =
       (struct us_internal_ssl_socket_t *)us_socket_context_adopt_socket(
           0, context, s,
+          old_socket_ext_size,
           sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t) +
               socket_ext_size);
   socket->ssl = NULL;

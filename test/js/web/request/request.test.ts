@@ -47,3 +47,30 @@ test("request can receive null signal", async () => {
   expect(await request.text()).toBe("bun");
   expect(await clone.text()).toBe("bun");
 });
+
+test("clone() does not lock original body when body was accessed before clone", async () => {
+  const readableStream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode("Hello, world!"));
+      controller.close();
+    },
+  });
+
+  const request = new Request("http://example.com", { method: "POST", body: readableStream });
+
+  // Access body before clone (this triggers the bug in the unfixed version)
+  const bodyBeforeClone = request.body;
+  expect(bodyBeforeClone?.locked).toBe(false);
+
+  const cloned = request.clone();
+
+  // Both should be unlocked after clone
+  expect(request.body?.locked).toBe(false);
+  expect(cloned.body?.locked).toBe(false);
+
+  // Both should be readable
+  const [originalText, clonedText] = await Promise.all([request.text(), cloned.text()]);
+
+  expect(originalText).toBe("Hello, world!");
+  expect(clonedText).toBe("Hello, world!");
+});

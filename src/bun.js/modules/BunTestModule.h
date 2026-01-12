@@ -17,14 +17,14 @@ void generateNativeModule_BunTest(
     exportValues.append(object);
 
     // Also export all properties as named exports
-    JSC::PropertyNameArray properties(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
+    JSC::PropertyNameArrayBuilder properties(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
     object->methodTable()->getOwnPropertyNames(object, lexicalGlobalObject, properties, JSC::DontEnumPropertiesMode::Exclude);
     if (catchScope.exception()) [[unlikely]] {
         catchScope.clearException();
         return;
     }
 
-    for (auto& property : properties) {
+    for (auto& property : properties.releaseData()->propertyNameVector()) {
         JSC::PropertySlot slot(object, JSC::PropertySlot::InternalMethodType::Get);
         auto ownPropertySlot = object->methodTable()->getOwnPropertySlot(object, lexicalGlobalObject, property, slot);
         if (catchScope.exception()) [[unlikely]] {

@@ -1,4 +1,5 @@
 pub const Classes = struct {
+    pub const Archive = api.Archive;
     pub const Blob = webcore.Blob;
     pub const HTMLRewriter = api.HTMLRewriter.HTMLRewriter;
     pub const Element = api.HTMLRewriter.Element;
@@ -48,6 +49,7 @@ pub const Classes = struct {
     pub const ServerWebSocket = api.ServerWebSocket;
     pub const Subprocess = api.Subprocess;
     pub const ResourceUsage = api.Subprocess.ResourceUsage;
+    pub const Terminal = api.Terminal;
     pub const TCPSocket = api.TCPSocket;
     pub const TLSSocket = api.TLSSocket;
     pub const UDPSocket = api.UDPSocket;

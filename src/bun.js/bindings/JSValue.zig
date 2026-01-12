@@ -1202,6 +1202,15 @@ pub const JSValue = enum(i64) {
         return bun.jsc.fromJSHostCallGeneric(globalThis, @src(), JSC__JSValue__jsonStringify, .{ this, globalThis, indent, out });
     }
 
+    extern fn JSC__JSValue__jsonStringifyFast(this: JSValue, globalThis: *JSGlobalObject, out: *bun.String) void;
+
+    /// Fast version of JSON.stringify that uses JSC's FastStringifier optimization.
+    /// When space is undefined (as opposed to 0), JSC uses a highly optimized SIMD-based
+    /// serialization path. This is significantly faster for most common use cases.
+    pub fn jsonStringifyFast(this: JSValue, globalThis: *JSGlobalObject, out: *bun.String) bun.JSError!void {
+        return bun.jsc.fromJSHostCallGeneric(globalThis, @src(), JSC__JSValue__jsonStringifyFast, .{ this, globalThis, out });
+    }
+
     /// Call `toString()` on the JSValue and clone the result.
     pub fn toSliceOrNull(this: JSValue, globalThis: *JSGlobalObject) bun.JSError!ZigString.Slice {
         const str = try bun.String.fromJS(this, globalThis);

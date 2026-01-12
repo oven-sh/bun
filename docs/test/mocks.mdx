@@ -428,26 +428,26 @@ test("foo, bar, baz", () => {
   const barSpy = spyOn(barModule, "bar");
   const bazSpy = spyOn(bazModule, "baz");
 
-  // Original values
-  expect(fooSpy).toBe("foo");
-  expect(barSpy).toBe("bar");
-  expect(bazSpy).toBe("baz");
+  // Original implementations still work
+  expect(fooModule.foo()).toBe("foo");
+  expect(barModule.bar()).toBe("bar");
+  expect(bazModule.baz()).toBe("baz");
 
   // Mock implementations
   fooSpy.mockImplementation(() => 42);
   barSpy.mockImplementation(() => 43);
   bazSpy.mockImplementation(() => 44);
 
-  expect(fooSpy()).toBe(42);
-  expect(barSpy()).toBe(43);
-  expect(bazSpy()).toBe(44);
+  expect(fooModule.foo()).toBe(42);
+  expect(barModule.bar()).toBe(43);
+  expect(bazModule.baz()).toBe(44);
 
   // Restore all
   mock.restore();
 
-  expect(fooSpy()).toBe("foo");
-  expect(barSpy()).toBe("bar");
-  expect(bazSpy()).toBe("baz");
+  expect(fooModule.foo()).toBe("foo");
+  expect(barModule.bar()).toBe("bar");
+  expect(bazModule.baz()).toBe("baz");
 });
 ```
 
@@ -455,10 +455,10 @@ Using `mock.restore()` can reduce the amount of code in your tests by adding it 
 
 ## Vitest Compatibility
 
-For added compatibility with tests written for Vitest, Bun provides the `vi` global object as an alias for parts of the Jest mocking API:
+For added compatibility with tests written for Vitest, Bun provides the `vi` object as an alias for parts of the Jest mocking API:
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
-import { test, expect } from "bun:test";
+import { test, expect, vi } from "bun:test";
 
 // Using the 'vi' alias similar to Vitest
 test("vitest compatibility", () => {

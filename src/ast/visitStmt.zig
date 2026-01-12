@@ -1000,7 +1000,10 @@ pub fn VisitStmt(
                 try stmts.append(stmt.*);
             }
             pub fn s_if(noalias p: *P, noalias stmts: *ListManaged(Stmt), noalias stmt: *Stmt, noalias data: *S.If) !void {
+                const prev_in_branch = p.in_branch_condition;
+                p.in_branch_condition = true;
                 data.test_ = p.visitExpr(data.test_);
+                p.in_branch_condition = prev_in_branch;
 
                 if (p.options.features.minify_syntax) {
                     data.test_ = SideEffects.simplifyBoolean(p, data.test_);

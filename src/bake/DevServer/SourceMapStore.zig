@@ -419,7 +419,7 @@ pub fn addWeakRef(store: *Self, key: Key) void {
         }
     }
 
-    const expire = bun.timespec.msFromNow(weak_ref_expiry_seconds * 1000);
+    const expire = bun.timespec.msFromNow(.allow_mocked_time, weak_ref_expiry_seconds * 1000);
     store.weak_refs.writeItem(.init(
         key,
         new_weak_ref_count,

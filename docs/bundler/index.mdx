@@ -220,6 +220,78 @@ An array of paths corresponding to the entrypoints of our application. One bundl
   </Tab>
 </Tabs>
 
+### files
+
+A map of file paths to their contents for in-memory bundling. This allows you to bundle virtual files that don't exist on disk, or override the contents of files that do exist. This option is only available in the JavaScript API.
+
+File contents can be provided as a `string`, `Blob`, `TypedArray`, or `ArrayBuffer`.
+
+#### Bundle entirely from memory
+
+You can bundle code without any files on disk by providing all sources via `files`:
+
+```ts title="build.ts" icon="/icons/typescript.svg"
+const result = await Bun.build({
+  entrypoints: ["/app/index.ts"],
+  files: {
+    "/app/index.ts": `
+      import { greet } from "./greet.ts";
+      console.log(greet("World"));
+    `,
+    "/app/greet.ts": `
+      export function greet(name: string) {
+        return "Hello, " + name + "!";
+      }
+    `,
+  },
+});
+
+const output = await result.outputs[0].text();
+console.log(output);
+```
+
+When all entrypoints are in the `files` map, the current working directory is used as the root.
+
+#### Override files on disk
+
+In-memory files take priority over files on disk. This lets you override specific files while keeping the rest of your codebase unchanged:
+
+```ts title="build.ts" icon="/icons/typescript.svg"
+// Assume ./src/config.ts exists on disk with development settings
+await Bun.build({
+  entrypoints: ["./src/index.ts"],
+  files: {
+    // Override config.ts with production values
+    "./src/config.ts": `
+      export const API_URL = "https://api.production.com";
+      export const DEBUG = false;
+    `,
+  },
+  outdir: "./dist",
+});
+```
+
+#### Mix disk and virtual files
+
+Real files on disk can import virtual files, and virtual files can import real files:
+
+```ts title="build.ts" icon="/icons/typescript.svg"
+// ./src/index.ts exists on disk and imports "./generated.ts"
+await Bun.build({
+  entrypoints: ["./src/index.ts"],
+  files: {
+    // Provide a virtual file that index.ts imports
+    "./src/generated.ts": `
+      export const BUILD_ID = "${crypto.randomUUID()}";
+      export const BUILD_TIME = ${Date.now()};
+    `,
+  },
+  outdir: "./dist",
+});
+```
+
+This is useful for code generation, injecting build-time constants, or testing with mock modules.
+
 ### outdir
 
 The directory where output files will be written.
@@ -1141,6 +1213,157 @@ Remove function calls from a bundle. For example, `--drop=console` will remove a
   </Tab>
 </Tabs>
 
+### features
+
+Enable compile-time feature flags for dead-code elimination. This provides a way to conditionally include or exclude code paths at bundle time using `import { feature } from "bun:bundle"`.
+
+```ts title="app.ts" icon="/icons/typescript.svg"
+import { feature } from "bun:bundle";
+
+if (feature("PREMIUM")) {
+  // Only included when PREMIUM flag is enabled
+  initPremiumFeatures();
+}
+
+if (feature("DEBUG")) {
+  // Only included when DEBUG flag is enabled
+  console.log("Debug mode");
+}
+```
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ['./app.ts'],
+      outdir: './out',
+      features: ["PREMIUM"],  // PREMIUM=true, DEBUG=false
+    })
+    ```
+  </Tab>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./app.ts --outdir ./out --feature PREMIUM
+    ```
+  </Tab>
+</Tabs>
+
+The `feature()` function is replaced with `true` or `false` at bundle time. Combined with minification, unreachable code is eliminated:
+
+```ts title="Input" icon="/icons/typescript.svg"
+import { feature } from "bun:bundle";
+const mode = feature("PREMIUM") ? "premium" : "free";
+```
+
+```js title="Output (with --feature PREMIUM --minify)" icon="/icons/javascript.svg"
+var mode = "premium";
+```
+
+```js title="Output (without --feature PREMIUM, with --minify)" icon="/icons/javascript.svg"
+var mode = "free";
+```
+
+**Key behaviors:**
+
+- `feature()` requires a string literal argument — dynamic values are not supported
+- The `bun:bundle` import is completely removed from the output
+- Works with `bun build`, `bun run`, and `bun test`
+- Multiple flags can be enabled: `--feature FLAG_A --feature FLAG_B`
+- For type safety, augment the `Registry` interface to restrict `feature()` to known flags (see below)
+
+**Use cases:**
+
+- Platform-specific code (`feature("SERVER")` vs `feature("CLIENT")`)
+- Environment-based features (`feature("DEVELOPMENT")`)
+- Gradual feature rollouts
+- A/B testing variants
+- Paid tier features
+
+**Type safety:** By default, `feature()` accepts any string. To get autocomplete and catch typos at compile time, create an `env.d.ts` file (or add to an existing `.d.ts`) and augment the `Registry` interface:
+
+```ts title="env.d.ts" icon="/icons/typescript.svg"
+declare module "bun:bundle" {
+  interface Registry {
+    features: "DEBUG" | "PREMIUM" | "BETA_FEATURES";
+  }
+}
+```
+
+Ensure the file is included in your `tsconfig.json` (e.g., `"include": ["src", "env.d.ts"]`). Now `feature()` only accepts those flags, and invalid strings like `feature("TYPO")` become type errors.
+
+### metafile
+
+Generate metadata about the build in a structured format. The metafile contains information about all input files, output files, their sizes, imports, and exports. This is useful for:
+
+- **Bundle analysis**: Understand what's contributing to bundle size
+- **Visualization**: Feed into tools like [esbuild's bundle analyzer](https://esbuild.github.io/analyze/) or other visualization tools
+- **Dependency tracking**: See the full import graph of your application
+- **CI integration**: Track bundle size changes over time
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    const result = await Bun.build({
+      entrypoints: ['./src/index.ts'],
+      outdir: './dist',
+      metafile: true,
+    });
+
+    if (result.metafile) {
+      // Analyze inputs
+      for (const [path, meta] of Object.entries(result.metafile.inputs)) {
+        console.log(`${path}: ${meta.bytes} bytes`);
+      }
+
+      // Analyze outputs
+      for (const [path, meta] of Object.entries(result.metafile.outputs)) {
+        console.log(`${path}: ${meta.bytes} bytes`);
+      }
+
+      // Save for external analysis tools
+      await Bun.write('./dist/meta.json', JSON.stringify(result.metafile));
+    }
+    ```
+
+  </Tab>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./src/index.ts --outdir ./dist --metafile ./dist/meta.json
+    ```
+  </Tab>
+</Tabs>
+
+The metafile structure contains:
+
+```ts
+interface BuildMetafile {
+  inputs: {
+    [path: string]: {
+      bytes: number;
+      imports: Array<{
+        path: string;
+        kind: ImportKind;
+        original?: string; // Original specifier before resolution
+        external?: boolean;
+      }>;
+      format?: "esm" | "cjs" | "json" | "css";
+    };
+  };
+  outputs: {
+    [path: string]: {
+      bytes: number;
+      inputs: {
+        [path: string]: { bytesInOutput: number };
+      };
+      imports: Array<{ path: string; kind: ImportKind }>;
+      exports: string[];
+      entryPoint?: string;
+      cssBundle?: string; // Associated CSS file for JS entry points
+    };
+  };
+}
+```
+
 ## Outputs
 
 The `Bun.build` function returns a `Promise<BuildOutput>`, defined as:
@@ -1150,6 +1373,7 @@ interface BuildOutput {
   outputs: BuildArtifact[];
   success: boolean;
   logs: Array<object>; // see docs for details
+  metafile?: BuildMetafile; // only when metafile: true
 }
 
 interface BuildArtifact extends Blob {

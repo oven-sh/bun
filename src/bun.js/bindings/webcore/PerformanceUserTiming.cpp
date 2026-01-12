@@ -43,7 +43,7 @@ namespace WebCore {
 
 using NavigationTimingFunction = unsigned long long (PerformanceTiming::*)() const;
 
-static constexpr std::pair<ComparableASCIILiteral, NavigationTimingFunction> restrictedMarkMappings[] = {
+static constexpr std::array<std::pair<ComparableASCIILiteral, NavigationTimingFunction>, 21> restrictedMarkMappings { {
     { "connectEnd"_s, &PerformanceTiming::connectEnd },
     { "connectStart"_s, &PerformanceTiming::connectStart },
     { "domComplete"_s, &PerformanceTiming::domComplete },
@@ -65,7 +65,7 @@ static constexpr std::pair<ComparableASCIILiteral, NavigationTimingFunction> res
     { "secureConnectionStart"_s, &PerformanceTiming::secureConnectionStart },
     { "unloadEventEnd"_s, &PerformanceTiming::unloadEventEnd },
     { "unloadEventStart"_s, &PerformanceTiming::unloadEventStart },
-};
+} };
 static constexpr SortedArrayMap restrictedMarkFunctions { restrictedMarkMappings };
 
 bool PerformanceUserTiming::isRestrictedMarkName(const String& markName)
@@ -125,7 +125,7 @@ ExceptionOr<Ref<PerformanceMark>> PerformanceUserTiming::mark(JSC::JSGlobalObjec
 
     // InspectorInstrumentation::performanceMark(context.get(), markName, timestamp, nullptr);
 
-    auto mark = PerformanceMark::create(globalObject, context, markName, WTFMove(markOptions));
+    auto mark = PerformanceMark::create(globalObject, context, markName, WTF::move(markOptions));
     if (mark.hasException())
         return mark.releaseException();
 

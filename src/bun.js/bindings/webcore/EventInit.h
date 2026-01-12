@@ -33,7 +33,7 @@ struct EventInit {
     bool composed { false };
 
     template<class Encoder> void encode(Encoder&) const;
-    template<class Decoder> static WARN_UNUSED_RETURN bool decode(Decoder&, EventInit&);
+    template<class Decoder> WARN_UNUSED_RETURN static bool decode(Decoder&, EventInit&);
 };
 
 template<class Encoder>

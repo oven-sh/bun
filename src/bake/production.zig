@@ -697,7 +697,7 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
         route_param_info,
         route_style_references,
     );
-    render_promise.setHandled(vm.jsc_vm);
+    render_promise.setHandled();
     vm.waitForPromise(.{ .normal = render_promise });
     switch (render_promise.unwrap(vm.jsc_vm, .mark_handled)) {
         .pending => unreachable,

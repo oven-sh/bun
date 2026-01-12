@@ -158,7 +158,7 @@ pub const WalkTask = struct {
             .alloc = alloc,
             .has_pending_activity = has_pending_activity,
         };
-        return try AsyncGlobWalkTask.createOnJSThread(alloc, globalThis, walkTask);
+        return AsyncGlobWalkTask.createOnJSThread(alloc, globalThis, walkTask);
     }
 
     pub fn run(this: *WalkTask) void {

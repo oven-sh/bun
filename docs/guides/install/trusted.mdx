@@ -8,7 +8,9 @@ Unlike other npm clients, Bun does not execute arbitrary lifecycle scripts for i
 
 <Note>
   Bun includes a default allowlist of popular packages containing `postinstall` scripts that are known to be safe. You
-  can see this list [here](https://github.com/oven-sh/bun/blob/main/src/install/default-trusted-dependencies.txt).
+  can see this list [here](https://github.com/oven-sh/bun/blob/main/src/install/default-trusted-dependencies.txt). This
+  default list only applies to packages installed from npm. For packages from other sources (such as `file:`, `link:`,
+  `git:`, or `github:` dependencies), you must explicitly add them to `trustedDependencies`.
 </Note>
 
 ---

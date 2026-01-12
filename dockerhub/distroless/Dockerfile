@@ -71,6 +71,7 @@ ENV PATH "${PATH}:/usr/local/bun-node-fallback-bin"
 
 # Temporarily use the `build`-stage image binaries to create a symlink:
 RUN --mount=type=bind,from=build,source=/usr/bin,target=/usr/bin \
+    --mount=type=bind,from=build,source=/etc/alternatives/which,target=/etc/alternatives/which \
     --mount=type=bind,from=build,source=/bin,target=/bin \
     --mount=type=bind,from=build,source=/usr/lib,target=/usr/lib \
     --mount=type=bind,from=build,source=/lib,target=/lib \

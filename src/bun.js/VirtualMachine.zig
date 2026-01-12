@@ -121,6 +121,9 @@ argv: []const []const u8 = &[_][]const u8{},
 
 origin_timer: std.time.Timer = undefined,
 origin_timestamp: u64 = 0,
+/// For fake timers: override performance.now() with a specific value (in nanoseconds)
+/// When null, use the real timer. When set, return this value instead.
+overridden_performance_now: ?u64 = null,
 macro_event_loop: EventLoop = EventLoop{},
 regular_event_loop: EventLoop = EventLoop{},
 event_loop: *EventLoop = undefined,
@@ -680,8 +683,8 @@ pub fn reportExceptionInHotReloadedModuleIfNeeded(this: *jsc.VirtualMachine) voi
     defer this.addMainToWatcherIfNeeded();
     var promise = this.pending_internal_promise orelse return;
 
-    if (promise.status(this.global.vm()) == .rejected and !promise.isHandled(this.global.vm())) {
-        this.unhandledRejection(this.global, promise.result(this.global.vm()), promise.asValue());
+    if (promise.status() == .rejected and !promise.isHandled()) {
+        this.unhandledRejection(this.global, promise.result(), promise.asValue());
         promise.setHandled(this.global.vm());
     }
 }
@@ -1053,7 +1056,9 @@ pub fn initWithModuleGraph(
     vm.transpiler.macro_context = js_ast.Macro.MacroContext.init(&vm.transpiler);
     if (opts.is_main_thread) {
         VMHolder.main_thread_vm = vm;
+        vm.is_main_thread = true;
     }
+    is_smol_mode = opts.smol;
     vm.global = JSGlobalObject.create(
         vm,
         vm.console,
@@ -2078,12 +2083,12 @@ fn loadPreloads(this: *VirtualMachine) !?*JSInternalPromise {
         // pending_internal_promise can change if hot module reloading is enabled
         if (this.isWatcherEnabled()) {
             this.eventLoop().performGC();
-            switch (this.pending_internal_promise.?.status(this.global.vm())) {
+            switch (this.pending_internal_promise.?.status()) {
                 .pending => {
-                    while (this.pending_internal_promise.?.status(this.global.vm()) == .pending) {
+                    while (this.pending_internal_promise.?.status() == .pending) {
                         this.eventLoop().tick();
 
-                        if (this.pending_internal_promise.?.status(this.global.vm()) == .pending) {
+                        if (this.pending_internal_promise.?.status() == .pending) {
                             this.eventLoop().autoTick();
                         }
                     }
@@ -2097,7 +2102,7 @@ fn loadPreloads(this: *VirtualMachine) !?*JSInternalPromise {
             });
         }
 
-        if (promise.status(this.global.vm()) == .rejected)
+        if (promise.status() == .rejected)
             return promise;
     }
 
@@ -2240,12 +2245,12 @@ pub fn loadEntryPointForTestRunner(this: *VirtualMachine, entry_path: string) an
     // pending_internal_promise can change if hot module reloading is enabled
     if (this.isWatcherEnabled()) {
         this.eventLoop().performGC();
-        switch (this.pending_internal_promise.?.status(this.global.vm())) {
+        switch (this.pending_internal_promise.?.status()) {
             .pending => {
-                while (this.pending_internal_promise.?.status(this.global.vm()) == .pending) {
+                while (this.pending_internal_promise.?.status() == .pending) {
                     this.eventLoop().tick();
 
-                    if (this.pending_internal_promise.?.status(this.global.vm()) == .pending) {
+                    if (this.pending_internal_promise.?.status() == .pending) {
                         this.eventLoop().autoTick();
                     }
                 }
@@ -2253,7 +2258,7 @@ pub fn loadEntryPointForTestRunner(this: *VirtualMachine, entry_path: string) an
             else => {},
         }
     } else {
-        if (promise.status(this.global.vm()) == .rejected) {
+        if (promise.status() == .rejected) {
             return promise;
         }
 
@@ -2272,12 +2277,12 @@ pub fn loadEntryPoint(this: *VirtualMachine, entry_path: string) anyerror!*JSInt
     // pending_internal_promise can change if hot module reloading is enabled
     if (this.isWatcherEnabled()) {
         this.eventLoop().performGC();
-        switch (this.pending_internal_promise.?.status(this.global.vm())) {
+        switch (this.pending_internal_promise.?.status()) {
             .pending => {
-                while (this.pending_internal_promise.?.status(this.global.vm()) == .pending) {
+                while (this.pending_internal_promise.?.status() == .pending) {
                     this.eventLoop().tick();
 
-                    if (this.pending_internal_promise.?.status(this.global.vm()) == .pending) {
+                    if (this.pending_internal_promise.?.status() == .pending) {
                         this.eventLoop().autoTick();
                     }
                 }
@@ -2285,7 +2290,7 @@ pub fn loadEntryPoint(this: *VirtualMachine, entry_path: string) anyerror!*JSInt
             else => {},
         }
     } else {
-        if (promise.status(this.global.vm()) == .rejected) {
+        if (promise.status() == .rejected) {
             return promise;
         }
 

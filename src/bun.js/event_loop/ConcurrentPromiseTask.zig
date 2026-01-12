@@ -21,7 +21,7 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
 
         pub const new = bun.TrivialNew(@This());
 
-        pub fn createOnJSThread(allocator: std.mem.Allocator, globalThis: *jsc.JSGlobalObject, value: *Context) !*This {
+        pub fn createOnJSThread(allocator: std.mem.Allocator, globalThis: *jsc.JSGlobalObject, value: *Context) *This {
             var this = This.new(.{
                 .event_loop = VirtualMachine.get().event_loop,
                 .ctx = value,

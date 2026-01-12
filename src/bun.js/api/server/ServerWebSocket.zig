@@ -167,7 +167,7 @@ pub fn onMessage(
     }
 
     if (result.asAnyPromise()) |promise| {
-        switch (promise.status(globalObject.vm())) {
+        switch (promise.status()) {
             .rejected => {
                 _ = promise.result(globalObject.vm());
                 return;

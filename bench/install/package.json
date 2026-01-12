@@ -26,7 +26,7 @@
     "@trpc/server": "^11.0.0",
     "drizzle-orm": "^0.41.0",
     "esbuild": "^0.25.11",
-    "next": "^15.2.3",
+    "next": "15.5.7",
     "next-auth": "5.0.0-beta.25",
     "postgres": "^3.4.4",
     "react": "^19.0.0",

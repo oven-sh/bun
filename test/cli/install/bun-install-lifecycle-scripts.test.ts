@@ -1760,6 +1760,127 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeFalse();
     });
 
+    test("default trusted dependencies should only apply to npm packages, not file: dependencies", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
+      // Create a file: dependency named "esbuild" (which is in the default trusted dependencies list)
+      // with a postinstall script that would fail if it ran
+      const esbuildPath = join(packageDir, "local-esbuild");
+      await mkdir(esbuildPath, { recursive: true });
+      await writeFile(
+        join(esbuildPath, "package.json"),
+        JSON.stringify({
+          name: "esbuild",
+          version: "1.0.0",
+          scripts: {
+            postinstall: "exit 1",
+          },
+        }),
+      );
+
+      await writeFile(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          dependencies: {
+            // file: dependency named "esbuild" - should NOT use default trusted list
+            esbuild: "file:./local-esbuild",
+          },
+        }),
+      );
+
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env: testEnv,
+      });
+
+      const err = await stderr.text();
+      const out = await stdout.text();
+
+      // The install should succeed because the postinstall script should NOT run
+      // (file: dependencies don't use default trusted list, even if name matches)
+      // The postinstall is blocked (not trusted), so we expect the "Blocked" message
+      expect(err).toContain("Saved lockfile");
+      expect(err).not.toContain("not found");
+      expect(err).not.toContain("error:");
+      expect(out.replace(/\s*\[[0-9\.]+m?s\]$/m, "").split(/\r?\n/)).toEqual([
+        expect.stringContaining("bun install v1."),
+        "",
+        "+ esbuild@local-esbuild",
+        "",
+        "1 package installed",
+        "",
+        "Blocked 1 postinstall. Run `bun pm untrusted` for details.",
+        "",
+      ]);
+      expect(await exited).toBe(0);
+    });
+
+    test("file: dependency with default trusted name should run scripts when explicitly added to trustedDependencies", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
+      // Create a file: dependency named "esbuild" with a postinstall script that creates a marker file
+      const esbuildPath = join(packageDir, "local-esbuild");
+      await mkdir(esbuildPath, { recursive: true });
+      await writeFile(
+        join(esbuildPath, "package.json"),
+        JSON.stringify({
+          name: "esbuild",
+          version: "1.0.0",
+          scripts: {
+            postinstall: `${bunExe()} -e "require('fs').writeFileSync('postinstall-ran.txt', 'ran')"`,
+          },
+        }),
+      );
+
+      await writeFile(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          dependencies: {
+            esbuild: "file:./local-esbuild",
+          },
+          // Explicitly trust the file: dependency
+          trustedDependencies: ["esbuild"],
+        }),
+      );
+
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env: testEnv,
+      });
+
+      const err = await stderr.text();
+      const out = await stdout.text();
+
+      expect(err).toContain("Saved lockfile");
+      expect(err).not.toContain("not found");
+      expect(err).not.toContain("error:");
+      expect(out.replace(/\s*\[[0-9\.]+m?s\]$/m, "").split(/\r?\n/)).toEqual([
+        expect.stringContaining("bun install v1."),
+        "",
+        "+ esbuild@local-esbuild",
+        "",
+        "1 package installed",
+        "",
+      ]);
+      expect(out).not.toContain("Blocked");
+      expect(await exited).toBe(0);
+
+      // The postinstall script should have run because we explicitly trusted it
+      expect(await exists(join(packageDir, "node_modules", "esbuild", "postinstall-ran.txt"))).toBeTrue();
+    });
+
     test("will run default trustedDependencies after install that didn't include them", async () => {
       await verdaccio.writeBunfig(packageDir, { saveTextLockfile: false, linker: "hoisted" });
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;

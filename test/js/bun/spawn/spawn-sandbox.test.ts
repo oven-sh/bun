@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { tempDir } from "harness";
+import { bunEnv, tempDir } from "harness";
 
 const isLinux = process.platform === "linux";
 const isMac = process.platform === "darwin";
@@ -154,6 +154,7 @@ describe("spawn sandbox (Linux)", () => {
   test.if(isLinux)("spawnSync with kill-all filter terminates process with SIGSYS", () => {
     const result = Bun.spawnSync({
       cmd: ["/bin/true"],
+      env: bunEnv,
       sandbox: { seccomp: KILL_ALL_FILTER },
     });
 
@@ -171,6 +172,7 @@ describe("spawn sandbox (Linux)", () => {
     // seccomp sends SIGSYS (signal 31) to terminate the process.
     await using proc = Bun.spawn({
       cmd: ["/bin/true"],
+      env: bunEnv,
       sandbox: { seccomp: KILL_ALL_FILTER },
       stderr: "pipe",
     });

@@ -934,9 +934,16 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         Bun__Node__UseSystemCA = (Bun__Node__CAStore == .system);
 
         // Parse permission flags (Deno-compatible security model)
-        ctx.runtime_options.permissions.secure_mode = args.flag("--secure");
-        ctx.runtime_options.permissions.allow_all = args.flag("--allow-all");
-        ctx.runtime_options.permissions.no_prompt = args.flag("--no-prompt");
+        // Only set to true if flag is present - let bunfig values remain otherwise
+        if (args.flag("--secure")) {
+            ctx.runtime_options.permissions.secure_mode = true;
+        }
+        if (args.flag("--allow-all")) {
+            ctx.runtime_options.permissions.allow_all = true;
+        }
+        if (args.flag("--no-prompt")) {
+            ctx.runtime_options.permissions.no_prompt = true;
+        }
 
         // Parse --allow-* flags (each can be a flag or have optional value)
         if (args.option("--allow-read")) |value| {

@@ -1915,12 +1915,21 @@ function internalConnectMultiple(context, canceled?) {
 }
 
 function internalConnectMultipleTimeout(context, req, handle) {
+  // Guard against race conditions where context or handle may be null/invalid
+  // This can happen when the socket is destroyed before the timeout fires
+  if (!context || !context.socket) {
+    return;
+  }
+
   $debug("connect/multiple: connection to %s:%s timed out", req.address, req.port);
   context.socket.emit("connectionAttemptTimeout", req.address, req.port, req.addressType);
 
   req.oncomplete = undefined;
   ArrayPrototypePush.$call(context.errors, createConnectionError(req, UV_ETIMEDOUT));
-  handle.close();
+
+  if (handle) {
+    handle.close();
+  }
 
   // Try the next address, unless we were aborted
   if (context.socket.connecting) {

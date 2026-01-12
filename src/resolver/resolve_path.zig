@@ -2066,6 +2066,44 @@ pub fn posixToPlatformInPlace(comptime T: type, path_buffer: []T) void {
     }
 }
 
+/// Expands a leading tilde (`~`) in a path to the user's home directory.
+/// Returns the original path if it doesn't start with `~` or if the home directory
+/// cannot be determined.
+///
+/// Examples:
+/// - `~/foo/bar` -> `/home/user/foo/bar`
+/// - `~` -> `/home/user`
+/// - `/absolute/path` -> `/absolute/path` (unchanged)
+/// - `relative/path` -> `relative/path` (unchanged)
+pub fn expandTilde(allocator: std.mem.Allocator, path: []const u8) ?[]const u8 {
+    // Check if path starts with ~
+    if (path.len == 0 or path[0] != '~') {
+        return null; // No expansion needed
+    }
+
+    // Handle ~ or ~/...
+    // We only expand ~ followed by nothing or a path separator
+    if (path.len == 1 or isSepAny(path[1])) {
+        const home_dir = bun.env_var.HOME.get() orelse return null;
+
+        if (path.len == 1) {
+            // Just "~"
+            return allocator.dupe(u8, home_dir) catch return null;
+        }
+
+        // "~/..." - join home_dir with the rest of the path (skip ~/)
+        const rest = path[2..]; // Skip ~/
+        const result = allocator.alloc(u8, home_dir.len + 1 + rest.len) catch return null;
+        @memcpy(result[0..home_dir.len], home_dir);
+        result[home_dir.len] = '/';
+        @memcpy(result[home_dir.len + 1 ..], rest);
+        return result;
+    }
+
+    // ~username expansion is not supported, return null
+    return null;
+}
+
 const Fs = @import("../fs.zig");
 const std = @import("std");
 

@@ -670,13 +670,13 @@ pub const Bunfig = struct {
 
                     if (install_obj.get("globalDir")) |dir| {
                         if (dir.asString(allocator)) |value| {
-                            install.global_dir = value;
+                            install.global_dir = bun.path.expandTilde(allocator, value) orelse value;
                         }
                     }
 
                     if (install_obj.get("globalBinDir")) |dir| {
                         if (dir.asString(allocator)) |value| {
-                            install.global_bin_dir = value;
+                            install.global_bin_dir = bun.path.expandTilde(allocator, value) orelse value;
                         }
                     }
 
@@ -696,7 +696,7 @@ pub const Bunfig = struct {
                             }
 
                             if (cache.asString(allocator)) |value| {
-                                install.cache_directory = value;
+                                install.cache_directory = bun.path.expandTilde(allocator, value) orelse value;
                                 break :load;
                             }
 
@@ -715,7 +715,7 @@ pub const Bunfig = struct {
 
                                 if (cache.get("dir")) |directory| {
                                     if (directory.asString(allocator)) |value| {
-                                        install.cache_directory = value;
+                                        install.cache_directory = bun.path.expandTilde(allocator, value) orelse value;
                                     }
                                 }
                             }

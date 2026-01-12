@@ -295,4 +295,38 @@ import path from "path";
     expect(fs.existsSync(path.join(temp, "src/components"))).toBe(true);
     expect(fs.existsSync(path.join(temp, "src/components/ui"))).toBe(true);
   }, 30_000);
+
+  test("bun init --react=nextjs works", async () => {
+    const temp = tempDirWithFiles("bun-init--react=nextjs-works", {});
+
+    const { exited } = Bun.spawn({
+      cmd: [bunExe(), "init", "--react=nextjs"],
+      cwd: temp,
+      stdio: ["ignore", "inherit", "inherit"],
+      env: bunEnv,
+    });
+
+    expect(await exited).toBe(0);
+
+    const pkg = JSON.parse(fs.readFileSync(path.join(temp, "package.json"), "utf8"));
+    expect(pkg).toHaveProperty("dependencies.react");
+    expect(pkg).toHaveProperty("dependencies.react-dom");
+    expect(pkg).toHaveProperty("dependencies.next");
+    expect(pkg).toHaveProperty("devDependencies.@types/react");
+    expect(pkg).toHaveProperty("devDependencies.@types/react-dom");
+    expect(pkg).toHaveProperty("devDependencies.tailwindcss");
+    expect(pkg).toHaveProperty("devDependencies.@tailwindcss/postcss");
+
+    expect(fs.existsSync(path.join(temp, "app"))).toBe(true);
+    expect(fs.existsSync(path.join(temp, "app/layout.tsx"))).toBe(true);
+    expect(fs.existsSync(path.join(temp, "app/page.tsx"))).toBe(true);
+    expect(fs.existsSync(path.join(temp, "app/globals.css"))).toBe(true);
+    expect(fs.existsSync(path.join(temp, "app/stats/page.tsx"))).toBe(true);
+    expect(fs.existsSync(path.join(temp, "public"))).toBe(true);
+    expect(fs.existsSync(path.join(temp, "public/header.webp"))).toBe(true);
+    expect(fs.existsSync(path.join(temp, "next.config.ts"))).toBe(true);
+    expect(fs.existsSync(path.join(temp, "next-env.d.ts"))).toBe(true);
+    expect(fs.existsSync(path.join(temp, "postcss.config.mjs"))).toBe(true);
+    expect(fs.existsSync(path.join(temp, "tsconfig.json"))).toBe(true);
+  }, 30_000);
 });

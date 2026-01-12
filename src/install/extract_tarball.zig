@@ -60,14 +60,7 @@ pub fn buildURLWithPrinter(
     const full_name = full_name_.slice();
 
     // Check if this is a GitLab registry by parsing the URL and checking the hostname
-    const is_gitlab_registry = blk: {
-        const url = bun.URL.parse(registry);
-        if (url.host.len == 0) break :blk false;
-        const host_buf = bun.default_allocator.alloc(u8, url.host.len) catch break :blk false;
-        defer bun.default_allocator.free(host_buf);
-        const host = bun.strings.copyLowercase(url.host, host_buf);
-        break :blk bun.strings.indexOf(host, "gitlab") != null;
-    };
+    const is_gitlab_registry = registry_utils.isGitLabRegistry(registry);
     
     var name = full_name;
     if (name[0] == '@' and !is_gitlab_registry) {
@@ -553,6 +546,8 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
         },
     };
 }
+
+const registry_utils = @import("./registry_utils.zig");
 
 const string = []const u8;
 

@@ -229,6 +229,21 @@ pub const S3Credentials = struct {
                     }
                 }
 
+                if (try opts.getTruthyComptime(globalObject, "type")) |js_value| {
+                    if (!js_value.isEmptyOrUndefinedOrNull()) {
+                        if (js_value.isString()) {
+                            const str = try bun.String.fromJS(js_value, globalObject);
+                            defer str.deref();
+                            if (str.tag != .Empty and str.tag != .Dead) {
+                                new_credentials._contentTypeSlice = str.toUTF8(bun.default_allocator);
+                                new_credentials.content_type = new_credentials._contentTypeSlice.?.slice();
+                            }
+                        } else {
+                            return globalObject.throwInvalidArgumentTypeValue("type", "string", js_value);
+                        }
+                    }
+                }
+
                 if (try opts.getBooleanStrict(globalObject, "requestPayer")) |request_payer| {
                     new_credentials.request_payer = request_payer;
                 }
@@ -421,6 +436,7 @@ pub const S3Credentials = struct {
         content_md5: ?[]const u8 = null,
         search_params: ?[]const u8 = null,
         content_disposition: ?[]const u8 = null,
+        content_type: ?[]const u8 = null,
         acl: ?ACL = null,
         storage_class: ?StorageClass = null,
         request_payer: bool = false,
@@ -530,6 +546,10 @@ pub const S3Credentials = struct {
         var content_disposition = signOptions.content_disposition;
         if (content_disposition != null and content_disposition.?.len == 0) {
             content_disposition = null;
+        }
+        var content_type = signOptions.content_type;
+        if (content_type != null and content_type.?.len == 0) {
+            content_type = null;
         }
         const session_token: ?[]const u8 = if (this.sessionToken.len == 0) null else this.sessionToken;
 
@@ -687,13 +707,26 @@ pub const S3Credentials = struct {
                     encoded_content_md5 = encodeURIComponent(content_md5_value, &content_md5_encoded_buffer, true) catch return error.FailedToGenerateSignature;
                 }
 
+                // Encode response override parameters for presigned URLs
+                var content_disposition_encoded_buffer: [512]u8 = undefined;
+                var encoded_content_disposition: ?[]const u8 = null;
+                if (content_disposition) |cd| {
+                    encoded_content_disposition = encodeURIComponent(cd, &content_disposition_encoded_buffer, true) catch return error.FailedToGenerateSignature;
+                }
+
+                var content_type_encoded_buffer: [256]u8 = undefined;
+                var encoded_content_type: ?[]const u8 = null;
+                if (content_type) |ct| {
+                    encoded_content_type = encodeURIComponent(ct, &content_type_encoded_buffer, true) catch return error.FailedToGenerateSignature;
+                }
+
                 // Build query parameters in alphabetical order for AWS Signature V4 canonical request
                 const canonical = brk_canonical: {
                     var stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
                     const allocator = stack_fallback.get();
-                    var query_parts: bun.BoundedArray([]const u8, 11) = .{};
+                    var query_parts: bun.BoundedArray([]const u8, 13) = .{};
 
-                    // Add parameters in alphabetical order: Content-MD5, X-Amz-Acl, X-Amz-Algorithm, X-Amz-Credential, X-Amz-Date, X-Amz-Expires, X-Amz-Security-Token, X-Amz-SignedHeaders, x-amz-request-payer, x-amz-storage-class
+                    // Add parameters in alphabetical order: Content-MD5, X-Amz-Acl, X-Amz-Algorithm, X-Amz-Credential, X-Amz-Date, X-Amz-Expires, X-Amz-Security-Token, X-Amz-SignedHeaders, response-content-disposition, response-content-type, x-amz-request-payer, x-amz-storage-class
 
                     if (encoded_content_md5) |encoded_content_md5_value| {
                         try query_parts.append(try std.fmt.allocPrint(allocator, "Content-MD5={s}", .{encoded_content_md5_value}));
@@ -716,6 +749,14 @@ pub const S3Credentials = struct {
                     }
 
                     try query_parts.append(try std.fmt.allocPrint(allocator, "X-Amz-SignedHeaders=host", .{}));
+
+                    if (encoded_content_disposition) |cd| {
+                        try query_parts.append(try std.fmt.allocPrint(allocator, "response-content-disposition={s}", .{cd}));
+                    }
+
+                    if (encoded_content_type) |ct| {
+                        try query_parts.append(try std.fmt.allocPrint(allocator, "response-content-type={s}", .{ct}));
+                    }
 
                     if (request_payer) {
                         try query_parts.append(try std.fmt.allocPrint(allocator, "x-amz-request-payer=requester", .{}));
@@ -746,9 +787,9 @@ pub const S3Credentials = struct {
                 // Build final URL with query parameters in alphabetical order to match canonical request
                 var url_stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
                 const url_allocator = url_stack_fallback.get();
-                var url_query_parts: bun.BoundedArray([]const u8, 12) = .{};
+                var url_query_parts: bun.BoundedArray([]const u8, 14) = .{};
 
-                // Add parameters in alphabetical order: Content-MD5, X-Amz-Acl, X-Amz-Algorithm, X-Amz-Credential, X-Amz-Date, X-Amz-Expires, X-Amz-Security-Token, X-Amz-Signature, X-Amz-SignedHeaders, x-amz-request-payer, x-amz-storage-class
+                // Add parameters in alphabetical order: Content-MD5, X-Amz-Acl, X-Amz-Algorithm, X-Amz-Credential, X-Amz-Date, X-Amz-Expires, X-Amz-Security-Token, X-Amz-Signature, X-Amz-SignedHeaders, response-content-disposition, response-content-type, x-amz-request-payer, x-amz-storage-class
 
                 if (encoded_content_md5) |encoded_content_md5_value| {
                     try url_query_parts.append(try std.fmt.allocPrint(url_allocator, "Content-MD5={s}", .{encoded_content_md5_value}));
@@ -773,6 +814,14 @@ pub const S3Credentials = struct {
                 try url_query_parts.append(try std.fmt.allocPrint(url_allocator, "X-Amz-Signature={s}", .{std.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower)}));
 
                 try url_query_parts.append(try std.fmt.allocPrint(url_allocator, "X-Amz-SignedHeaders=host", .{}));
+
+                if (encoded_content_disposition) |cd| {
+                    try url_query_parts.append(try std.fmt.allocPrint(url_allocator, "response-content-disposition={s}", .{cd}));
+                }
+
+                if (encoded_content_type) |ct| {
+                    try url_query_parts.append(try std.fmt.allocPrint(url_allocator, "response-content-type={s}", .{ct}));
+                }
 
                 if (request_payer) {
                     try url_query_parts.append(try std.fmt.allocPrint(url_allocator, "x-amz-request-payer=requester", .{}));
@@ -906,6 +955,7 @@ pub const S3CredentialsWithOptions = struct {
     acl: ?ACL = null,
     storage_class: ?StorageClass = null,
     content_disposition: ?[]const u8 = null,
+    content_type: ?[]const u8 = null,
     /// indicates if requester pays for the request (for requester pays buckets)
     request_payer: bool = false,
     /// indicates if the credentials have changed
@@ -919,6 +969,7 @@ pub const S3CredentialsWithOptions = struct {
     _bucketSlice: ?jsc.ZigString.Slice = null,
     _sessionTokenSlice: ?jsc.ZigString.Slice = null,
     _contentDispositionSlice: ?jsc.ZigString.Slice = null,
+    _contentTypeSlice: ?jsc.ZigString.Slice = null,
 
     pub fn deinit(this: *@This()) void {
         if (this._accessKeyIdSlice) |slice| slice.deinit();
@@ -928,6 +979,7 @@ pub const S3CredentialsWithOptions = struct {
         if (this._bucketSlice) |slice| slice.deinit();
         if (this._sessionTokenSlice) |slice| slice.deinit();
         if (this._contentDispositionSlice) |slice| slice.deinit();
+        if (this._contentTypeSlice) |slice| slice.deinit();
     }
 };
 

@@ -157,7 +157,7 @@ pub fn spawnMaybeSync(
     var terminal_info: ?Terminal.CreateResult = null;
     var existing_terminal: ?*Terminal = null; // Existing terminal passed by user
     var terminal_js_value: jsc.JSValue = .zero;
-    var seccomp_filter: ?[]const u8 = null;
+    var sandbox: bun.spawn.Sandbox = .{};
     defer {
         if (abort_signal) |signal| {
             signal.unref();
@@ -439,7 +439,7 @@ pub fn spawnMaybeSync(
                                     );
                                 }
                                 // Copy to arena allocator to ensure lifetime
-                                seccomp_filter = try allocator.dupe(u8, slice);
+                                sandbox.linux.seccomp_filter = try allocator.dupe(u8, slice);
                             }
                         } else {
                             return globalThis.throwInvalidArgumentType(
@@ -450,7 +450,73 @@ pub fn spawnMaybeSync(
                         }
                     }
                 }
-                // TODO: Parse sandbox.darwin (macOS SBPL profile)
+
+                // Parse sandbox.darwin (macOS SBPL profile) - only on macOS, ignored on other platforms
+                if (comptime Environment.isMac) {
+                    if (try sandbox_val.getTruthy(globalThis, "darwin")) |darwin_val| {
+                        if (darwin_val.isString()) {
+                            const slice = darwin_val.toSlice(globalThis, allocator) catch {
+                                return globalThis.throwInvalidArgumentType("spawn", "sandbox.darwin", "string");
+                            };
+                            if (slice.len > 0) {
+                                sandbox.darwin.profile = try allocator.dupeZ(u8, slice.slice());
+                            }
+                        } else if (darwin_val.isObject()) {
+                            // Object format: { profile: "...", parameters?: {...} } or { namedProfile: "..." }
+                            if (try darwin_val.get(globalThis, "namedProfile")) |named_val| {
+                                if ((try darwin_val.get(globalThis, "profile")) != null) {
+                                    return globalThis.throwInvalidArguments("sandbox.darwin cannot have both 'profile' and 'namedProfile'", .{});
+                                }
+                                const slice = named_val.toSlice(globalThis, allocator) catch {
+                                    return globalThis.throwInvalidArgumentType("spawn", "sandbox.darwin.namedProfile", "string");
+                                };
+                                if (slice.len > 0) {
+                                    sandbox.darwin.profile = try allocator.dupeZ(u8, slice.slice());
+                                    sandbox.darwin.flags = 1; // SANDBOX_NAMED
+                                }
+                            } else if (try darwin_val.get(globalThis, "profile")) |profile_val| {
+                                const slice = profile_val.toSlice(globalThis, allocator) catch {
+                                    return globalThis.throwInvalidArgumentType("spawn", "sandbox.darwin.profile", "string");
+                                };
+                                if (slice.len > 0) {
+                                    sandbox.darwin.profile = try allocator.dupeZ(u8, slice.slice());
+                                }
+
+                                // Parse optional parameters
+                                if (try darwin_val.getTruthy(globalThis, "parameters")) |params_val| {
+                                    const params_obj = params_val.getObject() orelse {
+                                        return globalThis.throwInvalidArgumentType("spawn", "sandbox.darwin.parameters", "object");
+                                    };
+
+                                    var params_iter = try jsc.JSPropertyIterator(.{ .skip_empty_name = false, .include_value = true }).init(globalThis, params_obj);
+                                    defer params_iter.deinit();
+
+                                    // Format: ["KEY1", "VALUE1", "KEY2", "VALUE2", ..., null]
+                                    var params_list = try std.ArrayList(?[*:0]const u8).initCapacity(allocator, params_iter.len * 2 + 1);
+
+                                    while (try params_iter.next()) |key| {
+                                        const value = params_iter.value;
+                                        if (value.isUndefined()) continue;
+
+                                        const value_str = try value.toBunString(globalThis);
+                                        defer value_str.deref();
+
+                                        params_list.appendAssumeCapacity((try key.toOwnedSliceZ(allocator)).ptr);
+                                        params_list.appendAssumeCapacity((try value_str.toOwnedSliceZ(allocator)).ptr);
+                                    }
+
+                                    params_list.appendAssumeCapacity(null);
+                                    sandbox.darwin.parameters = @ptrCast(params_list.items.ptr);
+                                }
+                            } else {
+                                // Object doesn't have either 'profile' or 'namedProfile'
+                                return globalThis.throwInvalidArgumentType("spawn", "sandbox.darwin", "object with 'profile' or 'namedProfile'");
+                            }
+                        } else {
+                            return globalThis.throwInvalidArgumentType("spawn", "sandbox.darwin", "string or object");
+                        }
+                    }
+                }
                 // TODO: Parse sandbox.windows (Windows sandbox options)
             }
         } else {
@@ -611,8 +677,8 @@ pub fn spawnMaybeSync(
             break :blk -1;
         } else {},
 
-        // Seccomp filter (Linux only)
-        .seccomp_filter = if (Environment.isLinux) seccomp_filter else null,
+        // Platform-specific sandbox configuration
+        .sandbox = sandbox,
 
         .windows = if (Environment.isWindows) .{
             .hide_window = windows_hide,

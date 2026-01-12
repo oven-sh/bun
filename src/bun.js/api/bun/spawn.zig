@@ -95,9 +95,7 @@ pub const BunSpawn = struct {
         pty_slave_fd: i32 = -1,
         flags: u16 = 0,
         reset_signals: bool = false,
-        /// Seccomp BPF filter bytecode (Linux only).
-        /// Must be a multiple of 8 bytes (sizeof(struct sock_filter)).
-        seccomp_filter: ?[]const u8 = null,
+        sandbox: PosixSpawn.Sandbox = .{},
 
         pub fn init() !Attr {
             return Attr{};
@@ -122,6 +120,51 @@ pub const BunSpawn = struct {
 
 // mostly taken from zig's posix_spawn.zig
 pub const PosixSpawn = struct {
+    /// Sandbox configuration for process spawning.
+    /// Contains platform-specific sandboxing options for both Linux (seccomp) and macOS (seatbelt).
+    pub const Sandbox = struct {
+        /// Linux sandbox options.
+        linux: Linux = .{},
+        /// macOS sandbox options.
+        darwin: Darwin = .{},
+
+        pub const Linux = struct {
+            /// Seccomp BPF filter bytecode.
+            /// Must be a multiple of 8 bytes (sizeof(struct sock_filter)).
+            seccomp_filter: ?[]const u8 = null,
+        };
+
+        pub const Darwin = struct {
+            /// Sandbox profile (SBPL string or named profile).
+            /// Applied after fork() but before exec() using sandbox_init().
+            profile: ?[:0]const u8 = null,
+            /// Sandbox flags: 0 = inline SBPL string, 1 = named profile from /usr/share/sandbox
+            flags: u64 = 0,
+            /// Sandbox parameters: array of key-value pairs for the param() function in SBPL.
+            /// Format: ["KEY1", "VALUE1", "KEY2", "VALUE2", ..., null]
+            parameters: ?[*:null]const ?[*:0]const u8 = null,
+        };
+
+        /// C-compatible layout for FFI with posix_spawn_bun.
+        pub const Extern = extern struct {
+            linux_seccomp_filter: ?[*]const u8 = null,
+            linux_seccomp_filter_len: usize = 0,
+            darwin_profile: ?[*:0]const u8 = null,
+            darwin_flags: u64 = 0,
+            darwin_parameters: ?[*:null]const ?[*:0]const u8 = null,
+        };
+
+        pub fn toExtern(self: Sandbox) Extern {
+            return .{
+                .linux_seccomp_filter = if (self.linux.seccomp_filter) |s| s.ptr else null,
+                .linux_seccomp_filter_len = if (self.linux.seccomp_filter) |s| s.len else 0,
+                .darwin_profile = if (self.darwin.profile) |s| s.ptr else null,
+                .darwin_flags = self.darwin.flags,
+                .darwin_parameters = self.darwin.parameters,
+            };
+        }
+    };
+
     pub const WaitPidResult = struct {
         pid: pid_t,
         status: u32,
@@ -273,9 +316,7 @@ pub const PosixSpawn = struct {
         detached: bool = false,
         actions: ActionsList = .{},
         pty_slave_fd: i32 = -1,
-        // Seccomp BPF filter (Linux only)
-        seccomp_filter: ?[*]const u8 = null,
-        seccomp_filter_len: usize = 0,
+        sandbox: Sandbox.Extern = .{},
 
         const ActionsList = extern struct {
             ptr: ?[*]const BunSpawn.Action = null,
@@ -330,17 +371,19 @@ pub const PosixSpawn = struct {
     ) Maybe(pid_t) {
         const pty_slave_fd = if (attr) |a| a.pty_slave_fd else -1;
         const detached = if (attr) |a| a.detached else false;
+        const sandbox = if (attr) |a| a.sandbox else Sandbox{};
 
         // Use posix_spawn_bun when:
         // - Linux: always (uses vfork which is fast and safe)
-        // - macOS: only for PTY spawns (pty_slave_fd >= 0) because PTY setup requires
+        // - macOS: for PTY spawns (pty_slave_fd >= 0) because PTY setup requires
         //   setsid() + ioctl(TIOCSCTTY) before exec, which system posix_spawn can't do.
-        //   For non-PTY spawns on macOS, we use system posix_spawn which is safer
+        // - macOS: for sandbox spawns (sandbox.darwin_profile != null) because sandbox_init()
+        //   must be called after fork() but before exec(), which system posix_spawn can't do.
+        //   For non-PTY, non-sandbox spawns on macOS, we use system posix_spawn which is safer
         //   (Apple's posix_spawn uses a kernel fast-path that avoids fork() entirely).
-        const use_bun_spawn = Environment.isLinux or (Environment.isMac and pty_slave_fd >= 0);
+        const use_bun_spawn = Environment.isLinux or (Environment.isMac and (pty_slave_fd >= 0 or sandbox.darwin.profile != null));
 
         if (use_bun_spawn) {
-            const seccomp = if (attr) |a| a.seccomp_filter else null;
             return BunSpawnRequest.spawn(
                 path,
                 .{
@@ -354,8 +397,7 @@ pub const PosixSpawn = struct {
                     .chdir_buf = if (actions) |a| a.chdir_buf else null,
                     .detached = detached,
                     .pty_slave_fd = pty_slave_fd,
-                    .seccomp_filter = if (seccomp) |s| s.ptr else null,
-                    .seccomp_filter_len = if (seccomp) |s| s.len else 0,
+                    .sandbox = sandbox.toExtern(),
                 },
                 argv,
                 envp,

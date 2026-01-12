@@ -20,6 +20,21 @@
 #include <linux/filter.h>
 #endif
 
+#if OS(DARWIN)
+#include <sandbox.h>
+
+// Private function used by Chrome, Firefox, Nix, etc.
+// Apple officially deprecates sandbox_init() but continues to support it.
+extern "C" int sandbox_init_with_parameters(
+    const char* profile,
+    uint64_t flags,
+    const char* const parameters[],
+    char** errorbuf);
+
+// Sandbox flags (from sandbox.h, but not always exposed)
+#define BUN_SANDBOX_NAMED 0x0001
+#endif
+
 extern char** environ;
 
 #ifndef CLOSE_RANGE_CLOEXEC
@@ -102,9 +117,16 @@ typedef struct bun_spawn_request_t {
     bool detached;
     bun_spawn_file_action_list_t actions;
     int pty_slave_fd; // -1 if not using PTY, otherwise the slave fd to set as controlling terminal
-    // Seccomp BPF filter (Linux only)
-    const void* seccomp_filter;      // Pointer to BPF bytecode (array of sock_filter structs)
-    size_t seccomp_filter_len;       // Length in bytes (must be multiple of 8)
+    // Linux seccomp BPF filter (Linux only)
+    const void* linux_seccomp_filter; // Pointer to BPF bytecode (array of sock_filter structs)
+    size_t linux_seccomp_filter_len; // Length in bytes (must be multiple of 8)
+    // macOS sandbox profile (SBPL string or named profile)
+    const char* darwin_profile;
+    // macOS sandbox flags: 0 = SANDBOX_STRING (inline SBPL), 1 = SANDBOX_NAMED
+    uint64_t darwin_flags;
+    // macOS sandbox parameters: null-terminated array of "KEY\0VALUE\0" pairs, ending with empty string
+    // Format: ["KEY1", "VALUE1", "KEY2", "VALUE2", ..., NULL]
+    const char* const* darwin_parameters;
 } bun_spawn_request_t;
 
 // Raw exit syscall that doesn't go through libc.
@@ -292,9 +314,9 @@ extern "C" ssize_t posix_spawn_bun(
 
 #if OS(LINUX)
         // Apply seccomp filter if provided (Linux only)
-        if (request->seccomp_filter && request->seccomp_filter_len > 0) {
+        if (request->linux_seccomp_filter && request->linux_seccomp_filter_len > 0) {
             // Validate filter length (must be multiple of sizeof(sock_filter) = 8)
-            if (request->seccomp_filter_len % sizeof(struct sock_filter) != 0) {
+            if (request->linux_seccomp_filter_len % sizeof(struct sock_filter) != 0) {
                 errno = EINVAL;
                 return childFailed();
             }
@@ -306,12 +328,34 @@ extern "C" ssize_t posix_spawn_bun(
 
             // Construct sock_fprog
             struct sock_fprog prog = {
-                .len = static_cast<unsigned short>(request->seccomp_filter_len / sizeof(struct sock_filter)),
-                .filter = static_cast<struct sock_filter*>(const_cast<void*>(request->seccomp_filter)),
+                .len = static_cast<unsigned short>(request->linux_seccomp_filter_len / sizeof(struct sock_filter)),
+                .filter = static_cast<struct sock_filter*>(const_cast<void*>(request->linux_seccomp_filter)),
             };
 
             // Apply the filter using prctl (more portable than seccomp syscall)
             if (prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &prog) == -1) {
+                return childFailed();
+            }
+        }
+#endif
+
+#if OS(DARWIN)
+        // Apply macOS sandbox profile if provided
+        // The sandbox is applied before execve and persists across exec.
+        // Child processes inherit the sandbox - they cannot remove or weaken it.
+        if (request->darwin_profile && request->darwin_profile[0] != '\0') {
+            char* errorbuf = nullptr;
+            // darwin_flags: 0 = inline SBPL string, BUN_SANDBOX_NAMED = named profile from /usr/share/sandbox
+            // darwin_parameters: array of key-value pairs for the param() function in SBPL
+            if (sandbox_init_with_parameters(
+                    request->darwin_profile,
+                    request->darwin_flags,
+                    request->darwin_parameters,
+                    &errorbuf)
+                != 0) {
+                // sandbox_init failed - child process will exit immediately via childFailed()
+                // No need to free errorbuf since we're about to _exit()
+                errno = EINVAL;
                 return childFailed();
             }
         }

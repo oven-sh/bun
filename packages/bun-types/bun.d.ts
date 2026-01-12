@@ -6076,7 +6076,7 @@ declare module "bun" {
        *
        * Currently supports:
        * - **Linux**: seccomp-BPF filters (`sandbox.linux`)
-       * - **macOS**: Coming soon (`sandbox.darwin`)
+       * - **macOS**: Seatbelt/SBPL profiles (`sandbox.darwin`)
        * - **Windows**: Coming soon (`sandbox.windows`)
        *
        * @example
@@ -6086,15 +6086,14 @@ declare module "bun" {
        *   cmd: ["./untrusted-program"],
        *   sandbox: {
        *     linux: linuxBpfFilter,
-       *     // darwin: macOsSbplProfile,  // Coming soon
+       *     darwin: `
+       *       (version 1)
+       *       (allow default)
+       *       (deny network*)
+       *     `,
        *     // windows: { ... },          // Coming soon
        *   },
        * });
-       *
-       * // Detect if seccomp killed the process (Linux)
-       * if (proc.signalCode === "SIGSYS") {
-       *   console.log("Process was killed by seccomp filter");
-       * }
        * ```
        */
       sandbox?: {
@@ -6128,6 +6127,84 @@ declare module "bun" {
          * @platform linux
          */
         linux?: ArrayBufferView | ArrayBuffer;
+
+        /**
+         * macOS sandbox profile in SBPL (Sandbox Profile Language) format.
+         *
+         * Silently ignored on non-macOS platforms.
+         *
+         * The sandbox is applied after `fork()` but before `exec()` using
+         * Apple's `sandbox_init()` API. Once applied, the sandbox cannot
+         * be removed or weakened. Child processes inherit the sandbox.
+         *
+         * Common operations to allow/deny:
+         * - `file-read*`, `file-write*` - File system access
+         * - `network-outbound`, `network-inbound` - Network access
+         * - `process-exec`, `process-fork` - Process creation
+         * - `sysctl-read`, `sysctl-write` - System information
+         *
+         * Can be specified as:
+         * - A string containing an inline SBPL profile
+         * - An object with `profile` (SBPL string) and optional `parameters`
+         * - An object with `namedProfile` referencing a system profile
+         *
+         * @example
+         * ```ts
+         * // Inline SBPL profile (string)
+         * const proc = Bun.spawn({
+         *   cmd: ["./my-script.sh"],
+         *   sandbox: {
+         *     darwin: `
+         *       (version 1)
+         *       (deny default)
+         *       (allow file-read*)
+         *       (allow process-exec)
+         *       (allow process-fork)
+         *     `
+         *   }
+         * });
+         *
+         * // SBPL profile with parameters
+         * const proc2 = Bun.spawn({
+         *   cmd: ["./my-script.sh"],
+         *   sandbox: {
+         *     darwin: {
+         *       profile: `
+         *         (version 1)
+         *         (deny default)
+         *         (allow file-read* (subpath (param "ALLOWED_PATH")))
+         *       `,
+         *       parameters: {
+         *         ALLOWED_PATH: "/tmp/safe-directory"
+         *       }
+         *     }
+         *   }
+         * });
+         *
+         * // Named system profile (from /usr/share/sandbox/)
+         * const proc3 = Bun.spawn({
+         *   cmd: ["./my-script.sh"],
+         *   sandbox: {
+         *     darwin: { namedProfile: "no-internet" }
+         *   }
+         * });
+         * ```
+         *
+         * @see https://reverse.put.as/wp-content/uploads/2011/09/Apple-Sandbox-Guide-v1.0.pdf
+         * @platform darwin
+         */
+        darwin?:
+          | string
+          | {
+              /** Inline SBPL profile string */
+              profile: string;
+              /** Optional parameters passed to the SBPL profile via the `param()` function */
+              parameters?: Record<string, string>;
+            }
+          | {
+              /** Named profile from /usr/share/sandbox/ (e.g., "no-internet") */
+              namedProfile: string;
+            };
       };
     }
 

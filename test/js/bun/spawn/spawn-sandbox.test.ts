@@ -1,4 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { tempDir } from "harness";
+
+const isLinux = process.platform === "linux";
+const isMac = process.platform === "darwin";
 
 // BPF instruction that returns SECCOMP_RET_ALLOW (0x7fff0000)
 // struct sock_filter { __u16 code; __u8 jt; __u8 jf; __u32 k; }
@@ -43,14 +47,22 @@ const BLOCK_WRITE_FILTER_X86_64 = new Uint8Array([
   0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80,
 ]);
 
-describe("spawn sandbox", () => {
-  const isLinux = process.platform === "linux";
+// SBPL profile that allows everything (proper SBPL syntax)
+const ALLOW_ALL_PROFILE = `(version 1)
+(allow default)`;
 
-  test("sandbox.linux is silently ignored on non-Linux", async () => {
-    if (isLinux) {
-      return; // Skip on Linux
-    }
+// SBPL profile that denies network access
+const DENY_NETWORK_PROFILE = `(version 1)
+(allow default)
+(deny network*)`;
 
+// SBPL profile that denies file writes
+const DENY_FILE_WRITE_PROFILE = `(version 1)
+(allow default)
+(deny file-write*)`;
+
+describe("spawn sandbox (Linux)", () => {
+  test.if(!isLinux)("sandbox.linux is silently ignored on non-Linux", async () => {
     // On non-Linux, sandbox.linux should be silently ignored
     // This allows users to specify all platform options at once
     await using proc = Bun.spawn({
@@ -63,11 +75,7 @@ describe("spawn sandbox", () => {
     expect(await proc.exited).toBe(0);
   });
 
-  test("rejects filter with invalid length (not multiple of 8)", () => {
-    if (!isLinux) {
-      return; // Skip on non-Linux
-    }
-
+  test.if(isLinux)("rejects filter with invalid length (not multiple of 8)", () => {
     expect(() => {
       Bun.spawn({
         cmd: ["echo", "test"],
@@ -76,11 +84,7 @@ describe("spawn sandbox", () => {
     }).toThrow("multiple of 8 bytes");
   });
 
-  test("rejects non-ArrayBuffer sandbox.linux value", () => {
-    if (!isLinux) {
-      return; // Skip on non-Linux
-    }
-
+  test.if(isLinux)("rejects non-ArrayBuffer sandbox.linux value", () => {
     expect(() => {
       Bun.spawn({
         cmd: ["echo", "test"],
@@ -89,11 +93,7 @@ describe("spawn sandbox", () => {
     }).toThrow("ArrayBuffer or TypedArray");
   });
 
-  test("accepts empty filter (no-op)", async () => {
-    if (!isLinux) {
-      return; // Skip on non-Linux
-    }
-
+  test.if(isLinux)("accepts empty filter (no-op)", async () => {
     // Empty filter should be treated as no filter
     await using proc = Bun.spawn({
       cmd: ["echo", "hello"],
@@ -105,11 +105,7 @@ describe("spawn sandbox", () => {
     expect(await proc.exited).toBe(0);
   });
 
-  test("spawn with allow-all filter works with echo", async () => {
-    if (!isLinux) {
-      return; // Skip on non-Linux
-    }
-
+  test.if(isLinux)("spawn with allow-all filter works with echo", async () => {
     await using proc = Bun.spawn({
       cmd: ["echo", "sandboxed"],
       sandbox: { linux: ALLOW_ALL_FILTER },
@@ -120,11 +116,7 @@ describe("spawn sandbox", () => {
     expect(await proc.exited).toBe(0);
   });
 
-  test("spawnSync with allow-all filter works with echo", () => {
-    if (!isLinux) {
-      return; // Skip on non-Linux
-    }
-
+  test.if(isLinux)("spawnSync with allow-all filter works with echo", () => {
     const result = Bun.spawnSync({
       cmd: ["echo", "sync-sandboxed"],
       sandbox: { linux: ALLOW_ALL_FILTER },
@@ -134,11 +126,7 @@ describe("spawn sandbox", () => {
     expect(result.exitCode).toBe(0);
   });
 
-  test("spawnSync with kill-all filter terminates process with SIGSYS", () => {
-    if (!isLinux) {
-      return; // Skip on non-Linux
-    }
-
+  test.if(isLinux)("spawnSync with kill-all filter terminates process with SIGSYS", () => {
     const result = Bun.spawnSync({
       cmd: ["/bin/true"],
       sandbox: { linux: KILL_ALL_FILTER },
@@ -153,11 +141,7 @@ describe("spawn sandbox", () => {
     expect(result.success).toBe(false);
   });
 
-  test("spawn with kill-all filter terminates process with SIGSYS", async () => {
-    if (!isLinux) {
-      return; // Skip on non-Linux
-    }
-
+  test.if(isLinux)("spawn with kill-all filter terminates process with SIGSYS", async () => {
     // The process should be killed immediately when it tries to make any syscall.
     // seccomp sends SIGSYS (signal 31) to terminate the process.
     await using proc = Bun.spawn({
@@ -180,11 +164,7 @@ describe("spawn sandbox", () => {
     expect(proc.signalCode).toBe("SIGSYS");
   });
 
-  test("accepts ArrayBuffer", async () => {
-    if (!isLinux) {
-      return; // Skip on non-Linux
-    }
-
+  test.if(isLinux)("accepts ArrayBuffer", async () => {
     const buffer = ALLOW_ALL_FILTER.buffer.slice(
       ALLOW_ALL_FILTER.byteOffset,
       ALLOW_ALL_FILTER.byteOffset + ALLOW_ALL_FILTER.byteLength,
@@ -200,11 +180,7 @@ describe("spawn sandbox", () => {
     expect(await proc.exited).toBe(0);
   });
 
-  test("accepts different TypedArray types", async () => {
-    if (!isLinux) {
-      return; // Skip on non-Linux
-    }
-
+  test.if(isLinux)("accepts different TypedArray types", async () => {
     // Test with Uint16Array (same bytes, different view)
     const uint16View = new Uint16Array(ALLOW_ALL_FILTER.buffer);
 
@@ -218,11 +194,7 @@ describe("spawn sandbox", () => {
     expect(await proc.exited).toBe(0);
   });
 
-  test("filter that blocks write() causes echo to fail", async () => {
-    if (!isLinux) {
-      return; // Skip on non-Linux
-    }
-
+  test.if(isLinux)("filter that blocks write() causes echo to fail", async () => {
     // echo uses write() to output to stdout
     // With write() blocked, echo should fail
     await using proc = Bun.spawn({
@@ -240,11 +212,7 @@ describe("spawn sandbox", () => {
     expect(exitCode).not.toBe(0);
   });
 
-  test("filter that blocks write() allows /bin/true to succeed", async () => {
-    if (!isLinux) {
-      return; // Skip on non-Linux
-    }
-
+  test.if(isLinux)("filter that blocks write() allows /bin/true to succeed", async () => {
     // /bin/true doesn't write anything, it just exits with 0
     // So blocking write() shouldn't affect it
     await using proc = Bun.spawn({
@@ -256,11 +224,7 @@ describe("spawn sandbox", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("filter that blocks write() causes /bin/false to exit non-zero", async () => {
-    if (!isLinux) {
-      return; // Skip on non-Linux
-    }
-
+  test.if(isLinux)("filter that blocks write() causes /bin/false to exit non-zero", async () => {
     // /bin/false doesn't write anything, it just exits with 1
     // So blocking write() shouldn't affect it - it should still exit 1
     await using proc = Bun.spawn({
@@ -272,11 +236,7 @@ describe("spawn sandbox", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("spawnSync filter that blocks write() causes echo to fail", () => {
-    if (!isLinux) {
-      return; // Skip on non-Linux
-    }
-
+  test.if(isLinux)("spawnSync filter that blocks write() causes echo to fail", () => {
     const result = Bun.spawnSync({
       cmd: ["echo", "this should not appear"],
       sandbox: { linux: BLOCK_WRITE_FILTER_X86_64 },
@@ -285,5 +245,453 @@ describe("spawn sandbox", () => {
     // echo should fail to write
     expect(result.stdout.toString()).toBe("");
     expect(result.exitCode).not.toBe(0);
+  });
+});
+
+describe("spawn sandbox (macOS)", () => {
+  test.if(!isMac)("sandbox.darwin is silently ignored on non-macOS", async () => {
+    // On non-macOS, sandbox.darwin should be silently ignored
+    await using proc = Bun.spawn({
+      cmd: ["echo", "test"],
+      sandbox: { darwin: ALLOW_ALL_PROFILE },
+    });
+
+    const stdout = await proc.stdout.text();
+    expect(stdout).toBe("test\n");
+    expect(await proc.exited).toBe(0);
+  });
+
+  test.if(isMac)("non-string sandbox.darwin value throws", () => {
+    // When sandbox.darwin is not a string or object, the spawn itself throws
+    expect(() => {
+      Bun.spawn({
+        cmd: ["echo", "test"],
+        sandbox: { darwin: 12345 as unknown as string },
+      });
+    }).toThrow("Expected sandbox.darwin to be a string or object");
+  });
+
+  test.if(isMac)("spawn with allow-all profile works with echo", async () => {
+    await using proc = Bun.spawn({
+      cmd: ["echo", "sandboxed"],
+      sandbox: { darwin: ALLOW_ALL_PROFILE },
+    });
+
+    const stdout = await proc.stdout.text();
+    expect(stdout).toBe("sandboxed\n");
+    expect(await proc.exited).toBe(0);
+  });
+
+  test.if(isMac)("spawnSync with allow-all profile works with echo", () => {
+    const result = Bun.spawnSync({
+      cmd: ["echo", "sync-sandboxed"],
+      sandbox: { darwin: ALLOW_ALL_PROFILE },
+    });
+
+    expect(result.stdout.toString()).toBe("sync-sandboxed\n");
+    expect(result.exitCode).toBe(0);
+  });
+
+  test.if(isMac)("spawn with deny-network profile allows echo", async () => {
+    // echo doesn't use network, so it should work
+    await using proc = Bun.spawn({
+      cmd: ["echo", "no-network"],
+      sandbox: { darwin: DENY_NETWORK_PROFILE },
+    });
+
+    const stdout = await proc.stdout.text();
+    expect(stdout).toBe("no-network\n");
+    expect(await proc.exited).toBe(0);
+  });
+
+  test.if(isMac)("spawn with deny-file-write profile allows /usr/bin/true", async () => {
+    // /usr/bin/true doesn't write files, so it should work
+    await using proc = Bun.spawn({
+      cmd: ["/usr/bin/true"],
+      sandbox: { darwin: DENY_FILE_WRITE_PROFILE },
+    });
+
+    expect(await proc.exited).toBe(0);
+  });
+
+  test.if(isMac)("spawnSync with deny-file-write profile allows /usr/bin/false", () => {
+    // /usr/bin/false doesn't write files, it just exits with 1
+    const result = Bun.spawnSync({
+      cmd: ["/usr/bin/false"],
+      sandbox: { darwin: DENY_FILE_WRITE_PROFILE },
+    });
+
+    expect(result.exitCode).toBe(1);
+  });
+
+  test("can specify both linux and darwin sandbox options", async () => {
+    // This should work on all platforms - each platform uses its own option
+    await using proc = Bun.spawn({
+      cmd: ["echo", "cross-platform"],
+      sandbox: {
+        linux: ALLOW_ALL_FILTER,
+        darwin: ALLOW_ALL_PROFILE,
+      },
+    });
+
+    const stdout = await proc.stdout.text();
+    expect(stdout).toBe("cross-platform\n");
+    expect(await proc.exited).toBe(0);
+  });
+
+  test.if(isMac)("invalid SBPL profile causes spawn to fail", () => {
+    // An invalid sandbox profile causes the child to fail immediately with EINVAL
+    expect(() => {
+      Bun.spawn({
+        cmd: ["/usr/bin/true"],
+        sandbox: { darwin: "(invalid sbpl garbage)" },
+      });
+    }).toThrow("EINVAL: invalid argument, posix_spawn");
+  });
+
+  test.if(isMac)("object format with profile property works", async () => {
+    // Test the object format { profile: "..." }
+    await using proc = Bun.spawn({
+      cmd: ["echo", "object-format"],
+      sandbox: { darwin: { profile: ALLOW_ALL_PROFILE } },
+    });
+
+    const stdout = await proc.stdout.text();
+    expect(stdout).toBe("object-format\n");
+    expect(await proc.exited).toBe(0);
+  });
+
+  test.if(isMac)("object format with profile and parameters works", async () => {
+    // SBPL profile that uses param() function to get a value
+    // This profile allows everything but demonstrates parameter passing
+    const profileWithParams = `(version 1)
+(allow default)
+(deny file-write* (subpath (param "BLOCKED_PATH")))`;
+
+    // Test the object format with parameters
+    // We block writes to /nonexistent which shouldn't affect /usr/bin/true
+    await using proc = Bun.spawn({
+      cmd: ["/usr/bin/true"],
+      sandbox: {
+        darwin: {
+          profile: profileWithParams,
+          parameters: { BLOCKED_PATH: "/nonexistent" },
+        },
+      },
+    });
+
+    expect(await proc.exited).toBe(0);
+  });
+
+  test.if(isMac)("spawnSync with profile and parameters works", () => {
+    const profileWithParams = `(version 1)
+(allow default)
+(deny file-write* (subpath (param "BLOCKED_PATH")))`;
+
+    const result = Bun.spawnSync({
+      cmd: ["/usr/bin/true"],
+      sandbox: {
+        darwin: {
+          profile: profileWithParams,
+          parameters: { BLOCKED_PATH: "/nonexistent" },
+        },
+      },
+    });
+
+    expect(result.exitCode).toBe(0);
+  });
+
+  test.if(isMac)("specifying both profile and namedProfile throws error", () => {
+    expect(() => {
+      Bun.spawn({
+        cmd: ["/usr/bin/true"],
+        sandbox: {
+          darwin: {
+            profile: ALLOW_ALL_PROFILE,
+            namedProfile: "pfd",
+          } as unknown as string,
+        },
+      });
+    }).toThrow("sandbox.darwin cannot have both 'profile' and 'namedProfile'");
+  });
+
+  test.if(isMac)("empty parameters object is allowed", async () => {
+    await using proc = Bun.spawn({
+      cmd: ["echo", "empty-params"],
+      sandbox: {
+        darwin: {
+          profile: ALLOW_ALL_PROFILE,
+          parameters: {},
+        },
+      },
+    });
+
+    const stdout = await proc.stdout.text();
+    expect(stdout).toBe("empty-params\n");
+    expect(await proc.exited).toBe(0);
+  });
+
+  test.if(isMac)("darwin object without profile or namedProfile throws error", () => {
+    expect(() => {
+      Bun.spawn({
+        cmd: ["/usr/bin/true"],
+        sandbox: {
+          darwin: { parameters: { KEY: "VALUE" } } as unknown as string,
+        },
+      });
+    }).toThrow("Expected sandbox.darwin to be a object with 'profile' or 'namedProfile'");
+  });
+
+  test.if(isMac)("namedProfile with non-existent profile throws EINVAL", () => {
+    // A non-existent named profile should fail with EINVAL
+    expect(() => {
+      Bun.spawn({
+        cmd: ["/usr/bin/true"],
+        sandbox: {
+          darwin: { namedProfile: "this-profile-does-not-exist-12345" },
+        },
+      });
+    }).toThrow("EINVAL: invalid argument, posix_spawn");
+  });
+
+  test.if(isMac)("namedProfile restricts process execution", () => {
+    // First verify ls works without sandbox
+    const withoutSandbox = Bun.spawnSync({
+      cmd: ["/bin/ls", "/"],
+    });
+    expect(withoutSandbox.stdout.toString()).toContain("usr");
+    expect(withoutSandbox.exitCode).toBe(0);
+
+    // The "pfd" (packet filter daemon) profile only allows executing /usr/libexec/pfd
+    // So /bin/ls should fail with EPERM (Operation not permitted)
+    // The sandbox blocks execve, which causes spawn to throw
+    expect(() => {
+      Bun.spawnSync({
+        cmd: ["/bin/ls", "/"],
+        sandbox: {
+          darwin: { namedProfile: "pfd" },
+        },
+      });
+    }).toThrow("EPERM: operation not permitted, posix_spawn");
+  });
+
+  test.if(isMac)("namedProfile restricts file writes during execution", () => {
+    using dir = tempDir("named-profile-test", {});
+    const testFile = `${dir}/test.txt`;
+
+    // First verify file write works without sandbox
+    const withoutSandbox = Bun.spawnSync({
+      cmd: ["/bin/sh", "-c", `echo hello > "${testFile}" && rm "${testFile}"`],
+    });
+    expect(withoutSandbox.exitCode).toBe(0);
+
+    // The "quicklookd" profile allows exec and file reads, but blocks file writes
+    // The process spawns successfully, but the write operation fails
+    const withSandbox = Bun.spawnSync({
+      cmd: ["/bin/sh", "-c", `echo hello > "${testFile}"`],
+      sandbox: {
+        darwin: { namedProfile: "quicklookd" },
+      },
+      stderr: "pipe",
+    });
+
+    // The shell runs but write fails with "Operation not permitted", exit code 1
+    expect(withSandbox.stderr.toString()).toContain("Operation not permitted");
+    expect(withSandbox.exitCode).toBe(1);
+  });
+
+  test.if(isMac)("SBPL parameters successfully block specified path", () => {
+    // Create a temporary directory
+    using dir = tempDir("sbpl-param-test", {});
+    const testFile = `${dir}/test.txt`;
+
+    // SBPL profile that blocks writes to the path specified by parameter
+    const profileWithParams = `(version 1)
+(allow default)
+(deny file-write* (subpath (param "BLOCKED_PATH")))`;
+
+    // First verify write works without sandbox
+    const withoutSandbox = Bun.spawnSync({
+      cmd: ["/bin/sh", "-c", `echo hello > "${testFile}" && rm "${testFile}"`],
+    });
+    expect(withoutSandbox.exitCode).toBe(0);
+
+    // With sandbox blocking the temp directory - should fail
+    const withSandboxBlocking = Bun.spawnSync({
+      cmd: ["/bin/sh", "-c", `echo hello > "${testFile}"`],
+      sandbox: {
+        darwin: {
+          profile: profileWithParams,
+          parameters: { BLOCKED_PATH: String(dir) },
+        },
+      },
+      stderr: "pipe",
+    });
+    expect(withSandboxBlocking.stderr.toString()).toContain("Operation not permitted");
+    expect(withSandboxBlocking.exitCode).toBe(1);
+
+    // With sandbox blocking a different path - should succeed
+    const withSandboxAllowing = Bun.spawnSync({
+      cmd: ["/bin/sh", "-c", `echo hello > "${testFile}" && rm "${testFile}"`],
+      sandbox: {
+        darwin: {
+          profile: profileWithParams,
+          parameters: { BLOCKED_PATH: "/nonexistent" },
+        },
+      },
+      stderr: "pipe",
+    });
+    expect(withSandboxAllowing.exitCode).toBe(0);
+  });
+
+  test.if(isMac)("SBPL profile with multiple parameters", () => {
+    using dir1 = tempDir("sbpl-multi-param-1", {});
+    using dir2 = tempDir("sbpl-multi-param-2", {});
+    const testFile1 = `${dir1}/test.txt`;
+    const testFile2 = `${dir2}/test.txt`;
+
+    // SBPL profile that blocks writes to two different paths via parameters
+    const profileWithMultipleParams = `(version 1)
+(allow default)
+(deny file-write* (subpath (param "BLOCKED_PATH_1")))
+(deny file-write* (subpath (param "BLOCKED_PATH_2")))`;
+
+    // Both paths blocked - writes to dir1 should fail
+    const result1 = Bun.spawnSync({
+      cmd: ["/bin/sh", "-c", `echo hello > "${testFile1}"`],
+      sandbox: {
+        darwin: {
+          profile: profileWithMultipleParams,
+          parameters: {
+            BLOCKED_PATH_1: String(dir1),
+            BLOCKED_PATH_2: String(dir2),
+          },
+        },
+      },
+      stderr: "pipe",
+    });
+    expect(result1.stderr.toString()).toContain("Operation not permitted");
+    expect(result1.exitCode).toBe(1);
+
+    // Both paths blocked - writes to dir2 should also fail
+    const result2 = Bun.spawnSync({
+      cmd: ["/bin/sh", "-c", `echo hello > "${testFile2}"`],
+      sandbox: {
+        darwin: {
+          profile: profileWithMultipleParams,
+          parameters: {
+            BLOCKED_PATH_1: String(dir1),
+            BLOCKED_PATH_2: String(dir2),
+          },
+        },
+      },
+      stderr: "pipe",
+    });
+    expect(result2.stderr.toString()).toContain("Operation not permitted");
+    expect(result2.exitCode).toBe(1);
+
+    // Only dir1 blocked - writes to dir2 should succeed
+    const result3 = Bun.spawnSync({
+      cmd: ["/bin/sh", "-c", `echo hello > "${testFile2}" && cat "${testFile2}" && rm "${testFile2}"`],
+      sandbox: {
+        darwin: {
+          profile: profileWithMultipleParams,
+          parameters: {
+            BLOCKED_PATH_1: String(dir1),
+            BLOCKED_PATH_2: "/nonexistent",
+          },
+        },
+      },
+    });
+    expect(result3.stdout.toString()).toBe("hello\n");
+    expect(result3.exitCode).toBe(0);
+  });
+
+  test.if(isMac)("async spawn with namedProfile blocking file writes", async () => {
+    using dir = tempDir("async-named-profile-test", {});
+    const testFile = `${dir}/test.txt`;
+
+    // First verify write works without sandbox
+    await using procWithout = Bun.spawn({
+      cmd: ["/bin/sh", "-c", `echo hello > "${testFile}" && rm "${testFile}"`],
+    });
+    expect(await procWithout.exited).toBe(0);
+
+    // The "quicklookd" profile blocks file writes
+    await using procWith = Bun.spawn({
+      cmd: ["/bin/sh", "-c", `echo hello > "${testFile}"`],
+      sandbox: {
+        darwin: { namedProfile: "quicklookd" },
+      },
+      stderr: "pipe",
+    });
+
+    const stderr = await procWith.stderr.text();
+    const exitCode = await procWith.exited;
+
+    expect(stderr).toContain("Operation not permitted");
+    expect(exitCode).toBe(1);
+  });
+
+  test.if(isMac)("async spawn with SBPL profile blocking writes", async () => {
+    using dir = tempDir("async-sbpl-test", {});
+    const testFile = `${dir}/test.txt`;
+
+    const profileWithParams = `(version 1)
+(allow default)
+(deny file-write* (subpath (param "BLOCKED_PATH")))`;
+
+    // Blocked write
+    await using procBlocked = Bun.spawn({
+      cmd: ["/bin/sh", "-c", `echo blocked > "${testFile}"`],
+      sandbox: {
+        darwin: {
+          profile: profileWithParams,
+          parameters: { BLOCKED_PATH: String(dir) },
+        },
+      },
+      stderr: "pipe",
+    });
+
+    const stderrBlocked = await procBlocked.stderr.text();
+    const exitCodeBlocked = await procBlocked.exited;
+
+    expect(stderrBlocked).toContain("Operation not permitted");
+    expect(exitCodeBlocked).toBe(1);
+
+    // Allowed write (different path blocked)
+    await using procAllowed = Bun.spawn({
+      cmd: ["/bin/sh", "-c", `echo allowed > "${testFile}" && cat "${testFile}" && rm "${testFile}"`],
+      sandbox: {
+        darwin: {
+          profile: profileWithParams,
+          parameters: { BLOCKED_PATH: "/nonexistent" },
+        },
+      },
+      stderr: "pipe",
+    });
+
+    const stdoutAllowed = await procAllowed.stdout.text();
+    const exitCodeAllowed = await procAllowed.exited;
+
+    expect(stdoutAllowed).toBe("allowed\n");
+    expect(exitCodeAllowed).toBe(0);
+  });
+
+  test.if(isMac)("async spawn with deny-file-write profile blocks writes", async () => {
+    using dir = tempDir("async-deny-write-test", {});
+    const testFile = `${dir}/test.txt`;
+
+    await using proc = Bun.spawn({
+      cmd: ["/bin/sh", "-c", `echo test > "${testFile}"`],
+      sandbox: { darwin: DENY_FILE_WRITE_PROFILE },
+      stderr: "pipe",
+    });
+
+    const stderr = await proc.stderr.text();
+    const exitCode = await proc.exited;
+
+    expect(stderr).toContain("Operation not permitted");
+    expect(exitCode).toBe(1);
   });
 });

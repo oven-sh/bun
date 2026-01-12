@@ -1365,14 +1365,27 @@ async function spawnBunTest(execPath, testPath, opts = { cwd }) {
     // prettier-ignore
     env.LSAN_OPTIONS = `malloc_context_size=100:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
   }
-  if (expectsSpawnedProcessCrash(relative(cwd, absPath))) {
-    // Tests that spawn processes expected to crash (e.g., seccomp sandbox tests)
-    // should not generate core dumps
+  // For tests that spawn processes expected to crash, disable core dumps
+  const disableCoreDumps = expectsSpawnedProcessCrash(relative(cwd, absPath));
+  const isAsanBuild = basename(execPath).includes("asan");
+  if (disableCoreDumps && isAsanBuild) {
+    // ASAN builds: use ASAN_OPTIONS to disable core dumps
     env.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=1";
   }
 
-  const { ok, error, stdout, crashes } = await spawnBun(execPath, {
-    args: isReallyTest ? testArgs : [...args, absPath],
+  // Build the command args
+  let spawnArgs = isReallyTest ? testArgs : [...args, absPath];
+  let spawnExecPath = execPath;
+
+  // Non-ASAN Linux builds: wrap with ulimit -c 0 to disable core dumps
+  if (disableCoreDumps && isLinux && !isAsanBuild) {
+    const originalCmd = [execPath, ...spawnArgs].map(a => `"${a.replace(/"/g, '\\"')}"`).join(" ");
+    spawnExecPath = "/bin/sh";
+    spawnArgs = ["-c", `ulimit -c 0 && exec ${originalCmd}`];
+  }
+
+  const { ok, error, stdout, crashes } = await spawnBun(spawnExecPath, {
+    args: spawnArgs,
     cwd: opts["cwd"],
     timeout: isReallyTest ? timeout : 30_000,
     env,

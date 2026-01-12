@@ -489,6 +489,62 @@ describe("@types/bun integration test", () => {
       ]);
     });
 
+    test("ES2024 features error with ES2022 lib", async () => {
+      // Regression test: @types/bun should NOT provide ES2024+ types
+      // Users should get proper TypeScript errors when targeting older ES versions
+      const testCode = `
+        // ES2024: Promise.withResolvers
+        const { promise, resolve } = Promise.withResolvers<number>();
+
+        // ES2024: ArrayBuffer.resize
+        const buffer = new ArrayBuffer(8);
+        buffer.resize(16);
+      `;
+
+      const { diagnostics } = await diagnose(TEMP_FIXTURE_DIR, {
+        options: {
+          lib: ["lib.es2022.d.ts"],
+          skipLibCheck: true,
+        },
+        files: {
+          "es2024-features.ts": testCode,
+        },
+      });
+
+      const relevantDiagnostics = diagnostics.filter(d => d.line?.startsWith("es2024-features.ts"));
+
+      // Should get errors for ES2024 features when using ES2022 lib
+      expect(relevantDiagnostics.length).toBeGreaterThan(0);
+      expect(relevantDiagnostics.some(d => d.message.includes("withResolvers"))).toBe(true);
+      expect(relevantDiagnostics.some(d => d.message.includes("resize"))).toBe(true);
+    });
+
+    test("ES2024 features work with ES2024 lib", async () => {
+      const testCode = `
+        // ES2024: Promise.withResolvers
+        const { promise, resolve } = Promise.withResolvers<number>();
+
+        // ES2024: ArrayBuffer.resize
+        const buffer = new ArrayBuffer(8);
+        buffer.resize(16);
+      `;
+
+      const { diagnostics } = await diagnose(TEMP_FIXTURE_DIR, {
+        options: {
+          lib: ["lib.es2024.d.ts"],
+          skipLibCheck: true,
+        },
+        files: {
+          "es2024-features.ts": testCode,
+        },
+      });
+
+      const relevantDiagnostics = diagnostics.filter(d => d.line?.startsWith("es2024-features.ts"));
+
+      // Should NOT get errors for ES2024 features when using ES2024 lib
+      expect(relevantDiagnostics).toEqual([]);
+    });
+
     test("checks with lib.dom.d.ts", async () => {
       const { diagnostics, emptyInterfaces } = await diagnose(TEMP_FIXTURE_DIR, {
         options: {

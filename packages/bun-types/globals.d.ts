@@ -1047,73 +1047,10 @@ interface ErrorConstructor {
   stackTraceLimit: number;
 }
 
-interface ArrayBufferConstructor {
-  new (byteLength: number, options: { maxByteLength?: number }): ArrayBuffer;
-}
-
-interface ArrayBuffer {
-  /**
-   * Read-only. The length of the ArrayBuffer (in bytes).
-   */
-  readonly byteLength: number;
-
-  /**
-   * Resize an ArrayBuffer in-place.
-   */
-  resize(byteLength: number): ArrayBuffer;
-
-  /**
-   * Returns a section of an ArrayBuffer.
-   */
-  slice(begin: number, end?: number): ArrayBuffer;
-}
-
-interface SharedArrayBuffer {
-  /**
-   * Grow the SharedArrayBuffer in-place.
-   */
-  grow(size: number): SharedArrayBuffer;
-}
-
-interface ArrayConstructor {
-  /**
-   * Create an array from an iterable or async iterable object.
-   * Values from the iterable are awaited.
-   *
-   * ```ts
-   * await Array.fromAsync([1]); // [1]
-   * await Array.fromAsync([Promise.resolve(1)]); // [1]
-   * await Array.fromAsync((async function*() { yield 1 })()); // [1]
-   * ```
-   *
-   * @param arrayLike - The iterable or async iterable to convert to an array.
-   * @returns A {@link Promise} whose fulfillment is a new {@link Array} instance containing the values from the iterator.
-   */
-  fromAsync<T>(arrayLike: AsyncIterable<T> | Iterable<T> | ArrayLike<T>): Promise<Awaited<T>[]>;
-
-  /**
-   * Create an array from an iterable or async iterable object.
-   * Values from the iterable are awaited. Results of the map function are also awaited.
-   *
-   * ```ts
-   * await Array.fromAsync([1]); // [1]
-   * await Array.fromAsync([Promise.resolve(1)]); // [1]
-   * await Array.fromAsync((async function*() { yield 1 })()); // [1]
-   * await Array.fromAsync([1], (n) => n + 1); // [2]
-   * await Array.fromAsync([1], (n) => Promise.resolve(n + 1)); // [2]
-   * ```
-   *
-   * @param arrayLike - The iterable or async iterable to convert to an array.
-   * @param mapFn - A mapper function that transforms each element of `arrayLike` after awaiting them.
-   * @param thisArg - The `this` to which `mapFn` is bound.
-   * @returns A {@link Promise} whose fulfillment is a new {@link Array} instance containing the values from the iterator.
-   */
-  fromAsync<T, U>(
-    arrayLike: AsyncIterable<T> | Iterable<T> | ArrayLike<T>,
-    mapFn?: (value: T, index: number) => U,
-    thisArg?: any,
-  ): Promise<Awaited<U>[]>;
-}
+// NOTE: ES2024+ types (ArrayBuffer.resize, SharedArrayBuffer.grow, Array.fromAsync,
+// Promise.withResolvers, Promise.try) are intentionally NOT defined here.
+// They are provided by TypeScript's lib.es2024.*.d.ts and lib.esnext.*.d.ts files.
+// This allows users to control ES feature availability via tsconfig's "lib" option.
 
 interface ConsoleOptions {
   stdout: import("stream").Writable;
@@ -1384,41 +1321,9 @@ interface EventSourceInit {
   withCredentials?: boolean;
 }
 
-interface PromiseConstructor {
-  /**
-   * Create a deferred promise, with exposed `resolve` and `reject` methods which can be called
-   * separately.
-   *
-   * This is useful when you want to return a Promise and have code outside the Promise
-   * resolve or reject it.
-   *
-   * @example
-   * ```ts
-   * const { promise, resolve, reject } = Promise.withResolvers();
-   *
-   * setTimeout(() => {
-   *  resolve("Hello world!");
-   * }, 1000);
-   *
-   * await promise; // "Hello world!"
-   * ```
-   */
-  withResolvers<T>(): {
-    promise: Promise<T>;
-    resolve: (value?: T | PromiseLike<T>) => void;
-    reject: (reason?: any) => void;
-  };
-
-  /**
-   * Try to run a function and return the result.
-   * If the function throws, return the result of the `catch` function.
-   *
-   * @param fn - The function to run
-   * @param args - The arguments to pass to the function. This is similar to `setTimeout` and avoids the extra closure.
-   * @returns The result of the function or the result of the `catch` function
-   */
-  try<T, A extends any[] = []>(fn: (...args: A) => T | PromiseLike<T>, ...args: A): Promise<T>;
-}
+// NOTE: PromiseConstructor.withResolvers and PromiseConstructor.try are NOT defined here.
+// They are provided by TypeScript's lib.es2024.promise.d.ts and lib.esnext.promise.d.ts files.
+// This allows users to control ES feature availability via tsconfig's "lib" option.
 
 interface Navigator {
   readonly userAgent: string;

@@ -623,14 +623,20 @@ describe("https.request agent TLS options inheritance", () => {
 
         const error = await promise;
         // Should get a certificate error (self-signed cert not trusted)
-        if (!(error.message.includes("self-signed") || error.message.includes("SELF_SIGNED") || error.message.includes("certificate") || error.message.includes("unable to verify"))) {
+        if (
+          !(
+            error.message.includes("self-signed") ||
+            error.message.includes("SELF_SIGNED") ||
+            error.message.includes("certificate") ||
+            error.message.includes("unable to verify")
+          )
+        ) {
           throw new Error(`Expected certificate error, got: ${error.message}`);
         }
       } finally {
         server.close();
       }
     });
-
   });
 });
 

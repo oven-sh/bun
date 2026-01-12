@@ -157,7 +157,7 @@ pub fn spawnMaybeSync(
     var terminal_info: ?Terminal.CreateResult = null;
     var existing_terminal: ?*Terminal = null; // Existing terminal passed by user
     var terminal_js_value: jsc.JSValue = .zero;
-    var sandbox: bun.spawn.Sandbox = .{};
+    var sandbox: bun.spawn.SpawnOptions.Sandbox = .{};
     defer {
         if (abort_signal) |signal| {
             signal.unref();

@@ -95,7 +95,7 @@ pub const BunSpawn = struct {
         pty_slave_fd: i32 = -1,
         flags: u16 = 0,
         reset_signals: bool = false,
-        sandbox: PosixSpawn.Sandbox = .{},
+        sandbox: bun.spawn.SpawnOptions.Sandbox = .{},
 
         pub fn init() !Attr {
             return Attr{};
@@ -120,56 +120,6 @@ pub const BunSpawn = struct {
 
 // mostly taken from zig's posix_spawn.zig
 pub const PosixSpawn = struct {
-    /// Sandbox configuration for process spawning.
-    /// Contains platform-specific sandboxing options for both Linux (seccomp) and macOS (seatbelt).
-    pub const Sandbox = struct {
-        /// Linux sandbox options.
-        linux: Linux = .{},
-        /// macOS sandbox options.
-        darwin: Darwin = .{},
-
-        pub const Linux = struct {
-            /// Seccomp BPF filter bytecode.
-            /// Must be a multiple of 8 bytes (sizeof(struct sock_filter)).
-            seccomp_filter: ?[]const u8 = null,
-            /// Seccomp filter flags (SECCOMP_FILTER_FLAG_*).
-            /// Only used when seccomp_filter is set.
-            seccomp_flags: u32 = 0,
-        };
-
-        pub const Darwin = struct {
-            /// Sandbox profile (SBPL string or named profile).
-            /// Applied after fork() but before exec() using sandbox_init().
-            profile: ?[:0]const u8 = null,
-            /// Sandbox flags: 0 = inline SBPL string, 1 = named profile from /usr/share/sandbox
-            flags: u64 = 0,
-            /// Sandbox parameters: array of key-value pairs for the param() function in SBPL.
-            /// Format: ["KEY1", "VALUE1", "KEY2", "VALUE2", ..., null]
-            parameters: ?[*:null]const ?[*:0]const u8 = null,
-        };
-
-        /// C-compatible layout for FFI with posix_spawn_bun.
-        pub const Extern = extern struct {
-            linux_seccomp_filter: ?[*]const u8 = null,
-            linux_seccomp_filter_len: usize = 0,
-            linux_seccomp_flags: u32 = 0,
-            darwin_profile: ?[*:0]const u8 = null,
-            darwin_flags: u64 = 0,
-            darwin_parameters: ?[*:null]const ?[*:0]const u8 = null,
-        };
-
-        pub fn toExtern(self: Sandbox) Extern {
-            return .{
-                .linux_seccomp_filter = if (self.linux.seccomp_filter) |s| s.ptr else null,
-                .linux_seccomp_filter_len = if (self.linux.seccomp_filter) |s| s.len else 0,
-                .linux_seccomp_flags = self.linux.seccomp_flags,
-                .darwin_profile = if (self.darwin.profile) |s| s.ptr else null,
-                .darwin_flags = self.darwin.flags,
-                .darwin_parameters = self.darwin.parameters,
-            };
-        }
-    };
-
     pub const WaitPidResult = struct {
         pid: pid_t,
         status: u32,
@@ -321,7 +271,7 @@ pub const PosixSpawn = struct {
         detached: bool = false,
         actions: ActionsList = .{},
         pty_slave_fd: i32 = -1,
-        sandbox: Sandbox.Extern = .{},
+        sandbox: SpawnOptions.Sandbox.Extern = .{},
 
         const ActionsList = extern struct {
             ptr: ?[*]const BunSpawn.Action = null,
@@ -376,7 +326,7 @@ pub const PosixSpawn = struct {
     ) Maybe(pid_t) {
         const pty_slave_fd = if (attr) |a| a.pty_slave_fd else -1;
         const detached = if (attr) |a| a.detached else false;
-        const sandbox = if (attr) |a| a.sandbox else Sandbox{};
+        const sandbox = if (attr) |a| a.sandbox else SpawnOptions.Sandbox{};
 
         // Use posix_spawn_bun when:
         // - Linux: always (uses vfork which is fast and safe)

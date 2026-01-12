@@ -65,9 +65,8 @@ pub const PermissionChecker = struct {
         switch (state) {
             .granted, .granted_partial => return, // OK
             .prompt, .denied, .denied_partial => {
-                // Note: prompts are disabled for now (no_prompt is always true).
-                // When interactive prompts are implemented, .prompt case should
-                // check self.perms.no_prompt and potentially prompt the user.
+                // In secure mode without explicit permission, access is denied.
+                // The .prompt state is treated as denied (no interactive prompts).
                 return self.throwPermissionDenied(kind, resource);
             },
         }

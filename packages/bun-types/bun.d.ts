@@ -6975,18 +6975,20 @@ declare module "bun" {
 
   /**
    * Compression format for archive output.
-   * - `"gzip"` - Compress with gzip
-   * - `true` - Same as `"gzip"`
-   * - `false` - Explicitly disable compression (no compression)
-   * - `undefined` - No compression (default behavior when omitted)
+   * Currently only `"gzip"` is supported.
    */
   type ArchiveCompression = "gzip";
 
   /**
    * Options for creating an Archive instance.
    *
+   * By default, archives are not compressed. Use `{ compress: "gzip" }` to enable compression.
+   *
    * @example
    * ```ts
+   * // No compression (default)
+   * new Bun.Archive(data);
+   *
    * // Enable gzip with default level (6)
    * new Bun.Archive(data, { compress: "gzip" });
    *
@@ -6994,27 +6996,23 @@ declare module "bun" {
    * new Bun.Archive(data, { compress: "gzip", level: 9 });
    * ```
    */
-  type ArchiveOptions =
-    | {
-        /**
-         * Compression algorithm to use.
-         * Currently only "gzip" is supported.
-         */
-        compress: "gzip";
-        /**
-         * Compression level (1-12).
-         * - 1: Fastest compression, lowest ratio
-         * - 6: Default balance of speed and ratio
-         * - 12: Best compression ratio, slowest
-         *
-         * @default 6
-         */
-        level?: number;
-      }
-    | {
-        compress?: never;
-        level?: never;
-      };
+  interface ArchiveOptions {
+    /**
+     * Compression algorithm to use.
+     * Currently only "gzip" is supported.
+     * If not specified, no compression is applied.
+     */
+    compress?: ArchiveCompression;
+    /**
+     * Compression level (1-12). Only applies when `compress` is set.
+     * - 1: Fastest compression, lowest ratio
+     * - 6: Default balance of speed and ratio
+     * - 12: Best compression ratio, slowest
+     *
+     * @default 6
+     */
+    level?: number;
+  }
 
   /**
    * Options for extracting archive contents.
@@ -7104,7 +7102,7 @@ declare module "bun" {
    * await Bun.Archive.write("bundle.tar.gz", {
    *   "src/index.ts": sourceCode,
    *   "package.json": packageJson,
-   * }, "gzip");
+   * }, { compress: "gzip" });
    * ```
    */
   export class Archive {
@@ -7192,7 +7190,7 @@ declare module "bun" {
      * @example
      * **Extract all entries:**
      * ```ts
-     * const archive = Bun.Archive.from(tarballBytes);
+     * const archive = new Bun.Archive(tarballBytes);
      * const count = await archive.extract("./extracted");
      * console.log(`Extracted ${count} entries`);
      * ```
@@ -7236,7 +7234,7 @@ declare module "bun" {
      * @example
      * **Get gzipped tarball as Blob:**
      * ```ts
-     * const archive = new Bun.Archive(data, { gzip: true });
+     * const archive = new Bun.Archive(data, { compress: "gzip" });
      * const gzippedBlob = await archive.blob();
      * ```
      */
@@ -7259,7 +7257,7 @@ declare module "bun" {
      * @example
      * **Get gzipped tarball bytes:**
      * ```ts
-     * const archive = new Bun.Archive(data, { gzip: true });
+     * const archive = new Bun.Archive(data, { compress: "gzip" });
      * const gzippedBytes = await archive.bytes();
      * ```
      */

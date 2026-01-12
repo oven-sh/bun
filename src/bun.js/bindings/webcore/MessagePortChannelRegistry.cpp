@@ -32,9 +32,6 @@
 #include <wtf/CompletionHandler.h>
 #include <wtf/MainThread.h>
 
-// ASSERT(isMainThread()) is used alot here, and I think it may be required, but i'm not 100% sure.
-// we totally are calling these off the main thread in many cases in Bun, so ........
-
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(MessagePortChannelRegistry);
@@ -43,6 +40,7 @@ MessagePortChannelRegistry::MessagePortChannelRegistry() = default;
 
 MessagePortChannelRegistry::~MessagePortChannelRegistry()
 {
+    Locker locker { m_openChannelsLock };
     ASSERT(m_openChannels.isEmpty());
 }
 
@@ -56,7 +54,7 @@ void MessagePortChannelRegistry::didCreateMessagePortChannel(const MessagePortId
 
 void MessagePortChannelRegistry::messagePortChannelCreated(MessagePortChannel& channel)
 {
-    // ASSERT(isMainThread());
+    Locker locker { m_openChannelsLock };
 
     auto result = m_openChannels.add(channel.port1(), channel);
     ASSERT_UNUSED(result, result.isNewEntry);
@@ -67,7 +65,7 @@ void MessagePortChannelRegistry::messagePortChannelCreated(MessagePortChannel& c
 
 void MessagePortChannelRegistry::messagePortChannelDestroyed(MessagePortChannel& channel)
 {
-    // ASSERT(isMainThread());
+    Locker locker { m_openChannelsLock };
 
     ASSERT(m_openChannels.get(channel.port1()) == &channel);
     ASSERT(m_openChannels.get(channel.port2()) == &channel);
@@ -78,12 +76,16 @@ void MessagePortChannelRegistry::messagePortChannelDestroyed(MessagePortChannel&
     // LOG(MessagePorts, "Registry: After removing channel %s there are %u channels left in the registry:", channel.logString().utf8().data(), m_openChannels.size());
 }
 
+RefPtr<MessagePortChannel> MessagePortChannelRegistry::getChannelForPort(const MessagePortIdentifier& port)
+{
+    Locker locker { m_openChannelsLock };
+    return m_openChannels.get(port);
+}
+
 void MessagePortChannelRegistry::didEntangleLocalToRemote(const MessagePortIdentifier& local, const MessagePortIdentifier& remote, ProcessIdentifier process)
 {
-    // ASSERT(isMainThread());
-
     // The channel might be gone if the remote side was closed.
-    RefPtr channel = m_openChannels.get(local);
+    RefPtr channel = getChannelForPort(local);
     if (!channel)
         return;
 
@@ -94,20 +96,17 @@ void MessagePortChannelRegistry::didEntangleLocalToRemote(const MessagePortIdent
 
 void MessagePortChannelRegistry::didDisentangleMessagePort(const MessagePortIdentifier& port)
 {
-    // ASSERT(isMainThread());
-
     // The channel might be gone if the remote side was closed.
-    if (RefPtr channel = m_openChannels.get(port))
+    if (RefPtr channel = getChannelForPort(port))
         channel->disentanglePort(port);
 }
 
 void MessagePortChannelRegistry::didCloseMessagePort(const MessagePortIdentifier& port)
 {
-    // ASSERT(isMainThread());
-
     // LOG(MessagePorts, "Registry: MessagePort %s closed in registry", port.logString().utf8().data());
 
-    RefPtr channel = m_openChannels.get(port);
+    // The channel might be gone if the remote side was closed.
+    RefPtr channel = getChannelForPort(port);
     if (!channel)
         return;
 
@@ -124,12 +123,10 @@ void MessagePortChannelRegistry::didCloseMessagePort(const MessagePortIdentifier
 
 bool MessagePortChannelRegistry::didPostMessageToRemote(MessageWithMessagePorts&& message, const MessagePortIdentifier& remoteTarget)
 {
-    // ASSERT(isMainThread());
-
     // LOG(MessagePorts, "Registry: Posting message to MessagePort %s in registry", remoteTarget.logString().utf8().data());
 
     // The channel might be gone if the remote side was closed.
-    RefPtr channel = m_openChannels.get(remoteTarget);
+    RefPtr channel = getChannelForPort(remoteTarget);
     if (!channel) {
         // LOG(MessagePorts, "Registry: Could not find MessagePortChannel for port %s; It was probably closed. Message will be dropped.", remoteTarget.logString().utf8().data());
         return false;
@@ -140,10 +137,8 @@ bool MessagePortChannelRegistry::didPostMessageToRemote(MessageWithMessagePorts&
 
 void MessagePortChannelRegistry::takeAllMessagesForPort(const MessagePortIdentifier& port, CompletionHandler<void(Vector<MessageWithMessagePorts>&&, CompletionHandler<void()>&&)>&& callback)
 {
-    // ASSERT(isMainThread());
-
     // The channel might be gone if the remote side was closed.
-    RefPtr channel = m_openChannels.get(port);
+    RefPtr channel = getChannelForPort(port);
     if (!channel) {
         callback({}, [] {});
         return;
@@ -154,23 +149,19 @@ void MessagePortChannelRegistry::takeAllMessagesForPort(const MessagePortIdentif
 
 std::optional<MessageWithMessagePorts> MessagePortChannelRegistry::tryTakeMessageForPort(const MessagePortIdentifier& port)
 {
-    // ASSERT(isMainThread());
-
     // LOG(MessagePorts, "Registry: Trying to take a message for MessagePort %s", port.logString().utf8().data());
 
     // The channel might be gone if the remote side was closed.
-    auto* channel = m_openChannels.get(port);
+    RefPtr channel = getChannelForPort(port);
     if (!channel)
         return std::nullopt;
 
     return channel->tryTakeMessageForPort(port);
 }
 
-MessagePortChannel* MessagePortChannelRegistry::existingChannelContainingPort(const MessagePortIdentifier& port)
+RefPtr<MessagePortChannel> MessagePortChannelRegistry::existingChannelContainingPort(const MessagePortIdentifier& port)
 {
-    // ASSERT(isMainThread());
-
-    return m_openChannels.get(port);
+    return getChannelForPort(port);
 }
 
 } // namespace WebCore

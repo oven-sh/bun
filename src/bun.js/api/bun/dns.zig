@@ -3637,11 +3637,11 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const bun = @import("bun");
-const c = bun.c;
 const Async = bun.Async;
 const Environment = bun.Environment;
 const Global = bun.Global;
 const Output = bun.Output;
+const c = bun.c;
 const c_ares = bun.c_ares;
 const default_allocator = bun.default_allocator;
 const strings = bun.strings;

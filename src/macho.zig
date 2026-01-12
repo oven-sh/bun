@@ -77,8 +77,8 @@ pub const MachoFile = struct {
                                     found_bun = true;
                                     original_fileoff = sect.offset;
                                     original_vmaddr = sect.addr;
-                                    original_data_end = original_fileoff + blob_alignment;
-                                    original_segsize = sect.size;
+                                    original_data_end = command.fileoff + command.filesize;
+                                    original_segsize = command.filesize;
                                     self.segment = command;
                                     self.section = sect.*;
 

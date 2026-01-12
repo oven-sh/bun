@@ -11,9 +11,9 @@ declare module "bun" {
      * If the file descriptor is not writable yet, the data is buffered.
      *
      * @param chunk The data to write
-     * @returns Number of bytes written
+     * @returns Number of bytes written or, if the write is pending, a Promise resolving to the number of bytes
      */
-    write(chunk: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer): number;
+    write(chunk: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer): number | Promise<number>;
     /**
      * Flush the internal buffer, committing the data to disk or the pipe.
      *
@@ -78,9 +78,9 @@ declare module "bun" {
      * If the network is not writable yet, the data is buffered.
      *
      * @param chunk The data to write
-     * @returns Number of bytes written
+     * @returns Number of bytes written or, if the write is pending, a Promise resolving to the number of bytes
      */
-    write(chunk: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer): number;
+    write(chunk: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer): number | Promise<number>;
     /**
      * Flush the internal buffer, committing the data to the network.
      *

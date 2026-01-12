@@ -431,6 +431,12 @@ fn drainEvents(this: *@This()) void {
             .async_http = http.*,
         });
         cloned.async_http.real = http;
+        // Clear stale queue pointers - the clone inherited http.next and http.task.node.next
+        // which may point to other AsyncHTTP structs that could be freed before the callback
+        // copies data back to the original. If not cleared, retrying a failed request would
+        // re-queue with stale pointers causing use-after-free.
+        cloned.async_http.next = null;
+        cloned.async_http.task.node.next = null;
         cloned.async_http.onStart();
         if (comptime Environment.allow_assert) {
             count += 1;

@@ -30,6 +30,7 @@
 #include <algorithm>
 #include <climits>
 #include <string_view>
+#include <span>
 #include <map>
 #include "MoveOnlyFunction.h"
 #include "ChunkedEncoding.h"
@@ -160,6 +161,13 @@ namespace uWS
         std::map<std::string, unsigned short, std::less<>> *currentParameterOffsets = nullptr;
 
     public:
+        /* Any data pipelined after the HTTP headers (before response).
+         * Used for Node.js compatibility: 'connect' and 'upgrade' events
+         * pass this as the 'head' Buffer parameter.
+         * WARNING: This points to data in the receive buffer and may be stack-allocated.
+         * Must be cloned before the request handler returns. */
+        std::span<const char> head;
+
         bool isAncient()
         {
             return ancientHttp;
@@ -883,6 +891,8 @@ namespace uWS
             /* If returned socket is not what we put in we need
              * to break here as we either have upgraded to
              * WebSockets or otherwise closed the socket. */
+            /* Store any remaining data as head for Node.js compat (connect/upgrade events) */
+            req->head = std::span<const char>(data, length);
             void *returnedUser = requestHandler(user, req);
             if (returnedUser != user) {
                 /* We are upgraded to WebSocket or otherwise broken */
@@ -928,9 +938,13 @@ namespace uWS
                     consumedTotal += emittable;
                 }
             } else if(isConnectRequest) {
-                // This only server to mark that the connect request read all headers
-                // and can starting emitting data
+                // This only serves to mark that the connect request read all headers
+                // and can start emitting data. Don't try to parse remaining data as HTTP -
+                // it's pipelined data that we've already captured in req->head.
                 remainingStreamingBytes = STATE_IS_CHUNKED;
+                // Mark remaining data as consumed and break - it's not HTTP
+                consumedTotal += length;
+                break;
             } else {
                 /* If we came here without a body; emit an empty data chunk to signal no data */
                 dataHandler(user, {}, true);

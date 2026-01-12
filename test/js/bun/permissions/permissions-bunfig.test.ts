@@ -12,7 +12,7 @@ no-prompt = true
 `,
         "test.ts": `
           try {
-            console.log("HOME:", process.env.HOME);
+            console.log("BUN_SECURE_VAR:", process.env.BUN_SECURE_VAR);
           } catch (e) {
             console.log("ERROR:", e.message);
             process.exit(1);
@@ -23,7 +23,7 @@ no-prompt = true
       await using proc = Bun.spawn({
         cmd: [bunExe(), "test.ts"],
         cwd: String(dir),
-        env: bunEnv,
+        env: { ...bunEnv, BUN_SECURE_VAR: "test_value" },
         stdout: "pipe",
         stderr: "pipe",
       });
@@ -42,21 +42,21 @@ secure = true
 allow-all = true
 `,
         "test.ts": `
-          console.log("HOME:", process.env.HOME);
+          console.log("BUN_ALLOW_ALL_VAR:", process.env.BUN_ALLOW_ALL_VAR);
         `,
       });
 
       await using proc = Bun.spawn({
         cmd: [bunExe(), "test.ts"],
         cwd: String(dir),
-        env: bunEnv,
+        env: { ...bunEnv, BUN_ALLOW_ALL_VAR: "allowed_value" },
         stdout: "pipe",
         stderr: "pipe",
       });
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect(stdout).toContain("HOME:");
+      expect(stdout).toContain("BUN_ALLOW_ALL_VAR: allowed_value");
       expect(exitCode).toBe(0);
     });
   });
@@ -331,7 +331,8 @@ allow-sys = ["hostname"]
       });
 
       // Get bun basename for allow-run using path.basename for cross-platform support
-      const bunBasename = require("node:path").basename(bunExe());
+      const nodePath = await import("node:path");
+      const bunBasename = nodePath.basename(bunExe());
 
       await Bun.write(
         `${String(dir)}/bunfig.toml`,
@@ -389,7 +390,7 @@ no-prompt = true
       using dir = tempDir("perm-cli-secure", {
         "test.ts": `
           try {
-            console.log("HOME:", process.env.HOME);
+            console.log("BUN_CLI_SECURE_VAR:", process.env.BUN_CLI_SECURE_VAR);
           } catch (e) {
             console.log("ERROR:", e.message);
             process.exit(1);
@@ -400,7 +401,7 @@ no-prompt = true
       await using proc = Bun.spawn({
         cmd: [bunExe(), "--secure", "--no-prompt", "test.ts"],
         cwd: String(dir),
-        env: bunEnv,
+        env: { ...bunEnv, BUN_CLI_SECURE_VAR: "test_value" },
         stdout: "pipe",
         stderr: "pipe",
       });

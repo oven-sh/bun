@@ -497,36 +497,7 @@ function ClientRequest(input, options, cb) {
           return;
         }
 
-        // Sort addresses: prefer global IPv6, then IPv4, then link-local IPv6.
-        // Link-local IPv6 (fe80::/10) addresses cannot route to global destinations,
-        // so we deprioritize them to avoid connection timeouts on VPN networks.
-        // See: https://github.com/oven-sh/bun/issues/25619
-        const isLinkLocalIPv6 = (addr: string) => {
-          // fe80::/10 covers fe80:: through febf:: (first 10 bits are 1111111010)
-          // Check if address starts with fe8, fe9, fea, or feb (case-insensitive)
-          if (addr.length < 4) return false;
-          const c0 = addr.charCodeAt(0) | 0x20; // lowercase
-          const c1 = addr.charCodeAt(1) | 0x20;
-          const c2 = addr.charCodeAt(2) | 0x20;
-          const c3 = addr.charCodeAt(3);
-          // Check for 'fe[89ab]:'
-          return (
-            c0 === 0x66 &&
-            c1 === 0x65 && // 'fe'
-            (c2 === 0x38 || c2 === 0x39 || c2 === 0x61 || c2 === 0x62) && // '8', '9', 'a', 'b'
-            ((c3 >= 0x30 && c3 <= 0x39) || ((c3 | 0x20) >= 0x61 && (c3 | 0x20) <= 0x66)) && // hex digit
-            addr.charCodeAt(4) === 0x3a
-          ); // ':'
-        };
-        let candidates = results.sort((a, b) => {
-          const aIsLinkLocal = a.family === 6 && isLinkLocalIPv6(a.address);
-          const bIsLinkLocal = b.family === 6 && isLinkLocalIPv6(b.address);
-          // Link-local addresses should come last
-          if (aIsLinkLocal && !bIsLinkLocal) return 1;
-          if (!aIsLinkLocal && bIsLinkLocal) return -1;
-          // Among non-link-local addresses, prefer IPv6 over IPv4
-          return b.family - a.family;
-        });
+        let candidates = results.sort((a, b) => b.family - a.family); // prefer IPv6
 
         const fail = (message, name, code, syscall) => {
           const error = new Error(message);

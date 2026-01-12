@@ -2,17 +2,11 @@
 pub fn parse(input: []const u8) ?f64 {
     if (input.len == 0 or input.len > 100) return null;
 
-    var i: usize = 0;
-
-    next: switch (input[i]) {
-        '-', '.', '0'...'9' => {
-            i += 1;
-            if (i < input.len) continue :next input[i];
-            break :next;
-        },
-        ' ', 'a'...'z', 'A'...'Z' => break :next,
+    const i: usize = for (input, 0..) |c, j| switch (c) {
+        '-', '.', '0'...'9' => {},
+        ' ', 'a'...'z', 'A'...'Z' => break j,
         else => return null,
-    }
+    } else input.len;
 
     const value = std.fmt.parseFloat(f64, input[0..i]) catch return null;
 
@@ -88,7 +82,7 @@ const MultiplierMap = bun.ComptimeStringMap(f64, .{
 // JavaScript's Math.round uses "round half toward +∞": ties round toward positive infinity (2.5→3, -2.5→-2)
 fn jsMathRound(x: f64) i64 {
     const i: f64 = @ceil(x);
-    if ((i - 0.5) > x) return @intFromFloat(i - 1.0);
+    if ((i - x) > 0.5) return @intFromFloat(i - 1.0);
     return @intFromFloat(i);
 }
 

@@ -450,9 +450,9 @@ namespace Bun {
 
 ## `Bun.ms`
 
-Built-in alternative to the [`ms`](https://npmjs.com/package/ms) package. Convert between human-readable time strings and milliseconds. Automatically optimized at compile-time when bundling.
+Built-in alternative to the [`ms`](https://npmjs.com/package/ms) package. Convert between human-readable time strings and milliseconds. When bundling, calls with constant arguments are evaluated at compile-time and replaced with the result.
 
-**Convert to Milliseconds**
+### Convert to Milliseconds
 
 ```ts
 Bun.ms("2 days"); // 172800000
@@ -469,7 +469,7 @@ Bun.ms("-1h"); // -3600000
 Bun.ms("-200"); // -200
 ```
 
-**Convert from Milliseconds**
+### Convert from Milliseconds
 
 ```ts
 Bun.ms(60000); // "1m"
@@ -483,7 +483,7 @@ Bun.ms(-3 * 60000, { long: true }); // "-3 minutes"
 Bun.ms(Bun.ms("10 hours"), { long: true }); // "10 hours"
 ```
 
-**Bundler Support**
+### Bundler Support
 
 ```sh
 $ cat ./example.ts

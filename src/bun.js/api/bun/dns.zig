@@ -1444,17 +1444,6 @@ pub const internal = struct {
         return addr[0] == 0xfe and (addr[1] & 0xc0) == 0x80;
     }
 
-    /// Check if an IPv6 address is a Unique Local Address (fc00::/7).
-    fn isULAIPv6Addr(addr: *const [16]u8) bool {
-        return (addr[0] & 0xfe) == 0xfc;
-    }
-
-    /// Check if an IPv6 address is loopback (::1).
-    fn isLoopbackIPv6Addr(addr: *const [16]u8) bool {
-        const zero_part = @as(*const u128, @ptrCast(addr)).*;
-        return zero_part == @as(u128, 1) << 120; // ::1 in big-endian
-    }
-
     /// Check if an IPv6 address is global scope (routable on the internet).
     /// Global addresses are in the 2000::/3 range (first 3 bits = 001).
     fn isGlobalIPv6Addr(addr: *const [16]u8) bool {
@@ -1602,6 +1591,7 @@ pub const internal = struct {
                     if (results[j].info.family == want) {
                         std.mem.swap(ResultEntry, &results[idx], &results[j]);
                         want = if (want == std.c.AF.INET6) std.c.AF.INET else std.c.AF.INET6;
+                        break;
                     }
                 } else {
                     // the rest of the non-link-local list is all one address family

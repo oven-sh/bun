@@ -1455,8 +1455,9 @@ pub const internal = struct {
     /// This determines whether we should prefer IPv6 destinations.
     /// Returns true if there's at least one non-link-local, non-loopback IPv6 address.
     const IPv6SourceAvailability = struct {
-        var cached_result: enum { unknown, available, unavailable } = .unknown;
-        var cache_timestamp: i64 = 0;
+        const CacheState = enum(u8) { unknown = 0, available = 1, unavailable = 2 };
+        var cached_result: std.atomic.Value(u8) = std.atomic.Value(u8).init(@intFromEnum(CacheState.unknown));
+        var cache_timestamp: std.atomic.Value(i64) = std.atomic.Value(i64).init(0);
         const CACHE_TTL_MS: i64 = 30000; // 30 seconds
 
         fn hasGlobalIPv6Source() bool {
@@ -1466,8 +1467,10 @@ pub const internal = struct {
             }
 
             const now = std.time.milliTimestamp();
-            if (cached_result != .unknown and (now - cache_timestamp) < CACHE_TTL_MS) {
-                return cached_result == .available;
+            const current_result: CacheState = @enumFromInt(cached_result.load(.acquire));
+            const current_timestamp = cache_timestamp.load(.acquire);
+            if (current_result != .unknown and (now - current_timestamp) < CACHE_TTL_MS) {
+                return current_result == .available;
             }
 
             // Check network interfaces for global IPv6 addresses
@@ -1503,14 +1506,15 @@ pub const internal = struct {
                 }
             }
 
-            cached_result = if (has_global_ipv6) .available else .unavailable;
-            cache_timestamp = now;
+            const new_result: CacheState = if (has_global_ipv6) .available else .unavailable;
+            cached_result.store(@intFromEnum(new_result), .release);
+            cache_timestamp.store(now, .release);
             return has_global_ipv6;
         }
 
         /// Invalidate the cache (e.g., when network changes are detected)
         pub fn invalidateCache() void {
-            cached_result = .unknown;
+            cached_result.store(@intFromEnum(CacheState.unknown), .release);
         }
     };
 

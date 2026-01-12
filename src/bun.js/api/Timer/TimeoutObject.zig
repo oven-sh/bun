@@ -118,11 +118,12 @@ pub fn set_repeat(_: *Self, thisValue: JSValue, globalThis: *JSGlobalObject, val
     Self.js.repeatSetCached(thisValue, globalThis, value);
 }
 
-pub fn get_idleStart(_: *Self, _: *JSGlobalObject) JSValue {
-    // Return current monotonic timestamp in milliseconds
-    // This mimics Node.js's _idleStart which is the libuv timestamp when the timer was created
-    // With cache: true, this is called once and the result is cached
-    return .jsNumber(bun.getRoughTickCountMs(.allow_mocked_time));
+pub fn get_idleStart(_: *Self, thisValue: JSValue, _: *JSGlobalObject) JSValue {
+    return Self.js.idleStartGetCached(thisValue).?;
+}
+
+pub fn set_idleStart(_: *Self, thisValue: JSValue, globalThis: *JSGlobalObject, value: JSValue) void {
+    Self.js.idleStartSetCached(thisValue, globalThis, value);
 }
 
 pub fn dispose(self: *Self, globalThis: *JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {

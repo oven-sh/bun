@@ -1896,6 +1896,8 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                                 }
                                 this.ref();
                                 byte_stream.pipe = jsc.WebCore.Pipe.Wrap(@This(), onPipe).init(this);
+                                // Deinit the old reference before creating a new one to avoid leaking the Strong.Impl
+                                this.response_body_readable_stream_ref.deinit();
                                 this.response_body_readable_stream_ref = jsc.WebCore.ReadableStream.Strong.init(stream, globalThis);
 
                                 this.byte_stream = byte_stream;

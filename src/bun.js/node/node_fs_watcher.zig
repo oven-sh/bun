@@ -17,14 +17,14 @@ pub const FSWatcher = struct {
     path_watcher: ?*PathWatcher.PathWatcher,
     poll_ref: Async.KeepAlive = .{},
     globalThis: *jsc.JSGlobalObject,
-    js_this: jsc.JSValue,
+    this_value: jsc.JSRef = jsc.JSRef.empty(),
     encoding: jsc.Node.Encoding,
 
     /// User can call close and pre-detach so we need to track this
     closed: bool,
 
-    /// While it's not closed, the pending activity
-    pending_activity_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
+    /// Task reference count - protected by mutex
+    task_count: u32 = 0,
     current_task: FSWatchTask = undefined,
 
     pub fn eventLoop(this: FSWatcher) *EventLoop {
@@ -41,7 +41,10 @@ pub const FSWatcher = struct {
         bun.destroy(this);
     }
 
-    pub const finalize = deinit;
+    pub fn finalize(this: *FSWatcher) void {
+        this.this_value.finalize();
+        this.deinit();
+    }
 
     pub const FSWatchTask = if (Environment.isWindows) FSWatchTaskWindows else FSWatchTaskPosix;
     pub const FSWatchTaskPosix = struct {
@@ -420,12 +423,18 @@ pub const FSWatcher = struct {
     pub fn initJS(this: *FSWatcher, listener: jsc.JSValue) void {
         if (this.persistent) {
             this.poll_ref.ref(this.ctx);
-            _ = this.pending_activity_count.fetchAdd(1, .monotonic);
         }
 
         const js_this = this.toJS(this.globalThis);
         js_this.ensureStillAlive();
-        this.js_this = js_this;
+        this.this_value.setWeak(js_this);
+
+        // Set initial task count to 1 (representing the watcher being active)
+        this.mutex.lock();
+        this.task_count = 1;
+        this.updateHasPendingActivityLocked();
+        this.mutex.unlock();
+
         js.listenerSetCached(js_this, this.globalThis, listener);
 
         if (this.signal) |s| {
@@ -454,13 +463,13 @@ pub const FSWatcher = struct {
 
     pub fn emitAbort(this: *FSWatcher, err: jsc.JSValue) void {
         if (this.closed) return;
-        _ = this.pending_activity_count.fetchAdd(1, .monotonic);
+        _ = this.refTask();
         defer this.close();
         defer this.unrefTask();
 
         err.ensureStillAlive();
-        if (this.js_this != .zero) {
-            const js_this = this.js_this;
+        const js_this = this.this_value.tryGet() orelse .zero;
+        if (js_this != .zero) {
             js_this.ensureStillAlive();
             if (js.listenerGetCached(js_this)) |listener| {
                 listener.ensureStillAlive();
@@ -479,8 +488,8 @@ pub const FSWatcher = struct {
         if (this.closed) return;
         defer this.close();
 
-        if (this.js_this != .zero) {
-            const js_this = this.js_this;
+        const js_this = this.this_value.tryGet() orelse .zero;
+        if (js_this != .zero) {
             js_this.ensureStillAlive();
             if (js.listenerGetCached(js_this)) |listener| {
                 listener.ensureStillAlive();
@@ -498,7 +507,7 @@ pub const FSWatcher = struct {
     }
 
     pub fn emitWithFilename(this: *FSWatcher, file_name: jsc.JSValue, comptime eventType: EventType) void {
-        const js_this = this.js_this;
+        const js_this = this.this_value.tryGet() orelse .zero;
         if (js_this == .zero) return;
         const listener = js.listenerGetCached(js_this) orelse return;
         emitJS(listener, this.globalThis, file_name, eventType);
@@ -506,7 +515,7 @@ pub const FSWatcher = struct {
 
     pub fn emit(this: *FSWatcher, file_name: string, comptime event_type: EventType) void {
         bun.assert(event_type != .@"error");
-        const js_this = this.js_this;
+        const js_this = this.this_value.tryGet() orelse .zero;
         if (js_this == .zero) return;
         const listener = js.listenerGetCached(js_this) orelse return;
         const globalObject = this.globalThis;
@@ -562,30 +571,46 @@ pub const FSWatcher = struct {
         this.mutex.lock();
         defer this.mutex.unlock();
         if (this.closed) return false;
-        _ = this.pending_activity_count.fetchAdd(1, .monotonic);
-
+        this.task_count += 1;
+        this.updateHasPendingActivityLocked();
         return true;
     }
 
-    pub fn hasPendingActivity(this: *FSWatcher) bool {
-        return this.pending_activity_count.load(.acquire) > 0;
+    pub fn computeHasPendingActivity(this: *const FSWatcher) bool {
+        return this.task_count > 0;
+    }
+
+    pub fn updateHasPendingActivity(this: *FSWatcher) void {
+        this.mutex.lock();
+        defer this.mutex.unlock();
+        this.updateHasPendingActivityLocked();
+    }
+
+    fn updateHasPendingActivityLocked(this: *FSWatcher) void {
+        const has_pending = this.computeHasPendingActivity();
+        if (has_pending) {
+            this.this_value.upgrade(this.globalThis);
+        } else {
+            this.this_value.downgrade();
+        }
     }
 
     pub fn unrefTask(this: *FSWatcher) void {
         this.mutex.lock();
         defer this.mutex.unlock();
-        // JSC eventually will free it
-        _ = this.pending_activity_count.fetchSub(1, .monotonic);
+        if (this.task_count == 0) return; // Already at 0, nothing to unref
+        this.task_count -= 1;
+        this.updateHasPendingActivityLocked();
     }
 
     pub fn close(this: *FSWatcher) void {
         this.mutex.lock();
         if (!this.closed) {
             this.closed = true;
-            const js_this = this.js_this;
             this.mutex.unlock();
             this.detach();
 
+            const js_this = this.this_value.tryGet() orelse .zero;
             if (js_this != .zero) {
                 if (FSWatcher.js.listenerGetCached(js_this)) |listener| {
                     _ = this.refTask();
@@ -617,8 +642,6 @@ pub const FSWatcher = struct {
             this.signal = null;
             signal.detach(this);
         }
-
-        this.js_this = .zero;
     }
 
     pub fn doClose(this: *FSWatcher, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
@@ -669,9 +692,10 @@ pub const FSWatcher = struct {
             .persistent = args.persistent,
             .path_watcher = null,
             .globalThis = args.global_this,
-            .js_this = .zero,
+            .this_value = jsc.JSRef.empty(),
             .encoding = args.encoding,
             .closed = false,
+            .task_count = 0,
             .verbose = args.verbose,
         });
         ctx.current_task.ctx = ctx;

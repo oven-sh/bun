@@ -36,26 +36,13 @@ pub const Kind = enum(u8) {
     }
 
     pub fn toFlagName(self: Kind) []const u8 {
-        return switch (self) {
-            .read => "read",
-            .write => "write",
-            .net => "net",
-            .env => "env",
-            .sys => "sys",
-            .run => "run",
-            .ffi => "ffi",
-        };
+        return @tagName(self);
     }
 
     pub fn toName(self: Kind) []const u8 {
         return switch (self) {
-            .read => "read",
-            .write => "write",
             .net => "network",
-            .env => "env",
-            .sys => "sys",
-            .run => "run",
-            .ffi => "ffi",
+            else => @tagName(self),
         };
     }
 
@@ -481,25 +468,17 @@ fn parsePortPatternString(port_str: []const u8, port_buf: *[16]u16) PortPattern 
 
     // Check for list (e.g., "80;443") - semicolon-separated to avoid conflict with CLI comma separator
     if (std.mem.indexOfScalar(u8, port_str, ';') != null) {
-        // Count ports
+        // Parse into caller-provided buffer (max 16 ports) in a single pass
         var count: usize = 0;
         var iter = std.mem.splitScalar(u8, port_str, ';');
-        while (iter.next()) |_| count += 1;
-
-        // Parse into caller-provided buffer (max 16 ports)
-        if (count <= 16) {
-            var i: usize = 0;
-            iter = std.mem.splitScalar(u8, port_str, ';');
-            while (iter.next()) |seg| {
-                const trimmed = std.mem.trim(u8, seg, " ");
-                // Fail closed on parse errors
-                port_buf[i] = std.fmt.parseInt(u16, trimmed, 10) catch return .none;
-                i += 1;
-            }
-            return .{ .list = port_buf[0..count] };
+        while (iter.next()) |seg| {
+            if (count >= 16) return .none; // Too many ports - fail closed
+            const trimmed = std.mem.trim(u8, seg, " ");
+            // Fail closed on parse errors
+            port_buf[count] = std.fmt.parseInt(u16, trimmed, 10) catch return .none;
+            count += 1;
         }
-        // Too many ports (>16) - fail closed
-        return .none;
+        return .{ .list = port_buf[0..count] };
     }
 
     // Single port - fail closed on parse errors

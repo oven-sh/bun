@@ -18,16 +18,21 @@ pub const Run = struct {
         bun.jsc.initialize(false);
         bun.analytics.Features.standalone_executable += 1;
 
-        const graph_ptr = try bun.default_allocator.create(bun.StandaloneModuleGraph);
-        graph_ptr.* = graph;
-        graph_ptr.set();
+        // Use the already-set graph from cli.zig, or create one if not set
+        const graph_ptr = bun.StandaloneModuleGraph.get() orelse brk: {
+            const ptr = try bun.default_allocator.create(bun.StandaloneModuleGraph);
+            ptr.* = graph;
+            ptr.set();
+            break :brk ptr;
+        };
 
         js_ast.Expr.Data.Store.create();
         js_ast.Stmt.Data.Store.create();
         const arena = Arena.init();
 
         // Load bunfig.toml unless disabled by compile flags
-        if (!ctx.debug.loaded_bunfig and !graph.flags.disable_autoload_bunfig) {
+        // Note: config loading with execArgv is handled earlier in cli.zig via loadConfig
+        if (!ctx.debug.loaded_bunfig and !graph_ptr.flags.disable_autoload_bunfig) {
             try bun.cli.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand);
         }
 

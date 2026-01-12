@@ -685,6 +685,11 @@ pub const Command = struct {
             if (try bun.StandaloneModuleGraph.fromExecutable(bun.default_allocator)) |graph| {
                 var offset_for_passthrough: usize = 0;
 
+                // Store graph globally so Arguments.loadConfig can check disable_autoload_bunfig
+                const graph_ptr = try bun.default_allocator.create(bun.StandaloneModuleGraph);
+                graph_ptr.* = graph;
+                graph_ptr.set();
+
                 const ctx: *ContextData = brk: {
                     if (graph.compile_exec_argv.len > 0) {
                         const original_argv_len = bun.argv.len;

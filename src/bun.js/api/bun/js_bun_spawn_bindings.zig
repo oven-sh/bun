@@ -1263,6 +1263,22 @@ pub fn appendEnvpFromJS(globalThis: *jsc.JSGlobalObject, object: *jsc.JSObject, 
 const log = Output.scoped(.Subprocess, .hidden);
 extern "C" const BUN_DEFAULT_PATH_FOR_SPAWN: [*:0]const u8;
 
+/// Seccomp filter flags for Linux sandboxing.
+/// These correspond to SECCOMP_FILTER_FLAG_* constants.
+pub const SeccompFlag = enum(u32) {
+    LOG = 0x2, // SECCOMP_FILTER_FLAG_LOG
+    SPEC_ALLOW = 0x4, // SECCOMP_FILTER_FLAG_SPEC_ALLOW
+    // NEW_LISTENER = 0x8, // SECCOMP_FILTER_FLAG_NEW_LISTENER
+
+    const Map = bun.ComptimeStringMap(SeccompFlag, .{
+        .{ "LOG", .LOG },
+        .{ "SPEC_ALLOW", .SPEC_ALLOW },
+        // .{ "NEW_LISTENER", .NEW_LISTENER },
+    });
+
+    pub const fromJS = Map.fromJS;
+};
+
 const IPC = @import("../../ipc.zig");
 const Terminal = @import("./Terminal.zig");
 const std = @import("std");
@@ -1290,19 +1306,3 @@ const Writable = Subprocess.Writable;
 const Process = bun.spawn.Process;
 const Rusage = bun.spawn.Rusage;
 const Stdio = bun.spawn.Stdio;
-
-/// Seccomp filter flags for Linux sandboxing.
-/// These correspond to SECCOMP_FILTER_FLAG_* constants.
-pub const SeccompFlag = enum(u32) {
-    LOG = 0x2, // SECCOMP_FILTER_FLAG_LOG
-    SPEC_ALLOW = 0x4, // SECCOMP_FILTER_FLAG_SPEC_ALLOW
-    // NEW_LISTENER = 0x8, // SECCOMP_FILTER_FLAG_NEW_LISTENER
-
-    const Map = bun.ComptimeStringMap(SeccompFlag, .{
-        .{ "LOG", .LOG },
-        .{ "SPEC_ALLOW", .SPEC_ALLOW },
-        // .{ "NEW_LISTENER", .NEW_LISTENER },
-    });
-
-    pub const fromJS = Map.fromJS;
-};

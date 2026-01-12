@@ -417,6 +417,9 @@ describe("flags", () => {
     expect(out).not.toContain("Packed size:");
     expect(out).not.toContain("bun pack v");
 
+    // Scripts do not handle gracefully newlines and expect a "single line"
+    expect(out).not.toStartWith("\n");
+
     // Should only contain the tarball name
     expect(out.trim()).toBe("pack-quiet-test-1.1.1.tgz");
 

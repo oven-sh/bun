@@ -83,19 +83,15 @@ fn countFilesInArchive(data: []const u8) u32 {
 /// Options:
 /// - compress: "gzip" - Enable gzip compression
 /// - level: number (1-12) - Compression level (default 6)
-/// When no options are provided, defaults to gzip level 6 compression
+/// When no options are provided, no compression is applied
 pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!*Archive {
     const data_arg, const options_arg = callframe.argumentsAsArray(2);
     if (data_arg == .zero) {
         return globalThis.throwInvalidArguments("new Archive() requires an argument", .{});
     }
 
-    // Parse compression options, defaulting to gzip level 6 when no options provided
-    const parsed_compress = try parseCompressionOptions(globalThis, options_arg);
-    const compress: Compression = if (parsed_compress == .none and options_arg.isUndefinedOrNull())
-        .{ .gzip = .{ .level = 6 } }
-    else
-        parsed_compress;
+    // Parse compression options
+    const compress = try parseCompressionOptions(globalThis, options_arg);
 
     // For Blob/Archive, ref the existing store (zero-copy)
     if (data_arg.as(jsc.WebCore.Blob)) |blob_ptr| {

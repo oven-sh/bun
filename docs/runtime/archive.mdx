@@ -43,10 +43,10 @@ for (const [path, file] of files) {
 
 ## Creating Archives
 
-Use `new Bun.Archive()` to create an archive from an object where keys are file paths and values are file contents. By default, archives are gzip-compressed at level 6:
+Use `new Bun.Archive()` to create an archive from an object where keys are file paths and values are file contents. By default, archives are uncompressed:
 
 ```ts
-// Creates a gzip-compressed archive (default)
+// Creates an uncompressed tar archive (default)
 const archive = new Bun.Archive({
   "README.md": "# My Project",
   "src/index.ts": "console.log('Hello');",
@@ -78,19 +78,19 @@ const archive = new Bun.Archive({
 Use `Bun.write()` to write an archive to disk:
 
 ```ts
-// Write gzipped tar (default - no options needed)
+// Write uncompressed tar (default)
 const archive = new Bun.Archive({
   "file1.txt": "content1",
   "file2.txt": "content2",
 });
-await Bun.write("output.tar.gz", archive);
+await Bun.write("output.tar", archive);
 
-// Write uncompressed tar (pass empty options)
-const uncompressed = new Bun.Archive(
+// Write gzipped tar
+const compressed = new Bun.Archive(
   { "src/index.ts": "console.log('Hello');" },
-  {}, // Empty options = no compression
+  { compress: "gzip" },
 );
-await Bun.write("output.tar", uncompressed);
+await Bun.write("output.tar.gz", compressed);
 ```
 
 ### Getting Archive Bytes
@@ -303,32 +303,28 @@ See [Bun.Glob](/docs/api/glob) for the full glob syntax including escaping and a
 
 ## Compression
 
-Bun.Archive uses gzip compression by default. When no options are provided, archives are compressed at level 6:
+Bun.Archive creates uncompressed tar archives by default. Use `{ compress: "gzip" }` to enable gzip compression:
 
 ```ts
-// Default: gzip level 6 compression
+// Default: uncompressed tar
 const archive = new Bun.Archive({ "hello.txt": "Hello, World!" });
 
 // Reading: automatically detects gzip
 const gzippedTarball = await Bun.file("archive.tar.gz").bytes();
 const readArchive = new Bun.Archive(gzippedTarball);
 
-// Explicit gzip with custom level (1-12)
-const maxCompression = new Bun.Archive({ "hello.txt": "Hello, World!" }, { compress: "gzip", level: 12 });
+// Enable gzip compression
+const compressed = new Bun.Archive({ "hello.txt": "Hello, World!" }, { compress: "gzip" });
 
-// No compression (pass empty options)
-const uncompressed = new Bun.Archive(
-  { "hello.txt": "Hello, World!" },
-  {}, // Empty options = uncompressed tar
-);
+// Gzip with custom level (1-12)
+const maxCompression = new Bun.Archive({ "hello.txt": "Hello, World!" }, { compress: "gzip", level: 12 });
 ```
 
 The options accept:
 
-- No options - Default gzip compression at level 6
-- `{}` (empty object) - No compression (uncompressed tar)
-- `compress: "gzip"` - Enable gzip compression
-- `level: number` - Compression level 1-12 (1 = fastest, 12 = smallest, default 6)
+- No options or `undefined` - Uncompressed tar (default)
+- `{ compress: "gzip" }` - Enable gzip compression at level 6
+- `{ compress: "gzip", level: number }` - Gzip with custom level 1-12 (1 = fastest, 12 = smallest)
 
 ## Examples
 
@@ -414,18 +410,12 @@ type ArchiveInput =
   | Bun.ArrayBufferView
   | ArrayBufferLike;
 
-type ArchiveOptions =
-  | {
-      /** Compression algorithm. Currently only "gzip" is supported. */
-      compress: "gzip";
-      /** Compression level 1-12 (default 6). */
-      level?: number;
-    }
-  | {
-      /** Pass empty object for no compression (uncompressed tar). */
-      compress?: never;
-      level?: never;
-    };
+type ArchiveOptions = {
+  /** Compression algorithm. Currently only "gzip" is supported. */
+  compress?: "gzip";
+  /** Compression level 1-12 (default 6 when gzip is enabled). */
+  level?: number;
+};
 
 interface ArchiveExtractOptions {
   /** Glob pattern(s) to filter extraction. Supports negative patterns with "!" prefix. */
@@ -436,8 +426,8 @@ class Archive {
   /**
    * Create an Archive from input data
    * @param data - Files to archive (as object) or existing archive data (as bytes/blob)
-   * @param options - Compression options. Defaults to gzip level 6 if omitted.
-   *                  Pass {} for no compression.
+   * @param options - Compression options. Uncompressed by default.
+   *                  Pass { compress: "gzip" } to enable compression.
    */
   constructor(data: ArchiveInput, options?: ArchiveOptions);
 

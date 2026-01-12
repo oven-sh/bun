@@ -272,6 +272,7 @@ JSC_DECLARE_HOST_FUNCTION(jsSQLStatementOpenStatementFunction);
 JSC_DECLARE_HOST_FUNCTION(jsSQLStatementIsInTransactionFunction);
 
 JSC_DECLARE_HOST_FUNCTION(jsSQLStatementLoadExtensionFunction);
+JSC_DECLARE_HOST_FUNCTION(jsSQLStatementCreateFunctionFunction);
 
 JSC_DECLARE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunction);
 JSC_DECLARE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRun);
@@ -602,6 +603,208 @@ static JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, sqlite3_stmt
 
     return jsNull();
 }
+
+// ********************************************************************************
+// User Defined Functions (UDF) Support
+// ********************************************************************************
+
+// Structure to hold JavaScript callback information for SQLite UDF
+struct SQLiteFunctionContext {
+    JSC::JSGlobalObject* globalObject;
+    JSC::Strong<JSC::Unknown> callback;
+    VersionSqlite3* version_db;
+    bool useBigInt64;
+
+    SQLiteFunctionContext(JSC::JSGlobalObject* global, JSC::JSValue cb, VersionSqlite3* db, bool useBigInt)
+        : globalObject(global)
+        , callback(global->vm(), cb)
+        , version_db(db)
+        , useBigInt64(useBigInt)
+    {
+        if (version_db) {
+            ++version_db->reference_count;
+        }
+    }
+
+    ~SQLiteFunctionContext()
+    {
+        if (version_db) {
+            version_db->release();
+        }
+    }
+};
+
+// Convert SQLite value to JavaScript value (for UDF arguments)
+template<bool useBigInt64>
+static JSC::JSValue sqliteValueToJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, sqlite3_value* value)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    switch (sqlite3_value_type(value)) {
+    case SQLITE_INTEGER: {
+        int64_t num = sqlite3_value_int64(value);
+        if constexpr (useBigInt64) {
+            auto bint = JSC::JSBigInt::createFrom(globalObject, num);
+            RETURN_IF_EXCEPTION(scope, {});
+            return bint;
+        } else {
+            return jsNumber(num);
+        }
+    }
+    case SQLITE_FLOAT: {
+        return jsNumber(sqlite3_value_double(value));
+    }
+    case SQLITE3_TEXT: {
+        const unsigned char* text = sqlite3_value_text(value);
+        int len = sqlite3_value_bytes(value);
+        if (!text || len == 0) [[unlikely]] {
+            return jsEmptyString(vm);
+        }
+        if (len < 64) {
+            return jsString(vm, WTF::String::fromUTF8({ text, static_cast<size_t>(len) }));
+        }
+        auto encoded = Bun__encoding__toStringUTF8(text, len, globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSC::JSValue::decode(encoded);
+    }
+    case SQLITE_BLOB: {
+        const void* blob = sqlite3_value_blob(value);
+        int len = sqlite3_value_bytes(value);
+        if (len > 0 && blob != nullptr) [[likely]] {
+            JSC::JSUint8Array* array = JSC::JSUint8Array::createUninitialized(globalObject, globalObject->m_typedArrayUint8.get(globalObject), len);
+            RETURN_IF_EXCEPTION(scope, {});
+            memcpy(array->vector(), blob, len);
+            return array;
+        }
+        auto array = JSC::JSUint8Array::create(globalObject, globalObject->m_typedArrayUint8.get(globalObject), 0);
+        RETURN_IF_EXCEPTION(scope, {});
+        return array;
+    }
+    case SQLITE_NULL:
+    default:
+        return jsNull();
+    }
+}
+
+// Convert JavaScript value to SQLite result (for UDF return values)
+static void jsValueToSQLiteResult(sqlite3_context* context, JSC::JSValue value, JSC::JSGlobalObject* globalObject)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (value.isNull() || value.isUndefined()) {
+        sqlite3_result_null(context);
+    } else if (value.isBoolean()) {
+        sqlite3_result_int(context, value.asBoolean() ? 1 : 0);
+    } else if (value.isAnyInt()) {
+        sqlite3_result_int64(context, value.asAnyInt());
+    } else if (value.isNumber()) {
+        double num = value.asNumber();
+        // Check if it's actually an integer
+        if (num == static_cast<int64_t>(num) && !std::isnan(num) && !std::isinf(num)) {
+            sqlite3_result_int64(context, static_cast<int64_t>(num));
+        } else {
+            sqlite3_result_double(context, num);
+        }
+    } else if (value.isHeapBigInt()) {
+        // Check if BigInt fits in INT64 by converting and comparing
+        auto* originalBigInt = JSC::jsCast<JSC::JSBigInt*>(value);
+        int64_t int64Value = JSC::JSBigInt::toBigInt64(value);
+
+        // Convert back to BigInt and compare
+        auto* convertedBack = JSC::JSBigInt::createFrom(globalObject, int64Value);
+        RETURN_IF_EXCEPTION(scope, void());
+
+        if (JSC::JSBigInt::equals(originalBigInt, convertedBack)) {
+            // Value fits in INT64
+            sqlite3_result_int64(context, int64Value);
+        } else {
+            // Value doesn't fit, store as text
+            auto wtfString = value.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, void());
+            auto utf8 = wtfString.utf8();
+            sqlite3_result_text(context, utf8.data(), utf8.length(), SQLITE_TRANSIENT);
+        }
+    } else if (value.isBigInt()) {
+        // Non-heap bigints always fit in INT64
+        sqlite3_result_int64(context, value.toBigInt64(globalObject));
+    } else if (value.isString()) {
+        // Convert to WTF::String using toWTFString
+        auto wtfString = value.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, void());
+        auto utf8 = wtfString.utf8();
+        sqlite3_result_text(context, utf8.data(), utf8.length(), SQLITE_TRANSIENT);
+    } else if (auto* uint8Array = JSC::jsDynamicCast<JSC::JSUint8Array*>(value)) {
+        auto* buffer = uint8Array->typedVector();
+        size_t length = uint8Array->byteLength();
+        sqlite3_result_blob(context, buffer, length, SQLITE_TRANSIENT);
+    } else {
+        // For other types, convert to string
+        auto wtfString = value.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, void());
+        auto utf8 = wtfString.utf8();
+        sqlite3_result_text(context, utf8.data(), utf8.length(), SQLITE_TRANSIENT);
+    }
+}
+
+// SQLite C callback that bridges to JavaScript
+static void sqliteScalarFunctionCallback(sqlite3_context* context, int argc, sqlite3_value** argv)
+{
+    auto* functionCtx = static_cast<SQLiteFunctionContext*>(sqlite3_user_data(context));
+
+    if (!functionCtx || !functionCtx->callback.get()) [[unlikely]] {
+        sqlite3_result_error(context, "Function callback not available", -1);
+        return;
+    }
+
+    auto* globalObject = functionCtx->globalObject;
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Convert SQLite arguments to JavaScript values
+    JSC::MarkedArgumentBuffer jsArgs;
+    for (int i = 0; i < argc; i++) {
+        JSC::JSValue jsValue;
+        if (functionCtx->useBigInt64) {
+            jsValue = sqliteValueToJS<true>(vm, globalObject, argv[i]);
+        } else {
+            jsValue = sqliteValueToJS<false>(vm, globalObject, argv[i]);
+        }
+        if (scope.exception()) {
+            scope.clearException();
+            sqlite3_result_error(context, "Error converting argument to JavaScript", -1);
+            return;
+        }
+        jsArgs.append(jsValue);
+    }
+    if (jsArgs.hasOverflowed()) {
+        sqlite3_result_error(context, "Too many arguments", -1);
+        return;
+    }
+
+    // Call the JavaScript function
+    auto callData = JSC::getCallData(functionCtx->callback.get());
+    if (callData.type == JSC::CallData::Type::None) [[unlikely]] {
+        sqlite3_result_error(context, "Callback is not callable", -1);
+        return;
+    }
+
+    JSC::JSValue result = call(globalObject, functionCtx->callback.get(), callData, jsUndefined(), jsArgs);
+
+    if (scope.exception()) {
+        auto* exception = scope.exception();
+        scope.clearException();
+        auto errorMsg = exception->value().toWTFString(globalObject);
+        auto utf8 = errorMsg.utf8();
+        sqlite3_result_error(context, utf8.data(), -1);
+        return;
+    }
+
+    // Convert JavaScript result back to SQLite value
+    jsValueToSQLiteResult(context, result, globalObject);
+}
+
+// ********************************************************************************
 
 static const HashTableValue JSSQLStatementPrototypeTableValues[] = {
     { "run"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementExecuteStatementFunctionRun, 1 } },
@@ -1335,6 +1538,106 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementLoadExtensionFunction, (JSC::JSGlobalObje
     RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsUndefined()));
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsSQLStatementCreateFunctionFunction, (JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue thisValue = callFrame->thisValue();
+    JSSQLStatementConstructor* thisObject = jsDynamicCast<JSSQLStatementConstructor*>(thisValue.getObject());
+    if (!thisObject) [[unlikely]] {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected SQL"_s));
+        return {};
+    }
+
+    // Arguments: dbHandle, name, argCount, deterministic, directOnly, useBigIntArguments, callback
+    if (callFrame->argumentCount() < 7) {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "createFunction requires 7 arguments"_s));
+        return {};
+    }
+
+    // Get database handle
+    int32_t dbIndex = callFrame->argument(0).toInt32(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (dbIndex < 0 || dbIndex >= databases().size()) [[unlikely]] {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Invalid database handle"_s));
+        return {};
+    }
+
+    auto* version_db = databases()[dbIndex];
+    if (!version_db || !version_db->db) [[unlikely]] {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Database is closed"_s));
+        return {};
+    }
+
+    sqlite3* db = version_db->db;
+
+    // Get function name
+    JSValue nameValue = callFrame->argument(1);
+    if (!nameValue.isString()) {
+        throwTypeError(lexicalGlobalObject, scope, "Function name must be a string"_s);
+        return {};
+    }
+    auto name = nameValue.toWTFString(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    // Get argCount
+    int argCount = callFrame->argument(2).toInt32(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (argCount < -1 || argCount > 100) {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Argument count must be between -1 and 100"_s));
+        return {};
+    }
+
+    // Get flags
+    bool deterministic = callFrame->argument(3).toBoolean(lexicalGlobalObject);
+    bool directOnly = callFrame->argument(4).toBoolean(lexicalGlobalObject);
+    bool useBigInt = callFrame->argument(5).toBoolean(lexicalGlobalObject);
+
+    int flags = SQLITE_UTF8;
+    if (deterministic) {
+        flags |= SQLITE_DETERMINISTIC;
+    }
+    if (directOnly) {
+        flags |= SQLITE_DIRECTONLY;
+    }
+
+    // Get callback
+    JSValue callback = callFrame->argument(6);
+    if (!callback.isCallable()) {
+        throwTypeError(lexicalGlobalObject, scope, "Callback must be a function"_s);
+        return {};
+    }
+
+    // Create context (will be owned by sqlite3 and cleaned up on function destruction)
+    auto* functionCtx = new SQLiteFunctionContext(lexicalGlobalObject, callback, version_db, useBigInt);
+
+    // Register with SQLite
+    auto utf8Name = name.utf8();
+    int result = sqlite3_create_function_v2(
+        db,
+        utf8Name.data(),
+        argCount,
+        flags,
+        functionCtx,
+        sqliteScalarFunctionCallback, // scalar function callback
+        nullptr, // step callback (for aggregate functions)
+        nullptr, // final callback (for aggregate functions)
+        [](void* pApp) { // destructor callback
+            delete static_cast<SQLiteFunctionContext*>(pApp);
+        });
+
+    if (result != SQLITE_OK) {
+        delete functionCtx;
+        throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, db));
+        return {};
+    }
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
+}
+
 static bool isSkippedInSQLiteQuery(const char c)
 {
     return c == ' ' || c == ';' || (c >= '\t' && c <= '\r');
@@ -1846,6 +2149,7 @@ static const HashTableValue JSSQLStatementConstructorTableValues[] = {
     { "run"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementExecuteFunction, 3 } },
     { "isInTransaction"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementIsInTransactionFunction, 1 } },
     { "loadExtension"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementLoadExtensionFunction, 2 } },
+    { "createFunction"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementCreateFunctionFunction, 3 } },
     { "setCustomSQLite"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementSetCustomSQLite, 1 } },
     { "serialize"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementSerialize, 1 } },
     { "deserialize"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementDeserialize, 2 } },

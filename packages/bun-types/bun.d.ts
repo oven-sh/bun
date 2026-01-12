@@ -6068,40 +6068,38 @@ declare module "bun" {
       maxBuffer?: number;
 
       /**
-       * Platform-specific process sandboxing options.
+       * Process sandboxing options.
        *
-       * You can specify options for multiple platforms - options for other
-       * platforms are silently ignored. This allows writing cross-platform
-       * code that sandboxes on all supported platforms.
+       * You can specify options for multiple sandbox technologies - options
+       * for unavailable technologies are silently ignored. This allows writing
+       * cross-platform code that sandboxes on all supported platforms.
        *
        * Currently supports:
-       * - **Linux**: seccomp-BPF filters (`sandbox.linux`)
-       * - **macOS**: Seatbelt/SBPL profiles (`sandbox.darwin`)
-       * - **Windows**: Coming soon (`sandbox.windows`)
+       * - **seccomp**: Linux syscall filtering via BPF
+       * - **seatbelt**: macOS sandbox via SBPL profiles
        *
        * @example
        * ```ts
-       * // Cross-platform sandboxing (options for other platforms are ignored)
+       * // Cross-platform sandboxing
        * const proc = Bun.spawn({
        *   cmd: ["./untrusted-program"],
        *   sandbox: {
-       *     linux: linuxBpfFilter,
-       *     darwin: `
+       *     seccomp: bpfFilter,  // Linux
+       *     seatbelt: `          // macOS
        *       (version 1)
        *       (allow default)
        *       (deny network*)
        *     `,
-       *     // windows: { ... },          // Coming soon
        *   },
        * });
        * ```
        */
       sandbox?: {
         /**
-         * Linux seccomp-BPF filter. A compiled BPF program that restricts
-         * which system calls the subprocess can make.
+         * seccomp-BPF filter (Linux only).
          *
-         * Silently ignored on non-Linux platforms.
+         * A compiled BPF program that restricts which system calls the
+         * subprocess can make. Silently ignored on non-Linux platforms.
          *
          * The buffer must contain valid BPF bytecode. Each BPF instruction
          * is 8 bytes:
@@ -6126,10 +6124,10 @@ declare module "bun" {
          * @see https://man7.org/linux/man-pages/man2/seccomp.2.html
          * @platform linux
          */
-        linux?: ArrayBufferView | ArrayBuffer;
+        seccomp?: ArrayBufferView | ArrayBuffer;
 
         /**
-         * macOS sandbox profile in SBPL (Sandbox Profile Language) format.
+         * macOS Seatbelt sandbox profile (SBPL format).
          *
          * Silently ignored on non-macOS platforms.
          *
@@ -6154,7 +6152,7 @@ declare module "bun" {
          * const proc = Bun.spawn({
          *   cmd: ["./my-script.sh"],
          *   sandbox: {
-         *     darwin: `
+         *     seatbelt: `
          *       (version 1)
          *       (deny default)
          *       (allow file-read*)
@@ -6168,7 +6166,7 @@ declare module "bun" {
          * const proc2 = Bun.spawn({
          *   cmd: ["./my-script.sh"],
          *   sandbox: {
-         *     darwin: {
+         *     seatbelt: {
          *       profile: `
          *         (version 1)
          *         (deny default)
@@ -6181,11 +6179,11 @@ declare module "bun" {
          *   }
          * });
          *
-         * // Named system profile (from /usr/share/sandbox/)
+         * // Named system profile
          * const proc3 = Bun.spawn({
          *   cmd: ["./my-script.sh"],
          *   sandbox: {
-         *     darwin: { namedProfile: "no-internet" }
+         *     seatbelt: { namedProfile: "quicklookd" }
          *   }
          * });
          * ```
@@ -6193,7 +6191,7 @@ declare module "bun" {
          * @see https://reverse.put.as/wp-content/uploads/2011/09/Apple-Sandbox-Guide-v1.0.pdf
          * @platform darwin
          */
-        darwin?:
+        seatbelt?:
           | string
           | {
               /** Inline SBPL profile string */
@@ -6202,7 +6200,7 @@ declare module "bun" {
               parameters?: Record<string, string>;
             }
           | {
-              /** Named profile from /usr/share/sandbox/ (e.g., "no-internet") */
+              /** Named profile (e.g., "quicklookd", "pfd") */
               namedProfile: string;
             };
       };

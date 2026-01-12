@@ -424,17 +424,17 @@ pub fn spawnMaybeSync(
 
             // Parse sandbox option
             if (try args.getTruthy(globalThis, "sandbox")) |sandbox_val| {
-                // Parse sandbox.linux (seccomp BPF filter) - only on Linux, ignored on other platforms
+                // Parse sandbox.seccomp (seccomp BPF filter) - only on Linux, ignored on other platforms
                 if (comptime Environment.isLinux) {
-                    if (try sandbox_val.getTruthy(globalThis, "linux")) |linux_val| {
+                    if (try sandbox_val.getTruthy(globalThis, "seccomp")) |seccomp_val| {
                         // Get ArrayBuffer or TypedArray bytes
-                        if (linux_val.asArrayBuffer(globalThis)) |array_buffer| {
+                        if (seccomp_val.asArrayBuffer(globalThis)) |array_buffer| {
                             const slice = array_buffer.slice();
                             if (slice.len > 0) {
                                 // Validate length is multiple of 8 (sizeof(sock_filter))
                                 if (slice.len % 8 != 0) {
                                     return globalThis.throwInvalidArguments(
-                                        "sandbox.linux filter must be a multiple of 8 bytes (each BPF instruction is 8 bytes)",
+                                        "sandbox.seccomp filter must be a multiple of 8 bytes (each BPF instruction is 8 bytes)",
                                         .{},
                                     );
                                 }
@@ -444,48 +444,48 @@ pub fn spawnMaybeSync(
                         } else {
                             return globalThis.throwInvalidArgumentType(
                                 "spawn",
-                                "sandbox.linux",
+                                "sandbox.seccomp",
                                 "ArrayBuffer or TypedArray",
                             );
                         }
                     }
                 }
 
-                // Parse sandbox.darwin (macOS SBPL profile) - only on macOS, ignored on other platforms
+                // Parse sandbox.seatbelt (macOS SBPL profile) - only on macOS, ignored on other platforms
                 if (comptime Environment.isMac) {
-                    if (try sandbox_val.getTruthy(globalThis, "darwin")) |darwin_val| {
-                        if (darwin_val.isString()) {
-                            const slice = darwin_val.toSlice(globalThis, allocator) catch {
-                                return globalThis.throwInvalidArgumentType("spawn", "sandbox.darwin", "string");
+                    if (try sandbox_val.getTruthy(globalThis, "seatbelt")) |seatbelt_val| {
+                        if (seatbelt_val.isString()) {
+                            const slice = seatbelt_val.toSlice(globalThis, allocator) catch {
+                                return globalThis.throwInvalidArgumentType("spawn", "sandbox.seatbelt", "string");
                             };
                             if (slice.len > 0) {
                                 sandbox.darwin.profile = try allocator.dupeZ(u8, slice.slice());
                             }
-                        } else if (darwin_val.isObject()) {
+                        } else if (seatbelt_val.isObject()) {
                             // Object format: { profile: "...", parameters?: {...} } or { namedProfile: "..." }
-                            if (try darwin_val.get(globalThis, "namedProfile")) |named_val| {
-                                if ((try darwin_val.get(globalThis, "profile")) != null) {
-                                    return globalThis.throwInvalidArguments("sandbox.darwin cannot have both 'profile' and 'namedProfile'", .{});
+                            if (try seatbelt_val.get(globalThis, "namedProfile")) |named_val| {
+                                if ((try seatbelt_val.get(globalThis, "profile")) != null) {
+                                    return globalThis.throwInvalidArguments("sandbox.seatbelt cannot have both 'profile' and 'namedProfile'", .{});
                                 }
                                 const slice = named_val.toSlice(globalThis, allocator) catch {
-                                    return globalThis.throwInvalidArgumentType("spawn", "sandbox.darwin.namedProfile", "string");
+                                    return globalThis.throwInvalidArgumentType("spawn", "sandbox.seatbelt.namedProfile", "string");
                                 };
                                 if (slice.len > 0) {
                                     sandbox.darwin.profile = try allocator.dupeZ(u8, slice.slice());
                                     sandbox.darwin.flags = 1; // SANDBOX_NAMED
                                 }
-                            } else if (try darwin_val.get(globalThis, "profile")) |profile_val| {
+                            } else if (try seatbelt_val.get(globalThis, "profile")) |profile_val| {
                                 const slice = profile_val.toSlice(globalThis, allocator) catch {
-                                    return globalThis.throwInvalidArgumentType("spawn", "sandbox.darwin.profile", "string");
+                                    return globalThis.throwInvalidArgumentType("spawn", "sandbox.seatbelt.profile", "string");
                                 };
                                 if (slice.len > 0) {
                                     sandbox.darwin.profile = try allocator.dupeZ(u8, slice.slice());
                                 }
 
                                 // Parse optional parameters
-                                if (try darwin_val.getTruthy(globalThis, "parameters")) |params_val| {
+                                if (try seatbelt_val.getTruthy(globalThis, "parameters")) |params_val| {
                                     const params_obj = params_val.getObject() orelse {
-                                        return globalThis.throwInvalidArgumentType("spawn", "sandbox.darwin.parameters", "object");
+                                        return globalThis.throwInvalidArgumentType("spawn", "sandbox.seatbelt.parameters", "object");
                                     };
 
                                     var params_iter = try jsc.JSPropertyIterator(.{ .skip_empty_name = false, .include_value = true }).init(globalThis, params_obj);
@@ -510,14 +510,14 @@ pub fn spawnMaybeSync(
                                 }
                             } else {
                                 // Object doesn't have either 'profile' or 'namedProfile'
-                                return globalThis.throwInvalidArgumentType("spawn", "sandbox.darwin", "object with 'profile' or 'namedProfile'");
+                                return globalThis.throwInvalidArgumentType("spawn", "sandbox.seatbelt", "object with 'profile' or 'namedProfile'");
                             }
                         } else {
-                            return globalThis.throwInvalidArgumentType("spawn", "sandbox.darwin", "string or object");
+                            return globalThis.throwInvalidArgumentType("spawn", "sandbox.seatbelt", "string or object");
                         }
                     }
                 }
-                // TODO: Parse sandbox.windows (Windows sandbox options)
+                // TODO: Parse sandbox.appContainer (Windows sandbox options)
             }
         } else {
             try getArgv(globalThis, cmd_value, PATH, cwd, &argv0, allocator, &argv);

@@ -62,12 +62,12 @@ const DENY_FILE_WRITE_PROFILE = `(version 1)
 (deny file-write*)`;
 
 describe("spawn sandbox (Linux)", () => {
-  test.if(!isLinux)("sandbox.linux is silently ignored on non-Linux", async () => {
-    // On non-Linux, sandbox.linux should be silently ignored
+  test.if(!isLinux)("sandbox.seccomp is silently ignored on non-Linux", async () => {
+    // On non-Linux, sandbox.seccomp should be silently ignored
     // This allows users to specify all platform options at once
     await using proc = Bun.spawn({
       cmd: ["echo", "test"],
-      sandbox: { linux: ALLOW_ALL_FILTER },
+      sandbox: { seccomp: ALLOW_ALL_FILTER },
     });
 
     const stdout = await proc.stdout.text();
@@ -79,16 +79,16 @@ describe("spawn sandbox (Linux)", () => {
     expect(() => {
       Bun.spawn({
         cmd: ["echo", "test"],
-        sandbox: { linux: new Uint8Array([0x06, 0x00, 0x00]) }, // 3 bytes, not multiple of 8
+        sandbox: { seccomp: new Uint8Array([0x06, 0x00, 0x00]) }, // 3 bytes, not multiple of 8
       });
     }).toThrow("multiple of 8 bytes");
   });
 
-  test.if(isLinux)("rejects non-ArrayBuffer sandbox.linux value", () => {
+  test.if(isLinux)("rejects non-ArrayBuffer sandbox.seccomp value", () => {
     expect(() => {
       Bun.spawn({
         cmd: ["echo", "test"],
-        sandbox: { linux: "not a buffer" as unknown as Uint8Array },
+        sandbox: { seccomp: "not a buffer" as unknown as Uint8Array },
       });
     }).toThrow("ArrayBuffer or TypedArray");
   });
@@ -97,7 +97,7 @@ describe("spawn sandbox (Linux)", () => {
     // Empty filter should be treated as no filter
     await using proc = Bun.spawn({
       cmd: ["echo", "hello"],
-      sandbox: { linux: new Uint8Array(0) },
+      sandbox: { seccomp: new Uint8Array(0) },
     });
 
     const stdout = await proc.stdout.text();
@@ -108,7 +108,7 @@ describe("spawn sandbox (Linux)", () => {
   test.if(isLinux)("spawn with allow-all filter works with echo", async () => {
     await using proc = Bun.spawn({
       cmd: ["echo", "sandboxed"],
-      sandbox: { linux: ALLOW_ALL_FILTER },
+      sandbox: { seccomp: ALLOW_ALL_FILTER },
     });
 
     const stdout = await proc.stdout.text();
@@ -119,7 +119,7 @@ describe("spawn sandbox (Linux)", () => {
   test.if(isLinux)("spawnSync with allow-all filter works with echo", () => {
     const result = Bun.spawnSync({
       cmd: ["echo", "sync-sandboxed"],
-      sandbox: { linux: ALLOW_ALL_FILTER },
+      sandbox: { seccomp: ALLOW_ALL_FILTER },
     });
 
     expect(result.stdout.toString()).toBe("sync-sandboxed\n");
@@ -129,7 +129,7 @@ describe("spawn sandbox (Linux)", () => {
   test.if(isLinux)("spawnSync with kill-all filter terminates process with SIGSYS", () => {
     const result = Bun.spawnSync({
       cmd: ["/bin/true"],
-      sandbox: { linux: KILL_ALL_FILTER },
+      sandbox: { seccomp: KILL_ALL_FILTER },
     });
 
     // Process is killed before it can do anything
@@ -146,7 +146,7 @@ describe("spawn sandbox (Linux)", () => {
     // seccomp sends SIGSYS (signal 31) to terminate the process.
     await using proc = Bun.spawn({
       cmd: ["/bin/true"],
-      sandbox: { linux: KILL_ALL_FILTER },
+      sandbox: { seccomp: KILL_ALL_FILTER },
       stderr: "pipe",
     });
 
@@ -172,7 +172,7 @@ describe("spawn sandbox (Linux)", () => {
 
     await using proc = Bun.spawn({
       cmd: ["echo", "arraybuffer"],
-      sandbox: { linux: buffer },
+      sandbox: { seccomp: buffer },
     });
 
     const stdout = await proc.stdout.text();
@@ -186,7 +186,7 @@ describe("spawn sandbox (Linux)", () => {
 
     await using proc = Bun.spawn({
       cmd: ["echo", "uint16"],
-      sandbox: { linux: uint16View },
+      sandbox: { seccomp: uint16View },
     });
 
     const stdout = await proc.stdout.text();
@@ -199,7 +199,7 @@ describe("spawn sandbox (Linux)", () => {
     // With write() blocked, echo should fail
     await using proc = Bun.spawn({
       cmd: ["echo", "this should not appear"],
-      sandbox: { linux: BLOCK_WRITE_FILTER_X86_64 },
+      sandbox: { seccomp: BLOCK_WRITE_FILTER_X86_64 },
       stderr: "pipe",
     });
 
@@ -217,7 +217,7 @@ describe("spawn sandbox (Linux)", () => {
     // So blocking write() shouldn't affect it
     await using proc = Bun.spawn({
       cmd: ["/bin/true"],
-      sandbox: { linux: BLOCK_WRITE_FILTER_X86_64 },
+      sandbox: { seccomp: BLOCK_WRITE_FILTER_X86_64 },
     });
 
     const exitCode = await proc.exited;
@@ -229,7 +229,7 @@ describe("spawn sandbox (Linux)", () => {
     // So blocking write() shouldn't affect it - it should still exit 1
     await using proc = Bun.spawn({
       cmd: ["/bin/false"],
-      sandbox: { linux: BLOCK_WRITE_FILTER_X86_64 },
+      sandbox: { seccomp: BLOCK_WRITE_FILTER_X86_64 },
     });
 
     const exitCode = await proc.exited;
@@ -239,7 +239,7 @@ describe("spawn sandbox (Linux)", () => {
   test.if(isLinux)("spawnSync filter that blocks write() causes echo to fail", () => {
     const result = Bun.spawnSync({
       cmd: ["echo", "this should not appear"],
-      sandbox: { linux: BLOCK_WRITE_FILTER_X86_64 },
+      sandbox: { seccomp: BLOCK_WRITE_FILTER_X86_64 },
     });
 
     // echo should fail to write
@@ -249,11 +249,11 @@ describe("spawn sandbox (Linux)", () => {
 });
 
 describe("spawn sandbox (macOS)", () => {
-  test.if(!isMac)("sandbox.darwin is silently ignored on non-macOS", async () => {
-    // On non-macOS, sandbox.darwin should be silently ignored
+  test.if(!isMac)("sandbox.seatbelt is silently ignored on non-macOS", async () => {
+    // On non-macOS, sandbox.seatbelt should be silently ignored
     await using proc = Bun.spawn({
       cmd: ["echo", "test"],
-      sandbox: { darwin: ALLOW_ALL_PROFILE },
+      sandbox: { seatbelt: ALLOW_ALL_PROFILE },
     });
 
     const stdout = await proc.stdout.text();
@@ -261,20 +261,20 @@ describe("spawn sandbox (macOS)", () => {
     expect(await proc.exited).toBe(0);
   });
 
-  test.if(isMac)("non-string sandbox.darwin value throws", () => {
-    // When sandbox.darwin is not a string or object, the spawn itself throws
+  test.if(isMac)("non-string sandbox.seatbelt value throws", () => {
+    // When sandbox.seatbelt is not a string or object, the spawn itself throws
     expect(() => {
       Bun.spawn({
         cmd: ["echo", "test"],
-        sandbox: { darwin: 12345 as unknown as string },
+        sandbox: { seatbelt: 12345 as unknown as string },
       });
-    }).toThrow("Expected sandbox.darwin to be a string or object");
+    }).toThrow("Expected sandbox.seatbelt to be a string or object");
   });
 
   test.if(isMac)("spawn with allow-all profile works with echo", async () => {
     await using proc = Bun.spawn({
       cmd: ["echo", "sandboxed"],
-      sandbox: { darwin: ALLOW_ALL_PROFILE },
+      sandbox: { seatbelt: ALLOW_ALL_PROFILE },
     });
 
     const stdout = await proc.stdout.text();
@@ -285,7 +285,7 @@ describe("spawn sandbox (macOS)", () => {
   test.if(isMac)("spawnSync with allow-all profile works with echo", () => {
     const result = Bun.spawnSync({
       cmd: ["echo", "sync-sandboxed"],
-      sandbox: { darwin: ALLOW_ALL_PROFILE },
+      sandbox: { seatbelt: ALLOW_ALL_PROFILE },
     });
 
     expect(result.stdout.toString()).toBe("sync-sandboxed\n");
@@ -296,7 +296,7 @@ describe("spawn sandbox (macOS)", () => {
     // echo doesn't use network, so it should work
     await using proc = Bun.spawn({
       cmd: ["echo", "no-network"],
-      sandbox: { darwin: DENY_NETWORK_PROFILE },
+      sandbox: { seatbelt: DENY_NETWORK_PROFILE },
     });
 
     const stdout = await proc.stdout.text();
@@ -308,7 +308,7 @@ describe("spawn sandbox (macOS)", () => {
     // /usr/bin/true doesn't write files, so it should work
     await using proc = Bun.spawn({
       cmd: ["/usr/bin/true"],
-      sandbox: { darwin: DENY_FILE_WRITE_PROFILE },
+      sandbox: { seatbelt: DENY_FILE_WRITE_PROFILE },
     });
 
     expect(await proc.exited).toBe(0);
@@ -318,19 +318,19 @@ describe("spawn sandbox (macOS)", () => {
     // /usr/bin/false doesn't write files, it just exits with 1
     const result = Bun.spawnSync({
       cmd: ["/usr/bin/false"],
-      sandbox: { darwin: DENY_FILE_WRITE_PROFILE },
+      sandbox: { seatbelt: DENY_FILE_WRITE_PROFILE },
     });
 
     expect(result.exitCode).toBe(1);
   });
 
-  test("can specify both linux and darwin sandbox options", async () => {
+  test("can specify both seccomp and seatbelt sandbox options", async () => {
     // This should work on all platforms - each platform uses its own option
     await using proc = Bun.spawn({
       cmd: ["echo", "cross-platform"],
       sandbox: {
-        linux: ALLOW_ALL_FILTER,
-        darwin: ALLOW_ALL_PROFILE,
+        seccomp: ALLOW_ALL_FILTER,
+        seatbelt: ALLOW_ALL_PROFILE,
       },
     });
 
@@ -344,7 +344,7 @@ describe("spawn sandbox (macOS)", () => {
     expect(() => {
       Bun.spawn({
         cmd: ["/usr/bin/true"],
-        sandbox: { darwin: "(invalid sbpl garbage)" },
+        sandbox: { seatbelt: "(invalid sbpl garbage)" },
       });
     }).toThrow("EINVAL: invalid argument, posix_spawn");
   });
@@ -353,7 +353,7 @@ describe("spawn sandbox (macOS)", () => {
     // Test the object format { profile: "..." }
     await using proc = Bun.spawn({
       cmd: ["echo", "object-format"],
-      sandbox: { darwin: { profile: ALLOW_ALL_PROFILE } },
+      sandbox: { seatbelt: { profile: ALLOW_ALL_PROFILE } },
     });
 
     const stdout = await proc.stdout.text();
@@ -373,7 +373,7 @@ describe("spawn sandbox (macOS)", () => {
     await using proc = Bun.spawn({
       cmd: ["/usr/bin/true"],
       sandbox: {
-        darwin: {
+        seatbelt: {
           profile: profileWithParams,
           parameters: { BLOCKED_PATH: "/nonexistent" },
         },
@@ -391,7 +391,7 @@ describe("spawn sandbox (macOS)", () => {
     const result = Bun.spawnSync({
       cmd: ["/usr/bin/true"],
       sandbox: {
-        darwin: {
+        seatbelt: {
           profile: profileWithParams,
           parameters: { BLOCKED_PATH: "/nonexistent" },
         },
@@ -406,20 +406,20 @@ describe("spawn sandbox (macOS)", () => {
       Bun.spawn({
         cmd: ["/usr/bin/true"],
         sandbox: {
-          darwin: {
+          seatbelt: {
             profile: ALLOW_ALL_PROFILE,
             namedProfile: "pfd",
           } as unknown as string,
         },
       });
-    }).toThrow("sandbox.darwin cannot have both 'profile' and 'namedProfile'");
+    }).toThrow("sandbox.seatbelt cannot have both 'profile' and 'namedProfile'");
   });
 
   test.if(isMac)("empty parameters object is allowed", async () => {
     await using proc = Bun.spawn({
       cmd: ["echo", "empty-params"],
       sandbox: {
-        darwin: {
+        seatbelt: {
           profile: ALLOW_ALL_PROFILE,
           parameters: {},
         },
@@ -431,15 +431,15 @@ describe("spawn sandbox (macOS)", () => {
     expect(await proc.exited).toBe(0);
   });
 
-  test.if(isMac)("darwin object without profile or namedProfile throws error", () => {
+  test.if(isMac)("seatbelt object without profile or namedProfile throws error", () => {
     expect(() => {
       Bun.spawn({
         cmd: ["/usr/bin/true"],
         sandbox: {
-          darwin: { parameters: { KEY: "VALUE" } } as unknown as string,
+          seatbelt: { parameters: { KEY: "VALUE" } } as unknown as string,
         },
       });
-    }).toThrow("Expected sandbox.darwin to be a object with 'profile' or 'namedProfile'");
+    }).toThrow("Expected sandbox.seatbelt to be a object with 'profile' or 'namedProfile'");
   });
 
   test.if(isMac)("namedProfile with non-existent profile throws EINVAL", () => {
@@ -448,7 +448,7 @@ describe("spawn sandbox (macOS)", () => {
       Bun.spawn({
         cmd: ["/usr/bin/true"],
         sandbox: {
-          darwin: { namedProfile: "this-profile-does-not-exist-12345" },
+          seatbelt: { namedProfile: "this-profile-does-not-exist-12345" },
         },
       });
     }).toThrow("EINVAL: invalid argument, posix_spawn");
@@ -469,7 +469,7 @@ describe("spawn sandbox (macOS)", () => {
       Bun.spawnSync({
         cmd: ["/bin/ls", "/"],
         sandbox: {
-          darwin: { namedProfile: "pfd" },
+          seatbelt: { namedProfile: "pfd" },
         },
       });
     }).toThrow("EPERM: operation not permitted, posix_spawn");
@@ -490,7 +490,7 @@ describe("spawn sandbox (macOS)", () => {
     const withSandbox = Bun.spawnSync({
       cmd: ["/bin/sh", "-c", `echo hello > "${testFile}"`],
       sandbox: {
-        darwin: { namedProfile: "quicklookd" },
+        seatbelt: { namedProfile: "quicklookd" },
       },
       stderr: "pipe",
     });
@@ -520,7 +520,7 @@ describe("spawn sandbox (macOS)", () => {
     const withSandboxBlocking = Bun.spawnSync({
       cmd: ["/bin/sh", "-c", `echo hello > "${testFile}"`],
       sandbox: {
-        darwin: {
+        seatbelt: {
           profile: profileWithParams,
           parameters: { BLOCKED_PATH: String(dir) },
         },
@@ -534,7 +534,7 @@ describe("spawn sandbox (macOS)", () => {
     const withSandboxAllowing = Bun.spawnSync({
       cmd: ["/bin/sh", "-c", `echo hello > "${testFile}" && rm "${testFile}"`],
       sandbox: {
-        darwin: {
+        seatbelt: {
           profile: profileWithParams,
           parameters: { BLOCKED_PATH: "/nonexistent" },
         },
@@ -560,7 +560,7 @@ describe("spawn sandbox (macOS)", () => {
     const result1 = Bun.spawnSync({
       cmd: ["/bin/sh", "-c", `echo hello > "${testFile1}"`],
       sandbox: {
-        darwin: {
+        seatbelt: {
           profile: profileWithMultipleParams,
           parameters: {
             BLOCKED_PATH_1: String(dir1),
@@ -577,7 +577,7 @@ describe("spawn sandbox (macOS)", () => {
     const result2 = Bun.spawnSync({
       cmd: ["/bin/sh", "-c", `echo hello > "${testFile2}"`],
       sandbox: {
-        darwin: {
+        seatbelt: {
           profile: profileWithMultipleParams,
           parameters: {
             BLOCKED_PATH_1: String(dir1),
@@ -594,7 +594,7 @@ describe("spawn sandbox (macOS)", () => {
     const result3 = Bun.spawnSync({
       cmd: ["/bin/sh", "-c", `echo hello > "${testFile2}" && cat "${testFile2}" && rm "${testFile2}"`],
       sandbox: {
-        darwin: {
+        seatbelt: {
           profile: profileWithMultipleParams,
           parameters: {
             BLOCKED_PATH_1: String(dir1),
@@ -621,7 +621,7 @@ describe("spawn sandbox (macOS)", () => {
     await using procWith = Bun.spawn({
       cmd: ["/bin/sh", "-c", `echo hello > "${testFile}"`],
       sandbox: {
-        darwin: { namedProfile: "quicklookd" },
+        seatbelt: { namedProfile: "quicklookd" },
       },
       stderr: "pipe",
     });
@@ -645,7 +645,7 @@ describe("spawn sandbox (macOS)", () => {
     await using procBlocked = Bun.spawn({
       cmd: ["/bin/sh", "-c", `echo blocked > "${testFile}"`],
       sandbox: {
-        darwin: {
+        seatbelt: {
           profile: profileWithParams,
           parameters: { BLOCKED_PATH: String(dir) },
         },
@@ -663,7 +663,7 @@ describe("spawn sandbox (macOS)", () => {
     await using procAllowed = Bun.spawn({
       cmd: ["/bin/sh", "-c", `echo allowed > "${testFile}" && cat "${testFile}" && rm "${testFile}"`],
       sandbox: {
-        darwin: {
+        seatbelt: {
           profile: profileWithParams,
           parameters: { BLOCKED_PATH: "/nonexistent" },
         },
@@ -684,7 +684,7 @@ describe("spawn sandbox (macOS)", () => {
 
     await using proc = Bun.spawn({
       cmd: ["/bin/sh", "-c", `echo test > "${testFile}"`],
-      sandbox: { darwin: DENY_FILE_WRITE_PROFILE },
+      sandbox: { seatbelt: DENY_FILE_WRITE_PROFILE },
       stderr: "pipe",
     });
 

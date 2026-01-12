@@ -1,10 +1,6 @@
-import { beforeAll, expect, setDefaultTimeout, test } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
-
-beforeAll(() => {
-  setDefaultTimeout(1000 * 60 * 5);
-});
 
 // https://github.com/oven-sh/bun/issues/25835
 // Bug: When using overrides in a monorepo workspace to redirect dependencies to

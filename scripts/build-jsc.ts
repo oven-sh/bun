@@ -138,8 +138,7 @@ const getBuildEnv = () => {
   const cxxflags = ["-ffat-lto-objects"];
 
   if (IS_LINUX && buildConfig !== "lto") {
-    cflags.push("-Wl,--whole-archive");
-    cxxflags.push("-Wl,--whole-archive", "-DUSE_BUN_JSC_ADDITIONS=ON", "-DUSE_BUN_EVENT_LOOP=ON");
+    cxxflags.push("-DUSE_BUN_JSC_ADDITIONS=ON", "-DUSE_BUN_EVENT_LOOP=ON");
   }
 
   env.CFLAGS = (env.CFLAGS || "") + " " + cflags.join(" ");

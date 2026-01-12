@@ -114,6 +114,10 @@ static bool compareFramesForDuplicates(
         return false;
     }
 
+    // JSC generates duplicate frames for async functions on adjacent lines:
+    // One frame for the function declaration (e.g., line 38: "async function foo() {")
+    // Another for the await expression (e.g., line 39: "return await bar();")
+    // We treat frames within 1 line as duplicates to filter these JSC artifacts.
     int lineDiff = std::abs(static_cast<int>(currentLine) - static_cast<int>(prevLine));
     return lineDiff <= 1;
 }
@@ -409,7 +413,7 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
             stackTrace.append(StackFrame(vm, owner, visitor->callee().asCell(), visitor->codeBlock(), visitor->bytecodeIndex()));
             prevFrame = &stackTrace.last();
             // Only track non-builtin frames for duplicate detection
-            if (visitor->codeBlock() && visitor->codeBlock()->unlinkedCodeBlock() && !visitor->codeBlock()->unlinkedCodeBlock()->isBuiltinFunction()) {
+            if (!isInternalBuiltinFrame(*prevFrame)) {
                 prevUserFrame = prevFrame;
             }
         } else {

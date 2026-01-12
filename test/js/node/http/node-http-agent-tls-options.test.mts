@@ -15,8 +15,8 @@ import https from "node:https";
 import { createRequire } from "node:module";
 import type { AddressInfo } from "node:net";
 import net from "node:net";
-import { describe, test } from "node:test";
 import { dirname, join } from "node:path";
+import { describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 // Use createRequire for ESM compatibility

@@ -7,6 +7,7 @@ import { bunEnv, bunExe } from "harness";
 import { createServer } from "http";
 import { AddressInfo, connect } from "net";
 import path from "node:path";
+import * as v8 from "node:v8";
 import { Server, WebSocket, WebSocketServer } from "ws";
 
 const strings = [
@@ -144,6 +145,19 @@ describe("WebSocket", () => {
         });
       });
     }
+    test("SharedArrayBuffer-backed Buffer (v8.serialize)", (ws, done) => {
+      ws.on("open", () => {
+        const data = v8.serialize({ test: "hello" });
+        expect(data.buffer).toBeInstanceOf(SharedArrayBuffer);
+        ws.send(data);
+      });
+      ws.on("message", (data, isBinary) => {
+        expect(isBinary).toBeTrue();
+        const decoded = v8.deserialize(data);
+        expect(decoded).toEqual({ test: "hello" });
+        done();
+      });
+    });
   });
   describe("ping()", () => {
     test("(no argument)", (ws, done) => {

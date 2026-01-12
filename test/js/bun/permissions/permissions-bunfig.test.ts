@@ -118,6 +118,7 @@ no-prompt = true
 
       expect(stdout).toContain("BUN_ALLOWED_VAR: allowed");
       expect(stdout + stderr).toContain("PermissionDenied");
+      // exitCode is 0 because the script catches the error and continues
     });
 
     test("allow-env string allows single var", async () => {
@@ -221,6 +222,7 @@ no-prompt = true
 
       expect(stdout).toContain("allowed: allowed content");
       expect(stdout + stderr).toContain("PermissionDenied");
+      // exitCode is 0 because the script catches the error and continues
     });
   });
 
@@ -256,6 +258,7 @@ no-prompt = true
 
       expect(stdout).toContain("BUN_PUBLIC: public");
       expect(stdout + stderr).toContain("PermissionDenied");
+      // exitCode is 0 because the script catches the error and continues
     });
   });
 
@@ -327,8 +330,8 @@ allow-sys = ["hostname"]
         `,
       });
 
-      // Get bun basename for allow-run
-      const bunBasename = bunExe().split("/").pop()?.split("\\").pop() || "bun";
+      // Get bun basename for allow-run using path.basename for cross-platform support
+      const bunBasename = require("node:path").basename(bunExe());
 
       await Bun.write(
         `${String(dir)}/bunfig.toml`,

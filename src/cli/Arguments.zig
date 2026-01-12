@@ -946,83 +946,37 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         }
 
         // Parse --allow-* flags (each can be a flag or have optional value)
-        if (args.option("--allow-read")) |value| {
-            if (value.len > 0) {
-                ctx.runtime_options.permissions.allow_read = parseCommaSeparated(allocator, value);
+        inline for (.{
+            .{ "--allow-read", "allow_read", "has_allow_read" },
+            .{ "--allow-write", "allow_write", "has_allow_write" },
+            .{ "--allow-net", "allow_net", "has_allow_net" },
+            .{ "--allow-env", "allow_env", "has_allow_env" },
+            .{ "--allow-sys", "allow_sys", "has_allow_sys" },
+            .{ "--allow-run", "allow_run", "has_allow_run" },
+            .{ "--allow-ffi", "allow_ffi", "has_allow_ffi" },
+        }) |perm| {
+            if (args.option(perm[0])) |value| {
+                if (value.len > 0) {
+                    @field(ctx.runtime_options.permissions, perm[1]) = parseCommaSeparated(allocator, value);
+                }
+                @field(ctx.runtime_options.permissions, perm[2]) = true;
             }
-            ctx.runtime_options.permissions.has_allow_read = true;
-        }
-        if (args.option("--allow-write")) |value| {
-            if (value.len > 0) {
-                ctx.runtime_options.permissions.allow_write = parseCommaSeparated(allocator, value);
-            }
-            ctx.runtime_options.permissions.has_allow_write = true;
-        }
-        if (args.option("--allow-net")) |value| {
-            if (value.len > 0) {
-                ctx.runtime_options.permissions.allow_net = parseCommaSeparated(allocator, value);
-            }
-            ctx.runtime_options.permissions.has_allow_net = true;
-        }
-        if (args.option("--allow-env")) |value| {
-            if (value.len > 0) {
-                ctx.runtime_options.permissions.allow_env = parseCommaSeparated(allocator, value);
-            }
-            ctx.runtime_options.permissions.has_allow_env = true;
-        }
-        if (args.option("--allow-sys")) |value| {
-            if (value.len > 0) {
-                ctx.runtime_options.permissions.allow_sys = parseCommaSeparated(allocator, value);
-            }
-            ctx.runtime_options.permissions.has_allow_sys = true;
-        }
-        if (args.option("--allow-run")) |value| {
-            if (value.len > 0) {
-                ctx.runtime_options.permissions.allow_run = parseCommaSeparated(allocator, value);
-            }
-            ctx.runtime_options.permissions.has_allow_run = true;
-        }
-        if (args.option("--allow-ffi")) |value| {
-            if (value.len > 0) {
-                ctx.runtime_options.permissions.allow_ffi = parseCommaSeparated(allocator, value);
-            }
-            ctx.runtime_options.permissions.has_allow_ffi = true;
         }
 
         // Parse --deny-* flags
-        if (args.option("--deny-read")) |value| {
-            if (value.len > 0) {
-                ctx.runtime_options.permissions.deny_read = parseCommaSeparated(allocator, value);
-            }
-        }
-        if (args.option("--deny-write")) |value| {
-            if (value.len > 0) {
-                ctx.runtime_options.permissions.deny_write = parseCommaSeparated(allocator, value);
-            }
-        }
-        if (args.option("--deny-net")) |value| {
-            if (value.len > 0) {
-                ctx.runtime_options.permissions.deny_net = parseCommaSeparated(allocator, value);
-            }
-        }
-        if (args.option("--deny-env")) |value| {
-            if (value.len > 0) {
-                ctx.runtime_options.permissions.deny_env = parseCommaSeparated(allocator, value);
-            }
-        }
-        if (args.option("--deny-sys")) |value| {
-            if (value.len > 0) {
-                ctx.runtime_options.permissions.deny_sys = parseCommaSeparated(allocator, value);
-            }
-        }
-        if (args.option("--deny-run")) |value| {
-            if (value.len > 0) {
-                ctx.runtime_options.permissions.deny_run = parseCommaSeparated(allocator, value);
-            }
-        }
-        if (args.option("--deny-ffi")) |value| {
-            if (value.len > 0) {
-                ctx.runtime_options.permissions.deny_ffi = parseCommaSeparated(allocator, value);
+        inline for (.{
+            .{ "--deny-read", "deny_read" },
+            .{ "--deny-write", "deny_write" },
+            .{ "--deny-net", "deny_net" },
+            .{ "--deny-env", "deny_env" },
+            .{ "--deny-sys", "deny_sys" },
+            .{ "--deny-run", "deny_run" },
+            .{ "--deny-ffi", "deny_ffi" },
+        }) |perm| {
+            if (args.option(perm[0])) |value| {
+                if (value.len > 0) {
+                    @field(ctx.runtime_options.permissions, perm[1]) = parseCommaSeparated(allocator, value);
+                }
             }
         }
     }

@@ -8,6 +8,7 @@
 #include <JavaScriptCore/SourceProvider.h>
 
 #include "BunClientData.h"
+#include "BunLocale.h"
 #include "NodeVM.h"
 #include "NodeVMScript.h"
 #include "NodeVMModule.h"
@@ -764,7 +765,7 @@ const JSC::GlobalObjectMethodTable& NodeVMGlobalObject::globalObjectMethodTable(
         &currentScriptExecutionOwner,
         &scriptExecutionStatus,
         &unsafeEvalNoop, // reportViolationForUnsafeEval
-        nullptr, // defaultLanguage
+        &Bun::defaultLanguage,
         nullptr, // compileStreaming
         nullptr, // instantiateStreaming
         nullptr,

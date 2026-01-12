@@ -38,7 +38,7 @@ globalBinDir = "~/.bun/bin"
     });
 
     // Read output before awaiting exited for better error messages
-    const [_stdout, _stderr, _exitCode] = await Promise.all([
+    const [_stdout, _stderr, exitCode] = await Promise.all([
       new Response(proc.stdout).text(),
       new Response(proc.stderr).text(),
       proc.exited,
@@ -52,6 +52,9 @@ globalBinDir = "~/.bun/bin"
     // Positive assertion: the expanded path under fake home should be used
     const expandedBinDir = join(fakeHome, ".bun", "bin");
     expect(existsSync(expandedBinDir)).toBe(true);
+
+    // Assert command succeeded
+    expect(exitCode).toBe(0);
   });
 
   test("globalDir with tilde expands to home directory", async () => {
@@ -81,7 +84,7 @@ globalDir = "~/.bun/install/global"
     });
 
     // Read output before awaiting exited for better error messages
-    const [_stdout, _stderr, _exitCode] = await Promise.all([
+    const [_stdout, _stderr, exitCode] = await Promise.all([
       new Response(proc.stdout).text(),
       new Response(proc.stderr).text(),
       proc.exited,
@@ -94,6 +97,9 @@ globalDir = "~/.bun/install/global"
     // Positive assertion: the expanded path under fake home should be used
     const expandedGlobalDir = join(fakeHome, ".bun", "install", "global");
     expect(existsSync(expandedGlobalDir)).toBe(true);
+
+    // Assert command succeeded
+    expect(exitCode).toBe(0);
   });
 
   test("cache.dir with tilde expands to home directory", async () => {
@@ -123,7 +129,7 @@ dir = "~/.bun/install/cache"
     });
 
     // Read output before awaiting exited for better error messages
-    const [_stdout, _stderr, _exitCode] = await Promise.all([
+    const [_stdout, _stderr, exitCode] = await Promise.all([
       new Response(proc.stdout).text(),
       new Response(proc.stderr).text(),
       proc.exited,
@@ -136,6 +142,9 @@ dir = "~/.bun/install/cache"
     // Positive assertion: the expanded path under fake home should be used
     const expandedCacheDir = join(fakeHome, ".bun", "install", "cache");
     expect(existsSync(expandedCacheDir)).toBe(true);
+
+    // Assert command succeeded
+    expect(exitCode).toBe(0);
   });
 
   test("cache shorthand with tilde expands to home directory", async () => {
@@ -164,7 +173,7 @@ cache = "~/.bun/install/cache"
     });
 
     // Read output before awaiting exited for better error messages
-    const [_stdout, _stderr, _exitCode] = await Promise.all([
+    const [_stdout, _stderr, exitCode] = await Promise.all([
       new Response(proc.stdout).text(),
       new Response(proc.stderr).text(),
       proc.exited,
@@ -177,5 +186,8 @@ cache = "~/.bun/install/cache"
     // Positive assertion: the expanded path under fake home should be used
     const expandedCacheDir = join(fakeHome, ".bun", "install", "cache");
     expect(existsSync(expandedCacheDir)).toBe(true);
+
+    // Assert command succeeded
+    expect(exitCode).toBe(0);
   });
 });

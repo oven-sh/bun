@@ -19,6 +19,7 @@ nonblocking: bool = false,
 force_sync: bool = false,
 
 is_socket: bool = false,
+owns_fd: bool = false,
 fd: bun.FileDescriptor = bun.invalid_fd,
 
 auto_flusher: webcore.AutoFlusher = .{},
@@ -321,6 +322,7 @@ pub fn setup(this: *FileSink, options: *const FileSink.Options) bun.sys.Maybe(vo
         .result => |fd| fd,
     };
     this.fd = fd;
+    this.owns_fd = true;
 
     if (comptime Environment.isWindows) {
         if (this.force_sync) {
@@ -614,7 +616,7 @@ pub fn updateRef(this: *FileSink, value: bool) void {
 }
 
 pub fn truncateFdToWritten(this: *FileSink) void {
-    if (this.fd != bun.invalid_fd and !this.is_socket) {
+    if (this.fd != bun.invalid_fd and !this.is_socket and this.owns_fd) {
         _ = bun.sys.ftruncate(this.fd, @as(isize, @intCast(this.written)));
     }
 }

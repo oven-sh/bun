@@ -51,6 +51,7 @@ pub const dump_source = isDebug and !isTest;
 pub const base_path = build_options.base_path;
 pub const enable_logs = build_options.enable_logs;
 pub const enable_asan = build_options.enable_asan;
+pub const enable_heap_breakdown = build_options.enable_heap_breakdown;
 pub const enable_fuzzilli = build_options.enable_fuzzilli;
 pub const codegen_path = build_options.codegen_path;
 pub const codegen_embed = build_options.codegen_embed;

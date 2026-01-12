@@ -8,21 +8,18 @@
  * the proxy tunnel to the target HTTPS server.
  */
 
-import { describe, test } from "node:test";
 import { once } from "node:events";
 import http from "node:http";
 import https from "node:https";
 import { createRequire } from "node:module";
-import net from "node:net";
 import type { AddressInfo } from "node:net";
+import net from "node:net";
+import { describe, test } from "node:test";
 
 // Use createRequire for ESM compatibility
 const require = createRequire(import.meta.url);
 const { HttpsProxyAgent } = require("https-proxy-agent") as {
-  HttpsProxyAgent: new (
-    proxyUrl: string,
-    options?: Record<string, unknown>
-  ) => http.Agent;
+  HttpsProxyAgent: new (proxyUrl: string, options?: Record<string, unknown>) => http.Agent;
 };
 
 // Self-signed certificate with SANs for localhost and 127.0.0.1
@@ -88,15 +85,12 @@ rEHkcals6p7hL98BoxjFIvA=
 };
 
 async function createHttpsServer(
-  options: https.ServerOptions = {}
+  options: https.ServerOptions = {},
 ): Promise<{ server: https.Server; port: number; hostname: string }> {
-  const server = https.createServer(
-    { key: tlsCerts.key, cert: tlsCerts.cert, ...options },
-    (req, res) => {
-      res.writeHead(200);
-      res.end("OK");
-    }
-  );
+  const server = https.createServer({ key: tlsCerts.key, cert: tlsCerts.cert, ...options }, (req, res) => {
+    res.writeHead(200);
+    res.end("OK");
+  });
   await once(server.listen(0, "127.0.0.1"), "listening");
   const { port } = server.address() as AddressInfo;
   return { server, port, hostname: "127.0.0.1" };
@@ -121,7 +115,7 @@ async function createHttpServer(): Promise<{
  * This proxy handles the CONNECT method to establish tunnels for HTTPS connections.
  */
 function createConnectProxy(): net.Server {
-  return net.createServer((clientSocket) => {
+  return net.createServer(clientSocket => {
     let buffer: Uint8Array = new Uint8Array(0);
     let tunnelEstablished = false;
     let targetSocket: net.Socket | null = null;
@@ -161,9 +155,7 @@ function createConnectProxy(): net.Server {
 
       // Get any data after the headers (shouldn't be any for CONNECT)
       // headerEnd is byte position in the string, need to account for UTF-8
-      const headerBytes = new TextEncoder().encode(
-        bufferStr.substring(0, headerEnd + 4)
-      ).length;
+      const headerBytes = new TextEncoder().encode(bufferStr.substring(0, headerEnd + 4)).length;
       const remainingData = buffer.subarray(headerBytes);
 
       // Connect to target
@@ -203,7 +195,7 @@ function createConnectProxy(): net.Server {
  * Helper to start a proxy server and get its port.
  */
 async function startProxy(server: net.Server): Promise<number> {
-  return new Promise<number>((resolve) => {
+  return new Promise<number>(resolve => {
     server.listen(0, "127.0.0.1", () => {
       const addr = server.address() as AddressInfo;
       resolve(addr.port);
@@ -232,10 +224,10 @@ describe("https.request agent TLS options inheritance", () => {
             agent,
             // NO ca here - should inherit from agent.options
           },
-          (res) => {
+          res => {
             res.on("data", () => {});
             res.on("end", resolve);
-          }
+          },
         );
         req.on("error", reject);
         req.end();
@@ -265,10 +257,10 @@ describe("https.request agent TLS options inheritance", () => {
             agent,
             // NO rejectUnauthorized here - should inherit from agent.options
           },
-          (res) => {
+          res => {
             res.on("data", () => {});
             res.on("end", resolve);
-          }
+          },
         );
         req.on("error", reject);
         req.end();
@@ -301,10 +293,10 @@ describe("https.request agent TLS options inheritance", () => {
             agent,
             // NO cert/key here - should inherit from agent.options
           },
-          (res) => {
+          res => {
             res.on("data", () => {});
             res.on("end", resolve);
-          }
+          },
         );
         req.on("error", reject);
         req.end();
@@ -343,10 +335,10 @@ describe("https.request agent TLS options inheritance", () => {
             // See: https://github.com/TooTallNate/node-https-proxy-agent/issues/35
             rejectUnauthorized: false,
           },
-          (res) => {
+          res => {
             res.on("data", () => {});
             res.on("end", resolve);
-          }
+          },
         );
         req.on("error", reject);
         req.end();
@@ -380,10 +372,10 @@ describe("https.request agent TLS options inheritance", () => {
             // TLS options must also be passed here for Node.js compatibility
             ca: tlsCerts.ca,
           },
-          (res) => {
+          res => {
             res.on("data", () => {});
             res.on("end", resolve);
-          }
+          },
         );
         req.on("error", reject);
         req.end();
@@ -421,10 +413,10 @@ describe("https.request agent TLS options inheritance", () => {
             cert: tlsCerts.cert,
             key: tlsCerts.key,
           },
-          (res) => {
+          res => {
             res.on("data", () => {});
             res.on("end", resolve);
-          }
+          },
         );
         req.on("error", reject);
         req.end();
@@ -462,10 +454,10 @@ describe("https.request agent TLS options inheritance", () => {
             agent,
             ca: "wrong-ca-that-would-fail", // Wrong CA in request - should be ignored
           },
-          (res) => {
+          res => {
             res.on("data", () => {});
             res.on("end", resolve);
-          }
+          },
         );
         req.on("error", reject);
         req.end();
@@ -493,10 +485,10 @@ describe("https.request agent TLS options inheritance", () => {
             agent,
             ca: tlsCerts.ca, // Direct option should be used since agent.options.ca is not set
           },
-          (res) => {
+          res => {
             res.on("data", () => {});
             res.on("end", resolve);
-          }
+          },
         );
         req.on("error", reject);
         req.end();
@@ -506,7 +498,6 @@ describe("https.request agent TLS options inheritance", () => {
         server.close();
       }
     });
-
   });
 
   describe("other TLS options", () => {
@@ -528,10 +519,10 @@ describe("https.request agent TLS options inheritance", () => {
             method: "GET",
             agent,
           },
-          (res) => {
+          res => {
             res.on("data", () => {});
             res.on("end", resolve);
-          }
+          },
         );
         req.on("error", reject);
         req.end();
@@ -560,10 +551,10 @@ describe("https.request agent TLS options inheritance", () => {
             method: "GET",
             agent,
           },
-          (res) => {
+          res => {
             res.on("data", () => {});
             res.on("end", resolve);
-          }
+          },
         );
         req.on("error", reject);
         req.end();
@@ -597,10 +588,10 @@ describe("http.request agent options", () => {
           method: "GET",
           agent,
         },
-        (res) => {
+        res => {
           res.on("data", () => {});
           res.on("end", resolve);
-        }
+        },
       );
       req.on("error", reject);
       req.end();

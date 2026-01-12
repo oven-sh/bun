@@ -186,8 +186,8 @@ export default [
       },
       _idleStart: {
         getter: "get_idleStart",
-        setter: "set_idleStart",
-        this: true,
+        cache: true,
+        writable: true,
       },
       ["@@dispose"]: {
         fn: "dispose",
@@ -195,7 +195,7 @@ export default [
         invalidThisBehavior: InvalidThisBehavior.NoOp,
       },
     },
-    values: ["arguments", "callback", "idleTimeout", "repeat", "idleStart"],
+    values: ["arguments", "callback", "idleTimeout", "repeat"],
   }),
   define({
     name: "Immediate",

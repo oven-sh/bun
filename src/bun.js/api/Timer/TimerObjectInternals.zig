@@ -292,9 +292,6 @@ pub fn init(
         TimeoutObject.js.callbackSetCached(timer, global, callback);
         TimeoutObject.js.idleTimeoutSetCached(timer, global, .jsNumber(interval));
         TimeoutObject.js.repeatSetCached(timer, global, if (kind == .setInterval) .jsNumber(interval) else .null);
-        // Set _idleStart to the current monotonic timestamp in milliseconds
-        // This mimics Node.js's behavior where _idleStart is the libuv timestamp when the timer was created
-        TimeoutObject.js.idleStartSetCached(timer, global, .jsNumber(bun.getRoughTickCountMs(.allow_mocked_time)));
 
         // this increments the refcount
         this.reschedule(timer, vm);

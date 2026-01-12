@@ -45,7 +45,7 @@ pub fn main() !void {
     const allocator = gpa_impl.allocator();
 
     var stdout_buf: [4096]u8 = undefined;
-    var stdout_file_writer = std.fs.File.stdout().writer(&stdout_buf);
+    var stdout_file_writer = std.fs.File.stdout().writerStreaming(&stdout_buf);
     var stdout = &stdout_file_writer.interface;
 
     const iters = 200_000;

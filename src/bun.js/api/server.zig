@@ -1745,6 +1745,37 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 switch (this.config.address) {
                     .tcp => |tcp| {
                         error_set: {
+                            // Check for getaddrinfo errors (stored as positive libuv-style error codes)
+                            // UV__EAI_* values from libuv/uv/errno.h: 3000-3014
+                            const raw_errno: c_int = std.c._errno().*;
+                            if (raw_errno >= 3000 and raw_errno <= 3014) {
+                                // This is a getaddrinfo error - DNS resolution failed
+                                const hostname_slice: []const u8 = if (tcp.hostname) |h| bun.span(h) else "0.0.0.0";
+                                const eai_code: []const u8 = switch (raw_errno) {
+                                    3000 => "EAI_ADDRFAMILY",
+                                    3001 => "EAI_AGAIN",
+                                    3002 => "EAI_BADFLAGS",
+                                    3003 => "EAI_CANCELED",
+                                    3004 => "EAI_FAIL",
+                                    3005 => "EAI_FAMILY",
+                                    3006 => "EAI_MEMORY",
+                                    3007 => "EAI_NODATA",
+                                    3008 => "EAI_NONAME",
+                                    3009 => "EAI_OVERFLOW",
+                                    3010 => "EAI_SERVICE",
+                                    3011 => "EAI_SOCKTYPE",
+                                    3013 => "EAI_BADHINTS",
+                                    3014 => "EAI_PROTOCOL",
+                                    else => "EAI_NONAME",
+                                };
+                                error_instance = (jsc.SystemError{
+                                    .message = bun.String.init(std.fmt.bufPrint(&output_buf, "getaddrinfo {s}", .{eai_code}) catch "getaddrinfo error"),
+                                    .code = bun.String.static("ENOTFOUND"),
+                                    .syscall = bun.String.static("getaddrinfo"),
+                                    .hostname = bun.String.init(hostname_slice),
+                                }).toErrorInstance(globalThis);
+                                break :error_set;
+                            }
                             if (comptime Environment.isLinux) {
                                 const rc: i32 = -1;
                                 const code = Sys.getErrno(rc);

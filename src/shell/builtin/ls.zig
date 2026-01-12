@@ -413,15 +413,15 @@ pub const ShellLsTask = struct {
         const nlink: u64 = @intCast(stat.nlink);
 
         // Owner and group (numeric)
-        const uid: u32 = stat.uid;
-        const gid: u32 = stat.gid;
+        const uid: u64 = @intCast(stat.uid);
+        const gid: u64 = @intCast(stat.gid);
 
         // File size
-        const size: i64 = stat.size;
+        const size: i64 = @intCast(stat.size);
 
         // Modification time
         const mtime = stat.mtime();
-        const time_str = this.formatTime(mtime.sec, this.now_secs);
+        const time_str = this.formatTime(@intCast(mtime.sec), this.now_secs);
 
         bun.handleOom(writer.print("{c}{s} {d: >3} {d: >5} {d: >5} {d: >8} {s} {s}\n", .{
             file_type,

@@ -211,6 +211,27 @@ pub const Runtime = struct {
         // TODO: make this a bitset of all unsupported features
         lower_using: bool = true,
 
+        /// Feature flags for dead-code elimination via `import { feature } from "bun:bundle"`
+        /// When `feature("FLAG_NAME")` is called, it returns true if FLAG_NAME is in this set.
+        bundler_feature_flags: *const bun.StringSet = &empty_bundler_feature_flags,
+
+        pub const empty_bundler_feature_flags: bun.StringSet = bun.StringSet.initComptime();
+
+        /// Initialize bundler feature flags for dead-code elimination via `import { feature } from "bun:bundle"`.
+        /// Returns a pointer to a StringSet containing the enabled flags, or the empty set if no flags are provided.
+        pub fn initBundlerFeatureFlags(allocator: std.mem.Allocator, feature_flags: []const []const u8) *const bun.StringSet {
+            if (feature_flags.len == 0) {
+                return &empty_bundler_feature_flags;
+            }
+
+            const set = bun.handleOom(allocator.create(bun.StringSet));
+            set.* = bun.StringSet.init(allocator);
+            for (feature_flags) |flag| {
+                bun.handleOom(set.insert(flag));
+            }
+            return set;
+        }
+
         const hash_fields_for_runtime_transpiler = .{
             .top_level_await,
             .auto_import_jsx,

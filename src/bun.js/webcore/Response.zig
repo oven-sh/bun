@@ -381,17 +381,20 @@ pub fn doClone(
     const js_wrapper = Response.makeMaybePooled(globalThis, cloned);
 
     if (js_wrapper != .zero) {
-        if (cloned.#body.value == .Locked) {
-            if (cloned.#body.value.Locked.readable.get(globalThis)) |readable| {
-                // If we are teed, then we need to update the cached .body
-                // value to point to the new readable stream
-                // We must do this on both the original and cloned response
-                // but especially the original response since it will have a stale .body value now.
-                js.bodySetCached(js_wrapper, globalThis, readable.value);
-                if (this.#body.value.Locked.readable.get(globalThis)) |other_readable| {
-                    js.bodySetCached(this_value, globalThis, other_readable.value);
-                }
-            }
+        // After toJS/makeMaybePooled, checkBodyStreamRef has already moved
+        // the streams from Locked.readable to js.gc.stream. So we need to
+        // use js.gc.stream to get the streams and update the body cache.
+        if (js.gc.stream.get(js_wrapper)) |cloned_stream| {
+            js.bodySetCached(js_wrapper, globalThis, cloned_stream);
+        }
+    }
+
+    // Update the original response's body cache with the new teed stream.
+    // At this point, this.#body.value.Locked.readable still holds the teed stream
+    // because checkBodyStreamRef hasn't been called on the original response yet.
+    if (this.#body.value == .Locked) {
+        if (this.#body.value.Locked.readable.get(globalThis)) |readable| {
+            js.bodySetCached(this_value, globalThis, readable.value);
         }
     }
 
@@ -526,10 +529,12 @@ pub fn constructJSON(
             const err = globalThis.createTypeErrorInstance("Do not know how to serialize a BigInt", .{});
             return globalThis.throwValue(err);
         }
+
         var str = bun.String.empty;
-        // calling JSON.stringify on an empty string adds extra quotes
-        // so this is correct
-        try json_value.jsonStringify(globalThis, 0, &str);
+        // Use jsonStringifyFast which passes undefined for the space parameter,
+        // triggering JSC's FastStringifier optimization. This is significantly faster
+        // than jsonStringify which passes 0 for space and uses the slower Stringifier.
+        try json_value.jsonStringifyFast(globalThis, &str);
 
         if (globalThis.hasException()) {
             return .zero;
@@ -892,8 +897,6 @@ inline fn emptyWithStatus(_: *jsc.JSGlobalObject, status: u16) Response {
 
 /// https://developer.mozilla.org/en-US/docs/Web/API/Headers
 // TODO: move to http.zig. this has nothing to do with jsc or WebCore
-
-const string = []const u8;
 
 const std = @import("std");
 const Method = @import("../../http/Method.zig").Method;

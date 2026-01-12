@@ -113,7 +113,7 @@ pub fn scanImportsAndExports(this: *LinkerContext) ScanImportsAndExportsError!vo
                         //
                         // In that case the module *is* considered a CommonJS module because
                         // the namespace object must be created.
-                        if ((record.contains_import_star or record.contains_default_alias) and
+                        if ((record.flags.contains_import_star or record.flags.contains_default_alias) and
                             !other_flags.has_lazy_export and !other_flags.force_cjs_to_esm and
                             exports_kind[other_file] == .none)
                         {
@@ -121,7 +121,7 @@ pub fn scanImportsAndExports(this: *LinkerContext) ScanImportsAndExportsError!vo
                             flags[other_file].wrap = .cjs;
                         }
 
-                        if (record.contains_default_alias and
+                        if (record.flags.contains_default_alias and
                             other_flags.force_cjs_to_esm)
                         {
                             exports_kind[other_file] = .cjs;
@@ -694,11 +694,11 @@ pub fn scanImportsAndExports(this: *LinkerContext) ScanImportsAndExportsError!vo
                                 //
                                 if (kind != .require and
                                     (kind != .stmt or
-                                        record.contains_import_star or
-                                        record.contains_default_alias or
-                                        record.contains_es_module_alias))
+                                        record.flags.contains_import_star or
+                                        record.flags.contains_default_alias or
+                                        record.flags.contains_es_module_alias))
                                 {
-                                    record.wrap_with_to_esm = true;
+                                    record.flags.wrap_with_to_esm = true;
                                     to_esm_uses += 1;
                                 }
                             }
@@ -727,7 +727,7 @@ pub fn scanImportsAndExports(this: *LinkerContext) ScanImportsAndExportsError!vo
                         // This is an ES6 import of a CommonJS module, so it needs the
                         // "__toESM" wrapper as long as it's not a bare "require()"
                         if (kind != .require and other_export_kind == .cjs and output_format != .internal_bake_dev) {
-                            record.wrap_with_to_esm = true;
+                            record.flags.wrap_with_to_esm = true;
                             to_esm_uses += 1;
                         }
 
@@ -755,7 +755,7 @@ pub fn scanImportsAndExports(this: *LinkerContext) ScanImportsAndExportsError!vo
                             // and subtle set of transpiler interop issues. See for example
                             // https://github.com/evanw/esbuild/issues/1591.
                             if (kind == .require) {
-                                record.wrap_with_to_commonjs = true;
+                                record.flags.wrap_with_to_commonjs = true;
                                 to_common_js_uses += 1;
                             }
                         }
@@ -817,7 +817,7 @@ pub fn scanImportsAndExports(this: *LinkerContext) ScanImportsAndExportsError!vo
                             Index.source(source_index),
                         );
                         this.graph.ast.items(.flags)[id].uses_exports_ref = true;
-                        record.calls_runtime_re_export_fn = true;
+                        record.flags.calls_runtime_re_export_fn = true;
                         re_export_uses += 1;
                     }
                 }

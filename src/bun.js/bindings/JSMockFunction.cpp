@@ -14,6 +14,7 @@
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <JavaScriptCore/JSInternalPromise.h>
+#include <JavaScriptCore/JSPromiseConstructor.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include <JavaScriptCore/Weak.h>
@@ -966,6 +967,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionCall, (JSGlobalObject * lexicalGlobalObje
         }
         case JSMockImplementation::Kind::RejectedValue: {
             JSValue rejectedPromise = JSC::JSPromise::rejectedPromise(globalObject, impl->underlyingValue.get());
+            RETURN_IF_EXCEPTION(scope, {});
             setReturnValue(createMockResult(vm, globalObject, "return"_s, rejectedPromise));
             return JSValue::encode(rejectedPromise);
         }

@@ -361,22 +361,41 @@ services:
       });
     });
 
-    test("parses null values", () => {
+    test("parses null values (YAML 1.2 Core Schema)", () => {
+      // YAML 1.2 Core Schema: null, Null, NULL, ~ and empty are null
       expect(YAML.parse("null")).toBe(null);
+      expect(YAML.parse("Null")).toBe(null);
+      expect(YAML.parse("NULL")).toBe(null);
       expect(YAML.parse("~")).toBe(null);
       expect(YAML.parse("")).toBe(null);
     });
 
-    test("parses boolean values", () => {
+    test("parses boolean values (YAML 1.2 Core Schema)", () => {
+      // YAML 1.2 Core Schema: true, True, TRUE, false, False, FALSE are booleans
       expect(YAML.parse("true")).toBe(true);
+      expect(YAML.parse("True")).toBe(true);
+      expect(YAML.parse("TRUE")).toBe(true);
       expect(YAML.parse("false")).toBe(false);
-      expect(YAML.parse("yes")).toBe(true);
-      expect(YAML.parse("no")).toBe(false);
-      expect(YAML.parse("on")).toBe(true);
-      expect(YAML.parse("off")).toBe(false);
+      expect(YAML.parse("False")).toBe(false);
+      expect(YAML.parse("FALSE")).toBe(false);
+      // YAML 1.2: these YAML 1.1 legacy values are strings, not booleans
+      expect(YAML.parse("yes")).toBe("yes");
+      expect(YAML.parse("no")).toBe("no");
+      expect(YAML.parse("on")).toBe("on");
+      expect(YAML.parse("off")).toBe("off");
+      expect(YAML.parse("Yes")).toBe("Yes");
+      expect(YAML.parse("No")).toBe("No");
+      expect(YAML.parse("YES")).toBe("YES");
+      expect(YAML.parse("NO")).toBe("NO");
+      expect(YAML.parse("On")).toBe("On");
+      expect(YAML.parse("Off")).toBe("Off");
+      expect(YAML.parse("ON")).toBe("ON");
+      expect(YAML.parse("OFF")).toBe("OFF");
+      expect(YAML.parse("y")).toBe("y");
+      expect(YAML.parse("n")).toBe("n");
     });
 
-    test("parses number values", () => {
+    test("parses number values (YAML 1.2 Core Schema)", () => {
       expect(YAML.parse("42")).toBe(42);
       expect(YAML.parse("3.14")).toBe(3.14);
       expect(YAML.parse("-17")).toBe(-17);
@@ -384,6 +403,12 @@ services:
       expect(YAML.parse(".inf")).toBe(Infinity);
       expect(YAML.parse("-.inf")).toBe(-Infinity);
       expect(YAML.parse(".nan")).toBeNaN();
+      // YAML 1.2 Core Schema: octal (0o) and hex (0x) are supported
+      expect(YAML.parse("0o777")).toBe(511);
+      expect(YAML.parse("0o10")).toBe(8);
+      expect(YAML.parse("0xFF")).toBe(255);
+      expect(YAML.parse("0x10")).toBe(16);
+      expect(YAML.parse("0xDEADBEEF")).toBe(0xdeadbeef);
     });
 
     test("parses string values", () => {
@@ -681,7 +706,7 @@ unicode: "\\u0041\\u0042\\u0043"
       });
     });
 
-    test("handles large numbers", () => {
+    test("handles large numbers (YAML 1.2 Core Schema)", () => {
       const yaml = `
 int: 9007199254740991
 float: 1.7976931348623157e+308
@@ -692,6 +717,7 @@ binary: 0b1010
       const result = YAML.parse(yaml);
       expect(result.int).toBe(9007199254740991);
       expect(result.float).toBe(1.7976931348623157e308);
+      // YAML 1.2 Core Schema: hex (0x) is supported, binary (0b) is NOT
       expect(result.hex).toBe(255);
       expect(result.octal).toBe(511);
       expect(result.binary).toBe("0b1010");
@@ -1471,6 +1497,30 @@ config:
         expect(YAML.stringify("label:\ttab")).toBe('"label:\\ttab"');
         expect(YAML.stringify("text:\n")).toBe('"text:\\n"');
         expect(YAML.stringify("item:\r")).toBe('"item:\\r"');
+      });
+
+      // https://github.com/oven-sh/bun/issues/25439
+      test("quotes strings ending with colons", () => {
+        // Trailing colons can be misinterpreted as mapping indicators
+        expect(YAML.stringify("tin:")).toBe('"tin:"');
+        expect(YAML.stringify("hello:")).toBe('"hello:"');
+        expect(YAML.stringify("a:")).toBe('"a:"');
+        expect(YAML.stringify("http://example.com:")).toBe('"http://example.com:"');
+        expect(YAML.stringify("key:value:")).toBe('"key:value:"');
+        expect(YAML.stringify(":::")).toBe('":::"');
+
+        // Round-trip should work
+        const testCases = ["tin:", "hello:", "a:", "http://example.com:", "key:value:", ":::"];
+        for (const str of testCases) {
+          const doc = { value: str };
+          expect(YAML.parse(YAML.stringify(doc))).toEqual(doc);
+        }
+
+        // Exact reproduction case from issue #25439
+        const doc = { txt: { en: "tin:" } };
+        const yml = YAML.stringify(doc, null, 2);
+        expect(yml).toContain('"tin:"');
+        expect(YAML.parse(yml)).toEqual(doc);
       });
 
       test("quotes strings containing flow indicators", () => {
@@ -2520,6 +2570,156 @@ refs:
           "42": "answer",
         });
       });
+    });
+  });
+
+  describe("roundtrip (stringify -> parse)", () => {
+    // Test that stringify -> parse produces deep equality for YAML 1.2 compliant values
+
+    test("roundtrips booleans", () => {
+      expect(YAML.parse(YAML.stringify(true))).toBe(true);
+      expect(YAML.parse(YAML.stringify(false))).toBe(false);
+    });
+
+    test("roundtrips null", () => {
+      expect(YAML.parse(YAML.stringify(null))).toBe(null);
+    });
+
+    test("roundtrips numbers", () => {
+      const numbers = [0, 1, -1, 42, 3.14, -17.5, 1e10, 1.5e-10, Infinity, -Infinity];
+      for (const n of numbers) {
+        expect(YAML.parse(YAML.stringify(n))).toBe(n);
+      }
+      expect(YAML.parse(YAML.stringify(NaN))).toBeNaN();
+    });
+
+    test("roundtrips strings", () => {
+      const strings = [
+        "hello",
+        "hello world",
+        "with\nnewline",
+        "with\ttab",
+        'with "quotes"',
+        "with 'single quotes'",
+        // YAML 1.2: these YAML 1.1 legacy values are strings, should roundtrip
+        "yes",
+        "no",
+        "on",
+        "off",
+        "Yes",
+        "No",
+        "YES",
+        "NO",
+        "On",
+        "Off",
+        "ON",
+        "OFF",
+        "y",
+        "n",
+        // YAML 1.2 Core Schema: True/TRUE/False/FALSE/Null/NULL are special values,
+        // but when passed as strings to stringify, they should be quoted and roundtrip
+        "True",
+        "False",
+        "TRUE",
+        "FALSE",
+        "Null",
+        "NULL",
+      ];
+      for (const s of strings) {
+        const roundtripped = YAML.parse(YAML.stringify(s));
+        expect(roundtripped).toBe(s);
+      }
+    });
+
+    test("roundtrips arrays", () => {
+      const arrays = [
+        [],
+        [1, 2, 3],
+        ["a", "b", "c"],
+        [true, false, null],
+        [1, "two", true, null],
+        [
+          [1, 2],
+          [3, 4],
+        ],
+        // YAML 1.2: these YAML 1.1 legacy strings should survive roundtrip
+        ["yes", "no", "on", "off"],
+        // YAML 1.2: these are booleans/null when parsed, but stringify should quote string values
+        ["True", "False", "NULL"],
+      ];
+      for (const arr of arrays) {
+        expect(YAML.parse(YAML.stringify(arr))).toEqual(arr);
+      }
+    });
+
+    test("roundtrips objects", () => {
+      const objects = [
+        {},
+        { a: 1, b: 2 },
+        { name: "test", count: 42 },
+        { nested: { deep: { value: true } } },
+        { arr: [1, 2, 3], obj: { key: "value" } },
+        // YAML 1.2: these YAML 1.1 legacy strings as values should survive roundtrip
+        { yes: "yes", no: "no", on: "on", off: "off" },
+        // YAML 1.2: these are special values but stringify should quote string values
+        { True: "True", False: "False", NULL: "NULL" },
+      ];
+      for (const obj of objects) {
+        expect(YAML.parse(YAML.stringify(obj))).toEqual(obj);
+      }
+    });
+
+    test("roundtrips complex nested structures", () => {
+      const complex = {
+        users: [
+          { name: "Alice", active: true, score: 100 },
+          { name: "Bob", active: false, score: null },
+        ],
+        settings: {
+          enabled: true,
+          count: 42,
+          values: [1, 2, 3],
+        },
+        // YAML 1.2: these YAML 1.1 legacy strings should survive roundtrip
+        yaml11strings: {
+          yes: "yes",
+          no: "no",
+          on: "on",
+          off: "off",
+          // These are YAML 1.1 legacy - strings in YAML 1.2
+          yes_variants: ["Yes", "YES"],
+          no_variants: ["No", "NO"],
+          on_variants: ["On", "ON"],
+          off_variants: ["Off", "OFF"],
+          // These are special in YAML 1.2 Core Schema but stringify quotes them
+          true_variants: ["True", "TRUE"],
+          false_variants: ["False", "FALSE"],
+          null_variants: ["Null", "NULL"],
+        },
+      };
+      expect(YAML.parse(YAML.stringify(complex))).toEqual(complex);
+    });
+
+    test("roundtrips GitHub Actions workflow keys", () => {
+      // This was a common pain point with YAML 1.1 - 'on' being parsed as true
+      const workflow = {
+        name: "CI",
+        on: {
+          push: {
+            branches: ["main"],
+          },
+          pull_request: {
+            branches: ["main"],
+          },
+        },
+        jobs: {
+          build: {
+            "runs-on": "ubuntu-latest",
+            steps: [{ uses: "actions/checkout@v4" }, { run: "npm test" }],
+          },
+        },
+      };
+      expect(YAML.parse(YAML.stringify(workflow))).toEqual(workflow);
     });
   });
 });

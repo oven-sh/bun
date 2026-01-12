@@ -9,6 +9,7 @@
 .ninja_deps
 .ninja_log
 .npm
+.npmrc
 .npm.gz
 .parcel-cache
 .swcrc

@@ -70,7 +70,7 @@ pub const Poll = WriterImpl;
 // pub fn __onClose(_: *IOWriter) void {}
 // pub fn __flush(_: *IOWriter) void {}
 
-pub fn refSelf(this: *IOWriter) *IOWriter {
+pub fn dupeRef(this: *IOWriter) *IOWriter {
     this.ref();
     return this;
 }

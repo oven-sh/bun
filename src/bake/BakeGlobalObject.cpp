@@ -36,7 +36,7 @@ bakeModuleLoaderImportModule(JSC::JSGlobalObject* global,
 
         if (!keyString) {
             auto promise = JSC::JSInternalPromise::create(vm, global->internalPromiseStructure());
-            promise->reject(global, JSC::createError(global, "import() requires a string"_s));
+            promise->reject(vm, global, JSC::createError(global, "import() requires a string"_s));
             return promise;
         }
 
@@ -94,8 +94,7 @@ static JSC::JSInternalPromise* rejectedInternalPromise(JSC::JSGlobalObject* glob
 {
     auto& vm = JSC::getVM(globalObject);
     JSC::JSInternalPromise* promise = JSC::JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
-    promise->internalField(JSC::JSPromise::Field::ReactionsOrResult).set(vm, promise, value);
-    promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, JSC::jsNumber(promise->internalField(JSC::JSPromise::Field::Flags).get().asUInt32AsAnyInt() | JSC::JSPromise::isFirstResolvingFunctionCalledFlag | static_cast<unsigned>(JSC::JSPromise::Status::Rejected)));
+    promise->rejectAsHandled(vm, globalObject, value);
     return promise;
 }
 
@@ -103,8 +102,7 @@ static JSC::JSInternalPromise* resolvedInternalPromise(JSC::JSGlobalObject* glob
 {
     auto& vm = JSC::getVM(globalObject);
     JSC::JSInternalPromise* promise = JSC::JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
-    promise->internalField(JSC::JSPromise::Field::ReactionsOrResult).set(vm, promise, value);
-    promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, JSC::jsNumber(promise->internalField(JSC::JSPromise::Field::Flags).get().asUInt32AsAnyInt() | JSC::JSPromise::isFirstResolvingFunctionCalledFlag | static_cast<unsigned>(JSC::JSPromise::Status::Fulfilled)));
+    promise->fulfill(vm, globalObject, value);
     return promise;
 }
 
@@ -141,10 +139,10 @@ JSC::JSInternalPromise* bakeModuleLoaderFetch(JSC::JSGlobalObject* globalObject,
                     globalObject,
                     source.toWTFString(),
                     origin,
-                    WTFMove(moduleKey),
+                    WTF::move(moduleKey),
                     WTF::TextPosition(),
                     JSC::SourceProviderSourceType::Module));
-                return resolvedInternalPromise(globalObject, JSC::JSSourceCode::create(vm, WTFMove(sourceCode)));
+                return resolvedInternalPromise(globalObject, JSC::JSSourceCode::create(vm, WTF::move(sourceCode)));
             }
 
             // We unconditionally prefix the key with "bake:" inside

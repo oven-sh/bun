@@ -25,7 +25,7 @@ public:
 
     static JSECDH* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* globalObject, ncrypto::ECKeyPointer&& key, const EC_GROUP* group)
     {
-        JSECDH* instance = new (NotNull, JSC::allocateCell<JSECDH>(vm)) JSECDH(vm, structure, WTFMove(key), group);
+        JSECDH* instance = new (NotNull, JSC::allocateCell<JSECDH>(vm)) JSECDH(vm, structure, WTF::move(key), group);
         instance->finishCreation(vm, globalObject);
         return instance;
     }
@@ -53,7 +53,7 @@ public:
 private:
     JSECDH(JSC::VM& vm, JSC::Structure* structure, ncrypto::ECKeyPointer&& key, const EC_GROUP* group)
         : Base(vm, structure)
-        , m_key(WTFMove(key))
+        , m_key(WTF::move(key))
         , m_group(group)
     {
         ASSERT(m_group);

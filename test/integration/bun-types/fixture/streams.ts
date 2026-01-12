@@ -60,6 +60,8 @@ expectType(node_stream.blob()).is<Promise<Blob>>();
 Bun.file("./foo.csv").stream().pipeThrough(new TextDecoderStream()).pipeThrough(new TextEncoderStream());
 
 Bun.file("./foo.csv").stream().pipeThrough(new CompressionStream("gzip")).pipeThrough(new DecompressionStream("gzip"));
+Bun.file("./foo.csv").stream().pipeThrough(new CompressionStream("brotli")).pipeThrough(new DecompressionStream("brotli"));
+Bun.file("./foo.csv").stream().pipeThrough(new CompressionStream("zstd")).pipeThrough(new DecompressionStream("zstd"));
 
 Bun.file("./foo.csv")
   .stream()

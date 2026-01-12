@@ -92,7 +92,7 @@ void reportException(JSGlobalObject* lexicalGlobalObject, JSValue exceptionValue
     if (!exception) {
         exception = vm.lastException();
         if (!exception)
-            exception = JSC::Exception::create(lexicalGlobalObject->vm(), exceptionValue, JSC::Exception::DoNotCaptureStack);
+            exception = JSC::Exception::create(lexicalGlobalObject->vm(), exceptionValue, JSC::Exception::StackCaptureAction::DoNotCaptureStack);
     }
 
     reportException(lexicalGlobalObject, exception, cachedScript, fromModule);
@@ -212,7 +212,7 @@ JSValue createDOMException(JSGlobalObject& lexicalGlobalObject, Exception&& exce
 void propagateExceptionSlowPath(JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& throwScope, Exception&& exception)
 {
     throwScope.assertNoExceptionExceptTermination();
-    auto jsException = createDOMException(lexicalGlobalObject, WTFMove(exception));
+    auto jsException = createDOMException(lexicalGlobalObject, WTF::move(exception));
     RETURN_IF_EXCEPTION(throwScope, );
     throwException(&lexicalGlobalObject, throwScope, jsException);
 }

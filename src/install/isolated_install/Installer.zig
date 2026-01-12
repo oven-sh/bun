@@ -916,7 +916,7 @@ pub const Installer = struct {
                         if (installer.trusted_dependencies_from_update_requests.contains(truncated_dep_name_hash)) {
                             break :brk .{ true, true };
                         }
-                        if (installer.lockfile.hasTrustedDependency(dep.name.slice(string_buf))) {
+                        if (installer.lockfile.hasTrustedDependency(dep.name.slice(string_buf), &pkg_res)) {
                             break :brk .{ true, false };
                         }
                         break :brk .{ false, false };

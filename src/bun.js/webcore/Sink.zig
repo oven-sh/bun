@@ -550,15 +550,17 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
                 }
             }
 
-            defer {
-                if (comptime @hasField(SinkType, "done")) {
-                    if (this.sink.done) {
-                        callframe.this().unprotect();
-                    }
+            const result = this.sink.endFromJS(globalThis).toJS(globalThis);
+
+            // Protect the JS wrapper from GC while an async operation is pending.
+            // This prevents the JS wrapper from being collected before the Promise resolves.
+            if (comptime @hasDecl(SinkType, "protectJSWrapper")) {
+                if (this.sink.pending.state == .pending) {
+                    this.sink.protectJSWrapper(globalThis, callframe.this());
                 }
             }
 
-            return this.sink.endFromJS(globalThis).toJS(globalThis);
+            return result;
         }
 
         pub fn endWithSink(ptr: *anyopaque, globalThis: *JSGlobalObject) callconv(jsc.conv) JSValue {

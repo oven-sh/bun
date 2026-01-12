@@ -350,8 +350,11 @@ pub const Result = union(Tag) {
             };
 
             pub fn run(this: *Writable.Pending) void {
-                if (this.state != .pending) return;
+                if (this.state != .pending) {
+                    return;
+                }
                 this.state = .used;
+
                 switch (this.future) {
                     .promise => {
                         var p = this.future.promise;

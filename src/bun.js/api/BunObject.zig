@@ -48,6 +48,7 @@ pub const BunObject = struct {
     // --- Callbacks ---
 
     // --- Lazy property callbacks ---
+    pub const Archive = toJSLazyPropertyCallback(Bun.getArchiveConstructor);
     pub const CryptoHasher = toJSLazyPropertyCallback(Crypto.CryptoHasher.getter);
     pub const CSRF = toJSLazyPropertyCallback(Bun.getCSRFObject);
     pub const FFI = toJSLazyPropertyCallback(Bun.FFIObject.getter);
@@ -61,6 +62,7 @@ pub const BunObject = struct {
     pub const SHA384 = toJSLazyPropertyCallback(Crypto.SHA384.getter);
     pub const SHA512 = toJSLazyPropertyCallback(Crypto.SHA512.getter);
     pub const SHA512_256 = toJSLazyPropertyCallback(Crypto.SHA512_256.getter);
+    pub const JSONC = toJSLazyPropertyCallback(Bun.getJSONCObject);
     pub const TOML = toJSLazyPropertyCallback(Bun.getTOMLObject);
     pub const YAML = toJSLazyPropertyCallback(Bun.getYAMLObject);
     pub const Transpiler = toJSLazyPropertyCallback(Bun.getTranspilerConstructor);
@@ -77,6 +79,7 @@ pub const BunObject = struct {
     pub const s3 = toJSLazyPropertyCallback(Bun.getS3DefaultClient);
     pub const ValkeyClient = toJSLazyPropertyCallback(Bun.getValkeyClientConstructor);
     pub const valkey = toJSLazyPropertyCallback(Bun.getValkeyDefaultClient);
+    pub const Terminal = toJSLazyPropertyCallback(Bun.getTerminalConstructor);
     // --- Lazy property callbacks ---
 
     // --- Getters ---
@@ -113,6 +116,7 @@ pub const BunObject = struct {
         }
 
         // --- Lazy property callbacks ---
+        @export(&BunObject.Archive, .{ .name = lazyPropertyCallbackName("Archive") });
         @export(&BunObject.CryptoHasher, .{ .name = lazyPropertyCallbackName("CryptoHasher") });
         @export(&BunObject.CSRF, .{ .name = lazyPropertyCallbackName("CSRF") });
         @export(&BunObject.FFI, .{ .name = lazyPropertyCallbackName("FFI") });
@@ -125,7 +129,7 @@ pub const BunObject = struct {
         @export(&BunObject.SHA384, .{ .name = lazyPropertyCallbackName("SHA384") });
         @export(&BunObject.SHA512, .{ .name = lazyPropertyCallbackName("SHA512") });
         @export(&BunObject.SHA512_256, .{ .name = lazyPropertyCallbackName("SHA512_256") });
-
+        @export(&BunObject.JSONC, .{ .name = lazyPropertyCallbackName("JSONC") });
         @export(&BunObject.TOML, .{ .name = lazyPropertyCallbackName("TOML") });
         @export(&BunObject.YAML, .{ .name = lazyPropertyCallbackName("YAML") });
         @export(&BunObject.Glob, .{ .name = lazyPropertyCallbackName("Glob") });
@@ -143,6 +147,7 @@ pub const BunObject = struct {
         @export(&BunObject.s3, .{ .name = lazyPropertyCallbackName("s3") });
         @export(&BunObject.ValkeyClient, .{ .name = lazyPropertyCallbackName("ValkeyClient") });
         @export(&BunObject.valkey, .{ .name = lazyPropertyCallbackName("valkey") });
+        @export(&BunObject.Terminal, .{ .name = lazyPropertyCallbackName("Terminal") });
         // --- Lazy property callbacks ---
 
         // --- Callbacks ---
@@ -1257,12 +1262,19 @@ pub fn getHashObject(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSVa
     return HashObject.create(globalThis);
 }
 
+pub fn getJSONCObject(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
+    return JSONCObject.create(globalThis);
+}
 pub fn getTOMLObject(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
     return TOMLObject.create(globalThis);
 }
 
 pub fn getYAMLObject(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
     return YAMLObject.create(globalThis);
+}
+
+pub fn getArchiveConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
+    return jsc.API.Archive.js.getConstructor(globalThis);
 }
 
 pub fn getGlobConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
@@ -1313,6 +1325,10 @@ pub fn getValkeyDefaultClient(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject)
 
 pub fn getValkeyClientConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
     return jsc.API.Valkey.js.getConstructor(globalThis);
+}
+
+pub fn getTerminalConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
+    return api.Terminal.js.getConstructor(globalThis);
 }
 
 pub fn getEmbeddedFiles(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) bun.JSError!jsc.JSValue {
@@ -2050,6 +2066,7 @@ const gen = bun.gen.BunObject;
 const api = bun.api;
 const FFIObject = bun.api.FFIObject;
 const HashObject = bun.api.HashObject;
+const JSONCObject = bun.api.JSONCObject;
 const TOMLObject = bun.api.TOMLObject;
 const UnsafeObject = bun.api.UnsafeObject;
 const YAMLObject = bun.api.YAMLObject;

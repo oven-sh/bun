@@ -170,6 +170,14 @@ struct us_socket_flags {
     unsigned char low_prio_state: 2;
     /* If true, the socket should be read using readmsg to support receiving file descriptors */
     bool is_ipc: 1;
+    /* If true, the socket has been closed */
+    bool is_closed: 1;
+    /* If true, the socket was reallocated during adoption */
+    bool adopted: 1;
+    /* If true, the socket is a TLS socket */
+    bool is_tls: 1;
+    /* If true, the last write to this socket failed (would block) */
+    bool last_write_failed: 1;
 
 } __attribute__((packed));
 
@@ -435,11 +443,11 @@ void us_internal_ssl_socket_shutdown(us_internal_ssl_socket_r s);
 
 struct us_internal_ssl_socket_t *us_internal_ssl_socket_context_adopt_socket(
     us_internal_ssl_socket_context_r context,
-    us_internal_ssl_socket_r s, int ext_size);
+    us_internal_ssl_socket_r s, int old_ext_size, int ext_size);
 
 struct us_internal_ssl_socket_t *us_internal_ssl_socket_wrap_with_tls(
     us_socket_r s, struct us_bun_socket_context_options_t options,
-    struct us_socket_events_t events, int socket_ext_size);
+    struct us_socket_events_t events, int old_socket_ext_size, int socket_ext_size);
 struct us_internal_ssl_socket_context_t *
 us_internal_create_child_ssl_socket_context(
     us_internal_ssl_socket_context_r context, int context_ext_size);

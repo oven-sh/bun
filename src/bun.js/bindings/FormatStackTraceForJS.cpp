@@ -149,19 +149,21 @@ WTF::String formatStackTrace(
 {
     // Filter the stack trace to remove consecutive duplicates and internal async frames
     // This matches Node.js behavior which doesn't expose JSC's async machinery
-    Vector<JSC::StackFrame> filteredStackTrace;
-    filteredStackTrace.reserveInitialCapacity(stackTrace.size());
+    // We use indices instead of copying frames for better performance
+    Vector<size_t> filteredIndices;
+    filteredIndices.reserveInitialCapacity(stackTrace.size());
 
     const JSC::StackFrame* prevUserFrame = nullptr;
 
-    for (const auto& frame : stackTrace) {
+    for (size_t i = 0; i < stackTrace.size(); i++) {
+        const auto& frame = stackTrace[i];
+
         // Skip implementation-private frames
         if (isImplementationVisibilityPrivate(frame)) {
             continue;
         }
 
         // Skip internal builtin frames (like asyncFunctionResume)
-        // Check once and reuse the result for both filtering and prevUserFrame tracking
         bool isBuiltin = isInternalBuiltinFrame(frame);
         if (isBuiltin) {
             continue;
@@ -172,11 +174,8 @@ WTF::String formatStackTrace(
             continue;
         }
 
-        filteredStackTrace.append(frame);
-
-        // Since we already filtered builtins above, this frame is a user frame
-        // Update prevUserFrame for duplicate detection in the next iteration
-        prevUserFrame = &filteredStackTrace.last();
+        filteredIndices.append(i);
+        prevUserFrame = &frame;
     }
 
     WTF::StringBuilder sb;
@@ -193,7 +192,7 @@ WTF::String formatStackTrace(
 
     // FIXME: why can size == 6 and capacity == 0?
     // https://discord.com/channels/876711213126520882/1174901590457585765/1174907969419350036
-    size_t framesCount = filteredStackTrace.size();
+    size_t framesCount = filteredIndices.size();
 
     bool hasSet = false;
     void* bunVM = nullptr;
@@ -206,7 +205,7 @@ WTF::String formatStackTrace(
 
     if (errorInstance) {
         if (JSC::ErrorInstance* err = jsDynamicCast<JSC::ErrorInstance*>(errorInstance)) {
-            if (err->errorType() == ErrorType::SyntaxError && (filteredStackTrace.isEmpty() || filteredStackTrace.at(0).sourceURL(vm) != err->sourceURL())) {
+            if (err->errorType() == ErrorType::SyntaxError && (filteredIndices.isEmpty() || stackTrace[filteredIndices[0]].sourceURL(vm) != err->sourceURL())) {
                 // There appears to be an off-by-one error.
                 // The following reproduces the issue:
                 // /* empty comment */
@@ -261,14 +260,14 @@ WTF::String formatStackTrace(
     }
 
     if (framesCount == 0) {
-        ASSERT(filteredStackTrace.isEmpty());
+        ASSERT(filteredIndices.isEmpty());
         return sb.toString();
     }
 
     sb.append("\n"_s);
 
     for (size_t i = 0; i < framesCount; i++) {
-        StackFrame& frame = filteredStackTrace.at(i);
+        StackFrame& frame = stackTrace[filteredIndices[i]];
         unsigned int flags = static_cast<unsigned int>(FunctionNameFlags::AddNewKeyword);
 
         // -- get the data we need to render the text --

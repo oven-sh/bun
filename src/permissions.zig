@@ -599,7 +599,12 @@ fn matchesWithDoubleStar(pattern_segs: []const []const u8, double_star_pos: usiz
     return true;
 }
 
-/// Central permissions container
+/// Central permissions container.
+///
+/// Memory management: The `allowed` and `denied_list` slices in each Permission
+/// are borrowed references to data owned by PermissionOptions (from CLI args).
+/// These slices remain valid for the lifetime of the process, so no explicit
+/// deallocation is needed. The Permissions struct does not own this memory.
 pub const Permissions = struct {
     read: Permission = .{ .state = .granted },
     write: Permission = .{ .state = .granted },

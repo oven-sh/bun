@@ -423,4 +423,63 @@ describe("File system permissions", () => {
       expect(exitCode).toBe(0);
     });
   });
+
+  describe("Bun.build permission checks", () => {
+    test("Bun.build requires read and write permissions in secure mode", async () => {
+      using dir = tempDir("perm-bundler-secure", {
+        "test.ts": `
+          try {
+            await Bun.build({
+              entrypoints: ["./entry.ts"],
+              outdir: "./dist",
+            });
+            console.log("SUCCESS");
+          } catch (e) {
+            console.log("ERROR:", e.message);
+            process.exit(1);
+          }
+        `,
+        "entry.ts": "console.log('hello');",
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--secure", "--no-prompt", "test.ts"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stdout + stderr).toContain("PermissionDenied");
+      expect(exitCode).not.toBe(0);
+    });
+
+    test("Bun.build works with --allow-read --allow-write", async () => {
+      using dir = tempDir("perm-bundler-allow", {
+        "test.ts": `
+          const result = await Bun.build({
+            entrypoints: ["./entry.ts"],
+            outdir: "./dist",
+          });
+          console.log("success:", result.success);
+        `,
+        "entry.ts": "console.log('hello');",
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--secure", "--allow-read", "--allow-write", "test.ts"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stdout).toContain("success: true");
+      expect(exitCode).toBe(0);
+    });
+  });
 });

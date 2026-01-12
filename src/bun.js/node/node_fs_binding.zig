@@ -412,7 +412,14 @@ fn checkFsPermission(comptime function_name: NodeFSFunctionEnum, globalObject: *
     }
 }
 
-/// Resolve a path to an absolute path using the current working directory
+/// Resolve a path to an absolute path using the current working directory.
+///
+/// Security note: This function does NOT follow symlinks. Permission checks are performed
+/// on the provided path, not the symlink target. This means a symlink pointing outside
+/// an allowed directory will be accessible. To protect sensitive directories, use --deny-*
+/// flags on the actual target paths. A future enhancement could add optional symlink
+/// resolution, but this has performance implications and edge cases (TOCTOU races,
+/// non-existent files for writes, etc.).
 fn resolvePath(globalObject: *jsc.JSGlobalObject, path: []const u8, buf: *[bun.MAX_PATH_BYTES]u8) []const u8 {
     // If it's already an absolute path, use it directly
     if (bun.path.Platform.auto.isAbsolute(path)) {

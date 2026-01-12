@@ -147,6 +147,38 @@ WTF::String formatStackTrace(
     Vector<JSC::StackFrame>& stackTrace,
     JSC::JSObject* errorInstance)
 {
+    // Filter the stack trace to remove consecutive duplicates and internal async frames
+    // This matches Node.js behavior which doesn't expose JSC's async machinery
+    Vector<JSC::StackFrame> filteredStackTrace;
+    filteredStackTrace.reserveInitialCapacity(stackTrace.size());
+
+    const JSC::StackFrame* prevUserFrame = nullptr;
+
+    for (const auto& frame : stackTrace) {
+        // Skip implementation-private frames
+        if (isImplementationVisibilityPrivate(frame)) {
+            continue;
+        }
+
+        // Skip internal builtin frames (like asyncFunctionResume)
+        // Check once and reuse the result for both filtering and prevUserFrame tracking
+        bool isBuiltin = isInternalBuiltinFrame(frame);
+        if (isBuiltin) {
+            continue;
+        }
+
+        // Check for consecutive duplicates (for async functions)
+        if (prevUserFrame && isConsecutiveDuplicateAsyncFrame(vm, frame, *prevUserFrame)) {
+            continue;
+        }
+
+        filteredStackTrace.append(frame);
+
+        // Since we already filtered builtins above, this frame is a user frame
+        // Update prevUserFrame for duplicate detection in the next iteration
+        prevUserFrame = &filteredStackTrace.last();
+    }
+
     WTF::StringBuilder sb;
 
     if (!name.isEmpty()) {
@@ -161,7 +193,7 @@ WTF::String formatStackTrace(
 
     // FIXME: why can size == 6 and capacity == 0?
     // https://discord.com/channels/876711213126520882/1174901590457585765/1174907969419350036
-    size_t framesCount = stackTrace.size();
+    size_t framesCount = filteredStackTrace.size();
 
     bool hasSet = false;
     void* bunVM = nullptr;
@@ -174,7 +206,7 @@ WTF::String formatStackTrace(
 
     if (errorInstance) {
         if (JSC::ErrorInstance* err = jsDynamicCast<JSC::ErrorInstance*>(errorInstance)) {
-            if (err->errorType() == ErrorType::SyntaxError && (stackTrace.isEmpty() || stackTrace.at(0).sourceURL(vm) != err->sourceURL())) {
+            if (err->errorType() == ErrorType::SyntaxError && (filteredStackTrace.isEmpty() || filteredStackTrace.at(0).sourceURL(vm) != err->sourceURL())) {
                 // There appears to be an off-by-one error.
                 // The following reproduces the issue:
                 // /* empty comment */
@@ -229,14 +261,14 @@ WTF::String formatStackTrace(
     }
 
     if (framesCount == 0) {
-        ASSERT(stackTrace.isEmpty());
+        ASSERT(filteredStackTrace.isEmpty());
         return sb.toString();
     }
 
     sb.append("\n"_s);
 
     for (size_t i = 0; i < framesCount; i++) {
-        StackFrame& frame = stackTrace.at(i);
+        StackFrame& frame = filteredStackTrace.at(i);
         unsigned int flags = static_cast<unsigned int>(FunctionNameFlags::AddNewKeyword);
 
         // -- get the data we need to render the text --

@@ -143,10 +143,8 @@ test("Async functions frame should be included in stack trace", async () => {
 
   expect(normalizeBunSnapshot(error.stack!)).toMatchInlineSnapshot(`
     "Error: error from qux
-        at asyncFunctionResume (file:NN:NN)
         at qux (file:NN:NN)
         at baz (file:NN:NN)
-        at asyncFunctionResume (file:NN:NN)
         at async bar (file:NN:NN)
         at async foo (file:NN:NN)
         at async <anonymous> (file:NN:NN)"

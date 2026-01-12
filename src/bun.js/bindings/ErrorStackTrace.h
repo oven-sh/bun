@@ -210,6 +210,8 @@ private:
 
 bool isImplementationVisibilityPrivate(JSC::StackVisitor& visitor);
 bool isImplementationVisibilityPrivate(const JSC::StackFrame& frame);
+bool isConsecutiveDuplicateAsyncFrame(JSC::VM& vm, const JSC::StackFrame& currentFrame, const JSC::StackFrame& prevFrame);
+bool isInternalBuiltinFrame(const JSC::StackFrame& frame);
 
 String sourceURL(const JSC::SourceOrigin& origin);
 String sourceURL(JSC::SourceProvider* sourceProvider);

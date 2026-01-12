@@ -149,7 +149,7 @@ static bool isConsecutiveDuplicateAsyncFrame(JSC::StackVisitor& visitor, const J
     return false;
 }
 
-static bool isConsecutiveDuplicateAsyncFrame(JSC::VM& vm, const JSC::StackFrame& currentFrame, const JSC::StackFrame& prevFrame)
+bool isConsecutiveDuplicateAsyncFrame(JSC::VM& vm, const JSC::StackFrame& currentFrame, const JSC::StackFrame& prevFrame)
 {
     auto* currentCallee = currentFrame.callee();
     auto* prevCallee = prevFrame.callee();
@@ -219,6 +219,18 @@ static bool isConsecutiveDuplicateAsyncFrame(JSC::VM& vm, const JSC::StackFrame&
     return false;
 }
 
+// Helper to check if a frame is an internal builtin that should be hidden
+// Builtin functions like asyncFunctionResume are JSC internal machinery that Node.js doesn't expose
+bool isInternalBuiltinFrame(const JSC::StackFrame& frame)
+{
+    if (auto* codeBlock = frame.codeBlock()) {
+        if (auto* unlinkedCodeBlock = codeBlock->unlinkedCodeBlock()) {
+            return unlinkedCodeBlock->isBuiltinFunction();
+        }
+    }
+    return false;
+}
+
 JSCStackTrace JSCStackTrace::fromExisting(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& existingFrames)
 {
     WTF::Vector<JSCStackFrame> newFrames;
@@ -230,7 +242,9 @@ JSCStackTrace JSCStackTrace::fromExisting(JSC::VM& vm, const WTF::Vector<JSC::St
 
     newFrames.reserveInitialCapacity(frameCount);
 
-    const JSC::StackFrame* prevFrame = nullptr;
+    // Track the last user code frame for duplicate detection
+    // This prevents native frames like asyncFunctionResume from breaking duplicate detection
+    const JSC::StackFrame* prevUserFrame = nullptr;
 
     for (size_t i = 0; i < frameCount; i++) {
         const auto& currentFrame = existingFrames.at(i);
@@ -239,12 +253,23 @@ JSCStackTrace JSCStackTrace::fromExisting(JSC::VM& vm, const WTF::Vector<JSC::St
             continue;
         }
 
-        if (prevFrame && isConsecutiveDuplicateAsyncFrame(vm, currentFrame, *prevFrame)) {
+        // Skip internal builtin frames (like asyncFunctionResume)
+        // Check once and reuse the result for both filtering and prevUserFrame tracking
+        bool isBuiltin = isInternalBuiltinFrame(currentFrame);
+        if (isBuiltin) {
+            continue;
+        }
+
+        // Use prevUserFrame to avoid builtin frames breaking duplicate detection
+        if (prevUserFrame && isConsecutiveDuplicateAsyncFrame(vm, currentFrame, *prevUserFrame)) {
             continue;
         }
 
         newFrames.constructAndAppend(vm, currentFrame);
-        prevFrame = &currentFrame;
+
+        // Since we already filtered builtins above, this frame is a user frame
+        // Update prevUserFrame for duplicate detection in the next iteration
+        prevUserFrame = &currentFrame;
     }
 
     return JSCStackTrace(newFrames);
@@ -348,8 +373,13 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
     totalFrames = 0;
     stackTrace.reserveInitialCapacity(framesCount);
 
-    // Track the previous frame to detect consecutive duplicates
+    // Track two different previous frames:
+    // - prevFrame: last frame added (for any purpose)
+    // - prevUserFrame: last user code frame (for duplicate detection)
+    // This separation ensures that native frames like asyncFunctionResume
+    // don't break consecutive duplicate detection
     const JSC::StackFrame* prevFrame = nullptr;
+    const JSC::StackFrame* prevUserFrame = nullptr;
 
     JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
         // Skip native frames
@@ -365,7 +395,8 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
 
         // Check if this is a consecutive duplicate async frame
         // This handles JSC's behavior of creating two frames for async functions
-        if (isConsecutiveDuplicateAsyncFrame(visitor, prevFrame)) {
+        // Use prevUserFrame (not prevFrame) to avoid native frames breaking detection
+        if (isConsecutiveDuplicateAsyncFrame(visitor, prevUserFrame)) {
             return WTF::IterationStatus::Continue;
         }
 
@@ -382,6 +413,8 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
             case NativeCallee::Category::Wasm: {
                 stackTrace.append(StackFrame(visitor->wasmFunctionIndexOrName()));
                 prevFrame = stackTrace.isEmpty() ? nullptr : &stackTrace.last();
+                // Wasm frames can participate in duplicate detection
+                prevUserFrame = prevFrame;
                 break;
             }
             case NativeCallee::Category::InlineCache: {
@@ -396,9 +429,16 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
         {
             stackTrace.append(StackFrame(vm, owner, visitor->callee().asCell(), visitor->codeBlock(), visitor->bytecodeIndex()));
             prevFrame = &stackTrace.last();
+            // Only update prevUserFrame for non-builtin functions
+            // Builtin functions like asyncFunctionResume shouldn't participate in duplicate detection
+            if (visitor->codeBlock() && visitor->codeBlock()->unlinkedCodeBlock() && !visitor->codeBlock()->unlinkedCodeBlock()->isBuiltinFunction()) {
+                prevUserFrame = prevFrame;
+            }
         } else {
             stackTrace.append(StackFrame(vm, owner, visitor->callee().asCell()));
             prevFrame = &stackTrace.last();
+            // Native/builtin frames without codeBlocks don't participate in duplicate detection
+            // This prevents frames like asyncFunctionResume from breaking duplicate detection
         }
 
         i++;

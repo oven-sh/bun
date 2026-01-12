@@ -93,7 +93,32 @@ bool isImplementationVisibilityPrivate(const JSC::StackFrame& frame)
     return implementationVisibility != ImplementationVisibility::Public;
 }
 
-static bool isConsecutiveDuplicateAsyncFrame(JSC::StackVisitor& visitor, const JSC::StackFrame* prevFrame)
+// Core logic for comparing two frames for duplicate detection
+static bool compareFramesForDuplicates(
+    const WTF::String& currentName,
+    const WTF::String& prevName,
+    const WTF::String& currentSourceURL,
+    const WTF::String& prevSourceURL,
+    unsigned currentLine,
+    unsigned prevLine)
+{
+    if (currentName.isEmpty() || prevName.isEmpty()) {
+        return false;
+    }
+
+    if (currentName != prevName) {
+        return false;
+    }
+
+    if (currentSourceURL.isEmpty() || prevSourceURL.isEmpty() || currentSourceURL != prevSourceURL) {
+        return false;
+    }
+
+    int lineDiff = std::abs(static_cast<int>(currentLine) - static_cast<int>(prevLine));
+    return lineDiff <= 1;
+}
+
+static bool isConsecutiveDuplicateAsyncFrame(JSC::VM& vm, JSC::StackVisitor& visitor, const JSC::StackFrame* prevFrame)
 {
     if (!prevFrame) {
         return false;
@@ -102,23 +127,10 @@ static bool isConsecutiveDuplicateAsyncFrame(JSC::StackVisitor& visitor, const J
     WTF::String currentFunctionName = visitor->functionName();
     WTF::String prevFunctionName;
 
-    // Get function name from previous frame's callee
     if (auto* callee = prevFrame->callee()) {
         if (auto* jsFunction = jsDynamicCast<JSFunction*>(callee)) {
-            if (auto* codeBlock = visitor->codeBlock()) {
-                prevFunctionName = jsFunction->name(codeBlock->vm());
-            } else if (auto* prevCodeBlock = prevFrame->codeBlock()) {
-                prevFunctionName = jsFunction->name(prevCodeBlock->vm());
-            }
+            prevFunctionName = jsFunction->name(vm);
         }
-    }
-
-    if (currentFunctionName.isEmpty() || prevFunctionName.isEmpty()) {
-        return false;
-    }
-
-    if (currentFunctionName != prevFunctionName) {
-        return false;
     }
 
     WTF::String currentSourceURL;
@@ -131,22 +143,20 @@ static bool isConsecutiveDuplicateAsyncFrame(JSC::StackVisitor& visitor, const J
         prevSourceURL = Zig::sourceURL(codeBlock);
     }
 
-    if (currentSourceURL.isEmpty() || prevSourceURL.isEmpty() || currentSourceURL != prevSourceURL) {
+    if (!visitor->hasLineAndColumnInfo() || !prevFrame->hasLineAndColumnInfo()) {
         return false;
     }
 
-    if (visitor->hasLineAndColumnInfo() && prevFrame->hasLineAndColumnInfo()) {
-        auto currentLineColumn = visitor->computeLineAndColumn();
-        auto prevLineColumn = prevFrame->computeLineAndColumn();
+    auto currentLineColumn = visitor->computeLineAndColumn();
+    auto prevLineColumn = prevFrame->computeLineAndColumn();
 
-        int lineDiff = std::abs(static_cast<int>(currentLineColumn.line) - static_cast<int>(prevLineColumn.line));
-
-        if (lineDiff <= 1) {
-            return true;
-        }
-    }
-
-    return false;
+    return compareFramesForDuplicates(
+        currentFunctionName,
+        prevFunctionName,
+        currentSourceURL,
+        prevSourceURL,
+        currentLineColumn.line,
+        prevLineColumn.line);
 }
 
 bool isConsecutiveDuplicateAsyncFrame(JSC::VM& vm, const JSC::StackFrame& currentFrame, const JSC::StackFrame& prevFrame)
@@ -179,48 +189,33 @@ bool isConsecutiveDuplicateAsyncFrame(JSC::VM& vm, const JSC::StackFrame& curren
         }
     }
 
-    if (currentName.isEmpty() || prevName.isEmpty()) {
-        return false;
-    }
-
-    if (currentName != prevName) {
-        return false;
-    }
-
-    auto* currentCodeBlock = currentFrame.codeBlock();
-    auto* prevCodeBlock = prevFrame.codeBlock();
-
     WTF::String currentSourceURL;
-    WTF::String prevSourceURL;
-
-    if (currentCodeBlock) {
+    if (auto* currentCodeBlock = currentFrame.codeBlock()) {
         currentSourceURL = Zig::sourceURL(currentCodeBlock);
     }
 
-    if (prevCodeBlock) {
+    WTF::String prevSourceURL;
+    if (auto* prevCodeBlock = prevFrame.codeBlock()) {
         prevSourceURL = Zig::sourceURL(prevCodeBlock);
     }
 
-    if (currentSourceURL.isEmpty() || prevSourceURL.isEmpty() || currentSourceURL != prevSourceURL) {
+    if (!currentFrame.hasLineAndColumnInfo() || !prevFrame.hasLineAndColumnInfo()) {
         return false;
     }
 
-    if (currentFrame.hasLineAndColumnInfo() && prevFrame.hasLineAndColumnInfo()) {
-        auto currentLineColumn = currentFrame.computeLineAndColumn();
-        auto prevLineColumn = prevFrame.computeLineAndColumn();
+    auto currentLineColumn = currentFrame.computeLineAndColumn();
+    auto prevLineColumn = prevFrame.computeLineAndColumn();
 
-        int lineDiff = std::abs(static_cast<int>(currentLineColumn.line) - static_cast<int>(prevLineColumn.line));
-
-        if (lineDiff <= 1) {
-            return true;
-        }
-    }
-
-    return false;
+    return compareFramesForDuplicates(
+        currentName,
+        prevName,
+        currentSourceURL,
+        prevSourceURL,
+        currentLineColumn.line,
+        prevLineColumn.line);
 }
 
-// Helper to check if a frame is an internal builtin that should be hidden
-// Builtin functions like asyncFunctionResume are JSC internal machinery that Node.js doesn't expose
+// Check if frame is an internal builtin (e.g., asyncFunctionResume)
 bool isInternalBuiltinFrame(const JSC::StackFrame& frame)
 {
     if (auto* codeBlock = frame.codeBlock()) {
@@ -242,8 +237,7 @@ JSCStackTrace JSCStackTrace::fromExisting(JSC::VM& vm, const WTF::Vector<JSC::St
 
     newFrames.reserveInitialCapacity(frameCount);
 
-    // Track the last user code frame for duplicate detection
-    // This prevents native frames like asyncFunctionResume from breaking duplicate detection
+    // Track last user frame for duplicate detection (skip builtins)
     const JSC::StackFrame* prevUserFrame = nullptr;
 
     for (size_t i = 0; i < frameCount; i++) {
@@ -253,22 +247,16 @@ JSCStackTrace JSCStackTrace::fromExisting(JSC::VM& vm, const WTF::Vector<JSC::St
             continue;
         }
 
-        // Skip internal builtin frames (like asyncFunctionResume)
-        // Check once and reuse the result for both filtering and prevUserFrame tracking
         bool isBuiltin = isInternalBuiltinFrame(currentFrame);
         if (isBuiltin) {
             continue;
         }
 
-        // Use prevUserFrame to avoid builtin frames breaking duplicate detection
         if (prevUserFrame && isConsecutiveDuplicateAsyncFrame(vm, currentFrame, *prevUserFrame)) {
             continue;
         }
 
         newFrames.constructAndAppend(vm, currentFrame);
-
-        // Since we already filtered builtins above, this frame is a user frame
-        // Update prevUserFrame for duplicate detection in the next iteration
         prevUserFrame = &currentFrame;
     }
 
@@ -373,30 +361,22 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
     totalFrames = 0;
     stackTrace.reserveInitialCapacity(framesCount);
 
-    // Track two different previous frames:
-    // - prevFrame: last frame added (for any purpose)
-    // - prevUserFrame: last user code frame (for duplicate detection)
-    // This separation ensures that native frames like asyncFunctionResume
-    // don't break consecutive duplicate detection
+    // prevFrame: last added frame; prevUserFrame: last non-builtin for duplicate detection
     const JSC::StackFrame* prevFrame = nullptr;
     const JSC::StackFrame* prevUserFrame = nullptr;
 
     JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
-        // Skip native frames
         if (isImplementationVisibilityPrivate(visitor)) {
             return WTF::IterationStatus::Continue;
         }
 
-        // Skip frames if needed
         if (skipFrames > 0) {
             skipFrames--;
             return WTF::IterationStatus::Continue;
         }
 
-        // Check if this is a consecutive duplicate async frame
-        // This handles JSC's behavior of creating two frames for async functions
-        // Use prevUserFrame (not prevFrame) to avoid native frames breaking detection
-        if (isConsecutiveDuplicateAsyncFrame(visitor, prevUserFrame)) {
+        // Skip consecutive duplicates from async functions
+        if (isConsecutiveDuplicateAsyncFrame(vm, visitor, prevUserFrame)) {
             return WTF::IterationStatus::Continue;
         }
 
@@ -413,7 +393,6 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
             case NativeCallee::Category::Wasm: {
                 stackTrace.append(StackFrame(visitor->wasmFunctionIndexOrName()));
                 prevFrame = stackTrace.isEmpty() ? nullptr : &stackTrace.last();
-                // Wasm frames can participate in duplicate detection
                 prevUserFrame = prevFrame;
                 break;
             }
@@ -429,16 +408,13 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
         {
             stackTrace.append(StackFrame(vm, owner, visitor->callee().asCell(), visitor->codeBlock(), visitor->bytecodeIndex()));
             prevFrame = &stackTrace.last();
-            // Only update prevUserFrame for non-builtin functions
-            // Builtin functions like asyncFunctionResume shouldn't participate in duplicate detection
+            // Only track non-builtin frames for duplicate detection
             if (visitor->codeBlock() && visitor->codeBlock()->unlinkedCodeBlock() && !visitor->codeBlock()->unlinkedCodeBlock()->isBuiltinFunction()) {
                 prevUserFrame = prevFrame;
             }
         } else {
             stackTrace.append(StackFrame(vm, owner, visitor->callee().asCell()));
             prevFrame = &stackTrace.last();
-            // Native/builtin frames without codeBlocks don't participate in duplicate detection
-            // This prevents frames like asyncFunctionResume from breaking duplicate detection
         }
 
         i++;

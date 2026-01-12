@@ -147,9 +147,7 @@ WTF::String formatStackTrace(
     Vector<JSC::StackFrame>& stackTrace,
     JSC::JSObject* errorInstance)
 {
-    // Filter the stack trace to remove consecutive duplicates and internal async frames
-    // This matches Node.js behavior which doesn't expose JSC's async machinery
-    // We use indices instead of copying frames for better performance
+    // Filter out consecutive duplicates and internal builtins (use indices for performance)
     Vector<size_t> filteredIndices;
     filteredIndices.reserveInitialCapacity(stackTrace.size());
 
@@ -158,18 +156,15 @@ WTF::String formatStackTrace(
     for (size_t i = 0; i < stackTrace.size(); i++) {
         const auto& frame = stackTrace[i];
 
-        // Skip implementation-private frames
         if (isImplementationVisibilityPrivate(frame)) {
             continue;
         }
 
-        // Skip internal builtin frames (like asyncFunctionResume)
         bool isBuiltin = isInternalBuiltinFrame(frame);
         if (isBuiltin) {
             continue;
         }
 
-        // Check for consecutive duplicates (for async functions)
         if (prevUserFrame && isConsecutiveDuplicateAsyncFrame(vm, frame, *prevUserFrame)) {
             continue;
         }

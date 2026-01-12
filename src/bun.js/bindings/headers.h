@@ -81,7 +81,7 @@ CPP_DECL void WebCore__FetchHeaders__append(WebCore::FetchHeaders* arg0, const Z
 CPP_DECL WebCore::FetchHeaders* WebCore__FetchHeaders__cast_(JSC::EncodedJSValue JSValue0, JSC::VM* arg1);
 CPP_DECL JSC::EncodedJSValue WebCore__FetchHeaders__clone(WebCore::FetchHeaders* arg0, JSC::JSGlobalObject* arg1);
 CPP_DECL WebCore::FetchHeaders* WebCore__FetchHeaders__cloneThis(WebCore::FetchHeaders* arg0, JSC::JSGlobalObject* arg1);
-CPP_DECL void WebCore__FetchHeaders__copyTo(WebCore::FetchHeaders* arg0, StringPointer* arg1, StringPointer* arg2, unsigned char* arg3);
+CPP_DECL void WebCore__FetchHeaders__copyTo(WebCore::FetchHeaders* arg0, StringPointer* arg1, StringPointer* arg2, unsigned char* arg3, size_t arg4, size_t arg5);
 CPP_DECL void WebCore__FetchHeaders__count(WebCore::FetchHeaders* arg0, uint32_t* arg1, uint32_t* arg2);
 CPP_DECL WebCore::FetchHeaders* WebCore__FetchHeaders__createEmpty();
 CPP_DECL WebCore::FetchHeaders* WebCore__FetchHeaders__createFromJS(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue1);

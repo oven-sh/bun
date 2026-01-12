@@ -86,10 +86,7 @@ const archive = new Bun.Archive({
 await Bun.write("output.tar", archive);
 
 // Write gzipped tar
-const compressed = new Bun.Archive(
-  { "src/index.ts": "console.log('Hello');" },
-  { compress: "gzip" },
-);
+const compressed = new Bun.Archive({ "src/index.ts": "console.log('Hello');" }, { compress: "gzip" });
 await Bun.write("output.tar.gz", compressed);
 ```
 

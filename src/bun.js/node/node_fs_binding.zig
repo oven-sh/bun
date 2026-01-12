@@ -270,14 +270,14 @@ fn getRequiredPermission(comptime function_name: NodeFSFunctionEnum) ?struct { k
         // Both read and write
         .copyFile, .cp => .{ .kind = .write, .needs_path = true }, // Requires both, check write as it's more restrictive
 
-        // Open can be read or write depending on flags - check at a lower level
+        // Open can be read or write depending on flags - handled specially in checkFsPermission
         .open => null,
 
         // Watch operations - read permission
         .watch, .watchFile, .unwatchFile => .{ .kind = .read, .needs_path = true },
 
-        // statfs - sys permission
-        .statfs => null, // Special handling needed
+        // statfs - requires sys permission, handled specially in checkFsPermission
+        .statfs => null,
 
         // Internal helpers and other functions don't need permission checks here
         else => null,
@@ -287,6 +287,32 @@ fn getRequiredPermission(comptime function_name: NodeFSFunctionEnum) ?struct { k
 /// Check permission for a filesystem operation
 fn checkFsPermission(comptime function_name: NodeFSFunctionEnum, globalObject: *jsc.JSGlobalObject, args: anytype) bun.JSError!void {
     const ArgsType = @TypeOf(args);
+
+    // Special handling for 'open' - check read or write based on flags
+    if (comptime function_name == .open) {
+        if (comptime @hasField(ArgsType, "path") and @hasField(ArgsType, "flags")) {
+            const path = args.path.slice();
+            const resolved_path = resolvePath(globalObject, path, &path_resolve_buf);
+            const flags_int = args.flags.asInt();
+
+            // Check if flags indicate write intent (O_WRONLY or O_RDWR)
+            // O_RDONLY is 0, O_WRONLY has bit 0 set, O_RDWR has bit 1 set
+            const needs_write = (flags_int & (bun.O.WRONLY | bun.O.RDWR)) != 0;
+
+            if (needs_write) {
+                try permission_check.requireWrite(globalObject, resolved_path);
+            } else {
+                try permission_check.requireRead(globalObject, resolved_path);
+            }
+        }
+        return;
+    }
+
+    // Special handling for 'statfs' - requires sys permission
+    if (comptime function_name == .statfs) {
+        try permission_check.requireSys(globalObject, "statfs");
+        return;
+    }
 
     // Get the required permission for this operation
     const required = comptime getRequiredPermission(function_name);

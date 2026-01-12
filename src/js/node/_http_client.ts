@@ -501,7 +501,10 @@ function ClientRequest(input, options, cb) {
         // Link-local IPv6 (fe80::/10) addresses cannot route to global destinations,
         // so we deprioritize them to avoid connection timeouts on VPN networks.
         // See: https://github.com/oven-sh/bun/issues/25619
-        const isLinkLocalIPv6 = (addr: string) => addr.toLowerCase().startsWith("fe80:");
+        const isLinkLocalIPv6 = (addr: string) => {
+          // fe80::/10 covers fe80:: through febf::
+          return /^fe[89ab][0-9a-f]:/i.test(addr);
+        };
         let candidates = results.sort((a, b) => {
           const aIsLinkLocal = a.family === 6 && isLinkLocalIPv6(a.address);
           const bIsLinkLocal = b.family === 6 && isLinkLocalIPv6(b.address);

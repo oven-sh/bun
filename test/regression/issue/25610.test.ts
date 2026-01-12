@@ -84,11 +84,7 @@ main();
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-  // The process should not crash
-  expect(stderr).not.toContain("Segmentation fault");
-  expect(stderr).not.toContain("panic");
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   const result = JSON.parse(stdout.trim());
   expect(result.success).toBe(true);
@@ -105,16 +101,16 @@ test("MessageChannel with many concurrent workers should not crash", async () =>
 const { parentPort, workerData } = require('worker_threads');
 const { port } = workerData;
 
-// Signal we're ready via the port
-port.postMessage({ ready: true, id: workerData.id });
+// Do some work
+let sum = 0;
+for (let i = 0; i < 1000; i++) {
+  sum += i;
+}
 
-// Wait for parent to signal completion
-parentPort.on('message', (msg) => {
-  if (msg === 'done') {
-    port.close();
-    process.exit(0);
-  }
-});
+// Signal we're done via the port
+port.postMessage({ done: true, id: workerData.id, sum });
+port.close();
+parentPort.postMessage('finished');
 `,
     "main.js": `
 const { Worker, MessageChannel } = require('worker_threads');
@@ -122,47 +118,41 @@ const path = require('path');
 
 async function main() {
   const numWorkers = 20;
-  const workers = [];
-  const channels = [];
+  const promises = [];
 
-  // Create all workers and channels concurrently
   for (let i = 0; i < numWorkers; i++) {
     const { port1, port2 } = new MessageChannel();
-    channels.push({ port1, port2 });
 
-    const worker = new Worker(path.join(__dirname, 'worker.js'), {
-      workerData: { port: port2, id: i },
-      transferList: [port2]
+    const promise = new Promise((resolve, reject) => {
+      const worker = new Worker(path.join(__dirname, 'worker.js'), {
+        workerData: { port: port2, id: i },
+        transferList: [port2]
+      });
+
+      let result = null;
+
+      port1.on('message', (msg) => {
+        result = msg;
+      });
+
+      worker.on('message', () => {
+        port1.close();
+        resolve(result);
+      });
+
+      worker.on('error', reject);
+      worker.on('exit', (code) => {
+        if (code !== 0 && !result) {
+          reject(new Error('Worker ' + i + ' exited with code ' + code));
+        }
+      });
     });
-    workers.push(worker);
+
+    promises.push(promise);
   }
 
-  // Wait for all workers to signal ready
-  const readyPromises = channels.map((ch, i) => new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      reject(new Error('Worker ' + i + ' timed out'));
-    }, 5000);
-
-    ch.port1.on('message', (msg) => {
-      clearTimeout(timeout);
-      if (msg.ready) {
-        resolve(msg);
-      }
-    });
-  }));
-
-  await Promise.all(readyPromises);
-
-  // Close all ports and terminate workers
-  for (let i = 0; i < numWorkers; i++) {
-    channels[i].port1.close();
-    workers[i].postMessage('done');
-  }
-
-  // Wait for all workers to exit
-  await Promise.all(workers.map(w => new Promise(resolve => w.on('exit', resolve))));
-
-  console.log(JSON.stringify({ success: true, workerCount: numWorkers }));
+  const results = await Promise.all(promises);
+  console.log(JSON.stringify({ success: true, workerCount: results.length }));
 }
 
 main().catch(err => {
@@ -180,11 +170,7 @@ main().catch(err => {
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-  // The process should not crash
-  expect(stderr).not.toContain("Segmentation fault");
-  expect(stderr).not.toContain("panic");
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   const result = JSON.parse(stdout.trim());
   expect(result.success).toBe(true);

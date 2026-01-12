@@ -195,7 +195,11 @@ pub const JSPromise = opaque {
         defer scope.deinit();
         var ctx = Wrapper{ .args = args };
         const promise = JSC__JSPromise__wrap(globalObject, &ctx, @ptrCast(&Wrapper.call));
-        try scope.assertNoExceptionExceptTermination();
+        scope.assertNoExceptionExceptTermination() catch |err| {
+            // Clear the exception before the scope is destroyed to avoid assertion failures
+            scope.clearException();
+            return err;
+        };
         return promise;
     }
 

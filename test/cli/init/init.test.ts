@@ -295,4 +295,45 @@ import path from "path";
     expect(fs.existsSync(path.join(temp, "src/components"))).toBe(true);
     expect(fs.existsSync(path.join(temp, "src/components/ui"))).toBe(true);
   }, 30_000);
+
+  test("bun init --library works", async () => {
+    const temp = tempDirWithFiles("bun-init--library-works", {});
+
+    const { exited } = Bun.spawn({
+      cmd: [bunExe(), "init"],
+      cwd: temp,
+      // Simulate: arrow down twice to "Library", enter, "mylib" as package name, enter for default entry point
+      stdin: new Blob(["\x1B[B\x1B[B\nmylib\n\n"]),
+      stdout: "inherit",
+      stderr: "inherit",
+      env: bunEnv,
+    });
+
+    expect(await exited).toBe(0);
+
+    const pkg = JSON.parse(fs.readFileSync(path.join(temp, "package.json"), "utf8"));
+
+    // Library template should NOT have "private": true
+    expect(pkg).toEqual({
+      "name": "mylib",
+      "module": "index.ts",
+      "type": "module",
+      "devDependencies": {
+        "@types/bun": "latest",
+      },
+      "peerDependencies": {
+        "typescript": "^5",
+      },
+    });
+
+    // Check tsconfig.json does NOT have React-specific JSX settings
+    const tsconfigContent = fs.readFileSync(path.join(temp, "tsconfig.json"), "utf8");
+    expect(tsconfigContent).not.toContain('"jsx"');
+    expect(tsconfigContent).toContain('"moduleResolution"');
+    expect(tsconfigContent).toContain('"strict"');
+
+    expect(fs.existsSync(path.join(temp, "index.ts"))).toBe(true);
+    expect(fs.existsSync(path.join(temp, ".gitignore"))).toBe(true);
+    expect(fs.existsSync(path.join(temp, "node_modules"))).toBe(true);
+  }, 30_000);
 });

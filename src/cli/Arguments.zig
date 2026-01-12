@@ -155,13 +155,17 @@ pub const runtime_params_ = [_]ParamType{
     clap.parseParam("--user-agent <STR>               Set the default User-Agent header for HTTP requests") catch unreachable,
     // Permission flags (Deno-compatible security model)
     clap.parseParam("--secure                          Enable secure-by-default mode (like Deno)") catch unreachable,
+    clap.parseParam("--permission                      Enable secure-by-default mode (Node.js compatibility alias for --secure)") catch unreachable,
     clap.parseParam("-A, --allow-all                   Allow all permissions") catch unreachable,
     clap.parseParam("--allow-read <STR>?               Allow file system read access (optionally scoped to paths)") catch unreachable,
     clap.parseParam("--allow-write <STR>?              Allow file system write access (optionally scoped to paths)") catch unreachable,
+    clap.parseParam("--allow-fs-read <STR>?            Allow file system read access (Node.js alias for --allow-read)") catch unreachable,
+    clap.parseParam("--allow-fs-write <STR>?           Allow file system write access (Node.js alias for --allow-write)") catch unreachable,
     clap.parseParam("--allow-net <STR>?                Allow network access (optionally scoped to hosts)") catch unreachable,
     clap.parseParam("--allow-env <STR>?                Allow environment variable access (optionally scoped to names)") catch unreachable,
     clap.parseParam("--allow-sys <STR>?                Allow system info access (optionally scoped to kinds)") catch unreachable,
     clap.parseParam("--allow-run <STR>?                Allow subprocess spawning (optionally scoped to commands)") catch unreachable,
+    clap.parseParam("--allow-child-process <STR>?      Allow subprocess spawning (Node.js alias for --allow-run)") catch unreachable,
     clap.parseParam("--allow-ffi <STR>?                Allow FFI/native addon loading (optionally scoped to paths)") catch unreachable,
     clap.parseParam("--deny-read <STR>?                Deny file system read access (optionally scoped to paths)") catch unreachable,
     clap.parseParam("--deny-write <STR>?               Deny file system write access (optionally scoped to paths)") catch unreachable,
@@ -933,9 +937,9 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         // Back-compat boolean used by native code until fully migrated
         Bun__Node__UseSystemCA = (Bun__Node__CAStore == .system);
 
-        // Parse permission flags (Deno-compatible security model)
+        // Parse permission flags (Deno and Node.js compatible security model)
         // Only set to true if flag is present - let bunfig values remain otherwise
-        if (args.flag("--secure")) {
+        if (args.flag("--secure") or args.flag("--permission")) {
             ctx.runtime_options.permissions.secure_mode = true;
         }
         if (args.flag("--allow-all")) {
@@ -946,13 +950,17 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         }
 
         // Parse --allow-* flags (each can be a flag or have optional value)
+        // Includes both Deno-style and Node.js-style aliases
         inline for (.{
             .{ "--allow-read", "allow_read", "has_allow_read" },
             .{ "--allow-write", "allow_write", "has_allow_write" },
+            .{ "--allow-fs-read", "allow_read", "has_allow_read" }, // Node.js alias
+            .{ "--allow-fs-write", "allow_write", "has_allow_write" }, // Node.js alias
             .{ "--allow-net", "allow_net", "has_allow_net" },
             .{ "--allow-env", "allow_env", "has_allow_env" },
             .{ "--allow-sys", "allow_sys", "has_allow_sys" },
             .{ "--allow-run", "allow_run", "has_allow_run" },
+            .{ "--allow-child-process", "allow_run", "has_allow_run" }, // Node.js alias
             .{ "--allow-ffi", "allow_ffi", "has_allow_ffi" },
         }) |perm| {
             if (args.option(perm[0])) |value| {

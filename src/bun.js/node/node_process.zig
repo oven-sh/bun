@@ -10,6 +10,85 @@ comptime {
     @export(&getExecPath, .{ .name = "Bun__Process__getExecPath" });
     @export(&bun.jsc.host_fn.wrap1(createExecArgv), .{ .name = "Bun__Process__createExecArgv" });
     @export(&getEval, .{ .name = "Bun__Process__getEval" });
+    @export(&permissionHas, .{ .name = "Bun__Process__permissionHas" });
+}
+
+/// Node.js-compatible process.permission.has(scope, reference?) API
+/// Maps Node.js permission names to Bun's permission system:
+/// - "fs.read" or "fs" -> read permission
+/// - "fs.write" -> write permission
+/// - "net" or "net.client" or "net.server" or "net.connect" -> net permission
+/// - "env" -> env permission
+/// - "child" or "child.process" -> run permission
+/// - "worker" -> run permission (workers can spawn processes)
+/// - "ffi" or "addon" -> ffi permission
+/// - "sys" -> sys permission
+pub fn permissionHas(globalObject: *jsc.JSGlobalObject, scope_ptr: [*]const u8, scope_len: usize, ref_ptr: ?[*]const u8, ref_len: usize) callconv(.c) bool {
+    const vm = globalObject.bunVM();
+    const scope = scope_ptr[0..scope_len];
+    const reference: ?[]const u8 = if (ref_ptr) |ptr| ptr[0..ref_len] else null;
+
+    // Map Node.js permission names to Bun's permission kinds
+    const permissions = bun.permissions;
+    const kind: ?permissions.Kind = blk: {
+        // File system permissions
+        if (std.mem.eql(u8, scope, "fs") or std.mem.eql(u8, scope, "fs.read")) {
+            break :blk .read;
+        }
+        if (std.mem.eql(u8, scope, "fs.write")) {
+            break :blk .write;
+        }
+
+        // Network permissions
+        if (std.mem.eql(u8, scope, "net") or
+            std.mem.eql(u8, scope, "net.client") or
+            std.mem.eql(u8, scope, "net.server") or
+            std.mem.eql(u8, scope, "net.connect"))
+        {
+            break :blk .net;
+        }
+
+        // Environment permissions
+        if (std.mem.eql(u8, scope, "env")) {
+            break :blk .env;
+        }
+
+        // Child process / worker permissions
+        if (std.mem.eql(u8, scope, "child") or
+            std.mem.eql(u8, scope, "child.process") or
+            std.mem.eql(u8, scope, "run"))
+        {
+            break :blk .run;
+        }
+
+        // Worker permissions (mapped to run since workers can spawn processes)
+        if (std.mem.eql(u8, scope, "worker")) {
+            break :blk .run;
+        }
+
+        // FFI / Native addon permissions
+        if (std.mem.eql(u8, scope, "ffi") or
+            std.mem.eql(u8, scope, "addon") or
+            std.mem.eql(u8, scope, "wasi"))
+        {
+            break :blk .ffi;
+        }
+
+        // System info permissions
+        if (std.mem.eql(u8, scope, "sys")) {
+            break :blk .sys;
+        }
+
+        break :blk null;
+    };
+
+    if (kind) |k| {
+        const state = vm.permissions.check(k, reference);
+        return state.isGranted();
+    }
+
+    // Unknown scope - return false (permission not granted)
+    return false;
 }
 
 var title_mutex = bun.Mutex{};

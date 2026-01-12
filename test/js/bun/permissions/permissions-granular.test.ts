@@ -3,34 +3,34 @@ import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
 describe("Granular permissions", () => {
   describe.concurrent("env wildcards", () => {
-    test("--allow-env=HOME* allows HOME and HOMEBREW_PREFIX", async () => {
+    test("--allow-env=BUN_TEST_* allows matching env vars", async () => {
       using dir = tempDir("perm-env-wildcard", {
         "test.ts": `
-          console.log("HOME:", process.env.HOME);
-          console.log("HOMEBREW_PREFIX:", process.env.HOMEBREW_PREFIX || "not-set");
+          console.log("BUN_TEST_VAR1:", process.env.BUN_TEST_VAR1);
+          console.log("BUN_TEST_VAR2:", process.env.BUN_TEST_VAR2);
         `,
       });
 
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "--secure", "--allow-env=HOME*", "test.ts"],
+        cmd: [bunExe(), "--secure", "--allow-env=BUN_TEST_*", "test.ts"],
         cwd: String(dir),
-        env: { ...bunEnv, HOMEBREW_PREFIX: "/opt/homebrew" },
+        env: { ...bunEnv, BUN_TEST_VAR1: "value1", BUN_TEST_VAR2: "value2" },
         stdout: "pipe",
         stderr: "pipe",
       });
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect(stdout).toContain("HOME:");
-      expect(stdout).toContain("HOMEBREW_PREFIX:");
+      expect(stdout).toContain("BUN_TEST_VAR1: value1");
+      expect(stdout).toContain("BUN_TEST_VAR2: value2");
       expect(exitCode).toBe(0);
     });
 
-    test("--allow-env=HOME* denies PATH", async () => {
+    test("--allow-env=BUN_TEST_* denies OTHER_VAR", async () => {
       using dir = tempDir("perm-env-wildcard-deny", {
         "test.ts": `
           try {
-            console.log("PATH:", process.env.PATH);
+            console.log("OTHER_VAR:", process.env.OTHER_VAR);
           } catch (e) {
             console.log("ERROR:", e.message);
             process.exit(1);
@@ -39,9 +39,9 @@ describe("Granular permissions", () => {
       });
 
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "--secure", "--allow-env=HOME*", "test.ts"],
+        cmd: [bunExe(), "--secure", "--no-prompt", "--allow-env=BUN_TEST_*", "test.ts"],
         cwd: String(dir),
-        env: bunEnv,
+        env: { ...bunEnv, OTHER_VAR: "other_value" },
         stdout: "pipe",
         stderr: "pipe",
       });
@@ -54,36 +54,39 @@ describe("Granular permissions", () => {
   });
 
   describe.concurrent("multiple values", () => {
-    test("--allow-env=HOME,USER,PATH allows all three", async () => {
+    test("--allow-env=VAR1,VAR2,VAR3 allows all three", async () => {
       using dir = tempDir("perm-env-multi", {
         "test.ts": `
-          console.log("HOME:", process.env.HOME ? "set" : "not-set");
-          console.log("USER:", process.env.USER ? "set" : "not-set");
-          console.log("PATH:", process.env.PATH ? "set" : "not-set");
+          console.log("VAR1:", process.env.VAR1);
+          console.log("VAR2:", process.env.VAR2);
+          console.log("VAR3:", process.env.VAR3);
         `,
       });
 
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "--secure", "--allow-env=HOME,USER,PATH", "test.ts"],
+        cmd: [bunExe(), "--secure", "--allow-env=VAR1,VAR2,VAR3", "test.ts"],
         cwd: String(dir),
-        env: bunEnv,
+        env: { ...bunEnv, VAR1: "a", VAR2: "b", VAR3: "c" },
         stdout: "pipe",
         stderr: "pipe",
       });
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect(stdout).toContain("HOME: set");
-      expect(stdout).toContain("USER: set");
-      expect(stdout).toContain("PATH: set");
+      expect(stdout).toContain("VAR1: a");
+      expect(stdout).toContain("VAR2: b");
+      expect(stdout).toContain("VAR3: c");
       expect(exitCode).toBe(0);
     });
 
     test("--allow-net=example.com,httpbin.org allows both hosts", async () => {
       using dir = tempDir("perm-net-multi", {
         "test.ts": `
-          const r1 = await fetch("https://example.com");
-          console.log("example.com:", r1.status);
+          // Use querySync to check permissions without making actual network requests
+          const perm1 = Bun.permissions.querySync({ name: "net", host: "example.com:443" });
+          const perm2 = Bun.permissions.querySync({ name: "net", host: "httpbin.org:443" });
+          console.log("example.com:", perm1.state);
+          console.log("httpbin.org:", perm2.state);
         `,
       });
 
@@ -97,7 +100,8 @@ describe("Granular permissions", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect(stdout).toContain("example.com: 200");
+      expect(stdout).toContain("example.com: granted");
+      expect(stdout).toContain("httpbin.org: granted");
       expect(exitCode).toBe(0);
     });
 
@@ -203,16 +207,20 @@ describe("Granular permissions", () => {
   });
 
   describe.concurrent("run command matching", () => {
-    test("--allow-run=echo matches /bin/echo (basename)", async () => {
+    test("--allow-run=<basename> matches spawned process", async () => {
+      // Use bun itself for cross-platform testing
       using dir = tempDir("perm-run-basename", {
         "test.ts": `
-          const result = Bun.spawnSync(["echo", "test"]);
+          const result = Bun.spawnSync([process.execPath, "--version"]);
           console.log("exit:", result.exitCode);
         `,
       });
 
+      // Get the basename of the bun executable for the allow-run flag
+      const bunBasename = bunExe().split("/").pop()?.split("\\").pop() || "bun";
+
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "--secure", "--allow-run=echo", "test.ts"],
+        cmd: [bunExe(), "--secure", `--allow-run=${bunBasename}`, "test.ts"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -225,16 +233,17 @@ describe("Granular permissions", () => {
       expect(exitCode).toBe(0);
     });
 
-    test("--allow-run=/bin/echo matches exact path", async () => {
+    test("--allow-run=<exact-path> matches spawned process", async () => {
+      // Use bun itself for cross-platform testing
       using dir = tempDir("perm-run-exact", {
         "test.ts": `
-          const result = Bun.spawnSync(["echo", "test"]);
+          const result = Bun.spawnSync([process.execPath, "--version"]);
           console.log("exit:", result.exitCode);
         `,
       });
 
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "--secure", "--allow-run=/bin/echo", "test.ts"],
+        cmd: [bunExe(), "--secure", `--allow-run=${bunExe()}`, "test.ts"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",
@@ -252,8 +261,9 @@ describe("Granular permissions", () => {
     test("--allow-net=example.com matches example.com:443", async () => {
       using dir = tempDir("perm-net-host-port", {
         "test.ts": `
-          const r = await fetch("https://example.com");
-          console.log("status:", r.status);
+          // Use querySync to check permissions without making actual network requests
+          const perm = Bun.permissions.querySync({ name: "net", host: "example.com:443" });
+          console.log("permission:", perm.state);
         `,
       });
 
@@ -267,7 +277,7 @@ describe("Granular permissions", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect(stdout).toContain("status: 200");
+      expect(stdout).toContain("permission: granted");
       expect(exitCode).toBe(0);
     });
   });

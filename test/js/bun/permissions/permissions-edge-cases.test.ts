@@ -59,7 +59,7 @@ describe("Permission edge cases", () => {
       using dir = tempDir("perm-spawn-async", {
         "test.ts": `
           try {
-            const proc = Bun.spawn(["echo", "hello"]);
+            const proc = Bun.spawn([process.execPath, "--version"]);
             await proc.exited;
             console.log("SUCCESS");
           } catch (e) {
@@ -87,7 +87,7 @@ describe("Permission edge cases", () => {
       using dir = tempDir("perm-spawn-sync", {
         "test.ts": `
           try {
-            Bun.spawnSync(["echo", "hello"]);
+            Bun.spawnSync([process.execPath, "--version"]);
             console.log("SUCCESS");
           } catch (e) {
             console.log("ERROR:", e.message);
@@ -260,7 +260,7 @@ describe("Permission edge cases", () => {
           import os from "os";
           console.log("hostname:", os.hostname());
           console.log("HOME:", process.env.HOME);
-          const r = Bun.spawnSync(["echo", "hi"]);
+          const r = Bun.spawnSync([process.execPath, "--version"]);
           console.log("spawn exit:", r.exitCode);
         `,
       });

@@ -125,7 +125,7 @@ describe("FFI permissions", () => {
     );
 
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "--secure", `--allow-ffi=${allowedPath}`, "test.ts"],
+      cmd: [bunExe(), "--secure", "--no-prompt", `--allow-ffi=${allowedPath}`, "test.ts"],
       cwd: String(dir),
       env: bunEnv,
       stdout: "pipe",

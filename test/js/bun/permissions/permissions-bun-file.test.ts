@@ -17,7 +17,7 @@ describe("Bun.file() permissions", () => {
       });
 
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "--secure", "test.ts"],
+        cmd: [bunExe(), "--secure", "--no-prompt", "test.ts"],
         env: bunEnv,
         cwd: String(dir),
         stdout: "pipe",
@@ -71,7 +71,7 @@ describe("Bun.file() permissions", () => {
       });
 
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "--secure", "test.ts"],
+        cmd: [bunExe(), "--secure", "--no-prompt", "test.ts"],
         env: bunEnv,
         cwd: String(dir),
         stdout: "pipe",
@@ -127,7 +127,7 @@ describe("Bun.file() permissions", () => {
       });
 
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "--secure", "test.ts"],
+        cmd: [bunExe(), "--secure", "--no-prompt", "test.ts"],
         env: bunEnv,
         cwd: String(dir),
         stdout: "pipe",
@@ -183,7 +183,7 @@ describe("Bun.file() permissions", () => {
       });
 
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "--secure", "test.ts"],
+        cmd: [bunExe(), "--secure", "--no-prompt", "test.ts"],
         env: bunEnv,
         cwd: String(dir),
         stdout: "pipe",
@@ -238,7 +238,7 @@ describe("Bun.file() permissions", () => {
       });
 
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "--secure", "test.ts"],
+        cmd: [bunExe(), "--secure", "--no-prompt", "test.ts"],
         env: bunEnv,
         cwd: String(dir),
         stdout: "pipe",
@@ -291,7 +291,7 @@ describe("Bun.file() permissions", () => {
       });
 
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "--secure", "test.ts"],
+        cmd: [bunExe(), "--secure", "--no-prompt", "test.ts"],
         env: bunEnv,
         cwd: String(dir),
         stdout: "pipe",
@@ -347,7 +347,7 @@ describe("Bun.file() permissions", () => {
       });
 
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "--secure", "test.ts"],
+        cmd: [bunExe(), "--secure", "--no-prompt", "test.ts"],
         env: bunEnv,
         cwd: String(dir),
         stdout: "pipe",
@@ -401,7 +401,7 @@ describe("Bun.file() permissions", () => {
       });
 
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "--secure", "test.ts"],
+        cmd: [bunExe(), "--secure", "--no-prompt", "test.ts"],
         env: bunEnv,
         cwd: String(dir),
         stdout: "pipe",

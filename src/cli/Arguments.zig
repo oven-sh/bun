@@ -296,6 +296,23 @@ fn getHomeConfigPath(buf: *bun.PathBuffer) ?[:0]const u8 {
 
     return null;
 }
+/// Check if the config value looks like a section name rather than a file path.
+/// A section name does not contain path separators and doesn't end with .toml
+fn isConfigSectionName(value: []const u8) bool {
+    if (value.len == 0) return false;
+
+    // If it contains path separators, it's a path
+    if (std.mem.indexOfAny(u8, value, "/\\")) |_| return false;
+
+    // If it ends with .toml, it's a file
+    if (bun.strings.endsWithComptime(value, ".toml")) return false;
+
+    // If it starts with a dot, it's likely a hidden file
+    if (value[0] == '.') return false;
+
+    return true;
+}
+
 pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx: Command.Context, comptime cmd: Command.Tag) OOM!void {
     var config_buf: bun.PathBuffer = undefined;
     if (comptime cmd.readGlobalConfig()) {
@@ -316,6 +333,19 @@ pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx:
     }
 
     var config_path_: []const u8 = user_config_path_ orelse "";
+
+    // For the test command, check if the --config value is a section name rather than a file path.
+    // Section names are used for conditional configuration like [test.ci] in bunfig.toml.
+    if (comptime cmd == .TestCommand) {
+        if (user_config_path_) |user_config| {
+            if (isConfigSectionName(user_config)) {
+                // Store the section name for the bunfig parser to use
+                ctx.test_options.config_section_name = user_config;
+                // Load the default bunfig.toml instead
+                config_path_ = "bunfig.toml";
+            }
+        }
+    }
 
     var auto_loaded: bool = false;
     if (config_path_.len == 0 and (user_config_path_ != null or

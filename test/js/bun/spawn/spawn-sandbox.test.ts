@@ -14,17 +14,21 @@ const ALLOW_ALL_FILTER = new Uint8Array([0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf
 // This will kill the process on any syscall
 const KILL_ALL_FILTER = new Uint8Array([0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80]);
 
-// BPF filter that blocks write() syscall on x86_64 with EPERM
+// BPF filter that blocks write() syscall with EPERM
 // This allows the process to continue but write() calls will fail with "Operation not permitted"
 //
 // BPF program logic:
 //   0: Load arch from seccomp_data (offset 4)
-//   1: If arch == AUDIT_ARCH_X86_64 (0xc000003e), continue; else jump to kill
+//   1: If arch matches expected, continue; else jump to kill
 //   2: Load syscall number (offset 0)
-//   3: If syscall == write (1), jump to block with EPERM
+//   3: If syscall == write, jump to block with EPERM
 //   4: Allow all other syscalls
 //   5: Return ERRNO | EPERM (0x00050001)
 //   6: Kill process (for wrong architecture)
+//
+// Architecture-specific values:
+//   x86_64:  AUDIT_ARCH = 0xc000003e, write syscall = 1
+//   aarch64: AUDIT_ARCH = 0xc00000b7, write syscall = 64
 //
 // prettier-ignore
 const BLOCK_WRITE_FILTER_X86_64 = new Uint8Array([
@@ -33,7 +37,7 @@ const BLOCK_WRITE_FILTER_X86_64 = new Uint8Array([
   //
   // Instruction 0: Load architecture (BPF_LD | BPF_W | BPF_ABS, offset=4)
   0x20, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00,
-  // Instruction 1: If arch == x86_64, continue (jt=0); else jump to instruction 6 (jf=4)
+  // Instruction 1: If arch == x86_64 (0xc000003e), continue (jt=0); else jump to instruction 6 (jf=4)
   0x15, 0x00, 0x00, 0x04, 0x3e, 0x00, 0x00, 0xc0,
   // Instruction 2: Load syscall number (offset=0)
   0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -46,6 +50,27 @@ const BLOCK_WRITE_FILTER_X86_64 = new Uint8Array([
   // Instruction 6: Kill (SECCOMP_RET_KILL_PROCESS = 0x80000000) for wrong arch
   0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80,
 ]);
+
+// prettier-ignore
+const BLOCK_WRITE_FILTER_AARCH64 = new Uint8Array([
+  // Instruction 0: Load architecture (BPF_LD | BPF_W | BPF_ABS, offset=4)
+  0x20, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00,
+  // Instruction 1: If arch == aarch64 (0xc00000b7), continue (jt=0); else jump to instruction 6 (jf=4)
+  0x15, 0x00, 0x00, 0x04, 0xb7, 0x00, 0x00, 0xc0,
+  // Instruction 2: Load syscall number (offset=0)
+  0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  // Instruction 3: If syscall == 64 (write on aarch64), jump to instruction 5 (jt=1); else continue (jf=0)
+  0x15, 0x00, 0x01, 0x00, 0x40, 0x00, 0x00, 0x00,
+  // Instruction 4: Allow (SECCOMP_RET_ALLOW = 0x7fff0000)
+  0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0x7f,
+  // Instruction 5: Block with EPERM (SECCOMP_RET_ERRNO | 1 = 0x00050001)
+  0x06, 0x00, 0x00, 0x00, 0x01, 0x00, 0x05, 0x00,
+  // Instruction 6: Kill (SECCOMP_RET_KILL_PROCESS = 0x80000000) for wrong arch
+  0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80,
+]);
+
+// Select the appropriate filter based on current architecture
+const BLOCK_WRITE_FILTER = process.arch === "arm64" ? BLOCK_WRITE_FILTER_AARCH64 : BLOCK_WRITE_FILTER_X86_64;
 
 // SBPL profile that allows everything (proper SBPL syntax)
 const ALLOW_ALL_PROFILE = `(version 1)
@@ -199,7 +224,7 @@ describe("spawn sandbox (Linux)", () => {
     // With write() blocked, echo should fail
     await using proc = Bun.spawn({
       cmd: ["echo", "this should not appear"],
-      sandbox: { seccomp: BLOCK_WRITE_FILTER_X86_64 },
+      sandbox: { seccomp: BLOCK_WRITE_FILTER },
       stderr: "pipe",
     });
 
@@ -217,7 +242,7 @@ describe("spawn sandbox (Linux)", () => {
     // So blocking write() shouldn't affect it
     await using proc = Bun.spawn({
       cmd: ["/bin/true"],
-      sandbox: { seccomp: BLOCK_WRITE_FILTER_X86_64 },
+      sandbox: { seccomp: BLOCK_WRITE_FILTER },
     });
 
     const exitCode = await proc.exited;
@@ -229,7 +254,7 @@ describe("spawn sandbox (Linux)", () => {
     // So blocking write() shouldn't affect it - it should still exit 1
     await using proc = Bun.spawn({
       cmd: ["/bin/false"],
-      sandbox: { seccomp: BLOCK_WRITE_FILTER_X86_64 },
+      sandbox: { seccomp: BLOCK_WRITE_FILTER },
     });
 
     const exitCode = await proc.exited;
@@ -239,7 +264,7 @@ describe("spawn sandbox (Linux)", () => {
   test.if(isLinux)("spawnSync filter that blocks write() causes echo to fail", () => {
     const result = Bun.spawnSync({
       cmd: ["echo", "this should not appear"],
-      sandbox: { seccomp: BLOCK_WRITE_FILTER_X86_64 },
+      sandbox: { seccomp: BLOCK_WRITE_FILTER },
     });
 
     // echo should fail to write and exit with 1

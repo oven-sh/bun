@@ -34,6 +34,9 @@ sni: ?bun.BabyList(SSLConfig) = null,
 max_request_body_size: usize = 1024 * 1024 * 128,
 development: DevelopmentOption = .development,
 broadcast_console_log_from_browser_to_server_for_bake: bool = false,
+/// Whether the HMR client should render the in-browser error overlay in development
+/// Only used when bake/dev server is active. Defaults to true to preserve behavior.
+client_overlay_in_dev_for_bake: bool = true,
 
 /// Enable automatic workspace folders for Chrome DevTools
 /// https://chromium.googlesource.com/devtools/devtools-frontend/+/main/docs/ecosystem/automatic_workspace_folders.md
@@ -469,6 +472,11 @@ pub fn fromJS(
 
                 if (try dev.getBooleanStrict(global, "console")) |console| {
                     args.broadcast_console_log_from_browser_to_server_for_bake = console;
+                }
+
+                // Allow disabling the browser error overlay in development for bake/dev server
+                if (try dev.getBooleanStrict(global, "clientOverlay")) |overlay| {
+                    args.client_overlay_in_dev_for_bake = overlay;
                 }
 
                 if (try dev.getBooleanStrict(global, "chromeDevToolsAutomaticWorkspaceFolders")) |enable_chrome_devtools_automatic_workspace_folders| {

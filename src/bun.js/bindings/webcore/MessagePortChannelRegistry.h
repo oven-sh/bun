@@ -58,6 +58,8 @@ public:
     WEBCORE_EXPORT void messagePortChannelDestroyed(MessagePortChannel&);
 
 private:
+    RefPtr<MessagePortChannel> channelForPort(const MessagePortIdentifier&);
+
     Lock m_openChannelsLock;
     UncheckedKeyHashMap<MessagePortIdentifier, WeakRef<MessagePortChannel>> m_openChannels WTF_GUARDED_BY_LOCK(m_openChannelsLock);
 };

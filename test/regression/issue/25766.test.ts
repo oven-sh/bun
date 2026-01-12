@@ -38,7 +38,7 @@ globalBinDir = "~/.bun/bin"
     });
 
     // Read output before awaiting exited for better error messages
-    const [stdout, stderr, exitCode] = await Promise.all([
+    const [_stdout, _stderr, _exitCode] = await Promise.all([
       new Response(proc.stdout).text(),
       new Response(proc.stderr).text(),
       proc.exited,
@@ -81,7 +81,7 @@ globalDir = "~/.bun/install/global"
     });
 
     // Read output before awaiting exited for better error messages
-    const [stdout, stderr, exitCode] = await Promise.all([
+    const [_stdout, _stderr, _exitCode] = await Promise.all([
       new Response(proc.stdout).text(),
       new Response(proc.stderr).text(),
       proc.exited,
@@ -123,7 +123,7 @@ dir = "~/.bun/install/cache"
     });
 
     // Read output before awaiting exited for better error messages
-    const [stdout, stderr, exitCode] = await Promise.all([
+    const [_stdout, _stderr, _exitCode] = await Promise.all([
       new Response(proc.stdout).text(),
       new Response(proc.stderr).text(),
       proc.exited,
@@ -164,7 +164,7 @@ cache = "~/.bun/install/cache"
     });
 
     // Read output before awaiting exited for better error messages
-    const [stdout, stderr, exitCode] = await Promise.all([
+    const [_stdout, _stderr, _exitCode] = await Promise.all([
       new Response(proc.stdout).text(),
       new Response(proc.stderr).text(),
       proc.exited,

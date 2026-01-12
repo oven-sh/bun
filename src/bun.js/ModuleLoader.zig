@@ -92,7 +92,7 @@ pub fn resolveEmbeddedFile(vm: *VirtualMachine, path_buf: *bun.PathBuffer, linux
         },
         else => {},
     }
-    return bun.path.joinAbsStringBuf(bun.fs.FileSystem.instance.fs.tmpdirPath(), path_buf, &[_]string{tmpfilename}, .auto);
+    return bun.path.joinAbsStringBuf(bun.fs.FileSystem.RealFS.tmpdirPath(), path_buf, &[_]string{tmpfilename}, .auto);
 }
 
 pub export fn Bun__getDefaultLoader(global: *JSGlobalObject, str: *const bun.String) api.Loader {

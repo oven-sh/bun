@@ -118,6 +118,9 @@ pub const BundleV2 = struct {
     bun_watcher: ?*bun.Watcher,
     plugins: ?*jsc.API.JSBundler.Plugin,
     completion: ?*JSBundleCompletionTask,
+    /// In-memory files that can be used as entrypoints or imported.
+    /// This is a pointer to the FileMap in the completion config.
+    file_map: ?*const jsc.API.JSBundler.FileMap,
     source_code_length: usize,
 
     /// There is a race condition where an onResolve plugin may schedule a task on the bundle thread before it's parsing task completes
@@ -534,9 +537,47 @@ pub const BundleV2 = struct {
         target: options.Target,
     ) void {
         const transpiler = this.transpilerForTarget(target);
+        const source_dir = Fs.PathName.init(import_record.source_file).dirWithTrailingSlash();
+
+        // Check the FileMap first for in-memory files
+        if (this.file_map) |file_map| {
+            if (file_map.resolve(import_record.source_file, import_record.specifier)) |_file_map_result| {
+                var file_map_result = _file_map_result;
+                var path_primary = file_map_result.path_pair.primary;
+                const entry = bun.handleOom(this.pathToSourceIndexMap(target).getOrPut(this.allocator(), path_primary.text));
+                if (!entry.found_existing) {
+                    const loader: Loader = brk: {
+                        const record: *ImportRecord = &this.graph.ast.items(.import_records)[import_record.importer_source_index].slice()[import_record.import_record_index];
+                        if (record.loader) |out_loader| {
+                            break :brk out_loader;
+                        }
+                        break :brk Fs.Path.init(path_primary.text).loader(&transpiler.options.loaders) orelse options.Loader.file;
+                    };
+                    // For virtual files, use the path text as-is (no relative path computation needed).
+                    path_primary.pretty = bun.handleOom(this.allocator().dupe(u8, path_primary.text));
+                    const idx = this.enqueueParseTask(
+                        &file_map_result,
+                        &.{
+                            .path = path_primary,
+                            .contents = "",
+                        },
+                        loader,
+                        import_record.original_target,
+                    ) catch |err| bun.handleOom(err);
+                    entry.value_ptr.* = idx;
+                    const record: *ImportRecord = &this.graph.ast.items(.import_records)[import_record.importer_source_index].slice()[import_record.import_record_index];
+                    record.source_index = Index.init(idx);
+                } else {
+                    const record: *ImportRecord = &this.graph.ast.items(.import_records)[import_record.importer_source_index].slice()[import_record.import_record_index];
+                    record.source_index = Index.init(entry.value_ptr.*);
+                }
+                return;
+            }
+        }
+
         var had_busted_dir_cache: bool = false;
         var resolve_result: _resolver.Result = while (true) break transpiler.resolver.resolve(
-            Fs.PathName.init(import_record.source_file).dirWithTrailingSlash(),
+            source_dir,
             import_record.specifier,
             import_record.kind,
         ) catch |err| {
@@ -880,6 +921,7 @@ pub const BundleV2 = struct {
             .bun_watcher = null,
             .plugins = null,
             .completion = null,
+            .file_map = null,
             .source_code_length = 0,
             .thread_lock = .initLocked(),
         };
@@ -929,6 +971,7 @@ pub const BundleV2 = struct {
         this.linker.options.target = transpiler.options.target;
         this.linker.options.output_format = transpiler.options.output_format;
         this.linker.options.generate_bytecode_cache = transpiler.options.bytecode;
+        this.linker.options.metafile = transpiler.options.metafile;
 
         this.linker.dev_server = transpiler.options.dev_server;
 
@@ -1031,6 +1074,18 @@ pub const BundleV2 = struct {
                     for (data) |entry_point| {
                         if (this.enqueueEntryPointOnResolvePluginIfNeeded(entry_point, this.transpiler.options.target)) {
                             continue;
+                        }
+
+                        // Check FileMap first for in-memory entry points
+                        if (this.file_map) |file_map| {
+                            if (file_map.resolve("", entry_point)) |file_map_result| {
+                                _ = try this.enqueueEntryItem(
+                                    file_map_result,
+                                    true,
+                                    this.transpiler.options.target,
+                                );
+                                continue;
+                            }
                         }
 
                         // no plugins were matched
@@ -1481,7 +1536,7 @@ pub const BundleV2 = struct {
         minify_duration: *u64,
         source_code_size: *u64,
         fetcher: ?*DependenciesScanner,
-    ) !std.array_list.Managed(options.OutputFile) {
+    ) !BuildResult {
         var this = try BundleV2.init(
             transpiler,
             null,
@@ -1535,10 +1590,27 @@ pub const BundleV2 = struct {
         // Do this at the very end, after processing all the imports/exports so that we can follow exports as needed.
         if (fetcher) |fetch| {
             try this.getAllDependencies(reachable_files, fetch);
-            return std.array_list.Managed(options.OutputFile).init(alloc);
+            return .{
+                .output_files = std.array_list.Managed(options.OutputFile).init(alloc),
+                .metafile = null,
+            };
         }
 
-        return try this.linker.generateChunksInParallel(chunks, false);
+        const output_files = try this.linker.generateChunksInParallel(chunks, false);
+
+        // Generate metafile if requested
+        const metafile: ?[]const u8 = if (this.linker.options.metafile)
+            LinkerContext.MetafileBuilder.generate(bun.default_allocator, &this.linker, chunks) catch |err| blk: {
+                bun.Output.warn("Failed to generate metafile: {s}", .{@errorName(err)});
+                break :blk null;
+            }
+        else
+            null;
+
+        return .{
+            .output_files = output_files,
+            .metafile = metafile,
+        };
     }
 
     pub fn generateFromBakeProductionCLI(
@@ -1750,6 +1822,7 @@ pub const BundleV2 = struct {
 
     pub const BuildResult = struct {
         output_files: std.array_list.Managed(options.OutputFile),
+        metafile: ?[]const u8 = null,
 
         pub fn deinit(this: *BuildResult) void {
             for (this.output_files.items) |*output_file| {
@@ -1757,6 +1830,11 @@ pub const BundleV2 = struct {
             }
 
             this.output_files.clearAndFree();
+
+            if (this.metafile) |mf| {
+                bun.default_allocator.free(mf);
+                this.metafile = null;
+            }
         }
     };
 
@@ -1905,6 +1983,7 @@ pub const BundleV2 = struct {
             transpiler.options.banner = config.banner.slice();
             transpiler.options.footer = config.footer.slice();
             transpiler.options.react_fast_refresh = config.react_fast_refresh;
+            transpiler.options.metafile = config.metafile;
 
             if (transpiler.options.compile) {
                 // Emitting DCE annotations is nonsensical in --compile.
@@ -2205,7 +2284,7 @@ pub const BundleV2 = struct {
                             return promise.reject(globalThis, err);
                         };
                     }
-                    const build_output = jsc.JSValue.createEmptyObject(globalThis, 3);
+                    const build_output = jsc.JSValue.createEmptyObject(globalThis, 4);
                     build_output.put(globalThis, jsc.ZigString.static("outputs"), output_files_js);
                     build_output.put(globalThis, jsc.ZigString.static("success"), .true);
                     build_output.put(
@@ -2215,6 +2294,15 @@ pub const BundleV2 = struct {
                             return promise.reject(globalThis, err);
                         },
                     );
+
+                    // Add metafile if it was generated (lazy parsing via getter)
+                    if (build.metafile) |metafile| {
+                        const metafile_js_str = bun.String.createUTF8ForJS(globalThis, metafile) catch |err| {
+                            return promise.reject(globalThis, err);
+                        };
+                        // Set up lazy getter that parses JSON on first access and memoizes
+                        Bun__setupLazyMetafile(globalThis, build_output, metafile_js_str);
+                    }
 
                     const didHandleCallbacks = if (this.plugins) |plugin| runOnEndCallbacks(globalThis, plugin, promise, build_output, .js_undefined) catch |err| {
                         return promise.reject(globalThis, err);
@@ -2603,7 +2691,7 @@ pub const BundleV2 = struct {
     pub fn runFromJSInNewThread(
         this: *BundleV2,
         entry_points: []const []const u8,
-    ) !std.array_list.Managed(options.OutputFile) {
+    ) !BuildResult {
         this.unique_key = generateUniqueKey();
 
         if (this.transpiler.log.errors > 0) {
@@ -2650,7 +2738,21 @@ pub const BundleV2 = struct {
             return error.BuildFailed;
         }
 
-        return try this.linker.generateChunksInParallel(chunks, false);
+        const output_files = try this.linker.generateChunksInParallel(chunks, false);
+
+        // Generate metafile if requested
+        const metafile: ?[]const u8 = if (this.linker.options.metafile)
+            LinkerContext.MetafileBuilder.generate(bun.default_allocator, &this.linker, chunks) catch |err| blk: {
+                bun.Output.warn("Failed to generate metafile: {s}", .{@errorName(err)});
+                break :blk null;
+            }
+        else
+            null;
+
+        return .{
+            .output_files = output_files,
+            .metafile = metafile,
+        };
     }
 
     fn shouldAddWatcherPlugin(bv2: *BundleV2, namespace: []const u8, path: []const u8) bool {
@@ -3101,6 +3203,11 @@ pub const BundleV2 = struct {
         var last_error: ?anyerror = null;
 
         outer: for (ast.import_records.slice(), 0..) |*import_record, i| {
+            // Preserve original import specifier before resolution modifies path
+            if (import_record.original_path.len == 0) {
+                import_record.original_path = import_record.path.text;
+            }
+
             if (
             // Don't resolve TypeScript types
             import_record.flags.is_unused or
@@ -3222,6 +3329,49 @@ pub const BundleV2 = struct {
                     ast.target.bakeGraph(),
                     ast.target,
                 };
+
+            // Check the FileMap first for in-memory files
+            if (this.file_map) |file_map| {
+                if (file_map.resolve(source.path.text, import_record.path.text)) |_file_map_result| {
+                    var file_map_result = _file_map_result;
+                    var path_primary = file_map_result.path_pair.primary;
+                    const import_record_loader = import_record.loader orelse Fs.Path.init(path_primary.text).loader(&transpiler.options.loaders) orelse .file;
+                    import_record.loader = import_record_loader;
+
+                    if (this.pathToSourceIndexMap(target).get(path_primary.text)) |id| {
+                        import_record.source_index = .init(id);
+                        continue;
+                    }
+
+                    const resolve_entry = resolve_queue.getOrPut(path_primary.text) catch |err| bun.handleOom(err);
+                    if (resolve_entry.found_existing) {
+                        import_record.path = resolve_entry.value_ptr.*.path;
+                        continue;
+                    }
+
+                    // For virtual files, use the path text as-is (no relative path computation needed).
+                    path_primary.pretty = bun.handleOom(this.allocator().dupe(u8, path_primary.text));
+                    import_record.path = path_primary;
+                    resolve_entry.key_ptr.* = path_primary.text;
+                    debug("created ParseTask from FileMap: {s}", .{path_primary.text});
+                    const resolve_task = bun.handleOom(bun.default_allocator.create(ParseTask));
+                    file_map_result.path_pair.primary = path_primary;
+                    resolve_task.* = ParseTask.init(&file_map_result, Index.invalid, this);
+                    resolve_task.known_target = target;
+                    // Use transpiler JSX options, applying force_node_env like the disk path does
+                    resolve_task.jsx = transpiler.options.jsx;
+                    resolve_task.jsx.development = switch (transpiler.options.force_node_env) {
+                        .development => true,
+                        .production => false,
+                        .unspecified => transpiler.options.jsx.development,
+                    };
+                    resolve_task.loader = import_record_loader;
+                    resolve_task.tree_shaking = transpiler.options.tree_shaking;
+                    resolve_task.side_effects = .has_side_effects;
+                    resolve_entry.value_ptr.* = resolve_task;
+                    continue;
+                }
+            }
 
             var had_busted_dir_cache = false;
             var resolve_result: _resolver.Result = inner: while (true) break transpiler.resolver.resolveWithFramework(
@@ -4568,6 +4718,10 @@ pub const LinkerGraph = @import("./LinkerGraph.zig").LinkerGraph;
 pub const Graph = @import("./Graph.zig");
 
 const string = []const u8;
+
+// C++ binding for lazy metafile getter (defined in BundlerMetafile.cpp)
+// Uses jsc.conv (SYSV_ABI on Windows x64) for proper calling convention
+extern "C" fn Bun__setupLazyMetafile(globalThis: *jsc.JSGlobalObject, buildOutput: jsc.JSValue, metafileString: jsc.JSValue) callconv(jsc.conv) void;
 
 const options = @import("../options.zig");
 

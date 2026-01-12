@@ -1422,6 +1422,17 @@ pub const internal = struct {
     const ResultEntry = extern struct {
         info: std.c.addrinfo,
         addr: std.c.sockaddr.storage,
+
+        /// Check if this is a link-local IPv6 address (fe80::/10).
+        /// Link-local addresses cannot route to global destinations.
+        fn isLinkLocalIPv6(this: *const ResultEntry) bool {
+            if (this.info.family != std.c.AF.INET6) return false;
+            const addr6: *const std.c.sockaddr.in6 = @ptrCast(@alignCast(&this.addr));
+            // fe80::/10 means first 10 bits are 1111111010
+            // First byte must be 0xFE, second byte high nibble must be 8, 9, A, or B (0b10xx)
+            const bytes = @as(*const [16]u8, @ptrCast(&addr6.addr));
+            return bytes[0] == 0xfe and (bytes[1] & 0xc0) == 0x80;
+        }
     };
 
     // re-order result to interleave ipv4 and ipv6 (also pack into a single allocation)
@@ -1455,17 +1466,39 @@ pub const internal = struct {
             info_ = ai.next;
         }
 
-        // sort (interleave ipv4 and ipv6)
+        // Sort addresses for optimal connection behavior:
+        // 1. Move link-local IPv6 (fe80::/10) to the end - they can't route to global destinations
+        //    and cause timeouts on VPN networks. See: https://github.com/oven-sh/bun/issues/25619
+        // 2. Interleave global IPv6 and IPv4 (Happy Eyeballs)
+        var link_local_start: usize = count;
+        for (0..link_local_start) |idx| {
+            if (results[idx].isLinkLocalIPv6()) {
+                // Find a non-link-local address to swap with from the end
+                while (link_local_start > idx + 1) {
+                    link_local_start -= 1;
+                    if (!results[link_local_start].isLinkLocalIPv6()) {
+                        std.mem.swap(ResultEntry, &results[idx], &results[link_local_start]);
+                        break;
+                    }
+                } else {
+                    // All remaining addresses are link-local
+                    link_local_start = idx;
+                    break;
+                }
+            }
+        }
+
+        // Now interleave IPv4 and IPv6 among the non-link-local addresses
         var want: usize = std.c.AF.INET6;
-        for (0..count) |idx| {
+        for (0..link_local_start) |idx| {
             if (results[idx].info.family == want) continue;
-            for (idx + 1..count) |j| {
+            for (idx + 1..link_local_start) |j| {
                 if (results[j].info.family == want) {
                     std.mem.swap(ResultEntry, &results[idx], &results[j]);
                     want = if (want == std.c.AF.INET6) std.c.AF.INET else std.c.AF.INET6;
                 }
             } else {
-                // the rest of the list is all one address family
+                // the rest of the non-link-local list is all one address family
                 break;
             }
         }

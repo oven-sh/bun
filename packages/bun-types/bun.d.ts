@@ -6123,8 +6123,41 @@ declare module "bun" {
          *
          * @see https://man7.org/linux/man-pages/man2/seccomp.2.html
          * @platform linux
+         *
+         * @example
+         * ```ts
+         * // Simple format: raw BPF filter
+         * Bun.spawn({
+         *   cmd: ["program"],
+         *   sandbox: { seccomp: bpfFilter }
+         * });
+         *
+         * // Object format with flags
+         * Bun.spawn({
+         *   cmd: ["program"],
+         *   sandbox: {
+         *     seccomp: {
+         *       filter: bpfFilter,
+         *       flags: ["LOG", "SPEC_ALLOW"]
+         *     }
+         *   }
+         * });
+         * ```
          */
-        seccomp?: ArrayBufferView | ArrayBuffer;
+        seccomp?:
+          | ArrayBufferView
+          | ArrayBuffer
+          | {
+              /** BPF filter bytecode. Each instruction is 8 bytes. */
+              filter: ArrayBufferView | ArrayBuffer;
+              /**
+               * Seccomp filter flags. Can be a single flag or array of flags.
+               *
+               * - `"LOG"` - Log all filter actions except ALLOW to audit log
+               * - `"SPEC_ALLOW"` - Disable Speculative Store Bypass mitigation
+               */
+              flags?: "LOG" | "SPEC_ALLOW" | ("LOG" | "SPEC_ALLOW")[];
+            };
 
         /**
          * macOS Seatbelt sandbox profile (SBPL format).

@@ -90,7 +90,7 @@ describe("spawn sandbox (Linux)", () => {
         cmd: ["echo", "test"],
         sandbox: { seccomp: "not a buffer" as unknown as Uint8Array },
       });
-    }).toThrow("ArrayBuffer or TypedArray");
+    }).toThrow("ArrayBuffer, TypedArray, or object");
   });
 
   test.if(isLinux)("accepts empty filter (no-op)", async () => {
@@ -207,9 +207,9 @@ describe("spawn sandbox (Linux)", () => {
     const stdout = await proc.stdout.text();
 
     // echo should fail to write and exit with error, or produce no output
-    // The exact behavior depends on how echo handles write() errors
+    // echo exits with 1 when write fails
     expect(stdout).toBe("");
-    expect(exitCode).not.toBe(0);
+    expect(exitCode).toBe(1);
   });
 
   test.if(isLinux)("filter that blocks write() allows /bin/true to succeed", async () => {
@@ -242,9 +242,156 @@ describe("spawn sandbox (Linux)", () => {
       sandbox: { seccomp: BLOCK_WRITE_FILTER_X86_64 },
     });
 
-    // echo should fail to write
+    // echo should fail to write and exit with 1
     expect(result.stdout.toString()).toBe("");
-    expect(result.exitCode).not.toBe(0);
+    expect(result.exitCode).toBe(1);
+  });
+
+  // Seccomp flags tests
+  test.if(isLinux)("seccomp object format with filter property works", async () => {
+    await using proc = Bun.spawn({
+      cmd: ["echo", "object-format"],
+      sandbox: {
+        seccomp: {
+          filter: ALLOW_ALL_FILTER,
+        },
+      },
+    });
+
+    const stdout = await proc.stdout.text();
+    expect(stdout).toBe("object-format\n");
+    expect(await proc.exited).toBe(0);
+  });
+
+  test.if(isLinux)("seccomp single flag as string", async () => {
+    await using proc = Bun.spawn({
+      cmd: ["echo", "with-log-flag"],
+      sandbox: {
+        seccomp: {
+          filter: ALLOW_ALL_FILTER,
+          flags: "LOG",
+        },
+      },
+    });
+
+    const stdout = await proc.stdout.text();
+    expect(stdout).toBe("with-log-flag\n");
+    expect(await proc.exited).toBe(0);
+  });
+
+  test.if(isLinux)("seccomp single flag in array", async () => {
+    await using proc = Bun.spawn({
+      cmd: ["echo", "spec-allow"],
+      sandbox: {
+        seccomp: {
+          filter: ALLOW_ALL_FILTER,
+          flags: ["SPEC_ALLOW"],
+        },
+      },
+    });
+
+    const stdout = await proc.stdout.text();
+    expect(stdout).toBe("spec-allow\n");
+    expect(await proc.exited).toBe(0);
+  });
+
+  test.if(isLinux)("seccomp multiple flags", async () => {
+    await using proc = Bun.spawn({
+      cmd: ["echo", "multiple-flags"],
+      sandbox: {
+        seccomp: {
+          filter: ALLOW_ALL_FILTER,
+          flags: ["LOG", "SPEC_ALLOW"],
+        },
+      },
+    });
+
+    const stdout = await proc.stdout.text();
+    expect(stdout).toBe("multiple-flags\n");
+    expect(await proc.exited).toBe(0);
+  });
+
+  test.if(isLinux)("seccomp spawnSync with flags", () => {
+    const result = Bun.spawnSync({
+      cmd: ["echo", "sync-with-flags"],
+      sandbox: {
+        seccomp: {
+          filter: ALLOW_ALL_FILTER,
+          flags: "LOG",
+        },
+      },
+    });
+
+    expect(result.stdout.toString()).toBe("sync-with-flags\n");
+    expect(result.exitCode).toBe(0);
+  });
+
+  test.if(isLinux)("seccomp object format requires filter property", () => {
+    expect(() => {
+      Bun.spawn({
+        cmd: ["echo", "test"],
+        sandbox: {
+          seccomp: { flags: "LOG" } as unknown as Uint8Array,
+        },
+      });
+    }).toThrow("filter");
+  });
+
+  test.if(isLinux)("seccomp rejects unknown flag", () => {
+    expect(() => {
+      Bun.spawn({
+        cmd: ["echo", "test"],
+        sandbox: {
+          seccomp: {
+            filter: ALLOW_ALL_FILTER,
+            flags: "INVALID_FLAG" as "LOG",
+          },
+        },
+      });
+    }).toThrow("Unknown seccomp flag");
+  });
+
+  test.if(isLinux)("seccomp rejects non-string flag in array", () => {
+    expect(() => {
+      Bun.spawn({
+        cmd: ["echo", "test"],
+        sandbox: {
+          seccomp: {
+            filter: ALLOW_ALL_FILTER,
+            flags: ["LOG", 123] as unknown as ("LOG" | "SPEC_ALLOW")[],
+          },
+        },
+      });
+    }).toThrow("Unknown seccomp flag");
+  });
+
+  test.if(isLinux)("seccomp object format filter must be ArrayBuffer or TypedArray", () => {
+    expect(() => {
+      Bun.spawn({
+        cmd: ["echo", "test"],
+        sandbox: {
+          seccomp: {
+            filter: "not a buffer" as unknown as Uint8Array,
+          },
+        },
+      });
+    }).toThrow("ArrayBuffer or TypedArray");
+  });
+
+  test.if(isLinux)("seccomp object format with empty flags array", async () => {
+    await using proc = Bun.spawn({
+      cmd: ["echo", "empty-flags"],
+      sandbox: {
+        seccomp: {
+          filter: ALLOW_ALL_FILTER,
+          flags: [],
+        },
+      },
+    });
+
+    const stdout = await proc.stdout.text();
+    expect(stdout).toBe("empty-flags\n");
+    expect(await proc.exited).toBe(0);
   });
 });
 

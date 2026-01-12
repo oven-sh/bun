@@ -120,6 +120,7 @@ typedef struct bun_spawn_request_t {
     // Linux seccomp BPF filter (Linux only)
     const void* linux_seccomp_filter; // Pointer to BPF bytecode (array of sock_filter structs)
     size_t linux_seccomp_filter_len; // Length in bytes (must be multiple of 8)
+    uint32_t linux_seccomp_flags; // SECCOMP_FILTER_FLAG_* flags
     // macOS sandbox profile (SBPL string or named profile)
     const char* darwin_profile;
     // macOS sandbox flags: 0 = SANDBOX_STRING (inline SBPL), 1 = SANDBOX_NAMED
@@ -332,8 +333,7 @@ extern "C" ssize_t posix_spawn_bun(
                 .filter = static_cast<struct sock_filter*>(const_cast<void*>(request->linux_seccomp_filter)),
             };
 
-            // Apply the filter using prctl (more portable than seccomp syscall)
-            if (prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &prog) == -1) {
+            if (syscall(SYS_seccomp, SECCOMP_SET_MODE_FILTER, request->linux_seccomp_flags, &prog) == -1) {
                 return childFailed();
             }
         }

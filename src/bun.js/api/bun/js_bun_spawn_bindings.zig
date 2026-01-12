@@ -427,25 +427,87 @@ pub fn spawnMaybeSync(
                 // Parse sandbox.seccomp (seccomp BPF filter) - only on Linux, ignored on other platforms
                 if (comptime Environment.isLinux) {
                     if (try sandbox_val.getTruthy(globalThis, "seccomp")) |seccomp_val| {
-                        // Get ArrayBuffer or TypedArray bytes
+                        // Check if it's an ArrayBuffer/TypedArray (simple format) or object (extended format)
                         if (seccomp_val.asArrayBuffer(globalThis)) |array_buffer| {
+                            // Simple format: just the filter bytes
                             const slice = array_buffer.slice();
                             if (slice.len > 0) {
-                                // Validate length is multiple of 8 (sizeof(sock_filter))
                                 if (slice.len % 8 != 0) {
                                     return globalThis.throwInvalidArguments(
                                         "sandbox.seccomp filter must be a multiple of 8 bytes (each BPF instruction is 8 bytes)",
                                         .{},
                                     );
                                 }
-                                // Copy to arena allocator to ensure lifetime
                                 sandbox.linux.seccomp_filter = try allocator.dupe(u8, slice);
+                            }
+                        } else if (seccomp_val.isObject()) {
+                            // Extended format: { filter: ArrayBuffer, flags?: string | string[] }
+                            if (try seccomp_val.getTruthy(globalThis, "filter")) |filter_val| {
+                                if (filter_val.asArrayBuffer(globalThis)) |array_buffer| {
+                                    const slice = array_buffer.slice();
+                                    if (slice.len > 0) {
+                                        if (slice.len % 8 != 0) {
+                                            return globalThis.throwInvalidArguments(
+                                                "sandbox.seccomp.filter must be a multiple of 8 bytes (each BPF instruction is 8 bytes)",
+                                                .{},
+                                            );
+                                        }
+                                        sandbox.linux.seccomp_filter = try allocator.dupe(u8, slice);
+                                    }
+                                } else {
+                                    return globalThis.throwInvalidArgumentType(
+                                        "spawn",
+                                        "sandbox.seccomp.filter",
+                                        "ArrayBuffer or TypedArray",
+                                    );
+                                }
+                            } else {
+                                return globalThis.throwInvalidArguments(
+                                    "sandbox.seccomp object must have 'filter' property",
+                                    .{},
+                                );
+                            }
+
+                            // Parse optional flags (string or array of strings)
+                            if (try seccomp_val.get(globalThis, "flags")) |flags_val| {
+                                if (!flags_val.isUndefinedOrNull()) {
+                                    var flags: u32 = 0;
+                                    if (flags_val.isString()) {
+                                        // Single flag: "LOG"
+                                        const flag = try SeccompFlag.fromJS(globalThis, flags_val) orelse {
+                                            return globalThis.throwInvalidArguments(
+                                                "Unknown seccomp flag. Expected: LOG or SPEC_ALLOW",
+                                                .{},
+                                            );
+                                        };
+                                        flags = @intFromEnum(flag);
+                                    } else if (flags_val.jsType().isArray()) {
+                                        // Array of flags: ["LOG", "SPEC_ALLOW"]
+                                        var iter = try flags_val.arrayIterator(globalThis);
+                                        while (try iter.next()) |item| {
+                                            const flag = try SeccompFlag.fromJS(globalThis, item) orelse {
+                                                return globalThis.throwInvalidArguments(
+                                                    "Unknown seccomp flag. Expected: LOG or SPEC_ALLOW",
+                                                    .{},
+                                                );
+                                            };
+                                            flags |= @intFromEnum(flag);
+                                        }
+                                    } else {
+                                        return globalThis.throwInvalidArgumentType(
+                                            "spawn",
+                                            "sandbox.seccomp.flags",
+                                            "string or array of strings",
+                                        );
+                                    }
+                                    sandbox.linux.seccomp_flags = flags;
+                                }
                             }
                         } else {
                             return globalThis.throwInvalidArgumentType(
                                 "spawn",
                                 "sandbox.seccomp",
-                                "ArrayBuffer or TypedArray",
+                                "ArrayBuffer, TypedArray, or object",
                             );
                         }
                     }
@@ -1228,3 +1290,19 @@ const Writable = Subprocess.Writable;
 const Process = bun.spawn.Process;
 const Rusage = bun.spawn.Rusage;
 const Stdio = bun.spawn.Stdio;
+
+/// Seccomp filter flags for Linux sandboxing.
+/// These correspond to SECCOMP_FILTER_FLAG_* constants.
+pub const SeccompFlag = enum(u32) {
+    LOG = 0x2, // SECCOMP_FILTER_FLAG_LOG
+    SPEC_ALLOW = 0x4, // SECCOMP_FILTER_FLAG_SPEC_ALLOW
+    // NEW_LISTENER = 0x8, // SECCOMP_FILTER_FLAG_NEW_LISTENER
+
+    const Map = bun.ComptimeStringMap(SeccompFlag, .{
+        .{ "LOG", .LOG },
+        .{ "SPEC_ALLOW", .SPEC_ALLOW },
+        // .{ "NEW_LISTENER", .NEW_LISTENER },
+    });
+
+    pub const fromJS = Map.fromJS;
+};

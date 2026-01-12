@@ -132,6 +132,9 @@ pub const PosixSpawn = struct {
             /// Seccomp BPF filter bytecode.
             /// Must be a multiple of 8 bytes (sizeof(struct sock_filter)).
             seccomp_filter: ?[]const u8 = null,
+            /// Seccomp filter flags (SECCOMP_FILTER_FLAG_*).
+            /// Only used when seccomp_filter is set.
+            seccomp_flags: u32 = 0,
         };
 
         pub const Darwin = struct {
@@ -149,6 +152,7 @@ pub const PosixSpawn = struct {
         pub const Extern = extern struct {
             linux_seccomp_filter: ?[*]const u8 = null,
             linux_seccomp_filter_len: usize = 0,
+            linux_seccomp_flags: u32 = 0,
             darwin_profile: ?[*:0]const u8 = null,
             darwin_flags: u64 = 0,
             darwin_parameters: ?[*:null]const ?[*:0]const u8 = null,
@@ -158,6 +162,7 @@ pub const PosixSpawn = struct {
             return .{
                 .linux_seccomp_filter = if (self.linux.seccomp_filter) |s| s.ptr else null,
                 .linux_seccomp_filter_len = if (self.linux.seccomp_filter) |s| s.len else 0,
+                .linux_seccomp_flags = self.linux.seccomp_flags,
                 .darwin_profile = if (self.darwin.profile) |s| s.ptr else null,
                 .darwin_flags = self.darwin.flags,
                 .darwin_parameters = self.darwin.parameters,

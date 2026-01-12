@@ -227,7 +227,7 @@ pub const ShellLsTask = struct {
     result_kind: enum { file, dir, idk } = .idk,
     /// Cached current time (seconds since epoch) for formatting timestamps.
     /// Cached once per task to avoid repeated syscalls.
-    now_secs: u64 = 0,
+    #now_secs: u64 = 0,
 
     event_loop: jsc.EventLoopHandle,
     concurrent_task: jsc.EventLoopTask,
@@ -298,7 +298,7 @@ pub const ShellLsTask = struct {
     pub fn run(this: *@This()) void {
         // Cache current time once per task for timestamp formatting
         if (this.opts.long_listing) {
-            this.now_secs = @as(u64, @intCast(std.time.timestamp()));
+            this.#now_secs = @as(u64, @intCast(std.time.timestamp()));
         }
 
         const fd = switch (ShellSyscall.openat(this.cwd, this.path, bun.O.RDONLY | bun.O.DIRECTORY, 0)) {
@@ -421,7 +421,7 @@ pub const ShellLsTask = struct {
 
         // Modification time
         const mtime = stat.mtime();
-        const time_str = this.formatTime(@intCast(mtime.sec), this.now_secs);
+        const time_str = this.formatTime(@intCast(mtime.sec), this.#now_secs);
 
         bun.handleOom(writer.print("{c}{s} {d: >3} {d: >5} {d: >5} {d: >8} {s} {s}\n", .{
             file_type,

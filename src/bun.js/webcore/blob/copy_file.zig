@@ -19,6 +19,7 @@ pub const CopyFile = struct {
 
     mkdirp_if_not_exists: bool = false,
     destination_mode: ?bun.Mode = null,
+    append: bool = false,
 
     pub const ResultType = anyerror!SizeType;
 
@@ -33,6 +34,7 @@ pub const CopyFile = struct {
         globalThis: *JSGlobalObject,
         mkdirp_if_not_exists: bool,
         destination_mode: ?bun.Mode,
+        append: bool,
     ) *CopyFilePromiseTask {
         const read_file = bun.new(CopyFile, CopyFile{
             .store = store,
@@ -44,6 +46,7 @@ pub const CopyFile = struct {
             .source_file_store = source_store.data.file,
             .mkdirp_if_not_exists = mkdirp_if_not_exists,
             .destination_mode = destination_mode,
+            .append = append,
         });
         store.ref();
         source_store.ref();
@@ -146,8 +149,12 @@ pub const CopyFile = struct {
     }
 
     const O = bun.O;
-    const open_destination_flags = O.CLOEXEC | O.CREAT | O.WRONLY | O.TRUNC;
     const open_source_flags = O.CLOEXEC | O.RDONLY;
+
+    fn openDestinationFlags(this: *const CopyFile) i32 {
+        const mode: i32 = if (this.append) O.APPEND else O.TRUNC;
+        return O.CLOEXEC | O.CREAT | O.WRONLY | mode;
+    }
 
     pub fn doOpenFile(this: *CopyFile, comptime which: IOWhich) !void {
         var path_buf1: bun.PathBuffer = undefined;
@@ -179,7 +186,7 @@ pub const CopyFile = struct {
                 const mode = this.destination_mode orelse jsc.Node.fs.default_permission;
                 this.destination_fd = switch (bun.sys.open(
                     dest,
-                    open_destination_flags,
+                    this.openDestinationFlags(),
                     mode,
                 )) {
                     .result => |result| switch (result.makeLibUVOwnedForSyscall(.open, .close_on_fail)) {
@@ -432,7 +439,7 @@ pub const CopyFile = struct {
             // First, we attempt to clonefile() on macOS
             // This is the fastest way to copy a file.
             if (comptime Environment.isMac) {
-                if (this.offset == 0 and this.source_file_store.pathlike == .path and this.destination_file_store.pathlike == .path) {
+                if (!this.append and this.offset == 0 and this.source_file_store.pathlike == .path and this.destination_file_store.pathlike == .path) {
                     do_clonefile: {
                         var path_buf: bun.PathBuffer = undefined;
 
@@ -545,6 +552,22 @@ pub const CopyFile = struct {
         }
 
         if (comptime Environment.isLinux) {
+            // if appending fall back to read-write loop
+            if (this.append) {
+                var total_written: u64 = 0;
+                switch (jsc.Node.fs.NodeFS.copyFileUsingReadWriteLoop("", "", this.source_fd, this.destination_fd, if (this.max_length == Blob.max_size) 0 else this.max_length, &total_written)) {
+                    .err => |err| {
+                        this.system_error = err.toSystemError();
+                        this.doClose();
+                        return;
+                    },
+                    .result => {
+                        this.read_len = @as(SizeType, @truncate(total_written));
+                        this.doClose();
+                        return;
+                    },
+                }
+            }
 
             // Bun.write(Bun.file("a"), Bun.file("b"))
             if (posix.S.ISREG(stat.mode) and (posix.S.ISREG(this.destination_file_store.mode) or this.destination_file_store.mode == 0)) {
@@ -587,12 +610,29 @@ pub const CopyFile = struct {
         }
 
         if (comptime Environment.isMac) {
+            // if appending fall back to read-write loop
+            if (this.append) {
+                var total_written: u64 = 0;
+                switch (jsc.Node.fs.NodeFS.copyFileUsingReadWriteLoop("", "", this.source_fd, this.destination_fd, if (this.max_length == Blob.max_size) 0 else this.max_length, &total_written)) {
+                    .err => |err| {
+                        this.system_error = err.toSystemError();
+                        this.doClose();
+                        return;
+                    },
+                    .result => {
+                        this.read_len = @as(SizeType, @truncate(total_written));
+                        this.doClose();
+                        return;
+                    },
+                }
+            }
+
             this.doFCopyFileWithReadWriteLoopFallback() catch {
                 this.doClose();
 
                 return;
             };
-            if (stat.size != 0 and @as(SizeType, @intCast(stat.size)) > this.max_length) {
+            if (!this.append and stat.size != 0 and @as(SizeType, @intCast(stat.size)) > this.max_length) {
                 _ = darwin.ftruncate(this.destination_fd.cast(), @as(std.posix.off_t, @intCast(this.max_length)));
             }
 
@@ -620,6 +660,7 @@ pub const CopyFileWindows = struct {
 
     /// For mkdirp
     err: ?bun.sys.Error = null,
+    append: bool = false,
 
     /// When we are unable to get the original file path, we do a read-write loop that uses libuv.
     read_write_loop: ReadWriteLoop = .{},
@@ -826,6 +867,7 @@ pub const CopyFileWindows = struct {
         source_file_store: *Store,
         event_loop: *jsc.EventLoop,
         mkdirp_if_not_exists: bool,
+        append: bool,
         size_: Blob.SizeType,
         destination_mode: ?bun.Mode,
     ) jsc.JSValue {
@@ -839,6 +881,7 @@ pub const CopyFileWindows = struct {
             .event_loop = event_loop,
             .mkdirp_if_not_exists = mkdirp_if_not_exists,
             .destination_mode = destination_mode,
+            .append = append,
             .size = size_,
         });
         const promise = result.promise.value();
@@ -850,7 +893,7 @@ pub const CopyFileWindows = struct {
         return promise;
     }
 
-    fn preparePathlike(pathlike: *jsc.Node.PathOrFileDescriptor, must_close: *bool, is_reading: bool) bun.sys.Maybe(bun.FileDescriptor) {
+    fn preparePathlike(pathlike: *jsc.Node.PathOrFileDescriptor, must_close: *bool, is_reading: bool, append: bool) bun.sys.Maybe(bun.FileDescriptor) {
         if (pathlike.* == .path) {
             const fd = switch (bun.sys.openatWindowsT(
                 u8,
@@ -858,6 +901,8 @@ pub const CopyFileWindows = struct {
                 pathlike.path.slice(),
                 if (is_reading)
                     bun.O.RDONLY
+                else if (append)
+                    bun.O.WRONLY | bun.O.CREAT | bun.O.APPEND
                 else
                     bun.O.WRONLY | bun.O.CREAT,
                 0,
@@ -890,7 +935,7 @@ pub const CopyFileWindows = struct {
         // Open the destination first, so that if we need to call
         // mkdirp(), we don't spend extra time opening the file handle for
         // the source.
-        this.read_write_loop.destination_fd = switch (preparePathlike(&this.destination_file_store.data.file.pathlike, &this.read_write_loop.must_close_destination_fd, false)) {
+        this.read_write_loop.destination_fd = switch (preparePathlike(&this.destination_file_store.data.file.pathlike, &this.read_write_loop.must_close_destination_fd, false, this.append)) {
             .result => |fd| fd,
             .err => |err| {
                 if (this.mkdirp_if_not_exists and err.getErrno() == .NOENT) {
@@ -903,7 +948,7 @@ pub const CopyFileWindows = struct {
             },
         };
 
-        this.read_write_loop.source_fd = switch (preparePathlike(&this.source_file_store.data.file.pathlike, &this.read_write_loop.must_close_source_fd, true)) {
+        this.read_write_loop.source_fd = switch (preparePathlike(&this.source_file_store.data.file.pathlike, &this.read_write_loop.must_close_source_fd, true, false)) {
             .result => |fd| fd,
             .err => |err| {
                 this.throw(err);
@@ -923,6 +968,12 @@ pub const CopyFileWindows = struct {
     }
 
     fn copyfile(this: *CopyFileWindows) void {
+        // if appending fall back to read-write loop
+        if (this.append) {
+            this.prepareReadWriteLoop();
+            return;
+        }
+
         // This is for making it easier for us to test this code path
         if (bun.feature_flag.BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE.get()) {
             this.prepareReadWriteLoop();
@@ -1089,7 +1140,8 @@ pub const CopyFileWindows = struct {
 
     pub fn onComplete(this: *CopyFileWindows, written_actual: usize) void {
         var written = written_actual;
-        if (written != @as(@TypeOf(written), @intCast(this.size)) and this.size != Blob.max_size) {
+        // do not truncate when appending
+        if (!this.append and written != @as(@TypeOf(written), @intCast(this.size)) and this.size != Blob.max_size) {
             this.truncate();
             written = @intCast(this.size);
         }

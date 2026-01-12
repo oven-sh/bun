@@ -157,11 +157,13 @@ pub fn write(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
             return try Blob.writeFileInternal(globalThis, &blob_internal, data, .{
                 .mkdirp_if_not_exists = false,
                 .extra_options = options,
+                .append = false,
             });
         },
         .blob => return try Blob.writeFileInternal(globalThis, &path_or_blob, data, .{
             .mkdirp_if_not_exists = false,
             .extra_options = args.nextEat(),
+            .append = false,
         }),
     }
 }

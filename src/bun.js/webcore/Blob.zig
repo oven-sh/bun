@@ -852,6 +852,11 @@ fn writeFileWithEmptySourceToDestination(ctx: *jsc.JSGlobalObject, destination_b
     const destination_store = destination_blob.store.?;
     defer destination_blob.detach();
 
+    // In append mode with empty source, the file should remain unchanged
+    if (options.append) {
+        return jsc.JSPromise.resolvedPromiseValue(ctx, .jsNumber(0));
+    }
+
     switch (destination_store.data) {
         .file => |file| {
             // TODO: make this async
@@ -1021,6 +1026,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
                 write_file_promise,
                 &WriteFilePromise.run,
                 options.mkdirp_if_not_exists orelse true,
+                options.append,
             ) catch |e| switch (e) {
                 error.WriteFileWindowsDeinitialized => {},
                 error.JSTerminated => |ex| return ex,
@@ -1035,6 +1041,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
             write_file_promise,
             WriteFilePromise.run,
             options.mkdirp_if_not_exists orelse true,
+            options.append,
         ) catch unreachable;
         var task = write_file.WriteFileTask.createOnJSThread(bun.default_allocator, ctx, file_copier);
         // Defer promise creation until we're just about to schedule the task
@@ -1053,6 +1060,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
                 source_store,
                 ctx.bunVM().eventLoop(),
                 options.mkdirp_if_not_exists orelse true,
+                options.append,
                 destination_blob.size,
                 options.mode,
             );
@@ -1066,6 +1074,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
             ctx,
             options.mkdirp_if_not_exists orelse true,
             options.mode,
+            options.append,
         );
         file_copier.schedule();
         return file_copier.promise.value();
@@ -1076,7 +1085,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
             source_blob,
             @truncate(s3.options.partSize),
         ), ctx)) |stream| {
-            return destination_blob.pipeReadableStreamToBlob(ctx, stream, options.extra_options);
+            return destination_blob.pipeReadableStreamToBlob(ctx, stream, options.extra_options, options.append);
         } else {
             return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, ctx.createErrorInstance("Failed to stream bytes from s3 bucket", .{}));
         }
@@ -1210,6 +1219,7 @@ const WriteFileOptions = struct {
     mkdirp_if_not_exists: ?bool = null,
     extra_options: ?JSValue = null,
     mode: ?bun.Mode = null,
+    append: bool,
 };
 
 /// ## Errors
@@ -1256,14 +1266,16 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
     //
     // except if you're on Windows. Windows I/O is slower. Let's not even try.
     if (comptime !Environment.isWindows) {
-        if (path_or_blob == .path or
-            // If they try to set an offset, its a little more complicated so let's avoid that
-            (path_or_blob.blob.offset == 0 and !path_or_blob.blob.isS3() and
-                // Is this a file that is known to be a pipe? Let's avoid blocking the main thread on it.
-                !(path_or_blob.blob.store != null and
-                    path_or_blob.blob.store.?.data == .file and
-                    path_or_blob.blob.store.?.data.file.mode != 0 and
-                    bun.isRegularFile(path_or_blob.blob.store.?.data.file.mode))))
+        // Skip fast path when appending
+        if (options.append == false and
+            (path_or_blob == .path or
+                // If they try to set an offset, its a little more complicated so let's avoid that
+                (path_or_blob.blob.offset == 0 and !path_or_blob.blob.isS3() and
+                    // Is this a file that is known to be a pipe? Let's avoid blocking the main thread on it.
+                    !(path_or_blob.blob.store != null and
+                        path_or_blob.blob.store.?.data == .file and
+                        path_or_blob.blob.store.?.data.file.mode != 0 and
+                        bun.isRegularFile(path_or_blob.blob.store.?.data.file.mode)))))
         {
             if (data.isString()) {
                 const len = try data.getLength(globalThis);
@@ -1412,6 +1424,7 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                         .file_blob = destination_blob,
                         .promise = jsc.JSPromise.Strong.init(globalThis),
                         .mkdirp_if_not_exists = options.mkdirp_if_not_exists orelse true,
+                        .append = options.append,
                     });
                     bodyValue.Locked.task = task;
                     bodyValue.Locked.onReceiveValue = WriteFileWaitFromLockedValueTask.thenWrap;
@@ -1474,6 +1487,7 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                         .file_blob = destination_blob,
                         .promise = jsc.JSPromise.Strong.init(globalThis),
                         .mkdirp_if_not_exists = options.mkdirp_if_not_exists orelse true,
+                        .append = options.append,
                     });
 
                     bodyValue.Locked.task = task;
@@ -1482,6 +1496,13 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                     return task.promise.value();
                 },
             }
+        }
+        if (try jsc.WebCore.ReadableStream.fromJS(data, globalThis)) |stream| {
+            if (stream.isDisturbed(globalThis)) {
+                destination_blob.detach();
+                return globalThis.throwInvalidArguments("ReadableStream has already been used", .{});
+            }
+            return destination_blob.pipeReadableStreamToBlob(globalThis, stream, options.extra_options, options.append);
         }
 
         break :brk try Blob.get(
@@ -1539,6 +1560,7 @@ pub fn writeFile(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun
     };
     var mkdirp_if_not_exists: ?bool = null;
     var mode: ?bun.Mode = null;
+    var append: bool = false;
     const options = args.nextEat();
     if (options) |options_object| {
         if (options_object.isObject()) {
@@ -1560,6 +1582,9 @@ pub fn writeFile(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun
                     mode = @intCast(mode_int);
                 }
             }
+            if (try options_object.getBooleanLoose(globalThis, "append")) |value| {
+                append = value;
+            }
         } else if (!options_object.isEmptyOrUndefinedOrNull()) {
             return globalThis.throwInvalidArgumentType("write", "options", "object");
         }
@@ -1568,6 +1593,7 @@ pub fn writeFile(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun
         .mkdirp_if_not_exists = mkdirp_if_not_exists,
         .extra_options = options,
         .mode = mode,
+        .append = append,
     });
 }
 
@@ -2286,6 +2312,7 @@ pub fn doWrite(this: *Blob, globalThis: *jsc.JSGlobalObject, callframe: *jsc.Cal
         return globalThis.throwInvalidArguments("blob.write(pathOrFdOrBlob, blob) expects a Blob-y thing to write", .{});
     }
     var mkdirp_if_not_exists: ?bool = null;
+    var append: bool = false;
     const options = args.nextEat();
     if (options) |options_object| {
         if (options_object.isObject()) {
@@ -2318,12 +2345,19 @@ pub fn doWrite(this: *Blob, globalThis: *jsc.JSGlobalObject, callframe: *jsc.Cal
                     }
                 }
             }
+            if (try options_object.getBooleanLoose(globalThis, "append")) |value| {
+                append = value;
+            }
         } else if (!options_object.isEmptyOrUndefinedOrNull()) {
             return globalThis.throwInvalidArgumentType("write", "options", "object");
         }
     }
     var blob_internal: PathOrBlob = .{ .blob = this.* };
-    return writeFileInternal(globalThis, &blob_internal, data, .{ .mkdirp_if_not_exists = mkdirp_if_not_exists, .extra_options = options });
+    return writeFileInternal(globalThis, &blob_internal, data, .{
+        .mkdirp_if_not_exists = mkdirp_if_not_exists,
+        .extra_options = options,
+        .append = append,
+    });
 }
 
 pub fn doUnlink(this: *Blob, globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
@@ -2406,7 +2440,7 @@ comptime {
     @export(&jsonRejectRequestStream, .{ .name = "Bun__FileStreamWrapper__onRejectRequestStream" });
 }
 
-pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, readable_stream: jsc.WebCore.ReadableStream, extra_options: ?JSValue) bun.JSError!jsc.JSValue {
+pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, readable_stream: jsc.WebCore.ReadableStream, extra_options: ?JSValue, append: bool) bun.JSError!jsc.JSValue {
     var store = this.store orelse {
         return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, globalThis.createErrorInstance("Blob is detached", .{}));
     };
@@ -2451,7 +2485,7 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, re
                 const path = pathlike.path.sliceZ(&file_path);
                 switch (bun.sys.open(
                     path,
-                    bun.O.WRONLY | bun.O.CREAT | bun.O.NONBLOCK,
+                    bun.O.WRONLY | bun.O.CREAT | bun.O.NONBLOCK | (if (append) bun.O.APPEND else 0),
                     write_permissions,
                 )) {
                     .result => |result| {
@@ -2527,6 +2561,7 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, re
         const stream_start: jsc.WebCore.streams.Start = .{
             .FileSink = .{
                 .input_path = input_path,
+                .append = append,
             },
         };
 
@@ -2626,6 +2661,14 @@ pub fn getWriter(
         return globalThis.throwInvalidArguments("options must be an object or undefined", .{});
     }
 
+    var append = false;
+    if (arguments.len > 0 and arguments.ptr[0].isObject()) {
+        const options = arguments.ptr[0];
+        if (try options.getBooleanLoose(globalThis, "append")) |value| {
+            append = value;
+        }
+    }
+
     try validateWritableBlob(globalThis, this);
 
     var store = this.store.?;
@@ -2702,7 +2745,7 @@ pub fn getWriter(
             var file_path: bun.PathBuffer = undefined;
             switch (bun.sys.open(
                 pathlike.path.sliceZ(&file_path),
-                bun.O.WRONLY | bun.O.CREAT | bun.O.NONBLOCK,
+                bun.O.WRONLY | bun.O.CREAT | bun.O.NONBLOCK | (if (append) bun.O.APPEND else 0),
                 write_permissions,
             )) {
                 .result => |result| {
@@ -2778,6 +2821,7 @@ pub fn getWriter(
     var stream_start: bun.webcore.streams.Start = .{
         .FileSink = .{
             .input_path = input_path,
+            .append = append,
         },
     };
 
@@ -4608,10 +4652,15 @@ pub fn FileOpener(comptime This: type) type {
 
         const __opener_flags = bun.O.NONBLOCK | bun.O.CLOEXEC;
 
-        const open_flags_ = if (@hasDecl(This, "open_flags"))
-            This.open_flags | __opener_flags
-        else
-            bun.O.RDONLY | __opener_flags;
+        fn getOpenFlagsForContext(context: *This) c_int {
+            if (@hasDecl(This, "getOpenFlags")) {
+                return context.getOpenFlags() | __opener_flags;
+            } else if (@hasDecl(This, "open_flags")) {
+                return This.open_flags | __opener_flags;
+            } else {
+                return bun.O.RDONLY | __opener_flags;
+            }
+        }
 
         fn getFdByOpening(this: *This, comptime Callback: OpenCallback) void {
             var buf: bun.PathBuffer = undefined;
@@ -4650,7 +4699,7 @@ pub fn FileOpener(comptime This: type) type {
                     this.loop,
                     &this.req,
                     path,
-                    open_flags_,
+                    getOpenFlagsForContext(this),
                     jsc.Node.fs.default_permission,
                     &WrappedCallback.callback,
                 );
@@ -4665,7 +4714,7 @@ pub fn FileOpener(comptime This: type) type {
             }
 
             while (true) {
-                this.opened_fd = switch (bun.sys.open(path, open_flags_, jsc.Node.fs.default_permission)) {
+                this.opened_fd = switch (bun.sys.open(path, getOpenFlagsForContext(this), jsc.Node.fs.default_permission)) {
                     .result => |fd| fd,
                     .err => |err| {
                         if (comptime @hasField(This, "mkdirp_if_not_exists")) {

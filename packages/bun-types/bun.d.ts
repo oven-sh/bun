@@ -750,7 +750,7 @@ declare module "bun" {
    */
   function write(
     destination: BunFile | S3File | PathLike,
-    input: Blob | NodeJS.TypedArray | ArrayBufferLike | string | BlobPart[],
+    input: Blob | NodeJS.TypedArray | ArrayBufferLike | string | BlobPart[] | ReadableStream | Request,
     options?: {
       /**
        * If writing to a PathLike, set the permissions of the file.
@@ -764,6 +764,14 @@ declare module "bun" {
        * @default true
        */
       createPath?: boolean;
+      /**
+       * If `true`, append to the end of the file instead of overwriting it.
+       *
+       * If `false` or omitted, the file will be truncated (overwritten).
+       *
+       * @default false
+       */
+      append?: boolean;
     },
   ): Promise<number>;
 
@@ -771,9 +779,9 @@ declare module "bun" {
    * Persist a {@link Response} body to disk.
    *
    * @param destination The file to write to. If the file doesn't exist,
-   * it will be created and if the file does exist, it will be
-   * overwritten. If `input`'s size is less than `destination`'s size,
-   * `destination` will be truncated.
+   * it will be created. If `append` is not set or false, the file will be
+   * overwritten and truncated. If `append: true`, data is appended to the
+   * end of the file.
    * @param input - `Response` object
    * @param options Options for the write
    *
@@ -791,6 +799,14 @@ declare module "bun" {
        * @default true
        */
       createPath?: boolean;
+      /**
+       * If `true`, append to the end of the file instead of overwriting it.
+       *
+       * If `false` or omitted, the file will be truncated (overwritten).
+       *
+       * @default false
+       */
+      append?: boolean;
     },
   ): Promise<number>;
 
@@ -798,9 +814,9 @@ declare module "bun" {
    * Persist a {@link Response} body to disk.
    *
    * @param destinationPath The file path to write to. If the file doesn't
-   * exist, it will be created and if the file does exist, it will be
-   * overwritten. If `input`'s size is less than `destination`'s size,
-   * `destination` will be truncated.
+   * exist, it will be created. If `append` is not set or false, the file
+   * will be overwritten and truncated. If `append: true`, data is appended
+   * to the end of the file.
    * @param input - `Response` object
    * @returns A promise that resolves with the number of bytes written.
    */
@@ -816,6 +832,14 @@ declare module "bun" {
        * @default true
        */
       createPath?: boolean;
+      /**
+       * If `true`, append to the end of the file instead of overwriting it.
+       *
+       * If `false` or omitted, the file will be truncated (overwritten).
+       *
+       * @default false
+       */
+      append?: boolean;
     },
   ): Promise<number>;
 
@@ -830,10 +854,12 @@ declare module "bun" {
    * [`clonefile()`](https://www.manpagez.com/man/2/clonefile/) and falls
    * back to [`fcopyfile()`](https://www.manpagez.com/man/2/fcopyfile/)
    *
+   * **Note**: When `append: true`, the optimized copy is not used.
+   *
    * @param destination The file to write to. If the file doesn't exist,
-   * it will be created and if the file does exist, it will be
-   * overwritten. If `input`'s size is less than `destination`'s size,
-   * `destination` will be truncated.
+   * it will be created. If `append` is not set or false, the file will be
+   * overwritten and truncated. If `append: true`, data is appended to the
+   * end of the file.
    * @param input The file to copy from.
    * @returns A promise that resolves with the number of bytes written.
    */
@@ -864,6 +890,14 @@ declare module "bun" {
        * @default true
        */
       createPath?: boolean;
+      /**
+       * If `true`, append to the end of the file instead of overwriting it.
+       *
+       * If `false` or omitted, the file will be truncated (overwritten).
+       *
+       * @default false
+       */
+      append?: boolean;
     },
   ): Promise<number>;
 
@@ -878,10 +912,12 @@ declare module "bun" {
    * [`clonefile()`](https://www.manpagez.com/man/2/clonefile/) and falls
    * back to [`fcopyfile()`](https://www.manpagez.com/man/2/fcopyfile/)
    *
+   * **Note**: When `append: true`, the optimized copy is not used.
+   *
    * @param destinationPath The file path to write to. If the file doesn't
-   * exist, it will be created and if the file does exist, it will be
-   * overwritten. If `input`'s size is less than `destination`'s size,
-   * `destination` will be truncated.
+   * exist, it will be created. If `append` is not set or false, the file
+   * will be overwritten and truncated. If `append: true`, data is appended
+   * to the end of the file.
    * @param input The file to copy from.
    * @returns A promise that resolves with the number of bytes written.
    */
@@ -911,6 +947,14 @@ declare module "bun" {
        * @default true
        */
       createPath?: boolean;
+      /**
+       * If `true`, append to the end of the file instead of overwriting it.
+       *
+       * If `false` or omitted, the file will be truncated (overwritten).
+       *
+       * @default false
+       */
+      append?: boolean;
     },
   ): Promise<number>;
 
@@ -1332,7 +1376,14 @@ declare module "bun" {
     /**
      * Incremental writer for files and pipes.
      */
-    writer(options?: { highWaterMark?: number }): FileSink;
+    writer(options?: {
+      highWaterMark?: number;
+      /**
+       * If `true`, append to the end of the file.
+       * @default false
+       */
+      append?: boolean;
+    }): FileSink;
 
     // TODO
     // readonly readable: ReadableStream<Uint8Array>;
@@ -1375,8 +1426,28 @@ declare module "bun" {
      * @param options - The options to use for the write.
      */
     write(
-      data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer | Request | Response | BunFile,
-      options?: { highWaterMark?: number },
+      data:
+        | Blob
+        | NodeJS.TypedArray
+        | ArrayBufferLike
+        | string
+        | BlobPart[]
+        | ReadableStream
+        | Request
+        | Response
+        | BunFile,
+
+      options?: {
+        highWaterMark?: number;
+        /**
+         * If `true`, append to the end of the file instead of overwriting it.
+         *
+         * If `false` or omitted, the file will be truncated (overwritten).
+         *
+         * @default false
+         */
+        append?: boolean;
+      },
     ): Promise<number>;
 
     /**

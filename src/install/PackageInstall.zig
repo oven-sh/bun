@@ -1524,7 +1524,6 @@ const FileSystem = bun.fs.FileSystem;
 const String = bun.Semver.String;
 
 const install = bun.install;
-const bun_patched_tag = install.bun_patched_tag;
 const BuntagHashBuf = install.BuntagHashBuf;
 const Lockfile = install.Lockfile;
 const Npm = install.Npm;
@@ -1533,5 +1532,6 @@ const PackageManager = install.PackageManager;
 const Repository = install.Repository;
 const Resolution = install.Resolution;
 const TruncatedPackageNameHash = install.TruncatedPackageNameHash;
+const bun_patched_tag = install.bun_patched_tag;
 const buntaghashbuf_make = install.buntaghashbuf_make;
 const initializeStore = install.initializeStore;

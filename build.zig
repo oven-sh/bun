@@ -438,6 +438,63 @@ pub fn build(b: *Build) !void {
         }
     }
 
+    // zig build url-decode-bench
+    {
+        const step = b.step("url-decode-bench", "Build url decode microbenchmark");
+        var o = build_options;
+
+        const bun_mod = b.createModule(.{ .root_source_file = b.path("src/bun.zig") });
+        bun_mod.addImport("bun", bun_mod);
+        addInternalImports(b, bun_mod, &o);
+
+        const root_mod = b.createModule(.{
+            .root_source_file = b.path("misctools/url_decode_bench.zig"),
+            .target = o.target,
+            .optimize = o.optimize,
+        });
+        root_mod.addImport("bun", bun_mod);
+
+        const exe = b.addExecutable(.{
+            .name = "url_decode_bench",
+            .root_module = root_mod,
+        });
+        configureObj(b, &o, exe);
+        exe.no_link_obj = false;
+        exe.linker_allow_shlib_undefined = true;
+        exe.root_module.strip = true;
+
+        step.dependOn(&exe.step);
+    }
+
+    // zig build run-url-decode-bench
+    {
+        const step = b.step("run-url-decode-bench", "Run url decode microbenchmark");
+        var o = build_options;
+
+        const bun_mod = b.createModule(.{ .root_source_file = b.path("src/bun.zig") });
+        bun_mod.addImport("bun", bun_mod);
+        addInternalImports(b, bun_mod, &o);
+
+        const root_mod = b.createModule(.{
+            .root_source_file = b.path("misctools/url_decode_bench.zig"),
+            .target = o.target,
+            .optimize = o.optimize,
+        });
+        root_mod.addImport("bun", bun_mod);
+
+        const exe = b.addExecutable(.{
+            .name = "url_decode_bench",
+            .root_module = root_mod,
+        });
+        configureObj(b, &o, exe);
+        exe.no_link_obj = false;
+        exe.linker_allow_shlib_undefined = true;
+        exe.root_module.strip = true;
+
+        const run = b.addRunArtifact(exe);
+        step.dependOn(&run.step);
+    }
+
     // zig build enum-extractor
     {
         // const step = b.step("enum-extractor", "Extract enum definitions (invoked by a code generator)");
@@ -608,7 +665,6 @@ fn configureObj(b: *Build, opts: *BunBuildOptions, obj: *Compile) void {
     }
 
     obj.no_link_obj = opts.os != .windows and !opts.no_llvm;
-
 
     if (opts.enable_asan and !enableFastBuild(b)) {
         if (@hasField(Build.Module, "sanitize_address")) {

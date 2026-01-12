@@ -32,6 +32,8 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const tlsCerts = {
   cert: readFileSync(join(__dirname, "fixtures", "cert.pem"), "utf8"),
   key: readFileSync(join(__dirname, "fixtures", "cert.key"), "utf8"),
+  encryptedKey: readFileSync(join(__dirname, "fixtures", "cert.encrypted.key"), "utf8"),
+  passphrase: "testpassword",
   // Self-signed cert, so it's its own CA
   get ca() {
     return this.cert;
@@ -518,6 +520,117 @@ describe("https.request agent TLS options inheritance", () => {
         server.close();
       }
     });
+
+    test("inherits passphrase from agent.options", async () => {
+      // Create server that accepts connections with encrypted key
+      const { server, port, hostname } = await createHttpsServer({
+        key: tlsCerts.encryptedKey,
+        passphrase: tlsCerts.passphrase,
+      });
+
+      try {
+        // Create an agent with encrypted key and passphrase in options
+        const agent = new https.Agent({
+          ca: tlsCerts.ca,
+          cert: tlsCerts.cert,
+          key: tlsCerts.encryptedKey,
+          passphrase: tlsCerts.passphrase,
+        });
+
+        const { promise, resolve, reject } = Promise.withResolvers<void>();
+        const req = https.request(
+          {
+            hostname,
+            port,
+            path: "/",
+            method: "GET",
+            agent,
+            // NO passphrase here - should inherit from agent.options
+          },
+          res => {
+            res.on("data", () => {});
+            res.on("end", resolve);
+          },
+        );
+        req.on("error", reject);
+        req.end();
+
+        await promise;
+      } finally {
+        server.close();
+      }
+    });
+
+    test("supports multiple CAs (array)", async () => {
+      const { server, port, hostname } = await createHttpsServer();
+
+      try {
+        // Create an agent with CA as an array
+        const agent = new https.Agent({
+          ca: [tlsCerts.ca], // Array of CAs
+        });
+
+        const { promise, resolve, reject } = Promise.withResolvers<void>();
+        const req = https.request(
+          {
+            hostname,
+            port,
+            path: "/",
+            method: "GET",
+            agent,
+          },
+          res => {
+            res.on("data", () => {});
+            res.on("end", resolve);
+          },
+        );
+        req.on("error", reject);
+        req.end();
+
+        await promise;
+      } finally {
+        server.close();
+      }
+    });
+  });
+
+  describe("TLS error handling", () => {
+    test("rejects self-signed cert when rejectUnauthorized is true", async () => {
+      const { server, port, hostname } = await createHttpsServer();
+
+      try {
+        // Create an agent without CA and with rejectUnauthorized: true (default)
+        const agent = new https.Agent({
+          rejectUnauthorized: true,
+          // NO ca - should fail because cert is self-signed
+        });
+
+        const { promise, resolve, reject } = Promise.withResolvers<Error>();
+        const req = https.request(
+          {
+            hostname,
+            port,
+            path: "/",
+            method: "GET",
+            agent,
+          },
+          () => {
+            reject(new Error("Expected request to fail"));
+          },
+        );
+        req.on("error", resolve);
+        req.end();
+
+        const error = await promise;
+        // Should get a certificate error (self-signed cert not trusted)
+        if (!(error.message.includes("self-signed") || error.message.includes("SELF_SIGNED") || error.message.includes("certificate") || error.message.includes("unable to verify"))) {
+          throw new Error(`Expected certificate error, got: ${error.message}`);
+        }
+      } finally {
+        server.close();
+      }
+    });
+
   });
 });
 
@@ -556,3 +669,36 @@ describe("http.request agent options", () => {
     }
   });
 });
+
+// Only run in Bun to avoid infinite loop when Node.js runs this file
+if (typeof Bun !== "undefined") {
+  const { bunEnv, nodeExe } = await import("harness");
+
+  describe("Node.js compatibility", () => {
+    test("all tests pass in Node.js", async () => {
+      const node = nodeExe();
+      if (!node) {
+        throw new Error("Node.js not found in PATH");
+      }
+
+      const testFile = fileURLToPath(import.meta.url);
+
+      await using proc = Bun.spawn({
+        cmd: [node, "--test", testFile],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]);
+
+      if (exitCode !== 0) {
+        throw new Error(`Node.js tests failed with code ${exitCode}\n${stderr}\n${stdout}`);
+      }
+    });
+  });
+}

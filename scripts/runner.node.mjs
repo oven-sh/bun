@@ -341,6 +341,16 @@ const shouldValidateLeakSan = test => {
 };
 
 /**
+ * Returns whether a test expects spawned child processes to crash (e.g., seccomp tests).
+ * For these tests, we disable core dumps to avoid CI failures from expected crashes.
+ * @param {string} test
+ * @returns {boolean}
+ */
+const expectsSpawnedProcessCrash = test => {
+  return test.endsWith("spawn-sandbox.test.ts");
+};
+
+/**
  * @param {string} testPath
  * @returns {string[]}
  */
@@ -602,6 +612,11 @@ async function runTests() {
               env.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1";
               // prettier-ignore
               env.LSAN_OPTIONS = `malloc_context_size=100:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
+            }
+            if (expectsSpawnedProcessCrash(testPath)) {
+              // Tests that spawn processes expected to crash (e.g., seccomp sandbox tests)
+              // should not generate core dumps
+              env.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=1";
             }
             return runTest(title, async () => {
               const { ok, error, stdout, crashes } = await spawnBun(execPath, {
@@ -1349,6 +1364,11 @@ async function spawnBunTest(execPath, testPath, opts = { cwd }) {
     env.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1";
     // prettier-ignore
     env.LSAN_OPTIONS = `malloc_context_size=100:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
+  }
+  if (expectsSpawnedProcessCrash(relative(cwd, absPath))) {
+    // Tests that spawn processes expected to crash (e.g., seccomp sandbox tests)
+    // should not generate core dumps
+    env.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=1";
   }
 
   const { ok, error, stdout, crashes } = await spawnBun(execPath, {

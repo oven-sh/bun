@@ -728,6 +728,12 @@ pub const Bunfig = struct {
                         }
                     }
 
+                    if (install_obj.get("followWorkspaceSymlinks")) |follow_symlinks| {
+                        if (follow_symlinks.asBool()) |value| {
+                            install.follow_workspace_symlinks = value;
+                        }
+                    }
+
                     if (install_obj.get("security")) |security_obj| {
                         if (security_obj.data == .e_object) {
                             if (security_obj.get("scanner")) |scanner| {

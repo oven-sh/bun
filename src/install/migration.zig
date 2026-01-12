@@ -22,7 +22,7 @@ pub fn detectAndLoadOtherLockfile(
                 Output.prettyErrorln(
                     \\<red><b>error<r><d>:<r> Please upgrade package-lock.json to lockfileVersion 2 or 3
                     \\
-                    \\Run 'npm i --lockfile-version 3 --frozen-lockfile' to upgrade your lockfile without changing dependencies.
+                    \\Run 'npm i --lockfile-version 3 --package-lock-only' to upgrade your lockfile without changing dependencies.
                 , .{});
                 Global.exit(1);
             }

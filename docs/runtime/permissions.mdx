@@ -313,3 +313,23 @@ Bun's permissions follow a fail-closed design:
 <Note>
 Without the `--secure` flag, Bun runs in permissive mode for backwards compatibility. All operations are allowed by default.
 </Note>
+
+### Symlink handling
+
+In `--secure` mode, Bun resolves symbolic links to their real paths before checking permissions. This prevents symlink-based attacks where a symlink in an allowed directory points to a forbidden location.
+
+```bash terminal icon="terminal"
+# Example directory structure:
+# /app/allowed/link -> /etc/passwd (symlink)
+
+# This will be DENIED because the symlink target is outside allowed paths
+bun --secure --allow-read=/app/allowed script.js
+# script.js tries to read /app/allowed/link
+# Bun resolves it to /etc/passwd and denies access
+```
+
+Symlink resolution applies to all file system operations in secure mode, including nested symlink chains. The entire chain is resolved to find the final target path, which is then checked against permissions.
+
+<Note>
+Symlink resolution only occurs in `--secure` mode. In default (permissive) mode, symlinks are not resolved before access, maintaining full backwards compatibility with no performance overhead.
+</Note>

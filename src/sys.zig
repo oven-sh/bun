@@ -747,8 +747,8 @@ pub fn fstatat(fd: bun.FileDescriptor, path: [:0]const u8) Maybe(bun.Stat) {
 /// Like fstatat but does not follow symlinks (uses AT_SYMLINK_NOFOLLOW)
 pub fn lstatat(fd: bun.FileDescriptor, path: [:0]const u8) Maybe(bun.Stat) {
     if (Environment.isWindows) {
-        // On Windows, use lstat behavior
-        return switch (openatWindowsA(fd, path, 0, 0)) {
+        // On Windows, use O.NOFOLLOW to get lstat behavior (prevents following symlinks)
+        return switch (openatWindowsA(fd, path, O.NOFOLLOW, 0)) {
             .result => |file| {
                 defer file.close();
                 return fstat(file);

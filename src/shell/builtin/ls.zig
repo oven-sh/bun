@@ -298,7 +298,7 @@ pub const ShellLsTask = struct {
     pub fn run(this: *@This()) void {
         // Cache current time once per task for timestamp formatting
         if (this.opts.long_listing) {
-            this.#now_secs = @as(u64, @intCast(std.time.timestamp()));
+            this.#now_secs = @intCast(std.time.timestamp());
         }
 
         const fd = switch (ShellSyscall.openat(this.cwd, this.path, bun.O.RDONLY | bun.O.DIRECTORY, 0)) {
@@ -406,8 +406,8 @@ pub const ShellLsTask = struct {
 
         // File type and permissions
         const mode: u32 = @intCast(stat.mode);
-        const file_type = this.getFileTypeChar(mode);
-        const perms = this.formatPermissions(mode);
+        const file_type = getFileTypeChar(mode);
+        const perms = formatPermissions(mode);
 
         // Number of hard links
         const nlink: u64 = @intCast(stat.nlink);
@@ -421,7 +421,7 @@ pub const ShellLsTask = struct {
 
         // Modification time
         const mtime = stat.mtime();
-        const time_str = this.formatTime(@intCast(mtime.sec), this.#now_secs);
+        const time_str = formatTime(@intCast(mtime.sec), this.#now_secs);
 
         bun.handleOom(writer.print("{c}{s} {d: >3} {d: >5} {d: >5} {d: >8} {s} {s}\n", .{
             file_type,
@@ -435,7 +435,7 @@ pub const ShellLsTask = struct {
         }));
     }
 
-    fn getFileTypeChar(_: *@This(), mode: u32) u8 {
+    fn getFileTypeChar(mode: u32) u8 {
         const file_type = mode & bun.S.IFMT;
         return switch (file_type) {
             bun.S.IFDIR => 'd',
@@ -448,7 +448,7 @@ pub const ShellLsTask = struct {
         };
     }
 
-    fn formatPermissions(_: *@This(), mode: u32) [9]u8 {
+    fn formatPermissions(mode: u32) [9]u8 {
         var perms: [9]u8 = undefined;
         // Owner permissions
         perms[0] = if (mode & bun.S.IRUSR != 0) 'r' else '-';
@@ -486,7 +486,7 @@ pub const ShellLsTask = struct {
         return perms;
     }
 
-    fn formatTime(_: *@This(), timestamp: i64, now_secs: u64) [12]u8 {
+    fn formatTime(timestamp: i64, now_secs: u64) [12]u8 {
         var buf: [12]u8 = undefined;
         // Format as "Mon DD HH:MM" for recent files (within 6 months)
         // or "Mon DD  YYYY" for older files

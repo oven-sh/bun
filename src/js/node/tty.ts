@@ -16,7 +16,9 @@ function ReadStream(fd): void {
   if (!(this instanceof ReadStream)) {
     return new ReadStream(fd);
   }
-  fs.ReadStream.$apply(this, ["", { fd }]);
+  // When an fd is provided, we must not auto-close it - the caller owns it.
+  // This is critical for node-pty and other PTY libraries that manage their own fds.
+  fs.ReadStream.$apply(this, ["", { fd, autoClose: false }]);
   this.isRaw = false;
   // Only set isTTY to true if the fd is actually a TTY
   this.isTTY = isatty(fd);

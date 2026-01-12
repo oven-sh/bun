@@ -310,6 +310,13 @@ readStreamPrototype._read = function (n) {
 
   this[kFs].read(this.fd, buf, 0, n, this.pos, (er, bytesRead, buf) => {
     if (er) {
+      // EAGAIN means no data available on a non-blocking fd (e.g., PTY master).
+      // This is not a fatal error - we should just wait and try again later.
+      if (er.code === "EAGAIN") {
+        // Schedule a retry after a short delay to avoid busy-waiting
+        setTimeout(() => this._read(n), 10);
+        return;
+      }
       require("internal/streams/destroy").errorOrDestroy(this, er);
     } else if (bytesRead > 0) {
       if (this.pos !== undefined) {

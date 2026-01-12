@@ -108,8 +108,7 @@ describe("DNS address sorting (issue #25619)", () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    // Should succeed - the connection should eventually work since both addresses
-    // are tried (link-local will fail quickly, then IPv4 will succeed)
+    // Should succeed - IPv4 is preferred over link-local IPv6 and will be tried first
     expect(stdout.trim()).toBe("SUCCESS");
     expect(exitCode).toBe(0);
   });

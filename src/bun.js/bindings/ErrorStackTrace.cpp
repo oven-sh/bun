@@ -93,29 +93,18 @@ bool isImplementationVisibilityPrivate(const JSC::StackFrame& frame)
     return implementationVisibility != ImplementationVisibility::Public;
 }
 
-// Helper function to detect if the current frame is a consecutive duplicate of the previous frame.
-// This specifically handles JSC's behavior of creating two stack frames for async functions:
-// one for the async wrapper/machinery and one for the actual function body.
-// Node.js V8 filters these out, so we need to do the same for compatibility.
-//
-// NOTE: We can't rely on StackFrame.isAsyncFrame() because JSC doesn't always mark async
-// frames correctly. Instead, we detect the duplication pattern: same function, same file,
-// adjacent lines (typically differ by 1).
 static bool isConsecutiveDuplicateAsyncFrame(JSC::StackVisitor& visitor, const JSC::StackFrame* prevFrame)
 {
-    // If no previous frame, can't be a duplicate
     if (!prevFrame) {
         return false;
     }
 
-    // Check if function names match
     WTF::String currentFunctionName = visitor->functionName();
     WTF::String prevFunctionName;
-    
+
     // Get function name from previous frame's callee
     if (auto* callee = prevFrame->callee()) {
         if (auto* jsFunction = jsDynamicCast<JSFunction*>(callee)) {
-            // We need a VM to get the name - get it from the visitor's codeBlock
             if (auto* codeBlock = visitor->codeBlock()) {
                 prevFunctionName = jsFunction->name(codeBlock->vm());
             } else if (auto* prevCodeBlock = prevFrame->codeBlock()) {
@@ -124,16 +113,14 @@ static bool isConsecutiveDuplicateAsyncFrame(JSC::StackVisitor& visitor, const J
         }
     }
 
-    // If function names are different or empty, not a duplicate
     if (currentFunctionName.isEmpty() || prevFunctionName.isEmpty()) {
         return false;
     }
-    
+
     if (currentFunctionName != prevFunctionName) {
         return false;
     }
 
-    // Check if source URLs match
     WTF::String currentSourceURL;
     if (auto* codeBlock = visitor->codeBlock()) {
         currentSourceURL = Zig::sourceURL(codeBlock);
@@ -144,48 +131,36 @@ static bool isConsecutiveDuplicateAsyncFrame(JSC::StackVisitor& visitor, const J
         prevSourceURL = Zig::sourceURL(codeBlock);
     }
 
-    // Source URLs must match (both non-empty and equal)
     if (currentSourceURL.isEmpty() || prevSourceURL.isEmpty() || currentSourceURL != prevSourceURL) {
         return false;
     }
 
-    // Check if line numbers are adjacent (within 1 line)
-    // This is the key signature of async frame duplication
     if (visitor->hasLineAndColumnInfo() && prevFrame->hasLineAndColumnInfo()) {
         auto currentLineColumn = visitor->computeLineAndColumn();
         auto prevLineColumn = prevFrame->computeLineAndColumn();
-        
+
         int lineDiff = std::abs(static_cast<int>(currentLineColumn.line) - static_cast<int>(prevLineColumn.line));
-        
-        // Consecutive duplicate frames typically differ by 0 or 1 line
-        // If lines are adjacent and everything else matches, this is a duplicate
+
         if (lineDiff <= 1) {
             return true;
         }
     }
 
-    // If we have all the matching criteria but no line info, be conservative
     return false;
 }
 
-// Overload for comparing two StackFrame objects (used in fromExisting)
-// NOTE: We can't rely on StackFrame.isAsyncFrame() because JSC doesn't always mark async
-// frames correctly. Instead, we detect the duplication pattern: same function, same file,
-// adjacent lines (typically differ by 1).
 static bool isConsecutiveDuplicateAsyncFrame(JSC::VM& vm, const JSC::StackFrame& currentFrame, const JSC::StackFrame& prevFrame)
 {
-    // Check if callees exist
     auto* currentCallee = currentFrame.callee();
     auto* prevCallee = prevFrame.callee();
-    
+
     if (!currentCallee || !prevCallee) {
         return false;
     }
 
-    // Get function names using the same logic as retrieveFunctionName
     WTF::String currentName;
     WTF::String prevName;
-    
+
     if (auto* jsFunc = jsDynamicCast<JSFunction*>(currentCallee)) {
         if (auto* codeBlock = currentFrame.codeBlock()) {
             currentName = Zig::functionName(vm, codeBlock);
@@ -194,7 +169,7 @@ static bool isConsecutiveDuplicateAsyncFrame(JSC::VM& vm, const JSC::StackFrame&
             currentName = jsFunc->name(vm);
         }
     }
-    
+
     if (auto* jsFunc = jsDynamicCast<JSFunction*>(prevCallee)) {
         if (auto* codeBlock = prevFrame.codeBlock()) {
             prevName = Zig::functionName(vm, codeBlock);
@@ -203,51 +178,44 @@ static bool isConsecutiveDuplicateAsyncFrame(JSC::VM& vm, const JSC::StackFrame&
             prevName = jsFunc->name(vm);
         }
     }
-    
-    // If names are different or empty, not a duplicate
+
     if (currentName.isEmpty() || prevName.isEmpty()) {
         return false;
     }
-    
+
     if (currentName != prevName) {
         return false;
     }
 
-    // Check if source URLs match
     auto* currentCodeBlock = currentFrame.codeBlock();
     auto* prevCodeBlock = prevFrame.codeBlock();
-    
+
     WTF::String currentSourceURL;
     WTF::String prevSourceURL;
-    
+
     if (currentCodeBlock) {
         currentSourceURL = Zig::sourceURL(currentCodeBlock);
     }
-    
+
     if (prevCodeBlock) {
         prevSourceURL = Zig::sourceURL(prevCodeBlock);
     }
-    
-    // Source URLs must match (both non-empty and equal)
+
     if (currentSourceURL.isEmpty() || prevSourceURL.isEmpty() || currentSourceURL != prevSourceURL) {
         return false;
     }
 
-    // Check if line numbers are adjacent (within 1 line)
-    // This is the key signature of async frame duplication
     if (currentFrame.hasLineAndColumnInfo() && prevFrame.hasLineAndColumnInfo()) {
         auto currentLineColumn = currentFrame.computeLineAndColumn();
         auto prevLineColumn = prevFrame.computeLineAndColumn();
-        
+
         int lineDiff = std::abs(static_cast<int>(currentLineColumn.line) - static_cast<int>(prevLineColumn.line));
-        
-        // Consecutive duplicate frames typically differ by 0 or 1 line
+
         if (lineDiff <= 1) {
             return true;
         }
     }
 
-    // If we have all the matching criteria but no line info, be conservative
     return false;
 }
 
@@ -261,21 +229,20 @@ JSCStackTrace JSCStackTrace::fromExisting(JSC::VM& vm, const WTF::Vector<JSC::St
     }
 
     newFrames.reserveInitialCapacity(frameCount);
-    
+
     const JSC::StackFrame* prevFrame = nullptr;
-    
+
     for (size_t i = 0; i < frameCount; i++) {
         const auto& currentFrame = existingFrames.at(i);
-        
+
         if (isImplementationVisibilityPrivate(currentFrame)) {
             continue;
         }
-        
-        // Check if this is a consecutive duplicate async frame
+
         if (prevFrame && isConsecutiveDuplicateAsyncFrame(vm, currentFrame, *prevFrame)) {
             continue;
         }
-        
+
         newFrames.constructAndAppend(vm, currentFrame);
         prevFrame = &currentFrame;
     }
@@ -380,10 +347,10 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
     size_t i = 0;
     totalFrames = 0;
     stackTrace.reserveInitialCapacity(framesCount);
-    
+
     // Track the previous frame to detect consecutive duplicates
     const JSC::StackFrame* prevFrame = nullptr;
-    
+
     JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
         // Skip native frames
         if (isImplementationVisibilityPrivate(visitor)) {

@@ -458,6 +458,7 @@ pub fn build(b: *Build) !void {
     });
     configureObj(b, &url_decode_options, url_decode_exe);
     url_decode_exe.no_link_obj = false;
+    // Allow unresolved symbols from unused bun code paths in this bench.
     url_decode_exe.linker_allow_shlib_undefined = true;
     url_decode_exe.root_module.strip = true;
 

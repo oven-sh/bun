@@ -309,6 +309,13 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             JSC::Options::heapGrowthMaxIncrease() = 2.0;
             JSC::Options::useAsyncStackTrace() = true;
             JSC::Options::useExplicitResourceManagement() = true;
+            // Disable tail call optimization for Node.js compatibility.
+            // V8/Node.js doesn't implement proper tail calls, so the Node.js ecosystem
+            // expects all intermediate stack frames to be present. Libraries like Nx,
+            // node-depd, and others use Error.prepareStackTrace to analyze call stacks
+            // and break when frames are eliminated by TCO.
+            // See: https://github.com/oven-sh/bun/issues/25738
+            JSC::Options::useTailCalls() = false;
             JSC::dangerouslyOverrideJSCBytecodeCacheVersion(getWebKitBytecodeCacheVersion());
 
 #ifdef BUN_DEBUG

@@ -412,22 +412,59 @@ fn checkFsPermission(comptime function_name: NodeFSFunctionEnum, globalObject: *
     }
 }
 
-/// Resolve a path to an absolute path using the current working directory.
+/// Resolve a path to an absolute path using the current working directory,
+/// and optionally resolve symlinks to their canonical target.
 ///
-/// Security note: This function does NOT follow symlinks. Permission checks are performed
-/// on the provided path, not the symlink target. This means a symlink pointing outside
-/// an allowed directory will be accessible. To protect sensitive directories, use --deny-*
-/// flags on the actual target paths. A future enhancement could add optional symlink
-/// resolution, but this has performance implications and edge cases (TOCTOU races,
-/// non-existent files for writes, etc.).
+/// Security note: When symlink resolution is enabled, permission checks are performed
+/// on the symlink target, not the symlink path itself. This provides stronger security
+/// guarantees but has a performance cost (extra syscall per operation).
+///
+/// Symlink resolution is enabled when running in secure mode (--secure flag).
+/// If realpath fails (e.g., file doesn't exist yet for write operations), we fall back
+/// to the original absolute path.
 fn resolvePath(globalObject: *jsc.JSGlobalObject, path: []const u8, buf: *[bun.MAX_PATH_BYTES]u8) []const u8 {
-    // If it's already an absolute path, use it directly
-    if (bun.path.Platform.auto.isAbsolute(path)) {
+    // First, resolve relative paths to absolute paths
+    const absolute_path = if (bun.path.Platform.auto.isAbsolute(path))
+        path
+    else blk: {
+        const cwd = globalObject.bunVM().transpiler.fs.top_level_dir;
+        break :blk bun.path.joinAbsStringBuf(cwd, buf, &.{path}, .auto);
+    };
+
+    // In secure mode, resolve symlinks to get canonical path
+    const vm = globalObject.bunVM();
+    if (vm.permissions.isSecureMode()) {
+        return resolveSymlinks(absolute_path, buf);
+    }
+
+    return absolute_path;
+}
+
+/// Resolve symlinks in a path to get the canonical path.
+/// Falls back to the original path if realpath fails (e.g., file doesn't exist).
+///
+/// Note: This adds a syscall overhead but provides stronger security guarantees
+/// by checking permissions on the actual target path, not the symlink.
+fn resolveSymlinks(path: []const u8, buf: *[bun.MAX_PATH_BYTES]u8) []const u8 {
+    // Need null-terminated path for C realpath
+    var path_buf: [bun.MAX_PATH_BYTES:0]u8 = undefined;
+    if (path.len >= bun.MAX_PATH_BYTES) {
+        return path; // Path too long, return original
+    }
+    @memcpy(path_buf[0..path.len], path);
+    path_buf[path.len] = 0;
+
+    // Call C realpath to resolve symlinks
+    const result = std.c.realpath(&path_buf, buf);
+    if (result == null) {
+        // realpath failed (file doesn't exist, permission denied, etc.)
+        // Fall back to original path - this is important for write operations
+        // where the file may not exist yet
         return path;
     }
-    // Otherwise, resolve it relative to the cwd
-    const cwd = globalObject.bunVM().transpiler.fs.top_level_dir;
-    return bun.path.joinAbsStringBuf(cwd, buf, &.{path}, .auto);
+
+    // Return the resolved path
+    return bun.sliceTo(buf, 0);
 }
 
 threadlocal var path_resolve_buf: [bun.MAX_PATH_BYTES]u8 = undefined;

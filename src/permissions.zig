@@ -646,6 +646,11 @@ pub const Permissions = struct {
         };
     }
 
+    /// Check if running in secure mode (--secure flag)
+    pub fn isSecureMode(self: *const Permissions) bool {
+        return self.secure_mode;
+    }
+
     /// Check permission with fast path for allow_all
     pub fn check(self: *const Permissions, kind: Kind, resource: ?[]const u8) State {
         // Fast path: if allow_all is true, skip all checks

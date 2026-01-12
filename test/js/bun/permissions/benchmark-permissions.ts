@@ -173,6 +173,55 @@ async function runBenchmarks() {
     }),
   );
 
+  // Symlink resolution benchmarks (only in secure mode)
+  if (isSecure) {
+    // Create symlink for testing
+    const symlinkDir = `${tempDir}/symlink-test`;
+    Bun.spawnSync({ cmd: ["rm", "-rf", symlinkDir] });
+    Bun.spawnSync({ cmd: ["mkdir", "-p", symlinkDir] });
+    await Bun.write(`${symlinkDir}/target.txt`, "symlink target content");
+    Bun.spawnSync({ cmd: ["ln", "-sf", `${symlinkDir}/target.txt`, `${symlinkDir}/link.txt`] });
+
+    // Create a chain of symlinks
+    Bun.spawnSync({ cmd: ["ln", "-sf", `${symlinkDir}/link.txt`, `${symlinkDir}/link2.txt`] });
+    Bun.spawnSync({ cmd: ["ln", "-sf", `${symlinkDir}/link2.txt`, `${symlinkDir}/link3.txt`] });
+
+    // Benchmark 12: Read through symlink (includes realpath overhead)
+    results.push(
+      benchSync("fs.readFileSync (symlink)", () => {
+        fs.readFileSync(`${symlinkDir}/link.txt`, "utf8");
+      }),
+    );
+
+    // Benchmark 13: Read direct file (baseline for comparison)
+    results.push(
+      benchSync("fs.readFileSync (direct)", () => {
+        fs.readFileSync(`${symlinkDir}/target.txt`, "utf8");
+      }),
+    );
+
+    // Benchmark 14: Read through symlink chain (3 levels)
+    results.push(
+      benchSync("fs.readFileSync (3 symlinks)", () => {
+        fs.readFileSync(`${symlinkDir}/link3.txt`, "utf8");
+      }),
+    );
+
+    // Benchmark 15: stat through symlink
+    results.push(
+      benchSync("fs.statSync (symlink)", () => {
+        fs.statSync(`${symlinkDir}/link.txt`);
+      }),
+    );
+
+    // Benchmark 16: stat direct file
+    results.push(
+      benchSync("fs.statSync (direct)", () => {
+        fs.statSync(`${symlinkDir}/target.txt`);
+      }),
+    );
+  }
+
   // Print results
   console.log("Results:");
   console.log("-".repeat(60));

@@ -175,8 +175,43 @@ pub const PackageInstall = struct {
         if (this.patch) |*patch| {
             if (!verified) return false;
             return this.verifyPatchHash(patch, root_node_modules_dir);
+        } else {
+            // If there's no patch expected, verify that the installed package
+            // doesn't have a patch tag file (from a previously applied patch).
+            if (!verified) return false;
+            return this.verifyNoPatchApplied(root_node_modules_dir);
         }
-        return verified;
+    }
+
+    /// Verify that the installed package doesn't have a .bun-patched marker file,
+    /// which would indicate a patch was previously applied that needs to be removed.
+    fn verifyNoPatchApplied(this: *@This(), root_node_modules_dir: std.fs.Dir) bool {
+        const patched_tag_path = bun.path.joinZ(&[_][]const u8{
+            this.destination_dir_subpath,
+            bun_patched_tag,
+        }, .posix);
+
+        var destination_dir = this.node_modules.openDir(root_node_modules_dir) catch return true;
+        defer {
+            if (std.fs.cwd().fd != destination_dir.fd) destination_dir.close();
+        }
+
+        // If .bun-patched exists, the package was patched and needs reinstallation
+        if (comptime bun.Environment.isPosix) {
+            if (bun.sys.fstatat(.fromStdDir(destination_dir), patched_tag_path).unwrap()) |_| {
+                return false; // File exists - package is patched
+            } else |_| {
+                return true; // File doesn't exist - package is not patched
+            }
+        } else {
+            switch (bun.sys.openat(.fromStdDir(destination_dir), patched_tag_path, bun.O.RDONLY, 0)) {
+                .err => return true, // File doesn't exist - package is not patched
+                .result => |fd| {
+                    fd.close();
+                    return false; // File exists - package is patched
+                },
+            }
+        }
     }
 
     // Only check for destination directory in node_modules. We can't use package.json because
@@ -1489,6 +1524,7 @@ const FileSystem = bun.fs.FileSystem;
 const String = bun.Semver.String;
 
 const install = bun.install;
+const bun_patched_tag = install.bun_patched_tag;
 const BuntagHashBuf = install.BuntagHashBuf;
 const Lockfile = install.Lockfile;
 const Npm = install.Npm;

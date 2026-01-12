@@ -9,6 +9,7 @@ pub const Resolution = @import("./resolution.zig").Resolution;
 pub const PackageInstall = bun.install.PackageInstall;
 
 pub const bun_hash_tag = bun.install.bun_hash_tag;
+pub const bun_patched_tag = bun.install.bun_patched_tag;
 pub const max_hex_hash_len: comptime_int = brk: {
     var buf: [128]u8 = undefined;
     break :brk (std.fmt.bufPrint(buf[0..], "{x}", .{std.math.maxInt(u64)}) catch @panic("Buf wasn't big enough.")).len;
@@ -371,6 +372,26 @@ pub const PatchTask = struct {
                 },
             };
             buntagfd.close();
+
+            // Also create a simple .bun-patched marker for efficient detection
+            // when verifying if a package needs to be reinstalled without a patch
+            const patched_tag_fd = switch (bun.sys.openat(
+                patch_pkg_dir,
+                bun_patched_tag,
+                bun.O.RDWR | bun.O.CREAT,
+                0o666,
+            )) {
+                .result => |fd| fd,
+                .err => |e| {
+                    return try log.addErrorFmtOpts(
+                        this.manager.allocator,
+                        "failed adding bun patched tag: {f}",
+                        .{e.withPath(bun_patched_tag)},
+                        .{},
+                    );
+                },
+            };
+            patched_tag_fd.close();
         }
 
         // 6. rename to cache dir

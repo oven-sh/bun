@@ -1,6 +1,7 @@
 threadlocal var initialized_store = false;
 
 pub const bun_hash_tag = ".bun-tag-";
+pub const bun_patched_tag: [:0]const u8 = ".bun-patched";
 pub const max_hex_hash_len: comptime_int = brk: {
     var buf: [128]u8 = undefined;
     break :brk (std.fmt.bufPrint(buf[0..], "{x}", .{std.math.maxInt(u64)}) catch @panic("Buf wasn't big enough.")).len;

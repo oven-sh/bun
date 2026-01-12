@@ -33,7 +33,7 @@ test("check timeout from conditional config", () => {
       stdout: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     // Should NOT get ENOENT error trying to open "ci" as a file
     expect(stderr).not.toContain("ENOENT");
@@ -70,7 +70,7 @@ test("staging config test", () => {
       stdout: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).not.toContain("ENOENT");
     expect(exitCode).toBe(0);
@@ -100,7 +100,7 @@ test("file path config test", () => {
       stdout: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(exitCode).toBe(0);
   });
@@ -129,7 +129,7 @@ test("custom file config test", () => {
       stdout: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(exitCode).toBe(0);
   });
@@ -158,7 +158,7 @@ test("test with missing conditional section", () => {
       stdout: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     // Should NOT get ENOENT error
     expect(stderr).not.toContain("ENOENT");

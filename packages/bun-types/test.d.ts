@@ -207,6 +207,32 @@ declare module "bun:test" {
   type DescribeLabel = number | string | Function | FunctionLike;
 
   /**
+   * Marks a group of tests as to be written or to be fixed.
+   *
+   * When called with only a label, creates a placeholder test group that will be
+   * shown in test results as "todo". When called with both a label and a function,
+   * the tests will not be executed unless the `--todo` flag is passed.
+   *
+   * @example
+   * // Placeholder test group - just a label
+   * describe.todo("unimplemented feature group");
+   *
+   * // Test group with implementation that won't run by default
+   * describe.todo("feature group to fix", () => {
+   *   test("broken test", () => {
+   *     expect(broken()).toBe(true);
+   *   });
+   * });
+   *
+   * @param label the label for the tests
+   * @param fn optional function that defines the tests
+   */
+  export interface DescribeTodo<T extends Readonly<any[]>> {
+    (label: DescribeLabel): void;
+    (label: DescribeLabel, fn: (...args: T) => void): void;
+  }
+
+  /**
    * Describes a group of related tests.
    *
    * @example
@@ -238,8 +264,12 @@ declare module "bun:test" {
     skip: Describe<T>;
     /**
      * Marks this group of tests as to be written or to be fixed.
+     *
+     * When called with only a label, creates a placeholder test group that will be
+     * shown in test results as "todo". When called with both a label and a function,
+     * the tests will not be executed unless the `--todo` flag is passed.
      */
-    todo: Describe<T>;
+    todo: DescribeTodo<T>;
     /**
      * Marks this group of tests to be executed concurrently.
      */
@@ -443,6 +473,39 @@ declare module "bun:test" {
   }
 
   /**
+   * Marks a test as to be written or to be fixed.
+   *
+   * When called with only a test name, creates a placeholder test that will be
+   * shown in test results as "todo". When called with both a name and a function,
+   * the test will not be executed unless the `--todo` flag is passed.
+   *
+   * @example
+   * // Placeholder test - just a name
+   * test.todo("unimplemented feature");
+   *
+   * // Test with implementation that won't run by default
+   * test.todo("feature to fix", () => {
+   *   expect(broken()).toBe(true);
+   * });
+   *
+   * @param label the label for the test
+   * @param fn optional test function
+   * @param options optional test timeout or options
+   */
+  export interface TestTodo<T extends ReadonlyArray<unknown>> {
+    (label: string): void;
+    (
+      label: string,
+      fn: (
+        ...args: __internal.IsTuple<T> extends true
+          ? [...table: __internal.Flatten<T>, done: (err?: unknown) => void]
+          : T
+      ) => void | Promise<unknown>,
+      options?: number | TestOptions,
+    ): void;
+  }
+
+  /**
    * Runs a test.
    *
    * @example
@@ -495,12 +558,13 @@ declare module "bun:test" {
     /**
      * Marks this test as to be written or to be fixed.
      *
-     * These tests will not be executed unless the `--todo` flag is passed. With the flag,
+     * When called with only a test name, creates a placeholder test that will be
+     * shown in test results as "todo". When called with both a name and a function,
+     * the test will not be executed unless the `--todo` flag is passed. With the flag,
      * if the test passes, the test will be marked as `fail` in the results; you will have to
-     * remove the `.todo` or check that your test
-     * is implemented correctly.
+     * remove the `.todo` or check that your test is implemented correctly.
      */
-    todo: Test<T>;
+    todo: TestTodo<T>;
     /**
      * Marks this test as failing.
      *

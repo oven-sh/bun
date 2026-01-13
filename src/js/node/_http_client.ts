@@ -738,7 +738,7 @@ function ClientRequest(input, options, cb) {
   //
   // agent.connectOpts: Used by https-proxy-agent for TLS connection options (lowest priority)
   // https://github.com/TooTallNate/proxy-agents/blob/main/packages/https-proxy-agent/src/index.ts#L110-L117
-  const mergedTlsOptions = { ...agent?.connectOpts, ...options, ...agent?.options };
+  const mergedTlsOptions = { __proto__: null, ...agent?.connectOpts, ...options, ...agent?.options };
 
   if (mergedTlsOptions.rejectUnauthorized !== undefined) {
     this._ensureTls().rejectUnauthorized = mergedTlsOptions.rejectUnauthorized;

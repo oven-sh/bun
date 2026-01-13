@@ -21,10 +21,11 @@ test("Bun.build reactFastRefresh option enables React Fast Refresh transform", a
   });
 
   // With reactFastRefresh: true, output should contain $RefreshReg$ and $RefreshSig$
+  // Using target: "bun" to verify it works with non-browser targets
   const buildEnabled = await Bun.build({
     entrypoints: [join(dir, "component.tsx")],
     reactFastRefresh: true,
-    target: "browser",
+    target: "bun",
     external: ["react"],
   });
 

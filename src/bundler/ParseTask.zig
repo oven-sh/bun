@@ -1189,8 +1189,7 @@ fn runWithSourceCode(
     opts.features.bundler_feature_flags = transpiler.options.bundler_feature_flags;
     opts.features.hot_module_reloading = output_format == .internal_bake_dev and !source.index.isRuntime();
     opts.features.auto_polyfill_require = output_format == .esm and !opts.features.hot_module_reloading;
-    opts.features.react_fast_refresh = target == .browser and
-        transpiler.options.react_fast_refresh and
+    opts.features.react_fast_refresh = transpiler.options.react_fast_refresh and
         loader.isJSX() and
         !source.path.isNodeModule();
 

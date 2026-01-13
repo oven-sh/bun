@@ -3893,24 +3893,26 @@ pub const NodeFS = struct {
     }
 
     pub fn lstat(this: *NodeFS, args: Arguments.Lstat, _: Flavor) Maybe(Return.Lstat) {
+        _ = this;
+        const path_slice = args.path.slice();
         if (Environment.isLinux and Syscall.supports_statx_on_linux.load(.monotonic)) {
-            return switch (Syscall.lstatx(args.path.sliceZ(&this.sync_error_buf), &.{ .type, .mode, .nlink, .uid, .gid, .atime, .mtime, .ctime, .btime, .ino, .size, .blocks })) {
+            return switch (Syscall.lstatxA(path_slice, &.{ .type, .mode, .nlink, .uid, .gid, .atime, .mtime, .ctime, .btime, .ino, .size, .blocks })) {
                 .result => |result| Maybe(Return.Lstat){ .result = .{ .stats = .init(&result, args.big_int) } },
                 .err => |err| brk: {
                     if (!args.throw_if_no_entry and err.getErrno() == .NOENT) {
                         return Maybe(Return.Lstat){ .result = .{ .not_found = {} } };
                     }
-                    break :brk Maybe(Return.Lstat){ .err = err.withPath(args.path.slice()) };
+                    break :brk Maybe(Return.Lstat){ .err = err.withPath(path_slice) };
                 },
             };
         } else {
-            return switch (Syscall.lstat(args.path.sliceZ(&this.sync_error_buf))) {
+            return switch (Syscall.lstatA(path_slice)) {
                 .result => |result| Maybe(Return.Lstat){ .result = .{ .stats = .init(&Syscall.PosixStat.init(&result), args.big_int) } },
                 .err => |err| brk: {
                     if (!args.throw_if_no_entry and err.getErrno() == .NOENT) {
                         return Maybe(Return.Lstat){ .result = .{ .not_found = {} } };
                     }
-                    break :brk Maybe(Return.Lstat){ .err = err.withPath(args.path.slice()) };
+                    break :brk Maybe(Return.Lstat){ .err = err.withPath(path_slice) };
                 },
             };
         }
@@ -4950,45 +4952,47 @@ pub const NodeFS = struct {
     }
 
     pub fn readFileWithOptions(this: *NodeFS, args: Arguments.ReadFile, comptime flavor: Flavor, comptime string_type: StringType) Maybe(Return.ReadFileWithOptions) {
-        var path: [:0]const u8 = undefined;
+        const path_slice = args.path.path.slice();
         const fd_maybe_windows: FileDescriptor = switch (args.path) {
             .path => brk: {
-                path = args.path.path.sliceZ(&this.sync_error_buf);
-
-                if (bun.StandaloneModuleGraph.get()) |graph| {
-                    if (graph.find(path)) |file| {
-                        if (args.encoding == .buffer) {
-                            return .{
-                                .result = .{
-                                    .buffer = Buffer.fromBytes(
-                                        bun.handleOom(bun.default_allocator.dupe(u8, file.contents)),
-                                        bun.default_allocator,
-                                        .Uint8Array,
-                                    ),
-                                },
-                            };
-                        } else if (comptime string_type == .default)
-                            return .{
-                                .result = .{
-                                    .string = bun.handleOom(bun.default_allocator.dupe(u8, file.contents)),
-                                },
-                            }
-                        else
-                            return .{
-                                .result = .{
-                                    .null_terminated = bun.handleOom(bun.default_allocator.dupeZ(u8, file.contents)),
-                                },
-                            };
+                // Only check StandaloneModuleGraph if path fits in buffer (otherwise it can't be in the graph)
+                if (path_slice.len < bun.MAX_PATH_BYTES) {
+                    if (bun.StandaloneModuleGraph.get()) |graph| {
+                        const path = args.path.path.sliceZ(&this.sync_error_buf);
+                        if (graph.find(path)) |file| {
+                            if (args.encoding == .buffer) {
+                                return .{
+                                    .result = .{
+                                        .buffer = Buffer.fromBytes(
+                                            bun.handleOom(bun.default_allocator.dupe(u8, file.contents)),
+                                            bun.default_allocator,
+                                            .Uint8Array,
+                                        ),
+                                    },
+                                };
+                            } else if (comptime string_type == .default)
+                                return .{
+                                    .result = .{
+                                        .string = bun.handleOom(bun.default_allocator.dupe(u8, file.contents)),
+                                    },
+                                }
+                            else
+                                return .{
+                                    .result = .{
+                                        .null_terminated = bun.handleOom(bun.default_allocator.dupeZ(u8, file.contents)),
+                                    },
+                                };
+                        }
                     }
                 }
 
-                break :brk switch (bun.sys.open(
-                    path,
+                break :brk switch (Syscall.openA(
+                    path_slice,
                     args.flag.asInt() | bun.O.NOCTTY,
                     default_permission,
                 )) {
                     .err => |err| return .{
-                        .err = err.withPath(args.path.path.slice()),
+                        .err = err.withPath(path_slice),
                     },
                     .result => |fd| fd,
                 };
@@ -5727,15 +5731,19 @@ pub const NodeFS = struct {
     }
 
     pub fn stat(this: *NodeFS, args: Arguments.Stat, _: Flavor) Maybe(Return.Stat) {
-        const path = args.path.sliceZ(&this.sync_error_buf);
-        if (bun.StandaloneModuleGraph.get()) |graph| {
-            if (graph.stat(path)) |*result| {
-                return .{ .result = .{ .stats = .init(&Syscall.PosixStat.init(result), args.big_int) } };
+        const path_slice = args.path.slice();
+        // Only check StandaloneModuleGraph if path fits in buffer (otherwise it can't be in the graph)
+        if (path_slice.len < bun.MAX_PATH_BYTES) {
+            if (bun.StandaloneModuleGraph.get()) |graph| {
+                const path = args.path.sliceZ(&this.sync_error_buf);
+                if (graph.stat(path)) |*result| {
+                    return .{ .result = .{ .stats = .init(&Syscall.PosixStat.init(result), args.big_int) } };
+                }
             }
         }
 
         if (Environment.isLinux and Syscall.supports_statx_on_linux.load(.monotonic)) {
-            return switch (Syscall.statx(path, &.{ .type, .mode, .nlink, .uid, .gid, .atime, .mtime, .ctime, .btime, .ino, .size, .blocks })) {
+            return switch (Syscall.statxA(path_slice, &.{ .type, .mode, .nlink, .uid, .gid, .atime, .mtime, .ctime, .btime, .ino, .size, .blocks })) {
                 .result => |result| .{
                     .result = .{ .stats = .init(&result, args.big_int) },
                 },
@@ -5743,11 +5751,11 @@ pub const NodeFS = struct {
                     if (!args.throw_if_no_entry and err.getErrno() == .NOENT) {
                         return .{ .result = .{ .not_found = {} } };
                     }
-                    break :brk .{ .err = err.withPath(args.path.slice()) };
+                    break :brk .{ .err = err.withPath(path_slice) };
                 },
             };
         } else {
-            return switch (Syscall.stat(path)) {
+            return switch (Syscall.statA(path_slice)) {
                 .result => |result| .{
                     .result = .{ .stats = .init(&Syscall.PosixStat.init(&result), args.big_int) },
                 },
@@ -5755,7 +5763,7 @@ pub const NodeFS = struct {
                     if (!args.throw_if_no_entry and err.getErrno() == .NOENT) {
                         return .{ .result = .{ .not_found = {} } };
                     }
-                    break :brk .{ .err = err.withPath(args.path.slice()) };
+                    break :brk .{ .err = err.withPath(path_slice) };
                 },
             };
         }

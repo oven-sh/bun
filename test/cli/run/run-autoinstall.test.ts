@@ -84,3 +84,106 @@ test("--install=fallback to install missing packages", async () => {
   expect(stderr?.toString("utf8")).not.toContain("error: Cannot find package 'is-odd'");
   expect(stdout?.toString("utf8")).toBe("true false\n");
 });
+
+// Regression test: Auto-install should not crash with a segfault when logging errors.
+// The crash occurred because the PackageManager's log used an allocator
+// that could become invalid during transpilation.
+describe("autoinstall should not crash on resolution errors", () => {
+  test("should handle missing package gracefully without segfault", async () => {
+    const dir = tmpdirSync();
+    mkdirSync(dir, { recursive: true });
+
+    // Create a project that imports a non-existent package
+    await Promise.all([
+      Bun.write(
+        join(dir, "index.js"),
+        "import nonExistentPackage from 'this-package-does-not-exist-12345'; console.log(nonExistentPackage);",
+      ),
+      Bun.write(
+        join(dir, "package.json"),
+        JSON.stringify({
+          name: "test-autoinstall-crash",
+          type: "module",
+        }),
+      ),
+    ]);
+
+    // Run without node_modules to trigger auto-install code path
+    const { exitCode, stderr } = Bun.spawnSync({
+      cmd: [bunExe(), join(dir, "index.js")],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const stderrText = stderr?.toString("utf8") ?? "";
+
+    // Should NOT crash with segfault (exit codes 128+N indicate death by signal N)
+    expect(exitCode).not.toBe(134); // SIGABRT (128 + 6)
+    expect(exitCode).not.toBe(139); // SIGSEGV (128 + 11)
+
+    // Should NOT contain crash indicators
+    expect(stderrText).not.toContain("Segmentation fault");
+    expect(stderrText).not.toContain("panic");
+    expect(stderrText).not.toContain("Bun has crashed");
+
+    // Should contain a normal error message about the missing package
+    expect(stderrText).toContain("this-package-does-not-exist-12345");
+  });
+
+  test("should handle resolution during transpilation without segfault", async () => {
+    const dir = tmpdirSync();
+    mkdirSync(dir, { recursive: true });
+
+    // Create a TypeScript project that triggers transpilation + resolution
+    await Promise.all([
+      Bun.write(
+        join(dir, "index.ts"),
+        `
+        // TypeScript file to trigger transpilation
+        const x: string = "hello";
+        import pkg from 'another-nonexistent-pkg-67890';
+        console.log(x, pkg);
+        `,
+      ),
+      Bun.write(
+        join(dir, "package.json"),
+        JSON.stringify({
+          name: "test-autoinstall-ts-crash",
+          type: "module",
+        }),
+      ),
+      Bun.write(
+        join(dir, "tsconfig.json"),
+        JSON.stringify({
+          compilerOptions: {
+            target: "ESNext",
+            module: "ESNext",
+          },
+        }),
+      ),
+    ]);
+
+    const { exitCode, stderr } = Bun.spawnSync({
+      cmd: [bunExe(), join(dir, "index.ts")],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const stderrText = stderr?.toString("utf8") ?? "";
+
+    // Should NOT crash with segfault (exit codes 128+N indicate death by signal N)
+    expect(exitCode).not.toBe(134); // SIGABRT (128 + 6)
+    expect(exitCode).not.toBe(139); // SIGSEGV (128 + 11)
+
+    expect(stderrText).not.toContain("Segmentation fault");
+    expect(stderrText).not.toContain("panic");
+    expect(stderrText).not.toContain("Bun has crashed");
+
+    // Should contain a normal error message
+    expect(stderrText).toContain("another-nonexistent-pkg-67890");
+  });
+});

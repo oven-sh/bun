@@ -76,6 +76,7 @@ pub const UnlinkCommand = @import("./cli/unlink_command.zig").UnlinkCommand;
 pub const InstallCompletionsCommand = @import("./cli/install_completions_command.zig").InstallCompletionsCommand;
 pub const PackageManagerCommand = @import("./cli/package_manager_command.zig").PackageManagerCommand;
 pub const RemoveCommand = @import("./cli/remove_command.zig").RemoveCommand;
+pub const PruneCommand = @import("./cli/prune_command.zig").PruneCommand;
 pub const RunCommand = @import("./cli/run_command.zig").RunCommand;
 pub const ShellCompletions = @import("./cli/shell_completions.zig");
 pub const UpdateCommand = @import("./cli/update_command.zig").UpdateCommand;
@@ -172,6 +173,7 @@ pub const HelpCommand = struct {
         \\  <b><blue>install<r>                        Install dependencies for a package.json <d>(bun i)<r>
         \\  <b><blue>add<r>       <d>{s:<16}<r>     Add a dependency to package.json <d>(bun a)<r>
         \\  <b><blue>remove<r>    <d>{s:<16}<r>     Remove a dependency from package.json <d>(bun rm)<r>
+        \\  <b><blue>prune<r>                          Remove extraneous packages from node_modules
         \\  <b><blue>update<r>    <d>{s:<16}<r>     Update outdated dependencies
         \\  <b><blue>audit<r>                          Check installed packages for vulnerabilities
         \\  <b><blue>outdated<r>                       Display latest versions of outdated dependencies
@@ -623,7 +625,7 @@ pub const Command = struct {
             RootCommandMatcher.case("login") => .ReservedCommand,
             RootCommandMatcher.case("logout") => .ReservedCommand,
             RootCommandMatcher.case("whoami") => .PackageManagerCommand,
-            RootCommandMatcher.case("prune") => .ReservedCommand,
+            RootCommandMatcher.case("prune") => .PruneCommand,
             RootCommandMatcher.case("list") => .PackageManagerCommand,
             RootCommandMatcher.case("why") => .WhyCommand,
 
@@ -642,6 +644,7 @@ pub const Command = struct {
         "link",
         "unlink",
         "remove",
+        "prune",
         "create",
         "bun",
         "upgrade",
@@ -818,6 +821,12 @@ pub const Command = struct {
                 try RemoveCommand.exec(ctx);
                 return;
             },
+            .PruneCommand => {
+                const ctx = try Command.init(allocator, log, .PruneCommand);
+
+                try PruneCommand.exec(ctx);
+                return;
+            },
             .LinkCommand => {
                 const ctx = try Command.init(allocator, log, .LinkCommand);
 
@@ -954,6 +963,7 @@ pub const Command = struct {
         LinkCommand,
         PackageManagerCommand,
         RemoveCommand,
+        PruneCommand,
         RunCommand,
         RunAsNodeCommand, // arg0 == 'node'
         TestCommand,
@@ -991,6 +1001,7 @@ pub const Command = struct {
                 .LinkCommand => 'l',
                 .PackageManagerCommand => 'P',
                 .RemoveCommand => 'R',
+                .PruneCommand => 'E',
                 .RunCommand => 'r',
                 .RunAsNodeCommand => 'n',
                 .TestCommand => 't',
@@ -1263,12 +1274,14 @@ pub const Command = struct {
                     , .{});
                     Output.flush();
                 },
-                .OutdatedCommand, .UpdateInteractiveCommand, .PublishCommand, .AuditCommand => {
+                .OutdatedCommand, .UpdateInteractiveCommand, .PublishCommand, .AuditCommand, .PruneCommand => {
                     Install.PackageManager.CommandLineArguments.printHelp(switch (cmd) {
                         .OutdatedCommand => .outdated,
                         .UpdateInteractiveCommand => .update,
                         .PublishCommand => .publish,
                         .AuditCommand => .audit,
+                        .PruneCommand => .prune,
+                        else => unreachable,
                     });
                 },
                 .InfoCommand => {
@@ -1332,6 +1345,7 @@ pub const Command = struct {
                 .InstallCommand,
                 .AddCommand,
                 .RemoveCommand,
+                .PruneCommand,
                 .UpdateCommand,
                 .PatchCommand,
                 .PatchCommitCommand,
@@ -1352,6 +1366,7 @@ pub const Command = struct {
                 .InstallCommand,
                 .AddCommand,
                 .RemoveCommand,
+                .PruneCommand,
                 .UpdateCommand,
                 .PatchCommand,
                 .PatchCommitCommand,
@@ -1369,6 +1384,7 @@ pub const Command = struct {
             .InstallCommand = true,
             .AddCommand = true,
             .RemoveCommand = true,
+            .PruneCommand = true,
             .UpdateCommand = true,
             .PatchCommand = true,
             .PatchCommitCommand = true,
@@ -1389,6 +1405,7 @@ pub const Command = struct {
             .InstallCommand = true,
             .AddCommand = true,
             .RemoveCommand = true,
+            .PruneCommand = true,
             .UpdateCommand = true,
             .PatchCommand = true,
             .PatchCommitCommand = true,
@@ -1414,6 +1431,7 @@ pub const Command = struct {
             .PatchCommand = false,
             .PatchCommitCommand = false,
             .PublishCommand = false,
+            .PruneCommand = false,
             .RemoveCommand = false,
             .UnlinkCommand = false,
             .UpdateCommand = false,

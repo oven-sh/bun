@@ -317,6 +317,11 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
     this.strong_self.set(globalObject, this_value);
     this.poll_ref.ref(handlers.vm);
 
+    // Register listen socket for cleanup on hot reload (only non-SSL sockets)
+    if (!ssl_enabled) {
+        handlers.vm.addListeningSocketForWatchMode(listen_socket.socket(false).fd());
+    }
+
     return this_value;
 }
 
@@ -429,6 +434,14 @@ pub fn stop(this: *Listener, _: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) 
 fn doStop(this: *Listener, force_close: bool) void {
     if (this.listener == .none) return;
     const listener = this.listener;
+
+    // Remove from watch mode list before closing (only non-SSL sockets are registered)
+    switch (listener) {
+        .uws => |socket| if (!this.ssl) {
+            this.handlers.vm.removeListeningSocketForWatchMode(socket.socket(false).fd());
+        },
+        else => {},
+    }
 
     defer switch (listener) {
         .uws => |socket| socket.close(this.ssl),

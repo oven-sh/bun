@@ -484,6 +484,328 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
             }
         }
     }
+
+    // Handle prune cleanup - must run AFTER install but OUTSIDE write_package_json conditional
+    prune_cleanup: {
+        if (subcommand != .prune) break :prune_cleanup;
+
+        var cwd = std.fs.cwd();
+        var node_modules_dir = cwd.openDir("node_modules", .{ .iterate = true }) catch break :prune_cleanup;
+        defer node_modules_dir.close();
+
+        const name_hashes = manager.lockfile.packages.items(.name_hash);
+        const package_metas = manager.lockfile.packages.items(.meta);
+        const package_resolutions = manager.lockfile.packages.items(.resolution);
+        const is_dry_run = manager.options.dry_run;
+        const workspace_paths = &manager.lockfile.workspace_paths;
+        const is_production = !manager.options.local_package_features.dev_dependencies;
+
+        // Production mode: track reachable PackageIDs via BFS for multi-version handling
+        var production_reachable_ids: ?bun.bit_set.DynamicBitSetUnmanaged = null;
+        defer if (production_reachable_ids) |*bitset| bitset.deinit(manager.allocator);
+
+        if (is_production) {
+            const packages = manager.lockfile.packages.slice();
+            production_reachable_ids = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(manager.allocator, packages.len);
+            var reachable = &production_reachable_ids.?;
+
+            const root_pkg_id = manager.root_package_id.get(manager.lockfile, manager.workspace_name_hash);
+
+            if (root_pkg_id == invalid_package_id) {
+                production_reachable_ids = null;
+            } else {
+                const dependencies_lists = packages.items(.dependencies);
+                const resolutions_lists = packages.items(.resolutions);
+
+                var queue: std.ArrayListUnmanaged(PackageID) = .{};
+                defer queue.deinit(manager.allocator);
+                var visited = std.AutoHashMap(PackageID, void).init(manager.allocator);
+                defer visited.deinit();
+
+                const root_dep_list = dependencies_lists[root_pkg_id];
+                const root_res_list = resolutions_lists[root_pkg_id];
+                const root_deps = root_dep_list.get(manager.lockfile.buffers.dependencies.items);
+                const root_package_ids = root_res_list.get(manager.lockfile.buffers.resolutions.items);
+
+                for (root_deps, root_package_ids) |dep, pkg_id| {
+                    if (pkg_id != invalid_package_id and pkg_id < packages.len and !dep.behavior.dev) {
+                        try queue.append(manager.allocator, pkg_id);
+                        try visited.put(pkg_id, {});
+                        reachable.set(pkg_id);
+                    }
+                }
+
+                // BFS traversal of transitive dependencies
+                var qi: usize = 0;
+                while (qi < queue.items.len) : (qi += 1) {
+                    const current_pkg_id = queue.items[qi];
+                    if (current_pkg_id >= dependencies_lists.len) continue;
+
+                    const dep_list = dependencies_lists[current_pkg_id];
+                    const res_list = resolutions_lists[current_pkg_id];
+                    const deps = dep_list.get(manager.lockfile.buffers.dependencies.items);
+                    const pkg_ids = res_list.get(manager.lockfile.buffers.resolutions.items);
+
+                    for (deps, pkg_ids) |dep2, pkg_id| {
+                        if (pkg_id == invalid_package_id) continue;
+                        if (pkg_id >= packages.len) continue;
+                        if (dep2.behavior.dev) continue;
+                        if (visited.contains(pkg_id)) continue;
+
+                        try queue.append(manager.allocator, pkg_id);
+                        try visited.put(pkg_id, {});
+                        reachable.set(pkg_id);
+                    }
+                }
+            }
+        }
+
+        const PruneContext = struct {
+            manager: *PackageManager,
+            name_hashes: []const PackageNameHash,
+            package_metas: @TypeOf(package_metas),
+            package_resolutions: @TypeOf(package_resolutions),
+            workspace_paths: @TypeOf(workspace_paths),
+            is_production: bool,
+            production_reachable_ids: ?*const bun.bit_set.DynamicBitSetUnmanaged,
+            is_dry_run: bool,
+            name_to_ids: *const std.AutoHashMap(PackageNameHash, std.ArrayListUnmanaged(PackageID)),
+            visited_inodes: *std.AutoHashMap(u64, void),
+
+            fn pruneNodeModulesRecursive(
+                self: *const @This(),
+                dir: std.fs.Dir,
+                depth: u8,
+            ) void {
+                // Detect symlink cycles via inode tracking
+                const stat = dir.stat() catch return;
+                if (self.visited_inodes.contains(stat.inode)) return;
+                self.visited_inodes.put(stat.inode, {}) catch return;
+
+                var iter = dir.iterate();
+                while (iter.next() catch null) |entry| {
+                    if (entry.kind != .directory and entry.kind != .sym_link) continue;
+                    if (entry.name[0] == '.') continue;
+
+                    // Scoped packages (@org/package)
+                    if (entry.name[0] == '@') {
+                        var scope_dir = dir.openDir(entry.name, .{ .iterate = true }) catch continue;
+                        defer scope_dir.close();
+
+                        var scope_iter = scope_dir.iterate();
+                        while (scope_iter.next() catch null) |scoped_entry| {
+                            if (scoped_entry.kind != .directory and scoped_entry.kind != .sym_link) continue;
+
+                            var scoped_name_buf: bun.PathBuffer = undefined;
+                            const scoped_name = std.fmt.bufPrint(&scoped_name_buf, "{s}/{s}", .{ entry.name, scoped_entry.name }) catch continue;
+
+                            var scoped_pkg_dir = scope_dir.openDir(scoped_entry.name, .{}) catch continue;
+                            defer scoped_pkg_dir.close();
+
+                            const should_remove = self.shouldRemovePackage(scoped_name, scoped_pkg_dir);
+                            if (should_remove) {
+                                self.manager.summary.remove += 1;
+                                if (!self.is_dry_run) {
+                                    scope_dir.deleteTree(scoped_entry.name) catch |err| {
+                                        if (self.manager.options.log_level != .silent) {
+                                            Output.warn("Failed to remove scoped package {s}: {s}", .{ scoped_name, @errorName(err) });
+                                        }
+                                        continue;
+                                    };
+                                }
+                            } else {
+                                var nested_node_modules = scoped_pkg_dir.openDir("node_modules", .{ .iterate = true }) catch continue;
+                                defer nested_node_modules.close();
+                                self.pruneNodeModulesRecursive(nested_node_modules, depth + 1);
+                            }
+                        }
+                        continue;
+                    }
+
+                    // Regular package - retry with iterate=true for symlinks (isolated linker mode)
+                    var pkg_dir = dir.openDir(entry.name, .{}) catch blk: {
+                        break :blk dir.openDir(entry.name, .{ .iterate = true }) catch continue;
+                    };
+                    defer pkg_dir.close();
+
+                    const should_remove = self.shouldRemovePackage(entry.name, pkg_dir);
+                    if (should_remove) {
+                        self.manager.summary.remove += 1;
+                        if (!self.is_dry_run) {
+                            dir.deleteTree(entry.name) catch |err| {
+                                if (self.manager.options.log_level != .silent) {
+                                    Output.warn("Failed to remove package {s}: {s}", .{ entry.name, @errorName(err) });
+                                }
+                                continue;
+                            };
+                        }
+                    } else {
+                        var nested_node_modules = pkg_dir.openDir("node_modules", .{ .iterate = true }) catch continue;
+                        defer nested_node_modules.close();
+                        self.pruneNodeModulesRecursive(nested_node_modules, depth + 1);
+                    }
+                }
+            }
+
+            fn shouldRemovePackage(self: *const @This(), pkg_name: []const u8, pkg_dir: std.fs.Dir) bool {
+                const pkg_hash = String.Builder.stringHash(pkg_name);
+
+                if (self.workspace_paths.contains(pkg_hash)) return false;
+
+                const matching_packages_ptr = self.name_to_ids.get(pkg_hash);
+                if (matching_packages_ptr == null) return true;
+
+                const matching_packages = matching_packages_ptr.?;
+
+                // Fast path: single matching package
+                var matched_pkg_id: ?PackageID = null;
+                if (matching_packages.items.len == 1) {
+                    const pid = matching_packages.items[0];
+                    if (pid < self.package_resolutions.len) {
+                        matched_pkg_id = pid;
+                    }
+                } else {
+                    // Prefer non-npm resolutions (git/file/path) - keep if reachable in production
+                    for (matching_packages.items) |pid| {
+                        if (pid >= self.package_resolutions.len) continue;
+                        if (self.package_resolutions[pid].tag != .npm) {
+                            if (!self.is_production or self.production_reachable_ids == null or
+                                self.production_reachable_ids.?.isSetAllowOutOfBound(pid, true))
+                            {
+                                matched_pkg_id = pid;
+                                break;
+                            }
+                        }
+                    }
+
+                    // npm version disambiguation
+                    if (matched_pkg_id == null) {
+                        const installed_version = blk: {
+                            const pkg_json_bytes = pkg_dir.readFileAlloc(
+                                self.manager.allocator,
+                                "package.json",
+                                1024 * 1024,
+                            ) catch break :blk null;
+                            defer self.manager.allocator.free(pkg_json_bytes);
+
+                            const source = bun.logger.Source.initPathString("package.json", pkg_json_bytes);
+                            var log = bun.logger.Log.init(bun.default_allocator);
+                            defer log.deinit();
+                            const json = JSON.parsePackageJSONUTF8(&source, &log, self.manager.allocator) catch break :blk null;
+
+                            if (json.asProperty("version")) |version_prop| {
+                                // asStringCloned to avoid use-after-free (pkg_json_bytes freed above)
+                                if (version_prop.expr.asStringCloned(self.manager.allocator) catch null) |version_str| {
+                                    break :blk version_str;
+                                }
+                            }
+                            break :blk null;
+                        };
+                        defer if (installed_version) |v| self.manager.allocator.free(v);
+
+                        if (installed_version) |inst_ver| {
+                            for (matching_packages.items) |pkg_id| {
+                                if (pkg_id >= self.package_resolutions.len) continue;
+                                if (self.package_resolutions[pkg_id].tag == .npm) {
+                                    const lockfile_version = self.package_resolutions[pkg_id].value.npm.version;
+                                    const string_buf = self.manager.lockfile.buffers.string_bytes.items;
+
+                                    var stack_buf: [64]u8 = undefined;
+                                    var heap_allocated = false;
+                                    const lockfile_ver_str = std.fmt.bufPrint(&stack_buf, "{any}", .{lockfile_version.fmt(string_buf)}) catch |err| blk: {
+                                        if (err == error.NoSpaceLeft) {
+                                            heap_allocated = true;
+                                            break :blk std.fmt.allocPrint(
+                                                self.manager.allocator,
+                                                "{any}",
+                                                .{lockfile_version.fmt(string_buf)},
+                                            ) catch continue;
+                                        } else {
+                                            continue;
+                                        }
+                                    };
+                                    defer if (heap_allocated) self.manager.allocator.free(lockfile_ver_str);
+
+                                    if (strings.eql(inst_ver, lockfile_ver_str)) {
+                                        matched_pkg_id = pkg_id;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+
+                        // Fall back to first match if version unknown; remove if version known but no match
+                        if (matched_pkg_id == null and installed_version == null) {
+                            const fallback_pid = matching_packages.items[0];
+                            if (fallback_pid < self.package_resolutions.len) {
+                                matched_pkg_id = fallback_pid;
+                            }
+                        }
+                    }
+                }
+
+                if (matched_pkg_id) |pkg_id| {
+                    // In production, check if this PackageID is reachable
+                    if (self.is_production and self.production_reachable_ids != null) {
+                        if (!self.production_reachable_ids.?.isSetAllowOutOfBound(pkg_id, false)) {
+                            return true;
+                        }
+                    }
+                    return false;
+                }
+                return true;
+            }
+        };
+
+        // Build name_hash → [PackageID] multimap for O(1) lookups
+        var name_to_ids = std.AutoHashMap(PackageNameHash, std.ArrayListUnmanaged(PackageID)).init(manager.allocator);
+        defer name_to_ids.deinit();
+
+        try name_to_ids.ensureTotalCapacity(@intCast(name_hashes.len));
+
+        for (name_hashes, 0..) |hash, idx| {
+            const pkg_id = @as(PackageID, @intCast(idx));
+            if (package_resolutions[pkg_id].tag == .workspace or
+                package_metas[pkg_id].origin == .local or
+                workspace_paths.contains(hash))
+            {
+                continue;
+            }
+
+            const result = try name_to_ids.getOrPut(hash);
+            if (!result.found_existing) {
+                result.value_ptr.* = try std.ArrayListUnmanaged(PackageID).initCapacity(manager.allocator, 2);
+            }
+            try result.value_ptr.append(manager.allocator, pkg_id);
+        }
+
+        var visited_inodes = std.AutoHashMap(u64, void).init(manager.allocator);
+        defer visited_inodes.deinit();
+
+        const prune_ctx = PruneContext{
+            .manager = manager,
+            .name_hashes = name_hashes,
+            .package_metas = package_metas,
+            .package_resolutions = package_resolutions,
+            .workspace_paths = workspace_paths,
+            .is_production = is_production,
+            .production_reachable_ids = if (production_reachable_ids) |*map| map else null,
+            .is_dry_run = is_dry_run,
+            .name_to_ids = &name_to_ids,
+            .visited_inodes = &visited_inodes,
+        };
+
+        prune_ctx.pruneNodeModulesRecursive(node_modules_dir, 0);
+
+        if (manager.summary.remove > 0 and manager.options.log_level != .silent) {
+            if (manager.options.dry_run) {
+                Output.pretty("<r><b>{d}<r> package{s} would be removed ", .{ manager.summary.remove, if (manager.summary.remove == 1) "" else "s" });
+            } else {
+                Output.pretty("<r><b>{d}<r> package{s} removed ", .{ manager.summary.remove, if (manager.summary.remove == 1) "" else "s" });
+            }
+            Output.prettyln("", .{});
+        }
+    }
 }
 
 pub fn updatePackageJSONAndInstallCatchError(
@@ -519,6 +841,10 @@ fn updatePackageJSONAndInstallAndCLI(
                 },
                 .remove => {
                     Output.prettyErrorln("<r>No package.json, so nothing to remove", .{});
+                    Global.crash();
+                },
+                .prune => {
+                    Output.prettyErrorln("<r>No package.json, so nothing to prune", .{});
                     Global.crash();
                 },
                 .patch, .@"patch-commit" => {
@@ -759,3 +1085,5 @@ const PatchCommitResult = PackageManager.PatchCommitResult;
 const Subcommand = PackageManager.Subcommand;
 const UpdateRequest = PackageManager.UpdateRequest;
 const attemptToCreatePackageJSON = PackageManager.attemptToCreatePackageJSON;
+const PackageID = bun.install.PackageID;
+const invalid_package_id = bun.install.invalid_package_id;

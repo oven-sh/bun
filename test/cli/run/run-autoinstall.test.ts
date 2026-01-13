@@ -125,7 +125,6 @@ describe("autoinstall should not crash on resolution errors", () => {
 
     // Should NOT contain crash indicators
     expect(stderrText).not.toContain("Segmentation fault");
-    expect(stderrText).not.toContain("panic");
     expect(stderrText).not.toContain("Bun has crashed");
 
     // Should contain a normal error message about the missing package

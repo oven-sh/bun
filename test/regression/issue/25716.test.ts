@@ -4,7 +4,7 @@ import { expect, test } from "bun:test";
 import { tempDirWithFiles } from "harness";
 import { join } from "path";
 
-test("Bun.build reactFastRefresh option enables React Fast Refresh transform", async () => {
+test.each(["browser", "bun"] as const)("Bun.build reactFastRefresh works with target: %s", async (target) => {
   const dir = tempDirWithFiles("react-fast-refresh-test", {
     "component.tsx": `
       import { useState } from "react";
@@ -21,11 +21,10 @@ test("Bun.build reactFastRefresh option enables React Fast Refresh transform", a
   });
 
   // With reactFastRefresh: true, output should contain $RefreshReg$ and $RefreshSig$
-  // Using target: "bun" to verify it works with non-browser targets
   const buildEnabled = await Bun.build({
     entrypoints: [join(dir, "component.tsx")],
     reactFastRefresh: true,
-    target: "bun",
+    target,
     external: ["react"],
   });
 
@@ -39,7 +38,7 @@ test("Bun.build reactFastRefresh option enables React Fast Refresh transform", a
   // Without reactFastRefresh (default), output should NOT contain refresh calls
   const buildDisabled = await Bun.build({
     entrypoints: [join(dir, "component.tsx")],
-    target: "browser",
+    target,
     external: ["react"],
   });
 

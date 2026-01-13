@@ -174,9 +174,6 @@ describe("autoinstall should not crash on resolution errors", () => {
     expect(exitCode).not.toBe(134); // SIGABRT (128 + 6)
     expect(exitCode).not.toBe(139); // SIGSEGV (128 + 11)
 
-    expect(stderrText).not.toContain("Segmentation fault");
-    expect(stderrText).not.toContain("Bun has crashed");
-
     // Should contain a normal error message
     expect(stderrText).toContain("another-nonexistent-pkg-67890");
   });

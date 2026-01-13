@@ -991,9 +991,38 @@ const Template = enum {
         return s;
     }
 
-    const agent_rule = @embedFile("../init/rule.md");
-    const cursor_rule = TemplateFile{ .path = ".cursor/rules/use-bun-instead-of-node-vite-npm-pnpm.mdc", .contents = agent_rule };
-    const cursor_rule_path_to_claude_md = "../../CLAUDE.md";
+    const skill_name = "use-bun-instead-of-node-vite-npm-pnpm";
+    const skill_contents = comptimeReplace(@embedFile("../init/rule.md"), "{{SKILL_NAME}}", skill_name);
+    const claude_md_contents = comptimeReplace(@embedFile("../init/claude-md-reference.md"), "{{SKILL_NAME}}", skill_name);
+    const skill_path: [:0]const u8 = ".claude/skills/" ++ skill_name ++ "/SKILL.md";
+    const cursor_rule_path: [:0]const u8 = ".cursor/rules/" ++ skill_name ++ ".mdc";
+    const cursor_symlink_target: [:0]const u8 = "../../.claude/skills/" ++ skill_name ++ "/SKILL.md";
+
+    fn comptimeReplace(
+        comptime haystack: []const u8,
+        comptime needle: []const u8,
+        comptime replacement: []const u8,
+    ) []const u8 {
+        comptime {
+            // Raise the branch limit to handle larger embedded files
+            @setEvalBranchQuota(haystack.len * 10);
+            var result: []const u8 = "";
+            var i: usize = 0;
+
+            while (i < haystack.len) {
+                if (i + needle.len <= haystack.len and
+                    std.mem.eql(u8, haystack[i..][0..needle.len], needle))
+                {
+                    result = result ++ replacement;
+                    i += needle.len;
+                } else {
+                    result = result ++ [_]u8{haystack[i]};
+                    i += 1;
+                }
+            }
+            return result;
+        }
+    }
 
     fn isClaudeCodeInstalled() bool {
         if (Environment.isWindows) {
@@ -1013,49 +1042,34 @@ const Template = enum {
     }
 
     pub fn createAgentRule() void {
-        var @"create CLAUDE.md" = Template.isClaudeCodeInstalled() and
-            // Never overwrite CLAUDE.md
-            !bun.sys.exists("CLAUDE.md");
+        const claude_installed = Template.isClaudeCodeInstalled();
+        const cursor_installed = Template.isCursorInstalled();
 
-        if (Template.getCursorRule()) |template_file| {
-            var did_create_agent_rule = false;
+        // Create the skill file as main source (if Claude or Cursor installed)
+        if ((claude_installed or cursor_installed) and !bun.sys.exists(skill_path)) {
+            bun.makePath(bun.FD.cwd().stdDir(), ".claude/skills/" ++ skill_name) catch {};
+            InitCommand.Assets.createNew(skill_path, skill_contents) catch {};
+        }
 
-            // If both Cursor & Claude is installed, make the cursor rule a
-            // symlink to ../../CLAUDE.md
-            const asset_path = if (@"create CLAUDE.md") "CLAUDE.md" else template_file.path;
-            const result = InitCommand.Assets.createNew(asset_path, template_file.contents);
-            did_create_agent_rule = true;
-            result catch {
-                did_create_agent_rule = false;
-                if (@"create CLAUDE.md") {
-                    @"create CLAUDE.md" = false;
-                    // If installing the CLAUDE.md fails for some reason, fall back to installing the cursor rule.
-                    InitCommand.Assets.createNew(template_file.path, template_file.contents) catch {};
-                }
-            };
-
+        // Cursor: create symlink to skill
+        if (cursor_installed and !bun.sys.exists(cursor_rule_path)) {
+            bun.makePath(bun.FD.cwd().stdDir(), ".cursor/rules") catch {};
             if (comptime !Environment.isWindows) {
-                // if we did create the CLAUDE.md, then symlinks the
-                // .cursor/rules/*.mdc -> CLAUDE.md so it's easier to keep them in
-                // sync if you change it locally. we use a symlink for the cursor
-                // rule in this case so that the github UI for CLAUDE.md (which may
-                // appear prominently in repos) doesn't show a file path.
-                if (did_create_agent_rule and @"create CLAUDE.md") symlink_cursor_rule: {
-                    @"create CLAUDE.md" = false;
-                    bun.makePath(bun.FD.cwd().stdDir(), ".cursor/rules") catch {};
-                    bun.sys.symlinkat(cursor_rule_path_to_claude_md, .cwd(), template_file.path).unwrap() catch break :symlink_cursor_rule;
-                    Output.prettyln(" + <r><d>{s} -\\> {s}<r>", .{ template_file.path, asset_path });
-                    Output.flush();
-                }
+                bun.sys.symlinkat(cursor_symlink_target, .cwd(), cursor_rule_path).unwrap() catch {
+                    // Fallback: copy file if symlink fails
+                    InitCommand.Assets.createNew(cursor_rule_path, skill_contents) catch {};
+                };
+                Output.prettyln(" + <r><d>{s} -\\> {s}<r>", .{ cursor_rule_path, skill_path });
+                Output.flush();
+            } else {
+                // Windows: copy file instead of symlink
+                InitCommand.Assets.createNew(cursor_rule_path, skill_contents) catch {};
             }
         }
 
-        // If cursor is not installed but claude code is installed, then create the CLAUDE.md.
-        if (@"create CLAUDE.md") {
-            // In this case, the frontmatter from the cursor rule is not helpful so let's trim it out.
-            const end_of_frontmatter = if (bun.strings.lastIndexOf(agent_rule, "---\n")) |start| start + "---\n".len else 0;
-
-            InitCommand.Assets.createNew("CLAUDE.md", agent_rule[end_of_frontmatter..]) catch {};
+        // Claude Code: create CLAUDE.md with reference text (not symlink)
+        if (claude_installed and !bun.sys.exists("CLAUDE.md")) {
+            InitCommand.Assets.createNew("CLAUDE.md", claude_md_contents) catch {};
         }
     }
 
@@ -1091,13 +1105,6 @@ const Template = enum {
         }
 
         return false;
-    }
-    fn getCursorRule() ?*const TemplateFile {
-        if (isCursorInstalled()) {
-            return &cursor_rule;
-        }
-
-        return null;
     }
 
     const ReactBlank = struct {

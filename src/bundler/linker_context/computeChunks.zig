@@ -157,10 +157,10 @@ pub noinline fn computeChunks(
                 js_chunks_with_css += 1;
 
                 if (!css_chunk_entry.found_existing) {
-                    var css_files_with_parts_in_chunk = std.AutoArrayHashMapUnmanaged(Index.Int, void){};
+                    var css_files_with_parts_in_chunk = std.AutoArrayHashMapUnmanaged(Index.Int, usize){};
                     for (order.slice()) |entry| {
                         if (entry.kind == .source_index) {
-                            bun.handleOom(css_files_with_parts_in_chunk.put(this.allocator(), entry.kind.source_index.get(), {}));
+                            bun.handleOom(css_files_with_parts_in_chunk.put(this.allocator(), entry.kind.source_index.get(), 0));
                         }
                     }
                     css_chunk_entry.value_ptr.* = .{
@@ -195,7 +195,10 @@ pub noinline fn computeChunks(
         source_id: u32,
 
         pub fn next(c: *@This(), chunk_id: usize) void {
-            _ = c.chunks[chunk_id].files_with_parts_in_chunk.getOrPut(c.allocator, @as(u32, @truncate(c.source_id))) catch unreachable;
+            const entry = c.chunks[chunk_id].files_with_parts_in_chunk.getOrPut(c.allocator, @as(u32, @truncate(c.source_id))) catch unreachable;
+            if (!entry.found_existing) {
+                entry.value_ptr.* = 0; // Initialize byte count to 0
+            }
         }
     };
 
@@ -228,7 +231,10 @@ pub noinline fn computeChunks(
                             };
                         }
 
-                        _ = js_chunk_entry.value_ptr.files_with_parts_in_chunk.getOrPut(this.allocator(), @as(u32, @truncate(source_index.get()))) catch unreachable;
+                        const entry = js_chunk_entry.value_ptr.files_with_parts_in_chunk.getOrPut(this.allocator(), @as(u32, @truncate(source_index.get()))) catch unreachable;
+                        if (!entry.found_existing) {
+                            entry.value_ptr.* = 0; // Initialize byte count to 0
+                        }
                     } else {
                         var handler = Handler{
                             .chunks = js_chunks.values(),

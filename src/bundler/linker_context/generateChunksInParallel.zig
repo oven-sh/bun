@@ -304,6 +304,18 @@ pub fn generateChunksInParallel(
         }
     }
 
+    // Generate metafile JSON fragments for each chunk (after paths are resolved)
+    if (c.options.metafile) {
+        for (chunks) |*chunk| {
+            chunk.metafile_chunk_json = LinkerContext.MetafileBuilder.generateChunkJson(
+                bun.default_allocator,
+                c,
+                chunk,
+                chunks,
+            ) catch "";
+        }
+    }
+
     var output_files = try OutputFileListBuilder.init(bun.default_allocator, c, chunks, c.parse_graph.additional_output_files.items.len);
 
     const root_path = c.resolver.opts.output_dir;

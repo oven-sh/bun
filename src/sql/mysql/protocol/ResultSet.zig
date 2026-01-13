@@ -140,8 +140,12 @@ pub const Row = struct {
                 }
             },
             else => {
-                const slice = value.slice();
-                cell.* = SQLDataCell{ .tag = .string, .value = .{ .string = if (slice.len > 0) bun.String.cloneUTF8(slice).value.WTFStringImpl else null }, .free_value = 1 };
+                if (column.flags.BINARY) {
+                    cell.* = SQLDataCell.raw(value);
+                } else {
+                    const slice = value.slice();
+                    cell.* = SQLDataCell{ .tag = .string, .value = .{ .string = if (slice.len > 0) bun.String.cloneUTF8(slice).value.WTFStringImpl else null }, .free_value = 1 };
+                }
             },
         };
     }
@@ -226,7 +230,7 @@ pub const Row = struct {
             }
 
             const column = this.columns[i];
-            value.* = try decodeBinaryValue(this.globalObject, column.column_type, column.column_length, this.raw, this.bigint, column.flags.UNSIGNED, Context, reader);
+            value.* = try decodeBinaryValue(this.globalObject, column.column_type, column.column_length, this.raw, this.bigint, column.flags.UNSIGNED, column.flags.BINARY, Context, reader);
             value.index = switch (column.name_or_index) {
                 // The indexed columns can be out of order.
                 .index => |idx| idx,

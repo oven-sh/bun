@@ -1484,6 +1484,12 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
             }
         }
 
+        // Check for Archive - allows Bun.write() and S3 writes to accept Archive instances
+        if (data.as(Archive)) |archive| {
+            archive.store.ref();
+            break :brk Blob.initWithStore(archive.store, globalThis);
+        }
+
         break :brk try Blob.get(
             globalThis,
             data,
@@ -4828,6 +4834,7 @@ const NewReadFileHandler = read_file.NewReadFileHandler;
 
 const string = []const u8;
 
+const Archive = @import("../api/Archive.zig");
 const Environment = @import("../../env.zig");
 const S3File = @import("./S3File.zig");
 const std = @import("std");

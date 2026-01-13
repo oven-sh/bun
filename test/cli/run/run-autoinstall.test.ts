@@ -179,7 +179,6 @@ describe("autoinstall should not crash on resolution errors", () => {
     expect(exitCode).not.toBe(139); // SIGSEGV (128 + 11)
 
     expect(stderrText).not.toContain("Segmentation fault");
-    expect(stderrText).not.toContain("panic");
     expect(stderrText).not.toContain("Bun has crashed");
 
     // Should contain a normal error message

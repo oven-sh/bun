@@ -1,4 +1,4 @@
-pub fn decodeBinaryValue(globalObject: *jsc.JSGlobalObject, field_type: types.FieldType, column_length: u32, raw: bool, bigint: bool, unsigned: bool, comptime Context: type, reader: NewReader(Context)) !SQLDataCell {
+pub fn decodeBinaryValue(globalObject: *jsc.JSGlobalObject, field_type: types.FieldType, column_length: u32, raw: bool, bigint: bool, unsigned: bool, binary: bool, comptime Context: type, reader: NewReader(Context)) !SQLDataCell {
     debug("decodeBinaryValue: {s}", .{@tagName(field_type)});
     return switch (field_type) {
         .MYSQL_TYPE_TINY => {
@@ -131,6 +131,7 @@ pub fn decodeBinaryValue(globalObject: *jsc.JSGlobalObject, field_type: types.Fi
             else => error.InvalidBinaryValue,
         },
 
+        // When the column contains a binary string we return a Buffer otherwise a string
         .MYSQL_TYPE_ENUM,
         .MYSQL_TYPE_SET,
         .MYSQL_TYPE_GEOMETRY,
@@ -138,7 +139,6 @@ pub fn decodeBinaryValue(globalObject: *jsc.JSGlobalObject, field_type: types.Fi
         .MYSQL_TYPE_STRING,
         .MYSQL_TYPE_VARCHAR,
         .MYSQL_TYPE_VAR_STRING,
-        // We could return Buffer here BUT TEXT, LONGTEXT, MEDIUMTEXT, TINYTEXT, etc. are BLOB and the user expects a string
         .MYSQL_TYPE_TINY_BLOB,
         .MYSQL_TYPE_MEDIUM_BLOB,
         .MYSQL_TYPE_LONG_BLOB,
@@ -151,7 +151,9 @@ pub fn decodeBinaryValue(globalObject: *jsc.JSGlobalObject, field_type: types.Fi
             }
             var string_data = try reader.encodeLenString();
             defer string_data.deinit();
-
+            if (binary) {
+                return SQLDataCell.raw(&string_data);
+            }
             const slice = string_data.slice();
             return SQLDataCell{ .tag = .string, .value = .{ .string = if (slice.len > 0) bun.String.cloneUTF8(slice).value.WTFStringImpl else null }, .free_value = 1 };
         },

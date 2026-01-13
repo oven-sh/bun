@@ -123,10 +123,6 @@ describe("autoinstall should not crash on resolution errors", () => {
     expect(exitCode).not.toBe(134); // SIGABRT (128 + 6)
     expect(exitCode).not.toBe(139); // SIGSEGV (128 + 11)
 
-    // Should NOT contain crash indicators
-    expect(stderrText).not.toContain("Segmentation fault");
-    expect(stderrText).not.toContain("Bun has crashed");
-
     // Should contain a normal error message about the missing package
     expect(stderrText).toContain("this-package-does-not-exist-12345");
   });

@@ -793,30 +793,33 @@ pub fn init(
 
     initializeStore();
 
-    if (bun.env_var.XDG_CONFIG_HOME.get() orelse bun.env_var.HOME.get()) |data_dir| {
+    {
         var buf: bun.PathBuffer = undefined;
-        var parts = [_]string{
-            "./.npmrc",
+        const parts = [_]string{".npmrc"};
+
+        const install_ = ctx.install orelse brk: {
+            const new_install = bun.handleOom(ctx.allocator.create(Api.BunInstall));
+            new_install.* = std.mem.zeroes(Api.BunInstall);
+            ctx.install = new_install;
+            break :brk new_install;
         };
 
-        bun.ini.loadNpmrcConfig(ctx.allocator, ctx.install orelse brk: {
-            const install_ = bun.handleOom(ctx.allocator.create(Api.BunInstall));
-            install_.* = std.mem.zeroes(Api.BunInstall);
-            ctx.install = install_;
-            break :brk install_;
-        }, env, true, &[_][:0]const u8{ Path.joinAbsStringBufZ(
-            data_dir,
-            &buf,
-            &parts,
-            .auto,
-        ), ".npmrc" });
-    } else {
-        bun.ini.loadNpmrcConfig(ctx.allocator, ctx.install orelse brk: {
-            const install_ = bun.handleOom(ctx.allocator.create(Api.BunInstall));
-            install_.* = std.mem.zeroes(Api.BunInstall);
-            ctx.install = install_;
-            break :brk install_;
-        }, env, true, &[_][:0]const u8{".npmrc"});
+        const home_config_path: ?[:0]const u8 = path: {
+            if (bun.env_var.XDG_CONFIG_HOME.get()) |xdg_dir| {
+                const p = Path.joinAbsStringBufZ(xdg_dir, &buf, &parts, .auto);
+                if (bun.sys.existsZ(p)) break :path p;
+            }
+            if (bun.env_var.HOME.get()) |home_dir| {
+                break :path Path.joinAbsStringBufZ(home_dir, &buf, &parts, .auto);
+            }
+            break :path null;
+        };
+
+        if (home_config_path) |p| {
+            bun.ini.loadNpmrcConfig(ctx.allocator, install_, env, true, &[_][:0]const u8{ p, ".npmrc" });
+        } else {
+            bun.ini.loadNpmrcConfig(ctx.allocator, install_, env, true, &[_][:0]const u8{".npmrc"});
+        }
     }
     const cpu_count = bun.getThreadCount();
 

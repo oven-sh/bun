@@ -67,6 +67,17 @@ pub fn NewApp(comptime ssl: bool) type {
             return c.uws_app_clear_routes(ssl_flag, @as(*uws_app_t, @ptrCast(app)));
         }
 
+        pub fn clearSNIRoutes(app: *ThisApp, server_names: []const [*:0]const u8, should_remove: bool) void {
+            if (!ssl) return; // SNI only works with SSL
+            return c.uws_app_clear_sni_routes(
+                ssl_flag,
+                @as(*uws_app_t, @ptrCast(app)),
+                server_names.ptr,
+                server_names.len,
+                @intFromBool(should_remove),
+            );
+        }
+
         pub fn publishWithOptions(app: *ThisApp, topic: []const u8, message: []const u8, opcode: Opcode, compress: bool) bool {
             return c.uws_publish(
                 @intFromBool(ssl),
@@ -453,6 +464,13 @@ pub const c = struct {
     ) void;
 
     pub extern fn uws_app_clear_routes(ssl_flag: c_int, app: *uws_app_t) void;
+    pub extern fn uws_app_clear_sni_routes(
+        ssl_flag: c_int,
+        app: *uws_app_t,
+        server_names: [*]const [*:0]const u8,
+        server_name_count: usize,
+        should_remove_server_names: c_int,
+    ) void;
 };
 
 const bun = @import("bun");

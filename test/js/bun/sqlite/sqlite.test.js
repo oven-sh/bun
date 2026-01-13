@@ -11,7 +11,7 @@ const tmpbase = tmpdir() + path.sep;
 describe("as", () => {
   it("should return an implementation of the class", () => {
     const db = new Database(":memory:");
-    db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)");
+    db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)");
     db.run("INSERT INTO test (name) VALUES ('Hello')");
     db.run("INSERT INTO test (name) VALUES ('World')");
 
@@ -47,7 +47,7 @@ describe("as", () => {
     }
 
     const db = new Database(":memory:");
-    db.exec("CREATE TABLE users (id INTEGER PRIMARY KEY, rawBirthdate TEXT)");
+    db.run("CREATE TABLE users (id INTEGER PRIMARY KEY, rawBirthdate TEXT)");
     db.run("INSERT INTO users (rawBirthdate) VALUES ('1995-12-19')");
     const query = db.query("SELECT * FROM users");
     query.as(User);
@@ -57,7 +57,7 @@ describe("as", () => {
 
   it("validates the class", () => {
     const db = new Database(":memory:");
-    db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)");
+    db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)");
     db.run("INSERT INTO test (name) VALUES ('Hello')");
     expect(() => db.query("SELECT * FROM test").as(null)).toThrow("Expected class to be a constructor or undefined");
     expect(() => db.query("SELECT * FROM test").as(() => {})).toThrow("Expected a constructor");
@@ -72,7 +72,7 @@ describe("as", () => {
 describe("safeIntegers", () => {
   it("should default to false", () => {
     const db = Database.open(":memory:");
-    db.exec("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, age INTEGER NOT NULL)");
+    db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, age INTEGER NOT NULL)");
     db.run("INSERT INTO foo (age) VALUES (?)", BigInt(Number.MAX_SAFE_INTEGER) + 10n);
     const query = db.query("SELECT * FROM foo");
     expect(query.all()).toEqual([{ id: 1, age: Number.MAX_SAFE_INTEGER + 10 }]);
@@ -87,7 +87,7 @@ describe("safeIntegers", () => {
 
   it("should allow overwriting default", () => {
     const db = Database.open(":memory:", { safeIntegers: true });
-    db.exec("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, age INTEGER NOT NULL)");
+    db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, age INTEGER NOT NULL)");
     db.run("INSERT INTO foo (age) VALUES (?)", BigInt(Number.MAX_SAFE_INTEGER) + 10n);
     const query = db.query("SELECT * FROM foo");
     expect(query.all()).toEqual([
@@ -138,7 +138,7 @@ describe("safeIntegers", () => {
         const query = queries[i];
         it(`${JSON.stringify(input)} -> ${query}`, () => {
           const db = Database.open(":memory:", { strict });
-          db.exec(
+          db.run(
             "CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL, age INTEGER NOT NULL)",
           );
           const { changes, lastInsertRowid } = db.run(`INSERT INTO cats (name, age) VALUES (${query})`, input);
@@ -172,7 +172,7 @@ describe("safeIntegers", () => {
             it(`${method}()`, () => {
               const db = Database.open(":memory:", { strict: true });
 
-              db.exec("CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, age INTEGER)");
+              db.run("CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, age INTEGER)");
 
               expect(() => {
                 const query = db.query("INSERT INTO cats (name, age) VALUES (@name, @age)");
@@ -322,7 +322,7 @@ it("upsert cross-process, see #1366", () => {
 
 it("creates", () => {
   const db = Database.open(":memory:");
-  db.exec(
+  db.run(
     "CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT, value INTEGER, created TEXT, deci FLOAT, blobby BLOB)",
   );
   const stmt = db.prepare("INSERT INTO test (name, value, deci, created, blobby) VALUES (?, ?, ?, ?, ?)");
@@ -384,16 +384,16 @@ it("creates", () => {
 
 it("int52", () => {
   const db = Database.open(":memory:");
-  db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, int64 INTEGER)");
+  db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, int64 INTEGER)");
   db.run("INSERT INTO test (int64) VALUES (?)", Number.MAX_SAFE_INTEGER);
   expect(db.query("SELECT * FROM test").get().int64).toBe(Number.MAX_SAFE_INTEGER);
 });
 
 it("typechecks", () => {
   const db = Database.open(":memory:");
-  db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)");
-  db.exec('INSERT INTO test (name) VALUES ("Hello")');
-  db.exec('INSERT INTO test (name) VALUES ("World")');
+  db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)");
+  db.run('INSERT INTO test (name) VALUES ("Hello")');
+  db.run('INSERT INTO test (name) VALUES ("World")');
 
   const q = db.prepare("SELECT * FROM test WHERE (name = ?)");
 
@@ -437,7 +437,7 @@ it("typechecks", () => {
 it("db.query supports TypedArray", () => {
   const db = Database.open(":memory:");
 
-  db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, blobby BLOB)");
+  db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, blobby BLOB)");
 
   const stmt = db.prepare("INSERT INTO test (blobby) VALUES (?)");
   stmt.run([encode("Hello World")]);
@@ -472,9 +472,9 @@ it("db.query supports TypedArray", () => {
 
 it("supports serialize/deserialize", () => {
   const db = Database.open(":memory:");
-  db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)");
-  db.exec('INSERT INTO test (name) VALUES ("Hello")');
-  db.exec('INSERT INTO test (name) VALUES ("World")');
+  db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)");
+  db.run('INSERT INTO test (name) VALUES ("Hello")');
+  db.run('INSERT INTO test (name) VALUES ("World")');
 
   const input = db.serialize();
   const db2 = new Database(input);
@@ -585,15 +585,15 @@ it("Database.deserialize should support readonly when passed as a flag or boolea
 
 it("db.query()", () => {
   const db = Database.open(":memory:");
-  db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)");
+  db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)");
 
   expect(db[Symbol.for("Bun.Database.cache.count")]).toBe(0);
 
   var q = db.query("SELECT * FROM test WHERE name = ?");
   expect(q.get("Hello") === null).toBe(true);
 
-  db.exec('INSERT INTO test (name) VALUES ("Hello")');
-  db.exec('INSERT INTO test (name) VALUES ("World")');
+  db.run('INSERT INTO test (name) VALUES ("Hello")');
+  db.run('INSERT INTO test (name) VALUES ("World")');
 
   var rows = db.query("SELECT * FROM test WHERE name = ?").all(["Hello"]);
 
@@ -734,7 +734,7 @@ it("db.query()", () => {
 it("db.run()", () => {
   const db = Database.open(":memory:");
 
-  db.exec("CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL, age INTEGER NOT NULL)");
+  db.run("CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL, age INTEGER NOT NULL)");
 
   const insert = db.query("INSERT INTO cats (name, age) VALUES (@name, @age) RETURNING name").all({
     "@name": "Joey",
@@ -746,7 +746,7 @@ for (let strict of [false, true]) {
   it(`strict: ${strict}`, () => {
     const db = Database.open(":memory:", { strict });
 
-    db.exec("CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, age INTEGER)");
+    db.run("CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, age INTEGER)");
 
     const result = db.query("INSERT INTO cats (name, age) VALUES (@name, @age) RETURNING name").all({
       [(!strict ? "@" : "") + "name"]: "Joey",
@@ -758,7 +758,7 @@ for (let strict of [false, true]) {
 it("strict: true", () => {
   const db = Database.open(":memory:", { strict: true });
 
-  db.exec("CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL, age INTEGER NOT NULL)");
+  db.run("CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL, age INTEGER NOT NULL)");
 
   const insert = db.query("INSERT INTO cats (name, age) VALUES (@name, @age) RETURNING name").all({
     "name": "Joey",
@@ -771,7 +771,7 @@ describe("does not throw missing parameter error in", () => {
     it(`${method}()`, () => {
       const db = Database.open(":memory:");
 
-      db.exec("CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, age INTEGER)");
+      db.run("CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, age INTEGER)");
 
       expect(() => {
         const query = db.query("INSERT INTO cats (name, age) VALUES (@name, @age) RETURNING name");
@@ -801,7 +801,7 @@ describe("does not throw missing parameter error in", () => {
 it("db.transaction()", () => {
   const db = Database.open(":memory:");
 
-  db.exec("CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, age INTEGER)");
+  db.run("CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, age INTEGER)");
 
   const insert = db.prepare("INSERT INTO cats (name, age) VALUES (@name, @age)");
 
@@ -974,15 +974,15 @@ it("supports FTS5", () => {
 describe("Database.run", () => {
   it("should not throw error `not an error` when provided query containing only whitespace", () => {
     const db = Database.open(":memory:");
-    db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)");
+    db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)");
 
     expect(db[Symbol.for("Bun.Database.cache.count")]).toBe(0);
 
     var q = db.query("SELECT * FROM test WHERE name = ?");
     expect(q.get("Hello") === null).toBe(true);
 
-    db.exec('INSERT INTO test (name) VALUES ("Hello")');
-    db.exec('INSERT INTO test (name) VALUES ("World")');
+    db.run('INSERT INTO test (name) VALUES ("Hello")');
+    db.run('INSERT INTO test (name) VALUES ("World")');
 
     try {
       db.run(" ");
@@ -1191,7 +1191,7 @@ it.skipIf(
       "ATAN(0.25)": 0.24497866312686414,
     },
   ]);
-  db.exec(
+  db.run(
     `
     CREATE TABLE num_table (value TEXT NOT NULL);
     INSERT INTO num_table values (1), (2), (6);
@@ -1312,13 +1312,13 @@ it("issue#6597 with many columns", () => {
 
 it("issue#7147", () => {
   const db = new Database(":memory:");
-  db.exec("CREATE TABLE foos (foo_id INTEGER NOT NULL PRIMARY KEY, foo_a TEXT, foo_b TEXT)");
-  db.exec(
+  db.run("CREATE TABLE foos (foo_id INTEGER NOT NULL PRIMARY KEY, foo_a TEXT, foo_b TEXT)");
+  db.run(
     "CREATE TABLE bars (bar_id INTEGER NOT NULL PRIMARY KEY, foo_id INTEGER NOT NULL, bar_a INTEGER, bar_b INTEGER, FOREIGN KEY (foo_id) REFERENCES foos (foo_id))",
   );
-  db.exec("INSERT INTO foos VALUES (1, 'foo_1', 'foo_2')");
-  db.exec("INSERT INTO bars VALUES (1, 1, 'bar_1', 'bar_2')");
-  db.exec("INSERT INTO bars VALUES (2, 1, 'baz_3', 'baz_4')");
+  db.run("INSERT INTO foos VALUES (1, 'foo_1', 'foo_2')");
+  db.run("INSERT INTO bars VALUES (1, 1, 'bar_1', 'bar_2')");
+  db.run("INSERT INTO bars VALUES (2, 1, 'baz_3', 'baz_4')");
   const query = db.query("SELECT f.*, b.* FROM foos f JOIN bars b ON b.foo_id = f.foo_id");
   const result = query.all();
   expect(result).toStrictEqual([
@@ -1346,20 +1346,20 @@ it("should close with WAL enabled", () => {
   const dir = tempDirWithFiles("sqlite-wal-test", { "empty.txt": "" });
   const file = path.join(dir, "my.db");
   const db = new Database(file);
-  db.exec("PRAGMA journal_mode = WAL");
+  db.run("PRAGMA journal_mode = WAL");
   db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, 0);
-  db.exec("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
-  db.exec("INSERT INTO foo (name) VALUES ('foo')");
+  db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
+  db.run("INSERT INTO foo (name) VALUES ('foo')");
   expect(db.query("SELECT * FROM foo").all()).toEqual([{ id: 1, name: "foo" }]);
-  db.exec("PRAGMA wal_checkpoint(truncate)");
+  db.run("PRAGMA wal_checkpoint(truncate)");
   db.close();
   expect(readdirSync(dir).sort()).toEqual(["empty.txt", "my.db"]);
 });
 
 it("close(true) should throw an error if the database is in use", () => {
   const db = new Database(":memory:");
-  db.exec("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
-  db.exec("INSERT INTO foo (name) VALUES ('foo')");
+  db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
+  db.run("INSERT INTO foo (name) VALUES ('foo')");
   const prepared = db.prepare("SELECT * FROM foo");
   expect(() => db.close(true)).toThrow("database is locked");
   prepared.finalize();
@@ -1368,8 +1368,8 @@ it("close(true) should throw an error if the database is in use", () => {
 
 it("close() should NOT throw an error if the database is in use", () => {
   const db = new Database(":memory:");
-  db.exec("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
-  db.exec("INSERT INTO foo (name) VALUES ('foo')");
+  db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
+  db.run("INSERT INTO foo (name) VALUES ('foo')");
   const prepared = db.prepare("SELECT * FROM foo");
   expect(() => db.close()).not.toThrow("database is locked");
 });
@@ -1379,8 +1379,8 @@ it("should dispose AND throw an error if the database is in use", () => {
     let prepared;
     {
       using db = new Database(":memory:");
-      db.exec("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
-      db.exec("INSERT INTO foo (name) VALUES ('foo')");
+      db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
+      db.run("INSERT INTO foo (name) VALUES ('foo')");
       prepared = db.prepare("SELECT * FROM foo");
     }
   }).toThrow("database is locked");
@@ -1390,8 +1390,8 @@ it("should dispose", () => {
   expect(() => {
     {
       using db = new Database(":memory:");
-      db.exec("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
-      db.exec("INSERT INTO foo (name) VALUES ('foo')");
+      db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
+      db.run("INSERT INTO foo (name) VALUES ('foo')");
     }
   }).not.toThrow();
 });
@@ -1405,8 +1405,8 @@ it("can continue to use existing statements after database has been GC'd", async
     function leakTheStatement() {
       const db = new Database(":memory:");
       console.log("---");
-      db.exec("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
-      db.exec("INSERT INTO foo (name) VALUES ('foo')");
+      db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
+      db.run("INSERT INTO foo (name) VALUES ('foo')");
       const prepared = db.prepare("SELECT * FROM foo");
       registry.register(db);
       return prepared;
@@ -1459,7 +1459,7 @@ it("query should work if the cached statement was finalized", () => {
 // https://github.com/oven-sh/bun/issues/12012
 it("reports changes in Statement#run", () => {
   const db = new Database(":memory:");
-  db.exec("CREATE TABLE cats (id INTEGER PRIMARY KEY, name TEXT)");
+  db.run("CREATE TABLE cats (id INTEGER PRIMARY KEY, name TEXT)");
 
   const sql = "INSERT INTO cats (name) VALUES ('Fluffy'), ('Furry')";
 

@@ -1,5 +1,16 @@
 import { describe, expect, it, spyOn } from "bun:test";
-import { bunEnv, bunExe, gc, getMaxFD, isBroken, isIntelMacOS, isWindows, tempDirWithFiles, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  gc,
+  getMaxFD,
+  isBroken,
+  isIntelMacOS,
+  isPosix,
+  isWindows,
+  tempDirWithFiles,
+  tmpdirSync,
+} from "harness";
 import { isAscii } from "node:buffer";
 import fs, {
   closeSync,
@@ -53,6 +64,7 @@ import { join } from "node:path";
 import { spawnSync } from "bun";
 import { ReadStream as ReadStream_, WriteStream as WriteStream_ } from "./export-from.js";
 import { ReadStream as ReadStreamStar_, WriteStream as WriteStreamStar_ } from "./export-star-from.js";
+import { mkfifo } from "mkfifo";
 
 const Buffer = globalThis.Buffer || Uint8Array;
 
@@ -1538,6 +1550,13 @@ it("symlink", () => {
   symlinkSync(import.meta.path, actual);
 
   expect(realpathSync(actual)).toBe(realpathSync(import.meta.path));
+});
+
+it.if(isPosix)("realpathSync doesn't block on FIFO", () => {
+  const path = join(tmpdirSync(), "test-fs-fifo-block.fifo");
+  mkfifo(path, 0o666);
+  realpathSync(path);
+  unlinkSync(path);
 });
 
 it("readlink", () => {

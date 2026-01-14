@@ -67,16 +67,9 @@ static constexpr int32_t kStrictFlag = 1 << 2;
 // we only call one pointer for the actual library
 // and it means there's less work for DYLD to do on startup
 // i.e. it shouldn't have any impact on startup time
-#if LAZY_LOAD_SQLITE
+
+// Always include lazy loading support
 #include "lazy_sqlite3.h"
-
-#else
-static inline int lazyLoadSQLite()
-{
-    return 0;
-}
-
-#endif
 /* ******************************************************************************** */
 
 #if !USE(SYSTEM_MALLOC)
@@ -1121,14 +1114,15 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSetCustomSQLite, (JSC::JSGlobalObject * l
         return {};
     }
 
-#if LAZY_LOAD_SQLITE
     if (sqlite3_handle) {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "SQLite already loaded\nThis function can only be called before SQLite has been loaded and exactly once. SQLite auto-loads when the first time you open a Database."_s));
         return {};
     }
 
-    sqlite3_lib_path = sqliteStrValue.toWTFString(lexicalGlobalObject).utf8().data();
+    // Mark that we want to use dynamic loading
+    auto pathString = sqliteStrValue.toWTFString(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
+    setSQLiteLibPath(std::string(pathString.utf8().data()));
 
     if (lazyLoadSQLite() == -1) {
         sqlite3_handle = nullptr;
@@ -1136,7 +1130,6 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSetCustomSQLite, (JSC::JSGlobalObject * l
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, msg));
         return {};
     }
-#endif
 
     initializeSQLite();
 
@@ -1184,13 +1177,11 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDeserialize, (JSC::JSGlobalObject * lexic
         return {};
     }
 
-#if LAZY_LOAD_SQLITE
     if (lazyLoadSQLite() < 0) [[unlikely]] {
         WTF::String msg = WTF::String::fromUTF8(dlerror());
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, msg));
         return {};
     }
-#endif
     initializeSQLite();
 
     size_t byteLength = array->byteLength();
@@ -1645,13 +1636,11 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementOpenStatementFunction, (JSC::JSGlobalObje
         return {};
     }
 
-#if LAZY_LOAD_SQLITE
     if (lazyLoadSQLite() < 0) [[unlikely]] {
         WTF::String msg = WTF::String::fromUTF8(dlerror());
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, msg));
         return {};
     }
-#endif
     initializeSQLite();
 
     auto catchScope = DECLARE_CATCH_SCOPE(vm);

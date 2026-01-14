@@ -689,7 +689,7 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
         result->putDirect(vm, Identifier::fromString(vm, "bytecodes"_s), jsString(vm, byteCodes.toString()));
         result->putDirect(vm, Identifier::fromString(vm, "stackTraces"_s), stackTraces);
 
-        return result;
+        RELEASE_AND_RETURN(throwScope, result);
     };
     const auto reportFailure = [](JSC::VM& vm) -> JSC::JSValue {
         if (auto* samplingProfiler = vm.samplingProfiler()) {

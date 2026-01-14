@@ -64,6 +64,11 @@ if(LINUX AND ABI STREQUAL "musl")
   set(WEBKIT_SUFFIX "-musl")
 endif()
 
+# Baseline builds require a WebKit compiled without AVX instructions
+if(ENABLE_BASELINE AND CMAKE_SYSTEM_PROCESSOR MATCHES "amd64|x86_64|x64|AMD64")
+  set(WEBKIT_SUFFIX "${WEBKIT_SUFFIX}-baseline")
+endif()
+
 if(DEBUG)
   set(WEBKIT_SUFFIX "${WEBKIT_SUFFIX}-debug")
 elseif(ENABLE_LTO)

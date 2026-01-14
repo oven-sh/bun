@@ -160,6 +160,8 @@ describe("Runtime inspector activation", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
+      const debug1Stderr = await debug1.stderr.text();
+      expect(debug1Stderr).toBe("");
       expect(await debug1.exited).toBe(0);
 
       // Wait for the full debugger banner (header + content + footer)
@@ -176,6 +178,8 @@ describe("Runtime inspector activation", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
+      const debug2Stderr = await debug2.stderr.text();
+      expect(debug2Stderr).toBe("");
       expect(await debug2.exited).toBe(0);
 
       // Release the reader and kill the target

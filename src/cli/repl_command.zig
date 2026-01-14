@@ -1,11 +1,3 @@
-const bun = @import("bun");
-const Environment = bun.Environment;
-const Global = bun.Global;
-const Output = bun.Output;
-const Command = bun.cli.Command;
-const Run = bun.bun_js.Run;
-const std = @import("std");
-
 pub const ReplCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
         @branchHint(.cold);
@@ -49,3 +41,9 @@ pub const ReplCommand = struct {
         try Run.boot(ctx, temp_path, null);
     }
 };
+
+const bun = @import("bun");
+const Global = bun.Global;
+const Output = bun.Output;
+const Command = bun.cli.Command;
+const Run = bun.bun_js.Run;

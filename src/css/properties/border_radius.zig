@@ -220,7 +220,7 @@ pub const BorderRadiusHandler = struct {
             if (logical_supported) {
                 bun.handleOom(d.append(ctx.allocator, v));
             } else {
-                const prefix = ctx.targets.prefixes(css.VendorPrefix{}, css.prefixes.Feature.border_radius);
+                const prefix = ctx.targets.prefixes(css.VendorPrefix{ .none = true }, css.prefixes.Feature.border_radius);
                 switch (v) {
                     .@"border-start-start-radius",
                     .@"border-start-end-radius",

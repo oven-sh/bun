@@ -60,6 +60,11 @@ pub const ReplCommand = struct {
                     Global.exit(1);
                 },
                 .result => |written| {
+                    if (written == 0) {
+                        Output.prettyErrorln("<r><red>error<r>: Could not write temp file: write returned 0 bytes", .{});
+                        temp_file_fd.close();
+                        Global.exit(1);
+                    }
                     offset += written;
                 },
             }

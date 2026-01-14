@@ -242,6 +242,8 @@ describe("Runtime inspector activation", () => {
           stderr: "pipe",
         });
 
+        const debug1Stderr = await debug1.stderr.text();
+        expect(debug1Stderr).toBe("");
         expect(await debug1.exited).toBe(0);
 
         const result1 = await waitForDebuggerListening(target1.stderr);
@@ -282,6 +284,8 @@ describe("Runtime inspector activation", () => {
           stderr: "pipe",
         });
 
+        const debug2Stderr = await debug2.stderr.text();
+        expect(debug2Stderr).toBe("");
         expect(await debug2.exited).toBe(0);
 
         const result2 = await waitForDebuggerListening(target2.stderr);

@@ -1,8 +1,14 @@
 const { isIP, isIPv6 } = require("internal/net/isIP");
 
-const { checkIsHttpToken, validateFunction, validateInteger, validateBoolean } = require("internal/validators");
+const {
+  checkIsHttpToken,
+  validateFunction,
+  validateInteger,
+  validateBoolean,
+  validateString,
+} = require("internal/validators");
 const { urlToHttpOptions } = require("internal/url");
-const { isValidTLSArray } = require("internal/tls");
+const { throwOnInvalidTLSArray } = require("internal/tls");
 const { validateHeaderName } = require("node:_http_common");
 const { getTimerDuration } = require("internal/timers");
 const { ConnResetException } = require("internal/shared");
@@ -744,41 +750,31 @@ function ClientRequest(input, options, cb) {
     this._ensureTls().rejectUnauthorized = mergedTlsOptions.rejectUnauthorized;
   }
   if (mergedTlsOptions.ca) {
-    if (!isValidTLSArray(mergedTlsOptions.ca))
-      throw new TypeError(
-        "ca argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
-      );
+    throwOnInvalidTLSArray("options.ca", mergedTlsOptions.ca);
     this._ensureTls().ca = mergedTlsOptions.ca;
   }
   if (mergedTlsOptions.cert) {
-    if (!isValidTLSArray(mergedTlsOptions.cert))
-      throw new TypeError(
-        "cert argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
-      );
+    throwOnInvalidTLSArray("options.cert", mergedTlsOptions.cert);
     this._ensureTls().cert = mergedTlsOptions.cert;
   }
   if (mergedTlsOptions.key) {
-    if (!isValidTLSArray(mergedTlsOptions.key))
-      throw new TypeError(
-        "key argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
-      );
+    throwOnInvalidTLSArray("options.key", mergedTlsOptions.key);
     this._ensureTls().key = mergedTlsOptions.key;
   }
   if (mergedTlsOptions.passphrase) {
-    if (typeof mergedTlsOptions.passphrase !== "string") throw new TypeError("passphrase argument must be a string");
+    validateString(mergedTlsOptions.passphrase, "options.passphrase");
     this._ensureTls().passphrase = mergedTlsOptions.passphrase;
   }
   if (mergedTlsOptions.ciphers) {
-    if (typeof mergedTlsOptions.ciphers !== "string") throw new TypeError("ciphers argument must be a string");
+    validateString(mergedTlsOptions.ciphers, "options.ciphers");
     this._ensureTls().ciphers = mergedTlsOptions.ciphers;
   }
   if (mergedTlsOptions.servername) {
-    if (typeof mergedTlsOptions.servername !== "string") throw new TypeError("servername argument must be a string");
+    validateString(mergedTlsOptions.servername, "options.servername");
     this._ensureTls().servername = mergedTlsOptions.servername;
   }
   if (mergedTlsOptions.secureOptions) {
-    if (typeof mergedTlsOptions.secureOptions !== "number")
-      throw new TypeError("secureOptions argument must be a number");
+    validateInteger(mergedTlsOptions.secureOptions, "options.secureOptions");
     this._ensureTls().secureOptions = mergedTlsOptions.secureOptions;
   }
   this[kPath] = options.path || "/";

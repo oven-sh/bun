@@ -3912,8 +3912,8 @@ describe("hoisting", async () => {
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
     // New improved peer dependency warning format shows the requiring package, expected version, and actual version
-    expect(err).toContain("peer-deps-fixed");
-    expect(err).toContain("has unmet peer dependency no-deps@^1.0.0 (found 2.0.0)");
+    // Match: "warn: ...peer-deps-fixed has unmet peer dependency no-deps@^1.0.0 (found 2.0.0)"
+    expect(err).toMatch(/warn:.*peer-deps-fixed has unmet peer dependency no-deps@\^1\.0\.0 \(found 2\.0\.0\)/);
 
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       expect.stringContaining("bun install v1."),
@@ -7676,8 +7676,7 @@ describe("yarn tests", () => {
     expect(err).not.toContain("error:");
     expect(err).not.toContain("not found");
     // New improved peer dependency warning format shows the requiring package, expected version, and actual version
-    expect(err).toContain("peer-deps-fixed");
-    expect(err).toContain("has unmet peer dependency no-deps@^1.0.0 (found 2.0.0)");
+    expect(err).toMatch(/warn:.*peer-deps-fixed has unmet peer dependency no-deps@\^1\.0\.0 \(found 2\.0\.0\)/);
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       expect.stringContaining("bun install v1."),
       "",

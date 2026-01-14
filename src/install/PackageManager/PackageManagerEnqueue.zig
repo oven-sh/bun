@@ -1946,16 +1946,32 @@ fn getDependencyPath(this: *PackageManager, package_id: PackageID, buf: *[1024]u
         const pkg_id = path_ids[i];
         const name = names[pkg_id].slice(string_buf);
 
-        if (written > 0 and written + 3 < buf.len) {
+        // Check if we have enough space for separator + full name
+        const separator_len: usize = if (written > 0) 3 else 0; // " > "
+        const needed = separator_len + name.len;
+        const remaining = buf.len - written;
+
+        if (needed > remaining) {
+            // Not enough space - add truncation marker and stop
+            const truncation_marker = "...";
+            if (remaining >= separator_len + truncation_marker.len) {
+                if (separator_len > 0) {
+                    @memcpy(buf[written..][0..3], " > ");
+                    written += 3;
+                }
+                @memcpy(buf[written..][0..truncation_marker.len], truncation_marker);
+                written += truncation_marker.len;
+            }
+            break;
+        }
+
+        if (separator_len > 0) {
             @memcpy(buf[written..][0..3], " > ");
             written += 3;
         }
 
-        const copy_len = @min(name.len, buf.len - written);
-        if (copy_len > 0) {
-            @memcpy(buf[written..][0..copy_len], name[0..copy_len]);
-            written += copy_len;
-        }
+        @memcpy(buf[written..][0..name.len], name);
+        written += name.len;
     }
 
     return buf[0..written];

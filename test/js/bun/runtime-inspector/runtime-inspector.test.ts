@@ -81,10 +81,9 @@ describe("Runtime inspector activation", () => {
         stderr: "pipe",
       });
 
-      const [debugStderr, debugExitCode] = await Promise.all([debugProc.stderr.text(), debugProc.exited]);
-
+      const debugStderr = await debugProc.stderr.text();
       expect(debugStderr).toBe("");
-      expect(debugExitCode).toBe(0);
+      expect(await debugProc.exited).toBe(0);
 
       // Wait for inspector to activate by reading stderr until we see the message
       const { stderr: targetStderr, reader: stderrReader } = await waitForDebuggerListening(targetProc.stderr);
@@ -109,10 +108,9 @@ describe("Runtime inspector activation", () => {
         stderr: "pipe",
       });
 
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-
+      const stderr = await proc.stderr.text();
       expect(stderr).toContain("Failed");
-      expect(exitCode).not.toBe(0);
+      expect(await proc.exited).not.toBe(0);
     });
 
     test("inspector does not activate twice", async () => {
@@ -300,10 +298,9 @@ describe("Runtime inspector activation", () => {
         stderr: "pipe",
       });
 
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-
+      const stderr = await proc.stderr.text();
       expect(stderr).toContain("requires a pid argument");
-      expect(exitCode).not.toBe(0);
+      expect(await proc.exited).not.toBe(0);
     });
 
     test("can interrupt an infinite loop", async () => {
@@ -352,10 +349,9 @@ describe("Runtime inspector activation", () => {
         stderr: "pipe",
       });
 
-      const [debugStderr, debugExitCode] = await Promise.all([debugProc.stderr.text(), debugProc.exited]);
-
+      const debugStderr = await debugProc.stderr.text();
       expect(debugStderr).toBe("");
-      expect(debugExitCode).toBe(0);
+      expect(await debugProc.exited).toBe(0);
 
       // Wait for inspector to activate - this proves we interrupted the infinite loop
       const { stderr: targetStderr, reader: stderrReader } = await waitForDebuggerListening(targetProc.stderr);
@@ -416,12 +412,11 @@ describe.skipIf(isWindows)("--disable-sigusr1", () => {
     // Send SIGUSR1 directly - without handler, this will terminate the process
     process.kill(pid, "SIGUSR1");
 
-    const [stderr, exitCode] = await Promise.all([targetProc.stderr.text(), targetProc.exited]);
-
+    const stderr = await targetProc.stderr.text();
     // Should NOT see debugger listening message
     expect(stderr).not.toContain("Debugger listening");
     // Process should be terminated by SIGUSR1
     // Exit code = 128 + signal number (macOS: SIGUSR1=30 -> 158, Linux: SIGUSR1=10 -> 138)
-    expect(exitCode).toBeOneOf([158, 138]);
+    expect(await targetProc.exited).toBeOneOf([158, 138]);
   });
 });

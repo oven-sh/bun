@@ -3410,7 +3410,9 @@ JSC::JSValue EvalGlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGloba
         scriptFetcher, sentValue, resumeMode);
 
     // Don't store the result if there was an exception - let the exception propagate
-    if (Bun__VM__specifierIsEvalEntryPoint(globalObject->bunVM(), JSValue::encode(key)) && !scope.exception()) {
+    // Check exception FIRST to avoid calling specifierIsEvalEntryPoint which may convert the key
+    // JSValue to a string, which is not allowed when an exception is pending
+    if (!scope.exception() && Bun__VM__specifierIsEvalEntryPoint(globalObject->bunVM(), JSValue::encode(key))) {
         Bun__VM__setEntryPointEvalResultESM(globalObject->bunVM(), JSValue::encode(result));
     }
 

@@ -3735,7 +3735,7 @@ describe("hoisting", async () => {
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
-    expect(err).not.toContain("incorrect peer dependency");
+    expect(err).not.toContain("unmet peer dependency");
 
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       expect.stringContaining("bun install v1."),
@@ -3911,7 +3911,9 @@ describe("hoisting", async () => {
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
-    expect(err).toContain("incorrect peer dependency");
+    // New improved peer dependency warning format shows the requiring package, expected version, and actual version
+    expect(err).toContain("peer-deps-fixed");
+    expect(err).toContain("has unmet peer dependency no-deps@^1.0.0 (found 2.0.0)");
 
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       expect.stringContaining("bun install v1."),
@@ -7632,7 +7634,7 @@ describe("yarn tests", () => {
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("error:");
     expect(err).not.toContain("not found");
-    expect(err).not.toContain("incorrect peer dependency");
+    expect(err).not.toContain("unmet peer dependency");
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       expect.stringContaining("bun install v1."),
       "",
@@ -7673,7 +7675,9 @@ describe("yarn tests", () => {
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("error:");
     expect(err).not.toContain("not found");
-    expect(err).toContain("incorrect peer dependency");
+    // New improved peer dependency warning format shows the requiring package, expected version, and actual version
+    expect(err).toContain("peer-deps-fixed");
+    expect(err).toContain("has unmet peer dependency no-deps@^1.0.0 (found 2.0.0)");
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       expect.stringContaining("bun install v1."),
       "",
@@ -7714,7 +7718,7 @@ describe("yarn tests", () => {
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("error:");
     expect(err).not.toContain("not found");
-    expect(err).not.toContain("incorrect peer dependency");
+    expect(err).not.toContain("unmet peer dependency");
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       expect.stringContaining("bun install v1."),
       "",
@@ -7822,7 +7826,7 @@ describe("yarn tests", () => {
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("error:");
     expect(err).not.toContain("not found");
-    expect(err).not.toContain("incorrect peer dependency");
+    expect(err).not.toContain("unmet peer dependency");
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       expect.stringContaining("bun install v1."),
       "",
@@ -7887,7 +7891,7 @@ describe("yarn tests", () => {
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("error:");
     expect(err).not.toContain("not found");
-    expect(err).not.toContain("incorrect peer dependency");
+    expect(err).not.toContain("unmet peer dependency");
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       expect.stringContaining("bun install v1."),
       "",
@@ -7953,7 +7957,7 @@ describe("yarn tests", () => {
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("error:");
     expect(err).not.toContain("not found");
-    expect(err).not.toContain("incorrect peer dependency");
+    expect(err).not.toContain("unmet peer dependency");
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       expect.stringContaining("bun install v1."),
       "",

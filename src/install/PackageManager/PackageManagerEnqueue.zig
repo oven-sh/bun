@@ -1519,16 +1519,7 @@ fn getOrPutResolvedPackage(
                         const ver_tag = version.tag;
                         if ((res_tag == .npm and ver_tag == .npm) or (res_tag == .git and ver_tag == .git) or (res_tag == .github and ver_tag == .github)) {
                             const existing_package = this.lockfile.packages.get(existing_id);
-                            this.log.addWarningFmt(
-                                null,
-                                logger.Loc.Empty,
-                                this.allocator,
-                                "incorrect peer dependency \"{f}@{f}\"",
-                                .{
-                                    existing_package.name.fmt(this.lockfile.buffers.string_bytes.items),
-                                    existing_package.resolution.fmt(this.lockfile.buffers.string_bytes.items, .auto),
-                                },
-                            ) catch unreachable;
+                            emitUnmetPeerDependencyWarning(this, dependency_id, existing_package, version);
                             successFn(this, dependency_id, existing_id);
                             return .{
                                 // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
@@ -1556,16 +1547,7 @@ fn getOrPutResolvedPackage(
                         if ((res_tag == .npm and ver_tag == .npm) or (res_tag == .git and ver_tag == .git) or (res_tag == .github and ver_tag == .github)) {
                             const existing_package_id = list.items[0];
                             const existing_package = this.lockfile.packages.get(existing_package_id);
-                            this.log.addWarningFmt(
-                                null,
-                                logger.Loc.Empty,
-                                this.allocator,
-                                "incorrect peer dependency \"{f}@{f}\"",
-                                .{
-                                    existing_package.name.fmt(this.lockfile.buffers.string_bytes.items),
-                                    existing_package.resolution.fmt(this.lockfile.buffers.string_bytes.items, .auto),
-                                },
-                            ) catch unreachable;
+                            emitUnmetPeerDependencyWarning(this, dependency_id, existing_package, version);
                             successFn(this, dependency_id, list.items[0]);
                             return .{
                                 // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
@@ -1843,6 +1825,140 @@ fn getOrPutResolvedPackage(
 
         else => return null,
     }
+}
+
+/// Find the package that owns a given dependency_id by checking which package's
+/// dependency slice contains the given ID.
+fn getPackageIdForDependencyId(this: *PackageManager, dependency_id: DependencyID) ?PackageID {
+    const packages = this.lockfile.packages.slice();
+    const dep_slices = packages.items(.dependencies);
+    for (dep_slices, 0..) |dep_slice, pkg_id| {
+        if (dep_slice.contains(dependency_id)) {
+            return @intCast(pkg_id);
+        }
+    }
+    return null;
+}
+
+/// Emit a warning for an unmet peer dependency, showing the full dependency path.
+fn emitUnmetPeerDependencyWarning(
+    this: *PackageManager,
+    dependency_id: DependencyID,
+    existing_package: Package,
+    version: Dependency.Version,
+) void {
+    const string_buf = this.lockfile.buffers.string_bytes.items;
+    if (getPackageIdForDependencyId(this, dependency_id)) |parent_id| {
+        var path_buf: [1024]u8 = undefined;
+        const dep_path = getDependencyPath(this, parent_id, &path_buf);
+        this.log.addWarningFmt(
+            null,
+            logger.Loc.Empty,
+            this.allocator,
+            "{s} has unmet peer dependency {f}@{f} (found {f})",
+            .{
+                dep_path,
+                existing_package.name.fmt(string_buf),
+                version.literal.fmt(string_buf),
+                existing_package.resolution.fmt(string_buf, .auto),
+            },
+        ) catch unreachable;
+    } else {
+        this.log.addWarningFmt(
+            null,
+            logger.Loc.Empty,
+            this.allocator,
+            "unmet peer dependency {f}@{f} (found {f})",
+            .{
+                existing_package.name.fmt(string_buf),
+                version.literal.fmt(string_buf),
+                existing_package.resolution.fmt(string_buf, .auto),
+            },
+        ) catch unreachable;
+    }
+}
+
+/// Build the dependency path from root to a given package.
+/// Returns a string like "root > @testing-library/react > react-dom" or just the package name if path can't be built.
+fn getDependencyPath(this: *PackageManager, package_id: PackageID, buf: *[1024]u8) []const u8 {
+    const packages = this.lockfile.packages.slice();
+    const names = packages.items(.name);
+    const resolutions_slices = packages.items(.resolutions);
+    const string_buf = this.lockfile.buffers.string_bytes.items;
+    const all_resolutions = this.lockfile.buffers.resolutions.items;
+
+    // Build path by tracing back through dependency tree
+    // We store package IDs in reverse order, then build the string
+    var path_ids: [32]PackageID = undefined;
+    var path_len: usize = 0;
+    var current_id = package_id;
+
+    // Trace back to root (package 0)
+    while (current_id != 0 and path_len < 32) {
+        path_ids[path_len] = current_id;
+        path_len += 1;
+
+        // Find who depends on current_id
+        var found_parent = false;
+        for (resolutions_slices, 0..) |res_slice, pkg_id| {
+            const pkg_resolutions = res_slice.get(all_resolutions);
+            for (pkg_resolutions) |resolved_id| {
+                if (resolved_id == current_id) {
+                    current_id = @intCast(pkg_id);
+                    found_parent = true;
+                    break;
+                }
+            }
+            if (found_parent) break;
+        }
+        if (!found_parent) break;
+    }
+
+    // Check if path was truncated due to depth limit
+    const was_truncated = current_id != 0 and path_len >= 32;
+
+    if (path_len == 0) {
+        // Just return the package name
+        const name = names[package_id].slice(string_buf);
+        const copy_len = @min(name.len, buf.len);
+        @memcpy(buf[0..copy_len], name[0..copy_len]);
+        return buf[0..copy_len];
+    }
+
+    // Build the path string in reverse order (root first)
+    var written: usize = 0;
+
+    // Indicate truncation or show root
+    if (was_truncated) {
+        const truncated_str = "... > ";
+        @memcpy(buf[written..][0..truncated_str.len], truncated_str);
+        written += truncated_str.len;
+    } else if (current_id == 0) {
+        const root_str = "(root)";
+        @memcpy(buf[written..][0..root_str.len], root_str);
+        written += root_str.len;
+    }
+
+    // Add packages in reverse order (from root to leaf)
+    var i = path_len;
+    while (i > 0) {
+        i -= 1;
+        const pkg_id = path_ids[i];
+        const name = names[pkg_id].slice(string_buf);
+
+        if (written > 0 and written + 3 < buf.len) {
+            @memcpy(buf[written..][0..3], " > ");
+            written += 3;
+        }
+
+        const copy_len = @min(name.len, buf.len - written);
+        if (copy_len > 0) {
+            @memcpy(buf[written..][0..copy_len], name[0..copy_len]);
+            written += copy_len;
+        }
+    }
+
+    return buf[0..written];
 }
 
 fn resolutionSatisfiesDependency(this: *PackageManager, resolution: Resolution, dependency: Dependency.Version) bool {

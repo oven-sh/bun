@@ -606,7 +606,7 @@ extern "C" napi_status napi_set_named_property(napi_env env, napi_value object,
     JSC::EnsureStillAliveScope ensureAlive2(target);
 
     auto nameStr = WTF::String::fromUTF8({ utf8name, strlen(utf8name) });
-    auto name = JSC::PropertyName(JSC::Identifier::fromString(vm, WTFMove(nameStr)));
+    auto name = JSC::PropertyName(JSC::Identifier::fromString(vm, WTF::move(nameStr)));
     PutPropertySlot slot(target, false);
 
     target->putInline(globalObject, name, jsValue, slot);
@@ -632,7 +632,7 @@ extern "C" napi_status napi_create_arraybuffer(napi_env env,
         return napi_set_last_error(env, napi_generic_failure);
     }
 
-    auto* jsArrayBuffer = JSC::JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(), WTFMove(arrayBuffer));
+    auto* jsArrayBuffer = JSC::JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(), WTF::move(arrayBuffer));
     NAPI_RETURN_IF_EXCEPTION(env);
 
     if (data && jsArrayBuffer->impl()) [[likely]] {
@@ -1451,7 +1451,7 @@ node_api_create_external_string_latin1(napi_env env,
     });
     Zig::GlobalObject* globalObject = toJS(env);
 
-    JSString* out = JSC::jsString(JSC::getVM(globalObject), WTF::String(WTFMove(impl)));
+    JSString* out = JSC::jsString(JSC::getVM(globalObject), WTF::String(WTF::move(impl)));
     ensureStillAliveHere(out);
     *result = toNapi(out, globalObject);
     ensureStillAliveHere(out);
@@ -1487,7 +1487,7 @@ node_api_create_external_string_utf16(napi_env env,
     });
     Zig::GlobalObject* globalObject = toJS(env);
 
-    JSString* out = JSC::jsString(JSC::getVM(globalObject), WTF::String(WTFMove(impl)));
+    JSString* out = JSC::jsString(JSC::getVM(globalObject), WTF::String(WTF::move(impl)));
     ensureStillAliveHere(out);
     *result = toNapi(out, globalObject);
     ensureStillAliveHere(out);
@@ -1714,27 +1714,27 @@ static JSC::JSArrayBufferView* createArrayBufferView(
     Structure* structure = globalObject->typedArrayStructure(getTypedArrayTypeFromNAPI(type), arrayBuffer->isResizableOrGrowableShared());
     switch (type) {
     case napi_int8_array:
-        return JSC::JSInt8Array::create(globalObject, structure, WTFMove(arrayBuffer), byteOffset, length);
+        return JSC::JSInt8Array::create(globalObject, structure, WTF::move(arrayBuffer), byteOffset, length);
     case napi_uint8_array:
-        return JSC::JSUint8Array::create(globalObject, structure, WTFMove(arrayBuffer), byteOffset, length);
+        return JSC::JSUint8Array::create(globalObject, structure, WTF::move(arrayBuffer), byteOffset, length);
     case napi_uint8_clamped_array:
-        return JSC::JSUint8ClampedArray::create(globalObject, structure, WTFMove(arrayBuffer), byteOffset, length);
+        return JSC::JSUint8ClampedArray::create(globalObject, structure, WTF::move(arrayBuffer), byteOffset, length);
     case napi_int16_array:
-        return JSC::JSInt16Array::create(globalObject, structure, WTFMove(arrayBuffer), byteOffset, length);
+        return JSC::JSInt16Array::create(globalObject, structure, WTF::move(arrayBuffer), byteOffset, length);
     case napi_uint16_array:
-        return JSC::JSUint16Array::create(globalObject, structure, WTFMove(arrayBuffer), byteOffset, length);
+        return JSC::JSUint16Array::create(globalObject, structure, WTF::move(arrayBuffer), byteOffset, length);
     case napi_int32_array:
-        return JSC::JSInt32Array::create(globalObject, structure, WTFMove(arrayBuffer), byteOffset, length);
+        return JSC::JSInt32Array::create(globalObject, structure, WTF::move(arrayBuffer), byteOffset, length);
     case napi_uint32_array:
-        return JSC::JSUint32Array::create(globalObject, structure, WTFMove(arrayBuffer), byteOffset, length);
+        return JSC::JSUint32Array::create(globalObject, structure, WTF::move(arrayBuffer), byteOffset, length);
     case napi_float32_array:
-        return JSC::JSFloat32Array::create(globalObject, structure, WTFMove(arrayBuffer), byteOffset, length);
+        return JSC::JSFloat32Array::create(globalObject, structure, WTF::move(arrayBuffer), byteOffset, length);
     case napi_float64_array:
-        return JSC::JSFloat64Array::create(globalObject, structure, WTFMove(arrayBuffer), byteOffset, length);
+        return JSC::JSFloat64Array::create(globalObject, structure, WTF::move(arrayBuffer), byteOffset, length);
     case napi_bigint64_array:
-        return JSC::JSBigInt64Array::create(globalObject, structure, WTFMove(arrayBuffer), byteOffset, length);
+        return JSC::JSBigInt64Array::create(globalObject, structure, WTF::move(arrayBuffer), byteOffset, length);
     case napi_biguint64_array:
-        return JSC::JSBigUint64Array::create(globalObject, structure, WTFMove(arrayBuffer), byteOffset, length);
+        return JSC::JSBigUint64Array::create(globalObject, structure, WTF::move(arrayBuffer), byteOffset, length);
     default:
         ASSERT_NOT_REACHED_WITH_MESSAGE("Unexpected napi_typedarray_type");
     }
@@ -2031,7 +2031,7 @@ extern "C" napi_status napi_create_external_buffer(napi_env env, size_t length,
 
         // TODO: is there a way to create a detached uint8 array?
         auto arrayBuffer = JSC::ArrayBuffer::createUninitialized(0, 1);
-        auto* buffer = JSC::JSUint8Array::create(globalObject, subclassStructure, WTFMove(arrayBuffer), 0, 0);
+        auto* buffer = JSC::JSUint8Array::create(globalObject, subclassStructure, WTF::move(arrayBuffer), 0, 0);
         NAPI_RETURN_IF_EXCEPTION(env);
         buffer->existingBuffer()->detach(vm);
 
@@ -2048,7 +2048,7 @@ extern "C" napi_status napi_create_external_buffer(napi_env env, size_t length,
         // do nothing
     }));
 
-    auto* buffer = JSC::JSUint8Array::create(globalObject, subclassStructure, WTFMove(arrayBuffer), 0, length);
+    auto* buffer = JSC::JSUint8Array::create(globalObject, subclassStructure, WTF::move(arrayBuffer), 0, length);
     NAPI_RETURN_IF_EXCEPTION(env);
 
     // setup finalizer after creating the array. if it throws callers of napi_create_external_buffer are expected
@@ -2076,7 +2076,7 @@ extern "C" napi_status napi_create_external_arraybuffer(napi_env env, void* exte
         env->doFinalizer(finalize_cb, p, finalize_hint);
     }));
 
-    auto* buffer = JSC::JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(ArrayBufferSharingMode::Default), WTFMove(arrayBuffer));
+    auto* buffer = JSC::JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(ArrayBufferSharingMode::Default), WTF::move(arrayBuffer));
 
     *result = toNapi(buffer, globalObject);
     NAPI_RETURN_SUCCESS(env);

@@ -1,9 +1,7 @@
 import { $ } from "bun";
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, isPosix, tempDirWithFiles } from "harness";
-import { appendFileSync, closeSync, openSync, writeFileSync } from "node:fs";
-import { devNull, tmpdir } from "os";
+import { bunEnv, isPosix, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 import { bunExe } from "./test_builder";
 import { createTestBuilder } from "./util";
@@ -53,22 +51,50 @@ const TESTS: [name: string, builder: () => TestBuilder, runs?: number][] = [
   ],
 ];
 
-describe("fd leak", () => {
+describe.concurrent("fd leak", () => {
   function fdLeakTest(name: string, builder: () => TestBuilder, runs: number = 1000, threshold: number = 5) {
     test(`fdleak_${name}`, async () => {
-      Bun.gc(true);
-      const baseline = openSync(devNull, "r");
-      closeSync(baseline);
+      const testcode = await Bun.file(join(import.meta.dirname, "./test_builder.ts")).text();
 
-      for (let i = 0; i < runs; i++) {
-        await builder().quiet().run();
+      const impl = /* ts */ `
+              import { openSync, closeSync } from "node:fs";
+              import { devNull } from "os";
+              const TestBuilder = createTestBuilder(import.meta.path);
+
+              const runs = ${runs};
+              const threshold = ${threshold};
+
+              Bun.gc(true);
+              const baseline = openSync(devNull, "r");
+              closeSync(baseline);
+
+              for (let i = 0; i < runs; i++) {
+                await ${builder.toString().slice("() =>".length)}.quiet().run();
+              }
+              // Run the GC, because the interpreter closes file descriptors when it
+              // deinitializes when its finalizer is called
+              Bun.gc(true);
+              const fd = openSync(devNull, "r");
+              closeSync(fd);
+              if (fd - baseline > threshold) {
+                console.error('FD leak detected:', fd - baseline, 'leaked (threshold:', threshold, ')');
+                process.exit(1);
+              }
+            `;
+
+      using dir = tempDir("fdleak", {
+        "script.ts": testcode + impl,
+      });
+
+      const { exited, stderr: stream } = Bun.spawn([process.argv0, "--smol", "test", join(dir, "script.ts")], {
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [exitCode, stderr] = await Promise.all([exited, stream.text()]);
+      if (exitCode != 0) {
+        console.log("\n\nSTDERR:", stderr);
       }
-      // Run the GC, because the interpreter closes file descriptors when it
-      // deinitializes when its finalizer is called
-      Bun.gc(true);
-      const fd = openSync(devNull, "r");
-      closeSync(fd);
-      expect(fd - baseline).toBeLessThanOrEqual(threshold);
+      expect(exitCode).toBe(0);
     }, 100_000);
   }
 
@@ -79,12 +105,7 @@ describe("fd leak", () => {
     threshold: number = DEFAULT_THRESHOLD,
   ) {
     test(`memleak_${name}`, async () => {
-      const tempfile = join(tmpdir(), "script.ts");
-
-      const filepath = import.meta.dirname;
-      const testcode = await Bun.file(join(filepath, "./test_builder.ts")).text();
-
-      writeFileSync(tempfile, testcode);
+      const testcode = await Bun.file(join(import.meta.dirname, "./test_builder.ts")).text();
 
       const impl = /* ts */ `
               import { heapStats } from "bun:jsc";
@@ -119,16 +140,17 @@ describe("fd leak", () => {
               }
             `;
 
-      appendFileSync(tempfile, impl);
-
-      // console.log("THE CODE", readFileSync(tempfile, "utf-8"));
-
-      const { stdout, stderr, exitCode } = Bun.spawnSync([process.argv0, "--smol", "test", tempfile], {
-        env: bunEnv,
+      using dir = tempDir("memleak", {
+        "script.ts": testcode + impl,
       });
-      // console.log("STDOUT:", stdout.toString(), "\n\nSTDERR:", stderr.toString());
+
+      const { exited, stderr: stream } = Bun.spawn([process.argv0, "--smol", "test", join(dir, "script.ts")], {
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [exitCode, stderr] = await Promise.all([exited, stream.text()]);
       if (exitCode != 0) {
-        console.log("\n\nSTDERR:", stderr.toString());
+        console.log("\n\nSTDERR:", stderr);
       }
       expect(exitCode).toBe(0);
     }, 100_000);
@@ -182,12 +204,7 @@ describe("fd leak", () => {
     test.if(runTheTest)(
       `memleak_protect_${name}`,
       async () => {
-        const tempfile = join(tmpdir(), "script.ts");
-
-        const filepath = import.meta.dirname;
-        const testcode = await Bun.file(join(filepath, "./test_builder.ts")).text();
-
-        writeFileSync(tempfile, testcode);
+        const testcode = await Bun.file(join(import.meta.dirname, "./test_builder.ts")).text();
 
         const impl = /* ts */ `
               import { heapStats } from "bun:jsc";
@@ -211,16 +228,18 @@ describe("fd leak", () => {
               }
             `;
 
-        appendFileSync(tempfile, impl);
-
-        // console.log("THE CODE", readFileSync(tempfile, "utf-8"));
-
-        const { stdout, stderr, exitCode } = Bun.spawnSync([process.argv0, "--smol", "test", tempfile], {
-          env: bunEnv,
+        using dir = tempDir("memleak_protect", {
+          "script.ts": testcode + impl,
         });
-        // console.log("STDOUT:", stdout.toString(), "\n\nSTDERR:", stderr.toString());
+
+        const { stderr: stream, exited } = Bun.spawn([process.argv0, "--smol", "test", join(dir, "script.ts")], {
+          env: bunEnv,
+          stdout: "ignore",
+          stderr: "pipe",
+        });
+        const [exitCode, stderr] = await Promise.all([exited, stream.text()]);
         if (exitCode != 0) {
-          console.log("\n\nSTDERR:", stderr.toString());
+          console.log("\n\nSTDERR:", stderr);
         }
         expect(exitCode).toBe(0);
       },
@@ -373,7 +392,7 @@ describe("fd leak", () => {
     true,
   );
 
-  describe("#11816", async () => {
+  describe.serial("#11816", async () => {
     function doit(builtin: boolean) {
       test(builtin ? "builtin" : "external", async () => {
         const files = tempDirWithFiles("hi", {
@@ -406,7 +425,7 @@ describe("fd leak", () => {
     doit(true);
   });
 
-  describe("not leaking ParsedShellScript when ShellInterpreter never runs", async () => {
+  describe.serial("not leaking ParsedShellScript when ShellInterpreter never runs", () => {
     function doit(builtin: boolean) {
       test(builtin ? "builtin" : "external", async () => {
         const files = tempDirWithFiles("hi", {

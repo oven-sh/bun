@@ -2,7 +2,7 @@ option(WEBKIT_VERSION "The version of WebKit to use")
 option(WEBKIT_LOCAL "If a local version of WebKit should be used instead of downloading")
 
 if(NOT WEBKIT_VERSION)
-  set(WEBKIT_VERSION 8400ec68b2649d7b95f10576ad648c3aa8a92b77)
+  set(WEBKIT_VERSION 1d0216219a3c52cb85195f48f19ba7d5db747ff7)
 endif()
 
 string(SUBSTRING ${WEBKIT_VERSION} 0 16 WEBKIT_VERSION_PREFIX)
@@ -28,6 +28,7 @@ if(WEBKIT_LOCAL)
     # make jsc-compile-debug jsc-copy-headers
     include_directories(
       ${WEBKIT_PATH}
+      ${WEBKIT_PATH}/JavaScriptCore/Headers
       ${WEBKIT_PATH}/JavaScriptCore/Headers/JavaScriptCore
       ${WEBKIT_PATH}/JavaScriptCore/PrivateHeaders
       ${WEBKIT_PATH}/bmalloc/Headers
@@ -90,7 +91,14 @@ if(EXISTS ${WEBKIT_PATH}/package.json)
   endif()
 endif()
 
-file(DOWNLOAD ${WEBKIT_DOWNLOAD_URL} ${CACHE_PATH}/${WEBKIT_FILENAME} SHOW_PROGRESS)
+file(
+  DOWNLOAD ${WEBKIT_DOWNLOAD_URL} ${CACHE_PATH}/${WEBKIT_FILENAME} SHOW_PROGRESS
+  STATUS WEBKIT_DOWNLOAD_STATUS
+)
+if(NOT "${WEBKIT_DOWNLOAD_STATUS}" MATCHES "^0;")
+  message(FATAL_ERROR "Failed to download WebKit: ${WEBKIT_DOWNLOAD_STATUS}")
+endif()
+
 file(ARCHIVE_EXTRACT INPUT ${CACHE_PATH}/${WEBKIT_FILENAME} DESTINATION ${CACHE_PATH} TOUCH)
 file(REMOVE ${CACHE_PATH}/${WEBKIT_FILENAME})
 file(REMOVE_RECURSE ${WEBKIT_PATH})

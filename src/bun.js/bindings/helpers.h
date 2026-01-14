@@ -208,14 +208,14 @@ static const WTF::String toStringCopy(ZigString str)
             return WTF::String();
         }
         memcpy(out.data(), untag(str.ptr), str.len * sizeof(char16_t));
-        return WTF::String(WTFMove(impl));
+        return WTF::String(WTF::move(impl));
     } else {
         std::span<Latin1Character> out;
         auto impl = WTF::StringImpl::tryCreateUninitialized(str.len, out);
         if (!impl) [[unlikely]]
             return WTF::String();
         memcpy(out.data(), untag(str.ptr), str.len * sizeof(Latin1Character));
-        return WTF::String(WTFMove(impl));
+        return WTF::String(WTF::move(impl));
     }
 }
 

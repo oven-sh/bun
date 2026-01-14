@@ -18,6 +18,7 @@ pub const CopyFile = struct {
     globalThis: *JSGlobalObject,
 
     mkdirp_if_not_exists: bool = false,
+    destination_mode: ?bun.Mode = null,
 
     pub const ResultType = anyerror!SizeType;
 
@@ -31,6 +32,7 @@ pub const CopyFile = struct {
         max_len: SizeType,
         globalThis: *JSGlobalObject,
         mkdirp_if_not_exists: bool,
+        destination_mode: ?bun.Mode,
     ) *CopyFilePromiseTask {
         const read_file = bun.new(CopyFile, CopyFile{
             .store = store,
@@ -41,6 +43,7 @@ pub const CopyFile = struct {
             .destination_file_store = store.data.file,
             .source_file_store = source_store.data.file,
             .mkdirp_if_not_exists = mkdirp_if_not_exists,
+            .destination_mode = destination_mode,
         });
         store.ref();
         source_store.ref();
@@ -97,6 +100,24 @@ pub const CopyFile = struct {
     pub fn doClose(this: *CopyFile) void {
         const close_input = this.destination_file_store.pathlike != .fd and this.destination_fd != bun.invalid_fd;
         const close_output = this.source_file_store.pathlike != .fd and this.source_fd != bun.invalid_fd;
+
+        // Apply destination mode using fchmod before closing (for POSIX platforms)
+        // This ensures mode is applied even when overwriting existing files, since
+        // open()'s mode argument only affects newly created files.
+        // On macOS clonefile path, chmod is called separately after clonefile.
+        // On Windows, this is handled via async uv_fs_chmod.
+        if (comptime !Environment.isWindows) {
+            if (this.destination_mode) |mode| {
+                if (this.destination_fd != bun.invalid_fd and this.system_error == null) {
+                    switch (bun.sys.fchmod(this.destination_fd, mode)) {
+                        .err => |err| {
+                            this.system_error = err.toSystemError();
+                        },
+                        .result => {},
+                    }
+                }
+            }
+        }
 
         if (close_input and close_output) {
             this.doCloseFile(.both);
@@ -155,10 +176,11 @@ pub const CopyFile = struct {
         if (which == .both or which == .destination) {
             while (true) {
                 const dest = this.destination_file_store.pathlike.path.sliceZ(&path_buf1);
+                const mode = this.destination_mode orelse jsc.Node.fs.default_permission;
                 this.destination_fd = switch (bun.sys.open(
                     dest,
                     open_destination_flags,
-                    jsc.Node.fs.default_permission,
+                    mode,
                 )) {
                     .result => |result| switch (result.makeLibUVOwnedForSyscall(.open, .close_on_fail)) {
                         .result => |result_fd| result_fd,
@@ -446,6 +468,16 @@ pub const CopyFile = struct {
                             } else {
                                 this.read_len = @as(SizeType, @intCast(stat_.?.size));
                             }
+                            // Apply destination mode if specified (clonefile copies source permissions)
+                            if (this.destination_mode) |mode| {
+                                switch (bun.sys.chmod(this.destination_file_store.pathlike.path.sliceZ(&path_buf), mode)) {
+                                    .err => |err| {
+                                        this.system_error = err.toSystemError();
+                                        return;
+                                    },
+                                    .result => {},
+                                }
+                            }
                             return;
                         } else |_| {
 
@@ -578,9 +610,13 @@ pub const CopyFileWindows = struct {
     io_request: libuv.fs_t = std.mem.zeroes(libuv.fs_t),
     promise: jsc.JSPromise.Strong = .{},
     mkdirp_if_not_exists: bool = false,
+    destination_mode: ?bun.Mode = null,
     event_loop: *jsc.EventLoop,
 
     size: Blob.SizeType = Blob.max_size,
+
+    /// Bytes written, stored for use after async chmod completes
+    written_bytes: usize = 0,
 
     /// For mkdirp
     err: ?bun.sys.Error = null,
@@ -791,6 +827,7 @@ pub const CopyFileWindows = struct {
         event_loop: *jsc.EventLoop,
         mkdirp_if_not_exists: bool,
         size_: Blob.SizeType,
+        destination_mode: ?bun.Mode,
     ) jsc.JSValue {
         destination_file_store.ref();
         source_file_store.ref();
@@ -801,6 +838,7 @@ pub const CopyFileWindows = struct {
             .io_request = std.mem.zeroes(libuv.fs_t),
             .event_loop = event_loop,
             .mkdirp_if_not_exists = mkdirp_if_not_exists,
+            .destination_mode = destination_mode,
             .size = size_,
         });
         const promise = result.promise.value();
@@ -1055,6 +1093,66 @@ pub const CopyFileWindows = struct {
             this.truncate();
             written = @intCast(this.size);
         }
+
+        // Apply destination mode if specified (async)
+        if (this.destination_mode) |mode| {
+            if (this.destination_file_store.data.file.pathlike == .path) {
+                this.written_bytes = written;
+                var pathbuf: bun.PathBuffer = undefined;
+                const path = this.destination_file_store.data.file.pathlike.path.sliceZ(&pathbuf);
+                const loop = this.event_loop.virtual_machine.event_loop_handle.?;
+                this.io_request.deinit();
+                this.io_request = std.mem.zeroes(libuv.fs_t);
+                this.io_request.data = @ptrCast(this);
+
+                const rc = libuv.uv_fs_chmod(
+                    loop,
+                    &this.io_request,
+                    path,
+                    @intCast(mode),
+                    &onChmod,
+                );
+
+                if (rc.errno()) |errno| {
+                    // chmod failed to start - reject the promise to report the error
+                    var err = bun.sys.Error.fromCode(@enumFromInt(errno), .chmod);
+                    const destination = &this.destination_file_store.data.file;
+                    if (destination.pathlike == .path) {
+                        err = err.withPath(destination.pathlike.path.slice());
+                    }
+                    this.throw(err);
+                    return;
+                }
+                this.event_loop.refConcurrently();
+                return;
+            }
+        }
+
+        this.resolvePromise(written);
+    }
+
+    fn onChmod(req: *libuv.fs_t) callconv(.c) void {
+        var this: *CopyFileWindows = @fieldParentPtr("io_request", req);
+        bun.assert(req.data == @as(?*anyopaque, @ptrCast(this)));
+
+        var event_loop = this.event_loop;
+        event_loop.unrefConcurrently();
+
+        const rc = req.result;
+        if (rc.errEnum()) |errno| {
+            var err = bun.sys.Error.fromCode(errno, .chmod);
+            const destination = &this.destination_file_store.data.file;
+            if (destination.pathlike == .path) {
+                err = err.withPath(destination.pathlike.path.slice());
+            }
+            this.throw(err);
+            return;
+        }
+
+        this.resolvePromise(this.written_bytes);
+    }
+
+    fn resolvePromise(this: *CopyFileWindows, written: usize) void {
         const globalThis = this.event_loop.global;
         const promise = this.promise.swap();
         var event_loop = this.event_loop;

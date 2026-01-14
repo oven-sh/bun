@@ -56,7 +56,7 @@ public:
     void namespaceObject(JSC::VM& vm, JSModuleNamespaceObject* value) { m_namespaceObject.set(vm, this, value); }
 
     const WTF::Vector<NodeVMModuleRequest>& moduleRequests() const { return m_moduleRequests; }
-    void addModuleRequest(NodeVMModuleRequest request) { m_moduleRequests.append(WTFMove(request)); }
+    void addModuleRequest(NodeVMModuleRequest request) { m_moduleRequests.append(WTF::move(request)); }
 
     // Purposely not virtual. Dispatches to the correct subclass.
     JSValue createModuleRecord(JSC::JSGlobalObject* globalObject);

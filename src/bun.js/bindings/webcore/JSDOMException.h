@@ -34,7 +34,7 @@ public:
     using Base = JSDOMWrapper<DOMException>;
     static JSDOMException* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<DOMException>&& impl)
     {
-        JSDOMException* ptr = new (NotNull, JSC::allocateCell<JSDOMException>(globalObject->vm())) JSDOMException(structure, *globalObject, WTFMove(impl));
+        JSDOMException* ptr = new (NotNull, JSC::allocateCell<JSDOMException>(globalObject->vm())) JSDOMException(structure, *globalObject, WTF::move(impl));
         ptr->finishCreation(globalObject->vm());
         return ptr;
     }

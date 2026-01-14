@@ -828,9 +828,10 @@ function rejects(
   error: nodeAssert.AssertPredicate,
   message?: string | Error,
 ): Promise<void>;
-assert.rejects = async function rejects(promiseFn: () => Promise<unknown>, ...args: any[]): Promise<void> {
-  expectsError(rejects, await waitForActual(promiseFn), ...args);
-};
+async function rejects(block: (() => Promise<unknown>) | Promise<unknown>, ...args: any[]): Promise<void> {
+  expectsError(rejects, await waitForActual(block), ...args);
+}
+assert.rejects = rejects;
 
 /**
  * Asserts that the function `fn` does not throw an error.

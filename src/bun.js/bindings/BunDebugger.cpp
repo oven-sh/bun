@@ -280,7 +280,7 @@ public:
             }
 
             for (auto message : messages) {
-                dispatcher.dispatchMessageFromRemote(WTFMove(message));
+                dispatcher.dispatchMessageFromRemote(WTF::move(message));
 
                 if (!debugger) {
                     debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(globalObject->debugger());
@@ -293,7 +293,7 @@ public:
             }
         } else {
             for (auto message : messages) {
-                dispatcher.dispatchMessageFromRemote(WTFMove(message));
+                dispatcher.dispatchMessageFromRemote(WTF::move(message));
             }
         }
 
@@ -461,7 +461,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSend, (JSC::JSGlobalObject * globalObject, JS
             messages.append(value.toWTFString(globalObject).isolatedCopy());
             return true;
         });
-        jsConnection->connection()->sendMessageToInspectorFromDebuggerThread(WTFMove(messages));
+        jsConnection->connection()->sendMessageToInspectorFromDebuggerThread(WTF::move(messages));
     }
 
     return JSValue::encode(jsUndefined());

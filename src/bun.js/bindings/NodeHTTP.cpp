@@ -115,14 +115,14 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
     {
         std::string_view fullURLStdStr = request->getFullUrl();
         String fullURL = String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const Latin1Character*>(fullURLStdStr.data()), fullURLStdStr.length() });
-        args.append(jsString(vm, WTFMove(fullURL)));
+        args.append(jsString(vm, WTF::move(fullURL)));
     }
 
     // Get the method.
     if (methodString.isUndefinedOrNull()) [[unlikely]] {
         std::string_view methodView = request->getMethod();
         WTF::String methodString = String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const Latin1Character*>(methodView.data()), methodView.length() });
-        args.append(jsString(vm, WTFMove(methodString)));
+        args.append(jsString(vm, WTF::move(methodString)));
     } else {
         args.append(methodString);
     }
@@ -216,7 +216,7 @@ static EncodedJSValue assignHeadersFromUWebSockets(uWS::HttpRequest* request, JS
         std::string_view fullURLStdStr = request->getFullUrl();
         String fullURL = String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const Latin1Character*>(fullURLStdStr.data()), fullURLStdStr.length() });
         PutPropertySlot slot(objectValue, false);
-        objectValue->put(objectValue, globalObject, builtinNames.urlPublicName(), jsString(vm, WTFMove(fullURL)), slot);
+        objectValue->put(objectValue, globalObject, builtinNames.urlPublicName(), jsString(vm, WTF::move(fullURL)), slot);
         RETURN_IF_EXCEPTION(scope, {});
     }
 
@@ -473,6 +473,15 @@ static EncodedJSValue NodeHTTPServer__onRequest(
         args.append(jsUndefined());
     }
     args.append(jsBoolean(request->isAncient()));
+
+    // Pass pipelined data (head buffer) for Node.js compat (connect/upgrade events)
+    if (!request->head.empty()) {
+        JSC::JSUint8Array* headBuffer = WebCore::createBuffer(globalObject, std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(request->head.data()), request->head.size()));
+        RETURN_IF_EXCEPTION(scope, {});
+        args.append(headBuffer);
+    } else {
+        args.append(jsUndefined());
+    }
 
     JSValue returnValue = AsyncContextFrame::profiledCall(globalObject, callbackObject, jsUndefined(), args);
     RETURN_IF_EXCEPTION(scope, {});

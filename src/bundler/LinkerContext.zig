@@ -4,6 +4,7 @@ pub const LinkerContext = struct {
 
     pub const OutputFileListBuilder = @import("./linker_context/OutputFileListBuilder.zig");
     pub const StaticRouteVisitor = @import("./linker_context/StaticRouteVisitor.zig");
+    pub const MetafileBuilder = @import("./linker_context/MetafileBuilder.zig");
 
     parse_graph: *Graph = undefined,
     graph: LinkerGraph = undefined,
@@ -69,6 +70,7 @@ pub const LinkerContext = struct {
         css_chunking: bool = false,
         source_maps: options.SourceMapOption = .none,
         target: options.Target = .browser,
+        metafile: bool = false,
 
         mode: Mode = .bundle,
 

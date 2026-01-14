@@ -445,6 +445,9 @@ pub fn SSLWrapper(comptime T: type) type {
                     log("triggering data callback (read {d}) and resetting read buffer", .{read});
                     // we filled the buffer
                     this.triggerDataCallback(buffer[0..read]);
+                    // The callback may have closed the connection - check before continuing
+                    // Check ssl first as a proxy for whether we were deinited
+                    if (this.ssl == null or this.flags.closed_notified) return false;
                     read = 0;
                 }
             }
@@ -452,6 +455,9 @@ pub fn SSLWrapper(comptime T: type) type {
             if (read > 0) {
                 log("triggering data callback (read {d})", .{read});
                 this.triggerDataCallback(buffer[0..read]);
+                // The callback may have closed the connection
+                // Check ssl first as a proxy for whether we were deinited
+                if (this.ssl == null or this.flags.closed_notified) return false;
             }
             return true;
         }

@@ -132,7 +132,7 @@ JSBunRequest* JSBunRequest::clone(JSC::VM& vm, JSGlobalObject* globalObject)
         if (auto* wrapper = jsDynamicCast<JSCookieMap*>(cookiesObject)) {
             auto cookieMap = wrapper->protectedWrapped();
             auto cookieMapClone = cookieMap->clone();
-            auto cookies = WebCore::toJSNewlyCreated(globalObject, jsCast<JSDOMGlobalObject*>(globalObject), WTFMove(cookieMapClone));
+            auto cookies = WebCore::toJSNewlyCreated(globalObject, jsCast<JSDOMGlobalObject*>(globalObject), WTF::move(cookieMapClone));
             clone->setCookies(cookies.getObject());
         }
     }
@@ -266,7 +266,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsJSBunRequestGetCookies, (JSC::JSGlobalObject * global
         auto cookieMap = cookieMapResult.releaseReturnValue();
 
         // Convert to JS
-        auto cookies = WebCore::toJSNewlyCreated(globalObject, jsCast<JSDOMGlobalObject*>(globalObject), WTFMove(cookieMap));
+        auto cookies = WebCore::toJSNewlyCreated(globalObject, jsCast<JSDOMGlobalObject*>(globalObject), WTF::move(cookieMap));
         RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
         request->setCookies(cookies.getObject());
         return JSValue::encode(cookies);

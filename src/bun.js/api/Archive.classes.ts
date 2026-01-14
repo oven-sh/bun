@@ -8,10 +8,6 @@ export default [
     configurable: false,
     JSType: "0b11101110",
     klass: {
-      from: {
-        fn: "from",
-        length: 1,
-      },
       write: {
         fn: "write",
         length: 2,
@@ -20,7 +16,7 @@ export default [
     proto: {
       extract: {
         fn: "extract",
-        length: 1,
+        length: 2,
       },
       blob: {
         fn: "blob",

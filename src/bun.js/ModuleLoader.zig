@@ -30,27 +30,6 @@ pub fn resetArena(this: *ModuleLoader, jsc_vm: *VirtualMachine) void {
     }
 }
 
-fn resolveEmbeddedNodeFileViaMemfd(file: *bun.StandaloneModuleGraph.File, path_buffer: *bun.PathBuffer, fd: *i32) ![]const u8 {
-    var label_buf: [128]u8 = undefined;
-    const count = struct {
-        pub var counter = std.atomic.Value(u32).init(0);
-        pub fn get() u32 {
-            return counter.fetchAdd(1, .seq_cst);
-        }
-    }.get();
-    const label = std.fmt.bufPrintZ(&label_buf, "node-addon-{d}", .{count}) catch "";
-    const memfd = try bun.sys.memfd_create(label, .executable).unwrap();
-    errdefer memfd.close();
-
-    fd.* = @intCast(memfd.cast());
-    errdefer fd.* = -1;
-
-    try bun.sys.ftruncate(memfd, @intCast(file.contents.len)).unwrap();
-    try bun.sys.File.writeAll(.{ .handle = memfd }, file.contents).unwrap();
-
-    return try std.fmt.bufPrint(path_buffer, "/proc/self/fd/{d}", .{memfd.cast()});
-}
-
 pub fn resolveEmbeddedFile(vm: *VirtualMachine, path_buf: *bun.PathBuffer, linux_memfd: *i32, input_path: []const u8, extname: []const u8) ?[]const u8 {
     if (input_path.len == 0) return null;
     var graph = vm.standalone_module_graph orelse return null;

@@ -66,12 +66,14 @@ fn requestInspectorActivation() void {
 /// This handles the case where the VM is idle (waiting on I/O).
 /// For active JS execution (including infinite loops), the StopTheWorld callback handles it.
 pub fn checkAndActivateInspector() void {
-    if (Bun__activateInspector()) {
-        // Clear the StopTheWorld trap. When the VM was idle, requestStopAll set a trap
-        // but m_numberOfActiveVMs was 0. If we don't clear it, the next JS execution
-        // would hit the trap and deadlock.
-        jsc.VMManager.requestResumeAll(.JSDebugger);
+    if (!inspector_activation_requested.load(.acquire)) {
+        return;
     }
+    // Always clear the trap when we handle the request, regardless of whether
+    // activation succeeded. This prevents leaving a stale trap when the debugger
+    // is already active (e.g., second SIGUSR1).
+    _ = Bun__activateInspector();
+    jsc.VMManager.requestResumeAll(.JSDebugger);
 }
 
 fn activateInspector(vm: *VirtualMachine) !void {

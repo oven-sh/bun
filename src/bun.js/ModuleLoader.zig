@@ -56,14 +56,13 @@ pub fn resolveEmbeddedFile(vm: *VirtualMachine, path_buf: *bun.PathBuffer, linux
     var graph = vm.standalone_module_graph orelse return null;
     const file = graph.find(input_path) orelse return null;
 
-    if (comptime Environment.isLinux) {
-        // Best-effort: use memfd to avoid hitting the disk
-        if (resolveEmbeddedNodeFileViaMemfd(file, path_buf, linux_memfd)) |path| {
-            return path;
-        } else |_| {
-            // fall back to temp file
-        }
-    }
+    // Note: We previously used memfd_create on Linux as an optimization to avoid
+    // writing to disk. However, this caused issues when loading multiple native
+    // modules: the memfd file descriptor would be closed after dlopen, allowing
+    // the fd number to be reused. Since dlopen caches by path (/proc/self/fd/N),
+    // it would return the wrong cached handle for subsequent modules.
+    // See: https://github.com/oven-sh/bun/issues/26045
+    _ = linux_memfd;
 
     // atomically write to a tmpfile and then move it to the final destination
     const tmpname_buf = bun.path_buffer_pool.get();

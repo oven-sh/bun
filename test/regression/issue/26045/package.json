@@ -1,0 +1,15 @@
+{
+  "name": "napi-repro-26045",
+  "version": "1.0.0",
+  "dependencies": {
+    "module-a": "file:./module-a",
+    "module-b": "file:./module-b"
+  },
+  "devDependencies": {
+    "node-gyp": "^11.2.0"
+  },
+  "trustedDependencies": [
+    "module-a",
+    "module-b"
+  ]
+}

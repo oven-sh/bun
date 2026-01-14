@@ -2071,9 +2071,9 @@ pub fn createBunStdout(globalThis: *jsc.JSGlobalObject) callconv(.c) jsc.JSValue
 
 const Braces = @import("../../shell/braces.zig");
 const Which = @import("../../which.zig");
-const wrap_ansi = @import("../../string/immutable/wrap_ansi.zig");
 const options = @import("../../options.zig");
 const std = @import("std");
+const wrap_ansi = @import("../../string/immutable/wrap_ansi.zig");
 const zlib = @import("../../zlib.zig");
 const Editor = @import("../../open.zig").Editor;
 const URL = @import("../../url.zig").URL;

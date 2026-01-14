@@ -6,9 +6,6 @@
 /// - Supports SGR (colors, styles) and OSC 8 (hyperlinks)
 /// - Compatible with NPM's wrap-ansi library
 const std = @import("std");
-const bun = @import("bun");
-const visible = @import("visible.zig");
-const strings = bun.strings;
 
 pub const WrapOptions = struct {
     hard: bool = false,
@@ -602,3 +599,8 @@ test "hard wrap" {
 
     try std.testing.expectEqualStrings("abc\ndef\ngh", result);
 }
+
+const visible = @import("./visible.zig");
+
+const bun = @import("bun");
+const strings = bun.strings;

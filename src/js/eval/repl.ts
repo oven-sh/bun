@@ -29,11 +29,17 @@ function colorize(text: string, color: string): string {
   return color ? `${color}${text}${colors.reset}` : text;
 }
 
-// History file path
-const historyPath = path.join(os.homedir(), ".bun_repl_history");
+// History file path - handle edge case where homedir() returns empty string
+const homeDir = os.homedir();
+const historyPath = homeDir ? path.join(homeDir, ".bun_repl_history") : "";
 const maxHistorySize = 1000;
 
+// Debounce timer for history saves
+let historySaveTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingHistory: string[] | null = null;
+
 function loadHistory(): string[] {
+  if (!historyPath) return [];
   try {
     if (fs.existsSync(historyPath)) {
       const content = fs.readFileSync(historyPath, "utf-8");
@@ -45,12 +51,40 @@ function loadHistory(): string[] {
   return [];
 }
 
-function saveHistory(history: string[]): void {
+function saveHistoryImmediate(history: string[]): void {
+  if (!historyPath) return;
   try {
     const toSave = history.slice(-maxHistorySize);
     fs.writeFileSync(historyPath, toSave.join("\n") + "\n");
   } catch {
     // Ignore errors saving history
+  }
+}
+
+function saveHistory(history: string[]): void {
+  // Debounce history writes - save after 1 second of inactivity
+  pendingHistory = history;
+  if (historySaveTimer) {
+    clearTimeout(historySaveTimer);
+  }
+  historySaveTimer = setTimeout(() => {
+    if (pendingHistory) {
+      saveHistoryImmediate(pendingHistory);
+      pendingHistory = null;
+    }
+    historySaveTimer = null;
+  }, 1000);
+}
+
+function flushHistory(): void {
+  // Flush any pending history writes immediately
+  if (historySaveTimer) {
+    clearTimeout(historySaveTimer);
+    historySaveTimer = null;
+  }
+  if (pendingHistory) {
+    saveHistoryImmediate(pendingHistory);
+    pendingHistory = null;
   }
 }
 
@@ -328,6 +362,7 @@ function startRepl(): void {
   });
 
   rl.on("close", () => {
+    flushHistory();
     console.log();
     process.exit(0);
   });

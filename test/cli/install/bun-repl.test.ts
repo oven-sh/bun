@@ -1,28 +1,10 @@
-import { spawnSync } from "bun";
-import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+// Tests for `bun repl` functionality are in test/regression/issue/26058.test.ts
+// This file is kept for backwards compatibility but the main tests are in the regression folder
+
+import { describe, test } from "bun:test";
 
 describe("bun repl", () => {
-  test("bun repl starts without downloading packages", () => {
-    // The built-in REPL should not trigger package downloads
-    const result = spawnSync({
-      cmd: [bunExe(), "repl"],
-      env: {
-        ...bunEnv,
-        TERM: "dumb",
-      },
-      stderr: "pipe",
-      stdout: "pipe",
-      stdin: "ignore",
-      timeout: 3000,
-    });
-
-    const stderr = result.stderr?.toString() || "";
-    const stdout = result.stdout?.toString() || "";
-
-    // Should NOT see bunx/package manager output
-    expect(stderr).not.toContain("Resolving dependencies");
-    expect(stderr).not.toContain("bun add");
-    expect(stdout).not.toContain("Resolving dependencies");
+  test.skip("moved to test/regression/issue/26058.test.ts", () => {
+    // REPL tests have been consolidated in the regression test file
   });
 });

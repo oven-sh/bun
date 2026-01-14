@@ -197,9 +197,10 @@ const CrossChunkDependencies = struct {
                     }
                 }
 
+                const wrapper_ref = deps.wrapper_refs[chunk.entry_point.source_index];
+
                 // Ensure "exports" is included if the current output format needs it
                 if (flags.force_include_exports_for_entry_point) {
-                    const wrapper_ref = deps.wrapper_refs[chunk.entry_point.source_index];
                     if (!wrapper_ref.eql(Ref.None)) {
                         imports.put(wrapper_ref, {}) catch unreachable;
                     }
@@ -207,7 +208,6 @@ const CrossChunkDependencies = struct {
 
                 // Include the wrapper if present
                 if (flags.wrap != .none) {
-                    const wrapper_ref = deps.wrapper_refs[chunk.entry_point.source_index];
                     if (!wrapper_ref.eql(Ref.None)) {
                         imports.put(wrapper_ref, {}) catch unreachable;
                     }

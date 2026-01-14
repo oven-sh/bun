@@ -301,5 +301,73 @@ describe("bundler", () => {
         };
       });
     }
+
+    // Test that onLoad is called for different namespaces with same path
+    itBundled("plugin/NamespaceOnLoadCalled", ({ root }) => {
+      const callOrder: string[] = [];
+
+      return {
+        files: {
+          "index.ts": /* ts */ `
+            import { value1 } from "module1";
+            import { value2 } from "module2";
+            console.log(value1, value2);
+          `,
+        },
+        plugins: [
+          {
+            name: "pluginA",
+            setup(builder) {
+              // Resolve module1 to namespace plugin-a
+              builder.onResolve({ filter: /^module1$/ }, args => {
+                callOrder.push("pluginA-resolve");
+                return {
+                  path: "shared-path.js",
+                  namespace: "plugin-a",
+                };
+              });
+            },
+          },
+          {
+            name: "pluginB",
+            setup(builder) {
+              // Resolve module2 to namespace plugin-b
+              builder.onResolve({ filter: /^module2$/ }, args => {
+                callOrder.push("pluginB-resolve");
+                return {
+                  path: "shared-path.js",
+                  namespace: "plugin-b",
+                };
+              });
+
+              // Handle onLoad for namespace plugin-a
+              builder.onLoad({ filter: /.*/, namespace: "plugin-a" }, args => {
+                callOrder.push("pluginB-load-a");
+                return {
+                  contents: 'export const value1 = "from plugin-a namespace";',
+                  loader: "js",
+                };
+              });
+
+              // Handle onLoad for namespace plugin-b
+              builder.onLoad({ filter: /.*/, namespace: "plugin-b" }, args => {
+                callOrder.push("pluginB-load-b");
+                return {
+                  contents: 'export const value2 = "from plugin-b namespace";',
+                  loader: "js",
+                };
+              });
+            },
+          },
+        ],
+        run: {
+          stdout: "from plugin-a namespace from plugin-b namespace",
+        },
+        onAfterBundle() {
+          // Both onLoad callbacks should have been called with their respective namespaces
+          expect(callOrder).toEqual(["pluginA-resolve", "pluginB-resolve", "pluginB-load-a", "pluginB-load-b"]);
+        },
+      };
+    });
   });
 });

@@ -6,38 +6,21 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 describe("issue #26058 - bun repl startup time", () => {
-  test("bun repl command is recognized", () => {
-    // Just verify the command is recognized (doesn't require TTY)
-    // The REPL itself requires a TTY to run interactively
-    const result = spawnSync({
-      cmd: [bunExe(), "repl", "--help"],
-      env: bunEnv,
-      stderr: "pipe",
-      stdout: "pipe",
-    });
-
-    // The REPL doesn't have a --help flag, but it should at least start
-    // (it will wait for input and then exit if no TTY)
-    // Exit code 0 or early termination is expected
-    expect(result.exitCode).toBeDefined();
-  });
-
-  test("bun repl does not print 'Resolving dependencies'", () => {
+  test("bun repl starts without downloading packages", () => {
     // The key indicator that bunx is being used is the "Resolving dependencies" message
     // Our built-in REPL should not print this
 
-    // Use timeout to prevent hanging
+    // Use timeout to prevent hanging since REPL requires TTY for interactive input
     const result = spawnSync({
       cmd: [bunExe(), "repl"],
       env: {
         ...bunEnv,
-        // Ensure no TTY simulation
         TERM: "dumb",
       },
       stderr: "pipe",
       stdout: "pipe",
       stdin: "ignore",
-      timeout: 2000, // 2 second timeout - plenty for built-in REPL to start
+      timeout: 3000,
     });
 
     const stderr = result.stderr?.toString() || "";
@@ -48,8 +31,8 @@ describe("issue #26058 - bun repl startup time", () => {
     expect(stderr).not.toContain("bun add");
     expect(stdout).not.toContain("Resolving dependencies");
 
-    // The built-in REPL should print "Welcome to Bun" if it starts
-    // Note: Without a TTY, it may exit immediately or wait indefinitely
-    // The important thing is it doesn't try to use bunx
+    // The built-in REPL should print "Welcome to Bun" when starting
+    // Even without a TTY, the welcome message should appear in stdout
+    expect(stdout).toContain("Welcome to Bun");
   });
 });

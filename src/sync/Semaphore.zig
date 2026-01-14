@@ -10,27 +10,27 @@
 
 const Semaphore = @This();
 
-ptr: *anyopaque,
+#ptr: *anyopaque,
 
 pub fn init() ?Semaphore {
     const ptr = Bun__Semaphore__create(0) orelse return null;
-    return .{ .ptr = ptr };
+    return .{ .#ptr = ptr };
 }
 
 pub fn deinit(self: Semaphore) void {
-    Bun__Semaphore__destroy(self.ptr);
+    Bun__Semaphore__destroy(self.#ptr);
 }
 
 /// Signal the semaphore, waking one waiting thread.
 /// This is async-signal-safe and can be called from signal handlers.
 pub fn post(self: Semaphore) bool {
-    return Bun__Semaphore__signal(self.ptr);
+    return Bun__Semaphore__signal(self.#ptr);
 }
 
 /// Wait for the semaphore to be signaled.
 /// Blocks until another thread calls post().
 pub fn wait(self: Semaphore) bool {
-    return Bun__Semaphore__wait(self.ptr);
+    return Bun__Semaphore__wait(self.#ptr);
 }
 
 extern fn Bun__Semaphore__create(value: c_uint) ?*anyopaque;

@@ -279,7 +279,6 @@ describe("bundler", () => {
     },
   });
   itBundled("splitting/ReExportESBuildIssue273", {
-    todo: true,
     files: {
       "/a.js": `export const a = { value: 1 }`,
       "/b.js": `export { a } from './a'`,

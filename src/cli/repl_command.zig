@@ -9,7 +9,10 @@ pub const ReplCommand = struct {
         const temp_dir = bun.fs.FileSystem.RealFS.platformTempDir();
 
         // Create unique temp file name with PID to avoid collisions
-        const pid = std.os.linux.getpid();
+        const pid = if (bun.Environment.isWindows)
+            std.os.windows.GetCurrentProcessId()
+        else
+            std.c.getpid();
         var temp_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         const temp_path = std.fmt.bufPrint(&temp_path_buf, "{s}/bun-repl-{d}.ts", .{ temp_dir, pid }) catch {
             Output.prettyErrorln("<r><red>error<r>: Could not create temp path", .{});

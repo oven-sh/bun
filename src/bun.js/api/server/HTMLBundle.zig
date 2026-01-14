@@ -282,11 +282,12 @@ pub const Route = struct {
         if (!is_development) {
             bun.handleOom(config.define.put("process.env.NODE_ENV", "\"production\""));
             config.jsx.development = false;
+            config.source_map = .none;
         } else {
             config.force_node_env = .development;
             config.jsx.development = true;
+            config.source_map = .linked;
         }
-        config.source_map = .linked;
 
         const completion_task = try bun.BundleV2.createAndScheduleCompletionTask(
             config,

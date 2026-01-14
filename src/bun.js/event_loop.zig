@@ -290,7 +290,9 @@ pub fn runImminentGCTimer(this: *EventLoop) void {
 pub fn tickConcurrentWithCount(this: *EventLoop) usize {
     this.updateCounts();
 
-    RuntimeInspector.checkAndActivateInspector(this.virtual_machine);
+    if (this.virtual_machine.is_main_thread) {
+        RuntimeInspector.checkAndActivateInspector();
+    }
 
     if (comptime Environment.isPosix) {
         if (this.signal_handler) |signal_handler| {

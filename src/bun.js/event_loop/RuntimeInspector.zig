@@ -65,34 +65,13 @@ fn requestInspectorActivation() void {
 /// Called from main thread during event loop tick.
 /// This handles the case where the VM is idle (waiting on I/O).
 /// For active JS execution (including infinite loops), the StopTheWorld callback handles it.
-pub fn checkAndActivateInspector(vm: *VirtualMachine) void {
-    if (!inspector_activation_requested.swap(false, .acq_rel)) {
-        return;
+pub fn checkAndActivateInspector() void {
+    if (Bun__activateInspector()) {
+        // Clear the StopTheWorld trap. When the VM was idle, requestStopAll set a trap
+        // but m_numberOfActiveVMs was 0. If we don't clear it, the next JS execution
+        // would hit the trap and deadlock.
+        jsc.VMManager.requestResumeAll(.JSDebugger);
     }
-
-    log("Processing inspector activation request on main thread (event loop path)", .{});
-
-    // Clear any pending StopTheWorld request. This is critical for idle VMs:
-    // When the VM was idle, requestStopAll set a trap but m_numberOfActiveVMs was 0.
-    // If we don't clear the trap here, the next JS execution would hit the trap
-    // and deadlock (m_numberOfStoppedVMs=1 != m_numberOfActiveVMs=0).
-    jsc.VMManager.requestResumeAll(.JSDebugger);
-
-    if (vm.is_shutting_down) {
-        log("VM is shutting down, ignoring inspector activation request", .{});
-        return;
-    }
-
-    // Check if debugger is already active (prevents double activation)
-    if (vm.debugger != null) {
-        log("Debugger already active, ignoring activation request", .{});
-        return;
-    }
-
-    activateInspector(vm) catch |err| {
-        Output.prettyErrorln("Failed to activate inspector: {s}\n", .{@errorName(err)});
-        Output.flush();
-    };
 }
 
 fn activateInspector(vm: *VirtualMachine) !void {
@@ -349,46 +328,40 @@ export fn Bun__Sigusr1Handler__uninstall() void {
     uninstallForUserHandler();
 }
 
-/// Called from C++ StopTheWorld callback to check if inspector activation was requested.
-export fn Bun__checkInspectorActivationRequest() bool {
-    return inspector_activation_requested.load(.acquire);
-}
-
-/// Called from C++ StopTheWorld callback to activate the inspector.
-/// This runs on the main thread at a safe point after all VMs have stopped.
-export fn Bun__activateInspector(global: ?*jsc.JSGlobalObject) void {
-    _ = global; // The C++ callback may pass nullptr if VM is idle (no entry scope)
-    const vm = VirtualMachine.get();
-
-    // Clear the flag and activate if it was set
+/// Called from C++ StopTheWorld callback or event loop to activate the inspector.
+/// Returns true if inspector was activated, false if already active or not requested.
+export fn Bun__activateInspector() bool {
     if (!inspector_activation_requested.swap(false, .acq_rel)) {
-        return;
+        return false;
     }
 
-    log("Activating inspector from StopTheWorld callback", .{});
+    const vm = VirtualMachine.get();
+
+    log("Activating inspector", .{});
 
     if (vm.is_shutting_down) {
         log("VM is shutting down, ignoring inspector activation request", .{});
-        return;
+        return false;
     }
 
-    // Check if debugger is already active (prevents double activation)
     if (vm.debugger != null) {
         log("Debugger already active, ignoring activation request", .{});
-        return;
+        return false;
     }
 
     activateInspector(vm) catch |err| {
         Output.prettyErrorln("Failed to activate inspector: {s}\n", .{@errorName(err)});
         Output.flush();
+        return false;
     };
+
+    return true;
 }
 
 comptime {
     if (Environment.isPosix) {
         _ = Bun__Sigusr1Handler__uninstall;
     }
-    _ = Bun__checkInspectorActivationRequest;
     _ = Bun__activateInspector;
 }
 

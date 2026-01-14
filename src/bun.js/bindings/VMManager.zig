@@ -24,8 +24,7 @@ pub fn requestStopAll(reason: StopReason) void {
     VMManager__requestStopAll(reason);
 }
 
-/// Clear the pending stop request for the given reason.
-/// This resumes VMs that were stopped and clears the trap.
+/// Clear the pending stop request and resume all VMs.
 pub fn requestResumeAll(reason: StopReason) void {
     VMManager__requestResumeAll(reason);
 }

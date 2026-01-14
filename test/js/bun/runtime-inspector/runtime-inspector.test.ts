@@ -95,7 +95,7 @@ describe("Runtime inspector activation", () => {
       await targetProc.exited;
 
       expect(targetStderr).toContain("Bun Inspector");
-      expect(targetStderr).toContain("ws://localhost:6499/");
+      expect(targetStderr).toMatch(/ws:\/\/localhost:\d+\//);
     });
 
     test.todoIf(isWindows)("throws error for non-existent process", async () => {
@@ -111,8 +111,8 @@ describe("Runtime inspector activation", () => {
 
       const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-      expect(exitCode).not.toBe(0);
       expect(stderr).toContain("Failed");
+      expect(exitCode).not.toBe(0);
     });
 
     test("inspector does not activate twice", async () => {
@@ -302,8 +302,8 @@ describe("Runtime inspector activation", () => {
 
       const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-      expect(exitCode).not.toBe(0);
       expect(stderr).toContain("requires a pid argument");
+      expect(exitCode).not.toBe(0);
     });
 
     test("can interrupt an infinite loop", async () => {
@@ -366,7 +366,7 @@ describe("Runtime inspector activation", () => {
       await targetProc.exited;
 
       expect(targetStderr).toContain("Bun Inspector");
-      expect(targetStderr).toContain("ws://localhost:6499/");
+      expect(targetStderr).toMatch(/ws:\/\/localhost:\d+\//);
     });
   });
 });

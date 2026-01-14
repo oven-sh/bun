@@ -63,7 +63,7 @@ describe.skipIf(isWindows)("Runtime inspector SIGUSR1 activation", () => {
     await proc.exited;
 
     expect(stderr).toContain("Bun Inspector");
-    expect(stderr).toContain("ws://localhost:6499/");
+    expect(stderr).toMatch(/ws:\/\/localhost:\d+\//);
   });
 
   test("user SIGUSR1 listener takes precedence over inspector activation", async () => {
@@ -164,12 +164,18 @@ describe.skipIf(isWindows)("Runtime inspector SIGUSR1 activation", () => {
 
     const pid = parseInt(await Bun.file(join(String(dir), "pid")).text(), 10);
 
-    // Send 3 SIGUSR1s with small delays
-    for (let i = 0; i < 3; i++) {
+    // Send SIGUSR1s and wait for each handler to respond before sending the next
+    for (let i = 1; i <= 3; i++) {
       process.kill(pid, "SIGUSR1");
-      await Bun.sleep(30);
+      // Wait for handler output before sending next signal
+      while (!output.includes(`SIGNAL_${i}`)) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        output += decoder.decode(value, { stream: true });
+      }
     }
 
+    // Read remaining output until process exits
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;

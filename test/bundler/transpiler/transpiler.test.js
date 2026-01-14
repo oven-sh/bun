@@ -1521,57 +1521,62 @@ console.log(<div {...obj} key="after" />);`),
 
   describe("JSX inlining optimization", () => {
     it("inlines JSX elements with react-19", () => {
-      var bun = new Bun.Transpiler({
+      const bun = new Bun.Transpiler({
         loader: "jsx",
         jsxOptimizationInline: "react-19",
       });
-      expect(bun.transformSync("export var foo = <div>hello</div>")).toContain("$$typeof:");
-      expect(bun.transformSync("export var foo = <div>hello</div>")).toContain("$$typeof_19");
-      expect(bun.transformSync("export var foo = <div>hello</div>")).toContain('type: "div"');
-      expect(bun.transformSync("export var foo = <div>hello</div>")).toContain("props:");
+      const result = bun.transformSync("export var foo = <div>hello</div>");
+      expect(result).toContain("$$typeof:");
+      expect(result).toContain("$$typeof_19");
+      expect(result).toContain('type: "div"');
+      expect(result).toContain("props:");
     });
 
     it("inlines JSX elements with react-18", () => {
-      var bun = new Bun.Transpiler({
+      const bun = new Bun.Transpiler({
         loader: "jsx",
         jsxOptimizationInline: "react-18",
       });
-      expect(bun.transformSync("export var foo = <div>hello</div>")).toContain("$$typeof:");
-      expect(bun.transformSync("export var foo = <div>hello</div>")).toContain("$$typeof_18");
-      expect(bun.transformSync("export var foo = <div>hello</div>")).toContain('type: "div"');
+      const result = bun.transformSync("export var foo = <div>hello</div>");
+      expect(result).toContain("$$typeof:");
+      expect(result).toContain("$$typeof_18");
+      expect(result).toContain('type: "div"');
     });
 
     it("does not inline when spread props are present", () => {
-      var bun = new Bun.Transpiler({
+      const bun = new Bun.Transpiler({
         loader: "jsx",
         jsxOptimizationInline: "react-19",
       });
       // With spread, it should fall back to jsx call
-      expect(bun.transformSync("export var foo = <div {...props}>hello</div>")).not.toContain("$$typeof:");
-      expect(bun.transformSync("export var foo = <div {...props}>hello</div>")).toContain("jsx");
+      const result = bun.transformSync("export var foo = <div {...props}>hello</div>");
+      expect(result).not.toContain("$$typeof:");
+      expect(result).toContain("jsx");
     });
 
     it("does not inline when ref prop is present", () => {
-      var bun = new Bun.Transpiler({
+      const bun = new Bun.Transpiler({
         loader: "jsx",
         jsxOptimizationInline: "react-19",
       });
       // With ref, it should fall back to jsx call
-      expect(bun.transformSync("export var foo = <div ref={myRef}>hello</div>")).not.toContain("$$typeof:");
-      expect(bun.transformSync("export var foo = <div ref={myRef}>hello</div>")).toContain("jsx");
+      const result = bun.transformSync("export var foo = <div ref={myRef}>hello</div>");
+      expect(result).not.toContain("$$typeof:");
+      expect(result).toContain("jsx");
     });
 
     it("does not inline by default (no jsxOptimizationInline)", () => {
-      var bun = new Bun.Transpiler({
+      const bun = new Bun.Transpiler({
         loader: "jsx",
       });
       // Should use jsx/jsxDEV call by default
-      expect(bun.transformSync("export var foo = <div>hello</div>")).not.toContain("$$typeof:");
-      expect(bun.transformSync("export var foo = <div>hello</div>")).toContain("jsx");
+      const result = bun.transformSync("export var foo = <div>hello</div>");
+      expect(result).not.toContain("$$typeof:");
+      expect(result).toContain("jsx");
     });
 
     it("handles component tags with defaultProps", () => {
-      var bun = new Bun.Transpiler({
+      const bun = new Bun.Transpiler({
         loader: "jsx",
         jsxOptimizationInline: "react-19",
       });
@@ -1582,7 +1587,7 @@ console.log(<div {...obj} key="after" />);`),
     });
 
     it("handles key prop", () => {
-      var bun = new Bun.Transpiler({
+      const bun = new Bun.Transpiler({
         loader: "jsx",
         jsxOptimizationInline: "react-19",
       });

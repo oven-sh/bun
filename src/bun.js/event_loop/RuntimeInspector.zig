@@ -66,14 +66,36 @@ fn requestInspectorActivation() void {
 /// This handles the case where the VM is idle (waiting on I/O).
 /// For active JS execution (including infinite loops), the StopTheWorld callback handles it.
 pub fn checkAndActivateInspector() void {
-    if (!inspector_activation_requested.load(.acquire)) {
+    if (!inspector_activation_requested.swap(false, .acq_rel)) {
         return;
     }
-    // Always clear the trap when we handle the request, regardless of whether
-    // activation succeeded. This prevents leaving a stale trap when the debugger
-    // is already active (e.g., second SIGUSR1).
-    _ = Bun__activateInspector();
-    jsc.VMManager.requestResumeAll(.JSDebugger);
+
+    defer jsc.VMManager.requestResumeAll(.JSDebugger);
+    _ = tryActivateInspector();
+}
+
+/// Tries to activate the inspector. Returns true if activated, false otherwise.
+/// Caller must have already consumed the activation request flag.
+fn tryActivateInspector() bool {
+    const vm = VirtualMachine.get();
+
+    if (vm.is_shutting_down) {
+        log("VM is shutting down, ignoring inspector activation request", .{});
+        return false;
+    }
+
+    if (vm.debugger != null) {
+        log("Debugger already active, ignoring activation request", .{});
+        return false;
+    }
+
+    activateInspector(vm) catch |err| {
+        Output.prettyErrorln("Failed to activate inspector: {s}\n", .{@errorName(err)});
+        Output.flush();
+        return false;
+    };
+
+    return true;
 }
 
 fn activateInspector(vm: *VirtualMachine) !void {
@@ -330,34 +352,13 @@ export fn Bun__Sigusr1Handler__uninstall() void {
     uninstallForUserHandler();
 }
 
-/// Called from C++ StopTheWorld callback or event loop to activate the inspector.
+/// Called from C++ StopTheWorld callback.
 /// Returns true if inspector was activated, false if already active or not requested.
 export fn Bun__activateInspector() bool {
     if (!inspector_activation_requested.swap(false, .acq_rel)) {
         return false;
     }
-
-    const vm = VirtualMachine.get();
-
-    log("Activating inspector", .{});
-
-    if (vm.is_shutting_down) {
-        log("VM is shutting down, ignoring inspector activation request", .{});
-        return false;
-    }
-
-    if (vm.debugger != null) {
-        log("Debugger already active, ignoring activation request", .{});
-        return false;
-    }
-
-    activateInspector(vm) catch |err| {
-        Output.prettyErrorln("Failed to activate inspector: {s}\n", .{@errorName(err)});
-        Output.flush();
-        return false;
-    };
-
-    return true;
+    return tryActivateInspector();
 }
 
 comptime {

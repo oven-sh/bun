@@ -1519,16 +1519,35 @@ fn getOrPutResolvedPackage(
                         const ver_tag = version.tag;
                         if ((res_tag == .npm and ver_tag == .npm) or (res_tag == .git and ver_tag == .git) or (res_tag == .github and ver_tag == .github)) {
                             const existing_package = this.lockfile.packages.get(existing_id);
-                            this.log.addWarningFmt(
-                                null,
-                                logger.Loc.Empty,
-                                this.allocator,
-                                "incorrect peer dependency \"{f}@{f}\"",
-                                .{
-                                    existing_package.name.fmt(this.lockfile.buffers.string_bytes.items),
-                                    existing_package.resolution.fmt(this.lockfile.buffers.string_bytes.items, .auto),
-                                },
-                            ) catch unreachable;
+                            const buf = this.lockfile.buffers.string_bytes.items;
+                            if (findDependencyOwner(this, dependency_id)) |owner_id| {
+                                const owner_package = this.lockfile.packages.get(owner_id);
+                                this.log.addWarningFmt(
+                                    null,
+                                    logger.Loc.Empty,
+                                    this.allocator,
+                                    "\"{f}@{f}\" has incorrect peer dependency \"{f}@{f}\" (expected \"{f}\")",
+                                    .{
+                                        owner_package.name.fmt(buf),
+                                        owner_package.resolution.fmt(buf, .auto),
+                                        existing_package.name.fmt(buf),
+                                        existing_package.resolution.fmt(buf, .auto),
+                                        version.literal.fmt(buf),
+                                    },
+                                ) catch unreachable;
+                            } else {
+                                this.log.addWarningFmt(
+                                    null,
+                                    logger.Loc.Empty,
+                                    this.allocator,
+                                    "incorrect peer dependency \"{f}@{f}\" (expected \"{f}\")",
+                                    .{
+                                        existing_package.name.fmt(buf),
+                                        existing_package.resolution.fmt(buf, .auto),
+                                        version.literal.fmt(buf),
+                                    },
+                                ) catch unreachable;
+                            }
                             successFn(this, dependency_id, existing_id);
                             return .{
                                 // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
@@ -1556,16 +1575,35 @@ fn getOrPutResolvedPackage(
                         if ((res_tag == .npm and ver_tag == .npm) or (res_tag == .git and ver_tag == .git) or (res_tag == .github and ver_tag == .github)) {
                             const existing_package_id = list.items[0];
                             const existing_package = this.lockfile.packages.get(existing_package_id);
-                            this.log.addWarningFmt(
-                                null,
-                                logger.Loc.Empty,
-                                this.allocator,
-                                "incorrect peer dependency \"{f}@{f}\"",
-                                .{
-                                    existing_package.name.fmt(this.lockfile.buffers.string_bytes.items),
-                                    existing_package.resolution.fmt(this.lockfile.buffers.string_bytes.items, .auto),
-                                },
-                            ) catch unreachable;
+                            const buf = this.lockfile.buffers.string_bytes.items;
+                            if (findDependencyOwner(this, dependency_id)) |owner_id| {
+                                const owner_package = this.lockfile.packages.get(owner_id);
+                                this.log.addWarningFmt(
+                                    null,
+                                    logger.Loc.Empty,
+                                    this.allocator,
+                                    "\"{f}@{f}\" has incorrect peer dependency \"{f}@{f}\" (expected \"{f}\")",
+                                    .{
+                                        owner_package.name.fmt(buf),
+                                        owner_package.resolution.fmt(buf, .auto),
+                                        existing_package.name.fmt(buf),
+                                        existing_package.resolution.fmt(buf, .auto),
+                                        version.literal.fmt(buf),
+                                    },
+                                ) catch unreachable;
+                            } else {
+                                this.log.addWarningFmt(
+                                    null,
+                                    logger.Loc.Empty,
+                                    this.allocator,
+                                    "incorrect peer dependency \"{f}@{f}\" (expected \"{f}\")",
+                                    .{
+                                        existing_package.name.fmt(buf),
+                                        existing_package.resolution.fmt(buf, .auto),
+                                        version.literal.fmt(buf),
+                                    },
+                                ) catch unreachable;
+                            }
                             successFn(this, dependency_id, list.items[0]);
                             return .{
                                 // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
@@ -1860,6 +1898,18 @@ fn resolutionSatisfiesDependency(this: *PackageManager, resolution: Resolution, 
     }
 
     return false;
+}
+
+/// Find the package that owns a given dependency ID by searching through
+/// all packages' dependency slices.
+fn findDependencyOwner(this: *PackageManager, dependency_id: DependencyID) ?PackageID {
+    const pkg_deps = this.lockfile.packages.items(.dependencies);
+    for (pkg_deps, 0..) |deps, pkg_id| {
+        if (deps.contains(dependency_id)) {
+            return @intCast(pkg_id);
+        }
+    }
+    return null;
 }
 
 const string = []const u8;

@@ -7673,7 +7673,9 @@ describe("yarn tests", () => {
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("error:");
     expect(err).not.toContain("not found");
+    // Verify the improved peer dependency warning message format
     expect(err).toContain("incorrect peer dependency");
+    expect(err).toContain('"peer-deps-fixed@1.0.0" has incorrect peer dependency "no-deps@2.0.0" (expected "^1.0.0")');
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       expect.stringContaining("bun install v1."),
       "",

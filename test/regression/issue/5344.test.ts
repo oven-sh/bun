@@ -42,6 +42,7 @@ test("code splitting with re-exports between entry points should not produce dup
     ],
     env: bunEnv,
     cwd: String(dir),
+    stdout: "pipe",
     stderr: "pipe",
   });
 

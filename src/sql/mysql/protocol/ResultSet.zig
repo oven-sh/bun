@@ -264,9 +264,10 @@ const std = @import("std");
 const Data = @import("../../shared/Data.zig").Data;
 const SQLDataCell = @import("../../shared/SQLDataCell.zig").SQLDataCell;
 const SQLQueryResultMode = @import("../../shared/SQLQueryResultMode.zig").SQLQueryResultMode;
+const decodeLengthInt = @import("./EncodeInt.zig").decodeLengthInt;
+
 const DecodeBinaryValue = @import("./DecodeBinaryValue.zig");
 const decodeBinaryValue = DecodeBinaryValue.decodeBinaryValue;
-const decodeLengthInt = @import("./EncodeInt.zig").decodeLengthInt;
 
 const NewReader = @import("./NewReader.zig").NewReader;
 const decoderWrap = @import("./NewReader.zig").decoderWrap;

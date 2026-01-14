@@ -14,7 +14,7 @@ test("pglite should be able to query using pg-gateway and Bun.SQL", async () => 
   await db.waitReady;
 
   // Create a simple test table
-  await db.exec(`
+  await db.run(`
     CREATE TABLE IF NOT EXISTS test_table (
       id SERIAL PRIMARY KEY,
       name TEXT NOT NULL

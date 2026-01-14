@@ -53,10 +53,10 @@ describe("bundler", () => {
         name: "hello-world",
         setup(api) {
           api.onResolve({ filter: /hello:world/, namespace: "file" }, args => {
-            return {
-              path: args.path,
-              namespace: "hello",
-            };
+              return {
+                path: args.path,
+                namespace: "hello",
+              };
           });
           api.onLoad({ filter: /.*/, namespace: "hello" }, args => {
             return {
@@ -320,15 +320,24 @@ describe("bundler", () => {
   for (const additionalOptions of additionalOptionsIters) {
     const { bytecode = false, format, minify = false } = additionalOptions;
     const NODE_ENV = minify ? "'production'" : undefined;
-    itBundled("compile/ReactSSR" + (bytecode ? "+bytecode" : "") + "+" + format + (minify ? "+minify" : ""), {
-      install: ["react@19.2.0-canary-b94603b9-20250513", "react-dom@19.2.0-canary-b94603b9-20250513"],
-      format,
-      minifySyntax: minify,
-      minifyIdentifiers: minify,
-      minifyWhitespace: minify,
-      define: NODE_ENV ? { "process.env.NODE_ENV": NODE_ENV } : undefined,
-      files: {
-        "/entry.tsx": /* tsx */ `
+    itBundled(
+      "compile/ReactSSR" +
+        (bytecode ? "+bytecode" : "") +
+        "+" +
+        format +
+        (minify ? "+minify" : ""),
+      {
+        install: [
+          "react@19.2.0-canary-b94603b9-20250513",
+          "react-dom@19.2.0-canary-b94603b9-20250513",
+        ],
+        format,
+        minifySyntax: minify,
+        minifyIdentifiers: minify,
+        minifyWhitespace: minify,
+        define: NODE_ENV ? { "process.env.NODE_ENV": NODE_ENV } : undefined,
+        files: {
+          "/entry.tsx": /* tsx */ `
         import React from "react";
         import { renderToReadableStream } from "react-dom/server";
 
@@ -362,21 +371,23 @@ describe("bundler", () => {
 
         main();
       `,
-      },
-      run: {
-        stdout: "<!DOCTYPE html><html><head></head><body><h1>Hello World</h1><p>This is an example.</p></body></html>",
-        stderr: bytecode
-          ? "[Disk Cache] Cache hit for sourceCode\n[Disk Cache] Cache miss for sourceCode\n"
-          : undefined,
-        env: bytecode
-          ? {
-              BUN_JSC_verboseDiskCache: "1",
-            }
-          : undefined,
-      },
-      compile: true,
-      bytecode,
-    });
+        },
+        run: {
+          stdout:
+            "<!DOCTYPE html><html><head></head><body><h1>Hello World</h1><p>This is an example.</p></body></html>",
+          stderr: bytecode
+            ? "[Disk Cache] Cache hit for sourceCode\n[Disk Cache] Cache miss for sourceCode\n"
+            : undefined,
+          env: bytecode
+            ? {
+                BUN_JSC_verboseDiskCache: "1",
+              }
+            : undefined,
+        },
+        compile: true,
+        bytecode,
+      }
+    );
   }
   itBundled("compile/DynamicRequire", {
     files: {
@@ -387,13 +398,18 @@ describe("bundler", () => {
         console.log(JSON.stringify([w, x, y, z]));
         module.exports = null;
       `,
-      "/node_modules/commonjs/index.js": "throw new Error('Must be runtime import.')",
-      "/node_modules/esm/index.js": "throw new Error('Must be runtime import.')",
-      "/node_modules/other/index.js": "throw new Error('Must be runtime import.')",
-      "/node_modules/other-esm/index.js": "throw new Error('Must be runtime import.')",
+      "/node_modules/commonjs/index.js":
+        "throw new Error('Must be runtime import.')",
+      "/node_modules/esm/index.js":
+        "throw new Error('Must be runtime import.')",
+      "/node_modules/other/index.js":
+        "throw new Error('Must be runtime import.')",
+      "/node_modules/other-esm/index.js":
+        "throw new Error('Must be runtime import.')",
     },
     runtimeFiles: {
-      "/node_modules/commonjs/index.js": "module.exports = 2; require('other');",
+      "/node_modules/commonjs/index.js":
+        "module.exports = 2; require('other');",
       "/node_modules/esm/index.js": "import 'other-esm'; export default 3;",
       "/node_modules/other/index.js": "globalThis.x = 1;",
       "/node_modules/other-esm/index.js": "globalThis.w = 0;",
@@ -414,13 +430,18 @@ describe("bundler", () => {
         console.log(JSON.stringify([w, x, y, z]));
       `,
       "/node_modules/static/index.js": "'use strict';",
-      "/node_modules/commonjs/index.js": "throw new Error('Must be runtime import.')",
-      "/node_modules/esm/index.js": "throw new Error('Must be runtime import.')",
-      "/node_modules/other/index.js": "throw new Error('Must be runtime import.')",
-      "/node_modules/other-esm/index.js": "throw new Error('Must be runtime import.')",
+      "/node_modules/commonjs/index.js":
+        "throw new Error('Must be runtime import.')",
+      "/node_modules/esm/index.js":
+        "throw new Error('Must be runtime import.')",
+      "/node_modules/other/index.js":
+        "throw new Error('Must be runtime import.')",
+      "/node_modules/other-esm/index.js":
+        "throw new Error('Must be runtime import.')",
     },
     runtimeFiles: {
-      "/node_modules/commonjs/index.js": "module.exports = 2; require('other');",
+      "/node_modules/commonjs/index.js":
+        "module.exports = 2; require('other');",
       "/node_modules/esm/index.js": "import 'other-esm'; export default 3;",
       "/node_modules/other/index.js": "globalThis.x = 1;",
       "/node_modules/other-esm/index.js": "globalThis.w = 0;",
@@ -473,15 +494,17 @@ describe("bundler", () => {
     });
     for (const sourceMap of ["external", "inline", "none"] as const) {
       // https://github.com/oven-sh/bun/issues/10344
-      itBundled("compile/10344+sourcemap=" + sourceMap + (minify ? "+minify" : ""), {
-        minifyIdentifiers: minify,
-        minifySyntax: minify,
-        minifyWhitespace: minify,
-        target: "bun",
-        sourceMap,
-        compile: true,
-        files: {
-          "/entry.ts": /* js */ `
+      itBundled(
+        "compile/10344+sourcemap=" + sourceMap + (minify ? "+minify" : ""),
+        {
+          minifyIdentifiers: minify,
+          minifySyntax: minify,
+          minifyWhitespace: minify,
+          target: "bun",
+          sourceMap,
+          compile: true,
+          files: {
+            "/entry.ts": /* js */ `
         import big from './generated.big.binary' with {type: "file"};
         import small from './generated.small.binary' with {type: "file"};
         import fs from 'fs';
@@ -495,25 +518,26 @@ describe("bundler", () => {
         await Bun.file(small).arrayBuffer();
         console.log("PASS");
       `,
-          "/generated.big.binary": (() => {
-            // make sure the size is not divisible by 32
-            const buffer = new Uint8ClampedArray(4096 + (32 - 2));
-            for (let i = 0; i < buffer.length; i++) {
-              buffer[i] = i;
-            }
-            return buffer;
-          })(),
-          "/generated.small.binary": (() => {
-            // make sure the size is less than 32
-            const buffer = new Uint8ClampedArray(31);
-            for (let i = 0; i < buffer.length; i++) {
-              buffer[i] = i;
-            }
-            return buffer;
-          })(),
-        },
-        run: { stdout: "PASS" },
-      });
+            "/generated.big.binary": (() => {
+              // make sure the size is not divisible by 32
+              const buffer = new Uint8ClampedArray(4096 + (32 - 2));
+              for (let i = 0; i < buffer.length; i++) {
+                buffer[i] = i;
+              }
+              return buffer;
+            })(),
+            "/generated.small.binary": (() => {
+              // make sure the size is less than 32
+              const buffer = new Uint8ClampedArray(31);
+              for (let i = 0; i < buffer.length; i++) {
+                buffer[i] = i;
+              }
+              return buffer;
+            })(),
+          },
+          run: { stdout: "PASS" },
+        }
+      );
     }
   }
   itBundled("compile/EmbeddedSqlite", {
@@ -525,8 +549,8 @@ describe("bundler", () => {
       `,
       "/db.sqlite": (() => {
         const db = new Database(":memory:");
-        db.exec("create table messages (message text)");
-        db.exec("insert into messages values ('Hello, world!')");
+        db.run("create table messages (message text)");
+        db.run("insert into messages values ('Hello, world!')");
         return db.serialize();
       })(),
     },
@@ -543,8 +567,8 @@ describe("bundler", () => {
     runtimeFiles: {
       "/db.sqlite": (() => {
         const db = new Database(":memory:");
-        db.exec("create table messages (message text)");
-        db.exec("insert into messages values ('Hello, world!')");
+        db.run("create table messages (message text)");
+        db.run("insert into messages values ('Hello, world!')");
         return db.serialize();
       })(),
     },
@@ -606,7 +630,7 @@ describe("bundler", () => {
 5 |   // hello world
 6 |           throw   new
                       ^
-error: Hello World`,
+error: Hello World`
         );
         expect(stderr).toInclude("entry.ts:6:19");
       },
@@ -616,7 +640,9 @@ error: Hello World`,
     target: "bun",
     compile: true,
     files: {
-      "/entry.ts": /* js */ `import * as ReactDom from ${JSON.stringify(require.resolve("react-dom/server"))};
+      "/entry.ts": /* js */ `import * as ReactDom from ${JSON.stringify(
+        require.resolve("react-dom/server")
+      )};
 
 // this file has comments and weird whitespace, intentionally
 // to make it obvious if sourcemaps were generated and mapped properly
@@ -644,7 +670,7 @@ console.log(ReactDom);`,
 7 |   // hello world
 8 |           throw   new
                       ^
-error: Hello World`,
+error: Hello World`
         );
         expect(stderr).toInclude("entry.ts:8:19");
       },
@@ -750,7 +776,10 @@ const server = serve({
       "assets/file-8": "",
     });
 
-    await Bun.$`${bunExe()} build --compile app.js assets/* --outfile app`.cwd(dir).env(bunEnv).throws(true);
+    await Bun.$`${bunExe()} build --compile app.js assets/* --outfile app`
+      .cwd(dir)
+      .env(bunEnv)
+      .throws(true);
 
     const result = await Bun.$`./app`.cwd(dir).env(bunEnv).nothrow();
     expect(result.stdout.toString().trim()).toBe("IT WORKS");

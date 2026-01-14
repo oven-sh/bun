@@ -68,8 +68,9 @@ pub const ReplCommand = struct {
     }
 };
 
-const bun = @import("bun");
 const std = @import("std");
+
+const bun = @import("bun");
 const Global = bun.Global;
 const Output = bun.Output;
 const Command = bun.cli.Command;

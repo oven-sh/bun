@@ -1803,13 +1803,13 @@ const E = js_ast.E;
 const Expr = js_ast.Expr;
 const ExprNodeIndex = js_ast.ExprNodeIndex;
 const ExprNodeList = js_ast.ExprNodeList;
+const Op = js_ast.Op;
 const Scope = js_ast.Scope;
 const Stmt = js_ast.Stmt;
 const Symbol = js_ast.Symbol;
 
 const G = js_ast.G;
 const Property = G.Property;
-const Op = js_ast.Op;
 
 const js_parser = bun.js_parser;
 const ExprIn = js_parser.ExprIn;

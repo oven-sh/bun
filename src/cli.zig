@@ -1741,12 +1741,12 @@ const FilterRun = @import("./cli/filter_run.zig");
 const PmViewCommand = @import("./cli/pm_view_command.zig");
 const fs = @import("./fs.zig");
 const options = @import("./options.zig");
-const Runtime = @import("./runtime.zig").Runtime;
 const std = @import("std");
 const Bunfig = @import("./bunfig.zig").Bunfig;
 const ColonListType = @import("./cli/colon_list_type.zig").ColonListType;
 const MacroMap = @import("./resolver/package_json.zig").MacroMap;
 const RunCommand_ = @import("./cli/run_command.zig").RunCommand;
+const Runtime = @import("./runtime.zig").Runtime;
 const TestCommand = @import("./cli/test_command.zig").TestCommand;
 
 const Install = @import("./install/install.zig");

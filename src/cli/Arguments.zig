@@ -74,6 +74,7 @@ pub const transpiler_params_ = [_]ParamType{
     clap.parseParam("--jsx-import-source <STR>         Declares the module specifier to be used for importing the jsx and jsxs factory functions. Default: \"react\"") catch unreachable,
     clap.parseParam("--jsx-runtime <STR>               \"automatic\" (default) or \"classic\"") catch unreachable,
     clap.parseParam("--jsx-side-effects                Treat JSX elements as having side effects (disable pure annotations)") catch unreachable,
+    clap.parseParam("--jsx-inline <STR>                Inline JSX elements to object literals: \"react-18\" or \"react-19\"") catch unreachable,
     clap.parseParam("--ignore-dce-annotations          Ignore tree-shaking annotations such as @__PURE__") catch unreachable,
 };
 pub const runtime_params_ = [_]ParamType{
@@ -934,6 +935,17 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         ctx.bundler_options.keep_names = args.flag("--keep-names");
 
         ctx.bundler_options.css_chunking = args.flag("--css-chunking");
+
+        if (args.option("--jsx-inline")) |jsx_inline| {
+            if (strings.eqlComptime(jsx_inline, "react-18")) {
+                ctx.bundler_options.jsx_inline = .react_18;
+            } else if (strings.eqlComptime(jsx_inline, "react-19")) {
+                ctx.bundler_options.jsx_inline = .react_19;
+            } else {
+                Output.prettyErrorln("<r><red>error<r>: Invalid --jsx-inline value: \"{s}\". Expected \"react-18\" or \"react-19\"", .{jsx_inline});
+                Global.exit(1);
+            }
+        }
 
         ctx.bundler_options.emit_dce_annotations = args.flag("--emit-dce-annotations") or
             !ctx.bundler_options.minify_whitespace;

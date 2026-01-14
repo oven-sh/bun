@@ -26,11 +26,14 @@ pub fn ParseJSXElement(
             var key_prop_i: i32 = -1;
             var flags = Flags.JSXElement.Bitset{};
             var start_tag: ?ExprNodeIndex = null;
+            // Track whether this element can be inlined (no spread props, no ref prop)
+            var can_be_inlined = false;
 
             // Fragments don't have props
             // Fragments of the form "React.Fragment" are not parsed as fragments.
             if (@as(JSXTag.TagType, tag.data) == .tag) {
                 start_tag = tag.data.tag;
+                can_be_inlined = p.options.jsx_optimization_inline.isEnabled();
 
                 var spread_loc: logger.Loc = logger.Loc.Empty;
                 var props = ListManaged(G.Property).init(p.allocator);
@@ -45,6 +48,11 @@ pub fn ParseJSXElement(
                             const prop_name_literal = p.lexer.identifier;
                             const special_prop = E.JSXElement.SpecialProp.Map.get(prop_name_literal) orelse E.JSXElement.SpecialProp.any;
                             try p.lexer.nextInsideJSXElement();
+
+                            // ref prop prevents inlining
+                            if (special_prop == .ref) {
+                                can_be_inlined = false;
+                            }
 
                             if (special_prop == .key) {
                                 // <ListItem key>
@@ -80,6 +88,8 @@ pub fn ParseJSXElement(
                             switch (p.lexer.token) {
                                 .t_dot_dot_dot => {
                                     try p.lexer.next();
+                                    // Spread props prevent inlining
+                                    can_be_inlined = false;
 
                                     if (first_spread_prop_i == -1) first_spread_prop_i = i;
                                     spread_loc = p.lexer.loc();
@@ -148,6 +158,7 @@ pub fn ParseJSXElement(
 
                 const is_key_after_spread = key_prop_i > -1 and first_spread_prop_i > -1 and key_prop_i > first_spread_prop_i;
                 flags.setPresent(.is_key_after_spread, is_key_after_spread);
+                flags.setPresent(.can_be_inlined, can_be_inlined);
                 properties = G.Property.List.moveFromList(&props);
                 if (is_key_after_spread and p.options.jsx.runtime == .automatic and !p.has_classic_runtime_warned) {
                     try p.log.addWarning(p.source, spread_loc, "\"key\" prop after a {...spread} is deprecated in JSX. Falling back to classic runtime.");

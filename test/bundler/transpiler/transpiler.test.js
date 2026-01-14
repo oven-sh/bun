@@ -1519,6 +1519,79 @@ console.log(<div {...obj} key="after" />);`),
     );
   });
 
+  describe("JSX inlining optimization", () => {
+    it("inlines JSX elements with react-19", () => {
+      var bun = new Bun.Transpiler({
+        loader: "jsx",
+        jsxOptimizationInline: "react-19",
+      });
+      expect(bun.transformSync("export var foo = <div>hello</div>")).toContain("$$typeof:");
+      expect(bun.transformSync("export var foo = <div>hello</div>")).toContain("$$typeof_19");
+      expect(bun.transformSync("export var foo = <div>hello</div>")).toContain('type: "div"');
+      expect(bun.transformSync("export var foo = <div>hello</div>")).toContain("props:");
+    });
+
+    it("inlines JSX elements with react-18", () => {
+      var bun = new Bun.Transpiler({
+        loader: "jsx",
+        jsxOptimizationInline: "react-18",
+      });
+      expect(bun.transformSync("export var foo = <div>hello</div>")).toContain("$$typeof:");
+      expect(bun.transformSync("export var foo = <div>hello</div>")).toContain("$$typeof_18");
+      expect(bun.transformSync("export var foo = <div>hello</div>")).toContain('type: "div"');
+    });
+
+    it("does not inline when spread props are present", () => {
+      var bun = new Bun.Transpiler({
+        loader: "jsx",
+        jsxOptimizationInline: "react-19",
+      });
+      // With spread, it should fall back to jsx call
+      expect(bun.transformSync("export var foo = <div {...props}>hello</div>")).not.toContain("$$typeof:");
+      expect(bun.transformSync("export var foo = <div {...props}>hello</div>")).toContain("jsx");
+    });
+
+    it("does not inline when ref prop is present", () => {
+      var bun = new Bun.Transpiler({
+        loader: "jsx",
+        jsxOptimizationInline: "react-19",
+      });
+      // With ref, it should fall back to jsx call
+      expect(bun.transformSync("export var foo = <div ref={myRef}>hello</div>")).not.toContain("$$typeof:");
+      expect(bun.transformSync("export var foo = <div ref={myRef}>hello</div>")).toContain("jsx");
+    });
+
+    it("does not inline by default (no jsxOptimizationInline)", () => {
+      var bun = new Bun.Transpiler({
+        loader: "jsx",
+      });
+      // Should use jsx/jsxDEV call by default
+      expect(bun.transformSync("export var foo = <div>hello</div>")).not.toContain("$$typeof:");
+      expect(bun.transformSync("export var foo = <div>hello</div>")).toContain("jsx");
+    });
+
+    it("handles component tags with defaultProps", () => {
+      var bun = new Bun.Transpiler({
+        loader: "jsx",
+        jsxOptimizationInline: "react-19",
+      });
+      const result = bun.transformSync("export var foo = <MyComponent a={1} />");
+      expect(result).toContain("$$typeof:");
+      // Should include merge logic for defaultProps
+      expect(result).toContain("defaultProps");
+    });
+
+    it("handles key prop", () => {
+      var bun = new Bun.Transpiler({
+        loader: "jsx",
+        jsxOptimizationInline: "react-19",
+      });
+      const result = bun.transformSync('export var foo = <div key="my-key">hello</div>');
+      expect(result).toContain("$$typeof:");
+      expect(result).toContain('key: "my-key"');
+    });
+  });
+
   it("require with a dynamic non-string expression", () => {
     var nodeTranspiler = new Bun.Transpiler({ platform: "node" });
     expect(nodeTranspiler.transformSync("require('hi' + bar)")).toBe('require("hi" + bar);\n');

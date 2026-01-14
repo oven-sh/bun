@@ -8,6 +8,7 @@ pub const Parser = struct {
 
     pub const Options = struct {
         jsx: options.JSX.Pragma,
+        jsx_optimization_inline: Runtime.Features.JsxInlineMode = .none,
         ts: bool = false,
         keep_names: bool = true,
         ignore_dce_annotations: bool = false,
@@ -44,10 +45,8 @@ pub const Parser = struct {
             if (did_use_jsx) {
                 if (this.jsx.parse) {
                     this.jsx.hashForRuntimeTranspiler(hasher);
-                    // this holds the values for the jsx optimizaiton flags, which have both been removed
-                    // as the optimizations break newer versions of react, see https://github.com/oven-sh/bun/issues/11025
-                    const jsx_optimizations = [_]bool{ false, false };
-                    hasher.update(std.mem.asBytes(&jsx_optimizations));
+                    // Include jsx_optimization_inline mode in hash
+                    hasher.update(std.mem.asBytes(&@intFromEnum(this.jsx_optimization_inline)));
                 } else {
                     hasher.update("NO_JSX");
                 }
@@ -1538,8 +1537,9 @@ const Define = @import("../defines.zig").Define;
 const importRecord = @import("../import_record.zig");
 const ImportRecord = importRecord.ImportRecord;
 
-const RuntimeFeatures = _runtime.Runtime.Features;
-const RuntimeImports = _runtime.Runtime.Imports;
+const Runtime = _runtime.Runtime;
+const RuntimeFeatures = Runtime.Features;
+const RuntimeImports = Runtime.Imports;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

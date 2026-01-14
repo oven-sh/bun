@@ -1107,6 +1107,7 @@ pub const Transpiler = struct {
 
                 opts.filepath_hash_for_hmr = file_hash orelse 0;
                 opts.features.auto_import_jsx = transpiler.options.auto_import_jsx;
+                opts.jsx_optimization_inline = transpiler.options.jsx_optimization_inline;
                 opts.warn_about_unbundled_modules = !target.isBun();
 
                 opts.features.inject_jest_globals = this_parse.inject_jest_globals;

@@ -1381,6 +1381,32 @@ pub fn stringWidth(str: bun.String, opts: gen.StringWidthOptions) usize {
     return str.visibleWidthExcludeANSIColors(!opts.ambiguous_is_narrow);
 }
 
+pub fn wrapAnsi(global: *jsc.JSGlobalObject, str: bun.String, columns: usize, opts: gen.WrapAnsiOptions) JSValue {
+    if (str.length() == 0) {
+        return bun.String.empty.toJS(global);
+    }
+
+    const allocator = bun.default_allocator;
+
+    // Convert to UTF-8 for processing
+    const input = str.toOwnedSlice(allocator) catch {
+        return global.throwOutOfMemoryValue();
+    };
+    defer allocator.free(input);
+
+    const result = wrap_ansi.wrapAnsi(allocator, input, columns, .{
+        .hard = opts.hard,
+        .word_wrap = opts.word_wrap,
+        .trim = opts.trim,
+        .ambiguous_is_narrow = opts.ambiguous_is_narrow,
+    }) catch {
+        return global.throwOutOfMemoryValue();
+    };
+    defer allocator.free(result);
+
+    return bun.String.cloneUTF8(result).toJS(global);
+}
+
 /// EnvironmentVariables is runtime defined.
 /// Also, you can't iterate over process.env normally since it only exists at build-time otherwise
 pub fn getCSRFObject(globalObject: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
@@ -2045,6 +2071,7 @@ pub fn createBunStdout(globalThis: *jsc.JSGlobalObject) callconv(.c) jsc.JSValue
 
 const Braces = @import("../../shell/braces.zig");
 const Which = @import("../../which.zig");
+const wrap_ansi = @import("../../string/immutable/wrap_ansi.zig");
 const options = @import("../../options.zig");
 const std = @import("std");
 const zlib = @import("../../zlib.zig");

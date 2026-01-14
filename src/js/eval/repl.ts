@@ -192,7 +192,9 @@ const replCommands: Record<string, { help: string; action: (args: string) => voi
         return;
       }
       try {
-        const code = fs.readFileSync(filename.trim(), "utf-8");
+        // Resolve relative paths against the user's current working directory
+        const resolvedPath = path.resolve(process.cwd(), filename.trim());
+        const code = fs.readFileSync(resolvedPath, "utf-8");
         const result = evaluateCode(code);
         if (result !== undefined) {
           console.log(formatResult(result));

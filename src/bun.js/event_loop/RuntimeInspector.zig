@@ -160,6 +160,8 @@ const posix = if (Environment.isPosix) struct {
             .stack_size = 512 * 1024,
         }, signalInspectorThread, .{}) catch |err| {
             log("thread spawn failed: {s}", .{@errorName(err)});
+            if (semaphore) |sem| sem.deinit();
+            semaphore = null;
             return false;
         };
 

@@ -50,14 +50,19 @@ pub const ReplCommand = struct {
             },
         };
 
-        // Write the script to the temp file
-        switch (bun.sys.write(temp_file_fd, repl_script)) {
-            .err => {
-                Output.prettyErrorln("<r><red>error<r>: Could not write temp file", .{});
-                temp_file_fd.close();
-                Global.exit(1);
-            },
-            .result => {},
+        // Write the script to the temp file, handling partial writes
+        var offset: usize = 0;
+        while (offset < repl_script.len) {
+            switch (bun.sys.write(temp_file_fd, repl_script[offset..])) {
+                .err => {
+                    Output.prettyErrorln("<r><red>error<r>: Could not write temp file", .{});
+                    temp_file_fd.close();
+                    Global.exit(1);
+                },
+                .result => |written| {
+                    offset += written;
+                },
+            }
         }
         temp_file_fd.close();
 

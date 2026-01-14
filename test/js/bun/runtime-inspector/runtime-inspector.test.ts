@@ -115,7 +115,7 @@ describe("Runtime inspector activation", () => {
       expect(exitCode).not.toBe(0);
     });
 
-    test("inspector does not activate twice", async () => {
+    test("inspector does not activate twice", { timeout: 30_000 }, async () => {
       using dir = tempDir("debug-process-twice-test", {
         "target.js": `
           const fs = require("fs");
@@ -125,7 +125,8 @@ describe("Runtime inspector activation", () => {
           console.log("READY");
 
           // Keep process alive long enough for both _debugProcess calls
-          setTimeout(() => process.exit(0), 5000);
+          // Use longer timeout for ASAN builds which can be slower
+          setTimeout(() => process.exit(0), 30000);
           setInterval(() => {}, 1000);
         `,
       });
@@ -190,7 +191,7 @@ describe("Runtime inspector activation", () => {
       expect(matches?.length ?? 0).toBe(2);
     });
 
-    test("can activate inspector in multiple processes sequentially", async () => {
+    test("can activate inspector in multiple processes sequentially", { timeout: 30_000 }, async () => {
       // Note: Runtime inspector uses hardcoded port 6499, so we must test
       // sequential activation (activate first, shut down, then activate second)
       // rather than concurrent activation.
@@ -204,7 +205,8 @@ describe("Runtime inspector activation", () => {
           console.log("READY-" + id);
 
           // Keep alive long enough for _debugProcess call
-          setTimeout(() => process.exit(0), 5000);
+          // Use longer timeout for ASAN builds which can be slower
+          setTimeout(() => process.exit(0), 30000);
           setInterval(() => {}, 1000);
         `,
       });

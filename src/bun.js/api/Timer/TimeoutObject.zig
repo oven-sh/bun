@@ -118,6 +118,14 @@ pub fn set_repeat(_: *Self, thisValue: JSValue, globalThis: *JSGlobalObject, val
     Self.js.repeatSetCached(thisValue, globalThis, value);
 }
 
+pub fn get_idleStart(_: *Self, thisValue: JSValue, _: *JSGlobalObject) JSValue {
+    return Self.js.idleStartGetCached(thisValue).?;
+}
+
+pub fn set_idleStart(_: *Self, thisValue: JSValue, globalThis: *JSGlobalObject, value: JSValue) void {
+    Self.js.idleStartSetCached(thisValue, globalThis, value);
+}
+
 pub fn dispose(self: *Self, globalThis: *JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
     self.internals.cancel(globalThis.bunVM());
     return .js_undefined;

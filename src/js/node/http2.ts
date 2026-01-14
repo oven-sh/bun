@@ -3807,6 +3807,7 @@ class Http2Server extends net.Server {
     if (typeof callback === "function") {
       this.on("timeout", callback);
     }
+    return this;
   }
   updateSettings(settings) {
     assertSettings(settings);
@@ -3900,6 +3901,7 @@ class Http2SecureServer extends tls.Server {
     if (typeof callback === "function") {
       this.on("timeout", callback);
     }
+    return this;
   }
   updateSettings(settings) {
     assertSettings(settings);

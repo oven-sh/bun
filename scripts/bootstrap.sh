@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version: 20
+# Version: 26
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -192,7 +192,7 @@ download_file() {
 	file_tmp_dir="$(create_tmp_directory)"
 	file_tmp_path="$file_tmp_dir/$(basename "$file_url")"
 
-	fetch "$file_url" >"$file_tmp_path"
+	fetch "$file_url" > "$file_tmp_path"
 	grant_to_user "$file_tmp_path"
 
 	print "$file_tmp_path"
@@ -204,14 +204,14 @@ download_and_verify_file() {
 	hash="$2"
 
 	path=$(download_file "$file_url")
-	execute sh -c 'echo "'"$hash  $path"'" | sha256sum -c' >/dev/null 2>&1
+	execute sh -c 'echo "'"$hash  $path"'" | sha256sum -c -' >/dev/null 2>&1
 
 	print "$path"
 }
 
 append_to_profile() {
 	content="$1"
-	profiles=".profile .zprofile .bash_profile .bashrc .zshrc"
+	profiles=".profile .zprofile .bash_profile .bashrc .zshrc .cshrc"
 	for profile in $profiles; do
 		for profile_path in "$current_home/$profile" "$home/$profile"; do
 			if [ "$ci" = "1" ] || [ -f "$profile_path" ]; then
@@ -275,10 +275,10 @@ check_operating_system() {
 
 	os="$("$uname" -s)"
 	case "$os" in
-	Linux*)
+	Linux)
 		os="linux"
 		;;
-	Darwin*)
+	Darwin)
 		os="darwin"
 		;;
 	*)
@@ -478,6 +478,9 @@ check_user() {
 }
 
 check_ulimit() {
+	if ! [ "$os" = "linux" ]; then
+		return
+	fi
 	if ! [ "$ci" = "1" ]; then
 		return
 	fi
@@ -588,6 +591,9 @@ package_manager() {
 	brew)
 		execute_as_user brew "$@"
 		;;
+	pkg)
+		execute_sudo pkg "$@"
+		;;
 	*)
 		error "Unsupported package manager: $pm"
 		;;
@@ -645,6 +651,9 @@ install_packages() {
 			--no-progress \
 			"$@"
 		;;
+	pkg)
+		package_manager install "$@"
+		;;
 	*)
 		error "Unsupported package manager: $pm"
 		;;
@@ -688,12 +697,56 @@ install_common_software() {
 				apt-transport-https \
 				software-properties-common
 		fi
+		# https://packages.debian.org
+		# https://packages.ubuntu.com
 		install_packages \
+			bash \
+			ca-certificates \
+			curl \
+			htop \
+			gnupg \
+			git \
+			unzip \
+			wget \
 			libc6-dbg
 		;;
 	dnf)
+		# https://packages.fedoraproject.org
 		install_packages \
+			bash \
+			ca-certificates \
+			curl \
+			htop \
+			gnupg \
+			git \
+			unzip \
+			wget \
 			dnf-plugins-core
+		;;
+	apk)
+		# https://pkgs.alpinelinux.org/packages
+		install_packages \
+			bash \
+			ca-certificates \
+			curl \
+			htop \
+			gnupg \
+			git \
+			unzip \
+			wget \
+		;;
+	pkg)
+		# https://www.freshports.org
+		install_packages \
+			shells/bash \
+			ftp/curl \
+			sysutils/htop \
+			security/gnupg \
+			devel/git \
+			archivers/unzip \
+			ftp/wget \
+			editors/vim \
+			sysutils/neofetch \
 		;;
 	esac
 
@@ -717,16 +770,6 @@ install_common_software() {
 	if [ -f "$crb" ]; then
 		execute "$crb" enable
 	fi
-
-	install_packages \
-		bash \
-		ca-certificates \
-		curl \
-		htop \
-		gnupg \
-		git \
-		unzip \
-		wget
 
 	install_rosetta
 	install_nodejs
@@ -1027,19 +1070,23 @@ install_build_essentials() {
 		;;
 	esac
 
-	install_packages \
-		make \
-		python3 \
-		libtool \
-		ruby \
-		perl
+	case "$os" in
+		linux)
+			install_packages \
+				make \
+				python3 \
+				libtool \
+				ruby \
+				perl \
+			;;
+	esac
 
 	install_cmake
 	install_llvm
 	install_osxcross
 	install_gcc
-	install_sccache
 	install_rust
+	install_ccache
 	install_docker
 }
 
@@ -1054,12 +1101,23 @@ llvm_version() {
 install_llvm() {
 	case "$pm" in
 	apt)
-		bash="$(require bash)"
-		llvm_script="$(download_file "https://apt.llvm.org/llvm.sh")"
-		execute_sudo "$bash" "$llvm_script" "$(llvm_version)" all
+		# Debian 13 (Trixie) has LLVM 19 natively, and apt.llvm.org doesn't have a trixie repo
+		if [ "$distro" = "debian" ]; then
+			install_packages \
+				"llvm-$(llvm_version)" \
+				"clang-$(llvm_version)" \
+				"lld-$(llvm_version)" \
+				"llvm-$(llvm_version)-dev" \
+				"llvm-$(llvm_version)-tools" \
+				"libclang-rt-$(llvm_version)-dev"
+		else
+			bash="$(require bash)"
+			llvm_script="$(download_file "https://apt.llvm.org/llvm.sh")"
+			execute_sudo "$bash" "$llvm_script" "$(llvm_version)" all
 
-		# Install llvm-symbolizer explicitly to ensure it's available for ASAN
-		install_packages "llvm-$(llvm_version)-tools"
+			# Install llvm-symbolizer explicitly to ensure it's available for ASAN
+			install_packages "llvm-$(llvm_version)-tools"
+		fi
 		;;
 	brew)
 		install_packages "llvm@$(llvm_version)"
@@ -1076,8 +1134,7 @@ install_llvm() {
 }
 
 install_gcc() {
-	if ! [ "$os" = "linux" ] || ! [ "$distro" = "ubuntu" ] || [ -z "$gcc_version" ]
-	then
+	if ! [ "$os" = "linux" ] || ! [ "$distro" = "ubuntu" ] || [ -z "$gcc_version" ]; then
 		return
 	fi
 
@@ -1149,52 +1206,39 @@ install_gcc() {
 	execute_sudo ln -sf $(which llvm-symbolizer-$llvm_v) /usr/bin/llvm-symbolizer
 }
 
-install_sccache() {
-	# Alright, look, this function is cobbled together but it's only as cobbled
-	# together as this whole script is.
-	#
-	# For some reason, move_to_bin doesn't work here due to permissions so I'm
-	# avoiding that function. It's also wrong with permissions and so on.
-	#
-	# Unfortunately, we cannot use install_packages since many package managers
-	# don't compile `sccache` with S3 support.
-	local opts=$-
-	set -ef
-
-	local sccache_http
-	sccache_http="https://github.com/mozilla/sccache/releases/download/v0.12.0/sccache-v0.12.0-$(uname -m)-unknown-linux-musl.tar.gz"
-
-	local file
-	file=$(download_file "$sccache_http")
-
-	local tmpdir
-	tmpdir=$(mktemp -d)
-
-	execute tar -xzf "$file" -C "$tmpdir"
-	execute_sudo install -m755 "$tmpdir/sccache-v0.12.0-$(uname -m)-unknown-linux-musl/sccache" "/usr/local/bin"
-
-	set +ef -"$opts"
+install_ccache() {
+	case "$pm" in
+	apt)
+		install_packages ccache
+		;;
+	brew)
+		install_packages ccache
+		;;
+	apk)
+		install_packages ccache
+		;;
+	dnf|yum)
+		install_packages ccache
+		;;
+	zypper)
+		install_packages ccache
+		;;
+	esac
 }
 
 install_rust() {
-	case "$pm" in
-	apk)
-		install_packages \
-			rust \
-			cargo
-		;;
-	*)
-		rust_home="/opt/rust"
-		create_directory "$rust_home"
-		append_to_profile "export RUSTUP_HOME=$rust_home"
-		append_to_profile "export CARGO_HOME=$rust_home"
+	rust_home="/opt/rust"
+	create_directory "$rust_home"
+	append_to_profile "export RUSTUP_HOME=$rust_home"
+	append_to_profile "export CARGO_HOME=$rust_home"
 
-		sh="$(require sh)"
-		rustup_script=$(download_file "https://sh.rustup.rs")
-		execute "$sh" -lc "$rustup_script -y --no-modify-path"
-		append_to_path "$rust_home/bin"
-		;;
-	esac
+	sh="$(require sh)"
+	rustup_script=$(download_file "https://sh.rustup.rs")
+	execute "$sh" -lc "$rustup_script -y --no-modify-path"
+	append_to_path "$rust_home/bin"
+
+	# Ensure all rustup files are accessible (for CI builds where different users run builds)
+	grant_to_user "$rust_home"
 
 	case "$osxcross" in
 	1)
@@ -1211,6 +1255,11 @@ install_docker() {
 		if ! [ -d "/Applications/Docker.app" ]; then
 			package_manager install docker --cask
 		fi
+		;;
+	pkg)
+		install_packages \
+			sysutils/docker \
+			sysutils/docker-compose \
 		;;
 	*)
 		case "$distro-$release" in
@@ -1310,6 +1359,10 @@ install_tailscale() {
 }
 
 install_fuse_python() {
+	if ! [ "$os" = "linux" ]; then
+		return
+	fi
+
 	# only linux needs this
 	case "$pm" in
 	apk)
@@ -1339,7 +1392,7 @@ install_fuse_python() {
 }
 
 create_buildkite_user() {
-	if ! [ "$ci" = "1" ] || ! [ "$os" = "linux" ]; then
+	if ! [ "$ci" = "1" ]; then
 		return
 	fi
 
@@ -1393,9 +1446,7 @@ create_buildkite_user() {
 	done
 
 	# The following is necessary to configure buildkite to use a stable
-	# checkout directory. sccache hashes absolute paths into its cache keys,
-	# so if buildkite uses a different checkout path each time (which it does
-	# by default), sccache will be useless.
+	# checkout directory for ccache to be effective.
 	local opts=$-
 	set -ef
 
@@ -1421,7 +1472,7 @@ install_buildkite() {
 		return
 	fi
 
-	buildkite_version="3.87.0"
+	buildkite_version="3.114.0"
 	case "$arch" in
 	aarch64)
 		buildkite_arch="arm64"
@@ -1518,6 +1569,10 @@ install_chromium() {
 			xorg-x11-fonts-Type1 \
 			xorg-x11-utils
 		;;
+	pkg)
+		install_packages \
+			www/chromium \
+		;;
 	esac
 
 	case "$distro" in
@@ -1529,28 +1584,35 @@ install_chromium() {
 }
 
 install_age() {
-	# we only use this to encrypt core dumps, which we only have on Linux
+	age_version="1.2.1"
 	case "$os" in
 	linux)
-		age_tarball=""
 		case "$arch" in
 		x64)
-			age_tarball="$(download_and_verify_file https://github.com/FiloSottile/age/releases/download/v1.2.1/age-v1.2.1-linux-amd64.tar.gz 7df45a6cc87d4da11cc03a539a7470c15b1041ab2b396af088fe9990f7c79d50)"
+			age_arch="amd64"
+			age_hash="7df45a6cc87d4da11cc03a539a7470c15b1041ab2b396af088fe9990f7c79d50"
 			;;
 		aarch64)
-			age_tarball="$(download_and_verify_file https://github.com/FiloSottile/age/releases/download/v1.2.1/age-v1.2.1-linux-arm64.tar.gz 57fd79a7ece5fe501f351b9dd51a82fbee1ea8db65a8839db17f5c080245e99f)"
+			age_arch="arm64"
+			age_hash="57fd79a7ece5fe501f351b9dd51a82fbee1ea8db65a8839db17f5c080245e99f"
+			;;
+		*)
+			error "Unsupported platform: $os-$arch"
 			;;
 		esac
-
-		age_extract_dir="$(create_tmp_directory)"
-		execute tar -C "$age_extract_dir" -zxf "$age_tarball" age/age
-		move_to_bin "$age_extract_dir/age/age"
+		;;
+	*)
+		error "Unsupported platform: $os-$arch"
 		;;
 	esac
+
+	age_tarball="$(download_and_verify_file https://github.com/FiloSottile/age/releases/download/v$age_version/age-v$age_version-$os-$age_arch.tar.gz "$age_hash")"
+	age_extract_dir="$(create_tmp_directory)"
+	execute tar -C "$age_extract_dir" -zxf "$age_tarball" age/age
+	move_to_bin "$age_extract_dir/age/age"
 }
 
 configure_core_dumps() {
-	# we only have core dumps on Linux
 	case "$os" in
 	linux)
 		# set up a directory that the test runner will look in after running tests
@@ -1600,7 +1662,7 @@ ensure_no_tmpfs() {
 	if ! [ "$os" = "linux" ]; then
 		return
 	fi
-	if ! [ "$distro" = "ubuntu" ]; then
+	if ! ( [ "$distro" = "ubuntu" ] || [ "$distro" = "debian" ] ); then
 		return
 	fi
 

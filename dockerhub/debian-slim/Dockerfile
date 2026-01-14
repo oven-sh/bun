@@ -1,4 +1,4 @@
-FROM debian:bookworm-slim AS build
+FROM debian:trixie-slim AS build
 
 # https://github.com/oven-sh/bun/releases
 ARG BUN_VERSION=latest
@@ -55,7 +55,7 @@ RUN apt-get update -qq \
     && which bun \
     && bun --version
 
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 
 # Disable the runtime transpiler cache by default inside Docker containers.
 # On ephemeral containers, the cache is not useful

@@ -1059,6 +1059,14 @@ it("new Response(stream).blob() (direct)", async () => {
   expect(await blob.text()).toBe('{"hello":true}');
 });
 
+it("Blob.stream(undefined) does not crash", () => {
+  var blob = new Blob(["abdefgh"]);
+  var stream = blob.stream(undefined);
+  expect(stream instanceof ReadableStream).toBeTrue();
+  stream = blob.stream(null);
+  expect(stream instanceof ReadableStream).toBeTrue();
+});
+
 it("Blob.stream() -> new Response(stream).text()", async () => {
   var blob = new Blob(["abdefgh"]);
   var stream = blob.stream();
@@ -1182,4 +1190,18 @@ recursiveFunction();
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(0);
+});
+
+it("handles exceptions during empty stream creation", () => {
+  expect(() => {
+    function foo() {
+      try {
+        foo();
+      } catch (e) {}
+      const v8 = new Blob();
+      v8.stream();
+    }
+    foo();
+    throw new Error("not stack overflow");
+  }).toThrow("not stack overflow");
 });

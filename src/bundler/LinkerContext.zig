@@ -4,6 +4,7 @@ pub const LinkerContext = struct {
 
     pub const OutputFileListBuilder = @import("./linker_context/OutputFileListBuilder.zig");
     pub const StaticRouteVisitor = @import("./linker_context/StaticRouteVisitor.zig");
+    pub const MetafileBuilder = @import("./linker_context/MetafileBuilder.zig");
 
     parse_graph: *Graph = undefined,
     graph: LinkerGraph = undefined,
@@ -69,6 +70,7 @@ pub const LinkerContext = struct {
         css_chunking: bool = false,
         source_maps: options.SourceMapOption = .none,
         target: options.Target = .browser,
+        metafile: bool = false,
 
         mode: Mode = .bundle,
 
@@ -885,7 +887,7 @@ pub const LinkerContext = struct {
         // any import to be considered different if the import's output path has changed.
         hasher.write(chunk.template.data);
 
-        const public_path = if (chunk.is_browser_chunk_from_server_build)
+        const public_path = if (chunk.flags.is_browser_chunk_from_server_build)
             @as(*bundler.BundleV2, @fieldParentPtr("linker", c)).transpilerForTarget(.browser).options.public_path
         else
             c.options.public_path;
@@ -1723,7 +1725,7 @@ pub const LinkerContext = struct {
                         entry_point_kinds,
                         css_reprs,
                     );
-                } else if (record.is_external_without_side_effects) {
+                } else if (record.flags.is_external_without_side_effects) {
                     // This can be removed if it's unused
                     continue;
                 }

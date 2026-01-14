@@ -1909,9 +1909,9 @@ pub const TestCommand = struct {
                 reporter.summary().files += 1;
             }
 
-            switch (promise.status(vm.global.vm())) {
+            switch (promise.status()) {
                 .rejected => {
-                    vm.unhandledRejection(vm.global, promise.result(vm.global.vm()), promise.asValue());
+                    vm.unhandledRejection(vm.global, promise.result(), promise.asValue());
                     reporter.summary().fail += 1;
 
                     if (reporter.jest.bail == reporter.summary().fail) {

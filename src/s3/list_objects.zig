@@ -73,7 +73,7 @@ pub const S3ListObjectsV2Result = struct {
     }
 
     pub fn toJS(this: *const @This(), globalObject: *JSGlobalObject) bun.JSError!JSValue {
-        const jsResult = JSValue.createEmptyObject(globalObject, 12);
+        const jsResult = JSValue.createEmptyObject(globalObject, 0);
 
         if (this.name) |name| {
             jsResult.put(globalObject, jsc.ZigString.static("name"), try bun.String.createUTF8ForJS(globalObject, name));

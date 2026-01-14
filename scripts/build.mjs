@@ -87,6 +87,9 @@ async function build(args) {
     flag.startsWith("-D") ? [`${flag}=${value}`] : [flag, value],
   );
 
+  try {
+    await Bun.file(buildPath + "/CMakeCache.txt").delete();
+  } catch (e) {}
   await startGroup("CMake Configure", () => spawn("cmake", generateArgs, { env }));
 
   const envPath = resolve(buildPath, ".env");
@@ -105,8 +108,8 @@ async function build(args) {
   await startGroup("CMake Build", () => spawn("cmake", buildArgs, { env }));
 
   if (ciCppBuild) {
-    await startGroup("sccache stats", () => {
-      spawn("sccache", ["--show-stats"], { env });
+    await startGroup("ccache stats", () => {
+      spawn("ccache", ["--show-stats"], { env });
     });
   }
 

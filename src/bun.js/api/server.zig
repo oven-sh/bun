@@ -394,7 +394,7 @@ const ServePlugins = struct {
         if (!result.isEmptyOrUndefinedOrNull()) {
             // handle the case where js returns a promise
             if (result.asAnyPromise()) |promise| {
-                switch (promise.status(global.vm())) {
+                switch (promise.status()) {
                     // promise not fulfilled yet
                     .pending => {
                         this.ref();
@@ -1919,13 +1919,13 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 }
 
                 if (result.asAnyPromise()) |promise| {
-                    if (promise.status(globalThis.vm()) == .pending) {
+                    if (promise.status() == .pending) {
                         strong_promise.set(globalThis, result);
                         needs_to_drain = false;
                         vm.drainMicrotasks();
                     }
 
-                    switch (promise.status(globalThis.vm())) {
+                    switch (promise.status()) {
                         .fulfilled => {
                             globalThis.handleRejectedPromises();
                             break :brk .{ .success = {} };

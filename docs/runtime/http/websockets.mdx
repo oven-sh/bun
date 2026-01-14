@@ -174,7 +174,7 @@ Bun.serve({
 
 To connect to this server from the browser, create a new `WebSocket`.
 
-```ts browser.js icon="file-code"
+```js browser.js icon="file-code"
 const socket = new WebSocket("ws://localhost:3000/chat");
 
 socket.addEventListener("message", event => {

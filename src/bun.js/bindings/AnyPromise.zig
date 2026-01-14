@@ -7,24 +7,26 @@ pub const AnyPromise = union(enum) {
             inline else => |promise| promise.unwrap(vm, mode),
         };
     }
-    pub fn status(this: AnyPromise, vm: *VM) JSPromise.Status {
+    pub fn status(this: AnyPromise) JSPromise.Status {
         return switch (this) {
-            inline else => |promise| promise.status(vm),
+            inline else => |promise| promise.status(),
         };
     }
     pub fn result(this: AnyPromise, vm: *VM) JSValue {
         return switch (this) {
-            inline else => |promise| promise.result(vm),
+            .normal => |promise| promise.result(vm),
+            .internal => |promise| promise.result(),
         };
     }
-    pub fn isHandled(this: AnyPromise, vm: *VM) bool {
+    pub fn isHandled(this: AnyPromise) bool {
         return switch (this) {
-            inline else => |promise| promise.isHandled(vm),
+            inline else => |promise| promise.isHandled(),
         };
     }
     pub fn setHandled(this: AnyPromise, vm: *VM) void {
         switch (this) {
-            inline else => |promise| promise.setHandled(vm),
+            .normal => |promise| promise.setHandled(),
+            .internal => |promise| promise.setHandled(vm),
         }
     }
 

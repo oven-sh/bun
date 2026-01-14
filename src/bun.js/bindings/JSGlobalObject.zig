@@ -776,17 +776,6 @@ pub const JSGlobalObject = opaque {
         return default;
     }
 
-    pub inline fn createHostFunction(
-        global: *JSGlobalObject,
-        comptime display_name: [:0]const u8,
-        // when querying from JavaScript, 'func.name'
-        comptime function: anytype,
-        // when querying from JavaScript, 'func.len'
-        comptime argument_count: u32,
-    ) JSValue {
-        return jsc.host_fn.NewRuntimeFunction(global, ZigString.static(display_name), argument_count, jsc.toJSHostFn(function), false, false, null);
-    }
-
     /// Get a lazily-initialized `JSC::String` from `BunCommonStrings.h`.
     pub inline fn commonStrings(this: *jsc.JSGlobalObject) CommonStrings {
         jsc.markBinding(@src());

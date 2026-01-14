@@ -246,7 +246,6 @@ pub const html = MimeType.initComptime("text/html;charset=utf-8", .html);
 pub const json = MimeType.initComptime("application/json;charset=utf-8", .json);
 pub const transpiled_json = javascript;
 pub const text = MimeType.initComptime("text/plain;charset=utf-8", .html);
-pub const text_plain = MimeType.initComptime("text/plain;charset=utf-8", .text);
 pub const wasm = MimeType.initComptime(
     "application/wasm",
     .wasm,

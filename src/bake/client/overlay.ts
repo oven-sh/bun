@@ -23,7 +23,7 @@ type FailureOwner = number;
 
 /**
  * Build errors come from SerializedFailure objects on the server, with the key
- * being the the SerializedFailure.Owner bitcast to an i32.
+ * being the SerializedFailure.Owner bitcast to an i32.
  */
 const buildErrors = new Map<FailureOwner, DeserializedFailure>();
 /** Runtime errors are stored in a list and are cleared before any hot update. */

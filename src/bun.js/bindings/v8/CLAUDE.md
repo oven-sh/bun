@@ -13,9 +13,9 @@ Bun implements V8 APIs by creating a compatibility layer that:
 
 For detailed background, see the blog series:
 
-- [Part 1: Introduction and challenges](https://bun.sh/blog/how-bun-supports-v8-apis-without-using-v8-part-1.md)
-- [Part 2: Memory layout and object representation](https://bun.sh/blog/how-bun-supports-v8-apis-without-using-v8-part-2.md)
-- [Part 3: Garbage collection and primitives](https://bun.sh/blog/how-bun-supports-v8-apis-without-using-v8-part-3.md)
+- [Part 1: Introduction and challenges](https://bun.com/blog/how-bun-supports-v8-apis-without-using-v8-part-1.md)
+- [Part 2: Memory layout and object representation](https://bun.com/blog/how-bun-supports-v8-apis-without-using-v8-part-2.md)
+- [Part 3: Garbage collection and primitives](https://bun.com/blog/how-bun-supports-v8-apis-without-using-v8-part-3.md)
 
 ## Directory Structure
 

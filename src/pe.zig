@@ -500,11 +500,11 @@ pub const PEFile = struct {
             }
         }
 
-        // Check for overflow before adding 4
-        if (data_to_embed.len > std.math.maxInt(u32) - 4) {
+        // Check for overflow before adding 8
+        if (data_to_embed.len > std.math.maxInt(u32) - 8) {
             return error.Overflow;
         }
-        const payload_len = @as(u32, @intCast(data_to_embed.len + 4)); // 4 for LE length prefix
+        const payload_len = @as(u32, @intCast(data_to_embed.len + 8)); // 8 for LE length prefix
         const raw_size = try alignUpU32(payload_len, opt.file_alignment);
         const new_va = try alignUpU32(last_va_end, opt.section_alignment);
         const new_raw = try alignUpU32(last_file_end, opt.file_alignment);
@@ -536,9 +536,9 @@ pub const PEFile = struct {
         std.mem.copyForwards(u8, self.data.items[new_sh_off .. new_sh_off + @sizeOf(SectionHeader)], std.mem.asBytes(&sh));
 
         // 8. Write payload
-        // At data[new_raw ..]: write LE length prefix then data
-        std.mem.writeInt(u32, self.data.items[new_raw..][0..4], @intCast(data_to_embed.len), .little);
-        @memcpy(self.data.items[new_raw + 4 ..][0..data_to_embed.len], data_to_embed);
+        // At data[new_raw ..]: write u64 LE length prefix, then data
+        std.mem.writeInt(u64, self.data.items[new_raw..][0..8], @intCast(data_to_embed.len), .little);
+        @memcpy(self.data.items[new_raw + 8 ..][0..data_to_embed.len], data_to_embed);
 
         // 9. Update headers
         // Get fresh pointers after resize
@@ -573,7 +573,8 @@ pub const PEFile = struct {
         const section_headers = try self.getSectionHeaders();
         for (section_headers) |section| {
             if (std.mem.eql(u8, section.name[0..8], &BUN_SECTION_NAME)) {
-                if (section.size_of_raw_data < @sizeOf(u32)) {
+                // Header: 8 bytes size (u64)
+                if (section.size_of_raw_data < @sizeOf(u64)) {
                     return error.InvalidBunSection;
                 }
 
@@ -585,36 +586,37 @@ pub const PEFile = struct {
                 }
 
                 const section_data = self.data.items[section.pointer_to_raw_data..][0..section.size_of_raw_data];
-                const data_size = std.mem.readInt(u32, section_data[0..4], .little);
+                const data_size = std.mem.readInt(u64, section_data[0..8], .little);
 
-                if (data_size + @sizeOf(u32) > section.size_of_raw_data) {
+                if (data_size + @sizeOf(u64) > section.size_of_raw_data) {
                     return error.InvalidBunSection;
                 }
 
-                return section_data[4..][0..data_size];
+                // Data starts at offset 8 (after u64 size)
+                return section_data[8..][0..data_size];
             }
         }
         return error.BunSectionNotFound;
     }
 
     /// Get the length of the Bun section data
-    pub fn getBunSectionLength(self: *const PEFile) !u32 {
+    pub fn getBunSectionLength(self: *const PEFile) !u64 {
         const section_headers = try self.getSectionHeaders();
         for (section_headers) |section| {
             if (std.mem.eql(u8, section.name[0..8], &BUN_SECTION_NAME)) {
-                if (section.size_of_raw_data < @sizeOf(u32)) {
+                if (section.size_of_raw_data < @sizeOf(u64)) {
                     return error.InvalidBunSection;
                 }
 
                 // Bounds check
                 if (section.pointer_to_raw_data >= self.data.items.len or
-                    section.pointer_to_raw_data + @sizeOf(u32) > self.data.items.len)
+                    section.pointer_to_raw_data + @sizeOf(u64) > self.data.items.len)
                 {
                     return error.InvalidBunSection;
                 }
 
                 const section_data = self.data.items[section.pointer_to_raw_data..];
-                return std.mem.readInt(u32, section_data[0..4], .little);
+                return std.mem.readInt(u64, section_data[0..8], .little);
             }
         }
         return error.BunSectionNotFound;

@@ -17,7 +17,7 @@ pkgs.mkShell rec {
     cargo
     go
     python3
-    sccache
+    ccache
     pkg-config
     gnumake
     libtool

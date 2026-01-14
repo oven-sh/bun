@@ -197,11 +197,17 @@ pub fn toBunStringComptime(input: []const u8, comptime encoding: Encoding) bun.S
     switch (comptime encoding) {
         .ascii => {
             const str, const chars = bun.String.createUninitialized(.latin1, input.len);
+            if (str.tag == .Dead) {
+                return str;
+            }
             strings.copyLatin1IntoASCII(chars, input);
             return str;
         },
         .latin1 => {
             const str, const chars = bun.String.createUninitialized(.latin1, input.len);
+            if (str.tag == .Dead) {
+                return str;
+            }
             @memcpy(chars, input);
             return str;
         },
@@ -220,6 +226,9 @@ pub fn toBunStringComptime(input: []const u8, comptime encoding: Encoding) bun.S
             if (input.len / 2 == 0) return bun.String.empty;
 
             const str, const chars = bun.String.createUninitialized(.utf16, input.len / 2);
+            if (str.tag == .Dead) {
+                return str;
+            }
             var output_bytes = std.mem.sliceAsBytes(chars);
             output_bytes[output_bytes.len - 1] = 0;
 
@@ -229,6 +238,9 @@ pub fn toBunStringComptime(input: []const u8, comptime encoding: Encoding) bun.S
 
         .hex => {
             const str, const chars = bun.String.createUninitialized(.latin1, input.len * 2);
+            if (str.tag == .Dead) {
+                return str;
+            }
 
             const wrote = strings.encodeBytesToHex(chars, input);
             bun.assert(wrote == chars.len);

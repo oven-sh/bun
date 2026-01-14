@@ -230,17 +230,11 @@ pub const JSValkeyClient = struct {
 
     timer: Timer.EventLoopTimer = .{
         .tag = .ValkeyConnectionTimeout,
-        .next = .{
-            .sec = 0,
-            .nsec = 0,
-        },
+        .next = .epoch,
     },
     reconnect_timer: Timer.EventLoopTimer = .{
         .tag = .ValkeyConnectionReconnect,
-        .next = .{
-            .sec = 0,
-            .nsec = 0,
-        },
+        .next = .epoch,
     },
     ref_count: RefCount,
 
@@ -743,7 +737,7 @@ pub const JSValkeyClient = struct {
         const vm = this.client.vm;
 
         // Set up timer and add to event loop
-        timer.next = bun.timespec.msFromNow(@intCast(next_timeout_ms));
+        timer.next = bun.timespec.msFromNow(.allow_mocked_time, @intCast(next_timeout_ms));
         vm.timer.insert(timer);
         this.ref();
     }

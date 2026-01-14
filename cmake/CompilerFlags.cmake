@@ -51,6 +51,23 @@ if(ENABLE_ASAN)
   )
 endif()
 
+if(ENABLE_FUZZILLI)
+  register_compiler_flags(
+    DESCRIPTION "Enable coverage instrumentation for fuzzing"
+    -fsanitize-coverage=trace-pc-guard
+  )
+
+  register_linker_flags(
+    DESCRIPTION "Link coverage instrumentation"
+    -fsanitize-coverage=trace-pc-guard
+  )
+
+  register_compiler_flags(
+    DESCRIPTION "Enable fuzzilli-specific code"
+    -DFUZZILLI_ENABLED
+  )
+endif()
+
 # --- Optimization level ---
 if(DEBUG)
   register_compiler_flags(

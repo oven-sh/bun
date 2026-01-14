@@ -25,7 +25,7 @@ bun ./index.html
 ```
 
 ```
-Bun v1.3.2
+Bun v1.3.3
 ready in 6.62ms
 → http://localhost:3000/
 Press h + Enter to show shortcuts
@@ -51,7 +51,7 @@ bun index.html
 ```
 
 ```
-Bun v1.3.2
+Bun v1.3.3
 ready in 6.62ms
 → http://localhost:3000/
 Press h + Enter to show shortcuts
@@ -81,7 +81,7 @@ bun ./index.html ./about.html
 ```
 
 ```txt
-Bun v1.3.2
+Bun v1.3.3
 ready in 6.62ms
 → http://localhost:3000/
 Routes:
@@ -104,7 +104,7 @@ bun ./**/*.html
 ```
 
 ```
-Bun v1.3.2
+Bun v1.3.3
 ready in 6.62ms
 → http://localhost:3000/
 Routes:
@@ -122,7 +122,7 @@ bun ./index.html ./about/index.html ./about/foo/index.html
 ```
 
 ```
-Bun v1.3.2
+Bun v1.3.3
 ready in 6.62ms
 → http://localhost:3000/
 Routes:
@@ -164,7 +164,7 @@ For example:
 }
 ```
 
-```css abc.css
+```css abc.css icon="file-code"
 body {
   background-color: red;
 }
@@ -174,7 +174,7 @@ body {
 
 This outputs:
 
-```css
+```css styles.css icon="file-code"
 body {
   background-color: red;
 }
@@ -262,6 +262,93 @@ Then, reference TailwindCSS in your HTML via `<link>` tag, `@import` in CSS, or 
 
 <Info>Only one of those are necessary, not all three.</Info>
 
+## Inline environment variables
+
+Bun can replace `process.env.*` references in your JavaScript and TypeScript with their actual values at build time. This is useful for injecting configuration like API URLs or feature flags into your frontend code.
+
+### Dev server (runtime)
+
+To inline environment variables when using `bun ./index.html`, configure the `env` option in your `bunfig.toml`:
+
+```toml title="bunfig.toml" icon="settings"
+[serve.static]
+env = "PUBLIC_*"  # only inline env vars starting with PUBLIC_ (recommended)
+# env = "inline"  # inline all environment variables
+# env = "disable" # disable env var replacement (default)
+```
+
+<Note>
+  This only works with literal `process.env.FOO` references, not `import.meta.env` or indirect access like `const env =
+  process.env; env.FOO`.
+
+If an environment variable is not set, you may see runtime errors like `ReferenceError: process
+  is not defined` in the browser.
+
+</Note>
+
+Then run the dev server:
+
+```bash terminal icon="terminal"
+PUBLIC_API_URL=https://api.example.com bun ./index.html
+```
+
+### Build for production
+
+When building static HTML for production, use the `env` option to inline environment variables:
+
+<Tabs>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    # Inline all environment variables
+    bun build ./index.html --outdir=dist --env=inline
+
+    # Only inline env vars with a specific prefix (recommended)
+    bun build ./index.html --outdir=dist --env=PUBLIC_*
+    ```
+
+  </Tab>
+  <Tab title="API">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    // Inline all environment variables
+    await Bun.build({
+      entrypoints: ["./index.html"],
+      outdir: "./dist",
+      env: "inline", // [!code highlight]
+    });
+
+    // Only inline env vars with a specific prefix (recommended)
+    await Bun.build({
+      entrypoints: ["./index.html"],
+      outdir: "./dist",
+      env: "PUBLIC_*", // [!code highlight]
+    });
+    ```
+
+  </Tab>
+</Tabs>
+
+### Example
+
+Given this source file:
+
+```ts title="app.ts" icon="/icons/typescript.svg"
+const apiUrl = process.env.PUBLIC_API_URL;
+console.log(`API URL: ${apiUrl}`);
+```
+
+And running with `PUBLIC_API_URL=https://api.example.com`:
+
+```bash terminal icon="terminal"
+PUBLIC_API_URL=https://api.example.com bun build ./index.html --outdir=dist --env=PUBLIC_*
+```
+
+The bundled output will contain:
+
+```js title="dist/app.js" icon="/icons/javascript.svg"
+const apiUrl = "https://api.example.com";
+console.log(`API URL: ${apiUrl}`);
+```
+
 ## Echo console logs from browser to terminal
 
 Bun's dev server supports streaming console logs from the browser to the terminal.
@@ -273,7 +360,7 @@ bun ./index.html --console
 ```
 
 ```
-Bun v1.3.2
+Bun v1.3.3
 ready in 6.62ms
 → http://localhost:3000/
 Press h + Enter to show shortcuts
@@ -385,7 +472,8 @@ All paths are resolved relative to your HTML file, making it easy to organize yo
 - Need more configuration options for things like asset handling
 - Need a way to configure CORS, headers, etc.
 
-If you want to submit a PR, most of the code is [here](https://github.com/oven-sh/bun/blob/main/src/bun.js/api/bun/html-rewriter.ts). You could even copy paste that file into your project and use it as a starting point.
+{/* todo: find the correct link to link to as this 404's and there isn't any similar files */}
+{/* If you want to submit a PR, most of the code is [here](https://github.com/oven-sh/bun/blob/main/src/bun.js/api/bun/html-rewriter.ts). You could even copy paste that file into your project and use it as a starting point. */}
 
 </Warning>
 

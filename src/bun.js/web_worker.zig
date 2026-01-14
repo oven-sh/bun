@@ -487,8 +487,8 @@ fn spin(this: *WebWorker) void {
         return;
     };
 
-    if (promise.status(vm.global.vm()) == .rejected) {
-        const handled = vm.uncaughtException(vm.global, promise.result(vm.global.vm()), true);
+    if (promise.status() == .rejected) {
+        const handled = vm.uncaughtException(vm.global, promise.result(), true);
 
         if (!handled) {
             vm.exit_handler.exit_code = 1;
@@ -496,7 +496,7 @@ fn spin(this: *WebWorker) void {
             return;
         }
     } else {
-        _ = promise.result(vm.global.vm());
+        _ = promise.result();
     }
 
     this.flushLogs();
@@ -611,10 +611,19 @@ pub fn exitAndDeinit(this: *WebWorker) noreturn {
         loop_.internal_loop_data.jsc_vm = null;
     }
 
+    if (vm_to_deinit) |vm| {
+        // this deinit needs to happen before `Loop.shutdown`
+        // in order to not call uv_close on the gc timer twice.
+        vm.gc_controller.deinit();
+    }
+
+    if (comptime Environment.isWindows) {
+        bun.windows.libuv.Loop.shutdown();
+    }
+
     this.deinit();
 
     if (vm_to_deinit) |vm| {
-        vm.gc_controller.deinit();
         vm.deinit(); // NOTE: deinit here isn't implemented, so freeing workers will leak the vm.
     }
     bun.deleteAllPoolsForThreadExit();
@@ -637,6 +646,7 @@ const WTFStringImpl = @import("../string.zig").WTFStringImpl;
 
 const bun = @import("bun");
 const Async = bun.Async;
+const Environment = bun.Environment;
 const Output = bun.Output;
 const assert = bun.assert;
 

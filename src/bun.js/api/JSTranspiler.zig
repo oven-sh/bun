@@ -165,7 +165,8 @@ pub const Config = struct {
                 }
 
                 if (!kind.isStringLike()) {
-                    try tsconfig.jsonStringify(globalThis, 0, &out);
+                    // Use jsonStringifyFast for SIMD-optimized serialization
+                    try tsconfig.jsonStringifyFast(globalThis, &out);
                 } else {
                     out = try tsconfig.toBunString(globalThis);
                 }
@@ -204,7 +205,8 @@ pub const Config = struct {
                 defer out.deref();
                 // TODO: write a converter between JSC types and Bun AST types
                 if (is_object) {
-                    try macros.jsonStringify(globalThis, 0, &out);
+                    // Use jsonStringifyFast for SIMD-optimized serialization
+                    try macros.jsonStringifyFast(globalThis, &out);
                 } else {
                     out = try macros.toBunString(globalThis);
                 }
@@ -388,7 +390,7 @@ pub const Config = struct {
                             const replacementValue = try value.getIndex(globalThis, 1);
                             if (try exportReplacementValue(replacementValue, globalThis, allocator)) |to_replace| {
                                 const replacementKey = try value.getIndex(globalThis, 0);
-                                var slice = replacementKey.toSliceCloneWithAllocator(globalThis, allocator) orelse return error.JSError;
+                                var slice = try replacementKey.toSliceCloneWithAllocator(globalThis, allocator);
                                 errdefer slice.deinit();
                                 const replacement_name = slice.slice();
 
@@ -453,7 +455,7 @@ pub const TransformTask = struct {
     pub const AsyncTransformTask = jsc.ConcurrentPromiseTask(TransformTask);
     pub const AsyncTransformEventLoopTask = AsyncTransformTask.EventLoopTask;
 
-    pub fn create(transpiler: *JSTranspiler, input_code: bun.jsc.Node.StringOrBuffer, globalThis: *JSGlobalObject, loader: Loader) !*AsyncTransformTask {
+    pub fn create(transpiler: *JSTranspiler, input_code: bun.jsc.Node.StringOrBuffer, globalThis: *JSGlobalObject, loader: Loader) *AsyncTransformTask {
         var transform_task = TransformTask.new(.{
             .input_code = input_code,
             .transpiler = transpiler.transpiler,
@@ -474,8 +476,7 @@ pub const TransformTask = struct {
         transform_task.transpiler.setAllocator(bun.default_allocator);
 
         transpiler.ref();
-        errdefer transform_task.deinit();
-        return try AsyncTransformTask.createOnJSThread(bun.default_allocator, globalThis, transform_task);
+        return AsyncTransformTask.createOnJSThread(bun.default_allocator, globalThis, transform_task);
     }
 
     pub fn run(this: *TransformTask) void {
@@ -666,7 +667,7 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
     }
 
     if ((config.log.warnings + config.log.errors) > 0) {
-        return globalThis.throwValue(try config.log.toJS(globalThis, allocator, "Failed to create transpiler"));
+        return globalThis.throwValue(try config.log.toJS(globalThis, bun.default_allocator, "Failed to create transpiler"));
     }
 
     const log = &config.log;
@@ -677,7 +678,7 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
         jsc.VirtualMachine.get().transpiler.env,
     ) catch |err| {
         if ((log.warnings + log.errors) > 0) {
-            return globalThis.throwValue(try log.toJS(globalThis, allocator, "Failed to create transpiler"));
+            return globalThis.throwValue(try log.toJS(globalThis, bun.default_allocator, "Failed to create transpiler"));
         }
 
         return globalThis.throwError(err, "Error creating transpiler");
@@ -688,7 +689,7 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
     transpiler.options.env.behavior = .disable;
     transpiler.configureDefines() catch |err| {
         if ((log.warnings + log.errors) > 0) {
-            return globalThis.throwValue(try log.toJS(globalThis, allocator, "Failed to load define"));
+            return globalThis.throwValue(try log.toJS(globalThis, bun.default_allocator, "Failed to load define"));
         }
         return globalThis.throwError(err, "Failed to load define");
     };
@@ -847,7 +848,7 @@ pub fn transform(this: *JSTranspiler, globalThis: *jsc.JSGlobalObject, callframe
     var code = try jsc.Node.StringOrBuffer.fromJSWithEncodingMaybeAsync(globalThis, bun.default_allocator, code_arg, .utf8, true, allow_string_object) orelse {
         return globalThis.throwInvalidArgumentType("transform", "code", "string or Uint8Array");
     };
-    errdefer code.deinit();
+    errdefer code.deinitAndUnprotect();
 
     args.eat();
     const loader: ?Loader = brk: {
@@ -859,21 +860,12 @@ pub fn transform(this: *JSTranspiler, globalThis: *jsc.JSGlobalObject, callframe
         break :brk null;
     };
 
-    if (code == .buffer) {
-        code_arg.protect();
-    }
     var task = TransformTask.create(
         this,
         code,
         globalThis,
         loader orelse this.config.default_loader,
-    ) catch {
-        if (code == .buffer) {
-            code_arg.unprotect();
-        }
-        globalThis.throwOutOfMemory();
-        return error.JSError;
-    };
+    );
     task.schedule();
     return task.promise.value();
 }
@@ -1028,7 +1020,7 @@ fn namedImportsToJS(global: *JSGlobalObject, import_records: []const ImportRecor
     array.ensureStillAlive();
 
     for (import_records, 0..) |record, i| {
-        if (record.is_internal) continue;
+        if (record.flags.is_internal) continue;
 
         array.ensureStillAlive();
         const path = jsc.ZigString.init(record.path.text).toJS(global);

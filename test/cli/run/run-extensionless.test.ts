@@ -1,29 +1,35 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tmpdirSync } from "harness";
 import { join } from "path";
 
-test("running extensionless file works", async () => {
-  const dir = tmpdirSync();
-  mkdirSync(dir, { recursive: true });
-  await Bun.write(join(dir, "cool"), "const x: Test = 2; console.log('hello world');");
-  let { stdout } = Bun.spawnSync({
-    cmd: [bunExe(), join(dir, "./cool")],
-    cwd: dir,
-    env: bunEnv,
+describe.concurrent("run-extensionless", () => {
+  test("running extensionless file works", async () => {
+    const dir = tmpdirSync();
+    mkdirSync(dir, { recursive: true });
+    await Bun.write(join(dir, "cool"), "const x: Test = 2; console.log('hello world');");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(dir, "./cool")],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+    });
+    const stdout = await proc.stdout.text();
+    expect(stdout).toEqual("hello world\n");
   });
-  expect(stdout.toString("utf8")).toEqual("hello world\n");
-});
 
-test.skipIf(isWindows)("running shebang typescript file works", async () => {
-  const dir = tmpdirSync();
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "cool"), `#!${bunExe()}\nconst x: Test = 2; console.log('hello world');`, { mode: 0o777 });
+  test.skipIf(isWindows)("running shebang typescript file works", async () => {
+    const dir = tmpdirSync();
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "cool"), `#!${bunExe()}\nconst x: Test = 2; console.log('hello world');`, { mode: 0o777 });
 
-  let { stdout } = Bun.spawnSync({
-    cmd: [join(dir, "./cool")],
-    cwd: dir,
-    env: bunEnv,
+    await using proc = Bun.spawn({
+      cmd: [join(dir, "./cool")],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+    });
+    const stdout = await proc.stdout.text();
+    expect(stdout).toEqual("hello world\n");
   });
-  expect(stdout.toString("utf8")).toEqual("hello world\n");
 });

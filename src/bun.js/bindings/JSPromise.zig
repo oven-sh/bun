@@ -217,20 +217,20 @@ pub const JSPromise = opaque {
         return resolvedPromiseValue(globalObject, value);
     }
 
-    pub fn status(this: *const JSPromise, vm: *VM) Status {
-        return @enumFromInt(bun.cpp.JSC__JSPromise__status(this, vm));
+    pub fn status(this: *const JSPromise) Status {
+        return @enumFromInt(bun.cpp.JSC__JSPromise__status(this));
     }
 
     pub fn result(this: *JSPromise, vm: *VM) JSValue {
         return bun.cpp.JSC__JSPromise__result(this, vm);
     }
 
-    pub fn isHandled(this: *const JSPromise, vm: *VM) bool {
-        return bun.cpp.JSC__JSPromise__isHandled(this, vm);
+    pub fn isHandled(this: *const JSPromise) bool {
+        return bun.cpp.JSC__JSPromise__isHandled(this);
     }
 
-    pub fn setHandled(this: *JSPromise, vm: *VM) void {
-        bun.cpp.JSC__JSPromise__setHandled(this, vm);
+    pub fn setHandled(this: *JSPromise) void {
+        bun.cpp.JSC__JSPromise__setHandled(this);
     }
 
     /// Create a new resolved promise resolving to a given value.
@@ -285,7 +285,19 @@ pub const JSPromise = opaque {
             }
         }
 
-        const err = value catch |err| globalThis.takeException(err);
+        const err = value catch |err| switch (err) {
+            // We can't use globalThis.takeException() because it throws out of
+            // memory error when we instead need to take the exception.
+            error.OutOfMemory => globalThis.createOutOfMemoryError(),
+
+            error.JSTerminated => return,
+            else => err: {
+                const exception = globalThis.tryTakeException() orelse {
+                    @panic("A JavaScript exception was thrown, but it was cleared before it could be read.");
+                };
+                break :err exception.toError() orelse exception;
+            },
+        };
 
         bun.cpp.JSC__JSPromise__reject(this, globalThis, err) catch return error.JSTerminated;
     }
@@ -318,11 +330,11 @@ pub const JSPromise = opaque {
     pub const UnwrapMode = enum { mark_handled, leave_unhandled };
 
     pub fn unwrap(promise: *JSPromise, vm: *VM, mode: UnwrapMode) Unwrapped {
-        return switch (promise.status(vm)) {
+        return switch (promise.status()) {
             .pending => .pending,
             .fulfilled => .{ .fulfilled = promise.result(vm) },
             .rejected => {
-                if (mode == .mark_handled) promise.setHandled(vm);
+                if (mode == .mark_handled) promise.setHandled();
                 return .{ .rejected = promise.result(vm) };
             },
         };

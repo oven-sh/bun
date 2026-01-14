@@ -13,7 +13,4 @@ export function run(opts = {}) {
 }
 
 export const bench = Mitata.bench;
-
-export function group(_name, fn) {
-  return Mitata.group(fn);
-}
+export const group = Mitata.group;

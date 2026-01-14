@@ -53,19 +53,21 @@ pub fn BabyList(comptime Type: type) type {
             const unsupported_arg_msg = "unsupported argument to `moveFromList`: *" ++
                 @typeName(ListType);
 
-            const items = if (comptime @hasField(ListType, "items"))
-                list_ptr.items
-            else if (comptime std.meta.hasFn(ListType, "slice"))
-                list_ptr.slice()
-            else
-                @compileError(unsupported_arg_msg);
-
             const capacity = if (comptime @hasField(ListType, "capacity"))
                 list_ptr.capacity
             else if (comptime @hasField(ListType, "cap"))
                 list_ptr.cap
             else if (comptime std.meta.hasFn(ListType, "capacity"))
                 list_ptr.capacity()
+            else
+                @compileError(unsupported_arg_msg);
+
+            const items = if (comptime std.meta.hasFn(ListType, "moveToUnmanaged"))
+                list_ptr.moveToUnmanaged().items
+            else if (comptime @hasField(ListType, "items"))
+                list_ptr.items
+            else if (comptime std.meta.hasFn(ListType, "slice"))
+                list_ptr.slice()
             else
                 @compileError(unsupported_arg_msg);
 
@@ -88,7 +90,10 @@ pub fn BabyList(comptime Type: type) type {
                 list_ptr.* = .empty;
             } else {
                 this.#allocator.set(bun.allocators.asStd(allocator));
-                list_ptr.* = .init(allocator);
+                // `moveToUnmanaged` already cleared the old list.
+                if (comptime !std.meta.hasFn(ListType, "moveToUnmanaged")) {
+                    list_ptr.* = .init(allocator);
+                }
             }
             return this;
         }
@@ -342,6 +347,10 @@ pub fn BabyList(comptime Type: type) type {
 
         pub fn sortAsc(this: *Self) void {
             bun.strings.sortAsc(this.slice());
+        }
+
+        pub fn sort(this: *Self, comptime Context: type, context: Context) void {
+            std.sort.pdq(Type, this.slice(), context, Context.lessThan);
         }
 
         pub fn writableSlice(

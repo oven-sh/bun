@@ -469,7 +469,7 @@ pub fn defineValues(this: *const CompileTarget) []const []const u8 {
                     switch (arch) {
                         .x64 => "\"x64\"",
                         .arm64 => "\"arm64\"",
-                        else => @compileError("TODO"),
+                        .wasm => @compileError("TODO"),
                     },
 
                     "\"" ++ Global.package_json_version ++ "\"",

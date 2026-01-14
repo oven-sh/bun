@@ -91,6 +91,26 @@ pub fn asUSockets(this: *const SSLConfig) uws.SocketContext.BunSocketContextOpti
     return ctx_opts;
 }
 
+/// Returns socket options for client-side TLS with manual verification.
+/// Sets request_cert=1 (to receive server cert) and reject_unauthorized=0
+/// (to handle verification manually in handshake callback).
+pub fn asUSocketsForClientVerification(this: *const SSLConfig) uws.SocketContext.BunSocketContextOptions {
+    var opts = this.asUSockets();
+    opts.request_cert = 1;
+    opts.reject_unauthorized = 0;
+    return opts;
+}
+
+/// Returns a copy of this config for client-side TLS with manual verification.
+/// Sets request_cert=1 (to receive server cert) and reject_unauthorized=0
+/// (to handle verification manually in handshake callback).
+pub fn forClientVerification(this: SSLConfig) SSLConfig {
+    var copy = this;
+    copy.request_cert = 1;
+    copy.reject_unauthorized = 0;
+    return copy;
+}
+
 pub fn isSame(this: *const SSLConfig, other: *const SSLConfig) bool {
     inline for (comptime std.meta.fields(SSLConfig)) |field| {
         const first = @field(this, field.name);

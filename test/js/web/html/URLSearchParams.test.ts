@@ -212,6 +212,13 @@ describe("URLSearchParams", () => {
   });
 });
 
+it("size property should be configurable (issue #9251)", () => {
+  const descriptor = Object.getOwnPropertyDescriptor(URLSearchParams.prototype, "size");
+  expect(descriptor).toBeDefined();
+  expect(descriptor!.configurable).toBe(true);
+  expect(descriptor!.enumerable).toBe(true);
+});
+
 it(".delete second argument", () => {
   const params = new URLSearchParams("a=1&a=2&b=3");
   params.delete("a", 1);

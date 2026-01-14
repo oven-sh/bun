@@ -34,8 +34,8 @@ pub const Iterator = NewIterator(false);
 pub const IteratorW = NewIterator(true);
 
 pub fn NewIterator(comptime use_windows_ospath: bool) type {
-    return switch (builtin.os.tag) {
-        .macos, .ios, .freebsd, .netbsd, .dragonfly, .openbsd, .solaris => struct {
+    return switch (bun.Environment.os) {
+        .mac => struct {
             dir: FD,
             seek: i64,
             buf: [8192]u8 align(@alignOf(std.posix.system.dirent)),
@@ -329,7 +329,7 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                 }
             }
         },
-        .wasi => struct {
+        .wasm => struct {
             dir: FD,
             buf: [8192]u8, // TODO align(@alignOf(os.wasi.dirent_t)),
             cookie: u64,
@@ -393,7 +393,6 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                 }
             }
         },
-        else => @compileError("unimplemented"),
     };
 }
 
@@ -414,14 +413,8 @@ pub fn NewWrappedIterator(comptime path_type: PathType) type {
 
         pub fn init(dir: FD) Self {
             return Self{
-                .iter = switch (builtin.os.tag) {
-                    .macos,
-                    .ios,
-                    .freebsd,
-                    .netbsd,
-                    .dragonfly,
-                    .openbsd,
-                    .solaris,
+                .iter = switch (bun.Environment.os) {
+                    .mac,
                     => IteratorType{
                         .dir = dir,
                         .seek = 0,
@@ -429,7 +422,7 @@ pub fn NewWrappedIterator(comptime path_type: PathType) type {
                         .end_index = 0,
                         .buf = undefined,
                     },
-                    .linux, .haiku => IteratorType{
+                    .linux => IteratorType{
                         .dir = dir,
                         .index = 0,
                         .end_index = 0,
@@ -443,14 +436,13 @@ pub fn NewWrappedIterator(comptime path_type: PathType) type {
                         .buf = undefined,
                         .name_data = undefined,
                     },
-                    .wasi => IteratorType{
+                    .wasm => IteratorType{
                         .dir = dir,
                         .cookie = posix.wasi.DIRCOOKIE_START,
                         .index = 0,
                         .end_index = 0,
                         .buf = undefined,
                     },
-                    else => @compileError("unimplemented"),
                 },
             };
         }

@@ -172,11 +172,11 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCustomEventDOMConstruc
     EnsureStillAliveScope argument1 = callFrame->argument(1);
     auto eventInitDict = convert<IDLDictionary<CustomEvent::Init>>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    auto object = CustomEvent::create(type, WTFMove(eventInitDict));
+    auto object = CustomEvent::create(type, WTF::move(eventInitDict));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
-    auto jsValue = toJSNewlyCreated<IDLInterface<CustomEvent>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTFMove(object));
+    auto jsValue = toJSNewlyCreated<IDLInterface<CustomEvent>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTF::move(object));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     setSubclassStructureIfNeeded<CustomEvent>(lexicalGlobalObject, callFrame, asObject(jsValue));
@@ -221,7 +221,7 @@ void JSCustomEventPrototype::finishCreation(VM& vm)
 const ClassInfo JSCustomEvent::s_info = { "CustomEvent"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCustomEvent) };
 
 JSCustomEvent::JSCustomEvent(Structure* structure, JSDOMGlobalObject& globalObject, Ref<CustomEvent>&& impl)
-    : JSEvent(structure, globalObject, WTFMove(impl))
+    : JSEvent(structure, globalObject, WTF::move(impl))
 {
 }
 
@@ -290,7 +290,7 @@ static inline JSC::EncodedJSValue jsCustomEventPrototypeFunction_initCustomEvent
     EnsureStillAliveScope argument3 = callFrame->argument(3);
     auto detail = argument3.value().isUndefined() ? jsNull() : convert<IDLAny>(*lexicalGlobalObject, argument3.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.initCustomEvent(type, WTFMove(bubbles), WTFMove(cancelable), WTFMove(detail)); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.initCustomEvent(type, WTF::move(bubbles), WTF::move(cancelable), WTF::move(detail)); })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsCustomEventPrototypeFunction_initCustomEvent, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -371,7 +371,7 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
     //         // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
     // #endif
     //     }
-    return createWrapper<CustomEvent>(globalObject, WTFMove(impl));
+    return createWrapper<CustomEvent>(globalObject, WTF::move(impl));
 }
 
 JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, CustomEvent& impl)

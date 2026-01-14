@@ -1156,10 +1156,11 @@ pub const JSValue = enum(i64) {
         return JSC__JSValue__bigIntSum(globalObject, a, b);
     }
 
-    extern fn JSC__JSValue__toUInt64NoTruncate(this: JSValue) u64;
+    /// Value must be either `isHeapBigInt` or `isNumber`
     pub fn toUInt64NoTruncate(this: JSValue) u64 {
         return JSC__JSValue__toUInt64NoTruncate(this);
     }
+    extern fn JSC__JSValue__toUInt64NoTruncate(this: JSValue) u64;
 
     /// Deprecated: replace with 'toBunString'
     pub fn getZigString(this: JSValue, global: *JSGlobalObject) bun.JSError!ZigString {
@@ -1201,6 +1202,15 @@ pub const JSValue = enum(i64) {
         return bun.jsc.fromJSHostCallGeneric(globalThis, @src(), JSC__JSValue__jsonStringify, .{ this, globalThis, indent, out });
     }
 
+    extern fn JSC__JSValue__jsonStringifyFast(this: JSValue, globalThis: *JSGlobalObject, out: *bun.String) void;
+
+    /// Fast version of JSON.stringify that uses JSC's FastStringifier optimization.
+    /// When space is undefined (as opposed to 0), JSC uses a highly optimized SIMD-based
+    /// serialization path. This is significantly faster for most common use cases.
+    pub fn jsonStringifyFast(this: JSValue, globalThis: *JSGlobalObject, out: *bun.String) bun.JSError!void {
+        return bun.jsc.fromJSHostCallGeneric(globalThis, @src(), JSC__JSValue__jsonStringifyFast, .{ this, globalThis, out });
+    }
+
     /// Call `toString()` on the JSValue and clone the result.
     pub fn toSliceOrNull(this: JSValue, globalThis: *JSGlobalObject) bun.JSError!ZigString.Slice {
         const str = try bun.String.fromJS(this, globalThis);
@@ -1219,17 +1229,8 @@ pub const JSValue = enum(i64) {
     /// On exception or out of memory, this returns null.
     ///
     /// Remember that `Symbol` throws an exception when you call `toString()`.
-    pub fn toSliceClone(this: JSValue, globalThis: *JSGlobalObject) ?ZigString.Slice {
+    pub fn toSliceClone(this: JSValue, globalThis: *JSGlobalObject) bun.JSError!ZigString.Slice {
         return this.toSliceCloneWithAllocator(globalThis, bun.default_allocator);
-    }
-
-    /// Call `toString()` on the JSValue and clone the result.
-    /// On exception or out of memory, this returns null.
-    ///
-    /// Remember that `Symbol` throws an exception when you call `toString()`.
-    pub fn toSliceCloneZ(this: JSValue, globalThis: *JSGlobalObject) JSError!?[:0]u8 {
-        var str = try bun.String.fromJS(this, globalThis);
-        return try str.toOwnedSliceZ(bun.default_allocator);
     }
 
     /// On exception or out of memory, this returns null, to make exception checks clearer.
@@ -1237,12 +1238,9 @@ pub const JSValue = enum(i64) {
         this: JSValue,
         globalThis: *JSGlobalObject,
         allocator: std.mem.Allocator,
-    ) ?ZigString.Slice {
-        var str = this.toJSString(globalThis) catch return null;
-        return str.toSliceClone(globalThis, allocator) catch {
-            globalThis.throwOutOfMemory() catch {}; // TODO: properly propagate exception upwards
-            return null;
-        };
+    ) JSError!ZigString.Slice {
+        var str = try this.toJSString(globalThis);
+        return str.toSliceClone(globalThis, allocator);
     }
 
     /// Runtime conversion to an object. This can have side effects.

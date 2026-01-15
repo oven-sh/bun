@@ -867,21 +867,6 @@ pub const BunxCommand = struct {
 
 const string = []const u8;
 
-const std = @import("std");
-const Run = @import("./run_command.zig").RunCommand;
-const Allocator = std.mem.Allocator;
-
-const cli = @import("../cli.zig");
-const Command = cli.Command;
-
-const bun = @import("bun");
-const Environment = bun.Environment;
-const Global = bun.Global;
-const Output = bun.Output;
-const default_allocator = bun.default_allocator;
-const strings = bun.strings;
-const UpdateRequest = bun.PackageManager.UpdateRequest;
-
 /// Infers the binary name from a tarball URL string.
 /// For URLs like https://registry.npmjs.org/cowsay/-/cowsay-1.5.0.tgz
 /// extracts "cowsay" as the package name.
@@ -934,3 +919,18 @@ fn inferBinNameFromTarball(url: string) string {
 
     return basename;
 }
+
+const std = @import("std");
+const Run = @import("./run_command.zig").RunCommand;
+const Allocator = std.mem.Allocator;
+
+const cli = @import("../cli.zig");
+const Command = cli.Command;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Global = bun.Global;
+const Output = bun.Output;
+const default_allocator = bun.default_allocator;
+const strings = bun.strings;
+const UpdateRequest = bun.PackageManager.UpdateRequest;

@@ -368,6 +368,8 @@ pub const BunxCommand = struct {
             "tsc"
         else if (update_request.version.tag == .github)
             update_request.version.value.github.repo.slice(update_request.version_buf)
+        else if (update_request.version.tag == .tarball)
+            inferBinNameFromTarball(update_request.version.literal.slice(update_request.version_buf))
         else if (strings.lastIndexOfChar(update_request.name, '/')) |index|
             update_request.name[index + 1 ..]
         else
@@ -879,3 +881,56 @@ const Output = bun.Output;
 const default_allocator = bun.default_allocator;
 const strings = bun.strings;
 const UpdateRequest = bun.PackageManager.UpdateRequest;
+
+/// Infers the binary name from a tarball URL string.
+/// For URLs like https://registry.npmjs.org/cowsay/-/cowsay-1.5.0.tgz
+/// extracts "cowsay" as the package name.
+/// For local tarballs like ./my-package-1.0.0.tgz, extracts "my-package".
+fn inferBinNameFromTarball(url: string) string {
+    // For npm registry URLs: https://registry.npmjs.org/package/-/package-version.tgz
+    // Extract package name between the registry domain and "/-/"
+    if (strings.indexOf(url, "/-/")) |separator_idx| {
+        // Find the start of the package name after the domain
+        var package_start: usize = 0;
+        if (strings.indexOf(url, "://")) |protocol_end| {
+            const after_protocol = protocol_end + 3;
+            // Find the next "/" after the protocol (end of domain)
+            if (strings.indexOfCharPos(url, '/', after_protocol)) |domain_end| {
+                package_start = domain_end + 1;
+            }
+        }
+        if (package_start > 0 and package_start < separator_idx) {
+            return url[package_start..separator_idx];
+        }
+    }
+
+    // Fallback: extract name from tarball filename
+    // Get the filename part (after last /)
+    const filename = if (strings.lastIndexOfChar(url, '/')) |idx|
+        url[idx + 1 ..]
+    else
+        url;
+
+    // Strip .tgz or .tar.gz extension
+    const basename = if (strings.endsWithComptime(filename, ".tar.gz"))
+        filename[0 .. filename.len - ".tar.gz".len]
+    else if (strings.endsWithComptime(filename, ".tgz"))
+        filename[0 .. filename.len - ".tgz".len]
+    else
+        filename;
+
+    // Try to strip version suffix (e.g., "cowsay-1.5.0" -> "cowsay")
+    // Look for the last dash followed by a digit (version number)
+    var i: usize = basename.len;
+    while (i > 0) {
+        i -= 1;
+        if (basename[i] == '-') {
+            // Check if what follows looks like a version (starts with digit)
+            if (i + 1 < basename.len and basename[i + 1] >= '0' and basename[i + 1] <= '9') {
+                return basename[0..i];
+            }
+        }
+    }
+
+    return basename;
+}

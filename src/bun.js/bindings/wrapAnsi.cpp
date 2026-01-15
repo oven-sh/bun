@@ -7,7 +7,6 @@
 #include <wtf/Vector.h>
 
 // Zig exports for visible width calculation
-extern "C" size_t Bun__visibleWidthExcludeANSI_utf8(const uint8_t* ptr, size_t len, bool ambiguous_as_wide);
 extern "C" size_t Bun__visibleWidthExcludeANSI_utf16(const uint16_t* ptr, size_t len, bool ambiguous_as_wide);
 extern "C" size_t Bun__visibleWidthExcludeANSI_latin1(const uint8_t* ptr, size_t len);
 extern "C" uint8_t Bun__codepointWidth(uint32_t cp, bool ambiguous_as_wide);
@@ -16,56 +15,8 @@ namespace Bun {
 using namespace WTF;
 
 // ============================================================================
-// UTF-8/UTF-16 Decoding Utilities (needed for hard wrap)
+// UTF-16 Decoding Utilities (needed for hard wrap with surrogate pairs)
 // ============================================================================
-
-static inline uint8_t utf8SequenceLength(uint8_t byte)
-{
-    if (byte < 0x80)
-        return 1;
-    if ((byte & 0xE0) == 0xC0)
-        return 2;
-    if ((byte & 0xF0) == 0xE0)
-        return 3;
-    if ((byte & 0xF8) == 0xF0)
-        return 4;
-    return 1; // Invalid, treat as 1
-}
-
-static char32_t decodeUTF8(const Latin1Character* ptr, size_t available, size_t& outLen)
-{
-    uint8_t byte = static_cast<uint8_t>(ptr[0]);
-
-    if (byte < 0x80) {
-        outLen = 1;
-        return byte;
-    }
-
-    uint8_t seqLen = utf8SequenceLength(byte);
-    if (seqLen > available) {
-        outLen = 1;
-        return 0xFFFD; // Replacement character
-    }
-
-    char32_t cp = 0;
-    switch (seqLen) {
-    case 2:
-        cp = ((byte & 0x1F) << 6) | (ptr[1] & 0x3F);
-        break;
-    case 3:
-        cp = ((byte & 0x0F) << 12) | ((ptr[1] & 0x3F) << 6) | (ptr[2] & 0x3F);
-        break;
-    case 4:
-        cp = ((byte & 0x07) << 18) | ((ptr[1] & 0x3F) << 12) | ((ptr[2] & 0x3F) << 6) | (ptr[3] & 0x3F);
-        break;
-    default:
-        outLen = 1;
-        return 0xFFFD;
-    }
-
-    outLen = seqLen;
-    return cp;
-}
 
 static char32_t decodeUTF16(const UChar* ptr, size_t available, size_t& outLen)
 {
@@ -109,7 +60,10 @@ static size_t stringWidth(const Char* start, const Char* end, bool ambiguousIsNa
         return 0;
 
     if constexpr (sizeof(Char) == 1) {
-        return Bun__visibleWidthExcludeANSI_utf8(reinterpret_cast<const uint8_t*>(start), len, !ambiguousIsNarrow);
+        // 8-bit JSC strings are Latin1, not UTF-8
+        // Note: Latin1 doesn't have ambiguous width characters (all are in U+0000-U+00FF)
+        (void)ambiguousIsNarrow;
+        return Bun__visibleWidthExcludeANSI_latin1(reinterpret_cast<const uint8_t*>(start), len);
     } else {
         return Bun__visibleWidthExcludeANSI_utf16(reinterpret_cast<const uint16_t*>(start), len, !ambiguousIsNarrow);
     }
@@ -232,7 +186,9 @@ static void wrapWord(Vector<Row<Char>>& rows, const Char* wordStart, const Char*
         if (!isInsideEscape) {
             char32_t cp;
             if constexpr (sizeof(Char) == 1) {
-                cp = decodeUTF8(it, wordEnd - it, charLen);
+                // Latin1: each byte is one character, direct 1:1 mapping to U+0000-U+00FF
+                charLen = 1;
+                cp = static_cast<uint8_t>(*it);
             } else {
                 cp = decodeUTF16(it, wordEnd - it, charLen);
             }

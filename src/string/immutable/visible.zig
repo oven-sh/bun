@@ -1146,18 +1146,6 @@ pub const visible = struct {
 // extern "C" bool icu_hasBinaryProperty(UChar32 cp, unsigned int prop)
 extern fn icu_hasBinaryProperty(c: u32, which: c_uint) bool;
 
-const bun = @import("bun");
-const std = @import("std");
-
-const strings = bun.strings;
-const decodeWTF8RuneTMultibyte = strings.decodeWTF8RuneTMultibyte;
-const firstNonASCII = strings.firstNonASCII;
-const firstNonASCII16 = strings.firstNonASCII16;
-const grapheme = strings.grapheme;
-const u3_fast = strings.u3_fast;
-const unicode_replacement = strings.unicode_replacement;
-const utf16CodepointWithFFFD = strings.utf16CodepointWithFFFD;
-
 // C exports for wrapAnsi.cpp
 
 /// Calculate visible width of UTF-8 string excluding ANSI escape codes
@@ -1183,3 +1171,15 @@ export fn Bun__visibleWidthExcludeANSI_latin1(ptr: [*]const u8, len: usize) usiz
 export fn Bun__codepointWidth(cp: u32, ambiguous_as_wide: bool) u8 {
     return @intCast(visibleCodepointWidth(cp, ambiguous_as_wide));
 }
+
+const bun = @import("bun");
+const std = @import("std");
+
+const strings = bun.strings;
+const decodeWTF8RuneTMultibyte = strings.decodeWTF8RuneTMultibyte;
+const firstNonASCII = strings.firstNonASCII;
+const firstNonASCII16 = strings.firstNonASCII16;
+const grapheme = strings.grapheme;
+const u3_fast = strings.u3_fast;
+const unicode_replacement = strings.unicode_replacement;
+const utf16CodepointWithFFFD = strings.utf16CodepointWithFFFD;

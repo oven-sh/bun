@@ -471,6 +471,8 @@ pub fn getPresignUrlFrom(this: *Blob, globalThis: *jsc.JSGlobalObject, extra_opt
 
     var method: bun.http.Method = .GET;
     var expires: usize = 86400; // 1 day default
+    var response_content_type_str: ?ZigString.Slice = null;
+    defer if (response_content_type_str) |slice| slice.deinit();
 
     const s3 = &this.store.?.data.s3;
     var credentialsWithOptions: S3.S3CredentialsWithOptions = .{
@@ -492,10 +494,23 @@ pub fn getPresignUrlFrom(this: *Blob, globalThis: *jsc.JSGlobalObject, extra_opt
                 if (expires_ <= 0) return globalThis.throwInvalidArguments("expiresIn must be greather than 0", .{});
                 expires = @intCast(expires_);
             }
+            if (try options.getTruthyComptime(globalThis, "type")) |content_type| {
+                if (!content_type.isString()) {
+                    return globalThis.throwInvalidArgumentType("presign", "options.type", "string");
+                }
+                response_content_type_str = try content_type.toSlice(globalThis, bun.default_allocator);
+            }
         }
         credentialsWithOptions = try s3.getCredentialsWithOptions(options, globalThis);
     }
     const path = s3.path();
+    var response_content_disposition = credentialsWithOptions.content_disposition;
+    if (response_content_disposition) |value| {
+        if (value.len == 0) {
+            response_content_disposition = null;
+        }
+    }
+    const response_content_type = if (response_content_type_str) |slice| if (slice.slice().len > 0) slice.slice() else null else null;
 
     const result = credentialsWithOptions.credentials.signRequest(.{
         .path = path,
@@ -503,7 +518,11 @@ pub fn getPresignUrlFrom(this: *Blob, globalThis: *jsc.JSGlobalObject, extra_opt
         .acl = credentialsWithOptions.acl,
         .storage_class = credentialsWithOptions.storage_class,
         .request_payer = credentialsWithOptions.request_payer,
-    }, false, .{ .expires = expires }) catch |sign_err| {
+    }, false, .{
+        .expires = expires,
+        .response_content_disposition = response_content_disposition,
+        .response_content_type = response_content_type,
+    }) catch |sign_err| {
         return S3.throwSignError(sign_err, globalThis);
     };
     defer result.deinit();
@@ -656,6 +675,7 @@ const Output = bun.Output;
 const S3 = bun.S3;
 const strings = bun.strings;
 const Method = bun.http.Method;
+const ZigString = bun.String;
 
 const jsc = bun.jsc;
 const JSValue = jsc.JSValue;

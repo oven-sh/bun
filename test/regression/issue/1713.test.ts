@@ -19,7 +19,9 @@ describe("console.log should only display own properties", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const stdout = await proc.stdout.text();
+    const stderr = await proc.stderr.text();
+    const exitCode = await proc.exited;
 
     expect(stderr).toBe("");
     // First line: empty object (no own properties)
@@ -46,7 +48,9 @@ describe("console.log should only display own properties", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const stdout = await proc.stdout.text();
+    const stderr = await proc.stderr.text();
+    const exitCode = await proc.exited;
 
     expect(stderr).toBe("");
     expect(stdout).toContain("foo:");
@@ -69,7 +73,9 @@ describe("console.log should only display own properties", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const stdout = await proc.stdout.text();
+    const stderr = await proc.stderr.text();
+    const exitCode = await proc.exited;
 
     expect(stderr).toBe("");
     expect(stdout).toContain("a: 1");
@@ -100,7 +106,9 @@ describe("console.log should only display own properties", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const stdout = await proc.stdout.text();
+    const stderr = await proc.stderr.text();
+    const exitCode = await proc.exited;
 
     expect(stderr).toBe("");
     expect(stdout).toContain("value: 42");

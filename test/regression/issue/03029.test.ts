@@ -31,7 +31,8 @@ describe("issue 3029 - JSX imports should be deduplicated", () => {
       const content = api.readFile("/out.js");
 
       // Count import statements from react/jsx-dev-runtime
-      const importMatches = content.match(/import\s*\{[^}]*\}\s*from\s*["']react\/jsx-dev-runtime["']/g);
+      // Pattern handles multi-line imports and optional "type" modifier
+      const importMatches = content.match(/import\s*(?:type\s*)?\{[\s\S]*?\}\s*from\s*["']react\/jsx-dev-runtime["']/g);
 
       // Should have only ONE import statement for react/jsx-dev-runtime
       expect(importMatches?.length).toBe(1);
@@ -79,7 +80,8 @@ describe("issue 3029 - JSX imports should be deduplicated", () => {
       const content = api.readFile("/out.js");
 
       // Count import statements from react/jsx-dev-runtime
-      const importMatches = content.match(/import\s*\{[^}]*\}\s*from\s*["']react\/jsx-dev-runtime["']/g);
+      // Pattern handles multi-line imports and optional "type" modifier
+      const importMatches = content.match(/import\s*(?:type\s*)?\{[\s\S]*?\}\s*from\s*["']react\/jsx-dev-runtime["']/g);
 
       // Should have only ONE import statement
       expect(importMatches?.length).toBe(1);
@@ -119,7 +121,8 @@ describe("issue 3029 - JSX imports should be deduplicated", () => {
       const content = api.readFile("/out.js");
 
       // Count import statements from react/jsx-dev-runtime
-      const importMatches = content.match(/import\s*\{[^}]*\}\s*from\s*["']react\/jsx-dev-runtime["']/g);
+      // Pattern handles multi-line imports and optional "type" modifier
+      const importMatches = content.match(/import\s*(?:type\s*)?\{[\s\S]*?\}\s*from\s*["']react\/jsx-dev-runtime["']/g);
 
       // Should have only ONE import statement
       expect(importMatches?.length).toBe(1);

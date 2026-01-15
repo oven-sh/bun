@@ -79,6 +79,8 @@ pub fn convertStmtsForChunk(
                     if (chunk.content == .javascript) {
                         const js_chunk = &chunk.content.javascript;
                         if (js_chunk.external_imports_deduplicated) {
+                            // Bounds check before accessing import record
+                            if (s.import_record_index >= ast.import_records.len) continue;
                             const record = ast.import_records.at(s.import_record_index);
                             if (!record.source_index.isValid() and record.kind == .stmt and !record.path.is_disabled) {
                                 const record_key = (@as(u64, source_index) << 32) | @as(u64, s.import_record_index);

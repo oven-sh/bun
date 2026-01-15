@@ -43,7 +43,14 @@ pub fn deduplicateExternalImports(c: *LinkerContext, chunks: []Chunk) void {
         // Map from (external path, import name) to canonical ref
         // Key format: "path\x00name" (null-separated)
         var canonical_refs = std.StringHashMap(CanonicalImport).init(c.allocator());
-        defer canonical_refs.deinit();
+        defer {
+            // Free allocated keys before deinit to avoid memory leak
+            var key_iter = canonical_refs.keyIterator();
+            while (key_iter.next()) |key| {
+                c.allocator().free(key.*);
+            }
+            canonical_refs.deinit();
+        }
 
         // Track the first import statement for each path
         var canonical_imports_by_path = std.StringHashMap(CanonicalPathImport).init(c.allocator());
@@ -207,11 +214,14 @@ pub fn deduplicateExternalImports(c: *LinkerContext, chunks: []Chunk) void {
             // Update the items if we have new ones
             if (unique_items.items.len > s_import.items.len) {
                 s_import.items = unique_items.items;
+            } else {
+                // Free the unused buffer to avoid memory leak
+                unique_items.deinit(c.allocator());
             }
         }
 
-        // Mark chunk as having deduplicated imports if any merging was done
-        if (canonical_refs.count() > 0) {
+        // Mark chunk as having deduplicated imports only if we actually deduplicated some
+        if (js_chunk.deduplicated_external_import_records.count() > 0) {
             js_chunk.external_imports_deduplicated = true;
         }
     }

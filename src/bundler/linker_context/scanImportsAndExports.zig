@@ -698,11 +698,22 @@ pub fn scanImportsAndExports(this: *LinkerContext) ScanImportsAndExportsError!vo
                                         record.flags.contains_default_alias or
                                         record.flags.contains_es_module_alias))
                                 {
-                                    // Only wrap with __toESM if target is CJS (or truly external with unknown kind)
-                                    if (!record.source_index.isValid() or exports_kind[record.source_index.get()] == .cjs) {
+                                    // For dynamic imports to cross-chunk CJS modules, we need extra
+                                    // unwrapping in js_printer (.then((m)=>__toESM(m.default))).
+                                    // For other cases (static imports, truly external), use standard wrapping.
+                                    if (record.source_index.isValid() and
+                                        this.isExternalDynamicImport(record, source_index) and
+                                        exports_kind[record.source_index.get()] == .cjs)
+                                    {
+                                        // Cross-chunk dynamic import to CJS - needs special handling in printer
+                                        record.flags.wrap_with_to_esm = true;
+                                        to_esm_uses += 1;
+                                    } else if (kind != .dynamic) {
+                                        // Static imports to external CJS modules need __toESM wrapping
                                         record.flags.wrap_with_to_esm = true;
                                         to_esm_uses += 1;
                                     }
+                                    // Dynamic imports to truly external modules: no wrapping (preserve native format)
                                 }
                             }
                         }

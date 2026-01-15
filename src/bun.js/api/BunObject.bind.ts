@@ -34,20 +34,3 @@ export const stringWidth = fn({
   },
   ret: t.usize,
 });
-
-export const WrapAnsiOptions = t.dictionary({
-  hard: t.boolean.default(false),
-  wordWrap: t.boolean.default(true),
-  trim: t.boolean.default(true),
-  ambiguousIsNarrow: t.boolean.default(true),
-});
-
-export const wrapAnsi = fn({
-  args: {
-    global: t.globalObject,
-    str: t.DOMString,
-    columns: t.usize,
-    opts: WrapAnsiOptions.default({}),
-  },
-  ret: t.any,
-});

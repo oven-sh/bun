@@ -5084,7 +5084,10 @@ describe.concurrent("bun-install", () => {
         env: { ...env, "GIT_ASKPASS": "echo" },
       });
       const err = await stderr.text();
-      expect(err.split(/\r?\n/)).toContain('error: "git clone" for "private-install" failed');
+      // The error message now includes git stderr, so check for the base message
+      expect(err).toContain('error: "git clone" for "private-install" failed');
+      // Verify the git error details are included (e.g., Permission denied, fatal:, etc.)
+      expect(err).toContain("fatal:");
       const out = await stdout.text();
       expect(out).toEqual(expect.stringContaining("bun install v1."));
       expect(await exited).toBe(1);
@@ -5122,9 +5125,10 @@ describe.concurrent("bun-install", () => {
         env,
       });
       const err = await stderr.text();
-      expect(err.split(/\r?\n/)).toContain(
-        'error: no commit matching "404-no_such_tag" found for "uglify" (but repository exists)',
-      );
+      // The error message now includes git stderr, so check for the base message
+      expect(err).toContain('error: no commit matching "404-no_such_tag" found for "uglify" (but repository exists)');
+      // Verify the git error details are included
+      expect(err).toContain("fatal:");
       const out = await stdout.text();
       expect(out).toEqual(expect.stringContaining("bun install v1."));
       expect(await exited).toBe(1);

@@ -2,6 +2,8 @@ threadlocal var final_path_buf: bun.PathBuffer = undefined;
 threadlocal var ssh_path_buf: bun.PathBuffer = undefined;
 threadlocal var folder_name_buf: bun.PathBuffer = undefined;
 threadlocal var json_path_buf: bun.PathBuffer = undefined;
+threadlocal var git_stderr_buf: [8192]u8 = undefined;
+threadlocal var git_stderr_len: usize = 0;
 
 const SloppyGlobalGitConfig = struct {
     has_askpass: bool = false,
@@ -372,21 +374,39 @@ pub const Repository = extern struct {
             });
 
         switch (result.term) {
-            .Exited => |sig| if (sig == 0) return result.stdout else if (
-            // remote: The page could not be found <-- for non git
-            // remote: Repository not found. <-- for git
-            // remote: fatal repository '<url>' does not exist <-- for git
-            (strings.containsComptime(result.stderr, "remote:") and
-                strings.containsComptime(result.stderr, "not") and
-                strings.containsComptime(result.stderr, "found")) or
-                strings.containsComptime(result.stderr, "does not exist"))
-            {
-                return error.RepositoryNotFound;
+            .Exited => |sig| if (sig == 0) return result.stdout else {
+                // Store stderr for error reporting
+                const stderr_trimmed = strings.trim(result.stderr, " \t\r\n");
+                const copy_len = @min(stderr_trimmed.len, git_stderr_buf.len);
+                @memcpy(git_stderr_buf[0..copy_len], stderr_trimmed[0..copy_len]);
+                git_stderr_len = copy_len;
+
+                if (
+                // remote: The page could not be found <-- for non git
+                // remote: Repository not found. <-- for git
+                // remote: fatal repository '<url>' does not exist <-- for git
+                (strings.containsComptime(result.stderr, "remote:") and
+                    strings.containsComptime(result.stderr, "not") and
+                    strings.containsComptime(result.stderr, "found")) or
+                    strings.containsComptime(result.stderr, "does not exist"))
+                {
+                    return error.RepositoryNotFound;
+                }
             },
-            else => {},
+            else => {
+                // Store stderr for error reporting on non-exit termination
+                const stderr_trimmed = strings.trim(result.stderr, " \t\r\n");
+                const copy_len = @min(stderr_trimmed.len, git_stderr_buf.len);
+                @memcpy(git_stderr_buf[0..copy_len], stderr_trimmed[0..copy_len]);
+                git_stderr_len = copy_len;
+            },
         }
 
         return error.InstallFailed;
+    }
+
+    fn getLastGitStderr() []const u8 {
+        return git_stderr_buf[0..git_stderr_len];
     }
 
     pub fn trySSH(url: string) ?string {
@@ -512,13 +532,24 @@ pub const Repository = extern struct {
                 env,
                 &[_]string{ "git", "-C", path, "fetch", "--quiet" },
             ) catch |err| {
-                log.addErrorFmt(
-                    null,
-                    logger.Loc.Empty,
-                    allocator,
-                    "\"git fetch\" for \"{s}\" failed",
-                    .{name},
-                ) catch unreachable;
+                const git_stderr = getLastGitStderr();
+                if (git_stderr.len > 0) {
+                    log.addErrorFmt(
+                        null,
+                        logger.Loc.Empty,
+                        allocator,
+                        "\"git fetch\" for \"{s}\" failed:\n{s}",
+                        .{ name, git_stderr },
+                    ) catch unreachable;
+                } else {
+                    log.addErrorFmt(
+                        null,
+                        logger.Loc.Empty,
+                        allocator,
+                        "\"git fetch\" for \"{s}\" failed",
+                        .{name},
+                    ) catch unreachable;
+                }
                 return err;
             };
             break :fetch dir;
@@ -538,13 +569,24 @@ pub const Repository = extern struct {
                 target,
             }) catch |err| {
                 if (err == error.RepositoryNotFound or attempt > 1) {
-                    log.addErrorFmt(
-                        null,
-                        logger.Loc.Empty,
-                        allocator,
-                        "\"git clone\" for \"{s}\" failed",
-                        .{name},
-                    ) catch unreachable;
+                    const git_stderr = getLastGitStderr();
+                    if (git_stderr.len > 0) {
+                        log.addErrorFmt(
+                            null,
+                            logger.Loc.Empty,
+                            allocator,
+                            "\"git clone\" for \"{s}\" failed:\n{s}",
+                            .{ name, git_stderr },
+                        ) catch unreachable;
+                    } else {
+                        log.addErrorFmt(
+                            null,
+                            logger.Loc.Empty,
+                            allocator,
+                            "\"git clone\" for \"{s}\" failed",
+                            .{name},
+                        ) catch unreachable;
+                    }
                 }
                 return err;
             };
@@ -576,13 +618,24 @@ pub const Repository = extern struct {
             else
                 &[_]string{ "git", "-C", path, "log", "--format=%H", "-1" },
         ) catch |err| {
-            log.addErrorFmt(
-                null,
-                logger.Loc.Empty,
-                allocator,
-                "no commit matching \"{s}\" found for \"{s}\" (but repository exists)",
-                .{ committish, name },
-            ) catch unreachable;
+            const git_stderr = getLastGitStderr();
+            if (git_stderr.len > 0) {
+                log.addErrorFmt(
+                    null,
+                    logger.Loc.Empty,
+                    allocator,
+                    "no commit matching \"{s}\" found for \"{s}\" (but repository exists):\n{s}",
+                    .{ committish, name, git_stderr },
+                ) catch unreachable;
+            } else {
+                log.addErrorFmt(
+                    null,
+                    logger.Loc.Empty,
+                    allocator,
+                    "no commit matching \"{s}\" found for \"{s}\" (but repository exists)",
+                    .{ committish, name },
+                ) catch unreachable;
+            }
             return err;
         }, " \t\r\n");
     }
@@ -615,26 +668,48 @@ pub const Repository = extern struct {
                 try bun.getFdPath(.fromStdDir(repo_dir), &final_path_buf),
                 target,
             }) catch |err| {
-                log.addErrorFmt(
-                    null,
-                    logger.Loc.Empty,
-                    allocator,
-                    "\"git clone\" for \"{s}\" failed",
-                    .{name},
-                ) catch unreachable;
+                const git_stderr = getLastGitStderr();
+                if (git_stderr.len > 0) {
+                    log.addErrorFmt(
+                        null,
+                        logger.Loc.Empty,
+                        allocator,
+                        "\"git clone\" for \"{s}\" failed:\n{s}",
+                        .{ name, git_stderr },
+                    ) catch unreachable;
+                } else {
+                    log.addErrorFmt(
+                        null,
+                        logger.Loc.Empty,
+                        allocator,
+                        "\"git clone\" for \"{s}\" failed",
+                        .{name},
+                    ) catch unreachable;
+                }
                 return err;
             };
 
             const folder = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{folder_name}, .auto);
 
             _ = exec(allocator, env, &[_]string{ "git", "-C", folder, "checkout", "--quiet", resolved }) catch |err| {
-                log.addErrorFmt(
-                    null,
-                    logger.Loc.Empty,
-                    allocator,
-                    "\"git checkout\" for \"{s}\" failed",
-                    .{name},
-                ) catch unreachable;
+                const git_stderr = getLastGitStderr();
+                if (git_stderr.len > 0) {
+                    log.addErrorFmt(
+                        null,
+                        logger.Loc.Empty,
+                        allocator,
+                        "\"git checkout\" for \"{s}\" failed:\n{s}",
+                        .{ name, git_stderr },
+                    ) catch unreachable;
+                } else {
+                    log.addErrorFmt(
+                        null,
+                        logger.Loc.Empty,
+                        allocator,
+                        "\"git checkout\" for \"{s}\" failed",
+                        .{name},
+                    ) catch unreachable;
+                }
                 return err;
             };
             var dir = try bun.openDir(cache_dir, folder_name);

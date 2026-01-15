@@ -7965,7 +7965,8 @@ describe("yarn tests", () => {
     expect(err).not.toContain("error:");
     expect(err).not.toContain("not found");
     // Normalize stderr (strip ANSI codes) and use case-insensitive regex
-    const normalizedErr = err.replace(/\x1b\[[0-9;]*m/g, "");
+    // Use RegExp constructor to avoid embedding control characters (satisfies noControlCharactersInRegex)
+    const normalizedErr = err.replace(new RegExp("\\x1b\\[[0-9;]*m", "g"), "");
     expect(normalizedErr).not.toMatch(/unmet peer dependency/i);
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       expect.stringContaining("bun install v1."),

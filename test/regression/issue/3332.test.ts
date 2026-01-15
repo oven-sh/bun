@@ -63,6 +63,11 @@ console.log(helper());`,
     // Sources should contain just the filename or a relative path, not "../"
     for (const source of map.sources) {
       expect(source).not.toMatch(/^\.\.\//);
+      // Verify the source path ends with "index.ts"
+      expect(source).toEndWith("index.ts");
     }
+
+    // Verify we have exactly one source file
+    expect(map.sources).toHaveLength(1);
   });
 });

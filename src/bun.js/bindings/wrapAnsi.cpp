@@ -4,7 +4,7 @@
 
 #include <wtf/text/WTFString.h>
 #include <wtf/text/StringBuilder.h>
-#include <vector>
+#include <wtf/Vector.h>
 
 // Zig exports for visible width calculation
 extern "C" size_t Bun__visibleWidthExcludeANSI_utf8(const uint8_t* ptr, size_t len, bool ambiguous_as_wide);
@@ -116,34 +116,35 @@ static size_t stringWidth(const Char* start, const Char* end, bool ambiguousIsNa
 }
 
 // ============================================================================
-// Row Management (using std::vector)
+// Row Management (using WTF::Vector)
 // ============================================================================
 
 template<typename Char>
 class Row {
 public:
-    std::vector<Char> m_data;
+    Vector<Char> m_data;
 
     void append(Char c)
     {
-        m_data.push_back(c);
+        m_data.append(c);
     }
 
     void append(const Char* start, const Char* end)
     {
-        m_data.insert(m_data.end(), start, end);
+        m_data.append(std::span { start, end });
     }
 
     void append(const Row& other)
     {
-        m_data.insert(m_data.end(), other.m_data.begin(), other.m_data.end());
+        m_data.appendVector(other.m_data);
     }
 
     size_t width(bool ambiguousIsNarrow) const
     {
-        if (m_data.empty())
+        if (m_data.isEmpty())
             return 0;
-        return stringWidth(m_data.data(), m_data.data() + m_data.size(), ambiguousIsNarrow);
+        auto span = m_data.span();
+        return stringWidth(span.data(), span.data() + span.size(), ambiguousIsNarrow);
     }
 
     void trimLeadingSpaces()
@@ -173,8 +174,8 @@ public:
             return;
 
         // Remove spaces while preserving ANSI codes
-        std::vector<Char> newData;
-        newData.reserve(m_data.size() - removeCount);
+        Vector<Char> newData;
+        newData.reserveCapacity(m_data.size() - removeCount);
 
         inEscape = false;
         size_t removed = 0;
@@ -183,20 +184,20 @@ public:
             Char c = m_data[i];
             if (c == 0x1b) {
                 inEscape = true;
-                newData.push_back(c);
+                newData.append(c);
                 continue;
             }
             if (inEscape) {
                 if (c == 'm' || c == 0x07)
                     inEscape = false;
-                newData.push_back(c);
+                newData.append(c);
                 continue;
             }
             if ((c == ' ' || c == '\t') && removed < removeCount) {
                 removed++;
                 continue;
             }
-            newData.push_back(c);
+            newData.append(c);
         }
 
         m_data = std::move(newData);
@@ -208,11 +209,11 @@ public:
 // ============================================================================
 
 template<typename Char>
-static void wrapWord(std::vector<Row<Char>>& rows, const Char* wordStart, const Char* wordEnd, size_t columns, const WrapAnsiOptions& options)
+static void wrapWord(Vector<Row<Char>>& rows, const Char* wordStart, const Char* wordEnd, size_t columns, const WrapAnsiOptions& options)
 {
     bool isInsideEscape = false;
     bool isInsideLinkEscape = false;
-    size_t vis = rows.back().width(options.ambiguousIsNarrow);
+    size_t vis = rows.last().width(options.ambiguousIsNarrow);
 
     const Char* it = wordStart;
     while (it < wordEnd) {
@@ -242,13 +243,13 @@ static void wrapWord(std::vector<Row<Char>>& rows, const Char* wordStart, const 
         }
 
         if (!isInsideEscape && vis + charWidth <= columns) {
-            rows.back().append(it, it + charLen);
+            rows.last().append(it, it + charLen);
         } else if (!isInsideEscape) {
-            rows.push_back(Row<Char>());
-            rows.back().append(it, it + charLen);
+            rows.append(Row<Char>());
+            rows.last().append(it, it + charLen);
             vis = 0;
         } else {
-            rows.back().append(*it);
+            rows.last().append(*it);
         }
 
         if (isInsideEscape) {
@@ -267,7 +268,7 @@ static void wrapWord(std::vector<Row<Char>>& rows, const Char* wordStart, const 
         vis += charWidth;
 
         if (vis == columns && it + charLen < wordEnd) {
-            rows.push_back(Row<Char>());
+            rows.append(Row<Char>());
             vis = 0;
         }
 
@@ -275,10 +276,10 @@ static void wrapWord(std::vector<Row<Char>>& rows, const Char* wordStart, const 
     }
 
     // Handle edge case: last row is only ANSI escape codes
-    if (vis == 0 && !rows.back().m_data.empty() && rows.size() > 1) {
-        Row<Char> lastRow = std::move(rows.back());
-        rows.pop_back();
-        rows.back().append(lastRow);
+    if (vis == 0 && !rows.last().m_data.isEmpty() && rows.size() > 1) {
+        Row<Char> lastRow = std::move(rows.last());
+        rows.removeLast();
+        rows.last().append(lastRow);
     }
 }
 
@@ -286,8 +287,9 @@ template<typename Char>
 static void trimRowTrailingSpaces(Row<Char>& row, bool ambiguousIsNarrow)
 {
     // Find last visible word
-    const Char* data = row.m_data.data();
-    size_t size = row.m_data.size();
+    auto span = row.m_data.span();
+    const Char* data = span.data();
+    size_t size = span.size();
 
     // Split by spaces and find last word with visible content
     size_t lastVisibleEnd = 0;
@@ -309,11 +311,11 @@ static void trimRowTrailingSpaces(Row<Char>& row, bool ambiguousIsNarrow)
 
     if (!hasVisibleContent) {
         // Keep only ANSI codes
-        std::vector<Char> ansiOnly;
+        Vector<Char> ansiOnly;
         bool inEscape = false;
         for (size_t i = 0; i < size; ++i) {
             if (data[i] == 0x1b || inEscape) {
-                ansiOnly.push_back(data[i]);
+                ansiOnly.append(data[i]);
                 if (data[i] == 0x1b)
                     inEscape = true;
                 else if (data[i] == 'm' || data[i] == 0x07)
@@ -326,11 +328,11 @@ static void trimRowTrailingSpaces(Row<Char>& row, bool ambiguousIsNarrow)
 
     if (lastVisibleEnd < size) {
         // Collect trailing ANSI codes
-        std::vector<Char> trailingAnsi;
+        Vector<Char> trailingAnsi;
         bool inEscape = false;
         for (size_t i = lastVisibleEnd; i < size; ++i) {
             if (data[i] == 0x1b || inEscape) {
-                trailingAnsi.push_back(data[i]);
+                trailingAnsi.append(data[i]);
                 if (data[i] == 0x1b)
                     inEscape = true;
                 else if (data[i] == 'm' || data[i] == 0x07)
@@ -338,8 +340,8 @@ static void trimRowTrailingSpaces(Row<Char>& row, bool ambiguousIsNarrow)
             }
         }
 
-        row.m_data.resize(lastVisibleEnd);
-        row.m_data.insert(row.m_data.end(), trailingAnsi.begin(), trailingAnsi.end());
+        row.m_data.shrink(lastVisibleEnd);
+        row.m_data.appendVector(trailingAnsi);
     }
 }
 
@@ -425,20 +427,20 @@ static std::optional<uint32_t> getCloseCode(uint32_t code)
 }
 
 template<typename Char>
-static void joinRowsWithAnsiPreservation(const std::vector<Row<Char>>& rows, StringBuilder& result)
+static void joinRowsWithAnsiPreservation(const Vector<Row<Char>>& rows, StringBuilder& result)
 {
     // First join all rows
-    std::vector<Char> joined;
+    Vector<Char> joined;
     size_t totalSize = 0;
     for (const auto& row : rows)
         totalSize += row.m_data.size() + 1;
 
-    joined.reserve(totalSize);
+    joined.reserveCapacity(totalSize);
 
     for (size_t i = 0; i < rows.size(); ++i) {
         if (i > 0)
-            joined.push_back(static_cast<Char>('\n'));
-        joined.insert(joined.end(), rows[i].m_data.begin(), rows[i].m_data.end());
+            joined.append(static_cast<Char>('\n'));
+        joined.appendVector(rows[i].m_data);
     }
 
     // Process for ANSI style preservation
@@ -451,16 +453,17 @@ static void joinRowsWithAnsiPreservation(const std::vector<Row<Char>>& rows, Str
         result.append(static_cast<UChar>(c));
 
         if (c == 0x1b && i + 1 < joined.size()) {
+            auto span = joined.span();
             // Parse ANSI sequence
             if (joined[i + 1] == '[') {
-                if (auto code = parseSgrCode(joined.data() + i, joined.data() + joined.size())) {
+                if (auto code = parseSgrCode(span.data() + i, span.data() + span.size())) {
                     if (*code == END_CODE || *code == 0)
                         escapeCode = std::nullopt;
                     else
                         escapeCode = *code;
                 }
             } else if (i + 4 < joined.size() && joined[i + 1] == ']' && joined[i + 2] == '8' && joined[i + 3] == ';' && joined[i + 4] == ';') {
-                auto [urlStart, urlEnd] = parseOsc8Url(joined.data() + i, joined.data() + joined.size());
+                auto [urlStart, urlEnd] = parseOsc8Url(span.data() + i, span.data() + span.size());
                 if (urlStart && urlEnd != urlStart) {
                     escapeUrl = urlStart;
                     escapeUrlLen = urlEnd - urlStart;
@@ -506,7 +509,7 @@ static void joinRowsWithAnsiPreservation(const std::vector<Row<Char>>& rows, Str
 // ============================================================================
 
 template<typename Char>
-static void processLine(const Char* lineStart, const Char* lineEnd, size_t columns, const WrapAnsiOptions& options, std::vector<Row<Char>>& rows)
+static void processLine(const Char* lineStart, const Char* lineEnd, size_t columns, const WrapAnsiOptions& options, Vector<Row<Char>>& rows)
 {
     // Handle empty or whitespace-only strings with trim
     if (options.trim) {
@@ -521,21 +524,21 @@ static void processLine(const Char* lineStart, const Char* lineEnd, size_t colum
     }
 
     // Calculate word lengths
-    std::vector<size_t> wordLengths;
+    Vector<size_t> wordLengths;
     const Char* wordStart = lineStart;
     for (const Char* it = lineStart; it <= lineEnd; ++it) {
         if (it == lineEnd || *it == ' ') {
             if (wordStart < it) {
-                wordLengths.push_back(stringWidth(wordStart, it, options.ambiguousIsNarrow));
+                wordLengths.append(stringWidth(wordStart, it, options.ambiguousIsNarrow));
             } else {
-                wordLengths.push_back(0);
+                wordLengths.append(0);
             }
             wordStart = it + 1;
         }
     }
 
     // Start with empty first row
-    rows.push_back(Row<Char>());
+    rows.append(Row<Char>());
 
     // Process each word
     wordStart = lineStart;
@@ -548,18 +551,18 @@ static void processLine(const Char* lineStart, const Char* lineEnd, size_t colum
         const Char* wordEnd = it;
 
         if (options.trim)
-            rows.back().trimLeadingSpaces();
+            rows.last().trimLeadingSpaces();
 
-        size_t rowLength = rows.back().width(options.ambiguousIsNarrow);
+        size_t rowLength = rows.last().width(options.ambiguousIsNarrow);
 
         if (wordIndex != 0) {
             if (rowLength >= columns && (!options.wordWrap || !options.trim)) {
-                rows.push_back(Row<Char>());
+                rows.append(Row<Char>());
                 rowLength = 0;
             }
 
             if (rowLength > 0 || !options.trim) {
-                rows.back().append(static_cast<Char>(' '));
+                rows.last().append(static_cast<Char>(' '));
                 rowLength++;
             }
         }
@@ -572,7 +575,7 @@ static void processLine(const Char* lineStart, const Char* lineEnd, size_t colum
             size_t breaksStartingThisLine = 1 + (wordLen > remainingColumns ? (wordLen - remainingColumns - 1) / columns : 0);
             size_t breaksStartingNextLine = wordLen > 0 ? (wordLen - 1) / columns : 0;
             if (breaksStartingNextLine < breaksStartingThisLine)
-                rows.push_back(Row<Char>());
+                rows.append(Row<Char>());
 
             wrapWord(rows, wordStart, wordEnd, columns, options);
             wordStart = it + 1;
@@ -588,10 +591,10 @@ static void processLine(const Char* lineStart, const Char* lineEnd, size_t colum
                 continue;
             }
 
-            rows.push_back(Row<Char>());
+            rows.append(Row<Char>());
         }
 
-        rowLength = rows.back().width(options.ambiguousIsNarrow);
+        rowLength = rows.last().width(options.ambiguousIsNarrow);
         if (rowLength + wordLen > columns && !options.wordWrap) {
             wrapWord(rows, wordStart, wordEnd, columns, options);
             wordStart = it + 1;
@@ -599,7 +602,7 @@ static void processLine(const Char* lineStart, const Char* lineEnd, size_t colum
             continue;
         }
 
-        rows.back().append(wordStart, wordEnd);
+        rows.last().append(wordStart, wordEnd);
         wordStart = it + 1;
         wordIndex++;
     }
@@ -628,15 +631,15 @@ static WTF::String wrapAnsiImpl(std::span<const Char> input, size_t columns, con
     }
 
     // Normalize \r\n to \n
-    std::vector<Char> normalized;
-    normalized.reserve(input.size());
+    Vector<Char> normalized;
+    normalized.reserveCapacity(input.size());
 
     for (size_t i = 0; i < input.size(); ++i) {
         if (i + 1 < input.size() && input[i] == '\r' && input[i + 1] == '\n') {
-            normalized.push_back(static_cast<Char>('\n'));
+            normalized.append(static_cast<Char>('\n'));
             i++; // Skip next char
         } else {
-            normalized.push_back(input[i]);
+            normalized.append(input[i]);
         }
     }
 
@@ -644,11 +647,12 @@ static WTF::String wrapAnsiImpl(std::span<const Char> input, size_t columns, con
     StringBuilder result;
     result.reserveCapacity(input.size() + input.size() / 10);
 
-    const Char* lineStart = normalized.data();
-    const Char* const dataEnd = normalized.data() + normalized.size();
+    auto span = normalized.span();
+    const Char* lineStart = span.data();
+    const Char* const dataEnd = span.data() + span.size();
     bool firstLine = true;
 
-    for (const Char* it = normalized.data(); it <= dataEnd; ++it) {
+    for (const Char* it = span.data(); it <= dataEnd; ++it) {
         if (it < dataEnd && *it != '\n')
             continue;
 
@@ -658,11 +662,11 @@ static WTF::String wrapAnsiImpl(std::span<const Char> input, size_t columns, con
         firstLine = false;
 
         // Process this input line
-        std::vector<Row<Char>> lineRows;
+        Vector<Row<Char>> lineRows;
         processLine(lineStart, it, columns, options, lineRows);
 
         // Join and append this line's rows with ANSI preservation
-        if (!lineRows.empty()) {
+        if (!lineRows.isEmpty()) {
             joinRowsWithAnsiPreservation(lineRows, result);
         }
 

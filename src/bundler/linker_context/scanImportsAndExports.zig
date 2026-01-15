@@ -698,8 +698,11 @@ pub fn scanImportsAndExports(this: *LinkerContext) ScanImportsAndExportsError!vo
                                         record.flags.contains_default_alias or
                                         record.flags.contains_es_module_alias))
                                 {
-                                    record.flags.wrap_with_to_esm = true;
-                                    to_esm_uses += 1;
+                                    // Only wrap with __toESM if target is CJS (or truly external with unknown kind)
+                                    if (!record.source_index.isValid() or exports_kind[record.source_index.get()] == .cjs) {
+                                        record.flags.wrap_with_to_esm = true;
+                                        to_esm_uses += 1;
+                                    }
                                 }
                             }
                         }

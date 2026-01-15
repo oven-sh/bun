@@ -1302,6 +1302,7 @@ pub fn Bun__fetch_(
                 credentialsWithOptions.storage_class,
                 if (headers) |h| (h.getContentType()) else null,
                 if (headers) |h| h.getContentDisposition() else null,
+                if (headers) |h| h.getContentEncoding() else null,
                 proxy_url,
                 credentialsWithOptions.request_payer,
                 @ptrCast(&Wrapper.resolve),

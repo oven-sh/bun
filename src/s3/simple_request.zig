@@ -351,6 +351,7 @@ pub const S3SimpleRequestOptions = struct {
     search_params: ?[]const u8 = null,
     content_type: ?[]const u8 = null,
     content_disposition: ?[]const u8 = null,
+    content_encoding: ?[]const u8 = null,
 
     // http request options
     body: []const u8,
@@ -372,6 +373,7 @@ pub fn executeSimpleS3Request(
         .method = options.method,
         .search_params = options.search_params,
         .content_disposition = options.content_disposition,
+        .content_encoding = options.content_encoding,
         .acl = options.acl,
         .storage_class = options.storage_class,
         .request_payer = options.request_payer,

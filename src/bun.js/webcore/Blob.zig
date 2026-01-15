@@ -968,6 +968,7 @@ fn writeFileWithEmptySourceToDestination(ctx: *jsc.JSGlobalObject, destination_b
                 "",
                 destination_blob.contentTypeOrMimeType(),
                 aws_options.content_disposition,
+                aws_options.content_encoding,
                 aws_options.acl,
                 proxy_url,
                 aws_options.storage_class,
@@ -1120,6 +1121,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
                             aws_options.storage_class,
                             destination_blob.contentTypeOrMimeType(),
                             aws_options.content_disposition,
+                            aws_options.content_encoding,
                             proxy_url,
                             aws_options.request_payer,
                             null,
@@ -1160,6 +1162,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
                         bytes.slice(),
                         destination_blob.contentTypeOrMimeType(),
                         aws_options.content_disposition,
+                        aws_options.content_encoding,
                         aws_options.acl,
                         proxy_url,
                         aws_options.storage_class,
@@ -1191,6 +1194,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
                         aws_options.storage_class,
                         destination_blob.contentTypeOrMimeType(),
                         aws_options.content_disposition,
+                        aws_options.content_encoding,
                         proxy_url,
                         aws_options.request_payer,
                         null,
@@ -1398,6 +1402,7 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                                 aws_options.storage_class,
                                 destination_blob.contentTypeOrMimeType(),
                                 aws_options.content_disposition,
+                                aws_options.content_encoding,
                                 proxy_url,
                                 aws_options.request_payer,
                                 null,
@@ -1460,6 +1465,7 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                                 aws_options.storage_class,
                                 destination_blob.contentTypeOrMimeType(),
                                 aws_options.content_disposition,
+                                aws_options.content_encoding,
                                 proxy_url,
                                 aws_options.request_payer,
                                 null,
@@ -2438,6 +2444,7 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, re
             aws_options.storage_class,
             this.contentTypeOrMimeType(),
             aws_options.content_disposition,
+            aws_options.content_encoding,
             proxy_url,
             aws_options.request_payer,
             null,
@@ -2674,6 +2681,14 @@ pub fn getWriter(
                     }
                     content_disposition_str = try content_disposition.toSlice(globalThis, bun.default_allocator);
                 }
+                var content_encoding_str: ?ZigString.Slice = null;
+                defer if (content_encoding_str) |ce| ce.deinit();
+                if (try options.getTruthy(globalThis, "contentEncoding")) |content_encoding| {
+                    if (!content_encoding.isString()) {
+                        return globalThis.throwInvalidArgumentType("write", "options.contentEncoding", "string");
+                    }
+                    content_encoding_str = try content_encoding.toSlice(globalThis, bun.default_allocator);
+                }
                 const credentialsWithOptions = try s3.getCredentialsWithOptions(options, globalThis);
                 return try S3.writableStream(
                     credentialsWithOptions.credentials.dupe(),
@@ -2682,6 +2697,7 @@ pub fn getWriter(
                     credentialsWithOptions.options,
                     this.contentTypeOrMimeType(),
                     if (content_disposition_str) |cd| cd.slice() else null,
+                    if (content_encoding_str) |ce| ce.slice() else null,
                     proxy_url,
                     credentialsWithOptions.storage_class,
                     credentialsWithOptions.request_payer,
@@ -2694,6 +2710,7 @@ pub fn getWriter(
             globalThis,
             .{},
             this.contentTypeOrMimeType(),
+            null,
             null,
             proxy_url,
             null,

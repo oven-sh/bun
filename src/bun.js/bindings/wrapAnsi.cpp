@@ -167,17 +167,22 @@ static void wrapWord(Vector<Row<Char>>& rows, const Char* wordStart, const Char*
 {
     bool isInsideEscape = false;
     bool isInsideLinkEscape = false;
+    bool isInsideCsiEscape = false;
     size_t vis = rows.last().width(options.ambiguousIsNarrow);
 
     const Char* it = wordStart;
     while (it < wordEnd) {
         if (*it == 0x1b) {
             isInsideEscape = true;
-            // Check for hyperlink escape
+            isInsideCsiEscape = false;
+            // Check for hyperlink escape (OSC 8)
             if (wordEnd - it > 4) {
                 if (it[1] == ']' && it[2] == '8' && it[3] == ';' && it[4] == ';')
                     isInsideLinkEscape = true;
             }
+            // Check for CSI escape (ESC [)
+            if (wordEnd - it > 1 && it[1] == '[')
+                isInsideCsiEscape = true;
         }
 
         size_t charLen = 0;
@@ -214,7 +219,15 @@ static void wrapWord(Vector<Row<Char>>& rows, const Char* wordStart, const Char*
                     isInsideEscape = false;
                     isInsideLinkEscape = false;
                 }
+            } else if (isInsideCsiEscape) {
+                // CSI sequence ends with a byte in 0x40-0x7E range
+                // (excluding '[' which is the CSI introducer)
+                if (*it >= 0x40 && *it <= 0x7E && *it != '[') {
+                    isInsideEscape = false;
+                    isInsideCsiEscape = false;
+                }
             } else if (*it == 'm') {
+                // Fallback for non-CSI SGR-like sequences
                 isInsideEscape = false;
             }
             it++;
@@ -237,6 +250,23 @@ static void wrapWord(Vector<Row<Char>>& rows, const Char* wordStart, const Char*
         rows.removeLast();
         rows.last().append(lastRow);
     }
+}
+
+// Helper to check if a character ends a CSI escape sequence
+// CSI sequences end with bytes in 0x40-0x7E range (excluding '[' which is the introducer)
+template<typename Char>
+static bool isCsiTerminator(Char c)
+{
+    return c >= 0x40 && c <= 0x7E && c != '[';
+}
+
+// Helper to check if a character ends an ANSI escape sequence
+template<typename Char>
+static bool isAnsiEscapeTerminator(Char c, bool isOscSequence)
+{
+    if (isOscSequence)
+        return c == 0x07; // BEL terminates OSC sequences
+    return isCsiTerminator(c); // CSI terminator
 }
 
 template<typename Char>
@@ -269,13 +299,17 @@ static void trimRowTrailingSpaces(Row<Char>& row, bool ambiguousIsNarrow)
         // Keep only ANSI codes
         Vector<Char> ansiOnly;
         bool inEscape = false;
+        bool inOscEscape = false;
         for (size_t i = 0; i < size; ++i) {
             if (data[i] == 0x1b || inEscape) {
                 ansiOnly.append(data[i]);
-                if (data[i] == 0x1b)
+                if (data[i] == 0x1b) {
                     inEscape = true;
-                else if (data[i] == 'm' || data[i] == 0x07)
+                    inOscEscape = (i + 1 < size && data[i + 1] == ']');
+                } else if (isAnsiEscapeTerminator(data[i], inOscEscape)) {
                     inEscape = false;
+                    inOscEscape = false;
+                }
             }
         }
         row.m_data = std::move(ansiOnly);
@@ -286,13 +320,17 @@ static void trimRowTrailingSpaces(Row<Char>& row, bool ambiguousIsNarrow)
         // Collect trailing ANSI codes
         Vector<Char> trailingAnsi;
         bool inEscape = false;
+        bool inOscEscape = false;
         for (size_t i = lastVisibleEnd; i < size; ++i) {
             if (data[i] == 0x1b || inEscape) {
                 trailingAnsi.append(data[i]);
-                if (data[i] == 0x1b)
+                if (data[i] == 0x1b) {
                     inEscape = true;
-                else if (data[i] == 'm' || data[i] == 0x07)
+                    inOscEscape = (i + 1 < size && data[i + 1] == ']');
+                } else if (isAnsiEscapeTerminator(data[i], inOscEscape)) {
                     inEscape = false;
+                    inOscEscape = false;
+                }
             }
         }
 

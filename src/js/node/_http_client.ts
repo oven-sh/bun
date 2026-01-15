@@ -328,40 +328,46 @@ function ClientRequest(input, options, cb) {
         keepOpen = true;
       }
 
-      if (method !== "GET" && method !== "HEAD" && method !== "OPTIONS") {
+      // Allow body for all methods when explicitly provided via req.write()/req.end()
+      // This is needed for Node.js compatibility - Node allows GET requests with bodies
+      if (customBody !== undefined) {
+        fetchOptions.body = customBody;
+        // Enable allowGetBody for methods that don't normally have bodies
+        if (method === "GET" || method === "HEAD" || method === "OPTIONS") {
+          fetchOptions.allowGetBody = true;
+        }
+      } else if (isDuplex && method !== "GET" && method !== "HEAD" && method !== "OPTIONS") {
+        // Only use duplex streaming for non-GET/HEAD/OPTIONS methods
+        // GET/HEAD/OPTIONS requests typically don't have streaming bodies
         const self = this;
-        if (customBody !== undefined) {
-          fetchOptions.body = customBody;
-        } else if (isDuplex) {
-          fetchOptions.body = async function* () {
-            while (self[kBodyChunks]?.length > 0) {
-              yield self[kBodyChunks].shift();
-            }
+        fetchOptions.body = async function* () {
+          while (self[kBodyChunks]?.length > 0) {
+            yield self[kBodyChunks].shift();
+          }
+
+          if (self[kBodyChunks]?.length === 0) {
+            self.emit("drain");
+          }
+
+          while (!self.finished) {
+            yield await new Promise(resolve => {
+              resolveNextChunk = end => {
+                resolveNextChunk = undefined;
+                if (end) {
+                  resolve(undefined);
+                } else {
+                  resolve(self[kBodyChunks].shift());
+                }
+              };
+            });
 
             if (self[kBodyChunks]?.length === 0) {
               self.emit("drain");
             }
+          }
 
-            while (!self.finished) {
-              yield await new Promise(resolve => {
-                resolveNextChunk = end => {
-                  resolveNextChunk = undefined;
-                  if (end) {
-                    resolve(undefined);
-                  } else {
-                    resolve(self[kBodyChunks].shift());
-                  }
-                };
-              });
-
-              if (self[kBodyChunks]?.length === 0) {
-                self.emit("drain");
-              }
-            }
-
-            handleResponse?.();
-          };
-        }
+          handleResponse?.();
+        };
       }
 
       if (tls) {

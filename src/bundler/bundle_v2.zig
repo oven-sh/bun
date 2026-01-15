@@ -1364,7 +1364,7 @@ pub const BundleV2 = struct {
         this.graph.input_files.append(this.allocator(), .{
             .source = source.*,
             .loader = loader,
-            .side_effects = loader.sideEffects(),
+            .side_effects = resolve_result.primary_side_effects_data,
         }) catch |err| bun.handleOom(err);
         var task = bun.handleOom(this.allocator().create(ParseTask));
         task.* = ParseTask.init(resolve_result, source_index, this);
@@ -2467,6 +2467,30 @@ pub const BundleV2 = struct {
         }
     }
 
+    /// Look up the sideEffects field from package.json for a given file path.
+    /// This is used when an onResolve plugin returns a path in the "file" namespace
+    /// to ensure tree-shaking still works properly.
+    fn lookupSideEffectsForPath(this: *BundleV2, absolute_path: []const u8, target: options.Target) _resolver.SideEffects {
+        const dir_path = bun.path.dirname(absolute_path, .auto);
+        const resolver = &this.transpilerForTarget(target).resolver;
+        var dir_info: ?*const _resolver.DirInfo = resolver.readDirInfoIgnoreError(dir_path);
+
+        // Walk up directory tree to find package.json
+        while (dir_info) |info| {
+            if (info.package_json) |package_json| {
+                return switch (package_json.side_effects) {
+                    .unspecified => .has_side_effects,
+                    .false => .no_side_effects__package_json,
+                    .map => |map| if (map.contains(bun.StringHashMapUnowned.Key.init(absolute_path))) .has_side_effects else .no_side_effects__package_json,
+                    .glob, .mixed => if (package_json.side_effects.hasSideEffects(absolute_path)) .has_side_effects else .no_side_effects__package_json,
+                };
+            }
+            dir_info = info.getParent();
+        }
+
+        return .has_side_effects;
+    }
+
     pub fn onResolveFromJsLoop(resolve: *bun.jsc.API.JSBundler.Resolve) void {
         onResolve(resolve, resolve.bv2);
     }
@@ -2556,6 +2580,12 @@ pub const BundleV2 = struct {
                         this.graph.ast.append(this.allocator(), JSAst.empty) catch unreachable;
                         const loader = path.loader(&this.transpiler.options.loaders) orelse options.Loader.file;
 
+                        // Look up sideEffects from package.json for file namespace paths
+                        const side_effects: _resolver.SideEffects = if (strings.eqlComptime(path.namespace, "file"))
+                            this.lookupSideEffectsForPath(path.text, resolve.import_record.original_target)
+                        else
+                            .has_side_effects;
+
                         this.graph.input_files.append(this.allocator(), .{
                             .source = .{
                                 .path = path,
@@ -2563,7 +2593,7 @@ pub const BundleV2 = struct {
                                 .index = source_index,
                             },
                             .loader = loader,
-                            .side_effects = .has_side_effects,
+                            .side_effects = side_effects,
                         }) catch unreachable;
                         var task = bun.default_allocator.create(ParseTask) catch unreachable;
                         task.* = ParseTask{
@@ -2576,7 +2606,7 @@ pub const BundleV2 = struct {
                                     .file = bun.invalid_fd,
                                 },
                             },
-                            .side_effects = .has_side_effects,
+                            .side_effects = side_effects,
                             .jsx = this.transpilerForTarget(resolve.import_record.original_target).options.jsx,
                             .source_index = source_index,
                             .module_type = .unknown,

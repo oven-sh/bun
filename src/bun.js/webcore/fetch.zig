@@ -544,7 +544,7 @@ pub fn Bun__fetch_(
     redirect_type = extract_redirect_type: {
         // First, try to use the Request object's redirect if available
         if (request) |req| {
-            redirect_type = req.redirect;
+            redirect_type = req.flags.redirect;
         }
 
         // Then check options/init objects which can override the Request's redirect

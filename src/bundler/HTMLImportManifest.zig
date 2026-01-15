@@ -166,8 +166,14 @@ pub fn write(index: u32, graph: *const Graph, linker_graph: *const LinkerGraph, 
     defer already_visited_output_file.deinit(bun.default_allocator);
 
     // Write all chunks that have files associated with this entry point.
+    // Also include browser chunks from server builds (lazy-loaded chunks from dynamic imports).
+    // When there's only one HTML import, all browser chunks belong to that manifest.
+    // When there are multiple HTML imports, only include chunks that intersect with this entry's bits.
+    const has_single_html_import = graph.html_imports.html_source_indices.len == 1;
     for (chunks) |*ch| {
-        if (ch.entryBits().hasIntersection(&entry_point_bits)) {
+        if (ch.entryBits().hasIntersection(&entry_point_bits) or
+            (has_single_html_import and ch.flags.is_browser_chunk_from_server_build))
+        {
             if (!first) try writer.writeAll(",");
             first = false;
 

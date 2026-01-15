@@ -2364,6 +2364,25 @@ pub const H2FrameParser = struct {
                 // we can now write any request
                 if (this.outstandingSettings > 0) {
                     this.outstandingSettings -= 1;
+
+                    // Per RFC 7540 Section 6.9.2: When INITIAL_WINDOW_SIZE changes, adjust
+                    // all existing stream windows by the difference. Now that our SETTINGS
+                    // is ACKed, the peer knows about our window size, so we can enforce it.
+                    if (this.outstandingSettings == 0 and this.localSettings.initialWindowSize != DEFAULT_WINDOW_SIZE) {
+                        const old_size: i64 = DEFAULT_WINDOW_SIZE;
+                        const new_size: i64 = this.localSettings.initialWindowSize;
+                        const delta = new_size - old_size;
+                        var it = this.streams.valueIterator();
+                        while (it.next()) |stream| {
+                            // Adjust the stream's local window size by the delta
+                            if (delta >= 0) {
+                                stream.windowSize +|= @intCast(@as(u64, @intCast(delta)));
+                            } else {
+                                stream.windowSize -|= @intCast(@as(u64, @intCast(-delta)));
+                            }
+                        }
+                        log("adjusted stream windows by delta {} (old: {}, new: {})", .{ delta, old_size, new_size });
+                    }
                 }
 
                 this.dispatch(.onLocalSettings, this.localSettings.toJS(this.handlers.globalObject));
@@ -2443,9 +2462,17 @@ pub const H2FrameParser = struct {
         // new stream open
         const entry = bun.handleOom(this.streams.getOrPut(streamIdentifier));
 
+        // Per RFC 7540 Section 6.5.1: The sender of SETTINGS can only rely on the
+        // setting being applied AFTER receiving SETTINGS_ACK. Until then, the peer
+        // hasn't seen our settings and uses the default window size.
+        // So we must accept data up to DEFAULT_WINDOW_SIZE until our SETTINGS is ACKed.
+        const local_window_size = if (this.outstandingSettings > 0)
+            DEFAULT_WINDOW_SIZE
+        else
+            this.localSettings.initialWindowSize;
         entry.value_ptr.* = Stream.init(
             streamIdentifier,
-            this.localSettings.initialWindowSize,
+            local_window_size,
             if (this.remoteSettings) |s| s.initialWindowSize else DEFAULT_WINDOW_SIZE,
             this.paddingStrategy,
         );

@@ -60,7 +60,6 @@ const { OutgoingMessage } = require("node:_http_outgoing");
 const globalReportError = globalThis.reportError;
 const setTimeout = globalThis.setTimeout;
 const INVALID_PATH_REGEX = /[^\u0021-\u00ff]/;
-const fetch = Bun.fetch;
 
 const { URL } = globalThis;
 

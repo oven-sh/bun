@@ -379,10 +379,6 @@ class EventSource extends EventTarget {
   static OPEN = 1;
   static CLOSED = 2;
 
-  CONNECTING = 0;
-  OPEN = 1;
-  CLOSED = 2;
-
   #url;
   #withCredentials;
   #readyState = 0;
@@ -407,6 +403,19 @@ class EventSource extends EventTarget {
 
     // Start connection on next tick
     process.nextTick(() => this.#connect());
+  }
+
+  // Instance getters that delegate to static constants (not writable/enumerable own properties)
+  get CONNECTING() {
+    return EventSource.CONNECTING;
+  }
+
+  get OPEN() {
+    return EventSource.OPEN;
+  }
+
+  get CLOSED() {
+    return EventSource.CLOSED;
   }
 
   get url() {
@@ -518,7 +527,9 @@ class EventSource extends EventTarget {
         }
 
         const contentType = response.headers.get("Content-Type");
-        if (!contentType || !contentType.includes("text/event-stream")) {
+        // Parse MIME type: extract media type before any parameters, case-insensitive comparison
+        const mimeType = contentType ? contentType.split(";")[0].trim().toLowerCase() : "";
+        if (mimeType !== "text/event-stream") {
           this.#fail();
           return;
         }
@@ -691,7 +702,14 @@ class EventSource extends EventTarget {
     // Per spec, error events are simple Event objects, not ErrorEvent
     this.dispatchEvent(new Event("error"));
 
-    this.#reconnectTimer = setTimeout(() => this.#connect(), this.#reconnectionTime);
+    // Clear any existing timer before scheduling a new one
+    if (this.#reconnectTimer) {
+      clearTimeout(this.#reconnectTimer);
+    }
+    this.#reconnectTimer = setTimeout(() => {
+      this.#reconnectTimer = null;
+      this.#connect();
+    }, this.#reconnectionTime);
   }
 }
 

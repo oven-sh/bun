@@ -2336,8 +2336,8 @@ void GlobalObject::finishCreation(VM& vm)
             }
         }
 
-        // Fallback: create a function that throws when called
-        init.set(JSC::JSFunction::create(vm, globalObject, 0, "EventSource"_s, eventSourceNotAvailable, ImplementationVisibility::Public));
+        // Fallback: create a function that throws when called (length 1 per Web API spec)
+        init.set(JSC::JSFunction::create(vm, globalObject, 1, "EventSource"_s, eventSourceNotAvailable, ImplementationVisibility::Public));
     });
 
     m_JSFileSinkClassStructure.initLater(

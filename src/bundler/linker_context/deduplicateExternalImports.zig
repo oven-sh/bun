@@ -237,10 +237,11 @@ fn makeKey(allocator: std.mem.Allocator, path: []const u8, name: []const u8) ![]
 }
 
 const std = @import("std");
-const bun = @import("bun");
-const Ref = bun.bundle_v2.Ref;
-const js_ast = bun.ast;
-const Logger = bun.logger;
 
-const LinkerContext = bun.bundle_v2.LinkerContext;
+const bun = @import("bun");
+const Logger = bun.logger;
+const js_ast = bun.ast;
+
 const Chunk = bun.bundle_v2.Chunk;
+const LinkerContext = bun.bundle_v2.LinkerContext;
+const Ref = bun.bundle_v2.Ref;

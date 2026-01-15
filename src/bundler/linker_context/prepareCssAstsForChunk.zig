@@ -14,6 +14,9 @@ pub fn prepareCssAstsForChunk(task: *ThreadPoolLib.Task) void {
 
 fn prepareCssAstsForChunkImpl(c: *LinkerContext, chunk: *Chunk, allocator: std.mem.Allocator) void {
     const asts: []const ?*bun.css.BundlerStyleSheet = c.graph.ast.items(.css);
+    // Map to track hashes of top-level rules for deduplication
+    // Arena allocator, no need to explicit deinit map
+    var deduplicate_map = std.AutoHashMap(u64, void).init(allocator);
 
     // Prepare CSS asts
     // Remove duplicate rules across files. This must be done in serial, not
@@ -171,7 +174,56 @@ fn prepareCssAstsForChunkImpl(c: *LinkerContext, chunk: *Chunk, allocator: std.m
                     }
 
                     wrapRulesWithConditions(ast, allocator, &entry.conditions);
-                    // TODO: Remove top-level duplicate rules across files
+                    // Deduplicate top-level rules
+                    // Iterate backwards so we keep the latest occurrence (cascade order).
+                    // This optimization reduces bundle size by removing redundant rules.
+
+                    {
+                        const rules = ast.rules.v.items;
+                        if (rules.len > 0) {
+                            var r: usize = rules.len;
+                            while (r != 0) {
+                                r -= 1;
+                                const rule = &rules[r];
+                                if (rule.* == .ignored or rule.* == .import or rule.* == .layer_statement) continue;
+
+                                // Use AllocatingWriter to print rule for hashing
+                                var allocating_writer = std.Io.Writer.Allocating.init(allocator);
+                                const scratchbuf = std.array_list.Managed(u8).init(allocator);
+
+                                var printer = bun.css.Printer.new(
+                                    allocator,
+                                    scratchbuf,
+                                    &allocating_writer.writer,
+                                    bun.css.PrinterOptions{
+                                        .minify = true,
+                                        .targets = bun.css.Targets.forBundlerTarget(c.options.target),
+                                    },
+                                    .{
+                                        .import_records = &c.graph.ast.items(.import_records)[source_index.get()],
+                                        .ast_urls_for_css = c.parse_graph.ast.items(.url_for_css),
+                                        .ast_unique_key_for_additional_file = c.parse_graph.input_files.items(.unique_key_for_additional_file),
+                                    },
+                                    null,
+                                    &c.graph.symbols,
+                                );
+
+                                defer printer.deinit();
+
+                                if (rule.toCss(&printer)) |_| {
+                                    const hash = std.hash.Wyhash.hash(0, allocating_writer.written());
+                                    if (deduplicate_map.contains(hash)) {
+                                        // Already seen this rule, ignore it
+                                        rule.* = .ignored;
+                                    } else {
+                                        deduplicate_map.put(hash, {}) catch |err| bun.handleOom(err);
+                                    }
+                                } else |_| {
+                                    // If errors (skip dedupe)
+                                }
+                            }
+                        }
+                    }
                 },
             }
         }

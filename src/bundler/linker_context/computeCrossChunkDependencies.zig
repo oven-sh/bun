@@ -35,6 +35,7 @@ pub fn computeCrossChunkDependencies(c: *LinkerContext, chunks: []Chunk) bun.OOM
             .entry_point_chunk_indices = c.graph.files.items(.entry_point_chunk_index),
             .imports_to_bind = c.graph.meta.items(.imports_to_bind),
             .wrapper_refs = c.graph.ast.items(.wrapper_ref),
+            .exports_refs = c.graph.ast.items(.exports_ref),
             .sorted_and_filtered_export_aliases = c.graph.meta.items(.sorted_and_filtered_export_aliases),
             .resolved_exports = c.graph.meta.items(.resolved_exports),
             .ctx = c,
@@ -61,6 +62,7 @@ const CrossChunkDependencies = struct {
     entry_point_chunk_indices: []Index.Int,
     imports_to_bind: []RefImportData,
     wrapper_refs: []const Ref,
+    exports_refs: []const Ref,
     sorted_and_filtered_export_aliases: []const []const string,
     resolved_exports: []const ResolvedExports,
     ctx: *LinkerContext,
@@ -154,6 +156,10 @@ const CrossChunkDependencies = struct {
                         break :brk ref_to_use;
                     };
 
+                    // Skip Ref.None which points to __INVALID__REF__ in runtime.js
+                    if (ref_to_use.eql(Ref.None))
+                        continue;
+
                     if (comptime Environment.allow_assert)
                         debug("Cross-chunk import: {s} {f}", .{ deps.symbols.get(ref_to_use).?.original_name, ref_to_use });
 
@@ -190,6 +196,11 @@ const CrossChunkDependencies = struct {
                         if (deps.symbols.getConst(target_ref).?.namespace_alias) |namespace_alias| {
                             target_ref = namespace_alias.namespace_ref;
                         }
+
+                        // Skip Ref.None which points to __INVALID__REF__ in runtime.js
+                        if (target_ref.eql(Ref.None))
+                            continue;
+
                         if (comptime Environment.allow_assert)
                             debug("Cross-chunk export: {s}", .{deps.symbols.get(target_ref).?.original_name});
 
@@ -197,17 +208,17 @@ const CrossChunkDependencies = struct {
                     }
                 }
 
-                const wrapper_ref = deps.wrapper_refs[chunk.entry_point.source_index];
-
                 // Ensure "exports" is included if the current output format needs it
                 if (flags.force_include_exports_for_entry_point) {
-                    if (!wrapper_ref.eql(Ref.None)) {
-                        imports.put(wrapper_ref, {}) catch unreachable;
+                    const exports_ref = deps.exports_refs[chunk.entry_point.source_index];
+                    if (!exports_ref.eql(Ref.None)) {
+                        imports.put(exports_ref, {}) catch unreachable;
                     }
                 }
 
                 // Include the wrapper if present
                 if (flags.wrap != .none) {
+                    const wrapper_ref = deps.wrapper_refs[chunk.entry_point.source_index];
                     if (!wrapper_ref.eql(Ref.None)) {
                         imports.put(wrapper_ref, {}) catch unreachable;
                     }
@@ -228,6 +239,10 @@ fn computeCrossChunkDependenciesWithChunkMetas(c: *LinkerContext, chunks: []Chun
 
         // Find all uses in this chunk of symbols from other chunks
         for (chunk_meta.imports.keys()) |import_ref| {
+            // Skip Ref.None which points to __INVALID__REF__ in runtime.js
+            if (import_ref.eql(Ref.None))
+                continue;
+
             const symbol = c.graph.symbols.getConst(import_ref).?;
 
             // Ignore uses that aren't top-level symbols

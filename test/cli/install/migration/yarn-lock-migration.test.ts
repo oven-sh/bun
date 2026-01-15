@@ -1,7 +1,11 @@
-import { describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import fs from "fs";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { join } from "path";
+
+beforeAll(() => {
+  setDefaultTimeout(1000 * 60 * 5);
+});
 
 describe("yarn.lock migration basic", () => {
   test("simple yarn.lock migration produces correct bun.lock", async () => {

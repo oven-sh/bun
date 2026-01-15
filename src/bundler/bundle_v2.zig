@@ -972,6 +972,7 @@ pub const BundleV2 = struct {
         this.linker.options.output_format = transpiler.options.output_format;
         this.linker.options.generate_bytecode_cache = transpiler.options.bytecode;
         this.linker.options.metafile = transpiler.options.metafile;
+        this.linker.options.experimental_esm_bytecode_cache = transpiler.options.experimental_esm_bytecode;
 
         this.linker.dev_server = transpiler.options.dev_server;
 
@@ -1956,6 +1957,7 @@ pub const BundleV2 = struct {
 
             transpiler.options.output_format = config.format;
             transpiler.options.bytecode = config.bytecode;
+            transpiler.options.experimental_esm_bytecode = config.experimental_esm_bytecode;
             transpiler.options.compile = config.compile != null;
 
             // For compile mode, set the public_path to the target-specific base path

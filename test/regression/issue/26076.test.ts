@@ -3,67 +3,52 @@
 // 1. The full dependency path from root to the package requiring the peer dependency
 // 2. What version range was expected
 // 3. What version was actually installed
-import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles, VerdaccioRegistry } from "harness";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, VerdaccioRegistry } from "harness";
+import { join } from "path";
+
+let registry: VerdaccioRegistry;
+let packageDir: string;
+
+beforeAll(async () => {
+  registry = new VerdaccioRegistry();
+  await registry.start();
+});
+
+afterAll(() => {
+  registry.stop();
+});
 
 describe("issue #26076 - peer dependency warnings", () => {
   test("warning message shows dependency path, expected version, and actual version", async () => {
-    // Use a local registry to avoid network dependencies
-    using registry = new VerdaccioRegistry();
-    await registry.start();
-
-    // Create packages that have peer dependency conflicts:
-    // - peer-deps-fixed requires no-deps@^1.0.0 as a peer dependency
-    // - But we install no-deps@2.0.0 which doesn't satisfy ^1.0.0
-
-    // First, publish the packages we need to the local registry
-    // no-deps@1.0.0
-    const noDeps100Dir = tempDirWithFiles("no-deps-1.0.0", {
-      "package.json": JSON.stringify({
-        name: "no-deps",
-        version: "1.0.0",
-      }),
-    });
-    await registry.publish(noDeps100Dir, "no-deps", bunEnv);
-
-    // no-deps@2.0.0
-    const noDeps200Dir = tempDirWithFiles("no-deps-2.0.0", {
-      "package.json": JSON.stringify({
-        name: "no-deps",
-        version: "2.0.0",
-      }),
-    });
-    await registry.publish(noDeps200Dir, "no-deps", bunEnv);
-
-    // peer-deps-fixed@1.0.0 - has peer dependency on no-deps@^1.0.0
-    const peerDepsDir = tempDirWithFiles("peer-deps-fixed", {
-      "package.json": JSON.stringify({
-        name: "peer-deps-fixed",
-        version: "1.0.0",
-        peerDependencies: {
-          "no-deps": "^1.0.0",
-        },
-      }),
-    });
-    await registry.publish(peerDepsDir, "peer-deps-fixed", bunEnv);
-
-    // Create the test project that will trigger the warning
+    // Create test directory with registry configured
+    // The registry already has:
+    // - no-deps@1.0.0 and no-deps@2.0.0
+    // - peer-deps-fixed@1.0.0 which has peerDependencies: { "no-deps": "^1.0.0" }
     // Installing no-deps@2.0.0 should trigger warning because peer-deps-fixed needs ^1.0.0
-    const projectDir = tempDirWithFiles("test-project", {
-      "package.json": JSON.stringify({
-        name: "test-peer-deps",
-        version: "1.0.0",
-        dependencies: {
-          "no-deps": "2.0.0",
-          "peer-deps-fixed": "1.0.0",
-        },
-      }),
-    });
+    ({ packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "test-peer-deps",
+          version: "1.0.0",
+          dependencies: {
+            "no-deps": "2.0.0",
+            "peer-deps-fixed": "1.0.0",
+          },
+        }),
+      },
+    }));
+
+    const env = {
+      ...bunEnv,
+      BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache"),
+    };
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "install"],
-      env: registry.withTestEnv(bunEnv),
-      cwd: projectDir,
+      env,
+      cwd: packageDir,
       stdout: "pipe",
       stderr: "pipe",
     });

@@ -374,7 +374,11 @@ pub const Repository = extern struct {
             });
 
         switch (result.term) {
-            .Exited => |sig| if (sig == 0) return result.stdout else {
+            .Exited => |sig| if (sig == 0) {
+                // Free stderr on success path (stdout is returned to caller)
+                allocator.free(result.stderr);
+                return result.stdout;
+            } else {
                 captureGitStderr(result.stderr);
 
                 // Check for "repository not found" before freeing stderr

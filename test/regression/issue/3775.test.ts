@@ -35,6 +35,7 @@ test("module.register() with require syntax emits a warning", async () => {
   // Check that the warning is emitted
   expect(stderr).toContain("module.register() is not implemented in Bun");
   expect(stderr).toContain("BUN_UNSUPPORTED_REGISTER");
+  expect(stderr).toContain("https://bun.sh/docs/bundler/plugins");
 
   // Exit code should be 0 (warning, not error)
   expect(exitCode).toBe(0);

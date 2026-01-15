@@ -654,6 +654,9 @@ static JSValue getSourceMapFunction(VM& vm, JSObject* moduleObject)
 
 static JSValue getBuiltinModulesObject(VM& vm, JSObject* moduleObject)
 {
+    auto* globalObject = defaultGlobalObject(moduleObject->globalObject());
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
     MarkedArgumentBuffer args;
     args.ensureCapacity(countof(builtinModuleNames));
 
@@ -661,8 +664,7 @@ static JSValue getBuiltinModulesObject(VM& vm, JSObject* moduleObject)
         args.append(JSC::jsOwnedString(vm, String(builtinModuleNames[i])));
     }
 
-    auto* globalObject = defaultGlobalObject(moduleObject->globalObject());
-    return JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), JSC::ArgList(args));
+    RELEASE_AND_RETURN(scope, JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), JSC::ArgList(args)));
 }
 
 static JSValue getConstantsObject(VM& vm, JSObject* moduleObject)
@@ -690,9 +692,10 @@ static JSValue getConstantsObject(VM& vm, JSObject* moduleObject)
 
 static JSValue getGlobalPathsObject(VM& vm, JSObject* moduleObject)
 {
-    return JSC::constructEmptyArray(
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    RELEASE_AND_RETURN(scope, JSC::constructEmptyArray(
         moduleObject->globalObject(),
-        static_cast<ArrayAllocationProfile*>(nullptr), 0);
+        static_cast<ArrayAllocationProfile*>(nullptr), 0));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionSetCJSWrapperItem, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -1150,14 +1153,8 @@ void generateNativeModule_NodeModule(JSC::JSGlobalObject* lexicalGlobalObject,
 {
     Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
-    auto catchScope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* constructor = globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(globalObject);
-    if (constructor->hasNonReifiedStaticProperties()) {
-        constructor->reifyAllStaticProperties(globalObject);
-        if (catchScope.exception()) {
-            catchScope.clearException();
-        }
-    }
 
     exportNames.reserveCapacity(Bun::countof(Bun::nodeModuleObjectTableValues) + 1);
     exportValues.ensureCapacity(Bun::countof(Bun::nodeModuleObjectTableValues) + 1);
@@ -1170,9 +1167,9 @@ void generateNativeModule_NodeModule(JSC::JSGlobalObject* lexicalGlobalObject,
         const auto& property = Identifier::fromString(vm, entry.m_key);
         JSValue value = constructor->get(globalObject, property);
 
-        if (catchScope.exception()) [[unlikely]] {
+        if (scope.exception()) [[unlikely]] {
             value = {};
-            catchScope.clearException();
+            scope.clearException();
         }
 
         exportNames.append(property);

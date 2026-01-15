@@ -62,12 +62,14 @@ JSArray* JSConnectionsList::all(JSGlobalObject* globalObject)
     JSValue item;
     size_t i = 0;
     while (iter->next(globalObject, item)) {
+        RETURN_IF_EXCEPTION(scope, nullptr);
         JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(item);
         if (!parser) {
             continue;
         }
 
         result->putDirectIndex(globalObject, i++, parser);
+        RETURN_IF_EXCEPTION(scope, nullptr);
     }
 
     return result;
@@ -88,6 +90,7 @@ JSArray* JSConnectionsList::idle(JSGlobalObject* globalObject)
     JSValue item;
     size_t i = 0;
     while (iter->next(globalObject, item)) {
+        RETURN_IF_EXCEPTION(scope, nullptr);
         JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(item);
         if (!parser) {
             continue;
@@ -95,6 +98,7 @@ JSArray* JSConnectionsList::idle(JSGlobalObject* globalObject)
 
         if (parser->impl()->lastMessageStart() == 0) {
             result->putDirectIndex(globalObject, i++, parser);
+            RETURN_IF_EXCEPTION(scope, nullptr);
         }
     }
 
@@ -116,12 +120,14 @@ JSArray* JSConnectionsList::active(JSGlobalObject* globalObject)
     JSValue item;
     size_t i = 0;
     while (iter->next(globalObject, item)) {
+        RETURN_IF_EXCEPTION(scope, nullptr);
         JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(item);
         if (!parser) {
             continue;
         }
 
         result->putDirectIndex(globalObject, i++, parser);
+        RETURN_IF_EXCEPTION(scope, nullptr);
     }
 
     return result;
@@ -139,18 +145,20 @@ JSArray* JSConnectionsList::expired(JSGlobalObject* globalObject, uint64_t heade
     auto iter = JSSetIterator::create(vm, globalObject->setIteratorStructure(), active, IterationKind::Keys);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    JSValue item = iter->next(vm);
+    JSValue item;
     size_t i = 0;
-    while (!item.isEmpty()) {
+    while (iter->next(globalObject, item)) {
+        RETURN_IF_EXCEPTION(scope, nullptr);
         JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(item);
         if (!parser) {
-            item = iter->next(vm);
             continue;
         }
 
         if ((!parser->impl()->headersCompleted() && headersDeadline > 0 && parser->impl()->lastMessageStart() < headersDeadline) || (requestDeadline > 0 && parser->impl()->lastMessageStart() < requestDeadline)) {
             result->putDirectIndex(globalObject, i++, item);
+            RETURN_IF_EXCEPTION(scope, nullptr);
             active->remove(globalObject, item);
+            RETURN_IF_EXCEPTION(scope, nullptr);
         }
     }
 

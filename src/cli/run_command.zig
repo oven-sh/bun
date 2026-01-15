@@ -1270,6 +1270,10 @@ pub const RunCommand = struct {
                     if (comptime Environment.isWindows) {
                         resolved = resolve_path.normalizeString(resolved, false, .windows);
                     }
+                    // Set file_path to the normalized input path (issue #2900). This preserves
+                    // the symlink path for process.argv[1], unlike getFdPath() which would
+                    // resolve symlinks to their targets.
+                    file_path = resolved;
                     break :brk bun.openFile(
                         resolved,
                         .{ .mode = .read_only },
@@ -1311,11 +1315,25 @@ pub const RunCommand = struct {
 
             Global.configureAllocator(.{ .long_running = true });
 
+            // Use the original path (symlink path) for process.argv[1] (issue #2900)
+            // For relative paths, we need to make them absolute
             absolute_script_path = brk: {
-                if (comptime !Environment.isWindows) break :brk bun.getFdPath(file, &script_name_buf) catch return false;
-
-                var fd_path_buf: bun.PathBuffer = undefined;
-                break :brk bun.getFdPath(file, &fd_path_buf) catch return false;
+                if (std.fs.path.isAbsolute(file_path)) {
+                    break :brk file_path;
+                }
+                // Make the relative path absolute
+                var path_buf_2: bun.PathBuffer = undefined;
+                const cwd = bun.getcwd(&path_buf_2) catch return false;
+                path_buf_2[cwd.len] = std.fs.path.sep;
+                var parts = [_]string{file_path};
+                const abs_path = resolve_path.joinAbsStringBuf(
+                    path_buf_2[0 .. cwd.len + 1],
+                    &script_name_buf,
+                    &parts,
+                    .auto,
+                );
+                if (abs_path.len == 0) return false;
+                break :brk abs_path;
             };
         }
 
@@ -1520,7 +1538,10 @@ pub const RunCommand = struct {
             const loader: bun.options.Loader = this_transpiler.options.loaders.get(path.name.ext) orelse .tsx;
             if (loader.canBeRunByBun() or loader == .html) {
                 log("Resolved to: `{s}`", .{path.text});
-                return _bootAndHandleError(ctx, path.text, loader);
+                // Use the original symlink path for process.argv[1] (issue #2900)
+                // When path.is_symlink is true, path.pretty contains the original symlink path
+                const entry_path = if (path.is_symlink) path.pretty else path.text;
+                return _bootAndHandleError(ctx, entry_path, loader);
             } else {
                 log("Resolved file `{s}` but ignoring because loader is {s}", .{ path.text, @tagName(loader) });
             }

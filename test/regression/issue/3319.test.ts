@@ -540,4 +540,97 @@ describe("EventSource", () => {
       expect(event.data).toBe("test");
     });
   });
+
+  describe("global reassignment", () => {
+    it("should allow EventSource to be reassigned", () => {
+      const original = EventSource;
+      const fake = function FakeEventSource() {};
+
+      // Reassign should work
+      (globalThis as any).EventSource = fake;
+      expect(EventSource).toBe(fake);
+
+      // Restore
+      (globalThis as any).EventSource = original;
+      expect(EventSource).toBe(original);
+    });
+  });
+
+  describe("event handler setters", () => {
+    it("should handle non-callable values gracefully", () => {
+      using server = Bun.serve({
+        port: 0,
+        fetch() {
+          return new Response("data: test\n\n", {
+            headers: { "Content-Type": "text/event-stream" },
+          });
+        },
+      });
+
+      const es = new EventSource(`http://localhost:${server.port}`);
+
+      // Setting non-function should not throw and should result in null
+      es.onopen = 1 as any;
+      expect(es.onopen).toBe(null);
+
+      es.onmessage = "not a function" as any;
+      expect(es.onmessage).toBe(null);
+
+      es.onerror = {} as any;
+      expect(es.onerror).toBe(null);
+
+      // Setting null should work
+      es.onopen = null;
+      expect(es.onopen).toBe(null);
+
+      // Setting undefined should result in null
+      es.onopen = undefined as any;
+      expect(es.onopen).toBe(null);
+
+      es.close();
+    });
+
+    it("should properly replace handlers", async () => {
+      using server = Bun.serve({
+        port: 0,
+        fetch() {
+          return new Response("data: test\n\n", {
+            headers: { "Content-Type": "text/event-stream" },
+          });
+        },
+      });
+
+      const es = new EventSource(`http://localhost:${server.port}`);
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+
+      let firstCalled = false;
+      let secondCalled = false;
+
+      const firstHandler = () => {
+        firstCalled = true;
+      };
+
+      const secondHandler = () => {
+        secondCalled = true;
+        es.close();
+        resolve();
+      };
+
+      es.onmessage = firstHandler;
+      expect(es.onmessage).toBe(firstHandler);
+
+      // Replace with second handler - first should be removed
+      es.onmessage = secondHandler;
+      expect(es.onmessage).toBe(secondHandler);
+
+      es.onerror = () => {
+        es.close();
+        reject(new Error("Connection error"));
+      };
+
+      await promise;
+      expect(firstCalled).toBe(false);
+      expect(secondCalled).toBe(true);
+    });
+  });
 });

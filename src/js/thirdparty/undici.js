@@ -435,12 +435,17 @@ class EventSource extends EventTarget {
   }
 
   set onopen(value) {
-    if (this.#onopen) {
-      this.removeEventListener("open", this.#onopen);
+    const oldHandler = this.#onopen;
+    // Only store functions, treat non-callables as null
+    const newHandler = typeof value === "function" ? value : null;
+    this.#onopen = newHandler;
+    // Remove old handler if it was a function
+    if (typeof oldHandler === "function") {
+      this.removeEventListener("open", oldHandler);
     }
-    this.#onopen = value;
-    if (value) {
-      this.addEventListener("open", value);
+    // Add new handler if it's a function
+    if (typeof newHandler === "function") {
+      this.addEventListener("open", newHandler);
     }
   }
 
@@ -449,12 +454,17 @@ class EventSource extends EventTarget {
   }
 
   set onmessage(value) {
-    if (this.#onmessage) {
-      this.removeEventListener("message", this.#onmessage);
+    const oldHandler = this.#onmessage;
+    // Only store functions, treat non-callables as null
+    const newHandler = typeof value === "function" ? value : null;
+    this.#onmessage = newHandler;
+    // Remove old handler if it was a function
+    if (typeof oldHandler === "function") {
+      this.removeEventListener("message", oldHandler);
     }
-    this.#onmessage = value;
-    if (value) {
-      this.addEventListener("message", value);
+    // Add new handler if it's a function
+    if (typeof newHandler === "function") {
+      this.addEventListener("message", newHandler);
     }
   }
 
@@ -463,12 +473,17 @@ class EventSource extends EventTarget {
   }
 
   set onerror(value) {
-    if (this.#onerror) {
-      this.removeEventListener("error", this.#onerror);
+    const oldHandler = this.#onerror;
+    // Only store functions, treat non-callables as null
+    const newHandler = typeof value === "function" ? value : null;
+    this.#onerror = newHandler;
+    // Remove old handler if it was a function
+    if (typeof oldHandler === "function") {
+      this.removeEventListener("error", oldHandler);
     }
-    this.#onerror = value;
-    if (value) {
-      this.addEventListener("error", value);
+    // Add new handler if it's a function
+    if (typeof newHandler === "function") {
+      this.addEventListener("error", newHandler);
     }
   }
 

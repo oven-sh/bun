@@ -928,6 +928,20 @@ JSC_DEFINE_CUSTOM_GETTER(EventSource_getter,
     return JSC::JSValue::encode(globalObject->m_eventSourceConstructor.get(globalObject));
 }
 
+// EventSource constructor setter - allows globalThis.EventSource to be reassigned
+JSC_DEFINE_CUSTOM_SETTER(EventSource_setter,
+    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
+        JSC::EncodedJSValue encodedValue, JSC::PropertyName property))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    JSValue value = JSValue::decode(encodedValue);
+    auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+
+    // Replace the accessor with a plain data property
+    globalObject->putDirect(vm, Identifier::fromString(vm, "EventSource"_s), value, 0);
+    return true;
+}
+
 JSC_DEFINE_CUSTOM_GETTER(globalOnMessage,
     (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
         JSC::PropertyName))
@@ -2816,8 +2830,8 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "onmessage"_s), JSC::CustomGetterSetter::create(vm, globalOnMessage, setGlobalOnMessage), 0);
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "onerror"_s), JSC::CustomGetterSetter::create(vm, globalOnError, setGlobalOnError), 0);
 
-    // EventSource - loaded from undici module lazily
-    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "EventSource"_s), JSC::CustomGetterSetter::create(vm, EventSource_getter, nullptr), PropertyAttribute::DontEnum | PropertyAttribute::CustomValue);
+    // EventSource - loaded from undici module lazily, can be reassigned
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "EventSource"_s), JSC::CustomGetterSetter::create(vm, EventSource_getter, EventSource_setter), PropertyAttribute::DontEnum | PropertyAttribute::CustomValue);
 
     // ----- Extensions to Built-in objects -----
 

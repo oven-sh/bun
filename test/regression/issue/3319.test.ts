@@ -546,12 +546,14 @@ describe("EventSource", () => {
       const original = EventSource;
       const fake = function FakeEventSource() {};
 
-      // Reassign should work
-      (globalThis as any).EventSource = fake;
-      expect(EventSource).toBe(fake);
-
-      // Restore
-      (globalThis as any).EventSource = original;
+      try {
+        // Reassign should work
+        (globalThis as any).EventSource = fake;
+        expect(EventSource).toBe(fake);
+      } finally {
+        // Always restore original to avoid leaking mutated global
+        (globalThis as any).EventSource = original;
+      }
       expect(EventSource).toBe(original);
     });
   });

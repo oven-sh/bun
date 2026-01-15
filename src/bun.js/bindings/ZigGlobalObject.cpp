@@ -937,8 +937,8 @@ JSC_DEFINE_CUSTOM_SETTER(EventSource_setter,
     JSValue value = JSValue::decode(encodedValue);
     auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
 
-    // Replace the accessor with a plain data property
-    globalObject->putDirect(vm, Identifier::fromString(vm, "EventSource"_s), value, 0);
+    // Replace the accessor with a plain data property, preserving DontEnum
+    globalObject->putDirect(vm, Identifier::fromString(vm, "EventSource"_s), value, static_cast<unsigned>(PropertyAttribute::DontEnum));
     return true;
 }
 

@@ -1,15 +1,15 @@
 // https://github.com/oven-sh/bun/issues/3675
 // bunx should support HTTPS tarball URLs like npx does
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 describe("issue/03675", () => {
   test("bunx can run package from HTTPS tarball URL", async () => {
-    const tmp = tmpdirSync();
+    using tmp = tempDir("bunx-tarball-test", {});
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "x", "https://registry.npmjs.org/cowsay/-/cowsay-1.5.0.tgz", "Hello"],
-      cwd: tmp,
+      cwd: String(tmp),
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -25,7 +25,7 @@ describe("issue/03675", () => {
   });
 
   test("bunx can run scoped package from HTTPS tarball URL", async () => {
-    const tmp = tmpdirSync();
+    using tmp = tempDir("bunx-tarball-scoped-test", {});
 
     // Use a scoped package to test the scoped package name extraction
     await using proc = Bun.spawn({
@@ -35,7 +35,7 @@ describe("issue/03675", () => {
         "https://registry.npmjs.org/@anthropic-ai/claude-code/-/claude-code-0.2.59.tgz",
         "--version",
       ],
-      cwd: tmp,
+      cwd: String(tmp),
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -47,5 +47,6 @@ describe("issue/03675", () => {
     // The package should be installed and run successfully
     // Note: we don't check the version output as it may vary
     // The main test is that it doesn't error on the tarball URL format
+    expect(exitCode).toBe(0);
   });
 });

@@ -506,18 +506,20 @@ class EventSource extends EventTarget {
           return;
         }
 
+        // HTTP 204 No Content means server wants to close the connection permanently
+        if (response.status === 204) {
+          this.#fail();
+          return;
+        }
+
         if (!response.ok) {
-          this.#fail(new Error(`HTTP ${response.status}: ${response.statusText}`));
+          this.#fail();
           return;
         }
 
         const contentType = response.headers.get("Content-Type");
         if (!contentType || !contentType.includes("text/event-stream")) {
-          this.#fail(
-            new Error(
-              `EventSource's response has a MIME type ("${contentType}") that is not "text/event-stream". Aborting the connection.`,
-            ),
-          );
+          this.#fail();
           return;
         }
 
@@ -540,7 +542,7 @@ class EventSource extends EventTarget {
           return;
         }
 
-        this.#reconnect(error);
+        this.#reconnect();
       });
   }
 
@@ -569,8 +571,19 @@ class EventSource extends EventTarget {
 
         let lineEnd;
         while ((lineEnd = this.#findLineEnd(buffer)) !== -1) {
+          const char = buffer[lineEnd];
           const line = buffer.slice(0, lineEnd);
-          buffer = buffer.slice(lineEnd + (buffer[lineEnd] === "\r" && buffer[lineEnd + 1] === "\n" ? 2 : 1));
+          // Handle CRLF: if we see \r, check if next char is \n
+          // If \r is at end of buffer, wait for more data to check for \n
+          if (char === "\r") {
+            if (lineEnd + 1 >= buffer.length) {
+              // \r at end of buffer - need more data to know if CRLF
+              break;
+            }
+            buffer = buffer.slice(lineEnd + (buffer[lineEnd + 1] === "\n" ? 2 : 1));
+          } else {
+            buffer = buffer.slice(lineEnd + 1);
+          }
 
           if (line === "") {
             if (data.length > 0) {
@@ -635,7 +648,7 @@ class EventSource extends EventTarget {
         return;
       }
 
-      this.#reconnect(error);
+      this.#reconnect();
       return;
     }
 
@@ -651,7 +664,7 @@ class EventSource extends EventTarget {
     return -1;
   }
 
-  #fail(error) {
+  #fail() {
     this.#readyState = EventSource.CLOSED;
 
     if (this.#abortController) {
@@ -664,23 +677,19 @@ class EventSource extends EventTarget {
       this.#reconnectTimer = null;
     }
 
-    if (error) {
-      this.dispatchEvent(new ErrorEvent("error", { error, message: error.message }));
-    }
+    // Per spec, error events are simple Event objects, not ErrorEvent
+    this.dispatchEvent(new Event("error"));
   }
 
-  #reconnect(error) {
+  #reconnect() {
     if (this.#readyState === EventSource.CLOSED) {
       return;
     }
 
     this.#readyState = EventSource.CONNECTING;
 
-    if (error) {
-      this.dispatchEvent(new ErrorEvent("error", { error, message: error.message }));
-    } else {
-      this.dispatchEvent(new Event("error"));
-    }
+    // Per spec, error events are simple Event objects, not ErrorEvent
+    this.dispatchEvent(new Event("error"));
 
     this.#reconnectTimer = setTimeout(() => this.#connect(), this.#reconnectionTime);
   }

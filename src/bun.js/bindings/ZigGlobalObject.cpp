@@ -910,6 +910,15 @@ JSC_DEFINE_CUSTOM_SETTER(errorConstructorPrepareStackTraceSetter,
 
 #pragma mark - Globals
 
+// EventSource stub function that throws when EventSource failed to load
+static JSC_DECLARE_HOST_FUNCTION(eventSourceNotAvailable);
+JSC_DEFINE_HOST_FUNCTION(eventSourceNotAvailable, (JSGlobalObject * globalObject, CallFrame*))
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    throwTypeError(globalObject, scope, "EventSource is not available"_s);
+    return {};
+}
+
 // EventSource constructor getter - loads from undici module lazily
 JSC_DEFINE_CUSTOM_GETTER(EventSource_getter,
     (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
@@ -2307,7 +2316,7 @@ void GlobalObject::finishCreation(VM& vm)
     });
 
     // EventSource constructor is loaded from the undici module
-    m_eventSourceConstructor.initLater([](const LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
+    m_eventSourceConstructor.initLater([](const LazyProperty<JSC::JSGlobalObject, JSC::JSFunction>::Initializer& init) {
         auto* globalObject = jsCast<Zig::GlobalObject*>(init.owner);
         auto& vm = init.vm;
         auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2321,14 +2330,14 @@ void GlobalObject::finishCreation(VM& vm)
             JSObject* moduleObject = moduleValue.getObject();
             JSValue eventSourceExport = moduleObject->getIfPropertyExists(globalObject, Identifier::fromString(vm, "EventSource"_s));
             RETURN_IF_EXCEPTION(scope, );
-            if (eventSourceExport && eventSourceExport.isObject()) {
-                init.set(jsCast<JSObject*>(eventSourceExport.asCell()));
+            if (JSFunction* eventSourceFunc = jsDynamicCast<JSFunction*>(eventSourceExport)) {
+                init.set(eventSourceFunc);
                 return;
             }
         }
 
-        // Fallback: create a placeholder that throws
-        init.set(constructEmptyObject(init.owner));
+        // Fallback: create a function that throws when called
+        init.set(JSC::JSFunction::create(vm, globalObject, 0, "EventSource"_s, eventSourceNotAvailable, ImplementationVisibility::Public));
     });
 
     m_JSFileSinkClassStructure.initLater(

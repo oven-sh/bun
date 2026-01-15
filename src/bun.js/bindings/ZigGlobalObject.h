@@ -636,7 +636,7 @@ public:
     V(public, LazyPropertyOfGlobalObject<Symbol>, m_nodeVMUseMainContextDefaultLoader)                       \
     V(public, LazyPropertyOfGlobalObject<JSFunction>, m_ipcSerializeFunction)                                \
     V(public, LazyPropertyOfGlobalObject<JSFunction>, m_ipcParseHandleFunction)                             \
-    V(public, LazyPropertyOfGlobalObject<JSObject>, m_eventSourceConstructor)    /* EventSource from undici module */
+    V(public, LazyPropertyOfGlobalObject<JSFunction>, m_eventSourceConstructor)    /* EventSource from undici module */
 
 #define DECLARE_GLOBALOBJECT_GC_MEMBER(visibility, T, name) \
     visibility:                                             \

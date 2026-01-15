@@ -49,263 +49,279 @@ describe("EventSource", () => {
       es.close();
     });
 
-    it("should transition to OPEN state when connected", async () => {
-      using server = Bun.serve({
-        port: 0,
-        fetch() {
-          return new Response(
-            new ReadableStream({
-              start(controller) {
-                controller.enqueue(new TextEncoder().encode("data: test\n\n"));
-              },
-            }),
-            { headers: { "Content-Type": "text/event-stream" } },
-          );
-        },
-      });
+    it(
+      "should transition to OPEN state when connected",
+      async () => {
+        using server = Bun.serve({
+          port: 0,
+          fetch() {
+            return new Response(
+              new ReadableStream({
+                start(controller) {
+                  controller.enqueue(new TextEncoder().encode("data: test\n\n"));
+                },
+              }),
+              { headers: { "Content-Type": "text/event-stream" } },
+            );
+          },
+        });
 
-      const es = new EventSource(`http://localhost:${server.port}`);
-      const { promise, resolve } = Promise.withResolvers<void>();
+        const es = new EventSource(`http://localhost:${server.port}`);
+        const { promise, resolve, reject } = Promise.withResolvers<void>();
 
-      es.onopen = () => {
-        expect(es.readyState).toBe(EventSource.OPEN);
-        es.close();
-        resolve();
-      };
+        es.onopen = () => {
+          expect(es.readyState).toBe(EventSource.OPEN);
+          es.close();
+          resolve();
+        };
 
-      es.onerror = () => {
-        es.close();
-        resolve();
-      };
+        es.onerror = () => {
+          es.close();
+          reject(new Error("Connection error"));
+        };
 
-      await promise;
-    });
+        await promise;
+      },
+      { timeout: 5000 },
+    );
 
-    it("should transition to CLOSED state when close() is called", async () => {
-      using server = Bun.serve({
-        port: 0,
-        fetch() {
-          return new Response(
-            new ReadableStream({
-              start(controller) {
-                controller.enqueue(new TextEncoder().encode("data: test\n\n"));
-              },
-            }),
-            { headers: { "Content-Type": "text/event-stream" } },
-          );
-        },
-      });
+    it(
+      "should transition to CLOSED state when close() is called",
+      async () => {
+        using server = Bun.serve({
+          port: 0,
+          fetch() {
+            return new Response(
+              new ReadableStream({
+                start(controller) {
+                  controller.enqueue(new TextEncoder().encode("data: test\n\n"));
+                },
+              }),
+              { headers: { "Content-Type": "text/event-stream" } },
+            );
+          },
+        });
 
-      const es = new EventSource(`http://localhost:${server.port}`);
-      const { promise, resolve } = Promise.withResolvers<void>();
+        const es = new EventSource(`http://localhost:${server.port}`);
+        const { promise, resolve, reject } = Promise.withResolvers<void>();
 
-      es.onopen = () => {
-        es.close();
-        expect(es.readyState).toBe(EventSource.CLOSED);
-        resolve();
-      };
+        es.onopen = () => {
+          es.close();
+          expect(es.readyState).toBe(EventSource.CLOSED);
+          resolve();
+        };
 
-      es.onerror = () => {
-        es.close();
-        resolve();
-      };
+        es.onerror = () => {
+          es.close();
+          reject(new Error("Connection error"));
+        };
 
-      await promise;
-    });
+        await promise;
+      },
+      { timeout: 5000 },
+    );
   });
 
   describe("message events", () => {
-    it("should receive simple message events", async () => {
-      using server = Bun.serve({
-        port: 0,
-        fetch() {
-          return new Response("data: Hello, World!\n\n", {
-            headers: { "Content-Type": "text/event-stream" },
-          });
-        },
-      });
+    it(
+      "should receive simple message events",
+      async () => {
+        using server = Bun.serve({
+          port: 0,
+          fetch() {
+            return new Response("data: Hello, World!\n\n", {
+              headers: { "Content-Type": "text/event-stream" },
+            });
+          },
+        });
 
-      const es = new EventSource(`http://localhost:${server.port}`);
-      const { promise, resolve, reject } = Promise.withResolvers<MessageEvent>();
+        const es = new EventSource(`http://localhost:${server.port}`);
+        const { promise, resolve, reject } = Promise.withResolvers<MessageEvent>();
 
-      const timeout = setTimeout(() => {
-        es.close();
-        reject(new Error("Timeout waiting for message"));
-      }, 5000);
+        es.onmessage = e => {
+          es.close();
+          resolve(e);
+        };
 
-      es.onmessage = e => {
-        clearTimeout(timeout);
-        es.close();
-        resolve(e);
-      };
+        es.onerror = () => {
+          es.close();
+          reject(new Error("Connection error"));
+        };
 
-      es.onerror = () => {
-        clearTimeout(timeout);
-        es.close();
-        reject(new Error("Connection error"));
-      };
+        const event = await promise;
+        expect(event.data).toBe("Hello, World!");
+      },
+      { timeout: 5000 },
+    );
 
-      const event = await promise;
-      expect(event.data).toBe("Hello, World!");
-    });
+    it(
+      "should handle multi-line data",
+      async () => {
+        using server = Bun.serve({
+          port: 0,
+          fetch() {
+            return new Response("data: Line 1\ndata: Line 2\ndata: Line 3\n\n", {
+              headers: { "Content-Type": "text/event-stream" },
+            });
+          },
+        });
 
-    it("should handle multi-line data", async () => {
-      using server = Bun.serve({
-        port: 0,
-        fetch() {
-          return new Response("data: Line 1\ndata: Line 2\ndata: Line 3\n\n", {
-            headers: { "Content-Type": "text/event-stream" },
-          });
-        },
-      });
+        const es = new EventSource(`http://localhost:${server.port}`);
+        const { promise, resolve, reject } = Promise.withResolvers<MessageEvent>();
 
-      const es = new EventSource(`http://localhost:${server.port}`);
-      const { promise, resolve, reject } = Promise.withResolvers<MessageEvent>();
+        es.onmessage = e => {
+          es.close();
+          resolve(e);
+        };
 
-      const timeout = setTimeout(() => {
-        es.close();
-        reject(new Error("Timeout waiting for message"));
-      }, 5000);
+        es.onerror = () => {
+          es.close();
+          reject(new Error("Connection error"));
+        };
 
-      es.onmessage = e => {
-        clearTimeout(timeout);
-        es.close();
-        resolve(e);
-      };
+        const event = await promise;
+        expect(event.data).toBe("Line 1\nLine 2\nLine 3");
+      },
+      { timeout: 5000 },
+    );
 
-      es.onerror = () => {
-        clearTimeout(timeout);
-        es.close();
-        reject(new Error("Connection error"));
-      };
+    it(
+      "should handle custom event types",
+      async () => {
+        using server = Bun.serve({
+          port: 0,
+          fetch() {
+            return new Response("event: custom\ndata: Custom Event Data\n\n", {
+              headers: { "Content-Type": "text/event-stream" },
+            });
+          },
+        });
 
-      const event = await promise;
-      expect(event.data).toBe("Line 1\nLine 2\nLine 3");
-    });
+        const es = new EventSource(`http://localhost:${server.port}`);
+        const { promise, resolve, reject } = Promise.withResolvers<MessageEvent>();
 
-    it("should handle custom event types", async () => {
-      using server = Bun.serve({
-        port: 0,
-        fetch() {
-          return new Response("event: custom\ndata: Custom Event Data\n\n", {
-            headers: { "Content-Type": "text/event-stream" },
-          });
-        },
-      });
+        es.addEventListener("custom", (e: Event) => {
+          es.close();
+          resolve(e as MessageEvent);
+        });
 
-      const es = new EventSource(`http://localhost:${server.port}`);
-      const { promise, resolve, reject } = Promise.withResolvers<MessageEvent>();
+        es.onerror = () => {
+          es.close();
+          reject(new Error("Connection error"));
+        };
 
-      const timeout = setTimeout(() => {
-        es.close();
-        reject(new Error("Timeout waiting for message"));
-      }, 5000);
+        const event = await promise;
+        expect(event.data).toBe("Custom Event Data");
+      },
+      { timeout: 5000 },
+    );
 
-      es.addEventListener("custom", (e: Event) => {
-        clearTimeout(timeout);
-        es.close();
-        resolve(e as MessageEvent);
-      });
+    it(
+      "should track lastEventId",
+      async () => {
+        using server = Bun.serve({
+          port: 0,
+          fetch() {
+            return new Response("id: 123\ndata: test\n\n", {
+              headers: { "Content-Type": "text/event-stream" },
+            });
+          },
+        });
 
-      es.onerror = () => {
-        clearTimeout(timeout);
-        es.close();
-        reject(new Error("Connection error"));
-      };
+        const es = new EventSource(`http://localhost:${server.port}`);
+        const { promise, resolve, reject } = Promise.withResolvers<MessageEvent>();
 
-      const event = await promise;
-      expect(event.data).toBe("Custom Event Data");
-    });
+        es.onmessage = e => {
+          es.close();
+          resolve(e);
+        };
 
-    it("should track lastEventId", async () => {
-      using server = Bun.serve({
-        port: 0,
-        fetch() {
-          return new Response("id: 123\ndata: test\n\n", {
-            headers: { "Content-Type": "text/event-stream" },
-          });
-        },
-      });
+        es.onerror = () => {
+          es.close();
+          reject(new Error("Connection error"));
+        };
 
-      const es = new EventSource(`http://localhost:${server.port}`);
-      const { promise, resolve, reject } = Promise.withResolvers<MessageEvent>();
-
-      const timeout = setTimeout(() => {
-        es.close();
-        reject(new Error("Timeout waiting for message"));
-      }, 5000);
-
-      es.onmessage = e => {
-        clearTimeout(timeout);
-        es.close();
-        resolve(e);
-      };
-
-      es.onerror = () => {
-        clearTimeout(timeout);
-        es.close();
-        reject(new Error("Connection error"));
-      };
-
-      const event = await promise;
-      expect(event.lastEventId).toBe("123");
-    });
+        const event = await promise;
+        expect(event.lastEventId).toBe("123");
+      },
+      { timeout: 5000 },
+    );
   });
 
   describe("error handling", () => {
-    it("should fire error event for wrong MIME type", async () => {
-      using server = Bun.serve({
-        port: 0,
-        fetch() {
-          return new Response("data: test\n\n", {
-            headers: { "Content-Type": "text/plain" },
-          });
-        },
-      });
+    it(
+      "should fire error event for wrong MIME type",
+      async () => {
+        using server = Bun.serve({
+          port: 0,
+          fetch() {
+            return new Response("data: test\n\n", {
+              headers: { "Content-Type": "text/plain" },
+            });
+          },
+        });
 
-      const es = new EventSource(`http://localhost:${server.port}`);
-      const { promise, resolve, reject } = Promise.withResolvers<Event>();
+        const es = new EventSource(`http://localhost:${server.port}`);
+        const { promise, resolve } = Promise.withResolvers<Event>();
 
-      const timeout = setTimeout(() => {
-        es.close();
-        reject(new Error("Timeout waiting for error"));
-      }, 5000);
+        es.onerror = e => {
+          es.close();
+          resolve(e);
+        };
 
-      es.onerror = e => {
-        clearTimeout(timeout);
-        es.close();
-        resolve(e);
-      };
+        await promise;
+        expect(es.readyState).toBe(EventSource.CLOSED);
+      },
+      { timeout: 5000 },
+    );
 
-      await promise;
-      expect(es.readyState).toBe(EventSource.CLOSED);
-    });
+    it(
+      "should fire error event for HTTP errors",
+      async () => {
+        using server = Bun.serve({
+          port: 0,
+          fetch() {
+            return new Response("Not Found", { status: 404 });
+          },
+        });
 
-    it("should fire error event for HTTP errors", async () => {
-      using server = Bun.serve({
-        port: 0,
-        fetch() {
-          return new Response("Not Found", { status: 404 });
-        },
-      });
+        const es = new EventSource(`http://localhost:${server.port}`);
+        const { promise, resolve } = Promise.withResolvers<Event>();
 
-      const es = new EventSource(`http://localhost:${server.port}`);
-      const { promise, resolve, reject } = Promise.withResolvers<Event>();
+        es.onerror = e => {
+          es.close();
+          resolve(e);
+        };
 
-      const timeout = setTimeout(() => {
-        es.close();
-        reject(new Error("Timeout waiting for error"));
-      }, 5000);
+        await promise;
+        expect(es.readyState).toBe(EventSource.CLOSED);
+      },
+      { timeout: 5000 },
+    );
 
-      es.onerror = e => {
-        clearTimeout(timeout);
-        es.close();
-        resolve(e);
-      };
+    it(
+      "should close connection on HTTP 204",
+      async () => {
+        using server = Bun.serve({
+          port: 0,
+          fetch() {
+            return new Response(null, { status: 204 });
+          },
+        });
 
-      await promise;
-      expect(es.readyState).toBe(EventSource.CLOSED);
-    });
+        const es = new EventSource(`http://localhost:${server.port}`);
+        const { promise, resolve } = Promise.withResolvers<Event>();
+
+        es.onerror = e => {
+          es.close();
+          resolve(e);
+        };
+
+        await promise;
+        expect(es.readyState).toBe(EventSource.CLOSED);
+      },
+      { timeout: 5000 },
+    );
   });
 
   describe("properties", () => {
@@ -357,121 +373,145 @@ describe("EventSource", () => {
   });
 
   describe("comments and ignored lines", () => {
-    it("should ignore comment lines starting with colon", async () => {
-      using server = Bun.serve({
-        port: 0,
-        fetch() {
-          return new Response(":this is a comment\ndata: actual data\n\n", {
-            headers: { "Content-Type": "text/event-stream" },
-          });
-        },
-      });
+    it(
+      "should ignore comment lines starting with colon",
+      async () => {
+        using server = Bun.serve({
+          port: 0,
+          fetch() {
+            return new Response(":this is a comment\ndata: actual data\n\n", {
+              headers: { "Content-Type": "text/event-stream" },
+            });
+          },
+        });
 
-      const es = new EventSource(`http://localhost:${server.port}`);
-      const { promise, resolve, reject } = Promise.withResolvers<MessageEvent>();
+        const es = new EventSource(`http://localhost:${server.port}`);
+        const { promise, resolve, reject } = Promise.withResolvers<MessageEvent>();
 
-      const timeout = setTimeout(() => {
-        es.close();
-        reject(new Error("Timeout waiting for message"));
-      }, 5000);
+        es.onmessage = e => {
+          es.close();
+          resolve(e);
+        };
 
-      es.onmessage = e => {
-        clearTimeout(timeout);
-        es.close();
-        resolve(e);
-      };
+        es.onerror = () => {
+          es.close();
+          reject(new Error("Connection error"));
+        };
 
-      es.onerror = () => {
-        clearTimeout(timeout);
-        es.close();
-        reject(new Error("Connection error"));
-      };
-
-      const event = await promise;
-      expect(event.data).toBe("actual data");
-    });
+        const event = await promise;
+        expect(event.data).toBe("actual data");
+      },
+      { timeout: 5000 },
+    );
   });
 
   describe("retry field", () => {
-    it("should accept valid retry field values", async () => {
-      // Note: We can't directly test the internal reconnection time,
-      // but we verify the connection works with a retry field
-      using server = Bun.serve({
-        port: 0,
-        fetch() {
-          return new Response("retry: 1000\ndata: test\n\n", {
-            headers: { "Content-Type": "text/event-stream" },
-          });
-        },
-      });
+    it(
+      "should accept valid retry field values",
+      async () => {
+        // Note: We can't directly test the internal reconnection time,
+        // but we verify the connection works with a retry field
+        using server = Bun.serve({
+          port: 0,
+          fetch() {
+            return new Response("retry: 1000\ndata: test\n\n", {
+              headers: { "Content-Type": "text/event-stream" },
+            });
+          },
+        });
 
-      const es = new EventSource(`http://localhost:${server.port}`);
-      const { promise, resolve, reject } = Promise.withResolvers<MessageEvent>();
+        const es = new EventSource(`http://localhost:${server.port}`);
+        const { promise, resolve, reject } = Promise.withResolvers<MessageEvent>();
 
-      const timeout = setTimeout(() => {
-        es.close();
-        reject(new Error("Timeout waiting for message"));
-      }, 5000);
+        es.onmessage = e => {
+          es.close();
+          resolve(e);
+        };
 
-      es.onmessage = e => {
-        clearTimeout(timeout);
-        es.close();
-        resolve(e);
-      };
+        es.onerror = () => {
+          es.close();
+          reject(new Error("Connection error"));
+        };
 
-      es.onerror = () => {
-        clearTimeout(timeout);
-        es.close();
-        reject(new Error("Connection error"));
-      };
-
-      const event = await promise;
-      expect(event.data).toBe("test");
-    });
+        const event = await promise;
+        expect(event.data).toBe("test");
+      },
+      { timeout: 5000 },
+    );
   });
 
   describe("multiple messages", () => {
-    it("should receive multiple messages in sequence", async () => {
-      using server = Bun.serve({
-        port: 0,
-        fetch() {
-          return new Response("data: first\n\ndata: second\n\ndata: third\n\n", {
-            headers: { "Content-Type": "text/event-stream" },
-          });
-        },
-      });
+    it(
+      "should receive multiple messages in sequence",
+      async () => {
+        using server = Bun.serve({
+          port: 0,
+          fetch() {
+            return new Response("data: first\n\ndata: second\n\ndata: third\n\n", {
+              headers: { "Content-Type": "text/event-stream" },
+            });
+          },
+        });
 
-      const es = new EventSource(`http://localhost:${server.port}`);
-      const messages: string[] = [];
-      const { promise, resolve, reject } = Promise.withResolvers<void>();
+        const es = new EventSource(`http://localhost:${server.port}`);
+        const messages: string[] = [];
+        const { promise, resolve, reject } = Promise.withResolvers<void>();
 
-      const timeout = setTimeout(() => {
-        es.close();
-        reject(new Error("Timeout waiting for messages"));
-      }, 5000);
+        es.onmessage = e => {
+          messages.push(e.data);
+          if (messages.length >= 3) {
+            es.close();
+            resolve();
+          }
+        };
 
-      es.onmessage = e => {
-        messages.push(e.data);
-        if (messages.length >= 3) {
-          clearTimeout(timeout);
+        es.onerror = () => {
           es.close();
-          resolve();
-        }
-      };
+          // On stream end, error fires before reconnect attempt
+          if (messages.length >= 3) {
+            resolve();
+          } else {
+            reject(new Error("Connection error"));
+          }
+        };
 
-      es.onerror = () => {
-        clearTimeout(timeout);
-        es.close();
-        // On stream end, error fires before reconnect attempt
-        if (messages.length >= 3) {
-          resolve();
-        } else {
+        await promise;
+        expect(messages).toEqual(["first", "second", "third"]);
+      },
+      { timeout: 5000 },
+    );
+  });
+
+  describe("CRLF handling", () => {
+    it(
+      "should handle CRLF line endings",
+      async () => {
+        using server = Bun.serve({
+          port: 0,
+          fetch() {
+            return new Response("data: test\r\n\r\n", {
+              headers: { "Content-Type": "text/event-stream" },
+            });
+          },
+        });
+
+        const es = new EventSource(`http://localhost:${server.port}`);
+        const { promise, resolve, reject } = Promise.withResolvers<MessageEvent>();
+
+        es.onmessage = e => {
+          es.close();
+          resolve(e);
+        };
+
+        es.onerror = () => {
+          es.close();
           reject(new Error("Connection error"));
-        }
-      };
+        };
 
-      await promise;
-      expect(messages).toEqual(["first", "second", "third"]);
-    });
+        const event = await promise;
+        expect(event.data).toBe("test");
+      },
+      { timeout: 5000 },
+    );
   });
 });

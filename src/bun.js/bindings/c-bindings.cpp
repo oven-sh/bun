@@ -23,10 +23,62 @@
 #include <lshpack.h>
 
 #if CPU(X86_64) && !OS(WINDOWS)
+#include <setjmp.h>
+
+static sigjmp_buf s_jmpbuf;
+static volatile sig_atomic_t s_sigill_caught = 0;
+
+static void sigill_handler(int sig)
+{
+    s_sigill_caught = 1;
+    siglongjmp(s_jmpbuf, 1);
+}
+
+// Safely check AVX support, catching SIGILL if CPUID is blocked (e.g., in nsjail)
+static bool safe_check_avx_support()
+{
+    struct sigaction sa, old_sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = sigill_handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+
+    // Install SIGILL handler
+    if (sigaction(SIGILL, &sa, &old_sa) != 0) {
+        // If we can't install signal handler, assume no AVX to be safe
+        return false;
+    }
+
+    bool has_avx = false;
+    s_sigill_caught = 0;
+
+    if (sigsetjmp(s_jmpbuf, 1) == 0) {
+        // Normal path: try to detect CPU features
+        __builtin_cpu_init();
+        if (__builtin_cpu_supports("avx")) {
+            has_avx = true;
+        }
+    } else {
+        // SIGILL was caught - we're in a restricted environment
+        // Fall back to assuming no AVX (conservative approach)
+        has_avx = false;
+    }
+
+    // Restore old signal handler
+    sigaction(SIGILL, &old_sa, nullptr);
+
+    return has_avx;
+}
+
 extern "C" void bun_warn_avx_missing(const char* url)
 {
-    __builtin_cpu_init();
-    if (__builtin_cpu_supports("avx")) {
+    if (safe_check_avx_support()) {
+        return;
+    }
+
+    // If we caught SIGILL, don't warn - user is in a sandboxed environment
+    // and the baseline build recommendation doesn't help with that
+    if (s_sigill_caught) {
         return;
     }
 

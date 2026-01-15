@@ -23,6 +23,22 @@ enum class AArch64CPUFeature : uint8_t {
 
 #include <windows.h>
 
+#else
+
+// For SIGILL handling in sandboxed environments (e.g., nsjail)
+#include <setjmp.h>
+#include <signal.h>
+#include <cstring>
+
+static sigjmp_buf s_cpu_features_jmpbuf;
+static volatile sig_atomic_t s_cpu_features_sigill_caught = 0;
+
+static void cpu_features_sigill_handler(int sig)
+{
+    s_cpu_features_sigill_caught = 1;
+    siglongjmp(s_cpu_features_jmpbuf, 1);
+}
+
 #endif
 
 static uint8_t x86_cpu_features()
@@ -45,18 +61,39 @@ static uint8_t x86_cpu_features()
 #else
 
 #if __has_builtin(__builtin_cpu_supports)
-    __builtin_cpu_init();
+    // Use SIGILL handler to catch cases where CPUID is blocked (e.g., nsjail)
+    struct sigaction sa, old_sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = cpu_features_sigill_handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
 
-    if (__builtin_cpu_supports("sse4.2"))
-        features |= 1 << static_cast<uint8_t>(X86CPUFeature::sse42);
-    if (__builtin_cpu_supports("popcnt"))
-        features |= 1 << static_cast<uint8_t>(X86CPUFeature::popcnt);
-    if (__builtin_cpu_supports("avx"))
-        features |= 1 << static_cast<uint8_t>(X86CPUFeature::avx);
-    if (__builtin_cpu_supports("avx2"))
-        features |= 1 << static_cast<uint8_t>(X86CPUFeature::avx2);
-    if (__builtin_cpu_supports("avx512f"))
-        features |= 1 << static_cast<uint8_t>(X86CPUFeature::avx512);
+    if (sigaction(SIGILL, &sa, &old_sa) != 0) {
+        // If we can't install signal handler, return 0 features to be safe
+        return 0;
+    }
+
+    s_cpu_features_sigill_caught = 0;
+
+    if (sigsetjmp(s_cpu_features_jmpbuf, 1) == 0) {
+        // Normal path: try to detect CPU features
+        __builtin_cpu_init();
+
+        if (__builtin_cpu_supports("sse4.2"))
+            features |= 1 << static_cast<uint8_t>(X86CPUFeature::sse42);
+        if (__builtin_cpu_supports("popcnt"))
+            features |= 1 << static_cast<uint8_t>(X86CPUFeature::popcnt);
+        if (__builtin_cpu_supports("avx"))
+            features |= 1 << static_cast<uint8_t>(X86CPUFeature::avx);
+        if (__builtin_cpu_supports("avx2"))
+            features |= 1 << static_cast<uint8_t>(X86CPUFeature::avx2);
+        if (__builtin_cpu_supports("avx512f"))
+            features |= 1 << static_cast<uint8_t>(X86CPUFeature::avx512);
+    }
+    // If SIGILL was caught, features remains 0 (conservative fallback)
+
+    // Restore old signal handler
+    sigaction(SIGILL, &old_sa, nullptr);
 #endif
 
 #endif

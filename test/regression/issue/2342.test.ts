@@ -34,7 +34,8 @@ test("git clone failure should show actual git error output", async () => {
   //   fatal: Could not read from remote repository.
   expect(stderr).toContain('"git clone" for "private-pkg" failed');
 
-  // The error should include the actual git stderr with "fatal:" message from git
+  // The error should include the actual git stderr output, which contains "fatal:" from git
+  // This is distinct from bun's own "error:" messages - we want to see the git-specific output
   expect(stderr).toContain("fatal:");
 
   // The exit code should be non-zero

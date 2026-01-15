@@ -1507,6 +1507,68 @@ describe("SQL helpers", () => {
     expect(result[0].param1).toBe("value1");
     expect(result[0].param2).toBe("value2");
   });
+
+  test("DELETE with WHERE IN helper", async () => {
+    const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+    await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id int, name text, age int)`;
+    const users = [
+      { id: 1, name: "John", age: 30 },
+      { id: 2, name: "Jane", age: 25 },
+      { id: 3, name: "Bob", age: 35 },
+    ];
+    await sql`INSERT INTO ${sql(random_name)} ${sql(users)}`;
+
+    // Verify initial state
+    const before = await sql`SELECT * FROM ${sql(random_name)} ORDER BY id`;
+    expect(before.length).toBe(3);
+
+    // DELETE with array of values
+    await sql`DELETE FROM ${sql(random_name)} WHERE id IN ${sql([1, 2])}`;
+
+    const after = await sql`SELECT * FROM ${sql(random_name)}`;
+    expect(after.length).toBe(1);
+    expect(after[0].id).toBe(3);
+    expect(after[0].name).toBe("Bob");
+  });
+
+  test("DELETE with WHERE IN using objects", async () => {
+    const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+    await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id int, name text, age int)`;
+    const users = [
+      { id: 1, name: "John", age: 30 },
+      { id: 2, name: "Jane", age: 25 },
+      { id: 3, name: "Bob", age: 35 },
+    ];
+    await sql`INSERT INTO ${sql(random_name)} ${sql(users)}`;
+
+    // DELETE with objects and column name
+    const toDelete = [{ id: 1 }, { id: 3 }];
+    await sql`DELETE FROM ${sql(random_name)} WHERE id IN ${sql(toDelete, "id")}`;
+
+    const after = await sql`SELECT * FROM ${sql(random_name)}`;
+    expect(after.length).toBe(1);
+    expect(after[0].id).toBe(2);
+    expect(after[0].name).toBe("Jane");
+  });
+
+  test("DELETE with WHERE NOT IN helper", async () => {
+    const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+    await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id int, name text, age int)`;
+    const users = [
+      { id: 1, name: "John", age: 30 },
+      { id: 2, name: "Jane", age: 25 },
+      { id: 3, name: "Bob", age: 35 },
+    ];
+    await sql`INSERT INTO ${sql(random_name)} ${sql(users)}`;
+
+    // DELETE with NOT IN
+    await sql`DELETE FROM ${sql(random_name)} WHERE id NOT IN ${sql([2])}`;
+
+    const after = await sql`SELECT * FROM ${sql(random_name)}`;
+    expect(after.length).toBe(1);
+    expect(after[0].id).toBe(2);
+    expect(after[0].name).toBe("Jane");
+  });
 });
 
 describe("Helper argument validation", () => {

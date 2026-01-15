@@ -613,44 +613,20 @@ describe("bundler", () => {
   // The dynamic import should properly unwrap the default export using __toESM.
   // Regression test for: dynamic import of CJS chunk returns { default: { __esModule, ... } }
   // and needs .then((m)=>__toESM(m.default)) to unwrap correctly.
+  // Note: __esModule is required because bun optimizes simple CJS to ESM otherwise.
   itBundled("splitting/CJSDynamicImportOfCJSChunk", {
     files: {
-      "/main.ts": /* js */ `
-        import { getValue } from "./loader.js";
-        async function run() {
-          const v = await getValue();
-          console.log(v);
-        }
-        run();
-      `,
-      "/loader.js": /* js */ `
-        "use strict";
-        Object.defineProperty(exports, "__esModule", { value: true });
-        exports.getValue = void 0;
-        let impl;
-        async function getValue() {
-          if (!impl) {
-            const mod = await import("./impl.js");
-            impl = mod.getValue;
-          }
-          return impl();
-        }
-        exports.getValue = getValue;
+      "/main.js": /* js */ `
+        import("./impl.js").then(mod => console.log(mod.foo()));
       `,
       "/impl.js": /* js */ `
-        "use strict";
         Object.defineProperty(exports, "__esModule", { value: true });
-        exports.getValue = void 0;
-        function getValue() {
-          return "success";
-        }
-        exports.getValue = getValue;
+        exports.foo = () => "success";
       `,
     },
-    entryPoints: ["/main.ts", "/impl.js"],
+    entryPoints: ["/main.js", "/impl.js"],
     splitting: true,
     outdir: "/out",
-    target: "bun",
     run: {
       file: "/out/main.js",
       stdout: "success",

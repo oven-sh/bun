@@ -3431,8 +3431,20 @@ pub const H2FrameParser = struct {
             return globalObject.throw("Expected sensitiveHeaders to be an object", .{});
         }
 
-        // max frame size will be always at least 16384
-        var buffer = shared_request_buffer[0 .. shared_request_buffer.len - FrameHeader.byteSize];
+        // Use remote settings maxFrameSize if available, otherwise default to localSettings
+        const settings = this.remoteSettings orelse this.localSettings;
+        const max_frame_size = settings.maxFrameSize;
+        const buffer_size = max_frame_size - FrameHeader.byteSize;
+        // Use shared buffer if it fits, otherwise allocate from heap
+        const use_shared = buffer_size <= shared_request_buffer.len;
+        const heap_buffer: ?[]u8 = if (!use_shared)
+            bun.default_allocator.alloc(u8, buffer_size) catch {
+                return globalObject.throw("Failed to allocate header buffer", .{});
+            }
+        else
+            null;
+        defer if (heap_buffer) |buf| bun.default_allocator.free(buf);
+        const buffer: []u8 = heap_buffer orelse shared_request_buffer[0..buffer_size];
         var encoded_size: usize = 0;
         // max header name length for lshpack
         var name_buffer: [4096]u8 = undefined;
@@ -3832,8 +3844,23 @@ pub const H2FrameParser = struct {
         if (!sensitive_arg.isObject()) {
             return globalObject.throw("Expected sensitiveHeaders to be an object", .{});
         }
-        // max frame size will be always at least 16384
-        var buffer = shared_request_buffer[0 .. shared_request_buffer.len - FrameHeader.byteSize - 5];
+        // Use remote settings maxFrameSize if available, otherwise use localSettings.
+        // Note: When remoteSettings is not yet received (before SETTINGS exchange completes),
+        // we use localSettings.maxFrameSize which defaults to 16384. If headers exceed this,
+        // we return an error. A proper fix would implement CONTINUATION frames for large headers.
+        const settings = this.remoteSettings orelse this.localSettings;
+        const max_frame_size = settings.maxFrameSize;
+        const buffer_size = max_frame_size - FrameHeader.byteSize - 5;
+        // Use shared buffer if it fits, otherwise allocate from heap
+        const use_shared = buffer_size <= shared_request_buffer.len;
+        const heap_buffer: ?[]u8 = if (!use_shared)
+            bun.default_allocator.alloc(u8, buffer_size) catch {
+                return globalObject.throw("Failed to allocate header buffer", .{});
+            }
+        else
+            null;
+        defer if (heap_buffer) |buf| bun.default_allocator.free(buf);
+        const buffer: []u8 = heap_buffer orelse shared_request_buffer[0..buffer_size];
         var encoded_size: usize = 0;
         // max header name length for lshpack
         var name_buffer: [4096]u8 = undefined;
@@ -3849,8 +3876,6 @@ pub const H2FrameParser = struct {
             .include_value = true,
         }).init(globalObject, headers_obj);
         defer iter.deinit();
-        var header_count: u32 = 0;
-
         var single_value_headers: [SingleValueHeaders.keys().len]bool = undefined;
         @memset(&single_value_headers, false);
 
@@ -3864,23 +3889,6 @@ pub const H2FrameParser = struct {
                 defer name_slice.deinit();
                 const name = name_slice.slice();
 
-                defer header_count += 1;
-                if (this.maxHeaderListPairs < header_count) {
-                    this.rejectedStreams += 1;
-                    const stream = this.handleReceivedStreamID(stream_id) orelse {
-                        return jsc.JSValue.jsNumber(-1);
-                    };
-                    if (!stream_ctx_arg.isEmptyOrUndefinedOrNull() and stream_ctx_arg.isObject()) {
-                        stream.setContext(stream_ctx_arg, globalObject);
-                    }
-                    stream.state = .CLOSED;
-                    stream.rstCode = @intFromEnum(ErrorCode.ENHANCE_YOUR_CALM);
-                    const identifier = stream.getIdentifier();
-                    identifier.ensureStillAlive();
-                    stream.freeResources(this, false);
-                    this.dispatchWithExtra(.onStreamError, identifier, jsc.JSValue.jsNumber(stream.rstCode));
-                    return jsc.JSValue.jsNumber(stream_id);
-                }
                 const validated_name = toValidHeaderName(name, name_buffer[0..name.len]) catch {
                     const exception = globalObject.toTypeError(.INVALID_HTTP_TOKEN, "The arguments Header name is invalid. Received \"{s}\"", .{name});
                     return globalObject.throwValue(exception);

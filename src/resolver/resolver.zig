@@ -1214,6 +1214,48 @@ pub const Resolver = struct {
                 const had_node_prefix = strings.hasPrefixComptime(import_path, "node:");
                 const import_path_without_node_prefix = if (had_node_prefix) import_path["node:".len..] else import_path;
 
+                // Check if this Node.js built-in is marked as external before applying polyfills.
+                // This allows --external to work with node built-ins like "path", "crypto", etc.
+                if (NodeFallbackModules.Map.has(import_path_without_node_prefix) or
+                    bun.jsc.ModuleLoader.HardcodedModule.Alias.has(import_path_without_node_prefix, .node, .{}))
+                {
+                    // Check external patterns (handles --external "path" style)
+                    if (r.isExternalPattern(import_path)) {
+                        if (r.debug_logs) |*debug| {
+                            debug.addNoteFmt("The node builtin \"{s}\" was marked as external by pattern", .{import_path});
+                            r.flushDebugLogs(.success) catch {};
+                        }
+                        return .{
+                            .success = Result{
+                                .path_pair = .{ .primary = Path.init(import_path) },
+                                .module_type = .esm,
+                                .flags = .{ .is_external = true },
+                            },
+                        };
+                    }
+                    // Check external node_modules map (handles --external path style for bare specifiers)
+                    if (r.opts.external.node_modules.count() > 0) {
+                        var query = import_path;
+                        while (true) {
+                            if (r.opts.external.node_modules.contains(query)) {
+                                if (r.debug_logs) |*debug| {
+                                    debug.addNoteFmt("The node builtin \"{s}\" was marked as external by the user", .{query});
+                                    r.flushDebugLogs(.success) catch {};
+                                }
+                                return .{
+                                    .success = Result{
+                                        .path_pair = .{ .primary = Path.init(import_path) },
+                                        .module_type = .esm,
+                                        .flags = .{ .is_external = true },
+                                    },
+                                };
+                            }
+                            const slash = strings.lastIndexOfChar(query, '/') orelse break;
+                            query = query[0..slash];
+                        }
+                    }
+                }
+
                 if (NodeFallbackModules.Map.get(import_path_without_node_prefix)) |*fallback_module| {
                     result.path_pair.primary = fallback_module.path;
                     result.module_type = .cjs;

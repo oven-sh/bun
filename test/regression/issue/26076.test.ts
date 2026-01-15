@@ -72,9 +72,10 @@ describe("issue #26076 - peer dependency warnings", () => {
     expect(stderr).toContain("no-deps@^1.0.0");
     expect(stderr).toContain("(found 2.0.0)");
 
-    // Verify the full format with regex - supports scoped packages and hyphenated names
-    // Pattern matches: "warn: ... <package-name> has unmet peer dependency <dep>@<version> (found <version>)"
-    expect(stderr).toMatch(/(?:warn:\s*)?[@\w./-]+ has unmet peer dependency [@\w./-]+@\S+ \(found \S+\)/);
+    // Verify the full format with regex - supports dependency paths like "(root) > peer-deps-fixed"
+    // Pattern matches: "warn: ... has unmet peer dependency <dep>@<version> (found <version>)"
+    // Use [^\n]* to match any characters in the dependency path (including parentheses, >, spaces)
+    expect(stderr).toMatch(/(?:warn:\s*)?[^\n]+ has unmet peer dependency [@\w./-]+@\S+ \(found \S+\)/);
 
     expect(exitCode).toBe(0);
   });

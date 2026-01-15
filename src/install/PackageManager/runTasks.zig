@@ -394,6 +394,7 @@ pub fn runTasks(
                                 extract.resolution.fmt(manager.lockfile.buffers.string_bytes.items, .auto),
                             },
                         ) catch |e| bun.handleOom(e);
+                        manager.any_failed_to_install = true;
                     } else {
                         manager.log.addWarningFmt(
                             null,
@@ -458,6 +459,7 @@ pub fn runTasks(
                                 response.status_code,
                             },
                         ) catch |err| bun.handleOom(err);
+                        manager.any_failed_to_install = true;
                     } else {
                         manager.log.addWarningFmt(
                             null,

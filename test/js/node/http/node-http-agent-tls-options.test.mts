@@ -18,12 +18,7 @@ import net from "node:net";
 import { dirname, join } from "node:path";
 import { describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
-
-// Use createRequire for ESM compatibility
-const require = createRequire(import.meta.url);
-const { HttpsProxyAgent } = require("https-proxy-agent") as {
-  HttpsProxyAgent: new (proxyUrl: string, options?: Record<string, unknown>) => http.Agent;
-};
+import { HttpsProxyAgent } from "https-proxy-agent";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 

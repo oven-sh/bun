@@ -19,24 +19,23 @@ test("code splitting with re-exports between entry points should not produce dup
   expect(result.success).toBe(true);
   expect(result.outputs.length).toBe(3); // entry-a.js, entry-b.js, chunk-*.js
 
-  // Find the entry-b output
   const entryB = result.outputs.find(o => o.path.endsWith("entry-b.js"));
   expect(entryB).toBeDefined();
 
   const entryBContent = await entryB!.text();
 
-  // Count export statements - there should be exactly one
   const exportMatches = entryBContent.match(/^export\s*\{/gm);
   expect(exportMatches?.length).toBe(1);
 
-  // Verify the output runs correctly
+  const entryAUrl = Bun.pathToFileURL(`${dir}/dist/entry-a.js`);
+  const entryBUrl = Bun.pathToFileURL(`${dir}/dist/entry-b.js`);
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
       `
-      import { a, b } from "${dir}/dist/entry-a.js";
-      import { b as b2 } from "${dir}/dist/entry-b.js";
+      import { a, b } from "${entryAUrl}";
+      import { b as b2 } from "${entryBUrl}";
       console.log(typeof a, typeof b, b === b2);
     `,
     ],

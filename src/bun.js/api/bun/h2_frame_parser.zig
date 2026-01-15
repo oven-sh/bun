@@ -20,6 +20,9 @@ const MAX_HEADER_TABLE_SIZE = std.math.maxInt(u32);
 const MAX_STREAM_ID = std.math.maxInt(i32);
 const MAX_FRAME_SIZE = std.math.maxInt(u24);
 const DEFAULT_WINDOW_SIZE = std.math.maxInt(u16);
+// RFC 7541 Section 4.1: Each header entry has 32 bytes of overhead
+// for the HPACK dynamic table entry structure
+const HPACK_ENTRY_OVERHEAD = 32;
 
 const PaddingStrategy = enum {
     none,
@@ -1856,6 +1859,8 @@ pub const H2FrameParser = struct {
 
         var sensitiveHeaders: JSValue = .js_undefined;
         var count: usize = 0;
+        // RFC 7540 Section 6.5.2: Track cumulative header list size
+        var headerListSize: usize = 0;
 
         while (true) {
             const header = this.decode(payload[offset..]) catch break;
@@ -1867,6 +1872,23 @@ pub const H2FrameParser = struct {
                 if (this.streams.getEntry(stream_id)) |entry| return entry.value_ptr;
                 return null;
             }
+
+            // RFC 7540 Section 6.5.2: Calculate header list size
+            // Size = name length + value length + HPACK entry overhead per header
+            headerListSize += header.name.len + header.value.len + HPACK_ENTRY_OVERHEAD;
+
+            // Check against maxHeaderListSize setting
+            if (headerListSize > this.localSettings.maxHeaderListSize) {
+                this.rejectedStreams += 1;
+                if (this.maxRejectedStreams <= this.rejectedStreams) {
+                    this.sendGoAway(stream_id, ErrorCode.ENHANCE_YOUR_CALM, "ENHANCE_YOUR_CALM", this.lastStreamID, true);
+                } else {
+                    this.endStream(stream, ErrorCode.ENHANCE_YOUR_CALM);
+                }
+                if (this.streams.getEntry(stream_id)) |entry| return entry.value_ptr;
+                return null;
+            }
+
             count += 1;
             if (this.maxHeaderListPairs < count) {
                 this.rejectedStreams += 1;

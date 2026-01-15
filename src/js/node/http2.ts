@@ -3038,6 +3038,7 @@ class ClientHttp2Session extends Http2Session {
   #socket_proxy: Proxy<TLSSocket | Socket>;
   #parser: typeof H2FrameParser | null;
   #url: URL;
+  #authority: string;
   #alpnProtocol: string | undefined = undefined;
   #localSettings: Settings | null = {
     headerTableSize: 4096,
@@ -3456,6 +3457,9 @@ class ClientHttp2Session extends Http2Session {
       host = url.host;
     }
 
+    // Store computed authority like Node.js does (session[kAuthority] = `${host}:${port}`)
+    this.#authority = `${host}:${port}`;
+
     function onConnect() {
       try {
         this.#onConnect(arguments);
@@ -3583,7 +3587,8 @@ class ClientHttp2Session extends Http2Session {
 
       let authority = headers[":authority"];
       if (!authority) {
-        authority = url.host;
+        // Use precomputed authority (like Node.js's session[kAuthority])
+        authority = this.#authority;
         if (!headers["host"]) {
           headers[":authority"] = authority;
         }

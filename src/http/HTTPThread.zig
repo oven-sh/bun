@@ -235,9 +235,6 @@ pub fn connect(this: *@This(), client: *HTTPClient, comptime is_ssl: bool) !NewH
                         bun.default_allocator.destroy(requested_config);
                     }
                     client.tls_props = other_config;
-                    // Disable keepalive to prevent socket pooling from reusing connections
-                    // with different TLS configurations (e.g., different client certificates for mTLS)
-                    client.flags.disable_keepalive = true;
                     if (client.http_proxy) |url| {
                         return try custom_ssl_context_map.get(other_config).?.connect(client, url.hostname, url.getPortAuto());
                     } else {

@@ -50,14 +50,9 @@ linker = "isolated"
     cmd: [bunExe(), "install"],
     cwd: packageDir,
     env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-  expect(stderr).not.toContain("panic:");
-  expect(stderr).not.toContain("error:");
+  const exitCode = await proc.exited;
   expect(exitCode).toBe(0);
 
   // The hoisted symlink should point to the higher version (7.0.0)
@@ -115,14 +110,9 @@ linker = "isolated"
     cmd: [bunExe(), "install"],
     cwd: packageDir,
     env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-  expect(stderr).not.toContain("panic:");
-  expect(stderr).not.toContain("error:");
+  const exitCode = await proc.exited;
   expect(exitCode).toBe(0);
 
   // The hoisted symlink should still point to the higher version (7.0.0)

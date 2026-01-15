@@ -910,6 +910,15 @@ JSC_DEFINE_CUSTOM_SETTER(errorConstructorPrepareStackTraceSetter,
 
 #pragma mark - Globals
 
+// EventSource constructor getter - loads from undici module lazily
+JSC_DEFINE_CUSTOM_GETTER(EventSource_getter,
+    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
+        JSC::PropertyName))
+{
+    Zig::GlobalObject* globalObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    return JSC::JSValue::encode(globalObject->m_eventSourceConstructor.get(globalObject));
+}
+
 JSC_DEFINE_CUSTOM_GETTER(globalOnMessage,
     (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
         JSC::PropertyName))
@@ -2297,6 +2306,31 @@ void GlobalObject::finishCreation(VM& vm)
         init.set(JSC::JSFunction::create(init.vm, init.owner, WebCore::ipcSerializeCodeGenerator(init.vm), init.owner));
     });
 
+    // EventSource constructor is loaded from the undici module
+    m_eventSourceConstructor.initLater([](const LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
+        auto* globalObject = jsCast<Zig::GlobalObject*>(init.owner);
+        auto& vm = init.vm;
+        auto scope = DECLARE_THROW_SCOPE(vm);
+
+        // Load from undici module which contains the full EventSource implementation
+        JSValue moduleValue = globalObject->internalModuleRegistry()->requireId(globalObject, vm, Bun::InternalModuleRegistry::Field::ThirdpartyUndici);
+        RETURN_IF_EXCEPTION(scope, );
+
+        // Get the EventSource export from undici
+        if (moduleValue.isObject()) {
+            JSObject* moduleObject = moduleValue.getObject();
+            JSValue eventSourceExport = moduleObject->getIfPropertyExists(globalObject, Identifier::fromString(vm, "EventSource"_s));
+            RETURN_IF_EXCEPTION(scope, );
+            if (eventSourceExport && eventSourceExport.isObject()) {
+                init.set(jsCast<JSObject*>(eventSourceExport.asCell()));
+                return;
+            }
+        }
+
+        // Fallback: create a placeholder that throws
+        init.set(constructEmptyObject(init.owner));
+    });
+
     m_JSFileSinkClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
             auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::FileSink);
@@ -2772,6 +2806,9 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     // TODO: this should be usable on the lookup table. it crashed las time i tried it
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "onmessage"_s), JSC::CustomGetterSetter::create(vm, globalOnMessage, setGlobalOnMessage), 0);
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "onerror"_s), JSC::CustomGetterSetter::create(vm, globalOnError, setGlobalOnError), 0);
+
+    // EventSource - loaded from undici module lazily
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "EventSource"_s), JSC::CustomGetterSetter::create(vm, EventSource_getter, nullptr), PropertyAttribute::DontEnum | PropertyAttribute::CustomValue);
 
     // ----- Extensions to Built-in objects -----
 

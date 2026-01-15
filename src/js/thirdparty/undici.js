@@ -372,13 +372,317 @@ const util = {
   },
 };
 
+// EventSource (Server-Sent Events) implementation
+// Follows the WHATWG HTML spec: https://html.spec.whatwg.org/multipage/server-sent-events.html
 class EventSource extends EventTarget {
   static CONNECTING = 0;
   static OPEN = 1;
   static CLOSED = 2;
 
-  constructor() {
+  CONNECTING = 0;
+  OPEN = 1;
+  CLOSED = 2;
+
+  #url;
+  #withCredentials;
+  #readyState = 0;
+  #lastEventId = "";
+  #reconnectionTime = 3000;
+  #abortController = null;
+  #reconnectTimer = null;
+
+  #onopen = null;
+  #onmessage = null;
+  #onerror = null;
+
+  constructor(url, options) {
     super();
+
+    // Validate and resolve URL
+    const resolvedUrl = new URL(url, typeof location !== "undefined" ? location.href : undefined);
+
+    this.#url = resolvedUrl.href;
+    this.#withCredentials = options?.withCredentials ?? false;
+    this.#readyState = EventSource.CONNECTING;
+
+    // Start connection on next tick
+    process.nextTick(() => this.#connect());
+  }
+
+  get url() {
+    return this.#url;
+  }
+
+  get readyState() {
+    return this.#readyState;
+  }
+
+  get withCredentials() {
+    return this.#withCredentials;
+  }
+
+  get onopen() {
+    return this.#onopen;
+  }
+
+  set onopen(value) {
+    if (this.#onopen) {
+      this.removeEventListener("open", this.#onopen);
+    }
+    this.#onopen = value;
+    if (value) {
+      this.addEventListener("open", value);
+    }
+  }
+
+  get onmessage() {
+    return this.#onmessage;
+  }
+
+  set onmessage(value) {
+    if (this.#onmessage) {
+      this.removeEventListener("message", this.#onmessage);
+    }
+    this.#onmessage = value;
+    if (value) {
+      this.addEventListener("message", value);
+    }
+  }
+
+  get onerror() {
+    return this.#onerror;
+  }
+
+  set onerror(value) {
+    if (this.#onerror) {
+      this.removeEventListener("error", this.#onerror);
+    }
+    this.#onerror = value;
+    if (value) {
+      this.addEventListener("error", value);
+    }
+  }
+
+  close() {
+    this.#readyState = EventSource.CLOSED;
+
+    if (this.#abortController) {
+      this.#abortController.abort();
+      this.#abortController = null;
+    }
+
+    if (this.#reconnectTimer) {
+      clearTimeout(this.#reconnectTimer);
+      this.#reconnectTimer = null;
+    }
+  }
+
+  #connect() {
+    if (this.#readyState === EventSource.CLOSED) {
+      return;
+    }
+
+    const abortController = new AbortController();
+    this.#abortController = abortController;
+
+    const headers = {
+      Accept: "text/event-stream",
+      "Cache-Control": "no-cache",
+    };
+
+    if (this.#lastEventId) {
+      headers["Last-Event-ID"] = this.#lastEventId;
+    }
+
+    fetch(this.#url, {
+      method: "GET",
+      headers,
+      credentials: this.#withCredentials ? "include" : "same-origin",
+      cache: "no-store",
+      signal: abortController.signal,
+    })
+      .then(response => {
+        if (this.#readyState === EventSource.CLOSED) {
+          return;
+        }
+
+        if (!response.ok) {
+          this.#fail(new Error(`HTTP ${response.status}: ${response.statusText}`));
+          return;
+        }
+
+        const contentType = response.headers.get("Content-Type");
+        if (!contentType || !contentType.includes("text/event-stream")) {
+          this.#fail(
+            new Error(
+              `EventSource's response has a MIME type ("${contentType}") that is not "text/event-stream". Aborting the connection.`,
+            ),
+          );
+          return;
+        }
+
+        this.#readyState = EventSource.OPEN;
+        this.dispatchEvent(new Event("open"));
+
+        if (!response.body) {
+          this.#reconnect();
+          return;
+        }
+
+        this.#readStream(response.body);
+      })
+      .catch(error => {
+        if (this.#readyState === EventSource.CLOSED) {
+          return;
+        }
+
+        if (error.name === "AbortError") {
+          return;
+        }
+
+        this.#reconnect(error);
+      });
+  }
+
+  async #readStream(body) {
+    const reader = body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    let eventType = "";
+    let data = [];
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+
+        if (this.#readyState === EventSource.CLOSED) {
+          reader.cancel();
+          return;
+        }
+
+        if (done) {
+          break;
+        }
+
+        buffer += decoder.decode(value, { stream: true });
+
+        let lineEnd;
+        while ((lineEnd = this.#findLineEnd(buffer)) !== -1) {
+          const line = buffer.slice(0, lineEnd);
+          buffer = buffer.slice(lineEnd + (buffer[lineEnd] === "\r" && buffer[lineEnd + 1] === "\n" ? 2 : 1));
+
+          if (line === "") {
+            if (data.length > 0) {
+              const origin = new URL(this.#url).origin;
+
+              const event = new MessageEvent(eventType || "message", {
+                data: data.join("\n"),
+                origin: origin,
+                lastEventId: this.#lastEventId,
+              });
+
+              this.dispatchEvent(event);
+            }
+
+            eventType = "";
+            data = [];
+          } else if (line[0] === ":") {
+            // Comment line, ignore
+          } else {
+            const colonIndex = line.indexOf(":");
+            let field;
+            let fieldValue;
+
+            if (colonIndex === -1) {
+              field = line;
+              fieldValue = "";
+            } else {
+              field = line.slice(0, colonIndex);
+              fieldValue = line.slice(colonIndex + 1);
+              if (fieldValue[0] === " ") {
+                fieldValue = fieldValue.slice(1);
+              }
+            }
+
+            switch (field) {
+              case "event":
+                eventType = fieldValue;
+                break;
+              case "data":
+                data.push(fieldValue);
+                break;
+              case "id":
+                if (!fieldValue.includes("\0")) {
+                  this.#lastEventId = fieldValue;
+                }
+                break;
+              case "retry":
+                if (/^\d+$/.test(fieldValue)) {
+                  this.#reconnectionTime = parseInt(fieldValue, 10);
+                }
+                break;
+            }
+          }
+        }
+      }
+    } catch (error) {
+      if (this.#readyState === EventSource.CLOSED) {
+        return;
+      }
+
+      if (error.name === "AbortError") {
+        return;
+      }
+
+      this.#reconnect(error);
+      return;
+    }
+
+    this.#reconnect();
+  }
+
+  #findLineEnd(buffer) {
+    for (let i = 0; i < buffer.length; i++) {
+      if (buffer[i] === "\n" || buffer[i] === "\r") {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  #fail(error) {
+    this.#readyState = EventSource.CLOSED;
+
+    if (this.#abortController) {
+      this.#abortController.abort();
+      this.#abortController = null;
+    }
+
+    if (this.#reconnectTimer) {
+      clearTimeout(this.#reconnectTimer);
+      this.#reconnectTimer = null;
+    }
+
+    if (error) {
+      this.dispatchEvent(new ErrorEvent("error", { error, message: error.message }));
+    }
+  }
+
+  #reconnect(error) {
+    if (this.#readyState === EventSource.CLOSED) {
+      return;
+    }
+
+    this.#readyState = EventSource.CONNECTING;
+
+    if (error) {
+      this.dispatchEvent(new ErrorEvent("error", { error, message: error.message }));
+    } else {
+      this.dispatchEvent(new Event("error"));
+    }
+
+    this.#reconnectTimer = setTimeout(() => this.#connect(), this.#reconnectionTime);
   }
 }
 

@@ -11,9 +11,9 @@ declare module "bun" {
      * If the file descriptor is not writable yet, the data is buffered.
      *
      * @param chunk The data to write
-     * @returns Number of bytes written
+     * @returns Number of bytes written or, if the write is pending, a Promise resolving to the number of bytes
      */
-    write(chunk: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer): number;
+    write(chunk: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer): number | Promise<number>;
     /**
      * Flush the internal buffer, committing the data to disk or the pipe.
      *
@@ -78,9 +78,9 @@ declare module "bun" {
      * If the network is not writable yet, the data is buffered.
      *
      * @param chunk The data to write
-     * @returns Number of bytes written
+     * @returns Number of bytes written or, if the write is pending, a Promise resolving to the number of bytes
      */
-    write(chunk: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer): number;
+    write(chunk: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer): number | Promise<number>;
     /**
      * Flush the internal buffer, committing the data to the network.
      *
@@ -609,7 +609,17 @@ declare module "bun" {
      *     });
      */
     write(
-      data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer | Request | Response | BunFile | S3File | Blob,
+      data:
+        | string
+        | ArrayBufferView
+        | ArrayBuffer
+        | SharedArrayBuffer
+        | Request
+        | Response
+        | BunFile
+        | S3File
+        | Blob
+        | Archive,
       options?: S3Options,
     ): Promise<number>;
 
@@ -920,7 +930,8 @@ declare module "bun" {
         | BunFile
         | S3File
         | Blob
-        | File,
+        | File
+        | Archive,
       options?: S3Options,
     ): Promise<number>;
 
@@ -970,7 +981,8 @@ declare module "bun" {
         | BunFile
         | S3File
         | Blob
-        | File,
+        | File
+        | Archive,
       options?: S3Options,
     ): Promise<number>;
 

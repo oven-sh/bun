@@ -8,17 +8,16 @@
  * the proxy tunnel to the target HTTPS server.
  */
 
+import { HttpsProxyAgent } from "https-proxy-agent";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import http from "node:http";
 import https from "node:https";
-import { createRequire } from "node:module";
 import type { AddressInfo } from "node:net";
 import net from "node:net";
 import { dirname, join } from "node:path";
 import { describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { HttpsProxyAgent } from "https-proxy-agent";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 

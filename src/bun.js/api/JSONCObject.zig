@@ -51,10 +51,10 @@ pub fn parse(
 }
 
 const bun = @import("bun");
+const ast = bun.ast;
 const default_allocator = bun.default_allocator;
 const logger = bun.logger;
 const json = bun.interchange.json;
-const ast = bun.ast;
 
 const jsc = bun.jsc;
 const JSValue = jsc.JSValue;

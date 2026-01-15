@@ -63,11 +63,11 @@ pub fn parse(
 }
 
 const bun = @import("bun");
+const ast = bun.ast;
 const default_allocator = bun.default_allocator;
 const js_printer = bun.js_printer;
 const logger = bun.logger;
 const TOML = bun.interchange.toml.TOML;
-const ast = bun.ast;
 
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;

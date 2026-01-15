@@ -6,332 +6,17 @@
 #include <wtf/SIMDHelpers.h>
 #include <vector>
 
+// Zig exports for visible width calculation
+extern "C" size_t Bun__visibleWidthExcludeANSI_utf8(const uint8_t* ptr, size_t len, bool ambiguous_as_wide);
+extern "C" size_t Bun__visibleWidthExcludeANSI_utf16(const uint16_t* ptr, size_t len, bool ambiguous_as_wide);
+extern "C" size_t Bun__visibleWidthExcludeANSI_latin1(const uint8_t* ptr, size_t len);
+extern "C" uint8_t Bun__codepointWidth(uint32_t cp, bool ambiguous_as_wide);
+
 namespace Bun {
 using namespace WTF;
 
-// Options for wrapping
-struct WrapAnsiOptions {
-    bool hard = false;
-    bool wordWrap = true;
-    bool trim = true;
-    bool ambiguousIsNarrow = true;
-};
-
 // ============================================================================
-// Character Width Calculation (ported from visible.zig)
-// ============================================================================
-
-template<typename T>
-static bool isZeroWidthCodepoint(T cp)
-{
-    if (cp <= 0x1f)
-        return true;
-
-    if (cp >= 0x7f && cp <= 0x9f)
-        return true;
-
-    // Soft hyphen
-    if (cp == 0xad)
-        return true;
-
-    if constexpr (sizeof(T) == 1)
-        return false;
-
-    // Combining Diacritical Marks
-    if (cp >= 0x300 && cp <= 0x36f)
-        return true;
-
-    // Modifying Invisible Characters (ZWS, ZWNJ, ZWJ, LRM, RLM)
-    if (cp >= 0x200b && cp <= 0x200f)
-        return true;
-
-    // Word joiner, invisible operators
-    if (cp >= 0x2060 && cp <= 0x2064)
-        return true;
-
-    // Combining Diacritical Marks for Symbols
-    if (cp >= 0x20d0 && cp <= 0x20ff)
-        return true;
-
-    // Variation Selectors
-    if (cp >= 0xfe00 && cp <= 0xfe0f)
-        return true;
-
-    // Combining Half Marks
-    if (cp >= 0xfe20 && cp <= 0xfe2f)
-        return true;
-
-    // Zero Width No-Break Space (BOM, ZWNBSP)
-    if (cp == 0xfeff)
-        return true;
-
-    // Surrogates
-    if (cp >= 0xd800 && cp <= 0xdfff)
-        return true;
-
-    // Arabic formatting characters
-    if ((cp >= 0x600 && cp <= 0x605) || cp == 0x6dd || cp == 0x70f || cp == 0x8e2)
-        return true;
-
-    // Indic script combining marks
-    if (cp >= 0x900 && cp <= 0xd4f) {
-        uint32_t offset = cp & 0x7f;
-        if (offset <= 0x02)
-            return true;
-        if (offset >= 0x3a && offset <= 0x4d && offset != 0x3d)
-            return true;
-        if (offset >= 0x51 && offset <= 0x57)
-            return true;
-        if (offset >= 0x62 && offset <= 0x63)
-            return true;
-    }
-
-    // Thai combining marks
-    if ((cp >= 0xe31 && cp <= 0xe3a) || (cp >= 0xe47 && cp <= 0xe4e))
-        return true;
-
-    // Lao combining marks
-    if ((cp >= 0xeb1 && cp <= 0xebc) || (cp >= 0xec8 && cp <= 0xecd))
-        return true;
-
-    // Combining Diacritical Marks Extended
-    if (cp >= 0x1ab0 && cp <= 0x1aff)
-        return true;
-
-    // Combining Diacritical Marks Supplement
-    if (cp >= 0x1dc0 && cp <= 0x1dff)
-        return true;
-
-    // Tag characters
-    if (cp >= 0xe0000 && cp <= 0xe007f)
-        return true;
-
-    // Variation Selectors Supplement
-    if (cp >= 0xe0100 && cp <= 0xe01ef)
-        return true;
-
-    return false;
-}
-
-template<typename T>
-static bool isFullWidthCodepoint(T cp)
-{
-    if (cp < 0x1100)
-        return false;
-
-    // Hangul Jamo
-    if (cp >= 0x1100 && cp <= 0x115F)
-        return true;
-
-    // Miscellaneous symbols and pictographs
-    if (cp >= 0x231A && cp <= 0x231B)
-        return true;
-    if (cp == 0x2329 || cp == 0x232A)
-        return true;
-    if (cp >= 0x23E9 && cp <= 0x23EC)
-        return true;
-    if (cp == 0x23F0 || cp == 0x23F3)
-        return true;
-    if (cp >= 0x25FD && cp <= 0x25FE)
-        return true;
-    if (cp >= 0x2614 && cp <= 0x2615)
-        return true;
-    if (cp >= 0x2648 && cp <= 0x2653)
-        return true;
-    if (cp == 0x267F || cp == 0x2693 || cp == 0x26A1)
-        return true;
-    if (cp >= 0x26AA && cp <= 0x26AB)
-        return true;
-    if (cp >= 0x26BD && cp <= 0x26BE)
-        return true;
-    if (cp >= 0x26C4 && cp <= 0x26C5)
-        return true;
-    if (cp == 0x26CE || cp == 0x26D4 || cp == 0x26EA)
-        return true;
-    if (cp >= 0x26F2 && cp <= 0x26F3)
-        return true;
-    if (cp == 0x26F5 || cp == 0x26FA || cp == 0x26FD)
-        return true;
-    if (cp == 0x2705)
-        return true;
-    if (cp >= 0x270A && cp <= 0x270B)
-        return true;
-    if (cp == 0x2728 || cp == 0x274C || cp == 0x274E)
-        return true;
-    if (cp >= 0x2753 && cp <= 0x2755)
-        return true;
-    if (cp == 0x2757)
-        return true;
-    if (cp >= 0x2795 && cp <= 0x2797)
-        return true;
-    if (cp == 0x27B0 || cp == 0x27BF)
-        return true;
-    if (cp >= 0x2B1B && cp <= 0x2B1C)
-        return true;
-    if (cp == 0x2B50 || cp == 0x2B55)
-        return true;
-
-    // CJK Radicals
-    if (cp >= 0x2E80 && cp <= 0x2E99)
-        return true;
-    if (cp >= 0x2E9B && cp <= 0x2EF3)
-        return true;
-    if (cp >= 0x2F00 && cp <= 0x2FD5)
-        return true;
-    if (cp >= 0x2FF0 && cp <= 0x2FFF)
-        return true;
-
-    // CJK Symbols and Punctuation through Enclosed CJK Letters
-    if (cp >= 0x3000 && cp <= 0x33FF)
-        return true;
-
-    // CJK Unified Ideographs Extension A through CJK Unified Ideographs
-    if (cp >= 0x3400 && cp <= 0x4DBF)
-        return true;
-    if (cp >= 0x4E00 && cp <= 0x9FFF)
-        return true;
-
-    // Yi Syllables
-    if (cp >= 0xA000 && cp <= 0xA4C6)
-        return true;
-
-    // Hangul Jamo Extended-A
-    if (cp >= 0xA960 && cp <= 0xA97C)
-        return true;
-
-    // Hangul Syllables
-    if (cp >= 0xAC00 && cp <= 0xD7A3)
-        return true;
-
-    // CJK Compatibility Ideographs
-    if (cp >= 0xF900 && cp <= 0xFAFF)
-        return true;
-
-    // Vertical Forms and CJK Compatibility Forms
-    if (cp >= 0xFE10 && cp <= 0xFE6B)
-        return true;
-
-    // Fullwidth Forms
-    if (cp >= 0xFF01 && cp <= 0xFF60)
-        return true;
-    if (cp >= 0xFFE0 && cp <= 0xFFE6)
-        return true;
-
-    // Supplementary Ideographic Plane
-    if (cp >= 0x16FE0 && cp <= 0x16FE4)
-        return true;
-    if (cp >= 0x16FF0 && cp <= 0x16FF1)
-        return true;
-    if (cp >= 0x17000 && cp <= 0x187F7)
-        return true;
-    if (cp >= 0x18800 && cp <= 0x18CD5)
-        return true;
-    if (cp >= 0x18D00 && cp <= 0x18D08)
-        return true;
-    if (cp >= 0x1AFF0 && cp <= 0x1B2FB)
-        return true;
-    if (cp == 0x1B132 || cp == 0x1B155)
-        return true;
-    if (cp >= 0x1B150 && cp <= 0x1B152)
-        return true;
-    if (cp >= 0x1B164 && cp <= 0x1B167)
-        return true;
-
-    // Emoji and symbols (wide)
-    if (cp == 0x1F004 || cp == 0x1F0CF || cp == 0x1F18E)
-        return true;
-    if (cp >= 0x1F191 && cp <= 0x1F19A)
-        return true;
-    if (cp >= 0x1F200 && cp <= 0x1F251)
-        return true;
-    if (cp >= 0x1F260 && cp <= 0x1F265)
-        return true;
-    if (cp >= 0x1F300 && cp <= 0x1F64F)
-        return true;
-    if (cp >= 0x1F680 && cp <= 0x1F6FC)
-        return true;
-    if (cp >= 0x1F7E0 && cp <= 0x1F7F0)
-        return true;
-    if (cp >= 0x1F90C && cp <= 0x1F9FF)
-        return true;
-    if (cp >= 0x1FA70 && cp <= 0x1FAF8)
-        return true;
-
-    // CJK Unified Ideographs Extension B through Extension H
-    if (cp >= 0x20000 && cp <= 0x3FFFD)
-        return true;
-
-    return false;
-}
-
-template<typename T>
-static bool isAmbiguousCodepoint(T cp)
-{
-    // Common ambiguous characters (subset for performance)
-    switch (cp) {
-    case 0xA1:
-    case 0xA4:
-    case 0xA7:
-    case 0xA8:
-    case 0xAA:
-    case 0xAD:
-    case 0xAE:
-    case 0xC6:
-    case 0xD0:
-    case 0xD7:
-    case 0xD8:
-    case 0xFC:
-    case 0xFE:
-        return true;
-    }
-
-    if (cp >= 0xB0 && cp <= 0xB4)
-        return true;
-    if (cp >= 0xB6 && cp <= 0xBA)
-        return true;
-    if (cp >= 0xBC && cp <= 0xBF)
-        return true;
-    if (cp >= 0xDE && cp <= 0xE1)
-        return true;
-    if (cp == 0xE6)
-        return true;
-    if (cp >= 0xE8 && cp <= 0xEA)
-        return true;
-    if (cp == 0xEC || cp == 0xED || cp == 0xF0 || cp == 0xF2 || cp == 0xF3)
-        return true;
-    if (cp >= 0xF7 && cp <= 0xFA)
-        return true;
-
-    // Greek letters (commonly used in math)
-    if (cp >= 0x391 && cp <= 0x3C9)
-        return true;
-
-    // Box drawing and block elements
-    if (cp >= 0x2500 && cp <= 0x257F)
-        return true;
-    if (cp >= 0x2580 && cp <= 0x259F)
-        return true;
-
-    return false;
-}
-
-template<typename T>
-static uint8_t getVisibleWidth(T cp, bool ambiguousIsWide)
-{
-    if (isZeroWidthCodepoint(cp))
-        return 0;
-
-    if (isFullWidthCodepoint(cp))
-        return 2;
-
-    if (ambiguousIsWide && isAmbiguousCodepoint(cp))
-        return 2;
-
-    return 1;
-}
-
-// ============================================================================
-// UTF-8/UTF-16 Decoding Utilities
+// UTF-8/UTF-16 Decoding Utilities (needed for hard wrap)
 // ============================================================================
 
 static inline uint8_t utf8SequenceLength(uint8_t byte)
@@ -398,6 +83,19 @@ static char32_t decodeUTF16(const UChar* ptr, size_t available, size_t& outLen)
     outLen = 1;
     return c;
 }
+
+static inline uint8_t getVisibleWidth(char32_t cp, bool ambiguousIsWide)
+{
+    return Bun__codepointWidth(cp, ambiguousIsWide);
+}
+
+// Options for wrapping
+struct WrapAnsiOptions {
+    bool hard = false;
+    bool wordWrap = true;
+    bool trim = true;
+    bool ambiguousIsNarrow = true;
+};
 
 // ============================================================================
 // ANSI Escape Sequence Detection (based on stripANSI.cpp)
@@ -568,37 +266,21 @@ static const Char* consumeANSI(const Char* start, const Char* end)
 }
 
 // ============================================================================
-// String Width Calculation (with ANSI awareness)
+// String Width Calculation (using Zig implementation)
 // ============================================================================
 
 template<typename Char>
 static size_t stringWidth(const Char* start, const Char* end, bool ambiguousIsNarrow)
 {
-    size_t width = 0;
-    const Char* it = start;
+    size_t len = end - start;
+    if (len == 0)
+        return 0;
 
-    while (it < end) {
-        // Check for ANSI escape
-        if (isEscapeCharacter(*it)) {
-            it = consumeANSI(it, end);
-            continue;
-        }
-
-        // Decode character and get width
-        size_t charLen = 0;
-        char32_t cp;
-
-        if constexpr (sizeof(Char) == 1) {
-            cp = decodeUTF8(it, end - it, charLen);
-        } else {
-            cp = decodeUTF16(it, end - it, charLen);
-        }
-
-        width += getVisibleWidth(cp, !ambiguousIsNarrow);
-        it += charLen;
+    if constexpr (sizeof(Char) == 1) {
+        return Bun__visibleWidthExcludeANSI_utf8(reinterpret_cast<const uint8_t*>(start), len, !ambiguousIsNarrow);
+    } else {
+        return Bun__visibleWidthExcludeANSI_utf16(reinterpret_cast<const uint16_t*>(start), len, !ambiguousIsNarrow);
     }
-
-    return width;
 }
 
 // ============================================================================

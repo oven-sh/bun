@@ -431,6 +431,9 @@ pub const LinkerContext = struct {
 
         try this.computeCrossChunkDependencies(chunks);
 
+        // Deduplicate external imports across files within each chunk
+        this.deduplicateExternalImports(chunks);
+
         if (comptime FeatureFlags.help_catch_memory_issues) {
             this.checkForMemoryCorruption();
         }
@@ -632,6 +635,7 @@ pub const LinkerContext = struct {
     };
 
     pub const computeCrossChunkDependencies = @import("./linker_context/computeCrossChunkDependencies.zig").computeCrossChunkDependencies;
+    pub const deduplicateExternalImports = @import("./linker_context/deduplicateExternalImports.zig").deduplicateExternalImports;
 
     pub const GenerateChunkCtx = struct {
         c: *LinkerContext,

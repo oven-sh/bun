@@ -103,6 +103,7 @@ pub const runtime_params_ = [_]ParamType{
     clap.parseParam("--conditions <STR>...             Pass custom conditions to resolve") catch unreachable,
     clap.parseParam("--fetch-preconnect <STR>...       Preconnect to a URL while code is loading") catch unreachable,
     clap.parseParam("--max-http-header-size <INT>      Set the maximum size of HTTP headers in bytes. Default is 16KiB") catch unreachable,
+    clap.parseParam("--max-http-header-count <INT>     Set the maximum number of HTTP headers. Default is 100") catch unreachable,
     clap.parseParam("--dns-result-order <STR>          Set the default order of DNS lookup results. Valid orders: verbatim (default), ipv4first, ipv6first") catch unreachable,
     clap.parseParam("--expose-gc                       Expose gc() on the global object. Has no effect on Bun.gc().") catch unreachable,
     clap.parseParam("--no-deprecation                  Suppress all reporting of the custom deprecation.") catch unreachable,
@@ -732,6 +733,18 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 bun.http.max_http_header_size = 1024 * 1024 * 1024;
             } else {
                 bun.http.max_http_header_size = size;
+            }
+        }
+
+        if (args.option("--max-http-header-count")) |count_str| {
+            const count = std.fmt.parseInt(u32, count_str, 10) catch {
+                Output.errGeneric("Invalid value for --max-http-header-count: \"{s}\". Must be a positive integer\n", .{count_str});
+                Global.exit(1);
+            };
+            if (count == 0) {
+                bun.http.max_http_headers_count = std.math.maxInt(u32);
+            } else {
+                bun.http.max_http_headers_count = count;
             }
         }
 

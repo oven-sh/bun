@@ -352,6 +352,8 @@ function emitErrorNt(msg, err, callback) {
 }
 const setMaxHTTPHeaderSize = $newZigFunction("node_http_binding.zig", "setMaxHTTPHeaderSize", 1);
 const getMaxHTTPHeaderSize = $newZigFunction("node_http_binding.zig", "getMaxHTTPHeaderSize", 0);
+const setMaxHTTPHeadersCount = $newZigFunction("node_http_binding.zig", "setMaxHTTPHeadersCount", 1);
+const getMaxHTTPHeadersCount = $newZigFunction("node_http_binding.zig", "getMaxHTTPHeadersCount", 0);
 const kOutHeaders = Symbol("kOutHeaders");
 
 function ipToInt(ip) {
@@ -502,6 +504,7 @@ export {
   getHeader,
   getIsNextIncomingMessageHTTPS,
   getMaxHTTPHeaderSize,
+  getMaxHTTPHeadersCount,
   getRawKeys,
   hasServerResponseFinished,
   headerStateSymbol,
@@ -551,6 +554,7 @@ export {
   setHeader,
   setIsNextIncomingMessageHTTPS,
   setMaxHTTPHeaderSize,
+  setMaxHTTPHeadersCount,
   setRequestTimeout,
   setServerCustomOptions,
   setServerIdleTimeout,

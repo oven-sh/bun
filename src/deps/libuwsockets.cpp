@@ -531,6 +531,15 @@ extern "C"
       uwsApp->setMaxHTTPHeaderSize(max_header_size);
     }
   }
+  void uws_app_set_max_http_headers_count(int ssl, uws_app_t *app, uint32_t max_headers_count) {
+    if (ssl) {
+      uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
+      uwsApp->setMaxHTTPHeadersCount(max_headers_count);
+    } else {
+      uWS::App *uwsApp = (uWS::App *)app;
+      uwsApp->setMaxHTTPHeadersCount(max_headers_count);
+    }
+  }
   void uws_app_set_flags(int ssl, uws_app_t *app, bool require_host_header, bool use_strict_method_validation) {
     if (ssl) {
       uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;

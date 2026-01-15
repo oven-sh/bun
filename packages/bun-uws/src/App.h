@@ -666,6 +666,11 @@ public:
         return std::move(*this);
     }
 
+    TemplatedApp &&setMaxHTTPHeadersCount(uint32_t maxHeadersCount) {
+        httpContext->getSocketContextData()->maxHeadersCount = maxHeadersCount;
+        return std::move(*this);
+    }
+
 };
 
 typedef TemplatedApp<false> App;

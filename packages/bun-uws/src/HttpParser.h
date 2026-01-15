@@ -45,6 +45,7 @@
 #endif
 
 extern "C" size_t BUN_DEFAULT_MAX_HTTP_HEADER_SIZE;
+extern "C" uint32_t BUN_DEFAULT_MAX_HTTP_HEADERS_COUNT;
 extern "C" int16_t Bun__HTTPMethod__from(const char *str, size_t len);
 
 namespace uWS
@@ -148,11 +149,22 @@ namespace uWS
 
         friend struct HttpParser;
 
-    private:
+    public:
         struct Header
         {
             std::string_view key, value;
-        } headers[UWS_HTTP_MAX_HEADERS_COUNT];
+        };
+
+    private:
+        /* Stack-allocated headers for the common case (fast path) */
+        Header stackHeaders[UWS_HTTP_MAX_HEADERS_COUNT];
+        /* Heap-allocated headers when maxHeadersCount > UWS_HTTP_MAX_HEADERS_COUNT */
+        std::vector<Header> dynamicHeaders;
+        /* Points to either stackHeaders or dynamicHeaders.data() */
+        Header *headers = stackHeaders;
+        /* Current max headers count limit */
+        uint32_t maxHeadersCount = UWS_HTTP_MAX_HEADERS_COUNT;
+
         bool ancientHttp;
         bool didYield;
         unsigned int querySeparator;
@@ -161,6 +173,23 @@ namespace uWS
         std::map<std::string, unsigned short, std::less<>> *currentParameterOffsets = nullptr;
 
     public:
+        /* Configure max headers count - must be called before parsing */
+        void setMaxHeadersCount(uint32_t count) {
+            if (count == 0) {
+                count = BUN_DEFAULT_MAX_HTTP_HEADERS_COUNT;
+            }
+            maxHeadersCount = count;
+            if (count > UWS_HTTP_MAX_HEADERS_COUNT) {
+                dynamicHeaders.resize(count);
+                headers = dynamicHeaders.data();
+            } else {
+                headers = stackHeaders;
+            }
+        }
+
+        uint32_t getMaxHeadersCount() const {
+            return maxHeadersCount;
+        }
         /* Any data pipelined after the HTTP headers (before response).
          * Used for Node.js compatibility: 'connect' and 'upgrade' events
          * pass this as the 'head' Buffer parameter.
@@ -651,7 +680,7 @@ namespace uWS
         }
 
         /* End is only used for the proxy parser. The HTTP parser recognizes "\ra" as invalid "\r\n" scan and breaks. */
-        static HttpParserResult getHeaders(char *postPaddedBuffer, char *end, struct HttpRequest::Header *headers, void *reserved, bool &isAncientHTTP, bool &isConnectRequest, bool useStrictMethodValidation, uint64_t maxHeaderSize) {
+        static HttpParserResult getHeaders(char *postPaddedBuffer, char *end, struct HttpRequest::Header *headers, void *reserved, bool &isAncientHTTP, bool &isConnectRequest, bool useStrictMethodValidation, uint64_t maxHeaderSize, uint32_t maxHeadersCount) {
             char *preliminaryKey, *preliminaryValue, *start = postPaddedBuffer;
             #ifdef UWS_WITH_PROXY
                 /* ProxyParser is passed as reserved parameter */
@@ -725,7 +754,7 @@ namespace uWS
 
             headers++;
 
-            for (unsigned int i = 1; i < UWS_HTTP_MAX_HEADERS_COUNT - 1; i++) {
+            for (unsigned int i = 1; i < maxHeadersCount - 1; i++) {
                 /* Lower case and consume the field name */
                 preliminaryKey = postPaddedBuffer;
                 postPaddedBuffer = consumeFieldName(postPaddedBuffer);
@@ -828,7 +857,7 @@ namespace uWS
         data[length + 1] = 'a'; /* Anything that is not \n, to trigger "invalid request" */
         req->ancientHttp = false;
         for (;length;) {
-            auto result = getHeaders(data, data + length, req->headers, reserved, req->ancientHttp, isConnectRequest, useStrictMethodValidation, maxHeaderSize);
+            auto result = getHeaders(data, data + length, req->headers, reserved, req->ancientHttp, isConnectRequest, useStrictMethodValidation, maxHeaderSize, req->getMaxHeadersCount());
             if(result.isError()) {
                 return result;
             }
@@ -960,10 +989,12 @@ namespace uWS
     }
 
 public:
-    HttpParserResult consumePostPadded(uint64_t maxHeaderSize, bool& isConnectRequest, bool requireHostHeader, bool useStrictMethodValidation, char *data, unsigned int length, void *user, void *reserved, MoveOnlyFunction<void *(void *, HttpRequest *)> &&requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &&dataHandler) {
+    HttpParserResult consumePostPadded(uint64_t maxHeaderSize, uint32_t maxHeadersCount, bool& isConnectRequest, bool requireHostHeader, bool useStrictMethodValidation, char *data, unsigned int length, void *user, void *reserved, MoveOnlyFunction<void *(void *, HttpRequest *)> &&requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &&dataHandler) {
         /* This resets BloomFilter by construction, but later we also reset it again.
         * Optimize this to skip resetting twice (req could be made global) */
         HttpRequest req;
+        /* Configure max headers count - enables dynamic allocation when > UWS_HTTP_MAX_HEADERS_COUNT */
+        req.setMaxHeadersCount(maxHeadersCount);
         if (remainingStreamingBytes) {
             if (isConnectRequest) {
                 dataHandler(user, std::string_view(data, length), false);

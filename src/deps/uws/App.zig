@@ -63,6 +63,10 @@ pub fn NewApp(comptime ssl: bool) type {
             return c.uws_app_set_max_http_header_size(ssl_flag, @as(*uws_app_t, @ptrCast(this)), max_header_size);
         }
 
+        pub fn setMaxHTTPHeadersCount(this: *ThisApp, max_headers_count: u32) void {
+            return c.uws_app_set_max_http_headers_count(ssl_flag, @as(*uws_app_t, @ptrCast(this)), max_headers_count);
+        }
+
         pub fn clearRoutes(app: *ThisApp) void {
             return c.uws_app_clear_routes(ssl_flag, @as(*uws_app_t, @ptrCast(app)));
         }
@@ -404,6 +408,7 @@ pub const c = struct {
     pub extern fn uws_app_destroy(ssl: i32, app: *uws_app_t) void;
     pub extern fn uws_app_set_flags(ssl: i32, app: *uws_app_t, require_host_header: bool, use_strict_method_validation: bool) void;
     pub extern fn uws_app_set_max_http_header_size(ssl: i32, app: *uws_app_t, max_header_size: u64) void;
+    pub extern fn uws_app_set_max_http_headers_count(ssl: i32, app: *uws_app_t, max_headers_count: u32) void;
     pub extern fn uws_app_get(ssl: i32, app: *uws_app_t, pattern: [*]const u8, pattern_len: usize, handler: uws_method_handler, user_data: ?*anyopaque) void;
     pub extern fn uws_app_post(ssl: i32, app: *uws_app_t, pattern: [*]const u8, pattern_len: usize, handler: uws_method_handler, user_data: ?*anyopaque) void;
     pub extern fn uws_app_options(ssl: i32, app: *uws_app_t, pattern: [*]const u8, pattern_len: usize, handler: uws_method_handler, user_data: ?*anyopaque) void;

@@ -15,6 +15,11 @@ comptime {
     @export(&max_http_header_size, .{ .name = "BUN_DEFAULT_MAX_HTTP_HEADER_SIZE" });
 }
 
+pub var max_http_headers_count: u32 = 100;
+comptime {
+    @export(&max_http_headers_count, .{ .name = "BUN_DEFAULT_MAX_HTTP_HEADERS_COUNT" });
+}
+
 pub var overridden_default_user_agent: []const u8 = "";
 
 const print_every = 0;

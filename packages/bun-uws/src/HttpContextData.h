@@ -70,6 +70,7 @@ private:
     OnClientErrorCallback onClientError = nullptr;
 
     uint64_t maxHeaderSize = 0; // 0 means no limit
+    uint32_t maxHeadersCount = 0; // 0 means use default (UWS_HTTP_MAX_HEADERS_COUNT)
 
     // TODO: SNI
     void clearRoutes() {

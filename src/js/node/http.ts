@@ -6,7 +6,14 @@ const { IncomingMessage } = require("node:_http_incoming");
 const { OutgoingMessage } = require("node:_http_outgoing");
 const { Server, ServerResponse } = require("node:_http_server");
 
-const { METHODS, STATUS_CODES, setMaxHTTPHeaderSize, getMaxHTTPHeaderSize } = require("internal/http");
+const {
+  METHODS,
+  STATUS_CODES,
+  setMaxHTTPHeaderSize,
+  getMaxHTTPHeaderSize,
+  setMaxHTTPHeadersCount,
+  getMaxHTTPHeadersCount,
+} = require("internal/http");
 
 const { WebSocket, CloseEvent, MessageEvent } = globalThis;
 
@@ -53,6 +60,12 @@ const http_exports = {
   },
   set maxHeaderSize(value) {
     setMaxHTTPHeaderSize(value);
+  },
+  get maxHeadersCount() {
+    return getMaxHTTPHeadersCount();
+  },
+  set maxHeadersCount(value) {
+    setMaxHTTPHeadersCount(value);
   },
   validateHeaderName,
   validateHeaderValue,

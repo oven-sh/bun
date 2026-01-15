@@ -334,9 +334,13 @@ function ClientRequest(input, options, cb) {
       // This is needed for Node.js compatibility - Node allows GET requests with bodies
       if (customBody !== undefined) {
         fetchOptions.body = customBody;
-      } else if (isDuplex && method !== "GET" && method !== "HEAD" && method !== "OPTIONS") {
-        // Only use duplex streaming for non-GET/HEAD/OPTIONS methods
-        // GET/HEAD/OPTIONS requests typically don't have streaming bodies
+      } else if (
+        isDuplex &&
+        // Normal case: non-GET/HEAD/OPTIONS can use streaming
+        ((method !== "GET" && method !== "HEAD" && method !== "OPTIONS") ||
+          // Special case: GET/HEAD/OPTIONS with already-queued chunks should also stream
+          this[kBodyChunks]?.length > 0)
+      ) {
         const self = this;
         fetchOptions.body = async function* () {
           while (self[kBodyChunks]?.length > 0) {

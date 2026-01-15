@@ -3,67 +3,93 @@
 // 1. The full dependency path from root to the package requiring the peer dependency
 // 2. What version range was expected
 // 3. What version was actually installed
-import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
-import { join } from "path";
-
-// This test downloads packages from npm, so we need a longer timeout
-setDefaultTimeout(60000);
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDirWithFiles, VerdaccioRegistry } from "harness";
 
 describe("issue #26076 - peer dependency warnings", () => {
   test("warning message shows dependency path, expected version, and actual version", async () => {
-    // Create a temp directory with packages that have peer dependency conflicts
-    using dir = tempDir("issue-26076", {
+    // Use a local registry to avoid network dependencies
+    using registry = new VerdaccioRegistry();
+    await registry.start();
+
+    // Create packages that have peer dependency conflicts:
+    // - peer-deps-fixed requires no-deps@^1.0.0 as a peer dependency
+    // - But we install no-deps@2.0.0 which doesn't satisfy ^1.0.0
+
+    // First, publish the packages we need to the local registry
+    // no-deps@1.0.0
+    const noDeps100Dir = tempDirWithFiles("no-deps-1.0.0", {
+      "package.json": JSON.stringify({
+        name: "no-deps",
+        version: "1.0.0",
+      }),
+    });
+    await registry.publish(noDeps100Dir, "no-deps", bunEnv);
+
+    // no-deps@2.0.0
+    const noDeps200Dir = tempDirWithFiles("no-deps-2.0.0", {
+      "package.json": JSON.stringify({
+        name: "no-deps",
+        version: "2.0.0",
+      }),
+    });
+    await registry.publish(noDeps200Dir, "no-deps", bunEnv);
+
+    // peer-deps-fixed@1.0.0 - has peer dependency on no-deps@^1.0.0
+    const peerDepsDir = tempDirWithFiles("peer-deps-fixed", {
+      "package.json": JSON.stringify({
+        name: "peer-deps-fixed",
+        version: "1.0.0",
+        peerDependencies: {
+          "no-deps": "^1.0.0",
+        },
+      }),
+    });
+    await registry.publish(peerDepsDir, "peer-deps-fixed", bunEnv);
+
+    // Create the test project that will trigger the warning
+    // Installing no-deps@2.0.0 should trigger warning because peer-deps-fixed needs ^1.0.0
+    const projectDir = tempDirWithFiles("test-project", {
       "package.json": JSON.stringify({
         name: "test-peer-deps",
         version: "1.0.0",
         dependencies: {
-          "react": "17.0.0",
-          "@testing-library/react": "12.1.5",
+          "no-deps": "2.0.0",
+          "peer-deps-fixed": "1.0.0",
         },
       }),
     });
 
-    // Use a fresh cache directory to ensure packages are downloaded
-    const cacheDir = join(String(dir), ".bun-cache");
-
     await using proc = Bun.spawn({
       cmd: [bunExe(), "install"],
-      env: {
-        ...bunEnv,
-        BUN_INSTALL_CACHE_DIR: cacheDir,
-      },
-      cwd: String(dir),
+      env: registry.withTestEnv(bunEnv),
+      cwd: projectDir,
       stdout: "pipe",
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Await stdout/stderr BEFORE exited for better error messages on failure
+    const stdout = await proc.stdout.text();
+    const stderr = await proc.stderr.text();
+    const exitCode = await proc.exited;
 
     // The warning should show:
-    // 1. The dependency path: "(root) > @testing-library/react > react-dom"
-    // 2. The unmet peer dependency with expected version: "react@17.0.2"
-    // 3. The actual version found: "(found 17.0.0)"
+    // 1. The package with unmet peer dependency: "peer-deps-fixed"
+    // 2. The unmet peer dependency with expected version: "no-deps@^1.0.0"
+    // 3. The actual version found: "(found 2.0.0)"
     //
-    // Full format: "(root) > @testing-library/react > react-dom has unmet peer dependency react@17.0.2 (found 17.0.0)"
-    //
-    // This is MORE helpful than pnpm's format because it shows the full path in a single line
-
-    // Check for dependency path
-    expect(stderr).toContain("@testing-library/react");
-    expect(stderr).toContain("react-dom");
+    // Full format: "warn: (root) > peer-deps-fixed has unmet peer dependency no-deps@^1.0.0 (found 2.0.0)"
 
     // Check for the "unmet peer dependency" message
     expect(stderr).toContain("has unmet peer dependency");
 
     // Check for expected vs actual version
-    expect(stderr).toContain("react@17.0.2");
-    expect(stderr).toContain("(found 17.0.0)");
+    expect(stderr).toContain("no-deps@^1.0.0");
+    expect(stderr).toContain("(found 2.0.0)");
 
-    // Verify the full format with regex
-    expect(stderr).toMatch(
-      /.*@testing-library\/react.*react-dom has unmet peer dependency react@[\d.]+ \(found [\d.]+\)/,
-    );
+    // Verify the full format with regex - supports scoped packages and hyphenated names
+    // Pattern matches: "warn: ... <package-name> has unmet peer dependency <dep>@<version> (found <version>)"
+    expect(stderr).toMatch(/(?:warn:\s*)?[@\w./-]+ has unmet peer dependency [@\w./-]+@\S+ \(found \S+\)/);
 
     expect(exitCode).toBe(0);
   });

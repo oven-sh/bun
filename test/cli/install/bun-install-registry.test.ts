@@ -7678,7 +7678,10 @@ describe("yarn tests", () => {
     expect(err).not.toContain("error:");
     expect(err).not.toContain("not found");
     // New improved peer dependency warning format shows the requiring package, expected version, and actual version
-    expect(err).toMatch(/warn:.*peer-deps-fixed has unmet peer dependency no-deps@\^1\.0\.0 \(found 2\.0\.0\)/);
+    // Use line-anchored pattern to avoid matching across lines
+    expect(err).toMatch(
+      /^warn:[^\n]*peer-deps-fixed[^\n]*has unmet peer dependency no-deps@\^1\.0\.0 \(found 2\.0\.0\)$/m,
+    );
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       expect.stringContaining("bun install v1."),
       "",

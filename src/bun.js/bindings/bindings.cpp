@@ -4989,34 +4989,24 @@ static void JSC__JSValue__forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC:
         return;
     }
 
-    size_t prototypeCount = 0;
     auto scope = DECLARE_CATCH_SCOPE(vm);
 
     JSC::Structure* structure = object->structure();
     bool fast = !nonIndexedOnly && canPerformFastPropertyEnumerationForIterationBun(structure);
-    JSValue prototypeObject = value;
 
     if (fast) {
         if (structure->outOfLineSize() == 0 && structure->inlineSize() == 0) {
+            // Object has no own properties - don't fall back to prototype properties.
+            // console.log should only show own enumerable properties, not inherited ones.
             fast = false;
-
-            if (JSValue proto = object->getPrototype(globalObject)) {
-                if ((structure = proto.structureOrNull())) {
-                    prototypeObject = proto;
-                    fast = canPerformFastPropertyEnumerationForIterationBun(structure);
-                    prototypeCount = 1;
-                }
-            }
         }
     }
     auto* propertyNames = vm.propertyNames;
     auto& builtinNames = WebCore::builtinNames(vm);
     WTF::Vector<Identifier, 6> visitedProperties;
 
-restart:
     if (fast) {
         bool anyHits = false;
-        JSC::JSObject* objectToUse = prototypeObject.getObject();
         structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
             if ((entry.attributes() & (PropertyAttribute::Function)) == 0 && (entry.attributes() & (PropertyAttribute::Builtin)) != 0) {
                 return true;
@@ -5025,7 +5015,7 @@ restart:
 
             if (prop == propertyNames->constructor
                 || prop == propertyNames->underscoreProto
-                || prop == propertyNames->toStringTagSymbol || (objectToUse != object && prop == propertyNames->__esModule))
+                || prop == propertyNames->toStringTagSymbol)
                 return true;
 
             if (builtinNames.bunNativePtrPrivateName() == prop)
@@ -5037,18 +5027,14 @@ restart:
             visitedProperties.append(Identifier::fromUid(vm, prop));
 
             ZigString key = toZigString(prop);
-            JSC::JSValue propertyValue = JSValue();
-
-            if (objectToUse == object) {
-                propertyValue = objectToUse->getDirect(entry.offset());
-                if (!propertyValue) {
-                    scope.clearException();
-                    return true;
-                }
+            JSC::JSValue propertyValue = object->getDirect(entry.offset());
+            if (!propertyValue) {
+                scope.clearException();
+                return true;
             }
 
-            if (!propertyValue || propertyValue.isGetterSetter() && !((entry.attributes() & PropertyAttribute::Accessor) != 0)) {
-                propertyValue = objectToUse->getIfPropertyExists(globalObject, prop);
+            if (propertyValue.isGetterSetter() && !((entry.attributes() & PropertyAttribute::Accessor) != 0)) {
+                propertyValue = object->getIfPropertyExists(globalObject, prop);
             }
 
             // Ignore exceptions due to getters.
@@ -5074,134 +5060,106 @@ restart:
         // Propagate exceptions from callbacks.
         RETURN_IF_EXCEPTION(scope, );
 
+        // Only iterate own properties - do not walk up the prototype chain.
         if (anyHits) {
-            if (prototypeCount++ < 5) {
-
-                if (JSValue proto = prototypeObject.getPrototype(globalObject)) {
-                    if (!(proto == globalObject->objectPrototype() || proto == globalObject->functionPrototype() || (proto.inherits<JSGlobalProxy>() && jsCast<JSGlobalProxy*>(proto)->target() != globalObject))) {
-                        if ((structure = proto.structureOrNull())) {
-                            prototypeObject = proto;
-                            fast = canPerformFastPropertyEnumerationForIterationBun(structure);
-                            goto restart;
-                        }
-                    }
-                }
-                // Ignore exceptions from Proxy "getPrototype" trap.
-                CLEAR_IF_EXCEPTION(scope);
-            }
             return;
         }
     }
 
+    // Slow path: iterate only own properties of the original object.
+    // Do not walk up the prototype chain - console.log should only show own enumerable properties.
     JSC::PropertyNameArrayBuilder properties(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
 
-    {
+    if constexpr (nonIndexedOnly) {
+        object->getOwnNonIndexPropertyNames(globalObject, properties, DontEnumPropertiesMode::Include);
+    } else {
+        object->methodTable()->getOwnPropertyNames(object, globalObject, properties, DontEnumPropertiesMode::Include);
+    }
 
-        JSObject* iterating = prototypeObject.getObject();
+    RETURN_IF_EXCEPTION(scope, void());
 
-        while (iterating && !(iterating == globalObject->objectPrototype() || iterating == globalObject->functionPrototype() || (iterating->inherits<JSGlobalProxy>() && jsCast<JSGlobalProxy*>(iterating)->target() != globalObject)) && prototypeCount++ < 5) {
-            if constexpr (nonIndexedOnly) {
-                iterating->getOwnNonIndexPropertyNames(globalObject, properties, DontEnumPropertiesMode::Include);
-            } else {
-                iterating->methodTable()->getOwnPropertyNames(iterating, globalObject, properties, DontEnumPropertiesMode::Include);
+    for (auto& property : properties) {
+        if (property.isEmpty() || property.isNull()) [[unlikely]]
+            continue;
+
+        // ignore constructor
+        if (property == propertyNames->constructor || builtinNames.bunNativePtrPrivateName() == property)
+            continue;
+
+        if constexpr (nonIndexedOnly) {
+            if (property == propertyNames->length) {
+                continue;
             }
-
-            RETURN_IF_EXCEPTION(scope, void());
-            for (auto& property : properties) {
-                if (property.isEmpty() || property.isNull()) [[unlikely]]
-                    continue;
-
-                // ignore constructor
-                if (property == propertyNames->constructor || builtinNames.bunNativePtrPrivateName() == property)
-                    continue;
-
-                if constexpr (nonIndexedOnly) {
-                    if (property == propertyNames->length) {
-                        continue;
-                    }
-                }
-
-                JSC::PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
-                if (!object->getPropertySlot(globalObject, property, slot))
-                    continue;
-                // Ignore exceptions from "Get" proxy traps.
-                CLEAR_IF_EXCEPTION(scope);
-
-                if ((slot.attributes() & PropertyAttribute::DontEnum) != 0) {
-                    if (property == propertyNames->underscoreProto
-                        || property == propertyNames->toStringTagSymbol || property == propertyNames->__esModule)
-                        continue;
-                }
-
-                if (visitedProperties.contains(property))
-                    continue;
-                visitedProperties.append(property);
-
-                ZigString key = toZigString(property.isSymbol() && !property.isPrivateName() ? property.impl() : property.string());
-
-                if (key.len == 0)
-                    continue;
-
-                JSC::JSValue propertyValue = jsUndefined();
-
-                if ((slot.attributes() & PropertyAttribute::DontEnum) != 0) {
-                    if ((slot.attributes() & PropertyAttribute::Accessor) != 0) {
-                        // If we can't use getPureResult, let's at least say it was a [Getter]
-                        if (!slot.isCacheableGetter()) {
-                            propertyValue = slot.getterSetter();
-                        } else {
-                            propertyValue = slot.getPureResult();
-                        }
-                    } else if (slot.attributes() & PropertyAttribute::BuiltinOrFunction) {
-                        propertyValue = slot.getValue(globalObject, property);
-                    } else if (slot.isCustom()) {
-                        propertyValue = slot.getValue(globalObject, property);
-                    } else if (slot.isValue()) {
-                        propertyValue = slot.getValue(globalObject, property);
-                    } else if (object->getOwnPropertySlot(object, globalObject, property, slot)) {
-                        propertyValue = slot.getValue(globalObject, property);
-                    }
-                } else if (slot.isAccessor()) {
-                    // If we can't use getPureResult, let's at least say it was a [Getter]
-                    if (!slot.isCacheableGetter()) {
-                        propertyValue = slot.getterSetter();
-                    } else {
-                        propertyValue = slot.getPureResult();
-                    }
-                } else {
-                    propertyValue = slot.getValue(globalObject, property);
-                }
-
-                // Ignore exceptions from getters.
-                if (scope.exception()) [[unlikely]] {
-                    scope.clearException();
-                    propertyValue = jsUndefined();
-                }
-
-                JSC::EnsureStillAliveScope ensureStillAliveScope(propertyValue);
-
-                bool isPrivate = property.isPrivateName();
-
-                if (isPrivate && !JSC::Options::showPrivateScriptsInStackTraces())
-                    continue;
-
-                iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), property.isSymbol(), isPrivate);
-
-                // Propagate exceptions from callbacks.
-                RETURN_IF_EXCEPTION(scope, void());
-            }
-            if constexpr (nonIndexedOnly) {
-                break;
-            }
-
-            // reuse memory
-            properties.data()->propertyNameVector().shrink(0);
-            if (iterating->isCallable())
-                break;
-            if (iterating == globalObject)
-                break;
-            iterating = iterating->getPrototype(globalObject).getObject();
         }
+
+        JSC::PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
+        if (!object->getPropertySlot(globalObject, property, slot))
+            continue;
+        // Ignore exceptions from "Get" proxy traps.
+        CLEAR_IF_EXCEPTION(scope);
+
+        if ((slot.attributes() & PropertyAttribute::DontEnum) != 0) {
+            if (property == propertyNames->underscoreProto
+                || property == propertyNames->toStringTagSymbol || property == propertyNames->__esModule)
+                continue;
+        }
+
+        if (visitedProperties.contains(property))
+            continue;
+        visitedProperties.append(property);
+
+        ZigString key = toZigString(property.isSymbol() && !property.isPrivateName() ? property.impl() : property.string());
+
+        if (key.len == 0)
+            continue;
+
+        JSC::JSValue propertyValue = jsUndefined();
+
+        if ((slot.attributes() & PropertyAttribute::DontEnum) != 0) {
+            if ((slot.attributes() & PropertyAttribute::Accessor) != 0) {
+                // If we can't use getPureResult, let's at least say it was a [Getter]
+                if (!slot.isCacheableGetter()) {
+                    propertyValue = slot.getterSetter();
+                } else {
+                    propertyValue = slot.getPureResult();
+                }
+            } else if (slot.attributes() & PropertyAttribute::BuiltinOrFunction) {
+                propertyValue = slot.getValue(globalObject, property);
+            } else if (slot.isCustom()) {
+                propertyValue = slot.getValue(globalObject, property);
+            } else if (slot.isValue()) {
+                propertyValue = slot.getValue(globalObject, property);
+            } else if (object->getOwnPropertySlot(object, globalObject, property, slot)) {
+                propertyValue = slot.getValue(globalObject, property);
+            }
+        } else if (slot.isAccessor()) {
+            // If we can't use getPureResult, let's at least say it was a [Getter]
+            if (!slot.isCacheableGetter()) {
+                propertyValue = slot.getterSetter();
+            } else {
+                propertyValue = slot.getPureResult();
+            }
+        } else {
+            propertyValue = slot.getValue(globalObject, property);
+        }
+
+        // Ignore exceptions from getters.
+        if (scope.exception()) [[unlikely]] {
+            scope.clearException();
+            propertyValue = jsUndefined();
+        }
+
+        JSC::EnsureStillAliveScope ensureStillAliveScope(propertyValue);
+
+        bool isPrivate = property.isPrivateName();
+
+        if (isPrivate && !JSC::Options::showPrivateScriptsInStackTraces())
+            continue;
+
+        iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), property.isSymbol(), isPrivate);
+
+        // Propagate exceptions from callbacks.
+        RETURN_IF_EXCEPTION(scope, void());
     }
 
     properties.releaseData();

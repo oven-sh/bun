@@ -161,8 +161,25 @@ comptime {
     @export(&Bun__fetch, .{ .name = "Bun__fetch" });
 }
 
-/// Implementation of `Bun.fetch`
+/// Public entry point for `Bun.fetch` - validates body on GET/HEAD/OPTIONS
 pub fn Bun__fetch_(
+    ctx: *jsc.JSGlobalObject,
+    callframe: *jsc.CallFrame,
+) bun.JSError!jsc.JSValue {
+    return fetchImpl(false, ctx, callframe);
+}
+
+/// Internal entry point for Node.js HTTP client - allows body on GET/HEAD/OPTIONS
+pub fn nodeHttpClient(
+    ctx: *jsc.JSGlobalObject,
+    callframe: *jsc.CallFrame,
+) bun.JSError!jsc.JSValue {
+    return fetchImpl(true, ctx, callframe);
+}
+
+/// Shared implementation of fetch
+fn fetchImpl(
+    comptime allow_get_body: bool,
     ctx: *jsc.JSGlobalObject,
     callframe: *jsc.CallFrame,
 ) bun.JSError!jsc.JSValue {
@@ -202,7 +219,6 @@ pub fn Bun__fetch_(
     var disable_timeout = false;
     var disable_keepalive = false;
     var disable_decompression = false;
-    var allow_get_body = false;
     var verbose: http.HTTPVerboseLevel = if (vm.log.level.atLeast(.debug)) .headers else .none;
     if (verbose == .none) {
         verbose = vm.getVerboseFetch();
@@ -417,38 +433,6 @@ pub fn Bun__fetch_(
         }
 
         break :extract_disable_decompression disable_decompression;
-    };
-
-    if (globalThis.hasException()) {
-        is_error = true;
-        return .zero;
-    }
-
-    // "allowGetBody: boolean" - allows body on GET/HEAD/OPTIONS requests (for Node.js compatibility)
-    allow_get_body = extract_allow_get_body: {
-        const objects_to_try = [_]JSValue{
-            options_object orelse .zero,
-            request_init_object orelse .zero,
-        };
-
-        inline for (0..2) |i| {
-            if (objects_to_try[i] != .zero) {
-                if (try objects_to_try[i].get(globalThis, "allowGetBody")) |allow_get_body_value| {
-                    if (allow_get_body_value.isBoolean()) {
-                        break :extract_allow_get_body allow_get_body_value.asBoolean();
-                    } else if (allow_get_body_value.isNumber()) {
-                        break :extract_allow_get_body allow_get_body_value.to(i32) != 0;
-                    }
-                }
-
-                if (globalThis.hasException()) {
-                    is_error = true;
-                    return .zero;
-                }
-            }
-        }
-
-        break :extract_allow_get_body allow_get_body;
     };
 
     if (globalThis.hasException()) {
@@ -1106,7 +1090,7 @@ pub fn Bun__fetch_(
         }
     }
 
-    if (!method.hasRequestBody() and body.hasBody() and !upgraded_connection and !allow_get_body) {
+    if (!allow_get_body and !method.hasRequestBody() and body.hasBody() and !upgraded_connection) {
         const err = globalThis.toTypeError(.INVALID_ARG_VALUE, fetch_error_unexpected_body, .{});
         is_error = true;
         return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);

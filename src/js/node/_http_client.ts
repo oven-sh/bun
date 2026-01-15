@@ -7,6 +7,9 @@ const {
   validateBoolean,
   validateString,
 } = require("internal/validators");
+
+// Internal fetch that allows body on GET/HEAD/OPTIONS for Node.js compatibility
+const nodeHttpClient = $newZigFunction("fetch.zig", "nodeHttpClient", 2);
 const { urlToHttpOptions } = require("internal/url");
 const { throwOnInvalidTLSArray } = require("internal/tls");
 const { validateHeaderName } = require("node:_http_common");
@@ -332,10 +335,6 @@ function ClientRequest(input, options, cb) {
       // This is needed for Node.js compatibility - Node allows GET requests with bodies
       if (customBody !== undefined) {
         fetchOptions.body = customBody;
-        // Enable allowGetBody for methods that don't normally have bodies
-        if (method === "GET" || method === "HEAD" || method === "OPTIONS") {
-          fetchOptions.allowGetBody = true;
-        }
       } else if (isDuplex && method !== "GET" && method !== "HEAD" && method !== "OPTIONS") {
         // Only use duplex streaming for non-GET/HEAD/OPTIONS methods
         // GET/HEAD/OPTIONS requests typically don't have streaming bodies
@@ -389,7 +388,7 @@ function ClientRequest(input, options, cb) {
       }
 
       //@ts-ignore
-      this[kFetchRequest] = fetch(url, fetchOptions).then(response => {
+      this[kFetchRequest] = nodeHttpClient(url, fetchOptions).then(response => {
         if (this.aborted) {
           maybeEmitClose();
           return;

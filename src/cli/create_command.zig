@@ -2493,8 +2493,7 @@ const js_ast = bun.ast;
 const logger = bun.logger;
 const strings = bun.strings;
 const Archiver = bun.libarchive.Archiver;
+const Npm = bun.install.Npm;
 
 const HTTP = bun.http;
 const Headers = bun.http.Headers;
-const Api = bun.schema.api;
-const Npm = bun.install.Npm;

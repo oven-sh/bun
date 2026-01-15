@@ -377,19 +377,30 @@ pub const Repository = extern struct {
             .Exited => |sig| if (sig == 0) return result.stdout else {
                 captureGitStderr(result.stderr);
 
-                if (
-                // remote: The page could not be found <-- for non git
-                // remote: Repository not found. <-- for git
-                // remote: fatal repository '<url>' does not exist <-- for git
-                (strings.containsComptime(result.stderr, "remote:") and
-                    strings.containsComptime(result.stderr, "not") and
-                    strings.containsComptime(result.stderr, "found")) or
-                    strings.containsComptime(result.stderr, "does not exist"))
-                {
+                // Check for "repository not found" before freeing stderr
+                const is_not_found =
+                    // remote: The page could not be found <-- for non git
+                    // remote: Repository not found. <-- for git
+                    // remote: fatal repository '<url>' does not exist <-- for git
+                    (strings.containsComptime(result.stderr, "remote:") and
+                        strings.containsComptime(result.stderr, "not") and
+                        strings.containsComptime(result.stderr, "found")) or
+                    strings.containsComptime(result.stderr, "does not exist");
+
+                // Free allocated buffers on error path
+                allocator.free(result.stdout);
+                allocator.free(result.stderr);
+
+                if (is_not_found) {
                     return error.RepositoryNotFound;
                 }
             },
-            else => captureGitStderr(result.stderr),
+            else => {
+                captureGitStderr(result.stderr);
+                // Free allocated buffers on error path
+                allocator.free(result.stdout);
+                allocator.free(result.stderr);
+            },
         }
 
         return error.InstallFailed;

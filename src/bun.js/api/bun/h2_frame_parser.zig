@@ -37,7 +37,7 @@ const FrameType = enum(u8) {
     HTTP_FRAME_PING = 0x06,
     HTTP_FRAME_GOAWAY = 0x07,
     HTTP_FRAME_WINDOW_UPDATE = 0x08,
-    HTTP_FRAME_CONTINUATION = 0x09,
+    HTTP_FRAME_CONTINUATION = 0x09, // RFC 7540 Section 6.10: Continues header block fragments
     HTTP_FRAME_ALTSVC = 0x0A, // https://datatracker.ietf.org/doc/html/rfc7838#section-7.2
     HTTP_FRAME_ORIGIN = 0x0C, // https://datatracker.ietf.org/doc/html/rfc8336#section-2
 };
@@ -2231,6 +2231,11 @@ pub const H2FrameParser = struct {
         return data.len;
     }
 
+    /// RFC 7540 Section 6.10: Handle CONTINUATION frame (type=0x9).
+    /// CONTINUATION frames continue header block fragments that don't fit in a single HEADERS frame.
+    /// - Must follow a HEADERS, PUSH_PROMISE, or CONTINUATION frame without END_HEADERS flag
+    /// - No padding allowed (unlike HEADERS frames)
+    /// - Must have same stream identifier as the initiating frame
     pub fn handleContinuationFrame(this: *H2FrameParser, frame: FrameHeader, data: []const u8, stream_: ?*Stream) bun.JSError!usize {
         log("handleContinuationFrame", .{});
         var stream = stream_ orelse {
@@ -3433,18 +3438,17 @@ pub const H2FrameParser = struct {
 
         // Use remote settings maxFrameSize if available, otherwise default to localSettings
         const settings = this.remoteSettings orelse this.localSettings;
-        const max_frame_size = settings.maxFrameSize;
-        const buffer_size = max_frame_size - FrameHeader.byteSize;
-        // Use shared buffer if it fits, otherwise allocate from heap
-        const use_shared = buffer_size <= shared_request_buffer.len;
-        const heap_buffer: ?[]u8 = if (!use_shared)
-            bun.default_allocator.alloc(u8, buffer_size) catch {
-                return globalObject.throw("Failed to allocate header buffer", .{});
-            }
-        else
-            null;
-        defer if (heap_buffer) |buf| bun.default_allocator.free(buf);
-        const buffer: []u8 = heap_buffer orelse shared_request_buffer[0..buffer_size];
+        // Buffer size allows up to 256KB of encoded trailers, which can be split into
+        // multiple HEADERS + CONTINUATION frames per RFC 7540.
+        const max_header_block_size: usize = 256 * 1024;
+        const buffer_size = max_header_block_size;
+        // Allocate buffer for large headers (256KB > shared buffer size of 16KB)
+        const heap_buffer = bun.default_allocator.alloc(u8, buffer_size) catch {
+            return globalObject.throw("Failed to allocate header buffer", .{});
+        };
+        defer bun.default_allocator.free(heap_buffer);
+        const buffer: []u8 = heap_buffer;
+        _ = settings;
         var encoded_size: usize = 0;
         // max header name length for lshpack
         var name_buffer: [4096]u8 = undefined;
@@ -3459,7 +3463,7 @@ pub const H2FrameParser = struct {
         var single_value_headers: [SingleValueHeaders.keys().len]bool = undefined;
         @memset(&single_value_headers, false);
 
-        // TODO: support CONTINUE for more headers if headers are too big
+        // Encode trailer headers using HPACK
         while (try iter.next()) |header_name| {
             if (header_name.length() == 0) continue;
 
@@ -3569,18 +3573,67 @@ pub const H2FrameParser = struct {
                 };
             }
         }
-        const flags: u8 = @intFromEnum(HeadersFrameFlags.END_HEADERS) | @intFromEnum(HeadersFrameFlags.END_STREAM);
+        // RFC 7540 Section 8.1: Trailers are sent as a HEADERS frame with END_STREAM flag
+        const base_flags: u8 = @intFromEnum(HeadersFrameFlags.END_STREAM);
+        // RFC 7540 Section 4.2: SETTINGS_MAX_FRAME_SIZE determines max frame payload
+        const actual_max_frame_size = (this.remoteSettings orelse this.localSettings).maxFrameSize;
 
         log("trailers encoded_size {}", .{encoded_size});
-        var frame: FrameHeader = .{
-            .type = @intFromEnum(FrameType.HTTP_FRAME_HEADERS),
-            .flags = flags,
-            .streamIdentifier = stream.id,
-            .length = @intCast(encoded_size),
-        };
+
         const writer = this.toWriter();
-        _ = frame.write(@TypeOf(writer), writer);
-        _ = writer.write(buffer[0..encoded_size]) catch 0;
+
+        // RFC 7540 Section 6.2 & 6.10: Check if we need CONTINUATION frames
+        if (encoded_size <= actual_max_frame_size) {
+            // Single HEADERS frame - header block fits in one frame
+            var frame: FrameHeader = .{
+                .type = @intFromEnum(FrameType.HTTP_FRAME_HEADERS),
+                .flags = base_flags | @intFromEnum(HeadersFrameFlags.END_HEADERS),
+                .streamIdentifier = stream.id,
+                .length = @intCast(encoded_size),
+            };
+            _ = frame.write(@TypeOf(writer), writer);
+            _ = writer.write(buffer[0..encoded_size]) catch 0;
+        } else {
+            // RFC 7540 Section 6.2 & 6.10: Header block exceeds MAX_FRAME_SIZE.
+            // Must split into HEADERS frame followed by one or more CONTINUATION frames.
+            // Note: CONTINUATION frames cannot have padding (Section 6.10) - they carry
+            // only header block fragments. END_HEADERS must be set on the last frame.
+            log("Using CONTINUATION frames for trailers: encoded_size={d} max_frame_size={d}", .{ encoded_size, actual_max_frame_size });
+
+            // RFC 7540 Section 6.2: First chunk goes in HEADERS frame (without END_HEADERS flag)
+            // Trailers use END_STREAM but NOT END_HEADERS when more frames follow
+            const first_chunk_size = actual_max_frame_size;
+
+            var headers_frame: FrameHeader = .{
+                .type = @intFromEnum(FrameType.HTTP_FRAME_HEADERS),
+                .flags = base_flags, // END_STREAM but NOT END_HEADERS
+                .streamIdentifier = stream.id,
+                .length = @intCast(first_chunk_size),
+            };
+            _ = headers_frame.write(@TypeOf(writer), writer);
+            _ = writer.write(buffer[0..first_chunk_size]) catch 0;
+
+            // RFC 7540 Section 6.10: CONTINUATION frames carry remaining header block fragments.
+            // They have no padding, no priority - just frame header + header block fragment.
+            var offset: usize = first_chunk_size;
+            while (offset < encoded_size) {
+                const remaining = encoded_size - offset;
+                const chunk_size = @min(remaining, actual_max_frame_size);
+                const is_last = (offset + chunk_size >= encoded_size);
+
+                // RFC 7540 Section 6.10: END_HEADERS flag must be set on the last frame
+                var cont_frame: FrameHeader = .{
+                    .type = @intFromEnum(FrameType.HTTP_FRAME_CONTINUATION),
+                    .flags = if (is_last) @intFromEnum(HeadersFrameFlags.END_HEADERS) else 0,
+                    .streamIdentifier = stream.id,
+                    .length = @intCast(chunk_size),
+                };
+                _ = cont_frame.write(@TypeOf(writer), writer);
+                _ = writer.write(buffer[offset..][0..chunk_size]) catch 0;
+
+                offset += chunk_size;
+            }
+        }
         const identifier = stream.getIdentifier();
         identifier.ensureStillAlive();
         if (stream.state == .HALF_CLOSED_REMOTE) {
@@ -3845,22 +3898,19 @@ pub const H2FrameParser = struct {
             return globalObject.throw("Expected sensitiveHeaders to be an object", .{});
         }
         // Use remote settings maxFrameSize if available, otherwise use localSettings.
-        // Note: When remoteSettings is not yet received (before SETTINGS exchange completes),
-        // we use localSettings.maxFrameSize which defaults to 16384. If headers exceed this,
-        // we return an error. A proper fix would implement CONTINUATION frames for large headers.
         const settings = this.remoteSettings orelse this.localSettings;
         const max_frame_size = settings.maxFrameSize;
-        const buffer_size = max_frame_size - FrameHeader.byteSize - 5;
-        // Use shared buffer if it fits, otherwise allocate from heap
-        const use_shared = buffer_size <= shared_request_buffer.len;
-        const heap_buffer: ?[]u8 = if (!use_shared)
-            bun.default_allocator.alloc(u8, buffer_size) catch {
-                return globalObject.throw("Failed to allocate header buffer", .{});
-            }
-        else
-            null;
-        defer if (heap_buffer) |buf| bun.default_allocator.free(buf);
-        const buffer: []u8 = heap_buffer orelse shared_request_buffer[0..buffer_size];
+        // Buffer size allows up to 256KB of encoded headers, which can be split into
+        // multiple HEADERS + CONTINUATION frames per RFC 7540.
+        const max_header_block_size: usize = 256 * 1024;
+        const buffer_size = max_header_block_size;
+        // Allocate buffer for large headers (256KB > shared buffer size of 16KB)
+        const heap_buffer = bun.default_allocator.alloc(u8, buffer_size) catch {
+            return globalObject.throw("Failed to allocate header buffer", .{});
+        };
+        defer bun.default_allocator.free(heap_buffer);
+        const buffer: []u8 = heap_buffer;
+        _ = max_frame_size;
         var encoded_size: usize = 0;
         // max header name length for lshpack
         var name_buffer: [4096]u8 = undefined;
@@ -4172,40 +4222,120 @@ pub const H2FrameParser = struct {
             return jsc.JSValue.jsNumber(stream_id);
         }
 
-        const padding = stream.getPadding(encoded_size, buffer.len - 1);
-        const payload_size = encoded_size + (if (padding != 0) @as(usize, @intCast(padding)) + 1 else 0);
-        log("padding: {d} size: {d} max_size: {d} payload_size: {d}", .{ padding, encoded_size, buffer.len - 1, payload_size });
-        if (padding != 0) {
-            flags |= @intFromEnum(HeadersFrameFlags.PADDED);
-        }
-        var frame: FrameHeader = .{
-            .type = @intFromEnum(FrameType.HTTP_FRAME_HEADERS),
-            .flags = flags,
-            .streamIdentifier = stream.id,
-            .length = @intCast(payload_size),
-        };
+        // RFC 7540 Section 4.2: SETTINGS_MAX_FRAME_SIZE determines max frame payload (default 16384)
+        const actual_max_frame_size = (this.remoteSettings orelse this.localSettings).maxFrameSize;
+
+        // RFC 7540 Section 6.2: HEADERS frame can include optional PRIORITY (5 bytes)
+        const priority_overhead: usize = if (has_priority) StreamPriority.byteSize else 0;
+
+        // RFC 7540 Section 6.10: CONTINUATION frames carry ONLY header block fragments.
+        // Unlike HEADERS frames, CONTINUATION frames CANNOT have padding or priority fields.
+        // When we need CONTINUATION frames, disable padding to keep the logic simple.
+        const padding: u8 = if (encoded_size + priority_overhead > actual_max_frame_size) 0 else stream.getPadding(encoded_size, buffer.len - 1);
+        const padding_overhead: usize = if (padding != 0) @as(usize, @intCast(padding)) + 1 else 0;
+
+        // Max payload for HEADERS frame (accounting for priority and padding overhead)
+        const headers_frame_max_payload = actual_max_frame_size - priority_overhead - padding_overhead;
 
         const writer = this.toWriter();
-        _ = frame.write(@TypeOf(writer), writer);
-        //https://datatracker.ietf.org/doc/html/rfc7540#section-6.2
-        if (has_priority) {
-            var stream_identifier: UInt31WithReserved = .{
-                .reserved = exclusive,
-                .uint31 = @intCast(parent),
-            };
 
-            var priority: StreamPriority = .{
-                .streamIdentifier = stream_identifier.toUInt32(),
-                .weight = @intCast(weight),
-            };
+        // Check if we need CONTINUATION frames
+        if (encoded_size <= headers_frame_max_payload) {
+            // Single HEADERS frame - fits in one frame
+            const payload_size = encoded_size + priority_overhead + padding_overhead;
+            log("padding: {d} size: {d} max_size: {d} payload_size: {d}", .{ padding, encoded_size, buffer.len - 1, payload_size });
 
-            _ = priority.write(@TypeOf(writer), writer);
+            if (padding != 0) {
+                flags |= @intFromEnum(HeadersFrameFlags.PADDED);
+            }
+
+            var frame: FrameHeader = .{
+                .type = @intFromEnum(FrameType.HTTP_FRAME_HEADERS),
+                .flags = flags,
+                .streamIdentifier = stream.id,
+                .length = @intCast(payload_size),
+            };
+            _ = frame.write(@TypeOf(writer), writer);
+
+            // Write priority data if present
+            if (has_priority) {
+                var stream_identifier: UInt31WithReserved = .{
+                    .reserved = exclusive,
+                    .uint31 = @intCast(parent),
+                };
+                var priority_data: StreamPriority = .{
+                    .streamIdentifier = stream_identifier.toUInt32(),
+                    .weight = @intCast(weight),
+                };
+                _ = priority_data.write(@TypeOf(writer), writer);
+            }
+
+            // Handle padding
+            if (padding != 0) {
+                bun.memmove(buffer[1..][0..encoded_size], buffer[0..encoded_size]);
+                buffer[0] = padding;
+            }
+            _ = writer.write(buffer[0 .. encoded_size + padding_overhead]) catch 0;
+        } else {
+            // RFC 7540 Section 6.2 & 6.10: Header blocks exceeding MAX_FRAME_SIZE must be split
+            // into HEADERS frame followed by one or more CONTINUATION frames.
+            // - HEADERS frame without END_HEADERS flag indicates more frames follow
+            // - CONTINUATION frames carry remaining header block fragments
+            // - Last frame (HEADERS or CONTINUATION) must have END_HEADERS flag set
+            // - All frames must have the same stream identifier
+            // - No other frames can be interleaved on this stream until END_HEADERS
+            log("Using CONTINUATION frames: encoded_size={d} max_frame_payload={d}", .{ encoded_size, actual_max_frame_size });
+
+            // RFC 7540 Section 6.2: First chunk goes in HEADERS frame (without END_HEADERS flag)
+            // HEADERS frame can carry PRIORITY but CONTINUATION frames cannot.
+            const first_chunk_size = actual_max_frame_size - priority_overhead;
+            const headers_flags = flags & ~@as(u8, @intFromEnum(HeadersFrameFlags.END_HEADERS));
+
+            var headers_frame: FrameHeader = .{
+                .type = @intFromEnum(FrameType.HTTP_FRAME_HEADERS),
+                .flags = headers_flags | (if (has_priority) @intFromEnum(HeadersFrameFlags.PRIORITY) else 0),
+                .streamIdentifier = stream.id,
+                .length = @intCast(first_chunk_size + priority_overhead),
+            };
+            _ = headers_frame.write(@TypeOf(writer), writer);
+
+            // Write priority data if present (only in HEADERS frame, not CONTINUATION)
+            if (has_priority) {
+                var stream_identifier: UInt31WithReserved = .{
+                    .reserved = exclusive,
+                    .uint31 = @intCast(parent),
+                };
+                var priority_data: StreamPriority = .{
+                    .streamIdentifier = stream_identifier.toUInt32(),
+                    .weight = @intCast(weight),
+                };
+                _ = priority_data.write(@TypeOf(writer), writer);
+            }
+
+            // Write first chunk of header block fragment
+            _ = writer.write(buffer[0..first_chunk_size]) catch 0;
+
+            // RFC 7540 Section 6.10: CONTINUATION frames carry remaining header block fragments.
+            // CONTINUATION frame format: just frame header + header block fragment (no padding, no priority)
+            var offset: usize = first_chunk_size;
+            while (offset < encoded_size) {
+                const remaining = encoded_size - offset;
+                const chunk_size = @min(remaining, actual_max_frame_size);
+                const is_last = (offset + chunk_size >= encoded_size);
+
+                // RFC 7540 Section 6.10: END_HEADERS flag must be set on the last frame
+                var cont_frame: FrameHeader = .{
+                    .type = @intFromEnum(FrameType.HTTP_FRAME_CONTINUATION),
+                    .flags = if (is_last) @intFromEnum(HeadersFrameFlags.END_HEADERS) else 0,
+                    .streamIdentifier = stream.id,
+                    .length = @intCast(chunk_size),
+                };
+                _ = cont_frame.write(@TypeOf(writer), writer);
+                _ = writer.write(buffer[offset..][0..chunk_size]) catch 0;
+
+                offset += chunk_size;
+            }
         }
-        if (padding != 0) {
-            bun.memmove(buffer[1..][0..encoded_size], buffer[0..encoded_size]);
-            buffer[0] = padding;
-        }
-        _ = writer.write(buffer[0..payload_size]) catch 0;
 
         if (end_stream) {
             stream.endAfterHeaders = true;

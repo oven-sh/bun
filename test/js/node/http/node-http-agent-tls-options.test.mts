@@ -8,22 +8,16 @@
  * the proxy tunnel to the target HTTPS server.
  */
 
+import { HttpsProxyAgent } from "https-proxy-agent";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import http from "node:http";
 import https from "node:https";
-import { createRequire } from "node:module";
 import type { AddressInfo } from "node:net";
 import net from "node:net";
 import { dirname, join } from "node:path";
 import { describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
-
-// Use createRequire for ESM compatibility
-const require = createRequire(import.meta.url);
-const { HttpsProxyAgent } = require("https-proxy-agent") as {
-  HttpsProxyAgent: new (proxyUrl: string, options?: Record<string, unknown>) => http.Agent;
-};
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 

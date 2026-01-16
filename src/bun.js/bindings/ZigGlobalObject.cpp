@@ -124,6 +124,7 @@
 #include "JSSink.h"
 #include "JSSocketAddressDTO.h"
 #include "JSSQLStatement.h"
+#include "git/JSGit.h"
 #include "JSStringDecoder.h"
 #include "JSTextEncoder.h"
 #include "JSTextEncoderStream.h"
@@ -1862,6 +1863,51 @@ void GlobalObject::finishCreation(VM& vm)
     m_JSSQLStatementStructure.initLater(
         [](const Initializer<Structure>& init) {
             init.set(WebCore::createJSSQLStatementStructure(init.owner));
+        });
+
+    m_JSGitRepositoryStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(WebCore::JSGitRepository::createStructure(init.vm, init.owner, init.owner->objectPrototype()));
+        });
+
+    m_JSGitCommitStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(WebCore::createJSGitCommitStructure(jsDynamicCast<Zig::GlobalObject*>(init.owner)));
+        });
+
+    m_JSGitBranchStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(WebCore::JSGitBranch::createStructure(init.vm, init.owner, init.owner->objectPrototype()));
+        });
+
+    m_JSGitRemoteStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(WebCore::JSGitRemote::createStructure(init.vm, init.owner, init.owner->objectPrototype()));
+        });
+
+    m_JSGitConfigStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(WebCore::JSGitConfig::createStructure(init.vm, init.owner, init.owner->objectPrototype()));
+        });
+
+    m_JSGitIndexStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(WebCore::JSGitIndex::createStructure(init.vm, init.owner, init.owner->objectPrototype()));
+        });
+
+    m_JSGitDiffStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(WebCore::JSGitDiff::createStructure(init.vm, init.owner, init.owner->objectPrototype()));
+        });
+
+    m_JSGitBlobStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(WebCore::JSGitBlob::createStructure(init.vm, init.owner, init.owner->objectPrototype()));
+        });
+
+    m_JSGitWorktreeStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(WebCore::JSGitWorktree::createStructure(init.vm, init.owner, init.owner->objectPrototype()));
         });
 
     m_V8GlobalInternals.initLater(

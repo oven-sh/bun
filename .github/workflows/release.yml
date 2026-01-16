@@ -81,21 +81,25 @@ jobs:
           # Install zstd and xz for compression
           sudo apt-get update && sudo apt-get install -y zstd xz-utils
 
-          # Get release assets using gh CLI
-          ASSETS=$(gh release view "${{ env.BUN_VERSION }}" --json assets -q '.assets[].name' 2>/dev/null || gh release view "bun-v${{ env.BUN_VERSION }}" --json assets -q '.assets[].name')
+          # Resolve the release tag once
+          if gh release view "${{ env.BUN_VERSION }}" --json tagName -q '.tagName' > /dev/null 2>&1; then
+            RELEASE_TAG="${{ env.BUN_VERSION }}"
+          else
+            RELEASE_TAG="bun-v${{ env.BUN_VERSION }}"
+          fi
+          echo "Using release tag: $RELEASE_TAG"
 
           # Create temp directory for processing
           WORKDIR=$(mktemp -d)
           cd "$WORKDIR"
 
-          # Process each .zip file
-          for ASSET in $ASSETS; do
+          # Get release assets and process each .zip file safely
+          gh release view "$RELEASE_TAG" --json assets -q '.assets[].name' | while IFS= read -r ASSET; do
             if [[ "$ASSET" == *.zip ]]; then
               echo "Processing: $ASSET"
 
               # Download the zip file
-              gh release download "${{ env.BUN_VERSION }}" --pattern "$ASSET" 2>/dev/null || \
-                gh release download "bun-v${{ env.BUN_VERSION }}" --pattern "$ASSET"
+              gh release download "$RELEASE_TAG" --pattern "$ASSET"
 
               # Extract the zip
               EXTRACT_DIR="${ASSET%.zip}"
@@ -105,22 +109,19 @@ jobs:
               # Create tar.gz
               TARGZ_NAME="${ASSET%.zip}.tar.gz"
               tar -czf "$TARGZ_NAME" -C "$EXTRACT_DIR" .
-              gh release upload "${{ env.BUN_VERSION }}" "$TARGZ_NAME" --clobber 2>/dev/null || \
-                gh release upload "bun-v${{ env.BUN_VERSION }}" "$TARGZ_NAME" --clobber
+              gh release upload "$RELEASE_TAG" "$TARGZ_NAME" --clobber
               echo "Uploaded: $TARGZ_NAME"
 
-              # Create tar.zst
+              # Create tar.zst (level 12 for good balance of speed and compression)
               TARZST_NAME="${ASSET%.zip}.tar.zst"
-              tar -cf - -C "$EXTRACT_DIR" . | zstd -19 -o "$TARZST_NAME"
-              gh release upload "${{ env.BUN_VERSION }}" "$TARZST_NAME" --clobber 2>/dev/null || \
-                gh release upload "bun-v${{ env.BUN_VERSION }}" "$TARZST_NAME" --clobber
+              tar -cf - -C "$EXTRACT_DIR" . | zstd -12 -o "$TARZST_NAME"
+              gh release upload "$RELEASE_TAG" "$TARZST_NAME" --clobber
               echo "Uploaded: $TARZST_NAME"
 
               # Create tar.xz
               TARXZ_NAME="${ASSET%.zip}.tar.xz"
               tar -cJf "$TARXZ_NAME" -C "$EXTRACT_DIR" .
-              gh release upload "${{ env.BUN_VERSION }}" "$TARXZ_NAME" --clobber 2>/dev/null || \
-                gh release upload "bun-v${{ env.BUN_VERSION }}" "$TARXZ_NAME" --clobber
+              gh release upload "$RELEASE_TAG" "$TARXZ_NAME" --clobber
               echo "Uploaded: $TARXZ_NAME"
 
               # Cleanup

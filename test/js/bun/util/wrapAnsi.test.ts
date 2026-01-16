@@ -208,4 +208,29 @@ describe("Bun.wrapAnsi", () => {
       expect(result).toBe("aあ\nbい");
     });
   });
+
+  describe("extended SGR codes", () => {
+    test("256-color preserved across line wrap", () => {
+      const input = "\x1b[38;5;196mRed text here\x1b[0m";
+      const result = Bun.wrapAnsi(input, 5);
+      // 256-color sequences should not be closed/reopened at line breaks
+      expect(result).toBe("\x1b[38;5;196mRed\ntext\nhere\x1b[0m");
+    });
+
+    test("TrueColor preserved across line wrap", () => {
+      const input = "\x1b[38;2;255;128;0mOrange text\x1b[0m";
+      const result = Bun.wrapAnsi(input, 6);
+      // TrueColor sequences should not be closed/reopened at line breaks
+      expect(result).toBe("\x1b[38;2;255;128;0mOrange\ntext\x1b[0m");
+    });
+
+    test("multiple styles (bold + color) preserved", () => {
+      const input = "\x1b[1m\x1b[31mBold Red text here\x1b[0m";
+      const result = Bun.wrapAnsi(input, 5);
+      // Bold stays, color closes with 39 and reopens with 31
+      expect(result).toBe(
+        "\x1b[1m\x1b[31mBold\x1b[39m\n\x1b[31mRed\x1b[39m\n\x1b[31mtext\x1b[39m\n\x1b[31mhere\x1b[0m",
+      );
+    });
+  });
 });

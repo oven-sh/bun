@@ -1,5 +1,6 @@
 import { YAML, file } from "bun";
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
 describe("Bun.YAML", () => {
@@ -2721,5 +2722,87 @@ refs:
       };
       expect(YAML.parse(YAML.stringify(workflow))).toEqual(workflow);
     });
+  });
+
+  // Regression test for #23489
+  test("YAML double-quoted strings with ... should not trigger document end error - issue #23489", () => {
+    // Test the original failing case with Arabic text and emoji
+    const yaml1 = 'balance_dont_have_wallet: "👛 لا تمتلك محفظة... !"';
+    const result1 = YAML.parse(yaml1);
+    expect(result1).toEqual({
+      balance_dont_have_wallet: "👛 لا تمتلك محفظة... !",
+    });
+
+    // Test various patterns of ... in double-quoted strings
+    const yaml2 = `test1: "this has ... dots"
+test2: "... at start"
+test3: "at end ..."
+test4: "👛 ... with emoji"`;
+    const result2 = YAML.parse(yaml2);
+    expect(result2).toEqual({
+      test1: "this has ... dots",
+      test2: "... at start",
+      test3: "at end ...",
+      test4: "👛 ... with emoji",
+    });
+
+    // Test that both single and double quotes work
+    const yaml3 = `single: 'this has ... dots'
+double: "this has ... dots"`;
+    const result3 = YAML.parse(yaml3);
+    expect(result3).toEqual({
+      single: "this has ... dots",
+      double: "this has ... dots",
+    });
+  });
+
+  // Regression test for #23489
+  test("YAML import with double-quoted strings containing ... - issue #23489", async () => {
+    using dir = tempDir("yaml-ellipsis", {
+      "test.yml": 'balance: "👛 لا تمتلك محفظة... !"',
+      "test.ts": `
+      import yaml from "./test.yml";
+      console.log(JSON.stringify(yaml));
+    `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("Unexpected document end");
+    expect(exitCode).toBe(0);
+    expect(stdout.trim()).toBe('{"balance":"👛 لا تمتلك محفظة... !"}');
+  });
+
+  // Regression test for #26088
+  // YAML parser was leaking memory on each parse call because AST nodes were
+  // not being freed. This caused segfaults after high-volume YAML parsing.
+  // Fix: Use ASTMemoryAllocator to ensure AST nodes are freed at end of scope.
+  test("YAML.parse shouldn't leak memory", () => {
+    // Create YAML with 10000 single-char strings - creates many AST E.String nodes
+    const items = Array.from({ length: 10000 }, () => "  - x").join("\n");
+    const yaml = `list:\n${items}`;
+
+    Bun.gc(true);
+    const initialMemory = process.memoryUsage.rss();
+
+    // Parse 100 times - each creates 10000 AST string nodes
+    for (let i = 0; i < 100; i++) {
+      YAML.parse(yaml);
+    }
+
+    Bun.gc(true);
+    const finalMemory = process.memoryUsage.rss();
+
+    // Memory increase should be less than 50MB if AST nodes are freed properly
+    const memoryIncreaseMB = (finalMemory - initialMemory) / 1024 / 1024;
+    expect(memoryIncreaseMB).toBeLessThan(50);
   });
 });

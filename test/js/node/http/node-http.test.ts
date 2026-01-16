@@ -1708,3 +1708,212 @@ describe("HTTP Server Security Tests - Advanced", () => {
     expect(text).toBe("Hello World");
   });
 });
+
+// Regression test for #25862
+// Pipelined data sent immediately after CONNECT request headers should be
+// delivered to the `head` parameter of the 'connect' event handler.
+test("CONNECT request should receive pipelined data in head parameter", async () => {
+  const PIPELINED_DATA = "PIPELINED_DATA";
+  const { promise: headReceived, resolve: resolveHead } = Promise.withResolvers<Buffer>();
+
+  await using server = http.createServer();
+
+  server.on("connect", (req, socket, head) => {
+    resolveHead(head);
+    socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+    socket.end();
+  });
+
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port, address } = server.address() as AddressInfo;
+
+  const { promise: clientDone, resolve: resolveClient } = Promise.withResolvers<void>();
+
+  const client = connect({ port, host: address }, () => {
+    // Send CONNECT request with pipelined data in the same write
+    // This simulates what Cap'n Proto's KJ HTTP library does
+    client.write(`CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n${PIPELINED_DATA}`);
+  });
+
+  client.on("data", () => {
+    // We got the response, we can close
+    client.end();
+  });
+
+  client.on("close", () => {
+    resolveClient();
+  });
+
+  const head = await headReceived;
+  await clientDone;
+
+  expect(head).toBeInstanceOf(Buffer);
+  expect(head.length).toBe(PIPELINED_DATA.length);
+  expect(head.toString()).toBe(PIPELINED_DATA);
+});
+
+// Regression test for #26143 - https GET request with body hangs
+describe("issue #26143 - https GET request with body hangs", () => {
+  test("http.request GET with body should complete", async () => {
+    // Use Node.js-style http.createServer which properly handles bodies on all methods
+    const server = http.createServer((req: any, res: any) => {
+      let body = "";
+      req.on("data", (chunk: string) => {
+        body += chunk;
+      });
+      req.on("end", () => {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ received: body }));
+      });
+    });
+
+    await new Promise<void>(resolve => server.listen(0, resolve));
+    const port = server.address().port;
+
+    try {
+      const result = await new Promise<{ status: number; data: string }>((resolve, reject) => {
+        const options = {
+          hostname: "localhost",
+          port,
+          path: "/test",
+          method: "GET",
+          headers: {
+            "Content-Type": "application/json",
+            "Content-Length": 2,
+          },
+        };
+
+        const req = http.request(options, (res: any) => {
+          let data = "";
+          res.on("data", (chunk: string) => {
+            data += chunk;
+          });
+          res.on("end", () => {
+            resolve({ status: res.statusCode, data });
+          });
+        });
+
+        req.on("error", reject);
+        req.write("{}");
+        req.end();
+      });
+
+      expect(result.status).toBe(200);
+      expect(result.data).toContain('"received":"{}"');
+    } finally {
+      server.close();
+    }
+  });
+
+  test("GET request without body should still work", async () => {
+    const server = http.createServer((req: any, res: any) => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ method: req.method }));
+    });
+
+    await new Promise<void>(resolve => server.listen(0, resolve));
+    const port = server.address().port;
+
+    try {
+      const result = await new Promise<{ status: number; data: string }>((resolve, reject) => {
+        const options = {
+          hostname: "localhost",
+          port,
+          path: "/test",
+          method: "GET",
+        };
+
+        const req = http.request(options, (res: any) => {
+          let data = "";
+          res.on("data", (chunk: string) => {
+            data += chunk;
+          });
+          res.on("end", () => {
+            resolve({ status: res.statusCode, data });
+          });
+        });
+
+        req.on("error", reject);
+        req.end();
+      });
+
+      expect(result.status).toBe(200);
+      expect(result.data).toContain('"method":"GET"');
+    } finally {
+      server.close();
+    }
+  });
+
+  test("HEAD request with body should complete", async () => {
+    const server = http.createServer((req: any, res: any) => {
+      let body = "";
+      req.on("data", (chunk: string) => {
+        body += chunk;
+      });
+      req.on("end", () => {
+        res.writeHead(200, { "X-Custom": "header", "X-Body-Received": body });
+        res.end();
+      });
+    });
+
+    await new Promise<void>(resolve => server.listen(0, resolve));
+    const port = server.address().port;
+
+    try {
+      const result = await new Promise<{ status: number; header: string | undefined }>((resolve, reject) => {
+        const options = {
+          hostname: "localhost",
+          port,
+          path: "/test",
+          method: "HEAD",
+          headers: {
+            "Content-Type": "application/json",
+            "Content-Length": 2,
+          },
+        };
+
+        const req = http.request(options, (res: any) => {
+          res.on("data", () => {});
+          res.on("end", () => {
+            resolve({ status: res.statusCode, header: res.headers["x-custom"] });
+          });
+        });
+
+        req.on("error", reject);
+        req.write("{}");
+        req.end();
+      });
+
+      expect(result.status).toBe(200);
+      expect(result.header).toBe("header");
+    } finally {
+      server.close();
+    }
+  });
+
+  test("Bun.fetch without allowGetBody should still throw", async () => {
+    const server = http.createServer((req: any, res: any) => {
+      res.writeHead(200);
+      res.end();
+    });
+
+    await new Promise<void>(resolve => server.listen(0, resolve));
+    const port = server.address().port;
+
+    try {
+      // Without allowGetBody, this should throw
+      expect(async () => {
+        await fetch(`http://localhost:${port}/test`, {
+          method: "GET",
+          headers: {
+            "Content-Type": "application/json",
+            "Content-Length": "2",
+          },
+          body: "{}",
+        });
+      }).toThrow("fetch() request with GET/HEAD/OPTIONS method cannot have body.");
+    } finally {
+      server.close();
+    }
+  });
+});

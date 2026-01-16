@@ -1,8 +1,8 @@
 import { spawn } from "bun";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { rm, writeFile } from "fs/promises";
-import { bunEnv, bunExe, isWindows, readdirSorted, tmpdirSync } from "harness";
-import { copyFileSync, readdirSync } from "node:fs";
+import { bunEnv, bunExe, isWindows, readdirSorted, tempDir, tmpdirSync } from "harness";
+import { copyFileSync, existsSync, readdirSync } from "node:fs";
 import { tmpdir } from "os";
 import { join, resolve } from "path";
 import { dummyAfterAll, dummyBeforeAll, dummyBeforeEach, dummyRegistry, getPort, setHandler } from "./dummy.registry";
@@ -725,8 +725,8 @@ describe("--package flag", () => {
 
       // Create the tarball with both binaries that output different messages
       // First, let's create the package structure
-      const tempDir = tmpdirSync();
-      const packageDir = join(tempDir, "package");
+      const tempDirPath = tmpdirSync();
+      const packageDir = join(tempDirPath, "package");
 
       await Bun.$`mkdir -p ${packageDir}/bin`;
 
@@ -760,7 +760,7 @@ console.log("EXECUTED: multi-tool-alt (alternate binary)");
       await Bun.$`chmod +x ${packageDir}/bin/multi-tool.js ${packageDir}/bin/multi-tool-alt.js`;
 
       // Create the tarball with package/ prefix
-      await Bun.$`cd ${tempDir} && tar -czf ${join(import.meta.dir, "multi-tool-pkg-1.0.0.tgz")} package`;
+      await Bun.$`cd ${tempDirPath} && tar -czf ${join(import.meta.dir, "multi-tool-pkg-1.0.0.tgz")} package`;
 
       // Test 1: Without --package, bunx multi-tool-alt should fail or install wrong package
       // Test 2: With --package, we can run the alternate binary
@@ -866,4 +866,175 @@ it.skipIf(!isWindows)("should not crash on corrupted .bunx file with missing quo
   // The key assertion: we should NOT see a panic
   expect(stderr).not.toContain("panic");
   expect(stderr).not.toContain("reached unreachable code");
+});
+
+// Regression test for #13316
+// https://github.com/oven-sh/bun/issues/13316
+// bunx cowsay "" panicked on Windows due to improper handling of empty string arguments
+// The issue was in the BunXFastPath.tryLaunch function which didn't properly quote
+// empty string arguments for the Windows command line.
+describe.if(isWindows)("#13316 - bunx with empty string arguments", () => {
+  it("bunx does not panic with empty string argument", async () => {
+    // Create a minimal package that echoes its arguments
+    using dir = tempDir("issue-13316", {
+      "package.json": JSON.stringify({
+        name: "test-project",
+        version: "1.0.0",
+        dependencies: {
+          "echo-args-test": "file:./echo-args-test",
+        },
+      }),
+      "echo-args-test/package.json": JSON.stringify({
+        name: "echo-args-test",
+        version: "1.0.0",
+        bin: {
+          "echo-args-test": "./index.js",
+        },
+      }),
+      "echo-args-test/index.js": `#!/usr/bin/env node
+console.log(JSON.stringify(process.argv.slice(2)));
+`,
+    });
+
+    // Install to create the .bunx shim in node_modules/.bin
+    await using installProc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    await installProc.exited;
+
+    // Verify the .bunx file was created (this is what triggers the fast path)
+    const bunxPath = join(String(dir), "node_modules", ".bin", "echo-args-test.bunx");
+    expect(existsSync(bunxPath)).toBe(true);
+
+    // Run with an empty string argument - this was triggering the panic
+    // We use `bun run` which goes through the same BunXFastPath when .bunx exists
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "echo-args-test", ""],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // The main assertion is that the process doesn't panic (exit code 3)
+    // If the bug is present, this would crash with "reached unreachable code"
+    expect(exitCode).not.toBe(3); // panic exit code
+    expect(exitCode).toBe(0);
+
+    // The empty string argument should be passed correctly
+    expect(JSON.parse(stdout.trim())).toEqual([""]);
+  });
+
+  it("bunx handles multiple arguments including empty strings", async () => {
+    using dir = tempDir("issue-13316-multi", {
+      "package.json": JSON.stringify({
+        name: "test-project",
+        version: "1.0.0",
+        dependencies: {
+          "echo-args-test": "file:./echo-args-test",
+        },
+      }),
+      "echo-args-test/package.json": JSON.stringify({
+        name: "echo-args-test",
+        version: "1.0.0",
+        bin: {
+          "echo-args-test": "./index.js",
+        },
+      }),
+      "echo-args-test/index.js": `#!/usr/bin/env node
+console.log(JSON.stringify(process.argv.slice(2)));
+`,
+    });
+
+    await using installProc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    await installProc.exited;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "echo-args-test", "hello", "", "world"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(exitCode).not.toBe(3); // panic exit code
+    expect(exitCode).toBe(0);
+    expect(JSON.parse(stdout.trim())).toEqual(["hello", "", "world"]);
+  });
+
+  // Related to #18275 - bunx concurrently "command with spaces"
+  // Arguments containing spaces must be preserved as single arguments
+  it("bunx preserves arguments with spaces", async () => {
+    using dir = tempDir("issue-13316-spaces", {
+      "package.json": JSON.stringify({
+        name: "test-project",
+        version: "1.0.0",
+        dependencies: {
+          "echo-args-test": "file:./echo-args-test",
+        },
+      }),
+      "echo-args-test/package.json": JSON.stringify({
+        name: "echo-args-test",
+        version: "1.0.0",
+        bin: {
+          "echo-args-test": "./index.js",
+        },
+      }),
+      "echo-args-test/index.js": `#!/usr/bin/env node
+console.log(JSON.stringify(process.argv.slice(2)));
+`,
+    });
+
+    await using installProc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    await installProc.exited;
+
+    // This simulates: bunx concurrently "bun --version"
+    // The shell strips the outer quotes, so bunx receives ["concurrently", "bun --version"]
+    // This must be preserved as a single argument with spaces
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "echo-args-test", "bun --version", "echo hello world"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(exitCode).toBe(0);
+    // Each argument with spaces should be preserved as a single argument
+    expect(JSON.parse(stdout.trim())).toEqual(["bun --version", "echo hello world"]);
+  });
+});
+
+// Regression test for #15276
+// https://github.com/oven-sh/bun/issues/15276
+// Parsing npm aliases without package manager should not crash
+it("parsing npm aliases without package manager does not crash", () => {
+  // Easiest way to repro this regression with `bunx bunbunbunbunbun@npm:another-bun@1.0.0`. The package
+  // doesn't need to exist, we just need `bunx` to parse the package version.
+  const { stdout, stderr, exitCode } = Bun.spawnSync({
+    cmd: [bunExe(), "x", "bunbunbunbunbun@npm:another-bun@1.0.0"],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+
+  expect(exitCode).toBe(1);
+  expect(stderr.toString()).toContain("error: bunbunbunbunbun@npm:another-bun@1.0.0 failed to resolve");
+  expect(stdout.toString()).toBe("");
 });

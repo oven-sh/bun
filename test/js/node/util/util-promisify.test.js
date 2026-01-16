@@ -298,4 +298,11 @@ describe("util.promisify", () => {
       });
     });
   });
+
+  // Regression test for #15201
+  it("should promisify globalThis.setTimeout", async () => {
+    const setTimeoutPromise = promisify(globalThis.setTimeout);
+    const result = await setTimeoutPromise(1, "ok");
+    expect(result).toBe("ok");
+  });
 });

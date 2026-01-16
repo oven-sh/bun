@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, test } from "bun:test";
 import crypto from "crypto";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, gc, tempDir, tls } from "harness";
@@ -864,4 +864,35 @@ it.serial("instances should be finalized when GC'd", async () => {
   console.log({ current_websocket_count, initial_websocket_count });
   // expect that current and initial websocket be close to the same (normaly 1 or 2 difference)
   expect(Math.abs(current_websocket_count - initial_websocket_count)).toBeLessThanOrEqual(50);
+});
+
+// Regression test for #12040
+test("ws.send callback works as expected", async () => {
+  const { WebSocket, WebSocketServer } = await import("ws");
+  const { createServer } = await import("node:http");
+  const httpServer = createServer();
+  const { promise, resolve } = Promise.withResolvers();
+  const { promise: promise2, resolve: resolve2 } = Promise.withResolvers();
+
+  const wss = new WebSocketServer({
+    server: httpServer,
+    WebSocket,
+  });
+
+  wss.on("connection", ws => {
+    // Following are two messages about to be sent, each with a slightly different way of calling the `ws.send` method:
+    ws.send("foo", () => resolve());
+    ws.send("bar", {}, () => resolve2());
+  });
+
+  const { promise: promise3, resolve: resolve3 } = Promise.withResolvers();
+  httpServer.listen(0, () => resolve3());
+  await promise3;
+
+  var ws = new WebSocket("ws://localhost:" + httpServer.address().port);
+
+  ws.on("message", msg => {});
+  await Promise.all([promise, promise2]);
+  ws.close();
+  wss.close();
 });

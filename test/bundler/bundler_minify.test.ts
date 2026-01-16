@@ -1109,15 +1109,15 @@ describe("bundler", () => {
       "/entry.js": /* js */ `
         // Test all equality operators with typeof undefined
         console.log(typeof x !== 'undefined');
-        console.log(typeof x != 'undefined'); 
+        console.log(typeof x != 'undefined');
         console.log('undefined' !== typeof x);
         console.log('undefined' != typeof x);
-        
+
         console.log(typeof x === 'undefined');
         console.log(typeof x == 'undefined');
         console.log('undefined' === typeof x);
         console.log('undefined' == typeof x);
-        
+
         // These should not be optimized
         console.log(typeof x === 'string');
         console.log(x === 'undefined');
@@ -1133,6 +1133,96 @@ describe("bundler", () => {
       expect(normalizeBunSnapshot(file)).toMatchInlineSnapshot(
         `"console.log(typeof x<"u");console.log(typeof x<"u");console.log(typeof x<"u");console.log(typeof x<"u");console.log(typeof x>"u");console.log(typeof x>"u");console.log(typeof x>"u");console.log(typeof x>"u");console.log(typeof x==="string");console.log(x==="undefined");console.log(y==="undefined");console.log(typeof x==="undefinedx");"`,
       );
+    },
+  });
+
+  // Regression test for #21137
+  itBundled("minify/TypeofUndefinedInCommaOperator", {
+    files: {
+      "/entry.js": /* js */ `
+        function testFunc() {
+          return (typeof undefinedVar !== "undefined", false);
+        }
+
+        function testFunc2() {
+          return (typeof someVar === "undefined", true);
+        }
+
+        function testFunc3() {
+          return ((typeof a !== "undefined", 1), (typeof b === "undefined", 2));
+        }
+
+        const result = typeof window !== "undefined" ? (typeof document !== "undefined", true) : false;
+
+        console.log(testFunc());
+        console.log(testFunc2());
+        console.log(testFunc3());
+        console.log(result);
+      `,
+    },
+    minifySyntax: true,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // The output should NOT contain invalid syntax like ", !" or ", false" or ", true"
+      expect(code).not.toContain(", !");
+      expect(code).not.toContain(", false");
+      expect(code).not.toContain(", true");
+      expect(code).not.toContain(", 1");
+      expect(code).not.toContain(", 2");
+    },
+    run: {
+      stdout: "false\ntrue\n2\nfalse",
+    },
+  });
+
+  // Regression test for #21137 - typeof undefined optimization preserves valid syntax
+  itBundled("minify/TypeofUndefinedOptimizationPreservesValidSyntax", {
+    files: {
+      "/entry.js": /* js */ `
+        const a = typeof x !== "undefined";
+        const b = typeof y === "undefined";
+        const c = typeof z != "undefined";
+        const d = typeof w == "undefined";
+
+        const e = (typeof foo !== "undefined", 42);
+        const f = (typeof bar === "undefined", "test");
+
+        function check() {
+          return (typeof missing !== "undefined", null);
+        }
+
+        console.log(JSON.stringify({a, b, c, d, e, f, check: check()}));
+      `,
+    },
+    minifySyntax: true,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // Check that the optimization is applied (should contain < or > comparisons with "u")
+      expect(code).toContain('"u"');
+      // But should not have invalid comma syntax
+      expect(code).not.toMatch(/,\s*[!<>]/);
+      expect(code).not.toMatch(/,\s*"u"/);
+    },
+    run: {
+      stdout: '{"a":false,"b":true,"c":false,"d":true,"e":42,"f":"test","check":null}',
+    },
+  });
+
+  // Regression test for minifying new Array with conditional expression
+  itBundled("minify/NewArrayWithConditional", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(new Array(Math.random() > -1 ? 1 : 2));
+      `,
+    },
+    minifySyntax: true,
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toMatchInlineSnapshot(`
+        "console.log(Array(Math.random()>-1?1:2));
+        "
+      `);
     },
   });
 });

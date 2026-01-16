@@ -1,5 +1,5 @@
 // foo.test.ts
-import { describe, it, beforeAll } from "bun:test";
+import { beforeAll, describe, it } from "bun:test";
 
 describe("foo", () => {
   beforeAll(() => {

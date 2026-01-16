@@ -1,7 +1,21 @@
-/// S3 Download Streaming - Handles streaming GET requests for large objects.
-/// Supports ReadableStream interface for incremental data consumption.
-/// See: https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObject.html
 const log = bun.Output.scoped(.S3, .hidden);
+
+/// Streaming download handler for large S3 objects.
+/// See: https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObject.html
+///
+/// Uses HTTP response body streaming to avoid buffering entire object in memory.
+/// Data is delivered incrementally via callback as chunks arrive.
+///
+/// Thread safety:
+/// - httpCallback runs on HTTP thread (updates state atomically)
+/// - onResponse runs on main thread (delivers chunks to consumer)
+/// - mutex protects shared state between threads
+/// - State packed struct uses atomic u64 for lock-free state sharing
+///
+/// State machine (status_code field):
+/// - 0: Initial state, waiting for response
+/// - 200/204/206: Success (206 for range requests)
+/// - Other: Error (check request_error and response body)
 pub const S3HttpDownloadStreamingTask = struct {
     pub const new = bun.TrivialNew(@This());
 
@@ -38,6 +52,8 @@ pub const S3HttpDownloadStreamingTask = struct {
     range: ?[]const u8,
     proxy_url: []const u8,
 
+    /// Atomic packed state for thread-safe sharing between HTTP and main threads.
+    /// Packed into u64 for atomic load/store without locks.
     pub const State = packed struct(u64) {
         pub const AtomicType = std.atomic.Value(u64);
         status_code: u32 = 0,
@@ -71,6 +87,11 @@ pub const S3HttpDownloadStreamingTask = struct {
         bun.destroy(this);
     }
 
+    /// Deliver chunk to consumer callback. Called on main thread.
+    /// Handles three cases:
+    /// - Success with data: Pass chunk to callback
+    /// - Success without more data: Pass final chunk, signal completion
+    /// - Failure: Extract error from response body, pass to callback
     fn reportProgress(this: *@This(), state: State) void {
         const has_more = state.has_more;
         var err: ?S3Error = null;
@@ -190,7 +211,10 @@ pub const S3HttpDownloadStreamingTask = struct {
         return wait_until_done;
     }
 
-    /// this functions is only called from the http callback in the HTTPThread and returns true if we should enqueue another task
+    /// Process HTTP response chunk from HTTPThread.
+    /// Updates atomic state, accumulates response data.
+    /// Returns true if main thread callback should be enqueued.
+    /// Must be called while holding mutex.
     fn processHttpCallback(this: *@This(), async_http: *bun.http.AsyncHTTP, result: bun.http.HTTPClientResult) bool {
         // lets lock and unlock to be safe we know the state is not in the middle of a callback when locked
         this.mutex.lock();
@@ -227,7 +251,10 @@ pub const S3HttpDownloadStreamingTask = struct {
         }
         return false;
     }
-    /// this is the callback from the http.zig AsyncHTTP is always called from the HTTPThread
+
+    /// HTTP thread callback - entry point from AsyncHTTP.
+    /// Processes response chunk and conditionally enqueues main thread callback.
+    /// Thread: HTTP thread (not main thread)
     pub fn httpCallback(this: *@This(), async_http: *bun.http.AsyncHTTP, result: bun.http.HTTPClientResult) void {
         if (processHttpCallback(this, async_http, result)) {
             // we are always unlocked here and its safe to enqueue

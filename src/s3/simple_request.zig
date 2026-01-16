@@ -1,5 +1,14 @@
 /// S3 Simple Request Operations (HEAD, GET, PUT, DELETE for single objects)
 /// See: https://docs.aws.amazon.com/AmazonS3/latest/API/API_Operations_Amazon_Simple_Storage_Service.html
+/// Result of a HEAD request for object metadata.
+/// See: https://docs.aws.amazon.com/AmazonS3/latest/API/API_HeadObject.html
+///
+/// On success, contains:
+/// - size: Object size in bytes (from Content-Length header)
+/// - etag: Entity tag for cache validation (from ETag header)
+/// - lastModified: RFC 7231 timestamp (from Last-Modified header)
+/// - contentType: MIME type (from Content-Type header)
+/// - headers: Raw response headers (for extracting x-amz-meta-* metadata)
 pub const S3StatResult = union(enum) {
     success: struct {
         size: usize = 0,
@@ -18,6 +27,11 @@ pub const S3StatResult = union(enum) {
     /// failure error is not owned and need to be copied if used after this callback
     failure: S3Error,
 };
+
+/// Result of a GET request for object content.
+/// See: https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObject.html
+///
+/// On success, contains body (owned) and etag.
 pub const S3DownloadResult = union(enum) {
     success: struct {
         /// etag is not owned and need to be copied if used after this callback
@@ -29,11 +43,18 @@ pub const S3DownloadResult = union(enum) {
     /// failure error is not owned and need to be copied if used after this callback
     failure: S3Error,
 };
+
+/// Result of a PUT request for object upload.
+/// See: https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObject.html
 pub const S3UploadResult = union(enum) {
     success: void,
     /// failure error is not owned and need to be copied if used after this callback
     failure: S3Error,
 };
+
+/// Result of a DELETE request for object removal.
+/// See: https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteObject.html
+/// Note: S3 returns success even if object doesn't exist.
 pub const S3DeleteResult = union(enum) {
     success: void,
     not_found: S3Error,
@@ -62,6 +83,14 @@ pub const S3PartResult = union(enum) {
     failure: S3Error,
 };
 
+/// Manages async HTTP request lifecycle for S3 operations.
+/// Handles request signing, execution, response parsing, and error extraction.
+///
+/// Lifecycle:
+/// 1. Created by executeSimpleS3Request with signed headers
+/// 2. Queued to HTTP thread pool
+/// 3. httpCallback called from HTTP thread on completion
+/// 4. onResponse called on main thread to deliver result
 pub const S3HttpSimpleTask = struct {
     http: bun.http.AsyncHTTP,
     vm: *jsc.VirtualMachine,
@@ -369,6 +398,15 @@ pub const S3SimpleRequestOptions = struct {
     metadata: ?s3creds.MetadataMap = null,
 };
 
+/// Execute a signed S3 request asynchronously.
+///
+/// @param this: S3 credentials for request signing
+/// @param options: Request configuration (path, method, body, headers, etc.)
+/// @param callback: Result handler - one of stat/download/upload/delete/listObjects
+/// @param callback_context: User context passed through to callback
+///
+/// Signs the request using AWS Sig V4, then queues it to the HTTP thread pool.
+/// Results are delivered asynchronously via callback on the main thread.
 pub fn executeSimpleS3Request(
     this: *const S3Credentials,
     options: S3SimpleRequestOptions,

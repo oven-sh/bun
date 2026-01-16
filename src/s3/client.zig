@@ -26,6 +26,11 @@ pub const S3ListObjectsResult = S3SimpleRequest.S3ListObjectsResult;
 pub const S3ListObjectsOptions = @import("./list_objects.zig").S3ListObjectsOptions;
 pub const getListObjectsOptionsFromJS = S3ListObjects.getListObjectsOptionsFromJS;
 
+/// Get object metadata without downloading content (HEAD request).
+/// See: https://docs.aws.amazon.com/AmazonS3/latest/API/API_HeadObject.html
+///
+/// Returns: size, etag, lastModified, contentType, and raw headers for metadata extraction.
+/// Use this to check if object exists and get its properties before downloading.
 pub fn stat(
     this: *S3Credentials,
     path: []const u8,
@@ -43,6 +48,11 @@ pub fn stat(
     }, .{ .stat = callback }, callback_context);
 }
 
+/// Download entire object content (GET request).
+/// See: https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObject.html
+///
+/// Returns: body (owned - caller must free) and etag.
+/// For large objects, consider using readableStream() or downloadSlice() instead.
 pub fn download(
     this: *S3Credentials,
     path: []const u8,
@@ -60,6 +70,13 @@ pub fn download(
     }, .{ .download = callback }, callback_context);
 }
 
+/// Download partial object content using HTTP Range header.
+/// See: https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObject.html
+///
+/// @param offset: Start byte position (0-indexed)
+/// @param size: Number of bytes to download (null = to end of object)
+///
+/// Useful for: resumable downloads, parallel chunk downloads, seeking in large files.
 pub fn downloadSlice(
     this: *S3Credentials,
     path: []const u8,
@@ -92,6 +109,11 @@ pub fn downloadSlice(
     }, .{ .download = callback }, callback_context);
 }
 
+/// Remove object from bucket (DELETE request).
+/// See: https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteObject.html
+///
+/// Note: S3 returns success even if the object doesn't exist.
+/// For versioned buckets, this creates a delete marker.
 pub fn delete(
     this: *S3Credentials,
     path: []const u8,
@@ -109,6 +131,11 @@ pub fn delete(
     }, .{ .delete = callback }, callback_context);
 }
 
+/// List objects in bucket with optional filtering (ListObjectsV2).
+/// See: https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectsV2.html
+///
+/// Supports pagination via continuation_token, filtering by prefix,
+/// and grouping by delimiter for directory-like listings.
 pub fn listObjects(
     this: *S3Credentials,
     listOptions: S3ListObjectsOptions,
@@ -238,6 +265,11 @@ pub fn listObjects(
     bun.http.http_thread.schedule(batch);
 }
 
+/// Upload object content using single PUT request.
+/// See: https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObject.html
+///
+/// Limit: 5GB maximum. For larger objects, use writableStream() or uploadStream()
+/// which automatically use multipart upload.
 pub fn upload(
     this: *S3Credentials,
     path: []const u8,
@@ -267,7 +299,12 @@ pub fn upload(
         .metadata = metadata,
     }, .{ .upload = callback }, callback_context);
 }
-/// returns a writable stream that writes to the s3 path
+
+/// Create a WritableStream for streaming upload to S3.
+/// Automatically uses multipart upload for content larger than partSize.
+///
+/// Returns: Bun WritableStream that can be piped to or written directly.
+/// The upload completes when the stream is closed.
 pub fn writableStream(
     this: *S3Credentials,
     path: []const u8,
@@ -454,7 +491,11 @@ pub const S3UploadStreamWrapper = struct {
     }
 };
 
-/// consumes the readable stream and upload to s3
+/// Consume a ReadableStream and upload its content to S3.
+/// Wraps multipart upload with automatic stream consumption.
+///
+/// Returns: Promise that resolves when upload completes.
+/// For creating the stream yourself, use writableStream() instead.
 pub fn uploadStream(
     this: *S3Credentials,
     path: []const u8,
@@ -538,7 +579,10 @@ pub fn uploadStream(
     return ctx.endPromise.value();
 }
 
-/// download a file from s3 chunk by chunk aka streaming (used on readableStream)
+/// Stream object content chunk by chunk (low-level API).
+/// Delivers data incrementally via callback without buffering entire object.
+///
+/// For a high-level API, use readableStream() which returns a standard ReadableStream.
 pub fn downloadStream(
     this: *S3Credentials,
     path: []const u8,
@@ -633,7 +677,11 @@ pub fn downloadStream(
     bun.http.http_thread.schedule(batch);
 }
 
-/// returns a readable stream that reads from the s3 path
+/// Create a ReadableStream for streaming download from S3.
+/// See: https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObject.html
+///
+/// Returns: Bun ReadableStream that can be consumed incrementally.
+/// Useful for large objects to avoid buffering entire content in memory.
 pub fn readableStream(
     this: *S3Credentials,
     path: []const u8,

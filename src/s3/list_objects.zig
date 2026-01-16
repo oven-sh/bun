@@ -1,5 +1,16 @@
 /// S3 ListObjectsV2 API implementation.
 /// See: https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectsV2.html
+/// Parameters for the ListObjectsV2 API.
+/// See: https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectsV2.html
+///
+/// All parameters are optional:
+/// - continuation_token: Resume pagination from previous response's nextContinuationToken
+/// - delimiter: Group keys by common prefix (e.g., "/" for directory-like listing)
+/// - encoding_type: URL-encode keys in response (always "url" if set)
+/// - fetch_owner: Include owner info in response (increases latency)
+/// - max_keys: Maximum objects to return per request (default/max: 1000)
+/// - prefix: Filter to keys starting with this prefix
+/// - start_after: Start listing after this key (alternative to continuation_token)
 pub const S3ListObjectsOptions = struct {
     continuation_token: ?[]const u8,
     delimiter: ?[]const u8,
@@ -34,6 +45,8 @@ const ObjectRestoreStatus = struct {
     restore_expiry_date: ?[]const u8,
 };
 
+/// Represents a single object in the ListObjectsV2 response.
+/// Maps to <Contents> element in AWS XML response.
 const S3ListObjectsContents = struct {
     key: []const u8,
     etag: ?bun.ptr.OwnedIn([]const u8, bun.allocators.MaybeOwned(bun.DefaultAllocator)),
@@ -50,6 +63,13 @@ const S3ListObjectsContents = struct {
     }
 };
 
+/// Parsed result from ListObjectsV2 API response.
+/// AWS returns XML; this struct holds the parsed data.
+///
+/// Key fields:
+/// - is_truncated: True if more results available (use nextContinuationToken)
+/// - contents: List of objects matching the query
+/// - common_prefixes: Grouped prefixes when delimiter is used
 pub const S3ListObjectsV2Result = struct {
     name: ?[]const u8,
     prefix: ?[]const u8,
@@ -74,6 +94,11 @@ pub const S3ListObjectsV2Result = struct {
         }
     }
 
+    /// Convert parsed result to JavaScript object.
+    /// Maps AWS XML field names to JS camelCase conventions:
+    /// - NextContinuationToken -> nextContinuationToken
+    /// - IsTruncated -> isTruncated
+    /// - KeyCount -> keyCount, etc.
     pub fn toJS(this: *const @This(), globalObject: *JSGlobalObject) bun.JSError!JSValue {
         const jsResult = JSValue.createEmptyObject(globalObject, 0);
 
@@ -182,6 +207,16 @@ pub const S3ListObjectsV2Result = struct {
     }
 };
 
+/// Parse XML response from S3 ListObjectsV2 API.
+///
+/// AWS S3 returns XML (not JSON). This function manually parses the
+/// <ListBucketResult> structure, extracting:
+/// - Bucket metadata: Name, Prefix, Delimiter, MaxKeys, KeyCount
+/// - Pagination: IsTruncated, ContinuationToken, NextContinuationToken
+/// - Objects: Contents[] with Key, ETag, Size, LastModified, StorageClass
+/// - Grouped prefixes: CommonPrefixes[] when delimiter is used
+///
+/// Note: ETag values have XML entity encoding (&quot;) which is decoded.
 pub fn parseS3ListObjectsResult(xml: []const u8) !S3ListObjectsV2Result {
     var result: S3ListObjectsV2Result = .{
         .contents = null,
@@ -501,6 +536,9 @@ pub fn parseS3ListObjectsResult(xml: []const u8) !S3ListObjectsV2Result {
     return result;
 }
 
+/// Parse ListObjectsV2 options from JavaScript object.
+/// Extracts: continuationToken, delimiter, encodingType, fetchOwner,
+/// maxKeys, prefix, startAfter.
 pub fn getListObjectsOptionsFromJS(globalThis: *jsc.JSGlobalObject, listOptions: JSValue) !S3ListObjectsOptions {
     var listObjectsOptions: S3ListObjectsOptions = .{
         .continuation_token = null,

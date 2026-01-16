@@ -608,4 +608,28 @@ describe("bundler", () => {
       stdout: "42 true 42",
     },
   });
+  // Test that CJS modules with dynamic imports to other CJS entry points work correctly
+  // when code splitting causes the dynamically imported module to be in a separate chunk.
+  // The dynamic import should properly unwrap the default export using __toESM.
+  // Regression test for: dynamic import of CJS chunk returns { default: { __esModule, ... } }
+  // and needs .then((m)=>__toESM(m.default)) to unwrap correctly.
+  // Note: __esModule is required because bun optimizes simple CJS to ESM otherwise.
+  itBundled("splitting/CJSDynamicImportOfCJSChunk", {
+    files: {
+      "/main.js": /* js */ `
+        import("./impl.js").then(mod => console.log(mod.foo()));
+      `,
+      "/impl.js": /* js */ `
+        Object.defineProperty(exports, "__esModule", { value: true });
+        exports.foo = () => "success";
+      `,
+    },
+    entryPoints: ["/main.js", "/impl.js"],
+    splitting: true,
+    outdir: "/out",
+    run: {
+      file: "/out/main.js",
+      stdout: "success",
+    },
+  });
 });

@@ -1,3 +1,7 @@
+/// S3 Client - Main entry point for S3 operations.
+/// Implements AWS S3 REST API operations: stat, download, upload, delete, listObjects.
+/// Uses AWS Signature Version 4 for request authentication.
+/// See: https://docs.aws.amazon.com/AmazonS3/latest/API/Welcome.html
 pub const ACL = @import("./acl.zig").ACL;
 pub const S3HttpDownloadStreamingTask = @import("./download_stream.zig").S3HttpDownloadStreamingTask;
 pub const MultiPartUploadOptions = @import("./multipart_options.zig").MultiPartUploadOptions;

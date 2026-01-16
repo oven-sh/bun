@@ -1,3 +1,5 @@
+/// S3 ListObjectsV2 API implementation.
+/// See: https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectsV2.html
 pub const S3ListObjectsOptions = struct {
     continuation_token: ?[]const u8,
     delimiter: ?[]const u8,

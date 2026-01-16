@@ -1,3 +1,12 @@
+/// S3 Multipart Upload Implementation
+/// See: https://docs.aws.amazon.com/AmazonS3/latest/userguide/mpuoverview.html
+///
+/// Key constraints from AWS:
+/// - Minimum part size: 5 MiB (except last part)
+/// - Maximum part size: 5 GiB
+/// - Maximum parts: 10,000
+/// - Maximum object size: 5 TiB
+///
 // When we start the request we will buffer data until partSize is reached or the last chunk is received.
 // If the buffer is smaller than partSize, it will be sent as a single request. Otherwise, a multipart upload will be initiated.
 // If we send a single request it will retry until the maximum retry count is reached. The single request do not increase the reference count of MultiPartUpload, as they are the final step.

@@ -1,3 +1,5 @@
+/// S3 Simple Request Operations (HEAD, GET, PUT, DELETE for single objects)
+/// See: https://docs.aws.amazon.com/AmazonS3/latest/API/API_Operations_Amazon_Simple_Storage_Service.html
 pub const S3StatResult = union(enum) {
     success: struct {
         size: usize = 0,

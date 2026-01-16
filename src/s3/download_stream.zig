@@ -1,3 +1,6 @@
+/// S3 Download Streaming - Handles streaming GET requests for large objects.
+/// Supports ReadableStream interface for incremental data consumption.
+/// See: https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObject.html
 const log = bun.Output.scoped(.S3, .hidden);
 pub const S3HttpDownloadStreamingTask = struct {
     pub const new = bun.TrivialNew(@This());

@@ -18,6 +18,18 @@ public:
     /*-- BUN --*/
     std::unique_ptr<IsoSubspace> m_subspaceForBunClassConstructor;
     std::unique_ptr<IsoSubspace> m_subspaceForBufferList;
+
+    /*-- GIT --*/
+    std::unique_ptr<IsoSubspace> m_subspaceForJSGitRepository;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSGitCommit;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSGitBranch;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSGitRemote;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSGitConfig;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSGitIndex;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSGitDiff;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSGitBlob;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSGitWorktree;
+
     std::unique_ptr<IsoSubspace> m_subspaceForFFIFunction;
     std::unique_ptr<IsoSubspace> m_subspaceForWrappingFunction;
     std::unique_ptr<IsoSubspace> m_subspaceForNapiClass;

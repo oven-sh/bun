@@ -314,6 +314,16 @@ public:
 
     Structure* JSSQLStatementStructure() const { return m_JSSQLStatementStructure.getInitializedOnMainThread(this); }
 
+    Structure* JSGitRepositoryStructure() const { return m_JSGitRepositoryStructure.getInitializedOnMainThread(this); }
+    Structure* JSGitCommitStructure() const { return m_JSGitCommitStructure.getInitializedOnMainThread(this); }
+    Structure* JSGitBranchStructure() const { return m_JSGitBranchStructure.getInitializedOnMainThread(this); }
+    Structure* JSGitRemoteStructure() const { return m_JSGitRemoteStructure.getInitializedOnMainThread(this); }
+    Structure* JSGitConfigStructure() const { return m_JSGitConfigStructure.getInitializedOnMainThread(this); }
+    Structure* JSGitIndexStructure() const { return m_JSGitIndexStructure.getInitializedOnMainThread(this); }
+    Structure* JSGitDiffStructure() const { return m_JSGitDiffStructure.getInitializedOnMainThread(this); }
+    Structure* JSGitBlobStructure() const { return m_JSGitBlobStructure.getInitializedOnMainThread(this); }
+    Structure* JSGitWorktreeStructure() const { return m_JSGitWorktreeStructure.getInitializedOnMainThread(this); }
+
     v8::shim::GlobalInternals* V8GlobalInternals() const { return m_V8GlobalInternals.getInitializedOnMainThread(this); }
 
     Bun::BakeAdditionsToGlobalObject& bakeAdditions() { return m_bakeAdditions; }
@@ -615,6 +625,17 @@ public:
     V(private, LazyPropertyOfGlobalObject<Structure>, m_NapiTypeTagStructure)                                \
                                                                                                              \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_JSSQLStatementStructure)                             \
+                                                                                                             \
+    V(private, LazyPropertyOfGlobalObject<Structure>, m_JSGitRepositoryStructure)                            \
+    V(private, LazyPropertyOfGlobalObject<Structure>, m_JSGitCommitStructure)                                \
+    V(private, LazyPropertyOfGlobalObject<Structure>, m_JSGitBranchStructure)                                \
+    V(private, LazyPropertyOfGlobalObject<Structure>, m_JSGitRemoteStructure)                                \
+    V(private, LazyPropertyOfGlobalObject<Structure>, m_JSGitConfigStructure)                                \
+    V(private, LazyPropertyOfGlobalObject<Structure>, m_JSGitIndexStructure)                                 \
+    V(private, LazyPropertyOfGlobalObject<Structure>, m_JSGitDiffStructure)                                  \
+    V(private, LazyPropertyOfGlobalObject<Structure>, m_JSGitBlobStructure)                                  \
+    V(private, LazyPropertyOfGlobalObject<Structure>, m_JSGitWorktreeStructure)                              \
+                                                                                                             \
     V(private, LazyPropertyOfGlobalObject<v8::shim::GlobalInternals>, m_V8GlobalInternals)                   \
                                                                                                              \
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_bunObject)                                             \

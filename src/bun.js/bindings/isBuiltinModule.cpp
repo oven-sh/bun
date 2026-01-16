@@ -32,6 +32,7 @@ static constexpr ASCIILiteral builtinModuleNamesSortedLength[] = {
     "timers"_s,
     "undici"_s,
     "bun:ffi"_s,
+    "bun:git"_s,
     "bun:jsc"_s,
     "cluster"_s,
     "console"_s,

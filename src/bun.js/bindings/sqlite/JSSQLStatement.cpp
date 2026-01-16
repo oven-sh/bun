@@ -1127,8 +1127,11 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSetCustomSQLite, (JSC::JSGlobalObject * l
         return {};
     }
 
-    sqlite3_lib_path = sqliteStrValue.toWTFString(lexicalGlobalObject).utf8().data();
+    // Use a static CString to keep the string alive for the lifetime of the process
+    static CString sqlite3_lib_path_storage;
+    sqlite3_lib_path_storage = sqliteStrValue.toWTFString(lexicalGlobalObject).utf8();
     RETURN_IF_EXCEPTION(scope, {});
+    sqlite3_lib_path = sqlite3_lib_path_storage.data();
 
     if (lazyLoadSQLite() == -1) {
         sqlite3_handle = nullptr;

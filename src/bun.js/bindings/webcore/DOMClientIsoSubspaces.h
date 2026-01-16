@@ -23,12 +23,7 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSGitRepository;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSGitCommit;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSGitBranch;
-    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSGitRemote;
-    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSGitConfig;
-    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSGitIndex;
-    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSGitDiff;
-    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSGitBlob;
-    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSGitWorktree;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSGitSignature;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForFFIFunction;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWrappingFunction;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNapiClass;
@@ -84,10 +79,6 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSX509Certificate;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSNodePerformanceHooksHistogram;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWasmStreamingCompiler;
-    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSGitRepository;
-    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSGitCommit;
-    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSGitBranch;
-    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSGitSignature;
 
 #include "ZigGeneratedClasses+DOMClientIsoSubspaces.h"
     /* --- bun --- */

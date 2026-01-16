@@ -63,7 +63,6 @@ set(BUN_DEPENDENCIES
   LibArchive # must be loaded after zlib
   HdrHistogram # must be loaded after zlib
   Zstd
-  LibGit2
 )
 
 include(CloneZstd)

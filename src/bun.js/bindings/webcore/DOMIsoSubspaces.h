@@ -23,12 +23,7 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForJSGitRepository;
     std::unique_ptr<IsoSubspace> m_subspaceForJSGitCommit;
     std::unique_ptr<IsoSubspace> m_subspaceForJSGitBranch;
-    std::unique_ptr<IsoSubspace> m_subspaceForJSGitRemote;
-    std::unique_ptr<IsoSubspace> m_subspaceForJSGitConfig;
-    std::unique_ptr<IsoSubspace> m_subspaceForJSGitIndex;
-    std::unique_ptr<IsoSubspace> m_subspaceForJSGitDiff;
-    std::unique_ptr<IsoSubspace> m_subspaceForJSGitBlob;
-    std::unique_ptr<IsoSubspace> m_subspaceForJSGitWorktree;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSGitSignature;
 
     std::unique_ptr<IsoSubspace> m_subspaceForFFIFunction;
     std::unique_ptr<IsoSubspace> m_subspaceForWrappingFunction;
@@ -82,10 +77,6 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForJSX509Certificate;
     std::unique_ptr<IsoSubspace> m_subspaceForJSNodePerformanceHooksHistogram;
     std::unique_ptr<IsoSubspace> m_subspaceForWasmStreamingCompiler;
-    std::unique_ptr<IsoSubspace> m_subspaceForJSGitRepository;
-    std::unique_ptr<IsoSubspace> m_subspaceForJSGitCommit;
-    std::unique_ptr<IsoSubspace> m_subspaceForJSGitBranch;
-    std::unique_ptr<IsoSubspace> m_subspaceForJSGitSignature;
 #include "ZigGeneratedClasses+DOMIsoSubspaces.h"
     /*-- BUN --*/
 

@@ -1,42 +1,25 @@
-register_repository(
-  NAME
-    libgit2
-  REPOSITORY
-    libgit2/libgit2
-  TAG
-    v1.9.0
-)
-
-set(LIBGIT2_CMAKE_ARGS
-  -DBUILD_SHARED_LIBS=OFF
-  -DBUILD_TESTS=OFF
-  -DBUILD_CLI=OFF
-  -DUSE_SSH=OFF
-  -DUSE_HTTPS=OFF
-  -DUSE_BUNDLED_ZLIB=OFF
-  -DUSE_ICONV=OFF
-  -DREGEX_BACKEND=builtin
-  -DCMAKE_POSITION_INDEPENDENT_CODE=ON
-  -DCMAKE_INSTALL_LIBDIR=lib
-)
-
-if(WIN32)
-  list(APPEND LIBGIT2_CMAKE_ARGS
-    -DWIN32_LEAKCHECK=OFF
-  )
-endif()
-
 register_cmake_command(
   TARGET
     libgit2
   TARGETS
-    libgit2
-  ARGS
-    ${LIBGIT2_CMAKE_ARGS}
+    libgit2package
+  CWD
+    ${CWD}/vendor/libgit2
   LIB_PATH
     .
   LIBRARIES
     git2
   INCLUDES
     include
+  CMAKE_ARGS
+    -DBUILD_SHARED_LIBS=OFF
+    -DBUILD_TESTS=OFF
+    -DBUILD_CLI=OFF
+    -DUSE_SSH=OFF
+    -DUSE_HTTPS=OFF
+    -DUSE_SHA1=Builtin
+    -DUSE_SHA256=Builtin
+    -DUSE_BUNDLED_ZLIB=ON
+    -DREGEX_BACKEND=builtin
+    -DUSE_HTTP_PARSER=builtin
 )

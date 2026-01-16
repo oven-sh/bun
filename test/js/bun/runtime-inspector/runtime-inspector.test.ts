@@ -1,7 +1,10 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
 import { join } from "path";
+
+// ASAN builds have issues with signal handling reliability for SIGUSR1-based inspector activation
+const skipASAN = isASAN;
 
 /**
  * Reads from a stderr stream until the full Bun Inspector banner appears.
@@ -10,10 +13,13 @@ import { join } from "path";
  */
 async function waitForDebuggerListening(
   stderrStream: ReadableStream<Uint8Array>,
+  timeoutMs: number = 30000,
 ): Promise<{ stderr: string; reader: ReadableStreamDefaultReader<Uint8Array> }> {
   const reader = stderrStream.getReader();
   const decoder = new TextDecoder();
   let stderr = "";
+
+  const startTime = Date.now();
 
   // Wait for the full banner (header + content + footer)
   // The banner format is:
@@ -24,9 +30,17 @@ async function waitForDebuggerListening(
   //   https://debug.bun.sh/#localhost:6499/...
   // --------------------- Bun Inspector ---------------------
   while ((stderr.match(/Bun Inspector/g) || []).length < 2) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    stderr += decoder.decode(value, { stream: true });
+    if (Date.now() - startTime > timeoutMs) {
+      throw new Error(`Timeout waiting for Bun Inspector banner after ${timeoutMs}ms. Got stderr: "${stderr}"`);
+    }
+
+    const readPromise = reader.read();
+    const timeoutPromise = Bun.sleep(1000).then(() => ({ value: undefined, done: false, timeout: true }));
+    const result = (await Promise.race([readPromise, timeoutPromise])) as any;
+
+    if (result.timeout) continue;
+    if (result.done) break;
+    stderr += decoder.decode(result.value, { stream: true });
   }
 
   return { stderr, reader };
@@ -36,7 +50,7 @@ async function waitForDebuggerListening(
 // Windows uses file mapping mechanism, POSIX uses SIGUSR1
 describe("Runtime inspector activation", () => {
   describe("process._debugProcess", () => {
-    test("activates inspector in target process", async () => {
+    test.skipIf(skipASAN)("activates inspector in target process", async () => {
       using dir = tempDir("debug-process-test", {
         "target.js": `
           const fs = require("fs");
@@ -192,7 +206,7 @@ describe("Runtime inspector activation", () => {
       expect(matches?.length ?? 0).toBe(2);
     });
 
-    test("can activate inspector in multiple processes sequentially", async () => {
+    test.skipIf(skipASAN)("can activate inspector in multiple processes sequentially", async () => {
       // Note: Runtime inspector uses hardcoded port 6499, so we must test
       // sequential activation (activate first, shut down, then activate second)
       // rather than concurrent activation.

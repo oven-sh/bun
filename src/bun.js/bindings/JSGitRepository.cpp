@@ -5,6 +5,7 @@
 #include "JavaScriptCore/ObjectConstructor.h"
 #include "wtf/text/WTFString.h"
 #include "helpers.h"
+#include "JSDOMExceptionHandling.h"
 #include "BunClientData.h"
 #include <git2.h>
 
@@ -79,7 +80,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsGitRepositoryGetter_path, (JSGlobalObject* globalObje
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* thisObject = jsDynamicCast<JSGitRepository*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) {
         throwThisTypeError(*globalObject, scope, "Repository"_s, "path"_s);
         return {};
     }
@@ -98,7 +99,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsGitRepositoryGetter_gitDir, (JSGlobalObject* globalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* thisObject = jsDynamicCast<JSGitRepository*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) {
         throwThisTypeError(*globalObject, scope, "Repository"_s, "gitDir"_s);
         return {};
     }
@@ -114,7 +115,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsGitRepositoryGetter_isBare, (JSGlobalObject* globalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* thisObject = jsDynamicCast<JSGitRepository*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) {
         throwThisTypeError(*globalObject, scope, "Repository"_s, "isBare"_s);
         return {};
     }
@@ -129,7 +130,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsGitRepositoryGetter_isClean, (JSGlobalObject* globalO
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* thisObject = jsDynamicCast<JSGitRepository*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) {
         throwThisTypeError(*globalObject, scope, "Repository"_s, "isClean"_s);
         return {};
     }
@@ -159,7 +160,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsGitRepositoryGetter_head, (JSGlobalObject* lexicalGlo
     auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
 
     auto* thisObject = jsDynamicCast<JSGitRepository*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) {
         throwThisTypeError(*lexicalGlobalObject, scope, "Repository"_s, "head"_s);
         return {};
     }
@@ -196,7 +197,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsGitRepositoryGetter_branch, (JSGlobalObject* lexicalG
     auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
 
     auto* thisObject = jsDynamicCast<JSGitRepository*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) {
         throwThisTypeError(*lexicalGlobalObject, scope, "Repository"_s, "branch"_s);
         return {};
     }
@@ -228,7 +229,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGitRepositoryProtoFunc_getCommit, (JSGlobalObject* le
     auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
 
     auto* thisObject = jsDynamicCast<JSGitRepository*>(callFrame->thisValue());
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) {
         throwThisTypeError(*lexicalGlobalObject, scope, "Repository"_s, "getCommit"_s);
         return {};
     }
@@ -271,7 +272,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGitRepositoryProtoFunc_status, (JSGlobalObject* globa
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* thisObject = jsDynamicCast<JSGitRepository*>(callFrame->thisValue());
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) {
         throwThisTypeError(*globalObject, scope, "Repository"_s, "status"_s);
         return {};
     }
@@ -365,7 +366,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGitRepositoryProtoFunc_add, (JSGlobalObject* globalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* thisObject = jsDynamicCast<JSGitRepository*>(callFrame->thisValue());
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) {
         throwThisTypeError(*globalObject, scope, "Repository"_s, "add"_s);
         return {};
     }
@@ -429,7 +430,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGitRepositoryProtoFunc_commit, (JSGlobalObject* lexic
     auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
 
     auto* thisObject = jsDynamicCast<JSGitRepository*>(callFrame->thisValue());
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) {
         throwThisTypeError(*lexicalGlobalObject, scope, "Repository"_s, "commit"_s);
         return {};
     }
@@ -572,64 +573,6 @@ void JSGitRepositoryPrototype::finishCreation(VM& vm, JSGlobalObject* globalObje
 
 const ClassInfo JSGitRepositoryConstructor::s_info = { "Repository"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSGitRepositoryConstructor) };
 
-JSGitRepositoryConstructor* JSGitRepositoryConstructor::create(VM& vm, JSGlobalObject* globalObject, Structure* structure, JSGitRepositoryPrototype* prototype)
-{
-    JSGitRepositoryConstructor* constructor = new (NotNull, allocateCell<JSGitRepositoryConstructor>(vm)) JSGitRepositoryConstructor(vm, structure);
-    constructor->finishCreation(vm, globalObject, prototype);
-    return constructor;
-}
-
-void JSGitRepositoryConstructor::finishCreation(VM& vm, JSGlobalObject* globalObject, JSGitRepositoryPrototype* prototype)
-{
-    Base::finishCreation(vm, 1, "Repository"_s, PropertyAdditionMode::WithoutStructureTransition);
-    putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
-}
-
-// Constructor: new Repository(path?)
-JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSGitRepositoryConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
-{
-    VM& vm = lexicalGlobalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
-
-    initializeLibgit2();
-
-    WTF::String pathStr = "."_s;
-    if (callFrame->argumentCount() > 0 && !callFrame->argument(0).isUndefinedOrNull()) {
-        pathStr = callFrame->argument(0).toWTFString(lexicalGlobalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-    }
-
-    // Discover the repository
-    git_buf repoPath = GIT_BUF_INIT;
-    int error = git_repository_discover(&repoPath, pathStr.utf8().data(), 0, nullptr);
-    if (error < 0) {
-        git_buf_dispose(&repoPath);
-        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Not a git repository"_s));
-        return {};
-    }
-
-    git_repository* repo = nullptr;
-    error = git_repository_open(&repo, repoPath.ptr);
-    git_buf_dispose(&repoPath);
-
-    if (error < 0) {
-        throwGitError(lexicalGlobalObject, scope, error);
-        return {};
-    }
-
-    auto* structure = globalObject->JSGitRepositoryStructure();
-    return JSValue::encode(JSGitRepository::create(vm, lexicalGlobalObject, structure, repo));
-}
-
-JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSGitRepositoryConstructor::call(JSGlobalObject* globalObject, CallFrame*)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    throwException(globalObject, scope, createTypeError(globalObject, "Repository constructor cannot be called as a function"_s));
-    return {};
-}
-
 // Static method: Repository.find(startPath?) -> Repository | null
 JSC_DEFINE_HOST_FUNCTION(jsGitRepositoryConstructorFunc_find, (JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame))
 {
@@ -707,24 +650,63 @@ static const HashTableValue JSGitRepositoryConstructorTableValues[] = {
     { "init"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsGitRepositoryConstructorFunc_init, 1 } },
 };
 
-void JSGitRepositoryConstructor::initializeProperties(VM& vm, JSGlobalObject* globalObject, JSGitRepositoryPrototype* prototype)
+JSGitRepositoryConstructor* JSGitRepositoryConstructor::create(VM& vm, JSGlobalObject* globalObject, Structure* structure, JSGitRepositoryPrototype* prototype)
 {
+    JSGitRepositoryConstructor* constructor = new (NotNull, allocateCell<JSGitRepositoryConstructor>(vm)) JSGitRepositoryConstructor(vm, structure);
+    constructor->finishCreation(vm, globalObject, prototype);
+    return constructor;
+}
+
+void JSGitRepositoryConstructor::finishCreation(VM& vm, JSGlobalObject* globalObject, JSGitRepositoryPrototype* prototype)
+{
+    Base::finishCreation(vm, 1, "Repository"_s, PropertyAdditionMode::WithoutStructureTransition);
+    putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     reifyStaticProperties(vm, info(), JSGitRepositoryConstructorTableValues, *this);
 }
 
-// ============================================================================
-// Class Structure Initialization
-// ============================================================================
-
-void initJSGitRepositoryClassStructure(LazyClassStructure::Initializer& init)
+// Constructor: new Repository(path?)
+JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSGitRepositoryConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
-    auto* prototype = JSGitRepositoryPrototype::create(init.vm, init.global, JSGitRepositoryPrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
-    auto* structure = JSGitRepository::createStructure(init.vm, init.global, prototype);
-    auto* constructor = JSGitRepositoryConstructor::create(init.vm, init.global, JSGitRepositoryConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
-    constructor->initializeProperties(init.vm, init.global, prototype);
-    init.setPrototype(prototype);
-    init.setStructure(structure);
-    init.setConstructor(constructor);
+    VM& vm = lexicalGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+
+    initializeLibgit2();
+
+    WTF::String pathStr = "."_s;
+    if (callFrame->argumentCount() > 0 && !callFrame->argument(0).isUndefinedOrNull()) {
+        pathStr = callFrame->argument(0).toWTFString(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    // Discover the repository
+    git_buf repoPath = GIT_BUF_INIT;
+    int error = git_repository_discover(&repoPath, pathStr.utf8().data(), 0, nullptr);
+    if (error < 0) {
+        git_buf_dispose(&repoPath);
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Not a git repository"_s));
+        return {};
+    }
+
+    git_repository* repo = nullptr;
+    error = git_repository_open(&repo, repoPath.ptr);
+    git_buf_dispose(&repoPath);
+
+    if (error < 0) {
+        throwGitError(lexicalGlobalObject, scope, error);
+        return {};
+    }
+
+    auto* structure = globalObject->JSGitRepositoryStructure();
+    return JSValue::encode(JSGitRepository::create(vm, lexicalGlobalObject, structure, repo));
+}
+
+JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSGitRepositoryConstructor::call(JSGlobalObject* globalObject, CallFrame*)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    throwException(globalObject, scope, createTypeError(globalObject, "Repository constructor cannot be called as a function"_s));
+    return {};
 }
 
 } // namespace Bun

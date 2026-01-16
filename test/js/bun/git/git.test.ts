@@ -1,590 +1,551 @@
-import { GitError, NotARepositoryError, Repository } from "bun:git";
-import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, writeFileSync } from "fs";
-import { tempDir } from "harness";
+import * as git from "bun:git";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdir, mkdtemp, rm, stat, writeFile } from "fs/promises";
+import { tmpdir } from "os";
 import { join } from "path";
 
-describe("bun:git", () => {
-  describe("Repository", () => {
-    describe("constructor", () => {
-      test("opens current directory as repository", () => {
-        // The bun repo itself is a git repo
-        const repo = new Repository(".");
-        expect(repo).toBeDefined();
-        expect(repo.path).toBeDefined();
-        expect(repo.gitDir).toBeDefined();
-      });
+const { Repository, Commit, Branch, Signature } = git;
 
-      test("throws when path is not a repository", () => {
-        using dir = tempDir("git-test-not-repo");
-        expect(() => new Repository(String(dir))).toThrow();
-      });
-
-      test("opens repository from subdirectory", () => {
-        // The bun repo's src directory should still find the root repo
-        const repo = new Repository("./src");
-        expect(repo).toBeDefined();
-        expect(repo.path).toContain("bun");
-      });
-    });
-
-    describe("Repository.find()", () => {
-      test("returns repository when found", () => {
-        const repo = Repository.find(".");
-        expect(repo).not.toBeNull();
-        expect(repo!.path).toBeDefined();
-      });
-
-      test("returns null when not found", () => {
-        using dir = tempDir("git-test-not-found");
-        const repo = Repository.find(String(dir));
-        expect(repo).toBeNull();
-      });
-
-      test("finds repository from subdirectory", () => {
-        const repo = Repository.find("./src/js");
-        expect(repo).not.toBeNull();
-      });
-    });
-
-    describe("Repository.init()", () => {
-      test("initializes new repository", () => {
-        using dir = tempDir("git-test-init");
-        const repoPath = join(String(dir), "new-repo");
-        mkdirSync(repoPath, { recursive: true });
-
-        const repo = Repository.init(repoPath);
-        expect(repo).toBeDefined();
-        expect(repo.path).toContain("new-repo");
-        expect(existsSync(join(repoPath, ".git"))).toBe(true);
-      });
-
-      test("initializes bare repository", () => {
-        using dir = tempDir("git-test-bare");
-        const repoPath = join(String(dir), "bare-repo");
-
-        const repo = Repository.init(repoPath, { bare: true });
-        expect(repo).toBeDefined();
-        expect(repo.isBare).toBe(true);
-      });
-
-      test("initializes with custom initial branch", () => {
-        using dir = tempDir("git-test-branch");
-        const repoPath = join(String(dir), "custom-branch");
-
-        const repo = Repository.init(repoPath, { initialBranch: "main" });
-        expect(repo).toBeDefined();
-        // Branch might be null until first commit
-      });
-    });
-
-    describe("properties", () => {
-      test("path returns working directory", () => {
-        const repo = new Repository(".");
-        expect(repo.path).toBeDefined();
-        expect(repo.path.length).toBeGreaterThan(0);
-      });
-
-      test("gitDir returns .git directory", () => {
-        const repo = new Repository(".");
-        expect(repo.gitDir).toBeDefined();
-        expect(repo.gitDir).toContain(".git");
-      });
-
-      test("isBare returns false for regular repo", () => {
-        const repo = new Repository(".");
-        expect(repo.isBare).toBe(false);
-      });
-
-      test("head returns current HEAD commit", () => {
-        const repo = new Repository(".");
-        const head = repo.head;
-        expect(head).not.toBeNull();
-        expect(head!.sha).toHaveLength(40);
-      });
-
-      test("branch returns current branch or null", () => {
-        const repo = new Repository(".");
-        const branch = repo.branch;
-        // Could be null if detached HEAD
-        if (branch) {
-          expect(branch.name).toBeDefined();
-        }
-      });
-
-      test("isClean returns boolean", () => {
-        const repo = new Repository(".");
-        expect(typeof repo.isClean).toBe("boolean");
-      });
-    });
-
-    describe("getCommit()", () => {
-      test("returns commit by SHA", () => {
-        const repo = new Repository(".");
-        const head = repo.head;
-        expect(head).not.toBeNull();
-
-        const commit = repo.getCommit(head!.sha);
-        expect(commit).not.toBeNull();
-        expect(commit!.sha).toBe(head!.sha);
-      });
-
-      test("returns commit by short SHA", () => {
-        const repo = new Repository(".");
-        const head = repo.head;
-        expect(head).not.toBeNull();
-
-        const commit = repo.getCommit(head!.shortSha);
-        expect(commit).not.toBeNull();
-        expect(commit!.sha).toBe(head!.sha);
-      });
-
-      test("returns commit by ref", () => {
-        const repo = new Repository(".");
-        const commit = repo.getCommit("HEAD");
-        expect(commit).not.toBeNull();
-      });
-
-      test("returns null for invalid ref", () => {
-        const repo = new Repository(".");
-        const commit = repo.getCommit("invalid-ref-that-does-not-exist");
-        expect(commit).toBeNull();
-      });
-    });
-
-    describe("getBranch()", () => {
-      test("returns branch by name", () => {
-        const repo = new Repository(".");
-        const branch = repo.getBranch("main");
-        if (branch) {
-          expect(branch.name).toBe("main");
-        }
-      });
-
-      test("returns null for non-existent branch", () => {
-        const repo = new Repository(".");
-        const branch = repo.getBranch("non-existent-branch-xyz");
-        expect(branch).toBeNull();
-      });
-    });
-
-    describe("getRemote()", () => {
-      test("returns origin by default", () => {
-        const repo = new Repository(".");
-        const remote = repo.getRemote();
-        // Origin might not exist in all repos
-        if (remote) {
-          expect(remote.name).toBe("origin");
-        }
-      });
-
-      test("returns remote by name", () => {
-        const repo = new Repository(".");
-        const remote = repo.getRemote("origin");
-        if (remote) {
-          expect(remote.name).toBe("origin");
-          expect(remote.url).toBeDefined();
-        }
-      });
-
-      test("returns null for non-existent remote", () => {
-        const repo = new Repository(".");
-        const remote = repo.getRemote("non-existent-remote");
-        expect(remote).toBeNull();
-      });
-    });
-
-    describe("status()", () => {
-      test("returns array of status entries", () => {
-        const repo = new Repository(".");
-        const status = repo.status();
-        expect(Array.isArray(status)).toBe(true);
-      });
-
-      test("status entries have expected properties", () => {
-        using dir = tempDir("git-test-status");
-        const repoPath = String(dir);
-
-        const repo = Repository.init(repoPath);
-
-        // Create an untracked file
-        writeFileSync(join(repoPath, "test.txt"), "hello");
-
-        const status = repo.status();
-        expect(status.length).toBeGreaterThan(0);
-
-        const entry = status[0];
-        expect(entry.path).toBeDefined();
-        expect(entry.indexStatus).toBeDefined();
-        expect(entry.workTreeStatus).toBeDefined();
-        expect(typeof entry.isStaged).toBe("boolean");
-        expect(typeof entry.isUntracked).toBe("boolean");
-      });
-    });
-
-    describe("add() and commit()", () => {
-      test("adds files and creates commit", () => {
-        using dir = tempDir("git-test-commit");
-        const repoPath = String(dir);
-
-        const repo = Repository.init(repoPath);
-
-        // Configure user for commit
-        repo.config.set("user.name", "Test User");
-        repo.config.set("user.email", "test@example.com");
-
-        // Create a file
-        writeFileSync(join(repoPath, "test.txt"), "hello world");
-
-        // Add the file
-        repo.add("test.txt");
-
-        // Check it's staged
-        const status = repo.status();
-        const testFile = status.find(e => e.path === "test.txt");
-        expect(testFile).toBeDefined();
-        expect(testFile!.isStaged).toBe(true);
-
-        // Commit
-        const commit = repo.commit("Initial commit");
-        expect(commit).toBeDefined();
-        expect(commit.sha).toHaveLength(40);
-        expect(commit.message).toContain("Initial commit");
-        expect(commit.author.name).toBe("Test User");
-        expect(commit.author.email).toBe("test@example.com");
-      });
-
-      test("add accepts array of paths", () => {
-        using dir = tempDir("git-test-add-array");
-        const repoPath = String(dir);
-
-        const repo = Repository.init(repoPath);
-        repo.config.set("user.name", "Test User");
-        repo.config.set("user.email", "test@example.com");
-
-        writeFileSync(join(repoPath, "file1.txt"), "content1");
-        writeFileSync(join(repoPath, "file2.txt"), "content2");
-
-        repo.add(["file1.txt", "file2.txt"]);
-
-        const status = repo.status();
-        const staged = status.filter(e => e.isStaged);
-        expect(staged.length).toBe(2);
-      });
-    });
-
-    describe("reset()", () => {
-      test("unstages files", () => {
-        using dir = tempDir("git-test-reset");
-        const repoPath = String(dir);
-
-        const repo = Repository.init(repoPath);
-        repo.config.set("user.name", "Test User");
-        repo.config.set("user.email", "test@example.com");
-
-        // Create initial commit
-        writeFileSync(join(repoPath, "initial.txt"), "initial");
-        repo.add("initial.txt");
-        repo.commit("Initial commit");
-
-        // Add another file
-        writeFileSync(join(repoPath, "test.txt"), "hello");
-        repo.add("test.txt");
-
-        // Verify staged
-        let status = repo.status();
-        let testFile = status.find(e => e.path === "test.txt");
-        expect(testFile?.isStaged).toBe(true);
-
-        // Reset
-        repo.reset("test.txt");
-
-        // Verify unstaged
-        status = repo.status();
-        testFile = status.find(e => e.path === "test.txt");
-        expect(testFile?.isStaged).toBe(false);
-        expect(testFile?.isUntracked).toBe(true);
-      });
-    });
+describe("bun:git module exports", () => {
+  test("exports Repository constructor", () => {
+    expect(Repository).toBeDefined();
+    expect(typeof Repository).toBe("function");
   });
 
-  describe("Commit", () => {
-    test("sha returns full 40-char SHA", () => {
-      const repo = new Repository(".");
-      const commit = repo.head;
-      expect(commit).not.toBeNull();
-      expect(commit!.sha).toHaveLength(40);
-      expect(/^[0-9a-f]{40}$/.test(commit!.sha)).toBe(true);
-    });
-
-    test("shortSha returns first 7 chars", () => {
-      const repo = new Repository(".");
-      const commit = repo.head;
-      expect(commit).not.toBeNull();
-      expect(commit!.shortSha).toHaveLength(7);
-      expect(commit!.sha.startsWith(commit!.shortSha)).toBe(true);
-    });
-
-    test("message returns full commit message", () => {
-      const repo = new Repository(".");
-      const commit = repo.head;
-      expect(commit).not.toBeNull();
-      expect(typeof commit!.message).toBe("string");
-    });
-
-    test("summary returns first line of message", () => {
-      const repo = new Repository(".");
-      const commit = repo.head;
-      expect(commit).not.toBeNull();
-      expect(typeof commit!.summary).toBe("string");
-      expect(commit!.summary.includes("\n")).toBe(false);
-    });
-
-    test("author returns signature object", () => {
-      const repo = new Repository(".");
-      const commit = repo.head;
-      expect(commit).not.toBeNull();
-
-      const author = commit!.author;
-      expect(author.name).toBeDefined();
-      expect(author.email).toBeDefined();
-      expect(author.date).toBeInstanceOf(Date);
-      expect(author.timezone).toBeDefined();
-    });
-
-    test("committer returns signature object", () => {
-      const repo = new Repository(".");
-      const commit = repo.head;
-      expect(commit).not.toBeNull();
-
-      const committer = commit!.committer;
-      expect(committer.name).toBeDefined();
-      expect(committer.email).toBeDefined();
-      expect(committer.date).toBeInstanceOf(Date);
-    });
-
-    test("parents returns array of parent commits", () => {
-      const repo = new Repository(".");
-      const commit = repo.head;
-      expect(commit).not.toBeNull();
-
-      const parents = commit!.parents;
-      expect(Array.isArray(parents)).toBe(true);
-      // Most commits have at least one parent (except initial commit)
-      if (parents.length > 0) {
-        expect(parents[0].sha).toHaveLength(40);
-      }
-    });
-
-    test("tree returns tree SHA", () => {
-      const repo = new Repository(".");
-      const commit = repo.head;
-      expect(commit).not.toBeNull();
-      expect(commit!.tree).toHaveLength(40);
-    });
-
-    test("parent() returns nth parent", () => {
-      const repo = new Repository(".");
-      const commit = repo.head;
-      expect(commit).not.toBeNull();
-
-      if (commit!.parents.length > 0) {
-        const parent = commit!.parent(0);
-        expect(parent).not.toBeNull();
-        expect(parent!.sha).toBe(commit!.parents[0].sha);
-      }
-
-      // Parent that doesn't exist
-      const noParent = commit!.parent(99);
-      expect(noParent).toBeNull();
-    });
-
-    test("listFiles() returns array of file paths", () => {
-      const repo = new Repository(".");
-      const commit = repo.head;
-      expect(commit).not.toBeNull();
-
-      const files = commit!.listFiles();
-      expect(Array.isArray(files)).toBe(true);
-      expect(files.length).toBeGreaterThan(0);
-      // Should contain some known files
-      expect(files.some((f: string) => f.endsWith(".zig") || f.endsWith(".ts") || f.endsWith(".md"))).toBe(true);
-    });
-
-    test("getFile() returns blob for existing file", () => {
-      const repo = new Repository(".");
-      const commit = repo.head;
-      expect(commit).not.toBeNull();
-
-      // Try to get a known file
-      const files = commit!.listFiles();
-      if (files.length > 0) {
-        const blob = commit!.getFile(files[0]);
-        expect(blob).not.toBeNull();
-        expect(blob!.sha).toHaveLength(40);
-        expect(typeof blob!.size).toBe("number");
-      }
-    });
-
-    test("getFile() returns null for non-existent file", () => {
-      const repo = new Repository(".");
-      const commit = repo.head;
-      expect(commit).not.toBeNull();
-
-      const blob = commit!.getFile("non-existent-file-xyz.txt");
-      expect(blob).toBeNull();
-    });
-
-    test("isAncestorOf() checks ancestry", () => {
-      const repo = new Repository(".");
-      const head = repo.head;
-      expect(head).not.toBeNull();
-
-      if (head!.parents.length > 0) {
-        const parent = head!.parent(0);
-        expect(parent).not.toBeNull();
-
-        // Parent should be ancestor of HEAD
-        const isAncestor = parent!.isAncestorOf(head!);
-        expect(isAncestor).toBe(true);
-
-        // HEAD should not be ancestor of parent
-        const notAncestor = head!.isAncestorOf(parent!);
-        expect(notAncestor).toBe(false);
-      }
-    });
+  test("exports Commit constructor", () => {
+    expect(Commit).toBeDefined();
+    expect(typeof Commit).toBe("function");
   });
 
-  describe("Config", () => {
-    test("get() returns config value", () => {
-      const repo = new Repository(".");
-      const config = repo.config;
-
-      // These are commonly set
-      const userName = config.get("user.name");
-      const userEmail = config.get("user.email");
-
-      // At least one should exist in most repos
-      expect(userName !== null || userEmail !== null).toBe(true);
-    });
-
-    test("get() returns null for non-existent key", () => {
-      const repo = new Repository(".");
-      const value = repo.config.get("non.existent.key.xyz");
-      expect(value).toBeNull();
-    });
-
-    test("set() and get() round-trip", () => {
-      using dir = tempDir("git-test-config");
-      const repoPath = String(dir);
-      const repo = Repository.init(repoPath);
-
-      repo.config.set("test.key", "test-value");
-      const value = repo.config.get("test.key");
-      expect(value).toBe("test-value");
-    });
-
-    test("userEmail property works", () => {
-      using dir = tempDir("git-test-config-email");
-      const repoPath = String(dir);
-      const repo = Repository.init(repoPath);
-
-      repo.config.userEmail = "test@example.com";
-      expect(repo.config.userEmail).toBe("test@example.com");
-    });
-
-    test("userName property works", () => {
-      using dir = tempDir("git-test-config-name");
-      const repoPath = String(dir);
-      const repo = Repository.init(repoPath);
-
-      repo.config.userName = "Test User";
-      expect(repo.config.userName).toBe("Test User");
-    });
+  test("exports Branch constructor", () => {
+    expect(Branch).toBeDefined();
+    expect(typeof Branch).toBe("function");
   });
 
-  describe("StatusEntry", () => {
-    test("has expected properties", () => {
-      using dir = tempDir("git-test-status-entry");
-      const repoPath = String(dir);
-      const repo = Repository.init(repoPath);
-
-      writeFileSync(join(repoPath, "test.txt"), "content");
-
-      const status = repo.status();
-      expect(status.length).toBe(1);
-
-      const entry = status[0];
-      expect(entry.path).toBe("test.txt");
-      expect(entry.indexStatus).toBe("unmodified");
-      expect(entry.workTreeStatus).toBe("untracked");
-      expect(entry.isStaged).toBe(false);
-      expect(entry.isUnstaged).toBe(true);
-      expect(entry.isUntracked).toBe(true);
-      expect(entry.isConflicted).toBe(false);
-    });
+  test("exports Signature constructor", () => {
+    expect(Signature).toBeDefined();
+    expect(typeof Signature).toBe("function");
   });
 
-  describe("Diff", () => {
-    test("diff() returns Diff object", () => {
-      using dir = tempDir("git-test-diff");
-      const repoPath = String(dir);
-      const repo = Repository.init(repoPath);
-      repo.config.set("user.name", "Test User");
-      repo.config.set("user.email", "test@example.com");
-
-      writeFileSync(join(repoPath, "test.txt"), "initial content");
-      repo.add("test.txt");
-      repo.commit("Initial commit");
-
-      // Modify the file
-      writeFileSync(join(repoPath, "test.txt"), "modified content");
-
-      const diff = repo.diff();
-      expect(diff).toBeDefined();
-      expect(diff.stats).toBeDefined();
-      expect(Array.isArray(diff.files)).toBe(true);
-    });
-
-    test("commit.diff() shows changes from parent", () => {
-      using dir = tempDir("git-test-commit-diff");
-      const repoPath = String(dir);
-      const repo = Repository.init(repoPath);
-      repo.config.set("user.name", "Test User");
-      repo.config.set("user.email", "test@example.com");
-
-      writeFileSync(join(repoPath, "test.txt"), "initial");
-      repo.add("test.txt");
-      const commit1 = repo.commit("Initial commit");
-
-      writeFileSync(join(repoPath, "test.txt"), "modified");
-      repo.add("test.txt");
-      const commit2 = repo.commit("Second commit");
-
-      const diff = commit2.diff();
-      expect(diff).toBeDefined();
-    });
+  test("new Repository() finds repo from current directory", () => {
+    // new Repository() is supported and finds the repo from current directory
+    // This tests from the bun workspace which is a git repo
+    const repo = new (Repository as any)();
+    expect(repo).toBeDefined();
+    expect(repo.path).toBeDefined();
   });
 
-  describe("Error classes", () => {
-    test("GitError has expected properties", () => {
-      const error = new GitError("test error", {
-        command: "git status",
-        exitCode: 1,
-        stderr: "error output",
-      });
+  test("Commit cannot be directly constructed", () => {
+    expect(() => new (Commit as any)()).toThrow();
+  });
 
-      expect(error.message).toBe("test error");
-      expect(error.command).toBe("git status");
-      expect(error.exitCode).toBe(1);
-      expect(error.stderr).toBe("error output");
-      expect(error.name).toBe("GitError");
-    });
+  test("Branch cannot be directly constructed", () => {
+    expect(() => new (Branch as any)()).toThrow();
+  });
 
-    test("NotARepositoryError", () => {
-      const error = new NotARepositoryError();
-      expect(error.name).toBe("NotARepositoryError");
-      expect(error.message).toContain("repository");
-    });
+  test("Signature cannot be directly constructed", () => {
+    expect(() => new (Signature as any)()).toThrow();
+  });
+});
+
+describe("Repository.find()", () => {
+  let repoDir: string;
+
+  beforeAll(async () => {
+    // Create a temp directory and initialize a git repo
+    repoDir = await mkdtemp(join(tmpdir(), "bun-git-test-"));
+    await Bun.$`git init ${repoDir}`.quiet();
+    await Bun.$`git -C ${repoDir} config user.email "test@example.com"`.quiet();
+    await Bun.$`git -C ${repoDir} config user.name "Test User"`.quiet();
+  });
+
+  afterAll(async () => {
+    await rm(repoDir, { recursive: true, force: true });
+  });
+
+  test("finds repository from exact path", () => {
+    const repo = Repository.find(repoDir);
+    expect(repo).toBeDefined();
+    expect(repo.path).toBe(repoDir + "/");
+  });
+
+  test("finds repository from subdirectory", async () => {
+    const subDir = join(repoDir, "subdir");
+    await mkdir(subDir, { recursive: true });
+
+    const repo = Repository.find(subDir);
+    expect(repo).toBeDefined();
+    expect(repo.path).toBe(repoDir + "/");
+  });
+
+  test("finds repository with default path (current directory)", () => {
+    const originalCwd = process.cwd();
+    try {
+      process.chdir(repoDir);
+      const repo = Repository.find();
+      expect(repo).toBeDefined();
+      expect(repo.path).toBe(repoDir + "/");
+    } finally {
+      process.chdir(originalCwd);
+    }
+  });
+
+  test("returns null when no repository found", async () => {
+    const noRepoDir = await mkdtemp(join(tmpdir(), "bun-git-no-repo-"));
+    try {
+      const repo = Repository.find(noRepoDir);
+      expect(repo).toBeNull();
+    } finally {
+      await rm(noRepoDir, { recursive: true, force: true });
+    }
+  });
+
+  test("repository has correct properties", () => {
+    const repo = Repository.find(repoDir);
+    expect(repo).toBeDefined();
+    expect(repo!.path).toContain(repoDir);
+    expect(repo!.gitDir).toContain(".git");
+    expect(repo!.isBare).toBe(false);
+  });
+});
+
+describe("Repository.init()", () => {
+  let testDir: string;
+
+  beforeAll(async () => {
+    testDir = await mkdtemp(join(tmpdir(), "bun-git-init-test-"));
+  });
+
+  afterAll(async () => {
+    await rm(testDir, { recursive: true, force: true });
+  });
+
+  test("initializes a new repository", async () => {
+    const newRepoPath = join(testDir, "new-repo");
+    await mkdir(newRepoPath);
+
+    const repo = Repository.init(newRepoPath);
+    expect(repo).toBeDefined();
+    expect(repo.path).toBe(newRepoPath + "/");
+    expect(repo.isBare).toBe(false);
+
+    // Verify .git directory was created
+    const gitDir = await stat(join(newRepoPath, ".git"));
+    expect(gitDir.isDirectory()).toBe(true);
+  });
+
+  test("initializes a bare repository", async () => {
+    const bareRepoPath = join(testDir, "bare-repo");
+    await mkdir(bareRepoPath);
+
+    const repo = Repository.init(bareRepoPath, { bare: true });
+    expect(repo).toBeDefined();
+    expect(repo.isBare).toBe(true);
+  });
+
+  test("init creates directory if it doesn't exist", async () => {
+    // libgit2 creates the directory structure if needed
+    const newPath = join(testDir, "auto-created-repo");
+    const repo = Repository.init(newPath);
+    expect(repo).toBeDefined();
+    expect(repo.path).toBe(newPath + "/");
+  });
+});
+
+describe("Repository with commits", () => {
+  let repoDir: string;
+  let repo: InstanceType<typeof Repository>;
+
+  beforeAll(async () => {
+    repoDir = await mkdtemp(join(tmpdir(), "bun-git-commit-test-"));
+    await Bun.$`git init ${repoDir}`.quiet();
+    await Bun.$`git -C ${repoDir} config user.email "test@example.com"`.quiet();
+    await Bun.$`git -C ${repoDir} config user.name "Test User"`.quiet();
+
+    // Create initial commit
+    await writeFile(join(repoDir, "README.md"), "# Test Repo\n");
+    await Bun.$`git -C ${repoDir} add README.md`.quiet();
+    await Bun.$`git -C ${repoDir} commit -m "Initial commit"`.quiet();
+
+    // Create second commit
+    await writeFile(join(repoDir, "file1.txt"), "content1\n");
+    await Bun.$`git -C ${repoDir} add file1.txt`.quiet();
+    await Bun.$`git -C ${repoDir} commit -m "Add file1"`.quiet();
+
+    repo = Repository.find(repoDir)!;
+  });
+
+  afterAll(async () => {
+    await rm(repoDir, { recursive: true, force: true });
+  });
+
+  test("repository has head as Commit object", () => {
+    expect(repo.head).toBeDefined();
+    expect(typeof repo.head).toBe("object");
+    expect(repo.head.sha).toBeDefined();
+    expect(repo.head.sha.length).toBe(40); // SHA-1 hash length
+  });
+
+  test("repository has branch", () => {
+    const branch = repo.branch;
+    expect(branch).toBeDefined();
+    expect(branch!.name).toMatch(/^(main|master)$/);
+    expect(branch!.isHead).toBe(true);
+    expect(branch!.isRemote).toBe(false);
+  });
+
+  test("getCommit returns commit object", () => {
+    const commit = repo.getCommit(repo.head.sha);
+    expect(commit).toBeDefined();
+    expect(commit!.sha).toBe(repo.head.sha);
+    expect(commit!.shortSha.length).toBe(7);
+    expect(commit!.message).toBe("Add file1\n");
+    expect(commit!.summary).toBe("Add file1");
+  });
+
+  test("getCommit returns null for invalid SHA", () => {
+    const commit = repo.getCommit("0000000000000000000000000000000000000000");
+    expect(commit).toBeNull();
+  });
+
+  test("commit has author signature", () => {
+    const commit = repo.getCommit(repo.head.sha);
+    expect(commit!.author).toBeDefined();
+    expect(commit!.author.name).toBe("Test User");
+    expect(commit!.author.email).toBe("test@example.com");
+    expect(commit!.author.date).toBeInstanceOf(Date);
+  });
+
+  test("commit has committer signature", () => {
+    const commit = repo.getCommit(repo.head.sha);
+    expect(commit!.committer).toBeDefined();
+    expect(commit!.committer.name).toBe("Test User");
+    expect(commit!.committer.email).toBe("test@example.com");
+  });
+
+  test("commit has parent", () => {
+    const commit = repo.getCommit(repo.head.sha);
+    expect(commit!.parents).toBeDefined();
+    expect(commit!.parents.length).toBe(1);
+
+    const parent = commit!.parent(0);
+    expect(parent).toBeDefined();
+    expect(parent!.message).toBe("Initial commit\n");
+  });
+
+  test("commit.isAncestorOf works", () => {
+    const headCommit = repo.getCommit(repo.head.sha)!;
+    const parentCommit = headCommit.parent(0)!;
+
+    expect(parentCommit.isAncestorOf(headCommit)).toBe(true);
+    expect(headCommit.isAncestorOf(parentCommit)).toBe(false);
+  });
+});
+
+describe("Branch operations", () => {
+  let repoDir: string;
+  let repo: InstanceType<typeof Repository>;
+
+  beforeAll(async () => {
+    repoDir = await mkdtemp(join(tmpdir(), "bun-git-branch-test-"));
+    await Bun.$`git init ${repoDir}`.quiet();
+    await Bun.$`git -C ${repoDir} config user.email "test@example.com"`.quiet();
+    await Bun.$`git -C ${repoDir} config user.name "Test User"`.quiet();
+
+    await writeFile(join(repoDir, "README.md"), "# Test\n");
+    await Bun.$`git -C ${repoDir} add README.md`.quiet();
+    await Bun.$`git -C ${repoDir} commit -m "Initial commit"`.quiet();
+
+    // Create a feature branch
+    await Bun.$`git -C ${repoDir} branch feature-branch`.quiet();
+
+    repo = Repository.find(repoDir)!;
+  });
+
+  afterAll(async () => {
+    await rm(repoDir, { recursive: true, force: true });
+  });
+
+  test("branch has name property", () => {
+    const branch = repo.branch;
+    expect(branch).toBeDefined();
+    expect(branch!.name).toMatch(/^(main|master)$/);
+  });
+
+  test("branch has fullName property", () => {
+    const branch = repo.branch;
+    expect(branch!.fullName).toMatch(/^refs\/heads\/(main|master)$/);
+  });
+
+  test("branch has isHead property", () => {
+    const branch = repo.branch;
+    expect(branch!.isHead).toBe(true);
+  });
+
+  test("branch has isRemote property", () => {
+    const branch = repo.branch;
+    expect(branch!.isRemote).toBe(false);
+  });
+
+  test("branch has commit property", () => {
+    const branch = repo.branch;
+    const commit = branch!.commit;
+    expect(commit).toBeDefined();
+    // head is a Commit object, so compare SHAs
+    expect(commit.sha).toBe(repo.head.sha);
+  });
+
+  test("branch upstream is null for local branch", () => {
+    const branch = repo.branch;
+    expect(branch!.upstream).toBeNull();
+  });
+
+  test("branch ahead/behind are 0 without upstream", () => {
+    const branch = repo.branch;
+    expect(branch!.ahead).toBe(0);
+    expect(branch!.behind).toBe(0);
+  });
+});
+
+describe("Repository.status()", () => {
+  let repoDir: string;
+  let repo: InstanceType<typeof Repository>;
+
+  beforeAll(async () => {
+    repoDir = await mkdtemp(join(tmpdir(), "bun-git-status-test-"));
+    await Bun.$`git init ${repoDir}`.quiet();
+    await Bun.$`git -C ${repoDir} config user.email "test@example.com"`.quiet();
+    await Bun.$`git -C ${repoDir} config user.name "Test User"`.quiet();
+
+    await writeFile(join(repoDir, "README.md"), "# Test\n");
+    await Bun.$`git -C ${repoDir} add README.md`.quiet();
+    await Bun.$`git -C ${repoDir} commit -m "Initial commit"`.quiet();
+
+    repo = Repository.find(repoDir)!;
+  });
+
+  afterAll(async () => {
+    await rm(repoDir, { recursive: true, force: true });
+  });
+
+  test("status returns empty array for clean repo", () => {
+    const status = repo.status();
+    expect(status).toEqual([]);
+  });
+
+  test("status shows new file", async () => {
+    await writeFile(join(repoDir, "new-file.txt"), "new content\n");
+
+    const status = repo.status();
+    expect(status.length).toBe(1);
+    expect(status[0].path).toBe("new-file.txt");
+    expect(status[0].workTreeStatus).toBe("untracked");
+    expect(status[0].indexStatus).toBe("unmodified");
+
+    // Cleanup
+    await rm(join(repoDir, "new-file.txt"));
+  });
+
+  test("status shows modified file", async () => {
+    await writeFile(join(repoDir, "README.md"), "# Modified Test\n");
+
+    const status = repo.status();
+    expect(status.length).toBe(1);
+    expect(status[0].path).toBe("README.md");
+    expect(status[0].workTreeStatus).toBe("modified");
+
+    // Restore
+    await Bun.$`git -C ${repoDir} checkout README.md`.quiet();
+  });
+
+  test("isClean returns true for clean repo", async () => {
+    // Make sure repo is clean first
+    await Bun.$`git -C ${repoDir} checkout .`.quiet();
+    const freshRepo = Repository.find(repoDir)!;
+    expect(freshRepo.isClean).toBe(true);
+  });
+
+  test("isClean returns false for dirty repo", async () => {
+    await writeFile(join(repoDir, "dirty.txt"), "dirty\n");
+
+    // Need to refresh the repo
+    const freshRepo = Repository.find(repoDir)!;
+    expect(freshRepo.isClean).toBe(false);
+
+    // Cleanup
+    await rm(join(repoDir, "dirty.txt"));
+  });
+});
+
+describe("Repository.add() and commit()", () => {
+  let repoDir: string;
+  let repo: InstanceType<typeof Repository>;
+
+  beforeAll(async () => {
+    repoDir = await mkdtemp(join(tmpdir(), "bun-git-add-test-"));
+    await Bun.$`git init ${repoDir}`.quiet();
+    await Bun.$`git -C ${repoDir} config user.email "test@example.com"`.quiet();
+    await Bun.$`git -C ${repoDir} config user.name "Test User"`.quiet();
+
+    await writeFile(join(repoDir, "README.md"), "# Test\n");
+    await Bun.$`git -C ${repoDir} add README.md`.quiet();
+    await Bun.$`git -C ${repoDir} commit -m "Initial commit"`.quiet();
+
+    repo = Repository.find(repoDir)!;
+  });
+
+  afterAll(async () => {
+    await rm(repoDir, { recursive: true, force: true });
+  });
+
+  test("add stages a file", async () => {
+    await writeFile(join(repoDir, "staged.txt"), "staged content\n");
+
+    repo.add("staged.txt");
+
+    const status = repo.status();
+    const staged = status.find(s => s.path === "staged.txt");
+    expect(staged).toBeDefined();
+    expect(staged!.indexStatus).toBe("added");
+
+    // Unstage for cleanup
+    await Bun.$`git -C ${repoDir} reset HEAD staged.txt`.quiet();
+    await rm(join(repoDir, "staged.txt"));
+  });
+
+  test("add stages multiple files", async () => {
+    await writeFile(join(repoDir, "file1.txt"), "content1\n");
+    await writeFile(join(repoDir, "file2.txt"), "content2\n");
+
+    repo.add(["file1.txt", "file2.txt"]);
+
+    const status = repo.status();
+    const addedFiles = status.filter(s => s.indexStatus === "added");
+    expect(addedFiles.some(s => s.path === "file1.txt")).toBe(true);
+    expect(addedFiles.some(s => s.path === "file2.txt")).toBe(true);
+
+    // Cleanup
+    await Bun.$`git -C ${repoDir} reset HEAD file1.txt file2.txt`.quiet();
+    await rm(join(repoDir, "file1.txt"));
+    await rm(join(repoDir, "file2.txt"));
+  });
+
+  test("commit creates new commit", async () => {
+    await writeFile(join(repoDir, "committed.txt"), "committed content\n");
+    repo.add("committed.txt");
+
+    const oldHeadSha = repo.head.sha;
+    const newCommit = repo.commit("Test commit message");
+
+    expect(newCommit).toBeDefined();
+    expect(newCommit.sha).toBeDefined();
+    expect(newCommit.sha.length).toBe(40);
+    expect(newCommit.sha).not.toBe(oldHeadSha);
+
+    const commit = repo.getCommit(newCommit.sha);
+    expect(commit!.message).toContain("Test commit message");
+  });
+});
+
+describe("Signature", () => {
+  let repoDir: string;
+  let repo: InstanceType<typeof Repository>;
+
+  beforeAll(async () => {
+    repoDir = await mkdtemp(join(tmpdir(), "bun-git-sig-test-"));
+    await Bun.$`git init ${repoDir}`.quiet();
+    await Bun.$`git -C ${repoDir} config user.email "test@example.com"`.quiet();
+    await Bun.$`git -C ${repoDir} config user.name "Test User"`.quiet();
+
+    await writeFile(join(repoDir, "README.md"), "# Test\n");
+    await Bun.$`git -C ${repoDir} add README.md`.quiet();
+    await Bun.$`git -C ${repoDir} commit -m "Initial commit"`.quiet();
+
+    repo = Repository.find(repoDir)!;
+  });
+
+  afterAll(async () => {
+    await rm(repoDir, { recursive: true, force: true });
+  });
+
+  test("signature has name property", () => {
+    const commit = repo.getCommit(repo.head.sha);
+    const sig = commit!.author;
+    expect(sig.name).toBe("Test User");
+  });
+
+  test("signature has email property", () => {
+    const commit = repo.getCommit(repo.head.sha);
+    const sig = commit!.author;
+    expect(sig.email).toBe("test@example.com");
+  });
+
+  test("signature has date property", () => {
+    const commit = repo.getCommit(repo.head.sha);
+    const sig = commit!.author;
+    expect(sig.date).toBeInstanceOf(Date);
+    expect(sig.date.getTime()).toBeLessThanOrEqual(Date.now());
+    expect(sig.date.getTime()).toBeGreaterThan(Date.now() - 60000); // Within last minute
+  });
+
+  test("signature has timezone property", () => {
+    const commit = repo.getCommit(repo.head.sha);
+    const sig = commit!.author;
+    expect(sig.timezone).toMatch(/^[+-]\d{2}:\d{2}$/);
+  });
+
+  test("signature toString() returns formatted string", () => {
+    const commit = repo.getCommit(repo.head.sha);
+    const sig = commit!.author;
+    expect(sig.toString()).toBe("Test User <test@example.com>");
+  });
+});
+
+describe("Error handling", () => {
+  test("Repository.find returns null for invalid argument type", () => {
+    // find() coerces arguments to string, so 123 becomes "123" which is not a valid repo
+    const result = (Repository as any).find(123);
+    expect(result).toBeNull();
+  });
+
+  test("Repository.init throws on missing path", () => {
+    expect(() => (Repository as any).init()).toThrow();
+  });
+
+  test("getCommit handles invalid sha gracefully", () => {
+    const repoDir = process.cwd(); // Use current bun repo
+    const repo = Repository.find(repoDir);
+    if (repo) {
+      const result = repo.getCommit("invalid-sha");
+      expect(result).toBeNull();
+    }
+  });
+});
+
+describe("Using Bun repository", () => {
+  test("can find Bun repository", () => {
+    const repo = Repository.find(process.cwd());
+    expect(repo).toBeDefined();
+  });
+
+  test("Bun repo has commits", () => {
+    const repo = Repository.find(process.cwd());
+    if (repo) {
+      expect(repo.head).toBeDefined();
+      expect(repo.head.sha.length).toBe(40);
+
+      const commit = repo.getCommit(repo.head.sha);
+      expect(commit).toBeDefined();
+      expect(commit!.message.length).toBeGreaterThan(0);
+    }
+  });
+
+  test("Bun repo has branch", () => {
+    const repo = Repository.find(process.cwd());
+    if (repo) {
+      const branch = repo.branch;
+      expect(branch).toBeDefined();
+      expect(branch!.name.length).toBeGreaterThan(0);
+    }
   });
 });

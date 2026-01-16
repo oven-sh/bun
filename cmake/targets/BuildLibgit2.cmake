@@ -30,11 +30,11 @@ register_cmake_command(
   TARGET
     libgit2
   TARGETS
-    git2
+    libgit2
   ARGS
     ${LIBGIT2_CMAKE_ARGS}
   LIB_PATH
-    lib
+    .
   LIBRARIES
     git2
   INCLUDES

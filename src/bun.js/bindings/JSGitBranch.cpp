@@ -5,6 +5,8 @@
 #include "JavaScriptCore/ObjectConstructor.h"
 #include "wtf/text/WTFString.h"
 #include "helpers.h"
+#include "JSDOMExceptionHandling.h"
+#include "BunClientData.h"
 #include <git2.h>
 
 namespace Bun {
@@ -24,9 +26,10 @@ JSGitBranch::~JSGitBranch()
     }
 }
 
-void JSGitBranch::finishCreation(VM& vm, JSGlobalObject* globalObject)
+void JSGitBranch::finishCreation(VM& vm, JSGlobalObject* globalObject, JSGitRepository* repo)
 {
     Base::finishCreation(vm);
+    m_repo.set(vm, this, repo);
 }
 
 template<typename Visitor>
@@ -57,7 +60,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsGitBranchGetter_name, (JSGlobalObject* globalObject, 
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* thisObject = jsDynamicCast<JSGitBranch*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) {
         throwThisTypeError(*globalObject, scope, "Branch"_s, "name"_s);
         return {};
     }
@@ -77,7 +80,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsGitBranchGetter_fullName, (JSGlobalObject* globalObje
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* thisObject = jsDynamicCast<JSGitBranch*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) {
         throwThisTypeError(*globalObject, scope, "Branch"_s, "fullName"_s);
         return {};
     }
@@ -93,7 +96,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsGitBranchGetter_isRemote, (JSGlobalObject* globalObje
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* thisObject = jsDynamicCast<JSGitBranch*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) {
         throwThisTypeError(*globalObject, scope, "Branch"_s, "isRemote"_s);
         return {};
     }
@@ -108,7 +111,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsGitBranchGetter_isHead, (JSGlobalObject* globalObject
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* thisObject = jsDynamicCast<JSGitBranch*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) {
         throwThisTypeError(*globalObject, scope, "Branch"_s, "isHead"_s);
         return {};
     }
@@ -124,7 +127,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsGitBranchGetter_commit, (JSGlobalObject* lexicalGloba
     auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
 
     auto* thisObject = jsDynamicCast<JSGitBranch*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) {
         throwThisTypeError(*lexicalGlobalObject, scope, "Branch"_s, "commit"_s);
         return {};
     }
@@ -163,7 +166,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsGitBranchGetter_upstream, (JSGlobalObject* lexicalGlo
     auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
 
     auto* thisObject = jsDynamicCast<JSGitBranch*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) {
         throwThisTypeError(*lexicalGlobalObject, scope, "Branch"_s, "upstream"_s);
         return {};
     }
@@ -190,7 +193,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsGitBranchGetter_ahead, (JSGlobalObject* globalObject,
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* thisObject = jsDynamicCast<JSGitBranch*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) {
         throwThisTypeError(*globalObject, scope, "Branch"_s, "ahead"_s);
         return {};
     }
@@ -220,7 +223,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsGitBranchGetter_behind, (JSGlobalObject* globalObject
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* thisObject = jsDynamicCast<JSGitBranch*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) {
         throwThisTypeError(*globalObject, scope, "Branch"_s, "behind"_s);
         return {};
     }
@@ -250,7 +253,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGitBranchProtoFunc_delete, (JSGlobalObject* globalObj
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* thisObject = jsDynamicCast<JSGitBranch*>(callFrame->thisValue());
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) {
         throwThisTypeError(*globalObject, scope, "Branch"_s, "delete"_s);
         return {};
     }
@@ -272,7 +275,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGitBranchProtoFunc_rename, (JSGlobalObject* globalObj
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* thisObject = jsDynamicCast<JSGitBranch*>(callFrame->thisValue());
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) {
         throwThisTypeError(*globalObject, scope, "Branch"_s, "rename"_s);
         return {};
     }
@@ -360,20 +363,6 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSGitBranchConstructor::call(JSGlob
     auto scope = DECLARE_THROW_SCOPE(vm);
     throwException(globalObject, scope, createTypeError(globalObject, "Branch cannot be called as a function"_s));
     return {};
-}
-
-// ============================================================================
-// Class Structure Initialization
-// ============================================================================
-
-void initJSGitBranchClassStructure(LazyClassStructure::Initializer& init)
-{
-    auto* prototype = JSGitBranchPrototype::create(init.vm, init.global, JSGitBranchPrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
-    auto* structure = JSGitBranch::createStructure(init.vm, init.global, prototype);
-    auto* constructor = JSGitBranchConstructor::create(init.vm, init.global, JSGitBranchConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
-    init.setPrototype(prototype);
-    init.setStructure(structure);
-    init.setConstructor(constructor);
 }
 
 } // namespace Bun

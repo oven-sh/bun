@@ -5,6 +5,8 @@
 #include "JavaScriptCore/ObjectConstructor.h"
 #include "wtf/text/WTFString.h"
 #include "helpers.h"
+#include "JSDOMExceptionHandling.h"
+#include "BunClientData.h"
 #include <git2.h>
 
 namespace Bun {
@@ -24,9 +26,10 @@ JSGitCommit::~JSGitCommit()
     }
 }
 
-void JSGitCommit::finishCreation(VM& vm, JSGlobalObject* globalObject)
+void JSGitCommit::finishCreation(VM& vm, JSGlobalObject* globalObject, JSGitRepository* repo)
 {
     Base::finishCreation(vm);
+    m_repo.set(vm, this, repo);
 }
 
 template<typename Visitor>
@@ -65,7 +68,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsGitCommitGetter_sha, (JSGlobalObject* globalObject, E
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* thisObject = jsDynamicCast<JSGitCommit*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) {
         throwThisTypeError(*globalObject, scope, "Commit"_s, "sha"_s);
         return {};
     }
@@ -81,7 +84,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsGitCommitGetter_shortSha, (JSGlobalObject* globalObje
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* thisObject = jsDynamicCast<JSGitCommit*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) {
         throwThisTypeError(*globalObject, scope, "Commit"_s, "shortSha"_s);
         return {};
     }
@@ -99,7 +102,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsGitCommitGetter_message, (JSGlobalObject* globalObjec
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* thisObject = jsDynamicCast<JSGitCommit*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) {
         throwThisTypeError(*globalObject, scope, "Commit"_s, "message"_s);
         return {};
     }
@@ -115,7 +118,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsGitCommitGetter_summary, (JSGlobalObject* globalObjec
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* thisObject = jsDynamicCast<JSGitCommit*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) {
         throwThisTypeError(*globalObject, scope, "Commit"_s, "summary"_s);
         return {};
     }
@@ -132,7 +135,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsGitCommitGetter_author, (JSGlobalObject* lexicalGloba
     auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
 
     auto* thisObject = jsDynamicCast<JSGitCommit*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) {
         throwThisTypeError(*lexicalGlobalObject, scope, "Commit"_s, "author"_s);
         return {};
     }
@@ -150,7 +153,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsGitCommitGetter_committer, (JSGlobalObject* lexicalGl
     auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
 
     auto* thisObject = jsDynamicCast<JSGitCommit*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) {
         throwThisTypeError(*lexicalGlobalObject, scope, "Commit"_s, "committer"_s);
         return {};
     }
@@ -167,7 +170,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsGitCommitGetter_tree, (JSGlobalObject* globalObject, 
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* thisObject = jsDynamicCast<JSGitCommit*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) {
         throwThisTypeError(*globalObject, scope, "Commit"_s, "tree"_s);
         return {};
     }
@@ -184,7 +187,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsGitCommitGetter_parents, (JSGlobalObject* lexicalGlob
     auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
 
     auto* thisObject = jsDynamicCast<JSGitCommit*>(JSValue::decode(thisValue));
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) {
         throwThisTypeError(*lexicalGlobalObject, scope, "Commit"_s, "parents"_s);
         return {};
     }
@@ -218,7 +221,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGitCommitProtoFunc_parent, (JSGlobalObject* lexicalGl
     auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
 
     auto* thisObject = jsDynamicCast<JSGitCommit*>(callFrame->thisValue());
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) {
         throwThisTypeError(*lexicalGlobalObject, scope, "Commit"_s, "parent"_s);
         return {};
     }
@@ -251,7 +254,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGitCommitProtoFunc_isAncestorOf, (JSGlobalObject* glo
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* thisObject = jsDynamicCast<JSGitCommit*>(callFrame->thisValue());
-    if (UNLIKELY(!thisObject)) {
+    if (!thisObject) {
         throwThisTypeError(*globalObject, scope, "Commit"_s, "isAncestorOf"_s);
         return {};
     }
@@ -355,20 +358,6 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSGitCommitConstructor::call(JSGlob
     auto scope = DECLARE_THROW_SCOPE(vm);
     throwException(globalObject, scope, createTypeError(globalObject, "Commit cannot be called as a function"_s));
     return {};
-}
-
-// ============================================================================
-// Class Structure Initialization
-// ============================================================================
-
-void initJSGitCommitClassStructure(LazyClassStructure::Initializer& init)
-{
-    auto* prototype = JSGitCommitPrototype::create(init.vm, init.global, JSGitCommitPrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
-    auto* structure = JSGitCommit::createStructure(init.vm, init.global, prototype);
-    auto* constructor = JSGitCommitConstructor::create(init.vm, init.global, JSGitCommitConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
-    init.setPrototype(prototype);
-    init.setStructure(structure);
-    init.setConstructor(constructor);
 }
 
 } // namespace Bun

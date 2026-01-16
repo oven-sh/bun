@@ -1,9 +1,7 @@
 #pragma once
 
 #include "root.h"
-#include <JavaScriptCore/JSDestructibleObject.h>
-#include <JavaScriptCore/JSNonFinalObject.h>
-#include <JavaScriptCore/InternalFunction.h>
+#include "BunClientData.h"
 #include <git2.h>
 
 namespace Bun {
@@ -155,10 +153,9 @@ class JSGitCommit : public JSC::JSDestructibleObject {
     using Base = JSC::JSDestructibleObject;
 
 public:
-    JSGitCommit(JSC::VM& vm, JSC::Structure* structure, git_commit* commit, JSGitRepository* repo)
+    JSGitCommit(JSC::VM& vm, JSC::Structure* structure, git_commit* commit)
         : Base(vm, structure)
         , m_commit(commit)
-        , m_repo(repo)
     {
     }
 
@@ -184,12 +181,12 @@ public:
 
     static JSGitCommit* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, git_commit* commit, JSGitRepository* repo)
     {
-        JSGitCommit* object = new (NotNull, JSC::allocateCell<JSGitCommit>(vm)) JSGitCommit(vm, structure, commit, repo);
-        object->finishCreation(vm, globalObject);
+        JSGitCommit* object = new (NotNull, JSC::allocateCell<JSGitCommit>(vm)) JSGitCommit(vm, structure, commit);
+        object->finishCreation(vm, globalObject, repo);
         return object;
     }
 
-    void finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
+    void finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSGitRepository* repo);
 
     static void destroy(JSCell* thisObject)
     {
@@ -199,11 +196,11 @@ public:
     ~JSGitCommit();
 
     git_commit* commit() const { return m_commit; }
-    JSGitRepository* repository() const { return m_repo; }
+    JSGitRepository* repository() const { return m_repo.get(); }
 
 private:
     git_commit* m_commit;
-    JSGitRepository* m_repo;
+    JSC::WriteBarrier<JSGitRepository> m_repo;
 };
 
 class JSGitCommitPrototype : public JSC::JSNonFinalObject {
@@ -277,10 +274,9 @@ class JSGitBranch : public JSC::JSDestructibleObject {
     using Base = JSC::JSDestructibleObject;
 
 public:
-    JSGitBranch(JSC::VM& vm, JSC::Structure* structure, git_reference* ref, JSGitRepository* repo, bool isRemote)
+    JSGitBranch(JSC::VM& vm, JSC::Structure* structure, git_reference* ref, bool isRemote)
         : Base(vm, structure)
         , m_ref(ref)
-        , m_repo(repo)
         , m_isRemote(isRemote)
     {
     }
@@ -307,12 +303,12 @@ public:
 
     static JSGitBranch* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, git_reference* ref, JSGitRepository* repo, bool isRemote)
     {
-        JSGitBranch* object = new (NotNull, JSC::allocateCell<JSGitBranch>(vm)) JSGitBranch(vm, structure, ref, repo, isRemote);
-        object->finishCreation(vm, globalObject);
+        JSGitBranch* object = new (NotNull, JSC::allocateCell<JSGitBranch>(vm)) JSGitBranch(vm, structure, ref, isRemote);
+        object->finishCreation(vm, globalObject, repo);
         return object;
     }
 
-    void finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
+    void finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSGitRepository* repo);
 
     static void destroy(JSCell* thisObject)
     {
@@ -322,12 +318,12 @@ public:
     ~JSGitBranch();
 
     git_reference* ref() const { return m_ref; }
-    JSGitRepository* repository() const { return m_repo; }
+    JSGitRepository* repository() const { return m_repo.get(); }
     bool isRemote() const { return m_isRemote; }
 
 private:
     git_reference* m_ref;
-    JSGitRepository* m_repo;
+    JSC::WriteBarrier<JSGitRepository> m_repo;
     bool m_isRemote;
 };
 
@@ -398,8 +394,8 @@ private:
 // JSGitSignature - Signature class (author/committer info)
 // ============================================================================
 
-class JSGitSignature : public JSC::JSNonFinalObject {
-    using Base = JSC::JSNonFinalObject;
+class JSGitSignature : public JSC::JSDestructibleObject {
+    using Base = JSC::JSDestructibleObject;
 
 public:
     JSGitSignature(JSC::VM& vm, JSC::Structure* structure)
@@ -415,12 +411,15 @@ public:
 
     static constexpr unsigned StructureFlags = Base::StructureFlags;
 
-    template<typename CellType, JSC::SubspaceAccess>
+    template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSGitSignature, Base);
-        return &vm.plainObjectSpace();
+        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+            return nullptr;
+        return subspaceForImpl(vm);
     }
+
+    static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
@@ -435,6 +434,11 @@ public:
     }
 
     void finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject, const git_signature* sig);
+
+    static void destroy(JSCell* thisObject)
+    {
+        static_cast<JSGitSignature*>(thisObject)->~JSGitSignature();
+    }
 
     const String& name() const { return m_name; }
     const String& email() const { return m_email; }
@@ -510,14 +514,5 @@ private:
 
     void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, JSGitSignaturePrototype* prototype);
 };
-
-// ============================================================================
-// Helper functions for class structure initialization
-// ============================================================================
-
-void initJSGitRepositoryClassStructure(JSC::LazyClassStructure::Initializer& init);
-void initJSGitCommitClassStructure(JSC::LazyClassStructure::Initializer& init);
-void initJSGitBranchClassStructure(JSC::LazyClassStructure::Initializer& init);
-void initJSGitSignatureClassStructure(JSC::LazyClassStructure::Initializer& init);
 
 } // namespace Bun

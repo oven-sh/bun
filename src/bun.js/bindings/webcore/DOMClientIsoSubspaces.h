@@ -84,6 +84,10 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSX509Certificate;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSNodePerformanceHooksHistogram;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWasmStreamingCompiler;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSGitRepository;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSGitCommit;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSGitBranch;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSGitSignature;
 
 #include "ZigGeneratedClasses+DOMClientIsoSubspaces.h"
     /* --- bun --- */

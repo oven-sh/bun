@@ -82,6 +82,10 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForJSX509Certificate;
     std::unique_ptr<IsoSubspace> m_subspaceForJSNodePerformanceHooksHistogram;
     std::unique_ptr<IsoSubspace> m_subspaceForWasmStreamingCompiler;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSGitRepository;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSGitCommit;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSGitBranch;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSGitSignature;
 #include "ZigGeneratedClasses+DOMIsoSubspaces.h"
     /*-- BUN --*/
 

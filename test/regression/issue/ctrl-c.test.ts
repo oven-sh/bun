@@ -2,6 +2,73 @@ import { expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
 import { join } from "path";
 
+// Test that bun run properly waits for child to handle SIGINT
+// On Windows, we skip this because process.kill uses TerminateProcess (not a real signal).
+// The Windows CTRL+C fix is tested manually - GenerateConsoleCtrlEvent would affect the test runner too.
+test.skipIf(isWindows)("bun run forwards SIGINT to child and waits for graceful exit", async () => {
+  const dir = tempDirWithFiles("ctrlc-forward", {
+    "server.js": /*js*/ `
+      // Simple script that handles SIGINT gracefully
+      console.log("ready");
+
+      process.on("SIGINT", () => {
+        console.log("received SIGINT, shutting down gracefully");
+        process.exit(42);
+      });
+
+      // Keep alive
+      setTimeout(() => {}, 999999);
+    `,
+    "package.json": JSON.stringify({
+      name: "ctrlc-forward",
+      scripts: {
+        start: "bun server.js",
+      },
+    }),
+  });
+
+  const proc = Bun.spawn({
+    cmd: [bunExe(), "run", "start"],
+    cwd: dir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+
+  // Collect all stdout
+  const chunks: Uint8Array[] = [];
+  const reader = proc.stdout.getReader();
+
+  // Wait for "ready" signal
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    const text = new TextDecoder().decode(value);
+    if (text.includes("ready")) break;
+  }
+
+  // Send SIGINT to bun run process
+  process.kill(proc.pid, "SIGINT");
+
+  // Read remaining output
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+  }
+  reader.releaseLock();
+
+  // Wait for exit
+  const exitCode = await proc.exited;
+  const stdout = new TextDecoder().decode(Buffer.concat(chunks.map(c => Buffer.from(c))));
+
+  // Verify the child received and handled SIGINT
+  expect(stdout).toContain("ready");
+  expect(stdout).toContain("received SIGINT");
+  expect(exitCode).toBe(42);
+});
+
 test.skipIf(isWindows)("verify that we can call sigint 4096 times", () => {
   const dir = tempDirWithFiles("ctrlc", {
     "index.js": /*js*/ `

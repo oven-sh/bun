@@ -55,11 +55,12 @@ pub const S3Stat = struct {
 
         for (headers) |header| {
             // Case-insensitive check for x-amz-meta- prefix
-            if (header.name.len > prefix_len and
+            if (header.name.len >= prefix_len and
                 strings.eqlCaseInsensitiveASCII(header.name[0..prefix_len], prefix, true))
             {
                 // Strip the prefix to get the user's key name
                 const key = header.name[prefix_len..];
+                if (key.len == 0) continue; // Skip empty keys if any
                 const value_js = try bun.String.createUTF8ForJS(globalThis, header.value);
 
                 // put() accepts []const u8 directly and wraps it in ZigString

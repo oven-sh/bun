@@ -81,8 +81,21 @@ pub const MetadataMap = struct {
         };
 
         for (0..n) |i| {
-            new_keys[i] = allocator.dupe(u8, this.keys[i]) catch return null;
-            new_values[i] = allocator.dupe(u8, this.values[i]) catch return null;
+            new_keys[i] = allocator.dupe(u8, this.keys[i]) catch {
+                // Free previously allocated keys
+                for (0..i) |j| allocator.free(new_keys[j]);
+                allocator.free(new_keys);
+                allocator.free(new_values);
+                return null;
+            };
+            new_values[i] = allocator.dupe(u8, this.values[i]) catch {
+                // Free previously allocated keys and values
+                for (0..i + 1) |j| allocator.free(new_keys[j]);
+                for (0..i) |j| allocator.free(new_values[j]);
+                allocator.free(new_keys);
+                allocator.free(new_values);
+                return null;
+            };
         }
 
         return .{
@@ -409,8 +422,12 @@ pub const S3Credentials = struct {
                                         values[i] = bun.default_allocator.dupe(u8, val_slice.slice()) catch bun.outOfMemory();
                                         val_slice.deinit();
                                     } else {
-                                        // Non-string value, use empty string or skip
-                                        values[i] = "";
+                                        // Clean up previously allocated keys/values before throwing
+                                        for (0..i + 1) |j| bun.default_allocator.free(keys[j]);
+                                        for (0..i) |j| bun.default_allocator.free(values[j]);
+                                        bun.default_allocator.free(keys);
+                                        bun.default_allocator.free(values);
+                                        return globalObject.throwInvalidArgumentTypeValue("metadata value", "string", val);
                                     }
                                     i += 1;
                                 }

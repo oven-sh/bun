@@ -91,6 +91,8 @@ jobs:
 
           # Create temp directory for processing
           WORKDIR=$(mktemp -d)
+          OLDPWD=$(pwd)
+          trap 'cd "$OLDPWD" && rm -rf "$WORKDIR"' EXIT
           cd "$WORKDIR"
 
           # Get release assets and process each .zip file safely
@@ -128,10 +130,6 @@ jobs:
               rm -rf "$ASSET" "$EXTRACT_DIR" "$TARGZ_NAME" "$TARZST_NAME" "$TARXZ_NAME"
             fi
           done
-
-          # Cleanup temp directory
-          cd -
-          rm -rf "$WORKDIR"
 
           echo "Done creating compressed archives"
         env:

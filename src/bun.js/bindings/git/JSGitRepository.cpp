@@ -1054,13 +1054,18 @@ JSC_DEFINE_HOST_FUNCTION(jsGitRepositoryProtoFunc_fetch, (JSGlobalObject* global
 // Global function to create Repository constructor
 // ============================================================================
 
-JSC::JSObject* createJSGitRepositoryConstructor(Zig::GlobalObject* globalObject)
+JSC::JSValue createJSGitRepositoryConstructor(Zig::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
 
     JSGitRepositoryPrototype* prototype = JSGitRepositoryPrototype::create(vm, globalObject, JSGitRepositoryPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
 
-    return JSGitRepositoryConstructor::create(vm, JSGitRepositoryConstructor::createStructure(vm, globalObject, globalObject->functionPrototype()), prototype);
+    auto* constructor = JSGitRepositoryConstructor::create(vm, JSGitRepositoryConstructor::createStructure(vm, globalObject, globalObject->functionPrototype()), prototype);
+
+    JSObject* result = JSC::constructEmptyObject(globalObject);
+    result->putDirectIndex(globalObject, 0, constructor);
+
+    return result;
 }
 
 } // namespace WebCore

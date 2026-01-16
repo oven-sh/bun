@@ -73,6 +73,12 @@ void initializeGitLibrary();
 // Create the Git module constructor
 JSC::JSValue createJSGitModule(Zig::GlobalObject* globalObject);
 
+// Create Repository constructor (for $cpp usage)
+JSC::JSValue createJSGitRepositoryConstructor(Zig::GlobalObject* globalObject);
+
+// Create Commit structure (for lazy initialization)
+JSC::Structure* createJSGitCommitStructure(Zig::GlobalObject* globalObject);
+
 // ============================================================================
 // JSGitRepository - Main repository class
 // ============================================================================

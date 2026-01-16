@@ -1,7 +1,3 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const FixedBufferAllocator = std.heap.FixedBufferAllocator;
-
 /// An allocator that attempts to allocate from a provided buffer first,
 /// falling back to another allocator when the buffer is exhausted.
 /// Unlike `std.heap.StackFallbackAllocator`, this does not own the buffer.
@@ -83,3 +79,7 @@ fn free(ctx: *anyopaque, buf: []u8, alignment: std.mem.Alignment, ra: usize) voi
 pub fn reset(self: *BufferFallbackAllocator) void {
     self.fixed_buffer_allocator.reset();
 }
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+const FixedBufferAllocator = std.heap.FixedBufferAllocator;

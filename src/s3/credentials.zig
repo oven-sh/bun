@@ -244,6 +244,21 @@ pub const S3Credentials = struct {
                     }
                 }
 
+                if (try opts.getTruthyComptime(globalObject, "contentEncoding")) |js_value| {
+                    if (!js_value.isEmptyOrUndefinedOrNull()) {
+                        if (js_value.isString()) {
+                            const str = try bun.String.fromJS(js_value, globalObject);
+                            defer str.deref();
+                            if (str.tag != .Empty and str.tag != .Dead) {
+                                new_credentials._contentEncodingSlice = str.toUTF8(bun.default_allocator);
+                                new_credentials.content_encoding = new_credentials._contentEncodingSlice.?.slice();
+                            }
+                        } else {
+                            return globalObject.throwInvalidArgumentTypeValue("contentEncoding", "string", js_value);
+                        }
+                    }
+                }
+
                 if (try opts.getBooleanStrict(globalObject, "requestPayer")) |request_payer| {
                     new_credentials.request_payer = request_payer;
                 }
@@ -363,12 +378,15 @@ pub const S3Credentials = struct {
         url: []const u8,
 
         content_disposition: []const u8 = "",
+        content_encoding: []const u8 = "",
         content_md5: []const u8 = "",
         session_token: []const u8 = "",
         acl: ?ACL = null,
         storage_class: ?StorageClass = null,
         request_payer: bool = false,
-        _headers: [9]picohttp.Header = .{
+        _headers: [MAX_HEADERS]picohttp.Header = .{
+            .{ .name = "", .value = "" },
+            .{ .name = "", .value = "" },
             .{ .name = "", .value = "" },
             .{ .name = "", .value = "" },
             .{ .name = "", .value = "" },
@@ -380,6 +398,8 @@ pub const S3Credentials = struct {
             .{ .name = "", .value = "" },
         },
         _headers_len: u8 = 0,
+
+        pub const MAX_HEADERS = 11;
 
         pub fn headers(this: *const @This()) []const picohttp.Header {
             return this._headers[0..this._headers_len];
@@ -406,6 +426,10 @@ pub const S3Credentials = struct {
 
             if (this.content_disposition.len > 0) {
                 bun.freeSensitive(bun.default_allocator, this.content_disposition);
+            }
+
+            if (this.content_encoding.len > 0) {
+                bun.freeSensitive(bun.default_allocator, this.content_encoding);
             }
 
             if (this.host.len > 0) {
@@ -437,6 +461,7 @@ pub const S3Credentials = struct {
         search_params: ?[]const u8 = null,
         content_disposition: ?[]const u8 = null,
         content_type: ?[]const u8 = null,
+        content_encoding: ?[]const u8 = null,
         acl: ?ACL = null,
         storage_class: ?StorageClass = null,
         request_payer: bool = false,
@@ -551,6 +576,10 @@ pub const S3Credentials = struct {
         if (content_type != null and content_type.?.len == 0) {
             content_type = null;
         }
+        var content_encoding = signOptions.content_encoding;
+        if (content_encoding != null and content_encoding.?.len == 0) {
+            content_encoding = null;
+        }
         const session_token: ?[]const u8 = if (this.sessionToken.len == 0) null else this.sessionToken;
 
         const acl: ?[]const u8 = if (signOptions.acl) |acl_value| acl_value.toString() else null;
@@ -660,6 +689,7 @@ pub const S3Credentials = struct {
         const request_payer = signOptions.request_payer;
         const header_key = SignedHeaders.Key{
             .content_disposition = content_disposition != null,
+            .content_encoding = content_encoding != null,
             .content_md5 = content_md5 != null,
             .acl = acl != null,
             .request_payer = request_payer,
@@ -849,6 +879,7 @@ pub const S3Credentials = struct {
                     normalizedPath,
                     if (search_params) |p| p[1..] else "",
                     content_disposition,
+                    content_encoding,
                     content_md5,
                     host,
                     acl,
@@ -906,6 +937,8 @@ pub const S3Credentials = struct {
                 .{ .name = "", .value = "" },
                 .{ .name = "", .value = "" },
                 .{ .name = "", .value = "" },
+                .{ .name = "", .value = "" },
+                .{ .name = "", .value = "" },
             },
             ._headers_len = 4,
         };
@@ -933,6 +966,13 @@ pub const S3Credentials = struct {
             result._headers_len += 1;
         }
 
+        if (content_encoding) |ce| {
+            const content_encoding_value = bun.handleOom(bun.default_allocator.dupe(u8, ce));
+            result.content_encoding = content_encoding_value;
+            result._headers[result._headers_len] = .{ .name = "content-encoding", .value = content_encoding_value };
+            result._headers_len += 1;
+        }
+
         if (content_md5) |c_md5| {
             const content_md5_value = bun.handleOom(bun.default_allocator.dupe(u8, c_md5));
             result.content_md5 = content_md5_value;
@@ -956,6 +996,7 @@ pub const S3CredentialsWithOptions = struct {
     storage_class: ?StorageClass = null,
     content_disposition: ?[]const u8 = null,
     content_type: ?[]const u8 = null,
+    content_encoding: ?[]const u8 = null,
     /// indicates if requester pays for the request (for requester pays buckets)
     request_payer: bool = false,
     /// indicates if the credentials have changed
@@ -970,6 +1011,7 @@ pub const S3CredentialsWithOptions = struct {
     _sessionTokenSlice: ?jsc.ZigString.Slice = null,
     _contentDispositionSlice: ?jsc.ZigString.Slice = null,
     _contentTypeSlice: ?jsc.ZigString.Slice = null,
+    _contentEncodingSlice: ?jsc.ZigString.Slice = null,
 
     pub fn deinit(this: *@This()) void {
         if (this._accessKeyIdSlice) |slice| slice.deinit();
@@ -980,14 +1022,16 @@ pub const S3CredentialsWithOptions = struct {
         if (this._sessionTokenSlice) |slice| slice.deinit();
         if (this._contentDispositionSlice) |slice| slice.deinit();
         if (this._contentTypeSlice) |slice| slice.deinit();
+        if (this._contentEncodingSlice) |slice| slice.deinit();
     }
 };
 
 /// Comptime-generated lookup table for signed headers strings.
 /// Headers must be in alphabetical order per AWS Signature V4 spec.
 const SignedHeaders = struct {
-    const Key = packed struct(u6) {
+    const Key = packed struct(u7) {
         content_disposition: bool,
+        content_encoding: bool,
         content_md5: bool,
         acl: bool,
         request_payer: bool,
@@ -997,6 +1041,7 @@ const SignedHeaders = struct {
 
     fn generate(comptime key: Key) []const u8 {
         return (if (key.content_disposition) "content-disposition;" else "") ++
+            (if (key.content_encoding) "content-encoding;" else "") ++
             (if (key.content_md5) "content-md5;" else "") ++
             "host;" ++
             (if (key.acl) "x-amz-acl;" else "") ++
@@ -1007,15 +1052,15 @@ const SignedHeaders = struct {
     }
 
     const table = init: {
-        var t: [64][]const u8 = undefined;
-        for (0..64) |i| {
-            t[i] = generate(@bitCast(@as(u6, @intCast(i))));
+        var t: [128][]const u8 = undefined;
+        for (0..128) |i| {
+            t[i] = generate(@bitCast(@as(u7, @intCast(i))));
         }
         break :init t;
     };
 
     pub fn get(key: Key) []const u8 {
-        return table[@as(u6, @bitCast(key))];
+        return table[@as(u7, @bitCast(key))];
     }
 };
 
@@ -1025,6 +1070,7 @@ const CanonicalRequest = struct {
     fn fmtString(comptime key: SignedHeaders.Key) []const u8 {
         return "{s}\n{s}\n{s}\n" ++ // method, path, query
             (if (key.content_disposition) "content-disposition:{s}\n" else "") ++
+            (if (key.content_encoding) "content-encoding:{s}\n" else "") ++
             (if (key.content_md5) "content-md5:{s}\n" else "") ++
             "host:{s}\n" ++
             (if (key.acl) "x-amz-acl:{s}\n" else "") ++
@@ -1042,6 +1088,7 @@ const CanonicalRequest = struct {
         path: []const u8,
         query: []const u8,
         content_disposition: ?[]const u8,
+        content_encoding: ?[]const u8,
         content_md5: ?[]const u8,
         host: []const u8,
         acl: ?[]const u8,
@@ -1053,6 +1100,7 @@ const CanonicalRequest = struct {
     ) error{NoSpaceLeft}![]u8 {
         return std.fmt.bufPrint(buf, fmtString(key), .{ method, path, query } ++
             (if (key.content_disposition) .{content_disposition.?} else .{}) ++
+            (if (key.content_encoding) .{content_encoding.?} else .{}) ++
             (if (key.content_md5) .{content_md5.?} else .{}) ++
             .{host} ++
             (if (key.acl) .{acl.?} else .{}) ++
@@ -1069,6 +1117,7 @@ const CanonicalRequest = struct {
         path: []const u8,
         query: []const u8,
         content_disposition: ?[]const u8,
+        content_encoding: ?[]const u8,
         content_md5: ?[]const u8,
         host: []const u8,
         acl: ?[]const u8,
@@ -1079,14 +1128,15 @@ const CanonicalRequest = struct {
         signed_headers: []const u8,
     ) error{NoSpaceLeft}![]u8 {
         // Dispatch to the right comptime-specialized function based on runtime key
-        return switch (@as(u6, @bitCast(key))) {
-            inline 0...63 => |idx| formatForKey(
+        return switch (@as(u7, @bitCast(key))) {
+            inline 0...127 => |idx| formatForKey(
                 @bitCast(idx),
                 buf,
                 method,
                 path,
                 query,
                 content_disposition,
+                content_encoding,
                 content_md5,
                 host,
                 acl,

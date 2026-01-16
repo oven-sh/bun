@@ -33,8 +33,8 @@ The workflow runs all three formatters simultaneously:
 
 #### 3. Tool Installation
 
-##### Clang-format-19
-- Installs ONLY `clang-format-19` package (not the entire LLVM toolchain)
+##### Clang-format-21
+- Installs ONLY `clang-format-21` package (not the entire LLVM toolchain)
 - Uses `--no-install-recommends --no-install-suggests` to skip unnecessary packages
 - Quiet installation with `-qq` and `-o=Dpkg::Use-Pty=0`
 
@@ -85,7 +85,7 @@ The workflow runs all three formatters simultaneously:
 
 ```bash
 # Test the clang-format script
-export LLVM_VERSION_MAJOR=19
+export LLVM_VERSION_MAJOR=21
 ./scripts/run-clang-format.sh format
 
 # Test with check mode (no modifications)

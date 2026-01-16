@@ -7,6 +7,9 @@ const {
   validateBoolean,
   validateString,
 } = require("internal/validators");
+
+// Internal fetch that allows body on GET/HEAD/OPTIONS for Node.js compatibility
+const nodeHttpClient = $newZigFunction("fetch.zig", "nodeHttpClient", 2);
 const { urlToHttpOptions } = require("internal/url");
 const { throwOnInvalidTLSArray } = require("internal/tls");
 const { validateHeaderName } = require("node:_http_common");
@@ -57,7 +60,6 @@ const { OutgoingMessage } = require("node:_http_outgoing");
 const globalReportError = globalThis.reportError;
 const setTimeout = globalThis.setTimeout;
 const INVALID_PATH_REGEX = /[^\u0021-\u00ff]/;
-const fetch = Bun.fetch;
 
 const { URL } = globalThis;
 
@@ -328,40 +330,46 @@ function ClientRequest(input, options, cb) {
         keepOpen = true;
       }
 
-      if (method !== "GET" && method !== "HEAD" && method !== "OPTIONS") {
+      // Allow body for all methods when explicitly provided via req.write()/req.end()
+      // This is needed for Node.js compatibility - Node allows GET requests with bodies
+      if (customBody !== undefined) {
+        fetchOptions.body = customBody;
+      } else if (
+        isDuplex &&
+        // Normal case: non-GET/HEAD/OPTIONS can use streaming
+        ((method !== "GET" && method !== "HEAD" && method !== "OPTIONS") ||
+          // Special case: GET/HEAD/OPTIONS with already-queued chunks should also stream
+          this[kBodyChunks]?.length > 0)
+      ) {
         const self = this;
-        if (customBody !== undefined) {
-          fetchOptions.body = customBody;
-        } else if (isDuplex) {
-          fetchOptions.body = async function* () {
-            while (self[kBodyChunks]?.length > 0) {
-              yield self[kBodyChunks].shift();
-            }
+        fetchOptions.body = async function* () {
+          while (self[kBodyChunks]?.length > 0) {
+            yield self[kBodyChunks].shift();
+          }
+
+          if (self[kBodyChunks]?.length === 0) {
+            self.emit("drain");
+          }
+
+          while (!self.finished) {
+            yield await new Promise(resolve => {
+              resolveNextChunk = end => {
+                resolveNextChunk = undefined;
+                if (end) {
+                  resolve(undefined);
+                } else {
+                  resolve(self[kBodyChunks].shift());
+                }
+              };
+            });
 
             if (self[kBodyChunks]?.length === 0) {
               self.emit("drain");
             }
+          }
 
-            while (!self.finished) {
-              yield await new Promise(resolve => {
-                resolveNextChunk = end => {
-                  resolveNextChunk = undefined;
-                  if (end) {
-                    resolve(undefined);
-                  } else {
-                    resolve(self[kBodyChunks].shift());
-                  }
-                };
-              });
-
-              if (self[kBodyChunks]?.length === 0) {
-                self.emit("drain");
-              }
-            }
-
-            handleResponse?.();
-          };
-        }
+          handleResponse?.();
+        };
       }
 
       if (tls) {
@@ -383,7 +391,7 @@ function ClientRequest(input, options, cb) {
       }
 
       //@ts-ignore
-      this[kFetchRequest] = fetch(url, fetchOptions).then(response => {
+      this[kFetchRequest] = nodeHttpClient(url, fetchOptions).then(response => {
         if (this.aborted) {
           maybeEmitClose();
           return;

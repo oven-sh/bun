@@ -248,7 +248,9 @@ pub const PathWatcherManager = struct {
                         const hash = Watcher.getHash(path_slice);
 
                         // skip consecutive duplicates
-                        const event_type: PathWatcher.EventType = .rename; // renaming folders, creating folder or files will be always be rename
+                        // If it's a create, delete, rename, or move event, emit "rename"
+                        // If it's a pure write (modify) event, emit "change"
+                        const event_type: PathWatcher.EventType = if (event.op.create or event.op.delete or event.op.rename or event.op.move_to) .rename else .change;
                         for (watchers) |w| {
                             if (w) |watcher| {
                                 if (comptime Environment.isMac) {

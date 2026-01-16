@@ -44,9 +44,9 @@ pub fn PosixPipeWriter(
                             return .{ .pending = offset };
                         }
 
-                        if (err.getErrno() == .PIPE) {
-                            return .{ .done = offset };
-                        }
+                        // Return EPIPE as an error so it propagates to JavaScript.
+                        // This ensures process.stdout.write() properly emits an error
+                        // when writing to a broken pipe, matching Node.js behavior.
 
                         return .{ .err = err };
                     },

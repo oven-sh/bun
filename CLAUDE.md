@@ -10,6 +10,8 @@ This is the Bun repository - an all-in-one JavaScript runtime & toolkit designed
 - **Run tests with your debug build**: `bun bd test <test-file>`
   - **CRITICAL**: Never use `bun test` directly - it won't include your changes
 - **Run any command with debug build**: `bun bd <command>`
+- **Run with JavaScript exception scope verification**: `BUN_JSC_validateExceptionChecks=1
+BUN_JSC_dumpSimulatedThrows=1 bun bd <command>`
 
 Tip: Bun is already installed and in $PATH. The `bd` subcommand is a package.json script.
 

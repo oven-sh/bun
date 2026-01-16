@@ -541,7 +541,7 @@ String escapePatternString(StringView input)
 }
 
 // https://urlpattern.spec.whatwg.org/#is-a-valid-name-code-point
-bool isValidNameCodepoint(char16_t codepoint, URLPatternUtilities::IsFirst first)
+bool isValidNameCodepoint(char32_t codepoint, URLPatternUtilities::IsFirst first)
 {
     if (first == URLPatternUtilities::IsFirst::Yes)
         return u_hasBinaryProperty(codepoint, UCHAR_ID_START) || codepoint == '_' || codepoint == '$';

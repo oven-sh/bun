@@ -256,7 +256,7 @@ pub const S3HttpDownloadStreamingTask = struct {
     /// Processes response chunk and conditionally enqueues main thread callback.
     /// Thread: HTTP thread (not main thread)
     pub fn httpCallback(this: *@This(), async_http: *bun.http.AsyncHTTP, result: bun.http.HTTPClientResult) void {
-        if (processHttpCallback(this, async_http, result)) {
+        if (this.processHttpCallback(async_http, result)) {
             // we are always unlocked here and its safe to enqueue
             this.vm.eventLoop().enqueueTaskConcurrent(this.concurrent_task.from(this, .manual_deinit));
         }

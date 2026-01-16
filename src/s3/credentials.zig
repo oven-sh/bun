@@ -23,8 +23,9 @@ const BASE_HEADERS: usize = 11;
 pub const MAX_HEADERS: usize = BASE_HEADERS + MAX_METADATA_HEADERS;
 
 /// Buffer size for signed headers string (e.g., "content-disposition;host;x-amz-meta-foo;...")
-/// Calculation: ~200 bytes for base headers + 32 metadata keys × ~50 chars each ≈ 1800 bytes
-const SIGNED_HEADERS_BUF_SIZE: usize = 2048;
+/// Calculation: ~200 bytes for base headers + 32 metadata keys × ~100 chars each ≈ 3400 bytes
+/// Increased to 4KB to accommodate long metadata key names
+const SIGNED_HEADERS_BUF_SIZE: usize = 4096;
 
 /// Buffer size for canonical request building with metadata.
 /// AWS Sig V4 canonical request format: METHOD\nPATH\nQUERY\nHEADERS\n\nSIGNED_HEADERS\nHASH
@@ -1002,12 +1003,28 @@ pub const S3Credentials = struct {
                 // Headers in alphabetical order (same as SignedHeaders.generate):
                 // content-disposition, content-encoding, content-md5, host, x-amz-acl, x-amz-content-sha256, x-amz-date,
                 // [x-amz-meta-*], x-amz-request-payer, x-amz-security-token, x-amz-storage-class
-                if (content_disposition != null) list.appendSlice("content-disposition;") catch {};
-                if (content_encoding != null) list.appendSlice("content-encoding;") catch {};
-                if (content_md5 != null) list.appendSlice("content-md5;") catch {};
+                // Track expected length to detect buffer overflow
+                var expected_len: usize = 0;
+                if (content_disposition != null) {
+                    list.appendSlice("content-disposition;") catch {};
+                    expected_len += "content-disposition;".len;
+                }
+                if (content_encoding != null) {
+                    list.appendSlice("content-encoding;") catch {};
+                    expected_len += "content-encoding;".len;
+                }
+                if (content_md5 != null) {
+                    list.appendSlice("content-md5;") catch {};
+                    expected_len += "content-md5;".len;
+                }
                 list.appendSlice("host;") catch {};
-                if (acl != null) list.appendSlice("x-amz-acl;") catch {};
+                expected_len += "host;".len;
+                if (acl != null) {
+                    list.appendSlice("x-amz-acl;") catch {};
+                    expected_len += "x-amz-acl;".len;
+                }
                 list.appendSlice("x-amz-content-sha256;x-amz-date") catch {};
+                expected_len += "x-amz-content-sha256;x-amz-date".len;
 
                 // Add metadata headers (sorted by key)
                 // Keys are already lowercase from parsing (AWS requirement)
@@ -1029,17 +1046,26 @@ pub const S3Credentials = struct {
                     for (indices[0..meta_count]) |idx| {
                         list.appendSlice(";x-amz-meta-") catch {};
                         list.appendSlice(meta.keys[idx]) catch {};
+                        expected_len += ";x-amz-meta-".len + meta.keys[idx].len;
                     }
                 }
 
-                if (request_payer) list.appendSlice(";x-amz-request-payer") catch {};
-                if (session_token != null) list.appendSlice(";x-amz-security-token") catch {};
-                if (storage_class != null) list.appendSlice(";x-amz-storage-class") catch {};
+                if (request_payer) {
+                    list.appendSlice(";x-amz-request-payer") catch {};
+                    expected_len += ";x-amz-request-payer".len;
+                }
+                if (session_token != null) {
+                    list.appendSlice(";x-amz-security-token") catch {};
+                    expected_len += ";x-amz-security-token".len;
+                }
+                if (storage_class != null) {
+                    list.appendSlice(";x-amz-storage-class") catch {};
+                    expected_len += ";x-amz-storage-class".len;
+                }
 
-                // If buffer overflowed, fall back to non-metadata path
-                if (list.items.len == 0) {
-                    // Fallback: metadata too large, use base signed_headers without metadata
-                    break :brk_signed SignedHeaders.get(header_key);
+                // If buffer overflowed, return error - signature would be invalid
+                if (list.items.len != expected_len) {
+                    return error.MetadataSigningBufferOverflow;
                 }
                 break :brk_signed list.items;
             }

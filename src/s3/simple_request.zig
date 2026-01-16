@@ -449,11 +449,11 @@ pub fn executeSimpleS3Request(
 }
 
 const ListObjects = @import("./list_objects.zig");
+const s3creds = @import("./credentials.zig");
 const std = @import("std");
 const ACL = @import("./acl.zig").ACL;
 const StorageClass = @import("./storage_class.zig").StorageClass;
 
-const s3creds = @import("./credentials.zig");
 const S3Credentials = s3creds.S3Credentials;
 const SignResult = S3Credentials.SignResult;
 

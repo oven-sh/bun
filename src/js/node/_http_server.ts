@@ -1187,7 +1187,8 @@ function _writeHead(statusCode, reason, obj, response) {
       // Trailers cannot be used without chunked encoding
       if (response.hasHeader("trailer")) {
         // If "Trailer" header is explicitly set, that's an error
-        if (hasContentLength) {
+        // Use hasContentLen (not hasContentLength) to reflect current headers after obj applied
+        if (hasContentLen) {
           response.removeHeader("trailer");
         } else {
           response.removeHeader("content-length");

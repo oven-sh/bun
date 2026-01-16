@@ -37,10 +37,9 @@ namespace WebCore {
 
 static constexpr auto dummyURLCharacters { "https://w/"_s };
 
-static bool isValidIPv6HostCodePoint(auto codepoint)
+static bool isValidIPv6HostCodePoint(char32_t codepoint)
 {
-    static constexpr std::array validSpecialCodepoints { '[', ']', ':' };
-    return isASCIIHexDigit(codepoint) || std::find(validSpecialCodepoints.begin(), validSpecialCodepoints.end(), codepoint) != validSpecialCodepoints.end();
+    return isASCIIHexDigit(codepoint) || codepoint == '[' || codepoint == ']' || codepoint == ':';
 }
 
 // https://urlpattern.spec.whatwg.org/#is-an-absolute-pathname

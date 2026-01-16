@@ -70,9 +70,9 @@ static Vector<uint8_t> encodeComplexUserDefined(StringView string, UnencodableHa
     Vector<uint8_t> result;
 
     for (auto character : string.codePoints()) {
-        int8_t signedByte = character;
-        if ((signedByte & 0xF7FF) == character)
-            result.append(signedByte);
+        auto signedByte = static_cast<int8_t>(character);
+        if (static_cast<char32_t>(signedByte & 0xF7FF) == character)
+            result.append(static_cast<uint8_t>(signedByte));
         else {
             // No way to encode this character with x-user-defined.
             UnencodableReplacementArray replacement;

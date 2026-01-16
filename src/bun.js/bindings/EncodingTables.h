@@ -58,14 +58,18 @@ inline void checkEncodingTableInvariants() {}
 struct CompareFirst {
     template<typename TypeA, typename TypeB> bool operator()(const TypeA& a, const TypeB& b)
     {
-        return a.first < b.first;
+        // Use std::common_type to safely compare different character types (e.g., char16_t vs char32_t)
+        using CommonType = std::common_type_t<decltype(a.first), decltype(b.first)>;
+        return static_cast<CommonType>(a.first) < static_cast<CommonType>(b.first);
     }
 };
 
 struct EqualFirst {
     template<typename TypeA, typename TypeB> bool operator()(const TypeA& a, const TypeB& b)
     {
-        return a.first == b.first;
+        // Use std::common_type to safely compare different character types (e.g., char16_t vs char32_t)
+        using CommonType = std::common_type_t<decltype(a.first), decltype(b.first)>;
+        return static_cast<CommonType>(a.first) == static_cast<CommonType>(b.first);
     }
 };
 
@@ -114,20 +118,23 @@ template<typename CollectionType> bool sortedFirstsAreUnique(const CollectionTyp
 
 template<typename CollectionType, typename KeyType> static auto findFirstInSortedPairs(const CollectionType& collection, const KeyType& key) -> std::optional<decltype(std::begin(collection)->second)>
 {
+    using CollectionKeyType = decltype(std::begin(collection)->first);
     if constexpr (std::is_integral_v<KeyType>) {
-        if (key != decltype(std::begin(collection)->first)(key))
+        if (static_cast<KeyType>(static_cast<CollectionKeyType>(key)) != key)
             return std::nullopt;
     }
     auto iterator = std::lower_bound(std::begin(collection), std::end(collection), makeFirstAdapter(key), CompareFirst {});
-    if (iterator == std::end(collection) || key < iterator->first)
+    using CommonType = std::common_type_t<KeyType, CollectionKeyType>;
+    if (iterator == std::end(collection) || static_cast<CommonType>(key) < static_cast<CommonType>(iterator->first))
         return std::nullopt;
     return iterator->second;
 }
 
 template<typename CollectionType, typename KeyType> static auto findInSortedPairs(const CollectionType& collection, const KeyType& key) -> std::span<std::remove_reference_t<decltype(*std::begin(collection))>>
 {
+    using CollectionKeyType = decltype(std::begin(collection)->first);
     if constexpr (std::is_integral_v<KeyType>) {
-        if (key != decltype(std::begin(collection)->first)(key))
+        if (static_cast<KeyType>(static_cast<CollectionKeyType>(key)) != key)
             return {};
     }
     return std::ranges::equal_range(collection, makeFirstAdapter(key), CompareFirst {});

@@ -718,8 +718,11 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
 
         JSNativeStdFunction* resolve = JSNativeStdFunction::create(
             vm, globalObject, 0, "resolve"_s,
-            [report](JSGlobalObject* globalObject, CallFrame* callFrame) {
-                return JSValue::encode(JSPromise::resolvedPromise(globalObject, report(globalObject->vm(), globalObject)));
+            [report](JSGlobalObject* globalObject, CallFrame* callFrame) -> JSC::EncodedJSValue {
+                auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+                JSValue result = report(globalObject->vm(), globalObject);
+                RETURN_IF_EXCEPTION(scope, {});
+                RELEASE_AND_RETURN(scope, JSValue::encode(JSPromise::resolvedPromise(globalObject, result)));
             });
         JSNativeStdFunction* reject = JSNativeStdFunction::create(
             vm, globalObject, 0, "reject"_s,
@@ -735,7 +738,8 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
         return JSValue::encode(afterOngoingPromiseCapability);
     }
 
-    return JSValue::encode(report(vm, globalObject));
+    JSValue result = report(vm, globalObject);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
 }
 
 JSC_DECLARE_HOST_FUNCTION(functionGenerateHeapSnapshotForDebugging);

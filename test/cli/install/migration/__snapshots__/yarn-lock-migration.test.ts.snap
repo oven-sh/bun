@@ -228,9 +228,34 @@ exports[`yarn.lock migration basic yarn.lock with workspace dependencies: worksp
         "lodash": "^4.17.21",
       },
     },
+    "packages/a": {
+      "name": "@workspace/a",
+      "version": "1.0.0",
+      "dependencies": {
+        "@workspace/b": "workspace:*",
+        "is-number": "^7.0.0",
+      },
+    },
+    "packages/b": {
+      "name": "@workspace/b",
+      "version": "1.0.0",
+      "dependencies": {
+        "is-odd": "^3.0.1",
+      },
+    },
   },
   "packages": {
+    "@workspace/a": ["@workspace/a@workspace:packages/a"],
+
+    "@workspace/b": ["@workspace/b@workspace:packages/b"],
+
+    "is-number": ["is-number@7.0.0", "", {}, "sha512-41Cifkg6e8TylSpdtTpeLVMqvSBEVzTttHvERD741+pnZ8ANv0004MRL43QKPDlK9cGvNp6NZWZUBlbGXYxxng=="],
+
+    "is-odd": ["is-odd@3.0.1", "", { "dependencies": { "is-number": "^6.0.0" } }, "sha512-CQpnWPrDwmP1+SMHXZhtLtJv90yiyVfluGsX5iNCVkrhQtU3TQHsUWPG9wkdk9Lgd5yNpAg9jQEo90CBaXgWMA=="],
+
     "lodash": ["lodash@4.17.21", "", {}, "sha512-v2kDEe57lecTulaDIuNTPy3Ry4gLGJ6Z1O3vE1krgXZNrsQ+LFTGHVxVjcXPs17LhbZVGedAJv8XZ1tvj5FvSg=="],
+
+    "is-odd/is-number": ["is-number@6.0.0", "", {}, "sha512-Wu1VHeILBK8KAWJUAiSZQX94GmOE45Rg6/538fKwiloUu21KncEkYGPqob2oSZ5mUT73vLGrHQjKw3KMPwfDzg=="],
   }
 }
 "
@@ -272,15 +297,15 @@ exports[`yarn.lock migration basic migration with realistic complex yarn.lock: c
     "": {
       "name": "complex-app",
       "dependencies": {
+        "@babel/core": "^7.20.0",
         "react": "^18.2.0",
         "react-dom": "^18.2.0",
-        "@babel/core": "^7.20.0",
         "webpack": "^5.75.0",
       },
       "devDependencies": {
         "@types/react": "^18.0.0",
-        "typescript": "^4.9.0",
         "eslint": "^8.0.0",
+        "typescript": "^4.9.0",
       },
       "optionalDependencies": {
         "fsevents": "^2.3.2",
@@ -2932,7 +2957,7 @@ exports[`bun pm migrate for existing yarn.lock yarn-cli-repo: yarn-cli-repo 1`] 
 
     "class-utils/define-property/is-descriptor/is-data-descriptor/kind-of": ["kind-of@3.2.2", "", { "dependencies": { "is-buffer": "^1.1.5" } }, "sha1-MeohpzS6ubuw8yRm2JOupR5KPGQ="],
 
-    "commitizen/inquirer/cli-cursor/restore-cursor/onetime": ["onetime@1.1.0", "http://registry.npmjs.org/onetime/-/onetime-1.1.0.tgz#a1f7838f8314c516f05ecefcbc4ccfe04b4ed789", {}, "sha1-ofeDj4MUxRbwXs78vEzP4EtO14k="],
+    "commitizen/inquirer/cli-cursor/restore-cursor/onetime": ["onetime@1.1.0", "", {}, "sha1-ofeDj4MUxRbwXs78vEzP4EtO14k="],
 
     "eslint/inquirer/chalk/supports-color/has-flag": ["has-flag@3.0.0", "", {}, "sha1-tdRU3CGZriJWmfNGfloH87lVuv0="],
 
@@ -3141,9 +3166,9 @@ exports[`bun pm migrate for existing yarn.lock yarn-stuff: yarn-stuff 1`] = `
   "packages": {
     "abbrev": ["abbrev@1.1.1", "", {}, "sha512-nne9/IiQ/hzIhY6pdDnbBtz7DjPTKrY00P/zvPSm5pOFkl6xuGrGnXn/VtTNNfNtAfZ9/1RtehkszU9qcTii0Q=="],
 
-    "full-git-url": ["abbrev-js@github:isaacs/abbrev-js#3f9802e", {}, ""],
+    "full-git-url": ["full-git-url@github:isaacs/abbrev-js#3f9802e", {}, ""],
 
-    "ghshort": ["ghshort@3.0.1", "https://codeload.github.com/isaacs/abbrev-js/tar.gz/3f9802e56ff878761a338e43ecacbfed39d2181d", {}, ""],
+    "ghshort": ["ghshort@github:isaacs/abbrev-js#3f9802e", {}, ""],
 
     "old": ["abbrev@1.0.9", "", {}, "sha512-LEyx4aLEC3x6T0UguF6YILf+ntvmOaWsVfENmIW0E9H09vKlLDGelMjjSm0jkDHALj8A8quZ/HapKNigzwge+Q=="],
 
@@ -3151,11 +3176,11 @@ exports[`bun pm migrate for existing yarn.lock yarn-stuff: yarn-stuff 1`] = `
 
     "reg": ["abbrev@1.1.1", "", {}, "sha512-nne9/IiQ/hzIhY6pdDnbBtz7DjPTKrY00P/zvPSm5pOFkl6xuGrGnXn/VtTNNfNtAfZ9/1RtehkszU9qcTii0Q=="],
 
-    "remote": ["abbrev@https://registry.npmjs.org/abbrev/-/abbrev-1.1.1.tgz#f8f2c887ad10bf67f634f005b6987fed3179aac8", {}],
+    "remote": ["abbrev@1.1.1", "", {}, "sha512-nne9/IiQ/hzIhY6pdDnbBtz7DjPTKrY00P/zvPSm5pOFkl6xuGrGnXn/VtTNNfNtAfZ9/1RtehkszU9qcTii0Q=="],
 
     "symlink": ["symlink@file:./abbrev-link-target", {}],
 
-    "tarball": ["tarball@abbrev-1.1.1.tgz", {}],
+    "tarball": ["tarball@file:abbrev-1.1.1.tgz#f8f2c887ad10bf67f634f005b6987fed3179aac8", {}],
   }
 }
 "
@@ -3183,8 +3208,8 @@ exports[`bun pm migrate for existing yarn.lock yarn.lock with packages that have
     "": {
       "name": "os-cpu-test",
       "dependencies": {
-        "fsevents": "^2.3.2",
         "esbuild": "^0.17.0",
+        "fsevents": "^2.3.2",
       },
     },
   },
@@ -3202,6 +3227,138 @@ exports[`bun pm migrate for existing yarn.lock yarn.lock with packages that have
     "esbuild": ["esbuild@0.17.19", "", { "optionalDependencies": { "@esbuild/android-arm": "0.17.19", "@esbuild/android-arm64": "0.17.19", "@esbuild/android-x64": "0.17.19", "@esbuild/darwin-arm64": "0.17.19", "@esbuild/darwin-x64": "0.17.19", "@esbuild/freebsd-arm64": "0.17.19", "@esbuild/freebsd-x64": "0.17.19", "@esbuild/linux-arm": "0.17.19", "@esbuild/linux-arm64": "0.17.19", "@esbuild/linux-ia32": "0.17.19", "@esbuild/linux-loong64": "0.17.19", "@esbuild/linux-mips64el": "0.17.19", "@esbuild/linux-ppc64": "0.17.19", "@esbuild/linux-riscv64": "0.17.19", "@esbuild/linux-s390x": "0.17.19", "@esbuild/linux-x64": "0.17.19", "@esbuild/netbsd-x64": "0.17.19", "@esbuild/openbsd-x64": "0.17.19", "@esbuild/sunos-x64": "0.17.19", "@esbuild/win32-arm64": "0.17.19", "@esbuild/win32-ia32": "0.17.19", "@esbuild/win32-x64": "0.17.19" }, "bin": { "esbuild": "bin/esbuild" } }, "sha512-XQ0jAPFkK/u3LcVRcvVHQcTIqD6E2H1fvZMA5dQPSOWb3suUbWbfbRf94pjc0bNzRYLfIrDRQXr7X+LHIm5oHw=="],
 
     "fsevents": ["fsevents@2.3.2", "", { "os": "darwin" }, "sha512-xiqMQR4xAeHTuB9uWm+fFRcIOgKBMiOBP+eXiyT7jsgVCq1bkVygt00oASowB7EdtpOHaaPgKt812P9ab+DDKA=="],
+  }
+}
+"
+`;
+
+exports[`bun pm migrate for existing yarn.lock yarn.lock with custom registry tarball URLs: custom-registry-yarn-migration 1`] = `
+"{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "custom-registry-test",
+      "dependencies": {
+        "another-pkg": "https://packages.example.com/tarballs/another-pkg-2.1.0.tgz",
+        "my-package": "https://my-custom-registry.com/my-package/-/my-package-1.0.0.tgz",
+      },
+    },
+  },
+  "packages": {
+    "another-pkg": ["another-pkg@2.1.0", "https://packages.example.com/tarballs/another-pkg-2.1.0.tgz", {}, "sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],
+
+    "my-package": ["my-package@1.0.0", "https://my-custom-registry.com/my-package/-/my-package-1.0.0.tgz", {}, ""],
+  }
+}
+"
+`;
+
+exports[`bun pm migrate for existing yarn.lock all yarn v1 quirks in one test: yarn-comprehensive 1`] = `
+"{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "yarn-quirks-test",
+      "dependencies": {
+        "@babel/core": "^7.20.0",
+        "@prisma/engines": "4.16.1-1.4bc8b6e1b66cb932731fb1bdbbc550d1e010de81",
+        "is-number": "^7.0.0",
+        "my-lodash": "npm:lodash@4.17.21",
+      },
+      "devDependencies": {
+        "lodash": "^3.10.0",
+      },
+      "optionalDependencies": {
+        "fsevents": "^2.3.2",
+      },
+    },
+    "packages/app": {
+      "name": "@workspace/app",
+      "version": "1.0.0",
+      "dependencies": {
+        "@workspace/lib": "workspace:*",
+        "is-number": "~7.0.0",
+        "lodash": "^4.17.0",
+      },
+    },
+    "packages/lib": {
+      "name": "@workspace/lib",
+      "version": "1.0.0",
+      "dependencies": {
+        "is-odd": "^3.0.0",
+      },
+    },
+  },
+  "packages": {
+    "@babel/core": ["@babel/core@7.20.12", "", { "dependencies": { "@babel/types": "^7.20.7" } }, "sha512-XsMfHovsUYHFMdrIHkZphTN/2Hzzi78R08NuHfDBehym2VsPDL6Zn/JAD/JQdnRvbSsbQc4mVaU1m6JgtTEElg=="],
+
+    "@babel/types": ["@babel/types@7.20.7", "", {}, "sha512-69OnhBxSSgK0OzTJai4kyPDiKTIe3j+ctaHdIGVbRahTLAT7L3R9oeXHC2aVSuGYt3cVnoAMDmOCgJ2yaiLMvg=="],
+
+    "@prisma/engines": ["@prisma/engines@4.16.1-1.4bc8b6e1b66cb932731fb1bdbbc550d1e010de81", "", {}, "sha512-q617EUWfRIDTriWADZ4YiWRZXCa/WuhNgLTVd+HqWLffjMSPzyM5uOWoauX91wvQClSKZU4pzI4JJLQ9Kl62Qg=="],
+
+    "@workspace/app": ["@workspace/app@workspace:packages/app"],
+
+    "@workspace/lib": ["@workspace/lib@workspace:packages/lib"],
+
+    "fsevents": ["fsevents@2.3.2", "", { "os": "darwin" }, "sha512-xiqMQR4xAeHTuB9uWm+fFRcIOgKBMiOBP+eXiyT7jsgVCq1bkVygt00oASowB7EdtpOHaaPgKt812P9ab+DDKA=="],
+
+    "is-number": ["is-number@7.0.0", "", {}, "sha512-41Cifkg6e8TylSpdtTpeLVMqvSBEVzTttHvERD741+pnZ8ANv0004MRL43QKPDlK9cGvNp6NZWZUBlbGXYxxng=="],
+
+    "is-odd": ["is-odd@3.0.1", "", { "dependencies": { "is-number": "^6.0.0" } }, "sha512-CQpnWPrDwmP1+SMHXZhtLtJv90yiyVfluGsX5iNCVkrhQtU3TQHsUWPG9wkdk9Lgd5yNpAg9jQEo90CBaXgWMA=="],
+
+    "lodash": ["lodash@3.10.1", "", {}, "sha512-9mDDwqVIma6OZX79ZlDACZl8sBm0TEnkf99zV3iMA4GzkSTbUYwRa7cmPR8CKkkl+OuU/fGTM48FNhQ5GnLsXw=="],
+
+    "my-lodash": ["lodash@4.17.21", "", {}, "sha512-v2kDEe57lecTulaDIuNTPy3Ry4gLGJ6Z1O3vE1krgXZNrsQ+LFTGHVxVjcXPs17LhbZVGedAJv8XZ1tvj5FvSg=="],
+
+    "@workspace/app/lodash": ["lodash@4.17.21", "", {}, "sha512-v2kDEe57lecTulaDIuNTPy3Ry4gLGJ6Z1O3vE1krgXZNrsQ+LFTGHVxVjcXPs17LhbZVGedAJv8XZ1tvj5FvSg=="],
+
+    "is-odd/is-number": ["is-number@6.0.0", "", {}, "sha512-Wu1VHeILBK8KAWJUAiSZQX94GmOE45Rg6/538fKwiloUu21KncEkYGPqob2oSZ5mUT73vLGrHQjKw3KMPwfDzg=="],
+  }
+}
+"
+`;
+
+exports[`bun pm migrate for existing yarn.lock parser handles indentation correctly: yarn-indentation 1`] = `
+"{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "indent-test",
+      "dependencies": {
+        "test-pkg": "^1.0.0",
+      },
+    },
+  },
+  "packages": {
+    "dep-a": ["dep-a@1.0.0", "", {}, ""],
+
+    "dep-b": ["dep-b@2.0.0", "", {}, ""],
+
+    "test-pkg": ["test-pkg@1.0.0", "", { "dependencies": { "dep-a": "^1.0.0", "dep-b": "^2.0.0" } }, ""],
+  }
+}
+"
+`;
+
+exports[`bun pm migrate for existing yarn.lock handles optionalDependencies correctly: yarn-optional-deps 1`] = `
+"{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "optional-test",
+      "dependencies": {
+        "pkg-a": "^1.0.0",
+      },
+    },
+  },
+  "packages": {
+    "optional-dep": ["optional-dep@1.0.0", "", {}, "sha512-testopt2AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],
+
+    "pkg-a": ["pkg-a@1.0.0", "", { "optionalDependencies": { "optional-dep": "^1.0.0" } }, "sha512-testoptionalAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],
   }
 }
 "

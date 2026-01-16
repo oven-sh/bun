@@ -91,8 +91,8 @@ jobs:
 
           # Create temp directory for processing
           WORKDIR=$(mktemp -d)
-          OLDPWD=$(pwd)
-          trap 'cd "$OLDPWD" && rm -rf "$WORKDIR"' EXIT
+          ORIG_DIR=$(pwd)
+          trap 'cd "$ORIG_DIR" && rm -rf "$WORKDIR"' EXIT
           cd "$WORKDIR"
 
           # Get release assets and process each .zip file safely

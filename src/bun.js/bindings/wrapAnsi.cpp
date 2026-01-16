@@ -206,10 +206,12 @@ static void wrapWord(Vector<Row<Char>>& rows, const Char* wordStart, const Char*
 
         if (!isInsideEscape && vis + charWidth <= columns) {
             rows.last().append(it, it + charLen);
+            vis += charWidth;
         } else if (!isInsideEscape) {
+            // Character doesn't fit on current line, start a new line
             rows.append(Row<Char>());
             rows.last().append(it, it + charLen);
-            vis = 0;
+            vis = charWidth; // Start with the width of the character we just added
         } else {
             rows.last().append(*it);
         }
@@ -234,8 +236,6 @@ static void wrapWord(Vector<Row<Char>>& rows, const Char* wordStart, const Char*
             it++;
             continue;
         }
-
-        vis += charWidth;
 
         if (vis == columns && it + charLen < wordEnd) {
             rows.append(Row<Char>());

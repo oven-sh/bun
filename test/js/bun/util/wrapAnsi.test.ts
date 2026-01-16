@@ -190,4 +190,22 @@ describe("Bun.wrapAnsi", () => {
       expect(Bun.wrapAnsi("hello world", NaN)).toBe("hello world");
     });
   });
+
+  describe("width tracking", () => {
+    test("width tracking after line wrap with full-width chars", () => {
+      // Each full-width character has width 2
+      const input = "あいうえお"; // 5 chars, total width 10
+      const result = Bun.wrapAnsi(input, 4, { hard: true });
+      // Width 4 allows 2 full-width chars per line: "あい"(4), "うえ"(4), "お"(2)
+      expect(result).toBe("あい\nうえ\nお");
+    });
+
+    test("width tracking with mixed width chars", () => {
+      // ASCII(width 1) and full-width(width 2) mixed
+      const input = "aあbい"; // widths: 1+2+1+2 = 6
+      const result = Bun.wrapAnsi(input, 3, { hard: true });
+      // "aあ"(3) on line 1, "bい"(3) on line 2
+      expect(result).toBe("aあ\nbい");
+    });
+  });
 });

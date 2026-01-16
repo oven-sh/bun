@@ -26,21 +26,6 @@ The `bun` CLI contains a Node.js-compatible package manager designed to be a dra
 
 </Note>
 
-<Accordion title="For Linux users">
-The recommended minimum Linux Kernel version is 5.6. If you're on Linux kernel 5.1 - 5.5, `bun install` will work, but HTTP requests will be slow due to a lack of support for io_uring's `connect()` operation.
-
-If you're using Ubuntu 20.04, here's how to install a [newer kernel](https://wiki.ubuntu.com/Kernel/LTSEnablementStack):
-
-```bash terminal icon="terminal"
-# If this returns a version >= 5.6, you don't need to do anything
-uname -r
-
-# Install the official Ubuntu hardware enablement kernel
-sudo apt install --install-recommends linux-generic-hwe-20.04
-```
-
-</Accordion>
-
 To install all dependencies of a project:
 
 ```bash terminal icon="terminal"

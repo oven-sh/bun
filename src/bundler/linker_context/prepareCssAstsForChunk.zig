@@ -16,7 +16,7 @@ fn prepareCssAstsForChunkImpl(c: *LinkerContext, chunk: *Chunk, allocator: std.m
     const asts: []const ?*bun.css.BundlerStyleSheet = c.graph.ast.items(.css);
     // Map to track hashes of top-level rules for deduplication
     // Arena allocator, no need to explicit deinit map
-    var deduplicate_map = std.AutoHashMap(u64, void).init(allocator);
+    var deduplicate_map = std.AutoHashMap(u64, []const u8).init(allocator);
 
     // Prepare CSS asts
     // Remove duplicate rules across files. This must be done in serial, not
@@ -212,11 +212,17 @@ fn prepareCssAstsForChunkImpl(c: *LinkerContext, chunk: *Chunk, allocator: std.m
 
                                 if (rule.toCss(&printer)) |_| {
                                     const hash = std.hash.Wyhash.hash(0, allocating_writer.written());
-                                    if (deduplicate_map.contains(hash)) {
-                                        // Already seen this rule, ignore it
-                                        rule.* = .ignored;
+                                    const content = allocating_writer.written();
+                                    if (deduplicate_map.get(hash)) |existing| {
+                                        if (std.mem.eql(u8, existing, content)) {
+                                            // Confirmed duplicate, ignore it
+                                            rule.* = .ignored;
+                                        }
+                                        // Hash collision with different content - keep both
                                     } else {
-                                        deduplicate_map.put(hash, {}) catch |err| bun.handleOom(err);
+                                        // Need to dupe the content since allocating_writer may be reused
+                                        const duped = allocator.dupe(u8, content) catch |err| bun.handleOom(err);
+                                        deduplicate_map.put(hash, duped) catch |err| bun.handleOom(err);
                                     }
                                 } else |_| {
                                     // If errors (skip dedupe)

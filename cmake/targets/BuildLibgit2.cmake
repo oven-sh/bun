@@ -3,23 +3,21 @@ register_cmake_command(
     libgit2
   TARGETS
     libgit2package
-  CWD
-    ${CWD}/vendor/libgit2
-  LIB_PATH
-    .
   LIBRARIES
     git2
-  INCLUDES
-    include
-  CMAKE_ARGS
+  ARGS
     -DBUILD_SHARED_LIBS=OFF
     -DBUILD_TESTS=OFF
     -DBUILD_CLI=OFF
     -DUSE_SSH=OFF
     -DUSE_HTTPS=OFF
+    -DUSE_NTLMCLIENT=OFF
+    -DUSE_GSSAPI=OFF
     -DUSE_SHA1=Builtin
     -DUSE_SHA256=Builtin
     -DUSE_BUNDLED_ZLIB=ON
     -DREGEX_BACKEND=builtin
     -DUSE_HTTP_PARSER=builtin
+  INCLUDES
+    include
 )

@@ -71,31 +71,33 @@ pub const MetadataMap = struct {
 
     /// Deep-copy the metadata map, duplicating all keys and values.
     pub fn dupe(this: @This(), allocator: std.mem.Allocator) ?MetadataMap {
-        const n = this.keys.len;
-        if (n == 0) return null;
+        return dupeImpl(this, allocator) catch return null;
+    }
 
-        const new_keys = allocator.alloc([]const u8, n) catch return null;
-        const new_values = allocator.alloc([]const u8, n) catch {
-            allocator.free(new_keys);
-            return null;
-        };
+    fn dupeImpl(this: @This(), allocator: std.mem.Allocator) error{OutOfMemory}!MetadataMap {
+        const n = this.keys.len;
+        if (n == 0) return error.OutOfMemory;
+
+        const new_keys = try allocator.alloc([]const u8, n);
+        errdefer allocator.free(new_keys);
+
+        const new_values = try allocator.alloc([]const u8, n);
+        errdefer allocator.free(new_values);
+
+        // Track how many items we've successfully allocated for cleanup
+        var keys_allocated: usize = 0;
+        var values_allocated: usize = 0;
+
+        errdefer {
+            for (0..keys_allocated) |j| allocator.free(new_keys[j]);
+            for (0..values_allocated) |j| allocator.free(new_values[j]);
+        }
 
         for (0..n) |i| {
-            new_keys[i] = allocator.dupe(u8, this.keys[i]) catch {
-                // Free previously allocated keys
-                for (0..i) |j| allocator.free(new_keys[j]);
-                allocator.free(new_keys);
-                allocator.free(new_values);
-                return null;
-            };
-            new_values[i] = allocator.dupe(u8, this.values[i]) catch {
-                // Free previously allocated keys and values
-                for (0..i + 1) |j| allocator.free(new_keys[j]);
-                for (0..i) |j| allocator.free(new_values[j]);
-                allocator.free(new_keys);
-                allocator.free(new_values);
-                return null;
-            };
+            new_keys[i] = try allocator.dupe(u8, this.keys[i]);
+            keys_allocated = i + 1;
+            new_values[i] = try allocator.dupe(u8, this.values[i]);
+            values_allocated = i + 1;
         }
 
         return .{
@@ -115,6 +117,74 @@ pub const MetadataMap = struct {
         allocator.free(this.values);
     }
 };
+
+/// Parse metadata from a JS object, returning a MetadataMap with lowercase keys.
+/// Uses errdefer for automatic cleanup on allocation failure.
+fn parseMetadataFromJS(metadata_value: jsc.JSValue, globalObject: *jsc.JSGlobalObject) bun.JSError!?MetadataMap {
+    const metadata_obj = try metadata_value.toObject(globalObject);
+
+    // Count properties first
+    var property_count: usize = 0;
+    var iter = try jsc.JSPropertyIterator(.{ .skip_empty_name = true, .include_value = true }).init(globalObject, metadata_obj);
+    defer iter.deinit();
+    while (try iter.next()) |_| {
+        property_count += 1;
+    }
+
+    if (property_count == 0) return null;
+
+    // Allocate arrays for keys and values
+    const keys = bun.default_allocator.alloc([]const u8, property_count) catch bun.outOfMemory();
+    errdefer bun.default_allocator.free(keys);
+
+    const values = bun.default_allocator.alloc([]const u8, property_count) catch bun.outOfMemory();
+    errdefer bun.default_allocator.free(values);
+
+    // Track allocations for cleanup on error
+    var keys_allocated: usize = 0;
+    var values_allocated: usize = 0;
+
+    errdefer {
+        for (0..keys_allocated) |j| bun.default_allocator.free(keys[j]);
+        for (0..values_allocated) |j| bun.default_allocator.free(values[j]);
+    }
+
+    // Second pass to extract keys and values
+    var iter2 = try jsc.JSPropertyIterator(.{ .skip_empty_name = true, .include_value = true }).init(globalObject, metadata_obj);
+    defer iter2.deinit();
+
+    var i: usize = 0;
+    while (try iter2.next()) |key| {
+        // Convert key to lowercase (AWS requires lowercase metadata keys)
+        const key_owned = try key.toOwnedSlice(bun.default_allocator);
+        defer bun.default_allocator.free(key_owned);
+
+        const key_lower = bun.default_allocator.alloc(u8, key_owned.len) catch bun.outOfMemory();
+        keys[i] = strings.copyLowercase(key_owned, key_lower);
+        keys_allocated = i + 1;
+
+        // Get value - metadata values must be strings
+        const val = iter2.value;
+        if (!val.isString()) {
+            return globalObject.throwInvalidArgumentTypeValue("metadata value", "string", val);
+        }
+
+        const val_str = try bun.String.fromJS(val, globalObject);
+        defer val_str.deref();
+        const val_slice = val_str.toUTF8(bun.default_allocator);
+        defer val_slice.deinit();
+
+        values[i] = bun.default_allocator.dupe(u8, val_slice.slice()) catch bun.outOfMemory();
+        values_allocated = i + 1;
+
+        i += 1;
+    }
+
+    return .{
+        .keys = keys,
+        .values = values,
+    };
+}
 
 pub const S3Credentials = struct {
     const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
@@ -385,58 +455,7 @@ pub const S3Credentials = struct {
                 if (try opts.getTruthyComptime(globalObject, "metadata")) |metadata_value| {
                     if (!metadata_value.isEmptyOrUndefinedOrNull()) {
                         if (metadata_value.isObject()) {
-                            const metadata_obj = try metadata_value.toObject(globalObject);
-                            // Count properties first
-                            var property_count: usize = 0;
-                            var iter = try jsc.JSPropertyIterator(.{ .skip_empty_name = true, .include_value = true }).init(globalObject, metadata_obj);
-                            defer iter.deinit();
-                            while (try iter.next()) |_| {
-                                property_count += 1;
-                            }
-
-                            if (property_count > 0) {
-                                // Allocate arrays for keys and values
-                                const keys = bun.default_allocator.alloc([]const u8, property_count) catch bun.outOfMemory();
-                                const values = bun.default_allocator.alloc([]const u8, property_count) catch bun.outOfMemory();
-
-                                // Second pass to extract keys and values
-                                var iter2 = try jsc.JSPropertyIterator(.{ .skip_empty_name = true, .include_value = true }).init(globalObject, metadata_obj);
-                                defer iter2.deinit();
-                                var i: usize = 0;
-                                while (try iter2.next()) |key| {
-                                    // Convert key to lowercase (AWS requires lowercase metadata keys)
-                                    const key_owned = try key.toOwnedSlice(bun.default_allocator);
-                                    const key_lower = bun.default_allocator.alloc(u8, key_owned.len) catch bun.outOfMemory();
-                                    for (key_owned, 0..) |c, j| {
-                                        key_lower[j] = if (c >= 'A' and c <= 'Z') c + 32 else c;
-                                    }
-                                    bun.default_allocator.free(key_owned);
-                                    keys[i] = key_lower;
-
-                                    // Get value - metadata values must be strings
-                                    const val = iter2.value;
-                                    if (val.isString()) {
-                                        const val_str = try bun.String.fromJS(val, globalObject);
-                                        defer val_str.deref();
-                                        const val_slice = val_str.toUTF8(bun.default_allocator);
-                                        values[i] = bun.default_allocator.dupe(u8, val_slice.slice()) catch bun.outOfMemory();
-                                        val_slice.deinit();
-                                    } else {
-                                        // Clean up previously allocated keys/values before throwing
-                                        for (0..i + 1) |j| bun.default_allocator.free(keys[j]);
-                                        for (0..i) |j| bun.default_allocator.free(values[j]);
-                                        bun.default_allocator.free(keys);
-                                        bun.default_allocator.free(values);
-                                        return globalObject.throwInvalidArgumentTypeValue("metadata value", "string", val);
-                                    }
-                                    i += 1;
-                                }
-
-                                new_credentials.metadata = .{
-                                    .keys = keys,
-                                    .values = values,
-                                };
-                            }
+                            new_credentials.metadata = try parseMetadataFromJS(metadata_value, globalObject);
                         } else {
                             return globalObject.throwInvalidArgumentTypeValue("metadata", "object", metadata_value);
                         }

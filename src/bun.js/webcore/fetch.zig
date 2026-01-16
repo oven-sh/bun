@@ -1309,6 +1309,9 @@ fn fetchImpl(
 
             const promise_value = promise.value();
             const proxy_url = if (proxy) |p| p.href else "";
+            // Dupe metadata since multipart upload takes ownership
+            const metadata_dupe = if (credentialsWithOptions.metadata) |meta| meta.dupe(bun.default_allocator) else null;
+            credentialsWithOptions.metadata = null; // Prevent double-free in deinit
             _ = try bun.S3.uploadStream(
                 credentialsWithOptions.credentials.dupe(),
                 url.s3Path(),
@@ -1322,7 +1325,7 @@ fn fetchImpl(
                 if (headers) |h| h.getContentEncoding() else null,
                 proxy_url,
                 credentialsWithOptions.request_payer,
-                credentialsWithOptions.metadata,
+                metadata_dupe,
                 @ptrCast(&Wrapper.resolve),
                 s3_stream,
             );

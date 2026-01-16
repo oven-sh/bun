@@ -1112,6 +1112,9 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
                         source_blob,
                         @truncate(s3.options.partSize),
                     ), ctx)) |stream| {
+                        // Dupe metadata since multipart upload takes ownership
+                        const metadata_dupe = if (aws_options.metadata) |meta| meta.dupe(bun.default_allocator) else null;
+                        aws_options.metadata = null; // Prevent double-free in defer
                         return S3.uploadStream(
                             (if (options.extra_options != null) aws_options.credentials.dupe() else s3.getCredentials()),
                             s3.path(),
@@ -1125,7 +1128,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
                             aws_options.content_encoding,
                             proxy_url,
                             aws_options.request_payer,
-                            aws_options.metadata,
+                            metadata_dupe,
                             null,
                             undefined,
                         );
@@ -1187,6 +1190,9 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
                     source_blob,
                     @truncate(s3.options.partSize),
                 ), ctx)) |stream| {
+                    // Dupe metadata since multipart upload takes ownership
+                    const metadata_dupe = if (aws_options.metadata) |meta| meta.dupe(bun.default_allocator) else null;
+                    aws_options.metadata = null; // Prevent double-free in defer
                     return S3.uploadStream(
                         (if (options.extra_options != null) aws_options.credentials.dupe() else s3.getCredentials()),
                         s3.path(),
@@ -1200,7 +1206,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
                         aws_options.content_encoding,
                         proxy_url,
                         aws_options.request_payer,
-                        aws_options.metadata,
+                        metadata_dupe,
                         null,
                         undefined,
                     );
@@ -1395,6 +1401,9 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                             }
                             const proxy = globalThis.bunVM().transpiler.env.getHttpProxy(true, null);
                             const proxy_url = if (proxy) |p| p.href else null;
+                            // Dupe metadata since multipart upload takes ownership
+                            const metadata_dupe = if (aws_options.metadata) |meta| meta.dupe(bun.default_allocator) else null;
+                            aws_options.metadata = null; // Prevent double-free in defer
 
                             return S3.uploadStream(
                                 (if (options.extra_options != null) aws_options.credentials.dupe() else s3.getCredentials()),
@@ -1409,7 +1418,7 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                                 aws_options.content_encoding,
                                 proxy_url,
                                 aws_options.request_payer,
-                                aws_options.metadata,
+                                metadata_dupe,
                                 null,
                                 undefined,
                             );
@@ -1460,6 +1469,9 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                             }
                             const proxy = globalThis.bunVM().transpiler.env.getHttpProxy(true, null);
                             const proxy_url = if (proxy) |p| p.href else null;
+                            // Dupe metadata since multipart upload takes ownership
+                            const metadata_dupe = if (aws_options.metadata) |meta| meta.dupe(bun.default_allocator) else null;
+                            aws_options.metadata = null; // Prevent double-free in defer
                             return S3.uploadStream(
                                 (if (options.extra_options != null) aws_options.credentials.dupe() else s3.getCredentials()),
                                 s3.path(),
@@ -1473,7 +1485,7 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                                 aws_options.content_encoding,
                                 proxy_url,
                                 aws_options.request_payer,
-                                aws_options.metadata,
+                                metadata_dupe,
                                 null,
                                 undefined,
                             );
@@ -2439,6 +2451,9 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, re
         const path = s3.path();
         const proxy = globalThis.bunVM().transpiler.env.getHttpProxy(true, null);
         const proxy_url = if (proxy) |p| p.href else null;
+        // Dupe metadata since multipart upload takes ownership
+        const metadata_dupe = if (aws_options.metadata) |meta| meta.dupe(bun.default_allocator) else null;
+        aws_options.metadata = null; // Prevent double-free in defer
 
         return S3.uploadStream(
             (if (extra_options != null) aws_options.credentials.dupe() else s3.getCredentials()),
@@ -2453,7 +2468,7 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, re
             aws_options.content_encoding,
             proxy_url,
             aws_options.request_payer,
-            aws_options.metadata,
+            metadata_dupe,
             null,
             undefined,
         );
@@ -2697,6 +2712,9 @@ pub fn getWriter(
                     content_encoding_str = try content_encoding.toSlice(globalThis, bun.default_allocator);
                 }
                 var credentialsWithOptions = try s3.getCredentialsWithOptions(options, globalThis);
+                // Dupe metadata since multipart upload takes ownership
+                const metadata_dupe = if (credentialsWithOptions.metadata) |meta| meta.dupe(bun.default_allocator) else null;
+                credentialsWithOptions.metadata = null; // Prevent double-free in deinit
                 defer credentialsWithOptions.deinit();
                 return try S3.writableStream(
                     credentialsWithOptions.credentials.dupe(),
@@ -2709,7 +2727,7 @@ pub fn getWriter(
                     proxy_url,
                     credentialsWithOptions.storage_class,
                     credentialsWithOptions.request_payer,
-                    credentialsWithOptions.metadata,
+                    metadata_dupe,
                 );
             }
         }

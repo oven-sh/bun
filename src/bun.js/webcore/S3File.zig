@@ -268,6 +268,9 @@ pub fn constructS3FileWithS3CredentialsAndOptions(
     store.data.s3.acl = aws_options.acl;
     store.data.s3.storage_class = aws_options.storage_class;
     store.data.s3.request_payer = aws_options.request_payer;
+    // Transfer metadata ownership to the store
+    store.data.s3.metadata = aws_options.metadata;
+    aws_options.metadata = null; // Prevent deinit from freeing
 
     var blob = Blob.initWithStore(store, globalObject);
     if (options) |opts| {
@@ -312,6 +315,9 @@ pub fn constructS3FileWithS3Credentials(
     store.data.s3.acl = aws_options.acl;
     store.data.s3.storage_class = aws_options.storage_class;
     store.data.s3.request_payer = aws_options.request_payer;
+    // Transfer metadata ownership to the store
+    store.data.s3.metadata = aws_options.metadata;
+    aws_options.metadata = null; // Prevent deinit from freeing
 
     var blob = Blob.initWithStore(store, globalObject);
     if (options) |opts| {
@@ -399,6 +405,7 @@ pub const S3BlobStatTask = struct {
                     stat_result.etag,
                     stat_result.contentType,
                     stat_result.lastModified,
+                    stat_result.headers,
                     globalThis,
                 )).toJS(globalThis));
             },
@@ -505,6 +512,7 @@ pub fn getPresignUrlFrom(this: *Blob, globalThis: *jsc.JSGlobalObject, extra_opt
         .request_payer = credentialsWithOptions.request_payer,
         .content_disposition = credentialsWithOptions.content_disposition,
         .content_type = credentialsWithOptions.content_type,
+        .metadata = credentialsWithOptions.metadata,
     }, false, .{ .expires = expires }) catch |sign_err| {
         return S3.throwSignError(sign_err, globalThis);
     };

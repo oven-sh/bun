@@ -7,6 +7,9 @@ pub const S3StatResult = union(enum) {
         lastModified: []const u8 = "",
         /// format: text/plain, contentType is not owned and need to be copied if used after this callback
         contentType: []const u8 = "",
+        /// Raw headers from response - caller should filter for x-amz-meta-* headers.
+        /// Headers are not owned and need to be copied if used after this callback.
+        headers: []const picohttp.Header = &.{},
     },
     not_found: S3Error,
 
@@ -231,6 +234,7 @@ pub const S3HttpSimpleTask = struct {
                                 .lastModified = response.headers.get("last-modified") orelse "",
                                 .contentType = response.headers.get("content-type") orelse "",
                                 .size = if (response.headers.get("content-length")) |content_len| (std.fmt.parseInt(usize, content_len, 10) catch 0) else 0,
+                                .headers = response.headers.list,
                             },
                         }, this.callback_context);
                     },
@@ -360,6 +364,7 @@ pub const S3SimpleRequestOptions = struct {
     acl: ?ACL = null,
     storage_class: ?StorageClass = null,
     request_payer: bool = false,
+    metadata: ?s3creds.MetadataMap = null,
 };
 
 pub fn executeSimpleS3Request(
@@ -377,6 +382,7 @@ pub fn executeSimpleS3Request(
         .acl = options.acl,
         .storage_class = options.storage_class,
         .request_payer = options.request_payer,
+        .metadata = options.metadata,
     }, false, null) catch |sign_err| {
         if (options.range) |range_| bun.default_allocator.free(range_);
         const error_code_and_message = getSignErrorCodeAndMessage(sign_err);
@@ -385,7 +391,8 @@ pub fn executeSimpleS3Request(
     };
 
     const headers = brk: {
-        var header_buffer: [S3Credentials.SignResult.MAX_HEADERS + 1]picohttp.Header = undefined;
+        // MAX_HEADERS (41) + 1 for the additional header we mix in
+        var header_buffer: [s3creds.MAX_HEADERS + 1]picohttp.Header = undefined;
         if (options.range) |range_| {
             const _headers = result.mixWithHeader(&header_buffer, .{ .name = "range", .value = range_ });
             break :brk bun.handleOom(bun.http.Headers.fromPicoHttpHeaders(_headers, bun.default_allocator));
@@ -444,8 +451,9 @@ const std = @import("std");
 const ACL = @import("./acl.zig").ACL;
 const StorageClass = @import("./storage_class.zig").StorageClass;
 
-const S3Credentials = @import("./credentials.zig").S3Credentials;
-const SignResult = @import("./credentials.zig").S3Credentials.SignResult;
+const s3creds = @import("./credentials.zig");
+const S3Credentials = s3creds.S3Credentials;
+const SignResult = S3Credentials.SignResult;
 
 const S3Error = @import("./error.zig").S3Error;
 const getSignErrorCodeAndMessage = @import("./error.zig").getSignErrorCodeAndMessage;

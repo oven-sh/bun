@@ -10,6 +10,8 @@ pub const getJSSignError = Error.getJSSignError;
 
 pub const S3Credentials = Credentials.S3Credentials;
 pub const S3CredentialsWithOptions = Credentials.S3CredentialsWithOptions;
+pub const MetadataMap = Credentials.MetadataMap;
+pub const MAX_HEADERS = Credentials.MAX_HEADERS;
 
 pub const S3HttpSimpleTask = S3SimpleRequest.S3HttpSimpleTask;
 pub const S3UploadResult = S3SimpleRequest.S3UploadResult;
@@ -243,6 +245,7 @@ pub fn upload(
     proxy_url: ?[]const u8,
     storage_class: ?StorageClass,
     request_payer: bool,
+    metadata: ?Credentials.MetadataMap,
     callback: *const fn (S3UploadResult, *anyopaque) bun.JSTerminated!void,
     callback_context: *anyopaque,
 ) bun.JSTerminated!void {
@@ -257,6 +260,7 @@ pub fn upload(
         .acl = acl,
         .storage_class = storage_class,
         .request_payer = request_payer,
+        .metadata = metadata,
     }, .{ .upload = callback }, callback_context);
 }
 /// returns a writable stream that writes to the s3 path
@@ -271,6 +275,7 @@ pub fn writableStream(
     proxy: ?[]const u8,
     storage_class: ?StorageClass,
     request_payer: bool,
+    metadata: ?Credentials.MetadataMap,
 ) bun.JSError!jsc.JSValue {
     const Wrapper = struct {
         pub fn callback(result: S3UploadResult, sink: *jsc.WebCore.NetworkSink) bun.JSTerminated!void {
@@ -316,6 +321,7 @@ pub fn writableStream(
         .content_encoding = if (content_encoding) |ce| bun.handleOom(bun.default_allocator.dupe(u8, ce)) else null,
         .storage_class = storage_class,
         .request_payer = request_payer,
+        .metadata = metadata,
 
         .callback = @ptrCast(&Wrapper.callback),
         .callback_context = undefined,
@@ -458,6 +464,7 @@ pub fn uploadStream(
     content_encoding: ?[]const u8,
     proxy: ?[]const u8,
     request_payer: bool,
+    metadata: ?Credentials.MetadataMap,
     callback: ?*const fn (S3UploadResult, *anyopaque) void,
     callback_context: *anyopaque,
 ) bun.JSError!jsc.JSValue {
@@ -503,6 +510,7 @@ pub fn uploadStream(
         .acl = acl,
         .storage_class = storage_class,
         .request_payer = request_payer,
+        .metadata = metadata,
         .vm = jsc.VirtualMachine.get(),
     });
 
@@ -565,7 +573,7 @@ pub fn downloadStream(
         return;
     };
 
-    var header_buffer: [S3Credentials.SignResult.MAX_HEADERS + 1]picohttp.Header = undefined;
+    var header_buffer: [Credentials.MAX_HEADERS + 1]picohttp.Header = undefined;
     const headers = brk: {
         if (range) |range_| {
             const _headers = result.mixWithHeader(&header_buffer, .{ .name = "range", .value = range_ });

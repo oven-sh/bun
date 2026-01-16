@@ -106,6 +106,7 @@ pub const MultiPartUpload = struct {
     acl: ?ACL = null,
     storage_class: ?Storageclass = null,
     request_payer: bool = false,
+    metadata: ?s3creds.MetadataMap = null,
     credentials: *S3Credentials,
     poll_ref: bun.Async.KeepAlive = bun.Async.KeepAlive.init(),
     vm: *jsc.VirtualMachine,
@@ -290,6 +291,9 @@ pub const MultiPartUpload = struct {
                 bun.default_allocator.free(ce);
             }
         }
+        if (this.metadata) |*meta| {
+            meta.deinit(bun.default_allocator);
+        }
         this.credentials.deref();
         this.uploadid_buffer.deinit();
         for (this.multipart_etags.items) |tag| {
@@ -320,6 +324,7 @@ pub const MultiPartUpload = struct {
                         .acl = this.acl,
                         .storage_class = this.storage_class,
                         .request_payer = this.request_payer,
+                        .metadata = this.metadata,
                     }, .{ .upload = @ptrCast(&singleSendUploadResponse) }, this);
 
                     return;
@@ -613,6 +618,7 @@ pub const MultiPartUpload = struct {
                 .acl = this.acl,
                 .storage_class = this.storage_class,
                 .request_payer = this.request_payer,
+                .metadata = this.metadata,
             }, .{ .download = @ptrCast(&startMultiPartRequestResult) }, this);
         } else if (this.state == .multipart_completed) {
             try part.start();
@@ -692,6 +698,7 @@ pub const MultiPartUpload = struct {
                 .acl = this.acl,
                 .storage_class = this.storage_class,
                 .request_payer = this.request_payer,
+                .metadata = this.metadata,
             }, .{ .upload = @ptrCast(&singleSendUploadResponse) }, this) catch {}; // TODO: properly propagate exception upwards
         } else {
             // we need to split
@@ -787,7 +794,8 @@ pub const MultiPartUpload = struct {
 const std = @import("std");
 const ACL = @import("./acl.zig").ACL;
 const MultiPartUploadOptions = @import("./multipart_options.zig").MultiPartUploadOptions;
-const S3Credentials = @import("./credentials.zig").S3Credentials;
+const s3creds = @import("./credentials.zig");
+const S3Credentials = s3creds.S3Credentials;
 const S3Error = @import("./error.zig").S3Error;
 const Storageclass = @import("./storage_class.zig").StorageClass;
 

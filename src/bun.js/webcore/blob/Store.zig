@@ -296,6 +296,8 @@ pub const S3 = struct {
     acl: ?bun.S3.ACL = null,
     storage_class: ?bun.S3.StorageClass = null,
     request_payer: bool = false,
+    /// User-defined metadata (x-amz-meta-* headers)
+    metadata: ?bun.S3.MetadataMap = null,
 
     pub fn isSeekable(_: *const @This()) ?bool {
         return true;
@@ -463,6 +465,10 @@ pub const S3 = struct {
         if (this.credentials) |credentials| {
             credentials.deref();
             this.credentials = null;
+        }
+        if (this.metadata) |*meta| {
+            meta.deinit(bun.default_allocator);
+            this.metadata = null;
         }
     }
 

@@ -1322,6 +1322,7 @@ fn fetchImpl(
                 if (headers) |h| h.getContentEncoding() else null,
                 proxy_url,
                 credentialsWithOptions.request_payer,
+                credentialsWithOptions.metadata,
                 @ptrCast(&Wrapper.resolve),
                 s3_stream,
             );
@@ -1361,7 +1362,7 @@ fn fetchImpl(
         }
 
         const content_type = if (headers) |h| (h.getContentType()) else null;
-        var header_buffer: [s3.S3Credentials.SignResult.MAX_HEADERS + 1]picohttp.Header = undefined;
+        var header_buffer: [s3.MAX_HEADERS + 1]picohttp.Header = undefined;
 
         if (range) |range_| {
             const _headers = result.mixWithHeader(&header_buffer, .{ .name = "range", .value = range_ });

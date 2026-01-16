@@ -973,6 +973,7 @@ fn writeFileWithEmptySourceToDestination(ctx: *jsc.JSGlobalObject, destination_b
                 proxy_url,
                 aws_options.storage_class,
                 aws_options.request_payer,
+                aws_options.metadata,
                 Wrapper.resolve,
                 Wrapper.new(.{
                     .promise = promise,
@@ -1124,6 +1125,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
                             aws_options.content_encoding,
                             proxy_url,
                             aws_options.request_payer,
+                            aws_options.metadata,
                             null,
                             undefined,
                         );
@@ -1167,6 +1169,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
                         proxy_url,
                         aws_options.storage_class,
                         aws_options.request_payer,
+                        aws_options.metadata,
                         Wrapper.resolve,
                         Wrapper.new(.{
                             .store = source_store,
@@ -1197,6 +1200,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
                         aws_options.content_encoding,
                         proxy_url,
                         aws_options.request_payer,
+                        aws_options.metadata,
                         null,
                         undefined,
                     );
@@ -1405,6 +1409,7 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                                 aws_options.content_encoding,
                                 proxy_url,
                                 aws_options.request_payer,
+                                aws_options.metadata,
                                 null,
                                 undefined,
                             );
@@ -1468,6 +1473,7 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                                 aws_options.content_encoding,
                                 proxy_url,
                                 aws_options.request_payer,
+                                aws_options.metadata,
                                 null,
                                 undefined,
                             );
@@ -2447,6 +2453,7 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, re
             aws_options.content_encoding,
             proxy_url,
             aws_options.request_payer,
+            aws_options.metadata,
             null,
             undefined,
         );
@@ -2702,20 +2709,24 @@ pub fn getWriter(
                     proxy_url,
                     credentialsWithOptions.storage_class,
                     credentialsWithOptions.request_payer,
+                    credentialsWithOptions.metadata,
                 );
             }
         }
+        // Dupe metadata since multipart upload takes ownership
+        const metadata_dupe = if (s3.metadata) |meta| meta.dupe(bun.default_allocator) else null;
         return try S3.writableStream(
             s3.getCredentials(),
             path,
             globalThis,
-            .{},
+            s3.options,
             this.contentTypeOrMimeType(),
             null,
             null,
             proxy_url,
-            null,
+            s3.storage_class,
             s3.request_payer,
+            metadata_dupe,
         );
     }
 

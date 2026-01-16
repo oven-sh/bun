@@ -1,3 +1,67 @@
+/// Maximum number of user-defined metadata headers.
+/// AWS S3 limits total metadata to ~2KB (https://docs.aws.amazon.com/AmazonS3/latest/userguide/UsingMetadata.html).
+/// With typical key-value pairs of ~50-100 bytes, 32 headers provides ample capacity.
+const MAX_METADATA_HEADERS: usize = 32;
+
+/// Number of base S3 headers (x-amz-content-sha256, x-amz-date, Host, Authorization, etc.)
+const BASE_HEADERS: usize = 9;
+
+/// Total maximum headers: base headers + metadata headers
+pub const MAX_HEADERS: usize = BASE_HEADERS + MAX_METADATA_HEADERS;
+
+/// Buffer size for signed headers string (e.g., "content-disposition;host;x-amz-meta-foo;...")
+/// Enough for all standard headers plus MAX_METADATA_HEADERS metadata keys of ~50 chars each
+const SIGNED_HEADERS_BUF_SIZE: usize = 2048;
+
+/// Buffer size for canonical request building with metadata
+/// Needs space for method, path, query, all headers with values, signed_headers, and hash
+const CANONICAL_REQUEST_BUF_SIZE: usize = 8192;
+
+/// Holds user-defined metadata key-value pairs for S3 objects (x-amz-meta-* headers).
+/// Keys are normalized to lowercase per AWS S3 requirements.
+/// See: https://docs.aws.amazon.com/AmazonS3/latest/userguide/UsingMetadata.html#UserMetadata
+pub const MetadataMap = struct {
+    keys: []const []const u8,
+    values: []const []const u8,
+
+    pub fn count(this: @This()) usize {
+        return this.keys.len;
+    }
+
+    /// Deep-copy the metadata map, duplicating all keys and values.
+    pub fn dupe(this: @This(), allocator: std.mem.Allocator) ?MetadataMap {
+        const n = this.keys.len;
+        if (n == 0) return null;
+
+        const new_keys = allocator.alloc([]const u8, n) catch return null;
+        const new_values = allocator.alloc([]const u8, n) catch {
+            allocator.free(new_keys);
+            return null;
+        };
+
+        for (0..n) |i| {
+            new_keys[i] = allocator.dupe(u8, this.keys[i]) catch return null;
+            new_values[i] = allocator.dupe(u8, this.values[i]) catch return null;
+        }
+
+        return .{
+            .keys = new_keys,
+            .values = new_values,
+        };
+    }
+
+    pub fn deinit(this: *@This(), allocator: std.mem.Allocator) void {
+        for (this.keys) |key| {
+            allocator.free(key);
+        }
+        for (this.values) |value| {
+            allocator.free(value);
+        }
+        allocator.free(this.keys);
+        allocator.free(this.values);
+    }
+};
+
 pub const S3Credentials = struct {
     const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
     pub const ref = RefCount.ref;
@@ -262,6 +326,64 @@ pub const S3Credentials = struct {
                 if (try opts.getBooleanStrict(globalObject, "requestPayer")) |request_payer| {
                     new_credentials.request_payer = request_payer;
                 }
+
+                // Parse metadata object
+                if (try opts.getTruthyComptime(globalObject, "metadata")) |metadata_value| {
+                    if (!metadata_value.isEmptyOrUndefinedOrNull()) {
+                        if (metadata_value.isObject()) {
+                            const metadata_obj = try metadata_value.toObject(globalObject);
+                            // Count properties first
+                            var property_count: usize = 0;
+                            var iter = try jsc.JSPropertyIterator(.{ .skip_empty_name = true, .include_value = true }).init(globalObject, metadata_obj);
+                            defer iter.deinit();
+                            while (try iter.next()) |_| {
+                                property_count += 1;
+                            }
+
+                            if (property_count > 0) {
+                                // Allocate arrays for keys and values
+                                const keys = bun.default_allocator.alloc([]const u8, property_count) catch bun.outOfMemory();
+                                const values = bun.default_allocator.alloc([]const u8, property_count) catch bun.outOfMemory();
+
+                                // Second pass to extract keys and values
+                                var iter2 = try jsc.JSPropertyIterator(.{ .skip_empty_name = true, .include_value = true }).init(globalObject, metadata_obj);
+                                defer iter2.deinit();
+                                var i: usize = 0;
+                                while (try iter2.next()) |key| {
+                                    // Convert key to lowercase (AWS requires lowercase metadata keys)
+                                    const key_owned = try key.toOwnedSlice(bun.default_allocator);
+                                    const key_lower = bun.default_allocator.alloc(u8, key_owned.len) catch bun.outOfMemory();
+                                    for (key_owned, 0..) |c, j| {
+                                        key_lower[j] = if (c >= 'A' and c <= 'Z') c + 32 else c;
+                                    }
+                                    bun.default_allocator.free(key_owned);
+                                    keys[i] = key_lower;
+
+                                    // Get value - metadata values must be strings
+                                    const val = iter2.value;
+                                    if (val.isString()) {
+                                        const val_str = try bun.String.fromJS(val, globalObject);
+                                        defer val_str.deref();
+                                        const val_slice = val_str.toUTF8(bun.default_allocator);
+                                        values[i] = bun.default_allocator.dupe(u8, val_slice.slice()) catch bun.outOfMemory();
+                                        val_slice.deinit();
+                                    } else {
+                                        // Non-string value, use empty string or skip
+                                        values[i] = "";
+                                    }
+                                    i += 1;
+                                }
+
+                                new_credentials.metadata = .{
+                                    .keys = keys,
+                                    .values = values,
+                                };
+                            }
+                        } else {
+                            return globalObject.throwInvalidArgumentTypeValue("metadata", "object", metadata_value);
+                        }
+                    }
+                }
             }
         }
         return new_credentials;
@@ -384,22 +506,11 @@ pub const S3Credentials = struct {
         acl: ?ACL = null,
         storage_class: ?StorageClass = null,
         request_payer: bool = false,
-        _headers: [MAX_HEADERS]picohttp.Header = .{
-            .{ .name = "", .value = "" },
-            .{ .name = "", .value = "" },
-            .{ .name = "", .value = "" },
-            .{ .name = "", .value = "" },
-            .{ .name = "", .value = "" },
-            .{ .name = "", .value = "" },
-            .{ .name = "", .value = "" },
-            .{ .name = "", .value = "" },
-            .{ .name = "", .value = "" },
-            .{ .name = "", .value = "" },
-            .{ .name = "", .value = "" },
-        },
+        /// Stores allocated metadata header names ("x-amz-meta-*") for cleanup
+        _metadata_header_names: ?[][]u8 = null,
+        /// Header storage: BASE_HEADERS (9) + MAX_METADATA_HEADERS (32) = MAX_HEADERS (41)
+        _headers: [MAX_HEADERS]picohttp.Header = [_]picohttp.Header{.{ .name = "", .value = "" }} ** MAX_HEADERS,
         _headers_len: u8 = 0,
-
-        pub const MAX_HEADERS = 11;
 
         pub fn headers(this: *const @This()) []const picohttp.Header {
             return this._headers[0..this._headers_len];
@@ -447,6 +558,14 @@ pub const S3Credentials = struct {
             if (this.content_md5.len > 0) {
                 bun.default_allocator.free(this.content_md5);
             }
+
+            // Free allocated metadata header names
+            if (this._metadata_header_names) |names| {
+                for (names) |name| {
+                    bun.default_allocator.free(name);
+                }
+                bun.default_allocator.free(names);
+            }
         }
     };
 
@@ -465,6 +584,8 @@ pub const S3Credentials = struct {
         acl: ?ACL = null,
         storage_class: ?StorageClass = null,
         request_payer: bool = false,
+        /// User-defined metadata (x-amz-meta-* headers)
+        metadata: ?MetadataMap = null,
     };
     /// This is not used for signing but for console.log output, is just nice to have
     pub fn guessBucket(endpoint: []const u8) ?[]const u8 {
@@ -687,6 +808,7 @@ pub const S3Credentials = struct {
 
         const amz_day = amz_date[0..8];
         const request_payer = signOptions.request_payer;
+        const metadata = signOptions.metadata;
         const header_key = SignedHeaders.Key{
             .content_disposition = content_disposition != null,
             .content_encoding = content_encoding != null,
@@ -696,7 +818,97 @@ pub const S3Credentials = struct {
             .session_token = session_token != null,
             .storage_class = storage_class != null,
         };
-        const signed_headers = if (signQuery) "host" else SignedHeaders.get(header_key);
+
+        // Build signed_headers string - for metadata we need to do this dynamically
+        // because metadata keys vary at runtime. Metadata header names (x-amz-meta-*)
+        // come after x-amz-date and before x-amz-request-payer alphabetically.
+        // See: https://docs.aws.amazon.com/AmazonS3/latest/API/sig-v4-header-based-auth.html
+        var signed_headers_buf: [SIGNED_HEADERS_BUF_SIZE]u8 = undefined;
+        const signed_headers: []const u8 = brk_signed: {
+            if (signQuery) {
+                // For presigned PUT URLs with metadata, include metadata headers
+                if (metadata) |meta| {
+                    const meta_count = meta.count();
+                    if (meta_count > 0) {
+                        var fba = std.heap.FixedBufferAllocator.init(&signed_headers_buf);
+                        var list = std.array_list.Managed(u8).init(fba.allocator());
+                        list.appendSlice("host") catch {};
+
+                        // Sort metadata keys alphabetically
+                        var indices: [MAX_METADATA_HEADERS]usize = undefined;
+                        for (0..meta_count) |i| {
+                            indices[i] = i;
+                        }
+                        std.mem.sort(usize, indices[0..meta_count], meta.keys, struct {
+                            fn lessThan(keys: []const []const u8, a: usize, b: usize) bool {
+                                return std.mem.lessThan(u8, keys[a], keys[b]);
+                            }
+                        }.lessThan);
+
+                        // Add metadata headers (alphabetically after "host")
+                        for (indices[0..meta_count]) |idx| {
+                            list.appendSlice(";x-amz-meta-") catch {};
+                            list.appendSlice(meta.keys[idx]) catch {};
+                        }
+                        if (list.items.len > 0) {
+                            break :brk_signed list.items;
+                        }
+                    }
+                }
+                break :brk_signed "host";
+            }
+            if (metadata) |meta| {
+                // Build signed headers dynamically with metadata
+                // AWS Sig V4 requires headers in alphabetical order
+                var fba = std.heap.FixedBufferAllocator.init(&signed_headers_buf);
+                var list = std.array_list.Managed(u8).init(fba.allocator());
+
+                // Headers in alphabetical order (same as SignedHeaders.generate):
+                // content-disposition, content-encoding, content-md5, host, x-amz-acl, x-amz-content-sha256, x-amz-date,
+                // [x-amz-meta-*], x-amz-request-payer, x-amz-security-token, x-amz-storage-class
+                if (content_disposition != null) list.appendSlice("content-disposition;") catch {};
+                if (content_encoding != null) list.appendSlice("content-encoding;") catch {};
+                if (content_md5 != null) list.appendSlice("content-md5;") catch {};
+                list.appendSlice("host;") catch {};
+                if (acl != null) list.appendSlice("x-amz-acl;") catch {};
+                list.appendSlice("x-amz-content-sha256;x-amz-date") catch {};
+
+                // Add metadata headers (sorted by key)
+                // Keys are already lowercase from parsing (AWS requirement)
+                const meta_count = meta.count();
+                if (meta_count > 0) {
+                    // Create sorted indices for metadata keys
+                    var indices: [MAX_METADATA_HEADERS]usize = undefined;
+                    for (0..meta_count) |i| {
+                        indices[i] = i;
+                    }
+                    // Sort indices by key for AWS Sig V4 canonical header ordering
+                    std.mem.sort(usize, indices[0..meta_count], meta.keys, struct {
+                        fn lessThan(keys: []const []const u8, a: usize, b: usize) bool {
+                            return std.mem.lessThan(u8, keys[a], keys[b]);
+                        }
+                    }.lessThan);
+
+                    // Append sorted metadata header names (x-amz-meta-{key})
+                    for (indices[0..meta_count]) |idx| {
+                        list.appendSlice(";x-amz-meta-") catch {};
+                        list.appendSlice(meta.keys[idx]) catch {};
+                    }
+                }
+
+                if (request_payer) list.appendSlice(";x-amz-request-payer") catch {};
+                if (session_token != null) list.appendSlice(";x-amz-security-token") catch {};
+                if (storage_class != null) list.appendSlice(";x-amz-storage-class") catch {};
+
+                // If buffer overflowed, fall back to non-metadata path
+                if (list.items.len == 0) {
+                    // Fallback: metadata too large, use base signed_headers without metadata
+                    break :brk_signed SignedHeaders.get(header_key);
+                }
+                break :brk_signed list.items;
+            }
+            break :brk_signed SignedHeaders.get(header_key);
+        };
 
         const service_name = "s3";
 
@@ -778,7 +990,10 @@ pub const S3Credentials = struct {
                         try query_parts.append(try std.fmt.allocPrint(allocator, "X-Amz-Security-Token={s}", .{token}));
                     }
 
-                    try query_parts.append(try std.fmt.allocPrint(allocator, "X-Amz-SignedHeaders=host", .{}));
+                    // URL-encode the signed headers (semicolons become %3B)
+                    var signed_headers_encoded_buf: [SIGNED_HEADERS_BUF_SIZE]u8 = undefined;
+                    const encoded_signed_headers = encodeURIComponent(signed_headers, &signed_headers_encoded_buf, true) catch signed_headers;
+                    try query_parts.append(try std.fmt.allocPrint(allocator, "X-Amz-SignedHeaders={s}", .{encoded_signed_headers}));
 
                     if (encoded_content_disposition) |cd| {
                         try query_parts.append(try std.fmt.allocPrint(allocator, "response-content-disposition={s}", .{cd}));
@@ -805,7 +1020,45 @@ pub const S3Credentials = struct {
                         allocator.free(part);
                     }
 
-                    break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\nhost:{s}\n\nhost\n{s}", .{ method_name, normalizedPath, query_string.items, host, aws_content_hash });
+                    // Canonical request: METHOD\nPATH\nQUERY\nCANONICAL_HEADERS\n\nSIGNED_HEADERS\nPAYLOAD_HASH
+                    // For presigned URLs with metadata, include both host and metadata headers
+                    if (metadata) |meta| {
+                        const meta_count = meta.count();
+                        if (meta_count > 0) {
+                            // Build canonical headers with metadata (sorted alphabetically)
+                            var canonical_headers_buf: [4096]u8 = undefined;
+                            var headers_fba = std.heap.FixedBufferAllocator.init(&canonical_headers_buf);
+                            var headers_list = std.array_list.Managed(u8).init(headers_fba.allocator());
+
+                            // Add host header first (comes before x-amz-meta-* alphabetically)
+                            headers_list.appendSlice("host:") catch {};
+                            headers_list.appendSlice(host) catch {};
+                            headers_list.append('\n') catch {};
+
+                            // Sort metadata indices for alphabetical ordering
+                            var meta_indices: [MAX_METADATA_HEADERS]usize = undefined;
+                            for (0..meta_count) |i| {
+                                meta_indices[i] = i;
+                            }
+                            std.mem.sort(usize, meta_indices[0..meta_count], meta.keys, struct {
+                                fn lessThan(keys: []const []const u8, a: usize, b: usize) bool {
+                                    return std.mem.lessThan(u8, keys[a], keys[b]);
+                                }
+                            }.lessThan);
+
+                            // Add metadata headers (x-amz-meta-{key}:{value})
+                            for (meta_indices[0..meta_count]) |idx| {
+                                headers_list.appendSlice("x-amz-meta-") catch {};
+                                headers_list.appendSlice(meta.keys[idx]) catch {};
+                                headers_list.append(':') catch {};
+                                headers_list.appendSlice(meta.values[idx]) catch {};
+                                headers_list.append('\n') catch {};
+                            }
+
+                            break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\n{s}\n{s}\n{s}", .{ method_name, normalizedPath, query_string.items, headers_list.items, signed_headers, aws_content_hash });
+                        }
+                    }
+                    break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\nhost:{s}\n\n{s}\n{s}", .{ method_name, normalizedPath, query_string.items, host, signed_headers, aws_content_hash });
                 };
                 var sha_digest = std.mem.zeroes(bun.sha.SHA256.Digest);
                 bun.sha.SHA256.hash(canonical, &sha_digest, jsc.VirtualMachine.get().rareData().boringEngine());
@@ -843,7 +1096,10 @@ pub const S3Credentials = struct {
 
                 try url_query_parts.append(try std.fmt.allocPrint(url_allocator, "X-Amz-Signature={s}", .{std.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower)}));
 
-                try url_query_parts.append(try std.fmt.allocPrint(url_allocator, "X-Amz-SignedHeaders=host", .{}));
+                // URL-encode the signed headers for the final URL
+                var url_signed_headers_encoded_buf: [SIGNED_HEADERS_BUF_SIZE]u8 = undefined;
+                const url_encoded_signed_headers = encodeURIComponent(signed_headers, &url_signed_headers_encoded_buf, true) catch signed_headers;
+                try url_query_parts.append(try std.fmt.allocPrint(url_allocator, "X-Amz-SignedHeaders={s}", .{url_encoded_signed_headers}));
 
                 if (encoded_content_disposition) |cd| {
                     try url_query_parts.append(try std.fmt.allocPrint(url_allocator, "response-content-disposition={s}", .{cd}));
@@ -872,25 +1128,187 @@ pub const S3Credentials = struct {
 
                 break :brk try std.fmt.allocPrint(bun.default_allocator, "{s}://{s}{s}?{s}", .{ protocol, host, normalizedPath, url_query_string.items });
             } else {
-                const canonical = try CanonicalRequest.format(
-                    &tmp_buffer,
-                    header_key,
-                    method_name,
-                    normalizedPath,
-                    if (search_params) |p| p[1..] else "",
-                    content_disposition,
-                    content_encoding,
-                    content_md5,
-                    host,
-                    acl,
-                    aws_content_hash,
-                    amz_date,
-                    session_token,
-                    storage_class,
-                    signed_headers,
-                );
+                // Build canonical request - if metadata exists, build manually
                 var sha_digest = std.mem.zeroes(bun.sha.SHA256.Digest);
-                bun.sha.SHA256.hash(canonical, &sha_digest, jsc.VirtualMachine.get().rareData().boringEngine());
+                if (metadata) |meta| {
+                    // Build canonical request manually with metadata headers
+                    // Format per AWS Sig V4: METHOD\nPATH\nQUERY\nHEADERS\n\nSIGNED_HEADERS\nHASH
+                    // See: https://docs.aws.amazon.com/AmazonS3/latest/API/sig-v4-header-based-auth.html
+                    var canonical_buf: [CANONICAL_REQUEST_BUF_SIZE]u8 = undefined;
+                    var fba = std.heap.FixedBufferAllocator.init(&canonical_buf);
+                    var writer = fba.allocator().alloc(u8, CANONICAL_REQUEST_BUF_SIZE) catch unreachable;
+                    var pos: usize = 0;
+
+                    // METHOD\n
+                    @memcpy(writer[pos..][0..method_name.len], method_name);
+                    pos += method_name.len;
+                    writer[pos] = '\n';
+                    pos += 1;
+
+                    // PATH\n
+                    @memcpy(writer[pos..][0..normalizedPath.len], normalizedPath);
+                    pos += normalizedPath.len;
+                    writer[pos] = '\n';
+                    pos += 1;
+
+                    // QUERY\n
+                    const query_str = if (search_params) |p| p[1..] else "";
+                    @memcpy(writer[pos..][0..query_str.len], query_str);
+                    pos += query_str.len;
+                    writer[pos] = '\n';
+                    pos += 1;
+
+                    // HEADERS (sorted alphabetically)
+                    if (content_disposition) |cd| {
+                        const hdr = "content-disposition:";
+                        @memcpy(writer[pos..][0..hdr.len], hdr);
+                        pos += hdr.len;
+                        @memcpy(writer[pos..][0..cd.len], cd);
+                        pos += cd.len;
+                        writer[pos] = '\n';
+                        pos += 1;
+                    }
+                    if (content_encoding) |ce| {
+                        const hdr = "content-encoding:";
+                        @memcpy(writer[pos..][0..hdr.len], hdr);
+                        pos += hdr.len;
+                        @memcpy(writer[pos..][0..ce.len], ce);
+                        pos += ce.len;
+                        writer[pos] = '\n';
+                        pos += 1;
+                    }
+                    if (content_md5) |md5| {
+                        const hdr = "content-md5:";
+                        @memcpy(writer[pos..][0..hdr.len], hdr);
+                        pos += hdr.len;
+                        @memcpy(writer[pos..][0..md5.len], md5);
+                        pos += md5.len;
+                        writer[pos] = '\n';
+                        pos += 1;
+                    }
+                    // host
+                    const host_hdr = "host:";
+                    @memcpy(writer[pos..][0..host_hdr.len], host_hdr);
+                    pos += host_hdr.len;
+                    @memcpy(writer[pos..][0..host.len], host);
+                    pos += host.len;
+                    writer[pos] = '\n';
+                    pos += 1;
+
+                    if (acl) |acl_val| {
+                        const hdr = "x-amz-acl:";
+                        @memcpy(writer[pos..][0..hdr.len], hdr);
+                        pos += hdr.len;
+                        @memcpy(writer[pos..][0..acl_val.len], acl_val);
+                        pos += acl_val.len;
+                        writer[pos] = '\n';
+                        pos += 1;
+                    }
+                    // x-amz-content-sha256
+                    const hash_hdr = "x-amz-content-sha256:";
+                    @memcpy(writer[pos..][0..hash_hdr.len], hash_hdr);
+                    pos += hash_hdr.len;
+                    @memcpy(writer[pos..][0..aws_content_hash.len], aws_content_hash);
+                    pos += aws_content_hash.len;
+                    writer[pos] = '\n';
+                    pos += 1;
+
+                    // x-amz-date
+                    const date_hdr = "x-amz-date:";
+                    @memcpy(writer[pos..][0..date_hdr.len], date_hdr);
+                    pos += date_hdr.len;
+                    @memcpy(writer[pos..][0..amz_date.len], amz_date);
+                    pos += amz_date.len;
+                    writer[pos] = '\n';
+                    pos += 1;
+
+                    // x-amz-meta-* headers (sorted by key)
+                    const meta_count = meta.count();
+                    if (meta_count > 0) {
+                        var indices: [MAX_METADATA_HEADERS]usize = undefined;
+                        for (0..meta_count) |i| {
+                            indices[i] = i;
+                        }
+                        std.mem.sort(usize, indices[0..meta_count], meta.keys, struct {
+                            fn lessThan(keys: []const []const u8, a: usize, b: usize) bool {
+                                return std.mem.lessThan(u8, keys[a], keys[b]);
+                            }
+                        }.lessThan);
+
+                        for (indices[0..meta_count]) |idx| {
+                            const prefix = "x-amz-meta-";
+                            @memcpy(writer[pos..][0..prefix.len], prefix);
+                            pos += prefix.len;
+                            @memcpy(writer[pos..][0..meta.keys[idx].len], meta.keys[idx]);
+                            pos += meta.keys[idx].len;
+                            writer[pos] = ':';
+                            pos += 1;
+                            @memcpy(writer[pos..][0..meta.values[idx].len], meta.values[idx]);
+                            pos += meta.values[idx].len;
+                            writer[pos] = '\n';
+                            pos += 1;
+                        }
+                    }
+
+                    if (request_payer) {
+                        const hdr = "x-amz-request-payer:requester\n";
+                        @memcpy(writer[pos..][0..hdr.len], hdr);
+                        pos += hdr.len;
+                    }
+                    if (session_token) |token| {
+                        const hdr = "x-amz-security-token:";
+                        @memcpy(writer[pos..][0..hdr.len], hdr);
+                        pos += hdr.len;
+                        @memcpy(writer[pos..][0..token.len], token);
+                        pos += token.len;
+                        writer[pos] = '\n';
+                        pos += 1;
+                    }
+                    if (storage_class) |sc| {
+                        const hdr = "x-amz-storage-class:";
+                        @memcpy(writer[pos..][0..hdr.len], hdr);
+                        pos += hdr.len;
+                        @memcpy(writer[pos..][0..sc.len], sc);
+                        pos += sc.len;
+                        writer[pos] = '\n';
+                        pos += 1;
+                    }
+
+                    // Empty line separator
+                    writer[pos] = '\n';
+                    pos += 1;
+
+                    // SIGNED_HEADERS
+                    @memcpy(writer[pos..][0..signed_headers.len], signed_headers);
+                    pos += signed_headers.len;
+                    writer[pos] = '\n';
+                    pos += 1;
+
+                    // HASH
+                    @memcpy(writer[pos..][0..aws_content_hash.len], aws_content_hash);
+                    pos += aws_content_hash.len;
+
+                    bun.sha.SHA256.hash(writer[0..pos], &sha_digest, jsc.VirtualMachine.get().rareData().boringEngine());
+                } else {
+                    const canonical = try CanonicalRequest.format(
+                        &tmp_buffer,
+                        header_key,
+                        method_name,
+                        normalizedPath,
+                        if (search_params) |p| p[1..] else "",
+                        content_disposition,
+                        content_encoding,
+                        content_md5,
+                        host,
+                        acl,
+                        aws_content_hash,
+                        amz_date,
+                        session_token,
+                        storage_class,
+                        signed_headers,
+                    );
+                    bun.sha.SHA256.hash(canonical, &sha_digest, jsc.VirtualMachine.get().rareData().boringEngine());
+                }
 
                 const signValue = try std.fmt.bufPrint(&tmp_buffer, "AWS4-HMAC-SHA256\n{s}\n{s}/{s}/{s}/aws4_request\n{s}", .{ amz_date, amz_day, region, service_name, std.fmt.bytesToHex(sha_digest[0..bun.sha.SHA256.digest], .lower) });
 
@@ -927,21 +1345,13 @@ pub const S3Credentials = struct {
             .storage_class = signOptions.storage_class,
             .request_payer = request_payer,
             .url = try std.fmt.allocPrint(bun.default_allocator, "{s}://{s}{s}{s}", .{ protocol, host, normalizedPath, if (search_params) |s| s else "" }),
-            ._headers = [_]picohttp.Header{
-                .{ .name = "x-amz-content-sha256", .value = aws_content_hash },
-                .{ .name = "x-amz-date", .value = amz_date },
-                .{ .name = "Host", .value = host },
-                .{ .name = "Authorization", .value = authorization[0..] },
-                .{ .name = "", .value = "" },
-                .{ .name = "", .value = "" },
-                .{ .name = "", .value = "" },
-                .{ .name = "", .value = "" },
-                .{ .name = "", .value = "" },
-                .{ .name = "", .value = "" },
-                .{ .name = "", .value = "" },
-            },
             ._headers_len = 4,
         };
+        // Set up the base headers
+        result._headers[0] = .{ .name = "x-amz-content-sha256", .value = aws_content_hash };
+        result._headers[1] = .{ .name = "x-amz-date", .value = amz_date };
+        result._headers[2] = .{ .name = "Host", .value = host };
+        result._headers[3] = .{ .name = "Authorization", .value = authorization[0..] };
 
         if (acl) |acl_value| {
             result._headers[result._headers_len] = .{ .name = "x-amz-acl", .value = acl_value };
@@ -985,6 +1395,34 @@ pub const S3Credentials = struct {
             result._headers_len += 1;
         }
 
+        // Add metadata headers (x-amz-meta-*)
+        // See: https://docs.aws.amazon.com/AmazonS3/latest/userguide/UsingMetadata.html#UserMetadata
+        if (metadata) |meta| {
+            const meta_count = meta.count();
+            if (meta_count > 0) {
+                // Allocate array to hold the "x-amz-meta-{key}" header names
+                // These need to be allocated because picohttp.Header stores slices
+                const header_names = bun.handleOom(bun.default_allocator.alloc([]u8, meta_count));
+                result._metadata_header_names = header_names;
+
+                for (0..meta_count) |i| {
+                    const key = meta.keys[i];
+                    // Build "x-amz-meta-{key}" header name
+                    const prefix = "x-amz-meta-";
+                    const header_name = bun.handleOom(bun.default_allocator.alloc(u8, prefix.len + key.len));
+                    @memcpy(header_name[0..prefix.len], prefix);
+                    @memcpy(header_name[prefix.len..], key);
+                    header_names[i] = header_name;
+
+                    result._headers[result._headers_len] = .{
+                        .name = header_name,
+                        .value = meta.values[i],
+                    };
+                    result._headers_len += 1;
+                }
+            }
+        }
+
         return result;
     }
 };
@@ -1003,6 +1441,8 @@ pub const S3CredentialsWithOptions = struct {
     changed_credentials: bool = false,
     /// indicates if the virtual hosted style is used
     virtual_hosted_style: bool = false,
+    /// User-defined metadata (x-amz-meta-* headers)
+    metadata: ?MetadataMap = null,
     _accessKeyIdSlice: ?jsc.ZigString.Slice = null,
     _secretAccessKeySlice: ?jsc.ZigString.Slice = null,
     _regionSlice: ?jsc.ZigString.Slice = null,
@@ -1023,6 +1463,7 @@ pub const S3CredentialsWithOptions = struct {
         if (this._contentDispositionSlice) |slice| slice.deinit();
         if (this._contentTypeSlice) |slice| slice.deinit();
         if (this._contentEncodingSlice) |slice| slice.deinit();
+        if (this.metadata) |*meta| meta.deinit(bun.default_allocator);
     }
 };
 

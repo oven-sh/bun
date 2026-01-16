@@ -13,7 +13,7 @@ pub const S3Stat = struct {
     lastModified: f64,
     /// Cached JS object containing x-amz-meta-* headers as key-value pairs.
     /// Keys have the "x-amz-meta-" prefix stripped.
-    metadata: jsc.JSValue,
+    metadata: jsc.JSRef,
 
     pub fn constructor(globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!*@This() {
         return globalThis.throwInvalidArguments("S3Stat is not constructable", .{});
@@ -35,14 +35,13 @@ pub const S3Stat = struct {
 
         // Build metadata JS object from x-amz-meta-* headers
         const metadata_obj = try buildMetadataObject(headers, globalThis);
-        jsc.JSValue.protect(metadata_obj);
 
         return S3Stat.new(.{
             .size = size,
             .etag = bun.String.cloneUTF8(etag),
             .contentType = bun.String.cloneUTF8(contentType),
             .lastModified = last_modified,
-            .metadata = metadata_obj,
+            .metadata = jsc.JSRef.initStrong(metadata_obj, globalThis),
         });
     }
 
@@ -88,13 +87,13 @@ pub const S3Stat = struct {
     }
 
     pub fn getMetadata(this: *@This(), _: *jsc.JSGlobalObject) jsc.JSValue {
-        return this.metadata;
+        return this.metadata.tryGet() orelse .js_undefined;
     }
 
     pub fn finalize(this: *@This()) void {
         this.etag.deref();
         this.contentType.deref();
-        jsc.JSValue.unprotect(this.metadata);
+        this.metadata.deinit();
         bun.destroy(this);
     }
 };

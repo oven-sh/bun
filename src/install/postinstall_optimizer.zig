@@ -50,6 +50,7 @@ pub const PostinstallOptimizer = enum {
         metas: []const Meta,
         target_cpu: Npm.Architecture,
         target_os: Npm.OperatingSystem,
+        target_libc: Npm.Libc,
     ) ?PackageID {
         // Windows needs file extensions.
         if (target_os.isMatch(@enumFromInt(Npm.OperatingSystem.win32))) {
@@ -62,7 +63,7 @@ pub const PostinstallOptimizer = enum {
             if (resolution >= metas.len) continue;
             const meta: *const Meta = &metas[resolution];
             if (meta.arch == .all or meta.os == .all) continue;
-            if (meta.arch.isMatch(target_cpu) and meta.os.isMatch(target_os)) {
+            if (meta.arch.isMatch(target_cpu) and meta.os.isMatch(target_os) and meta.libc.isMatch(target_libc)) {
                 return resolution;
             }
         }
@@ -104,6 +105,7 @@ pub const PostinstallOptimizer = enum {
             metas: []const Meta,
             target_cpu: Npm.Architecture,
             target_os: Npm.OperatingSystem,
+            target_libc: Npm.Libc,
             tree_id: ?Lockfile.Tree.Id,
         ) bool {
             if (bun.env_var.feature_flag.BUN_FEATURE_FLAG_DISABLE_IGNORE_SCRIPTS.get()) {
@@ -123,7 +125,7 @@ pub const PostinstallOptimizer = enum {
                     // breaking the code.
                     //
                     // This shows up in test/integration/esbuild/esbuild.test.ts
-                    getNativeBinlinkReplacementPackageID(resolutions, metas, target_cpu, target_os) != null,
+                    getNativeBinlinkReplacementPackageID(resolutions, metas, target_cpu, target_os, target_libc) != null,
 
                 .ignore => true,
             };

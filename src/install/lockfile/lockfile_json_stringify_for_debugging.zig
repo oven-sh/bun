@@ -313,6 +313,18 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
                 }
             }
 
+            if (@as(u8, @intFromEnum(pkg.meta.libc)) != Npm.Libc.all_value) {
+                try w.objectField("libc");
+                try w.beginArray();
+                defer w.endArray() catch {};
+
+                for (Npm.Libc.NameMap.kvs) |kv| {
+                    if (pkg.meta.libc.has(kv.value)) {
+                        try w.write(kv.key);
+                    }
+                }
+            }
+
             try w.objectField("integrity");
             if (pkg.meta.integrity.tag != .unknown) {
                 try w.print("\"{f}\"", .{pkg.meta.integrity});

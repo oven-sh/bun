@@ -715,6 +715,10 @@ pub const Libc = enum(u8) {
     }
 
     pub fn isMatch(this: Libc, target: Libc) bool {
+        // If the package doesn't specify libc (none), it's compatible with any libc
+        if (this == .none or this == .all) return true;
+        // If the target is all (e.g., on non-Linux systems), any package libc matches
+        if (target == .all) return true;
         return (@intFromEnum(this) & @intFromEnum(target)) != 0;
     }
 
@@ -722,8 +726,13 @@ pub const Libc = enum(u8) {
         return .{ .added = this, .removed = .none };
     }
 
-    // TODO:
-    pub const current: Libc = @intFromEnum(glibc);
+    /// Returns the current system's libc type.
+    /// On Linux, this detects musl vs glibc at runtime.
+    /// On other platforms (macOS, Windows), returns .all since libc is not relevant.
+    pub const current: Libc = if (Environment.isLinux)
+        @enumFromInt(if (Environment.isMusl) musl else glibc)
+    else
+        .all;
 
     const jsc = bun.jsc;
     pub fn jsFunctionLibcIsMatch(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {

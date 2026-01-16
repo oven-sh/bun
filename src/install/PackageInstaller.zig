@@ -289,11 +289,13 @@ pub const PackageInstaller = struct {
                         .native_binlink => {
                             const target_cpu = manager.options.cpu;
                             const target_os = manager.options.os;
+                            const target_libc = manager.options.libc;
                             if (PostinstallOptimizer.getNativeBinlinkReplacementPackageID(
                                 pkg_resolutions_lists[package_id].get(pkg_resolutions_buffer),
                                 pkg_metas,
                                 target_cpu,
                                 target_os,
+                                target_libc,
                             )) |replacement_pkg_id| {
                                 if (tree_id != 0) {
                                     // TODO: support this optimization in nested node_modules
@@ -1172,6 +1174,7 @@ pub const PackageInstaller = struct {
                                 this.lockfile.packages.items(.meta),
                                 this.manager.options.cpu,
                                 this.manager.options.os,
+                                this.manager.options.libc,
                                 this.current_tree_id,
                             )) {
                                 if (PackageManager.verbose_install) {
@@ -1366,6 +1369,7 @@ pub const PackageInstaller = struct {
                         this.lockfile.packages.items(.meta),
                         this.manager.options.cpu,
                         this.manager.options.os,
+                        this.manager.options.libc,
                         this.current_tree_id,
                     )) {
                         if (PackageManager.verbose_install) {

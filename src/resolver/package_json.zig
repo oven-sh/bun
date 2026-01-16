@@ -64,6 +64,7 @@ pub const PackageJSON = struct {
 
     arch: Architecture = Architecture.all,
     os: OperatingSystem = OperatingSystem.all,
+    libc: Libc = Libc.all,
 
     package_manager_package_id: Install.PackageID = Install.invalid_package_id,
     dependencies: DependencyMap = .{},
@@ -960,6 +961,20 @@ pub const PackageJSON = struct {
                         }
 
                         package_json.os = os.combine();
+                    }
+                }
+
+                if (json.get("libc")) |libc_field| {
+                    var tmp = libc_field.asArray();
+                    if (tmp) |*array| {
+                        var libc = Libc.none.negatable();
+                        while (array.next()) |item| {
+                            if (item.asString(bun.default_allocator)) |str| {
+                                libc.apply(str);
+                            }
+                        }
+
+                        package_json.libc = libc.combine();
                     }
                 }
 
@@ -2149,6 +2164,7 @@ const resolver = @import("./resolver.zig");
 const std = @import("std");
 
 const Architecture = @import("../install/npm.zig").Architecture;
+const Libc = @import("../install/npm.zig").Libc;
 const OperatingSystem = @import("../install/npm.zig").OperatingSystem;
 
 const bun = @import("bun");

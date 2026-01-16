@@ -939,6 +939,7 @@ pub const Installer = struct {
                             pkg_metas,
                             manager.options.cpu,
                             manager.options.os,
+                            manager.options.libc,
                             null,
                         )) {
                             break :enqueue_lifecycle_scripts;
@@ -1321,11 +1322,13 @@ pub const Installer = struct {
                     const manager = this.manager;
                     const target_cpu = manager.options.cpu;
                     const target_os = manager.options.os;
+                    const target_libc = manager.options.libc;
                     if (PostinstallOptimizer.getNativeBinlinkReplacementPackageID(
                         pkg_resolutions_lists[pkg_id].get(pkg_resolutions_buffer),
                         pkg_metas,
                         target_cpu,
                         target_os,
+                        target_libc,
                     )) |replacement_pkg_id| {
                         for (entry_node_ids, 0..) |new_node_id, new_entry_id| {
                             if (node_pkg_ids[new_node_id.get()] == replacement_pkg_id) {

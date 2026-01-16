@@ -1,4 +1,4 @@
-pub const FetchRedirect = enum(u8) {
+pub const FetchRedirect = enum(u2) {
     follow,
     manual,
     @"error",

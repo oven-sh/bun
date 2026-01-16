@@ -363,7 +363,8 @@ pub fn isFilteredDependencyOrWorkspace(
     const res = &pkg_resolutions[pkg_id];
     const parent_res = &pkg_resolutions[parent_pkg_id];
 
-    if (pkg_metas[pkg_id].isDisabled(manager.options.cpu, manager.options.os, manager.options.libc)) {
+    const target_libc = manager.options.getLibc();
+    if (pkg_metas[pkg_id].isDisabled(manager.options.cpu, manager.options.os, target_libc)) {
         if (manager.options.log_level.isVerbose()) {
             const meta = &pkg_metas[pkg_id];
             const name = lockfile.str(&pkg_names[pkg_id]);
@@ -373,7 +374,7 @@ pub fn isFilteredDependencyOrWorkspace(
                 Output.prettyErrorln("<d>Skip installing<r> <b>{s}<r> <d>- os mismatch<r>", .{name});
             } else if (!meta.arch.isMatch(manager.options.cpu)) {
                 Output.prettyErrorln("<d>Skip installing<r> <b>{s}<r> <d>- cpu mismatch<r>", .{name});
-            } else if (!meta.libc.isMatch(manager.options.libc)) {
+            } else if (!meta.libc.isMatch(target_libc)) {
                 Output.prettyErrorln("<d>Skip installing<r> <b>{s}<r> <d>- libc mismatch<r>", .{name});
             }
         }

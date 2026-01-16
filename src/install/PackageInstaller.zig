@@ -289,7 +289,7 @@ pub const PackageInstaller = struct {
                         .native_binlink => {
                             const target_cpu = manager.options.cpu;
                             const target_os = manager.options.os;
-                            const target_libc = manager.options.libc;
+                            const target_libc = manager.options.getLibc();
                             if (PostinstallOptimizer.getNativeBinlinkReplacementPackageID(
                                 pkg_resolutions_lists[package_id].get(pkg_resolutions_buffer),
                                 pkg_metas,
@@ -1174,7 +1174,7 @@ pub const PackageInstaller = struct {
                                 this.lockfile.packages.items(.meta),
                                 this.manager.options.cpu,
                                 this.manager.options.os,
-                                this.manager.options.libc,
+                                this.manager.options.getLibc(),
                                 this.current_tree_id,
                             )) {
                                 if (PackageManager.verbose_install) {
@@ -1369,7 +1369,7 @@ pub const PackageInstaller = struct {
                         this.lockfile.packages.items(.meta),
                         this.manager.options.cpu,
                         this.manager.options.os,
-                        this.manager.options.libc,
+                        this.manager.options.getLibc(),
                         this.current_tree_id,
                     )) {
                         if (PackageManager.verbose_install) {

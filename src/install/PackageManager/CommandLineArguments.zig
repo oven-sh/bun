@@ -253,7 +253,7 @@ audit_ignore_list: []const string = &.{},
 // CPU, OS, and libc overrides for optional dependencies
 cpu: Npm.Architecture = Npm.Architecture.current,
 os: Npm.OperatingSystem = Npm.OperatingSystem.current,
-libc: Npm.Libc = Npm.Libc.current,
+libc: Npm.Libc = .none, // Resolved to Npm.Libc.current() when .none
 
 pub const AuditLevel = enum {
     low,

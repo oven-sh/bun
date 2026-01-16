@@ -142,7 +142,7 @@ fn shouldPrintPackageInstall(
         &pkg_metas[package_id],
         this.options.cpu,
         this.options.os,
-        this.options.libc,
+        this.options.getLibc(),
     )) {
         return .no;
     }

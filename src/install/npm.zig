@@ -729,10 +729,49 @@ pub const Libc = enum(u8) {
     /// Returns the current system's libc type.
     /// On Linux, this detects musl vs glibc at runtime.
     /// On other platforms (macOS, Windows), returns .all since libc is not relevant.
-    pub const current: Libc = if (Environment.isLinux)
-        @enumFromInt(if (Environment.isMusl) musl else glibc)
-    else
-        .all;
+    pub fn current() Libc {
+        // On non-Linux platforms, libc type is not relevant for package filtering
+        if (!Environment.isLinux) return .all;
+
+        // If Bun was compiled for musl, we're definitely on a musl system
+        if (Environment.isMusl) return @enumFromInt(musl);
+
+        // For glibc-compiled binaries, detect at runtime if we're actually on a musl system.
+        // This handles cases like running a glibc binary on Alpine via compatibility layers.
+        return cached_current orelse {
+            const result = detectLibcRuntime();
+            cached_current = result;
+            return result;
+        };
+    }
+
+    var cached_current: ?Libc = null;
+
+    /// Detects the system's libc at runtime by checking for musl's dynamic loader.
+    /// Musl systems have /lib/ld-musl-<arch>.so.1 as the dynamic loader.
+    fn detectLibcRuntime() Libc {
+        // Check for musl dynamic loader paths based on architecture
+        const musl_loader_paths = switch (Environment.arch) {
+            .x64 => &[_][:0]const u8{
+                "/lib/ld-musl-x86_64.so.1",
+                "/lib64/ld-musl-x86_64.so.1",
+            },
+            .arm64 => &[_][:0]const u8{
+                "/lib/ld-musl-aarch64.so.1",
+                "/lib64/ld-musl-aarch64.so.1",
+            },
+            else => &[_][:0]const u8{},
+        };
+
+        for (musl_loader_paths) |path| {
+            if (bun.sys.access(path, std.posix.F_OK).asErr() == null) {
+                return @enumFromInt(musl);
+            }
+        }
+
+        // Default to glibc if no musl loader found
+        return @enumFromInt(glibc);
+    }
 
     const jsc = bun.jsc;
     pub fn jsFunctionLibcIsMatch(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
@@ -746,7 +785,7 @@ pub const Libc = enum(u8) {
             if (globalObject.hasException()) return .zero;
         }
         if (globalObject.hasException()) return .zero;
-        return jsc.JSValue.jsBoolean(libc.combine().isMatch(current));
+        return jsc.JSValue.jsBoolean(libc.combine().isMatch(current()));
     }
 };
 

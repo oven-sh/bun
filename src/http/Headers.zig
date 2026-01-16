@@ -79,6 +79,9 @@ pub fn deinit(this: *Headers) void {
 pub fn getContentDisposition(this: *const Headers) ?[]const u8 {
     return this.get("content-disposition");
 }
+pub fn getContentEncoding(this: *const Headers) ?[]const u8 {
+    return this.get("content-encoding");
+}
 pub fn getContentType(this: *const Headers) ?[]const u8 {
     return this.get("content-type");
 }

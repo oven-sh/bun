@@ -2224,12 +2224,11 @@ export function readableStreamIntoArray(stream) {
     return chunks;
   }
 
-  // Use $promiseResolveWithThen to convert InternalPromise to regular Promise
   if (manyResult && $isPromise(manyResult)) {
-    return $promiseResolveWithThen(Promise, manyResult.$then(processManyResult));
+    return manyResult.$then(processManyResult);
   }
 
-  return $promiseResolveWithThen(Promise, processManyResult(manyResult));
+  return processManyResult(manyResult);
 }
 
 export function withoutUTF8BOM(result) {
@@ -2246,13 +2245,10 @@ export function readableStreamIntoText(stream: ReadableStream) {
   const prom = $readStreamIntoSink(stream, textStream, false);
 
   if (prom && $isPromise(prom)) {
-    // Use $promiseResolveWithThen to convert InternalPromise to regular Promise
-    // since $readStreamIntoSink is an async builtin function that returns InternalPromise
-    return $promiseResolveWithThen(Promise, Promise.$resolve(prom).$then(closer.promise).$then($withoutUTF8BOM));
+    return Promise.$resolve(prom).$then(closer.promise).$then($withoutUTF8BOM);
   }
 
-  // Also wrap the non-promise path since closer.promise.$then() returns InternalPromise in builtin context
-  return $promiseResolveWithThen(Promise, closer.promise.$then($withoutUTF8BOM));
+  return closer.promise.$then($withoutUTF8BOM);
 }
 
 export function readableStreamToArrayBufferDirect(

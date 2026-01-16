@@ -148,31 +148,72 @@ if (!buildNumber) {
 const buildResponse = await fetch(`https://buildkite.com/bun/bun/builds/${buildNumber}.json`);
 const build = await buildResponse.json();
 
-// Calculate time ago
-const buildTime = new Date(build.started_at);
-const now = new Date();
-const diffMs = now.getTime() - buildTime.getTime();
-const diffSecs = Math.floor(diffMs / 1000);
-const diffMins = Math.floor(diffSecs / 60);
-const diffHours = Math.floor(diffMins / 60);
-const diffDays = Math.floor(diffHours / 24);
+// Helper to format time ago
+function formatTimeAgo(dateStr: string | null): string {
+  if (!dateStr) return "not started";
+  const date = new Date(dateStr);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffSecs = Math.floor(diffMs / 1000);
+  const diffMins = Math.floor(diffSecs / 60);
+  const diffHours = Math.floor(diffMins / 60);
+  const diffDays = Math.floor(diffHours / 24);
 
-let timeAgo;
-if (diffDays > 0) {
-  timeAgo = `${diffDays} day${diffDays !== 1 ? "s" : ""} ago`;
-} else if (diffHours > 0) {
-  timeAgo = `${diffHours} hour${diffHours !== 1 ? "s" : ""} ago`;
-} else if (diffMins > 0) {
-  timeAgo = `${diffMins} minute${diffMins !== 1 ? "s" : ""} ago`;
-} else {
-  timeAgo = `${diffSecs} second${diffSecs !== 1 ? "s" : ""} ago`;
+  if (diffDays > 0) return `${diffDays} day${diffDays !== 1 ? "s" : ""} ago`;
+  if (diffHours > 0) return `${diffHours} hour${diffHours !== 1 ? "s" : ""} ago`;
+  if (diffMins > 0) return `${diffMins} minute${diffMins !== 1 ? "s" : ""} ago`;
+  return `${diffSecs} second${diffSecs !== 1 ? "s" : ""} ago`;
 }
+
+// Calculate time ago (use created_at as fallback for scheduled/pending builds)
+const timeAgo = formatTimeAgo(build.started_at || build.created_at);
 
 console.log(`${timeAgo} - build #${buildNumber} https://buildkite.com/bun/bun/builds/${buildNumber}\n`);
 
 // Check if build passed
 if (build.state === "passed") {
   console.log(`${colors.green}✅ Passed!${colors.reset}`);
+  process.exit(0);
+}
+
+// Check if build is pending/running/scheduled
+if (build.state === "scheduled" || build.state === "running" || build.state === "creating") {
+  const runningJobs = build.jobs?.filter((job: any) => job.state === "running") || [];
+  const pendingJobs = build.jobs?.filter((job: any) => job.state === "scheduled" || job.state === "waiting") || [];
+  const passedJobs = build.jobs?.filter((job: any) => job.state === "passed") || [];
+  const totalJobs = build.jobs?.filter((job: any) => job.type === "script")?.length || 0;
+
+  if (build.state === "scheduled" || build.state === "creating") {
+    console.log(`${colors.dim}⏳ Build is scheduled/pending${colors.reset}`);
+    if (build.created_at) {
+      console.log(`${colors.dim}   Created: ${formatTimeAgo(build.created_at)}${colors.reset}`);
+    }
+  } else {
+    console.log(`${colors.dim}🔄 Build is running${colors.reset}`);
+    if (build.started_at) {
+      console.log(`${colors.dim}   Started: ${formatTimeAgo(build.started_at)}${colors.reset}`);
+    }
+    console.log(
+      `${colors.dim}   Progress: ${passedJobs.length}/${totalJobs} jobs passed, ${runningJobs.length} running, ${pendingJobs.length} pending${colors.reset}`,
+    );
+
+    if (runningJobs.length > 0) {
+      console.log(`\n${colors.dim}Running jobs:${colors.reset}`);
+      for (const job of runningJobs.slice(0, 5)) {
+        const name = job.name || job.label || "Unknown";
+        console.log(`   ${colors.dim}• ${name}${colors.reset}`);
+      }
+      if (runningJobs.length > 5) {
+        console.log(`   ${colors.dim}... and ${runningJobs.length - 5} more${colors.reset}`);
+      }
+    }
+  }
+  process.exit(0);
+}
+
+// Check if build was canceled
+if (build.state === "canceled" || build.state === "canceling") {
+  console.log(`${colors.dim}🚫 Build was canceled${colors.reset}`);
   process.exit(0);
 }
 

@@ -565,7 +565,7 @@ pub fn downloadStream(
         return;
     };
 
-    var header_buffer: [10]picohttp.Header = undefined;
+    var header_buffer: [S3Credentials.SignResult.MAX_HEADERS + 1]picohttp.Header = undefined;
     const headers = brk: {
         if (range) |range_| {
             const _headers = result.mixWithHeader(&header_buffer, .{ .name = "range", .value = range_ });

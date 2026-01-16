@@ -2689,7 +2689,8 @@ pub fn getWriter(
                     }
                     content_encoding_str = try content_encoding.toSlice(globalThis, bun.default_allocator);
                 }
-                const credentialsWithOptions = try s3.getCredentialsWithOptions(options, globalThis);
+                var credentialsWithOptions = try s3.getCredentialsWithOptions(options, globalThis);
+                defer credentialsWithOptions.deinit();
                 return try S3.writableStream(
                     credentialsWithOptions.credentials.dupe(),
                     path,

@@ -384,7 +384,7 @@ pub const S3Credentials = struct {
         acl: ?ACL = null,
         storage_class: ?StorageClass = null,
         request_payer: bool = false,
-        _headers: [11]picohttp.Header = .{
+        _headers: [MAX_HEADERS]picohttp.Header = .{
             .{ .name = "", .value = "" },
             .{ .name = "", .value = "" },
             .{ .name = "", .value = "" },
@@ -398,6 +398,8 @@ pub const S3Credentials = struct {
             .{ .name = "", .value = "" },
         },
         _headers_len: u8 = 0,
+
+        pub const MAX_HEADERS = 11;
 
         pub fn headers(this: *const @This()) []const picohttp.Header {
             return this._headers[0..this._headers_len];

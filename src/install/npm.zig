@@ -727,7 +727,7 @@ pub const Libc = enum(u8) {
     }
 
     /// Returns the current system's libc type.
-    /// On Linux, this detects musl vs glibc at runtime.
+    /// On Linux, this detects musl vs glibc at runtime (thread-safe, cached).
     /// On other platforms (macOS, Windows), returns .all since libc is not relevant.
     pub fn current() Libc {
         // On non-Linux platforms, libc type is not relevant for package filtering
@@ -738,18 +738,19 @@ pub const Libc = enum(u8) {
 
         // For glibc-compiled binaries, detect at runtime if we're actually on a musl system.
         // This handles cases like running a glibc binary on Alpine via compatibility layers.
-        return cached_current orelse {
-            const result = detectLibcRuntime();
-            cached_current = result;
-            return result;
-        };
+        // Uses std.once for thread-safe one-time initialization.
+        cached_current_once.call();
+        return cached_current;
     }
 
-    var cached_current: ?Libc = null;
+    /// Cached result of runtime libc detection. Written by detectLibcRuntimeOnce.
+    var cached_current: Libc = @enumFromInt(glibc);
+    var cached_current_once = std.once(detectLibcRuntimeOnce);
 
     /// Detects the system's libc at runtime by checking for musl's dynamic loader.
     /// Musl systems have /lib/ld-musl-<arch>.so.1 as the dynamic loader.
-    fn detectLibcRuntime() Libc {
+    /// This is called exactly once via std.once for thread safety.
+    fn detectLibcRuntimeOnce() void {
         // Check for musl dynamic loader paths based on architecture
         const musl_loader_paths = switch (Environment.arch) {
             .x64 => &[_][:0]const u8{
@@ -765,12 +766,12 @@ pub const Libc = enum(u8) {
 
         for (musl_loader_paths) |path| {
             if (bun.sys.access(path, std.posix.F_OK).asErr() == null) {
-                return @enumFromInt(musl);
+                cached_current = @enumFromInt(musl);
+                return;
             }
         }
 
-        // Default to glibc if no musl loader found
-        return @enumFromInt(glibc);
+        // Default to glibc if no musl loader found (already initialized)
     }
 
     const jsc = bun.jsc;

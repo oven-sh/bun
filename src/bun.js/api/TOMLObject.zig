@@ -22,6 +22,11 @@ pub fn parse(
     var arena = bun.ArenaAllocator.init(globalThis.allocator());
     const allocator = arena.allocator();
     defer arena.deinit();
+
+    var ast_memory_allocator = bun.handleOom(allocator.create(ast.ASTMemoryAllocator));
+    var ast_scope = ast_memory_allocator.enter(allocator);
+    defer ast_scope.exit();
+
     var log = logger.Log.init(default_allocator);
     const arguments = callframe.arguments_old(1).slice();
     if (arguments.len == 0 or arguments[0].isEmptyOrUndefinedOrNull()) {
@@ -58,6 +63,7 @@ pub fn parse(
 }
 
 const bun = @import("bun");
+const ast = bun.ast;
 const default_allocator = bun.default_allocator;
 const js_printer = bun.js_printer;
 const logger = bun.logger;

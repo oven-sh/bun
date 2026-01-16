@@ -11,7 +11,7 @@ JSC_DECLARE_HOST_FUNCTION(jsVerifyOneShot);
 static const unsigned int NoDsaSignature = static_cast<unsigned int>(-1);
 
 struct SignJobCtx {
-    WTF_MAKE_TZONE_ALLOCATED(name);
+    WTF_MAKE_TZONE_ALLOCATED(SignJobCtx);
 
 public:
     enum class Mode {

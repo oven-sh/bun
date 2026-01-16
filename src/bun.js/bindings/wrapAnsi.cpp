@@ -647,9 +647,11 @@ static WTF::String wrapAnsiImpl(std::span<const Char> input, size_t columns, con
     const Char* const dataEnd = span.data() + span.size();
     bool firstLine = true;
 
-    for (const Char* it = span.data(); it <= dataEnd; ++it) {
-        if (it < dataEnd && *it != '\n')
-            continue;
+    while (lineStart <= dataEnd) {
+        // Find next newline using WTF::find
+        auto remaining = std::span<const Char>(lineStart, dataEnd);
+        size_t nlPos = WTF::find(remaining, static_cast<Char>('\n'));
+        const Char* lineEnd = (nlPos == WTF::notFound) ? dataEnd : lineStart + nlPos;
 
         // Add newline between input lines
         if (!firstLine)
@@ -658,14 +660,14 @@ static WTF::String wrapAnsiImpl(std::span<const Char> input, size_t columns, con
 
         // Process this input line
         Vector<Row<Char>> lineRows;
-        processLine(lineStart, it, columns, options, lineRows);
+        processLine(lineStart, lineEnd, columns, options, lineRows);
 
         // Join and append this line's rows with ANSI preservation
         if (!lineRows.isEmpty()) {
             joinRowsWithAnsiPreservation(lineRows, result);
         }
 
-        lineStart = it + 1;
+        lineStart = lineEnd + 1;
     }
 
     return result.toString();

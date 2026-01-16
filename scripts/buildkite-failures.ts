@@ -68,6 +68,7 @@ Arguments:
 Options:
   --flaky, -f       Include flaky test annotations
   --warnings, -w    Include warning annotations
+  --wait            Poll continuously until build completes or fails
   --help, -h        Show this help message
 
 Examples:
@@ -75,12 +76,14 @@ Examples:
   bun run scripts/buildkite-failures.ts main               # Main branch
   bun run scripts/buildkite-failures.ts 35051              # Build #35051
   bun run scripts/buildkite-failures.ts #26173             # PR #26173
+  bun run scripts/buildkite-failures.ts --wait             # Wait for current branch build to complete
 `);
   process.exit(0);
 }
 
 const showWarnings = args.includes("--warnings") || args.includes("-w");
 const showFlaky = args.includes("--flaky") || args.includes("-f");
+const waitMode = args.includes("--wait");
 const inputArg = args.find(arg => !arg.startsWith("-") && !arg.startsWith("--"));
 
 // Determine what type of input we have
@@ -144,10 +147,6 @@ if (!buildNumber) {
   buildNumber = match[1];
 }
 
-// Fetch build JSON
-const buildResponse = await fetch(`https://buildkite.com/bun/bun/builds/${buildNumber}.json`);
-const build = await buildResponse.json();
-
 // Helper to format time ago
 function formatTimeAgo(dateStr: string | null): string {
   if (!dateStr) return "not started";
@@ -165,57 +164,115 @@ function formatTimeAgo(dateStr: string | null): string {
   return `${diffSecs} second${diffSecs !== 1 ? "s" : ""} ago`;
 }
 
-// Calculate time ago (use created_at as fallback for scheduled/pending builds)
-const timeAgo = formatTimeAgo(build.started_at || build.created_at);
+// Helper to clear line for updates
+const clearLine = isTTY ? "\x1b[2K\r" : "";
 
-console.log(`${timeAgo} - build #${buildNumber} https://buildkite.com/bun/bun/builds/${buildNumber}\n`);
+// Poll for build status
+let build: any;
+let pollCount = 0;
+const pollInterval = 10000; // 10 seconds
 
-// Check if build passed
-if (build.state === "passed") {
-  console.log(`${colors.green}✅ Passed!${colors.reset}`);
-  process.exit(0);
-}
+while (true) {
+  // Fetch build JSON
+  const buildResponse = await fetch(`https://buildkite.com/bun/bun/builds/${buildNumber}.json`);
+  build = await buildResponse.json();
 
-// Check if build is pending/running/scheduled
-if (build.state === "scheduled" || build.state === "running" || build.state === "creating") {
-  const runningJobs = build.jobs?.filter((job: any) => job.state === "running") || [];
-  const pendingJobs = build.jobs?.filter((job: any) => job.state === "scheduled" || job.state === "waiting") || [];
-  const passedJobs = build.jobs?.filter((job: any) => job.state === "passed") || [];
-  const totalJobs = build.jobs?.filter((job: any) => job.type === "script")?.length || 0;
+  // Check for failed jobs first (even if build is still running)
+  const failedJobsEarly =
+    build.jobs?.filter(
+      (job: any) => job.exit_status && job.exit_status > 0 && !job.soft_failed && job.type === "script",
+    ) || [];
 
-  if (build.state === "scheduled" || build.state === "creating") {
-    console.log(`${colors.dim}⏳ Build is scheduled/pending${colors.reset}`);
-    if (build.created_at) {
-      console.log(`${colors.dim}   Created: ${formatTimeAgo(build.created_at)}${colors.reset}`);
+  // In wait mode with failures, stop polling and show failures
+  if (waitMode && failedJobsEarly.length > 0) {
+    if (pollCount > 0) {
+      process.stdout.write(clearLine);
     }
-  } else {
-    console.log(`${colors.dim}🔄 Build is running${colors.reset}`);
-    if (build.started_at) {
-      console.log(`${colors.dim}   Started: ${formatTimeAgo(build.started_at)}${colors.reset}`);
-    }
-    console.log(
-      `${colors.dim}   Progress: ${passedJobs.length}/${totalJobs} jobs passed, ${runningJobs.length} running, ${pendingJobs.length} pending${colors.reset}`,
-    );
+    break;
+  }
 
-    if (runningJobs.length > 0) {
-      console.log(`\n${colors.dim}Running jobs:${colors.reset}`);
-      for (const job of runningJobs.slice(0, 5)) {
-        const name = job.name || job.label || "Unknown";
-        console.log(`   ${colors.dim}• ${name}${colors.reset}`);
+  // Calculate time ago (use created_at as fallback for scheduled/pending builds)
+  const timeAgo = formatTimeAgo(build.started_at || build.created_at);
+
+  // Check if build passed
+  if (build.state === "passed") {
+    if (pollCount > 0) {
+      process.stdout.write(clearLine);
+    }
+    console.log(`${timeAgo} - build #${buildNumber} https://buildkite.com/bun/bun/builds/${buildNumber}\n`);
+    console.log(`${colors.green}✅ Passed!${colors.reset}`);
+    process.exit(0);
+  }
+
+  // Check if build was canceled
+  if (build.state === "canceled" || build.state === "canceling") {
+    if (pollCount > 0) {
+      process.stdout.write(clearLine);
+    }
+    console.log(`${timeAgo} - build #${buildNumber} https://buildkite.com/bun/bun/builds/${buildNumber}\n`);
+    console.log(`${colors.dim}🚫 Build was canceled${colors.reset}`);
+    process.exit(0);
+  }
+
+  // Check if build is pending/running/scheduled
+  if (build.state === "scheduled" || build.state === "running" || build.state === "creating") {
+    const runningJobs = build.jobs?.filter((job: any) => job.state === "running") || [];
+    const pendingJobs = build.jobs?.filter((job: any) => job.state === "scheduled" || job.state === "waiting") || [];
+    const passedJobs = build.jobs?.filter((job: any) => job.state === "passed") || [];
+    const totalJobs = build.jobs?.filter((job: any) => job.type === "script")?.length || 0;
+
+    if (waitMode) {
+      // In wait mode, show a single updating line
+      let statusMsg = "";
+      if (build.state === "scheduled" || build.state === "creating") {
+        statusMsg = `⏳ Waiting... (scheduled ${formatTimeAgo(build.created_at)})`;
+      } else {
+        statusMsg = `🔄 Running... ${passedJobs.length}/${totalJobs} passed, ${runningJobs.length} running`;
       }
-      if (runningJobs.length > 5) {
-        console.log(`   ${colors.dim}... and ${runningJobs.length - 5} more${colors.reset}`);
+      process.stdout.write(`${clearLine}${colors.dim}${statusMsg}${colors.reset}`);
+      pollCount++;
+      await Bun.sleep(pollInterval);
+      continue;
+    } else {
+      // Not in wait mode, show full status and exit
+      console.log(`${timeAgo} - build #${buildNumber} https://buildkite.com/bun/bun/builds/${buildNumber}\n`);
+
+      if (build.state === "scheduled" || build.state === "creating") {
+        console.log(`${colors.dim}⏳ Build is scheduled/pending${colors.reset}`);
+        if (build.created_at) {
+          console.log(`${colors.dim}   Created: ${formatTimeAgo(build.created_at)}${colors.reset}`);
+        }
+      } else {
+        console.log(`${colors.dim}🔄 Build is running${colors.reset}`);
+        if (build.started_at) {
+          console.log(`${colors.dim}   Started: ${formatTimeAgo(build.started_at)}${colors.reset}`);
+        }
+        console.log(
+          `${colors.dim}   Progress: ${passedJobs.length}/${totalJobs} jobs passed, ${runningJobs.length} running, ${pendingJobs.length} pending${colors.reset}`,
+        );
+
+        if (runningJobs.length > 0) {
+          console.log(`\n${colors.dim}Running jobs:${colors.reset}`);
+          for (const job of runningJobs.slice(0, 5)) {
+            const name = job.name || job.label || "Unknown";
+            console.log(`   ${colors.dim}• ${name}${colors.reset}`);
+          }
+          if (runningJobs.length > 5) {
+            console.log(`   ${colors.dim}... and ${runningJobs.length - 5} more${colors.reset}`);
+          }
+        }
       }
+      process.exit(0);
     }
   }
-  process.exit(0);
+
+  // Build is in a terminal state (failed, etc.) - break out of loop
+  break;
 }
 
-// Check if build was canceled
-if (build.state === "canceled" || build.state === "canceling") {
-  console.log(`${colors.dim}🚫 Build was canceled${colors.reset}`);
-  process.exit(0);
-}
+// Print header for failed build
+const timeAgo = formatTimeAgo(build.started_at || build.created_at);
+console.log(`${timeAgo} - build #${buildNumber} https://buildkite.com/bun/bun/builds/${buildNumber}\n`);
 
 // Get failed jobs
 const failedJobs =

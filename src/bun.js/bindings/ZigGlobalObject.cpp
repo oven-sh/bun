@@ -2789,6 +2789,52 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     RETURN_IF_EXCEPTION(scope, );
     consoleObject->putDirectBuiltinFunction(vm, this, vm.propertyNames->asyncIteratorSymbol, consoleObjectAsyncIteratorCodeGenerator(vm), PropertyAttribute::Builtin | 0);
     consoleObject->putDirectBuiltinFunction(vm, this, clientData->builtinNames().writePublicName(), consoleObjectWriteCodeGenerator(vm), PropertyAttribute::Builtin | 0);
+    {
+        auto logName = Identifier::fromString(vm, "log"_s);
+        auto logNativeName = Identifier::fromString(vm, "__bunNativeLog"_s);
+        JSValue originalLog = consoleObject->get(this, logName);
+        RETURN_IF_EXCEPTION(scope, );
+        if (!originalLog.isUndefined()) {
+            consoleObject->putDirect(vm, logNativeName, originalLog, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+            consoleObject->putDirectBuiltinFunction(vm, this, logName, consoleObjectLogCodeGenerator(vm), PropertyAttribute::Builtin | 0);
+        }
+
+        auto infoName = Identifier::fromString(vm, "info"_s);
+        auto infoNativeName = Identifier::fromString(vm, "__bunNativeInfo"_s);
+        JSValue originalInfo = consoleObject->get(this, infoName);
+        RETURN_IF_EXCEPTION(scope, );
+        if (!originalInfo.isUndefined()) {
+            consoleObject->putDirect(vm, infoNativeName, originalInfo, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+            consoleObject->putDirectBuiltinFunction(vm, this, infoName, consoleObjectInfoCodeGenerator(vm), PropertyAttribute::Builtin | 0);
+        }
+
+        auto debugName = Identifier::fromString(vm, "debug"_s);
+        auto debugNativeName = Identifier::fromString(vm, "__bunNativeDebug"_s);
+        JSValue originalDebug = consoleObject->get(this, debugName);
+        RETURN_IF_EXCEPTION(scope, );
+        if (!originalDebug.isUndefined()) {
+            consoleObject->putDirect(vm, debugNativeName, originalDebug, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+            consoleObject->putDirectBuiltinFunction(vm, this, debugName, consoleObjectDebugCodeGenerator(vm), PropertyAttribute::Builtin | 0);
+        }
+
+        auto warnName = Identifier::fromString(vm, "warn"_s);
+        auto warnNativeName = Identifier::fromString(vm, "__bunNativeWarn"_s);
+        JSValue originalWarn = consoleObject->get(this, warnName);
+        RETURN_IF_EXCEPTION(scope, );
+        if (!originalWarn.isUndefined()) {
+            consoleObject->putDirect(vm, warnNativeName, originalWarn, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+            consoleObject->putDirectBuiltinFunction(vm, this, warnName, consoleObjectWarnCodeGenerator(vm), PropertyAttribute::Builtin | 0);
+        }
+
+        auto errorName = Identifier::fromString(vm, "error"_s);
+        auto errorNativeName = Identifier::fromString(vm, "__bunNativeError"_s);
+        JSValue originalError = consoleObject->get(this, errorName);
+        RETURN_IF_EXCEPTION(scope, );
+        if (!originalError.isUndefined()) {
+            consoleObject->putDirect(vm, errorNativeName, originalError, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+            consoleObject->putDirectBuiltinFunction(vm, this, errorName, consoleObjectErrorCodeGenerator(vm), PropertyAttribute::Builtin | 0);
+        }
+    }
     consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "Console"_s), CustomGetterSetter::create(vm, getConsoleConstructor, nullptr), PropertyAttribute::CustomValue | 0);
     consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "_stdout"_s), CustomGetterSetter::create(vm, getConsoleStdout, nullptr), PropertyAttribute::DontEnum | PropertyAttribute::CustomValue | 0);
     consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "_stderr"_s), CustomGetterSetter::create(vm, getConsoleStderr, nullptr), PropertyAttribute::DontEnum | PropertyAttribute::CustomValue | 0);

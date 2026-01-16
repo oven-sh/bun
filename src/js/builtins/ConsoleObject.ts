@@ -134,6 +134,56 @@ export function write(this: Console, input) {
   return wrote;
 }
 
+export function log(this: Console) {
+  const receiver = (this as any)?.__bunNativeLog ? this : globalThis.console;
+  const nativeLog = (receiver as any).__bunNativeLog;
+  const count = $argumentCount();
+  if (count === 0) {
+    return nativeLog.$call(receiver, "");
+  }
+  return nativeLog.$apply(receiver, arguments);
+}
+
+export function info(this: Console) {
+  const receiver = (this as any)?.__bunNativeInfo ? this : globalThis.console;
+  const nativeInfo = (receiver as any).__bunNativeInfo;
+  const count = $argumentCount();
+  if (count === 0) {
+    return nativeInfo.$call(receiver, "");
+  }
+  return nativeInfo.$apply(receiver, arguments);
+}
+
+export function debug(this: Console) {
+  const receiver = (this as any)?.__bunNativeDebug ? this : globalThis.console;
+  const nativeDebug = (receiver as any).__bunNativeDebug;
+  const count = $argumentCount();
+  if (count === 0) {
+    return nativeDebug.$call(receiver, "");
+  }
+  return nativeDebug.$apply(receiver, arguments);
+}
+
+export function warn(this: Console) {
+  const receiver = (this as any)?.__bunNativeWarn ? this : globalThis.console;
+  const nativeWarn = (receiver as any).__bunNativeWarn;
+  const count = $argumentCount();
+  if (count === 0) {
+    return nativeWarn.$call(receiver, "");
+  }
+  return nativeWarn.$apply(receiver, arguments);
+}
+
+export function error(this: Console) {
+  const receiver = (this as any)?.__bunNativeError ? this : globalThis.console;
+  const nativeError = (receiver as any).__bunNativeError;
+  const count = $argumentCount();
+  if (count === 0) {
+    return nativeError.$call(receiver, "");
+  }
+  return nativeError.$apply(receiver, arguments);
+}
+
 // This is the `console.Console` constructor. It is mostly copied from Node.
 // https://github.com/nodejs/node/blob/d2c7c367741bdcb6f7f77f55ce95a745f0b29fef/lib/internal/console/constructor.js
 // Some parts are copied from imported files and inlined here. Not too much of a performance issue

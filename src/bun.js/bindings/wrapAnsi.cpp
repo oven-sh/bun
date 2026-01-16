@@ -5,6 +5,7 @@
 #include <wtf/text/WTFString.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/Vector.h>
+#include <cmath>
 
 // Zig exports for visible width calculation
 extern "C" size_t Bun__visibleWidthExcludeANSI_utf16(const uint16_t* ptr, size_t len, bool ambiguous_as_wide);
@@ -697,8 +698,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionBunWrapAnsi, (JSC::JSGlobalObject * globalObj
     // Get columns
     size_t columns = 0;
     if (!columnsValue.isUndefined()) {
-        columns = static_cast<size_t>(columnsValue.toIntegerOrInfinity(globalObject));
+        double colsDouble = columnsValue.toIntegerOrInfinity(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
+        // Only set columns if positive and finite (negative values would wrap to huge size_t)
+        if (colsDouble > 0 && std::isfinite(colsDouble))
+            columns = static_cast<size_t>(colsDouble);
     }
 
     // Parse options

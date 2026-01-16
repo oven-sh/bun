@@ -175,4 +175,19 @@ describe("Bun.wrapAnsi", () => {
       expect(typeof result).toBe("string");
     });
   });
+
+  describe("edge cases for columns", () => {
+    test("negative columns returns input unchanged", () => {
+      expect(Bun.wrapAnsi("hello world", -5)).toBe("hello world");
+      expect(Bun.wrapAnsi("hello world", -Infinity)).toBe("hello world");
+    });
+
+    test("Infinity columns returns input unchanged", () => {
+      expect(Bun.wrapAnsi("hello world", Infinity)).toBe("hello world");
+    });
+
+    test("NaN columns returns input unchanged", () => {
+      expect(Bun.wrapAnsi("hello world", NaN)).toBe("hello world");
+    });
+  });
 });

@@ -3515,13 +3515,13 @@ pub const H2FrameParser = struct {
         // Buffer size allows up to 256KB of encoded trailers, which can be split into
         // multiple HEADERS + CONTINUATION frames per RFC 7540.
         const max_header_block_size: usize = 256 * 1024;
-        const buffer_size = max_header_block_size;
-        // Allocate buffer for large headers (256KB > shared buffer size of 16KB)
-        const heap_buffer = bun.default_allocator.alloc(u8, buffer_size) catch {
+        // Use shared buffer when possible, fall back to heap for large headers
+        var buf_fallback = bun.allocators.BufferFallbackAllocator.init(&shared_request_buffer, bun.default_allocator);
+        const alloc = buf_fallback.allocator();
+        const buffer = alloc.alloc(u8, max_header_block_size) catch {
             return globalObject.throw("Failed to allocate header buffer", .{});
         };
-        defer bun.default_allocator.free(heap_buffer);
-        const buffer: []u8 = heap_buffer;
+        defer alloc.free(buffer);
         _ = settings;
         var encoded_size: usize = 0;
         // max header name length for lshpack
@@ -3977,13 +3977,13 @@ pub const H2FrameParser = struct {
         // Buffer size allows up to 256KB of encoded headers, which can be split into
         // multiple HEADERS + CONTINUATION frames per RFC 7540.
         const max_header_block_size: usize = 256 * 1024;
-        const buffer_size = max_header_block_size;
-        // Allocate buffer for large headers (256KB > shared buffer size of 16KB)
-        const heap_buffer = bun.default_allocator.alloc(u8, buffer_size) catch {
+        // Use shared buffer when possible, fall back to heap for large headers
+        var buf_fallback = bun.allocators.BufferFallbackAllocator.init(&shared_request_buffer, bun.default_allocator);
+        const alloc = buf_fallback.allocator();
+        const buffer = alloc.alloc(u8, max_header_block_size) catch {
             return globalObject.throw("Failed to allocate header buffer", .{});
         };
-        defer bun.default_allocator.free(heap_buffer);
-        const buffer: []u8 = heap_buffer;
+        defer alloc.free(buffer);
         _ = max_frame_size;
         var encoded_size: usize = 0;
         // max header name length for lshpack

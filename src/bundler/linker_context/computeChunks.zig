@@ -45,7 +45,7 @@ pub noinline fn computeChunks(
         // reachable from other entry points (e.g., via re-exports), its content goes into
         // a shared chunk rather than staying in the entry point's chunk.
         // https://github.com/evanw/esbuild/blob/cd832972927f1f67b6d2cc895c06a8759c1cf309/internal/linker/linker.go#L3882
-        var entry_point_chunk_bits = try AutoBitSet.initEmpty(temp_allocator, this.graph.entry_points.len);
+        var entry_point_chunk_bits = try AutoBitSet.initEmpty(this.allocator(), this.graph.entry_points.len);
         entry_point_chunk_bits.set(entry_bit);
 
         const js_chunk_key = brk: {

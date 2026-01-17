@@ -293,12 +293,15 @@ pub fn preadv(fd: FileDescriptor, bufs: []const bun.PlatformIOVec, position: i64
     var req: uv.fs_t = uv.fs_t.uninitialized;
     defer req.deinit();
 
+    const nbufs = std.math.cast(c_uint, bufs.len) orelse return .{
+        .err = .{ .errno = @intFromEnum(std.posix.E.INVAL), .fd = fd, .syscall = .read },
+    };
     const rc = uv.uv_fs_read(
         uv.Loop.get(),
         &req,
         uv_fd,
         bufs.ptr,
-        @intCast(bufs.len),
+        nbufs,
         position,
         null,
     );
@@ -327,12 +330,15 @@ pub fn pwritev(fd: FileDescriptor, bufs: []const bun.PlatformIOVecConst, positio
     var req: uv.fs_t = uv.fs_t.uninitialized;
     defer req.deinit();
 
+    const nbufs = std.math.cast(c_uint, bufs.len) orelse return .{
+        .err = .{ .errno = @intFromEnum(std.posix.E.INVAL), .fd = fd, .syscall = .write },
+    };
     const rc = uv.uv_fs_write(
         uv.Loop.get(),
         &req,
         uv_fd,
         bufs.ptr,
-        @intCast(bufs.len),
+        nbufs,
         position,
         null,
     );
@@ -382,6 +388,7 @@ pub inline fn write(fd: FileDescriptor, buf: []const u8) Maybe(usize) {
 
 pub const Tag = @import("./sys.zig").Tag;
 
+const std = @import("std");
 const bun = @import("bun");
 const Environment = bun.Environment;
 const FileDescriptor = bun.FileDescriptor;

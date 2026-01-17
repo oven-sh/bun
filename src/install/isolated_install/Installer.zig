@@ -270,7 +270,7 @@ pub const Installer = struct {
 
             const dep = this.lockfile.buffers.dependencies.items[dep_id];
 
-            if (dep.behavior.isWorkspace()) {
+            if (dep.behavior.isWorkspace() or dep.version.tag == .workspace) {
                 break :state .{ node_id, .skipped };
             }
 
@@ -338,6 +338,8 @@ pub const Installer = struct {
         next: ?*Task,
 
         result: Result,
+
+        critical_section: bun.safety.CriticalSection = .{},
 
         const Result = union(enum) {
             none,
@@ -1122,6 +1124,9 @@ pub const Installer = struct {
         /// Called from task thread
         pub fn callback(task: *ThreadPool.Task) void {
             const this: *Task = @fieldParentPtr("task", task);
+
+            this.critical_section.begin();
+            defer this.critical_section.end();
 
             const res = this.run() catch |err| switch (err) {
                 error.OutOfMemory => bun.outOfMemory(),

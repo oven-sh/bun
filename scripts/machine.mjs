@@ -224,6 +224,7 @@ const aws = {
    */
   async createImage(options) {
     const flags = aws.getFlags(options);
+    const finalName = options?.name;
 
     /** @type {string | undefined} */
     let existingImageId;
@@ -246,9 +247,29 @@ const aws = {
       return ImageId;
     }
 
+    // Name collision: create with temp name, wait for availability, copy with final name,
+    // then deregister old and temp images. This ensures no gap where the image is unavailable.
+    const tempName = `${finalName}-temp-${Date.now()}`;
+    const tempFlags = aws.getFlags({ ...options, name: tempName });
+    const { ImageId: tempImageId } = await aws.spawn($`ec2 create-image ${tempFlags}`);
+
+    // Wait for temp image to be available
+    await aws.waitImage("image-available", tempImageId);
+
+    // Copy temp image to final name
+    const region = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || "us-east-1";
+    const { ImageId: finalImageId } = await aws.spawn(
+      $`ec2 copy-image --source-image-id ${tempImageId} --source-region ${region} --name ${finalName}`,
+    );
+
+    // Wait for final image to be available
+    await aws.waitImage("image-available", finalImageId);
+
+    // Now safe to deregister old and temp images
     await aws.spawn($`ec2 deregister-image --image-id ${existingImageId}`);
-    const { ImageId } = await aws.spawn($`ec2 create-image ${flags}`);
-    return ImageId;
+    await aws.spawn($`ec2 deregister-image --image-id ${tempImageId}`);
+
+    return finalImageId;
   },
 
   /**

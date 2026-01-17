@@ -1351,9 +1351,44 @@ pub const S3Credentials = struct {
                 if (metadata) |meta| {
                     // With metadata: build canonical request manually
                     // Format: METHOD\nPATH\nQUERY\nHEADERS\n\nSIGNED_HEADERS\nHASH
+                    const query_str = if (search_params) |p| p[1..] else "";
+
+                    // Precompute total required length to prevent buffer overflow
+                    var required_len: usize = 0;
+                    required_len += method_name.len + 1; // METHOD\n
+                    required_len += normalizedPath.len + 1; // PATH\n
+                    required_len += query_str.len + 1; // QUERY\n
+
+                    // Headers
+                    if (content_disposition) |cd| required_len += "content-disposition:".len + cd.len + 1;
+                    if (content_encoding) |ce| required_len += "content-encoding:".len + ce.len + 1;
+                    if (content_md5) |md5| required_len += "content-md5:".len + md5.len + 1;
+                    required_len += "host:".len + host.len + 1;
+                    if (acl) |acl_val| required_len += "x-amz-acl:".len + acl_val.len + 1;
+                    required_len += "x-amz-content-sha256:".len + aws_content_hash.len + 1;
+                    required_len += "x-amz-date:".len + amz_date.len + 1;
+
+                    // x-amz-meta-* headers: "x-amz-meta-" + key + ":" + value + "\n"
+                    const meta_count = meta.count();
+                    for (0..meta_count) |idx| {
+                        required_len += "x-amz-meta-".len + meta.keys[idx].len + 1 + meta.values[idx].len + 1;
+                    }
+
+                    if (request_payer) required_len += "x-amz-request-payer:requester\n".len;
+                    if (session_token) |token| required_len += "x-amz-security-token:".len + token.len + 1;
+                    if (storage_class) |sc| required_len += "x-amz-storage-class:".len + sc.len + 1;
+
+                    required_len += 1; // Empty line separator
+                    required_len += signed_headers.len + 1; // SIGNED_HEADERS\n
+                    required_len += aws_content_hash.len; // HASH
+
+                    if (required_len > CANONICAL_REQUEST_BUF_SIZE) {
+                        return error.CanonicalRequestBufferOverflow;
+                    }
+
                     var canonical_buf: [CANONICAL_REQUEST_BUF_SIZE]u8 = undefined;
                     var fba = std.heap.FixedBufferAllocator.init(&canonical_buf);
-                    var writer = fba.allocator().alloc(u8, CANONICAL_REQUEST_BUF_SIZE) catch unreachable;
+                    const writer = fba.allocator().alloc(u8, CANONICAL_REQUEST_BUF_SIZE) catch unreachable;
                     var pos: usize = 0;
 
                     // METHOD\n
@@ -1369,7 +1404,6 @@ pub const S3Credentials = struct {
                     pos += 1;
 
                     // QUERY\n
-                    const query_str = if (search_params) |p| p[1..] else "";
                     @memcpy(writer[pos..][0..query_str.len], query_str);
                     pos += query_str.len;
                     writer[pos] = '\n';
@@ -1440,7 +1474,6 @@ pub const S3Credentials = struct {
                     pos += 1;
 
                     // x-amz-meta-* headers (sorted by key)
-                    const meta_count = meta.count();
                     if (meta_count > 0) {
                         var indices: [MAX_METADATA_HEADERS]usize = undefined;
                         for (0..meta_count) |i| {

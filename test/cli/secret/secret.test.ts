@@ -137,13 +137,13 @@ describe("bun secret", () => {
         "integration-key",
         "integration-value",
       ]);
-      expect(setExit).toBe(0);
       expect(setStderr).toBe("");
+      expect(setExit).toBe(0);
 
       const { stdout, exitCode, stderr } = runSecretCommand(["get", "-s", testService, "-n", "integration-key"]);
-      expect(exitCode).toBe(0);
       expect(stderr).toBe("");
       expect(stdout.trim()).toBe("integration-value");
+      expect(exitCode).toBe(0);
     });
 
     test("delete secret", () => {

@@ -421,6 +421,17 @@ extern "C" SYSV_ABI SecretsCliResult Bun__Secrets__setSync(
 
     auto err = Bun::Secrets::setPassword(serviceCStr, nameCStr, WTF::move(valueCStr), allowUnrestrictedAccess);
 
+    // Zero sensitive data after use
+    if (valueCStr.length() > 0) {
+        memsetSpan(valueCStr.mutableSpan(), 0);
+    }
+    if (nameCStr.length() > 0) {
+        memsetSpan(nameCStr.mutableSpan(), 0);
+    }
+    if (serviceCStr.length() > 0) {
+        memsetSpan(serviceCStr.mutableSpan(), 0);
+    }
+
     if (err.isError()) {
         result.error_type = static_cast<int>(err.type);
         result.error_code = err.code;

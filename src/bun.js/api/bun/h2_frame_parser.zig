@@ -3549,6 +3549,8 @@ pub const H2FrameParser = struct {
         const alloc = buf_fallback.allocator();
         // Use ArrayList with initial capacity of shared buffer size, doubling when needed
         var encoded_headers = std.ArrayListUnmanaged(u8){};
+        // IMPORTANT: defer cleanup immediately after init to prevent memory leaks on early returns
+        defer encoded_headers.deinit(alloc);
         // Pre-allocate to shared buffer size (this uses the stack buffer via BufferFallbackAllocator)
         encoded_headers.ensureTotalCapacity(alloc, shared_request_buffer.len) catch {
             return globalObject.throw("Failed to allocate header buffer", .{});
@@ -3621,7 +3623,6 @@ pub const H2FrameParser = struct {
                     log("encode header {s} {s}", .{ validated_name, value });
 
                     _ = this.encodeHeaderIntoList(&encoded_headers, alloc, validated_name, value, never_index) catch |err| {
-                        encoded_headers.deinit(alloc);
                         if (err == error.OutOfMemory) {
                             return globalObject.throw("Failed to allocate header buffer", .{});
                         }
@@ -3662,7 +3663,6 @@ pub const H2FrameParser = struct {
                 log("encode header {s} {s}", .{ name, value });
 
                 _ = this.encodeHeaderIntoList(&encoded_headers, alloc, validated_name, value, never_index) catch |err| {
-                    encoded_headers.deinit(alloc);
                     if (err == error.OutOfMemory) {
                         return globalObject.throw("Failed to allocate header buffer", .{});
                     }
@@ -3682,7 +3682,6 @@ pub const H2FrameParser = struct {
                 };
             }
         }
-        defer encoded_headers.deinit(alloc);
         const encoded_data = encoded_headers.items;
         const encoded_size = encoded_data.len;
 
@@ -4018,6 +4017,8 @@ pub const H2FrameParser = struct {
         const alloc = buf_fallback.allocator();
         // Use ArrayList with initial capacity of shared buffer size, doubling when needed
         var encoded_headers = std.ArrayListUnmanaged(u8){};
+        // IMPORTANT: defer cleanup immediately after init to prevent memory leaks on early returns
+        defer encoded_headers.deinit(alloc);
         // Pre-allocate to shared buffer size (this uses the stack buffer via BufferFallbackAllocator)
         encoded_headers.ensureTotalCapacity(alloc, shared_request_buffer.len) catch {
             return globalObject.throw("Failed to allocate header buffer", .{});
@@ -4119,7 +4120,6 @@ pub const H2FrameParser = struct {
                         log("encode header {s} {s}", .{ validated_name, value });
 
                         _ = this.encodeHeaderIntoList(&encoded_headers, alloc, validated_name, value, never_index) catch |err| {
-                            encoded_headers.deinit(alloc);
                             if (err == error.OutOfMemory) {
                                 return globalObject.throw("Failed to allocate header buffer", .{});
                             }
@@ -4157,7 +4157,6 @@ pub const H2FrameParser = struct {
                     log("encode header {s} {s}", .{ validated_name, value });
 
                     _ = this.encodeHeaderIntoList(&encoded_headers, alloc, validated_name, value, never_index) catch |err| {
-                        encoded_headers.deinit(alloc);
                         if (err == error.OutOfMemory) {
                             return globalObject.throw("Failed to allocate header buffer", .{});
                         }
@@ -4175,7 +4174,6 @@ pub const H2FrameParser = struct {
                 }
             }
         }
-        defer encoded_headers.deinit(alloc);
         const encoded_data = encoded_headers.items;
         const encoded_size = encoded_data.len;
 

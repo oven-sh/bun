@@ -288,6 +288,9 @@ exports[`yarn.lock migration basic migration with realistic complex yarn.lock: c
       "peerDependencies": {
         "react": ">=16.8.0",
       },
+      "optionalPeers": [
+        "react",
+      ],
     },
   },
   "packages": {

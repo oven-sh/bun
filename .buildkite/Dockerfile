@@ -182,20 +182,14 @@ RUN chmod 755 /var/lib/buildkite-agent/hooks/environment \
     && chmod 755 /var/lib/buildkite-agent/hooks/checkout \
     && chmod 755 /var/lib/buildkite-agent/hooks/pre-command
 
-# Clone Bun repository and pre-download dependencies
+# Pre-download the bake-dependencies script and run it
+# The script handles: cloning repo, installing deps, running cmake, downloading build deps
 # This avoids downloading dependencies during each CI build
-RUN git clone --depth=1 https://github.com/oven-sh/bun.git /var/lib/buildkite-agent/build
+RUN curl -fsSL https://raw.githubusercontent.com/oven-sh/bun/main/scripts/bake-dependencies.sh -o /tmp/bake-dependencies.sh && \
+    BUN_REPO_PATH=/var/lib/buildkite-agent/build sh /tmp/bake-dependencies.sh && \
+    rm /tmp/bake-dependencies.sh
 
 WORKDIR /var/lib/buildkite-agent/build
-
-# Install dependencies, generate source lists, and run cmake configure to download build dependencies
-# Keep cmake/ninja files so subsequent builds can skip already-downloaded dependencies
-RUN bun install --frozen-lockfile && \
-    bun run scripts/glob-sources.mjs && \
-    mkdir -p build/release && \
-    cmake -S . -B build/release -G Ninja -DCMAKE_BUILD_TYPE=Release -DCI=ON && \
-    cmake --build build/release --target clone-zig clone-boringssl clone-mimalloc clone-zstd clone-lolhtml clone-cares clone-libdeflate clone-libarchive clone-tinycc clone-zlib clone-lshpack clone-brotli clone-highway clone-hdrhistogram clone-picohttpparser || true && \
-    rm -rf node_modules
 
 COPY  ../*/agent.mjs /var/bun/scripts/
 

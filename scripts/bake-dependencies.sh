@@ -101,26 +101,37 @@ print "Cache path: $CACHE_PATH"
 # This will download: Zig, WebKit, BoringSSL, and all other dependencies
 print "Running CMake configure to download dependencies..."
 
-CMAKE_ARGS="-S $BUN_REPO_PATH -B $BUILD_PATH"
-CMAKE_ARGS="$CMAKE_ARGS -G Ninja"
-CMAKE_ARGS="$CMAKE_ARGS -DCMAKE_BUILD_TYPE=Release"
-CMAKE_ARGS="$CMAKE_ARGS -DCI=ON"
-
+# Run cmake configure - this downloads WebKit
 if [ -n "$ABI" ]; then
-    CMAKE_ARGS="$CMAKE_ARGS -DABI=$ABI"
+    cmake -S "$BUN_REPO_PATH" -B "$BUILD_PATH" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCI=ON -DABI="$ABI"
+else
+    cmake -S "$BUN_REPO_PATH" -B "$BUILD_PATH" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCI=ON
 fi
 
-# Run cmake configure - this downloads WebKit
-cmake $CMAKE_ARGS
+if [ $? -ne 0 ]; then
+    error "CMake configure failed for release build"
+fi
 
 # Run cmake build for clone targets only - this downloads Zig, BoringSSL, etc.
 # These are build targets that download dependencies
 print "Downloading build dependencies (Zig, BoringSSL, etc.)..."
-cmake --build "$BUILD_PATH" --target clone-zig clone-boringssl clone-mimalloc clone-zstd clone-lolhtml clone-cares clone-libdeflate clone-libarchive clone-tinycc clone-zlib clone-lshpack clone-brotli clone-highway clone-hdrhistogram clone-picohttpparser || true
+CLONE_TARGETS="clone-zig clone-boringssl clone-mimalloc clone-zstd clone-lolhtml clone-cares clone-libdeflate clone-libarchive clone-tinycc clone-zlib clone-lshpack clone-brotli clone-highway clone-hdrhistogram clone-picohttpparser"
+
+if ! cmake --build "$BUILD_PATH" --target $CLONE_TARGETS; then
+    error "Failed to download build dependencies (clone targets) for release build in $BUILD_PATH"
+fi
 
 # Also download debug WebKit variant for debug builds
 print "Downloading debug WebKit variant..."
-cmake $CMAKE_ARGS -DCMAKE_BUILD_TYPE=Debug -B "$BUN_REPO_PATH/build/debug" || true
+if [ -n "$ABI" ]; then
+    cmake -S "$BUN_REPO_PATH" -B "$BUN_REPO_PATH/build/debug" -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCI=ON -DABI="$ABI"
+else
+    cmake -S "$BUN_REPO_PATH" -B "$BUN_REPO_PATH/build/debug" -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCI=ON
+fi
+
+if [ $? -ne 0 ]; then
+    error "CMake configure failed for debug build"
+fi
 
 # Keep cmake/ninja files so subsequent builds don't re-download dependencies
 # The ninja build system tracks what's been built - removing these files causes re-downloads

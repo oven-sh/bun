@@ -1,9 +1,9 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux } from "harness";
 
-function runSecretCommand(args: string[]): { stdout: string; stderr: string; exitCode: number } {
+function runBunCommand(args: string[]): { stdout: string; stderr: string; exitCode: number } {
   const result = Bun.spawnSync({
-    cmd: [bunExe(), "secret", ...args],
+    cmd: [bunExe(), ...args],
     env: bunEnv,
     stdin: "ignore",
     stdout: "pipe",
@@ -14,6 +14,10 @@ function runSecretCommand(args: string[]): { stdout: string; stderr: string; exi
     stderr: result.stderr.toString(),
     exitCode: result.exitCode,
   };
+}
+
+function runSecretCommand(args: string[]): { stdout: string; stderr: string; exitCode: number } {
+  return runBunCommand(["secret", ...args]);
 }
 
 function checkLibsecretAvailable(): boolean {
@@ -28,15 +32,9 @@ const testService = `bun-test-${Date.now()}`;
 describe("bun secret", () => {
   describe("help", () => {
     test("bun --help shows secret command", () => {
-      const result = Bun.spawnSync({
-        cmd: [bunExe(), "--help"],
-        env: bunEnv,
-        stdin: "ignore",
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      expect(result.exitCode).toBe(0);
-      expect(result.stdout.toString()).toContain("secret");
+      const { stdout, exitCode } = runBunCommand(["--help"]);
+      expect(exitCode).toBe(0);
+      expect(stdout).toContain("secret");
     });
 
     test("bun secret shows help", () => {

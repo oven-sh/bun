@@ -380,7 +380,6 @@ function createHook(arg0: unknown, arg1: unknown, context?: TestContext) {
   const runHook = (done: (error?: unknown) => void) => {
     let result: unknown;
     try {
-      // Passar o contexto se disponível, caso contrário chamar sem argumentos
       result = context ? fn(context) : fn();
     } catch (error) {
       done(error);

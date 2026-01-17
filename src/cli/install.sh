@@ -170,9 +170,6 @@ tildify() {
 success "bun was installed successfully to $Bold_Green$(tildify "$exe")"
 
 if command -v bun >/dev/null; then
-    # Install completions, but we don't care if it fails
-    IS_BUN_AUTO_UPDATE=true $exe completions &>/dev/null || :
-
     echo "Run 'bun --help' to get started"
     exit
 fi
@@ -190,9 +187,6 @@ echo
 
 case $(basename "$SHELL") in
 fish)
-    # Install completions, but we don't care if it fails
-    IS_BUN_AUTO_UPDATE=true SHELL=fish $exe completions &>/dev/null || :
-
     commands=(
         "set --export $install_env $quoted_install_dir"
         "set --export PATH $bin_env \$PATH"
@@ -222,9 +216,6 @@ fish)
     fi
     ;;
 zsh)
-    # Install completions, but we don't care if it fails
-    IS_BUN_AUTO_UPDATE=true SHELL=zsh $exe completions &>/dev/null || :
-
     commands=(
         "export $install_env=$quoted_install_dir"
         "export PATH=\"$bin_env:\$PATH\""
@@ -254,9 +245,6 @@ zsh)
     fi
     ;;
 bash)
-    # Install completions, but we don't care if it fails
-    IS_BUN_AUTO_UPDATE=true SHELL=bash $exe completions &>/dev/null || :
-
     commands=(
         "export $install_env=$quoted_install_dir"
         "export PATH=\"$bin_env:\$PATH\""

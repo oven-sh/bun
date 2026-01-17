@@ -143,6 +143,36 @@ pub fn isSame(this: *const SSLConfig, other: *const SSLConfig) bool {
     return true;
 }
 
+pub fn hash(this: *const SSLConfig, hasher: *std.hash.Wyhash) void {
+    inline for (comptime std.meta.fields(SSLConfig)) |field| {
+        const value = @field(this, field.name);
+        switch (field.type) {
+            ?[*:0]const u8 => {
+                if (value) |v| {
+                    hasher.update(&[_]u8{1}); // present marker
+                    hasher.update(bun.asByteSlice(v));
+                    hasher.update(&[_]u8{0}); // separator
+                } else {
+                    hasher.update(&[_]u8{0}); // absent marker
+                }
+            },
+            ?[][*:0]const u8 => {
+                if (value) |slice| {
+                    hasher.update(&[_]u8{1}); // present marker
+                    for (slice) |v| {
+                        hasher.update(bun.asByteSlice(v));
+                        hasher.update(&[_]u8{0}); // element separator
+                    }
+                    hasher.update(&[_]u8{0}); // end of array
+                } else {
+                    hasher.update(&[_]u8{0}); // absent marker
+                }
+            },
+            else => hasher.update(std.mem.asBytes(&value)),
+        }
+    }
+}
+
 fn stringsEqual(a: [*:0]const u8, b: [*:0]const u8) bool {
     const lhs = bun.asByteSlice(a);
     const rhs = bun.asByteSlice(b);

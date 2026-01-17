@@ -9,10 +9,13 @@ CREATE USER bun_sql_test_scram WITH PASSWORD 'bun_sql_test_scram';
 
 -- Create test database
 CREATE DATABASE bun_sql_test;
+CREATE DATABASE bun_sql_test_orphan;
 
 -- Grant permissions to all test users
 GRANT ALL ON DATABASE bun_sql_test TO bun_sql_test;
 GRANT ALL ON DATABASE bun_sql_test TO bun_sql_test_md5;
 GRANT ALL ON DATABASE bun_sql_test TO bun_sql_test_scram;
+GRANT ALL ON DATABASE bun_sql_test_orphan TO bun_sql_test;
 
 ALTER DATABASE bun_sql_test OWNER TO bun_sql_test;
+ALTER DATABASE bun_sql_test_orphan OWNER TO bun_sql_test;

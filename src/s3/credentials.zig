@@ -613,6 +613,8 @@ pub const S3Credentials = struct {
         request_payer: bool = false,
         /// Stores allocated metadata header names ("x-amz-meta-*") for cleanup
         _metadata_header_names: ?[][]u8 = null,
+        /// Stores duplicated metadata values for cleanup (prevents use-after-free)
+        _metadata_values: ?[][]u8 = null,
         /// Header storage: BASE_HEADERS (9) + MAX_METADATA_HEADERS (32) = MAX_HEADERS (41)
         _headers: [MAX_HEADERS]picohttp.Header = [_]picohttp.Header{.{ .name = "", .value = "" }} ** MAX_HEADERS,
         _headers_len: u8 = 0,
@@ -670,6 +672,14 @@ pub const S3Credentials = struct {
                     bun.default_allocator.free(name);
                 }
                 bun.default_allocator.free(names);
+            }
+
+            // Free duplicated metadata values
+            if (this._metadata_values) |values| {
+                for (values) |value| {
+                    bun.default_allocator.free(value);
+                }
+                bun.default_allocator.free(values);
             }
         }
     };
@@ -996,7 +1006,7 @@ pub const S3Credentials = struct {
                     if (meta_count > 0) {
                         var fba = std.heap.FixedBufferAllocator.init(&signed_headers_buf);
                         var list = std.array_list.Managed(u8).init(fba.allocator());
-                        list.appendSlice("host") catch {};
+                        list.appendSlice("host") catch return error.SignedHeadersBufferOverflow;
 
                         // Sort metadata keys alphabetically
                         var indices: [MAX_METADATA_HEADERS]usize = undefined;
@@ -1011,8 +1021,8 @@ pub const S3Credentials = struct {
 
                         // Add metadata headers (alphabetically after "host")
                         for (indices[0..meta_count]) |idx| {
-                            list.appendSlice(";x-amz-meta-") catch {};
-                            list.appendSlice(meta.keys[idx]) catch {};
+                            list.appendSlice(";x-amz-meta-") catch return error.SignedHeadersBufferOverflow;
+                            list.appendSlice(meta.keys[idx]) catch return error.SignedHeadersBufferOverflow;
                         }
                         if (list.items.len > 0) {
                             break :brk_signed list.items;
@@ -1030,28 +1040,20 @@ pub const S3Credentials = struct {
                 // Headers in alphabetical order (same as SignedHeaders.generate):
                 // content-disposition, content-encoding, content-md5, host, x-amz-acl, x-amz-content-sha256, x-amz-date,
                 // [x-amz-meta-*], x-amz-request-payer, x-amz-security-token, x-amz-storage-class
-                // Track expected length to detect buffer overflow
-                var expected_len: usize = 0;
                 if (content_disposition != null) {
-                    list.appendSlice("content-disposition;") catch {};
-                    expected_len += "content-disposition;".len;
+                    list.appendSlice("content-disposition;") catch return error.SignedHeadersBufferOverflow;
                 }
                 if (content_encoding != null) {
-                    list.appendSlice("content-encoding;") catch {};
-                    expected_len += "content-encoding;".len;
+                    list.appendSlice("content-encoding;") catch return error.SignedHeadersBufferOverflow;
                 }
                 if (content_md5 != null) {
-                    list.appendSlice("content-md5;") catch {};
-                    expected_len += "content-md5;".len;
+                    list.appendSlice("content-md5;") catch return error.SignedHeadersBufferOverflow;
                 }
-                list.appendSlice("host;") catch {};
-                expected_len += "host;".len;
+                list.appendSlice("host;") catch return error.SignedHeadersBufferOverflow;
                 if (acl != null) {
-                    list.appendSlice("x-amz-acl;") catch {};
-                    expected_len += "x-amz-acl;".len;
+                    list.appendSlice("x-amz-acl;") catch return error.SignedHeadersBufferOverflow;
                 }
-                list.appendSlice("x-amz-content-sha256;x-amz-date") catch {};
-                expected_len += "x-amz-content-sha256;x-amz-date".len;
+                list.appendSlice("x-amz-content-sha256;x-amz-date") catch return error.SignedHeadersBufferOverflow;
 
                 // Add metadata headers (sorted by key)
                 // Keys are already lowercase from parsing (AWS requirement)
@@ -1071,29 +1073,21 @@ pub const S3Credentials = struct {
 
                     // Append sorted metadata header names (x-amz-meta-{key})
                     for (indices[0..meta_count]) |idx| {
-                        list.appendSlice(";x-amz-meta-") catch {};
-                        list.appendSlice(meta.keys[idx]) catch {};
-                        expected_len += ";x-amz-meta-".len + meta.keys[idx].len;
+                        list.appendSlice(";x-amz-meta-") catch return error.SignedHeadersBufferOverflow;
+                        list.appendSlice(meta.keys[idx]) catch return error.SignedHeadersBufferOverflow;
                     }
                 }
 
                 if (request_payer) {
-                    list.appendSlice(";x-amz-request-payer") catch {};
-                    expected_len += ";x-amz-request-payer".len;
+                    list.appendSlice(";x-amz-request-payer") catch return error.SignedHeadersBufferOverflow;
                 }
                 if (session_token != null) {
-                    list.appendSlice(";x-amz-security-token") catch {};
-                    expected_len += ";x-amz-security-token".len;
+                    list.appendSlice(";x-amz-security-token") catch return error.SignedHeadersBufferOverflow;
                 }
                 if (storage_class != null) {
-                    list.appendSlice(";x-amz-storage-class") catch {};
-                    expected_len += ";x-amz-storage-class".len;
+                    list.appendSlice(";x-amz-storage-class") catch return error.SignedHeadersBufferOverflow;
                 }
 
-                // If buffer overflowed, return error - signature would be invalid
-                if (list.items.len != expected_len) {
-                    return error.MetadataSigningBufferOverflow;
-                }
                 break :brk_signed list.items;
             }
             break :brk_signed SignedHeaders.get(header_key);
@@ -1244,9 +1238,9 @@ pub const S3Credentials = struct {
                             var headers_list = std.array_list.Managed(u8).init(headers_fba.allocator());
 
                             // Add host header first (comes before x-amz-meta-* alphabetically)
-                            headers_list.appendSlice("host:") catch {};
-                            headers_list.appendSlice(host) catch {};
-                            headers_list.append('\n') catch {};
+                            headers_list.appendSlice("host:") catch return error.CanonicalHeadersBufferOverflow;
+                            headers_list.appendSlice(host) catch return error.CanonicalHeadersBufferOverflow;
+                            headers_list.append('\n') catch return error.CanonicalHeadersBufferOverflow;
 
                             // Sort metadata indices for alphabetical ordering
                             var meta_indices: [MAX_METADATA_HEADERS]usize = undefined;
@@ -1261,11 +1255,11 @@ pub const S3Credentials = struct {
 
                             // Add metadata headers (x-amz-meta-{key}:{value})
                             for (meta_indices[0..meta_count]) |idx| {
-                                headers_list.appendSlice("x-amz-meta-") catch {};
-                                headers_list.appendSlice(meta.keys[idx]) catch {};
-                                headers_list.append(':') catch {};
-                                headers_list.appendSlice(meta.values[idx]) catch {};
-                                headers_list.append('\n') catch {};
+                                headers_list.appendSlice("x-amz-meta-") catch return error.CanonicalHeadersBufferOverflow;
+                                headers_list.appendSlice(meta.keys[idx]) catch return error.CanonicalHeadersBufferOverflow;
+                                headers_list.append(':') catch return error.CanonicalHeadersBufferOverflow;
+                                headers_list.appendSlice(meta.values[idx]) catch return error.CanonicalHeadersBufferOverflow;
+                                headers_list.append('\n') catch return error.CanonicalHeadersBufferOverflow;
                             }
 
                             break :brk_canonical try std.fmt.bufPrint(&tmp_buffer, "{s}\n{s}\n{s}\n{s}\n{s}\n{s}", .{ method_name, normalizedPath, query_string.items, headers_list.items, signed_headers, aws_content_hash });
@@ -1689,10 +1683,14 @@ pub const S3Credentials = struct {
         if (metadata) |meta| {
             const meta_count = meta.count();
             if (meta_count > 0) {
-                // Allocate array to hold the "x-amz-meta-{key}" header names
-                // These need to be allocated because picohttp.Header stores slices
+                // Allocate arrays to hold the "x-amz-meta-{key}" header names and duplicated values
+                // These need to be allocated because picohttp.Header stores slices and the original
+                // metadata values may be freed before the headers are used (use-after-free prevention)
                 const header_names = bun.handleOom(bun.default_allocator.alloc([]u8, meta_count));
                 result._metadata_header_names = header_names;
+
+                const header_values = bun.handleOom(bun.default_allocator.alloc([]u8, meta_count));
+                result._metadata_values = header_values;
 
                 for (0..meta_count) |i| {
                     const key = meta.keys[i];
@@ -1703,9 +1701,13 @@ pub const S3Credentials = struct {
                     @memcpy(header_name[prefix.len..], key);
                     header_names[i] = header_name;
 
+                    // Duplicate metadata value to prevent use-after-free
+                    const header_value = bun.handleOom(bun.default_allocator.dupe(u8, meta.values[i]));
+                    header_values[i] = header_value;
+
                     result._headers[result._headers_len] = .{
                         .name = header_name,
-                        .value = meta.values[i],
+                        .value = header_value,
                     };
                     result._headers_len += 1;
                 }

@@ -82,7 +82,6 @@ pub const MetadataMap = struct {
 
     fn dupeImpl(this: @This(), allocator: std.mem.Allocator) error{OutOfMemory}!MetadataMap {
         const n = this.keys.len;
-        if (n == 0) return error.OutOfMemory;
 
         const new_keys = try allocator.alloc([]const u8, n);
         errdefer allocator.free(new_keys);

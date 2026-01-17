@@ -6522,16 +6522,13 @@ pub fn NewParser_(
                 }
             }
 
-            // Make a wrapper symbol in case we need to be wrapped in a closure.
-            // This is always created when bundling because the linker may later
-            // determine wrapping is needed (e.g., when an ESM file is require()'d).
-            // https://github.com/evanw/esbuild/blob/v0.27.2/internal/js_parser/js_parser.go#L18711
+            // Make a wrapper symbol in case we need to be wrapped in a closure
             const wrapper_ref: Ref = brk: {
                 if (p.options.features.hot_module_reloading) {
                     break :brk p.hmr_api_ref;
                 }
 
-                if (p.options.bundle) {
+                if (p.options.bundle and p.needsWrapperRef(parts.items)) {
                     break :brk p.newSymbol(
                         .other,
                         std.fmt.allocPrint(

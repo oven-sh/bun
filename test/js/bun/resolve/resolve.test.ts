@@ -444,3 +444,38 @@ describe("When CJS and ESM are mixed", () => {
     expect(stderr).toBeEmpty();
   });
 });
+
+it("missing files in package export aliases fallback to the next in the list", () => {
+  const dir = tempDirWithFiles("resolve", {
+    "node_modules/package-json-exports/foo/bar.js": "export const bar = 1;",
+    "node_modules/package-json-exports/package.json": JSON.stringify({
+      name: "package-json-exports",
+      version: "1.0.0",
+      exports: {
+        "./foo/*": {
+          "default": ["./foo/*.ts", "./foo/*.js"],
+        },
+      },
+    }),
+    "package.json": JSON.stringify({
+      name: "resolve",
+      dependencies: {
+        "package-json-exports": "1.0.0",
+      },
+    }),
+    "test.ts": "import { bar } from 'package-json-exports/foo/bar'; console.log(bar);",
+  });
+
+  const { exitCode, stdout, stderr } = Bun.spawnSync({
+    cmd: [bunExe(), "test.ts"],
+    env: bunEnv,
+    cwd: dir,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+  if (exitCode !== 0) {
+    console.log(stdout.toString("utf8"));
+    console.log(stderr.toString("utf8"));
+  }
+  expect(exitCode).toBe(0);
+});

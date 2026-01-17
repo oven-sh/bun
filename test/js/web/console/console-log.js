@@ -270,3 +270,18 @@ console.log("Hello %%i %i", 5, 6);
 
 // doesn't go out of bounds when printing
 console.log("%%d", 1);
+
+{
+  class FooBar {
+    constructor() {
+      this.abc = () => {};
+    }
+
+    method() {
+      return 123;
+    }
+  }
+
+  const f = new FooBar();
+  console.log(f);
+}

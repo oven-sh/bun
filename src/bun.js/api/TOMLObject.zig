@@ -36,7 +36,10 @@ pub fn parse(
     var input_slice = try arguments[0].toSlice(globalThis, bun.default_allocator);
     defer input_slice.deinit();
     const source = &logger.Source.initPathString("input.toml", input_slice.slice());
-    const parse_result = TOML.parse(source, &log, allocator, false) catch {
+    const parse_result = TOML.parse(source, &log, allocator, false) catch |err| {
+        if (err == error.StackOverflow) {
+            return globalThis.throwStackOverflow();
+        }
         return globalThis.throwValue(try log.toJS(globalThis, default_allocator, "Failed to parse toml"));
     };
 

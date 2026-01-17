@@ -6522,6 +6522,7 @@ pub fn NewParser_(
                 }
             }
 
+            // Make a wrapper symbol in case we need to be wrapped in a closure
             const wrapper_ref: Ref = brk: {
                 if (p.options.features.hot_module_reloading) {
                     break :brk p.hmr_api_ref;

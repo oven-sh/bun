@@ -156,10 +156,6 @@ const CrossChunkDependencies = struct {
                         break :brk ref_to_use;
                     };
 
-                    // Skip Ref.None which points to __INVALID__REF__ in runtime.js
-                    if (ref_to_use.eql(Ref.None))
-                        continue;
-
                     if (comptime Environment.allow_assert)
                         debug("Cross-chunk import: {s} {f}", .{ deps.symbols.get(ref_to_use).?.original_name, ref_to_use });
 
@@ -197,10 +193,6 @@ const CrossChunkDependencies = struct {
                             target_ref = namespace_alias.namespace_ref;
                         }
 
-                        // Skip Ref.None which points to __INVALID__REF__ in runtime.js
-                        if (target_ref.eql(Ref.None))
-                            continue;
-
                         if (comptime Environment.allow_assert)
                             debug("Cross-chunk export: {s}", .{deps.symbols.get(target_ref).?.original_name});
 
@@ -209,19 +201,15 @@ const CrossChunkDependencies = struct {
                 }
 
                 // Ensure "exports" is included if the current output format needs it
+                // https://github.com/evanw/esbuild/blob/v0.27.2/internal/linker/linker.go#L1049-L1051
                 if (flags.force_include_exports_for_entry_point) {
-                    const exports_ref = deps.exports_refs[chunk.entry_point.source_index];
-                    if (!exports_ref.eql(Ref.None)) {
-                        imports.put(exports_ref, {}) catch unreachable;
-                    }
+                    imports.put(deps.exports_refs[chunk.entry_point.source_index], {}) catch unreachable;
                 }
 
                 // Include the wrapper if present
+                // https://github.com/evanw/esbuild/blob/v0.27.2/internal/linker/linker.go#L1053-L1056
                 if (flags.wrap != .none) {
-                    const wrapper_ref = deps.wrapper_refs[chunk.entry_point.source_index];
-                    if (!wrapper_ref.eql(Ref.None)) {
-                        imports.put(wrapper_ref, {}) catch unreachable;
-                    }
+                    imports.put(deps.wrapper_refs[chunk.entry_point.source_index], {}) catch unreachable;
                 }
             }
         }
@@ -239,10 +227,6 @@ fn computeCrossChunkDependenciesWithChunkMetas(c: *LinkerContext, chunks: []Chun
 
         // Find all uses in this chunk of symbols from other chunks
         for (chunk_meta.imports.keys()) |import_ref| {
-            // Skip Ref.None which points to __INVALID__REF__ in runtime.js
-            if (import_ref.eql(Ref.None))
-                continue;
-
             const symbol = c.graph.symbols.getConst(import_ref).?;
 
             // Ignore uses that aren't top-level symbols

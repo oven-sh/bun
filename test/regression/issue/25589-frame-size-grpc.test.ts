@@ -127,19 +127,22 @@ describe("HTTP/2 FRAME_SIZE_ERROR with @grpc/grpc-js", () => {
     const metadata = new grpc.Metadata();
     metadata.add("x-large-response", "32768"); // 32KB response
 
-    const response = await new Promise<{ value: string; value2: number }>((resolve, reject) => {
-      client.echo(
-        { value: "test", value2: 1 },
-        metadata,
-        (err: Error | null, response: { value: string; value2: number }) => {
-          client.close();
-          if (err) reject(err);
-          else resolve(response);
-        },
-      );
-    });
+    try {
+      const response = await new Promise<{ value: string; value2: number }>((resolve, reject) => {
+        client.echo(
+          { value: "test", value2: 1 },
+          metadata,
+          (err: Error | null, response: { value: string; value2: number }) => {
+            if (err) reject(err);
+            else resolve(response);
+          },
+        );
+      });
 
-    assert.ok(response.value.length >= 32768, `Response should be at least 32KB, got ${response.value.length}`);
+      assert.ok(response.value.length >= 32768, `Response should be at least 32KB, got ${response.value.length}`);
+    } finally {
+      client.close();
+    }
   });
 
   test("receives large response (100KB) without FRAME_SIZE_ERROR", async () => {
@@ -149,19 +152,22 @@ describe("HTTP/2 FRAME_SIZE_ERROR with @grpc/grpc-js", () => {
     const metadata = new grpc.Metadata();
     metadata.add("x-large-response", "102400"); // 100KB response
 
-    const response = await new Promise<{ value: string; value2: number }>((resolve, reject) => {
-      client.echo(
-        { value: "test", value2: 1 },
-        metadata,
-        (err: Error | null, response: { value: string; value2: number }) => {
-          client.close();
-          if (err) reject(err);
-          else resolve(response);
-        },
-      );
-    });
+    try {
+      const response = await new Promise<{ value: string; value2: number }>((resolve, reject) => {
+        client.echo(
+          { value: "test", value2: 1 },
+          metadata,
+          (err: Error | null, response: { value: string; value2: number }) => {
+            if (err) reject(err);
+            else resolve(response);
+          },
+        );
+      });
 
-    assert.ok(response.value.length >= 102400, `Response should be at least 100KB, got ${response.value.length}`);
+      assert.ok(response.value.length >= 102400, `Response should be at least 100KB, got ${response.value.length}`);
+    } finally {
+      client.close();
+    }
   });
 
   test("receives large response headers without FRAME_SIZE_ERROR", async () => {
@@ -172,19 +178,22 @@ describe("HTTP/2 FRAME_SIZE_ERROR with @grpc/grpc-js", () => {
     // Request 100 headers of ~200 bytes each = ~20KB of headers
     metadata.add("x-large-headers", "100");
 
-    const response = await new Promise<{ value: string; value2: number }>((resolve, reject) => {
-      client.echo(
-        { value: "test", value2: 1 },
-        metadata,
-        (err: Error | null, response: { value: string; value2: number }) => {
-          client.close();
-          if (err) reject(err);
-          else resolve(response);
-        },
-      );
-    });
+    try {
+      const response = await new Promise<{ value: string; value2: number }>((resolve, reject) => {
+        client.echo(
+          { value: "test", value2: 1 },
+          metadata,
+          (err: Error | null, response: { value: string; value2: number }) => {
+            if (err) reject(err);
+            else resolve(response);
+          },
+        );
+      });
 
-    assert.strictEqual(response.value, "test");
+      assert.strictEqual(response.value, "test");
+    } finally {
+      client.close();
+    }
   });
 
   test("sends large request metadata without FRAME_SIZE_ERROR", async () => {
@@ -199,19 +208,22 @@ describe("HTTP/2 FRAME_SIZE_ERROR with @grpc/grpc-js", () => {
       metadata.add(`x-custom-header-${i}`, "A".repeat(200));
     }
 
-    const response = await new Promise<{ value: string; value2: number }>((resolve, reject) => {
-      client.echo(
-        { value: "test", value2: 1 },
-        metadata,
-        (err: Error | null, response: { value: string; value2: number }) => {
-          client.close();
-          if (err) reject(err);
-          else resolve(response);
-        },
-      );
-    });
+    try {
+      const response = await new Promise<{ value: string; value2: number }>((resolve, reject) => {
+        client.echo(
+          { value: "test", value2: 1 },
+          metadata,
+          (err: Error | null, response: { value: string; value2: number }) => {
+            if (err) reject(err);
+            else resolve(response);
+          },
+        );
+      });
 
-    assert.strictEqual(response.value, "test");
+      assert.strictEqual(response.value, "test");
+    } finally {
+      client.close();
+    }
   });
 
   test("receives large trailers without FRAME_SIZE_ERROR", async () => {
@@ -222,18 +234,21 @@ describe("HTTP/2 FRAME_SIZE_ERROR with @grpc/grpc-js", () => {
     // Request large trailers (20KB)
     metadata.add("x-large-trailers", "20000");
 
-    const response = await new Promise<{ value: string; value2: number }>((resolve, reject) => {
-      client.echo(
-        { value: "test", value2: 1 },
-        metadata,
-        (err: Error | null, response: { value: string; value2: number }) => {
-          client.close();
-          if (err) reject(err);
-          else resolve(response);
-        },
-      );
-    });
+    try {
+      const response = await new Promise<{ value: string; value2: number }>((resolve, reject) => {
+        client.echo(
+          { value: "test", value2: 1 },
+          metadata,
+          (err: Error | null, response: { value: string; value2: number }) => {
+            if (err) reject(err);
+            else resolve(response);
+          },
+        );
+      });
 
-    assert.strictEqual(response.value, "test");
+      assert.strictEqual(response.value, "test");
+    } finally {
+      client.close();
+    }
   });
 });

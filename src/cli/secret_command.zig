@@ -94,6 +94,7 @@ pub const SecretCommand = struct {
             \\  <cyan>-s, --service<r> \<name\>  Service/application name (required)
             \\  <cyan>-n, --name<r> \<name\>     Secret name (can also be positional)
             \\  <cyan>-v, --value<r> \<value\>   Secret value (for set, can also be positional)
+            \\  <cyan>-u, --allow-unrestricted-access<r>  Allow access without user confirmation (set only)
             \\
             \\<b>Examples:<r>
             \\  bun secret set --service myapp API_KEY sk-abc123
@@ -115,6 +116,7 @@ fn execSet(args: []const [:0]const u8) !void {
     var service: ?[]const u8 = null;
     var name: ?[]const u8 = null;
     var value: ?[]const u8 = null;
+    var allow_unrestricted: bool = false;
 
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
@@ -140,6 +142,8 @@ fn execSet(args: []const [:0]const u8) !void {
                 Global.exit(1);
             }
             value = args[i];
+        } else if (strings.eqlComptime(arg, "--allow-unrestricted-access") or strings.eqlComptime(arg, "-u")) {
+            allow_unrestricted = true;
         } else if (name == null) {
             name = arg;
         } else if (value == null) {
@@ -175,7 +179,7 @@ fn execSet(args: []const [:0]const u8) !void {
         name_val.len,
         value_val.ptr,
         value_val.len,
-        false,
+        allow_unrestricted,
     );
     defer Bun__Secrets__freeResult(&result);
 

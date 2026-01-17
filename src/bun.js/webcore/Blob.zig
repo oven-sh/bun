@@ -2713,7 +2713,8 @@ pub fn getWriter(
                 }
                 var credentialsWithOptions = try s3.getCredentialsWithOptions(options, globalThis);
                 // Dupe metadata since multipart upload takes ownership
-                const metadata_dupe = if (credentialsWithOptions.metadata) |meta| meta.dupe(bun.default_allocator) else null;
+                var metadata_dupe = if (credentialsWithOptions.metadata) |meta| meta.dupe(bun.default_allocator) else null;
+                errdefer if (metadata_dupe) |*meta| meta.deinit(bun.default_allocator);
                 credentialsWithOptions.metadata = null; // Prevent double-free in deinit
                 defer credentialsWithOptions.deinit();
                 return try S3.writableStream(
@@ -2732,7 +2733,8 @@ pub fn getWriter(
             }
         }
         // Dupe metadata since multipart upload takes ownership
-        const metadata_dupe = if (s3.metadata) |meta| meta.dupe(bun.default_allocator) else null;
+        var metadata_dupe = if (s3.metadata) |meta| meta.dupe(bun.default_allocator) else null;
+        errdefer if (metadata_dupe) |*meta| meta.deinit(bun.default_allocator);
         return try S3.writableStream(
             s3.getCredentials(),
             path,

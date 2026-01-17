@@ -134,6 +134,15 @@ fn parseMetadataFromJS(metadata_value: jsc.JSValue, globalObject: *jsc.JSGlobalO
 
     if (property_count == 0) return null;
 
+    // Enforce maximum metadata headers limit to prevent buffer overflows
+    if (property_count > MAX_METADATA_HEADERS) {
+        return globalObject.throwRangeError(@as(i64, @intCast(property_count)), .{
+            .min = 0,
+            .max = MAX_METADATA_HEADERS,
+            .field_name = "metadata properties",
+        });
+    }
+
     // Allocate arrays for keys and values
     const keys = bun.handleOom(bun.default_allocator.alloc([]const u8, property_count));
     errdefer bun.default_allocator.free(keys);

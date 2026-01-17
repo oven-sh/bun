@@ -187,7 +187,7 @@ void JSX509Certificate::finishCreation(VM& vm)
         auto scope = DECLARE_THROW_SCOPE(init.vm);
         auto value = init.owner->computeSubject(init.owner->view(), init.owner->globalObject(), false);
         if (scope.exception()) [[unlikely]] {
-            scope.clearException();
+            (void)scope.tryClearException();
             return init.set(jsEmptyString(init.vm));
         }
         if (!value.isString()) {
@@ -201,7 +201,7 @@ void JSX509Certificate::finishCreation(VM& vm)
         auto scope = DECLARE_THROW_SCOPE(init.vm);
         JSValue value = init.owner->computeIssuer(init.owner->view(), init.owner->globalObject(), false);
         if (scope.exception()) [[unlikely]] {
-            scope.clearException();
+            (void)scope.tryClearException();
             return init.set(jsEmptyString(init.vm));
         }
         if (value.isString()) {

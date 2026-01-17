@@ -37,7 +37,10 @@ pub fn parse(
     var input_slice = try input_value.toSlice(globalThis, bun.default_allocator);
     defer input_slice.deinit();
     const source = &logger.Source.initPathString("input.jsonc", input_slice.slice());
-    const parse_result = json.parseTSConfig(source, &log, allocator, true) catch {
+    const parse_result = json.parseTSConfig(source, &log, allocator, true) catch |err| {
+        if (err == error.StackOverflow) {
+            return globalThis.throwStackOverflow();
+        }
         return globalThis.throwValue(try log.toJS(globalThis, default_allocator, "Failed to parse JSONC"));
     };
 

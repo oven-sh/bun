@@ -211,3 +211,24 @@ Built-in JavaScript modules use special syntax and are organized as:
 12. **Branch names must start with `claude/`** - This is a requirement for the CI to work.
 
 **ONLY** push up changes after running `bun bd test <file>` and ensuring your tests pass.
+
+## Debugging CI Failures
+
+Use `scripts/buildkite-failures.ts` to fetch and analyze CI build failures:
+
+```bash
+# View failures for current branch
+bun run scripts/buildkite-failures.ts
+
+# View failures for a specific build number
+bun run scripts/buildkite-failures.ts 35051
+
+# View failures for a GitHub PR
+bun run scripts/buildkite-failures.ts #26173
+bun run scripts/buildkite-failures.ts https://github.com/oven-sh/bun/pull/26173
+
+# Wait for build to complete (polls every 10s until pass/fail)
+bun run scripts/buildkite-failures.ts --wait
+```
+
+The script fetches logs from BuildKite's public API and saves complete logs to `/tmp/bun-build-{number}-{platform}-{step}.log`. It displays a summary of errors and the file path for each failed job. Use `--wait` to poll continuously until the build completes or fails.

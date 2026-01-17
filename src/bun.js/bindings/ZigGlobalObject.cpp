@@ -2829,7 +2829,7 @@ uint8_t GlobalObject::drainMicrotasks()
         }
 
 #if ASSERT_ENABLED
-        scope.clearException();
+        (void)scope.tryClearException();
         // We should not have an exception here.
         // But it's an easy mistake to make.
         // Let's log it so that we can debug this.
@@ -2850,7 +2850,7 @@ uint8_t GlobalObject::drainMicrotasks()
             if (vm.isTerminationException(exception)) {
                 return 1;
             }
-            scope.clearException();
+            (void)scope.tryClearException();
             this->reportUncaughtExceptionAtEventLoop(this, exception);
             return 0;
         }
@@ -2860,7 +2860,7 @@ uint8_t GlobalObject::drainMicrotasks()
         if (vm.isTerminationException(exception)) {
             return 1;
         }
-        scope.clearException();
+        (void)scope.tryClearException();
         this->reportUncaughtExceptionAtEventLoop(this, exception);
     }
 
@@ -2957,7 +2957,7 @@ extern "C" void JSGlobalObject__clearTerminationException(JSC::JSGlobalObject* g
     // In case it actually has been thrown, clear the exception itself as well
     auto scope = DECLARE_CATCH_SCOPE(vm);
     if (scope.exception() && vm.isTerminationException(scope.exception())) {
-        scope.clearException();
+        (void)scope.tryClearException();
     }
 }
 
@@ -3002,7 +3002,7 @@ void GlobalObject::handleRejectedPromises()
 
         Bun__handleRejectedPromise(this, promise);
         if (auto ex = scope.exception()) {
-            scope.clearException();
+            (void)scope.tryClearException();
             this->reportUncaughtExceptionAtEventLoop(this, ex);
         }
     }

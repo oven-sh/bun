@@ -694,6 +694,46 @@ pub const H2FrameParser = struct {
 
     threadlocal var shared_request_buffer: [16384]u8 = undefined;
 
+    /// Ensures the ArrayList has enough capacity, doubling when growth is needed.
+    /// Returns error if allocation fails.
+    fn ensureCapacityDoubling(encoded_headers: *std.ArrayListUnmanaged(u8), alloc: std.mem.Allocator, required: usize) !void {
+        if (required > encoded_headers.capacity) {
+            const new_capacity = @max(required, encoded_headers.capacity * 2);
+            try encoded_headers.ensureTotalCapacity(alloc, new_capacity);
+        }
+    }
+
+    /// Encodes a single header into the ArrayList, growing with doubling strategy if needed.
+    /// Returns the number of bytes written, or error on failure.
+    ///
+    /// Capacity estimation: name.len + value.len + HPACK_ENTRY_OVERHEAD
+    ///
+    /// Per RFC 7541, the HPACK wire format for a literal header field is:
+    ///   - 1 byte: type indicator (literal with/without indexing, never indexed)
+    ///   - 1-6 bytes: name length as variable-length integer (7-bit prefix)
+    ///   - N bytes: name string (raw or Huffman-encoded)
+    ///   - 1-6 bytes: value length as variable-length integer (7-bit prefix)
+    ///   - M bytes: value string (raw or Huffman-encoded)
+    ///
+    /// For most headers (name/value < 127 bytes), this is ~3 bytes overhead.
+    /// Using HPACK_ENTRY_OVERHEAD (32 bytes, from RFC 7541 Section 4.1) is a
+    /// conservative estimate that accounts for worst-case variable integer
+    /// encoding and ensures we never underallocate, even with very large headers.
+    fn encodeHeaderIntoList(
+        this: *H2FrameParser,
+        encoded_headers: *std.ArrayListUnmanaged(u8),
+        alloc: std.mem.Allocator,
+        name: []const u8,
+        value: []const u8,
+        never_index: bool,
+    ) !usize {
+        const required = encoded_headers.items.len + name.len + value.len + HPACK_ENTRY_OVERHEAD;
+        try ensureCapacityDoubling(encoded_headers, alloc, required);
+        const bytes_written = try this.encode(encoded_headers.allocatedSlice(), encoded_headers.items.len, name, value, never_index);
+        encoded_headers.items.len += bytes_written;
+        return bytes_written;
+    }
+
     /// The streams hashmap may mutate when growing we use this when we need to make sure its safe to iterate over it
     pub const StreamResumableIterator = struct {
         parser: *H2FrameParser,
@@ -3512,18 +3552,16 @@ pub const H2FrameParser = struct {
 
         // Use remote settings maxFrameSize if available, otherwise default to localSettings
         const settings = this.remoteSettings orelse this.localSettings;
-        // Buffer size allows up to 256KB of encoded trailers, which can be split into
-        // multiple HEADERS + CONTINUATION frames per RFC 7540.
-        const max_header_block_size: usize = 256 * 1024;
+        _ = settings;
         // Use shared buffer when possible, fall back to heap for large headers
         var buf_fallback = bun.allocators.BufferFallbackAllocator.init(&shared_request_buffer, bun.default_allocator);
         const alloc = buf_fallback.allocator();
-        const buffer = alloc.alloc(u8, max_header_block_size) catch {
+        // Use ArrayList with initial capacity of shared buffer size, doubling when needed
+        var encoded_headers = std.ArrayListUnmanaged(u8){};
+        // Pre-allocate to shared buffer size (this uses the stack buffer via BufferFallbackAllocator)
+        encoded_headers.ensureTotalCapacity(alloc, shared_request_buffer.len) catch {
             return globalObject.throw("Failed to allocate header buffer", .{});
         };
-        defer alloc.free(buffer);
-        _ = settings;
-        var encoded_size: usize = 0;
         // max header name length for lshpack
         var name_buffer: [4096]u8 = undefined;
         @memset(&name_buffer, 0);
@@ -3591,7 +3629,11 @@ pub const H2FrameParser = struct {
                     const value = value_slice.slice();
                     log("encode header {s} {s}", .{ validated_name, value });
 
-                    encoded_size += this.encode(buffer, encoded_size, validated_name, value, never_index) catch {
+                    _ = this.encodeHeaderIntoList(&encoded_headers, alloc, validated_name, value, never_index) catch |err| {
+                        encoded_headers.deinit(alloc);
+                        if (err == error.OutOfMemory) {
+                            return globalObject.throw("Failed to allocate header buffer", .{});
+                        }
                         stream.state = .CLOSED;
                         const identifier = stream.getIdentifier();
                         identifier.ensureStillAlive();
@@ -3628,7 +3670,11 @@ pub const H2FrameParser = struct {
                 const value = value_slice.slice();
                 log("encode header {s} {s}", .{ name, value });
 
-                encoded_size += this.encode(buffer, encoded_size, validated_name, value, never_index) catch {
+                _ = this.encodeHeaderIntoList(&encoded_headers, alloc, validated_name, value, never_index) catch |err| {
+                    encoded_headers.deinit(alloc);
+                    if (err == error.OutOfMemory) {
+                        return globalObject.throw("Failed to allocate header buffer", .{});
+                    }
                     stream.state = .CLOSED;
                     const identifier = stream.getIdentifier();
                     identifier.ensureStillAlive();
@@ -3640,13 +3686,15 @@ pub const H2FrameParser = struct {
                         jsc.JSValue.jsNumber(@intFromEnum(FrameType.HTTP_FRAME_HEADERS)),
                         jsc.JSValue.jsNumber(@intFromEnum(ErrorCode.FRAME_SIZE_ERROR)),
                     );
-
                     this.dispatchWithExtra(.onStreamError, identifier, jsc.JSValue.jsNumber(stream.rstCode));
-
                     return .js_undefined;
                 };
             }
         }
+        defer encoded_headers.deinit(alloc);
+        const encoded_data = encoded_headers.items;
+        const encoded_size = encoded_data.len;
+
         // RFC 7540 Section 8.1: Trailers are sent as a HEADERS frame with END_STREAM flag
         const base_flags: u8 = @intFromEnum(HeadersFrameFlags.END_STREAM);
         // RFC 7540 Section 4.2: SETTINGS_MAX_FRAME_SIZE determines max frame payload
@@ -3666,7 +3714,7 @@ pub const H2FrameParser = struct {
                 .length = @intCast(encoded_size),
             };
             _ = frame.write(@TypeOf(writer), writer);
-            _ = writer.write(buffer[0..encoded_size]) catch 0;
+            _ = writer.write(encoded_data) catch 0;
         } else {
             // RFC 7540 Section 6.2 & 6.10: Header block exceeds MAX_FRAME_SIZE.
             // Must split into HEADERS frame followed by one or more CONTINUATION frames.
@@ -3685,7 +3733,7 @@ pub const H2FrameParser = struct {
                 .length = @intCast(first_chunk_size),
             };
             _ = headers_frame.write(@TypeOf(writer), writer);
-            _ = writer.write(buffer[0..first_chunk_size]) catch 0;
+            _ = writer.write(encoded_data[0..first_chunk_size]) catch 0;
 
             // RFC 7540 Section 6.10: CONTINUATION frames carry remaining header block fragments.
             // They have no padding, no priority - just frame header + header block fragment.
@@ -3703,7 +3751,7 @@ pub const H2FrameParser = struct {
                     .length = @intCast(chunk_size),
                 };
                 _ = cont_frame.write(@TypeOf(writer), writer);
-                _ = writer.write(buffer[offset..][0..chunk_size]) catch 0;
+                _ = writer.write(encoded_data[offset..][0..chunk_size]) catch 0;
 
                 offset += chunk_size;
             }
@@ -3973,19 +4021,16 @@ pub const H2FrameParser = struct {
         }
         // Use remote settings maxFrameSize if available, otherwise use localSettings.
         const settings = this.remoteSettings orelse this.localSettings;
-        const max_frame_size = settings.maxFrameSize;
-        // Buffer size allows up to 256KB of encoded headers, which can be split into
-        // multiple HEADERS + CONTINUATION frames per RFC 7540.
-        const max_header_block_size: usize = 256 * 1024;
+        _ = settings;
         // Use shared buffer when possible, fall back to heap for large headers
         var buf_fallback = bun.allocators.BufferFallbackAllocator.init(&shared_request_buffer, bun.default_allocator);
         const alloc = buf_fallback.allocator();
-        const buffer = alloc.alloc(u8, max_header_block_size) catch {
+        // Use ArrayList with initial capacity of shared buffer size, doubling when needed
+        var encoded_headers = std.ArrayListUnmanaged(u8){};
+        // Pre-allocate to shared buffer size (this uses the stack buffer via BufferFallbackAllocator)
+        encoded_headers.ensureTotalCapacity(alloc, shared_request_buffer.len) catch {
             return globalObject.throw("Failed to allocate header buffer", .{});
         };
-        defer alloc.free(buffer);
-        _ = max_frame_size;
-        var encoded_size: usize = 0;
         // max header name length for lshpack
         var name_buffer: [4096]u8 = undefined;
         @memset(&name_buffer, 0);
@@ -4082,7 +4127,11 @@ pub const H2FrameParser = struct {
                         const value = value_slice.slice();
                         log("encode header {s} {s}", .{ validated_name, value });
 
-                        encoded_size += this.encode(buffer, encoded_size, validated_name, value, never_index) catch {
+                        _ = this.encodeHeaderIntoList(&encoded_headers, alloc, validated_name, value, never_index) catch |err| {
+                            encoded_headers.deinit(alloc);
+                            if (err == error.OutOfMemory) {
+                                return globalObject.throw("Failed to allocate header buffer", .{});
+                            }
                             const stream = this.handleReceivedStreamID(stream_id) orelse {
                                 return jsc.JSValue.jsNumber(-1);
                             };
@@ -4116,7 +4165,11 @@ pub const H2FrameParser = struct {
                     const value = value_slice.slice();
                     log("encode header {s} {s}", .{ validated_name, value });
 
-                    encoded_size += this.encode(buffer, encoded_size, validated_name, value, never_index) catch {
+                    _ = this.encodeHeaderIntoList(&encoded_headers, alloc, validated_name, value, never_index) catch |err| {
+                        encoded_headers.deinit(alloc);
+                        if (err == error.OutOfMemory) {
+                            return globalObject.throw("Failed to allocate header buffer", .{});
+                        }
                         const stream = this.handleReceivedStreamID(stream_id) orelse {
                             return jsc.JSValue.jsNumber(-1);
                         };
@@ -4131,6 +4184,10 @@ pub const H2FrameParser = struct {
                 }
             }
         }
+        defer encoded_headers.deinit(alloc);
+        const encoded_data = encoded_headers.items;
+        const encoded_size = encoded_data.len;
+
         const stream = this.handleReceivedStreamID(stream_id) orelse {
             return jsc.JSValue.jsNumber(-1);
         };
@@ -4305,7 +4362,7 @@ pub const H2FrameParser = struct {
         // RFC 7540 Section 6.10: CONTINUATION frames carry ONLY header block fragments.
         // Unlike HEADERS frames, CONTINUATION frames CANNOT have padding or priority fields.
         // When we need CONTINUATION frames, disable padding to keep the logic simple.
-        const padding: u8 = if (encoded_size + priority_overhead > actual_max_frame_size) 0 else stream.getPadding(encoded_size, buffer.len - 1);
+        const padding: u8 = if (encoded_size + priority_overhead > actual_max_frame_size) 0 else stream.getPadding(encoded_size, encoded_data.len);
         const padding_overhead: usize = if (padding != 0) @as(usize, @intCast(padding)) + 1 else 0;
 
         // Max payload for HEADERS frame (accounting for priority and padding overhead)
@@ -4317,7 +4374,7 @@ pub const H2FrameParser = struct {
         if (encoded_size <= headers_frame_max_payload) {
             // Single HEADERS frame - fits in one frame
             const payload_size = encoded_size + priority_overhead + padding_overhead;
-            log("padding: {d} size: {d} max_size: {d} payload_size: {d}", .{ padding, encoded_size, buffer.len - 1, payload_size });
+            log("padding: {d} size: {d} max_size: {d} payload_size: {d}", .{ padding, encoded_size, encoded_data.len, payload_size });
 
             if (padding != 0) {
                 flags |= @intFromEnum(HeadersFrameFlags.PADDED);
@@ -4346,10 +4403,17 @@ pub const H2FrameParser = struct {
 
             // Handle padding
             if (padding != 0) {
+                // Need extra capacity for padding length byte and padding bytes
+                encoded_headers.ensureTotalCapacity(alloc, encoded_size + padding_overhead) catch {
+                    return globalObject.throw("Failed to allocate padding buffer", .{});
+                };
+                const buffer = encoded_headers.allocatedSlice();
                 bun.memmove(buffer[1..][0..encoded_size], buffer[0..encoded_size]);
                 buffer[0] = padding;
+                _ = writer.write(buffer[0 .. encoded_size + padding_overhead]) catch 0;
+            } else {
+                _ = writer.write(encoded_data) catch 0;
             }
-            _ = writer.write(buffer[0 .. encoded_size + padding_overhead]) catch 0;
         } else {
             // RFC 7540 Section 6.2 & 6.10: Header blocks exceeding MAX_FRAME_SIZE must be split
             // into HEADERS frame followed by one or more CONTINUATION frames.
@@ -4387,7 +4451,7 @@ pub const H2FrameParser = struct {
             }
 
             // Write first chunk of header block fragment
-            _ = writer.write(buffer[0..first_chunk_size]) catch 0;
+            _ = writer.write(encoded_data[0..first_chunk_size]) catch 0;
 
             // RFC 7540 Section 6.10: CONTINUATION frames carry remaining header block fragments.
             // CONTINUATION frame format: just frame header + header block fragment (no padding, no priority)
@@ -4405,7 +4469,7 @@ pub const H2FrameParser = struct {
                     .length = @intCast(chunk_size),
                 };
                 _ = cont_frame.write(@TypeOf(writer), writer);
-                _ = writer.write(buffer[offset..][0..chunk_size]) catch 0;
+                _ = writer.write(encoded_data[offset..][0..chunk_size]) catch 0;
 
                 offset += chunk_size;
             }

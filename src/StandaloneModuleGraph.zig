@@ -670,7 +670,7 @@ pub const StandaloneModuleGraph = struct {
                                 if (!tried_changing_abs_dir) {
                                     tried_changing_abs_dir = true;
                                     const zname_z = bun.strings.concat(bun.default_allocator, &.{
-                                        bun.fs.FileSystem.instance.fs.tmpdirPath(),
+                                        bun.fs.FileSystem.RealFS.tmpdirPath(),
                                         std.fs.path.sep_str,
                                         zname,
                                         &.{0},
@@ -1159,7 +1159,9 @@ pub const StandaloneModuleGraph = struct {
         return .success;
     }
 
-    pub fn fromExecutable(allocator: std.mem.Allocator) !?StandaloneModuleGraph {
+    /// Loads the standalone module graph from the executable, allocates it on the heap,
+    /// sets it globally, and returns the pointer.
+    pub fn fromExecutable(allocator: std.mem.Allocator) !?*StandaloneModuleGraph {
         if (comptime Environment.isMac) {
             const macho_bytes = Macho.getData() orelse return null;
             if (macho_bytes.len < @sizeOf(Offsets) + trailer.len) {
@@ -1173,7 +1175,7 @@ pub const StandaloneModuleGraph = struct {
                 return null;
             }
             const offsets = std.mem.bytesAsValue(Offsets, macho_bytes_slice).*;
-            return try StandaloneModuleGraph.fromBytes(allocator, @constCast(macho_bytes), offsets);
+            return try fromBytesAlloc(allocator, @constCast(macho_bytes), offsets);
         }
 
         if (comptime Environment.isWindows) {
@@ -1189,7 +1191,7 @@ pub const StandaloneModuleGraph = struct {
                 return null;
             }
             const offsets = std.mem.bytesAsValue(Offsets, pe_bytes_slice).*;
-            return try StandaloneModuleGraph.fromBytes(allocator, @constCast(pe_bytes), offsets);
+            return try fromBytesAlloc(allocator, @constCast(pe_bytes), offsets);
         }
 
         // Do not invoke libuv here.
@@ -1213,7 +1215,7 @@ pub const StandaloneModuleGraph = struct {
             }
         }
 
-        if (read_amount < trailer.len + @sizeOf(usize) + 32)
+        if (read_amount < trailer.len + @sizeOf(usize) + @sizeOf(Offsets))
             // definitely missing data
             return null;
 
@@ -1284,7 +1286,15 @@ pub const StandaloneModuleGraph = struct {
             }
         }
 
-        return try StandaloneModuleGraph.fromBytes(allocator, to_read, offsets);
+        return try fromBytesAlloc(allocator, to_read, offsets);
+    }
+
+    /// Allocates a StandaloneModuleGraph on the heap, populates it from bytes, sets it globally, and returns the pointer.
+    fn fromBytesAlloc(allocator: std.mem.Allocator, raw_bytes: []u8, offsets: Offsets) !*StandaloneModuleGraph {
+        const graph_ptr = try allocator.create(StandaloneModuleGraph);
+        graph_ptr.* = try StandaloneModuleGraph.fromBytes(allocator, raw_bytes, offsets);
+        graph_ptr.set();
+        return graph_ptr;
     }
 
     /// heuristic: `bun build --compile` won't be supported if the name is "bun", "bunx", or "node".

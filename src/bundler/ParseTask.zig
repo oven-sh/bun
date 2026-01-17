@@ -636,6 +636,16 @@ fn getCodeForParseTaskWithoutPlugins(
             const trace = bun.perf.trace("Bundler.readFile");
             defer trace.end();
 
+            // Check FileMap for in-memory files first
+            if (task.ctx.file_map) |file_map| {
+                if (file_map.get(file_path.text)) |file_contents| {
+                    break :brk .{
+                        .contents = file_contents,
+                        .fd = bun.invalid_fd,
+                    };
+                }
+            }
+
             if (strings.eqlComptime(file_path.namespace, "node")) lookup_builtin: {
                 if (task.ctx.framework) |f| {
                     if (f.built_in_modules.get(file_path.text)) |file| {
@@ -1179,8 +1189,7 @@ fn runWithSourceCode(
     opts.features.bundler_feature_flags = transpiler.options.bundler_feature_flags;
     opts.features.hot_module_reloading = output_format == .internal_bake_dev and !source.index.isRuntime();
     opts.features.auto_polyfill_require = output_format == .esm and !opts.features.hot_module_reloading;
-    opts.features.react_fast_refresh = target == .browser and
-        transpiler.options.react_fast_refresh and
+    opts.features.react_fast_refresh = transpiler.options.react_fast_refresh and
         loader.isJSX() and
         !source.path.isNodeModule();
 

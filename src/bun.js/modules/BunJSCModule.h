@@ -734,6 +734,10 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
     if (sampleValue.isNumber()) {
         unsigned sampleInterval = sampleValue.toUInt32(globalObject);
         samplingProfiler.setTimingInterval(Seconds::fromMicroseconds(sampleInterval));
+    } else {
+        // Reset to default interval (1000 microseconds) to ensure each profile()
+        // call is independent of previous calls
+        samplingProfiler.setTimingInterval(Seconds::fromMicroseconds(1000));
     }
 
     const auto report = [](JSC::VM& vm,
@@ -749,7 +753,14 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
 
         JSValue stackTraces = JSONParse(globalObject, samplingProfiler.stackTracesAsJSON()->toJSONString());
 
-        samplingProfiler.shutdown();
+        // Use pause() instead of shutdown() to allow the profiler to be restarted
+        // shutdown() sets m_isShutDown=true which is never reset, making the profiler unusable
+        {
+            auto& lock = samplingProfiler.getLock();
+            WTF::Locker locker { lock };
+            samplingProfiler.pause();
+            samplingProfiler.clearData();
+        }
         RETURN_IF_EXCEPTION(throwScope, {});
 
         JSObject* result = constructEmptyObject(globalObject, globalObject->objectPrototype(), 3);
@@ -761,8 +772,9 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
     };
     const auto reportFailure = [](JSC::VM& vm) -> JSC::JSValue {
         if (auto* samplingProfiler = vm.samplingProfiler()) {
+            auto& lock = samplingProfiler->getLock();
+            WTF::Locker locker { lock };
             samplingProfiler->pause();
-            samplingProfiler->shutdown();
             samplingProfiler->clearData();
         }
 
@@ -785,8 +797,11 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
 
         JSNativeStdFunction* resolve = JSNativeStdFunction::create(
             vm, globalObject, 0, "resolve"_s,
-            [report](JSGlobalObject* globalObject, CallFrame* callFrame) {
-                return JSValue::encode(JSPromise::resolvedPromise(globalObject, report(globalObject->vm(), globalObject)));
+            [report](JSGlobalObject* globalObject, CallFrame* callFrame) -> JSC::EncodedJSValue {
+                auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+                JSValue result = report(globalObject->vm(), globalObject);
+                RETURN_IF_EXCEPTION(scope, {});
+                RELEASE_AND_RETURN(scope, JSValue::encode(JSPromise::resolvedPromise(globalObject, result)));
             });
         JSNativeStdFunction* reject = JSNativeStdFunction::create(
             vm, globalObject, 0, "reject"_s,
@@ -802,7 +817,8 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
         return JSValue::encode(afterOngoingPromiseCapability);
     }
 
-    return JSValue::encode(report(vm, globalObject));
+    JSValue result = report(vm, globalObject);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
 }
 
 JSC_DECLARE_HOST_FUNCTION(functionGenerateHeapSnapshotForDebugging);

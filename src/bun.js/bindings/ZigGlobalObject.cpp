@@ -730,13 +730,18 @@ JSC::ScriptExecutionStatus Zig::GlobalObject::scriptExecutionStatus(JSC::JSGloba
 
 void unsafeEvalNoop(JSGlobalObject*, const WTF::String&) {}
 
+static void queueMicrotaskToEventLoop(JSGlobalObject& globalObject, QueuedTask&& task)
+{
+    globalObject.vm().queueMicrotask(WTF::move(task));
+}
+
 const JSC::GlobalObjectMethodTable& GlobalObject::globalObjectMethodTable()
 {
     static const JSC::GlobalObjectMethodTable table = {
         &supportsRichSourceInfo,
         &shouldInterruptScript,
         &javaScriptRuntimeFlags,
-        nullptr, // &queueMicrotaskToEventLoop, // queueTaskToEventLoop
+        &queueMicrotaskToEventLoop,
         nullptr, // &shouldInterruptScriptBeforeTimeout,
         &moduleLoaderImportModule, // moduleLoaderImportModule
         &moduleLoaderResolve, // moduleLoaderResolve
@@ -765,8 +770,7 @@ const JSC::GlobalObjectMethodTable& EvalGlobalObject::globalObjectMethodTable()
         &supportsRichSourceInfo,
         &shouldInterruptScript,
         &javaScriptRuntimeFlags,
-        // &queueMicrotaskToEventLoop, // queueTaskToEventLoop
-        nullptr,
+        &queueMicrotaskToEventLoop,
         nullptr, // &shouldInterruptScriptBeforeTimeout,
         &moduleLoaderImportModule, // moduleLoaderImportModule
         &moduleLoaderResolve, // moduleLoaderResolve
@@ -1072,7 +1076,7 @@ JSC_DEFINE_HOST_FUNCTION(functionQueueMicrotask,
     // BunPerformMicrotaskJob accepts a variable number of arguments (up to: performMicrotask, job, asyncContext, arg0, arg1).
     // The runtime inspects argumentCount to determine which arguments are present, so callers may pass only the subset they need.
     // Here we pass: function, callback, asyncContext.
-    JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::BunPerformMicrotaskJob, globalObject, function, callback, asyncContext };
+    JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::BunPerformMicrotaskJob, 0, globalObject, function, callback, asyncContext };
     globalObject->vm().queueMicrotask(WTF::move(task));
 
     return JSC::JSValue::encode(JSC::jsUndefined());
@@ -3103,7 +3107,7 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskCallback(Zig::GlobalObject* g
 
     // Do not use JSCell* here because the GC will try to visit it.
     // Use BunInvokeJobWithArguments to pass the two arguments (ptr and callback) to the trampoline function
-    JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::BunInvokeJobWithArguments, globalObject, function, JSValue(std::bit_cast<double>(reinterpret_cast<uintptr_t>(ptr))), JSValue(std::bit_cast<double>(reinterpret_cast<uintptr_t>(callback))) };
+    JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::BunInvokeJobWithArguments, 0, globalObject, function, JSValue(std::bit_cast<double>(reinterpret_cast<uintptr_t>(ptr))), JSValue(std::bit_cast<double>(reinterpret_cast<uintptr_t>(callback))) };
     globalObject->vm().queueMicrotask(WTF::move(task));
 }
 
@@ -3293,8 +3297,7 @@ static JSC::JSInternalPromise* rejectedInternalPromise(JSC::JSGlobalObject* glob
 {
     auto& vm = JSC::getVM(globalObject);
     JSInternalPromise* promise = JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
-    promise->internalField(JSC::JSPromise::Field::ReactionsOrResult).set(vm, promise, value);
-    promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, jsNumber(promise->internalField(JSC::JSPromise::Field::Flags).get().asUInt32AsAnyInt() | JSC::JSPromise::isFirstResolvingFunctionCalledFlag | static_cast<unsigned>(JSC::JSPromise::Status::Rejected)));
+    promise->rejectAsHandled(vm, globalObject, value);
     return promise;
 }
 

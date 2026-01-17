@@ -323,4 +323,216 @@ describe("bundler", () => {
       stdout: "a.js executed\na loaded from entry\nb.js executed\nb.js imports a {}\nb loaded from entry, value: B",
     },
   });
+
+  // https://github.com/oven-sh/bun/issues/22884
+  // When a shared module is listed as both an entry point AND imported by another
+  // entry point with splitting enabled, the output should not contain duplicate exports.
+  itBundled("splitting/NoDuplicateExportsWhenSharedModuleIsEntryPoint", {
+    files: {
+      "/shared.ts": `export const shared = "shared";`,
+      "/entry-a.ts": `
+        import { shared } from "./shared";
+        console.log(shared);
+      `,
+    },
+    entryPoints: ["/entry-a.ts", "/shared.ts"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      const sharedContent = api.readFile("/out/shared.js");
+      // Count how many times "export {" or "export{" appears in the file
+      const exportMatches = sharedContent.match(/export\s*\{/g) || [];
+      if (exportMatches.length !== 1) {
+        throw new Error(
+          `shared.js contains ${exportMatches.length} export statements, expected exactly 1. Content:\n${sharedContent}`,
+        );
+      }
+    },
+    run: [
+      { file: "/out/entry-a.js", stdout: "shared" },
+      { file: "/out/shared.js", stdout: "" },
+    ],
+  });
+
+  // Test: Named re-export with entry point overlap
+  // When entry-a re-exports from shared, and shared is also an entry point
+  itBundled("splitting/NamedReExportWithEntryPointOverlap", {
+    files: {
+      "/shared.ts": `export const foo = "foo"; export const bar = "bar";`,
+      "/entry-a.ts": `
+        export { foo } from "./shared";
+        console.log("entry-a");
+      `,
+    },
+    entryPoints: ["/entry-a.ts", "/shared.ts"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      const sharedContent = api.readFile("/out/shared.js");
+      const exportMatches = sharedContent.match(/export\s*\{/g) || [];
+      if (exportMatches.length !== 1) {
+        throw new Error(
+          `shared.js contains ${exportMatches.length} export statements, expected exactly 1. Content:\n${sharedContent}`,
+        );
+      }
+    },
+    run: [
+      { file: "/out/entry-a.js", stdout: "entry-a" },
+      { file: "/out/shared.js", stdout: "" },
+    ],
+  });
+
+  // Test: Export star with entry point overlap
+  // When entry-a does export * from shared, and shared is also an entry point
+  itBundled("splitting/ExportStarWithEntryPointOverlap", {
+    files: {
+      "/shared.ts": `export const foo = "foo"; export const bar = "bar";`,
+      "/entry-a.ts": `
+        export * from "./shared";
+        console.log("entry-a");
+      `,
+    },
+    entryPoints: ["/entry-a.ts", "/shared.ts"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      const sharedContent = api.readFile("/out/shared.js");
+      const exportMatches = sharedContent.match(/export\s*\{/g) || [];
+      if (exportMatches.length !== 1) {
+        throw new Error(
+          `shared.js contains ${exportMatches.length} export statements, expected exactly 1. Content:\n${sharedContent}`,
+        );
+      }
+    },
+    run: [
+      { file: "/out/entry-a.js", stdout: "entry-a" },
+      { file: "/out/shared.js", stdout: "" },
+    ],
+  });
+
+  // Test: CommonJS import with entry point overlap
+  // When entry-a imports from a CJS module that is also an entry point
+  itBundled("splitting/CommonJSImportWithEntryPointOverlap", {
+    files: {
+      "/shared.js": `module.exports = { foo: "foo", bar: "bar" };`,
+      "/entry-a.ts": `
+        import { foo } from "./shared.js";
+        console.log(foo);
+      `,
+    },
+    entryPoints: ["/entry-a.ts", "/shared.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: [{ file: "/out/entry-a.js", stdout: "foo" }],
+  });
+
+  // Test: ESM re-exporting namespace from CommonJS with entry point overlap (namespace_alias case)
+  // This specifically tests the namespace_alias resolution path where an ESM entry point
+  // re-exports from a CJS module that is also an entry point.
+  // Uses namespace import to avoid unrelated CJS re-export bugs.
+  itBundled("splitting/ESMReExportFromCJSWithEntryPointOverlap", {
+    files: {
+      "/cjs-module.js": `
+        module.exports = { value: "from-cjs" };
+      `,
+      "/esm-reexport.ts": `
+        import * as cjs from "./cjs-module.js";
+        export const value = cjs.value;
+      `,
+      "/consumer.ts": `
+        import { value } from "./esm-reexport";
+        console.log(value);
+      `,
+    },
+    entryPoints: ["/consumer.ts", "/esm-reexport.ts", "/cjs-module.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: [{ file: "/out/consumer.js", stdout: "from-cjs" }],
+  });
+
+  // Test: Three entry points with transitive imports
+  // A imports B, B imports C, all three are entry points
+  itBundled("splitting/ThreeEntryPointsWithTransitiveImports", {
+    files: {
+      "/a.ts": `
+        import { b } from "./b";
+        console.log("a", b);
+      `,
+      "/b.ts": `
+        import { c } from "./c";
+        export const b = "b+" + c;
+      `,
+      "/c.ts": `export const c = "c";`,
+    },
+    entryPoints: ["/a.ts", "/b.ts", "/c.ts"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      // Check that c.js has exactly one export
+      const cContent = api.readFile("/out/c.js");
+      const cExportMatches = cContent.match(/export\s*\{/g) || [];
+      if (cExportMatches.length !== 1) {
+        throw new Error(
+          `c.js contains ${cExportMatches.length} export statements, expected exactly 1. Content:\n${cContent}`,
+        );
+      }
+      // Check that b.js has exactly one export
+      const bContent = api.readFile("/out/b.js");
+      const bExportMatches = bContent.match(/export\s*\{/g) || [];
+      if (bExportMatches.length !== 1) {
+        throw new Error(
+          `b.js contains ${bExportMatches.length} export statements, expected exactly 1. Content:\n${bContent}`,
+        );
+      }
+    },
+    run: [
+      { file: "/out/a.js", stdout: "a b+c" },
+      { file: "/out/b.js", stdout: "" },
+      { file: "/out/c.js", stdout: "" },
+    ],
+  });
+
+  // Test: Aliased exports with entry point overlap
+  // When shared.ts exports the same value under multiple names, and is both
+  // an entry point and imported by other entry points
+  itBundled("splitting/AliasedExportsWithEntryPointOverlap", {
+    files: {
+      "/shared.ts": `
+        export const foo = "foo";
+        export { foo as bar };
+      `,
+      "/entry-a.ts": `
+        import { foo } from "./shared";
+        console.log("a:", foo);
+      `,
+      "/entry-b.ts": `
+        import { bar } from "./shared";
+        console.log("b:", bar);
+      `,
+    },
+    entryPoints: ["/entry-a.ts", "/entry-b.ts", "/shared.ts"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      const sharedContent = api.readFile("/out/shared.js");
+      const exportMatches = sharedContent.match(/export\s*\{/g) || [];
+      if (exportMatches.length !== 1) {
+        throw new Error(
+          `shared.js contains ${exportMatches.length} export statements, expected exactly 1. Content:\n${sharedContent}`,
+        );
+      }
+    },
+    run: [
+      { file: "/out/entry-a.js", stdout: "a: foo" },
+      { file: "/out/entry-b.js", stdout: "b: foo" },
+      { file: "/out/shared.js", stdout: "" },
+    ],
+  });
 });

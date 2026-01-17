@@ -694,16 +694,7 @@ pub const H2FrameParser = struct {
 
     threadlocal var shared_request_buffer: [16384]u8 = undefined;
 
-    /// Ensures the ArrayList has enough capacity, doubling when growth is needed.
-    /// Returns error if allocation fails.
-    fn ensureCapacityDoubling(encoded_headers: *std.ArrayListUnmanaged(u8), alloc: std.mem.Allocator, required: usize) !void {
-        if (required > encoded_headers.capacity) {
-            const new_capacity = @max(required, encoded_headers.capacity * 2);
-            try encoded_headers.ensureTotalCapacity(alloc, new_capacity);
-        }
-    }
-
-    /// Encodes a single header into the ArrayList, growing with doubling strategy if needed.
+    /// Encodes a single header into the ArrayList, growing if needed.
     /// Returns the number of bytes written, or error on failure.
     ///
     /// Capacity estimation: name.len + value.len + HPACK_ENTRY_OVERHEAD
@@ -728,7 +719,7 @@ pub const H2FrameParser = struct {
         never_index: bool,
     ) !usize {
         const required = encoded_headers.items.len + name.len + value.len + HPACK_ENTRY_OVERHEAD;
-        try ensureCapacityDoubling(encoded_headers, alloc, required);
+        try encoded_headers.ensureTotalCapacity(alloc, required);
         const bytes_written = try this.encode(encoded_headers.allocatedSlice(), encoded_headers.items.len, name, value, never_index);
         encoded_headers.items.len += bytes_written;
         return bytes_written;

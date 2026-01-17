@@ -15,6 +15,7 @@ pub const AnyPostgresError = error{
     InvalidTimeFormat,
     JSError,
     JSTerminated,
+    MessageTooLarge,
     MultidimensionalArrayNotSupportedYet,
     NullsInArrayNotSupportedYet,
     OutOfMemory,
@@ -93,6 +94,7 @@ pub fn postgresErrorToJS(globalObject: *jsc.JSGlobalObject, message: ?[]const u8
         error.InvalidServerKey => "ERR_POSTGRES_INVALID_SERVER_KEY",
         error.InvalidServerSignature => "ERR_POSTGRES_INVALID_SERVER_SIGNATURE",
         error.InvalidTimeFormat => "ERR_POSTGRES_INVALID_TIME_FORMAT",
+        error.MessageTooLarge => "ERR_POSTGRES_MESSAGE_TOO_LARGE",
         error.MultidimensionalArrayNotSupportedYet => "ERR_POSTGRES_MULTIDIMENSIONAL_ARRAY_NOT_SUPPORTED_YET",
         error.NullsInArrayNotSupportedYet => "ERR_POSTGRES_NULLS_IN_ARRAY_NOT_SUPPORTED_YET",
         error.Overflow => "ERR_POSTGRES_OVERFLOW",
@@ -124,8 +126,11 @@ pub fn postgresErrorToJS(globalObject: *jsc.JSGlobalObject, message: ?[]const u8
         },
     };
 
-    var buffer_message = [_]u8{0} ** 256;
-    const msg = message orelse std.fmt.bufPrint(buffer_message[0..], "Failed to bind query: {s}", .{@errorName(err)}) catch "Failed to bind query";
+    var buffer_message = [_]u8{0} ** 512;
+    const msg = message orelse switch (err) {
+        error.MessageTooLarge => "Query message exceeds PostgreSQL protocol limit of 2GB. Try reducing the number of rows in your bulk insert or split it into smaller batches.",
+        else => std.fmt.bufPrint(&buffer_message, "Failed to bind query: {s}", .{@errorName(err)}) catch "Failed to bind query",
+    };
 
     return createPostgresError(globalObject, msg, .{ .code = code }) catch |e| globalObject.takeError(e);
 }

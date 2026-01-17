@@ -29,8 +29,9 @@ test("absolute path to a file that is symlinked has import.meta.main", () => {
   });
   expect(result.stdout.trim()).toBe(
     [
-      //
-      import.meta.path,
+      // process.argv[1] should be the symlink path (issue #2900)
+      root + "/main.js",
+      // Bun.main should be the resolved path
       import.meta.path,
       "true",
       import.meta.dir,

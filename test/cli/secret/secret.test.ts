@@ -37,22 +37,22 @@ describe("bun secret", () => {
   describe("help", () => {
     test("bun --help shows secret command", () => {
       const { stdout, exitCode } = runBunCommand(["--help"]);
-      expect(exitCode).toBe(0);
       expect(stdout).toContain("secret");
+      expect(exitCode).toBe(0);
     });
 
     test("bun secret shows help", () => {
       const { stdout, exitCode } = runSecretCommand([]);
-      expect(exitCode).toBe(0);
       expect(stdout).toContain("Manage secrets");
+      expect(exitCode).toBe(0);
     });
   });
 
   describe("invalid subcommand", () => {
     test("unknown subcommand returns error", () => {
       const { stderr, exitCode } = runSecretCommand(["invalid"]);
-      expect(exitCode).toBe(1);
       expect(stderr).toContain("Unknown subcommand");
+      expect(exitCode).toBe(1);
     });
   });
 
@@ -60,66 +60,66 @@ describe("bun secret", () => {
     describe("set", () => {
       test("missing --service shows error", () => {
         const { stderr, exitCode } = runSecretCommand(["set"]);
-        expect(exitCode).toBe(1);
         expect(stderr).toContain("Missing required --service");
+        expect(exitCode).toBe(1);
       });
 
       test("missing name shows error", () => {
         const { stderr, exitCode } = runSecretCommand(["set", "-s", "test"]);
-        expect(exitCode).toBe(1);
         expect(stderr).toContain("Missing required name");
+        expect(exitCode).toBe(1);
       });
 
       test("missing value shows error", () => {
         const { stderr, exitCode } = runSecretCommand(["set", "-s", "test", "-n", "key"]);
-        expect(exitCode).toBe(1);
         expect(stderr).toContain("Missing required value");
+        expect(exitCode).toBe(1);
       });
 
       test("extra argument shows error", () => {
         const { stderr, exitCode } = runSecretCommand(["set", "-s", "test", "key", "value", "extra"]);
-        expect(exitCode).toBe(1);
         expect(stderr).toContain("Unexpected argument");
+        expect(exitCode).toBe(1);
       });
     });
 
     describe("get", () => {
       test("missing --service shows error", () => {
         const { stderr, exitCode } = runSecretCommand(["get"]);
-        expect(exitCode).toBe(1);
         expect(stderr).toContain("Missing required --service");
+        expect(exitCode).toBe(1);
       });
 
       test("missing name shows error", () => {
         const { stderr, exitCode } = runSecretCommand(["get", "-s", "test"]);
-        expect(exitCode).toBe(1);
         expect(stderr).toContain("Missing required name");
+        expect(exitCode).toBe(1);
       });
 
       test("extra argument shows error", () => {
         const { stderr, exitCode } = runSecretCommand(["get", "-s", "test", "key", "extra"]);
-        expect(exitCode).toBe(1);
         expect(stderr).toContain("Unexpected argument");
+        expect(exitCode).toBe(1);
       });
     });
 
     describe("delete", () => {
       test("missing --service shows error", () => {
         const { stderr, exitCode } = runSecretCommand(["delete"]);
-        expect(exitCode).toBe(1);
         expect(stderr).toContain("Missing required --service");
+        expect(exitCode).toBe(1);
       });
 
       test("missing name shows error", () => {
         const { stderr, exitCode } = runSecretCommand(["delete", "-s", "test"]);
-        expect(exitCode).toBe(1);
         expect(stderr).toContain("Missing required name");
+        expect(exitCode).toBe(1);
       });
 
       test("extra argument shows error", () => {
         const { stderr, exitCode } = runSecretCommand(["delete", "-s", "test", "key", "extra"]);
-        expect(exitCode).toBe(1);
         expect(stderr).toContain("Unexpected argument");
+        expect(exitCode).toBe(1);
       });
     });
   });
@@ -173,8 +173,8 @@ describe("bun secret", () => {
 
     test("get nonexistent secret returns error", () => {
       const { exitCode, stderr } = runSecretCommand(["get", "-s", testService, "-n", "nonexistent-key"]);
-      expect(exitCode).not.toBe(0);
       expect(stderr.length).toBeGreaterThan(0);
+      expect(exitCode).not.toBe(0);
     });
 
     test("special characters in values", () => {
@@ -198,20 +198,20 @@ describe("bun secret", () => {
   describe.skipIf(libsecretAvailable || !isLinux)("without libsecret", () => {
     test("set fails gracefully with libsecret error", () => {
       const { stderr, exitCode } = runSecretCommand(["set", "-s", "test", "-n", "key", "value"]);
-      expect(exitCode).toBe(1);
       expect(stderr.toLowerCase()).toContain("libsecret");
+      expect(exitCode).toBe(1);
     });
 
     test("get fails gracefully with libsecret error", () => {
       const { stderr, exitCode } = runSecretCommand(["get", "-s", "test", "-n", "key"]);
-      expect(exitCode).toBe(1);
       expect(stderr.toLowerCase()).toContain("libsecret");
+      expect(exitCode).toBe(1);
     });
 
     test("delete fails gracefully with libsecret error", () => {
       const { stderr, exitCode } = runSecretCommand(["delete", "-s", "test", "-n", "key"]);
-      expect(exitCode).toBe(1);
       expect(stderr.toLowerCase()).toContain("libsecret");
+      expect(exitCode).toBe(1);
     });
   });
 });

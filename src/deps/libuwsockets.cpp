@@ -1122,7 +1122,7 @@ extern "C"
                                    const char **dest)
   {
     if (!ws) {
-      *dest = nullptr;
+      if (dest) *dest = nullptr;
       return 0;
     }
     if (ssl)
@@ -1145,7 +1145,7 @@ extern "C"
                                            const char **dest)
   {
     if (!ws) {
-      *dest = nullptr;
+      if (dest) *dest = nullptr;
       return 0;
     }
     if (ssl)

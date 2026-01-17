@@ -22,8 +22,12 @@ function runSecretCommand(args: string[]): { stdout: string; stderr: string; exi
 
 function checkLibsecretAvailable(): boolean {
   if (!isLinux) return false;
-  const { stderr } = runSecretCommand(["get", "-s", "__probe__", "-n", "__probe__"]);
-  return !stderr.toLowerCase().includes("libsecret");
+  const probeService = "__probe__";
+  const probeName = "__probe__";
+  const set = runSecretCommand(["set", "-s", probeService, "-n", probeName, "__probe__"]);
+  if (set.exitCode !== 0) return false;
+  runSecretCommand(["delete", "-s", probeService, "-n", probeName]);
+  return true;
 }
 
 const libsecretAvailable = checkLibsecretAvailable();

@@ -24,7 +24,6 @@ describeWithContainer(
       });
       const result = await sql`SELECT 1 as x`;
       expect(result).toEqual([{ x: 1 }]);
-      await sql.end();
     });
 
     test("should connect with password using caching_sha2_password", async () => {
@@ -38,14 +37,12 @@ describeWithContainer(
         await sql`CREATE USER testuser26195@'%' IDENTIFIED WITH caching_sha2_password BY 'testpass123';
               GRANT ALL PRIVILEGES ON bun_sql_test.* TO testuser26195@'%';
             FLUSH PRIVILEGES;`.simple();
-        await sql.end();
       }
 
       // Now connect with the new user using caching_sha2_password
       await using sql = new SQL(`mysql://testuser26195:testpass123@${container.host}:${container.port}/bun_sql_test`);
       const result = await sql`SELECT 1 as x`;
       expect(result).toEqual([{ x: 1 }]);
-      await sql.end();
     });
   },
 );

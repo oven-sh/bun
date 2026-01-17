@@ -1177,17 +1177,30 @@ function _writeHead(statusCode, reason, obj, response) {
         if (k) response.setHeader(k, obj[k]);
       }
     }
-    if (
-      (response.chunkedEncoding !== true || response.hasHeader("content-length")) &&
-      (response._trailer || response.hasHeader("trailer"))
-    ) {
-      // remove the invalid content-length or trailer header
-      if (hasContentLength) {
-        response.removeHeader("trailer");
-      } else {
-        response.removeHeader("content-length");
+    // Check if chunked encoding is being used. Trailers require chunked encoding.
+    // Check both the chunkedEncoding property and the Transfer-Encoding header.
+    const teHeader = response.getHeader("transfer-encoding");
+    const isChunked = response.chunkedEncoding === true || (teHeader && /chunked/i.test(String(teHeader)));
+    const hasContentLen = response.hasHeader("content-length");
+
+    if (!isChunked || hasContentLen) {
+      // Trailers cannot be used without chunked encoding
+      if (response.hasHeader("trailer")) {
+        // If "Trailer" header is explicitly set, that's an error
+        // Use hasContentLen (not hasContentLength) to reflect current headers after obj applied
+        if (hasContentLen) {
+          response.removeHeader("trailer");
+        } else {
+          response.removeHeader("content-length");
+        }
+        throw $ERR_HTTP_TRAILER_INVALID("Trailers are invalid with this transfer encoding");
       }
-      throw $ERR_HTTP_TRAILER_INVALID("Trailers are invalid with this transfer encoding");
+      // If only _trailer is set (via addTrailers), silently discard per Node.js docs:
+      // "Trailers will only be emitted if chunked encoding is used for the response;
+      // if it is not (e.g. if the request was HTTP/1.0), they will be silently discarded."
+      if (response._trailer) {
+        response._trailer = "";
+      }
     }
   }
 

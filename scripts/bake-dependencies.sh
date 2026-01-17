@@ -60,13 +60,13 @@ ABI="$(detect_abi)"
 
 # Default paths - these should match what the buildkite agent uses
 BUN_REPO_PATH="${BUN_REPO_PATH:-/var/lib/buildkite-agent/build}"
-BUILD_TYPE="${BUILD_TYPE:-release}"
+BUILD_DIR="${BUILD_DIR:-release}"
 
 print "=== Bun Dependency Baking Script ==="
 print "Architecture: $ARCH"
 print "ABI: ${ABI:-glibc}"
 print "Repository path: $BUN_REPO_PATH"
-print "Build type: $BUILD_TYPE"
+print "Build directory: $BUILD_DIR"
 
 # Clone the Bun repository if it doesn't exist
 if [ ! -d "$BUN_REPO_PATH/.git" ]; then
@@ -90,7 +90,7 @@ print "Generating cmake source lists..."
 bun run scripts/glob-sources.mjs
 
 # Set up build directory
-BUILD_PATH="$BUN_REPO_PATH/build/$BUILD_TYPE"
+BUILD_PATH="$BUN_REPO_PATH/build/$BUILD_DIR"
 CACHE_PATH="$BUILD_PATH/cache"
 mkdir -p "$BUILD_PATH" "$CACHE_PATH"
 

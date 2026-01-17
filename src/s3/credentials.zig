@@ -135,10 +135,10 @@ fn parseMetadataFromJS(metadata_value: jsc.JSValue, globalObject: *jsc.JSGlobalO
     if (property_count == 0) return null;
 
     // Allocate arrays for keys and values
-    const keys = bun.default_allocator.alloc([]const u8, property_count) catch bun.outOfMemory();
+    const keys = bun.handleOom(bun.default_allocator.alloc([]const u8, property_count));
     errdefer bun.default_allocator.free(keys);
 
-    const values = bun.default_allocator.alloc([]const u8, property_count) catch bun.outOfMemory();
+    const values = bun.handleOom(bun.default_allocator.alloc([]const u8, property_count));
     errdefer bun.default_allocator.free(values);
 
     // Track allocations for cleanup on error
@@ -160,7 +160,7 @@ fn parseMetadataFromJS(metadata_value: jsc.JSValue, globalObject: *jsc.JSGlobalO
         const key_owned = try key.toOwnedSlice(bun.default_allocator);
         defer bun.default_allocator.free(key_owned);
 
-        const key_lower = bun.default_allocator.alloc(u8, key_owned.len) catch bun.outOfMemory();
+        const key_lower = bun.handleOom(bun.default_allocator.alloc(u8, key_owned.len));
         keys[i] = strings.copyLowercase(key_owned, key_lower);
         keys_allocated = i + 1;
 
@@ -175,7 +175,7 @@ fn parseMetadataFromJS(metadata_value: jsc.JSValue, globalObject: *jsc.JSGlobalO
         const val_slice = val_str.toUTF8(bun.default_allocator);
         defer val_slice.deinit();
 
-        values[i] = bun.default_allocator.dupe(u8, val_slice.slice()) catch bun.outOfMemory();
+        values[i] = bun.handleOom(bun.default_allocator.dupe(u8, val_slice.slice()));
         values_allocated = i + 1;
 
         i += 1;

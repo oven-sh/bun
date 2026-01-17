@@ -1169,4 +1169,61 @@ describe.todoIf(isWindows)("Bun.spawn with terminal option", () => {
     const output = Buffer.concat(dataChunks).toString();
     expect(output).toContain("hello");
   });
+
+  test("existing terminal sends SIGINT on Ctrl+C", async () => {
+    await using terminal = new Bun.Terminal({});
+
+    // Spawn a process that will run until interrupted (sleepSync uses milliseconds)
+    await using proc = Bun.spawn([bunExe(), "-e", "Bun.sleepSync(100000)"], { terminal, env: bunEnv });
+
+    // Wait for process to start - use longer delay for CI reliability
+    await Bun.sleep(300);
+
+    // Send Ctrl+C - should send SIGINT and interrupt sleep
+    terminal.write("\x03");
+
+    await proc.exited;
+    // SIGINT causes null exitCode with signalCode
+    expect(proc.exitCode).toBeNull();
+    expect(proc.signalCode).toBe("SIGINT");
+  });
+
+  test("existing terminal can be reused across multiple spawns", async () => {
+    await using terminal = new Bun.Terminal({});
+
+    // First spawn
+    await using proc1 = Bun.spawn(["echo", "first"], { terminal });
+    await proc1.exited;
+    expect(proc1.exitCode).toBe(0);
+
+    // Terminal should still be usable
+    expect(terminal.closed).toBe(false);
+
+    // Second spawn with same terminal
+    await using proc2 = Bun.spawn(["echo", "second"], { terminal });
+    await proc2.exited;
+    expect(proc2.exitCode).toBe(0);
+
+    // Both should have used the same terminal
+    expect(proc1.terminal).toBe(terminal);
+    expect(proc2.terminal).toBe(terminal);
+  });
+
+  test("existing terminal SIGINT works after reuse", async () => {
+    await using terminal = new Bun.Terminal({});
+
+    // First spawn - normal exit
+    await using proc1 = Bun.spawn(["echo", "first"], { terminal });
+    await proc1.exited;
+    expect(proc1.exitCode).toBe(0);
+
+    // Second spawn - interrupt with Ctrl+C (sleepSync uses milliseconds)
+    await using proc2 = Bun.spawn([bunExe(), "-e", "Bun.sleepSync(100000)"], { terminal, env: bunEnv });
+    await Bun.sleep(300);
+    terminal.write("\x03");
+
+    await proc2.exited;
+    expect(proc2.exitCode).toBeNull();
+    expect(proc2.signalCode).toBe("SIGINT");
+  });
 });

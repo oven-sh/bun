@@ -535,7 +535,7 @@ pub const PublishCommand = struct {
         const registry = ctx.manager.scopeForPackageName(ctx.package_name);
 
         // Check for authentication: token, OR auth/user (username:password), OR URL-embedded credentials
-        if (registry.token.len == 0 and (registry.auth.len == 0 or registry.user.len == 0) and (registry.url.password.len == 0 or registry.url.username.len == 0)) {
+        if (registry.token.len == 0 and registry.auth.len == 0 and registry.user.len == 0 and (registry.url.password.len == 0 or registry.url.username.len == 0)) {
             return error.NeedAuth;
         }
 

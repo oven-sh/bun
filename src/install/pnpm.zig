@@ -622,10 +622,9 @@ pub fn migratePnpmLockfile(
                 if (package_obj.get("cpu")) |cpu_expr| {
                     pkg.meta.arch = try Negatable(Npm.Architecture).fromJson(allocator, cpu_expr);
                 }
-                // TODO: libc
-                // if (package_obj.get("libc")) |libc_expr| {
-                //     pkg.meta.libc = try Negatable(Npm.Libc).fromJson(allocator, libc_expr);
-                // }
+                if (package_obj.get("libc")) |libc_expr| {
+                    pkg.meta.libc = try Negatable(Npm.Libc).fromJson(allocator, libc_expr);
+                }
 
                 const off, const len = try parseAppendPackageDependencies(
                     lockfile,

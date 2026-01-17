@@ -303,7 +303,7 @@ pub var pretend_to_be_node = false;
 pub var is_bunx_exe = false;
 
 /// Index in argv where the command was found by `which()`
-pub var command_arg_index: usize = 1;
+var command_arg_index: usize = 1;
 
 pub const Command = struct {
     pub fn get() Context {

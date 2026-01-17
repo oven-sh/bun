@@ -3,6 +3,11 @@
 /// With typical key-value pairs of ~50-100 bytes, 32 headers provides ample capacity.
 const MAX_METADATA_HEADERS: usize = 32;
 
+/// Maximum total bytes for user-defined metadata (keys + values).
+/// AWS S3 enforces a 2KB limit on total metadata size.
+/// See: https://docs.aws.amazon.com/AmazonS3/latest/userguide/UsingMetadata.html
+const MAX_METADATA_BYTES: usize = 2048;
+
 /// Number of base S3 headers:
 /// - Required (4):
 ///   - x-amz-content-sha256: Payload hash (https://docs.aws.amazon.com/AmazonS3/latest/API/sig-v4-header-based-auth.html)
@@ -164,14 +169,11 @@ fn parseMetadataFromJS(metadata_value: jsc.JSValue, globalObject: *jsc.JSGlobalO
     defer iter2.deinit();
 
     var i: usize = 0;
+    var total_metadata_bytes: usize = 0;
     while (try iter2.next()) |key| {
         // Convert key to lowercase (AWS requires lowercase metadata keys)
         const key_owned = try key.toOwnedSlice(bun.default_allocator);
         defer bun.default_allocator.free(key_owned);
-
-        const key_lower = bun.handleOom(bun.default_allocator.alloc(u8, key_owned.len));
-        keys[i] = strings.copyLowercase(key_owned, key_lower);
-        keys_allocated = i + 1;
 
         // Get value - metadata values must be strings
         const val = iter2.value;
@@ -183,6 +185,23 @@ fn parseMetadataFromJS(metadata_value: jsc.JSValue, globalObject: *jsc.JSGlobalO
         defer val_str.deref();
         const val_slice = val_str.toUTF8(bun.default_allocator);
         defer val_slice.deinit();
+
+        // Check total metadata bytes limit BEFORE allocating
+        // AWS enforces a 2KB limit on total metadata size
+        const entry_bytes = key_owned.len + val_slice.slice().len;
+        if (total_metadata_bytes + entry_bytes > MAX_METADATA_BYTES) {
+            return globalObject.throwRangeError(@as(i64, @intCast(total_metadata_bytes + entry_bytes)), .{
+                .min = 0,
+                .max = MAX_METADATA_BYTES,
+                .field_name = "metadata total bytes",
+            });
+        }
+        total_metadata_bytes += entry_bytes;
+
+        // Now safe to allocate
+        const key_lower = bun.handleOom(bun.default_allocator.alloc(u8, key_owned.len));
+        keys[i] = strings.copyLowercase(key_owned, key_lower);
+        keys_allocated = i + 1;
 
         values[i] = bun.handleOom(bun.default_allocator.dupe(u8, val_slice.slice()));
         values_allocated = i + 1;

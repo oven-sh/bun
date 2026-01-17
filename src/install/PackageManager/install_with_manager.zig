@@ -658,6 +658,12 @@ pub fn installWithManager(
         }
     }
 
+    // Refresh workspace package scripts if they changed (detected during diff).
+    // This ensures the lockfile is saved with the updated scripts.
+    if (manager.summary.workspace_scripts_changed) {
+        try refreshWorkspaceScripts(manager);
+    }
+
     // append scripts to lockfile before generating new metahash
     manager.loadRootLifecycleScripts(root);
     defer {
@@ -848,6 +854,7 @@ pub fn installWithManager(
         (manager.options.do.save_lockfile and
             (did_meta_hash_change or
                 had_any_diffs or
+                manager.summary.workspace_scripts_changed or
                 manager.update_requests.len > 0 or
                 (load_result == .ok and (load_result.ok.serializer_result.packages_need_update or load_result.ok.serializer_result.migrated_from_lockb_v2)) or
                 manager.lockfile.isEmpty() or
@@ -1099,6 +1106,68 @@ pub fn getWorkspaceFilters(manager: *PackageManager, original_cwd: []const u8) !
     }
 
     return .{ workspace_filters.items, install_root_dependencies };
+}
+
+/// Refreshes workspace package scripts from their package.json files.
+/// This is called when workspace scripts have changed (detected during diff)
+/// to ensure the lockfile is saved with the updated scripts.
+fn refreshWorkspaceScripts(manager: *PackageManager) !void {
+    const packages = manager.lockfile.packages.slice();
+    const resolutions = packages.items(.resolution);
+    const name_hashes = packages.items(.name_hash);
+    var scripts_list = packages.items(.scripts);
+    var metas = packages.items(.meta);
+
+    for (resolutions, name_hashes, 0..) |resolution, name_hash, pkg_id| {
+        if (resolution.tag != .workspace) continue;
+
+        // Get workspace path
+        const workspace_path = manager.lockfile.workspace_paths.getPtr(name_hash) orelse continue;
+
+        // Build package.json path
+        var package_json_path: bun.AbsPath(.{ .sep = .auto }) = .initTopLevelDir();
+        defer package_json_path.deinit();
+        package_json_path.append(workspace_path.slice(manager.lockfile.buffers.string_bytes.items));
+        package_json_path.append("package.json");
+
+        // Read and parse package.json
+        const json_result = manager.workspace_package_json_cache.getWithPath(
+            manager.allocator,
+            manager.log,
+            package_json_path.sliceZ(),
+            .{},
+        );
+
+        const json = switch (json_result) {
+            .entry => |entry| entry.root,
+            else => continue,
+        };
+
+        // Parse scripts from the JSON
+        var builder = manager.lockfile.stringBuilder();
+        Package.Scripts.parseCount(manager.allocator, &builder, json);
+        try builder.allocate();
+
+        var new_scripts: Package.Scripts = .{};
+        new_scripts.parseAlloc(manager.allocator, &builder, json);
+        new_scripts.filled = true;
+        builder.clamp();
+
+        // Update the scripts in the lockfile
+        scripts_list[pkg_id] = new_scripts;
+
+        // Update hasInstallScript flag
+        const has_scripts = new_scripts.hasAny() or brk: {
+            const dir = std.fs.path.dirname(package_json_path.slice()) orelse "";
+            const binding_dot_gyp_path = bun.path.joinAbsStringZ(
+                dir,
+                &[_][]const u8{"binding.gyp"},
+                .auto,
+            );
+            break :brk bun.sys.exists(binding_dot_gyp_path);
+        };
+        metas[pkg_id].setHasInstallScript(has_scripts);
+    }
 }
 
 const security_scanner = @import("./security_scanner.zig");

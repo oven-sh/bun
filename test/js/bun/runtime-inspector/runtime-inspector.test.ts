@@ -29,18 +29,19 @@ async function waitForDebuggerListening(
   // Inspect in browser:
   //   https://debug.bun.sh/#localhost:6499/...
   // --------------------- Bun Inspector ---------------------
+  // Note: We maintain a single readPromise across iterations to avoid violating
+  // the Web Streams API contract (concurrent reads are not allowed).
+  let readPromise = reader.read();
   while ((stderr.match(/Bun Inspector/g) || []).length < 2) {
     if (Date.now() - startTime > timeoutMs) {
       throw new Error(`Timeout waiting for Bun Inspector banner after ${timeoutMs}ms. Got stderr: "${stderr}"`);
     }
 
-    const readPromise = reader.read();
-    const timeoutPromise = Bun.sleep(1000).then(() => ({ value: undefined, done: false, timeout: true }));
-    const result = (await Promise.race([readPromise, timeoutPromise])) as any;
-
-    if (result.timeout) continue;
+    const result = await Promise.race([readPromise, Bun.sleep(1000).then(() => null)]);
+    if (result === null) continue;
     if (result.done) break;
     stderr += decoder.decode(result.value, { stream: true });
+    readPromise = reader.read();
   }
 
   return { stderr, reader };
@@ -136,8 +137,7 @@ describe("Runtime inspector activation", () => {
           fs.writeFileSync(path.join(process.cwd(), "pid"), String(process.pid));
           console.log("READY");
 
-          // Keep process alive long enough for both _debugProcess calls
-          setTimeout(() => process.exit(0), 5000);
+          // Keep process alive until parent kills it
           setInterval(() => {}, 1000);
         `,
       });
@@ -219,8 +219,7 @@ describe("Runtime inspector activation", () => {
           fs.writeFileSync(path.join(process.cwd(), "pid-" + id), String(process.pid));
           console.log("READY-" + id);
 
-          // Keep alive long enough for _debugProcess call
-          setTimeout(() => process.exit(0), 5000);
+          // Keep process alive until parent kills it
           setInterval(() => {}, 1000);
         `,
       });
@@ -404,8 +403,7 @@ describe.skipIf(isWindows)("--disable-sigusr1", () => {
         fs.writeFileSync(path.join(process.cwd(), "pid"), String(process.pid));
         console.log("READY");
 
-        // Keep alive long enough for signal to be sent
-        setTimeout(() => process.exit(0), 5000);
+        // Keep process alive until signal terminates it
         setInterval(() => {}, 1000);
       `,
     });
@@ -435,8 +433,8 @@ describe.skipIf(isWindows)("--disable-sigusr1", () => {
     process.kill(pid, "SIGUSR1");
 
     const stderr = await targetProc.stderr.text();
-    // Should NOT see debugger listening message
-    expect(stderr).not.toContain("Debugger listening");
+    // Should NOT see Bun Inspector banner
+    expect(stderr).not.toContain("Bun Inspector");
     // Process should be terminated by SIGUSR1
     // Exit code = 128 + signal number (macOS: SIGUSR1=30 -> 158, Linux: SIGUSR1=10 -> 138)
     expect(await targetProc.exited).toBeOneOf([158, 138]);

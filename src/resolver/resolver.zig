@@ -4235,9 +4235,11 @@ pub const Resolver = struct {
                             merged_config.preserve_imports_not_used_as_values = value;
                         }
 
-                        var iter = parent_config.paths.iterator();
-                        while (iter.next()) |c| {
-                            merged_config.paths.put(c.key_ptr.*, c.value_ptr.*) catch unreachable;
+                        // TypeScript's behavior: if a child config defines `paths`, it completely
+                        // overrides the parent's `paths` rather than merging.
+                        if (parent_config.paths.count() > 0) {
+                            merged_config.paths = parent_config.paths;
+                            merged_config.base_url_for_paths = parent_config.base_url_for_paths;
                         }
                         // todo deinit these parent configs somehow?
                     }

@@ -2538,7 +2538,9 @@ function initOriginSet(session: Http2Session) {
       }
     }
     let originString = `https://${hostName}`;
-    if (socket.remotePort != null) originString += `:${socket.remotePort}`;
+    // Only include port if it's not the default HTTPS port (443)
+    // This matches URL.origin normalization behavior
+    if (socket.remotePort != null && socket.remotePort !== 443) originString += `:${socket.remotePort}`;
     originSet.add(originString);
   }
   return originSet;

@@ -424,6 +424,7 @@ pub const Command = struct {
         pub const BundlerOptions = struct {
             outdir: []const u8 = "",
             outfile: []const u8 = "",
+            metafile: [:0]const u8 = "",
             root_dir: []const u8 = "",
             public_path: []const u8 = "",
             entry_naming: []const u8 = "[dir]/[name].[ext]",
@@ -463,6 +464,7 @@ pub const Command = struct {
             compile_autoload_bunfig: bool = true,
             compile_autoload_tsconfig: bool = false,
             compile_autoload_package_json: bool = false,
+            compile_executable_path: ?[]const u8 = null,
             windows: options.WindowsOptions = .{},
         };
 
@@ -688,13 +690,26 @@ pub const Command = struct {
                         const original_argv_len = bun.argv.len;
                         var argv_list = std.array_list.Managed([:0]const u8).fromOwnedSlice(bun.default_allocator, bun.argv);
                         try bun.appendOptionsEnv(graph.compile_exec_argv, &argv_list, bun.default_allocator);
-                        bun.argv = argv_list.items;
+
+                        // Store the full argv including user arguments
+                        const full_argv = argv_list.items;
+                        const num_exec_argv_options = full_argv.len -| original_argv_len;
 
                         // Calculate offset: skip executable name + all exec argv options
-                        offset_for_passthrough = if (bun.argv.len > 1) 1 + (bun.argv.len -| original_argv_len) else 0;
+                        offset_for_passthrough = if (full_argv.len > 1) 1 + num_exec_argv_options else 0;
+
+                        // Temporarily set bun.argv to only include executable name + exec_argv options.
+                        // This prevents user arguments like --version/--help from being intercepted
+                        // by Bun's argument parser (they should be passed through to user code).
+                        bun.argv = full_argv[0..@min(1 + num_exec_argv_options, full_argv.len)];
 
                         // Handle actual options to parse.
-                        break :brk try Command.init(allocator, log, .AutoCommand);
+                        const result = try Command.init(allocator, log, .AutoCommand);
+
+                        // Restore full argv so passthrough calculation works correctly
+                        bun.argv = full_argv;
+
+                        break :brk result;
                     }
 
                     context_data = .{

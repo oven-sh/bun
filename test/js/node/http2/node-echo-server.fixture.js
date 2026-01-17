@@ -69,12 +69,12 @@ server.on("stream", (stream, headers, flags) => {
     });
   }
 });
-let baseurl = "https://localhost:";
+let baseurl = "https://127.0.0.1:";
 
-server.listen(0, "localhost");
+server.listen(0, "127.0.0.1");
 
 server.on("listening", () => {
   const { port, address, family } = server.address();
-  baseurl = `https://localhost:${port}`;
-  process.stdout.write(JSON.stringify({ port, address: "localhost", family: "IPv4" }));
+  baseurl = `https://127.0.0.1:${port}`;
+  process.stdout.write(JSON.stringify({ port, address: "127.0.0.1", family: "IPv4" }));
 });

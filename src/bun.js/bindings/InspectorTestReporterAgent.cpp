@@ -50,6 +50,26 @@ void Bun__TestReporterAgentReportTestFound(Inspector::InspectorTestReporterAgent
     agent->reportTestFound(callFrame, testId, str, type, parentId);
 }
 
+void Bun__TestReporterAgentReportTestFoundWithLocation(Inspector::InspectorTestReporterAgent* agent, int testId, BunString* name, BunTestType item_type, int parentId, BunString* sourceURL, int line)
+{
+    auto str = name->toWTFString(BunString::ZeroCopy);
+    auto sourceURLStr = sourceURL->toWTFString(BunString::ZeroCopy);
+
+    Protocol::TestReporter::TestType type;
+    switch (item_type) {
+    case BunTestType::Test:
+        type = Protocol::TestReporter::TestType::Test;
+        break;
+    case BunTestType::Describe:
+        type = Protocol::TestReporter::TestType::Describe;
+        break;
+    default:
+        ASSERT_NOT_REACHED();
+    }
+
+    agent->reportTestFoundWithLocation(testId, str, type, parentId, sourceURLStr, line);
+}
+
 void Bun__TestReporterAgentReportTestStart(Inspector::InspectorTestReporterAgent* agent, int testId)
 {
     agent->reportTestStart(testId);
@@ -206,6 +226,21 @@ void InspectorTestReporterAgent::reportTestFound(JSC::CallFrame* callFrame, int 
         sourceID > 0 ? String::number(sourceID) : String(),
         sourceURL,
         lineColumn.line,
+        name,
+        type,
+        parentId > 0 ? parentId : std::optional<int>());
+}
+
+void InspectorTestReporterAgent::reportTestFoundWithLocation(int testId, const String& name, Protocol::TestReporter::TestType type, int parentId, const String& sourceURL, int line)
+{
+    if (!m_enabled)
+        return;
+
+    m_frontendDispatcher->found(
+        testId,
+        String(), // sourceID - not available for retroactively reported tests
+        sourceURL,
+        line,
         name,
         type,
         parentId > 0 ? parentId : std::optional<int>());

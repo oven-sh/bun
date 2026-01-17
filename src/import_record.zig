@@ -108,6 +108,11 @@ pub const ImportRecord = struct {
 
     source_index: bun.ast.Index = .invalid,
 
+    /// The original import specifier as written in source code (e.g., "./foo.js").
+    /// This is preserved before resolution overwrites `path` with the resolved path.
+    /// Used for metafile generation.
+    original_path: []const u8 = "",
+
     /// Pack all boolean flags into 2 bytes to reduce padding overhead.
     /// Previously 15 separate bool fields caused ~14-16 bytes of padding waste.
     flags: Flags = .{},

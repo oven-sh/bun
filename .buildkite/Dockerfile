@@ -136,7 +136,64 @@ set -efu
 export BUILDKITE_BUILD_CHECKOUT_PATH=/var/lib/buildkite-agent/build
 EOF
 
-RUN chmod 744 /var/lib/buildkite-agent/hooks/environment
+# Checkout hook - uses git fetch instead of clone when repo exists
+RUN cat <<'EOF' > /var/lib/buildkite-agent/hooks/checkout
+#!/bin/sh
+set -efu
+
+CHECKOUT_PATH="${BUILDKITE_BUILD_CHECKOUT_PATH}"
+COMMIT="${BUILDKITE_COMMIT}"
+REPO="${BUILDKITE_REPO}"
+
+echo "--- :git: Checkout"
+
+if [ -d "${CHECKOUT_PATH}/.git" ]; then
+    echo "Repository exists, using git fetch..."
+    cd "${CHECKOUT_PATH}"
+    git fetch --depth=1 origin "${COMMIT}" || git fetch origin "${COMMIT}"
+    git reset --hard
+    git clean -fdx -e 'build/' -e 'vendor/zig/'
+    git checkout -f "${COMMIT}"
+else
+    echo "Repository does not exist, cloning..."
+    git clone --depth=1 "${REPO}" "${CHECKOUT_PATH}"
+    cd "${CHECKOUT_PATH}"
+    git fetch --depth=1 origin "${COMMIT}" || git fetch origin "${COMMIT}"
+    git checkout -f "${COMMIT}"
+fi
+
+echo "Checked out ${COMMIT}"
+EOF
+
+# Pre-command hook - removes node_modules before each build
+RUN cat <<'EOF' > /var/lib/buildkite-agent/hooks/pre-command
+#!/bin/sh
+set -eu
+
+CHECKOUT_PATH="${BUILDKITE_BUILD_CHECKOUT_PATH}"
+
+if [ -d "${CHECKOUT_PATH}/node_modules" ]; then
+    echo "Removing existing node_modules..."
+    rm -rf "${CHECKOUT_PATH}/node_modules"
+fi
+EOF
+
+RUN chmod 755 /var/lib/buildkite-agent/hooks/environment \
+    && chmod 755 /var/lib/buildkite-agent/hooks/checkout \
+    && chmod 755 /var/lib/buildkite-agent/hooks/pre-command
+
+# Clone Bun repository and pre-download dependencies
+# This avoids downloading dependencies during each CI build
+RUN git clone --depth=1 https://github.com/oven-sh/bun.git /var/lib/buildkite-agent/build
+
+WORKDIR /var/lib/buildkite-agent/build
+
+# Install dependencies and run cmake configure to download build dependencies
+RUN bun install --frozen-lockfile && \
+    mkdir -p build/release && \
+    cmake -S . -B build/release -G Ninja -DCMAKE_BUILD_TYPE=Release -DCI=ON && \
+    rm -rf build/release/CMakeFiles build/release/CMakeCache.txt build/release/cmake_install.cmake && \
+    rm -rf node_modules
 
 COPY  ../*/agent.mjs /var/bun/scripts/
 

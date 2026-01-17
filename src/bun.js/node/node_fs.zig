@@ -219,10 +219,16 @@ pub const Async = struct {
                         const bufs = args.buffers.buffers.items;
                         const pos: i64 = args.position orelse -1;
 
+                        const nbufs = std.math.cast(c_uint, bufs.len) orelse {
+                            task.result = .{ .err = .{ .errno = @intFromEnum(bun.sys.E.INVAL), .syscall = .read } };
+                            task.globalObject.bunVM().eventLoop().enqueueTask(jsc.Task.init(task));
+                            return task.promise.value();
+                        };
+
                         var sum: u64 = 0;
                         for (bufs) |b| sum += b.slice().len;
 
-                        const rc = uv.uv_fs_read(loop, &task.req, fd, bufs.ptr, @intCast(bufs.len), pos, &uv_callback);
+                        const rc = uv.uv_fs_read(loop, &task.req, fd, bufs.ptr, nbufs, pos, &uv_callback);
                         bun.debugAssert(rc == .zero);
                         log("uv readv({d}, {*}, {d}, {d}, {d} total bytes) = scheduled", .{ fd, bufs.ptr, bufs.len, pos, sum });
                     },
@@ -237,12 +243,18 @@ pub const Async = struct {
                             return task.promise.value();
                         }
 
+                        const nbufs = std.math.cast(c_uint, bufs.len) orelse {
+                            task.result = .{ .err = .{ .errno = @intFromEnum(bun.sys.E.INVAL), .syscall = .write } };
+                            task.globalObject.bunVM().eventLoop().enqueueTask(jsc.Task.init(task));
+                            return task.promise.value();
+                        };
+
                         const pos: i64 = args_.position orelse -1;
 
                         var sum: u64 = 0;
                         for (bufs) |b| sum += b.slice().len;
 
-                        const rc = uv.uv_fs_write(loop, &task.req, fd, bufs.ptr, @intCast(bufs.len), pos, &uv_callback);
+                        const rc = uv.uv_fs_write(loop, &task.req, fd, bufs.ptr, nbufs, pos, &uv_callback);
                         bun.debugAssert(rc == .zero);
                         log("uv writev({d}, {*}, {d}, {d}, {d} total bytes) = scheduled", .{ fd, bufs.ptr, bufs.len, pos, sum });
                     },

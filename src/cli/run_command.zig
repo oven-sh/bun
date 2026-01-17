@@ -1395,6 +1395,20 @@ pub const RunCommand = struct {
         // check for stdin
 
         if (target_name.len == 1 and target_name[0] == '-') {
+            if (Output.isStdinTTY()) {
+                const stdin_is_character_device = switch (bun.sys.fstat(bun.FD.stdin())) {
+                    .result => |stat| bun.sys.kindFromMode(stat.mode) == .character_device,
+                    .err => false,
+                };
+
+                if (stdin_is_character_device) {
+                    RunCommand.printHelp(root_dir_info.enclosing_package_json);
+                    Output.prettyln("<r><yellow>`bun -` reads from stdin. Pipe code into it or use `bun --help`.<r>\n", .{});
+                    Output.flush();
+                    return true;
+                }
+            }
+
             log("Executing from stdin", .{});
 
             // read from stdin

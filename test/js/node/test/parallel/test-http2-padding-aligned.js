@@ -27,10 +27,10 @@ const { duplexPair } = require('stream');
 // sensitive to how the internals are implemented and may differ from node.js due to corking and settings.
 
 // 45 is the settings frame (9 + 36)
-// 9 + 9 + 40 are settings ACK window update and byte frames
+// 9 + 9 + 34 are settings ACK window update and header frames
 // 24 is the data (divisible by 8 because of padding)
 // 9 is the end of the stream
-const clientLengths = [45, 9, 9, 40, 9, 24, 9];
+const clientLengths = [45, 9, 9, 34, 9, 24, 9];
 
 
 // 45 for settings (9 + 36)

@@ -159,8 +159,8 @@ describe("bun secret", () => {
         "-n",
         "to-delete",
       ]);
-      expect(deleteExit).toBe(0);
       expect(deleteStderr).toBe("");
+      expect(deleteExit).toBe(0);
 
       // Verify it's gone
       const { exitCode: getExit } = runSecretCommand(["get", "-s", testService, "-n", "to-delete"]);
@@ -186,8 +186,8 @@ describe("bun secret", () => {
       expect(setExit).toBe(0);
 
       const { stdout, exitCode } = runSecretCommand(["get", "-s", testService, "-n", "special-key"]);
-      expect(exitCode).toBe(0);
       expect(stdout.trim()).toBe(specialValue);
+      expect(exitCode).toBe(0);
     });
   });
 

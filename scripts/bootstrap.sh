@@ -1485,7 +1485,7 @@ if [ -d "${CHECKOUT_PATH}/.git" ]; then
 
     # Clean up any local changes
     git reset --hard
-    git clean -fdx -e 'build/' -e 'vendor/zig/'
+    git clean -fdx -e 'build/' -e 'vendor/'
 
     # Checkout the commit
     git checkout -f "${COMMIT}"

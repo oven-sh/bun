@@ -152,7 +152,7 @@ if [ -d "${CHECKOUT_PATH}/.git" ]; then
     cd "${CHECKOUT_PATH}"
     git fetch --depth=1 origin "${COMMIT}" || git fetch origin "${COMMIT}"
     git reset --hard
-    git clean -fdx -e 'build/' -e 'vendor/zig/'
+    git clean -fdx -e 'build/' -e 'vendor/'
     git checkout -f "${COMMIT}"
 else
     echo "Repository does not exist, cloning..."
@@ -188,11 +188,13 @@ RUN git clone --depth=1 https://github.com/oven-sh/bun.git /var/lib/buildkite-ag
 
 WORKDIR /var/lib/buildkite-agent/build
 
-# Install dependencies and run cmake configure to download build dependencies
+# Install dependencies, generate source lists, and run cmake configure to download build dependencies
 RUN bun install --frozen-lockfile && \
+    bun run scripts/glob-sources.mjs && \
     mkdir -p build/release && \
     cmake -S . -B build/release -G Ninja -DCMAKE_BUILD_TYPE=Release -DCI=ON && \
-    rm -rf build/release/CMakeFiles build/release/CMakeCache.txt build/release/cmake_install.cmake && \
+    cmake --build build/release --target clone-zig clone-boringssl clone-mimalloc clone-zstd clone-lolhtml clone-cares clone-libdeflate clone-libarchive clone-tinycc clone-zlib clone-lshpack clone-brotli clone-highway clone-hdrhistogram clone-picohttpparser || true && \
+    rm -rf build/release/CMakeFiles build/release/CMakeCache.txt build/release/cmake_install.cmake build/release/build.ninja build/release/compile_commands.json && \
     rm -rf node_modules
 
 COPY  ../*/agent.mjs /var/bun/scripts/

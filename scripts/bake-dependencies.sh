@@ -85,6 +85,10 @@ cd "$BUN_REPO_PATH"
 print "Installing npm dependencies..."
 bun install --frozen-lockfile
 
+# Generate cmake source lists (these are gitignored but required for cmake configure)
+print "Generating cmake source lists..."
+bun run scripts/glob-sources.mjs
+
 # Set up build directory
 BUILD_PATH="$BUN_REPO_PATH/build/$BUILD_TYPE"
 CACHE_PATH="$BUILD_PATH/cache"
@@ -106,8 +110,13 @@ if [ -n "$ABI" ]; then
     CMAKE_ARGS="$CMAKE_ARGS -DABI=$ABI"
 fi
 
-# Run cmake configure - this downloads all dependencies
+# Run cmake configure - this downloads WebKit
 cmake $CMAKE_ARGS
+
+# Run cmake build for clone targets only - this downloads Zig, BoringSSL, etc.
+# These are build targets that download dependencies
+print "Downloading build dependencies (Zig, BoringSSL, etc.)..."
+cmake --build "$BUILD_PATH" --target clone-zig clone-boringssl clone-mimalloc clone-zstd clone-lolhtml clone-cares clone-libdeflate clone-libarchive clone-tinycc clone-zlib clone-lshpack clone-brotli clone-highway clone-hdrhistogram clone-picohttpparser || true
 
 # Also download debug WebKit variant for debug builds
 print "Downloading debug WebKit variant..."
@@ -115,8 +124,8 @@ cmake $CMAKE_ARGS -DCMAKE_BUILD_TYPE=Debug -B "$BUN_REPO_PATH/build/debug" || tr
 
 # Clean up build artifacts but keep downloaded dependencies
 print "Cleaning up build artifacts..."
-rm -rf "$BUILD_PATH/CMakeFiles" "$BUILD_PATH/CMakeCache.txt" "$BUILD_PATH/cmake_install.cmake"
-rm -rf "$BUN_REPO_PATH/build/debug/CMakeFiles" "$BUN_REPO_PATH/build/debug/CMakeCache.txt" 2>/dev/null || true
+rm -rf "$BUILD_PATH/CMakeFiles" "$BUILD_PATH/CMakeCache.txt" "$BUILD_PATH/cmake_install.cmake" "$BUILD_PATH/build.ninja" "$BUILD_PATH/compile_commands.json" "$BUILD_PATH/.ninja_deps" "$BUILD_PATH/.ninja_log"
+rm -rf "$BUN_REPO_PATH/build/debug/CMakeFiles" "$BUN_REPO_PATH/build/debug/CMakeCache.txt" "$BUN_REPO_PATH/build/debug/build.ninja" 2>/dev/null || true
 
 # Remove node_modules - will be reinstalled during actual builds
 print "Removing node_modules..."
@@ -125,23 +134,32 @@ rm -rf "$BUN_REPO_PATH/node_modules"
 # List what was downloaded
 print ""
 print "=== Downloaded Dependencies ==="
-if [ -d "$BUN_REPO_PATH/vendor/zig" ]; then
-    print "✓ Zig compiler: $(ls -la "$BUN_REPO_PATH/vendor/zig/zig" 2>/dev/null | awk '{print $5}' || echo 'present')"
+VENDOR_PATH="$BUN_REPO_PATH/vendor"
+if [ -d "$VENDOR_PATH/zig" ]; then
+    print "✓ Zig compiler: $(du -sh "$VENDOR_PATH/zig" 2>/dev/null | cut -f1)"
 fi
-if [ -d "$CACHE_PATH/webkit-"* ] 2>/dev/null; then
-    print "✓ WebKit: $(du -sh "$CACHE_PATH"/webkit-* 2>/dev/null | head -1 || echo 'present')"
+if [ -d "$CACHE_PATH" ]; then
+    for webkit_dir in "$CACHE_PATH"/webkit-*; do
+        if [ -d "$webkit_dir" ]; then
+            print "✓ WebKit: $(du -sh "$webkit_dir" 2>/dev/null | cut -f1)"
+            break
+        fi
+    done
 fi
-if [ -d "$BUILD_PATH/boringssl" ]; then
-    print "✓ BoringSSL: present"
+if [ -d "$VENDOR_PATH/boringssl" ]; then
+    print "✓ BoringSSL: $(du -sh "$VENDOR_PATH/boringssl" 2>/dev/null | cut -f1)"
 fi
-if [ -d "$BUILD_PATH/mimalloc" ]; then
-    print "✓ mimalloc: present"
+if [ -d "$VENDOR_PATH/mimalloc" ]; then
+    print "✓ mimalloc: $(du -sh "$VENDOR_PATH/mimalloc" 2>/dev/null | cut -f1)"
 fi
-if [ -d "$BUILD_PATH/zstd" ]; then
-    print "✓ zstd: present"
+if [ -d "$VENDOR_PATH/zstd" ]; then
+    print "✓ zstd: $(du -sh "$VENDOR_PATH/zstd" 2>/dev/null | cut -f1)"
 fi
-if [ -d "$BUILD_PATH/lol-html" ]; then
-    print "✓ lol-html: present"
+if [ -d "$VENDOR_PATH/lolhtml" ]; then
+    print "✓ lol-html: $(du -sh "$VENDOR_PATH/lolhtml" 2>/dev/null | cut -f1)"
+fi
+if [ -d "$VENDOR_PATH/cares" ]; then
+    print "✓ c-ares: $(du -sh "$VENDOR_PATH/cares" 2>/dev/null | cut -f1)"
 fi
 
 # Calculate total size

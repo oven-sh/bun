@@ -1677,11 +1677,13 @@ describe.skipIf(!minioCredentials)("Archive with S3", () => {
 
 // Metadata tests - test with MinIO only since it properly supports x-amz-meta-* headers
 describe.skipIf(!minioCredentials?.endpoint)("S3 Metadata (x-amz-meta-*)", () => {
+  // Use optional chaining with fallbacks to avoid evaluation errors when minioCredentials is undefined
+  // (the describe is skipped in that case, but the callback is still evaluated)
   const credentials: S3Options = {
-    accessKeyId: minioCredentials!.accessKeyId,
-    secretAccessKey: minioCredentials!.secretAccessKey,
-    endpoint: minioCredentials!.endpoint,
-    bucket: minioCredentials!.bucket,
+    accessKeyId: minioCredentials?.accessKeyId ?? "",
+    secretAccessKey: minioCredentials?.secretAccessKey ?? "",
+    endpoint: minioCredentials?.endpoint ?? "",
+    bucket: minioCredentials?.bucket ?? "",
   };
 
   it("should upload and retrieve metadata via S3File.write() and stat()", async () => {

@@ -528,8 +528,8 @@ static void processLine(const Char* lineStart, const Char* lineEnd, size_t colum
 
         if (wordStartIdx < wordEndIdx) {
             wordLengths.append(stringWidth(lineSpan.data() + wordStartIdx,
-                                           lineSpan.data() + wordEndIdx,
-                                           options.ambiguousIsNarrow));
+                lineSpan.data() + wordEndIdx,
+                options.ambiguousIsNarrow));
         } else {
             wordLengths.append(0);
         }

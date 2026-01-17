@@ -4203,12 +4203,19 @@ pub const Resolver = struct {
                         const ts_dir_name = Dirname.dirname(current.abs_path);
                         const abs_path = ResolvePath.joinAbsStringBuf(ts_dir_name, bufs(.tsconfig_path_abs), &[_]string{ ts_dir_name, current.extends }, .auto);
                         const parent_config_maybe = r.parseTSConfig(abs_path, bun.invalid_fd) catch |err| {
-                            r.log.addDebugFmt(null, logger.Loc.Empty, r.allocator, "{s} loading tsconfig.json extends {f}", .{
-                                @errorName(err),
-                                bun.fmt.QuotedFormatter{
-                                    .text = abs_path,
-                                },
-                            }) catch {};
+                            // Only show warnings for tsconfig files outside of node_modules
+                            if (!info.isInsideNodeModules()) {
+                                if (err == error.ENOENT or err == error.FileNotFound) {
+                                    r.log.addWarningFmtLineCol(current.abs_path, 0, 0, r.allocator, "Cannot find base config file {f}", .{
+                                        bun.fmt.QuotedFormatter{ .text = current.extends },
+                                    }) catch {};
+                                } else if (err != error.ParseErrorAlreadyLogged and err != error.IsDir and err != error.EISDIR) {
+                                    r.log.addWarningFmtLineCol(current.abs_path, 0, 0, r.allocator, "Cannot read base config file {f}: {s}", .{
+                                        bun.fmt.QuotedFormatter{ .text = current.extends },
+                                        @errorName(err),
+                                    }) catch {};
+                                }
+                            }
                             break;
                         };
                         if (parent_config_maybe) |parent_config| {

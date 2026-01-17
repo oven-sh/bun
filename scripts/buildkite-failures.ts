@@ -215,7 +215,12 @@ while (true) {
   }
 
   // Check if build is pending/running/scheduled
-  if (build.state === "scheduled" || build.state === "running" || build.state === "creating") {
+  if (
+    build.state === "scheduled" ||
+    build.state === "running" ||
+    build.state === "creating" ||
+    build.state === "started"
+  ) {
     const runningJobs = build.jobs?.filter((job: any) => job.state === "running") || [];
     const pendingJobs = build.jobs?.filter((job: any) => job.state === "scheduled" || job.state === "waiting") || [];
     const passedJobs = build.jobs?.filter((job: any) => job.state === "passed") || [];

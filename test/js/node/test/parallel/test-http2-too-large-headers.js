@@ -43,7 +43,9 @@ async function runTestForPrototype(prototype) {
       server.on('error', reject);
     });
   } finally {
-    server.close();
+    if (server.listening) {
+      server.close();
+    }
   }
 }
 

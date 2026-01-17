@@ -192,9 +192,9 @@ describe("HTTP/2 FRAME_SIZE_ERROR with @grpc/grpc-js", () => {
 
     const client = createClient(serverAddress);
     const metadata = new grpc.Metadata();
-    // Add many custom headers. Limited to 97 headers to stay under the 16KB frame size limit.
-    // Note: HTTP/2 spec allows larger headers via CONTINUATION frames, but Bun doesn't
-    // currently implement sending CONTINUATION frames for headers that exceed MAX_FRAME_SIZE.
+    // Add many custom headers to test large header handling.
+    // Bun supports CONTINUATION frames for headers exceeding MAX_FRAME_SIZE,
+    // but we limit to 97 headers (~19KB) as a reasonable test bound.
     for (let i = 0; i < 97; i++) {
       metadata.add(`x-custom-header-${i}`, "A".repeat(200));
     }

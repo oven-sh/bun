@@ -64,6 +64,7 @@ const StringPrototypeTrim = String.prototype.trim;
 const ArrayPrototypePush = Array.prototype.push;
 const StringPrototypeToLowerCase = String.prototype.toLowerCase;
 const StringPrototypeIncludes = String.prototype.includes;
+const StringPrototypeStartsWith = String.prototype.startsWith;
 const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 const DatePrototypeToUTCString = Date.prototype.toUTCString;
 const DatePrototypeGetMilliseconds = Date.prototype.getMilliseconds;
@@ -3470,7 +3471,7 @@ class ClientHttp2Session extends Http2Session {
       this.#authority = host;
     } else {
       // IPv6 literals need brackets when appending port (e.g., [::1]:8080)
-      const needsBrackets = host.includes(":") && !host.startsWith("[");
+      const needsBrackets = StringPrototypeIncludes.$call(host, ":") && !StringPrototypeStartsWith.$call(host, "[");
       this.#authority = needsBrackets ? `[${host}]:${port}` : `${host}:${port}`;
     }
 

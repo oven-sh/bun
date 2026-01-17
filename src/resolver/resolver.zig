@@ -1014,7 +1014,11 @@ pub const Resolver = struct {
                     const symlink_path = query.entry.symlink(&r.fs.fs, r.store_fd);
                     if (symlink_path.len > 0) {
                         path.setRealpath(symlink_path);
-                        if (!result.file_fd.isValid()) result.file_fd = query.entry.cache.fd;
+                        // Only store the FD if we're not going to close it later.
+                        // When needToCloseFiles() is true, cached FDs may be stale.
+                        if (!result.file_fd.isValid() and !r.fs.fs.needToCloseFiles()) {
+                            result.file_fd = query.entry.cache.fd;
+                        }
 
                         if (r.debug_logs) |*debug| {
                             debug.addNoteFmt("Resolved symlink \"{s}\" to \"{s}\"", .{ path.text, symlink_path });
@@ -1036,22 +1040,23 @@ pub const Resolver = struct {
                             Fs.FileSystem.setMaxFd(file.native());
                         }
 
-                        defer {
-                            if (r.fs.fs.needToCloseFiles()) {
-                                if (query.entry.cache.fd.isValid()) {
-                                    var file = query.entry.cache.fd.stdFile();
-                                    file.close();
-                                    query.entry.cache.fd = .invalid;
-                                }
-                            }
-                        }
-
                         const symlink = try Fs.FileSystem.FilenameStore.instance.append(@TypeOf(out), out);
                         if (r.debug_logs) |*debug| {
                             debug.addNoteFmt("Resolved symlink \"{s}\" to \"{s}\"", .{ symlink, path.text });
                         }
                         query.entry.cache.symlink = PathString.init(symlink);
-                        if (!result.file_fd.isValid() and store_fd) result.file_fd = query.entry.cache.fd;
+
+                        // Only store the FD in the result if we're not going to close it.
+                        // Otherwise the caller would get a stale FD that's been closed.
+                        if (r.fs.fs.needToCloseFiles()) {
+                            if (query.entry.cache.fd.isValid()) {
+                                var file = query.entry.cache.fd.stdFile();
+                                file.close();
+                                query.entry.cache.fd = .invalid;
+                            }
+                        } else if (!result.file_fd.isValid() and store_fd) {
+                            result.file_fd = query.entry.cache.fd;
+                        }
 
                         path.setRealpath(symlink);
                     }
@@ -3841,7 +3846,8 @@ pub const Resolver = struct {
                     .path = abs_path,
                     .diff_case = query.diff_case,
                     .dirname_fd = entries.fd,
-                    .file_fd = query.entry.cache.fd,
+                    // When needToCloseFiles() is true (HMR mode), cached FDs may be stale
+                    .file_fd = if (r.fs.fs.needToCloseFiles()) bun.invalid_fd else query.entry.cache.fd,
                 };
             }
         }
@@ -3916,7 +3922,8 @@ pub const Resolver = struct {
                                 },
                                 .diff_case = query.diff_case,
                                 .dirname_fd = entries.fd,
-                                .file_fd = query.entry.cache.fd,
+                                // When needToCloseFiles() is true (HMR mode), cached FDs may be stale
+                                .file_fd = if (r.fs.fs.needToCloseFiles()) bun.invalid_fd else query.entry.cache.fd,
                             };
                         }
                     }
@@ -3969,7 +3976,8 @@ pub const Resolver = struct {
                     },
                     .diff_case = query.diff_case,
                     .dirname_fd = entries.fd,
-                    .file_fd = query.entry.cache.fd,
+                    // When needToCloseFiles() is true (HMR mode), cached FDs may be stale
+                    .file_fd = if (r.fs.fs.needToCloseFiles()) bun.invalid_fd else query.entry.cache.fd,
                 };
             }
         }

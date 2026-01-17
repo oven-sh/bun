@@ -1151,14 +1151,31 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultResolve, (JSC::JSGlobalObje
     bool wasModuleMock = pendingModule->wasModuleMock;
 
     JSC::JSValue result = handleVirtualModuleResult<false>(static_cast<Zig::GlobalObject*>(globalObject), objectResult, &res, &specifier, &referrer, wasModuleMock);
+
     if (!scope.exception() && !res.success) [[unlikely]] {
         throwException(globalObject, scope, result);
     }
     if (scope.exception()) [[unlikely]] {
         auto retValue = JSValue::encode(promise->rejectWithCaughtException(globalObject, scope));
         pendingModule->internalField(2).set(vm, pendingModule, JSC::jsUndefined());
+
+        if (wasModuleMock) {
+            auto* zigGlobal = static_cast<Zig::GlobalObject*>(globalObject);
+            auto specifierWtf = specifier.toWTFString(BunString::ZeroCopy);
+            zigGlobal->onLoadPlugins.modulesPendingMock.remove(specifierWtf);
+            zigGlobal->onLoadPlugins.modulesExecutingFactory.remove(specifierWtf);
+        }
+
         return retValue;
     }
+
+    if (wasModuleMock) {
+        auto* zigGlobal = static_cast<Zig::GlobalObject*>(globalObject);
+        auto specifierWtf = specifier.toWTFString(BunString::ZeroCopy);
+        zigGlobal->onLoadPlugins.modulesPendingMock.remove(specifierWtf);
+        zigGlobal->onLoadPlugins.modulesExecutingFactory.remove(specifierWtf);
+    }
+
     scope.release();
     promise->resolve(globalObject, result);
     pendingModule->internalField(2).set(vm, pendingModule, JSC::jsUndefined());

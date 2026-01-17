@@ -1002,7 +1002,7 @@ describe("split npmrc authentication", () => {
       };
 
       const cleanupPath = format.scope
-        ? join(registry.packagesPath, format.scope, format.packageName.split('/')[1])
+        ? join(registry.packagesPath, format.scope, format.packageName.split("/")[1])
         : join(registry.packagesPath, format.packageName);
 
       await Promise.all([
@@ -1013,10 +1013,9 @@ describe("split npmrc authentication", () => {
 
       const { out, err, exitCode } = await publish(env, packageDir);
 
-      expect(exitCode).toBe(0);
       expect(out).toContain(`+ ${format.packageName}@1.0.0`);
       expect(err).not.toContain("missing authentication");
+      expect(exitCode).toBe(0);
     });
   }
 });
-

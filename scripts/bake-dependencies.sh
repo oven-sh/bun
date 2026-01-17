@@ -122,10 +122,9 @@ cmake --build "$BUILD_PATH" --target clone-zig clone-boringssl clone-mimalloc cl
 print "Downloading debug WebKit variant..."
 cmake $CMAKE_ARGS -DCMAKE_BUILD_TYPE=Debug -B "$BUN_REPO_PATH/build/debug" || true
 
-# Clean up build artifacts but keep downloaded dependencies
-print "Cleaning up build artifacts..."
-rm -rf "$BUILD_PATH/CMakeFiles" "$BUILD_PATH/CMakeCache.txt" "$BUILD_PATH/cmake_install.cmake" "$BUILD_PATH/build.ninja" "$BUILD_PATH/compile_commands.json" "$BUILD_PATH/.ninja_deps" "$BUILD_PATH/.ninja_log"
-rm -rf "$BUN_REPO_PATH/build/debug/CMakeFiles" "$BUN_REPO_PATH/build/debug/CMakeCache.txt" "$BUN_REPO_PATH/build/debug/build.ninja" 2>/dev/null || true
+# Keep cmake/ninja files so subsequent builds don't re-download dependencies
+# The ninja build system tracks what's been built - removing these files causes re-downloads
+print "Keeping build system files for caching..."
 
 # Remove node_modules - will be reinstalled during actual builds
 print "Removing node_modules..."

@@ -3468,7 +3468,9 @@ class ClientHttp2Session extends Http2Session {
     // Only include port if non-default (RFC 7540: omit default ports 443 for https, 80 for http)
     const isDefaultPort = (protocol === "https:" && port === 443) || (protocol === "http:" && port === 80);
     if (isDefaultPort) {
-      this.#authority = host;
+      // IPv6 literals need brackets even without port (e.g., [::1])
+      const needsBrackets = StringPrototypeIncludes.$call(host, ":") && !StringPrototypeStartsWith.$call(host, "[");
+      this.#authority = needsBrackets ? `[${host}]` : host;
     } else {
       // IPv6 literals need brackets when appending port (e.g., [::1]:8080)
       const needsBrackets = StringPrototypeIncludes.$call(host, ":") && !StringPrototypeStartsWith.$call(host, "[");

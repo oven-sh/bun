@@ -9,11 +9,11 @@
  * 4. Large DATA frames
  */
 
+import { afterAll, beforeAll, describe, test } from "bun:test";
 import assert from "node:assert";
 import { spawn, type ChildProcess } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { after, before, describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 // @ts-ignore - @grpc/grpc-js types
@@ -112,11 +112,11 @@ function createClient(address: ServerAddress): InstanceType<typeof echoService> 
 }
 
 describe("HTTP/2 FRAME_SIZE_ERROR with @grpc/grpc-js", () => {
-  before(async () => {
+  beforeAll(async () => {
     serverAddress = await startServer();
   });
 
-  after(async () => {
+  afterAll(async () => {
     await stopServer();
   });
 

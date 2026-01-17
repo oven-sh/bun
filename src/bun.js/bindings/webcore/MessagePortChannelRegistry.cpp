@@ -58,6 +58,18 @@ void MessagePortChannelRegistry::messagePortChannelCreated(MessagePortChannel& c
 {
     // ASSERT(isMainThread());
 
+    Locker locker { m_lock };
+
+    // When a channel is destroyed, its ThreadSafeWeakPtr becomes null but the map entry may still exist.
+    // Clean up any stale entries before adding new channels with the same port identifiers.
+    RefPtr existingChannel1 = m_openChannels.get(channel.port1()).get();
+    if (!existingChannel1)
+        m_openChannels.remove(channel.port1());
+
+    RefPtr existingChannel2 = m_openChannels.get(channel.port2()).get();
+    if (!existingChannel2)
+        m_openChannels.remove(channel.port2());
+
     auto result = m_openChannels.add(channel.port1(), channel);
     ASSERT_UNUSED(result, result.isNewEntry);
 
@@ -69,11 +81,20 @@ void MessagePortChannelRegistry::messagePortChannelDestroyed(MessagePortChannel&
 {
     // ASSERT(isMainThread());
 
-    ASSERT(m_openChannels.get(channel.port1()) == &channel);
-    ASSERT(m_openChannels.get(channel.port2()) == &channel);
+    Locker locker { m_lock };
 
-    m_openChannels.remove(channel.port1());
-    m_openChannels.remove(channel.port2());
+    // The channel might have already been removed from m_openChannels if both ports
+    // were closed in quick succession from different threads. With ThreadSafeWeakPtr, the entries
+    // may still exist but point to null, or may have been removed entirely.
+    // We defensively remove the entries without asserting they match.
+    RefPtr existingChannel1 = m_openChannels.get(channel.port1()).get();
+    RefPtr existingChannel2 = m_openChannels.get(channel.port2()).get();
+
+    // Only remove if the entry points to this channel (or is null/stale)
+    if (!existingChannel1 || existingChannel1.get() == &channel)
+        m_openChannels.remove(channel.port1());
+    if (!existingChannel2 || existingChannel2.get() == &channel)
+        m_openChannels.remove(channel.port2());
 
     // LOG(MessagePorts, "Registry: After removing channel %s there are %u channels left in the registry:", channel.logString().utf8().data(), m_openChannels.size());
 }
@@ -83,7 +104,12 @@ void MessagePortChannelRegistry::didEntangleLocalToRemote(const MessagePortIdent
     // ASSERT(isMainThread());
 
     // The channel might be gone if the remote side was closed.
-    RefPtr channel = m_openChannels.get(local);
+    RefPtr<MessagePortChannel> channel;
+    {
+        Locker locker { m_lock };
+        channel = m_openChannels.get(local).get();
+    }
+
     if (!channel)
         return;
 
@@ -97,7 +123,13 @@ void MessagePortChannelRegistry::didDisentangleMessagePort(const MessagePortIden
     // ASSERT(isMainThread());
 
     // The channel might be gone if the remote side was closed.
-    if (RefPtr channel = m_openChannels.get(port))
+    RefPtr<MessagePortChannel> channel;
+    {
+        Locker locker { m_lock };
+        channel = m_openChannels.get(port).get();
+    }
+
+    if (channel)
         channel->disentanglePort(port);
 }
 
@@ -107,7 +139,12 @@ void MessagePortChannelRegistry::didCloseMessagePort(const MessagePortIdentifier
 
     // LOG(MessagePorts, "Registry: MessagePort %s closed in registry", port.logString().utf8().data());
 
-    RefPtr channel = m_openChannels.get(port);
+    RefPtr<MessagePortChannel> channel;
+    {
+        Locker locker { m_lock };
+        channel = m_openChannels.get(port).get();
+    }
+
     if (!channel)
         return;
 
@@ -129,7 +166,12 @@ bool MessagePortChannelRegistry::didPostMessageToRemote(MessageWithMessagePorts&
     // LOG(MessagePorts, "Registry: Posting message to MessagePort %s in registry", remoteTarget.logString().utf8().data());
 
     // The channel might be gone if the remote side was closed.
-    RefPtr channel = m_openChannels.get(remoteTarget);
+    RefPtr<MessagePortChannel> channel;
+    {
+        Locker locker { m_lock };
+        channel = m_openChannels.get(remoteTarget).get();
+    }
+
     if (!channel) {
         // LOG(MessagePorts, "Registry: Could not find MessagePortChannel for port %s; It was probably closed. Message will be dropped.", remoteTarget.logString().utf8().data());
         return false;
@@ -143,7 +185,12 @@ void MessagePortChannelRegistry::takeAllMessagesForPort(const MessagePortIdentif
     // ASSERT(isMainThread());
 
     // The channel might be gone if the remote side was closed.
-    RefPtr channel = m_openChannels.get(port);
+    RefPtr<MessagePortChannel> channel;
+    {
+        Locker locker { m_lock };
+        channel = m_openChannels.get(port).get();
+    }
+
     if (!channel) {
         callback({}, [] {});
         return;
@@ -159,18 +206,24 @@ std::optional<MessageWithMessagePorts> MessagePortChannelRegistry::tryTakeMessag
     // LOG(MessagePorts, "Registry: Trying to take a message for MessagePort %s", port.logString().utf8().data());
 
     // The channel might be gone if the remote side was closed.
-    auto* channel = m_openChannels.get(port);
+    RefPtr<MessagePortChannel> channel;
+    {
+        Locker locker { m_lock };
+        channel = m_openChannels.get(port).get();
+    }
+
     if (!channel)
         return std::nullopt;
 
     return channel->tryTakeMessageForPort(port);
 }
 
-MessagePortChannel* MessagePortChannelRegistry::existingChannelContainingPort(const MessagePortIdentifier& port)
+RefPtr<MessagePortChannel> MessagePortChannelRegistry::existingChannelContainingPort(const MessagePortIdentifier& port)
 {
     // ASSERT(isMainThread());
 
-    return m_openChannels.get(port);
+    Locker locker { m_lock };
+    return m_openChannels.get(port).get();
 }
 
 } // namespace WebCore

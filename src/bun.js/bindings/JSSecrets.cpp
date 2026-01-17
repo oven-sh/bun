@@ -462,6 +462,12 @@ extern "C" SYSV_ABI SecretsCliResult Bun__Secrets__getSync(
     Bun::Secrets::Error err;
     auto maybeValue = Bun::Secrets::getPassword(serviceCStr, nameCStr, err);
 
+    if (err.type == Bun::Secrets::ErrorType::NotFound) {
+        result.success = true;
+        result.value = nullptr;
+        result.value_len = 0;
+        return result;
+    }
     if (err.isError()) {
         result.error_type = static_cast<int>(err.type);
         result.error_code = err.code;

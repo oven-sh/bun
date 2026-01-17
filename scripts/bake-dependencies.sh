@@ -18,7 +18,7 @@ print() {
 }
 
 error() {
-    print "error: $@" >&2
+    printf 'error: %s\n' "$*" >&2
     exit 1
 }
 
@@ -103,13 +103,13 @@ print "Running CMake configure to download dependencies..."
 
 # Run cmake configure - this downloads WebKit
 if [ -n "$ABI" ]; then
-    cmake -S "$BUN_REPO_PATH" -B "$BUILD_PATH" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCI=ON -DABI="$ABI"
+    if ! cmake -S "$BUN_REPO_PATH" -B "$BUILD_PATH" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCI=ON -DABI="$ABI"; then
+        error "CMake configure failed for release build"
+    fi
 else
-    cmake -S "$BUN_REPO_PATH" -B "$BUILD_PATH" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCI=ON
-fi
-
-if [ $? -ne 0 ]; then
-    error "CMake configure failed for release build"
+    if ! cmake -S "$BUN_REPO_PATH" -B "$BUILD_PATH" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCI=ON; then
+        error "CMake configure failed for release build"
+    fi
 fi
 
 # Run cmake build for clone targets only - this downloads Zig, BoringSSL, etc.
@@ -124,13 +124,13 @@ fi
 # Also download debug WebKit variant for debug builds
 print "Downloading debug WebKit variant..."
 if [ -n "$ABI" ]; then
-    cmake -S "$BUN_REPO_PATH" -B "$BUN_REPO_PATH/build/debug" -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCI=ON -DABI="$ABI"
+    if ! cmake -S "$BUN_REPO_PATH" -B "$BUN_REPO_PATH/build/debug" -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCI=ON -DABI="$ABI"; then
+        error "CMake configure failed for debug build"
+    fi
 else
-    cmake -S "$BUN_REPO_PATH" -B "$BUN_REPO_PATH/build/debug" -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCI=ON
-fi
-
-if [ $? -ne 0 ]; then
-    error "CMake configure failed for debug build"
+    if ! cmake -S "$BUN_REPO_PATH" -B "$BUN_REPO_PATH/build/debug" -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCI=ON; then
+        error "CMake configure failed for debug build"
+    fi
 fi
 
 # Keep cmake/ninja files so subsequent builds don't re-download dependencies

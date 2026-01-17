@@ -843,4 +843,107 @@ body {
       api.expectFile("out/" + jsFile).toContain("sourceMappingURL");
     },
   });
+
+  // Test that resources inside <noscript> tags are bundled - issue #25618
+  itBundled("html/noscript-resources", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <noscript><link rel="stylesheet" href="noscript.css"></noscript>
+    <link rel="stylesheet" href="main.css">
+  </head>
+  <body>
+    <p>Hello, World!</p>
+    <noscript>
+      <img src="fallback.jpg" alt="Fallback image">
+    </noscript>
+  </body>
+</html>`,
+      "/noscript.css": `
+p {
+  color: red;
+}`,
+      "/main.css": `
+body {
+  margin: 0;
+}`,
+      "/fallback.jpg": "fake image content",
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const htmlContent = api.readFile("out/index.html");
+
+      // Check that noscript CSS is bundled and referenced
+      expect(htmlContent).not.toContain('href="noscript.css"');
+      expect(htmlContent).not.toContain('href="main.css"');
+      expect(htmlContent).toMatch(/href=".*\.css"/);
+
+      // Check that noscript image is bundled and referenced
+      expect(htmlContent).not.toContain('src="fallback.jpg"');
+      expect(htmlContent).toMatch(/<noscript>\s*<img src=".*\.jpg"/);
+
+      // Verify there are hashed CSS files for both stylesheets
+      const cssMatches = htmlContent.match(/href="([^"]*\.css)"/g);
+      expect(cssMatches).not.toBeNull();
+      expect(cssMatches!.length).toBeGreaterThanOrEqual(1);
+
+      // Verify the CSS content exists
+      const cssPath = htmlContent.match(/href="([^"]*\.css)"/)?.[1];
+      const cssBundle = api.readFile("out/" + cssPath!);
+      expect(cssBundle).toContain("color:");
+      expect(cssBundle).toContain("margin:");
+    },
+  });
+
+  // Test noscript with script tags - issue #25618
+  itBundled("html/noscript-script", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <script src="main.js"></script>
+    <noscript>
+      <link rel="stylesheet" href="nojs-styles.css">
+    </noscript>
+  </head>
+  <body>
+    <div id="app"></div>
+  </body>
+</html>`,
+      "/main.js": `console.log('App loaded');`,
+      "/nojs-styles.css": `
+#app {
+  display: none;
+}
+.no-js-message {
+  display: block;
+}`,
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const htmlContent = api.readFile("out/index.html");
+
+      // Main JS should be bundled
+      expect(htmlContent).not.toContain('src="main.js"');
+      expect(htmlContent).toMatch(/src=".*\.js"/);
+
+      // Noscript CSS should be bundled
+      expect(htmlContent).not.toContain('href="nojs-styles.css"');
+
+      // Get the CSS file from inside noscript
+      const noscriptMatch = htmlContent.match(/<noscript>\s*<link[^>]*href="([^"]*\.css)"/);
+      expect(noscriptMatch).not.toBeNull();
+
+      const cssBundle = api.readFile("out/" + noscriptMatch![1]);
+      expect(cssBundle).toContain("#app");
+      expect(cssBundle).toContain(".no-js-message");
+    },
+  });
 });

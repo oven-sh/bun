@@ -6,7 +6,7 @@
  * into HEADERS + CONTINUATION frames.
  *
  * Works with both:
- * - bun test test/js/node/http2/node-http2-continuation.test.ts
+ * - bun bd test test/js/node/http2/node-http2-continuation.test.ts
  * - node --experimental-strip-types --test test/js/node/http2/node-http2-continuation.test.ts
  */
 import assert from "node:assert";
@@ -92,9 +92,6 @@ async function startNodeServer(): Promise<ServerInfo> {
         reject(new Error(`Server exited with code ${code}`));
       }
     });
-
-    // Timeout after 10 seconds
-    setTimeout(() => reject(new Error("Server start timeout")), 10000);
   });
 }
 

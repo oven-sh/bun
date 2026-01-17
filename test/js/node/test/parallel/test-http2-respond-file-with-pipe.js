@@ -16,8 +16,8 @@ tmpdir.refresh();
 const pipeName = tmpdir.resolve('pipe');
 
 const mkfifo = child_process.spawnSync('mkfifo', [ pipeName ]);
-if (mkfifo.error && mkfifo.error.code === 'ENOENT') {
-  common.skip('missing mkfifo');
+if (mkfifo.error) {
+  common.skip(`mkfifo failed: ${mkfifo.error.code || mkfifo.error.message}`);
 }
 
 const server = http2.createServer();
@@ -32,7 +32,16 @@ server.on('stream', common.mustCall((stream) => {
 
 server.listen(0, common.mustCall(() => {
   const client = http2.connect(`http://localhost:${server.address().port}`);
+
+  client.on('error', common.mustNotCall((err) => {
+    assert.fail(`Client error: ${err.message}`);
+  }));
+
   const req = client.request();
+
+  req.on('error', common.mustNotCall((err) => {
+    assert.fail(`Request error: ${err.message}`);
+  }));
 
   req.on('response', common.mustCall((headers) => {
     assert.strictEqual(headers[':status'], 200);

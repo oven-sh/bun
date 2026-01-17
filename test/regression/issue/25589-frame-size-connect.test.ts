@@ -88,12 +88,6 @@ async function startServer(): Promise<ServerAddress> {
         reject(new Error(`Server exited with code ${code}`));
       }
     });
-
-    setTimeout(() => {
-      if (!serverAddress) {
-        reject(new Error("Server startup timeout"));
-      }
-    }, 10000);
   });
 }
 

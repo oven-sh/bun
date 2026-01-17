@@ -11,11 +11,11 @@
  * @see https://github.com/oven-sh/bun/issues/25589
  */
 
+import { afterAll, beforeAll, describe, test } from "bun:test";
 import assert from "node:assert";
 import { readFileSync } from "node:fs";
 import http2 from "node:http2";
 import { join } from "node:path";
-import { after, before, describe, test } from "node:test";
 
 // TLS certificates for testing
 const fixturesDir = join(import.meta.dirname, "..", "fixtures");
@@ -159,7 +159,7 @@ function closeServer(server: http2.Http2SecureServer): Promise<void> {
 describe("HTTP/2 large frame size", () => {
   let ctx: TestContext;
 
-  before(async () => {
+  beforeAll(async () => {
     ctx = await createServer({
       maxFrameSize: 16777215, // 16MB - 1 (maximum per RFC 7540)
       maxConcurrentStreams: 100,
@@ -167,7 +167,7 @@ describe("HTTP/2 large frame size", () => {
     });
   });
 
-  after(async () => {
+  afterAll(async () => {
     if (ctx?.server) {
       await closeServer(ctx.server);
     }
@@ -221,7 +221,7 @@ describe("HTTP/2 large frame size", () => {
 describe("HTTP/2 small window size (flow control)", () => {
   let ctx: TestContext;
 
-  before(async () => {
+  beforeAll(async () => {
     ctx = await createServer({
       maxFrameSize: 16777215, // Large frame size
       maxConcurrentStreams: 100,
@@ -229,7 +229,7 @@ describe("HTTP/2 small window size (flow control)", () => {
     });
   });
 
-  after(async () => {
+  afterAll(async () => {
     if (ctx?.server) {
       await closeServer(ctx.server);
     }
@@ -413,7 +413,7 @@ describe("HTTP/2 gRPC-style framing", () => {
     });
   }
 
-  before(async () => {
+  beforeAll(async () => {
     const server = http2.createSecureServer({
       ...tls,
       allowHTTP1: false,
@@ -479,7 +479,7 @@ describe("HTTP/2 gRPC-style framing", () => {
     };
   });
 
-  after(async () => {
+  afterAll(async () => {
     if (ctx?.server) {
       await closeServer(ctx.server);
     }

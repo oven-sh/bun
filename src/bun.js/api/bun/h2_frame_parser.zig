@@ -4348,14 +4348,18 @@ pub const H2FrameParser = struct {
         // RFC 7540 Section 6.2: HEADERS frame can include optional PRIORITY (5 bytes)
         const priority_overhead: usize = if (has_priority) StreamPriority.byteSize else 0;
 
+        // Compute available payload budget for HEADERS frame (before padding is applied)
+        const available_payload = actual_max_frame_size - priority_overhead;
+
         // RFC 7540 Section 6.10: CONTINUATION frames carry ONLY header block fragments.
         // Unlike HEADERS frames, CONTINUATION frames CANNOT have padding or priority fields.
         // When we need CONTINUATION frames, disable padding to keep the logic simple.
-        const padding: u8 = if (encoded_size + priority_overhead > actual_max_frame_size) 0 else stream.getPadding(encoded_size, encoded_data.len);
+        // Pass available_payload as maxLen so getPadding can apply padding when headers fit in one frame.
+        const padding: u8 = if (encoded_size > available_payload) 0 else stream.getPadding(encoded_size, available_payload);
         const padding_overhead: usize = if (padding != 0) @as(usize, @intCast(padding)) + 1 else 0;
 
         // Max payload for HEADERS frame (accounting for priority and padding overhead)
-        const headers_frame_max_payload = actual_max_frame_size - priority_overhead - padding_overhead;
+        const headers_frame_max_payload = available_payload - padding_overhead;
 
         const writer = this.toWriter();
 

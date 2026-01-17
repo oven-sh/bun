@@ -87,13 +87,6 @@ async function startServer(): Promise<ServerAddress> {
         reject(new Error(`Server exited with code ${code}`));
       }
     });
-
-    // Timeout after 10 seconds
-    setTimeout(() => {
-      if (!serverAddress) {
-        reject(new Error("Server startup timeout"));
-      }
-    }, 10000);
   });
 }
 

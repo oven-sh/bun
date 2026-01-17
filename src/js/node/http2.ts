@@ -3466,7 +3466,13 @@ class ClientHttp2Session extends Http2Session {
     // Store computed authority like Node.js does (session[kAuthority] = `${host}:${port}`)
     // Only include port if non-default (RFC 7540: omit default ports 443 for https, 80 for http)
     const isDefaultPort = (protocol === "https:" && port === 443) || (protocol === "http:" && port === 80);
-    this.#authority = isDefaultPort ? host : `${host}:${port}`;
+    if (isDefaultPort) {
+      this.#authority = host;
+    } else {
+      // IPv6 literals need brackets when appending port (e.g., [::1]:8080)
+      const needsBrackets = host.includes(":") && !host.startsWith("[");
+      this.#authority = needsBrackets ? `[${host}]:${port}` : `${host}:${port}`;
+    }
 
     function onConnect() {
       try {

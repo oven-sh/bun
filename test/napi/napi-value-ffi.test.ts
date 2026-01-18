@@ -39,16 +39,19 @@ beforeAll(() => {
   addon1 = dlopen(join(__dirname, `napi-app/build/Debug/ffi_addon_1.node`), symbols).symbols;
   addon2 = dlopen(join(__dirname, `napi-app/build/Debug/ffi_addon_2.node`), symbols).symbols;
   try {
-    cc1 = cc({
-      source,
-      symbols,
-      flags: `-I${join(__dirname, "napi-app/node_modules/node-api-headers/include")}`,
-    }).symbols;
-    cc2 = cc({
-      source,
-      symbols,
-      flags: `-I${join(__dirname, "napi-app/node_modules/node-api-headers/include")}`,
-    }).symbols;
+    // TinyCC internal error handling uses setjmp/longjmp which conflicts with ASan
+    if (!isASAN) {
+      cc1 = cc({
+        source,
+        symbols,
+        flags: `-I${join(__dirname, "napi-app/node_modules/node-api-headers/include")}`,
+      }).symbols;
+      cc2 = cc({
+        source,
+        symbols,
+        flags: `-I${join(__dirname, "napi-app/node_modules/node-api-headers/include")}`,
+      }).symbols;
+    }
   } catch (e) {
     // ignore compilation failure on Windows
     if (!isWindows) throw e;
@@ -73,7 +76,8 @@ describe("ffi napi integration", () => {
 
 describe("cc napi integration", () => {
   // fails on windows as TCC can't link the napi_ functions
-  it.todoIf(isWindows)("has a different napi_env for each cc invocation", () => {
+  // TinyCC internal error handling uses setjmp/longjmp which conflicts with ASan
+  it.todoIf(isWindows || isASAN)("has a different napi_env for each cc invocation", () => {
     cc1.set_instance_data(undefined, 5);
     cc2.set_instance_data(undefined, 6);
     expect(cc1.get_instance_data()).toBe(5);

@@ -1272,7 +1272,6 @@ fn cleanupCopyState(this: *PostgresSQLConnection) void {
     this.copy_chunks_processed = 0;
     // Reset streaming mode and callback flags
     this.copy_streaming_mode = false;
-    this.copy_chunk_handler_registered = false;
     this.copy_callback_in_progress = false;
 
     // Reset timeout tracking

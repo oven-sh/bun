@@ -649,13 +649,18 @@ function expectBundled(
 
     return (async () => {
       // Prepare virtual files with dedent applied for strings, preserve binary content as-is
+      // Use relative paths (strip leading /) to get consistent path comments in CSS output
       const virtualFiles: Record<string, string | Buffer | Uint8Array | Blob> = {};
       for (const [file, contents] of Object.entries(files)) {
-        virtualFiles[file] = typeof contents === "string" ? dedent(contents) : contents;
+        const relativePath = file.startsWith("/") ? file.slice(1) : file;
+        virtualFiles[relativePath] = typeof contents === "string" ? dedent(contents) : contents;
       }
 
+      // Convert entrypoints to relative paths too
+      const relativeEntryPoints = entryPoints.map(ep => (ep.startsWith("/") ? ep.slice(1) : ep));
+
       const build = await Bun.build({
-        entrypoints: entryPoints,
+        entrypoints: relativeEntryPoints,
         files: virtualFiles,
         target,
         format,

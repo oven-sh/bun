@@ -16,7 +16,7 @@ h1 {
 
     onAfterBundle(api) {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-/* ../../a.css */
+/* a.css */
 h1 {
     ${property}: ${expected};
 }

@@ -46,10 +46,16 @@ SYSV_ABI JSC::EncodedJSValue S3Error__toErrorInstance(const S3Error* arg0,
     }
 
     if (err.path.tag != BunStringTag::Empty) {
+        auto catchScope = DECLARE_CATCH_SCOPE(vm);
         auto* path = Bun::toJS(globalObject, err.path);
-        RETURN_IF_EXCEPTION(scope, {});
-        result->putDirect(vm, names.pathPublicName(), path,
-            JSC::PropertyAttribute::DontDelete | 0);
+        // If the path is too long to convert to JS, just skip setting it.
+        // The error code/message is more important than the path.
+        if (catchScope.exception()) {
+            (void)catchScope.tryClearException();
+        } else {
+            result->putDirect(vm, names.pathPublicName(), path,
+                JSC::PropertyAttribute::DontDelete | 0);
+        }
     }
 
     return JSC::JSValue::encode(result);

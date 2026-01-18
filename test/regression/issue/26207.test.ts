@@ -3,7 +3,8 @@
 // when NODE env var points to a non-existent path
 
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { chmodSync } from "fs";
+import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
 
 test("bun run --workspaces creates node symlink when NODE env points to non-existent path", async () => {
   const dir = tempDirWithFiles("workspaces-node-fallback", {
@@ -77,7 +78,8 @@ test("bun run --filter creates node symlink when NODE env points to non-existent
   expect(exitCode).toBe(0);
 });
 
-test("bun run --workspaces runs scripts that have #!/usr/bin/env node shebang", async () => {
+// Skip on Windows: shebang scripts (#!/usr/bin/env node) are Unix-specific
+test.skipIf(isWindows)("bun run --workspaces runs scripts that have #!/usr/bin/env node shebang", async () => {
   const dir = tempDirWithFiles("workspaces-shebang", {
     "package.json": JSON.stringify({
       name: "root",
@@ -94,8 +96,7 @@ test("bun run --workspaces runs scripts that have #!/usr/bin/env node shebang", 
   });
 
   // Make the script executable
-  const { execSync } = await import("child_process");
-  execSync(`chmod +x "${dir}/packages/a/build.js"`);
+  chmodSync(`${dir}/packages/a/build.js`, 0o755);
 
   // Remove system node from PATH, and clear NODE/npm_node_execpath to avoid
   // interfering with bun's node symlink creation

@@ -21,7 +21,7 @@ if [ ! -f "$TOOL_BINARY" ] || [ "$TOOL_SOURCE" -nt "$TOOL_BINARY" ]; then
     else
         # Linux - try to find LLVM installation
         LLVM_DIR=""
-        for version in 18 17 16 15 14 13 12; do
+        for version in 21 20 19 18 17 16 15 14; do
             if [ -d "/usr/lib/llvm-$version" ]; then
                 LLVM_DIR="/usr/lib/llvm-$version"
                 break

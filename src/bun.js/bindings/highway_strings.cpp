@@ -81,10 +81,16 @@ size_t IndexOfAnyCharImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, con
     } else {
         ASSERT(chars_len <= 16);
         constexpr size_t kMaxPreloadedChars = 16;
-        hn::Vec<D8> char_vecs[kMaxPreloadedChars];
+
+        // Use FixedTag to get a fixed-size vector type that can be stored in arrays.
+        // This avoids the "sizeless type" issue with scalable vectors (SVE).
+        // FixedTag<T, N> gives us exactly N lanes with a known compile-time size.
+        const hn::FixedTag<uint8_t, 16> d_fixed;
+        using VecFixed = hn::Vec<decltype(d_fixed)>;
+        VecFixed char_vecs[kMaxPreloadedChars];
         const size_t num_chars_to_preload = std::min(chars_len, kMaxPreloadedChars);
         for (size_t c = 0; c < num_chars_to_preload; ++c) {
-            char_vecs[c] = hn::Set(d, chars[c]);
+            char_vecs[c] = hn::Set(d_fixed, chars[c]);
         }
 
         const size_t simd_text_len = text_len - (text_len % N);
@@ -95,7 +101,8 @@ size_t IndexOfAnyCharImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, con
             auto found_mask = hn::MaskFalse(d);
 
             for (size_t c = 0; c < num_chars_to_preload; ++c) {
-                found_mask = hn::Or(found_mask, hn::Eq(text_vec, char_vecs[c]));
+                // ResizeBitCast converts the fixed-size vector to the scalable vector type
+                found_mask = hn::Or(found_mask, hn::Eq(text_vec, hn::ResizeBitCast(d, char_vecs[c])));
             }
             if (chars_len > num_chars_to_preload) {
                 for (size_t c = num_chars_to_preload; c < chars_len; ++c) {

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version: 26
+# Version: 27
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -1091,7 +1091,7 @@ install_build_essentials() {
 }
 
 llvm_version_exact() {
-	print "19.1.7"
+	print "21.1.0"
 }
 
 llvm_version() {
@@ -1101,28 +1101,20 @@ llvm_version() {
 install_llvm() {
 	case "$pm" in
 	apt)
-		# Debian 13 (Trixie) has LLVM 19 natively, and apt.llvm.org doesn't have a trixie repo
-		if [ "$distro" = "debian" ]; then
-			install_packages \
-				"llvm-$(llvm_version)" \
-				"clang-$(llvm_version)" \
-				"lld-$(llvm_version)" \
-				"llvm-$(llvm_version)-dev" \
-				"llvm-$(llvm_version)-tools" \
-				"libclang-rt-$(llvm_version)-dev"
-		else
-			bash="$(require bash)"
-			llvm_script="$(download_file "https://apt.llvm.org/llvm.sh")"
-			execute_sudo "$bash" "$llvm_script" "$(llvm_version)" all
+		# Use apt.llvm.org for all apt-based distros (Ubuntu, Debian)
+		# apt.llvm.org has LLVM 21 for trixie/bookworm/bullseye and all Ubuntu versions
+		bash="$(require bash)"
+		llvm_script="$(download_file "https://apt.llvm.org/llvm.sh")"
+		execute_sudo "$bash" "$llvm_script" "$(llvm_version)" all
 
-			# Install llvm-symbolizer explicitly to ensure it's available for ASAN
-			install_packages "llvm-$(llvm_version)-tools"
-		fi
+		# Install llvm-symbolizer explicitly to ensure it's available for ASAN
+		install_packages "llvm-$(llvm_version)-tools"
 		;;
 	brew)
 		install_packages "llvm@$(llvm_version)"
 		;;
 	apk)
+		# Alpine 3.23+ has LLVM 21 available
 		install_packages \
 			"llvm$(llvm_version)" \
 			"clang$(llvm_version)" \
@@ -1172,7 +1164,7 @@ install_gcc() {
 		;;
 	esac
 
-	llvm_v="19"
+	llvm_v="21"
 
 	append_to_profile "export CC=clang-${llvm_v}"
 	append_to_profile "export CXX=clang++-${llvm_v}"

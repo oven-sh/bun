@@ -262,7 +262,7 @@ static Vector<uint8_t> encode(const SingleByteEncodeTable& table, StringView str
     result.reserveInitialCapacity(string.length());
     for (auto codePoint : string.codePoints()) {
         if (isASCII(codePoint)) {
-            result.append(codePoint);
+            result.append(static_cast<uint8_t>(codePoint));
             continue;
         }
         auto byte = findFirstInSortedPairs(table, codePoint);

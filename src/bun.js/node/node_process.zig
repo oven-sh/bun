@@ -10,6 +10,51 @@ comptime {
     @export(&getExecPath, .{ .name = "Bun__Process__getExecPath" });
     @export(&bun.jsc.host_fn.wrap1(createExecArgv), .{ .name = "Bun__Process__createExecArgv" });
     @export(&getEval, .{ .name = "Bun__Process__getEval" });
+    @export(&permissionHas, .{ .name = "Bun__Process__permissionHas" });
+}
+
+/// Maps Node.js permission scope names to Bun's permission kinds.
+/// Uses StaticStringMap for O(1) lookup performance.
+const ScopeToKindMap = std.StaticStringMap(bun.permissions.Kind).initComptime(.{
+    // File system permissions
+    .{ "fs", .read },
+    .{ "fs.read", .read },
+    .{ "fs.write", .write },
+    // Network permissions
+    .{ "net", .net },
+    .{ "net.client", .net },
+    .{ "net.server", .net },
+    .{ "net.connect", .net },
+    // Environment permissions
+    .{ "env", .env },
+    // Subprocess permissions
+    .{ "child", .run },
+    .{ "child.process", .run },
+    .{ "run", .run },
+    .{ "worker", .run }, // Workers can spawn processes
+    // FFI / Native addon permissions
+    .{ "ffi", .ffi },
+    .{ "addon", .ffi },
+    .{ "wasi", .ffi },
+    // System info permissions
+    .{ "sys", .sys },
+});
+
+/// Node.js-compatible process.permission.has(scope, reference?) API
+/// Maps Node.js permission names to Bun's permission system.
+/// See ScopeToKindMap for the full mapping.
+pub fn permissionHas(globalObject: *jsc.JSGlobalObject, scope_ptr: [*]const u8, scope_len: usize, ref_ptr: ?[*]const u8, ref_len: usize) callconv(.c) bool {
+    const vm = globalObject.bunVM();
+    const scope = scope_ptr[0..scope_len];
+    const reference: ?[]const u8 = if (ref_ptr) |ptr| ptr[0..ref_len] else null;
+
+    if (ScopeToKindMap.get(scope)) |kind| {
+        const state = vm.permissions.check(kind, reference);
+        return state.isGranted();
+    }
+
+    // Unknown scope - return false (permission not granted)
+    return false;
 }
 
 var title_mutex = bun.Mutex{};

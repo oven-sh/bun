@@ -161,6 +161,9 @@ BUN_DECLARE_HOST_FUNCTION(Bun__Process__send);
 extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global);
 extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValue value);
 
+// Node.js process.permission.has() API
+extern "C" bool Bun__Process__permissionHas(JSGlobalObject* globalObject, const char* scope_ptr, size_t scope_len, const char* ref_ptr, size_t ref_len);
+
 extern "C" void Bun__suppressCrashOnProcessKillSelfIfDesired();
 
 static Process* getProcessObject(JSC::JSGlobalObject* lexicalGlobalObject, JSValue thisValue);
@@ -2214,6 +2217,63 @@ static JSValue constructProcessReportObject(VM& vm, JSObject* processObject)
     return report;
 }
 
+// Node.js process.permission.has(scope, reference?) implementation
+JSC_DEFINE_HOST_FUNCTION(Process_functionPermissionHas, (JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // First argument: scope (required)
+    if (callFrame->argumentCount() < 1) {
+        throwTypeError(globalObject, scope, "process.permission.has requires a scope argument"_s);
+        return {};
+    }
+
+    JSValue scopeArg = callFrame->argument(0);
+    if (!scopeArg.isString()) {
+        throwTypeError(globalObject, scope, "scope must be a string"_s);
+        return {};
+    }
+
+    auto scopeString = scopeArg.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    // Second argument: reference (optional)
+    const char* refPtr = nullptr;
+    size_t refLen = 0;
+    CString refCString;
+
+    if (callFrame->argumentCount() >= 2) {
+        JSValue refArg = callFrame->argument(1);
+        if (!refArg.isUndefined()) {
+            if (!refArg.isString()) {
+                throwTypeError(globalObject, scope, "reference must be a string"_s);
+                return {};
+            }
+            auto refString = refArg.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            refCString = refString.utf8();
+            refPtr = refCString.data();
+            refLen = refCString.length();
+        }
+    }
+
+    auto scopeCString = scopeString.utf8();
+    bool result = Bun__Process__permissionHas(globalObject, scopeCString.data(), scopeCString.length(), refPtr, refLen);
+
+    return JSValue::encode(jsBoolean(result));
+}
+
+// Node.js process.permission object
+static JSValue constructProcessPermissionObject(VM& vm, JSObject* processObject)
+{
+    auto* globalObject = processObject->globalObject();
+    auto* permission = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);
+    permission->putDirect(vm, JSC::Identifier::fromString(vm, "has"_s),
+        JSC::JSFunction::create(vm, globalObject, 1, String("has"_s), Process_functionPermissionHas, ImplementationVisibility::Public), 0);
+    return permission;
+}
+
 static JSValue constructProcessConfigObject(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();
@@ -4023,6 +4083,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   nextTick                         constructProcessNextTickFn                          PropertyCallback
   noDeprecation                    processNoDeprecation                                CustomAccessor
   openStdin                        Process_functionOpenStdin                           Function 0
+  permission                       constructProcessPermissionObject                    PropertyCallback
   pid                              constructPid                                        PropertyCallback
   platform                         constructPlatform                                   PropertyCallback
   ppid                             constructPpid                                       PropertyCallback

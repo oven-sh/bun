@@ -1081,6 +1081,21 @@ pub const JSBundler = struct {
             return globalThis.throwInvalidArguments("Expected a config object to be passed to Bun.build", .{});
         }
 
+        // Check permissions for Bun.build() - requires both read and write access
+        // The bundler needs to read source files and write output files
+        const vm = globalThis.bunVM();
+        if (vm.permissions.secure_mode and !vm.permissions.allow_all) {
+            // In secure mode, check that we have read and write permissions
+            const has_read = vm.permissions.read.state == .granted or vm.permissions.read.state == .granted_partial;
+            const has_write = vm.permissions.write.state == .granted or vm.permissions.write.state == .granted_partial;
+            if (!has_read or !has_write) {
+                return globalThis.throwInvalidArguments(
+                    "PermissionDenied: Bun.build() requires file system access, run again with --allow-read --allow-write or -A",
+                    .{},
+                );
+            }
+        }
+
         var plugins: ?*Plugin = null;
         const config = try Config.fromJS(globalThis, arguments[0], &plugins, bun.default_allocator);
 
@@ -1750,7 +1765,7 @@ pub const BuildArtifact = struct {
         return ZigString.init(out).toJS(globalThis);
     }
 
-    pub fn getSize(this: *BuildArtifact, globalObject: *jsc.JSGlobalObject) JSValue {
+    pub fn getSize(this: *BuildArtifact, globalObject: *jsc.JSGlobalObject) bun.JSError!JSValue {
         return @call(bun.callmod_inline, Blob.getSize, .{ &this.blob, globalObject });
     }
 

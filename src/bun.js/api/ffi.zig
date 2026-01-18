@@ -1037,6 +1037,11 @@ pub const FFI = struct {
             return global.toInvalidArguments("Invalid library name", .{});
         }
 
+        // Check FFI permission for loading native library
+        bun.permission_check.requireFfi(global, name) catch {
+            return .zero;
+        };
+
         var symbols = bun.StringArrayHashMapUnmanaged(Function){};
         if (generateSymbols(global, bun.default_allocator, &symbols, object) catch jsc.JSValue.zero) |val| {
             // an error while validating symbols

@@ -120,6 +120,16 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
     const ssl_enabled = ssl != null;
     const socket_flags = socket_config.socketFlags();
 
+    // Check net permission for socket listening
+    {
+        var buf: [128]u8 = undefined;
+        const host_str: []const u8 = if (port) |p|
+            std.fmt.bufPrint(&buf, "{s}:{d}", .{ hostname_or_unix.slice(), p }) catch hostname_or_unix.slice()
+        else
+            hostname_or_unix.slice();
+        try bun.permission_check.requireNet(globalObject, host_str);
+    }
+
     if (Environment.isWindows and port == null) {
         // we check if the path is a named pipe otherwise we try to connect using AF_UNIX
         var buf: bun.PathBuffer = undefined;
@@ -576,6 +586,16 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
     const ssl = if (socket_config.ssl) |*ssl| ssl else null;
     const ssl_enabled = ssl != null;
     const default_data = socket_config.default_data;
+
+    // Check net permission for socket connection
+    {
+        var buf: [128]u8 = undefined;
+        const host_str: []const u8 = if (port) |p|
+            std.fmt.bufPrint(&buf, "{s}:{d}", .{ hostname_or_unix.slice(), p }) catch hostname_or_unix.slice()
+        else
+            hostname_or_unix.slice();
+        try bun.permission_check.requireNet(globalObject, host_str);
+    }
 
     vm.eventLoop().ensureWaker();
 

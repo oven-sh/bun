@@ -41,6 +41,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsGetterEnvironmentVariable, (JSGlobalObject * globalOb
         return JSValue::encode(jsUndefined());
 
     if (!Bun__getEnvValue(globalObject, &name, &value)) {
+        RETURN_IF_EXCEPTION(scope, {});
         return JSValue::encode(jsUndefined());
     }
 
@@ -85,6 +86,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsTimeZoneEnvironmentVariableGetter, (JSGlobalObject * 
     }
 
     if (!Bun__getEnvValue(globalObject, &name, &value) || value.len == 0) {
+        RETURN_IF_EXCEPTION(scope, {});
         return JSValue::encode(jsUndefined());
     }
 
@@ -167,6 +169,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeTLSRejectUnauthorizedGetter, (JSGlobalObject * gl
     ZigString value = { nullptr, 0 };
 
     if (!Bun__getEnvValue(globalObject, &name, &value) || value.len == 0) {
+        RETURN_IF_EXCEPTION(scope, {});
         return JSValue::encode(jsUndefined());
     }
 
@@ -221,6 +224,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsBunConfigVerboseFetchGetter, (JSGlobalObject * global
     ZigString value = { nullptr, 0 };
 
     if (!Bun__getEnvValue(globalObject, &name, &value) || value.len == 0) {
+        RETURN_IF_EXCEPTION(scope, {});
         return JSValue::encode(jsUndefined());
     }
 

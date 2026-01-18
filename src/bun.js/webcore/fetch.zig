@@ -372,6 +372,14 @@ fn fetchImpl(
     }
     url_proxy_buffer = url.href;
 
+    // Check net permission for remote URLs
+    if (url_type == .remote and url.host.len > 0) {
+        bun.permission_check.requireNet(globalThis, url.host) catch {
+            is_error = true;
+            return .zero;
+        };
+    }
+
     if (url_str.hasPrefixComptime("data:")) {
         var url_slice = url_str.toUTF8WithoutRef(allocator);
         defer url_slice.deinit();

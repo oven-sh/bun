@@ -122,8 +122,19 @@ pub fn doReadFromS3(this: *Blob, comptime Function: anytype, global: *JSGlobalOb
     return S3BlobDownloadTask.init(global, this, WrappedFn.wrapped);
 }
 
-pub fn doReadFile(this: *Blob, comptime Function: anytype, global: *JSGlobalObject) JSValue {
+pub fn doReadFile(this: *Blob, comptime Function: anytype, global: *JSGlobalObject) bun.JSError!JSValue {
     debug("doReadFile", .{});
+
+    // Check read permission if this is a file-backed blob
+    if (this.store) |store| {
+        if (store.data == .file) {
+            if (store.data.file.pathlike == .path) {
+                const path = store.data.file.pathlike.path.slice();
+                const resolved_path = resolvePath(global, path);
+                try permission_check.PermissionChecker.init(global).requireRead(resolved_path);
+            }
+        }
+    }
 
     const Handler = NewReadFileHandler(Function);
 
@@ -1225,6 +1236,26 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
         return globalThis.throwInvalidArguments("Bun.write(pathOrFdOrBlob, blob) expects a Blob-y thing to write", .{});
     }
     var path_or_blob = path_or_blob_.*;
+
+    // Check write permission for the destination path
+    if (path_or_blob == .path) {
+        if (path_or_blob.path == .path) {
+            const path = path_or_blob.path.path.slice();
+            const resolved_path = resolvePath(globalThis, path);
+            try permission_check.PermissionChecker.init(globalThis).requireWrite(resolved_path);
+        }
+    } else if (path_or_blob == .blob) {
+        if (path_or_blob.blob.store) |store| {
+            if (store.data == .file) {
+                if (store.data.file.pathlike == .path) {
+                    const path = store.data.file.pathlike.path.slice();
+                    const resolved_path = resolvePath(globalThis, path);
+                    try permission_check.PermissionChecker.init(globalThis).requireWrite(resolved_path);
+                }
+            }
+        }
+    }
+
     if (path_or_blob == .blob) {
         const blob_store = path_or_blob.blob.store orelse {
             return globalThis.throwInvalidArguments("Blob is detached", .{});
@@ -2015,6 +2046,17 @@ pub fn getStream(
     globalThis: *jsc.JSGlobalObject,
     callframe: *jsc.CallFrame,
 ) bun.JSError!jsc.JSValue {
+    // Check read permission if this is a file-backed blob
+    if (this.store) |store| {
+        if (store.data == .file) {
+            if (store.data.file.pathlike == .path) {
+                const path = store.data.file.pathlike.path.slice();
+                const resolved_path = resolvePath(globalThis, path);
+                try permission_check.PermissionChecker.init(globalThis).requireRead(resolved_path);
+            }
+        }
+    }
+
     const thisValue = callframe.this();
     if (js.streamGetCached(thisValue)) |cached| {
         return cached;
@@ -2359,6 +2401,17 @@ pub fn getExists(
     globalThis: *jsc.JSGlobalObject,
     _: *jsc.CallFrame,
 ) bun.JSError!JSValue {
+    // Check read permission if this is a file-backed blob
+    if (this.store) |store| {
+        if (store.data == .file) {
+            if (store.data.file.pathlike == .path) {
+                const path = store.data.file.pathlike.path.slice();
+                const resolved_path = resolvePath(globalThis, path);
+                try permission_check.PermissionChecker.init(globalThis).requireRead(resolved_path);
+            }
+        }
+    }
+
     if (this.isS3()) {
         return S3File.S3BlobStatTask.exists(globalThis, this);
     }
@@ -3145,7 +3198,18 @@ pub fn getStat(this: *Blob, globalThis: *jsc.JSGlobalObject, callback: *jsc.Call
         else => .js_undefined,
     };
 }
-pub fn getSize(this: *Blob, _: *jsc.JSGlobalObject) JSValue {
+pub fn getSize(this: *Blob, globalThis: *jsc.JSGlobalObject) bun.JSError!JSValue {
+    // Check read permission if this is a file-backed blob
+    if (this.store) |store| {
+        if (store.data == .file) {
+            if (store.data.file.pathlike == .path) {
+                const path = store.data.file.pathlike.path.slice();
+                const resolved_path = resolvePath(globalThis, path);
+                try permission_check.PermissionChecker.init(globalThis).requireRead(resolved_path);
+            }
+        }
+    }
+
     if (this.size == Blob.max_size) {
         if (this.isS3()) {
             return jsc.JSValue.jsNumber(std.math.nan(f64));
@@ -3782,7 +3846,7 @@ pub fn toArrayBufferView(this: *Blob, global: *JSGlobalObject, comptime lifetime
     return WithBytesFn(this, global, @constCast(view_), lifetime);
 }
 
-pub fn toFormData(this: *Blob, global: *JSGlobalObject, comptime lifetime: Lifetime) bun.JSTerminated!JSValue {
+pub fn toFormData(this: *Blob, global: *JSGlobalObject, comptime lifetime: Lifetime) bun.JSError!JSValue {
     if (this.needsToReadFile()) {
         return this.doReadFile(toFormDataWithBytes, global);
     }
@@ -4883,3 +4947,18 @@ const PathOrBlob = jsc.Node.PathOrBlob;
 
 const Request = jsc.WebCore.Request;
 const Response = jsc.WebCore.Response;
+const permission_check = @import("../permission_check.zig");
+
+/// Thread-local buffer for path resolution
+threadlocal var path_resolve_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+
+/// Resolve a path to an absolute path using the current working directory
+fn resolvePath(global: *JSGlobalObject, path: []const u8) []const u8 {
+    // If it's already an absolute path, use it directly
+    if (bun.path.Platform.auto.isAbsolute(path)) {
+        return path;
+    }
+    // Otherwise, resolve it relative to the cwd
+    const cwd = global.bunVM().transpiler.fs.top_level_dir;
+    return bun.path.joinAbsStringBuf(cwd, &path_resolve_buf, &.{path}, .auto);
+}

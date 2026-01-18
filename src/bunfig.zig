@@ -849,6 +849,84 @@ pub const Bunfig = struct {
                         }
                     }
                 }
+
+                // Parse [permissions] section for Deno-compatible security model
+                if (json.get("permissions")) |permissions_expr| {
+                    var permissions = &this.ctx.runtime_options.permissions;
+
+                    // secure = true enables secure-by-default mode
+                    if (permissions_expr.get("secure")) |secure| {
+                        if (secure.asBool()) |value| {
+                            permissions.secure_mode = value;
+                        } else {
+                            try this.addError(secure.loc, "Expected boolean for 'secure'");
+                        }
+                    }
+
+                    // allow-all = true grants all permissions (equivalent to -A)
+                    if (permissions_expr.get("allow-all")) |allow_all| {
+                        if (allow_all.asBool()) |value| {
+                            permissions.allow_all = value;
+                        } else {
+                            try this.addError(allow_all.loc, "Expected boolean for 'allow-all'");
+                        }
+                    }
+
+                    // no-prompt = true disables interactive permission prompts
+                    if (permissions_expr.get("no-prompt")) |no_prompt| {
+                        if (no_prompt.asBool()) |value| {
+                            permissions.no_prompt = value;
+                        } else {
+                            try this.addError(no_prompt.loc, "Expected boolean for 'no-prompt'");
+                        }
+                    }
+
+                    // Parse allow-* and deny-* permission fields
+                    inline for (.{
+                        .{ "allow-read", "allow_read", "has_allow_read" },
+                        .{ "allow-write", "allow_write", "has_allow_write" },
+                        .{ "allow-net", "allow_net", "has_allow_net" },
+                        .{ "allow-env", "allow_env", "has_allow_env" },
+                        .{ "allow-sys", "allow_sys", "has_allow_sys" },
+                        .{ "allow-run", "allow_run", "has_allow_run" },
+                        .{ "allow-ffi", "allow_ffi", "has_allow_ffi" },
+                    }) |field_info| {
+                        const toml_key = field_info[0];
+                        const struct_field = field_info[1];
+                        const has_field = field_info[2];
+
+                        if (permissions_expr.get(toml_key)) |expr| {
+                            // Set the has_* flag to indicate this permission was explicitly configured
+                            @field(permissions, has_field) = true;
+
+                            // Handle boolean (allow all), string (single value), or array (multiple values)
+                            if (expr.asBool()) |_| {
+                                // boolean true = allow all (null means all when has_* is true)
+                                @field(permissions, struct_field) = null;
+                            } else {
+                                @field(permissions, struct_field) = try this.parseStringOrArray(expr, allocator);
+                            }
+                        }
+                    }
+
+                    // Parse deny-* fields (no has_* flag needed)
+                    inline for (.{
+                        .{ "deny-read", "deny_read" },
+                        .{ "deny-write", "deny_write" },
+                        .{ "deny-net", "deny_net" },
+                        .{ "deny-env", "deny_env" },
+                        .{ "deny-sys", "deny_sys" },
+                        .{ "deny-run", "deny_run" },
+                        .{ "deny-ffi", "deny_ffi" },
+                    }) |field_info| {
+                        const toml_key = field_info[0];
+                        const struct_field = field_info[1];
+
+                        if (permissions_expr.get(toml_key)) |expr| {
+                            @field(permissions, struct_field) = try this.parseStringOrArray(expr, allocator);
+                        }
+                    }
+                }
             }
 
             if (json.getObject("serve")) |serve_obj2| {
@@ -1157,6 +1235,35 @@ pub const Bunfig = struct {
                     .extensions = loader_names,
                     .loaders = loader_values,
                 };
+            }
+        }
+
+        /// Parse an expression that can be either a string or an array of strings
+        /// Returns null if the expression is invalid
+        fn parseStringOrArray(this: *Parser, expr: js_ast.Expr, allocator: std.mem.Allocator) !?[]const []const u8 {
+            switch (expr.data) {
+                .e_string => |str| {
+                    const result = try allocator.alloc([]const u8, 1);
+                    result[0] = try str.string(allocator);
+                    return result;
+                },
+                .e_array => |array| {
+                    const items = array.items.slice();
+                    if (items.len == 0) return null;
+                    const result = try allocator.alloc([]const u8, items.len);
+                    for (items, 0..) |item, i| {
+                        if (item.data != .e_string) {
+                            try this.addError(item.loc, "Expected string in array");
+                            return error.@"Invalid Bunfig";
+                        }
+                        result[i] = try item.data.e_string.string(allocator);
+                    }
+                    return result;
+                },
+                else => {
+                    try this.addError(expr.loc, "Expected string or array of strings");
+                    return error.@"Invalid Bunfig";
+                },
             }
         }
 

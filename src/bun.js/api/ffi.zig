@@ -2456,12 +2456,13 @@ fn makeNapiEnvIfNeeded(functions: []const FFI.Function, globalThis: *JSGlobalObj
 
 const string = []const u8;
 
-const Fs = @import("../../fs.zig");
 const TCC = if (Environment.enable_tinycc) @import("../../deps/tcc.zig") else struct {
     pub const State = struct {
         pub fn deinit(_: *State) void {}
     };
 };
+
+const Fs = @import("../../fs.zig");
 const napi = @import("../../napi/napi.zig");
 const options = @import("../../options.zig");
 const std = @import("std");

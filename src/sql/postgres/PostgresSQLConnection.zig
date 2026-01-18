@@ -535,6 +535,10 @@ pub fn fail(this: *PostgresSQLConnection, message: []const u8, err: AnyPostgresE
 }
 
 pub fn onClose(this: *PostgresSQLConnection) void {
+    // Reject any pending awaitWritable promise first so callers do not hang on remote close.
+    // Do this early to avoid races with cleanup and socket teardown.
+    this.rejectAwaitWritable(this.globalObject, "Connection closed");
+
     this.unregisterAutoFlusher();
 
     // Clean up COPY state if connection closes during COPY operation

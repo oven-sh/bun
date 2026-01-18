@@ -19,7 +19,7 @@ declare module "bun" {
     /**
      * Send COPY data chunk (for COPY FROM STDIN)
      */
-    copySendData(data: string | Uint8Array): void;
+    copySendData(data: string | Uint8Array | ArrayBuffer): void;
 
     /**
      * Signal end of COPY FROM STDIN operation

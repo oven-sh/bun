@@ -148,7 +148,7 @@ interface CopyFromBinaryOptions extends CopyFromOptionsBase {
 type CopyFromOptions = CopyFromOptionsBase | CopyFromBinaryOptions;
 
 const isCopyFromBinaryOptions = (options: CopyFromOptions | undefined): options is CopyFromBinaryOptions => {
-  return !!options && options.format === "binary" && "binaryTypes" in options && Array.isArray(options.binaryTypes);
+  return !!options && options.format === "binary" && "binaryTypes" in options && $isArray(options.binaryTypes);
 };
 
 interface CopyToOptions {
@@ -1407,7 +1407,15 @@ const SQL: typeof Bun.SQL = function SQL(
     }
 
     const fmt = options?.format === "csv" ? "csv" : options?.format === "binary" ? "binary" : "text";
-    const delimiter = options?.delimiter ?? (fmt === "csv" ? "," : "\t");
+
+    let delimiter = options?.delimiter ?? (fmt === "csv" ? "," : "\t");
+    if (delimiter !== undefined) {
+      delimiter = String(delimiter);
+      if (delimiter.length !== 1) {
+        throw $ERR_INVALID_ARG_VALUE("options.delimiter", delimiter, "must be exactly one character");
+      }
+    }
+
     const nullToken = options?.null ?? (fmt === "csv" ? "" : "\\N");
 
     const stripNul = options?.sanitizeNUL === true;
@@ -1569,13 +1577,20 @@ const SQL: typeof Bun.SQL = function SQL(
 
       const maybeIter = typeof data === "function" ? data() : data;
 
+      let cachedBinaryTypes: ReturnType<typeof validateBinaryTypes> | undefined = undefined;
+      const getBinaryTypes = () => {
+        if (cachedBinaryTypes !== undefined) return cachedBinaryTypes;
+        cachedBinaryTypes = validateBinaryTypes(options, columns);
+        return cachedBinaryTypes;
+      };
+
       // Async iterable (rows or raw string/Uint8Array chunks)
       if (isAsyncIterable(maybeIter)) {
         for await (const item of maybeIter as AsyncIterable<unknown>) {
           if (aborted) throw new Error("AbortError");
           if ($isArray(item)) {
             if (fmt === "binary") {
-              const types = validateBinaryTypes(options, columns);
+              const types = getBinaryTypes();
               await flushBatch();
               const payload = encodeBinaryRow(item, types);
               const counters = { bytesSent, chunksSent };
@@ -1618,7 +1633,7 @@ const SQL: typeof Bun.SQL = function SQL(
         for (const item of maybeIter as Iterable<unknown>) {
           if ($isArray(item)) {
             if (fmt === "binary") {
-              const types = validateBinaryTypes(options, columns);
+              const types = getBinaryTypes();
               await flushBatch();
               const payload = encodeBinaryRow(item, types);
               const counters = { bytesSent, chunksSent };
@@ -1804,13 +1819,12 @@ const SQL: typeof Bun.SQL = function SQL(
         }
       }
       let sqlText = cols ? `COPY ${tableName} (${cols}) FROM STDIN` : `COPY ${tableName} FROM STDIN`;
-      if (fmt === "csv") {
-        const delim = options?.delimiter;
-        const nullStr = options?.null;
-        const delimOpt =
-          delim && String(delim).length > 0 ? `, DELIMITER '${String(delim)[0].replaceAll("'", "''")}'` : "";
-        const nullOpt = nullStr != null ? `, NULL '${String(nullToken).replaceAll("'", "''")}'` : "";
-        sqlText += ` (FORMAT CSV${delimOpt}${nullOpt})`;
+      if (fmt === "csv" || fmt === "text") {
+        const delimiterOption =
+          delimiter && String(delimiter).length === 1 ? `, DELIMITER '${String(delimiter).replaceAll("'", "''")}'` : "";
+        const nullOption = options?.null != null ? `, NULL '${String(nullToken).replaceAll("'", "''")}'` : "";
+        const formatOption = fmt === "csv" ? "CSV" : "TEXT";
+        sqlText += ` (FORMAT ${formatOption}${delimiterOption}${nullOption})`;
       } else if (fmt === "binary") {
         sqlText += ` (FORMAT BINARY)`;
       }
@@ -1982,6 +1996,80 @@ const SQL: typeof Bun.SQL = function SQL(
             }) === true;
         }
 
+        const toUint8Array = (value: unknown): Uint8Array | null => {
+          if (value instanceof Uint8Array) return value;
+          if (value instanceof ArrayBuffer) return new Uint8Array(value);
+          if (ArrayBuffer.isView(value)) {
+            const view = value as ArrayBufferView;
+            return new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+          }
+          return null;
+        };
+
+        const toRealArrayBuffer = (u8: Uint8Array): ArrayBuffer => {
+          const buffer = u8.buffer;
+          if (buffer instanceof ArrayBuffer && u8.byteOffset === 0 && u8.byteLength === buffer.byteLength) {
+            return buffer;
+          }
+          return u8.slice().buffer;
+        };
+
+        const joinUint8Arrays = (parts: Uint8Array[]): ArrayBuffer => {
+          let total = 0;
+          for (let i = 0; i < parts.length; i++) total += parts[i].byteLength;
+          const out = new Uint8Array(total);
+          let offset = 0;
+          for (let i = 0; i < parts.length; i++) {
+            out.set(parts[i], offset);
+            offset += parts[i].byteLength;
+          }
+          return toRealArrayBuffer(out);
+        };
+
+        const yieldAccumulated = async function* (
+          accumulated: unknown,
+          isBinary: boolean,
+          format: string | undefined,
+        ): AsyncGenerator<string | ArrayBuffer, void, void> {
+          if (isBinary) {
+            if (Array.isArray(accumulated)) {
+              const parts: Uint8Array[] = [];
+              for (let i = 0; i < accumulated.length; i++) {
+                const u8 = toUint8Array(accumulated[i]);
+                if (!u8) {
+                  throw $ERR_INVALID_ARG_VALUE(
+                    "format",
+                    format,
+                    'COPY TO returned non-binary data while format is "binary"',
+                  );
+                }
+                parts.push(u8);
+              }
+              yield joinUint8Arrays(parts);
+              return;
+            }
+
+            const value = Array.isArray(accumulated) ? accumulated[0] : (accumulated ?? null);
+            const u8 = toUint8Array(value);
+            if (!u8) {
+              throw $ERR_INVALID_ARG_VALUE(
+                "format",
+                format,
+                'COPY TO returned non-binary data while format is "binary"',
+              );
+            }
+            yield toRealArrayBuffer(u8);
+            return;
+          }
+
+          if (Array.isArray(accumulated)) {
+            yield accumulated.map(x => String(x ?? "")).join("");
+            return;
+          }
+
+          yield String(Array.isArray(accumulated) ? (accumulated[0] ?? "") : (accumulated ?? ""));
+        };
+
         try {
           if (aborted) throw new Error("AbortError");
 
@@ -2028,71 +2116,8 @@ const SQL: typeof Bun.SQL = function SQL(
             const format = typeof queryOrOptions === "string" ? undefined : queryOrOptions.format;
             const isBinary = format === "binary";
 
-            const toUint8Array = (value: unknown): Uint8Array | null => {
-              if (value instanceof Uint8Array) return value;
-              if (value instanceof ArrayBuffer) return new Uint8Array(value);
-              if (ArrayBuffer.isView(value)) {
-                const view = value as ArrayBufferView;
-                return new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
-              }
-              return null;
-            };
-
-            const toRealArrayBuffer = (u8: Uint8Array): ArrayBuffer => {
-              const buffer = u8.buffer;
-              if (buffer instanceof ArrayBuffer && u8.byteOffset === 0 && u8.byteLength === buffer.byteLength) {
-                return buffer;
-              }
-              return u8.slice().buffer;
-            };
-
-            const joinUint8Arrays = (parts: Uint8Array[]): ArrayBuffer => {
-              let total = 0;
-              for (let i = 0; i < parts.length; i++) total += parts[i].byteLength;
-              const out = new Uint8Array(total);
-              let offset = 0;
-              for (let i = 0; i < parts.length; i++) {
-                out.set(parts[i], offset);
-                offset += parts[i].byteLength;
-              }
-              return toRealArrayBuffer(out);
-            };
-
-            if (isBinary) {
-              if (Array.isArray(accumulated)) {
-                const parts: Uint8Array[] = [];
-                for (let i = 0; i < accumulated.length; i++) {
-                  const u8 = toUint8Array(accumulated[i]);
-                  if (!u8) {
-                    throw $ERR_INVALID_ARG_VALUE(
-                      "format",
-                      format,
-                      'COPY TO returned non-binary data while format is "binary"',
-                    );
-                  }
-                  parts.push(u8);
-                }
-                yield joinUint8Arrays(parts);
-              } else {
-                const value = Array.isArray(accumulated) ? accumulated[0] : (accumulated ?? null);
-                const u8 = toUint8Array(value);
-                if (!u8) {
-                  throw $ERR_INVALID_ARG_VALUE(
-                    "format",
-                    format,
-                    'COPY TO returned non-binary data while format is "binary"',
-                  );
-                }
-                yield toRealArrayBuffer(u8);
-              }
-            } else {
-              let payload = "";
-              if (Array.isArray(accumulated)) {
-                payload = accumulated.map(x => String(x ?? "")).join("");
-              } else {
-                payload = String(Array.isArray(accumulated) ? (accumulated[0] ?? "") : (accumulated ?? ""));
-              }
-              yield payload;
+            for await (const part of yieldAccumulated(accumulated, isBinary, format)) {
+              yield part;
             }
 
             done = true;
@@ -2115,71 +2140,8 @@ const SQL: typeof Bun.SQL = function SQL(
             const format = typeof queryOrOptions === "string" ? undefined : queryOrOptions.format;
             const isBinary = format === "binary";
 
-            const toUint8Array = (value: unknown): Uint8Array | null => {
-              if (value instanceof Uint8Array) return value;
-              if (value instanceof ArrayBuffer) return new Uint8Array(value);
-              if (ArrayBuffer.isView(value)) {
-                const view = value as ArrayBufferView;
-                return new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
-              }
-              return null;
-            };
-
-            const toRealArrayBuffer = (u8: Uint8Array): ArrayBuffer => {
-              const buffer = u8.buffer;
-              if (buffer instanceof ArrayBuffer && u8.byteOffset === 0 && u8.byteLength === buffer.byteLength) {
-                return buffer;
-              }
-              return u8.slice().buffer;
-            };
-
-            const joinUint8Arrays = (parts: Uint8Array[]): ArrayBuffer => {
-              let total = 0;
-              for (let i = 0; i < parts.length; i++) total += parts[i].byteLength;
-              const out = new Uint8Array(total);
-              let offset = 0;
-              for (let i = 0; i < parts.length; i++) {
-                out.set(parts[i], offset);
-                offset += parts[i].byteLength;
-              }
-              return toRealArrayBuffer(out);
-            };
-
-            if (isBinary) {
-              if (Array.isArray(accumulated)) {
-                const parts: Uint8Array[] = [];
-                for (let i = 0; i < accumulated.length; i++) {
-                  const u8 = toUint8Array(accumulated[i]);
-                  if (!u8) {
-                    throw $ERR_INVALID_ARG_VALUE(
-                      "format",
-                      format,
-                      'COPY TO returned non-binary data while format is "binary"',
-                    );
-                  }
-                  parts.push(u8);
-                }
-                yield joinUint8Arrays(parts);
-              } else {
-                const value = Array.isArray(accumulated) ? accumulated[0] : (accumulated ?? null);
-                const u8 = toUint8Array(value);
-                if (!u8) {
-                  throw $ERR_INVALID_ARG_VALUE(
-                    "format",
-                    format,
-                    'COPY TO returned non-binary data while format is "binary"',
-                  );
-                }
-                yield toRealArrayBuffer(u8);
-              }
-            } else {
-              let payload = "";
-              if (Array.isArray(accumulated)) {
-                payload = accumulated.map(x => String(x ?? "")).join("");
-              } else {
-                payload = String(Array.isArray(accumulated) ? (accumulated[0] ?? "") : (accumulated ?? ""));
-              }
-              yield payload;
+            for await (const part of yieldAccumulated(accumulated, isBinary)) {
+              yield part;
             }
 
             done = true;

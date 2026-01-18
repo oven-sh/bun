@@ -209,7 +209,7 @@ pub const FilterSet = struct {
             if (filter.kind == .name and filter.fuzzy_scope_eligible) {
                 if (matchesScopedPackage(name, filter.pattern)) {
                     // Track this as a candidate for fuzzy matching
-                    self.fuzzy_scope_candidates.put(name, {}) catch {};
+                    self.fuzzy_scope_candidates.put(name, {}) catch |err| bun.handleOom(err);
                     self.fuzzy_scope_initialized = true;
                 }
             }

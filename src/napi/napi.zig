@@ -493,7 +493,7 @@ pub export fn napi_create_string_utf16(env_: napi_env, str: ?[*]const char16_t, 
     var string, const chars = bun.String.createUninitialized(.utf16, slice.len);
     @memcpy(chars, slice);
 
-    result.set(env, string.transferToJS(env.toJS()));
+    result.set(env, string.transferToJS(env.toJS()) catch return env.setLastError(.generic_failure));
     return env.ok();
 }
 

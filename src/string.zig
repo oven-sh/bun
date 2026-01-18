@@ -69,9 +69,9 @@ pub const String = extern struct {
     }
 
     extern fn BunString__transferToJS(this: *String, globalThis: *jsc.JSGlobalObject) jsc.JSValue;
-    pub fn transferToJS(this: *String, globalThis: *jsc.JSGlobalObject) jsc.JSValue {
+    pub fn transferToJS(this: *String, globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
         jsc.markBinding(@src());
-        return BunString__transferToJS(this, globalThis);
+        return bun.jsc.fromJSHostCall(globalThis, @src(), BunString__transferToJS, .{ this, globalThis });
     }
 
     pub fn toOwnedSlice(this: String, allocator: std.mem.Allocator) OOM![]u8 {

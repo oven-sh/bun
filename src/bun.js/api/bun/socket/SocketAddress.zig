@@ -327,10 +327,10 @@ pub fn finalize(this: *SocketAddress) void {
 /// This method is slightly faster if you are creating a lot of socket addresses
 /// that will not be around for very long. `createDTO` is even faster, but
 /// requires callers to already have a presentation-formatted address.
-pub fn intoDTO(this: *SocketAddress, global: *jsc.JSGlobalObject) jsc.JSValue {
+pub fn intoDTO(this: *SocketAddress, global: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
     var addr_str = this.address();
     defer this._presentation = .dead;
-    return JSSocketAddressDTO__create(global, addr_str.transferToJS(global), this.port(), this.family() == AF.INET6);
+    return JSSocketAddressDTO__create(global, try addr_str.transferToJS(global), this.port(), this.family() == AF.INET6);
 }
 
 /// Directly create a socket address DTO. This is a POJO with address, port, and family properties.

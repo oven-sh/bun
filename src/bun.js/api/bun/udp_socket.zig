@@ -96,9 +96,9 @@ fn onData(socket: *uws.udp.Socket, buf: *uws.udp.PacketBuffer, packets: c_int) c
 
         _ = callback.call(globalThis, thisValue, &.{
             thisValue,
-            udpSocket.config.binary_type.toJS(slice, globalThis) catch return, // TODO: properly propagate exception upwards
+            udpSocket.config.binary_type.toJS(slice, globalThis) catch return,
             .jsNumber(port),
-            hostname_string.transferToJS(globalThis),
+            hostname_string.transferToJS(globalThis) catch return,
         }) catch |err| {
             udpSocket.callErrorHandler(.zero, globalThis.takeException(err));
         };
@@ -833,7 +833,7 @@ pub const UDPSocket = struct {
 
     fn createSockAddr(globalThis: *JSGlobalObject, address_bytes: []const u8, port: u16) JSValue {
         var sockaddr = SocketAddress.init(address_bytes, port) catch return .js_undefined;
-        return sockaddr.intoDTO(globalThis);
+        return sockaddr.intoDTO(globalThis) catch .js_undefined;
     }
 
     pub fn getAddress(this: *This, globalThis: *JSGlobalObject) JSValue {

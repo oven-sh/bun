@@ -1342,7 +1342,7 @@ pub const JSFrameworkRouter = struct {
         var out = bun.String.init(rendered.items);
         const obj = JSValue.createEmptyObject(global, 2);
         obj.put(global, "kind", try bun.String.static(@tagName(parsed.kind)).toJS(global));
-        obj.put(global, "pattern", out.transferToJS(global));
+        obj.put(global, "pattern", try out.transferToJS(global));
         return obj;
     }
 
@@ -1352,7 +1352,7 @@ pub const JSFrameworkRouter = struct {
         var it = pattern.iterate();
         while (it.next()) |part| try part.toStringForInternalUse(rendered.writer());
         var str = bun.String.cloneUTF8(rendered.items);
-        return str.transferToJS(global);
+        return try str.transferToJS(global);
     }
 
     fn partToJS(global: *JSGlobalObject, part: Part, temp_allocator: Allocator) !JSValue {
@@ -1360,7 +1360,7 @@ pub const JSFrameworkRouter = struct {
         defer rendered.deinit();
         try part.toStringForInternalUse(rendered.writer());
         var str = bun.String.cloneUTF8(rendered.items);
-        return str.transferToJS(global);
+        return try str.transferToJS(global);
     }
 
     pub fn getFileIdForRouter(jsfr: *JSFrameworkRouter, abs_path: []const u8, _: Route.Index, _: Route.FileKind) !OpaqueFileId {

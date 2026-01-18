@@ -1355,7 +1355,7 @@ fn computeArgumentsForFrameworkRequest(
                 const relative_path_buf = bun.path_buffer_pool.get();
                 defer bun.path_buffer_pool.put(relative_path_buf);
                 var route_name = bun.String.cloneUTF8(dev.relativePath(relative_path_buf, keys[fromOpaqueFileId(.server, route.file_page.unwrap().?).get()]));
-                try arr.putIndex(global, 0, route_name.transferToJS(global));
+                try arr.putIndex(global, 0, try route_name.transferToJS(global));
             }
             n = 1;
             while (true) {
@@ -1366,7 +1366,7 @@ fn computeArgumentsForFrameworkRequest(
                         relative_path_buf,
                         keys[fromOpaqueFileId(.server, layout).get()],
                     ));
-                    try arr.putIndex(global, @intCast(n), layout_name.transferToJS(global));
+                    try arr.putIndex(global, @intCast(n), try layout_name.transferToJS(global));
                     n += 1;
                 }
                 route = dev.router.routePtr(route.parent.unwrap() orelse break);

@@ -662,7 +662,7 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
         try route_patterns.putIndex(global, @intCast(nav_index), try pattern_string.toJS(global));
 
         var src_path = bun.String.cloneUTF8(bun.path.relative(cwd, pt.inputFile(main_file_route_index).absPath()));
-        try route_source_files.putIndex(global, @intCast(nav_index), src_path.transferToJS(global));
+        try route_source_files.putIndex(global, @intCast(nav_index), try src_path.transferToJS(global));
 
         try route_nested_files.putIndex(global, @intCast(nav_index), file_list);
         try route_type_and_flags.putIndex(global, @intCast(nav_index), JSValue.jsNumberFromInt32(@bitCast(TypeAndFlags{

@@ -663,17 +663,14 @@ pub const SendQueue = struct {
                 log("IPC call continueSend() from onAckNack retry", .{});
                 return this.continueSend(global, .new_message_appended);
             }
-            // too many retries; give up
+            // too many retries; give up - emit warning if possible
             var warning = bun.String.static("Handle did not reach the receiving process correctly");
             var warning_name = bun.String.static("SentHandleNotReceivedWarning");
-            global.emitWarning(
-                warning.transferToJS(global),
-                warning_name.transferToJS(global),
-                .js_undefined,
-                .js_undefined,
-            ) catch |e| {
-                _ = global.takeException(e);
-            };
+            if (warning.transferToJS(global)) |warning_js| {
+                if (warning_name.transferToJS(global)) |warning_name_js| {
+                    global.emitWarning(warning_js, warning_name_js, .js_undefined, .js_undefined) catch {};
+                } else |_| {}
+            } else |_| {}
             // (fall through to success code in order to consume the message and continue sending)
         }
         // consume the message and continue sending

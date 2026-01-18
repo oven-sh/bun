@@ -600,7 +600,12 @@ function expectBundled(
     if (snapshotSourceMap) unsupportedOptions.push("snapshotSourceMap");
     if (expectExactFilesize) unsupportedOptions.push("expectExactFilesize");
     if (onAfterApiBundle) unsupportedOptions.push("onAfterApiBundle");
-    if (bundleWarnings && Object.keys(bundleWarnings).length > 0) unsupportedOptions.push("bundleWarnings");
+    if (bundleWarnings) unsupportedOptions.push("bundleWarnings");
+    if (keepNames) unsupportedOptions.push("keepNames");
+    if (emitDCEAnnotations) unsupportedOptions.push("emitDCEAnnotations");
+    if (ignoreDCEAnnotations) unsupportedOptions.push("ignoreDCEAnnotations");
+    if (bytecode) unsupportedOptions.push("bytecode");
+    if (compile) unsupportedOptions.push("compile");
     if (outdir) unsupportedOptions.push("outdir (use outfile instead)");
 
     if (unsupportedOptions.length > 0) {
@@ -648,6 +653,9 @@ function expectBundled(
               development: jsx.development,
             }
           : undefined,
+        define,
+        drop,
+        conditions,
       });
 
       if (!build.success) {
@@ -696,7 +704,7 @@ function expectBundled(
         if (!normalizedFile.startsWith("/")) normalizedFile = "/" + normalizedFile;
 
         // Try exact match first
-        if (outputCache[normalizedFile]) return outputCache[normalizedFile];
+        if (normalizedFile in outputCache) return outputCache[normalizedFile];
 
         // For single-output builds, allow accessing the output by the configured outfile path
         const outputs = Object.keys(outputCache);

@@ -286,20 +286,27 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         }
 #endif
 
-        JSC::initialize();
-        {
-
-            JSC::Options::AllowUnfinalizedAccessScope scope;
-
+        // Use JSC::initialize with a callback to set critical Options BEFORE
+        // IPInt::initialize() is called. On Windows ARM64, we must disable WASM
+        // before IPInt runs because of alignment validation issues.
+        JSC::initialize([&] {
+#if OS(WINDOWS) && CPU(ARM64)
+            // Windows ARM64: Disable WASM/JIT due to IPInt alignment validation issues
+            // in WebKit COFF format. Enable once WebKit is built with the fix.
+            JSC::Options::useWasm() = false;
+            JSC::Options::useJIT() = false;
+            JSC::Options::useBBQJIT() = false;
+#else
+            JSC::Options::useWasm() = true;
+            JSC::Options::useJIT() = true;
+            JSC::Options::useBBQJIT() = true;
+#endif
             JSC::Options::useConcurrentJIT() = true;
             // JSC::Options::useSigillCrashAnalyzer() = true;
-            JSC::Options::useWasm() = true;
             JSC::Options::useSourceProviderCache() = true;
             // JSC::Options::useUnlinkedCodeBlockJettisoning() = false;
             JSC::Options::exposeInternalModuleLoader() = true;
             JSC::Options::useSharedArrayBuffer() = true;
-            JSC::Options::useJIT() = true;
-            JSC::Options::useBBQJIT() = true;
             JSC::Options::useJITCage() = false;
             JSC::Options::useShadowRealm() = true;
             JSC::Options::useV8DateParser() = true;
@@ -331,7 +338,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
                 }
             }
             JSC::Options::assertOptionsAreCoherent();
-        }
+        }); // end JSC::initialize lambda
     }); // end std::call_once lambda
 
     // NOLINTEND

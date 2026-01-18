@@ -26,7 +26,8 @@ function checkLibsecretAvailable(): boolean {
   const probeName = "__probe__";
   const set = runSecretCommand(["set", "-s", probeService, "-n", probeName, "__probe__"]);
   if (set.exitCode !== 0) return false;
-  runSecretCommand(["delete", "-s", probeService, "-n", probeName]);
+  const del = runSecretCommand(["delete", "-s", probeService, "-n", probeName]);
+  if (del.exitCode !== 0) return false;
   return true;
 }
 

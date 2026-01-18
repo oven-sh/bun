@@ -311,9 +311,13 @@ fn execDelete(args: []const [:0]const u8) !void {
     defer Bun__Secrets__freeResult(&result);
 
     if (!result.success) {
-        const msg = result.error_message orelse {
+        if (result.error_type == 0) {
             Output.prettyln("<yellow>⚠<r> Secret '{s}' not found", .{name_val});
             return;
+        }
+        const msg = result.error_message orelse {
+            Output.errGeneric("Failed to delete secret (error code: {d})", .{result.error_code});
+            Global.exit(1);
         };
         Output.errGeneric("Failed to delete secret: {s}", .{msg});
         Global.exit(1);

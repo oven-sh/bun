@@ -179,7 +179,8 @@ function getByteLength(value: string | { byteLength: number } | Uint8Array | Arr
       ? (Buffer as any).byteLength(value, "utf8")
       : new TextEncoder().encode(value).byteLength;
   }
-  return (value as any)?.byteLength >>> 0 || 0;
+  const length = value?.byteLength;
+  return Number.isFinite(length) ? Math.max(0, Math.trunc(length)) : 0;
 }
 
 /**
@@ -1248,7 +1249,7 @@ const SQL: typeof Bun.SQL = function SQL(
     const stripNul = options?.sanitizeNUL === true;
     const replaceInvalid = options?.replaceInvalid ?? "";
 
-    const sanitizeString = (s: string) => (stripNul ? s.replace(/\u0000/g, replaceInvalid) : s);
+    const sanitizeString = (s: string) => (stripNul ? s.replaceAll("\u0000", replaceInvalid) : s);
     const sanitizeBytes = (u8: Uint8Array) => {
       if (!stripNul) return u8;
       let keep = 0;
@@ -1477,7 +1478,7 @@ const SQL: typeof Bun.SQL = function SQL(
       }
 
       // Array of arrays
-      if (Array.isArray(data)) {
+      if ($isArray(data)) {
         // Binary format does not support automatic row serialization
         if (fmt === "binary") {
           throw new Error(

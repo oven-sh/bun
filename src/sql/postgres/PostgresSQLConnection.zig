@@ -2554,9 +2554,9 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
             try resp.decodeInternal(Context, reader);
             defer resp.deinit();
 
-            debug("CopyInResponse: format={} columns={}", .{ resp.overall_format, resp.column_format_codes.len });
+            debug("CopyInResponse: format={} columns={}", .{ resp.overall_format(), resp.column_format_codes().len });
             // Initialize COPY FROM state
-            try this.startCopy(resp.overall_format, resp.column_format_codes, false);
+            try this.startCopy(resp.overall_format(), resp.column_format_codes(), false);
             debug("CopyInResponse: ready to accept COPY data", .{});
         },
         .NoticeResponse => {
@@ -2577,9 +2577,9 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
             try resp.decodeInternal(Context, reader);
             defer resp.deinit();
 
-            debug("CopyOutResponse: format={} columns={}", .{ resp.overall_format, resp.column_format_codes.len });
+            debug("CopyOutResponse: format={} columns={}", .{ resp.overall_format(), resp.column_format_codes().len });
             // Initialize COPY TO state
-            try this.startCopy(resp.overall_format, resp.column_format_codes, true);
+            try this.startCopy(resp.overall_format(), resp.column_format_codes(), true);
             debug("CopyOutResponse: ready to stream COPY data", .{});
         },
         .CopyDone => {
@@ -2619,7 +2619,7 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
             try resp.decodeInternal(Context, reader);
             defer resp.deinit();
 
-            debug("CopyBothResponse: format={} columns={} (streaming replication)", .{ resp.overall_format, resp.column_format_codes.len });
+            debug("CopyBothResponse: format={} columns={} (streaming replication)", .{ resp.overall_format(), resp.column_format_codes().len });
 
             // CopyBothResponse is used for streaming replication
             // Not implemented yet

@@ -2240,12 +2240,15 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
                 this.copy_bytes_transferred = this.copy_bytes_transferred +| @as(u64, @intCast(data_slice.len));
                 this.copy_chunks_processed = this.copy_chunks_processed +| @as(u64, 1);
 
-                // Emit streaming chunk callback if registered (flush pending first if any)
-                if (this.copy_streaming_mode and this.copy_data_buffer.items.len > 0 and this.copy_binary_header_validated and !this.copy_callback_in_progress) {
-                    try this.flushBufferedChunkToJS();
+                // Streaming mode: flush any pending buffered bytes then emit this chunk.
+                // - For text COPY (copy_format == 0), we can flush immediately.
+                // - For binary COPY (copy_format == 1), only flush once the header has been validated.
+                if (this.copy_streaming_mode) {
+                    if (this.copy_data_buffer.items.len > 0 and !this.copy_callback_in_progress and (this.copy_format == 0 or this.copy_binary_header_validated)) {
+                        try this.flushBufferedChunkToJS();
+                    }
+                    try this.emitChunkToJS(data_slice);
                 }
-                // Emit streaming chunk callback if registered
-                try this.emitChunkToJS(data_slice);
             } else if (this.copy_state == .copy_in_progress) {
                 // For COPY FROM STDIN, we shouldn't receive CopyData from server
                 debug("CopyData: unexpected in copy_in_progress state", .{});

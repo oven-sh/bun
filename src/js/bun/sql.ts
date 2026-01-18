@@ -1436,11 +1436,10 @@ const SQL: typeof Bun.SQL = function SQL(
     // Abort handling and progress
     const signal: AbortSignal | undefined = options?.signal;
     let aborted = false;
-    let bytesSent = 0;
-    let chunksSent = 0;
+    const counters = { bytesSent: 0, chunksSent: 0 };
     const notifyProgress = () => {
       try {
-        options?.onProgress?.({ bytesSent, chunksSent });
+        options?.onProgress?.({ bytesSent: counters.bytesSent, chunksSent: counters.chunksSent });
       } catch {}
     };
     const onAbort = () => {
@@ -1542,13 +1541,13 @@ const SQL: typeof Bun.SQL = function SQL(
           // Enforce maxBytes and update progress before sending this batch
           const bLen = getByteLength(batch);
 
-          if (resolvedMaxBytes && bytesSent + bLen > resolvedMaxBytes) {
+          if (resolvedMaxBytes && counters.bytesSent + bLen > resolvedMaxBytes) {
             throw new Error("copyFrom: maxBytes exceeded");
           }
 
           reserved.copySendData(batch);
-          bytesSent += bLen;
-          chunksSent += 1;
+          counters.bytesSent += bLen;
+          counters.chunksSent += 1;
           notifyProgress();
           await awaitWritableWithFallback(reserved, pool);
           batch = "";
@@ -1566,10 +1565,7 @@ const SQL: typeof Bun.SQL = function SQL(
       if (typeof data === "string") {
         if (aborted) throw new Error("AbortError");
         const payload = sanitizeString(data);
-        const counters = { bytesSent, chunksSent };
         await sendChunkedData(payload, reserved, pool, resolvedLimits, counters, notifyProgress);
-        bytesSent = counters.bytesSent;
-        chunksSent = counters.chunksSent;
         sendBinaryTrailer();
         reserved.copyDone();
         return;
@@ -1593,10 +1589,7 @@ const SQL: typeof Bun.SQL = function SQL(
               const types = getBinaryTypes();
               await flushBatch();
               const payload = encodeBinaryRow(item, types);
-              const counters = { bytesSent, chunksSent };
               await sendChunkedData(payload, reserved, pool, resolvedLimits, counters, notifyProgress);
-              bytesSent = counters.bytesSent;
-              chunksSent = counters.chunksSent;
             } else {
               // text/csv: treat as row[]
               await addToBatch(serializeRow(item));
@@ -1613,10 +1606,7 @@ const SQL: typeof Bun.SQL = function SQL(
             }
             // For binary format, send raw bytes as-is; for text/csv, sanitize NUL bytes if requested
             const src = fmt === "binary" ? view : sanitizeBytes(view);
-            const counters = { bytesSent, chunksSent };
             await sendChunkedData(src, reserved, pool, resolvedLimits, counters, notifyProgress);
-            bytesSent = counters.bytesSent;
-            chunksSent = counters.chunksSent;
           } else {
             // fallback: attempt to serialize as a row
             await addToBatch(serializeRow(item));
@@ -1636,10 +1626,7 @@ const SQL: typeof Bun.SQL = function SQL(
               const types = getBinaryTypes();
               await flushBatch();
               const payload = encodeBinaryRow(item, types);
-              const counters = { bytesSent, chunksSent };
               await sendChunkedData(payload, reserved, pool, resolvedLimits, counters, notifyProgress);
-              bytesSent = counters.bytesSent;
-              chunksSent = counters.chunksSent;
             } else {
               await addToBatch(serializeRow(item));
             }
@@ -1653,10 +1640,7 @@ const SQL: typeof Bun.SQL = function SQL(
               throw $ERR_INVALID_ARG_VALUE("data", item, "must be a string, an array row, or a byte source");
             }
             const src = fmt === "binary" ? view : sanitizeBytes(view);
-            const counters = { bytesSent, chunksSent };
             await sendChunkedData(src, reserved, pool, resolvedLimits, counters, notifyProgress);
-            bytesSent = counters.bytesSent;
-            chunksSent = counters.chunksSent;
           } else {
             await addToBatch(serializeRow(item));
           }
@@ -1688,10 +1672,7 @@ const SQL: typeof Bun.SQL = function SQL(
               throw $ERR_INVALID_ARG_VALUE(`data[${i}]`, row, "must be an array");
             }
             const payload = encodeBinaryRow(row, types);
-            const counters = { bytesSent, chunksSent };
             await sendChunkedData(payload, reserved, pool, resolvedLimits, counters, notifyProgress);
-            bytesSent = counters.bytesSent;
-            chunksSent = counters.chunksSent;
           }
 
           await flushBatch();
@@ -1712,10 +1693,7 @@ const SQL: typeof Bun.SQL = function SQL(
       // Fallback: treat as string
       if (aborted) throw new Error("AbortError");
       const fallback = sanitizeString(String(data ?? ""));
-      reserved.copySendData(fallback);
-      bytesSent += getByteLength(fallback);
-      chunksSent += 1;
-      notifyProgress();
+      await sendChunkedData(fallback, reserved, pool, resolvedLimits, counters, notifyProgress);
       sendBinaryTrailer();
       reserved.copyDone();
     };
@@ -1896,20 +1874,41 @@ const SQL: typeof Bun.SQL = function SQL(
       if (typeof queryOrOptions === "string") {
         return queryOrOptions;
       }
+
+      validateObject(queryOrOptions, "queryOrOptions");
+
       const table = queryOrOptions.table;
+      if ((typeof table !== "string" && typeof table !== "symbol") || String(table).length === 0) {
+        throw $ERR_INVALID_ARG_VALUE("queryOrOptions.table", table, "must be a non-empty string or symbol");
+      }
+
+      const format = queryOrOptions.format;
+      if (format !== undefined) {
+        validateOneOf(format, "queryOrOptions.format", ["text", "csv", "binary"]);
+      }
+
+      const columns = queryOrOptions.columns;
+      if (columns !== undefined && !$isArray(columns)) {
+        throw $ERR_INVALID_ARG_VALUE("queryOrOptions.columns", columns, "must be an array of strings");
+      }
+      if ($isArray(columns)) {
+        for (let i = 0; i < columns.length; i++) {
+          const column = columns[i];
+          if (typeof column !== "string" || column.length === 0) {
+            throw $ERR_INVALID_ARG_VALUE(`queryOrOptions.columns[${i}]`, column, "must be a non-empty string");
+          }
+        }
+      }
+
       // Use adapter's escapeIdentifier to handle schema-qualified names correctly
       const escapeIdentifier = pool.escapeIdentifier
         ? pool.escapeIdentifier.bind(pool)
         : (str: string) => '"' + String(str).replaceAll('"', '""').replaceAll(".", '"."') + '"';
+
       const tableName = escapeIdentifier(String(table));
-      const cols = (queryOrOptions.columns ?? []).map(c => escapeIdentifier(String(c))).join(", ");
-      const fmt =
-        queryOrOptions.format === "csv"
-          ? " (FORMAT CSV)"
-          : queryOrOptions.format === "binary"
-            ? " (FORMAT BINARY)"
-            : "";
-      return `COPY ${tableName}${cols ? ` (${cols})` : ""} TO STDOUT${fmt}`;
+      const list = $isArray(columns) ? columns.map(c => escapeIdentifier(String(c))).join(", ") : "";
+      const fmt = format === "csv" ? " (FORMAT CSV)" : format === "binary" ? " (FORMAT BINARY)" : "";
+      return `COPY ${tableName}${list ? ` (${list})` : ""} TO STDOUT${fmt}`;
     };
 
     return {

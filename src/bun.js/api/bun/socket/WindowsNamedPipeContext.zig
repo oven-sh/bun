@@ -99,10 +99,10 @@ fn onError(this: *WindowsNamedPipeContext, err: bun.sys.Error) void {
     if (this.is_open) {
         switch (this.socket) {
             .tls => |tls| {
-                tls.handleError(err.toJS(this.globalThis));
+                tls.handleError(err.toJS(this.globalThis) catch return);
             },
             .tcp => |tcp| {
-                tcp.handleError(err.toJS(this.globalThis));
+                tcp.handleError(err.toJS(this.globalThis) catch return);
             },
             else => {},
         }

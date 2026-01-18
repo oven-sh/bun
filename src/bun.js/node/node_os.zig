@@ -307,7 +307,7 @@ pub fn homedir(global: *jsc.JSGlobalObject) !bun.String {
         var out: bun.PathBuffer = undefined;
         var size: usize = out.len;
         if (libuv.uv_os_homedir(&out, &size).toError(.uv_os_homedir)) |err| {
-            return global.throwValue(err.toJS(global));
+            return global.throwValue(try err.toJS(global));
         }
         return bun.String.cloneUTF8(out[0..size]);
     } else {
@@ -649,7 +649,7 @@ fn networkInterfacesWindows(globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSV
             .errno = err,
             .syscall = bun.String.static("uv_interface_addresses"),
         };
-        return globalThis.throwValue(sys_err.toErrorInstance(globalThis));
+        return globalThis.throwValue(try sys_err.toErrorInstance(globalThis));
     }
     defer libuv.uv_free_interface_addresses(ifaces, count);
 
@@ -897,7 +897,7 @@ pub fn uptime(global: *jsc.JSGlobalObject) bun.JSError!f64 {
                     .errno = err,
                     .syscall = bun.String.static("uv_uptime"),
                 };
-                return global.throwValue(sys_err.toErrorInstance(global));
+                return global.throwValue(try sys_err.toErrorInstance(global));
             }
             return uptime_value;
         },

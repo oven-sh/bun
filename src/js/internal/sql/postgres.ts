@@ -274,7 +274,7 @@ initPostgres(
     copyEndHandlers.delete(this);
     copyStartHandlers.delete(this);
     try {
-      (setCopyChunkHandlerRegistered as any)(this, false);
+      setCopyChunkHandlerRegistered(this, false);
     } catch {}
   },
   function onWritable(this: $ZigGeneratedClasses.PostgresSQLConnection) {
@@ -330,16 +330,16 @@ export interface PostgresDotZig {
     simple: boolean,
   ) => $ZigGeneratedClasses.PostgresSQLQuery;
 
-  // Low-level COPY helpers (to be called with .call(connection, ...))
-  sendCopyData: (data: string | Uint8Array) => void;
-  sendCopyDone: () => void;
-  sendCopyFail: (message?: string) => void;
-  awaitWritable: () => Promise<void>;
-  setCopyStreamingMode: (enable: boolean) => void;
-  setCopyChunkHandlerRegistered: (registered: boolean) => void;
-  setCopyTimeout: (ms: number) => void;
-  setMaxCopyBufferSize: (bytes: number) => void;
-  setMaxCopyBufferSizeUnsafe: (bytes: number) => void;
+  // Low-level COPY helpers (call with explicit thisArg as first parameter)
+  sendCopyData: (connection: $ZigGeneratedClasses.PostgresSQLConnection, data: string | Uint8Array) => void;
+  sendCopyDone: (connection: $ZigGeneratedClasses.PostgresSQLConnection) => void;
+  sendCopyFail: (connection: $ZigGeneratedClasses.PostgresSQLConnection, message?: string) => void;
+  awaitWritable: (connection: $ZigGeneratedClasses.PostgresSQLConnection) => Promise<void>;
+  setCopyStreamingMode: (connection: $ZigGeneratedClasses.PostgresSQLConnection, enable: boolean) => void;
+  setCopyChunkHandlerRegistered: (connection: $ZigGeneratedClasses.PostgresSQLConnection, registered: boolean) => void;
+  setCopyTimeout: (connection: $ZigGeneratedClasses.PostgresSQLConnection, ms: number) => void;
+  setMaxCopyBufferSize: (connection: $ZigGeneratedClasses.PostgresSQLConnection, bytes: number) => void;
+  setMaxCopyBufferSizeUnsafe: (connection: $ZigGeneratedClasses.PostgresSQLConnection, bytes: number) => void;
 }
 
 function onCopyStart(connection: $ZigGeneratedClasses.PostgresSQLConnection, handler: () => void) {
@@ -347,15 +347,15 @@ function onCopyStart(connection: $ZigGeneratedClasses.PostgresSQLConnection, han
   copyStartHandlers.set(connection, handler);
 }
 function copySendData(connection: $ZigGeneratedClasses.PostgresSQLConnection, data: string | Uint8Array) {
-  // delegate to Zig binding with the connection as thisArg
+  // delegate to Zig binding (expects explicit thisArg as first parameter)
   // Zig side accepts string and ArrayBuffer/TypedArray payloads via PostgresSQLConnection.copySendDataFromJSValue.
-  (sendCopyData as any)(connection, data as any);
+  sendCopyData(connection, data);
 }
 function copyDone(connection: $ZigGeneratedClasses.PostgresSQLConnection) {
-  (sendCopyDone as any)(connection);
+  sendCopyDone(connection);
 }
 function copyFail(connection: $ZigGeneratedClasses.PostgresSQLConnection, message?: string) {
-  (sendCopyFail as any)(connection, message ?? "");
+  sendCopyFail(connection, message ?? "");
 }
 enum SQLCommand {
   insert = 0,
@@ -594,7 +594,7 @@ class PooledPostgresConnection {
       copyEndHandlers.delete(underlyingConnection);
       writableHandlers.delete(underlyingConnection);
       try {
-        (setCopyChunkHandlerRegistered as any)(underlyingConnection, false);
+        setCopyChunkHandlerRegistered(underlyingConnection, false);
       } catch {}
     }
 
@@ -873,41 +873,39 @@ class PostgresAdapter
   static onCopyChunk(connection: $ZigGeneratedClasses.PostgresSQLConnection, handler: (chunk: any) => void) {
     copyChunkHandlers.set(connection, handler);
     try {
-      (setCopyChunkHandlerRegistered as any)(connection, true);
+      setCopyChunkHandlerRegistered(connection, true);
     } catch {}
   }
   static onCopyEnd(connection: $ZigGeneratedClasses.PostgresSQLConnection, handler: () => void) {
     copyEndHandlers.set(connection, handler);
   }
   static copySendData(connection: $ZigGeneratedClasses.PostgresSQLConnection, data: string | Uint8Array) {
-    // delegate to Zig binding with the connection as thisArg
-    // Zig side currently expects strings; Uint8Array will be coerced by Bun
-    // If binary mode is used later, we can pass bytes directly
-    (sendCopyData as any)(connection, data as any);
+    // delegate to Zig binding (expects explicit thisArg as first parameter)
+    sendCopyData(connection, data);
   }
   static copyDone(connection: $ZigGeneratedClasses.PostgresSQLConnection) {
-    (sendCopyDone as any)(connection);
+    sendCopyDone(connection);
   }
   static copyFail(connection: $ZigGeneratedClasses.PostgresSQLConnection, message?: string) {
-    (sendCopyFail as any)(connection, message ?? "");
+    sendCopyFail(connection, message ?? "");
   }
   static setCopyStreamingMode(connection: $ZigGeneratedClasses.PostgresSQLConnection, enable: boolean) {
-    (setCopyStreamingMode as any)(connection, !!enable);
+    setCopyStreamingMode(connection, !!enable);
   }
   static setCopyTimeout(connection: $ZigGeneratedClasses.PostgresSQLConnection, ms: number) {
     const n = Math.min(0xffffffff, Math.max(0, Math.trunc(Number(ms) || 0)));
-    (setCopyTimeout as any)(connection, n);
+    setCopyTimeout(connection, n);
   }
   static setMaxCopyBufferSize(connection: $ZigGeneratedClasses.PostgresSQLConnection, bytes: number) {
     // Normalize to a non-negative integer. Zig enforces the safety cap (and treats 0 as disabled).
     const n = Math.max(0, Math.trunc(Number(bytes) || 0));
-    (setMaxCopyBufferSize as any)(connection, n);
+    setMaxCopyBufferSize(connection, n);
   }
 
   static setMaxCopyBufferSizeUnsafe(connection: $ZigGeneratedClasses.PostgresSQLConnection, bytes: number) {
     // Normalize to a non-negative integer. Zig enforces the hard cap (and treats 0 as disabled).
     const n = Math.max(0, Math.trunc(Number(bytes) || 0));
-    (setMaxCopyBufferSizeUnsafe as any)(connection, n);
+    setMaxCopyBufferSizeUnsafe(connection, n);
   }
   static onWritable(connection: $ZigGeneratedClasses.PostgresSQLConnection, handler: () => void) {
     writableHandlers.set(connection, handler);
@@ -917,7 +915,7 @@ class PostgresAdapter
       writableHandlers.set(connection, handler);
     }
     // Use the connection as thisArg; the Zig binding returns a Promise that resolves when the socket becomes writable.
-    return (awaitWritable as any)(connection);
+    return awaitWritable(connection);
   }
 
   // Instance helpers to control COPY using a pooled connection handle

@@ -175,9 +175,7 @@ function resolveCopyToMaxBytes(queryOrOptions: any, pool: any): number {
 
 function getByteLength(value: string | { byteLength: number } | Uint8Array | ArrayBuffer): number {
   if (typeof value === "string") {
-    return (Buffer as any)?.byteLength
-      ? (Buffer as any).byteLength(value, "utf8")
-      : new TextEncoder().encode(value).byteLength;
+    return Buffer?.byteLength ? Buffer.byteLength(value, "utf8") : new TextEncoder().encode(value).byteLength;
   }
   const length = value?.byteLength;
   return Number.isFinite(length) ? Math.max(0, Math.trunc(length)) : 0;
@@ -1281,8 +1279,8 @@ const SQL: typeof Bun.SQL = function SQL(
 
     // Helpers
     const escapeIdentifier =
-      (pool as any).escapeIdentifier && typeof (pool as any).escapeIdentifier === "function"
-        ? (s: string) => (pool as any).escapeIdentifier(s)
+      pool.escapeIdentifier && typeof pool.escapeIdentifier === "function"
+        ? (s: string) => pool.escapeIdentifier(s)
         : (s: string) => '"' + String(s).replaceAll('"', '""').replaceAll(".", '"."') + '"';
 
     const fmt = options?.format === "csv" ? "csv" : options?.format === "binary" ? "binary" : "text";
@@ -1328,7 +1326,7 @@ const SQL: typeof Bun.SQL = function SQL(
       if (typeof v === "boolean") return fmt === "csv" ? (v ? "true" : "false") : v ? "t" : "f";
       if (typeof v === "number" || typeof v === "bigint") return String(v);
       if (typeof v === "string") return sanitizeString(v);
-      if (ArrayBuffer.isView(v) && !(globalThis as any).Buffer?.isBuffer?.(v)) {
+      if (ArrayBuffer.isView(v) && !globalThis.Buffer?.isBuffer?.(v)) {
         // Typed array -> string
         return String(v);
       }
@@ -1374,8 +1372,8 @@ const SQL: typeof Bun.SQL = function SQL(
     const feedData = async () => {
       // Batch size for accumulating small chunks (configurable)
       const BATCH_SIZE =
-        options && typeof (options as any).batchSize === "number" && (options as any).batchSize > 0
-          ? ((options as any).batchSize as number)
+        options && typeof options.batchSize === "number" && options.batchSize > 0
+          ? (options.batchSize as number)
           : DEFAULT_COPY_BATCH_SIZE;
       let batch = "";
 

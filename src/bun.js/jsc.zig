@@ -77,6 +77,7 @@ pub const SystemError = @import("./bindings/SystemError.zig").SystemError;
 pub const URL = @import("./bindings/URL.zig").URL;
 pub const URLSearchParams = @import("./bindings/URLSearchParams.zig").URLSearchParams;
 pub const VM = @import("./bindings/VM.zig").VM;
+pub const VMManager = @import("./bindings/VMManager.zig");
 pub const Weak = @import("./Weak.zig").Weak;
 pub const WeakRefType = @import("./Weak.zig").WeakRefType;
 pub const Exception = @import("./bindings/Exception.zig").Exception;

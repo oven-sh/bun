@@ -3,6 +3,8 @@
 #include "ZigGlobalObject.h"
 
 #include <JavaScriptCore/InspectorFrontendChannel.h>
+#include <JavaScriptCore/StopTheWorldCallback.h>
+#include <JavaScriptCore/VMManager.h>
 #include <JavaScriptCore/JSGlobalObjectDebuggable.h>
 #include <JavaScriptCore/JSGlobalObjectDebugger.h>
 #include <JavaScriptCore/Debugger.h>
@@ -658,4 +660,37 @@ extern "C" void Debugger__willDispatchAsyncCall(JSGlobalObject* globalObject, As
 
     agent->willDispatchAsyncCall(getCallType(callType), callbackId);
 }
+}
+
+// StopTheWorld callback for SIGUSR1 debugger activation.
+// This runs on the main thread at a safe point when VMManager::requestStopAll(JSDebugger) is called.
+//
+// This handles the case where JS is actively executing (including infinite loops).
+// For idle VMs, RuntimeInspector::checkAndActivateInspector handles it via event loop.
+
+extern "C" bool Bun__activateInspector();
+
+JSC::StopTheWorldStatus Bun__jsDebuggerCallback(JSC::VM& vm, JSC::StopTheWorldEvent event)
+{
+    using namespace JSC;
+
+    if (event != StopTheWorldEvent::VMStopped)
+        return STW_CONTINUE();
+
+    if (Bun__activateInspector()) {
+        vm.notifyNeedDebuggerBreak();
+    }
+
+    return STW_RESUME_ALL();
+}
+
+// Zig bindings for VMManager
+extern "C" void VMManager__requestStopAll(uint32_t reason)
+{
+    JSC::VMManager::requestStopAll(static_cast<JSC::VMManager::StopReason>(reason));
+}
+
+extern "C" void VMManager__requestResumeAll(uint32_t reason)
+{
+    JSC::VMManager::requestResumeAll(static_cast<JSC::VMManager::StopReason>(reason));
 }

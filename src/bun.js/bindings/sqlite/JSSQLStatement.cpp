@@ -459,11 +459,23 @@ public:
     bool need_update() { return version_db->version.load() != version; }
     void update_version() { version = version_db->version.load(); }
 
+    // Check if SQLite auto-reprepared the statement due to external schema changes
+    bool check_reprepare()
+    {
+        int currentReprepare = sqlite3_stmt_status(stmt, SQLITE_STMTSTATUS_REPREPARE, 0);
+        if (currentReprepare != lastReprepareCount) {
+            lastReprepareCount = currentReprepare;
+            return true;
+        }
+        return false;
+    }
+
     ~JSSQLStatement();
 
     sqlite3_stmt* stmt;
     VersionSqlite3* version_db;
     uint64_t version = 0;
+    int lastReprepareCount = 0;
     // Tracks which columns are valid in the current result set. Used to handle duplicate column names.
     // The bit at index i is set if the column at index i is valid.
     WTF::BitVector validColumns;
@@ -2073,7 +2085,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionIterate, (JSC::JS
         castedThis->version_db->version++;
     }
 
-    if (!castedThis->hasExecuted || castedThis->need_update()) {
+    if (!castedThis->hasExecuted || castedThis->need_update() || castedThis->check_reprepare()) {
         initializeColumnNames(lexicalGlobalObject, castedThis);
         RETURN_IF_EXCEPTION(scope, {});
     }
@@ -2125,7 +2137,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll, (JSC::JSGlob
         castedThis->version_db->version++;
     }
 
-    if (!castedThis->hasExecuted || castedThis->need_update()) {
+    if (!castedThis->hasExecuted || castedThis->need_update() || castedThis->check_reprepare()) {
         initializeColumnNames(lexicalGlobalObject, castedThis);
         RETURN_IF_EXCEPTION(scope, {});
     }
@@ -2210,7 +2222,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionGet, (JSC::JSGlob
         castedThis->version_db->version++;
     }
 
-    if (!castedThis->hasExecuted || castedThis->need_update()) {
+    if (!castedThis->hasExecuted || castedThis->need_update() || castedThis->check_reprepare()) {
         initializeColumnNames(lexicalGlobalObject, castedThis);
         RETURN_IF_EXCEPTION(scope, {});
     }
@@ -2266,7 +2278,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRows, (JSC::JSGlo
         castedThis->version_db->version++;
     }
 
-    if (!castedThis->hasExecuted || castedThis->need_update()) {
+    if (!castedThis->hasExecuted || castedThis->need_update() || castedThis->check_reprepare()) {
         initializeColumnNames(lexicalGlobalObject, castedThis);
 
         if (scope.exception()) [[unlikely]] {
@@ -2353,7 +2365,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRawRows, (JSC::JS
         castedThis->version_db->version++;
     }
 
-    if (!castedThis->hasExecuted || castedThis->need_update()) {
+    if (!castedThis->hasExecuted || castedThis->need_update() || castedThis->check_reprepare()) {
         initializeColumnNames(lexicalGlobalObject, castedThis);
         if (scope.exception()) [[unlikely]] {
             sqlite3_reset(stmt);
@@ -2451,7 +2463,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRun, (JSC::JSGlob
         castedThis->version_db->version++;
     }
 
-    if (!castedThis->hasExecuted || castedThis->need_update()) {
+    if (!castedThis->hasExecuted || castedThis->need_update() || castedThis->check_reprepare()) {
         initializeColumnNames(lexicalGlobalObject, castedThis);
         if (scope.exception()) [[unlikely]] {
             sqlite3_reset(stmt);
@@ -2511,7 +2523,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnNames, (JSGlobalObject * lexical
     auto scope = DECLARE_THROW_SCOPE(vm);
     CHECK_THIS
 
-    if (!castedThis->hasExecuted || castedThis->need_update()) {
+    if (!castedThis->hasExecuted || castedThis->need_update() || castedThis->check_reprepare()) {
         initializeColumnNames(lexicalGlobalObject, castedThis);
         RETURN_IF_EXCEPTION(scope, {});
     }

@@ -2,8 +2,9 @@ import { itBundled } from "../expectBundled";
 
 describe("css", () => {
   itBundled("css/view-transition-class-selector-23600", {
+    virtual: true,
     files: {
-      "index.css": /* css */ `
+      "/index.css": /* css */ `
         @keyframes slide-out {
           from {
             opacity: 1;
@@ -33,11 +34,10 @@ describe("css", () => {
         }
       `,
     },
-    outdir: "/out",
-    entryPoints: ["/index.css"],
+    outfile: "/out.css",
     onAfterBundle(api) {
-      api.expectFile("/out/index.css").toMatchInlineSnapshot(`
-        "/* index.css */
+      api.expectFile("/out.css").toMatchInlineSnapshot(`
+        "/* ../../index.css */
         @keyframes slide-out {
           from {
             opacity: 1;

@@ -2,18 +2,18 @@ import { itBundled } from "../expectBundled";
 
 describe("css", () => {
   itBundled("css-module/GlobalPseudoFunction", {
+    virtual: true,
     files: {
-      "index.module.css": /* css */ `
+      "/index.module.css": /* css */ `
       :global(.foo) {
         color: red;
       }
       `,
     },
-    outdir: "/out",
-    entryPoints: ["/index.module.css"],
+    outfile: "/out.css",
     onAfterBundle(api) {
-      api.expectFile("/out/index.module.css").toEqualIgnoringWhitespace(`
-      /* index.module.css */
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
+      /* ../../index.module.css */
       .foo {
         color: red;
       }

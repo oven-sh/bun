@@ -465,7 +465,9 @@ pub const FFI = struct {
 
             // TinyCC now manages relocation memory internally
             dangerouslyRunWithoutJitProtections(TCC.Error!void, TCC.State.relocate, .{state}) catch {
-                bun.debugAssert(this.hasDeferredErrors());
+                if (!this.hasDeferredErrors()) {
+                    bun.handleOom(this.deferred_errors.append(bun.default_allocator, "tcc_relocate returned a negative value"));
+                }
                 return error.DeferredErrors;
             };
 

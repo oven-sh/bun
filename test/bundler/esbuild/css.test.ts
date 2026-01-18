@@ -9,7 +9,6 @@ import { itBundled } from "../expectBundled";
 
 describe("bundler", () => {
   itBundled("css/CSSEntryPoint", {
-    // GENERATED
     files: {
       "/entry.css": /* css */ `
           body {
@@ -29,7 +28,6 @@ describe("bundler", () => {
   });
 
   itBundled("css/CSSEntryPointEmpty", {
-    // GENERATED
     files: {
       "/entry.css": /* css */ `\n`,
     },
@@ -41,7 +39,6 @@ describe("bundler", () => {
   });
 
   itBundled("css/CSSNesting", {
-    // GENERATED
     target: "bun",
     files: {
       "/entry.css": /* css */ `
@@ -65,7 +62,6 @@ describe("bundler", () => {
   });
 
   itBundled("css/CSSAtImportMissing", {
-    // Cannot use virtual mode for error tests - Bun.build throws instead of returning { success: false }
     files: {
       "/entry.css": `@import "./missing.css";`,
     },
@@ -140,7 +136,6 @@ describe("bundler", () => {
   });
 
   itBundled("css/CSSAtImportCycle", {
-    // GENERATED
     files: {
       "/a.css": /* css */ `
           @import "./a.css";

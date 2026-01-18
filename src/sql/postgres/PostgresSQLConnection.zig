@@ -150,7 +150,7 @@ pub fn setCopyTimeout(this: *PostgresSQLConnection, globalObject: *jsc.JSGlobalO
     }
     const n = try args[0].toNumber(globalObject);
     var ms: u32 = 0;
-    if (n > 0) {
+    if (std.math.isFinite(n) and n > 0) {
         const n_u64: u64 = @intFromFloat(n);
         ms = @intCast(@min(n_u64, @as(u64, std.math.maxInt(u32))));
     }
@@ -1086,7 +1086,7 @@ pub fn copySendDataFromJSValue(this: *PostgresSQLConnection, globalObject: *jsc.
     }
 
     // Guard against excessively large chunks
-    if (slice.len > this.max_copy_buffer_size) {
+    if (this.max_copy_buffer_size > 0 and slice.len > this.max_copy_buffer_size) {
         return globalObject.throw("COPY data chunk too large: {d} bytes exceeds maximum of {d} bytes. Consider sending smaller chunks.", .{ slice.len, this.max_copy_buffer_size });
     }
 
@@ -2161,7 +2161,9 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
 
                 // In streaming mode, enforce a per-chunk limit to avoid allocating huge ArrayBuffers
                 if (this.copy_streaming_mode) {
-                    const per_chunk_limit: usize = @min(this.max_copy_buffer_size, 64 * 1024 * 1024);
+                    const effective_limit: usize = if (this.max_copy_buffer_size == 0) std.math.maxInt(usize) else this.max_copy_buffer_size;
+                    const per_chunk_limit: usize = @min(effective_limit, 64 * 1024 * 1024);
+
                     if (data_slice.len > per_chunk_limit) {
                         this.abortCopyAndFailConnection(error.CopyChunkTooLarge, "COPY aborted: chunk too large");
                         return error.CopyChunkTooLarge;

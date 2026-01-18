@@ -99,8 +99,13 @@ fn __pg_setCopyTimeout(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFr
         return globalObject.throwNotEnoughArguments("setCopyTimeout", 2, 1);
     }
 
-    const ms_i32 = ms_value.toInt32();
-    const ms_u32: u32 = if (ms_i32 < 0) 0 else @intCast(ms_i32);
+    const ms_num = try ms_value.toNumber(globalObject);
+
+    var ms_u32: u32 = 0;
+    if (std.math.isFinite(ms_num) and ms_num > 0) {
+        ms_u32 = @intCast(@min(@as(u64, @intFromFloat(ms_num)), @as(u64, std.math.maxInt(u32))));
+    }
+
     connection.copy_timeout_ms = ms_u32;
 
     return .js_undefined;
@@ -118,8 +123,13 @@ fn __pg_setMaxCopyBufferSize(globalObject: *jsc.JSGlobalObject, callframe: *jsc.
         return globalObject.throwNotEnoughArguments("setMaxCopyBufferSize", 2, 1);
     }
 
-    const size_i32 = bytes_value.toInt32();
-    const size_u: usize = if (size_i32 <= 0) 0 else @intCast(size_i32);
+    const size_num = try bytes_value.toNumber(globalObject);
+
+    var size_u: usize = 0;
+    if (std.math.isFinite(size_num) and size_num > 0) {
+        size_u = @intCast(@min(@as(u64, @intFromFloat(size_num)), @as(u64, std.math.maxInt(usize))));
+    }
+
     connection.max_copy_buffer_size = size_u;
 
     // Note: if currently accumulating (non-streaming COPY TO), existing buffered data may exceed the new limit.
@@ -140,8 +150,13 @@ fn __pg_setMaxCopyBufferSizeUnsafe(globalObject: *jsc.JSGlobalObject, callframe:
         return globalObject.throwNotEnoughArguments("setMaxCopyBufferSizeUnsafe", 2, 1);
     }
 
-    const size_i32 = bytes_value.toInt32();
-    const size_u: usize = if (size_i32 <= 0) 0 else @intCast(size_i32);
+    const size_num = try bytes_value.toNumber(globalObject);
+
+    var size_u: usize = 0;
+    if (std.math.isFinite(size_num) and size_num > 0) {
+        size_u = @intCast(@min(@as(u64, @intFromFloat(size_num)), @as(u64, std.math.maxInt(usize))));
+    }
+
     connection.max_copy_buffer_size = size_u;
 
     return .js_undefined;
@@ -157,14 +172,14 @@ fn __pg_awaitWritable(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFra
     return connection.awaitWritable(globalObject, callframe);
 }
 
-pub const PostgresSQLConnection = @import("./postgres/PostgresSQLConnection.zig");
-pub const PostgresSQLContext = @import("./postgres/PostgresSQLContext.zig");
-pub const PostgresSQLQuery = @import("./postgres/PostgresSQLQuery.zig");
-pub const protocol = @import("./postgres/PostgresProtocol.zig");
-pub const types = @import("./postgres/PostgresTypes.zig");
-
+const std = @import("std");
 const bun = @import("bun");
-
 const jsc = bun.jsc;
 const JSValue = jsc.JSValue;
 const ZigString = jsc.ZigString;
+
+pub const protocol = @import("./postgres/PostgresProtocol.zig");
+pub const PostgresSQLConnection = @import("./postgres/PostgresSQLConnection.zig");
+pub const PostgresSQLContext = @import("./postgres/PostgresSQLContext.zig");
+pub const PostgresSQLQuery = @import("./postgres/PostgresSQLQuery.zig");
+pub const types = @import("./postgres/PostgresTypes.zig");

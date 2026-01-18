@@ -213,7 +213,7 @@ export function encodeBinaryValue(v: unknown, t: CopyBinaryType): Uint8Array {
   // Handle arrays like "int4[]"
   if (t.endsWith("[]")) {
     const base = t.slice(0, -2) as CopyBinaryBaseType;
-    if (!Array.isArray(v)) throw new Error("binary array expects a JavaScript array value");
+    if (!$isArray(v)) throw new Error("binary array expects a JavaScript array value");
     return encodeArray1D(v, base);
   }
   switch (t) {

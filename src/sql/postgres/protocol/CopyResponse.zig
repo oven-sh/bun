@@ -3,20 +3,20 @@
 /// share identical structure and decoding logic.
 const CopyResponse = @This();
 
-overall_format: u8 = 0,
-column_format_codes: []u16 = &[_]u16{},
+#overall_format: u8 = 0,
+#column_format_codes: []u16 = &[_]u16{},
 
 pub fn deinit(this: *CopyResponse) void {
-    if (this.column_format_codes.len > 0) {
-        bun.default_allocator.free(this.column_format_codes);
-        this.column_format_codes = &[_]u16{};
+    if (this.#column_format_codes.len > 0) {
+        bun.default_allocator.free(this.#column_format_codes);
+        this.#column_format_codes = &[_]u16{};
     }
 }
 
 pub fn decodeInternal(this: *CopyResponse, comptime Container: type, reader: NewReader(Container)) !void {
     this.* = .{
-        .overall_format = 0,
-        .column_format_codes = &[_]u16{},
+        .#overall_format = 0,
+        .#column_format_codes = &[_]u16{},
     };
 
     _ = try reader.length();
@@ -32,8 +32,8 @@ pub fn decodeInternal(this: *CopyResponse, comptime Container: type, reader: New
     }
 
     this.* = .{
-        .overall_format = overall_format,
-        .column_format_codes = column_format_codes,
+        .#overall_format = overall_format,
+        .#column_format_codes = column_format_codes,
     };
 }
 

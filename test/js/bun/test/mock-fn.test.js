@@ -1015,3 +1015,58 @@ describe("spyOn", () => {
 
   // spyOn does not work with getters/setters yet.
 });
+
+// Regression test for #1825
+describe("Jest mock functions from issue #1825", () => {
+  test("jest.mock should be available and work with factory function", () => {
+    // Should not throw - jest.mock should be available
+    expect(() => {
+      jest.mock("fs", () => ({ readFile: jest.fn() }));
+    }).not.toThrow();
+  });
+
+  test("jest.resetAllMocks should be available and not throw", () => {
+    const mockFn = jest.fn();
+    mockFn();
+    expect(mockFn).toHaveBeenCalledTimes(1);
+
+    // Should not throw - jest.resetAllMocks should be available
+    expect(() => {
+      jest.resetAllMocks();
+    }).not.toThrow();
+  });
+
+  test("mockReturnThis should return the mock function itself", () => {
+    const mockFn = jest.fn();
+    const result = mockFn.mockReturnThis();
+
+    // mockReturnThis should return the mock function itself
+    expect(result).toBe(mockFn);
+  });
+});
+
+// Regression test for #18820
+describe("mock.clearAllMocks", () => {
+  const random1 = mock(() => Math.random());
+  const random2 = mock(() => Math.random());
+
+  test("clearing all mocks", () => {
+    random1();
+    random2();
+
+    expect(random1).toHaveBeenCalledTimes(1);
+    expect(random2).toHaveBeenCalledTimes(1);
+
+    mock.clearAllMocks();
+
+    expect(random1).toHaveBeenCalledTimes(0);
+    expect(random2).toHaveBeenCalledTimes(0);
+
+    // Note: implementations are preserved
+    expect(typeof random1()).toBe("number");
+    expect(typeof random2()).toBe("number");
+
+    expect(random1).toHaveBeenCalledTimes(1);
+    expect(random2).toHaveBeenCalledTimes(1);
+  });
+});

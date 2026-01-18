@@ -1,6 +1,7 @@
 import { AsyncLocalStorage, AsyncResource } from "async_hooks";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+import { createServer } from "node:http";
 
 describe("AsyncLocalStorage", () => {
   test("throw inside of AsyncLocalStorage.run() will be passed out", () => {
@@ -559,5 +560,32 @@ describe("async context passes through", () => {
       });
     });
     expect(a).toBe("value");
+  });
+
+  // Regression test for #18595
+  test("node:http server with nested als.run()", () => {
+    const als = new AsyncLocalStorage();
+
+    const server = createServer((req, res) => {
+      const appStore = als.getStore();
+      als.run(appStore, async () => {
+        const out = `counter: ${++als.getStore().counter}`;
+        await new Promise(resolve => setTimeout(resolve, 10));
+        res.end(out);
+      });
+    });
+
+    const { promise, resolve } = Promise.withResolvers();
+
+    als.run({ counter: 0 }, () => {
+      server.listen(0, async () => {
+        const response = await fetch(`http://localhost:${server.address().port}`);
+        expect(await response.text()).toBe("counter: 1");
+        server.close();
+        resolve();
+      });
+    });
+
+    return promise;
   });
 });

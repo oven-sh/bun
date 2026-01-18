@@ -2,8 +2,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-import { describe, test } from "bun:test";
+import { cssInternals } from "bun:internal-for-testing";
+import { describe, expect, test } from "bun:test";
 import "harness";
+import { bunEnv, bunExe, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 import {
   cssTest,
@@ -7456,4 +7458,391 @@ describe("css tests", () => {
       cssTest(input, output);
     });
   });
+});
+
+// Regression test for #21907
+
+test("CSS parser should handle extremely large floating-point values without crashing", async () => {
+  // Test for regression of issue #21907: "integer part of floating point value out of bounds"
+  // This was causing crashes on Windows when processing TailwindCSS with rounded-full class
+
+  const dir = tempDirWithFiles("css-large-float-regression", {
+    "input.css": `
+/* Tests intFromFloat(i32, value) in serializeDimension */
+.test-rounded-full {
+  border-radius: 3.40282e38px;
+  width: 2147483648px;
+  height: -2147483649px;
+}
+
+.test-negative {
+  border-radius: -3.40282e38px;
+}
+
+.test-very-large {
+  border-radius: 999999999999999999999999999999999999999px;
+}
+
+.test-large-integer {
+  border-radius: 340282366920938463463374607431768211456px;
+}
+
+/* Tests intFromFloat(u8, value) in color conversion */
+.test-colors {
+  color: rgb(300, -50, 1000);
+  background: rgba(999.9, 0.1, -10.5, 1.5);
+}
+
+/* Tests intFromFloat(i32, value) in percentage handling */
+.test-percentages {
+  width: 999999999999999999%;
+  height: -999999999999999999%;
+}
+
+/* Tests edge cases around integer boundaries */
+.test-boundaries {
+  margin: 2147483647px; /* i32 max */
+  padding: -2147483648px; /* i32 min */
+  left: 4294967295px; /* u32 max */
+}
+
+/* Tests normal values */
+.test-normal {
+  width: 10px;
+  height: 20.5px;
+  margin: 0px;
+}
+`,
+  });
+
+  // This would previously crash with "integer part of floating point value out of bounds"
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "input.css", "--outdir", "out"],
+    env: bunEnv,
+    cwd: dir,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // Should not crash and should exit successfully
+  expect(exitCode).toBe(0);
+  expect(stderr).not.toContain("panic");
+  expect(stderr).not.toContain("integer part of floating point value out of bounds");
+
+  // Verify the output CSS is properly processed with intFromFloat conversions
+  const outputContent = await Bun.file(`${dir}/out/input.css`).text();
+
+  // Helper function to normalize CSS output for snapshots
+  function normalizeCSSOutput(output: string): string {
+    return output
+      .replace(/\/\*.*?\*\//g, "/* [path] */") // Replace comment paths
+      .trim();
+  }
+
+  // Test the actual output with inline snapshot - this ensures all intFromFloat
+  // conversions work correctly and captures any changes in output format
+  expect(normalizeCSSOutput(outputContent)).toMatchInlineSnapshot(`
+    "/* [path] */
+    .test-rounded-full {
+      border-radius: 3.40282e+38px;
+      width: 2147480000px;
+      height: -2147480000px;
+    }
+
+    .test-negative {
+      border-radius: -3.40282e+38px;
+    }
+
+    .test-very-large, .test-large-integer {
+      border-radius: 3.40282e38px;
+    }
+
+    .test-colors {
+      color: #f0f;
+      background: red;
+    }
+
+    .test-percentages {
+      width: 1000000000000000000%;
+      height: -1000000000000000000%;
+    }
+
+    .test-boundaries {
+      margin: 2147480000px;
+      padding: -2147480000px;
+      left: 4294970000px;
+    }
+
+    .test-normal {
+      width: 10px;
+      height: 20.5px;
+      margin: 0;
+    }"
+  `);
+});
+
+// Regression test for CSS system colors in various contexts
+test("CSS system colors in various contexts should not crash", () => {
+  // Test system colors in contexts where they might be converted/processed
+  const testCases = [
+    // Basic system colors
+    "color: ButtonFace",
+    "background-color: Canvas",
+    "border-color: WindowFrame",
+
+    // System colors in color functions (might trigger conversion)
+    "color: color-mix(in srgb, ButtonFace, red)",
+    "color: color-mix(in srgb, Canvas 50%, blue)",
+    "color: color-mix(in oklch, AccentColor, white)",
+
+    // System colors in relative color syntax (likely to trigger conversion)
+    "color: hsl(from ButtonFace h s l)",
+    "color: hsl(from Canvas h s l)",
+    "color: hsl(from AccentColor h s l)",
+    "color: rgb(from ButtonFace r g b)",
+    "color: rgb(from Canvas r g b)",
+    "color: hwb(from AccentColor h w b)",
+    "color: oklch(from ButtonFace l c h)",
+    "color: color(from Canvas srgb r g b)",
+
+    // System colors with calc() (might trigger conversion)
+    "color: hsl(from ButtonFace calc(h + 10) s l)",
+    "color: rgb(from Canvas calc(r * 0.5) g b)",
+    "color: hwb(from AccentColor h calc(w + 10%) b)",
+
+    // System colors with alpha modifications (might trigger conversion)
+    "color: color(from ButtonFace srgb r g b / 0.5)",
+    "color: hsl(from Canvas h s l / 0.8)",
+    "color: rgb(from AccentColor r g b / 50%)",
+
+    // System colors in gradients (might trigger conversion)
+    "background: linear-gradient(to right, ButtonFace, Canvas)",
+    "background: radial-gradient(circle, AccentColor, WindowFrame)",
+
+    // System colors in complex expressions
+    "color: color-mix(in srgb, color-mix(in srgb, ButtonFace, red), Canvas)",
+    "color: hsl(from color-mix(in srgb, ButtonFace, red) h s l)",
+
+    // Light-dark with system colors
+    "color: light-dark(ButtonFace, Canvas)",
+    "color: light-dark(Canvas, ButtonFace)",
+    "color: hsl(from light-dark(ButtonFace, Canvas) h s l)",
+  ];
+
+  for (const testCase of testCases) {
+    const css = `
+      .test {
+        ${testCase};
+      }
+    `;
+
+    console.log(`Testing: ${testCase}`);
+
+    try {
+      const result = cssInternals._test(css, css);
+      console.log(`Result: ${result ? "parsed" : "failed"}`);
+    } catch (error: any) {
+      console.log(`Error: ${error.message}`);
+
+      // Check if this is the specific crash we're looking for
+      if (
+        error.message.includes("system colors cannot be converted to a color") ||
+        error.message.includes("unreachable") ||
+        error.message.includes("panic")
+      ) {
+        console.log("FOUND THE SYSTEM COLOR CRASH!");
+        throw error; // Re-throw to make the test fail and show the crash
+      }
+    }
+  }
+});
+
+// Regression test for #25785
+test("CSS bundler should preserve logical border-radius properties", async () => {
+  using dir = tempDir("issue-25785", {
+    "test.css": `
+.test1 {
+  border-start-start-radius: 0.75rem;
+}
+.test2 {
+  border-end-start-radius: 0.75rem;
+}
+.test3 {
+  border-start-end-radius: 0.75rem;
+}
+.test4 {
+  border-end-end-radius: 0.75rem;
+}
+.test5 {
+  border-top-left-radius: 0.75rem;
+}
+`,
+  });
+
+  const result = await Bun.build({
+    entrypoints: [`${dir}/test.css`],
+    outdir: `${dir}/dist`,
+    experimentalCss: true,
+    minify: false,
+  });
+
+  expect(result.success).toBe(true);
+  expect(result.outputs.length).toBe(1);
+
+  const output = await result.outputs[0].text();
+
+  // Logical properties are compiled to physical properties with LTR/RTL rules
+  // .test1 with border-start-start-radius compiles to border-top-left-radius (LTR) and border-top-right-radius (RTL)
+  expect(output).toContain(".test1");
+  expect(output).toContain("border-top-left-radius");
+  expect(output).toContain("border-top-right-radius");
+
+  // .test2 with border-end-start-radius compiles to border-bottom-left-radius (LTR) and border-bottom-right-radius (RTL)
+  expect(output).toContain(".test2");
+  expect(output).toContain("border-bottom-left-radius");
+  expect(output).toContain("border-bottom-right-radius");
+
+  // .test3 with border-start-end-radius
+  expect(output).toContain(".test3");
+
+  // .test4 with border-end-end-radius
+  expect(output).toContain(".test4");
+
+  // Physical property should also be preserved
+  expect(output).toContain(".test5");
+});
+
+// Regression test for #25785
+test("CSS bundler should handle logical border-radius with targets that compile logical properties", async () => {
+  using dir = tempDir("issue-25785-compiled", {
+    "test.css": `
+.test1 {
+  border-start-start-radius: 0.75rem;
+}
+.test2 {
+  border-end-start-radius: 0.75rem;
+}
+.test3 {
+  border-start-end-radius: 0.75rem;
+}
+.test4 {
+  border-end-end-radius: 0.75rem;
+}
+`,
+  });
+
+  const result = await Bun.build({
+    entrypoints: [`${dir}/test.css`],
+    outdir: `${dir}/dist`,
+    experimentalCss: true,
+    minify: false,
+    // Target older browsers that don't support logical properties
+    target: "browser",
+  });
+
+  expect(result.success).toBe(true);
+  expect(result.outputs.length).toBe(1);
+
+  const output = await result.outputs[0].text();
+
+  // When logical properties are compiled down, they should produce physical properties
+  // with :lang() selectors to handle LTR/RTL
+  // At minimum, the output should NOT be empty (the bug caused empty output)
+  expect(output.trim().length).toBeGreaterThan(0);
+
+  // Should have some border-radius output (compiled to physical)
+  expect(output).toMatch(/border-.*-radius/);
+
+  // All classes should be present in the output
+  expect(output).toContain(".test1");
+  expect(output).toContain(".test2");
+  expect(output).toContain(".test3");
+  expect(output).toContain(".test4");
+});
+
+// Regression test for #25794
+test("CSS logical properties should not be stripped when nested rules are present", async () => {
+  // Test for regression of issue #25794: CSS logical properties (e.g., inset-inline-end)
+  // are stripped from bundler output when they appear in a nested selector that also
+  // contains further nested rules (like pseudo-elements).
+
+  const dir = tempDirWithFiles("css-logical-properties-nested", {
+    "input.css": `.test-longform {
+  background-color: teal;
+
+  &.test-longform--end {
+    inset-inline-end: 20px;
+
+    &:after {
+      content: "";
+    }
+  }
+}
+`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "input.css", "--outdir", "out"],
+    env: bunEnv,
+    cwd: dir,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // Verify the output CSS contains the logical property fallbacks
+  const outputContent = await Bun.file(`${dir}/out/input.css`).text();
+
+  // Helper function to normalize CSS output for snapshots
+  function normalizeCSSOutput(output: string): string {
+    return output
+      .replace(/\/\*.*?\*\//g, "/* [path] */") // Replace comment paths
+      .trim();
+  }
+
+  // The output should contain LTR/RTL fallback rules for inset-inline-end
+  // inset-inline-end: 20px should generate:
+  // - right: 20px for LTR languages
+  // - left: 20px for RTL languages
+  // The bundler generates vendor-prefixed variants for browser compatibility
+  expect(normalizeCSSOutput(outputContent)).toMatchInlineSnapshot(`
+    "/* [path] */
+    .test-longform {
+      background-color: teal;
+    }
+
+    .test-longform.test-longform--end:not(:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+      right: 20px;
+    }
+
+    .test-longform.test-longform--end:not(:-moz-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+      right: 20px;
+    }
+
+    .test-longform.test-longform--end:not(:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+      right: 20px;
+    }
+
+    .test-longform.test-longform--end:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+      left: 20px;
+    }
+
+    .test-longform.test-longform--end:-moz-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+      left: 20px;
+    }
+
+    .test-longform.test-longform--end:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+      left: 20px;
+    }
+
+    .test-longform.test-longform--end:after {
+      content: "";
+    }"
+  `);
+
+  // Should exit successfully
+  expect(exitCode).toBe(0);
 });

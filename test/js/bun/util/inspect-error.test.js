@@ -188,3 +188,187 @@ test("error.stack throwing an error doesn't lead to a crash", () => {
     throw err;
   }).toThrow();
 });
+
+// Regression tests for #22863 - circular error stack references
+describe("circular error stack references", () => {
+  const { bunEnv, bunExe, tempDir } = require("harness");
+
+  test("error with circular stack reference should not cause infinite recursion", async () => {
+    using dir = tempDir("circular-error-stack", {
+      "index.js": `
+        const error = new Error("Test error");
+        error.stack = error;
+        console.log(error);
+        console.log("after error print");
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("after error print");
+    expect(stdout).not.toContain("Maximum call stack");
+    expect(stderr).not.toContain("Maximum call stack");
+  });
+
+  test("error with nested circular references should not cause infinite recursion", async () => {
+    using dir = tempDir("nested-circular-error", {
+      "index.js": `
+        const error1 = new Error("Error 1");
+        const error2 = new Error("Error 2");
+        error1.stack = error2;
+        error2.stack = error1;
+        console.log(error1);
+        console.log("after error print");
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("after error print");
+    expect(stdout).not.toContain("Maximum call stack");
+    expect(stderr).not.toContain("Maximum call stack");
+  });
+
+  test("error with circular reference in cause chain", async () => {
+    using dir = tempDir("circular-error-cause", {
+      "index.js": `
+        const error1 = new Error("Error 1");
+        const error2 = new Error("Error 2");
+        error1.cause = error2;
+        error2.cause = error1;
+        console.log(error1);
+        console.log("after error print");
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("after error print");
+    expect(stdout).not.toContain("Maximum call stack");
+    expect(stderr).not.toContain("Maximum call stack");
+  });
+
+  test("error.stack getter that throws should not crash", async () => {
+    using dir = tempDir("throwing-stack-getter", {
+      "index.js": `
+        const error = new Error("Test error");
+        Object.defineProperty(error, "stack", {
+          get() {
+            throw new Error("Stack getter throws!");
+          }
+        });
+        console.log(error);
+        console.log("after error print");
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("after error print");
+    expect(stdout).not.toContain("Stack getter throws");
+    expect(stderr).not.toContain("Stack getter throws");
+  });
+
+  test("error.stack getter returning circular reference", async () => {
+    using dir = tempDir("circular-stack-getter", {
+      "index.js": `
+        const error = new Error("Test error");
+        Object.defineProperty(error, "stack", {
+          get() {
+            return error; // Return the error itself
+          }
+        });
+        console.log(error);
+        console.log("after error print");
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("after error print");
+    expect(stdout).not.toContain("Maximum call stack");
+    expect(stderr).not.toContain("Maximum call stack");
+  });
+
+  test("error with multiple throwing getters", async () => {
+    using dir = tempDir("multiple-throwing-getters", {
+      "index.js": `
+        const error = new Error("Test error");
+        Object.defineProperty(error, "stack", {
+          get() {
+            throw new Error("Stack throws!");
+          }
+        });
+        Object.defineProperty(error, "cause", {
+          get() {
+            throw new Error("Cause throws!");
+          }
+        });
+        error.normalProp = "works";
+        console.log(error);
+        console.log("after error print");
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("after error print");
+    expect(stdout).toContain("normalProp");
+    expect(stdout).not.toContain("Stack throws");
+    expect(stdout).not.toContain("Cause throws");
+  });
+});

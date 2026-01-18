@@ -308,3 +308,30 @@ it("should send cipher events in the right order", async () => {
     ``,
   ]);
 });
+
+// Regression test for #9469
+it("generateKeyPair with promisify returns object with publicKey and privateKey", async () => {
+  if (!crypto.generateKeyPair) {
+    return; // skip if missing crypto.generateKeyPair
+  }
+
+  const util = require("util");
+  const generateKeyPairAsync = util.promisify(crypto.generateKeyPair);
+  const ret = await generateKeyPairAsync("rsa", {
+    publicExponent: 3,
+    modulusLength: 512,
+    publicKeyEncoding: {
+      type: "pkcs1",
+      format: "pem",
+    },
+    privateKeyEncoding: {
+      type: "pkcs8",
+      format: "pem",
+    },
+  });
+
+  expect(Object.keys(ret)).toHaveLength(2);
+  const { publicKey, privateKey } = ret;
+  expect(typeof publicKey).toBe("string");
+  expect(typeof privateKey).toBe("string");
+});

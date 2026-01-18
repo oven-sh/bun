@@ -49,7 +49,7 @@ describe("2-arg form", () => {
 test("print size", () => {
   expect(normalizeBunSnapshot(Bun.inspect(new Response(Bun.file(import.meta.filename)))), import.meta.dir)
     .toMatchInlineSnapshot(`
-    "Response (5.83 KB) {
+    "Response (7.66 KB) {
       ok: true,
       url: "",
       status: 200,
@@ -175,4 +175,43 @@ describe("clone()", () => {
     expect(originalText).toBe("Hello, world!");
     expect(clonedText).toBe("Hello, world!");
   });
+});
+
+// Regression test for #7397
+test("Response.redirect clones string from Location header", () => {
+  const url = new URL("http://example.com");
+  url.hostname = "example1.com";
+  const { href } = url;
+  expect(href).toBe("http://example1.com/");
+  const response = Response.redirect(href);
+  expect(response.headers.get("Location")).toBe(href);
+});
+
+// Regression tests for #21257
+// `Response.json()` should throw with top level value of `function` `symbol` `undefined` (node compatibility)
+test("Response.json() throws TypeError for non-JSON serializable top-level values", () => {
+  // These should throw "Value is not JSON serializable"
+  expect(() => Response.json(Symbol("test"))).toThrow("Value is not JSON serializable");
+  expect(() => Response.json(function testFunc() {})).toThrow("Value is not JSON serializable");
+  expect(() => Response.json(undefined)).toThrow("Value is not JSON serializable");
+});
+
+test("Response.json() works correctly with valid values", () => {
+  // These should not throw
+  expect(() => Response.json(null)).not.toThrow();
+  expect(() => Response.json({})).not.toThrow();
+  expect(() => Response.json("string")).not.toThrow();
+  expect(() => Response.json(123)).not.toThrow();
+  expect(() => Response.json(true)).not.toThrow();
+  expect(() => Response.json([1, 2, 3])).not.toThrow();
+
+  // Objects containing non-serializable values should not throw at top-level
+  expect(() => Response.json({ symbol: Symbol("test") })).not.toThrow();
+  expect(() => Response.json({ func: function () {} })).not.toThrow();
+  expect(() => Response.json({ undef: undefined })).not.toThrow();
+});
+
+test("Response.json() BigInt error matches Node.js", () => {
+  // BigInt should throw with Node.js compatible error message
+  expect(() => Response.json(123n)).toThrow("Do not know how to serialize a BigInt");
 });

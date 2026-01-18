@@ -90,4 +90,16 @@ describe("Bun.inspect", () => {
   it("depth = 0", () => {
     expect(Bun.inspect({ a: { b: { c: { d: 1 } } } }, { depth: 0 })).toEqual("{\n  a: [Object ...],\n}");
   });
+
+  // Regression test for #16007
+  it("Set is properly formatted in Bun.inspect()", () => {
+    const set = new Set(["foo", "bar"]);
+    const formatted = Bun.inspect({ set });
+    expect(formatted).toBe(`{
+  set: Set(2) {
+    "foo",
+    "bar",
+  },
+}`);
+  });
 });

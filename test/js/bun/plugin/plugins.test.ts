@@ -197,7 +197,7 @@ plugin({
 });
 
 // This is to test that it works when imported from a separate file
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { render as svelteRender } from "svelte/server";
 import "../../third_party/svelte";
 import "./module-plugins";
@@ -559,4 +559,191 @@ it("recursion throws stack overflow at entry point", () => {
   });
 
   expect(result.stderr.toString()).toContain("RangeError: Maximum call stack size exceeded.");
+});
+
+// Regression test for #22199
+describe("onResolve returning undefined/null", () => {
+  it("plugin onResolve returning undefined should not crash", () => {
+    using dir = tempDir("plugin-undefined", {
+      "plugin.js": `
+        Bun.plugin({
+          name: "test-plugin",
+          setup(build) {
+            build.onResolve({ filter: /.*\\.(ts|tsx|js|jsx)$/ }, async (args) => {
+              // Returning undefined should continue to next plugin or default resolution
+              return undefined;
+            });
+          },
+        });
+      `,
+      "index.js": `console.log("Hello from index.js");`,
+    });
+
+    const result = Bun.spawnSync({
+      cmd: [bunExe(), "--preload", "./plugin.js", "./index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "inherit",
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.toString().trim()).toBe("Hello from index.js");
+  });
+
+  it("plugin onResolve returning null should not crash", () => {
+    using dir = tempDir("plugin-null", {
+      "plugin.js": `
+        Bun.plugin({
+          name: "test-plugin",
+          setup(build) {
+            build.onResolve({ filter: /.*\\.(ts|tsx|js|jsx)$/ }, async (args) => {
+              // Returning null should continue to next plugin or default resolution
+              return null;
+            });
+          },
+        });
+      `,
+      "index.js": `console.log("Hello from index.js");`,
+    });
+
+    const result = Bun.spawnSync({
+      cmd: [bunExe(), "--preload", "./plugin.js", "./index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "inherit",
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.toString().trim()).toBe("Hello from index.js");
+  });
+
+  it("plugin onResolve with sync function returning undefined should not crash", () => {
+    using dir = tempDir("plugin-sync-undefined", {
+      "plugin.js": `
+        Bun.plugin({
+          name: "test-plugin",
+          setup(build) {
+            build.onResolve({ filter: /.*\\.(ts|tsx|js|jsx)$/ }, (args) => {
+              // Sync function returning undefined
+              return undefined;
+            });
+          },
+        });
+      `,
+      "index.js": `console.log("Hello from index.js");`,
+    });
+
+    const result = Bun.spawnSync({
+      cmd: [bunExe(), "--preload", "./plugin.js", "./index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "inherit",
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.toString().trim()).toBe("Hello from index.js");
+  });
+
+  it("plugin onResolve with rejected promise should throw error", () => {
+    using dir = tempDir("plugin-reject", {
+      "plugin.js": `
+        Bun.plugin({
+          name: "test-plugin",
+          setup(build) {
+            build.onResolve({ filter: /.*\\.(ts|tsx|js|jsx)$/ }, async (args) => {
+              throw new Error("Custom plugin error");
+            });
+          },
+        });
+      `,
+      "index.js": `console.log("Hello from index.js");`,
+    });
+
+    const result = Bun.spawnSync({
+      cmd: [bunExe(), "--preload", "./plugin.js", "./index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr.toString()).toContain("Custom plugin error");
+  });
+});
+
+// Regression test for #12548
+describe("TypeScript syntax with 'ts' loader in BunPlugin", () => {
+  it("issue #12548: TypeScript syntax should work with 'ts' loader in BunPlugin", async () => {
+    using dir = tempDir("issue-12548", {
+      "index.js": `
+        import plugin from "./plugin.js";
+
+        Bun.plugin(plugin);
+
+        // This should work with 'ts' loader
+        console.log(require('virtual-ts-module'));
+      `,
+      "plugin.js": `
+        export default {
+          setup(build) {
+            build.module('virtual-ts-module', () => ({
+              contents: "import { type TSchema } from '@sinclair/typebox'; export const test = 'works';",
+              loader: 'ts',
+            }));
+          },
+        };
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toBe("");
+    expect(stdout).toContain('test: "works"');
+  });
+
+  it("issue #12548: TypeScript type imports work with 'ts' loader", async () => {
+    using dir = tempDir("issue-12548-type-imports", {
+      "index.js": `
+        Bun.plugin({
+          setup(build) {
+            build.module('test-module', () => ({
+              contents: \`
+                import { type TSchema } from '@sinclair/typebox';
+                type MyType = { a: number };
+                export type { MyType };
+                export const value = 42;
+              \`,
+              loader: 'ts',
+            }));
+          },
+        });
+
+        const mod = require('test-module');
+        console.log(JSON.stringify(mod));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toBe("");
+    expect(stdout).toContain('{"value":42}');
+  });
 });

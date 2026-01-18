@@ -1205,3 +1205,66 @@ it("handles exceptions during empty stream creation", () => {
     throw new Error("not stack overflow");
   }).toThrow("not stack overflow");
 });
+
+// Regression test for #19661
+describe("ReadableStream controller close error", () => {
+  test("closing an already closed controller throws proper error", async () => {
+    const { resolve, promise } = Promise.withResolvers();
+    let controller;
+    const stream = () =>
+      new ReadableStream({
+        start(controller1) {
+          controller = controller1;
+          controller1.close();
+          process.nextTick(resolve);
+        },
+      });
+
+    stream();
+
+    await promise;
+
+    expect(() => controller.close()).toThrowError(
+      expect.objectContaining({
+        name: "TypeError",
+        message: "Invalid state: Controller is already closed",
+        code: "ERR_INVALID_STATE",
+      }),
+    );
+  });
+
+  test("server version - closing an already closed controller throws proper error", async () => {
+    const { resolve, promise } = Promise.withResolvers();
+    let controller;
+    const stream = () =>
+      new ReadableStream({
+        start(controller1) {
+          controller = controller1;
+          controller.close();
+          process.nextTick(resolve);
+        },
+      });
+
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        return new Response(stream());
+      },
+    });
+
+    try {
+      await fetch(server.url, {});
+      await promise;
+
+      expect(() => controller.close()).toThrowError(
+        expect.objectContaining({
+          name: "TypeError",
+          message: "Invalid state: Controller is already closed",
+          code: "ERR_INVALID_STATE",
+        }),
+      );
+    } finally {
+      server.stop(true);
+    }
+  });
+});

@@ -1,5 +1,6 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, setDefaultTimeout } from "bun:test";
+import { readFileSync } from "fs";
 import { access, appendFile, copyFile, mkdir, readlink, rm, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env, readdirSorted, tmpdirSync, toBeValidBin, toBeWorkspaceLink, toHaveBins } from "harness";
 import { join, relative, resolve } from "path";
@@ -2427,4 +2428,34 @@ it("should install tarball with tarball dependencies", async () => {
   // Verify both packages were installed
   await access(join(add_dir, "node_modules", "test-parent"));
   await access(join(add_dir, "node_modules", "test-child"));
+});
+
+// Regression test for #631
+it("should escape JSON strings properly", async () => {
+  // Create a directory with our test package file containing escaped characters
+  await writeFile(join(add_dir, "package.json"), String.raw`{"testRegex":"\\a\n\\b\\"}`);
+
+  // Attempt to add a package, causing the package file to be parsed, modified,
+  // written, and reparsed. This verifies that escaped backslashes in JSON
+  // survive the roundtrip
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "add", "left-pad"],
+    cwd: add_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const err = await stderr.text();
+  expect(err).not.toContain("error:");
+  expect(await exited).toBe(0);
+
+  const packageContents = readFileSync(join(add_dir, "package.json"), { encoding: "utf8" });
+  expect(packageContents).toBe(String.raw`{
+  "testRegex": "\\a\n\\b\\",
+  "dependencies": {
+    "left-pad": "^1.3.0"
+  }
+}`);
 });

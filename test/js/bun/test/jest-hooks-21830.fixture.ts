@@ -51,11 +51,11 @@ describe("Show Deletion Tests", async () => {
     await initTest();
     agent = await withUser();
     await bulkCreateShows(10, agent);
-    console.log("Show Deletion Tests pre ");
+    console.log("Show Deletion Tests pre");
   });
 
   afterAll(async () => {
-    console.log("Show Deletion test post ");
+    console.log("Show Deletion test post");
     await clearDatabase();
   });
 

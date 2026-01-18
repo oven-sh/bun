@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeAll } from "bun:test";
+import { beforeAll, describe, test } from "bun:test";
 
 describe("desc1", () => {
   beforeAll(() => {

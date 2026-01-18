@@ -1,10 +1,11 @@
 import { Socket as _BunSocket, TCPSocketListener } from "bun";
 import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, expectMaxObjectTypeCount, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, expectMaxObjectTypeCount, isWindows, tls as tlsCert, tmpdirSync } from "harness";
 import { randomUUID } from "node:crypto";
-import { connect, createConnection, createServer, isIP, isIPv4, isIPv6, Server, Socket, Stream } from "node:net";
+import net, { connect, createConnection, createServer, isIP, isIPv4, isIPv6, Server, Socket, Stream } from "node:net";
 import { join } from "node:path";
+import tls from "node:tls";
 
 const socket_domain = tmpdirSync();
 
@@ -656,3 +657,266 @@ it.if(isWindows)(
   },
   20_000,
 );
+
+// Regression test for #22481
+it("client socket can write Uint8Array", async () => {
+  const server = createServer(socket => {
+    socket.on("data", data => {
+      // Echo back what we received
+      socket.write(data);
+      socket.end();
+    });
+  });
+
+  await new Promise<void>(resolve => {
+    server.listen(0, "127.0.0.1", () => resolve());
+  });
+
+  const port = (server.address() as any).port;
+
+  const testData = "Hello from Uint8Array!";
+  const u8 = new Uint8Array(testData.split("").map(x => x.charCodeAt(0)));
+
+  // Test with Uint8Array
+  {
+    const received = await new Promise<string>((resolve, reject) => {
+      const client = createConnection(port, "127.0.0.1", () => {
+        // Write Uint8Array directly
+        client.write(u8, err => {
+          if (err) reject(err);
+        });
+      });
+
+      let data = "";
+      client.on("data", chunk => {
+        data += chunk.toString();
+      });
+
+      client.on("end", () => {
+        resolve(data);
+      });
+
+      client.on("error", reject);
+    });
+
+    expect(received).toBe(testData);
+  }
+
+  // Test with Buffer.from(Uint8Array) for comparison
+  {
+    const received = await new Promise<string>((resolve, reject) => {
+      const client = createConnection(port, "127.0.0.1", () => {
+        // Write Buffer created from Uint8Array
+        client.write(Buffer.from(u8), err => {
+          if (err) reject(err);
+        });
+      });
+
+      let data = "";
+      client.on("data", chunk => {
+        data += chunk.toString();
+      });
+
+      client.on("end", () => {
+        resolve(data);
+      });
+
+      client.on("error", reject);
+    });
+
+    expect(received).toBe(testData);
+  }
+
+  // Test with other TypedArrays (Float32Array view)
+  {
+    const float32 = new Float32Array([1.5, 2.5]);
+    const u8view = new Uint8Array(float32.buffer);
+
+    const received = await new Promise<Buffer>((resolve, reject) => {
+      const client = createConnection(port, "127.0.0.1", () => {
+        client.write(u8view, err => {
+          if (err) reject(err);
+        });
+      });
+
+      const chunks: Buffer[] = [];
+      client.on("data", chunk => {
+        chunks.push(chunk);
+      });
+
+      client.on("end", () => {
+        resolve(Buffer.concat(chunks));
+      });
+
+      client.on("error", reject);
+    });
+
+    // Check that we received the same bytes back
+    expect(received).toEqual(Buffer.from(u8view));
+  }
+
+  server.close();
+});
+
+// Regression test for #24575
+it("socket._handle.fd should be accessible on TCP sockets", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers<void>();
+
+  let serverFd: number | undefined;
+  let clientFd: number | undefined;
+
+  const server = net.createServer(socket => {
+    // Server-side socket should have _handle.fd
+    expect(socket._handle).toBeDefined();
+    expect(socket._handle.fd).toBeTypeOf("number");
+    expect(socket._handle.fd).toBeGreaterThan(0);
+    serverFd = socket._handle.fd;
+
+    socket.end(`server fd: ${socket._handle.fd}`);
+  });
+
+  server.listen(0, "127.0.0.1", () => {
+    const client = net.connect({
+      host: "127.0.0.1",
+      port: (server.address() as any).port,
+    });
+
+    client.on("connect", () => {
+      // Client-side socket should have _handle.fd
+      expect(client._handle).toBeDefined();
+      expect(client._handle.fd).toBeTypeOf("number");
+      expect(client._handle.fd).toBeGreaterThan(0);
+      clientFd = client._handle.fd;
+    });
+
+    client.on("data", data => {
+      const response = data.toString();
+      expect(response).toStartWith("server fd: ");
+
+      // Verify we got valid fds
+      expect(serverFd).toBeTypeOf("number");
+      expect(clientFd).toBeTypeOf("number");
+      expect(serverFd).toBeGreaterThan(0);
+      expect(clientFd).toBeGreaterThan(0);
+
+      // Server and client should have different fds
+      expect(serverFd).not.toBe(clientFd);
+
+      server.close();
+      resolve();
+    });
+
+    client.on("error", reject);
+  });
+
+  server.on("error", reject);
+
+  await promise;
+});
+
+// Regression test for #24575
+it("socket._handle.fd should remain consistent during connection lifetime", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers<void>();
+
+  const server = net.createServer(socket => {
+    const initialFd = socket._handle.fd;
+
+    // Send multiple messages to ensure fd doesn't change
+    socket.write("message1\n");
+    expect(socket._handle.fd).toBe(initialFd);
+
+    socket.write("message2\n");
+    expect(socket._handle.fd).toBe(initialFd);
+
+    socket.end("message3\n");
+    expect(socket._handle.fd).toBe(initialFd);
+  });
+
+  server.listen(0, "127.0.0.1", () => {
+    const client = net.connect({
+      host: "127.0.0.1",
+      port: (server.address() as any).port,
+    });
+
+    let initialClientFd: number;
+    let buffer = "";
+
+    client.on("connect", () => {
+      initialClientFd = client._handle.fd;
+      expect(initialClientFd).toBeGreaterThan(0);
+    });
+
+    client.on("data", data => {
+      buffer += data.toString();
+      // Fd should remain consistent across multiple data events
+      expect(client._handle.fd).toBe(initialClientFd);
+    });
+
+    client.on("end", () => {
+      // Verify we received all messages
+      expect(buffer).toBe("message1\nmessage2\nmessage3\n");
+      server.close();
+      resolve();
+    });
+
+    client.on("error", reject);
+  });
+
+  server.on("error", reject);
+
+  await promise;
+});
+
+// Regression test for #24575
+it("socket._handle.fd should be accessible on TLS sockets", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers<void>();
+
+  let serverFd: number | undefined;
+  let clientFd: number | undefined;
+
+  const server = tls.createServer(tlsCert, socket => {
+    // Server-side TLS socket should have _handle.fd
+    expect(socket._handle).toBeDefined();
+    expect(socket._handle.fd).toBeTypeOf("number");
+    // TLS sockets should have a valid fd (may be -1 on some platforms/states)
+    expect(typeof socket._handle.fd).toBe("number");
+    serverFd = socket._handle.fd;
+
+    socket.end(`server fd: ${socket._handle.fd}`);
+  });
+
+  server.listen(0, "127.0.0.1", () => {
+    const client = tls.connect({
+      host: "127.0.0.1",
+      port: (server.address() as any).port,
+      rejectUnauthorized: false,
+    });
+
+    client.on("secureConnect", () => {
+      // Client-side TLS socket should have _handle.fd
+      expect(client._handle).toBeDefined();
+      expect(client._handle.fd).toBeTypeOf("number");
+      // TLS sockets should have a valid fd (may be -1 on some platforms/states)
+      expect(typeof client._handle.fd).toBe("number");
+      clientFd = client._handle.fd;
+    });
+
+    client.on("data", data => {
+      const response = data.toString();
+      expect(response).toMatch(/server fd: -?\d+/);
+
+      // Verify we got valid fds (number type, even if -1)
+      expect(serverFd).toBeTypeOf("number");
+      expect(clientFd).toBeTypeOf("number");
+
+      server.close();
+      resolve();
+    });
+
+    client.on("error", reject);
+  });
+
+  server.on("error", reject);
+
+  await promise;
+});

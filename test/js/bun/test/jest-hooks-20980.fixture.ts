@@ -1,4 +1,4 @@
-import { beforeEach, it, expect } from "bun:test";
+import { beforeEach, expect, it } from "bun:test";
 beforeEach(async () => {
   await Bun.sleep(100);
   throw 5;

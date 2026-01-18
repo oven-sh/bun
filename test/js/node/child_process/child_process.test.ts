@@ -1,8 +1,9 @@
-import { semver, write } from "bun";
-import { afterAll, beforeEach, describe, expect, it } from "bun:test";
+import { semver, which, write } from "bun";
+import { afterAll, beforeEach, describe, expect, it, test } from "bun:test";
 import fs from "fs";
 import { bunEnv, bunExe, isWindows, nodeExe, runBunInstall, shellExe, tmpdirSync } from "harness";
 import { ChildProcess, exec, execFile, execFileSync, execSync, spawn, spawnSync } from "node:child_process";
+import { Readable } from "node:stream";
 import { promisify } from "node:util";
 import path from "path";
 const debug = process.env.DEBUG ? console.log : () => {};
@@ -470,4 +471,102 @@ it("spawnSync(does-not-exist)", () => {
   expect(x.output).toEqual([null, null, null]);
   expect(x.stdout).toEqual(null);
   expect(x.stderr).toEqual(null);
+});
+
+// Regression test for #8095
+test.each([null, undefined])("spawnSync can pass %p as option to stdio", input => {
+  const { stdout, stderr, output } = spawnSync(bunExe(), { stdio: [input, input, input] });
+  expect(stdout).toBeInstanceOf(Buffer);
+  expect(stderr).toBeInstanceOf(Buffer);
+  expect(output).toStrictEqual([null, stdout, stderr]);
+});
+
+// Regression test for #8095
+test.each([null, undefined])("spawn can pass %p as option to stdio", input => {
+  const { stdout, stderr, stdio } = spawn(bunExe(), { stdio: [input, input, input] });
+  expect(stdout).toBeInstanceOf(Readable);
+  expect(stderr).toBeInstanceOf(Readable);
+  expect(stdio).toBeArrayOfSize(3);
+  expect(stdio.slice(1)).toStrictEqual([stdout, stderr]);
+});
+
+// Regression test for #9279
+test.if(!!which("sleep"))("child_process.spawn({ timeout }) should not exit instantly", async () => {
+  const start = performance.now();
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn("sleep", ["1000"], { timeout: 100 });
+    child.on("error", reject);
+    child.on("exit", resolve);
+  });
+  const end = performance.now();
+  expect(end - start).toBeGreaterThanOrEqual(100);
+});
+
+// Regression test for #10170
+test("promisified execFile returns object with stdout and stderr", async () => {
+  const execFileAsync = promisify(execFile);
+  const result = await execFileAsync(bunExe(), ["--version"]);
+  expect(result.stdout).toContain(Bun.version);
+  expect(result.stderr).toBe("");
+});
+
+// Regression test for https://github.com/microlinkhq/youtube-dl-exec/issues/246
+describe("child process stdio properties should be enumerable for Object.assign()", () => {
+  test("child process stdio properties should be enumerable for Object.assign()", () => {
+    const child = spawn(process.execPath, ["-e", 'console.log("hello")']);
+
+    // The real issue: stdio properties must be enumerable for Object.assign() to work
+    // This is what libraries like tinyspawn depend on
+    expect(Object.keys(child)).toContain("stdin");
+    expect(Object.keys(child)).toContain("stdout");
+    expect(Object.keys(child)).toContain("stderr");
+    expect(Object.keys(child)).toContain("stdio");
+
+    // Property descriptors should show enumerable: true
+    for (const key of ["stdin", "stdout", "stderr", "stdio"] as const) {
+      expect(Object.getOwnPropertyDescriptor(child, key)?.enumerable).toBe(true);
+    }
+  });
+
+  test("Object.assign should copy child process stdio properties", () => {
+    const child = spawn(process.execPath, ["-e", 'console.log("hello")']);
+
+    // This is what tinyspawn does: Object.assign(promise, childProcess)
+    const merged: any = {};
+    Object.assign(merged, child);
+
+    // The merged object should have the stdio properties
+    expect(merged.stdout).toBeTruthy();
+    expect(merged.stderr).toBeTruthy();
+    expect(merged.stdin).toBeTruthy();
+    expect(merged.stdio).toBeTruthy();
+
+    // Should maintain stream functionality
+    expect(typeof merged.stdout.pipe).toBe("function");
+    expect(typeof merged.stdout.on).toBe("function");
+  });
+
+  test("tinyspawn-like library usage should work", () => {
+    // Simulate the exact pattern from tinyspawn library
+    let childProcess: any;
+    const promise = new Promise(resolve => {
+      childProcess = spawn(process.execPath, ["-e", 'console.log("test")']);
+      childProcess.on("exit", () => resolve(childProcess));
+    });
+
+    // This is the critical line that was failing in Bun
+    const subprocess: any = Object.assign(promise, childProcess);
+
+    // Should have stdio properties immediately after Object.assign
+    expect(subprocess.stdout).toBeTruthy();
+    expect(subprocess.stderr).toBeTruthy();
+    expect(subprocess.stdin).toBeTruthy();
+
+    // Should still be a Promise
+    expect(subprocess instanceof Promise).toBe(true);
+
+    // Should have stream methods available
+    expect(typeof subprocess.stdout.pipe).toBe("function");
+    expect(typeof subprocess.stdout.on).toBe("function");
+  });
 });

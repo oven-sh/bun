@@ -4899,6 +4899,197 @@ describe("expect()", () => {
   });
 });
 
+// Regression test for #7736
+describe("toEqual on a large Map", () => {
+  const MAP_SIZE = 918 * 4;
+  function* genpairs() {
+    for (let i = 0; i < MAP_SIZE; i++) {
+      yield ["k" + i, "v" + i];
+    }
+  }
+
+  for (let MapClass of [
+    Map,
+    class CustomMap extends Map {
+      abc = 123;
+      constructor(iterable) {
+        super(iterable);
+      }
+    },
+  ]) {
+    test(MapClass.name, () => {
+      const x = new MapClass(genpairs());
+      const y = new MapClass(genpairs());
+
+      expect(x).toEqual(y);
+      x.set("not-okay", 1);
+      y.set("okay", 1);
+
+      expect(x).not.toEqual(y);
+
+      x.delete("not-okay");
+      x.set("okay", 1);
+
+      expect(x).toEqual(y);
+
+      x.set("okay", 2);
+      expect(x).not.toEqual(y);
+    });
+  }
+});
+
+// Regression test for #7736
+describe("toEqual on a large Set", () => {
+  const MAP_SIZE = 918 * 4;
+  function* genvalues() {
+    for (let i = 0; i < MAP_SIZE; i++) {
+      yield "v" + i;
+    }
+  }
+  for (let SetClass of [
+    Set,
+    class CustomSet extends Set {
+      constructor(iterable) {
+        super(iterable);
+        this.abc = 123;
+      }
+    },
+  ]) {
+    test(SetClass.name, () => {
+      const x = new SetClass(genvalues());
+      const y = new SetClass(genvalues());
+
+      expect(x).toEqual(y);
+      x.add("not-okay");
+      y.add("okay");
+
+      expect(x).not.toEqual(y);
+
+      x.delete("not-okay");
+      x.add("okay");
+
+      expect(x).toEqual(y);
+    });
+  }
+});
+
+// Regression test for #11677
+test("toContainKeys empty", () => {
+  expect({ "": 1 }).toContainKeys([""]);
+});
+
+// Regression test for #11677
+test("toContainKey proxy", () => {
+  expect(
+    new Proxy(
+      {},
+      {
+        has(target, str) {
+          return str === "foo";
+        },
+        getOwnPropertyDescriptor(target, str) {
+          if (str === "foo") {
+            return { value: 1, configurable: true, enumerable: true };
+          }
+
+          return undefined;
+        },
+      },
+    ),
+  ).toContainKey("foo");
+});
+
+// Regression test for #11677
+test("toContainKeys proxy", () => {
+  expect(
+    new Proxy(
+      {},
+      {
+        has(target, str) {
+          return str === "foo";
+        },
+        getOwnPropertyDescriptor(target, str) {
+          if (str === "foo") {
+            return { value: 1, configurable: true, enumerable: true };
+          }
+
+          return undefined;
+        },
+      },
+    ),
+  ).toContainKeys(["foo"]);
+});
+
+// Regression test for #11677
+test("toContainKeys proxy throwing", () => {
+  expect(() =>
+    expect(
+      new Proxy(
+        {},
+        {
+          has(target, str) {
+            return str === "foo";
+          },
+          getOwnPropertyDescriptor(target, str) {
+            throw new Error("my error!");
+          },
+        },
+      ),
+    ).not.toContainKeys(["my error!"]),
+  ).toThrow();
+});
+
+// Regression test for #11677
+test("NOT toContainKeys empty", () => {
+  expect({}).not.toContainKeys([""]);
+});
+
+// Regression test for #11677
+test("NOT toContainAnyKeys string empty", () => {
+  expect({}).not.toContainAnyKeys([""]);
+});
+
+// Regression test for #11677
+test("toContainAnyKeys true string empty", () => {
+  expect({ "": 1 }).toContainAnyKeys([""]);
+});
+
+// Regression test for #11677
+test("toContainAnyKeys holey", () => {
+  expect([,]).not.toContainAnyKeys([,]);
+});
+
+// Regression test for #11677
+test("NOT toContainAnyKeysEmpty", () => {
+  expect({}).not.toContainAnyKeys([]);
+});
+
+// Regression test for #12276
+test("toIncludeRepeated should check for exact count, not at least count", () => {
+  // The bug: toIncludeRepeated was checking if string contains AT LEAST n occurrences
+  // Instead of EXACTLY n occurrences
+
+  // These should pass - exact match
+  expect("hello hello world").toIncludeRepeated("hello", 2);
+  expect("hello world").toIncludeRepeated("hello", 1);
+  expect("world").toIncludeRepeated("hello", 0);
+
+  // These should pass - not exact match with .not
+  expect("hello hello world").not.toIncludeRepeated("hello", 1);
+  expect("hello hello world").not.toIncludeRepeated("hello", 3);
+  expect("hello hello hello").not.toIncludeRepeated("hello", 2);
+
+  // Additional test cases
+  expect("abc abc abc").toIncludeRepeated("abc", 3);
+  expect("abc abc abc").not.toIncludeRepeated("abc", 1);
+  expect("abc abc abc").not.toIncludeRepeated("abc", 2);
+  expect("abc abc abc").not.toIncludeRepeated("abc", 4);
+
+  // Edge cases - std.mem.count doesn't count overlapping occurrences
+  expect("aaa").toIncludeRepeated("aa", 1); // "aa" appears once (non-overlapping)
+  expect("aaaa").toIncludeRepeated("aa", 2); // "aa" appears twice (non-overlapping)
+});
+
 function tmpFile(exists) {
   const { join } = require("path");
   const { tmpdir } = require("os");

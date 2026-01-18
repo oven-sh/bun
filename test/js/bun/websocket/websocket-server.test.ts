@@ -1,7 +1,7 @@
 import type { Server, Subprocess, WebSocketHandler } from "bun";
 import { serve, spawn } from "bun";
 import { afterEach, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, forceGuardMalloc } from "harness";
+import { bunEnv, bunExe, forceGuardMalloc, tempDir } from "harness";
 import { isIP } from "node:net";
 import path from "node:path";
 
@@ -1054,3 +1054,649 @@ it("you can call server.subscriberCount() when its not a websocket server", asyn
   });
   expect(server.subscriberCount("boop")).toBe(0);
 });
+
+// Regression test for #23474
+it("request.cookies.set() should set websocket upgrade response cookie", async () => {
+  using server = Bun.serve({
+    port: 0,
+    routes: {
+      "/ws": req => {
+        // Set a cookie before upgrading
+        req.cookies.set("test", "123", {
+          httpOnly: true,
+          path: "/",
+        });
+
+        const upgraded = server.upgrade(req);
+        if (upgraded) {
+          return undefined;
+        }
+        return new Response("Upgrade failed", { status: 500 });
+      },
+    },
+    websocket: {
+      message(ws, message) {
+        ws.close();
+      },
+    },
+  });
+
+  const { promise, resolve, reject } = Promise.withResolvers();
+
+  // Use Bun.connect to send a WebSocket upgrade request and check response headers
+  const socket = await Bun.connect({
+    hostname: "localhost",
+    port: server.port,
+    socket: {
+      data(socket, data) {
+        try {
+          const response = new TextDecoder().decode(data);
+
+          // Check that we got a successful upgrade response
+          expect(response).toContain("HTTP/1.1 101");
+          expect(response).toContain("Upgrade: websocket");
+
+          // The critical check: Set-Cookie header should be present
+          expect(response).toContain("Set-Cookie:");
+          expect(response).toContain("test=123");
+
+          socket.end();
+          resolve();
+        } catch (err) {
+          reject(err);
+        }
+      },
+      error(socket, error) {
+        reject(error);
+      },
+    },
+  });
+
+  // Send a valid WebSocket upgrade request
+  socket.write(
+    "GET /ws HTTP/1.1\r\n" +
+      `Host: localhost:${server.port}\r\n` +
+      "Upgrade: websocket\r\n" +
+      "Connection: Upgrade\r\n" +
+      "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
+      "Sec-WebSocket-Version: 13\r\n" +
+      "\r\n",
+  );
+
+  await promise;
+});
+
+// Regression test for #23474
+it("request.cookies.set() should work with custom headers in upgrade", async () => {
+  using server = Bun.serve({
+    port: 0,
+    routes: {
+      "/ws": req => {
+        // Set cookies before upgrading
+        req.cookies.set("session", "abc123", { path: "/" });
+        req.cookies.set("user", "john", { httpOnly: true });
+
+        const upgraded = server.upgrade(req, {
+          headers: {
+            "X-Custom-Header": "test",
+          },
+        });
+        if (upgraded) {
+          return undefined;
+        }
+        return new Response("Upgrade failed", { status: 500 });
+      },
+    },
+    websocket: {
+      message(ws, message) {
+        ws.close();
+      },
+    },
+  });
+
+  const { promise, resolve, reject } = Promise.withResolvers();
+
+  const socket = await Bun.connect({
+    hostname: "localhost",
+    port: server.port,
+    socket: {
+      data(socket, data) {
+        try {
+          const response = new TextDecoder().decode(data);
+
+          // Check that we got a successful upgrade response
+          expect(response).toContain("HTTP/1.1 101");
+          expect(response).toContain("Upgrade: websocket");
+
+          // Check custom header
+          expect(response).toContain("X-Custom-Header: test");
+
+          // Check that both cookies are present
+          expect(response).toContain("Set-Cookie:");
+          expect(response).toContain("session=abc123");
+          expect(response).toContain("user=john");
+
+          socket.end();
+          resolve();
+        } catch (err) {
+          reject(err);
+        }
+      },
+      error(socket, error) {
+        reject(error);
+      },
+    },
+  });
+
+  socket.write(
+    "GET /ws HTTP/1.1\r\n" +
+      `Host: localhost:${server.port}\r\n` +
+      "Upgrade: websocket\r\n" +
+      "Connection: Upgrade\r\n" +
+      "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
+      "Sec-WebSocket-Version: 13\r\n" +
+      "\r\n",
+  );
+
+  await promise;
+});
+
+// Regression test for #24593
+// Generate a realistic ~109KB JSON message similar to the original reproduction
+function generateLargeMessage(): string {
+  const items = [];
+  for (let i = 0; i < 50; i++) {
+    items.push({
+      id: 6000 + i,
+      pickListId: 444,
+      externalRef: null,
+      sku: `405053843${String(i).padStart(4, "0")}`,
+      sequence: i + 1,
+      requestedQuantity: 1,
+      pickedQuantity: 0,
+      dischargedQuantity: 0,
+      state: "allocated",
+      allocatedAt: new Date().toISOString(),
+      startedAt: null,
+      cancelledAt: null,
+      pickedAt: null,
+      placedAt: null,
+      dischargedAt: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      allocations: Array.from({ length: 20 }, (_, j) => ({
+        id: 9000 + i * 20 + j,
+        pickListItemId: 6000 + i,
+        productId: 36000 + j,
+        state: "reserved",
+        reservedAt: new Date().toISOString(),
+        startedAt: null,
+        pickedAt: null,
+        placedAt: null,
+        cancelledAt: null,
+        quantity: 1,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        location: {
+          id: 1000 + j,
+          name: `Location-${j}`,
+          zone: `Zone-${Math.floor(j / 5)}`,
+          aisle: `Aisle-${j % 10}`,
+          shelf: `Shelf-${j % 20}`,
+          position: j,
+        },
+        product: {
+          id: 36000 + j,
+          sku: `SKU-${String(j).padStart(6, "0")}`,
+          name: `Product Name ${j} with some additional description text`,
+          category: `Category-${j % 5}`,
+          weight: 1.5 + j * 0.1,
+          dimensions: { width: 10, height: 20, depth: 30 },
+        },
+      })),
+    });
+  }
+  return JSON.stringify({
+    id: 444,
+    externalRef: null,
+    description: "Generated pick list",
+    stockId: null,
+    priority: 0,
+    state: "allocated",
+    picksInSequence: true,
+    allocatedAt: new Date().toISOString(),
+    startedAt: null,
+    pausedAt: null,
+    pickedAt: null,
+    placedAt: null,
+    cancelledAt: null,
+    dischargedAt: null,
+    collectedAt: null,
+    totalRequestedQuantity: 50,
+    totalPickedQuantity: 0,
+    totalDischargedQuantity: 0,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    items,
+  });
+}
+
+// Regression test for #24593
+describe("WebSocket server.publish with perMessageDeflate", () => {
+  it("should handle large message publish without crash", async () => {
+    // Create a ~109KB JSON message (similar to the reproduction)
+    const largeMessage = generateLargeMessage();
+    expect(largeMessage.length).toBeGreaterThan(100000);
+
+    using server = serve({
+      port: 0,
+      fetch(req, server) {
+        if (server.upgrade(req)) {
+          return;
+        }
+        return new Response("WebSocket server");
+      },
+      websocket: {
+        perMessageDeflate: true,
+        open(ws) {
+          ws.subscribe("test");
+        },
+        message() {},
+        close() {},
+      },
+    });
+
+    const client = new WebSocket(`ws://localhost:${server.port}`);
+
+    const { promise: openPromise, resolve: resolveOpen, reject: rejectOpen } = Promise.withResolvers<void>();
+    const { promise: messagePromise, resolve: resolveMessage, reject: rejectMessage } = Promise.withResolvers<string>();
+
+    client.onopen = () => resolveOpen();
+    client.onerror = e => {
+      rejectOpen(e);
+      rejectMessage(new Error("WebSocket error"));
+    };
+    client.onmessage = event => resolveMessage(event.data);
+
+    await openPromise;
+
+    // This is the critical test - server.publish() with a large compressed message
+    // On Windows, this was causing a segfault in memcpy during the compression path
+    const published = server.publish("test", largeMessage);
+    expect(published).toBeGreaterThan(0); // Returns bytes sent, should be > 0
+
+    const received = await messagePromise;
+    expect(received.length).toBe(largeMessage.length);
+    expect(received).toBe(largeMessage);
+
+    client.close();
+  });
+
+  it("should handle multiple large message publishes", async () => {
+    // Test multiple publishes in succession to catch potential buffer corruption
+    const largeMessage = generateLargeMessage();
+
+    let messagesReceived = 0;
+    const expectedMessages = 5;
+
+    using server = serve({
+      port: 0,
+      fetch(req, server) {
+        if (server.upgrade(req)) {
+          return;
+        }
+        return new Response("WebSocket server");
+      },
+      websocket: {
+        perMessageDeflate: true,
+        open(ws) {
+          ws.subscribe("multi-test");
+        },
+        message() {},
+        close() {},
+      },
+    });
+
+    const client = new WebSocket(`ws://localhost:${server.port}`);
+
+    const { promise: openPromise, resolve: resolveOpen, reject: rejectOpen } = Promise.withResolvers<void>();
+    const {
+      promise: allMessagesReceived,
+      resolve: resolveMessages,
+      reject: rejectMessages,
+    } = Promise.withResolvers<void>();
+
+    client.onopen = () => resolveOpen();
+    client.onerror = e => {
+      rejectOpen(e);
+      rejectMessages(e instanceof Error ? e : new Error("WebSocket error"));
+    };
+    client.onmessage = event => {
+      messagesReceived++;
+      expect(event.data.length).toBe(largeMessage.length);
+      if (messagesReceived === expectedMessages) {
+        resolveMessages();
+      }
+    };
+
+    await openPromise;
+
+    // Publish multiple times in quick succession
+    for (let i = 0; i < expectedMessages; i++) {
+      const published = server.publish("multi-test", largeMessage);
+      expect(published).toBeGreaterThan(0); // Returns bytes sent
+    }
+
+    await allMessagesReceived;
+    expect(messagesReceived).toBe(expectedMessages);
+
+    client.close();
+  });
+
+  it("should handle publish to multiple subscribers", async () => {
+    // Test publishing to multiple clients - this exercises the publishBig loop
+    const largeMessage = generateLargeMessage();
+
+    const numClients = 3;
+    const clientsReceived: boolean[] = new Array(numClients).fill(false);
+
+    using server = serve({
+      port: 0,
+      fetch(req, server) {
+        if (server.upgrade(req)) {
+          return;
+        }
+        return new Response("WebSocket server");
+      },
+      websocket: {
+        perMessageDeflate: true,
+        open(ws) {
+          ws.subscribe("broadcast");
+        },
+        message() {},
+        close() {},
+      },
+    });
+
+    const clients: WebSocket[] = [];
+    try {
+      const allClientsOpen = Promise.all(
+        Array.from({ length: numClients }, (_, i) => {
+          return new Promise<void>((resolve, reject) => {
+            const client = new WebSocket(`ws://localhost:${server.port}`);
+            clients.push(client);
+            client.onopen = () => resolve();
+            client.onerror = e => reject(e);
+          });
+        }),
+      );
+
+      await allClientsOpen;
+
+      const allMessagesReceived = Promise.all(
+        clients.map(
+          (client, i) =>
+            new Promise<void>(resolve => {
+              client.onmessage = event => {
+                expect(event.data.length).toBe(largeMessage.length);
+                clientsReceived[i] = true;
+                resolve();
+              };
+            }),
+        ),
+      );
+
+      // Publish to all subscribers
+      const published = server.publish("broadcast", largeMessage);
+      expect(published).toBeGreaterThan(0); // Returns bytes sent
+
+      await allMessagesReceived;
+      expect(clientsReceived.every(r => r)).toBe(true);
+    } finally {
+      for (const c of clients) {
+        try {
+          c.close();
+        } catch {}
+      }
+    }
+  });
+
+  // CORK_BUFFER_SIZE is 16KB - test messages right at this boundary
+  // since messages >= CORK_BUFFER_SIZE use publishBig path
+  const CORK_BUFFER_SIZE = 16 * 1024;
+
+  it.each([
+    { name: "just under 16KB", size: CORK_BUFFER_SIZE - 100 },
+    { name: "exactly 16KB", size: CORK_BUFFER_SIZE },
+    { name: "just over 16KB", size: CORK_BUFFER_SIZE + 100 },
+  ])("should handle message at CORK_BUFFER_SIZE boundary: $name", async ({ size }) => {
+    const message = Buffer.alloc(size, "D").toString();
+
+    using server = serve({
+      port: 0,
+      fetch(req, server) {
+        if (server.upgrade(req)) {
+          return;
+        }
+        return new Response("WebSocket server");
+      },
+      websocket: {
+        perMessageDeflate: true,
+        open(ws) {
+          ws.subscribe("boundary-test");
+        },
+        message() {},
+        close() {},
+      },
+    });
+
+    const client = new WebSocket(`ws://localhost:${server.port}`);
+
+    const { promise: openPromise, resolve: resolveOpen, reject: rejectOpen } = Promise.withResolvers<void>();
+    const { promise: messagePromise, resolve: resolveMessage, reject: rejectMessage } = Promise.withResolvers<string>();
+
+    let openSettled = false;
+    client.onopen = () => {
+      openSettled = true;
+      resolveOpen();
+    };
+    client.onerror = e => {
+      if (!openSettled) {
+        openSettled = true;
+        rejectOpen(e);
+      } else {
+        rejectMessage(e);
+      }
+    };
+    client.onmessage = event => resolveMessage(event.data);
+
+    await openPromise;
+
+    server.publish("boundary-test", message);
+
+    const received = await messagePromise;
+    expect(received.length).toBe(size);
+
+    client.close();
+  });
+});
+
+// Regression test for #3613
+// WebSocketServer handleProtocols option should set the selected protocol in the upgrade response
+it("ws WebSocketServer handleProtocols sets selected protocol", async () => {
+  using dir = tempDir("ws-handle-protocols", {
+    "server.js": `
+import { WebSocketServer } from 'ws';
+
+const wss = new WebSocketServer({
+  port: 0,
+  handleProtocols: (protocols, request) => {
+    return 'selected-protocol';
+  }
+});
+
+wss.on('listening', async () => {
+  const port = wss.address().port;
+  console.log('PORT:' + port);
+
+  // Test using fetch to verify the actual response headers
+  try {
+    const res = await fetch('http://127.0.0.1:' + port, {
+      headers: {
+        "Upgrade": "websocket",
+        "Connection": "Upgrade",
+        "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==",
+        "Sec-WebSocket-Version": "13",
+        "Sec-WebSocket-Protocol": "custom-protocol, selected-protocol"
+      }
+    });
+    console.log("STATUS:" + res.status);
+    console.log("PROTOCOL:" + res.headers.get("sec-websocket-protocol"));
+  } catch (e) {
+    console.log("ERROR:" + e.message);
+  }
+
+  wss.close();
+  process.exit(0);
+});
+
+wss.on('connection', (ws) => {
+  console.log('SERVER_WS_PROTOCOL:' + ws.protocol);
+});
+`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "server.js"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // The server should respond with the protocol selected by handleProtocols
+  expect(stdout).toContain("STATUS:101");
+  expect(stdout).toContain("PROTOCOL:selected-protocol");
+  expect(stdout).toContain("SERVER_WS_PROTOCOL:selected-protocol");
+  expect(exitCode).toBe(0);
+}, 10000);
+
+// Regression test for #3613
+it("ws WebSocketServer handleProtocols with no protocol", async () => {
+  using dir = tempDir("ws-handle-protocols-empty", {
+    "server.js": `
+import { WebSocketServer } from 'ws';
+
+const wss = new WebSocketServer({
+  port: 0,
+  handleProtocols: (protocols, request) => {
+    // Return empty string - should not set a protocol header
+    return '';
+  }
+});
+
+wss.on('listening', async () => {
+  const port = wss.address().port;
+  console.log('PORT:' + port);
+
+  try {
+    const res = await fetch('http://127.0.0.1:' + port, {
+      headers: {
+        "Upgrade": "websocket",
+        "Connection": "Upgrade",
+        "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==",
+        "Sec-WebSocket-Version": "13",
+        "Sec-WebSocket-Protocol": "custom-protocol"
+      }
+    });
+    console.log("STATUS:" + res.status);
+    // When handleProtocols returns empty, Bun falls back to client's first protocol
+    console.log("PROTOCOL:" + res.headers.get("sec-websocket-protocol"));
+  } catch (e) {
+    console.log("ERROR:" + e.message);
+  }
+
+  wss.close();
+  process.exit(0);
+});
+
+wss.on('connection', (ws) => {
+  console.log('SERVER_WS_PROTOCOL:' + JSON.stringify(ws.protocol));
+});
+`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "server.js"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // The server should respond with 101 status
+  expect(stdout).toContain("STATUS:101");
+  expect(exitCode).toBe(0);
+}, 10000);
+
+// Regression test for #3613
+it("ws WebSocketServer without handleProtocols uses first client protocol", async () => {
+  using dir = tempDir("ws-no-handle-protocols", {
+    "server.js": `
+import { WebSocketServer } from 'ws';
+
+const wss = new WebSocketServer({
+  port: 0,
+  // No handleProtocols - should default to first client protocol
+});
+
+wss.on('listening', async () => {
+  const port = wss.address().port;
+  console.log('PORT:' + port);
+
+  try {
+    const res = await fetch('http://127.0.0.1:' + port, {
+      headers: {
+        "Upgrade": "websocket",
+        "Connection": "Upgrade",
+        "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==",
+        "Sec-WebSocket-Version": "13",
+        "Sec-WebSocket-Protocol": "first-protocol, second-protocol"
+      }
+    });
+    console.log("STATUS:" + res.status);
+    console.log("PROTOCOL:" + res.headers.get("sec-websocket-protocol"));
+  } catch (e) {
+    console.log("ERROR:" + e.message);
+  }
+
+  wss.close();
+  process.exit(0);
+});
+
+wss.on('connection', (ws) => {
+  console.log('SERVER_WS_PROTOCOL:' + ws.protocol);
+});
+`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "server.js"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // Without handleProtocols, should default to first client protocol
+  expect(stdout).toContain("STATUS:101");
+  expect(stdout).toContain("PROTOCOL:first-protocol");
+  expect(stdout).toContain("SERVER_WS_PROTOCOL:first-protocol");
+  expect(exitCode).toBe(0);
+}, 10000);

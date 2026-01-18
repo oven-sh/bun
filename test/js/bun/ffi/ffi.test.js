@@ -970,3 +970,30 @@ describe.if(!!libPath)("can open more than 63 symbols via", () => {
     });
   }
 });
+
+// Regression test for #25231
+describe("CString constructor", () => {
+  it("Bun.FFI.CString is callable with new", () => {
+    // Create a buffer with a null-terminated string
+    const buf = Buffer.from("hello\0");
+    const ptrValue = ptr(buf);
+
+    // CString should be callable with new
+    const result = new CString(ptrValue, 0, 5);
+
+    // The result should be the string "hello"
+    expect(String(result)).toBe("hello");
+  });
+
+  it("Bun.FFI.CString can be called without new", () => {
+    // Create a buffer with a null-terminated string
+    const buf = Buffer.from("hello\0");
+    const ptrValue = ptr(buf);
+
+    // CString should also be callable without new
+    const result = CString(ptrValue, 0, 5);
+
+    // The result should be the string "hello"
+    expect(result).toBe("hello");
+  });
+});

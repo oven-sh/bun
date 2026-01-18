@@ -737,4 +737,9 @@ describe("Bun.semver.satisfies()", () => {
   test("pre-release snapshot", () => {
     expect(unsortedPrereleases.sort(Bun.semver.order)).toMatchSnapshot();
   });
+
+  // Regression test for #8040
+  test("semver with multiple tags work properly", () => {
+    expect(satisfies("3.4.5", ">=3.3.0-beta.1 <3.4.0-beta.3")).toBeFalse();
+  });
 });

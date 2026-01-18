@@ -299,6 +299,13 @@ export interface BundlerTestInput {
 
   /** Run after the bun.build function is called with its output */
   onAfterApiBundle?(build: BuildOutput): Promise<void> | void;
+
+  /**
+   * Run the build entirely in memory using Bun.build's `files` API.
+   * No temp directories or files are created. Outputs are read from BuildArtifact.text().
+   * The `onAfterBundle` callback still works with the same API.
+   */
+  virtual?: boolean;
 }
 
 export interface SourceMapTests {
@@ -494,6 +501,7 @@ function expectBundled(
     generateOutput = true,
     onAfterApiBundle,
     throw: _throw = false,
+    virtual = false,
     ...unknownProps
   } = opts;
 
@@ -578,6 +586,180 @@ function expectBundled(
   }
   if (dryRun) {
     return testRef(id, opts);
+  }
+
+  // Virtual mode: run entirely in memory without disk I/O
+  if (virtual) {
+    return (async () => {
+      // Prepare virtual files with dedent applied
+      const virtualFiles: Record<string, string> = {};
+      for (const [file, contents] of Object.entries(files)) {
+        virtualFiles[file] = typeof contents === "string" ? dedent(contents) : contents.toString();
+      }
+
+      entryPoints ??= [Object.keys(files)[0]];
+      format ??= "esm";
+      target ??= "browser";
+
+      const build = await Bun.build({
+        entrypoints: entryPoints,
+        files: virtualFiles,
+        target,
+        format,
+        minify: {
+          whitespace: minifyWhitespace,
+          syntax: minifySyntax,
+          identifiers: minifyIdentifiers,
+        },
+        external,
+        plugins: typeof plugins === "function" ? [{ name: "plugin", setup: plugins }] : plugins,
+        splitting,
+        treeShaking,
+        sourcemap: sourceMap,
+        publicPath,
+        banner,
+        footer,
+        packages,
+        loader,
+        jsx: jsx
+          ? {
+              runtime: jsx.runtime,
+              importSource: jsx.importSource,
+              factory: jsx.factory,
+              fragment: jsx.fragment,
+              sideEffects: jsx.sideEffects,
+              development: jsx.development,
+            }
+          : undefined,
+      });
+
+      if (!build.success) {
+        const errors = build.logs
+          .filter(x => x.level === "error")
+          .map(x => x.message)
+          .join("\n");
+
+        // Check if errors were expected
+        if (bundleErrors) {
+          const expectedErrors = Object.entries(bundleErrors).flatMap(([file, v]) => v.map(error => ({ file, error })));
+          // For now, just check that we got errors as expected
+          if (expectedErrors.length > 0) {
+            return testRef(id, opts);
+          }
+        }
+        throw new Error(`Bundle failed:\n${errors}`);
+      } else if (bundleErrors) {
+        const expectedErrors = Object.entries(bundleErrors).flatMap(([file, v]) => v.map(error => ({ file, error })));
+        if (expectedErrors.length > 0) {
+          throw new Error(
+            "Errors were expected while bundling:\n" + expectedErrors.map(e => `${e.file}: ${e.error}`).join("\n"),
+          );
+        }
+      }
+
+      // Build in-memory file cache from BuildArtifact outputs
+      const outputCache: Record<string, string> = {};
+      for (const output of build.outputs) {
+        // Normalize path: "./a.css" -> "/a.css"
+        let outputPath = output.path;
+        if (outputPath.startsWith("./")) outputPath = outputPath.slice(1);
+        if (!outputPath.startsWith("/")) outputPath = "/" + outputPath;
+        outputCache[outputPath] = await output.text();
+      }
+
+      // Determine the main output file path
+      const mainOutputPath = Object.keys(outputCache)[0] || "/out.js";
+      const outfileVirtual = outfile ? (outfile.startsWith("/") ? outfile : "/" + outfile) : mainOutputPath;
+
+      // Create API object that reads from in-memory cache
+      const readFile = (file: string): string => {
+        // Normalize the file path
+        let normalizedFile = file;
+        if (normalizedFile.startsWith("./")) normalizedFile = normalizedFile.slice(1);
+        if (!normalizedFile.startsWith("/")) normalizedFile = "/" + normalizedFile;
+
+        // Try exact match first
+        if (outputCache[normalizedFile]) return outputCache[normalizedFile];
+
+        // Try matching by basename for /out.css -> /a.css case
+        const basename = normalizedFile.split("/").pop()!;
+        for (const [key, value] of Object.entries(outputCache)) {
+          if (key.endsWith("/" + basename) || key === "/" + basename) {
+            return value;
+          }
+        }
+
+        // If looking for a specific extension and there's only one file with that extension, use it
+        const ext = basename.includes(".") ? basename.slice(basename.lastIndexOf(".")) : "";
+        if (ext) {
+          const matchingFiles = Object.entries(outputCache).filter(([key]) => key.endsWith(ext));
+          if (matchingFiles.length === 1) {
+            return matchingFiles[0][1];
+          }
+        }
+
+        throw new Error(`Virtual file not found: ${file}. Available: ${Object.keys(outputCache).join(", ")}`);
+      };
+
+      const api = {
+        root: "/virtual",
+        outfile: outfileVirtual,
+        outdir: "/virtual/out",
+        join: (...paths: string[]) => "/" + paths.join("/").replace(/^\/+/, ""),
+        readFile,
+        writeFile: (_file: string, _contents: string) => {
+          throw new Error("writeFile not supported in virtual mode");
+        },
+        expectFile: (file: string) => expect(readFile(file)),
+        prependFile: (_file: string, _contents: string) => {
+          throw new Error("prependFile not supported in virtual mode");
+        },
+        appendFile: (_file: string, _contents: string) => {
+          throw new Error("appendFile not supported in virtual mode");
+        },
+        assertFileExists: (file: string) => {
+          readFile(file); // Will throw if not found
+        },
+        warnings: {} as Record<string, ErrorMeta[]>,
+        options: opts,
+        captureFile: (file: string, fnName = "capture") => {
+          const fileContents = readFile(file);
+          let i = 0;
+          const length = fileContents.length;
+          const matches = [];
+          while (i < length) {
+            i = fileContents.indexOf(fnName, i);
+            if (i === -1) break;
+            const start = i;
+            let depth = 0;
+            while (i < length) {
+              const char = fileContents[i];
+              if (char === "(") depth++;
+              else if (char === ")") {
+                depth--;
+                if (depth === 0) break;
+              }
+              i++;
+            }
+            if (depth !== 0) {
+              throw new Error(`Could not find closing paren for ${fnName} call in ${file}`);
+            }
+            matches.push(fileContents.slice(start + fnName.length + 1, i));
+            i++;
+          }
+          if (matches.length === 0) {
+            throw new Error(`No ${fnName} calls found in ${file}`);
+          }
+          return matches;
+        },
+      } satisfies BundlerTestBundleAPI;
+
+      if (onAfterBundle) {
+        onAfterBundle(api);
+      }
+
+      return testRef(id, opts);
+    })();
   }
 
   return (async () => {

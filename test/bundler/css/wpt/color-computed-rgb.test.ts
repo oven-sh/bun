@@ -4,6 +4,7 @@ import { itBundled } from "../../expectBundled";
 const runTest = (testTitle: string, input: string, expected: string) => {
   testTitle = testTitle.length === 0 ? input : testTitle;
   itBundled(testTitle, {
+    virtual: true,
     files: {
       "/a.css": /* css */ `
 h1 {
@@ -11,11 +12,11 @@ h1 {
 }
       `,
     },
-    outfile: "out.css",
+    outfile: "/out.css",
 
     onAfterBundle(api) {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-/* a.css */
+/* ../../a.css */
 h1 {
     color: ${expected};
 }

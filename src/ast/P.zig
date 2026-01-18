@@ -2204,7 +2204,7 @@ pub fn NewParser_(
                         var is_sloppy_mode_block_level_fn_stmt = false;
                         const original_member_ref = value.ref;
 
-                        if (p.willUseRenamer() and symbol.kind == .hoisted_function) {
+                        if (p.willUseRenamer() and symbol.kind == .hoisted_function and scope.kind != .label) {
                             // Block-level function declarations behave like "let" in strict mode
                             if (scope.strict_mode != .sloppy_mode) {
                                 continue;

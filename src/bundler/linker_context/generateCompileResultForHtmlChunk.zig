@@ -49,6 +49,10 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
             html: ?u32 = 0,
         },
         added_head_tags: bool,
+        /// Stores data-* attributes from the first bundled JS element
+        js_data_attrs: ?[]const u8,
+        /// Stores data-* attributes from the first bundled CSS element
+        css_data_attrs: ?[]const u8,
 
         pub fn onWriteHTML(this: *@This(), bytes: []const u8) void {
             bun.handleOom(this.output.appendSlice(bytes));
@@ -100,6 +104,12 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
             }
 
             if (loader.isJavaScriptLike() or loader.isCSS()) {
+                // Capture data-* attributes from the first bundled element of each type
+                if (loader.isJavaScriptLike() and this.js_data_attrs == null) {
+                    this.js_data_attrs = collectDataAttributes(element, this.allocator);
+                } else if (loader.isCSS() and this.css_data_attrs == null) {
+                    this.css_data_attrs = collectDataAttributes(element, this.allocator);
+                }
                 // Remove the original non-external tags
                 element.remove();
                 return;
@@ -146,12 +156,22 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
             var array: bun.BoundedArray([]const u8, 2) = .{};
             // Put CSS before JS to reduce changes of flash of unstyled content
             if (this.chunk.getCSSChunkForHTML(this.chunks)) |css_chunk| {
-                const link_tag = bun.handleOom(std.fmt.allocPrintSentinel(allocator, "<link rel=\"stylesheet\" crossorigin href=\"{s}\">", .{css_chunk.unique_key}, 0));
+                const data_attrs = this.css_data_attrs orelse "";
+                const link_tag = bun.handleOom(std.fmt.allocPrintSentinel(allocator, "<link rel=\"stylesheet\" crossorigin href=\"{s}\"{s}{s}>", .{
+                    css_chunk.unique_key,
+                    if (data_attrs.len > 0) " " else "",
+                    data_attrs,
+                }, 0));
                 array.appendAssumeCapacity(link_tag);
             }
             if (this.chunk.getJSChunkForHTML(this.chunks)) |js_chunk| {
                 // type="module" scripts do not block rendering, so it is okay to put them in head
-                const script = bun.handleOom(std.fmt.allocPrintSentinel(allocator, "<script type=\"module\" crossorigin src=\"{s}\"></script>", .{js_chunk.unique_key}, 0));
+                const data_attrs = this.js_data_attrs orelse "";
+                const script = bun.handleOom(std.fmt.allocPrintSentinel(allocator, "<script type=\"module\" crossorigin src=\"{s}\"{s}{s}></script>", .{
+                    js_chunk.unique_key,
+                    if (data_attrs.len > 0) " " else "",
+                    data_attrs,
+                }, 0));
                 array.appendAssumeCapacity(script);
             }
             return array;
@@ -209,6 +229,8 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
             .head = null,
         },
         .added_head_tags = false,
+        .js_data_attrs = null,
+        .css_data_attrs = null,
     };
 
     HTMLScanner.HTMLProcessor(HTMLLoader, true).run(
@@ -251,6 +273,55 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
         .source_index = chunk.entry_point.source_index,
         .script_injection_offset = script_injection_offset,
     } };
+}
+
+/// Collects all data-* attributes from an element and returns them as a string.
+/// Returns null if there are no data-* attributes.
+fn collectDataAttributes(element: *const lol.Element, allocator: std.mem.Allocator) ?[]const u8 {
+    const attr_iter = element.attributes() orelse return null;
+    defer attr_iter.deinit();
+
+    var result = std.array_list.Managed(u8).init(allocator);
+    var first = true;
+
+    while (attr_iter.next()) |attr| {
+        const attr_name = attr.name();
+        defer attr_name.deinit();
+        const name_slice = attr_name.slice();
+
+        // Check if attribute name starts with "data-"
+        if (name_slice.len >= 5 and std.mem.eql(u8, name_slice[0..5], "data-")) {
+            const attr_value = attr.value();
+            defer attr_value.deinit();
+            const value_slice = attr_value.slice();
+
+            if (!first) {
+                result.append(' ') catch bun.outOfMemory();
+            }
+            first = false;
+
+            // Append attribute name
+            result.appendSlice(name_slice) catch bun.outOfMemory();
+            // Append ="value" (with proper escaping for the value)
+            result.appendSlice("=\"") catch bun.outOfMemory();
+            // Escape the value for HTML attribute context
+            for (value_slice) |c| {
+                switch (c) {
+                    '"' => result.appendSlice("&quot;") catch bun.outOfMemory(),
+                    '&' => result.appendSlice("&amp;") catch bun.outOfMemory(),
+                    else => result.append(c) catch bun.outOfMemory(),
+                }
+            }
+            result.append('"') catch bun.outOfMemory();
+        }
+    }
+
+    if (result.items.len == 0) {
+        result.deinit();
+        return null;
+    }
+
+    return result.toOwnedSlice() catch bun.outOfMemory();
 }
 
 pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;

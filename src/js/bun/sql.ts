@@ -1718,10 +1718,21 @@ const SQL: typeof Bun.SQL = function SQL(
           signal.addEventListener("abort", onAbort, { once: true });
         }
 
+        let chunkResolve: (() => void) | null = null;
+
+        const waitForChunk = () =>
+          new Promise<void>(r => {
+            chunkResolve = r;
+          });
+
         // Register streaming handlers
-        if (typeof (reserved as any).onCopyChunk === "function") {
-          (reserved as any).onCopyChunk((chunk: any) => {
+        if (typeof reserved.onCopyChunk === "function") {
+          reserved.onCopyChunk((chunk: any) => {
             chunks.push(chunk);
+            if (chunkResolve) {
+              chunkResolve();
+              chunkResolve = null;
+            }
             try {
               // Update progress
               if (chunk instanceof ArrayBuffer) {
@@ -1750,19 +1761,22 @@ const SQL: typeof Bun.SQL = function SQL(
             } catch {}
           });
         }
-        if (typeof (reserved as any).onCopyEnd === "function") {
-          (reserved as any).onCopyEnd(() => {
+        if (typeof reserved.onCopyEnd === "function") {
+          reserved.onCopyEnd(() => {
             done = true;
+            if (chunkResolve) {
+              chunkResolve();
+              chunkResolve = null;
+            }
           });
         }
 
         try {
           if (aborted) throw new Error("AbortError");
           // Enable streaming mode to avoid accumulation in Zig during COPY TO
-          if (typeof (reserved as any).setCopyStreamingMode === "function") {
+          if (typeof reserved.setCopyStreamingMode === "function") {
             try {
-              const __defaults__ =
-                (reserved as any)?.getCopyDefaults?.() || (pool as any)?.getCopyDefaults?.() || undefined;
+              const __defaults__ = reserved?.getCopyDefaults?.() || (pool as any)?.getCopyDefaults?.() || undefined;
               const __toDefaults__ = (__defaults__ && __defaults__.to) || { stream: true, maxBytes: 0, timeout: 0 };
               const stream =
                 typeof queryOrOptions === "string"
@@ -1798,7 +1812,7 @@ const SQL: typeof Bun.SQL = function SQL(
             }
             if (chunks.length === 0) {
               // yield to event loop
-              await Promise.resolve();
+              await waitForChunk();
               continue;
             }
             yield chunks.shift();

@@ -61,7 +61,7 @@ function expandExponent(s: string): string {
   const sign = m[1] === "-" ? "-" : "";
   let intPart = m[2] || "0";
   let fracPart = m[3] || "";
-  const exp = Number(m[4]) | 0;
+  const exp = Math.trunc(Number(m[4]));
   if (exp > 0) {
     const needed = exp - fracPart.length;
     if (needed >= 0) {

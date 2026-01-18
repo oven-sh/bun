@@ -48,15 +48,6 @@ fn __pg_sendCopyDone(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFram
     const connection: *PostgresSQLConnection = connection_value.as(PostgresSQLConnection) orelse {
         return globalObject.throw("sendCopyDone first argument must be a PostgresSQLConnection", .{});
     };
-
-    // Validate connection state
-    if (connection.status != .connected) {
-        return globalObject.throw("Cannot send COPY done: connection is {s}. The connection must be open to complete the COPY operation.", .{@tagName(connection.status)});
-    }
-    if (connection.copy_state != .copy_in_progress) {
-        return globalObject.throw("Cannot send COPY done: not in COPY FROM STDIN mode (current state: {s}). You must be in an active COPY FROM STDIN operation.", .{@tagName(connection.copy_state)});
-    }
-
     return connection.sendCopyDone(globalObject, callframe);
 }
 fn __pg_sendCopyFail(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {

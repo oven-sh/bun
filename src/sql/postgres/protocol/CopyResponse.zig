@@ -28,7 +28,8 @@ pub fn decodeInternal(this: *CopyResponse, comptime Container: type, reader: New
     errdefer bun.default_allocator.free(column_format_codes);
 
     for (column_format_codes) |*format_code| {
-        format_code.* = @intCast(try reader.short());
+        const raw = try reader.short();
+        format_code.* = if (raw < 0) 0 else @intCast(raw);
     }
 
     this.* = .{

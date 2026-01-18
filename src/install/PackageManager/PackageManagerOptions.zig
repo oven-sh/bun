@@ -483,6 +483,10 @@ pub fn load(
         this.do.verify_integrity = !strings.eqlComptime(check_bool, "0");
     }
 
+    if (env.get("BUN_CONFIG_OFFLINE")) |check_bool| {
+        this.enable.offline = !strings.eqlComptime(check_bool, "0");
+    }
+
     // Update should never read from manifest cache
     if (subcommand == .update) {
         this.enable.manifest_cache = false;
@@ -635,6 +639,10 @@ pub fn load(
             this.enable.force_save_lockfile = true;
         }
 
+        if (cli.offline) {
+            this.enable.offline = true;
+        }
+
         if (cli.development) {
             this.update.development = cli.development;
         } else if (cli.optional) {
@@ -733,7 +741,10 @@ pub const Enable = packed struct(u16) {
 
     exact_versions: bool = false,
     only_missing: bool = false,
-    _: u7 = 0,
+
+    // Run without network access, using only cached packages
+    offline: bool = false,
+    _: u6 = 0,
 };
 
 const string = []const u8;

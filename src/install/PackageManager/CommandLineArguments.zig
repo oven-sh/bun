@@ -32,6 +32,7 @@ const shared_params = [_]ParamType{
     clap.parseParam("-f, --force                           Always request the latest versions from the registry & reinstall all dependencies") catch unreachable,
     clap.parseParam("--cache-dir <PATH>                    Store & load cached data from a specific directory path") catch unreachable,
     clap.parseParam("--no-cache                            Ignore manifest cache entirely") catch unreachable,
+    clap.parseParam("--offline                             Run without network access, using only cached packages") catch unreachable,
     clap.parseParam("--silent                              Don't log anything") catch unreachable,
     clap.parseParam("--quiet                               Only show tarball name when packing") catch unreachable,
     clap.parseParam("--verbose                             Excessively verbose logging") catch unreachable,
@@ -188,6 +189,7 @@ no_save: bool = false,
 dry_run: bool = false,
 force: bool = false,
 no_cache: bool = false,
+offline: bool = false,
 silent: bool = false,
 quiet: bool = false,
 verbose: bool = false,
@@ -801,6 +803,7 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
     cli.force = args.flag("--force");
     cli.no_verify = args.flag("--no-verify");
     cli.no_cache = args.flag("--no-cache");
+    cli.offline = args.flag("--offline");
     cli.silent = args.flag("--silent");
     cli.quiet = args.flag("--quiet");
     cli.verbose = args.flag("--verbose") or Output.is_verbose;

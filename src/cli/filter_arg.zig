@@ -104,7 +104,15 @@ pub const FilterSet = struct {
     has_name_filters: bool = false,
     match_all: bool = false,
 
-    pub fn matches(this: *const FilterSet, path: []const u8, name: []const u8) bool {
+    // For fuzzy scope matching (pnpm-compatible):
+    // If a name filter doesn't start with '@' and doesn't contain '/',
+    // and no packages match directly, we try matching with '@*/{pattern}'.
+    // Only if exactly one package matches the scoped pattern do we use it.
+    fuzzy_scope_candidates: std.StringHashMap(void) = undefined,
+    fuzzy_scope_initialized: bool = false,
+    had_direct_match: bool = false,
+
+    pub fn matches(this: *FilterSet, path: []const u8, name: []const u8) bool {
         if (this.match_all) {
             // allow empty name if there are any filters which are a relative path
             // --filter="*" --filter="./bar" script
@@ -127,6 +135,7 @@ pub const FilterSet = struct {
             /// THIS MEANS THE PATTERN IS ALLOCATED ON THE HEAP! FREE IT!
             path,
         },
+        fuzzy_scope_eligible: bool = false,
         // negate: bool = false,
     };
 
@@ -136,7 +145,7 @@ pub const FilterSet = struct {
         var buf: bun.PathBuffer = undefined;
         // TODO fixed buffer allocator with fallback?
         var list = try std.array_list.Managed(Pattern).initCapacity(allocator, filters.len);
-        var self = FilterSet{ .allocator = allocator, .filters = &.{} };
+        var self = FilterSet{ .allocator = allocator, .filters = &.{}, .fuzzy_scope_candidates = std.StringHashMap(void).init(allocator) };
         for (filters) |filter_utf8_| {
             if (strings.eqlComptime(filter_utf8_, "*") or strings.eqlComptime(filter_utf8_, "**")) {
                 self.match_all = true;
@@ -156,9 +165,11 @@ pub const FilterSet = struct {
                 });
             } else {
                 self.has_name_filters = true;
+                const fuzzy_eligible = filter_utf8.len > 0 and filter_utf8[0] != '@' and std.mem.indexOfScalar(u8, filter_utf8, '/') == null;
                 try list.append(.{
                     .pattern = filter_utf8,
                     .kind = .name,
+                    .fuzzy_scope_eligible = fuzzy_eligible,
                 });
             }
         }
@@ -173,6 +184,9 @@ pub const FilterSet = struct {
             }
         }
         self.allocator.free(self.filters);
+        if (self.fuzzy_scope_initialized) {
+            self.fuzzy_scope_candidates.deinit();
+        }
     }
 
     pub fn matchesPath(self: *const FilterSet, path: []const u8) bool {
@@ -184,17 +198,105 @@ pub const FilterSet = struct {
         return false;
     }
 
-    pub fn matchesPathName(self: *const FilterSet, path: []const u8, name: []const u8) bool {
+    pub fn matchesPathName(self: *FilterSet, path: []const u8, name: []const u8) bool {
         for (self.filters) |filter| {
             const target = switch (filter.kind) {
                 .name => name,
                 .path => path,
             };
             if (glob.match(filter.pattern, target).matches()) {
+                self.had_direct_match = true;
                 return true;
+            }
+            if (filter.kind == .name and filter.fuzzy_scope_eligible) {
+                if (matchesScopedPackage(name, filter.pattern)) {
+                    // Track this as a candidate for fuzzy matching
+                    self.fuzzy_scope_candidates.put(name, {}) catch {};
+                    self.fuzzy_scope_initialized = true;
+                }
             }
         }
         return false;
+    }
+
+    /// Check if a package name is scoped and matches a pattern after the scope.
+    /// E.g., "@babel/core" matches pattern "core", "@types/node" matches pattern "node"
+    fn matchesScopedPackage(name: []const u8, pattern: []const u8) bool {
+        // Package must start with '@' to be scoped
+        if (name.len == 0 or name[0] != '@') {
+            return false;
+        }
+
+        // Find the '/' that separates scope from package name
+        const slash_idx = std.mem.indexOfScalar(u8, name, '/') orelse return false;
+        if (slash_idx + 1 >= name.len) {
+            return false;
+        }
+
+        // Get the part after the scope
+        const unscoped_name = name[slash_idx + 1 ..];
+        // Match the pattern against the unscoped name
+        return glob.match(pattern, unscoped_name).matches();
+    }
+
+    /// After all packages have been checked, resolve fuzzy scope matches.
+    /// Returns the single matching scoped package name if exactly one matched,
+    /// otherwise returns null (ambiguous or no matches).
+    pub fn resolveFuzzyScopeMatch(self: *const FilterSet, pattern: []const u8) ?[]const u8 {
+        if (!self.fuzzy_scope_initialized) {
+            return null;
+        }
+        var match_count: usize = 0;
+        var matched_name: ?[]const u8 = null;
+        var iter = self.fuzzy_scope_candidates.iterator();
+        while (iter.next()) |entry| {
+            const name = entry.key_ptr.*;
+            // Check if this candidate matches the specific pattern
+            if (matchesScopedPackage(name, pattern)) {
+                match_count += 1;
+                matched_name = name;
+                if (match_count > 1) {
+                    // Ambiguous - more than one match
+                    return null;
+                }
+            }
+        }
+        return matched_name;
+    }
+
+    /// Second-pass matching that includes fuzzy scope resolution.
+    pub fn matchesWithFuzzyScope(self: *FilterSet, path: []const u8, name: []const u8) bool {
+        // First try direct match
+        if (self.match_all and name.len > 0) {
+            return true;
+        }
+        if (self.has_name_filters) {
+            // Check for direct matches
+            for (self.filters) |filter| {
+                const target = switch (filter.kind) {
+                    .name => name,
+                    .path => path,
+                };
+                if (glob.match(filter.pattern, target).matches()) {
+                    return true;
+                }
+            }
+            // Only use fuzzy scope matching if there were no direct matches at all
+            if (!self.had_direct_match) {
+                // Check for fuzzy scope matches (only if exactly one candidate)
+                for (self.filters) |filter| {
+                    if (filter.kind == .name and filter.fuzzy_scope_eligible) {
+                        if (self.resolveFuzzyScopeMatch(filter.pattern)) |matched| {
+                            if (strings.eql(name, matched)) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+            return false;
+        }
+        return self.matchesPath(path);
     }
 };
 

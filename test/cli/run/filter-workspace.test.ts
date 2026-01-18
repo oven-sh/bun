@@ -547,4 +547,157 @@ describe("bun", () => {
       win32ExpectedError: /--elide-lines is only supported in terminal environments/,
     });
   });
+
+  test("fuzzy scope matching: matches scoped package by unscoped name when unique", () => {
+    const dir = tempDirWithFiles("testworkspace", {
+      packages: {
+        core: {
+          "package.json": JSON.stringify({
+            name: "@babel/core",
+            scripts: {
+              test: "echo babel-core",
+            },
+          }),
+        },
+      },
+      "package.json": JSON.stringify({
+        name: "ws",
+        workspaces: ["packages/*"],
+      }),
+    });
+    runInCwdSuccess({
+      cwd: dir,
+      pattern: "core",
+      target_pattern: [/babel-core/],
+      command: ["test"],
+    });
+  });
+
+  test("fuzzy scope matching: does not match when there's an unscoped package with same name", () => {
+    const dir = tempDirWithFiles("testworkspace", {
+      packages: {
+        scopedcore: {
+          "package.json": JSON.stringify({
+            name: "@babel/core",
+            scripts: {
+              test: "echo babel-core",
+            },
+          }),
+        },
+        core: {
+          "package.json": JSON.stringify({
+            name: "core",
+            scripts: {
+              test: "echo unscoped-core",
+            },
+          }),
+        },
+      },
+      "package.json": JSON.stringify({
+        name: "ws",
+        workspaces: ["packages/*"],
+      }),
+    });
+    runInCwdSuccess({
+      cwd: dir,
+      pattern: "core",
+      target_pattern: [/unscoped-core/],
+      antipattern: [/babel-core/],
+      command: ["test"],
+    });
+  });
+
+  test("fuzzy scope matching: does not match when multiple scoped packages match", () => {
+    const dir = tempDirWithFiles("testworkspace", {
+      packages: {
+        babelcore: {
+          "package.json": JSON.stringify({
+            name: "@babel/core",
+            scripts: {
+              test: "echo babel-core",
+            },
+          }),
+        },
+        typescore: {
+          "package.json": JSON.stringify({
+            name: "@types/core",
+            scripts: {
+              test: "echo types-core",
+            },
+          }),
+        },
+      },
+      "package.json": JSON.stringify({
+        name: "ws",
+        workspaces: ["packages/*"],
+      }),
+    });
+    const { exitCode, stderr } = spawnSync({
+      cwd: dir,
+      cmd: [bunExe(), "run", "--filter", "core", "test"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(stderr.toString()).toMatch(/No packages matched/);
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("fuzzy scope matching: still matches when filter starts with @", () => {
+    const dir = tempDirWithFiles("testworkspace", {
+      packages: {
+        core: {
+          "package.json": JSON.stringify({
+            name: "@babel/core",
+            scripts: {
+              test: "echo babel-core",
+            },
+          }),
+        },
+      },
+      "package.json": JSON.stringify({
+        name: "ws",
+        workspaces: ["packages/*"],
+      }),
+    });
+    runInCwdSuccess({
+      cwd: dir,
+      pattern: "@babel/core",
+      target_pattern: [/babel-core/],
+      command: ["test"],
+    });
+  });
+
+  test("fuzzy scope matching: glob patterns work with scoped packages", () => {
+    const dir = tempDirWithFiles("testworkspace", {
+      packages: {
+        core: {
+          "package.json": JSON.stringify({
+            name: "@babel/core",
+            scripts: {
+              test: "echo babel-core",
+            },
+          }),
+        },
+        preset: {
+          "package.json": JSON.stringify({
+            name: "@babel/preset-env",
+            scripts: {
+              test: "echo babel-preset",
+            },
+          }),
+        },
+      },
+      "package.json": JSON.stringify({
+        name: "ws",
+        workspaces: ["packages/*"],
+      }),
+    });
+    runInCwdSuccess({
+      cwd: dir,
+      pattern: "@babel/*",
+      target_pattern: [/babel-core/, /babel-preset/],
+      command: ["test"],
+    });
+  });
 });

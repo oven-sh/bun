@@ -53,11 +53,11 @@ describe("Bun.build compile", () => {
       Bun.build({
         entrypoints: [join(dir, "index.js")],
         compile: {
-          target: "bun-windows-arm64",
+          target: "bun-wasm",
           outfile: join(dir, "invalid-app"),
         },
       }),
-    ).toThrowErrorMatchingInlineSnapshot(`"Unsupported compile target: bun-windows-arm64"`);
+    ).toThrowErrorMatchingInlineSnapshot(`"Unsupported compile target: bun-wasm"`);
   });
   test("compile with relative outfile paths", async () => {
     using dir = tempDir("build-compile-relative-paths", {

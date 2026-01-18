@@ -342,6 +342,7 @@ pub fn build(b: *Build) !void {
         const step = b.step("check-debug", "Check for semantic analysis errors on some platforms");
         addMultiCheck(b, step, build_options, &.{
             .{ .os = .windows, .arch = .x86_64 },
+            .{ .os = .windows, .arch = .aarch64 },
             .{ .os = .mac, .arch = .aarch64 },
             .{ .os = .linux, .arch = .x86_64 },
         }, &.{.Debug});
@@ -352,6 +353,7 @@ pub fn build(b: *Build) !void {
         const step = b.step("check-all", "Check for semantic analysis errors on all supported platforms");
         addMultiCheck(b, step, build_options, &.{
             .{ .os = .windows, .arch = .x86_64 },
+            .{ .os = .windows, .arch = .aarch64 },
             .{ .os = .mac, .arch = .x86_64 },
             .{ .os = .mac, .arch = .aarch64 },
             .{ .os = .linux, .arch = .x86_64 },
@@ -366,6 +368,7 @@ pub fn build(b: *Build) !void {
         const step = b.step("check-all-debug", "Check for semantic analysis errors on all supported platforms in debug mode");
         addMultiCheck(b, step, build_options, &.{
             .{ .os = .windows, .arch = .x86_64 },
+            .{ .os = .windows, .arch = .aarch64 },
             .{ .os = .mac, .arch = .x86_64 },
             .{ .os = .mac, .arch = .aarch64 },
             .{ .os = .linux, .arch = .x86_64 },
@@ -380,12 +383,14 @@ pub fn build(b: *Build) !void {
         const step = b.step("check-windows", "Check for semantic analysis errors on Windows");
         addMultiCheck(b, step, build_options, &.{
             .{ .os = .windows, .arch = .x86_64 },
+            .{ .os = .windows, .arch = .aarch64 },
         }, &.{ .Debug, .ReleaseFast });
     }
     {
         const step = b.step("check-windows-debug", "Check for semantic analysis errors on Windows");
         addMultiCheck(b, step, build_options, &.{
             .{ .os = .windows, .arch = .x86_64 },
+            .{ .os = .windows, .arch = .aarch64 },
         }, &.{.Debug});
     }
     {
@@ -422,6 +427,7 @@ pub fn build(b: *Build) !void {
         const step = b.step("translate-c", "Copy generated translated-c-headers.zig to zig-out");
         for ([_]TargetDescription{
             .{ .os = .windows, .arch = .x86_64 },
+            .{ .os = .windows, .arch = .aarch64 },
             .{ .os = .mac, .arch = .x86_64 },
             .{ .os = .mac, .arch = .aarch64 },
             .{ .os = .linux, .arch = .x86_64 },

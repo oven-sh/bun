@@ -190,8 +190,10 @@ function Install-KeyLocker {
     }
     
     # Download MSI installer
-    $msiUrl = "https://bun-ci-assets.bun.sh/Keylockertools-windows-x64.msi"
-    $msiPath = Join-Path $env:TEMP "Keylockertools-windows-x64.msi"
+    # Note: KeyLocker tools currently only available for x64, but works on ARM64 via emulation
+    $msiArch = "x64"
+    $msiUrl = "https://bun-ci-assets.bun.sh/Keylockertools-windows-${msiArch}.msi"
+    $msiPath = Join-Path $env:TEMP "Keylockertools-windows-${msiArch}.msi"
     
     Log-Info "Downloading MSI from: $msiUrl"
     Log-Info "Downloading to: $msiPath"

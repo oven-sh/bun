@@ -3899,10 +3899,10 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDebugProcess, (JSC::JSGlobalObject * gl
         return {};
     }
 
-    // Wait briefly for the thread to complete because closing the handles
-    // immediately could terminate the remote thread before it finishes
-    // triggering the inspector in the target process.
-    WaitForSingleObject(hThread, 1000);
+    // Wait for the thread to complete. Closing the handles before the thread
+    // finishes could terminate the remote thread before it triggers the
+    // inspector in the target process. Use INFINITE to match Node.js behavior.
+    WaitForSingleObject(hThread, INFINITE);
     CloseHandle(hThread);
     CloseHandle(hProcess);
 #endif

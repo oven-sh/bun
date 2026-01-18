@@ -925,10 +925,11 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             const stat: bun.Stat = switch (bun.sys.fstat(fd)) {
                 .result => |result| result,
                 .err => |err| {
-                    this.runErrorHandler(err.withPathLike(file.pathlike).toJS(globalThis) catch return);
+                    // Close fd before toJS call, which might throw
                     if (auto_close) {
                         fd.close();
                     }
+                    this.runErrorHandler(err.withPathLike(file.pathlike).toJS(globalThis) catch return);
                     return;
                 },
             };
@@ -964,7 +965,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     };
                     var sys = err.withPathLike(file.pathlike).toShellSystemError();
                     sys.message = bun.String.static("File must be regular or FIFO");
-                    this.runErrorHandler(sys.toErrorInstance(globalThis));
+                    this.runErrorHandler(sys.toErrorInstance(globalThis) catch return);
                     return;
                 }
             }

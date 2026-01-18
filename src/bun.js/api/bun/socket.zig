@@ -327,7 +327,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                     this.has_pending_activity.store(false, .release);
 
                     // reject the promise on connect() error
-                    const err_value = err.toErrorInstance(globalObject);
+                    const err_value = err.toErrorInstance(globalObject) catch return;
                     promise.asPromise().?.reject(globalObject, err_value) catch {}; // TODO: properly propagate exception upwards
                 }
 
@@ -583,7 +583,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                 const authorization_error: JSValue = if (ssl_error.error_no == 0)
                     JSValue.jsNull()
                 else
-                    ssl_error.toJS(globalObject);
+                    ssl_error.toJS(globalObject) catch return;
 
                 result = callback.call(globalObject, this_value, &[_]JSValue{
                     this_value,

@@ -1657,7 +1657,7 @@ fn writeStringToFileFast(
                     }
                     return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(
                         globalThis,
-                        err.withPath(pathlike.path.slice()).toJS(globalThis),
+                        err.withPath(pathlike.path.slice()).toJS(globalThis) catch return .zero,
                     );
                 },
             }
@@ -1732,7 +1732,7 @@ fn writeBytesToFileFast(
                 if (comptime !needs_open) {
                     return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(
                         globalThis,
-                        err.toJS(globalThis),
+                        err.toJS(globalThis) catch return .zero,
                     );
                 }
                 return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(

@@ -227,7 +227,7 @@ pub fn createMemfdForTesting(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.
             return jsc.JSValue.jsNumber(fd.cast());
         },
         .err => |err| {
-            return globalObject.throwValue(err.toJS(globalObject));
+            return globalObject.throwValue(try err.toJS(globalObject));
         },
     }
 }

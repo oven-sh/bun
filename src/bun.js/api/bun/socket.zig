@@ -1380,6 +1380,9 @@ pub fn NewSocket(comptime ssl: bool) type {
             if (this.socket.isDetached() or this.socket.isNamedPipe()) {
                 return .js_undefined;
             }
+            if (this.isServer()) {
+                return globalObject.throw("Server-side upgradeTLS is not supported. Please upvote https://github.com/oven-sh/bun/issues/25044 if you need this support.", .{});
+            }
             const args = callframe.arguments_old(1);
 
             if (args.len < 1) {

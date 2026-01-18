@@ -610,6 +610,97 @@ declare module "bun" {
    */
   function stripANSI(input: string): string;
 
+  interface WrapAnsiOptions {
+    /**
+     * If `true`, break words in the middle if they don't fit on a line.
+     * If `false`, only break at word boundaries.
+     *
+     * @default false
+     */
+    hard?: boolean;
+
+    /**
+     * If `true`, wrap at word boundaries when possible.
+     * If `false`, don't perform word wrapping (only wrap at explicit newlines).
+     *
+     * @default true
+     */
+    wordWrap?: boolean;
+
+    /**
+     * If `true`, trim leading and trailing whitespace from each line.
+     * If `false`, preserve whitespace.
+     *
+     * @default true
+     */
+    trim?: boolean;
+
+    /**
+     * When it's ambiguous and `true`, count ambiguous width characters as 1 character wide.
+     * If `false`, count them as 2 characters wide.
+     *
+     * @default true
+     */
+    ambiguousIsNarrow?: boolean;
+  }
+
+  /**
+   * Wrap a string to fit within the specified column width, preserving ANSI escape codes.
+   *
+   * This function is designed to be compatible with the popular "wrap-ansi" NPM package.
+   *
+   * Features:
+   * - Preserves ANSI escape codes (colors, styles) across line breaks
+   * - Supports SGR codes (colors, bold, italic, etc.) and OSC 8 hyperlinks
+   * - Respects Unicode display widths (full-width characters, emoji)
+   * - Word wrapping at word boundaries (configurable)
+   *
+   * @category Utilities
+   *
+   * @param input The string to wrap
+   * @param columns The maximum column width
+   * @param options Wrapping options
+   * @returns The wrapped string
+   *
+   * @example
+   * ```ts
+   * import { wrapAnsi } from "bun";
+   *
+   * console.log(wrapAnsi("hello world", 5));
+   * // Output:
+   * // hello
+   * // world
+   *
+   * // Preserves ANSI colors across line breaks
+   * console.log(wrapAnsi("\u001b[31mhello world\u001b[0m", 5));
+   * // Output:
+   * // \u001b[31mhello\u001b[0m
+   * // \u001b[31mworld\u001b[0m
+   *
+   * // Hard wrap long words
+   * console.log(wrapAnsi("abcdefghij", 3, { hard: true }));
+   * // Output:
+   * // abc
+   * // def
+   * // ghi
+   * // j
+   * ```
+   */
+  function wrapAnsi(
+    /**
+     * The string to wrap
+     */
+    input: string,
+    /**
+     * The maximum column width
+     */
+    columns: number,
+    /**
+     * Wrapping options
+     */
+    options?: WrapAnsiOptions,
+  ): string;
+
   /**
    * TOML related APIs
    */
@@ -750,7 +841,7 @@ declare module "bun" {
    */
   function write(
     destination: BunFile | S3File | PathLike,
-    input: Blob | NodeJS.TypedArray | ArrayBufferLike | string | BlobPart[],
+    input: Blob | NodeJS.TypedArray | ArrayBufferLike | string | BlobPart[] | Archive,
     options?: {
       /**
        * If writing to a PathLike, set the permissions of the file.
@@ -6963,6 +7054,356 @@ declare module "bun" {
      * ```
      */
     match(str: string): boolean;
+  }
+
+  /**
+   * Input data for creating an archive. Can be:
+   * - An object mapping paths to file contents (string, Blob, TypedArray, or ArrayBuffer)
+   * - A Blob containing existing archive data
+   * - A TypedArray or ArrayBuffer containing existing archive data
+   */
+  type ArchiveInput = Record<string, BlobPart> | Blob | ArrayBufferView | ArrayBufferLike;
+
+  /**
+   * Compression format for archive output.
+   * Currently only `"gzip"` is supported.
+   */
+  type ArchiveCompression = "gzip";
+
+  /**
+   * Options for creating an Archive instance.
+   *
+   * By default, archives are not compressed. Use `{ compress: "gzip" }` to enable compression.
+   *
+   * @example
+   * ```ts
+   * // No compression (default)
+   * new Bun.Archive(data);
+   *
+   * // Enable gzip with default level (6)
+   * new Bun.Archive(data, { compress: "gzip" });
+   *
+   * // Specify compression level
+   * new Bun.Archive(data, { compress: "gzip", level: 9 });
+   * ```
+   */
+  interface ArchiveOptions {
+    /**
+     * Compression algorithm to use.
+     * Currently only "gzip" is supported.
+     * If not specified, no compression is applied.
+     */
+    compress?: ArchiveCompression;
+    /**
+     * Compression level (1-12). Only applies when `compress` is set.
+     * - 1: Fastest compression, lowest ratio
+     * - 6: Default balance of speed and ratio
+     * - 12: Best compression ratio, slowest
+     *
+     * @default 6
+     */
+    level?: number;
+  }
+
+  /**
+   * Options for extracting archive contents.
+   */
+  interface ArchiveExtractOptions {
+    /**
+     * Glob pattern(s) to filter which entries are extracted.
+     * Uses the same syntax as {@link Bun.Glob}, including support for wildcards (`*`, `**`),
+     * character classes (`[abc]`), alternation (`{a,b}`), and negation (`!pattern`).
+     *
+     * Patterns are matched against archive entry paths normalized to use forward slashes (`/`),
+     * regardless of the host operating system. Always write patterns using `/` as the separator.
+     *
+     * - Positive patterns: Only entries matching at least one pattern will be extracted.
+     * - Negative patterns (prefixed with `!`): Entries matching these patterns will be excluded.
+     *   Negative patterns are applied after positive patterns.
+     *
+     * If not specified, all entries are extracted.
+     *
+     * @example
+     * ```ts
+     * // Extract only TypeScript files
+     * await archive.extract("./out", { glob: "**" + "/*.ts" });
+     *
+     * // Extract files from multiple directories
+     * await archive.extract("./out", { glob: ["src/**", "lib/**"] });
+     *
+     * // Exclude node_modules using negative pattern
+     * await archive.extract("./out", { glob: ["**", "!node_modules/**"] });
+     *
+     * // Extract source files but exclude tests
+     * await archive.extract("./out", { glob: ["src/**", "!**" + "/*.test.ts"] });
+     * ```
+     */
+    glob?: string | readonly string[];
+  }
+
+  /**
+   * A class for creating and extracting tar archives with optional gzip compression.
+   *
+   * `Bun.Archive` provides a fast, native implementation for working with tar archives.
+   * It supports creating archives from in-memory data or extracting existing archives
+   * to disk or memory.
+   *
+   * @example
+   * **Create an archive from an object:**
+   * ```ts
+   * const archive = new Bun.Archive({
+   *   "hello.txt": "Hello, World!",
+   *   "data.json": JSON.stringify({ foo: "bar" }),
+   *   "binary.bin": new Uint8Array([1, 2, 3, 4]),
+   * });
+   * ```
+   *
+   * @example
+   * **Create a gzipped archive:**
+   * ```ts
+   * const archive = new Bun.Archive({
+   *   "hello.txt": "Hello, World!",
+   * }, { compress: "gzip" });
+   *
+   * // Or with a specific compression level (1-12)
+   * const archive = new Bun.Archive(data, { compress: "gzip", level: 9 });
+   * ```
+   *
+   * @example
+   * **Extract an archive to disk:**
+   * ```ts
+   * const archive = new Bun.Archive(tarballBytes);
+   * const entryCount = await archive.extract("./output");
+   * console.log(`Extracted ${entryCount} entries`);
+   * ```
+   *
+   * @example
+   * **Get archive contents as a Map of File objects:**
+   * ```ts
+   * const archive = new Bun.Archive(tarballBytes);
+   * const entries = await archive.files();
+   * for (const [path, file] of entries) {
+   *   console.log(path, await file.text());
+   * }
+   * ```
+   *
+   * @example
+   * **Write a gzipped archive directly to disk:**
+   * ```ts
+   * await Bun.Archive.write("bundle.tar.gz", {
+   *   "src/index.ts": sourceCode,
+   *   "package.json": packageJson,
+   * }, { compress: "gzip" });
+   * ```
+   */
+  export class Archive {
+    /**
+     * Create an `Archive` instance from input data.
+     *
+     * By default, archives are not compressed. Use `{ compress: "gzip" }` to enable compression.
+     *
+     * @param data - The input data for the archive:
+     *   - **Object**: Creates a new tarball with the object's keys as file paths and values as file contents
+     *   - **Blob/TypedArray/ArrayBuffer**: Wraps existing archive data (tar or tar.gz)
+     * @param options - Optional archive options including compression settings.
+     *   Defaults to no compression if omitted.
+     *
+     * @example
+     * **From an object (creates uncompressed tarball):**
+     * ```ts
+     * const archive = new Bun.Archive({
+     *   "hello.txt": "Hello, World!",
+     *   "nested/file.txt": "Nested content",
+     * });
+     * ```
+     *
+     * @example
+     * **With gzip compression:**
+     * ```ts
+     * const archive = new Bun.Archive(data, { compress: "gzip" });
+     * ```
+     *
+     * @example
+     * **With explicit gzip compression level:**
+     * ```ts
+     * const archive = new Bun.Archive(data, { compress: "gzip", level: 12 });
+     * ```
+     *
+     * @example
+     * **From existing archive data:**
+     * ```ts
+     * const response = await fetch("https://example.com/package.tar.gz");
+     * const archive = new Bun.Archive(await response.blob());
+     * ```
+     */
+    constructor(data: ArchiveInput, options?: ArchiveOptions);
+
+    /**
+     * Create and write an archive directly to disk in one operation.
+     *
+     * This is more efficient than creating an archive and then writing it separately,
+     * as it streams the data directly to disk.
+     *
+     * @param path - The file path to write the archive to
+     * @param data - The input data for the archive (same as `new Archive()`)
+     * @param options - Optional archive options including compression settings
+     *
+     * @returns A promise that resolves when the write is complete
+     *
+     * @example
+     * **Write uncompressed tarball:**
+     * ```ts
+     * await Bun.Archive.write("output.tar", {
+     *   "file1.txt": "content1",
+     *   "file2.txt": "content2",
+     * });
+     * ```
+     *
+     * @example
+     * **Write gzipped tarball:**
+     * ```ts
+     * await Bun.Archive.write("output.tar.gz", files, { compress: "gzip" });
+     * ```
+     */
+    static write(path: string, data: ArchiveInput | Archive, options?: ArchiveOptions): Promise<void>;
+
+    /**
+     * Extract the archive contents to a directory on disk.
+     *
+     * Creates the target directory and any necessary parent directories if they don't exist.
+     * Existing files will be overwritten.
+     *
+     * @param path - The directory path to extract to
+     * @param options - Optional extraction options
+     * @param options.glob - Glob pattern(s) to filter entries (positive patterns include, negative patterns starting with `!` exclude)
+     * @returns A promise that resolves with the number of entries extracted (files, directories, and symlinks)
+     *
+     * @example
+     * **Extract all entries:**
+     * ```ts
+     * const archive = new Bun.Archive(tarballBytes);
+     * const count = await archive.extract("./extracted");
+     * console.log(`Extracted ${count} entries`);
+     * ```
+     *
+     * @example
+     * **Extract only TypeScript files:**
+     * ```ts
+     * const count = await archive.extract("./src", { glob: "**" + "/*.ts" });
+     * ```
+     *
+     * @example
+     * **Extract everything except tests:**
+     * ```ts
+     * const count = await archive.extract("./dist", { glob: ["**", "!**" + "/*.test.*"] });
+     * ```
+     *
+     * @example
+     * **Extract source files but exclude tests:**
+     * ```ts
+     * const count = await archive.extract("./output", {
+     *   glob: ["src/**", "lib/**", "!**" + "/*.test.ts", "!**" + "/__tests__/**"]
+     * });
+     * ```
+     */
+    extract(path: string, options?: ArchiveExtractOptions): Promise<number>;
+
+    /**
+     * Get the archive contents as a `Blob`.
+     *
+     * Uses the compression settings specified when the Archive was created.
+     *
+     * @returns A promise that resolves with the archive data as a Blob
+     *
+     * @example
+     * **Get tarball as Blob:**
+     * ```ts
+     * const archive = new Bun.Archive(data);
+     * const blob = await archive.blob();
+     * ```
+     *
+     * @example
+     * **Get gzipped tarball as Blob:**
+     * ```ts
+     * const archive = new Bun.Archive(data, { compress: "gzip" });
+     * const gzippedBlob = await archive.blob();
+     * ```
+     */
+    blob(): Promise<Blob>;
+
+    /**
+     * Get the archive contents as a `Uint8Array`.
+     *
+     * Uses the compression settings specified when the Archive was created.
+     *
+     * @returns A promise that resolves with the archive data as a Uint8Array
+     *
+     * @example
+     * **Get tarball bytes:**
+     * ```ts
+     * const archive = new Bun.Archive(data);
+     * const bytes = await archive.bytes();
+     * ```
+     *
+     * @example
+     * **Get gzipped tarball bytes:**
+     * ```ts
+     * const archive = new Bun.Archive(data, { compress: "gzip" });
+     * const gzippedBytes = await archive.bytes();
+     * ```
+     */
+    bytes(): Promise<Uint8Array<ArrayBuffer>>;
+
+    /**
+     * Get the archive contents as a `Map` of `File` objects.
+     *
+     * Each file in the archive is returned as a `File` object with:
+     * - `name`: The file path within the archive
+     * - `lastModified`: The file's modification time from the archive
+     * - Standard Blob methods (`text()`, `arrayBuffer()`, `stream()`, etc.)
+     *
+     * Only regular files are included; directories are not returned.
+     * File contents are loaded into memory, so for large archives consider using `extract()` instead.
+     *
+     * @param glob - Optional glob pattern(s) to filter files. Supports the same syntax as {@link Bun.Glob},
+     *   including negation patterns (prefixed with `!`). Patterns are matched against paths normalized
+     *   to use forward slashes (`/`).
+     * @returns A promise that resolves with a Map where keys are file paths (always using forward slashes `/` as separators) and values are File objects
+     *
+     * @example
+     * **Get all files:**
+     * ```ts
+     * const entries = await archive.files();
+     * for (const [path, file] of entries) {
+     *   console.log(`${path}: ${file.size} bytes`);
+     * }
+     * ```
+     *
+     * @example
+     * **Filter by glob pattern:**
+     * ```ts
+     * const tsFiles = await archive.files("**" + "/*.ts");
+     * const srcFiles = await archive.files(["src/**", "lib/**"]);
+     * ```
+     *
+     * @example
+     * **Exclude files with negative patterns:**
+     * ```ts
+     * // Get all source files except tests
+     * const srcFiles = await archive.files(["src/**", "!**" + "/*.test.ts"]);
+     * ```
+     *
+     * @example
+     * **Read file contents:**
+     * ```ts
+     * const entries = await archive.files();
+     * const readme = entries.get("README.md");
+     * if (readme) {
+     *   console.log(await readme.text());
+     * }
+     * ```
+     */
+    files(glob?: string | readonly string[]): Promise<Map<string, File>>;
   }
 
   /**

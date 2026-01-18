@@ -1,4 +1,5 @@
 .claude/settings.local.json
+.direnv
 .DS_Store
 .env
 .envrc

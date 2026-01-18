@@ -161,8 +161,25 @@ comptime {
     @export(&Bun__fetch, .{ .name = "Bun__fetch" });
 }
 
-/// Implementation of `Bun.fetch`
+/// Public entry point for `Bun.fetch` - validates body on GET/HEAD/OPTIONS
 pub fn Bun__fetch_(
+    ctx: *jsc.JSGlobalObject,
+    callframe: *jsc.CallFrame,
+) bun.JSError!jsc.JSValue {
+    return fetchImpl(false, ctx, callframe);
+}
+
+/// Internal entry point for Node.js HTTP client - allows body on GET/HEAD/OPTIONS
+pub fn nodeHttpClient(
+    ctx: *jsc.JSGlobalObject,
+    callframe: *jsc.CallFrame,
+) bun.JSError!jsc.JSValue {
+    return fetchImpl(true, ctx, callframe);
+}
+
+/// Shared implementation of fetch
+fn fetchImpl(
+    comptime allow_get_body: bool,
     ctx: *jsc.JSGlobalObject,
     callframe: *jsc.CallFrame,
 ) bun.JSError!jsc.JSValue {
@@ -544,7 +561,7 @@ pub fn Bun__fetch_(
     redirect_type = extract_redirect_type: {
         // First, try to use the Request object's redirect if available
         if (request) |req| {
-            redirect_type = req.redirect;
+            redirect_type = req.flags.redirect;
         }
 
         // Then check options/init objects which can override the Request's redirect
@@ -1073,7 +1090,7 @@ pub fn Bun__fetch_(
         }
     }
 
-    if (!method.hasRequestBody() and body.hasBody() and !upgraded_connection) {
+    if (!allow_get_body and !method.hasRequestBody() and body.hasBody() and !upgraded_connection) {
         const err = globalThis.toTypeError(.INVALID_ARG_VALUE, fetch_error_unexpected_body, .{});
         is_error = true;
         return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
@@ -1302,6 +1319,7 @@ pub fn Bun__fetch_(
                 credentialsWithOptions.storage_class,
                 if (headers) |h| (h.getContentType()) else null,
                 if (headers) |h| h.getContentDisposition() else null,
+                if (headers) |h| h.getContentEncoding() else null,
                 proxy_url,
                 credentialsWithOptions.request_payer,
                 @ptrCast(&Wrapper.resolve),
@@ -1343,7 +1361,7 @@ pub fn Bun__fetch_(
         }
 
         const content_type = if (headers) |h| (h.getContentType()) else null;
-        var header_buffer: [10]picohttp.Header = undefined;
+        var header_buffer: [s3.S3Credentials.SignResult.MAX_HEADERS + 1]picohttp.Header = undefined;
 
         if (range) |range_| {
             const _headers = result.mixWithHeader(&header_buffer, .{ .name = "range", .value = range_ });

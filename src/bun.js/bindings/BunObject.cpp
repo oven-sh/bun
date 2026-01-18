@@ -77,6 +77,7 @@ BUN_DECLARE_HOST_FUNCTION(Bun__randomUUIDv5);
 
 namespace Bun {
 JSC_DECLARE_HOST_FUNCTION(jsFunctionBunStripANSI);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionBunWrapAnsi);
 }
 
 using namespace JSC;
@@ -354,14 +355,12 @@ static JSValue constructBunShell(VM& vm, JSObject* bunObject)
     auto* globalObject = jsCast<Zig::GlobalObject*>(bunObject->globalObject());
     JSFunction* createParsedShellScript = JSFunction::create(vm, bunObject->globalObject(), 2, "createParsedShellScript"_s, BunObject_callback_createParsedShellScript, ImplementationVisibility::Private, NoIntrinsic);
     JSFunction* createShellInterpreterFunction = JSFunction::create(vm, bunObject->globalObject(), 1, "createShellInterpreter"_s, BunObject_callback_createShellInterpreter, ImplementationVisibility::Private, NoIntrinsic);
-    JSFunction* traceShellScriptFunction = JSFunction::create(vm, bunObject->globalObject(), 1, "traceShellScript"_s, BunObject_callback_traceShellScript, ImplementationVisibility::Private, NoIntrinsic);
     JSC::JSFunction* createShellFn = JSC::JSFunction::create(vm, globalObject, shellCreateBunShellTemplateFunctionCodeGenerator(vm), globalObject);
 
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto args = JSC::MarkedArgumentBuffer();
     args.append(createShellInterpreterFunction);
     args.append(createParsedShellScript);
-    args.append(traceShellScriptFunction);
     JSC::JSValue shell = JSC::call(globalObject, createShellFn, args, "BunShell"_s);
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -804,6 +803,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     stdout                                         BunObject_lazyPropCb_wrap_stdout                                    DontDelete|PropertyCallback
     stringWidth                                    Generated::BunObject::jsStringWidth                                 DontDelete|Function 2
     stripANSI                                      jsFunctionBunStripANSI                                              DontDelete|Function 1
+    wrapAnsi                                       jsFunctionBunWrapAnsi                                               DontDelete|Function 3
     Terminal                                       BunObject_lazyPropCb_wrap_Terminal                                  DontDelete|PropertyCallback
     unsafe                                         BunObject_lazyPropCb_wrap_unsafe                                    DontDelete|PropertyCallback
     version                                        constructBunVersion                                                 ReadOnly|DontDelete|PropertyCallback
@@ -959,7 +959,7 @@ static void exportBunObject(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC:
         JSValue value = object->get(globalObject, propertyName);
 
         if (catchScope.exception()) {
-            catchScope.clearException();
+            (void)catchScope.tryClearException();
             value = jsUndefined();
         }
         exportValues.append(value);

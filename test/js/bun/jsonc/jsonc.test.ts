@@ -123,3 +123,15 @@ test("Bun.JSONC.parse handles empty array", () => {
   const result = Bun.JSONC.parse("[]");
   expect(result).toEqual([]);
 });
+
+test("Bun.JSONC.parse throws on deeply nested arrays instead of crashing", () => {
+  const depth = 25_000;
+  const deepJson = "[".repeat(depth) + "]".repeat(depth);
+  expect(() => Bun.JSONC.parse(deepJson)).toThrow(RangeError);
+});
+
+test("Bun.JSONC.parse throws on deeply nested objects instead of crashing", () => {
+  const depth = 25_000;
+  const deepJson = '{"a":'.repeat(depth) + "1" + "}".repeat(depth);
+  expect(() => Bun.JSONC.parse(deepJson)).toThrow(RangeError);
+});

@@ -60,6 +60,8 @@ beforeEach(async () => {
   users = {};
   env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
   env.BUN_TMPDIR = env.TMPDIR = env.TEMP = join(packageDir, ".bun-tmp");
+  // Ensure tests use the mock registry instead of global ~/.npmrc settings
+  env.BUN_CONFIG_REGISTRY = registry.registryUrl();
 });
 
 function registryUrl() {
@@ -361,6 +363,15 @@ ljelkjwelkgjw;lekj;lkejflkj
 });
 
 describe("whoami", async () => {
+  // Create env without BUN_CONFIG_REGISTRY and with HOME set to packageDir
+  // to prevent reading global ~/.npmrc which can interfere with auth tests
+  function whoamiEnv() {
+    const cleanEnv = { ...env };
+    delete cleanEnv.BUN_CONFIG_REGISTRY;
+    cleanEnv.HOME = packageDir;
+    return cleanEnv;
+  }
+
   test("can get username", async () => {
     const bunfig = await registry.authBunfig("whoami");
     await Promise.all([
@@ -379,7 +390,7 @@ describe("whoami", async () => {
       cwd: packageDir,
       stdout: "pipe",
       stderr: "pipe",
-      env,
+      env: whoamiEnv(),
     });
 
     const out = await stdout.text();
@@ -409,7 +420,7 @@ describe("whoami", async () => {
       cwd: packageDir,
       stdout: "pipe",
       stderr: "pipe",
-      env,
+      env: whoamiEnv(),
     });
 
     const out = await stdout.text();
@@ -432,7 +443,7 @@ describe("whoami", async () => {
       cwd: packageDir,
       stdout: "pipe",
       stderr: "pipe",
-      env,
+      env: whoamiEnv(),
     });
     const out = await stdout.text();
     expect(out).toBe("whoami-npmrc\n");
@@ -457,7 +468,7 @@ describe("whoami", async () => {
       stdout: "pipe",
       stderr: "pipe",
       env: {
-        ...env,
+        ...whoamiEnv(),
         XDG_CONFIG_HOME: `${homeDir}`,
       },
     });
@@ -472,7 +483,7 @@ describe("whoami", async () => {
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "pm", "whoami"],
       cwd: packageDir,
-      env,
+      env: whoamiEnv(),
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -497,7 +508,7 @@ describe("whoami", async () => {
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "pm", "whoami"],
       cwd: packageDir,
-      env,
+      env: whoamiEnv(),
       stdout: "pipe",
       stderr: "pipe",
     });

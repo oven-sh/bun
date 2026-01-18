@@ -1,8 +1,23 @@
 import { spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { writeFile } from "fs/promises";
-import { bunEnv as env, bunExe } from "harness";
+import { bunEnv, bunExe } from "harness";
 import { join } from "path";
+
+// Create a clean environment without npm registry overrides
+// This ensures bunfig.toml settings are respected
+function createCleanEnv(): NodeJS.Dict<string> {
+  const cleanEnv = { ...bunEnv };
+  // Delete all npm/bun registry-related env vars that could override bunfig.toml
+  delete cleanEnv.npm_config_registry;
+  delete cleanEnv.NPM_CONFIG_REGISTRY;
+  delete cleanEnv.BUN_CONFIG_REGISTRY;
+  // Also delete any global cache settings that could interfere
+  delete cleanEnv.BUN_INSTALL_CACHE_DIR;
+  delete cleanEnv.npm_config_cache;
+  return cleanEnv;
+}
+const env = createCleanEnv();
 import {
   createTestContext,
   destroyTestContext,
@@ -47,7 +62,7 @@ describe("bun install --offline", () => {
           name: "test-offline",
           version: "1.0.0",
           dependencies: {
-            "no-deps": "1.0.0",
+            "bar": "0.0.2",
           },
         }),
       );
@@ -75,20 +90,33 @@ describe("bun install --offline", () => {
       const urls: string[] = [];
       setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
 
+      // Override bunfig.toml to enable caching for this test
+      const cacheDir = join(ctx.package_dir, ".bun-cache");
+      const bunfigPath = join(ctx.package_dir, "bunfig.toml");
+      const bunfigContent = `
+[install]
+cache = "${cacheDir}"
+registry = "${ctx.registry_url}"
+saveTextLockfile = false
+linker = "hoisted"
+`;
+      await writeFile(bunfigPath, bunfigContent);
+
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
           name: "test-offline-cached",
           version: "1.0.0",
           dependencies: {
-            "no-deps": "1.0.0",
+            bar: "", // Empty string means "latest", mock registry returns 0.0.2
           },
         }),
       );
 
       // First install to populate cache
+      // Use --registry flag to ensure mock registry is used (overrides all other settings)
       const { exited: firstExited } = spawn({
-        cmd: [bunExe(), "install"],
+        cmd: [bunExe(), "install", `--registry=${ctx.registry_url}`, `--config=${bunfigPath}`],
         cwd: ctx.package_dir,
         stdout: "pipe",
         stdin: "inherit",
@@ -107,8 +135,8 @@ describe("bun install --offline", () => {
       }).exited;
 
       // Now install with --offline flag (should use cache)
-      const { stderr, exited } = spawn({
-        cmd: [bunExe(), "install", "--offline"],
+      const { exited } = spawn({
+        cmd: [bunExe(), "install", "--offline", `--config=${bunfigPath}`],
         cwd: ctx.package_dir,
         stdout: "pipe",
         stdin: "inherit",
@@ -133,7 +161,7 @@ describe("bun install --offline", () => {
           name: "test-offline-env",
           version: "1.0.0",
           dependencies: {
-            "no-deps": "1.0.0",
+            "bar": "0.0.2",
           },
         }),
       );

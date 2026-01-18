@@ -200,6 +200,64 @@ bun install --dry-run
 
 ---
 
+## Offline mode
+
+To install packages without making any network requests, use the `--offline` flag:
+
+```bash terminal icon="terminal"
+bun install --offline
+```
+
+When offline mode is enabled, Bun will only use packages that are already in the local cache. If a required package is not cached, the installation will fail with an error message indicating that the package is not available in offline mode.
+
+### When to use offline mode
+
+Offline mode is useful in several scenarios:
+
+- **Air-gapped environments**: Servers or build systems that have no internet access
+- **CI/CD optimization**: After an initial install populates the cache, subsequent installs can run offline for faster, more reliable builds
+- **Reproducible builds**: Ensure builds only use cached, known-good packages
+- **Network reliability**: Avoid failures caused by temporary network issues or registry outages
+
+### Setting up offline installs
+
+For offline mode to work, you need:
+
+1. **Caching enabled**: The default cache location is `~/.bun/install/cache`. If you've disabled caching with `cache = false` in `bunfig.toml`, offline mode won't work.
+2. **Packages already cached**: Run a normal install first to populate the cache.
+
+A typical workflow:
+
+```bash terminal icon="terminal"
+# First: Install packages normally to populate the cache
+bun install
+
+# Later: Install from cache only (no network requests)
+bun install --offline
+```
+
+If you're using a custom cache directory, make sure it's configured in both the initial install and the offline install:
+
+```toml bunfig.toml icon="settings"
+[install]
+cache = "/path/to/custom/cache"
+```
+
+You can also enable offline mode using the `BUN_CONFIG_OFFLINE` environment variable:
+
+```bash terminal icon="terminal"
+BUN_CONFIG_OFFLINE=1 bun install
+```
+
+Or configure it in `bunfig.toml`:
+
+```toml bunfig.toml icon="settings"
+[install]
+offline = true
+```
+
+---
+
 ## Non-npm dependencies
 
 Bun supports installing dependencies from Git, GitHub, and local or remotely-hosted tarballs. For complete documentation refer to [Package manager > Git, GitHub, and tarball dependencies](/pm/cli/add).
@@ -324,6 +382,9 @@ frozenLockfile = false
 # equivalent to `--dry-run` flag
 dryRun = false
 
+# equivalent to `--offline` flag
+offline = false
+
 # equivalent to `--concurrent-scripts` flag
 concurrentScripts = 16 # (cpu count or GOMAXPROCS) x2
 
@@ -347,11 +408,12 @@ Environment variables have a higher priority than `bunfig.toml`.
 | ---------------------------------- | ------------------------------------------------------------- |
 | `BUN_CONFIG_REGISTRY`              | Set an npm registry (default: https://registry.npmjs.org)     |
 | `BUN_CONFIG_TOKEN`                 | Set an auth token (currently does nothing)                    |
+| `BUN_CONFIG_OFFLINE`               | Install packages from cache only, without making network requests |
 | `BUN_CONFIG_YARN_LOCKFILE`         | Save a Yarn v1-style yarn.lock                                |
 | `BUN_CONFIG_LINK_NATIVE_BINS`      | Point `bin` in package.json to a platform-specific dependency |
-| `BUN_CONFIG_SKIP_SAVE_LOCKFILE`    | Don’t save a lockfile                                         |
-| `BUN_CONFIG_SKIP_LOAD_LOCKFILE`    | Don’t load a lockfile                                         |
-| `BUN_CONFIG_SKIP_INSTALL_PACKAGES` | Don’t install any packages                                    |
+| `BUN_CONFIG_SKIP_SAVE_LOCKFILE`    | Don't save a lockfile                                         |
+| `BUN_CONFIG_SKIP_LOAD_LOCKFILE`    | Don't load a lockfile                                         |
+| `BUN_CONFIG_SKIP_INSTALL_PACKAGES` | Don't install any packages                                    |
 
 Bun always tries to use the fastest available installation method for the target platform. On macOS, that’s `clonefile` and on Linux, that’s `hardlink`. You can change which installation method is used with the `--backend` flag. When unavailable or on error, `clonefile` and `hardlink` fallsback to a platform-specific implementation of copying files.
 

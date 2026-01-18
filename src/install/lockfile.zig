@@ -62,6 +62,7 @@ pub const Scripts = struct {
         "preprepare",
         "prepare",
         "postprepare",
+        "dependencies",
     };
 
     const RunCommand = @import("../cli/run_command.zig").RunCommand;
@@ -72,6 +73,7 @@ pub const Scripts = struct {
     preprepare: Entries = .{},
     prepare: Entries = .{},
     postprepare: Entries = .{},
+    dependencies: Entries = .{},
 
     pub fn hasAny(this: *Scripts) bool {
         inline for (Scripts.names) |hook| {

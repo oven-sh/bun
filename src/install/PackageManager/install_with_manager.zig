@@ -659,7 +659,8 @@ pub fn installWithManager(
     }
 
     // append scripts to lockfile before generating new metahash
-    manager.loadRootLifecycleScripts(root);
+    // Load without dependencies script initially (we'll reload later with correct flag)
+    manager.loadRootLifecycleScripts(root, false);
     defer {
         if (manager.root_lifecycle_scripts) |root_scripts| {
             manager.allocator.free(root_scripts.package_name);
@@ -680,6 +681,10 @@ pub fn installWithManager(
                             manager.lockfile.buffers.string_bytes.items,
                             .workspace,
                             false,
+                            // Include dependencies script for workspace packages. Unlike npm (which
+                            // doesn't run dependencies script for workspaces at all), we run it
+                            // consistently with other lifecycle scripts like postinstall.
+                            true,
                         );
 
                         if (comptime Environment.allow_assert) {
@@ -701,6 +706,8 @@ pub fn installWithManager(
                             manager.lockfile,
                             manager.lockfile.buffers.string_bytes.items,
                             .workspace,
+                            true,
+                            // NOTE: See comment above about workspace dependencies script behavior
                             true,
                         );
 
@@ -882,6 +889,14 @@ pub fn installWithManager(
     }
 
     if (manager.options.do.run_scripts and install_root_dependencies and !manager.options.global) {
+        // Reload root lifecycle scripts with correct dependencies_changed flag
+        // The dependencies script should only run if dependencies actually changed
+        if (manager.root_lifecycle_scripts) |old_scripts| {
+            manager.allocator.free(old_scripts.package_name);
+            manager.root_lifecycle_scripts = null;
+        }
+        manager.loadRootLifecycleScripts(root, did_meta_hash_change);
+
         if (manager.root_lifecycle_scripts) |scripts| {
             if (comptime Environment.allow_assert) {
                 bun.assert(scripts.total > 0);

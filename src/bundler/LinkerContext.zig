@@ -53,7 +53,8 @@ pub const LinkerContext = struct {
     }
 
     pub fn pathWithPrettyInitialized(this: *LinkerContext, path: Fs.Path) !Fs.Path {
-        return bundler.genericPathWithPrettyInitialized(path, this.options.target, this.resolver.fs.top_level_dir, this.allocator());
+        const root_dir = if (this.options.root_dir.len > 0) this.options.root_dir else this.resolver.fs.top_level_dir;
+        return bundler.genericPathWithPrettyInitialized(path, this.options.target, root_dir, this.allocator());
     }
 
     pub const LinkerOptions = struct {
@@ -75,6 +76,7 @@ pub const LinkerContext = struct {
         mode: Mode = .bundle,
 
         public_path: []const u8 = "",
+        root_dir: []const u8 = "",
 
         pub const Mode = enum {
             passthrough,

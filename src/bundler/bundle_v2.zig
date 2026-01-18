@@ -688,7 +688,8 @@ pub const BundleV2 = struct {
 
         if (path.pretty.ptr == path.text.ptr) {
             // TODO: outbase
-            const rel = bun.path.relativePlatform(transpiler.fs.top_level_dir, path.text, .loose, false);
+            const root_dir = if (transpiler.options.root_dir.len > 0) transpiler.options.root_dir else transpiler.fs.top_level_dir;
+            const rel = bun.path.relativePlatform(root_dir, path.text, .loose, false);
             path.pretty = bun.handleOom(this.allocator().dupe(u8, rel));
         }
         path.assertPrettyIsValid();
@@ -972,6 +973,7 @@ pub const BundleV2 = struct {
         this.linker.options.output_format = transpiler.options.output_format;
         this.linker.options.generate_bytecode_cache = transpiler.options.bytecode;
         this.linker.options.metafile = transpiler.options.metafile;
+        this.linker.options.root_dir = transpiler.options.root_dir;
 
         this.linker.dev_server = transpiler.options.dev_server;
 
@@ -3138,7 +3140,8 @@ pub const BundleV2 = struct {
     }
 
     fn pathWithPrettyInitialized(this: *BundleV2, path: Fs.Path, target: options.Target) !Fs.Path {
-        return genericPathWithPrettyInitialized(path, target, this.transpiler.fs.top_level_dir, this.allocator());
+        const root_dir = if (this.transpiler.options.root_dir.len > 0) this.transpiler.options.root_dir else this.transpiler.fs.top_level_dir;
+        return genericPathWithPrettyInitialized(path, target, root_dir, this.allocator());
     }
 
     fn reserveSourceIndexesForBake(this: *BundleV2) !void {

@@ -290,7 +290,7 @@ fn collectDataAttributes(element: *const lol.Element, allocator: std.mem.Allocat
         const name_slice = attr_name.slice();
 
         // Check if attribute name starts with "data-"
-        if (name_slice.len >= 5 and std.mem.eql(u8, name_slice[0..5], "data-")) {
+        if (std.mem.startsWith(u8, name_slice, "data-")) {
             const attr_value = attr.value();
             defer attr_value.deinit();
             const value_slice = attr_value.slice();
@@ -309,6 +309,8 @@ fn collectDataAttributes(element: *const lol.Element, allocator: std.mem.Allocat
                 switch (c) {
                     '"' => result.appendSlice("&quot;") catch bun.outOfMemory(),
                     '&' => result.appendSlice("&amp;") catch bun.outOfMemory(),
+                    '<' => result.appendSlice("&lt;") catch bun.outOfMemory(),
+                    '>' => result.appendSlice("&gt;") catch bun.outOfMemory(),
                     else => result.append(c) catch bun.outOfMemory(),
                 }
             }

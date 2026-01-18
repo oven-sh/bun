@@ -26,13 +26,13 @@ test("bun build preserves data-* attributes on script tags", async () => {
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(exitCode).toBe(0);
-
   const outputHtml = await Bun.file(`${dir}/out/index.html`).text();
 
   // Check that data-* attributes are preserved on the bundled script tag
   expect(outputHtml).toContain('data-inline=""');
   expect(outputHtml).toContain('data-custom="value"');
+
+  expect(exitCode).toBe(0);
 });
 
 test("bun build preserves data-* attributes on link tags", async () => {
@@ -60,13 +60,13 @@ test("bun build preserves data-* attributes on link tags", async () => {
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(exitCode).toBe(0);
-
   const outputHtml = await Bun.file(`${dir}/out/index.html`).text();
 
   // Check that data-* attributes are preserved on the bundled link tag
   expect(outputHtml).toContain('data-theme="dark"');
   expect(outputHtml).toContain('data-priority="high"');
+
+  expect(exitCode).toBe(0);
 });
 
 test("bun build preserves data-* attributes with special characters", async () => {
@@ -94,12 +94,13 @@ test("bun build preserves data-* attributes with special characters", async () =
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(exitCode).toBe(0);
-
   const outputHtml = await Bun.file(`${dir}/out/index.html`).text();
 
   // Check that data-* attributes with special characters are preserved (quotes get escaped)
-  expect(outputHtml).toContain("data-config=");
+  // The original single-quoted JSON value gets converted to double quotes with escaped inner quotes
+  expect(outputHtml).toContain('data-config="{&quot;key&quot;:&quot;value&quot;}"');
+
+  expect(exitCode).toBe(0);
 });
 
 test("bun build uses data-* attributes from first bundled element when merging multiple scripts", async () => {
@@ -129,10 +130,12 @@ test("bun build uses data-* attributes from first bundled element when merging m
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(exitCode).toBe(0);
-
   const outputHtml = await Bun.file(`${dir}/out/index.html`).text();
 
   // The first bundled script's data-* attributes should be used
   expect(outputHtml).toContain('data-first="true"');
+  // The second script's attributes should NOT be included
+  expect(outputHtml).not.toContain('data-second="true"');
+
+  expect(exitCode).toBe(0);
 });

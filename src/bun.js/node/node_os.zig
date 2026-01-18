@@ -935,7 +935,7 @@ pub fn userInfo(globalThis: *jsc.JSGlobalObject, options: gen.UserInfoOptions) b
     const home = try homedir(globalThis);
     defer home.deref();
 
-    result.put(globalThis, jsc.ZigString.static("homedir"), home.toJS(globalThis));
+    result.put(globalThis, jsc.ZigString.static("homedir"), try home.toJS(globalThis));
 
     if (comptime Environment.isWindows) {
         result.put(globalThis, jsc.ZigString.static("username"), jsc.ZigString.init(bun.env_var.USER.get() orelse "unknown").withEncoding().toJS(globalThis));

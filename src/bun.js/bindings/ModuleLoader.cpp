@@ -469,7 +469,8 @@ extern "C" void Bun__onFulfillAsyncModule(
         RELEASE_AND_RETURN(scope, promise->reject(vm, globalObject, JSValue::decode(res->result.err.value)));
     }
 
-    auto specifierValue = Bun::toJS(globalObject, *specifier);
+    auto* specifierValue = Bun::toJS(globalObject, *specifier);
+    RETURN_IF_EXCEPTION(scope, );
 
     auto* map = globalObject->esmRegistryMap();
     RETURN_IF_EXCEPTION(scope, );

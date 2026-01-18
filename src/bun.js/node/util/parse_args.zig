@@ -26,7 +26,7 @@ const ValueRef = union(Tag) {
         };
     }
 
-    pub fn asJSValue(this: ValueRef, globalObject: *JSGlobalObject) JSValue {
+    pub fn asJSValue(this: ValueRef, globalObject: *JSGlobalObject) bun.JSError!JSValue {
         return switch (this) {
             .jsvalue => |str| str,
             .bunstr => |str| return str.toJS(globalObject),
@@ -96,7 +96,7 @@ const OptionToken = struct {
     };
 
     /// Returns the raw name of the arg (includes any dashes and excludes inline values), as a JSValue
-    fn makeRawNameJSValue(this: OptionToken, globalThis: *JSGlobalObject) JSValue {
+    fn makeRawNameJSValue(this: OptionToken, globalThis: *JSGlobalObject) bun.JSError!JSValue {
         if (this.optgroup_idx) |optgroup_idx| {
             const raw = this.raw.asBunString(globalThis);
             var buf: [8]u8 = undefined;
@@ -105,7 +105,7 @@ const OptionToken = struct {
         } else {
             switch (this.parse_type) {
                 .lone_short_option, .lone_long_option => {
-                    return this.raw.asJSValue(globalThis);
+                    return try this.raw.asJSValue(globalThis);
                 },
                 .short_option_and_value => {
                     var raw = this.raw.asBunString(globalThis);
@@ -255,7 +255,7 @@ fn storeOption(globalThis: *JSGlobalObject, option_name: ValueRef, option_value:
         return;
     }
 
-    var value = option_value.asJSValue(globalThis);
+    var value = try option_value.asJSValue(globalThis);
 
     // We store based on the option value rather than option type,
     // preserving the users intent for author to deal with.
@@ -583,7 +583,7 @@ const ParseArgsState = struct {
                     );
                     return globalThis.throwValue(err);
                 }
-                const value = token.value.asJSValue(globalThis);
+                const value = try token.value.asJSValue(globalThis);
                 try this.positionals.push(globalThis, value);
             },
             .@"option-terminator" => {},
@@ -601,7 +601,7 @@ const ParseArgsState = struct {
             // reuse JSValue for the kind names: "positional", "option", "option-terminator"
             const kind_idx = @intFromEnum(token_generic);
             const kind_jsvalue = this.kinds_jsvalues[kind_idx] orelse kindval: {
-                const val = String.static(@tagName(token_generic)).toJS(globalThis);
+                const val = try String.static(@tagName(token_generic)).toJS(globalThis);
                 this.kinds_jsvalues[kind_idx] = val;
                 break :kindval val;
             };
@@ -611,17 +611,17 @@ const ParseArgsState = struct {
             switch (token_generic) {
                 .option => |token| {
                     obj.put(globalThis, ZigString.static("index"), JSValue.jsNumber(token.index));
-                    obj.put(globalThis, ZigString.static("name"), token.name.asJSValue(globalThis));
-                    obj.put(globalThis, ZigString.static("rawName"), token.makeRawNameJSValue(globalThis));
+                    obj.put(globalThis, ZigString.static("name"), try token.name.asJSValue(globalThis));
+                    obj.put(globalThis, ZigString.static("rawName"), try token.makeRawNameJSValue(globalThis));
 
                     // value exists only for string options, otherwise the property exists with "undefined" as value
-                    var value = token.value.asJSValue(globalThis);
+                    var value = try token.value.asJSValue(globalThis);
                     obj.put(globalThis, ZigString.static("value"), value);
                     obj.put(globalThis, ZigString.static("inlineValue"), if (value.isUndefined()) .js_undefined else JSValue.jsBoolean(token.inline_value));
                 },
                 .positional => |token| {
                     obj.put(globalThis, ZigString.static("index"), JSValue.jsNumber(token.index));
-                    obj.put(globalThis, ZigString.static("value"), token.value.asJSValue(globalThis));
+                    obj.put(globalThis, ZigString.static("value"), try token.value.asJSValue(globalThis));
                 },
                 .@"option-terminator" => |token| {
                     obj.put(globalThis, ZigString.static("index"), JSValue.jsNumber(token.index));

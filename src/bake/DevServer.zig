@@ -1383,7 +1383,7 @@ fn computeArgumentsForFrameworkRequest(
                 std.mem.asBytes(&generation),
             }) catch |err| bun.handleOom(err);
             defer str.deref();
-            const js = str.toJS(dev.vm.global);
+            const js = try str.toJS(dev.vm.global);
             framework_bundle.cached_client_bundle_url = .create(js, dev.vm.global);
             break :str js;
         },
@@ -2091,7 +2091,7 @@ fn generateCssJSArray(dev: *DevServer, route_bundle: *RouteBundle) bun.JSError!j
         }) catch unreachable;
         const str = bun.String.cloneUTF8(path);
         defer str.deref();
-        try arr.putIndex(dev.vm.global, @intCast(i), str.toJS(dev.vm.global));
+        try arr.putIndex(dev.vm.global, @intCast(i), try str.toJS(dev.vm.global));
     }
     return arr;
 }
@@ -2136,7 +2136,7 @@ fn makeArrayForServerComponentsPatch(dev: *DevServer, global: *jsc.JSGlobalObjec
         defer bun.path_buffer_pool.put(relative_path_buf);
         const str = bun.String.cloneUTF8(dev.relativePath(relative_path_buf, names[item.get()]));
         defer str.deref();
-        try arr.putIndex(global, @intCast(i), str.toJS(global));
+        try arr.putIndex(global, @intCast(i), try str.toJS(global));
     }
     return arr;
 }

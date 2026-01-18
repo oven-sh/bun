@@ -2991,7 +2991,7 @@ pub fn getName(
     this: *Blob,
     _: jsc.JSValue,
     globalThis: *jsc.JSGlobalObject,
-) JSValue {
+) bun.JSError!JSValue {
     return if (this.getNameString()) |name| name.toJS(globalThis) else .js_undefined;
 }
 
@@ -4304,7 +4304,7 @@ pub const Any = union(enum) {
                     return ZigString.Empty.toJS(global);
                 }
 
-                const owned = this.InternalBlob.toStringOwned(global);
+                const owned = try this.InternalBlob.toStringOwned(global);
                 this.* = .{ .Blob = .{} };
                 return owned;
             },
@@ -4313,7 +4313,7 @@ pub const Any = union(enum) {
                 defer str.deref();
                 this.* = .{ .Blob = .{} };
 
-                return str.toJS(global);
+                return try str.toJS(global);
             },
         }
     }
@@ -4460,7 +4460,7 @@ pub const Internal = struct {
         return this.bytes.capacity;
     }
 
-    pub fn toStringOwned(this: *@This(), globalThis: *jsc.JSGlobalObject) JSValue {
+    pub fn toStringOwned(this: *@This(), globalThis: *jsc.JSGlobalObject) bun.JSError!JSValue {
         const bytes_without_bom = strings.withoutUTF8BOM(this.bytes.items);
         if (strings.toUTF16Alloc(bun.default_allocator, bytes_without_bom, false, false) catch &[_]u16{}) |out| {
             const return_value = ZigString.toExternalU16(out.ptr, out.len, globalThis);

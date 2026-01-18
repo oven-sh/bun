@@ -777,7 +777,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             };
         }
 
-        pub fn getLocalFamily(this: *This, globalThis: *jsc.JSGlobalObject) JSValue {
+        pub fn getLocalFamily(this: *This, globalThis: *jsc.JSGlobalObject) bun.JSError!JSValue {
             if (this.socket.isDetached()) {
                 return .js_undefined;
             }
@@ -785,8 +785,8 @@ pub fn NewSocket(comptime ssl: bool) type {
             var buf: [64]u8 = [_]u8{0} ** 64;
             const address_bytes: []const u8 = this.socket.localAddress(&buf) orelse return .js_undefined;
             return switch (address_bytes.len) {
-                4 => bun.String.static("IPv4").toJS(globalThis),
-                16 => bun.String.static("IPv6").toJS(globalThis),
+                4 => try bun.String.static("IPv4").toJS(globalThis),
+                16 => try bun.String.static("IPv6").toJS(globalThis),
                 else => return .js_undefined,
             };
         }
@@ -818,7 +818,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             return JSValue.jsNumber(this.socket.localPort());
         }
 
-        pub fn getRemoteFamily(this: *This, globalThis: *jsc.JSGlobalObject) JSValue {
+        pub fn getRemoteFamily(this: *This, globalThis: *jsc.JSGlobalObject) bun.JSError!JSValue {
             if (this.socket.isDetached()) {
                 return .js_undefined;
             }
@@ -826,8 +826,8 @@ pub fn NewSocket(comptime ssl: bool) type {
             var buf: [64]u8 = [_]u8{0} ** 64;
             const address_bytes: []const u8 = this.socket.remoteAddress(&buf) orelse return .js_undefined;
             return switch (address_bytes.len) {
-                4 => bun.String.static("IPv4").toJS(globalThis),
-                16 => bun.String.static("IPv6").toJS(globalThis),
+                4 => try bun.String.static("IPv4").toJS(globalThis),
+                16 => try bun.String.static("IPv6").toJS(globalThis),
                 else => return .js_undefined,
             };
         }

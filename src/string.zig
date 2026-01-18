@@ -543,10 +543,10 @@ pub const String = extern struct {
         return if (ok) out else error.JSError;
     }
 
-    pub fn toJS(this: *const String, globalObject: *bun.jsc.JSGlobalObject) jsc.JSValue {
+    pub fn toJS(this: *const String, globalObject: *bun.jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
         jsc.markBinding(@src());
 
-        return BunString__toJS(globalObject, this);
+        return bun.jsc.fromJSHostCall(globalObject, @src(), BunString__toJS, .{ globalObject, this });
     }
 
     pub fn toJSDOMURL(this: *String, globalObject: *bun.jsc.JSGlobalObject) jsc.JSValue {

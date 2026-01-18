@@ -660,6 +660,11 @@ class PooledPostgresConnection {
     this.adapter.readyConnections?.delete(this);
     const queries = new Set(this.queries);
     this.queries?.clear?.();
+    // Decrement totalQueries by current queryCount before zeroing
+    // This ensures the adapter's pending query count stays accurate
+    if (this.queryCount > 0) {
+      this.adapter.totalQueries -= this.queryCount;
+    }
     this.queryCount = 0;
     this.flags &= ~PooledConnectionFlags.reserved;
 

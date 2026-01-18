@@ -573,7 +573,7 @@ const SQL: typeof Bun.SQL = function SQL(
 
     reserved_sql.commitDistributed = async function (name: string) {
       if (!pool.getCommitDistributedSQL) {
-        throw Error(`This adapter doesn't support distributed transactions.`);
+        throw new Error(`This adapter doesn't support distributed transactions.`);
       }
 
       const sql = pool.getCommitDistributedSQL(name);
@@ -581,7 +581,7 @@ const SQL: typeof Bun.SQL = function SQL(
     };
     reserved_sql.rollbackDistributed = async function (name: string) {
       if (!pool.getRollbackDistributedSQL) {
-        throw Error(`This adapter doesn't support distributed transactions.`);
+        throw new Error(`This adapter doesn't support distributed transactions.`);
       }
 
       const sql = pool.getRollbackDistributedSQL(name);
@@ -970,7 +970,7 @@ const SQL: typeof Bun.SQL = function SQL(
     };
     transaction_sql.commitDistributed = async function (name: string) {
       if (!pool.getCommitDistributedSQL) {
-        throw Error(`This adapter doesn't support distributed transactions.`);
+        throw new Error(`This adapter doesn't support distributed transactions.`);
       }
 
       const sql = pool.getCommitDistributedSQL(name);
@@ -978,7 +978,7 @@ const SQL: typeof Bun.SQL = function SQL(
     };
     transaction_sql.rollbackDistributed = async function (name: string) {
       if (!pool.getRollbackDistributedSQL) {
-        throw Error(`This adapter doesn't support distributed transactions.`);
+        throw new Error(`This adapter doesn't support distributed transactions.`);
       }
 
       const sql = pool.getRollbackDistributedSQL(name);
@@ -1231,8 +1231,8 @@ const SQL: typeof Bun.SQL = function SQL(
     const reserved = await sql.reserve();
     const closeReserved = async () => {
       try {
-        if (reserved && typeof (reserved as any).close === "function") {
-          await (reserved as any).close();
+        if (reserved && typeof (reserved as any).release === "function") {
+          await (reserved as any).release();
         }
       } catch {}
     };
@@ -1337,6 +1337,10 @@ const SQL: typeof Bun.SQL = function SQL(
           : 64 * 1024;
       let batch = "";
 
+      // Resolve limits once at start instead of on every flush
+      const resolvedLimits = resolveCopyFromLimits(options, pool);
+      const resolvedMaxBytes = resolvedLimits.maxBytes;
+
       // Binary COPY support using shared encoding utilities
       let binaryHeaderSent = false;
       const sendBinaryHeader = () => {
@@ -1353,21 +1357,8 @@ const SQL: typeof Bun.SQL = function SQL(
         if (batch.length > 0) {
           // Enforce maxBytes and update progress before sending this batch
           const bLen = getByteLength(batch);
-          // Resolve maxBytes from options or adapter defaults
-          let __fromDefaults__: { maxChunkSize: number; maxBytes: number } = { maxChunkSize: 256 * 1024, maxBytes: 0 };
-          try {
-            const __defaults__ =
-              (pool as any)?.getCopyDefaults?.() || (reserved as any)?.getCopyDefaults?.() || undefined;
-            if (__defaults__?.from) {
-              __fromDefaults__ = __defaults__.from;
-            }
-          } catch {}
-          const maxBytes =
-            options && typeof (options as any).maxBytes === "number" && (options as any).maxBytes > 0
-              ? Number((options as any).maxBytes)
-              : Math.max(0, Math.trunc(Number(__fromDefaults__.maxBytes) || 0));
 
-          if (maxBytes && bytesSent + bLen > maxBytes) {
+          if (resolvedMaxBytes && bytesSent + bLen > resolvedMaxBytes) {
             throw new Error("copyFrom: maxBytes exceeded");
           }
 
@@ -1815,10 +1806,10 @@ const SQL: typeof Bun.SQL = function SQL(
               if (toMax > 0 && bytesReceived > toMax) {
                 rejectErr = new Error("copyTo: maxBytes exceeded");
                 done = true;
-                // Immediately close connection to halt incoming data
+                // Immediately release connection to halt incoming data
                 try {
-                  if (typeof (reserved as any).close === "function") {
-                    (reserved as any).close();
+                  if (typeof (reserved as any).release === "function") {
+                    (reserved as any).release();
                   }
                 } catch {}
               }
@@ -1887,8 +1878,8 @@ const SQL: typeof Bun.SQL = function SQL(
                 (reserved as any).setCopyStreamingMode(false);
               } catch {}
             }
-            if (typeof (reserved as any).close === "function") {
-              await (reserved as any).close();
+            if (typeof (reserved as any).release === "function") {
+              await (reserved as any).release();
             }
           } catch {}
           if (signal) {
@@ -1960,7 +1951,7 @@ const SQL: typeof Bun.SQL = function SQL(
     }
 
     if (!pool.getRollbackDistributedSQL) {
-      throw Error(`This adapter doesn't support distributed transactions.`);
+      throw new Error(`This adapter doesn't support distributed transactions.`);
     }
 
     const sqlQuery = pool.getRollbackDistributedSQL(name);
@@ -1973,7 +1964,7 @@ const SQL: typeof Bun.SQL = function SQL(
     }
 
     if (!pool.getCommitDistributedSQL) {
-      throw Error(`This adapter doesn't support distributed transactions.`);
+      throw new Error(`This adapter doesn't support distributed transactions.`);
     }
 
     const sqlQuery = pool.getCommitDistributedSQL(name);

@@ -1232,7 +1232,7 @@ if (isDockerEnabled()) {
       expect(timeoutError).toBe(false);
       expect(bufferError).toBe(false);
 
-      await (reserved as any).close();
+      await (reserved as any).release();
     });
 
     test("Audit fix: escapeIdentifier for schema-qualified names in copyTo", async () => {

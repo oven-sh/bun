@@ -57,12 +57,16 @@ set(BUN_DEPENDENCIES
   LolHtml
   Lshpack
   Mimalloc
-  TinyCC
   Zlib
   LibArchive # must be loaded after zlib
   HdrHistogram # must be loaded after zlib
   Zstd
 )
+
+# TinyCC is optional - disabled on Windows ARM64 where it's not supported
+if(ENABLE_TINYCC)
+  list(APPEND BUN_DEPENDENCIES TinyCC)
+endif()
 
 include(CloneZstd)
 
@@ -657,7 +661,9 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm|ARM|arm64|ARM64|aarch64|AARCH64")
   if(APPLE)
     set(ZIG_CPU "apple_m1")
   else()
-    set(ZIG_CPU "native")
+    # Use generic for non-Apple ARM64 to avoid native detection issues
+    # (e.g., Windows ARM64 running Zig under x64 emulation detects wrong CPU)
+    set(ZIG_CPU "generic")
   endif()
 elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|X86_64|x64|X64|amd64|AMD64")
   if(ENABLE_BASELINE)
@@ -694,6 +700,7 @@ register_command(
       -Denable_asan=$<IF:$<BOOL:${ENABLE_ZIG_ASAN}>,true,false>
       -Denable_fuzzilli=$<IF:$<BOOL:${ENABLE_FUZZILLI}>,true,false>
       -Denable_valgrind=$<IF:$<BOOL:${ENABLE_VALGRIND}>,true,false>
+      -Denable_tinycc=$<IF:$<BOOL:${ENABLE_TINYCC}>,true,false>
       -Duse_mimalloc=$<IF:$<BOOL:${USE_MIMALLOC_AS_DEFAULT_ALLOCATOR}>,true,false>
       -Dllvm_codegen_threads=${LLVM_ZIG_CODEGEN_THREADS}
       -Dversion=${VERSION}

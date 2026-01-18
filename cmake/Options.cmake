@@ -49,12 +49,24 @@ else()
   message(FATAL_ERROR "Unsupported operating system: ${CMAKE_SYSTEM_NAME}")
 endif()
 
-if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|arm")
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64")
   setx(ARCH "aarch64")
 elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "amd64|x86_64|x64|AMD64")
   setx(ARCH "x64")
 else()
   message(FATAL_ERROR "Unsupported architecture: ${CMAKE_SYSTEM_PROCESSOR}")
+endif()
+
+# CMake 4.0+ policy CMP0197 controls how MSVC machine type flags are handled
+# Setting to NEW prevents duplicate /machine: flags being added to linker commands
+if(WIN32 AND ARCH STREQUAL "aarch64")
+  set(CMAKE_POLICY_DEFAULT_CMP0197 NEW)
+  set(CMAKE_MSVC_CMP0197 NEW)
+  # Set linker flags for exe/shared linking
+  set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /machine:ARM64")
+  set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} /machine:ARM64")
+  set(CMAKE_MODULE_LINKER_FLAGS "${CMAKE_MODULE_LINKER_FLAGS} /machine:ARM64")
+  set(CMAKE_STATIC_LINKER_FLAGS "${CMAKE_STATIC_LINKER_FLAGS} /machine:ARM64")
 endif()
 
 # Windows Code Signing Option
@@ -198,6 +210,16 @@ endif()
 optionx(USE_WEBKIT_ICU BOOL "Use the ICU libraries from WebKit" DEFAULT ${DEFAULT_WEBKIT_ICU})
 
 optionx(ERROR_LIMIT STRING "Maximum number of errors to show when compiling C++ code" DEFAULT "100")
+
+# TinyCC is used for FFI JIT compilation
+# Disable on Windows ARM64 where it's not yet supported
+if(WIN32 AND ARCH STREQUAL "aarch64")
+  set(DEFAULT_ENABLE_TINYCC OFF)
+else()
+  set(DEFAULT_ENABLE_TINYCC ON)
+endif()
+
+optionx(ENABLE_TINYCC BOOL "Enable TinyCC for FFI JIT compilation" DEFAULT ${DEFAULT_ENABLE_TINYCC})
 
 # This is not an `option` because setting this variable to OFF is experimental
 # and unsupported. This replaces the `use_mimalloc` variable previously in

@@ -757,7 +757,7 @@ function(register_cmake_command)
   set(MAKE_EFFECTIVE_ARGS -B${MAKE_BUILD_PATH} ${CMAKE_ARGS})
 
   set(setFlags GENERATOR BUILD_TYPE)
-  set(appendFlags C_FLAGS CXX_FLAGS LINKER_FLAGS)
+  set(appendFlags C_FLAGS CXX_FLAGS LINKER_FLAGS STATIC_LINKER_FLAGS EXE_LINKER_FLAGS SHARED_LINKER_FLAGS MODULE_LINKER_FLAGS)
   set(specialFlags POSITION_INDEPENDENT_CODE)
   set(flags ${setFlags} ${appendFlags} ${specialFlags})
 
@@ -802,6 +802,14 @@ function(register_cmake_command)
   foreach(flag ${effectiveFlags})
     list(APPEND MAKE_EFFECTIVE_ARGS "-DCMAKE_${flag}=${MAKE_${flag}}")
   endforeach()
+
+  # Workaround for CMake 4.1.0 bug: Force correct machine type for Windows ARM64
+  # Use toolchain file and set CMP0197 policy to prevent duplicate /machine: flags
+  if(WIN32 AND CMAKE_SYSTEM_PROCESSOR MATCHES "ARM64|aarch64|AARCH64")
+    list(APPEND MAKE_EFFECTIVE_ARGS "-DCMAKE_TOOLCHAIN_FILE=${CWD}/cmake/toolchains/windows-aarch64.cmake")
+    list(APPEND MAKE_EFFECTIVE_ARGS "-DCMAKE_POLICY_DEFAULT_CMP0197=NEW")
+    list(APPEND MAKE_EFFECTIVE_ARGS "-DCMAKE_PROJECT_INCLUDE=${CWD}/cmake/arm64-static-lib-fix.cmake")
+  endif()
 
   if(DEFINED FRESH)
     list(APPEND MAKE_EFFECTIVE_ARGS --fresh)

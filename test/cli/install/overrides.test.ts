@@ -247,3 +247,71 @@ test("overrides do not apply to workspaces", async () => {
   expect(await exited).toBe(0);
   expect(await stderr.text()).not.toContain("Saved lockfile");
 });
+
+test("bun add updates overrides when adding new version of overridden package", async () => {
+  // Regression test for https://github.com/oven-sh/bun/issues/25843
+  // When running `bun add pkg@newversion`, if there's an override for that package,
+  // the override should also be updated to prevent conflicts.
+  const tmp = tmpdirSync();
+  writeFileSync(
+    join(tmp, "package.json"),
+    JSON.stringify({
+      dependencies: {
+        lodash: "4.0.0",
+      },
+      overrides: {
+        lodash: "4.0.0",
+      },
+    }),
+  );
+
+  // First install to set up the lockfile with the old version
+  install(tmp, ["install"]);
+  expect(versionOf(tmp, "node_modules/lodash/package.json")).toBe("4.0.0");
+
+  // Now use bun add to update to a new version
+  install(tmp, ["add", "lodash@4.17.21"]);
+
+  // Verify the new version is installed
+  expect(versionOf(tmp, "node_modules/lodash/package.json")).toBe("4.17.21");
+
+  // Verify the package.json was updated correctly (both dependencies and overrides)
+  const packageJson = JSON.parse(readFileSync(join(tmp, "package.json")).toString());
+  expect(packageJson.dependencies.lodash).toBe("4.17.21");
+  expect(packageJson.overrides.lodash).toBe("4.17.21");
+
+  ensureLockfileDoesntChangeOnBunI(tmp);
+});
+
+test("bun add updates resolutions when adding new version of package with resolution", async () => {
+  // Similar to overrides test but for yarn-style resolutions
+  const tmp = tmpdirSync();
+  writeFileSync(
+    join(tmp, "package.json"),
+    JSON.stringify({
+      dependencies: {
+        lodash: "4.0.0",
+      },
+      resolutions: {
+        lodash: "4.0.0",
+      },
+    }),
+  );
+
+  // First install to set up the lockfile with the old version
+  install(tmp, ["install"]);
+  expect(versionOf(tmp, "node_modules/lodash/package.json")).toBe("4.0.0");
+
+  // Now use bun add to update to a new version
+  install(tmp, ["add", "lodash@4.17.21"]);
+
+  // Verify the new version is installed
+  expect(versionOf(tmp, "node_modules/lodash/package.json")).toBe("4.17.21");
+
+  // Verify the package.json was updated correctly (both dependencies and resolutions)
+  const packageJson = JSON.parse(readFileSync(join(tmp, "package.json")).toString());
+  expect(packageJson.dependencies.lodash).toBe("4.17.21");
+  expect(packageJson.resolutions.lodash).toBe("4.17.21");
+
+  ensureLockfileDoesntChangeOnBunI(tmp);
+});

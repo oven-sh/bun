@@ -36,6 +36,7 @@ const {
   sendCopyFail,
   awaitWritable,
   setCopyStreamingMode,
+  setCopyChunkHandlerRegistered,
   setCopyTimeout,
   setMaxCopyBufferSize,
   setMaxCopyBufferSizeUnsafe,
@@ -266,10 +267,15 @@ initPostgres(
       try {
         handler();
       } catch {}
-      // one-shot by default
-      copyChunkHandlers.delete(this);
-      copyEndHandlers.delete(this);
     }
+    // Always clear COPY handlers on end (even if no explicit end handler was registered),
+    // to avoid retaining a connection object through WeakMap entries.
+    copyChunkHandlers.delete(this);
+    copyEndHandlers.delete(this);
+    copyStartHandlers.delete(this);
+    try {
+      (setCopyChunkHandlerRegistered as any)(this, false);
+    } catch {}
   },
   function onWritable(this: $ZigGeneratedClasses.PostgresSQLConnection) {
     const handler = writableHandlers.get(this);
@@ -330,6 +336,7 @@ export interface PostgresDotZig {
   sendCopyFail: (message?: string) => void;
   awaitWritable: () => Promise<void>;
   setCopyStreamingMode: (enable: boolean) => void;
+  setCopyChunkHandlerRegistered: (registered: boolean) => void;
   setCopyTimeout: (ms: number) => void;
   setMaxCopyBufferSize: (bytes: number) => void;
   setMaxCopyBufferSizeUnsafe: (bytes: number) => void;
@@ -341,8 +348,7 @@ function onCopyStart(connection: $ZigGeneratedClasses.PostgresSQLConnection, han
 }
 function copySendData(connection: $ZigGeneratedClasses.PostgresSQLConnection, data: string | Uint8Array) {
   // delegate to Zig binding with the connection as thisArg
-  // Zig side currently expects strings; Uint8Array will be coerced by Bun
-  // If binary mode is used later, we can pass bytes directly
+  // Zig side accepts string and ArrayBuffer/TypedArray payloads via PostgresSQLConnection.copySendDataFromJSValue.
   (sendCopyData as any)(connection, data as any);
 }
 function copyDone(connection: $ZigGeneratedClasses.PostgresSQLConnection) {
@@ -574,9 +580,23 @@ class PooledPostgresConnection {
     if (connectionInfo?.onclose) {
       connectionInfo.onclose(err);
     }
+
+    const underlyingConnection = this.connection;
+
     this.state = PooledConnectionState.closed;
     this.connection = null;
     this.storedError = err;
+
+    if (underlyingConnection) {
+      // Clear any COPY/writable handlers to avoid retaining the underlying connection object.
+      copyStartHandlers.delete(underlyingConnection);
+      copyChunkHandlers.delete(underlyingConnection);
+      copyEndHandlers.delete(underlyingConnection);
+      writableHandlers.delete(underlyingConnection);
+      try {
+        (setCopyChunkHandlerRegistered as any)(underlyingConnection, false);
+      } catch {}
+    }
 
     // remove from ready connections if its there
     this.adapter.readyConnections?.delete(this);
@@ -852,6 +872,9 @@ class PostgresAdapter
   }
   static onCopyChunk(connection: $ZigGeneratedClasses.PostgresSQLConnection, handler: (chunk: any) => void) {
     copyChunkHandlers.set(connection, handler);
+    try {
+      (setCopyChunkHandlerRegistered as any)(connection, true);
+    } catch {}
   }
   static onCopyEnd(connection: $ZigGeneratedClasses.PostgresSQLConnection, handler: () => void) {
     copyEndHandlers.set(connection, handler);
@@ -876,12 +899,14 @@ class PostgresAdapter
     (setCopyTimeout as any)(connection, n);
   }
   static setMaxCopyBufferSize(connection: $ZigGeneratedClasses.PostgresSQLConnection, bytes: number) {
-    const n = Math.min(0xffffffff, Math.max(0, Math.trunc(Number(bytes) || 0)));
+    // Normalize to a non-negative integer. Zig enforces the safety cap (and treats 0 as disabled).
+    const n = Math.max(0, Math.trunc(Number(bytes) || 0));
     (setMaxCopyBufferSize as any)(connection, n);
   }
 
   static setMaxCopyBufferSizeUnsafe(connection: $ZigGeneratedClasses.PostgresSQLConnection, bytes: number) {
-    const n = Math.min(0xffffffff, Math.max(0, Math.trunc(Number(bytes) || 0)));
+    // Normalize to a non-negative integer. Zig enforces the hard cap (and treats 0 as disabled).
+    const n = Math.max(0, Math.trunc(Number(bytes) || 0));
     (setMaxCopyBufferSizeUnsafe as any)(connection, n);
   }
   static onWritable(connection: $ZigGeneratedClasses.PostgresSQLConnection, handler: () => void) {

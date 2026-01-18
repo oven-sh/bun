@@ -19,6 +19,7 @@ pub fn createBinding(globalObject: *jsc.JSGlobalObject) JSValue {
     binding.put(globalObject, ZigString.static("sendCopyFail"), jsc.JSFunction.create(globalObject, "sendCopyFail", __pg_sendCopyFail, 2, .{}));
     binding.put(globalObject, ZigString.static("awaitWritable"), jsc.JSFunction.create(globalObject, "awaitWritable", __pg_awaitWritable, 2, .{}));
     binding.put(globalObject, ZigString.static("setCopyStreamingMode"), jsc.JSFunction.create(globalObject, "setCopyStreamingMode", __pg_setCopyStreamingMode, 2, .{}));
+    binding.put(globalObject, ZigString.static("setCopyChunkHandlerRegistered"), jsc.JSFunction.create(globalObject, "setCopyChunkHandlerRegistered", __pg_setCopyChunkHandlerRegistered, 2, .{}));
     binding.put(globalObject, ZigString.static("setCopyTimeout"), jsc.JSFunction.create(globalObject, "setCopyTimeout", __pg_setCopyTimeout, 2, .{}));
     binding.put(globalObject, ZigString.static("setMaxCopyBufferSize"), jsc.JSFunction.create(globalObject, "setMaxCopyBufferSize", __pg_setMaxCopyBufferSize, 2, .{}));
     binding.put(globalObject, ZigString.static("setMaxCopyBufferSizeUnsafe"), jsc.JSFunction.create(globalObject, "setMaxCopyBufferSizeUnsafe", __pg_setMaxCopyBufferSizeUnsafe, 2, .{}));
@@ -65,6 +66,7 @@ fn __pg_sendCopyFail(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFram
 }
 fn __pg_setCopyStreamingMode(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     // Arg0: PostgresSQLConnection, Arg1: enable (boolean)
+    // Returns: undefined.
     const connection_value = callframe.argument(0);
     const connection: *PostgresSQLConnection = connection_value.as(PostgresSQLConnection) orelse {
         return globalObject.throw("setCopyStreamingMode first argument must be a PostgresSQLConnection", .{});
@@ -73,7 +75,24 @@ fn __pg_setCopyStreamingMode(globalObject: *jsc.JSGlobalObject, callframe: *jsc.
     const enable_arg = callframe.argument(1);
     const enable = enable_arg.toBoolean();
 
-    connection.copy_streaming_mode = enable;
+    // Apply the requested mode, but never enable streaming unless a per-connection chunk handler is registered.
+    // Otherwise, COPY TO streaming could silently drop data.
+    connection.copy_streaming_mode = enable and connection.copy_chunk_handler_registered;
+
+    return .js_undefined;
+}
+
+fn __pg_setCopyChunkHandlerRegistered(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
+    // Arg0: PostgresSQLConnection, Arg1: registered (boolean)
+    const connection_value = callframe.argument(0);
+    const connection: *PostgresSQLConnection = connection_value.as(PostgresSQLConnection) orelse {
+        return globalObject.throw("setCopyChunkHandlerRegistered first argument must be a PostgresSQLConnection", .{});
+    };
+
+    const registered_arg = callframe.argument(1);
+    const registered = registered_arg.toBoolean();
+
+    connection.copy_chunk_handler_registered = registered;
 
     return .js_undefined;
 }
@@ -92,6 +111,7 @@ fn __pg_setCopyTimeout(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFr
 
     const ms_num = try ms_value.toNumber(globalObject);
 
+    // 0 means disabled. Clamp to u32 max.
     var ms_u32: u32 = 0;
     if (std.math.isFinite(ms_num) and ms_num > 0) {
         ms_u32 = @intCast(@min(@as(u64, @intFromFloat(ms_num)), @as(u64, std.math.maxInt(u32))));
@@ -114,19 +134,8 @@ fn __pg_setMaxCopyBufferSize(globalObject: *jsc.JSGlobalObject, callframe: *jsc.
         return globalObject.throwNotEnoughArguments("setMaxCopyBufferSize", 2, 1);
     }
 
-    const size_num = try bytes_value.toNumber(globalObject);
-
-    var size_u: usize = 0;
-    if (std.math.isFinite(size_num) and size_num > 0) {
-        size_u = @intCast(@min(@as(u64, @intFromFloat(size_num)), @as(u64, std.math.maxInt(usize))));
-    }
-
-    connection.max_copy_buffer_size = size_u;
-
-    // Note: if currently accumulating (non-streaming COPY TO), existing buffered data may exceed the new limit.
-    // Guards on append and completion will enforce the limit going forward.
-
-    return .js_undefined;
+    // Delegate to the connection method to apply the safety cap.
+    return connection.setMaxCopyBufferSize(globalObject, callframe);
 }
 
 fn __pg_setMaxCopyBufferSizeUnsafe(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
@@ -141,16 +150,8 @@ fn __pg_setMaxCopyBufferSizeUnsafe(globalObject: *jsc.JSGlobalObject, callframe:
         return globalObject.throwNotEnoughArguments("setMaxCopyBufferSizeUnsafe", 2, 1);
     }
 
-    const size_num = try bytes_value.toNumber(globalObject);
-
-    var size_u: usize = 0;
-    if (std.math.isFinite(size_num) and size_num > 0) {
-        size_u = @intCast(@min(@as(u64, @intFromFloat(size_num)), @as(u64, std.math.maxInt(usize))));
-    }
-
-    connection.max_copy_buffer_size = size_u;
-
-    return .js_undefined;
+    // Delegate to the connection method to apply the hard cap.
+    return connection.setMaxCopyBufferSizeUnsafe(globalObject, callframe);
 }
 fn __pg_awaitWritable(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     // Arg0: PostgresSQLConnection

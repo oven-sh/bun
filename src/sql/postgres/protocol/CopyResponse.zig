@@ -29,10 +29,17 @@ pub fn decodeInternal(this: *CopyResponse, comptime Container: type, reader: New
         .#column_format_codes = &[_]u16{},
     };
 
-    _ = try reader.length();
+    const length_value = try reader.length();
+    const payload_len: usize = if (length_value > 4) @intCast(length_value - 4) else 0;
+    const min_header: usize = 1 + 2; // overall_format (u8) + column_count (i16)
+    if (payload_len < min_header) return error.InvalidMessage;
 
     const format_value = try reader.int(u8);
-    const column_count: usize = @intCast(@max(try reader.short(), 0));
+    const raw_column_count = try reader.short();
+    const column_count: usize = @intCast(@max(raw_column_count, 0));
+
+    const max_columns = (payload_len - min_header) / 2; // each format code is int16
+    if (column_count > max_columns) return error.InvalidMessage;
 
     const format_codes = try bun.default_allocator.alloc(u16, column_count);
     errdefer bun.default_allocator.free(format_codes);

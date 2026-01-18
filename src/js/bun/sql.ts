@@ -188,24 +188,21 @@ function getByteLength(value: string | { byteLength: number } | Uint8Array | Arr
  * Used throughout COPY protocol to handle backpressure.
  */
 async function awaitWritableWithFallback(reserved: any, pool: any): Promise<void> {
-  await new Promise<void>(resolve => {
-    let settled = false;
-    const settle = () => {
-      if (!settled) {
-        settled = true;
-        resolve();
-      }
-    };
-    if (typeof reserved.awaitWritable === "function") {
-      reserved.awaitWritable(settle);
-    } else if (pool && typeof pool.awaitWritableFor === "function") {
-      pool.awaitWritableFor(reserved, settle);
-    } else {
-      settle();
+  if (reserved && typeof reserved.awaitWritable === "function") {
+    const promise = reserved.awaitWritable();
+    if (promise && typeof promise.then === "function") {
+      await promise;
       return;
     }
-    queueMicrotask(settle);
-  });
+  }
+  if (pool && typeof pool.awaitWritableFor === "function") {
+    const promise = pool.awaitWritableFor(reserved);
+    if (promise && typeof promise.then === "function") {
+      await promise;
+      return;
+    }
+  }
+  await new Promise<void>(queueMicrotask);
 }
 
 /**
@@ -613,42 +610,69 @@ const SQL: typeof Bun.SQL = function SQL(
      */
     /** @type {(enable: boolean) => void} */
     reserved_sql.setCopyStreamingMode = (enable: boolean) => {
-      if (typeof (pool as any).setCopyStreamingModeFor === "function") {
-        (pool as any).setCopyStreamingModeFor(pooledConnection, !!enable);
-      } else {
-        const underlying = pool.getConnectionForQuery
-          ? pool.getConnectionForQuery(pooledConnection)
-          : pooledConnection?.connection;
-        if (underlying && (PostgresAdapter as any).setCopyStreamingMode) {
-          (PostgresAdapter as any).setCopyStreamingMode(underlying, !!enable);
-        }
+      const copyPool = pool as unknown as {
+        setCopyStreamingModeFor?: (connection: any, enable: boolean) => void;
+        getConnectionForQuery?: (connection: any) => any;
+      };
+      if (typeof copyPool.setCopyStreamingModeFor === "function") {
+        copyPool.setCopyStreamingModeFor(pooledConnection, !!enable);
+        return;
+      }
+
+      const underlying = copyPool.getConnectionForQuery
+        ? copyPool.getConnectionForQuery(pooledConnection)
+        : pooledConnection?.connection;
+
+      const adapter = PostgresAdapter as unknown as {
+        setCopyStreamingMode?: (connection: any, enable: boolean) => void;
+      };
+      if (underlying && typeof adapter.setCopyStreamingMode === "function") {
+        adapter.setCopyStreamingMode(underlying, !!enable);
       }
     };
     /** @type {(ms: number) => void} */
     reserved_sql.setCopyTimeout = (ms: number) => {
-      if (typeof (pool as any).setCopyTimeoutFor === "function") {
-        (pool as any).setCopyTimeoutFor(pooledConnection, clampUint32(ms));
-      } else {
-        const underlying = pool.getConnectionForQuery
-          ? pool.getConnectionForQuery(pooledConnection)
-          : pooledConnection?.connection;
-        if (underlying && (PostgresAdapter as any).setCopyTimeout) {
-          (PostgresAdapter as any).setCopyTimeout(underlying, clampUint32(ms));
-        }
+      const copyPool = pool as unknown as {
+        setCopyTimeoutFor?: (connection: any, ms: number) => void;
+        getConnectionForQuery?: (connection: any) => any;
+      };
+      const clamped = clampUint32(ms);
+
+      if (typeof copyPool.setCopyTimeoutFor === "function") {
+        copyPool.setCopyTimeoutFor(pooledConnection, clamped);
+        return;
+      }
+
+      const underlying = copyPool.getConnectionForQuery
+        ? copyPool.getConnectionForQuery(pooledConnection)
+        : pooledConnection?.connection;
+
+      const adapter = PostgresAdapter as unknown as { setCopyTimeout?: (connection: any, ms: number) => void };
+      if (underlying && typeof adapter.setCopyTimeout === "function") {
+        adapter.setCopyTimeout(underlying, clamped);
       }
     };
     /** @type {(bytes: number) => void} */
     reserved_sql.setMaxCopyBufferSize = (bytes: number) => {
-      if (typeof (pool as any).setMaxCopyBufferSizeFor === "function") {
-        (pool as any).setMaxCopyBufferSizeFor(pooledConnection, clampUint32(bytes));
-      } else {
-        const underlying = pool.getConnectionForQuery
-          ? pool.getConnectionForQuery(pooledConnection)
-          : pooledConnection?.connection;
-        if (underlying && (PostgresAdapter as any).setMaxCopyBufferSize) {
-          // Delegate to adapter binding so native-side safety caps are applied consistently.
-          (PostgresAdapter as any).setMaxCopyBufferSize(underlying, clampUint32(bytes));
-        }
+      const copyPool = pool as unknown as {
+        setMaxCopyBufferSizeFor?: (connection: any, bytes: number) => void;
+        getConnectionForQuery?: (connection: any) => any;
+      };
+      const clamped = clampUint32(bytes);
+
+      if (typeof copyPool.setMaxCopyBufferSizeFor === "function") {
+        copyPool.setMaxCopyBufferSizeFor(pooledConnection, clamped);
+        return;
+      }
+
+      const underlying = copyPool.getConnectionForQuery
+        ? copyPool.getConnectionForQuery(pooledConnection)
+        : pooledConnection?.connection;
+
+      const adapter = PostgresAdapter as unknown as { setMaxCopyBufferSize?: (connection: any, bytes: number) => void };
+      if (underlying && typeof adapter.setMaxCopyBufferSize === "function") {
+        // Delegate to adapter binding so native-side safety caps are applied consistently.
+        adapter.setMaxCopyBufferSize(underlying, clamped);
       }
     };
     // Expose adapter-level COPY defaults on reserved connections
@@ -664,19 +688,27 @@ const SQL: typeof Bun.SQL = function SQL(
 
     // Streaming COPY TO STDOUT helpers (Phase 4)
     reserved_sql.onCopyChunk = (handler: (chunk: string | ArrayBuffer | Uint8Array) => void) => {
-      const underlying = pool.getConnectionForQuery
-        ? pool.getConnectionForQuery(pooledConnection)
+      const copyPool = pool as unknown as { getConnectionForQuery?: (connection: any) => any };
+      const underlying = copyPool.getConnectionForQuery
+        ? copyPool.getConnectionForQuery(pooledConnection)
         : pooledConnection?.connection;
-      if (underlying && (PostgresAdapter as any).onCopyChunk) {
-        (PostgresAdapter as any).onCopyChunk(underlying, handler);
+
+      const adapter = PostgresAdapter as unknown as {
+        onCopyChunk?: (connection: any, handler: (chunk: any) => void) => void;
+      };
+      if (underlying && typeof adapter.onCopyChunk === "function") {
+        adapter.onCopyChunk(underlying, handler as unknown as (chunk: any) => void);
       }
     };
     reserved_sql.onCopyEnd = (handler: () => void) => {
-      const underlying = pool.getConnectionForQuery
-        ? pool.getConnectionForQuery(pooledConnection)
+      const copyPool = pool as unknown as { getConnectionForQuery?: (connection: any) => any };
+      const underlying = copyPool.getConnectionForQuery
+        ? copyPool.getConnectionForQuery(pooledConnection)
         : pooledConnection?.connection;
-      if (underlying && (PostgresAdapter as any).onCopyEnd) {
-        (PostgresAdapter as any).onCopyEnd(underlying, handler);
+
+      const adapter = PostgresAdapter as unknown as { onCopyEnd?: (connection: any, handler: () => void) => void };
+      if (underlying && typeof adapter.onCopyEnd === "function") {
+        adapter.onCopyEnd(underlying, handler);
       }
     };
 
@@ -1203,6 +1235,19 @@ const SQL: typeof Bun.SQL = function SQL(
     return pool.array(values, typeNameOrID);
   };
 
+  type CopyReservedConnection = {
+    unsafe: (sqlText: string, values?: unknown[]) => Promise<any>;
+    release: () => Promise<void>;
+    onCopyStart?: (handler: () => void) => void;
+    onCopyChunk?: (handler: (chunk: any) => void) => void;
+    onCopyEnd?: (handler: () => void) => void;
+    copySendData: (data: string | Uint8Array) => void;
+    copyDone: () => void;
+    copyFail?: (message?: string) => void;
+    setCopyTimeout?: (ms: number) => void;
+    setCopyStreamingMode?: (enable: boolean) => void;
+  };
+
   // High-level COPY FROM STDIN helper
   // Usage: await sql.copyFrom("table", ["col1","col2"], data, {
   //   format: "text"|"csv"|"binary",
@@ -1227,12 +1272,10 @@ const SQL: typeof Bun.SQL = function SQL(
     options?: CopyFromOptions,
   ) {
     // Reserve a dedicated connection for COPY
-    const reserved = await sql.reserve();
+    const reserved = (await sql.reserve()) as CopyReservedConnection;
     const closeReserved = async () => {
       try {
-        if (reserved && typeof (reserved as any).release === "function") {
-          await (reserved as any).release();
-        }
+        await reserved.release();
       } catch {}
     };
 
@@ -1336,7 +1379,7 @@ const SQL: typeof Bun.SQL = function SQL(
           : DEFAULT_COPY_BATCH_SIZE;
       let batch = "";
 
-      // Resolve limits once at start instead of on every flush
+      // Resolve limits once at start (avoid repeated option resolution inside loops)
       const resolvedLimits = resolveCopyFromLimits(options, pool);
       const resolvedMaxBytes = resolvedLimits.maxBytes;
 
@@ -1344,12 +1387,12 @@ const SQL: typeof Bun.SQL = function SQL(
       let binaryHeaderSent = false;
       const sendBinaryHeader = () => {
         if (binaryHeaderSent) return;
-        (reserved as any).copySendData(createBinaryCopyHeader());
+        reserved.copySendData(createBinaryCopyHeader());
         binaryHeaderSent = true;
       };
       const sendBinaryTrailer = () => {
         if (!binaryHeaderSent) return;
-        (reserved as any).copySendData(createBinaryCopyTrailer());
+        reserved.copySendData(createBinaryCopyTrailer());
       };
 
       const flushBatch = async () => {
@@ -1361,7 +1404,7 @@ const SQL: typeof Bun.SQL = function SQL(
             throw new Error("copyFrom: maxBytes exceeded");
           }
 
-          (reserved as any).copySendData(batch);
+          reserved.copySendData(batch);
           bytesSent += bLen;
           chunksSent += 1;
           notifyProgress();
@@ -1381,12 +1424,11 @@ const SQL: typeof Bun.SQL = function SQL(
       if (typeof data === "string") {
         if (aborted) throw new Error("AbortError");
         const payload = sanitizeString(data);
-        const limits = resolveCopyFromLimits(options, pool);
         const counters = { bytesSent, chunksSent };
-        await sendChunkedData(payload, reserved, pool, limits, counters, notifyProgress);
+        await sendChunkedData(payload, reserved, pool, resolvedLimits, counters, notifyProgress);
         bytesSent = counters.bytesSent;
         chunksSent = counters.chunksSent;
-        (reserved as any).copyDone();
+        reserved.copyDone();
         return;
       }
 
@@ -1403,7 +1445,7 @@ const SQL: typeof Bun.SQL = function SQL(
               // header once
               sendBinaryHeader();
               const payload = encodeBinaryRow(item, types);
-              (reserved as any).copySendData(payload);
+              reserved.copySendData(payload);
               bytesSent += payload.byteLength;
               chunksSent += 1;
               notifyProgress();
@@ -1421,9 +1463,8 @@ const SQL: typeof Bun.SQL = function SQL(
             const u8raw = item instanceof Uint8Array ? item : new Uint8Array(item as ArrayBuffer);
             // For binary format, send raw bytes as-is; for text/csv, sanitize NUL bytes if requested
             const src = fmt === "binary" ? u8raw : sanitizeBytes(u8raw);
-            const limits = resolveCopyFromLimits(options, pool);
             const counters = { bytesSent, chunksSent };
-            await sendChunkedData(src, reserved, pool, limits, counters, notifyProgress);
+            await sendChunkedData(src, reserved, pool, resolvedLimits, counters, notifyProgress);
             bytesSent = counters.bytesSent;
             chunksSent = counters.chunksSent;
           } else {
@@ -1434,7 +1475,7 @@ const SQL: typeof Bun.SQL = function SQL(
         await flushBatch();
         // If we sent any binary rows via encoder, send trailer before done.
         sendBinaryTrailer();
-        (reserved as any).copyDone();
+        reserved.copyDone();
         return;
       }
 
@@ -1447,7 +1488,7 @@ const SQL: typeof Bun.SQL = function SQL(
               await flushBatch();
               sendBinaryHeader();
               const payload = encodeBinaryRow(item, types);
-              (reserved as any).copySendData(payload);
+              reserved.copySendData(payload);
               bytesSent += payload.byteLength;
               chunksSent += 1;
               notifyProgress();
@@ -1462,9 +1503,8 @@ const SQL: typeof Bun.SQL = function SQL(
             await flushBatch();
             const u8raw = item instanceof Uint8Array ? item : new Uint8Array(item as ArrayBuffer);
             const src = fmt === "binary" ? u8raw : sanitizeBytes(u8raw);
-            const limits = resolveCopyFromLimits(options, pool);
             const counters = { bytesSent, chunksSent };
-            await sendChunkedData(src, reserved, pool, limits, counters, notifyProgress);
+            await sendChunkedData(src, reserved, pool, resolvedLimits, counters, notifyProgress);
             bytesSent = counters.bytesSent;
             chunksSent = counters.chunksSent;
           } else {
@@ -1473,7 +1513,7 @@ const SQL: typeof Bun.SQL = function SQL(
         }
         await flushBatch();
         sendBinaryTrailer();
-        (reserved as any).copyDone();
+        reserved.copyDone();
         return;
       }
 
@@ -1490,30 +1530,30 @@ const SQL: typeof Bun.SQL = function SQL(
           await addToBatch(serializeRow(row));
         }
         await flushBatch();
-        (reserved as any).copyDone();
+        reserved.copyDone();
         return;
       }
 
       // Fallback: treat as string
       if (aborted) throw new Error("AbortError");
       const fallback = sanitizeString(String(data ?? ""));
-      (reserved as any).copySendData(fallback);
+      reserved.copySendData(fallback);
       bytesSent += getByteLength(fallback);
       chunksSent += 1;
       notifyProgress();
-      (reserved as any).copyDone();
+      reserved.copyDone();
     };
 
     try {
       // Register one-shot onCopyStart to feed rows
-      if (typeof (reserved as any).onCopyStart === "function") {
-        (reserved as any).onCopyStart(() => {
+      if (typeof reserved.onCopyStart === "function") {
+        reserved.onCopyStart(() => {
           // Properly handle errors during data feeding
           feedData().catch(feedErr => {
             try {
               // Send CopyFail to server to abort the COPY operation
-              if (typeof (reserved as any).copyFail === "function") {
-                (reserved as any).copyFail(String(feedErr?.message || feedErr || "Error feeding data"));
+              if (typeof reserved.copyFail === "function") {
+                reserved.copyFail(String(feedErr?.message || feedErr || "Error feeding data"));
               }
             } catch {}
           });
@@ -1552,7 +1592,7 @@ const SQL: typeof Bun.SQL = function SQL(
             AND a.attnum > 0 AND NOT a.attisdropped
           ORDER BY a.attnum
         `;
-        const rows = await (reserved as any).unsafe(q, [relName, schemaName]);
+        const rows = await reserved.unsafe(q, [relName, schemaName]);
         // Build expected OIDs for provided type tokens
         const expectedOids: number[] = typeTokens.map(tok => {
           if (tok.endsWith("[]")) {
@@ -1629,21 +1669,21 @@ const SQL: typeof Bun.SQL = function SQL(
           options && typeof (options as any).timeout === "number" && (options as any).timeout >= 0
             ? Math.max(0, Math.trunc((options as any).timeout))
             : Math.max(0, Math.trunc(__fromDefaults__.timeout ?? 0));
-        if (typeof (reserved as any).setCopyTimeout === "function") {
+        if (typeof reserved.setCopyTimeout === "function") {
           try {
-            (reserved as any).setCopyTimeout(timeout);
+            reserved.setCopyTimeout(timeout);
           } catch {}
         }
       } catch {}
 
-      const result = await (reserved as any).unsafe(sqlText);
+      const result = await reserved.unsafe(sqlText);
       await closeReserved();
       return result;
     } catch (err) {
       // Ensure we send CopyFail if we haven't already
       try {
-        if (typeof (reserved as any).copyFail === "function") {
-          (reserved as any).copyFail(String(err?.message || err || "COPY operation failed"));
+        if (typeof reserved.copyFail === "function") {
+          reserved.copyFail(String(err?.message || err || "COPY operation failed"));
         }
       } catch {}
       await closeReserved();
@@ -1725,8 +1765,11 @@ const SQL: typeof Bun.SQL = function SQL(
             chunkResolve = r;
           });
 
+        const hasCopyChunkHandler = typeof reserved.onCopyChunk === "function";
+        const hasCopyEndHandler = typeof reserved.onCopyEnd === "function";
+
         // Register streaming handlers
-        if (typeof reserved.onCopyChunk === "function") {
+        if (hasCopyChunkHandler) {
           reserved.onCopyChunk((chunk: any) => {
             chunks.push(chunk);
             if (chunkResolve) {
@@ -1753,15 +1796,14 @@ const SQL: typeof Bun.SQL = function SQL(
                 done = true;
                 // Immediately release connection to halt incoming data
                 try {
-                  if (typeof (reserved as any).release === "function") {
-                    (reserved as any).release();
-                  }
+                  reserved.release();
                 } catch {}
               }
             } catch {}
           });
         }
-        if (typeof reserved.onCopyEnd === "function") {
+
+        if (hasCopyEndHandler) {
           reserved.onCopyEnd(() => {
             done = true;
             if (chunkResolve) {
@@ -1773,62 +1815,97 @@ const SQL: typeof Bun.SQL = function SQL(
 
         try {
           if (aborted) throw new Error("AbortError");
-          // Enable streaming mode to avoid accumulation in Zig during COPY TO
-          if (typeof reserved.setCopyStreamingMode === "function") {
-            try {
-              const __defaults__ = reserved?.getCopyDefaults?.() || (pool as any)?.getCopyDefaults?.() || undefined;
-              const __toDefaults__ = (__defaults__ && __defaults__.to) || { stream: true, maxBytes: 0, timeout: 0 };
-              const stream =
-                typeof queryOrOptions === "string"
-                  ? __toDefaults__.stream
-                  : queryOrOptions.stream !== undefined
-                    ? !!queryOrOptions.stream
-                    : __toDefaults__.stream;
-              const timeout =
-                typeof queryOrOptions === "string"
-                  ? (__toDefaults__.timeout ?? 0)
-                  : (queryOrOptions as any).timeout !== undefined
-                    ? Math.max(0, Math.trunc((queryOrOptions as any).timeout))
-                    : (__toDefaults__.timeout ?? 0);
 
-              if (typeof (reserved as any).setCopyTimeout === "function") {
-                try {
-                  (reserved as any).setCopyTimeout(timeout);
-                } catch {}
+          // Determine whether streaming was requested for COPY TO.
+          const __defaults__ = reserved?.getCopyDefaults?.() || (pool as any)?.getCopyDefaults?.() || undefined;
+          const __toDefaults__ = (__defaults__ && __defaults__.to) || { stream: true, maxBytes: 0, timeout: 0 };
+          const desiredStream =
+            typeof queryOrOptions === "string"
+              ? __toDefaults__.stream
+              : queryOrOptions.stream !== undefined
+                ? !!queryOrOptions.stream
+                : __toDefaults__.stream;
+
+          const timeout =
+            typeof queryOrOptions === "string"
+              ? (__toDefaults__.timeout ?? 0)
+              : (queryOrOptions as any).timeout !== undefined
+                ? Math.max(0, Math.trunc((queryOrOptions as any).timeout))
+                : (__toDefaults__.timeout ?? 0);
+
+          // Tightened semantics:
+          // - If streaming is requested but we do not have an onCopyChunk handler, we force accumulation
+          //   and yield exactly one chunk (the accumulated payload).
+          if (desiredStream && !hasCopyChunkHandler) {
+            if (typeof reserved.setCopyTimeout === "function") {
+              try {
+                reserved.setCopyTimeout(timeout);
+              } catch {}
+            }
+
+            if (typeof reserved.setCopyStreamingMode === "function") {
+              try {
+                reserved.setCopyStreamingMode(false);
+              } catch {}
+            }
+
+            const q = makeQuery();
+            const accumulated = await reserved.unsafe(q);
+
+            // Tightened semantics: yield exactly one chunk.
+            // If the underlying result is an array, join its parts into a single payload.
+            let payload = "";
+            if (Array.isArray(accumulated)) {
+              payload = accumulated.map(x => String(x ?? "")).join("");
+            } else {
+              payload = String((accumulated as any)?.[0] ?? accumulated ?? "");
+            }
+
+            yield payload;
+            done = true;
+          } else {
+            // Enable streaming mode to avoid accumulation in Zig during COPY TO.
+            if (typeof reserved.setCopyStreamingMode === "function") {
+              try {
+                if (typeof reserved.setCopyTimeout === "function") {
+                  try {
+                    reserved.setCopyTimeout(timeout);
+                  } catch {}
+                }
+
+                reserved.setCopyStreamingMode(!!desiredStream);
+              } catch {}
+            }
+
+            // Start COPY TO STDOUT
+            const q = makeQuery();
+            await reserved.unsafe(q);
+
+            // Drain chunks as they arrive; finish when done flag is set
+            while (!done || chunks.length > 0) {
+              if (aborted) {
+                // Stop consumption early; close the reserved connection to abort server-side
+                rejectErr = new Error("AbortError");
+                break;
               }
-              (reserved as any).setCopyStreamingMode(stream);
-            } catch {}
-          }
-          // Start COPY TO STDOUT
-          const q = makeQuery();
-          await (reserved as any).unsafe(q);
-
-          // Drain chunks as they arrive; finish when done flag is set
-          while (!done || chunks.length > 0) {
-            if (aborted) {
-              // Stop consumption early; close the reserved connection to abort server-side
-              rejectErr = new Error("AbortError");
-              break;
+              if (chunks.length === 0) {
+                // yield to event loop
+                await waitForChunk();
+                continue;
+              }
+              yield chunks.shift();
             }
-            if (chunks.length === 0) {
-              // yield to event loop
-              await waitForChunk();
-              continue;
-            }
-            yield chunks.shift();
           }
         } catch (e) {
           rejectErr = e;
         } finally {
           try {
-            if (typeof (reserved as any).setCopyStreamingMode === "function") {
+            if (typeof reserved.setCopyStreamingMode === "function") {
               try {
-                (reserved as any).setCopyStreamingMode(false);
+                reserved.setCopyStreamingMode(false);
               } catch {}
             }
-            if (typeof (reserved as any).release === "function") {
-              await (reserved as any).release();
-            }
+            await reserved.release();
           } catch {}
           if (signal) {
             signal.removeEventListener("abort", onAbort as any);
@@ -1997,8 +2074,8 @@ const SQL: typeof Bun.SQL = function SQL(
   // Expose adapter-level COPY defaults on SQL instance
   sql.getCopyDefaults = () => pool.getCopyDefaults();
   sql.setCopyDefaults = (defaults: {
-    from?: { maxChunkSize?: number; maxBytes?: number };
-    to?: { stream?: boolean; maxBytes?: number };
+    from?: { maxChunkSize?: number; maxBytes?: number; timeout?: number };
+    to?: { stream?: boolean; maxBytes?: number; timeout?: number };
   }) => {
     pool.setCopyDefaults(defaults);
     return sql;

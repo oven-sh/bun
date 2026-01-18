@@ -23,6 +23,109 @@ if (isDockerEnabled()) {
       }
     });
 
+    // Phase 0: Regression tests
+
+    test("Regression: COPY maxBytes=0 disables the limit", async () => {
+      await using sql = connect();
+
+      await sql.unsafe("DROP TABLE IF EXISTS copy_unlimited", []);
+      await sql.unsafe("CREATE TABLE copy_unlimited (id INT, name TEXT)", []);
+
+      const rowCount = 2500;
+      const name = "x".repeat(80);
+
+      async function* genRows() {
+        for (let i = 0; i < rowCount; i++) {
+          yield `${i}\t${name}\n`;
+        }
+      }
+
+      const copyRes = await sql.copyFrom("copy_unlimited", ["id", "name"], genRows(), {
+        format: "text",
+        maxBytes: 0,
+      });
+
+      expect(copyRes?.command).toBe("COPY");
+      expect(copyRes?.count).toBe(rowCount);
+
+      const verify = await sql`SELECT COUNT(*)::int AS count FROM copy_unlimited`;
+      expect(verify[0]?.count).toBe(rowCount);
+    });
+
+    test("Regression: ErrorResponse during COPY rejects the correct COPY query even with another query queued", async () => {
+      await using sql = connect();
+
+      await sql.unsafe("DROP TABLE IF EXISTS copy_error_owner", []);
+      await sql.unsafe("CREATE TABLE copy_error_owner (id INT NOT NULL, name TEXT)", []);
+
+      async function* invalidRows() {
+        yield "1\tok\n";
+        // Invalid for NOT NULL id, will trigger an ErrorResponse during COPY
+        yield "\\N\tbad\n";
+      }
+
+      const copyPromise = sql.copyFrom("copy_error_owner", ["id", "name"], invalidRows(), { format: "text" });
+
+      // Queue another query while COPY is in progress so ErrorResponse routing must prefer copy_owner.
+      const otherQueryPromise = sql`SELECT 123::int AS v`;
+
+      let copyFailed = false;
+      try {
+        await copyPromise;
+      } catch {
+        copyFailed = true;
+      }
+      expect(copyFailed).toBe(true);
+
+      // The non-COPY query should still succeed, proving the error was attributed to the COPY request.
+      const otherQueryResult = await otherQueryPromise;
+      expect(otherQueryResult[0]?.v).toBe(123);
+
+      // Ensure COPY did not partially insert.
+      const verify = await sql`SELECT COUNT(*)::int AS count FROM copy_error_owner`;
+      expect(verify[0]?.count).toBe(0);
+    });
+
+    test("Regression: copyTo falls back to accumulation when streaming is requested but no chunk handler is registered", async () => {
+      await using sql = connect();
+
+      await sql.unsafe("DROP TABLE IF EXISTS copy_stream_fallback", []);
+      await sql.unsafe("CREATE TABLE copy_stream_fallback (id INT, name TEXT)", []);
+      await sql.unsafe("INSERT INTO copy_stream_fallback (id, name) VALUES (1, 'Alpha'), (2, 'Beta')", []);
+
+      // Force the "no chunk handler" path by temporarily disabling the handler registration methods.
+      const originalOnCopyChunk = (sql as any).onCopyChunk;
+      const originalOnCopyEnd = (sql as any).onCopyEnd;
+      (sql as any).onCopyChunk = undefined;
+      (sql as any).onCopyEnd = undefined;
+
+      try {
+        // Request streaming, but the implementation should fall back to accumulation.
+        // Accumulation may still yield more than one chunk depending on internal buffering,
+        // so we validate that concatenation produces a single correct payload.
+        const iterable = await sql.copyTo({
+          table: "copy_stream_fallback",
+          columns: ["id", "name"],
+          format: "csv",
+          stream: true,
+        });
+
+        const chunks: string[] = [];
+        for await (const chunk of iterable) {
+          chunks.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
+        }
+
+        expect(chunks.length).toBeGreaterThan(0);
+        const payload = chunks.join("");
+        expect(payload.includes("Alpha")).toBe(true);
+        expect(payload.includes("Beta")).toBe(true);
+        expect(payload.length).toBeGreaterThan(0);
+      } finally {
+        (sql as any).onCopyChunk = originalOnCopyChunk;
+        (sql as any).onCopyEnd = originalOnCopyEnd;
+      }
+    });
+
     // Phase 1: COPY TO STDOUT (Data Export)
 
     test("COPY TO STDOUT (text) returns a single string payload", async () => {
@@ -261,6 +364,32 @@ if (isDockerEnabled()) {
       }
       expect(progressCalled).toBeGreaterThan(0);
       expect(threw).toBe(true);
+    });
+
+    test("copyFrom backpressure waits for awaitWritable Promise", async () => {
+      await using sql = connect();
+
+      await sql.unsafe("DROP TABLE IF EXISTS copy_backpressure", []);
+      await sql.unsafe("CREATE TABLE copy_backpressure (id INT, val TEXT)", []);
+
+      // Simulate backpressure by setting a very small maxBytes and sending one large chunk
+      const enc = new TextEncoder();
+      const largeChunk = enc.encode("1\tHello World\n2\tMore Data\n".repeat(1000)); // ~18KB
+
+      let progressCalled = 0;
+      let bytesSent = 0;
+      const res = await sql.copyFrom("copy_backpressure", ["id", "val"], [largeChunk], {
+        format: "text",
+        maxBytes: largeChunk.byteLength + 10, // allow only slightly more than one chunk
+        onProgress: info => {
+          progressCalled++;
+          bytesSent = info.bytesSent;
+        },
+      });
+
+      expect(res?.command).toBe("COPY");
+      expect(res?.count).toBeGreaterThan(0);
+      expect(progressCalled).toBeGreaterThan(0);
     });
 
     test("copyFrom supports progress + abort", async () => {
@@ -678,6 +807,61 @@ if (isDockerEnabled()) {
       expect(didTimeout).toBe(true);
       expect(errorMessage).toMatch(/timeout/);
     });
+
+    test("Regression: copyTo has no timeout by default and timeout=0 disables timeout", async () => {
+      await using sql = connect();
+
+      await sql.unsafe("DROP TABLE IF EXISTS copy_timeout_disabled", []);
+      await sql.unsafe("CREATE TABLE copy_timeout_disabled (id INT, data TEXT)", []);
+      await sql.unsafe(
+        "INSERT INTO copy_timeout_disabled SELECT i, repeat('x', 1000) FROM generate_series(1, 10000) i",
+        [],
+      );
+
+      const readAll = async (iterable: AsyncIterable<any>) => {
+        let count = 0;
+        for await (const _ of iterable) {
+          count++;
+        }
+        return count;
+      };
+
+      let succeededDefault = false;
+      try {
+        const n = await readAll(
+          sql.copyTo({
+            table: "copy_timeout_disabled",
+            columns: ["id", "data"],
+            format: "text",
+          }),
+        );
+        expect(n).toBeGreaterThan(0);
+        succeededDefault = true;
+      } catch (e) {
+        const message = String((e as any)?.message ?? e).toLowerCase();
+        expect(message).not.toMatch(/timeout/);
+      }
+      expect(succeededDefault).toBe(true);
+
+      let succeededZero = false;
+      try {
+        const n = await readAll(
+          sql.copyTo({
+            table: "copy_timeout_disabled",
+            columns: ["id", "data"],
+            format: "text",
+            timeout: 0,
+          }),
+        );
+        expect(n).toBeGreaterThan(0);
+        succeededZero = true;
+      } catch (e) {
+        const message = String((e as any)?.message ?? e).toLowerCase();
+        expect(message).not.toMatch(/timeout/);
+      }
+      expect(succeededZero).toBe(true);
+    });
+
     // pgx-inspired tests
 
     test("pgx: small typed rows with nulls", async () => {

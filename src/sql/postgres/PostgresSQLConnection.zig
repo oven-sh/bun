@@ -12,9 +12,9 @@ const MAX_COPY_BUFFER_SIZE_HARD_CAP: usize = 1024 * 1024 * 1024; // 1 GiB
 /// If buffer capacity exceeds this after COPY, we shrink it to avoid wasting memory
 const COPY_BUFFER_SHRINK_THRESHOLD: usize = 64 * 1024 * 1024;
 
-/// Default COPY operation timeout in milliseconds (5 minutes)
-/// 0 means no timeout
-const DEFAULT_COPY_TIMEOUT_MS: u32 = 5 * 60 * 1000;
+/// Default COPY operation timeout in milliseconds.
+/// 0 means no COPY timeout.
+const DEFAULT_COPY_TIMEOUT_MS: u32 = 0;
 
 /// PostgreSQL binary COPY format signature: "PGCOPY\n\xff\r\n\0"
 const COPY_BINARY_SIGNATURE = [_]u8{ 'P', 'G', 'C', 'O', 'P', 'Y', '\n', 0xff, '\r', '\n', 0 };
@@ -104,10 +104,14 @@ copy_bytes_transferred: u64 = 0,
 copy_chunks_processed: u64 = 0,
 /// If true, do not accumulate COPY TO data in memory; only emit streaming chunks to JS
 copy_streaming_mode: bool = false,
+/// Whether JavaScript has registered an onCopyChunk handler for this connection.
+/// This is used to prevent enabling streaming mode when there is nowhere to deliver chunks.
+copy_chunk_handler_registered: bool = false,
 /// Track if we're currently processing a streaming callback to prevent reentrant calls
 copy_callback_in_progress: bool = false,
-/// COPY-specific timeout in milliseconds (0 = use connection timeout)
-copy_timeout_ms: u32 = DEFAULT_COPY_TIMEOUT_MS,
+/// COPY-specific timeout in milliseconds.
+/// 0 means no COPY timeout.
+copy_timeout_ms: u32 = 0,
 /// Timestamp when COPY operation started (for timeout tracking)
 copy_start_timestamp_ms: u64 = 0,
 /// Track if we've validated the binary COPY header
@@ -115,6 +119,10 @@ copy_binary_header_validated: bool = false,
 
 pub const ref = RefCount.ref;
 pub const deref = RefCount.deref;
+
+fn effectiveMaxCopyBufferSize(this: *const PostgresSQLConnection) usize {
+    return if (this.max_copy_buffer_size == 0) std.math.maxInt(usize) else this.max_copy_buffer_size;
+}
 
 fn resolveAwaitWritable(this: *PostgresSQLConnection, globalObject: *jsc.JSGlobalObject) void {
     const promise_value = this.await_writable_promise.swap();
@@ -1073,6 +1081,17 @@ pub fn copySendDataFromJSValue(this: *PostgresSQLConnection, globalObject: *jsc.
         return globalObject.throw("Cannot send COPY data: not in COPY FROM STDIN mode (current state: {s}). You must execute a 'COPY ... FROM STDIN' command first.", .{@tagName(this.copy_state)});
     }
 
+    // Enforce COPY timeout for COPY FROM as well (0 disables COPY timeout).
+    if (this.copy_timeout_ms > 0 and this.copy_start_timestamp_ms > 0) {
+        const now = std.time.milliTimestamp();
+        const elapsed = @as(u64, @intCast(now)) -| this.copy_start_timestamp_ms;
+        const timeout_u64: u64 = @intCast(this.copy_timeout_ms);
+        if (elapsed > timeout_u64) {
+            this.abortCopyAndFailConnection(error.CopyTimeout, "COPY aborted: timeout");
+            return globalObject.throw("COPY aborted: timeout", .{});
+        }
+    }
+
     // Extract payload as bytes (ArrayBuffer/TypedArray) or UTF-8 from string
     var slice: []const u8 = "";
     if (data_value.asArrayBuffer(globalObject)) |buf| {
@@ -1085,9 +1104,11 @@ pub fn copySendDataFromJSValue(this: *PostgresSQLConnection, globalObject: *jsc.
         slice = data_utf8.slice();
     }
 
-    // Guard against excessively large chunks
-    if (this.max_copy_buffer_size > 0 and slice.len > this.max_copy_buffer_size) {
-        return globalObject.throw("COPY data chunk too large: {d} bytes exceeds maximum of {d} bytes. Consider sending smaller chunks.", .{ slice.len, this.max_copy_buffer_size });
+    const max_copy_buffer_size = this.effectiveMaxCopyBufferSize();
+
+    // Guard against excessively large chunks (0 disables limit)
+    if (slice.len > max_copy_buffer_size) {
+        return globalObject.throw("COPY data chunk too large: {d} bytes exceeds maximum of {d} bytes. Consider sending smaller chunks.", .{ slice.len, max_copy_buffer_size });
     }
 
     // Write CopyData
@@ -1243,8 +1264,9 @@ fn cleanupCopyState(this: *PostgresSQLConnection) void {
     // Reset progress counters
     this.copy_bytes_transferred = 0;
     this.copy_chunks_processed = 0;
-    // Reset streaming mode and callback flag
+    // Reset streaming mode and callback flags
     this.copy_streaming_mode = false;
+    this.copy_chunk_handler_registered = false;
     this.copy_callback_in_progress = false;
 
     // Reset timeout tracking
@@ -1300,6 +1322,13 @@ fn startCopy(this: *PostgresSQLConnection, overall_format: u8, column_format_cod
             this.globalObject.reportActiveExceptionAsUnhandled(error.JSError);
             return error.JSError;
         }
+    }
+
+    // Tightened semantics:
+    // For COPY TO, if streaming mode was requested but JavaScript did not register a per-connection
+    // chunk handler, fall back to accumulation to avoid silently discarding data.
+    if (is_out and this.copy_streaming_mode and !this.copy_chunk_handler_registered) {
+        this.copy_streaming_mode = false;
     }
 }
 
@@ -1377,12 +1406,14 @@ fn finishCopy(this: *PostgresSQLConnection, request: *PostgresSQLQuery, command_
             return error.InvalidBinaryData;
         }
 
+        const max_copy_buffer_size = this.effectiveMaxCopyBufferSize();
+
         // Non-streaming: pass COPY TO accumulated data to JavaScript (even if empty), with safety guard
-        if (this.copy_data_buffer.items.len > this.max_copy_buffer_size) {
+        if (this.copy_data_buffer.items.len > max_copy_buffer_size) {
             const err_msg = std.fmt.allocPrint(
                 bun.default_allocator,
                 "COPY buffer exceeded limit at completion: {d} bytes (limit: {d} bytes)",
-                .{ this.copy_data_buffer.items.len, this.max_copy_buffer_size },
+                .{ this.copy_data_buffer.items.len, max_copy_buffer_size },
             ) catch "COPY buffer too large";
             defer if (err_msg.ptr != "COPY buffer too large".ptr) bun.default_allocator.free(err_msg);
             this.cleanupCopyState();
@@ -2063,13 +2094,15 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
                 // Validate/accumulate binary COPY header (supports fragmented first chunks)
                 if (this.copy_format == 1 and !this.copy_binary_header_validated) {
                     if (this.copy_streaming_mode) {
+                        const max_copy_buffer_size = this.effectiveMaxCopyBufferSize();
+
                         // In streaming mode, buffer until we have at least the signature, then validate and emit buffered bytes
-                        if (data_slice.len > this.max_copy_buffer_size) {
+                        if (data_slice.len > max_copy_buffer_size) {
                             this.abortCopyAndFailConnection(error.CopyBufferTooLarge, "COPY aborted: buffer limit exceeded");
                             return error.CopyBufferTooLarge;
                         }
                         const new_total_stream = this.copy_data_buffer.items.len + data_slice.len;
-                        if (new_total_stream > this.max_copy_buffer_size) {
+                        if (new_total_stream > max_copy_buffer_size) {
                             this.abortCopyAndFailConnection(error.CopyBufferTooLarge, "COPY aborted: buffer limit exceeded");
                             return error.CopyBufferTooLarge;
                         }
@@ -2145,8 +2178,9 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
 
                 // If a previous callback is still in progress, buffer and return safely (streaming mode)
                 if (this.copy_streaming_mode and this.copy_callback_in_progress) {
+                    const max_copy_buffer_size = this.effectiveMaxCopyBufferSize();
                     const new_total_pending = this.copy_data_buffer.items.len + data_slice.len;
-                    if (new_total_pending > this.max_copy_buffer_size) {
+                    if (new_total_pending > max_copy_buffer_size) {
                         this.abortCopyAndFailConnection(error.CopyBufferTooLarge, "COPY aborted: buffer limit exceeded");
                         return error.CopyBufferTooLarge;
                     }
@@ -2171,15 +2205,17 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
                 }
 
                 if (!this.copy_streaming_mode) {
-                    // Validate individual chunk size
-                    if (data_slice.len > this.max_copy_buffer_size) {
+                    const max_copy_buffer_size = this.effectiveMaxCopyBufferSize();
+
+                    // Validate individual chunk size (0 disables limit)
+                    if (data_slice.len > max_copy_buffer_size) {
                         this.abortCopyAndFailConnection(error.CopyBufferTooLarge, "COPY aborted: buffer limit exceeded");
                         return error.CopyBufferTooLarge;
                     }
 
                     // Check buffer size limit to prevent excessive memory usage
                     const new_total = this.copy_data_buffer.items.len + data_slice.len;
-                    if (new_total > this.max_copy_buffer_size) {
+                    if (new_total > max_copy_buffer_size) {
                         this.abortCopyAndFailConnection(error.CopyBufferTooLarge, "COPY aborted: buffer limit exceeded");
                         return error.CopyBufferTooLarge;
                     }
@@ -2495,12 +2531,6 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
             var err: protocol.ErrorResponse = undefined;
             try err.decodeInternal(Context, reader);
 
-            // Clean up COPY state if we were in the middle of a COPY operation
-            if (this.copy_state != .none) {
-                debug("ErrorResponse during COPY operation - cleaning up state", .{});
-                this.cleanupCopyState();
-            }
-
             if (this.status == .connecting or this.status == .sent_startup_message) {
                 defer {
                     err.deinit();
@@ -2512,16 +2542,20 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
                 return;
             }
 
-            var request = this.current() orelse {
+            // During an active COPY operation, prefer rejecting the COPY-owning query.
+            // This ensures deterministic attribution of server errors during COPY.
+            var request = (if (this.copy_owner) |owner| owner else this.current()) orelse {
                 debug("ErrorResponse: {f}", .{err});
                 return error.ExpectedRequest;
             };
+
             var is_error_owned = true;
             defer {
                 if (is_error_owned) {
                     err.deinit();
                 }
             }
+
             if (request.statement) |stmt| {
                 if (stmt.status == PostgresSQLStatement.Status.parsing) {
                     stmt.status = PostgresSQLStatement.Status.failed;
@@ -2536,6 +2570,13 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
             this.finishRequest(request);
             this.updateRef();
             request.onError(.{ .protocol = err }, this.globalObject);
+
+            // Clean up COPY state if we were in the middle of a COPY operation.
+            // This is done after routing the error so `copy_owner` is still available.
+            if (this.copy_state != .none) {
+                debug("ErrorResponse during COPY operation - cleaning up state", .{});
+                this.cleanupCopyState();
+            }
         },
         .PortalSuspended => {
             // try reader.eatMessage(&protocol.PortalSuspended);
@@ -2587,12 +2628,14 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
 
             debug("CopyDone: received {} bytes total", .{this.copy_data_buffer.items.len});
 
+            const max_copy_buffer_size = this.effectiveMaxCopyBufferSize();
+
             // Safety guard: if not streaming and accumulated buffer somehow exceeds limit, abort
-            if (!this.copy_streaming_mode and this.copy_data_buffer.items.len > this.max_copy_buffer_size) {
+            if (!this.copy_streaming_mode and this.copy_data_buffer.items.len > max_copy_buffer_size) {
                 const err_msg = std.fmt.allocPrint(
                     bun.default_allocator,
                     "COPY buffer exceeded limit at end: {d} bytes (limit: {d} bytes)",
-                    .{ this.copy_data_buffer.items.len, this.max_copy_buffer_size },
+                    .{ this.copy_data_buffer.items.len, max_copy_buffer_size },
                 ) catch "COPY buffer too large";
                 defer if (err_msg.ptr != "COPY buffer too large".ptr) bun.default_allocator.free(err_msg);
                 this.cleanupCopyState();

@@ -398,7 +398,13 @@ function Install-PdbAddr2line {
 }
 
 function Install-Llvm {
-  $llvmVersion = "21.1.8"
+  # LLVM 21 is required for ARM64 (first version with ARM64 Windows builds)
+  # x64 uses LLVM 19.1.7
+  if ($script:IsARM64) {
+    $llvmVersion = "21.1.8"
+  } else {
+    $llvmVersion = "19.1.7"
+  }
   $llvmPath = "$env:ProgramFiles\LLVM"
 
   # Check if LLVM is already installed with correct version

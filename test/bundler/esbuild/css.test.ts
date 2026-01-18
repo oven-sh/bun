@@ -9,7 +9,7 @@ import { itBundled } from "../expectBundled";
 
 describe("bundler", () => {
   itBundled("css/CSSEntryPoint", {
-    virtual: true,
+    // GENERATED
     files: {
       "/entry.css": /* css */ `
           body {
@@ -20,7 +20,7 @@ describe("bundler", () => {
     outfile: "/out.css",
     onAfterBundle(api) {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* ../../entry.css */
+  /* entry.css */
   body {
           color: #000;
           background: #fff;
@@ -29,19 +29,19 @@ describe("bundler", () => {
   });
 
   itBundled("css/CSSEntryPointEmpty", {
-    virtual: true,
+    // GENERATED
     files: {
       "/entry.css": /* css */ `\n`,
     },
     outfile: "/out.css",
     onAfterBundle(api) {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* ../../entry.css */`);
+  /* entry.css */`);
     },
   });
 
   itBundled("css/CSSNesting", {
-    virtual: true,
+    // GENERATED
     target: "bun",
     files: {
       "/entry.css": /* css */ `
@@ -54,9 +54,9 @@ describe("bundler", () => {
     outfile: "/out.css",
     onAfterBundle(api) {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* ../../entry.css */
+  /* entry.css */
   body {
-  	&h1 {
+  	& h1 {
   		color: #fff;
   	}
   }
@@ -75,7 +75,6 @@ describe("bundler", () => {
   });
 
   itBundled("css/CSSAtImportSimple", {
-    virtual: true,
     // GENERATED
     files: {
       "/entry.css": /* css */ `
@@ -88,17 +87,16 @@ describe("bundler", () => {
     outfile: "/out.css",
     onAfterBundle(api) {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* /internal.css */
+  /* internal.css */
   .before {
     color: red;
   }
-  /* ../../entry.css */
+  /* entry.css */
   `);
     },
   });
 
   itBundled("css/CSSAtImportDiamond", {
-    virtual: true,
     // GENERATED
     files: {
       "/a.css": /* css */ `
@@ -121,19 +119,19 @@ describe("bundler", () => {
     outfile: "/out.css",
     onAfterBundle(api) {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* /b.css */
+  /* b.css */
   .first {
     color: red;
   }
-  /* /d.css */
+  /* d.css */
   .second {
     color: red;
   }
-  /* /c.css */
+  /* c.css */
   .third {
     color: red;
   }
-  /* ../../a.css */
+  /* a.css */
   .last {
     color: red;
   }
@@ -142,7 +140,7 @@ describe("bundler", () => {
   });
 
   itBundled("css/CSSAtImportCycle", {
-    virtual: true,
+    // GENERATED
     files: {
       "/a.css": /* css */ `
           @import "./a.css";
@@ -152,7 +150,7 @@ describe("bundler", () => {
     outfile: "/out.css",
     onAfterBundle(api) {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* ../../a.css */
+  /* a.css */
   .hehe {
     color: red;
   }

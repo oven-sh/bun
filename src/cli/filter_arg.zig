@@ -184,9 +184,7 @@ pub const FilterSet = struct {
             }
         }
         self.allocator.free(self.filters);
-        if (self.fuzzy_scope_initialized) {
-            self.fuzzy_scope_candidates.deinit();
-        }
+        self.fuzzy_scope_candidates.deinit();
     }
 
     pub fn matchesPath(self: *const FilterSet, path: []const u8) bool {

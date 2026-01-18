@@ -902,8 +902,7 @@ fn writeFileWithEmptySourceToDestination(ctx: *jsc.JSGlobalObject, destination_b
                         // SAFETY: we check if `file.pathlike` is an fd or
                         // not above, returning if it is.
                         var buf: bun.PathBuffer = undefined;
-                        // TODO: respect `options.mode`
-                        const mode: bun.Mode = jsc.Node.fs.default_permission;
+                        const mode: bun.Mode = options.mode orelse jsc.Node.fs.default_permission;
                         while (true) {
                             const open_res = bun.sys.open(file.pathlike.path.sliceZ(&buf), bun.O.CREAT | bun.O.TRUNC, mode);
                             switch (open_res) {
@@ -969,6 +968,7 @@ fn writeFileWithEmptySourceToDestination(ctx: *jsc.JSGlobalObject, destination_b
                 "",
                 destination_blob.contentTypeOrMimeType(),
                 aws_options.content_disposition,
+                aws_options.content_encoding,
                 aws_options.acl,
                 proxy_url,
                 aws_options.storage_class,
@@ -1055,6 +1055,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
                 ctx.bunVM().eventLoop(),
                 options.mkdirp_if_not_exists orelse true,
                 destination_blob.size,
+                options.mode,
             );
         }
         var file_copier = copy_file.CopyFile.create(
@@ -1065,6 +1066,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
             destination_blob.size,
             ctx,
             options.mkdirp_if_not_exists orelse true,
+            options.mode,
         );
         file_copier.schedule();
         return file_copier.promise.value();
@@ -1119,6 +1121,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
                             aws_options.storage_class,
                             destination_blob.contentTypeOrMimeType(),
                             aws_options.content_disposition,
+                            aws_options.content_encoding,
                             proxy_url,
                             aws_options.request_payer,
                             null,
@@ -1159,6 +1162,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
                         bytes.slice(),
                         destination_blob.contentTypeOrMimeType(),
                         aws_options.content_disposition,
+                        aws_options.content_encoding,
                         aws_options.acl,
                         proxy_url,
                         aws_options.storage_class,
@@ -1190,6 +1194,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
                         aws_options.storage_class,
                         destination_blob.contentTypeOrMimeType(),
                         aws_options.content_disposition,
+                        aws_options.content_encoding,
                         proxy_url,
                         aws_options.request_payer,
                         null,
@@ -1208,6 +1213,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
 const WriteFileOptions = struct {
     mkdirp_if_not_exists: ?bool = null,
     extra_options: ?JSValue = null,
+    mode: ?bun.Mode = null,
 };
 
 /// ## Errors
@@ -1396,6 +1402,7 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                                 aws_options.storage_class,
                                 destination_blob.contentTypeOrMimeType(),
                                 aws_options.content_disposition,
+                                aws_options.content_encoding,
                                 proxy_url,
                                 aws_options.request_payer,
                                 null,
@@ -1458,6 +1465,7 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                                 aws_options.storage_class,
                                 destination_blob.contentTypeOrMimeType(),
                                 aws_options.content_disposition,
+                                aws_options.content_encoding,
                                 proxy_url,
                                 aws_options.request_payer,
                                 null,
@@ -1480,6 +1488,12 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                     return task.promise.value();
                 },
             }
+        }
+
+        // Check for Archive - allows Bun.write() and S3 writes to accept Archive instances
+        if (data.as(Archive)) |archive| {
+            archive.store.ref();
+            break :brk Blob.initWithStore(archive.store, globalThis);
         }
 
         break :brk try Blob.get(
@@ -1536,6 +1550,7 @@ pub fn writeFile(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun
         return globalThis.throwInvalidArguments("Bun.write(pathOrFdOrBlob, blob) expects a Blob-y thing to write", .{});
     };
     var mkdirp_if_not_exists: ?bool = null;
+    var mode: ?bun.Mode = null;
     const options = args.nextEat();
     if (options) |options_object| {
         if (options_object.isObject()) {
@@ -1545,6 +1560,18 @@ pub fn writeFile(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun
                 }
                 mkdirp_if_not_exists = create_directory.toBoolean();
             }
+            if (try options_object.get(globalThis, "mode")) |mode_value| {
+                if (!mode_value.isEmptyOrUndefinedOrNull()) {
+                    if (!mode_value.isNumber()) {
+                        return globalThis.throwInvalidArgumentType("write", "options.mode", "number");
+                    }
+                    const mode_int = mode_value.toInt64();
+                    if (mode_int < 0 or mode_int > 0o777) {
+                        return globalThis.throwRangeError(mode_int, .{ .field_name = "mode", .min = 0, .max = 0o777 });
+                    }
+                    mode = @intCast(mode_int);
+                }
+            }
         } else if (!options_object.isEmptyOrUndefinedOrNull()) {
             return globalThis.throwInvalidArgumentType("write", "options", "object");
         }
@@ -1552,6 +1579,7 @@ pub fn writeFile(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun
     return writeFileInternal(globalThis, &path_or_blob, data, .{
         .mkdirp_if_not_exists = mkdirp_if_not_exists,
         .extra_options = options,
+        .mode = mode,
     });
 }
 
@@ -2416,6 +2444,7 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, re
             aws_options.storage_class,
             this.contentTypeOrMimeType(),
             aws_options.content_disposition,
+            aws_options.content_encoding,
             proxy_url,
             aws_options.request_payer,
             null,
@@ -2652,7 +2681,16 @@ pub fn getWriter(
                     }
                     content_disposition_str = try content_disposition.toSlice(globalThis, bun.default_allocator);
                 }
-                const credentialsWithOptions = try s3.getCredentialsWithOptions(options, globalThis);
+                var content_encoding_str: ?ZigString.Slice = null;
+                defer if (content_encoding_str) |ce| ce.deinit();
+                if (try options.getTruthy(globalThis, "contentEncoding")) |content_encoding| {
+                    if (!content_encoding.isString()) {
+                        return globalThis.throwInvalidArgumentType("write", "options.contentEncoding", "string");
+                    }
+                    content_encoding_str = try content_encoding.toSlice(globalThis, bun.default_allocator);
+                }
+                var credentialsWithOptions = try s3.getCredentialsWithOptions(options, globalThis);
+                defer credentialsWithOptions.deinit();
                 return try S3.writableStream(
                     credentialsWithOptions.credentials.dupe(),
                     path,
@@ -2660,6 +2698,7 @@ pub fn getWriter(
                     credentialsWithOptions.options,
                     this.contentTypeOrMimeType(),
                     if (content_disposition_str) |cd| cd.slice() else null,
+                    if (content_encoding_str) |ce| ce.slice() else null,
                     proxy_url,
                     credentialsWithOptions.storage_class,
                     credentialsWithOptions.request_payer,
@@ -2672,6 +2711,7 @@ pub fn getWriter(
             globalThis,
             .{},
             this.contentTypeOrMimeType(),
+            null,
             null,
             proxy_url,
             null,
@@ -4812,6 +4852,7 @@ const NewReadFileHandler = read_file.NewReadFileHandler;
 
 const string = []const u8;
 
+const Archive = @import("../api/Archive.zig");
 const Environment = @import("../../env.zig");
 const S3File = @import("./S3File.zig");
 const std = @import("std");

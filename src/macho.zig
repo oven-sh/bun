@@ -77,8 +77,8 @@ pub const MachoFile = struct {
                                     found_bun = true;
                                     original_fileoff = sect.offset;
                                     original_vmaddr = sect.addr;
-                                    original_data_end = original_fileoff + blob_alignment;
-                                    original_segsize = sect.size;
+                                    original_data_end = command.fileoff + command.filesize;
+                                    original_segsize = command.filesize;
                                     self.segment = command;
                                     self.section = sect.*;
 
@@ -183,8 +183,10 @@ pub const MachoFile = struct {
 
         // Only update offsets if the size actually changed
         if (size_diff != 0) {
-            // New signature size is the old size plus the size of the hashes for the new pages
-            sig_size = sig_size + @as(usize, @intCast(size_of_new_hashes));
+            if (self.header.cputype == macho.CPU_TYPE_ARM64 and !bun.feature_flag.BUN_NO_CODESIGN_MACHO_BINARY.get()) {
+                // New signature size is the old size plus the size of the hashes for the new pages
+                sig_size = sig_size + @as(usize, @intCast(size_of_new_hashes));
+            }
 
             // We move the offsets of the LINKEDIT segment ahead by `size_diff`
             linkedit_seg.fileoff += @as(usize, @intCast(size_diff));

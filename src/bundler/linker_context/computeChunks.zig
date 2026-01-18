@@ -157,10 +157,10 @@ pub noinline fn computeChunks(
                 js_chunks_with_css += 1;
 
                 if (!css_chunk_entry.found_existing) {
-                    var css_files_with_parts_in_chunk = std.AutoArrayHashMapUnmanaged(Index.Int, void){};
+                    var css_files_with_parts_in_chunk = std.AutoArrayHashMapUnmanaged(Index.Int, usize){};
                     for (order.slice()) |entry| {
                         if (entry.kind == .source_index) {
-                            bun.handleOom(css_files_with_parts_in_chunk.put(this.allocator(), entry.kind.source_index.get(), {}));
+                            bun.handleOom(css_files_with_parts_in_chunk.put(this.allocator(), entry.kind.source_index.get(), 0));
                         }
                     }
                     css_chunk_entry.value_ptr.* = .{
@@ -195,7 +195,10 @@ pub noinline fn computeChunks(
         source_id: u32,
 
         pub fn next(c: *@This(), chunk_id: usize) void {
-            _ = c.chunks[chunk_id].files_with_parts_in_chunk.getOrPut(c.allocator, @as(u32, @truncate(c.source_id))) catch unreachable;
+            const entry = c.chunks[chunk_id].files_with_parts_in_chunk.getOrPut(c.allocator, @as(u32, @truncate(c.source_id))) catch unreachable;
+            if (!entry.found_existing) {
+                entry.value_ptr.* = 0; // Initialize byte count to 0
+            }
         }
     };
 
@@ -226,9 +229,22 @@ pub noinline fn computeChunks(
                                 .output_source_map = SourceMap.SourceMapPieces.init(this.allocator()),
                                 .flags = .{ .is_browser_chunk_from_server_build = is_browser_chunk_from_server_build },
                             };
+                        } else if (could_be_browser_target_from_server_build and
+                            !js_chunk_entry.value_ptr.entry_point.is_entry_point and
+                            !js_chunk_entry.value_ptr.flags.is_browser_chunk_from_server_build and
+                            ast_targets[source_index.get()] == .browser)
+                        {
+                            // If any file in the chunk has browser target, mark the whole chunk as browser.
+                            // This handles the case where a lazy-loaded chunk (code splitting chunk, not entry point)
+                            // contains browser-targeted files but was first created by a non-browser file.
+                            // We only apply this to non-entry-point chunks to preserve the correct side for server entry points.
+                            js_chunk_entry.value_ptr.flags.is_browser_chunk_from_server_build = true;
                         }
 
-                        _ = js_chunk_entry.value_ptr.files_with_parts_in_chunk.getOrPut(this.allocator(), @as(u32, @truncate(source_index.get()))) catch unreachable;
+                        const entry = js_chunk_entry.value_ptr.files_with_parts_in_chunk.getOrPut(this.allocator(), @as(u32, @truncate(source_index.get()))) catch unreachable;
+                        if (!entry.found_existing) {
+                            entry.value_ptr.* = 0; // Initialize byte count to 0
+                        }
                     } else {
                         var handler = Handler{
                             .chunks = js_chunks.values(),
@@ -249,9 +265,29 @@ pub noinline fn computeChunks(
 
         var sorted_keys = try BabyList(string).initCapacity(temp_allocator, js_chunks.count());
 
-        // JS Chunks
         sorted_keys.appendSliceAssumeCapacity(js_chunks.keys());
-        sorted_keys.sortAsc();
+
+        // sort by entry_point_id to ensure the main entry point (id=0) comes first,
+        // then by key for determinism among the rest.
+        const ChunkSortContext = struct {
+            chunks: *const bun.StringArrayHashMap(Chunk),
+
+            pub fn lessThan(ctx: @This(), a_key: string, b_key: string) bool {
+                const a_chunk = ctx.chunks.get(a_key) orelse return true;
+                const b_chunk = ctx.chunks.get(b_key) orelse return false;
+                const a_id = a_chunk.entry_point.entry_point_id;
+                const b_id = b_chunk.entry_point.entry_point_id;
+
+                // Main entry point (id=0) always comes first
+                if (a_id == 0 and b_id != 0) return true;
+                if (b_id == 0 and a_id != 0) return false;
+
+                // Otherwise sort alphabetically by key for determinism
+                return bun.strings.order(a_key, b_key) == .lt;
+            }
+        };
+
+        sorted_keys.sort(ChunkSortContext, .{ .chunks = &js_chunks });
         var js_chunk_indices_with_css = try BabyList(u32).initCapacity(temp_allocator, js_chunks_with_css);
         for (sorted_keys.slice()) |key| {
             const chunk = js_chunks.get(key) orelse unreachable;

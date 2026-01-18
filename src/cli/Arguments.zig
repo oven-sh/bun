@@ -158,12 +158,14 @@ pub const build_only_params = [_]ParamType{
     clap.parseParam("--no-compile-autoload-tsconfig   Disable autoloading of tsconfig.json at runtime in standalone executable") catch unreachable,
     clap.parseParam("--compile-autoload-package-json  Enable autoloading of package.json at runtime in standalone executable (default: false)") catch unreachable,
     clap.parseParam("--no-compile-autoload-package-json Disable autoloading of package.json at runtime in standalone executable") catch unreachable,
+    clap.parseParam("--compile-executable-path <STR>  Path to a Bun executable to use for cross-compilation instead of downloading") catch unreachable,
     clap.parseParam("--bytecode                       Use a bytecode cache") catch unreachable,
     clap.parseParam("--watch                          Automatically restart the process on file change") catch unreachable,
     clap.parseParam("--no-clear-screen                Disable clearing the terminal screen on reload when --watch is enabled") catch unreachable,
     clap.parseParam("--target <STR>                   The intended execution environment for the bundle. \"browser\", \"bun\" or \"node\"") catch unreachable,
     clap.parseParam("--outdir <STR>                   Default to \"dist\" if multiple files") catch unreachable,
     clap.parseParam("--outfile <STR>                  Write to a file") catch unreachable,
+    clap.parseParam("--metafile <STR>?                Write a JSON file with metadata about the build") catch unreachable,
     clap.parseParam("--sourcemap <STR>?               Build with sourcemaps - 'linked', 'inline', 'external', or 'none'") catch unreachable,
     clap.parseParam("--banner <STR>                   Add a banner to the bundled output such as \"use client\"; for a bundle being used with RSCs") catch unreachable,
     clap.parseParam("--footer <STR>                   Add a footer to the bundled output such as // built with bun!") catch unreachable,
@@ -295,6 +297,16 @@ fn getHomeConfigPath(buf: *bun.PathBuffer) ?[:0]const u8 {
     return null;
 }
 pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx: Command.Context, comptime cmd: Command.Tag) OOM!void {
+    // If running as a standalone executable with autoloadBunfig disabled, skip config loading
+    // unless an explicit config path was provided via --config
+    if (user_config_path_ == null) {
+        if (bun.StandaloneModuleGraph.get()) |graph| {
+            if (graph.flags.disable_autoload_bunfig) {
+                return;
+            }
+        }
+    }
+
     var config_buf: bun.PathBuffer = undefined;
     if (comptime cmd.readGlobalConfig()) {
         if (!ctx.has_loaded_global_config) {
@@ -1105,6 +1117,14 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             }
         }
 
+        if (args.option("--compile-executable-path")) |path| {
+            if (!ctx.bundler_options.compile) {
+                Output.errGeneric("--compile-executable-path requires --compile", .{});
+                Global.crash();
+            }
+            ctx.bundler_options.compile_executable_path = path;
+        }
+
         if (args.flag("--windows-hide-console")) {
             // --windows-hide-console technically doesnt depend on WinAPI, but since since --windows-icon
             // does, all of these customization options have been gated to windows-only
@@ -1193,6 +1213,14 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             if (outfile.len > 0) {
                 ctx.bundler_options.outfile = outfile;
             }
+        }
+
+        if (args.option("--metafile")) |metafile| {
+            // If --metafile is passed without a value, default to "meta.json"
+            ctx.bundler_options.metafile = if (metafile.len > 0)
+                bun.handleOom(allocator.dupeZ(u8, metafile))
+            else
+                "meta.json";
         }
 
         if (args.option("--root")) |root_dir| {

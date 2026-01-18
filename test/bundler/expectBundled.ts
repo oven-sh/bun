@@ -590,11 +590,28 @@ function expectBundled(
 
   // Virtual mode: run entirely in memory without disk I/O
   if (virtual) {
+    // Validate that unsupported options are not set
+    const unsupportedOptions: string[] = [];
+    if (runtimeFiles && Object.keys(runtimeFiles).length > 0) unsupportedOptions.push("runtimeFiles");
+    if (run) unsupportedOptions.push("run");
+    if (dce) unsupportedOptions.push("dce");
+    if (cjs2esm) unsupportedOptions.push("cjs2esm");
+    if (matchesReference) unsupportedOptions.push("matchesReference");
+    if (snapshotSourceMap) unsupportedOptions.push("snapshotSourceMap");
+    if (expectExactFilesize) unsupportedOptions.push("expectExactFilesize");
+    if (onAfterApiBundle) unsupportedOptions.push("onAfterApiBundle");
+    if (bundleWarnings && Object.keys(bundleWarnings).length > 0) unsupportedOptions.push("bundleWarnings");
+    if (outdir) unsupportedOptions.push("outdir (use outfile instead)");
+
+    if (unsupportedOptions.length > 0) {
+      throw new Error(`Virtual mode does not support the following options: ${unsupportedOptions.join(", ")}`);
+    }
+
     return (async () => {
-      // Prepare virtual files with dedent applied
-      const virtualFiles: Record<string, string> = {};
+      // Prepare virtual files with dedent applied for strings, preserve binary content as-is
+      const virtualFiles: Record<string, string | Buffer | Uint8Array | Blob> = {};
       for (const [file, contents] of Object.entries(files)) {
-        virtualFiles[file] = typeof contents === "string" ? dedent(contents) : contents.toString();
+        virtualFiles[file] = typeof contents === "string" ? dedent(contents) : contents;
       }
 
       entryPoints ??= [Object.keys(files)[0]];
@@ -681,21 +698,10 @@ function expectBundled(
         // Try exact match first
         if (outputCache[normalizedFile]) return outputCache[normalizedFile];
 
-        // Try matching by basename for /out.css -> /a.css case
-        const basename = normalizedFile.split("/").pop()!;
-        for (const [key, value] of Object.entries(outputCache)) {
-          if (key.endsWith("/" + basename) || key === "/" + basename) {
-            return value;
-          }
-        }
-
-        // If looking for a specific extension and there's only one file with that extension, use it
-        const ext = basename.includes(".") ? basename.slice(basename.lastIndexOf(".")) : "";
-        if (ext) {
-          const matchingFiles = Object.entries(outputCache).filter(([key]) => key.endsWith(ext));
-          if (matchingFiles.length === 1) {
-            return matchingFiles[0][1];
-          }
+        // For single-output builds, allow accessing the output by the configured outfile path
+        const outputs = Object.keys(outputCache);
+        if (outputs.length === 1 && normalizedFile === outfileVirtual) {
+          return outputCache[outputs[0]];
         }
 
         throw new Error(`Virtual file not found: ${file}. Available: ${Object.keys(outputCache).join(", ")}`);

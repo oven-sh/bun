@@ -6,7 +6,7 @@ import path from "path";
 
 // TODO: we need to install build-essential and Apple SDK in CI.
 // It can't find includes. It can on machines with that enabled.
-// TinyCC internal error handling uses setjmp/longjmp which conflicts with ASan
+// TinyCC's setjmp/longjmp error handling conflicts with ASan.
 it.todoIf(isWindows || isASAN)("can run a .c file", () => {
   const result = Bun.spawnSync({
     cmd: [bunExe(), path.join(__dirname, "cc-fixture.js")],
@@ -18,9 +18,8 @@ it.todoIf(isWindows || isASAN)("can run a .c file", () => {
   expect(result.exitCode).toBe(0);
 });
 
-// TinyCC internal error handling uses setjmp/longjmp which conflicts with ASan
-// TCC also doesn't work on Windows (missing headers/libraries)
-describe.skipIf(isASAN || isWindows)("given an add(a, b) function", () => {
+// TinyCC's setjmp/longjmp error handling conflicts with ASan.
+describe.skipIf(isASAN)("given an add(a, b) function", () => {
   const source = /* c */ `
       int add(int a, int b) {
         return a + b;

@@ -415,6 +415,40 @@ function testRef(id: string, options: BundlerTestInput): BundlerTestRef {
   return { id, options };
 }
 
+/**
+ * Extract capture function calls from file contents.
+ * Finds all occurrences of fnName(...) and returns the argument contents.
+ */
+function extractCaptures(fileContents: string, file: string, fnName: string): string[] {
+  let i = 0;
+  const length = fileContents.length;
+  const matches: string[] = [];
+  while (i < length) {
+    i = fileContents.indexOf(fnName, i);
+    if (i === -1) break;
+    const start = i;
+    let depth = 0;
+    while (i < length) {
+      const char = fileContents[i];
+      if (char === "(") depth++;
+      else if (char === ")") {
+        depth--;
+        if (depth === 0) break;
+      }
+      i++;
+    }
+    if (depth !== 0) {
+      throw new Error(`Could not find closing paren for ${fnName} call in ${file}`);
+    }
+    matches.push(fileContents.slice(start + fnName.length + 1, i));
+    i++;
+  }
+  if (matches.length === 0) {
+    throw new Error(`No ${fnName} calls found in ${file}`);
+  }
+  return matches;
+}
+
 function expectBundled(
   id: string,
   opts: BundlerTestInput,
@@ -606,6 +640,7 @@ function expectBundled(
     if (ignoreDCEAnnotations) unsupportedOptions.push("ignoreDCEAnnotations");
     if (bytecode) unsupportedOptions.push("bytecode");
     if (compile) unsupportedOptions.push("compile");
+    if (features && features.length > 0) unsupportedOptions.push("features");
     if (outdir) unsupportedOptions.push("outdir (use outfile instead)");
 
     if (unsupportedOptions.length > 0) {
@@ -618,10 +653,6 @@ function expectBundled(
       for (const [file, contents] of Object.entries(files)) {
         virtualFiles[file] = typeof contents === "string" ? dedent(contents) : contents;
       }
-
-      entryPoints ??= [Object.keys(files)[0]];
-      format ??= "esm";
-      target ??= "browser";
 
       const build = await Bun.build({
         entrypoints: entryPoints,
@@ -658,28 +689,59 @@ function expectBundled(
         conditions,
       });
 
+      const expectedErrors = bundleErrors
+        ? Object.entries(bundleErrors).flatMap(([file, v]) => v.map(error => ({ file, error })))
+        : null;
+
       if (!build.success) {
-        const errors = build.logs
+        // Collect actual errors from build logs
+        const actualErrors = build.logs
           .filter(x => x.level === "error")
-          .map(x => x.message)
-          .join("\n");
+          .map(x => ({
+            file: x.position?.file || "",
+            error: x.message,
+          }));
 
         // Check if errors were expected
-        if (bundleErrors) {
-          const expectedErrors = Object.entries(bundleErrors).flatMap(([file, v]) => v.map(error => ({ file, error })));
-          // For now, just check that we got errors as expected
-          if (expectedErrors.length > 0) {
-            return testRef(id, opts);
+        if (expectedErrors && expectedErrors.length > 0) {
+          const errorsLeft = [...expectedErrors];
+          const unexpectedErrors: typeof actualErrors = [];
+
+          for (const error of actualErrors) {
+            const i = errorsLeft.findIndex(item => error.file.endsWith(item.file) && error.error.includes(item.error));
+            if (i === -1) {
+              unexpectedErrors.push(error);
+            } else {
+              errorsLeft.splice(i, 1);
+            }
           }
+
+          if (unexpectedErrors.length > 0) {
+            throw new Error(
+              "Unexpected errors reported while bundling:\n" +
+                unexpectedErrors.map(e => `${e.file}: ${e.error}`).join("\n") +
+                "\n\nExpected errors:\n" +
+                expectedErrors.map(e => `${e.file}: ${e.error}`).join("\n"),
+            );
+          }
+
+          if (errorsLeft.length > 0) {
+            throw new Error(
+              "Expected errors were not found while bundling:\n" +
+                errorsLeft.map(e => `${e.file}: ${e.error}`).join("\n") +
+                "\n\nActual errors:\n" +
+                actualErrors.map(e => `${e.file}: ${e.error}`).join("\n"),
+            );
+          }
+
+          return testRef(id, opts);
         }
-        throw new Error(`Bundle failed:\n${errors}`);
-      } else if (bundleErrors) {
-        const expectedErrors = Object.entries(bundleErrors).flatMap(([file, v]) => v.map(error => ({ file, error })));
-        if (expectedErrors.length > 0) {
-          throw new Error(
-            "Errors were expected while bundling:\n" + expectedErrors.map(e => `${e.file}: ${e.error}`).join("\n"),
-          );
-        }
+
+        throw new Error(`Bundle failed:\n${actualErrors.map(e => `${e.file}: ${e.error}`).join("\n")}`);
+      } else if (expectedErrors && expectedErrors.length > 0) {
+        throw new Error(
+          "Errors were expected while bundling:\n" + expectedErrors.map(e => `${e.file}: ${e.error}`).join("\n"),
+        );
       }
 
       // Build in-memory file cache from BuildArtifact outputs
@@ -736,36 +798,7 @@ function expectBundled(
         },
         warnings: {} as Record<string, ErrorMeta[]>,
         options: opts,
-        captureFile: (file: string, fnName = "capture") => {
-          const fileContents = readFile(file);
-          let i = 0;
-          const length = fileContents.length;
-          const matches = [];
-          while (i < length) {
-            i = fileContents.indexOf(fnName, i);
-            if (i === -1) break;
-            const start = i;
-            let depth = 0;
-            while (i < length) {
-              const char = fileContents[i];
-              if (char === "(") depth++;
-              else if (char === ")") {
-                depth--;
-                if (depth === 0) break;
-              }
-              i++;
-            }
-            if (depth !== 0) {
-              throw new Error(`Could not find closing paren for ${fnName} call in ${file}`);
-            }
-            matches.push(fileContents.slice(start + fnName.length + 1, i));
-            i++;
-          }
-          if (matches.length === 0) {
-            throw new Error(`No ${fnName} calls found in ${file}`);
-          }
-          return matches;
-        },
+        captureFile: (file: string, fnName = "capture") => extractCaptures(readFile(file), file, fnName),
       } satisfies BundlerTestBundleAPI;
 
       if (onAfterBundle) {
@@ -1517,42 +1550,7 @@ for (const [key, blob] of build.outputs) {
       },
       warnings: warningReference,
       options: opts,
-      captureFile: (file, fnName = "capture") => {
-        const fileContents = readFile(file);
-        let i = 0;
-        const length = fileContents.length;
-        const matches = [];
-        while (i < length) {
-          i = fileContents.indexOf(fnName, i);
-          if (i === -1) {
-            break;
-          }
-          const start = i;
-          let depth = 0;
-          while (i < length) {
-            const char = fileContents[i];
-            if (char === "(") {
-              depth++;
-            } else if (char === ")") {
-              depth--;
-              if (depth === 0) {
-                break;
-              }
-            }
-            i++;
-          }
-          if (depth !== 0) {
-            throw new Error(`Could not find closing paren for ${fnName} call in ${file}`);
-          }
-          matches.push(fileContents.slice(start + fnName.length + 1, i));
-          i++;
-        }
-
-        if (matches.length === 0) {
-          throw new Error(`No ${fnName} calls found in ${file}`);
-        }
-        return matches;
-      },
+      captureFile: (file, fnName = "capture") => extractCaptures(readFile(file), file, fnName),
     } satisfies BundlerTestBundleAPI;
 
     // DCE keep scan

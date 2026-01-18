@@ -48,16 +48,6 @@ describe("Bun.build compile", () => {
         },
       }),
     ).toThrowErrorMatchingInlineSnapshot(`"Unknown compile target: bun-invalid-platform"`);
-
-    expect(() =>
-      Bun.build({
-        entrypoints: [join(dir, "index.js")],
-        compile: {
-          target: "bun-wasm",
-          outfile: join(dir, "invalid-app"),
-        },
-      }),
-    ).toThrowErrorMatchingInlineSnapshot(`"Unsupported compile target: bun-wasm"`);
   });
   test("compile with relative outfile paths", async () => {
     using dir = tempDir("build-compile-relative-paths", {

@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { cc, dlopen } from "bun:ffi";
 import { beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows } from "harness";
 import { join } from "path";
 
 import source from "./napi-app/ffi_addon_1.c" with { type: "file" };

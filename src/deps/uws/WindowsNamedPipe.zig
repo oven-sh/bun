@@ -75,6 +75,9 @@ fn onPipeClose(this: *WindowsNamedPipe) void {
     log("onPipeClose", .{});
     this.flags.disconnected = true;
     this.pipe = null;
+    // Clear the writer's source to prevent access to dangling pipe pointer
+    // This fixes a race condition where the writer tries to access the pipe after it's been freed
+    this.writer.source = null;
     this.onClose();
 }
 

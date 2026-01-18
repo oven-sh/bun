@@ -645,7 +645,7 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::
             }
         }
         if (catchScope.exception()) [[unlikely]] {
-            catchScope.clearException();
+            (void)catchScope.tryClearException();
         }
     }
 
@@ -654,7 +654,7 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::
         auto catchScope = DECLARE_CATCH_SCOPE(vm);
         functionName = JSC::getCalculatedDisplayName(vm, object);
         if (catchScope.exception()) [[unlikely]] {
-            catchScope.clearException();
+            (void)catchScope.tryClearException();
         }
     }
 

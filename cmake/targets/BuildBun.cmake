@@ -1310,6 +1310,9 @@ if(WIN32)
     wsock32 # ws2_32 required by TransmitFile aka sendfile on windows
     delayimp.lib
   )
+  # Required for static ICU linkage - without this, ICU headers expect DLL linkage
+  # which causes ABI mismatch and crashes (STATUS_STACK_BUFFER_OVERRUN)
+  target_compile_definitions(${bun} PRIVATE U_STATIC_IMPLEMENTATION)
 endif()
 
 # --- Packaging ---

@@ -372,19 +372,6 @@ fn fetchImpl(
     }
     url_proxy_buffer = url.href;
 
-    if (url_str.hasPrefixComptime("data:")) {
-        var url_slice = url_str.toUTF8WithoutRef(allocator);
-        defer url_slice.deinit();
-
-        var data_url = DataURL.parseWithoutCheck(url_slice.slice()) catch {
-            const err = globalThis.createError("failed to fetch the data URL", .{});
-            return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
-        };
-        data_url.url = url_str;
-
-        return dataURLResponse(data_url, globalThis, allocator);
-    }
-
     // **Start with the harmless ones.**
 
     // "method"

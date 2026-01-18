@@ -696,7 +696,10 @@ const SQL: typeof Bun.SQL = function SQL(
       };
       if (underlying && typeof adapter.onCopyChunk === "function") {
         adapter.onCopyChunk(underlying, handler as unknown as (chunk: any) => void);
+        return true;
       }
+
+      return false;
     };
     reserved_sql.onCopyEnd = (handler: () => void) => {
       const copyPool = pool as unknown as { getConnectionForQuery?: (connection: any) => any };
@@ -707,7 +710,10 @@ const SQL: typeof Bun.SQL = function SQL(
       const adapter = PostgresAdapter as unknown as { onCopyEnd?: (connection: any, handler: () => void) => void };
       if (underlying && typeof adapter.onCopyEnd === "function") {
         adapter.onCopyEnd(underlying, handler);
+        return true;
       }
+
+      return false;
     };
 
     function onTransactionFinished(transaction_promise: Promise<any>) {
@@ -1237,8 +1243,8 @@ const SQL: typeof Bun.SQL = function SQL(
     unsafe: (sqlText: string, values?: unknown[]) => Promise<any>;
     release: () => Promise<void>;
     onCopyStart?: (handler: () => void) => void;
-    onCopyChunk?: (handler: (chunk: any) => void) => void;
-    onCopyEnd?: (handler: () => void) => void;
+    onCopyChunk?: (handler: (chunk: string | ArrayBuffer | Uint8Array) => void) => boolean | void;
+    onCopyEnd?: (handler: () => void) => boolean | void;
     copySendData: (data: string | Uint8Array) => void;
     copyDone: () => void;
     copyFail?: (message?: string) => void;
@@ -1443,11 +1449,10 @@ const SQL: typeof Bun.SQL = function SQL(
               // header once
               sendBinaryHeader();
               const payload = encodeBinaryRow(item, types);
-              reserved.copySendData(payload);
-              bytesSent += payload.byteLength;
-              chunksSent += 1;
-              notifyProgress();
-              await awaitWritableWithFallback(reserved, pool);
+              const counters = { bytesSent, chunksSent };
+              await sendChunkedData(payload, reserved, pool, resolvedLimits, counters, notifyProgress);
+              bytesSent = counters.bytesSent;
+              chunksSent = counters.chunksSent;
             } else {
               // text/csv: treat as row[]
               await addToBatch(serializeRow(item));
@@ -1458,7 +1463,12 @@ const SQL: typeof Bun.SQL = function SQL(
           } else if (item && (item as any).byteLength !== undefined) {
             // raw bytes (Uint8Array or ArrayBuffer) - flush and send directly
             await flushBatch();
-            const u8raw = item instanceof Uint8Array ? item : new Uint8Array(item as ArrayBuffer);
+            const u8raw =
+              item instanceof Uint8Array
+                ? item
+                : item instanceof ArrayBuffer
+                  ? new Uint8Array(item)
+                  : new Uint8Array(item as ArrayBuffer);
             // For binary format, send raw bytes as-is; for text/csv, sanitize NUL bytes if requested
             const src = fmt === "binary" ? u8raw : sanitizeBytes(u8raw);
             const counters = { bytesSent, chunksSent };
@@ -1486,11 +1496,10 @@ const SQL: typeof Bun.SQL = function SQL(
               await flushBatch();
               sendBinaryHeader();
               const payload = encodeBinaryRow(item, types);
-              reserved.copySendData(payload);
-              bytesSent += payload.byteLength;
-              chunksSent += 1;
-              notifyProgress();
-              await awaitWritableWithFallback(reserved, pool);
+              const counters = { bytesSent, chunksSent };
+              await sendChunkedData(payload, reserved, pool, resolvedLimits, counters, notifyProgress);
+              bytesSent = counters.bytesSent;
+              chunksSent = counters.chunksSent;
             } else {
               await addToBatch(serializeRow(item));
             }
@@ -1499,7 +1508,12 @@ const SQL: typeof Bun.SQL = function SQL(
           } else if (item && (item as any).byteLength !== undefined) {
             // raw bytes (Uint8Array or ArrayBuffer) - flush and send directly
             await flushBatch();
-            const u8raw = item instanceof Uint8Array ? item : new Uint8Array(item as ArrayBuffer);
+            const u8raw =
+              item instanceof Uint8Array
+                ? item
+                : item instanceof ArrayBuffer
+                  ? new Uint8Array(item)
+                  : new Uint8Array(item as ArrayBuffer);
             const src = fmt === "binary" ? u8raw : sanitizeBytes(u8raw);
             const counters = { bytesSent, chunksSent };
             await sendChunkedData(src, reserved, pool, resolvedLimits, counters, notifyProgress);
@@ -1763,52 +1777,54 @@ const SQL: typeof Bun.SQL = function SQL(
             chunkResolve = r;
           });
 
-        const hasCopyChunkHandler = typeof reserved.onCopyChunk === "function";
-        const hasCopyEndHandler = typeof reserved.onCopyEnd === "function";
+        let hasCopyChunkHandler = false;
+        let hasCopyEndHandler = false;
 
-        // Register streaming handlers
-        if (hasCopyChunkHandler) {
-          reserved.onCopyChunk((chunk: any) => {
-            chunks.push(chunk);
-            if (chunkResolve) {
-              chunkResolve();
-              chunkResolve = null;
-            }
-            try {
-              // Update progress
-              if (chunk instanceof ArrayBuffer) {
-                bytesReceived += chunk.byteLength;
-              } else if (typeof chunk === "string") {
-                bytesReceived += (Buffer as any).byteLength
-                  ? (Buffer as any).byteLength(chunk, "utf8")
-                  : new TextEncoder().encode(chunk).byteLength;
-              } else if (chunk?.byteLength != null) {
-                bytesReceived += chunk.byteLength;
+        // Register streaming handlers (wrapper functions always exist; detect real registration via return value)
+        if (typeof reserved.onCopyChunk === "function") {
+          hasCopyChunkHandler =
+            reserved.onCopyChunk((chunk: any) => {
+              chunks.push(chunk);
+              if (chunkResolve) {
+                chunkResolve();
+                chunkResolve = null;
               }
-              chunksReceived += 1;
-              notifyProgress();
-              // Guardrail: maxBytes
-              const toMax = resolveCopyToMaxBytes(queryOrOptions, pool);
-              if (toMax > 0 && bytesReceived > toMax) {
-                rejectErr = new Error("copyTo: maxBytes exceeded");
-                done = true;
-                // Immediately release connection to halt incoming data
-                try {
-                  reserved.release();
-                } catch {}
-              }
-            } catch {}
-          });
+              try {
+                // Update progress
+                if (chunk instanceof ArrayBuffer) {
+                  bytesReceived += chunk.byteLength;
+                } else if (typeof chunk === "string") {
+                  bytesReceived += (Buffer as any).byteLength
+                    ? (Buffer as any).byteLength(chunk, "utf8")
+                    : new TextEncoder().encode(chunk).byteLength;
+                } else if (chunk?.byteLength != null) {
+                  bytesReceived += chunk.byteLength;
+                }
+                chunksReceived += 1;
+                notifyProgress();
+                // Guardrail: maxBytes
+                const toMax = resolveCopyToMaxBytes(queryOrOptions, pool);
+                if (toMax > 0 && bytesReceived > toMax) {
+                  rejectErr = new Error("copyTo: maxBytes exceeded");
+                  done = true;
+                  // Immediately release connection to halt incoming data
+                  try {
+                    reserved.release();
+                  } catch {}
+                }
+              } catch {}
+            }) === true;
         }
 
-        if (hasCopyEndHandler) {
-          reserved.onCopyEnd(() => {
-            done = true;
-            if (chunkResolve) {
-              chunkResolve();
-              chunkResolve = null;
-            }
-          });
+        if (typeof reserved.onCopyEnd === "function") {
+          hasCopyEndHandler =
+            reserved.onCopyEnd(() => {
+              done = true;
+              if (chunkResolve) {
+                chunkResolve();
+                chunkResolve = null;
+              }
+            }) === true;
         }
 
         try {

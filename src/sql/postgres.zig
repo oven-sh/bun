@@ -114,7 +114,10 @@ fn __pg_setCopyTimeout(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFr
     // 0 means disabled. Clamp to u32 max.
     var ms_u32: u32 = 0;
     if (std.math.isFinite(ms_num) and ms_num > 0) {
-        ms_u32 = @intCast(@min(@as(u64, @intFromFloat(ms_num)), @as(u64, std.math.maxInt(u32))));
+        const max_u32_f64: f64 = @floatFromInt(std.math.maxInt(u32));
+        const clamped_f64: f64 = @min(ms_num, max_u32_f64);
+        const ms_u64: u64 = @intFromFloat(clamped_f64);
+        ms_u32 = @intCast(ms_u64);
     }
 
     connection.copy_timeout_ms = ms_u32;

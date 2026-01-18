@@ -159,8 +159,10 @@ pub fn setCopyTimeout(this: *PostgresSQLConnection, globalObject: *jsc.JSGlobalO
     const n = try args[0].toNumber(globalObject);
     var ms: u32 = 0;
     if (std.math.isFinite(n) and n > 0) {
-        const n_u64: u64 = @intFromFloat(n);
-        ms = @intCast(@min(n_u64, @as(u64, std.math.maxInt(u32))));
+        const cap_f64: f64 = @floatFromInt(std.math.maxInt(u32));
+        const clamped: f64 = @min(n, cap_f64);
+        const n_u64: u64 = @intFromFloat(clamped);
+        ms = @intCast(n_u64);
     }
     this.copy_timeout_ms = ms;
     return .js_undefined;
@@ -187,7 +189,9 @@ pub fn setMaxCopyBufferSize(this: *PostgresSQLConnection, globalObject: *jsc.JSG
     if (!std.math.isFinite(n) or n <= 0) {
         bytes = 0;
     } else {
-        const n_u64: u64 = @intFromFloat(n);
+        const cap_f64: f64 = @floatFromInt(@as(u64, MAX_COPY_BUFFER_SIZE));
+        const clamped: f64 = @min(n, cap_f64);
+        const n_u64: u64 = @intFromFloat(clamped);
         bytes = @intCast(@min(n_u64, @as(u64, MAX_COPY_BUFFER_SIZE)));
     }
 
@@ -207,7 +211,9 @@ pub fn setMaxCopyBufferSizeUnsafe(this: *PostgresSQLConnection, globalObject: *j
 
     var bytes: usize = 0;
     if (std.math.isFinite(n) and n > 0) {
-        const n_u64: u64 = @intFromFloat(n);
+        const cap_f64: f64 = @floatFromInt(@as(u64, MAX_COPY_BUFFER_SIZE_HARD_CAP));
+        const clamped: f64 = @min(n, cap_f64);
+        const n_u64: u64 = @intFromFloat(clamped);
         bytes = @intCast(@min(n_u64, @as(u64, MAX_COPY_BUFFER_SIZE_HARD_CAP)));
     }
 

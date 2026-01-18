@@ -157,7 +157,8 @@ fetch('http://localhost:${server.port}', {
     stdout: "pipe",
     stderr: "pipe",
   });
-  await installProc.exited;
+  const installExitCode = await installProc.exited;
+  expect(installExitCode).toBe(0);
 
   // Run the client
   const proc = Bun.spawn({
@@ -259,7 +260,8 @@ fetch('http://localhost:${server.port}', {
     stdout: "pipe",
     stderr: "pipe",
   });
-  await installProc.exited;
+  const installExitCode = await installProc.exited;
+  expect(installExitCode).toBe(0);
 
   // Run the client
   const proc = Bun.spawn({

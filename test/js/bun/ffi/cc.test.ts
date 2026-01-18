@@ -18,7 +18,8 @@ it.todoIf(isWindows || isASAN)("can run a .c file", () => {
   expect(result.exitCode).toBe(0);
 });
 
-describe("given an add(a, b) function", () => {
+// TinyCC internal error handling uses setjmp/longjmp which conflicts with ASan
+describe.skipIf(isASAN)("given an add(a, b) function", () => {
   const source = /* c */ `
       int add(int a, int b) {
         return a + b;

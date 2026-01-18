@@ -670,7 +670,7 @@ pub const StandaloneModuleGraph = struct {
                                 if (!tried_changing_abs_dir) {
                                     tried_changing_abs_dir = true;
                                     const zname_z = bun.strings.concat(bun.default_allocator, &.{
-                                        bun.fs.FileSystem.RealFS.tmpdirPath(),
+                                        bun.fs.FileSystem.tmpdirPath(),
                                         std.fs.path.sep_str,
                                         zname,
                                         &.{0},

@@ -76,7 +76,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
 
         main: MainFile = .{},
 
-        tombstones: bun.StringHashMapUnmanaged(*bun.fs.FileSystem.RealFS.EntriesOption) = .{},
+        tombstones: bun.StringHashMapUnmanaged(*bun.fs.FileSystem.EntriesOption) = .{},
 
         pub fn init(ctx: *Ctx, fs: *bun.fs.FileSystem, verbose: bool, clear_screen_flag: bool) *Watcher {
             const reloader = bun.handleOom(bun.default_allocator.create(Reloader));
@@ -296,11 +296,11 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             reloader.getContext().start() catch @panic("Failed to start File Watcher");
         }
 
-        fn putTombstone(this: *@This(), key: []const u8, value: *bun.fs.FileSystem.RealFS.EntriesOption) void {
+        fn putTombstone(this: *@This(), key: []const u8, value: *bun.fs.FileSystem.EntriesOption) void {
             this.tombstones.put(bun.default_allocator, key, value) catch unreachable;
         }
 
-        fn getTombstone(this: *@This(), key: []const u8) ?*bun.fs.FileSystem.RealFS.EntriesOption {
+        fn getTombstone(this: *@This(), key: []const u8) ?*bun.fs.FileSystem.EntriesOption {
             return this.tombstones.get(key);
         }
 
@@ -346,7 +346,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             defer Output.flush();
 
             const fs: *Fs.FileSystem = &Fs.FileSystem.instance;
-            const rfs: *Fs.FileSystem.RealFS = &fs.fs;
+            const rfs: *Fs.FileSystem = fs;
             var _on_file_update_path_buf: bun.PathBuffer = undefined;
             var current_task = Task.initEmpty(this);
             defer current_task.enqueue();
@@ -407,7 +407,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                             continue;
                         }
                         var affected_buf: [128][]const u8 = undefined;
-                        var entries_option: ?*Fs.FileSystem.RealFS.EntriesOption = null;
+                        var entries_option: ?*Fs.FileSystem.EntriesOption = null;
 
                         const affected = brk: {
                             if (comptime Environment.isMac) {

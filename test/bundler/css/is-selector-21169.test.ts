@@ -2,7 +2,6 @@ import { itBundled } from "../expectBundled";
 
 describe("css", () => {
   itBundled("css/is-selector", {
-    virtual: true,
     files: {
       "/index.css": /* css */ `
         .foo:is(input:checked) {
@@ -13,7 +12,7 @@ describe("css", () => {
     outfile: "/out.css",
     onAfterBundle(api) {
       api.expectFile("/out.css").toMatchInlineSnapshot(`
-        "/* ../../index.css */
+        "/* index.css */
         .foo:-webkit-any(input:checked) {
           color: red;
         }

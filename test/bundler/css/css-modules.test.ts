@@ -2,7 +2,6 @@ import { itBundled } from "../expectBundled";
 
 describe("css", () => {
   itBundled("css-module/GlobalPseudoFunction", {
-    virtual: true,
     files: {
       "/index.module.css": /* css */ `
       :global(.foo) {
@@ -13,7 +12,7 @@ describe("css", () => {
     outfile: "/out.css",
     onAfterBundle(api) {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-      /* ../../index.module.css */
+      /* index.module.css */
       .foo {
         color: red;
       }

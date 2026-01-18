@@ -2,7 +2,6 @@ import { itBundled } from "../expectBundled";
 
 describe("css", () => {
   itBundled("css/view-transition-class-selector-23600", {
-    virtual: true,
     files: {
       "/index.css": /* css */ `
         @keyframes slide-out {
@@ -37,7 +36,7 @@ describe("css", () => {
     outfile: "/out.css",
     onAfterBundle(api) {
       api.expectFile("/out.css").toMatchInlineSnapshot(`
-        "/* ../../index.css */
+        "/* index.css */
         @keyframes slide-out {
           from {
             opacity: 1;

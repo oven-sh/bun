@@ -5,7 +5,6 @@ let i = 0;
 const testname = () => `test-${i++}`;
 describe("relative_color_out_of_gamut", () => {
   itBundled(testname(), {
-    virtual: true,
     files: {
       "/a.css": /* css */ `
 h1 {
@@ -17,7 +16,7 @@ h1 {
 
     onAfterBundle(api) {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-/* ../../a.css */
+/* a.css */
 h1 {
     color: #00f942;
 }
@@ -26,7 +25,6 @@ h1 {
   });
 
   itBundled(testname(), {
-    virtual: true,
     files: {
       "/a.css": /* css */ `
   h1 {
@@ -38,7 +36,7 @@ h1 {
 
     onAfterBundle(api) {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* ../../a.css */
+  /* a.css */
   h1 {
       color: rgb(from lab(100 104.3 -50.9) r g b);
   }
@@ -47,7 +45,6 @@ h1 {
   });
 
   itBundled(testname(), {
-    virtual: true,
     files: {
       "/a.css": /* css */ `
   h1 {
@@ -59,7 +56,7 @@ h1 {
 
     onAfterBundle(api) {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* ../../a.css */
+  /* a.css */
   h1 {
       color: rgb(from lab(0 104.3 -50.9) r g b);
   }
@@ -68,7 +65,6 @@ h1 {
   });
 
   itBundled(testname(), {
-    virtual: true,
     files: {
       "/a.css": /* css */ `
   h1 {
@@ -80,7 +76,7 @@ h1 {
 
     onAfterBundle(api) {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* ../../a.css */
+  /* a.css */
   h1 {
       color: rgb(from lch(100 116 334) r g b);
   }
@@ -89,7 +85,6 @@ h1 {
   });
 
   itBundled(testname(), {
-    virtual: true,
     files: {
       "/a.css": /* css */ `
   h1 {
@@ -101,7 +96,7 @@ h1 {
 
     onAfterBundle(api) {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* ../../a.css */
+  /* a.css */
   h1 {
       color: rgb(from lch(0 116 334) r g b);
   }
@@ -110,7 +105,6 @@ h1 {
   });
 
   itBundled(testname(), {
-    virtual: true,
     files: {
       "/a.css": /* css */ `
   h1 {
@@ -122,7 +116,7 @@ h1 {
 
     onAfterBundle(api) {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* ../../a.css */
+  /* a.css */
   h1 {
       color: rgb(from oklab(1 .365 -.16) r g b);
   }
@@ -131,7 +125,6 @@ h1 {
   });
 
   itBundled(testname(), {
-    virtual: true,
     files: {
       "/a.css": /* css */ `
   h1 {
@@ -143,7 +136,7 @@ h1 {
 
     onAfterBundle(api) {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* ../../a.css */
+  /* a.css */
   h1 {
       color: rgb(from oklab(0 .365 -.16) r g b);
   }
@@ -152,7 +145,6 @@ h1 {
   });
 
   itBundled(testname(), {
-    virtual: true,
     files: {
       "/a.css": /* css */ `
   h1 {
@@ -164,7 +156,7 @@ h1 {
 
     onAfterBundle(api) {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* ../../a.css */
+  /* a.css */
   h1 {
       color: rgb(from oklch(1 .399 336.3) r g b);
   }
@@ -173,7 +165,6 @@ h1 {
   });
 
   itBundled(testname(), {
-    virtual: true,
     files: {
       "/a.css": /* css */ `
   h1 {
@@ -185,7 +176,7 @@ h1 {
 
     onAfterBundle(api) {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* ../../a.css */
+  /* a.css */
   h1 {
       color: rgb(from oklch(0 .399 336.3) r g b);
   }
@@ -194,7 +185,6 @@ h1 {
   });
 
   itBundled(testname(), {
-    virtual: true,
     files: {
       "/a.css": /* css */ `
   h1 {
@@ -206,7 +196,7 @@ h1 {
 
     onAfterBundle(api) {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* ../../a.css */
+  /* a.css */
   h1 {
       color: #00f942;
   }
@@ -215,7 +205,6 @@ h1 {
   });
 
   itBundled(testname(), {
-    virtual: true,
     files: {
       "/a.css": /* css */ `
   h1 {
@@ -227,7 +216,7 @@ h1 {
 
     onAfterBundle(api) {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* ../../a.css */
+  /* a.css */
   h1 {
       color: hsl(from lab(100 104.3 -50.9) h s l);
   }
@@ -236,7 +225,6 @@ h1 {
   });
 
   itBundled(testname(), {
-    virtual: true,
     files: {
       "/a.css": /* css */ `
   h1 {
@@ -248,7 +236,7 @@ h1 {
 
     onAfterBundle(api) {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* ../../a.css */
+  /* a.css */
   h1 {
       color: hsl(from lab(0 104.3 -50.9) h s l);
   }
@@ -257,7 +245,6 @@ h1 {
   });
 
   itBundled(testname(), {
-    virtual: true,
     files: {
       "/a.css": /* css */ `
   h1 {
@@ -269,7 +256,7 @@ h1 {
 
     onAfterBundle(api) {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* ../../a.css */
+  /* a.css */
   h1 {
       color: hsl(from lch(100 116 334) h s l);
   }
@@ -278,7 +265,6 @@ h1 {
   });
 
   itBundled(testname(), {
-    virtual: true,
     files: {
       "/a.css": /* css */ `
   h1 {
@@ -290,7 +276,7 @@ h1 {
 
     onAfterBundle(api) {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* ../../a.css */
+  /* a.css */
   h1 {
       color: hsl(from lch(0 116 334) h s l);
   }
@@ -299,7 +285,6 @@ h1 {
   });
 
   itBundled(testname(), {
-    virtual: true,
     files: {
       "/a.css": /* css */ `
   h1 {
@@ -311,7 +296,7 @@ h1 {
 
     onAfterBundle(api) {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* ../../a.css */
+  /* a.css */
   h1 {
       color: hsl(from oklab(1 .365 -.16) h s l);
   }
@@ -320,7 +305,6 @@ h1 {
   });
 
   itBundled(testname(), {
-    virtual: true,
     files: {
       "/a.css": /* css */ `
   h1 {
@@ -332,7 +316,7 @@ h1 {
 
     onAfterBundle(api) {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* ../../a.css */
+  /* a.css */
   h1 {
       color: hsl(from oklab(0 .365 -.16) h s l);
   }
@@ -341,7 +325,6 @@ h1 {
   });
 
   itBundled(testname(), {
-    virtual: true,
     files: {
       "/a.css": /* css */ `
   h1 {
@@ -353,7 +336,7 @@ h1 {
 
     onAfterBundle(api) {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* ../../a.css */
+  /* a.css */
   h1 {
       color: hsl(from oklch(1 .399 336.3) h s l);
   }
@@ -362,7 +345,6 @@ h1 {
   });
 
   itBundled(testname(), {
-    virtual: true,
     files: {
       "/a.css": /* css */ `
   h1 {
@@ -374,7 +356,7 @@ h1 {
 
     onAfterBundle(api) {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* ../../a.css */
+  /* a.css */
   h1 {
       color: hsl(from oklch(0 .399 336.3) h s l);
   }
@@ -383,7 +365,6 @@ h1 {
   });
 
   itBundled(testname(), {
-    virtual: true,
     files: {
       "/a.css": /* css */ `
   h1 {
@@ -395,7 +376,7 @@ h1 {
 
     onAfterBundle(api) {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* ../../a.css */
+  /* a.css */
   h1 {
       color: #00f942;
   }
@@ -404,7 +385,6 @@ h1 {
   });
 
   itBundled(testname(), {
-    virtual: true,
     files: {
       "/a.css": /* css */ `
   h1 {
@@ -416,7 +396,7 @@ h1 {
 
     onAfterBundle(api) {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* ../../a.css */
+  /* a.css */
   h1 {
       color: hwb(from lab(100 104.3 -50.9) h w b);
   }
@@ -425,7 +405,6 @@ h1 {
   });
 
   itBundled(testname(), {
-    virtual: true,
     files: {
       "/a.css": /* css */ `
   h1 {
@@ -437,7 +416,7 @@ h1 {
 
     onAfterBundle(api) {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* ../../a.css */
+  /* a.css */
   h1 {
       color: hwb(from lab(0 104.3 -50.9) h w b);
   }
@@ -446,7 +425,6 @@ h1 {
   });
 
   itBundled(testname(), {
-    virtual: true,
     files: {
       "/a.css": /* css */ `
   h1 {
@@ -458,7 +436,7 @@ h1 {
 
     onAfterBundle(api) {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* ../../a.css */
+  /* a.css */
   h1 {
       color: hwb(from lch(100 116 334) h w b);
   }
@@ -467,7 +445,6 @@ h1 {
   });
 
   itBundled(testname(), {
-    virtual: true,
     files: {
       "/a.css": /* css */ `
   h1 {
@@ -479,7 +456,7 @@ h1 {
 
     onAfterBundle(api) {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* ../../a.css */
+  /* a.css */
   h1 {
       color: hwb(from lch(0 116 334) h w b);
   }
@@ -488,7 +465,6 @@ h1 {
   });
 
   itBundled(testname(), {
-    virtual: true,
     files: {
       "/a.css": /* css */ `
   h1 {
@@ -500,7 +476,7 @@ h1 {
 
     onAfterBundle(api) {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* ../../a.css */
+  /* a.css */
   h1 {
       color: hwb(from oklab(1 .365 -.16) h w b);
   }
@@ -509,7 +485,6 @@ h1 {
   });
 
   itBundled(testname(), {
-    virtual: true,
     files: {
       "/a.css": /* css */ `
   h1 {
@@ -521,7 +496,7 @@ h1 {
 
     onAfterBundle(api) {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* ../../a.css */
+  /* a.css */
   h1 {
       color: hwb(from oklab(0 .365 -.16) h w b);
   }
@@ -530,7 +505,6 @@ h1 {
   });
 
   itBundled(testname(), {
-    virtual: true,
     files: {
       "/a.css": /* css */ `
   h1 {
@@ -542,7 +516,7 @@ h1 {
 
     onAfterBundle(api) {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* ../../a.css */
+  /* a.css */
   h1 {
       color: hwb(from oklch(1 .399 336.3) h w b);
   }
@@ -551,7 +525,6 @@ h1 {
   });
 
   itBundled(testname(), {
-    virtual: true,
     files: {
       "/a.css": /* css */ `
   h1 {
@@ -563,7 +536,7 @@ h1 {
 
     onAfterBundle(api) {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-  /* ../../a.css */
+  /* a.css */
   h1 {
       color: hwb(from oklch(0 .399 336.3) h w b);
   }

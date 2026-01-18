@@ -28,6 +28,7 @@
     macro("bun:test"_s, BunTest) \
     macro("bun:jsc"_s, BunJSC) \
     macro("bun:app"_s, BunApp) \
+    macro("bun:git"_s, BunGit) \
     macro("node:buffer"_s, NodeBuffer) \
     macro("node:constants"_s, NodeConstants) \
     macro("node:string_decoder"_s, NodeStringDecoder) \

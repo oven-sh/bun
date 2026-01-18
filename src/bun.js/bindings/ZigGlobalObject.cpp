@@ -125,6 +125,7 @@
 #include "JSSocketAddressDTO.h"
 #include "JSSQLStatement.h"
 #include "JSStringDecoder.h"
+#include "JSGit.h"
 #include "JSTextEncoder.h"
 #include "JSTextEncoderStream.h"
 #include "JSTextDecoderStream.h"
@@ -2406,6 +2407,55 @@ void GlobalObject::finishCreation(VM& vm)
             auto* structure = JSStringDecoder::createStructure(init.vm, init.global, prototype);
             auto* constructor = JSStringDecoderConstructor::create(
                 init.vm, init.global, JSStringDecoderConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
+            init.setPrototype(prototype);
+            init.setStructure(structure);
+            init.setConstructor(constructor);
+        });
+
+    // Git class structures
+    m_JSGitRepositoryClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            auto* prototype = Bun::JSGitRepositoryPrototype::create(
+                init.vm, init.global, Bun::JSGitRepositoryPrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
+            auto* structure = Bun::JSGitRepository::createStructure(init.vm, init.global, prototype);
+            auto* constructor = Bun::JSGitRepositoryConstructor::create(
+                init.vm, init.global, Bun::JSGitRepositoryConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
+            init.setPrototype(prototype);
+            init.setStructure(structure);
+            init.setConstructor(constructor);
+        });
+
+    m_JSGitCommitClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            auto* prototype = Bun::JSGitCommitPrototype::create(
+                init.vm, init.global, Bun::JSGitCommitPrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
+            auto* structure = Bun::JSGitCommit::createStructure(init.vm, init.global, prototype);
+            auto* constructor = Bun::JSGitCommitConstructor::create(
+                init.vm, init.global, Bun::JSGitCommitConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
+            init.setPrototype(prototype);
+            init.setStructure(structure);
+            init.setConstructor(constructor);
+        });
+
+    m_JSGitBranchClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            auto* prototype = Bun::JSGitBranchPrototype::create(
+                init.vm, init.global, Bun::JSGitBranchPrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
+            auto* structure = Bun::JSGitBranch::createStructure(init.vm, init.global, prototype);
+            auto* constructor = Bun::JSGitBranchConstructor::create(
+                init.vm, init.global, Bun::JSGitBranchConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
+            init.setPrototype(prototype);
+            init.setStructure(structure);
+            init.setConstructor(constructor);
+        });
+
+    m_JSGitSignatureClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            auto* prototype = Bun::JSGitSignaturePrototype::create(
+                init.vm, init.global, Bun::JSGitSignaturePrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
+            auto* structure = Bun::JSGitSignature::createStructure(init.vm, init.global, prototype);
+            auto* constructor = Bun::JSGitSignatureConstructor::create(
+                init.vm, init.global, Bun::JSGitSignatureConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
             init.setPrototype(prototype);
             init.setStructure(structure);
             init.setConstructor(constructor);

@@ -54,6 +54,7 @@ set(BUN_DEPENDENCIES
   Cares
   Highway
   LibDeflate
+  Libgit2
   LolHtml
   Lshpack
   Mimalloc

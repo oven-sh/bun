@@ -1,0 +1,23 @@
+register_cmake_command(
+  TARGET
+    libgit2
+  TARGETS
+    libgit2package
+  LIBRARIES
+    git2
+  ARGS
+    -DBUILD_SHARED_LIBS=OFF
+    -DBUILD_TESTS=OFF
+    -DBUILD_CLI=OFF
+    -DUSE_SSH=OFF
+    -DUSE_HTTPS=OFF
+    -DUSE_NTLMCLIENT=OFF
+    -DUSE_GSSAPI=OFF
+    -DUSE_SHA1=Builtin
+    -DUSE_SHA256=Builtin
+    -DUSE_BUNDLED_ZLIB=ON
+    -DREGEX_BACKEND=builtin
+    -DUSE_HTTP_PARSER=builtin
+  INCLUDES
+    include
+)

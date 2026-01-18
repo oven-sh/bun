@@ -263,6 +263,22 @@ public:
     JSC::JSObject* NodeVMSyntheticModule() const { return m_NodeVMSyntheticModuleClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue NodeVMSyntheticModulePrototype() const { return m_NodeVMSyntheticModuleClassStructure.prototypeInitializedOnMainThread(this); }
 
+    JSC::Structure* JSGitRepositoryStructure() const { return m_JSGitRepositoryClassStructure.getInitializedOnMainThread(this); }
+    JSC::JSObject* JSGitRepositoryConstructor() const { return m_JSGitRepositoryClassStructure.constructorInitializedOnMainThread(this); }
+    JSC::JSValue JSGitRepositoryPrototype() const { return m_JSGitRepositoryClassStructure.prototypeInitializedOnMainThread(this); }
+
+    JSC::Structure* JSGitCommitStructure() const { return m_JSGitCommitClassStructure.getInitializedOnMainThread(this); }
+    JSC::JSObject* JSGitCommitConstructor() const { return m_JSGitCommitClassStructure.constructorInitializedOnMainThread(this); }
+    JSC::JSValue JSGitCommitPrototype() const { return m_JSGitCommitClassStructure.prototypeInitializedOnMainThread(this); }
+
+    JSC::Structure* JSGitBranchStructure() const { return m_JSGitBranchClassStructure.getInitializedOnMainThread(this); }
+    JSC::JSObject* JSGitBranchConstructor() const { return m_JSGitBranchClassStructure.constructorInitializedOnMainThread(this); }
+    JSC::JSValue JSGitBranchPrototype() const { return m_JSGitBranchClassStructure.prototypeInitializedOnMainThread(this); }
+
+    JSC::Structure* JSGitSignatureStructure() const { return m_JSGitSignatureClassStructure.getInitializedOnMainThread(this); }
+    JSC::JSObject* JSGitSignatureConstructor() const { return m_JSGitSignatureClassStructure.constructorInitializedOnMainThread(this); }
+    JSC::JSValue JSGitSignaturePrototype() const { return m_JSGitSignatureClassStructure.prototypeInitializedOnMainThread(this); }
+
     JSC::JSMap* readableStreamNativeMap() const { return m_lazyReadableStreamPrototypeMap.getInitializedOnMainThread(this); }
     JSC::JSMap* requireMap() const { return m_requireMap.getInitializedOnMainThread(this); }
     JSC::JSMap* esmRegistryMap() const { return m_esmRegistryMap.getInitializedOnMainThread(this); }
@@ -563,6 +579,11 @@ public:
     V(public, LazyClassStructure, m_JSConnectionsListClassStructure)                                         \
     V(public, LazyClassStructure, m_JSHTTPParserClassStructure)                                              \
                                                                                                              \
+    V(public, LazyClassStructure, m_JSGitRepositoryClassStructure)                                           \
+    V(public, LazyClassStructure, m_JSGitCommitClassStructure)                                               \
+    V(public, LazyClassStructure, m_JSGitBranchClassStructure)                                               \
+    V(public, LazyClassStructure, m_JSGitSignatureClassStructure)                                            \
+                                                                                                             \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_pendingVirtualModuleResultStructure)                 \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_performMicrotaskFunction)                           \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_nativeMicrotaskTrampoline)                          \
@@ -615,6 +636,7 @@ public:
     V(private, LazyPropertyOfGlobalObject<Structure>, m_NapiTypeTagStructure)                                \
                                                                                                              \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_JSSQLStatementStructure)                             \
+                                                                                                             \
     V(private, LazyPropertyOfGlobalObject<v8::shim::GlobalInternals>, m_V8GlobalInternals)                   \
                                                                                                              \
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_bunObject)                                             \

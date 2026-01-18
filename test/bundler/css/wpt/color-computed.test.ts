@@ -3,6 +3,7 @@ import { itBundled } from "../../expectBundled";
 
 const runTest = (input: string, expected: string) => {
   itBundled(input, {
+    virtual: true,
     files: {
       "/a.css": /* css */ `
 h1 {
@@ -14,7 +15,7 @@ h1 {
 
     onAfterBundle(api) {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-/* a.css */
+/* ../../a.css */
 h1 {
     color: ${expected};
 }

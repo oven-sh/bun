@@ -1339,6 +1339,10 @@ const SQL: typeof Bun.SQL = function SQL(
     copyFail?: (message?: string) => void;
     setCopyTimeout?: (ms: number) => void;
     setCopyStreamingMode?: (enable: boolean) => void;
+    getCopyDefaults?: () => {
+      from?: { maxChunkSize?: number; maxBytes?: number; timeout?: number };
+      to?: { stream?: boolean; maxBytes?: number; timeout?: number };
+    };
   };
 
   // High-level COPY FROM STDIN helper
@@ -2024,13 +2028,22 @@ const SQL: typeof Bun.SQL = function SQL(
             const format = typeof queryOrOptions === "string" ? undefined : queryOrOptions.format;
             const isBinary = format === "binary";
 
-            const toUint8Array = (value: any): Uint8Array | null => {
-              if (value instanceof ArrayBuffer) return new Uint8Array(value);
+            const toUint8Array = (value: unknown): Uint8Array | null => {
               if (value instanceof Uint8Array) return value;
-              if (value && value.buffer instanceof ArrayBuffer && typeof value.byteLength === "number") {
-                return new Uint8Array(value.buffer, value.byteOffset ?? 0, value.byteLength);
+              if (value instanceof ArrayBuffer) return new Uint8Array(value);
+              if (ArrayBuffer.isView(value)) {
+                const view = value as ArrayBufferView;
+                return new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
               }
               return null;
+            };
+
+            const toRealArrayBuffer = (u8: Uint8Array): ArrayBuffer => {
+              const buffer = u8.buffer;
+              if (buffer instanceof ArrayBuffer && u8.byteOffset === 0 && u8.byteLength === buffer.byteLength) {
+                return buffer;
+              }
+              return u8.slice().buffer;
             };
 
             const joinUint8Arrays = (parts: Uint8Array[]): ArrayBuffer => {
@@ -2042,7 +2055,7 @@ const SQL: typeof Bun.SQL = function SQL(
                 out.set(parts[i], offset);
                 offset += parts[i].byteLength;
               }
-              return out.buffer;
+              return toRealArrayBuffer(out);
             };
 
             if (isBinary) {
@@ -2070,7 +2083,7 @@ const SQL: typeof Bun.SQL = function SQL(
                     'COPY TO returned non-binary data while format is "binary"',
                   );
                 }
-                yield u8.buffer;
+                yield toRealArrayBuffer(u8);
               }
             } else {
               let payload = "";
@@ -2102,13 +2115,22 @@ const SQL: typeof Bun.SQL = function SQL(
             const format = typeof queryOrOptions === "string" ? undefined : queryOrOptions.format;
             const isBinary = format === "binary";
 
-            const toUint8Array = (value: any): Uint8Array | null => {
-              if (value instanceof ArrayBuffer) return new Uint8Array(value);
+            const toUint8Array = (value: unknown): Uint8Array | null => {
               if (value instanceof Uint8Array) return value;
-              if (value && value.buffer instanceof ArrayBuffer && typeof value.byteLength === "number") {
-                return new Uint8Array(value.buffer, value.byteOffset ?? 0, value.byteLength);
+              if (value instanceof ArrayBuffer) return new Uint8Array(value);
+              if (ArrayBuffer.isView(value)) {
+                const view = value as ArrayBufferView;
+                return new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
               }
               return null;
+            };
+
+            const toRealArrayBuffer = (u8: Uint8Array): ArrayBuffer => {
+              const buffer = u8.buffer;
+              if (buffer instanceof ArrayBuffer && u8.byteOffset === 0 && u8.byteLength === buffer.byteLength) {
+                return buffer;
+              }
+              return u8.slice().buffer;
             };
 
             const joinUint8Arrays = (parts: Uint8Array[]): ArrayBuffer => {
@@ -2120,7 +2142,7 @@ const SQL: typeof Bun.SQL = function SQL(
                 out.set(parts[i], offset);
                 offset += parts[i].byteLength;
               }
-              return out.buffer;
+              return toRealArrayBuffer(out);
             };
 
             if (isBinary) {
@@ -2148,7 +2170,7 @@ const SQL: typeof Bun.SQL = function SQL(
                     'COPY TO returned non-binary data while format is "binary"',
                   );
                 }
-                yield u8.buffer;
+                yield toRealArrayBuffer(u8);
               }
             } else {
               let payload = "";

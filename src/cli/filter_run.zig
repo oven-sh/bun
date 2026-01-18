@@ -458,9 +458,17 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
     var package_json_iter = try FilterArg.PackageFilterIterator.init(ctx.allocator, patterns.items, resolve_root);
     defer package_json_iter.deinit();
 
-    // Get list of packages that match the configuration
-    var scripts = std.array_list.Managed(ScriptConfig).init(ctx.allocator);
-    // var scripts = std.ArrayHashMap([]const u8, ScriptConfig).init(ctx.allocator);
+    // Collect all candidate packages first (for fuzzy scope matching)
+    const PackageCandidate = struct {
+        package_json_path: []const u8,
+        path: []const u8,
+        name: []const u8,
+        scripts: ?*bun.StringArrayHashMap([]const u8),
+        dependencies: DependencyMap,
+    };
+    var candidates = std.array_list.Managed(PackageCandidate).init(ctx.allocator);
+
+    // First pass: collect all packages and check for matches (populates fuzzy scope candidates)
     while (try package_json_iter.next()) |package_json_path| {
         const dirpath = std.fs.path.dirname(package_json_path) orelse Global.crash();
         const path = bun.strings.withoutTrailingSlash(dirpath);
@@ -475,17 +483,32 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
             continue;
         };
 
-        const pkgscripts = pkgjson.scripts orelse continue;
+        // Call matches to populate fuzzy scope candidates for all packages
+        _ = filter_instance.matches(path, pkgjson.name);
 
-        if (!filter_instance.matches(path, pkgjson.name))
+        try candidates.append(.{
+            .package_json_path = try ctx.allocator.dupe(u8, package_json_path),
+            .path = try ctx.allocator.dupe(u8, path),
+            .name = pkgjson.name,
+            .scripts = pkgjson.scripts,
+            .dependencies = pkgjson.dependencies,
+        });
+    }
+
+    // Second pass: use matchesWithFuzzyScope to include fuzzy scope matches
+    var scripts = std.array_list.Managed(ScriptConfig).init(ctx.allocator);
+    for (candidates.items) |candidate| {
+        const pkgscripts = candidate.scripts orelse continue;
+
+        if (!filter_instance.matchesWithFuzzyScope(candidate.path, candidate.name))
             continue;
 
-        const PATH = try RunCommand.configurePathForRunWithPackageJsonDir(ctx, dirpath, &this_transpiler, null, dirpath, ctx.debug.run_in_bun);
+        const PATH = try RunCommand.configurePathForRunWithPackageJsonDir(ctx, std.fs.path.dirname(candidate.package_json_path) orelse "", &this_transpiler, null, std.fs.path.dirname(candidate.package_json_path) orelse "", ctx.debug.run_in_bun);
 
         for (&[3][]const u8{ pre_script_name, script_name, post_script_name }, 0..) |name, i| {
             const original_content = pkgscripts.get(name) orelse {
                 if (i == 1 and ctx.workspaces and !ctx.if_present) {
-                    Output.errGeneric("Missing '{s}' script at '{s}'", .{ script_name, path });
+                    Output.errGeneric("Missing '{s}' script at '{s}'", .{ script_name, candidate.path });
                     Global.exit(1);
                 }
 
@@ -511,12 +534,12 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
             try copy_script.append(0);
 
             try scripts.append(.{
-                .package_json_path = try ctx.allocator.dupe(u8, package_json_path),
-                .package_name = pkgjson.name,
+                .package_json_path = try ctx.allocator.dupe(u8, candidate.package_json_path),
+                .package_name = candidate.name,
                 .script_name = name,
                 .script_content = copy_script.items[0..len_command_only],
                 .combined = copy_script.items[0 .. copy_script.items.len - 1 :0],
-                .deps = pkgjson.dependencies,
+                .deps = candidate.dependencies,
                 .PATH = PATH,
                 .elide_count = ctx.bundler_options.elide_lines,
             });

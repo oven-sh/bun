@@ -240,7 +240,7 @@ function Install-Git {
 }
 
 function Install-NodeJs {
-  Install-Package nodejs -Command node -Version "24.3.0"
+  Install-Package nodejs -Command node -Version "25.3.0"
 }
 
 function Install-Bun {

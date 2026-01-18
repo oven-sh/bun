@@ -233,6 +233,29 @@ pub const Config = struct {
             this.runtime.allow_runtime = flag;
         }
 
+        if (try object.getTruthy(globalThis, "jsxOptimizationInline")) |jsx_inline| {
+            if (jsx_inline.isString()) {
+                const str = try jsx_inline.toSlice(globalThis, bun.default_allocator);
+                defer str.deinit();
+                if (bun.strings.eqlComptime(str.slice(), "react-18")) {
+                    this.runtime.jsx_optimization_inline = .react_18;
+                } else if (bun.strings.eqlComptime(str.slice(), "react-19")) {
+                    this.runtime.jsx_optimization_inline = .react_19;
+                } else {
+                    return globalThis.throwInvalidArguments("jsxOptimizationInline must be \"react-18\" or \"react-19\"", .{});
+                }
+            } else if (jsx_inline.isBoolean()) {
+                // For backwards compatibility, true means react-18
+                if (jsx_inline.toBoolean()) {
+                    this.runtime.jsx_optimization_inline = .react_18;
+                } else {
+                    this.runtime.jsx_optimization_inline = .none;
+                }
+            } else {
+                return globalThis.throwInvalidArguments("jsxOptimizationInline must be a string (\"react-18\" or \"react-19\") or boolean", .{});
+            }
+        }
+
         if (try object.getBooleanLoose(globalThis, "inline")) |flag| {
             this.runtime.inlining = flag;
         }
@@ -716,6 +739,7 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
     transpiler.options.auto_import_jsx = config.runtime.auto_import_jsx;
     transpiler.options.inlining = config.runtime.inlining;
     transpiler.options.hot_module_reloading = config.runtime.hot_module_reloading;
+    transpiler.options.jsx_optimization_inline = config.runtime.jsx_optimization_inline;
     transpiler.options.react_fast_refresh = false;
 
     return this;

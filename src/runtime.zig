@@ -175,6 +175,11 @@ pub const Runtime = struct {
 
         set_breakpoint_on_first_line: bool = false,
 
+        /// JSX element inlining optimization mode.
+        /// Instead of jsx("div", {}, void 0), transform to an inline object literal:
+        /// { $$typeof: Symbol.for("react.element"), type: "div", ... }
+        jsx_optimization_inline: JsxInlineMode = .none,
+
         trim_unused_imports: bool = false,
 
         /// Allow runtime usage of require(), converting `require` into `__require`
@@ -261,6 +266,8 @@ pub const Runtime = struct {
             }
 
             hasher.update(std.mem.asBytes(&bools));
+            // Include jsx_optimization_inline mode in hash
+            hasher.update(std.mem.asBytes(&@intFromEnum(this.jsx_optimization_inline)));
         }
 
         pub fn shouldUnwrapRequire(this: *const Features, package_name: string) bool {
@@ -276,6 +283,21 @@ pub const Runtime = struct {
             },
 
             pub const Map = bun.StringArrayHashMapUnmanaged(ReplaceableExport);
+        };
+
+        /// JSX element inlining optimization mode.
+        /// This transforms jsx() calls into inline object literals for better performance.
+        pub const JsxInlineMode = enum {
+            /// Disabled - no JSX inlining (default)
+            none,
+            /// React 18 compatible - uses Symbol.for("react.element")
+            react_18,
+            /// React 19 compatible - uses Symbol.for("react.transitional.element")
+            react_19,
+
+            pub fn isEnabled(mode: JsxInlineMode) bool {
+                return mode != .none;
+            }
         };
 
         pub const ServerComponentsMode = enum {
@@ -335,6 +357,8 @@ pub const Runtime = struct {
         __legacyDecorateParamTS: ?Ref = null,
         __legacyMetadataTS: ?Ref = null,
         @"$$typeof": ?Ref = null,
+        @"$$typeof_18": ?Ref = null,
+        @"$$typeof_19": ?Ref = null,
         __using: ?Ref = null,
         __callDispose: ?Ref = null,
         __jsonParse: ?Ref = null,
@@ -352,6 +376,8 @@ pub const Runtime = struct {
             "__legacyDecorateParamTS",
             "__legacyMetadataTS",
             "$$typeof",
+            "$$typeof_18",
+            "$$typeof_19",
             "__using",
             "__callDispose",
             "__jsonParse",

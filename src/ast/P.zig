@@ -5571,7 +5571,7 @@ pub fn NewParser_(
             }
         }
 
-        fn runtimeIdentifier(p: *P, loc: logger.Loc, comptime name: string) Expr {
+        pub fn runtimeIdentifier(p: *P, loc: logger.Loc, comptime name: string) Expr {
             const ref = p.runtimeIdentifierRef(loc, name);
             p.recordUsage(ref);
             return p.newExpr(

@@ -780,10 +780,12 @@ pub fn doRedirect(
         log("close the tunnel in redirect", .{});
         this.proxy_tunnel = null;
         tunnel.detachAndDeref();
-        NewHTTPContext(is_ssl).closeSocket(socket);
+        if (!socket.isClosedOrHasError()) {
+            NewHTTPContext(is_ssl).closeSocket(socket);
+        }
     } else {
         // we need to clean the client reference before closing the socket because we are going to reuse the same ref in a another request
-        if (this.isKeepAlivePossible()) {
+        if (this.isKeepAlivePossible() and !socket.isClosedOrHasError()) {
             log("Keep-Alive release in redirect", .{});
             assert(this.connected_url.hostname.len > 0);
             ctx.releaseSocket(
@@ -792,7 +794,7 @@ pub fn doRedirect(
                 this.connected_url.hostname,
                 this.connected_url.getPortAuto(),
             );
-        } else {
+        } else if (!socket.isClosedOrHasError()) {
             NewHTTPContext(is_ssl).closeSocket(socket);
         }
     }

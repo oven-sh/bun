@@ -1,6 +1,6 @@
-# Version: 11
+# Version: 12
 # A script that installs the dependencies needed to build and test Bun.
-# This should work on Windows 10 or newer with PowerShell.
+# This should work on Windows 10 or newer with PowerShell (x64 and ARM64).
 
 # If this script does not work on your machine, please open an issue:
 # https://github.com/oven-sh/bun/issues
@@ -13,8 +13,15 @@ param (
   [Parameter(Mandatory = $false)]
   [switch]$CI = $false,
   [Parameter(Mandatory = $false)]
-  [switch]$Optimize = $CI
+  [switch]$Optimize = $CI,
+  [Parameter(Mandatory = $false)]
+  [switch]$SkipCygwin = $false
 )
+
+# Detect system architecture
+$script:IsARM64 = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq [System.Runtime.InteropServices.Architecture]::Arm64
+$script:ArchName = if ($script:IsARM64) { "ARM64" } else { "x64" }
+Write-Output "Detected architecture: $script:ArchName"
 
 $ErrorActionPreference = "Stop"
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
@@ -206,7 +213,13 @@ function Install-Common-Software {
   Install-Packages curl 7zip nssm
   Install-NodeJs
   Install-Bun
-  Install-Cygwin
+  # Cygwin is only needed for building WebKit locally
+  # Skip on ARM64 by default as it may not work well, or if explicitly requested
+  if (-not $SkipCygwin -and -not $script:IsARM64) {
+    Install-Cygwin
+  } else {
+    Write-Output "Skipping Cygwin installation (only needed for building WebKit locally)"
+  }
   if ($CI) {
     # FIXME: Installing tailscale causes the AWS metadata server to become unreachable
     # Install-Tailscale
@@ -385,10 +398,47 @@ function Install-PdbAddr2line {
 }
 
 function Install-Llvm {
-  Install-Package llvm `
-    -Command clang-cl `
-    -Version "19.1.7"
-  Add-To-Path "$env:ProgramFiles\LLVM\bin"
+  $llvmVersion = "21.1.8"
+  $llvmPath = "$env:ProgramFiles\LLVM"
+
+  # Check if LLVM is already installed with correct version
+  $clangCl = Which clang-cl
+  if ($clangCl) {
+    $installedVersion = & clang-cl --version 2>&1 | Select-String -Pattern "(\d+\.\d+\.\d+)" | ForEach-Object { $_.Matches[0].Value }
+    if ($installedVersion -like "$llvmVersion*") {
+      Write-Output "LLVM $llvmVersion already installed"
+      Add-To-Path "$llvmPath\bin"
+      return
+    }
+  }
+
+  if ($script:IsARM64) {
+    # For ARM64, download directly from GitHub releases
+    # Chocolatey's LLVM package doesn't support ARM64
+    Write-Output "Installing LLVM $llvmVersion for ARM64..."
+
+    $llvmInstaller = Download-File "https://github.com/llvm/llvm-project/releases/download/llvmorg-$llvmVersion/LLVM-$llvmVersion-woa64.exe" -Name "LLVM-$llvmVersion-woa64.exe"
+
+    Write-Output "Running LLVM installer..."
+    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $startInfo.FileName = $llvmInstaller
+    $startInfo.Arguments = "/S /D=$llvmPath"
+    $startInfo.CreateNoWindow = $true
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $startInfo
+    $process.Start()
+    $process.WaitForExit()
+    if ($process.ExitCode -ne 0) {
+      throw "Failed to install LLVM: code $($process.ExitCode)"
+    }
+  } else {
+    # For x64, use Chocolatey
+    Install-Package llvm `
+      -Command clang-cl `
+      -Version $llvmVersion
+  }
+
+  Add-To-Path "$llvmPath\bin"
 }
 
 function Optimize-System {

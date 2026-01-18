@@ -36,16 +36,20 @@ function Log-Debug {
     }
 }
 
+# Detect system architecture
+$script:IsARM64 = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq [System.Runtime.InteropServices.Architecture]::Arm64
+$script:VsArch = if ($script:IsARM64) { "arm64" } else { "amd64" }
+
 # Load Visual Studio environment if not already loaded
 function Ensure-VSEnvironment {
     if ($null -eq $env:VSINSTALLDIR) {
-        Log-Info "Loading Visual Studio environment..."
-        
+        Log-Info "Loading Visual Studio environment for $script:VsArch..."
+
         $vswhere = "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe"
         if (!(Test-Path $vswhere)) {
             throw "Command not found: vswhere (did you install Visual Studio?)"
         }
-        
+
         $vsDir = & $vswhere -prerelease -latest -property installationPath
         if ($null -eq $vsDir) {
             $vsDir = Get-ChildItem -Path "C:\Program Files\Microsoft Visual Studio\2022" -Directory -ErrorAction SilentlyContinue
@@ -54,20 +58,20 @@ function Ensure-VSEnvironment {
             }
             $vsDir = $vsDir.FullName
         }
-        
+
         Push-Location $vsDir
         try {
             $vsShell = Join-Path -Path $vsDir -ChildPath "Common7\Tools\Launch-VsDevShell.ps1"
-            . $vsShell -Arch amd64 -HostArch amd64
+            . $vsShell -Arch $script:VsArch -HostArch $script:VsArch
         } finally {
             Pop-Location
         }
-        
+
         Log-Success "Visual Studio environment loaded"
     }
-    
+
     if ($env:VSCMD_ARG_TGT_ARCH -eq "x86") {
-        throw "Visual Studio environment is targeting 32 bit, but only 64 bit is supported."
+        throw "Visual Studio environment is targeting 32 bit x86, but only 64-bit architectures (x64/arm64) are supported."
     }
 }
 

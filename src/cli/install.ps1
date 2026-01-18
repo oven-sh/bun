@@ -14,15 +14,10 @@ param(
   [Switch]$DownloadWithoutCurl = $false
 );
 
-# Detect system architecture
-$SystemType = (Get-CimInstance Win32_ComputerSystem).SystemType
-if ($SystemType -match "ARM64-based") {
-  $script:IsARM64 = $true
-} elseif ($SystemType -match "x64-based") {
-  $script:IsARM64 = $false
-} else {
+# filter out 32 bit + ARM
+if (-not ((Get-CimInstance Win32_ComputerSystem)).SystemType -match "x64-based") {
   Write-Output "Install Failed:"
-  Write-Output "Bun for Windows is only available for x86-64 and ARM64 Windows.`n"
+  Write-Output "Bun for Windows is currently only available for x86 64-bit Windows.`n"
   return 1
 }
 
@@ -108,11 +103,9 @@ function Install-Bun {
     $Version = "bun-$Version"
   }
 
-  $Arch = if ($script:IsARM64) { "aarch64" } else { "x64" }
+  $Arch = "x64"
   $IsBaseline = $ForceBaseline
-  # Baseline check only applies to x64 (AVX2 support detection)
-  # ARM64 doesn't have baseline variants
-  if (!$IsBaseline -and !$script:IsARM64) {
+  if (!$IsBaseline) {
     $IsBaseline = !( `
       Add-Type -MemberDefinition '[DllImport("kernel32.dll")] public static extern bool IsProcessorFeaturePresent(int ProcessorFeature);' `
         -Name 'Kernel32' -Namespace 'Win32' -PassThru `
@@ -142,8 +135,7 @@ function Install-Bun {
   }
 
   $Target = "bun-windows-$Arch"
-  # ARM64 doesn't have baseline variants
-  if ($IsBaseline -and !$script:IsARM64) {
+  if ($IsBaseline) {
     $Target = "bun-windows-$Arch-baseline"
   }
   $BaseURL = "https://github.com/oven-sh/bun/releases"
@@ -206,10 +198,8 @@ function Install-Bun {
 
   $BunRevision = "$(& "${BunBin}\bun.exe" --revision)"
   if ($LASTEXITCODE -eq 1073741795) { # STATUS_ILLEGAL_INSTRUCTION
-    if ($IsBaseline -or $script:IsARM64) {
-      # ARM64 doesn't have baseline variants, so we can't fallback
-      $archNote = if ($script:IsARM64) { " (ARM64)" } else { " (baseline)" }
-      Write-Output "Install Failed - bun.exe${archNote} is not compatible with your CPU.`n"
+    if ($IsBaseline) {
+      Write-Output "Install Failed - bun.exe (baseline) is not compatible with your CPU.`n"
       Write-Output "Please open a GitHub issue with your CPU model:`nhttps://github.com/oven-sh/bun/issues/new/choose`n"
       return 1
     }
@@ -228,9 +218,8 @@ function Install-Bun {
     # TODO: as of July 2024, Bun has no external dependencies.
     # I want to keep this error message in for a few months to ensure that
     # if someone somehow runs into this, it can be reported.
-    $vcRedistArch = if ($script:IsARM64) { "arm64" } else { "x64" }
     Write-Output "Install Failed - You are missing a DLL required to run bun.exe"
-    Write-Output "This can be solved by installing the Visual C++ Redistributable from Microsoft:`nSee https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist`nDirect Download -> https://aka.ms/vs/17/release/vc_redist.${vcRedistArch}.exe`n`n"
+    Write-Output "This can be solved by installing the Visual C++ Redistributable from Microsoft:`nSee https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist`nDirect Download -> https://aka.ms/vs/17/release/vc_redist.x64.exe`n`n"
     Write-Output "The error above should be unreachable as Bun does not depend on this library. Please comment in https://github.com/oven-sh/bun/issues/8598 or open a new issue.`n`n"
     Write-Output "The command '${BunBin}\bun.exe --revision' exited with code ${LASTEXITCODE}`n"
     return 1

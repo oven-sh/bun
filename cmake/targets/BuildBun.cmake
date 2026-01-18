@@ -660,10 +660,12 @@ endif()
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm|ARM|arm64|ARM64|aarch64|AARCH64")
   if(APPLE)
     set(ZIG_CPU "apple_m1")
+  elseif(WIN32)
+    # Windows ARM64: use a specific CPU with NEON support
+    # Zig running under x64 emulation would detect wrong CPU with "native"
+    set(ZIG_CPU "cortex_a76")
   else()
-    # Use generic for non-Apple ARM64 to avoid native detection issues
-    # (e.g., Windows ARM64 running Zig under x64 emulation detects wrong CPU)
-    set(ZIG_CPU "generic")
+    set(ZIG_CPU "native")
   endif()
 elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|X86_64|x64|X64|amd64|AMD64")
   if(ENABLE_BASELINE)

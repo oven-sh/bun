@@ -1,3 +1,6 @@
+/// S3 Error Handling
+/// Maps internal Zig errors to S3-specific error codes and messages.
+/// See: https://docs.aws.amazon.com/AmazonS3/latest/API/ErrorResponses.html
 pub const ErrorCodeAndMessage = struct {
     code: []const u8,
     message: []const u8,

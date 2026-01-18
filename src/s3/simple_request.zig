@@ -1,3 +1,14 @@
+/// S3 Simple Request Operations (HEAD, GET, PUT, DELETE for single objects)
+/// See: https://docs.aws.amazon.com/AmazonS3/latest/API/API_Operations_Amazon_Simple_Storage_Service.html
+/// Result of a HEAD request for object metadata.
+/// See: https://docs.aws.amazon.com/AmazonS3/latest/API/API_HeadObject.html
+///
+/// On success, contains:
+/// - size: Object size in bytes (from Content-Length header)
+/// - etag: Entity tag for cache validation (from ETag header)
+/// - lastModified: RFC 7231 timestamp (from Last-Modified header)
+/// - contentType: MIME type (from Content-Type header)
+/// - headers: Raw response headers (for extracting x-amz-meta-* metadata)
 pub const S3StatResult = union(enum) {
     success: struct {
         size: usize = 0,
@@ -7,12 +18,20 @@ pub const S3StatResult = union(enum) {
         lastModified: []const u8 = "",
         /// format: text/plain, contentType is not owned and need to be copied if used after this callback
         contentType: []const u8 = "",
+        /// Raw headers from response - caller should filter for x-amz-meta-* headers.
+        /// Headers are not owned and need to be copied if used after this callback.
+        headers: []const picohttp.Header = &.{},
     },
     not_found: S3Error,
 
     /// failure error is not owned and need to be copied if used after this callback
     failure: S3Error,
 };
+
+/// Result of a GET request for object content.
+/// See: https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObject.html
+///
+/// On success, contains body (owned) and etag.
 pub const S3DownloadResult = union(enum) {
     success: struct {
         /// etag is not owned and need to be copied if used after this callback
@@ -24,11 +43,18 @@ pub const S3DownloadResult = union(enum) {
     /// failure error is not owned and need to be copied if used after this callback
     failure: S3Error,
 };
+
+/// Result of a PUT request for object upload.
+/// See: https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObject.html
 pub const S3UploadResult = union(enum) {
     success: void,
     /// failure error is not owned and need to be copied if used after this callback
     failure: S3Error,
 };
+
+/// Result of a DELETE request for object removal.
+/// See: https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteObject.html
+/// Note: S3 returns success even if object doesn't exist.
 pub const S3DeleteResult = union(enum) {
     success: void,
     not_found: S3Error,
@@ -57,6 +83,14 @@ pub const S3PartResult = union(enum) {
     failure: S3Error,
 };
 
+/// Manages async HTTP request lifecycle for S3 operations.
+/// Handles request signing, execution, response parsing, and error extraction.
+///
+/// Lifecycle:
+/// 1. Created by executeSimpleS3Request with signed headers
+/// 2. Queued to HTTP thread pool
+/// 3. httpCallback called from HTTP thread on completion
+/// 4. onResponse called on main thread to deliver result
 pub const S3HttpSimpleTask = struct {
     http: bun.http.AsyncHTTP,
     vm: *jsc.VirtualMachine,
@@ -231,6 +265,7 @@ pub const S3HttpSimpleTask = struct {
                                 .lastModified = response.headers.get("last-modified") orelse "",
                                 .contentType = response.headers.get("content-type") orelse "",
                                 .size = if (response.headers.get("content-length")) |content_len| (std.fmt.parseInt(usize, content_len, 10) catch 0) else 0,
+                                .headers = response.headers.list,
                             },
                         }, this.callback_context);
                     },
@@ -360,8 +395,18 @@ pub const S3SimpleRequestOptions = struct {
     acl: ?ACL = null,
     storage_class: ?StorageClass = null,
     request_payer: bool = false,
+    metadata: ?s3creds.MetadataMap = null,
 };
 
+/// Execute a signed S3 request asynchronously.
+///
+/// @param this: S3 credentials for request signing
+/// @param options: Request configuration (path, method, body, headers, etc.)
+/// @param callback: Result handler - one of stat/download/upload/delete/listObjects
+/// @param callback_context: User context passed through to callback
+///
+/// Signs the request using AWS Sig V4, then queues it to the HTTP thread pool.
+/// Results are delivered asynchronously via callback on the main thread.
 pub fn executeSimpleS3Request(
     this: *const S3Credentials,
     options: S3SimpleRequestOptions,
@@ -377,6 +422,7 @@ pub fn executeSimpleS3Request(
         .acl = options.acl,
         .storage_class = options.storage_class,
         .request_payer = options.request_payer,
+        .metadata = options.metadata,
     }, false, null) catch |sign_err| {
         if (options.range) |range_| bun.default_allocator.free(range_);
         const error_code_and_message = getSignErrorCodeAndMessage(sign_err);
@@ -385,7 +431,8 @@ pub fn executeSimpleS3Request(
     };
 
     const headers = brk: {
-        var header_buffer: [S3Credentials.SignResult.MAX_HEADERS + 1]picohttp.Header = undefined;
+        // MAX_HEADERS (41) + 1 for the additional header we mix in
+        var header_buffer: [s3creds.MAX_HEADERS + 1]picohttp.Header = undefined;
         if (options.range) |range_| {
             const _headers = result.mixWithHeader(&header_buffer, .{ .name = "range", .value = range_ });
             break :brk bun.handleOom(bun.http.Headers.fromPicoHttpHeaders(_headers, bun.default_allocator));
@@ -440,12 +487,13 @@ pub fn executeSimpleS3Request(
 }
 
 const ListObjects = @import("./list_objects.zig");
+const s3creds = @import("./credentials.zig");
 const std = @import("std");
 const ACL = @import("./acl.zig").ACL;
 const StorageClass = @import("./storage_class.zig").StorageClass;
 
-const S3Credentials = @import("./credentials.zig").S3Credentials;
-const SignResult = @import("./credentials.zig").S3Credentials.SignResult;
+const S3Credentials = s3creds.S3Credentials;
+const SignResult = S3Credentials.SignResult;
 
 const S3Error = @import("./error.zig").S3Error;
 const getSignErrorCodeAndMessage = @import("./error.zig").getSignErrorCodeAndMessage;

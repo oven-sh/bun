@@ -1,10 +1,19 @@
 pub const MultiPartUploadOptions = struct {
+    /// 1 MiB = 1024 * 1024 = 1,048,576 bytes
     pub const OneMiB: usize = 1048576;
-    pub const MAX_SINGLE_UPLOAD_SIZE: usize = 5120 * OneMiB; // we limit to 5 GiB
+
+    /// AWS S3 maximum object size for single PUT is 5 GiB
+    /// See: https://docs.aws.amazon.com/AmazonS3/latest/userguide/upload-objects.html
+    pub const MAX_SINGLE_UPLOAD_SIZE: usize = 5120 * OneMiB;
+
+    /// AWS S3 minimum part size for multipart upload is 5 MiB (except last part)
+    /// See: https://docs.aws.amazon.com/AmazonS3/latest/userguide/qfacts.html
     pub const MIN_SINGLE_UPLOAD_SIZE: usize = 5 * OneMiB;
 
     pub const DefaultPartSize = MIN_SINGLE_UPLOAD_SIZE;
-    pub const MAX_QUEUE_SIZE = 64; // dont make sense more than this because we use fetch anything greater will be 64
+
+    /// Max concurrent upload parts. HTTP thread pool limits practical concurrency to ~64.
+    pub const MAX_QUEUE_SIZE = 64;
 
     /// more than 255 dont make sense http thread cannot handle more than that
     queueSize: u8 = 5,

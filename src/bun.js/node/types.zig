@@ -440,11 +440,7 @@ pub const Encoding = enum(u8) {
                 return jsc.ArrayBuffer.createBuffer(globalObject, input);
             },
             inline else => |enc| {
-                const res = jsc.WebCore.encoding.toStringComptime(input, globalObject, enc);
-                if (res.isError()) {
-                    return globalObject.throwValue(res);
-                }
-                return res;
+                return try jsc.WebCore.encoding.toStringComptime(input, globalObject, enc);
             },
         }
     }
@@ -461,7 +457,7 @@ pub const Encoding = enum(u8) {
                 const encoded_len = bun.base64.encode(&base64_buf, input);
                 var encoded, const bytes = bun.String.createUninitialized(.latin1, encoded_len);
                 @memcpy(@constCast(bytes), base64_buf[0..encoded_len]);
-                return encoded.transferToJS(globalObject);
+                return try encoded.transferToJS(globalObject);
             },
             .base64url => {
                 var buf: [std.base64.url_safe_no_pad.Encoder.calcSize(max_size * 4)]u8 = undefined;
@@ -485,12 +481,7 @@ pub const Encoding = enum(u8) {
                 return jsc.ArrayBuffer.createBuffer(globalObject, input);
             },
             inline else => |enc| {
-                const res = jsc.WebCore.encoding.toStringComptime(input, globalObject, enc);
-                if (res.isError()) {
-                    return globalObject.throwValue(res);
-                }
-
-                return res;
+                return try jsc.WebCore.encoding.toStringComptime(input, globalObject, enc);
             },
         }
     }
@@ -771,7 +762,7 @@ pub const Valid = struct {
             else => {
                 var system_error = bun.sys.Error.fromCode(.NAMETOOLONG, .open).withPath(zig_str.slice()).toSystemError();
                 system_error.syscall = bun.String.dead;
-                return ctx.throwValue(system_error.toErrorInstance(ctx));
+                return ctx.throwValue(try system_error.toErrorInstance(ctx));
             },
         }
         comptime unreachable;
@@ -783,7 +774,7 @@ pub const Valid = struct {
             else => {
                 var system_error = bun.sys.Error.fromCode(.NAMETOOLONG, .open).toSystemError();
                 system_error.syscall = bun.String.dead;
-                return ctx.throwValue(system_error.toErrorInstance(ctx));
+                return ctx.throwValue(try system_error.toErrorInstance(ctx));
             },
         }
         comptime unreachable;
@@ -802,7 +793,7 @@ pub const Valid = struct {
             else => {
                 var system_error = bun.sys.Error.fromCode(.NAMETOOLONG, .open).toSystemError();
                 system_error.syscall = bun.String.dead;
-                return ctx.throwValue(system_error.toErrorInstance(ctx));
+                return ctx.throwValue(try system_error.toErrorInstance(ctx));
             },
             1...bun.MAX_PATH_BYTES => return,
         }

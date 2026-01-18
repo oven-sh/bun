@@ -1075,7 +1075,8 @@ for (let credentials of allCredentials) {
                 await s3file.write("Hello Bun!");
                 expect.unreachable();
               } catch (e: any) {
-                expect(["ENAMETOOLONG", "ERR_S3_INVALID_PATH"]).toContain(e?.code);
+                // ERR_STRING_TOO_LONG can occur when the path is too long to convert to a JS string
+                expect(["ENAMETOOLONG", "ERR_S3_INVALID_PATH", "ERR_STRING_TOO_LONG"]).toContain(e?.code);
               }
             }),
           );

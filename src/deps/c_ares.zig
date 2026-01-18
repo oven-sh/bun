@@ -1395,7 +1395,7 @@ pub const struct_any_reply = struct {
             char.* = std.ascii.toUpper(char.*);
         }
 
-        transformed.put(globalThis, "type", bun.String.ascii(&upper).toJS(globalThis));
+        transformed.put(globalThis, "type", try bun.String.ascii(&upper).toJS(globalThis));
         try array.putIndex(globalThis, i.*, transformed);
         i.* += 1;
     }
@@ -1682,7 +1682,7 @@ pub const Error = enum(i32) {
             });
         }
 
-        pub fn reject(this: *Deferred, globalThis: *jsc.JSGlobalObject) bun.JSTerminated!void {
+        pub fn reject(this: *Deferred, globalThis: *jsc.JSGlobalObject) bun.JSError!void {
             const system_error = jsc.SystemError{
                 .errno = @intFromEnum(this.errno),
                 .code = bun.String.static(this.errno.code()),
@@ -1694,8 +1694,8 @@ pub const Error = enum(i32) {
                 .hostname = this.hostname orelse bun.String.empty,
             };
 
-            const instance = system_error.toErrorInstance(globalThis);
-            instance.put(globalThis, "name", bun.String.static("DNSException").toJS(globalThis));
+            const instance = try system_error.toErrorInstance(globalThis);
+            instance.put(globalThis, "name", try bun.String.static("DNSException").toJS(globalThis));
 
             defer this.deinit();
             defer this.hostname = null;
@@ -1706,7 +1706,7 @@ pub const Error = enum(i32) {
             const Context = struct {
                 deferred: *Deferred,
                 globalThis: *jsc.JSGlobalObject,
-                pub fn callback(context: *@This()) bun.JSTerminated!void {
+                pub fn callback(context: *@This()) bun.JSError!void {
                     defer bun.default_allocator.destroy(context);
                     try context.deferred.reject(context.globalThis);
                 }
@@ -1737,26 +1737,26 @@ pub const Error = enum(i32) {
         return Deferred.init(this, syscall, host_string, promise.*);
     }
 
-    pub fn toJSWithSyscall(this: Error, globalThis: *jsc.JSGlobalObject, comptime syscall: [:0]const u8) jsc.JSValue {
-        const instance = (jsc.SystemError{
+    pub fn toJSWithSyscall(this: Error, globalThis: *jsc.JSGlobalObject, comptime syscall: [:0]const u8) bun.JSError!jsc.JSValue {
+        const instance = try (jsc.SystemError{
             .errno = @intFromEnum(this),
             .code = bun.String.static(this.code()[4..]),
             .syscall = bun.String.static(syscall),
             .message = bun.handleOom(bun.String.createFormat("{s} {s}", .{ syscall, this.code()[4..] })),
         }).toErrorInstance(globalThis);
-        instance.put(globalThis, "name", bun.String.static("DNSException").toJS(globalThis));
+        instance.put(globalThis, "name", try bun.String.static("DNSException").toJS(globalThis));
         return instance;
     }
 
-    pub fn toJSWithSyscallAndHostname(this: Error, globalThis: *jsc.JSGlobalObject, comptime syscall: [:0]const u8, hostname: []const u8) jsc.JSValue {
-        const instance = (jsc.SystemError{
+    pub fn toJSWithSyscallAndHostname(this: Error, globalThis: *jsc.JSGlobalObject, comptime syscall: [:0]const u8, hostname: []const u8) bun.JSError!jsc.JSValue {
+        const instance = try (jsc.SystemError{
             .errno = @intFromEnum(this),
             .code = bun.String.static(this.code()[4..]),
             .message = bun.handleOom(bun.String.createFormat("{s} {s} {s}", .{ syscall, this.code()[4..], hostname })),
             .syscall = bun.String.static(syscall),
             .hostname = bun.String.cloneUTF8(hostname),
         }).toErrorInstance(globalThis);
-        instance.put(globalThis, "name", bun.String.static("DNSException").toJS(globalThis));
+        instance.put(globalThis, "name", try bun.String.static("DNSException").toJS(globalThis));
         return instance;
     }
 

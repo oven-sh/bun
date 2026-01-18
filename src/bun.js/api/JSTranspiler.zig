@@ -569,7 +569,10 @@ pub const TransformTask = struct {
     }
 
     fn finish(this: *TransformTask, promise: *jsc.JSPromise) bun.JSTerminated!void {
-        return promise.resolve(this.global, this.output_code.transferToJS(this.global));
+        const value = this.output_code.transferToJS(this.global) catch |e| {
+            return promise.reject(this.global, this.global.takeException(e));
+        };
+        return promise.resolve(this.global, value);
     }
 
     pub fn deinit(this: *TransformTask) void {

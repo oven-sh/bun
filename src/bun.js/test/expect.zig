@@ -1029,7 +1029,7 @@ pub const Expect = struct {
         const err = switch (Output.enable_ansi_colors_stderr) {
             inline else => |colors| globalThis.createErrorInstance(Output.prettyFmt(fmt, colors), .{ matcher_name, result.toFmt(&formatter) }),
         };
-        err.put(globalThis, ZigString.static("name"), bun.String.static("InvalidMatcherError").toJS(globalThis));
+        err.put(globalThis, ZigString.static("name"), try bun.String.static("InvalidMatcherError").toJS(globalThis));
         return globalThis.throwValue(err);
     }
 
@@ -1251,13 +1251,13 @@ pub const Expect = struct {
 
         if (arg.isEmptyOrUndefinedOrNull()) {
             const error_value = bun.String.init("reached unreachable code").toErrorInstance(globalThis);
-            error_value.put(globalThis, ZigString.static("name"), bun.String.init("UnreachableError").toJS(globalThis));
+            error_value.put(globalThis, ZigString.static("name"), try bun.String.init("UnreachableError").toJS(globalThis));
             return globalThis.throwValue(error_value);
         }
 
         if (arg.isString()) {
             const error_value = (try arg.toBunString(globalThis)).toErrorInstance(globalThis);
-            error_value.put(globalThis, ZigString.static("name"), bun.String.init("UnreachableError").toJS(globalThis));
+            error_value.put(globalThis, ZigString.static("name"), try bun.String.init("UnreachableError").toJS(globalThis));
             return globalThis.throwValue(error_value);
         }
 
@@ -1802,7 +1802,7 @@ pub const ExpectMatcherContext = struct {
         return JSValue.jsBoolean(this.flags.not);
     }
 
-    pub fn getPromise(this: *ExpectMatcherContext, globalThis: *JSGlobalObject) JSValue {
+    pub fn getPromise(this: *ExpectMatcherContext, globalThis: *JSGlobalObject) bun.JSError!JSValue {
         return switch (this.flags.promise) {
             .rejects => bun.String.static("rejects").toJS(globalThis),
             .resolves => bun.String.static("resolves").toJS(globalThis),
@@ -1908,8 +1908,8 @@ pub const ExpectMatcherUtils = struct {
         const matcher_name = try arguments[0].toBunString(globalThis);
         defer matcher_name.deref();
 
-        const received = if (arguments.len > 1) arguments[1] else bun.String.static("received").toJS(globalThis);
-        const expected = if (arguments.len > 2) arguments[2] else bun.String.static("expected").toJS(globalThis);
+        const received = if (arguments.len > 1) arguments[1] else try bun.String.static("received").toJS(globalThis);
+        const expected = if (arguments.len > 2) arguments[2] else try bun.String.static("expected").toJS(globalThis);
         const options = if (arguments.len > 3) arguments[3] else .js_undefined;
 
         var is_not = false;

@@ -2217,6 +2217,7 @@ JSC::EncodedJSValue SystemError__toErrorInstance(const SystemError* arg0, JSC::J
     SystemError err = *arg0;
 
     auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     WTF::String message = WTF::emptyString();
     if (err.message.tag != BunStringTag::Empty) {
@@ -2230,17 +2231,20 @@ JSC::EncodedJSValue SystemError__toErrorInstance(const SystemError* arg0, JSC::J
     auto clientData = WebCore::clientData(vm);
 
     if (err.code.tag != BunStringTag::Empty) {
-        JSC::JSValue code = Bun::toJS(globalObject, err.code);
+        auto* code = Bun::toJS(globalObject, err.code);
+        RETURN_IF_EXCEPTION(scope, {});
         result->putDirect(vm, clientData->builtinNames().codePublicName(), code, JSC::PropertyAttribute::DontDelete | 0);
     }
 
     if (err.path.tag != BunStringTag::Empty) {
-        JSC::JSValue path = Bun::toJS(globalObject, err.path);
+        auto* path = Bun::toJS(globalObject, err.path);
+        RETURN_IF_EXCEPTION(scope, {});
         result->putDirect(vm, clientData->builtinNames().pathPublicName(), path, JSC::PropertyAttribute::DontDelete | 0);
     }
 
     if (err.dest.tag != BunStringTag::Empty) {
-        JSC::JSValue dest = Bun::toJS(globalObject, err.dest);
+        auto* dest = Bun::toJS(globalObject, err.dest);
+        RETURN_IF_EXCEPTION(scope, {});
         result->putDirect(vm, clientData->builtinNames().destPublicName(), dest, JSC::PropertyAttribute::DontDelete | 0);
     }
 
@@ -2250,18 +2254,19 @@ JSC::EncodedJSValue SystemError__toErrorInstance(const SystemError* arg0, JSC::J
     }
 
     if (err.syscall.tag != BunStringTag::Empty) {
-        JSC::JSValue syscall = Bun::toJS(globalObject, err.syscall);
+        auto* syscall = Bun::toJS(globalObject, err.syscall);
+        RETURN_IF_EXCEPTION(scope, {});
         result->putDirect(vm, names.syscallPublicName(), syscall, JSC::PropertyAttribute::DontDelete | 0);
     }
 
     if (err.hostname.tag != BunStringTag::Empty) {
-        JSC::JSValue hostname = Bun::toJS(globalObject, err.hostname);
+        auto* hostname = Bun::toJS(globalObject, err.hostname);
+        RETURN_IF_EXCEPTION(scope, {});
         result->putDirect(vm, names.hostnamePublicName(), hostname, JSC::PropertyAttribute::DontDelete | 0);
     }
 
     result->putDirect(vm, names.errnoPublicName(), jsNumber(err.errno_), JSC::PropertyAttribute::DontDelete | 0);
 
-    ASSERT_NO_PENDING_EXCEPTION(globalObject);
     return JSC::JSValue::encode(result);
 }
 

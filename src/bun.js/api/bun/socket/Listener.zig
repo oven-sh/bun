@@ -269,7 +269,7 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
                     .syscall = .static("listen"),
                     .fd = fd.uv(),
                 };
-                return globalObject.throwValue(err.toErrorInstance(globalObject));
+                return globalObject.throwValue(try err.toErrorInstance(globalObject));
             },
         }
     } orelse {
@@ -744,7 +744,7 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
             .syscall = bun.String.static("connect"),
             .code = if (port == null) bun.String.static("ENOENT") else bun.String.static("ECONNREFUSED"),
         };
-        return globalObject.throwValue(err.toErrorInstance(globalObject));
+        return globalObject.throwValue(try err.toErrorInstance(globalObject));
     };
 
     if (ssl_enabled) {
@@ -830,8 +830,8 @@ pub fn getsockname(this: *Listener, globalThis: *jsc.JSGlobalObject, callFrame: 
         else => return .js_undefined,
     };
     const family_js = switch (address_bytes.len) {
-        4 => bun.String.static("IPv4").toJS(globalThis),
-        16 => bun.String.static("IPv6").toJS(globalThis),
+        4 => try bun.String.static("IPv4").toJS(globalThis),
+        16 => try bun.String.static("IPv6").toJS(globalThis),
         else => return .js_undefined,
     };
     const address_js = ZigString.init(bun.fmt.formatIp(address_zig, &text_buf) catch unreachable).toJS(globalThis);

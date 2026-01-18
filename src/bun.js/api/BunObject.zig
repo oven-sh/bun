@@ -606,7 +606,7 @@ fn getMain(globalThis: *jsc.JSGlobalObject) callconv(jsc.conv) jsc.JSValue {
             }
         }
 
-        return vm.main_resolved_path.toJS(globalThis);
+        return vm.main_resolved_path.toJS(globalThis) catch .zero;
     }
 
     return ZigString.init(vm.main).toJS(globalThis);
@@ -1103,7 +1103,7 @@ pub export fn Bun__escapeHTML16(globalObject: *jsc.JSGlobalObject, input_value: 
     assert(len > 0);
     const input_slice = ptr[0..len];
     const escaped = strings.escapeHTMLForUTF16Input(globalObject.bunVM().allocator, input_slice) catch {
-        return globalObject.throwValue(bun.String.static("Out of memory").toJS(globalObject)) catch .zero;
+        return globalObject.throwValue(ZigString.init("Out of memory").toErrorInstance(globalObject)) catch return .zero;
     };
 
     return switch (escaped) {
@@ -1121,7 +1121,7 @@ pub export fn Bun__escapeHTML8(globalObject: *jsc.JSGlobalObject, input_value: J
     const allocator = if (input_slice.len <= 32) stack_allocator.get() else stack_allocator.fallback_allocator;
 
     const escaped = strings.escapeHTMLForLatin1Input(allocator, input_slice) catch {
-        return globalObject.throwValue(bun.String.static("Out of memory").toJS(globalObject)) catch .zero;
+        return globalObject.throwValue(ZigString.init("Out of memory").toErrorInstance(globalObject)) catch return .zero;
     };
 
     switch (escaped) {
@@ -1238,7 +1238,7 @@ pub fn mmapFile(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.
         .result => |map| map,
 
         .err => |err| {
-            return globalThis.throwValue(err.toJS(globalThis));
+            return globalThis.throwValue(try err.toJS(globalThis));
         },
     };
 

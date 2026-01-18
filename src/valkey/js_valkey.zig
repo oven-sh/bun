@@ -1526,7 +1526,11 @@ fn SocketHandler(comptime ssl: bool) type {
                                 defer loop.exit();
                                 this.client.flags.is_manually_closed = true;
                                 defer this.client.close();
-                                try this.client.failWithJSValue(this.globalObject, ssl_error.toJS(this.globalObject));
+                                const ssl_js_value = ssl_error.toJS(this.globalObject) catch |err| switch (err) {
+                                    error.JSTerminated => return error.JSTerminated,
+                                    else => return,
+                                };
+                                try this.client.failWithJSValue(this.globalObject, ssl_js_value);
                                 return;
                             }
                         }

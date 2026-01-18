@@ -386,7 +386,7 @@ pub fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []
                 }
 
                 const var_path = label[var_start..var_end];
-                const value = try function_args[0].getIfPropertyExistsFromPath(globalThis, bun.String.init(var_path).toJS(globalThis));
+                const value = try function_args[0].getIfPropertyExistsFromPath(globalThis, try bun.String.init(var_path).toJS(globalThis));
                 if (!value.isEmptyOrUndefinedOrNull()) {
                     // For primitive strings, use toString() to avoid adding quotes
                     // This matches Jest's behavior (https://github.com/jestjs/jest/issues/7689)

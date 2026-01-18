@@ -70,7 +70,7 @@ pub const ShellErr = union(enum) {
         }
         switch (this.*) {
             .sys => {
-                const err = this.sys.toErrorInstance(globalThis);
+                const err = try this.sys.toErrorInstance(globalThis);
                 return globalThis.throwValue(err);
             },
             .custom => {

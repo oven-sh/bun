@@ -29,7 +29,7 @@ pub const JSGlobalObject = opaque {
 
     pub fn throwTODO(this: *JSGlobalObject, msg: []const u8) bun.JSError {
         const err = this.createErrorInstance("{s}", .{msg});
-        err.put(this, ZigString.static("name"), bun.String.static("TODOError").toJS(this));
+        err.put(this, ZigString.static("name"), (bun.String.static("TODOError").toJS(this)) catch return error.JSError);
         return this.throwValue(err);
     }
 

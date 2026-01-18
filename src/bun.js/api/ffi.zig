@@ -1072,7 +1072,7 @@ pub const FFI = struct {
                         .message = bun.String.cloneUTF8(msg),
                         .syscall = bun.String.cloneUTF8("dlopen"),
                     };
-                    return system_error.toErrorInstance(global);
+                    return system_error.toErrorInstance(global) catch return .zero;
                 };
             };
         };

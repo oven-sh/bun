@@ -21,6 +21,7 @@ pub fn createBinding(globalObject: *jsc.JSGlobalObject) JSValue {
     binding.put(globalObject, ZigString.static("setCopyStreamingMode"), jsc.JSFunction.create(globalObject, "setCopyStreamingMode", __pg_setCopyStreamingMode, 2, .{}));
     binding.put(globalObject, ZigString.static("setCopyTimeout"), jsc.JSFunction.create(globalObject, "setCopyTimeout", __pg_setCopyTimeout, 2, .{}));
     binding.put(globalObject, ZigString.static("setMaxCopyBufferSize"), jsc.JSFunction.create(globalObject, "setMaxCopyBufferSize", __pg_setMaxCopyBufferSize, 2, .{}));
+    binding.put(globalObject, ZigString.static("setMaxCopyBufferSizeUnsafe"), jsc.JSFunction.create(globalObject, "setMaxCopyBufferSizeUnsafe", __pg_setMaxCopyBufferSizeUnsafe, 2, .{}));
 
     return binding;
 }
@@ -126,17 +127,34 @@ fn __pg_setMaxCopyBufferSize(globalObject: *jsc.JSGlobalObject, callframe: *jsc.
 
     return .js_undefined;
 }
+
+fn __pg_setMaxCopyBufferSizeUnsafe(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
+    // Arg0: PostgresSQLConnection, Arg1: size in bytes (number; 0 disables limit)
+    const connection_value = callframe.argument(0);
+    const connection: *PostgresSQLConnection = connection_value.as(PostgresSQLConnection) orelse {
+        return globalObject.throw("setMaxCopyBufferSizeUnsafe first argument must be a PostgresSQLConnection", .{});
+    };
+
+    const bytes_value = callframe.argument(1);
+    if (bytes_value == .zero) {
+        return globalObject.throwNotEnoughArguments("setMaxCopyBufferSizeUnsafe", 2, 1);
+    }
+
+    const size_i32 = bytes_value.toInt32();
+    const size_u: usize = if (size_i32 <= 0) 0 else @intCast(size_i32);
+    connection.max_copy_buffer_size = size_u;
+
+    return .js_undefined;
+}
 fn __pg_awaitWritable(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    // Arg0: PostgresSQLConnection, Arg1: optional callback invoked when socket becomes writable
+    // Arg0: PostgresSQLConnection
     const connection_value = callframe.argument(0);
     const connection: *PostgresSQLConnection = connection_value.as(PostgresSQLConnection) orelse {
         return globalObject.throw("awaitWritable first argument must be a PostgresSQLConnection", .{});
     };
-    _ = connection;
 
-    // No-op here: writable notifications are dispatched via the global TS-installed handler.
-
-    return .js_undefined;
+    // Delegate to the connection method, which returns a Promise that resolves when the socket becomes writable.
+    return connection.awaitWritable(globalObject, callframe);
 }
 
 pub const PostgresSQLConnection = @import("./postgres/PostgresSQLConnection.zig");

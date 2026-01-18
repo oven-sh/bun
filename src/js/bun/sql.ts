@@ -23,11 +23,22 @@ const {
   copyTextEscape,
   csvQuote: pgCsvQuote,
   needsCsvQuote,
-  TYPE_OID,
-  TYPE_ARRAY_OID,
 } = require("internal/sql/postgres-encoding");
 
+const {
+  TYPE_OID,
+  TYPE_ARRAY_OID,
+  isSupportedBaseType,
+  isSupportedArrayType,
+  getSupportedBaseTypes,
+  getSupportedArrayTypes,
+} = require("internal/sql/postgres-types");
+
 const defineProperties = Object.defineProperties;
+
+// Default COPY protocol constants
+const DEFAULT_COPY_BATCH_SIZE = 64 * 1024; // 64 KiB - batch accumulation threshold
+const DEFAULT_COPY_MAX_CHUNK_SIZE = 256 * 1024; // 256 KiB - max bytes per chunk
 
 // Re-export types for convenience
 export type { CopyBinaryType, CopyBinaryBaseType };
@@ -127,7 +138,10 @@ function resolveCopyFromLimits(options: any, pool: any): { maxBytes: number; max
     "getCopyDefaults" in pool
       ? (pool as unknown as { getCopyDefaults: () => __CopyDefaults__ }).getCopyDefaults()
       : undefined;
-  const __fromDefaults__ = (__defaults__ && __defaults__.from) || { maxChunkSize: 256 * 1024, maxBytes: 0 };
+  const __fromDefaults__ = (__defaults__ && __defaults__.from) || {
+    maxChunkSize: DEFAULT_COPY_MAX_CHUNK_SIZE,
+    maxBytes: 0,
+  };
 
   const maxBytes =
     options && typeof options.maxBytes === "number" && options.maxBytes > 0
@@ -169,6 +183,31 @@ function getByteLength(value: string | { byteLength: number } | Uint8Array | Arr
 }
 
 /**
+ * Await socket writability with a microtask fallback to prevent hanging.
+ * Used throughout COPY protocol to handle backpressure.
+ */
+async function awaitWritableWithFallback(reserved: any, pool: any): Promise<void> {
+  await new Promise<void>(resolve => {
+    let settled = false;
+    const settle = () => {
+      if (!settled) {
+        settled = true;
+        resolve();
+      }
+    };
+    if (typeof reserved.awaitWritable === "function") {
+      reserved.awaitWritable(settle);
+    } else if (pool && typeof pool.awaitWritableFor === "function") {
+      pool.awaitWritableFor(reserved, settle);
+    } else {
+      settle();
+      return;
+    }
+    queueMicrotask(settle);
+  });
+}
+
+/**
  * Sends data in chunks with backpressure handling
  */
 async function sendChunkedData(
@@ -181,60 +220,24 @@ async function sendChunkedData(
 ): Promise<void> {
   const { maxBytes, maxChunkSize } = limits;
 
-  const sendAwaitWritable = async () => {
-    if (typeof reserved.awaitWritable === "function") {
-      await new Promise<void>(resolve => {
-        let settled = false;
-        reserved.awaitWritable(() => {
-          if (!settled) {
-            settled = true;
-            resolve();
-          }
-        });
-        queueMicrotask(() => {
-          if (!settled) {
-            settled = true;
-            resolve();
-          }
-        });
-      });
-    } else {
-      await new Promise<void>(resolve => {
-        let settled = false;
-        pool.awaitWritableFor(reserved, () => {
-          if (!settled) {
-            settled = true;
-            resolve();
-          }
-        });
-        queueMicrotask(() => {
-          if (!settled) {
-            settled = true;
-            resolve();
-          }
-        });
-      });
-    }
-  };
-
-  const dataLength = getByteLength(data);
+  // Convert string to Uint8Array to ensure chunking by bytes, not characters
+  // This prevents splitting multi-byte UTF-8 characters
+  const bytes: Uint8Array = typeof data === "string" ? new TextEncoder().encode(data) : data;
+  const dataLength = bytes.byteLength;
 
   if (dataLength <= maxChunkSize) {
     if (maxBytes && counters.bytesSent + dataLength > maxBytes) {
       throw new Error("copyFrom: maxBytes exceeded");
     }
-    reserved.copySendData(data);
+    reserved.copySendData(bytes);
     counters.bytesSent += dataLength;
     counters.chunksSent += 1;
     notifyProgress();
-    await sendAwaitWritable();
+    await awaitWritableWithFallback(reserved, pool);
   } else {
     for (let i = 0; i < dataLength; i += maxChunkSize) {
-      const part =
-        typeof data === "string"
-          ? data.slice(i, i + maxChunkSize)
-          : data.subarray(i, Math.min(dataLength, i + maxChunkSize));
-      const partLength = getByteLength(part as any);
+      const part = bytes.subarray(i, Math.min(dataLength, i + maxChunkSize));
+      const partLength = part.byteLength;
 
       if (maxBytes && counters.bytesSent + partLength > maxBytes) {
         throw new Error("copyFrom: maxBytes exceeded");
@@ -243,7 +246,7 @@ async function sendChunkedData(
       counters.bytesSent += partLength;
       counters.chunksSent += 1;
       notifyProgress();
-      await sendAwaitWritable();
+      await awaitWritableWithFallback(reserved, pool);
     }
   }
 }
@@ -263,27 +266,21 @@ function validateBinaryTypes(options: any, columns: string[] | undefined): strin
   }
 
   // Validate that each provided token is a supported base or array type
-  // Supported bases and arrays are defined by TYPE_OID and TYPE_ARRAY_OID from internal/sql/postgres-encoding
+  // Uses helper functions from shared postgres-types module
   const isSupportedToken = (token: string): boolean => {
     if (typeof token !== "string" || token.length === 0) return false;
-
-    if (token.endsWith("[]")) {
-      // exact match required, e.g. "int4[]", "timestamptz[]"
-      return Object.hasOwn(TYPE_ARRAY_OID, token);
-    }
-    // base type, e.g. "int4", "varchar"
-    return Object.hasOwn(TYPE_OID, token);
+    return token.endsWith("[]") ? isSupportedArrayType(token) : isSupportedBaseType(token);
   };
 
   for (let i = 0; i < types.length; i++) {
-    const tok = types[i];
-    if (!isSupportedToken(tok)) {
+    const token = types[i];
+    if (!isSupportedToken(token)) {
       throw new Error(
-        `Unsupported COPY binaryTypes token at index ${i}: "${tok}".` +
+        `Unsupported COPY binaryTypes token at index ${i}: "${token}".` +
           " Supported base types include: " +
-          Object.keys(TYPE_OID).sort().join(", ") +
+          getSupportedBaseTypes().join(", ") +
           "; supported array types include: " +
-          Object.keys(TYPE_ARRAY_OID).sort().join(", "),
+          getSupportedArrayTypes().join(", "),
       );
     }
   }
@@ -648,6 +645,7 @@ const SQL: typeof Bun.SQL = function SQL(
           ? pool.getConnectionForQuery(pooledConnection)
           : pooledConnection?.connection;
         if (underlying && (PostgresAdapter as any).setMaxCopyBufferSize) {
+          // Delegate to adapter binding so native-side safety caps are applied consistently.
           (PostgresAdapter as any).setMaxCopyBufferSize(underlying, clampUint32(bytes));
         }
       }
@@ -1330,11 +1328,11 @@ const SQL: typeof Bun.SQL = function SQL(
     // TYPE_OID and TYPE_ARRAY_OID are now imported from postgres-encoding
 
     const feedData = async () => {
-      // Batch size for accumulating small chunks (configurable, default 64KB)
+      // Batch size for accumulating small chunks (configurable)
       const BATCH_SIZE =
         options && typeof (options as any).batchSize === "number" && (options as any).batchSize > 0
           ? ((options as any).batchSize as number)
-          : 64 * 1024;
+          : DEFAULT_COPY_BATCH_SIZE;
       let batch = "";
 
       // Resolve limits once at start instead of on every flush
@@ -1366,25 +1364,7 @@ const SQL: typeof Bun.SQL = function SQL(
           bytesSent += bLen;
           chunksSent += 1;
           notifyProgress();
-
-          {
-            await new Promise<void>(resolve => {
-              let settled = false;
-              (pool as any).awaitWritableFor(reserved, () => {
-                if (!settled) {
-                  settled = true;
-                  resolve();
-                }
-              });
-              // Fallback to avoid hanging if there's no backpressure
-              queueMicrotask(() => {
-                if (!settled) {
-                  settled = true;
-                  resolve();
-                }
-              });
-            });
-          }
+          await awaitWritableWithFallback(reserved, pool);
           batch = "";
         }
       };
@@ -1426,21 +1406,7 @@ const SQL: typeof Bun.SQL = function SQL(
               bytesSent += payload.byteLength;
               chunksSent += 1;
               notifyProgress();
-              await new Promise<void>(resolve => {
-                let settled = false;
-                (pool as any).awaitWritableFor(reserved, () => {
-                  if (!settled) {
-                    settled = true;
-                    resolve();
-                  }
-                });
-                queueMicrotask(() => {
-                  if (!settled) {
-                    settled = true;
-                    resolve();
-                  }
-                });
-              });
+              await awaitWritableWithFallback(reserved, pool);
             } else {
               // text/csv: treat as row[]
               await addToBatch(serializeRow(item));
@@ -1484,40 +1450,7 @@ const SQL: typeof Bun.SQL = function SQL(
               bytesSent += payload.byteLength;
               chunksSent += 1;
               notifyProgress();
-              // If awaitWritable exists on reserved, also use it
-              if (typeof (reserved as any).awaitWritable === "function") {
-                await new Promise<void>(resolve => {
-                  let settled = false;
-                  (reserved as any).awaitWritable(() => {
-                    if (!settled) {
-                      settled = true;
-                      resolve();
-                    }
-                  });
-                  queueMicrotask(() => {
-                    if (!settled) {
-                      settled = true;
-                      resolve();
-                    }
-                  });
-                });
-              } else {
-                await new Promise<void>(resolve => {
-                  let settled = false;
-                  (pool as any).awaitWritableFor(reserved, () => {
-                    if (!settled) {
-                      settled = true;
-                      resolve();
-                    }
-                  });
-                  queueMicrotask(() => {
-                    if (!settled) {
-                      settled = true;
-                      resolve();
-                    }
-                  });
-                });
-              }
+              await awaitWritableWithFallback(reserved, pool);
             } else {
               await addToBatch(serializeRow(item));
             }
@@ -1687,7 +1620,7 @@ const SQL: typeof Bun.SQL = function SQL(
       try {
         const __defaults__ = (reserved as any)?.getCopyDefaults?.() || (pool as any)?.getCopyDefaults?.() || undefined;
         const __fromDefaults__ = (__defaults__ && __defaults__.from) || {
-          maxChunkSize: 256 * 1024,
+          maxChunkSize: DEFAULT_COPY_MAX_CHUNK_SIZE,
           maxBytes: 0,
           timeout: 0,
         };

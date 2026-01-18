@@ -2,50 +2,11 @@
  * Shared PostgreSQL encoding utilities for binary COPY and array serialization
  */
 
-// PostgreSQL type OID constants
-export const TYPE_OID: Record<string, number> = {
-  bool: 16,
-  int2: 21,
-  int4: 23,
-  int8: 20,
-  float4: 700,
-  float8: 701,
-  text: 25,
-  varchar: 1043,
-  bpchar: 1042,
-  bytea: 17,
-  date: 1082,
-  time: 1083,
-  timestamp: 1114,
-  timestamptz: 1184,
-  uuid: 2950,
-  json: 114,
-  jsonb: 3802,
-  numeric: 1700,
-  interval: 1186,
-};
+// Import shared type constants from centralized module
+const { TYPE_OID, TYPE_ARRAY_OID } = require("./postgres-types");
 
-export const TYPE_ARRAY_OID: Record<string, number> = {
-  "bool[]": 1000,
-  "int2[]": 1005,
-  "int4[]": 1007,
-  "int8[]": 1016,
-  "float4[]": 1021,
-  "float8[]": 1022,
-  "text[]": 1009,
-  "varchar[]": 1015,
-  "bpchar[]": 1014,
-  "bytea[]": 1001,
-  "date[]": 1182,
-  "time[]": 1183,
-  "timestamp[]": 1115,
-  "timestamptz[]": 1185,
-  "uuid[]": 2951,
-  "json[]": 199,
-  "jsonb[]": 3807,
-  "numeric[]": 1231,
-  "interval[]": 1187,
-};
+// Re-export for consumers
+export { TYPE_OID, TYPE_ARRAY_OID };
 
 // Binary encoding helpers
 const encText = new TextEncoder();

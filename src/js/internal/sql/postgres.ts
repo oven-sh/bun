@@ -21,6 +21,11 @@ function isTypedArray(value: any) {
 
 const { PostgresError } = require("internal/sql/errors");
 const { arrayEscape } = require("internal/sql/postgres-encoding");
+const {
+  POSTGRES_ARRAY_TYPES,
+  isNumericType: isPostgresNumericType,
+  isJsonType: isPostgresJsonType,
+} = require("internal/sql/postgres-types");
 
 const {
   createConnection: createPostgresConnection,
@@ -33,6 +38,7 @@ const {
   setCopyStreamingMode,
   setCopyTimeout,
   setMaxCopyBufferSize,
+  setMaxCopyBufferSizeUnsafe,
 } = $zig("postgres.zig", "createBinding") as PostgresDotZig;
 
 const copyStartHandlers = new WeakMap<$ZigGeneratedClasses.PostgresSQLConnection, () => void>();
@@ -42,109 +48,7 @@ const writableHandlers = new WeakMap<$ZigGeneratedClasses.PostgresSQLConnection,
 
 const cmds = ["", "INSERT", "DELETE", "UPDATE", "MERGE", "SELECT", "MOVE", "FETCH", "COPY"];
 
-const POSTGRES_ARRAY_TYPES = {
-  // Boolean
-  1000: "BOOLEAN", // bool_array
-
-  // Binary
-  1001: "BYTEA", // bytea_array
-
-  // Character types
-  1002: "CHAR", // char_array
-  1003: "NAME", // name_array
-  1009: "TEXT", // text_array
-  1014: "CHAR", // bpchar_array
-  1015: "VARCHAR", // varchar_array
-
-  // Numeric types
-  1005: "SMALLINT", // int2_array
-  1006: "INT2VECTOR", // int2vector_array
-  1007: "INTEGER", // int4_array
-  1016: "BIGINT", // int8_array
-  1021: "REAL", // float4_array
-  1022: "DOUBLE PRECISION", // float8_array
-  1231: "NUMERIC", // numeric_array
-  791: "MONEY", // money_array
-
-  // OID types
-  1028: "OID", // oid_array
-  1010: "TID", // tid_array
-  1011: "XID", // xid_array
-  1012: "CID", // cid_array
-
-  // JSON types
-  199: "JSON", // json_array
-  3802: "JSONB", // jsonb (not array)
-  3807: "JSONB", // jsonb_array
-  4072: "JSONPATH", // jsonpath
-  4073: "JSONPATH", // jsonpath_array
-
-  // XML
-  143: "XML", // xml_array
-
-  // Geometric types
-  1017: "POINT", // point_array
-  1018: "LSEG", // lseg_array
-  1019: "PATH", // path_array
-  1020: "BOX", // box_array
-  1027: "POLYGON", // polygon_array
-  629: "LINE", // line_array
-  719: "CIRCLE", // circle_array
-
-  // Network types
-  651: "CIDR", // cidr_array
-  1040: "MACADDR", // macaddr_array
-  1041: "INET", // inet_array
-  775: "MACADDR8", // macaddr8_array
-  2951: "UUID", // uuid_array
-
-  // Date/Time types
-  1182: "DATE", // date_array
-  1183: "TIME", // time_array
-  1115: "TIMESTAMP", // timestamp_array
-  1185: "TIMESTAMPTZ", // timestamptz_array
-  1187: "INTERVAL", // interval_array
-  1270: "TIMETZ", // timetz_array
-
-  // Bit string types
-  1561: "BIT", // bit_array
-  1563: "VARBIT", // varbit_array
-
-  // ACL
-  1034: "ACLITEM", // aclitem_array
-
-  // System catalog types
-  12052: "PG_DATABASE", // pg_database_array
-  10052: "PG_DATABASE", // pg_database_array2
-};
-
-function isPostgresNumericType(type: string) {
-  switch (type) {
-    case "BIT": // bit_array
-    case "VARBIT": // varbit_array
-    case "SMALLINT": // int2_array
-    case "INT2VECTOR": // int2vector_array
-    case "INTEGER": // int4_array
-    case "INT": // int4_array
-    case "BIGINT": // int8_array
-    case "REAL": // float4_array
-    case "DOUBLE PRECISION": // float8_array
-    case "NUMERIC": // numeric_array
-    case "MONEY": // money_array
-      return true;
-    default:
-      return false;
-  }
-}
-function isPostgresJsonType(type: string) {
-  switch (type) {
-    case "JSON":
-    case "JSONB":
-      return true;
-    default:
-      return false;
-  }
-}
+// POSTGRES_ARRAY_TYPES, isPostgresNumericType, isPostgresJsonType imported from postgres-types
 function getPostgresArrayType(typeId: number) {
   return POSTGRES_ARRAY_TYPES[typeId] || null;
 }
@@ -189,16 +93,22 @@ function arrayValueSerializer(type: ArrayType, is_numeric: boolean, is_json: boo
           // fallback to string
           return value === true ? '"true"' : '"false"';
       }
-    default:
-      if (value instanceof Date) {
-        const isoValue = value.toISOString();
+    case "object": {
+      // Type assertion needed because TypeScript's control flow analysis
+      // incorrectly infers 'never' after the typeof switch
+      const objectValue = value as object | null;
+      if (objectValue === null) {
+        return "null";
+      }
+      if (objectValue instanceof Date) {
+        const isoValue = objectValue.toISOString();
         if (is_json) {
           return `"${arrayEscape(JSON.stringify(isoValue))}"`;
         }
         return `"${arrayEscape(isoValue)}"`;
       }
-      if (Buffer.isBuffer(value)) {
-        const hexValue = value.toString("hex");
+      if (Buffer.isBuffer(objectValue)) {
+        const hexValue = objectValue.toString("hex");
         // bytea array
         if (type === "BYTEA") {
           return `"\\x${arrayEscape(hexValue)}"`;
@@ -209,6 +119,10 @@ function arrayValueSerializer(type: ArrayType, is_numeric: boolean, is_json: boo
         return `"${arrayEscape(hexValue)}"`;
       }
       // fallback to JSON.stringify
+      return `"${arrayEscape(JSON.stringify(objectValue))}"`;
+    }
+    default:
+      // function, symbol - fallback to JSON.stringify
       return `"${arrayEscape(JSON.stringify(value))}"`;
   }
 }
@@ -238,7 +152,14 @@ function wrapPostgresError(error: Error | PostgresErrorOptions) {
   if (Error.isError(error)) {
     return error;
   }
-  return new PostgresError(error.message, error);
+
+  let message = "PostgreSQL error";
+
+  if ("message" in error) {
+    message = error.message as string;
+  }
+
+  return new PostgresError(message, error);
 }
 
 initPostgres(
@@ -375,6 +296,7 @@ export interface PostgresDotZig {
     onCopyStart: (this: $ZigGeneratedClasses.PostgresSQLConnection) => void,
     onCopyChunk: (this: $ZigGeneratedClasses.PostgresSQLConnection, chunk: any) => void,
     onCopyEnd: (this: $ZigGeneratedClasses.PostgresSQLConnection) => void,
+    onWritable: (this: $ZigGeneratedClasses.PostgresSQLConnection) => void,
   ) => void;
   createConnection: (
     hostname: string | undefined,
@@ -406,10 +328,11 @@ export interface PostgresDotZig {
   sendCopyData: (data: string | Uint8Array) => void;
   sendCopyDone: () => void;
   sendCopyFail: (message?: string) => void;
-  awaitWritable: () => void;
+  awaitWritable: () => Promise<void>;
   setCopyStreamingMode: (enable: boolean) => void;
   setCopyTimeout: (ms: number) => void;
   setMaxCopyBufferSize: (bytes: number) => void;
+  setMaxCopyBufferSizeUnsafe: (bytes: number) => void;
 }
 
 function onCopyStart(connection: $ZigGeneratedClasses.PostgresSQLConnection, handler: () => void) {
@@ -428,7 +351,7 @@ function copyDone(connection: $ZigGeneratedClasses.PostgresSQLConnection) {
 function copyFail(connection: $ZigGeneratedClasses.PostgresSQLConnection, message?: string) {
   (sendCopyFail as any)(connection, message ?? "");
 }
-const enum SQLCommand {
+enum SQLCommand {
   insert = 0,
   update = 1,
   updateSet = 2,
@@ -436,7 +359,6 @@ const enum SQLCommand {
   in = 4,
   none = -1,
 }
-export type { SQLCommand };
 
 function commandToString(command: SQLCommand): string {
   switch (command) {
@@ -957,6 +879,11 @@ class PostgresAdapter
     const n = Math.min(0xffffffff, Math.max(0, Math.trunc(Number(bytes) || 0)));
     (setMaxCopyBufferSize as any)(connection, n);
   }
+
+  static setMaxCopyBufferSizeUnsafe(connection: $ZigGeneratedClasses.PostgresSQLConnection, bytes: number) {
+    const n = Math.min(0xffffffff, Math.max(0, Math.trunc(Number(bytes) || 0)));
+    (setMaxCopyBufferSizeUnsafe as any)(connection, n);
+  }
   static onWritable(connection: $ZigGeneratedClasses.PostgresSQLConnection, handler: () => void) {
     writableHandlers.set(connection, handler);
   }
@@ -964,8 +891,8 @@ class PostgresAdapter
     if (handler) {
       writableHandlers.set(connection, handler);
     }
-    // Use the connection as thisArg; no explicit callback so the global dispatcher installed by init is used.
-    (awaitWritable as any)(connection);
+    // Use the connection as thisArg; the Zig binding returns a Promise that resolves when the socket becomes writable.
+    return (awaitWritable as any)(connection);
   }
 
   // Instance helpers to control COPY using a pooled connection handle
@@ -1002,7 +929,7 @@ class PostgresAdapter
   awaitWritableFor(connection: PooledPostgresConnection, handler?: () => void) {
     const underlying = this.getConnectionForQuery(connection);
     if (underlying) {
-      PostgresAdapter.awaitWritable(underlying, handler);
+      return PostgresAdapter.awaitWritable(underlying, handler);
     }
   }
   setCopyStreamingModeFor(connection: PooledPostgresConnection, enable: boolean) {

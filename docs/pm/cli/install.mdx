@@ -219,22 +219,12 @@ Offline mode is useful in several scenarios:
 - **Reproducible builds**: Ensure builds only use cached, known-good packages
 - **Network reliability**: Avoid failures caused by temporary network issues or registry outages
 
-### Setting up offline installs
+### Cache requirements
 
 For offline mode to work, you need:
 
 1. **Caching enabled**: The default cache location is `~/.bun/install/cache`. If you've disabled caching with `cache = false` in `bunfig.toml`, offline mode won't work.
 2. **Packages already cached**: Run a normal install first to populate the cache.
-
-A typical workflow:
-
-```bash terminal icon="terminal"
-# First: Install packages normally to populate the cache
-bun install
-
-# Later: Install from cache only (no network requests)
-bun install --offline
-```
 
 If you're using a custom cache directory, make sure it's configured in both the initial install and the offline install:
 
@@ -254,6 +244,195 @@ Or configure it in `bunfig.toml`:
 ```toml bunfig.toml icon="settings"
 [install]
 offline = true
+```
+
+### Air-gapped environment workflow
+
+For environments with no internet access, you need to prepare the cache on a connected machine and transfer it to the air-gapped system.
+
+#### Step 1: Prepare the cache on a connected machine
+
+On a machine with internet access, install all dependencies to populate the cache:
+
+```bash terminal icon="terminal"
+# Clone or copy your project
+git clone https://github.com/your-org/your-project.git
+cd your-project
+
+# Install dependencies (this populates ~/.bun/install/cache)
+bun install
+
+# Verify the cache was populated
+ls ~/.bun/install/cache
+```
+
+#### Step 2: Package the cache for transfer
+
+Create a portable archive of the cache directory:
+
+```bash terminal icon="terminal"
+# Create a tarball of the cache
+tar -czvf bun-cache.tar.gz -C ~/.bun/install cache
+
+# Also include your lockfile for reproducibility
+cp bun.lock /path/to/transfer/
+```
+
+<Note>
+
+The cache directory contains both package tarballs and extracted package contents. The entire `cache` directory must be transferred to ensure offline installs work correctly.
+
+</Note>
+
+#### Step 3: Transfer to the air-gapped system
+
+Transfer the following files to your air-gapped environment:
+
+- `bun-cache.tar.gz` - The package cache
+- `bun.lock` - Your lockfile for reproducible installs
+- Your project source code
+
+Use your organization's approved method for transferring files (USB drive, secure file transfer, etc.).
+
+#### Step 4: Set up on the air-gapped system
+
+On the air-gapped machine:
+
+```bash terminal icon="terminal"
+# Extract the cache to Bun's cache directory
+mkdir -p ~/.bun/install
+tar -xzvf bun-cache.tar.gz -C ~/.bun/install
+
+# Copy your project and lockfile
+cp -r your-project /path/to/workspace/
+cd /path/to/workspace/your-project
+
+# Install using only the cache (no network requests)
+bun install --offline --frozen-lockfile
+```
+
+#### Using a custom cache location
+
+For more control, you can use a project-local cache:
+
+```bash terminal icon="terminal"
+# On the connected machine: use a local cache directory
+BUN_INSTALL_CACHE_DIR=./vendor/cache bun install
+
+# Transfer the entire project including vendor/cache
+
+# On the air-gapped machine: use the same cache location
+BUN_INSTALL_CACHE_DIR=./vendor/cache bun install --offline
+```
+
+Or configure it in `bunfig.toml`:
+
+```toml bunfig.toml icon="settings"
+[install]
+cache = "./vendor/cache"
+offline = true
+```
+
+### Docker workflow for air-gapped builds
+
+For containerized air-gapped environments, you can bake the cache into your Docker image:
+
+```dockerfile Dockerfile icon="docker"
+# Stage 1: Build with network access (on connected system)
+FROM oven/bun:1 AS deps
+WORKDIR /app
+COPY package.json bun.lock ./
+RUN bun install
+
+# Stage 2: Production image (can run air-gapped)
+FROM oven/bun:1
+WORKDIR /app
+
+# Copy the populated cache from the build stage
+COPY --from=deps /root/.bun/install/cache /root/.bun/install/cache
+
+# Copy application files
+COPY package.json bun.lock ./
+COPY src ./src
+
+# Install from cache only - no network needed
+RUN bun install --offline --frozen-lockfile
+
+CMD ["bun", "run", "start"]
+```
+
+Alternatively, pre-build a cache image that can be used across multiple projects:
+
+```dockerfile Dockerfile.cache icon="docker"
+# Cache image - build this on a connected system
+FROM oven/bun:1
+WORKDIR /cache
+
+# Copy all your organization's package.json files
+COPY projects/*/package.json projects/*/bun.lock ./
+
+# Install everything to populate the cache
+RUN for dir in */; do (cd "$dir" && bun install); done
+
+# The cache is now at /root/.bun/install/cache
+```
+
+### CI/CD with cached dependencies
+
+For CI/CD pipelines, cache the Bun install cache between runs:
+
+```yaml .github/workflows/build.yml icon="file-code"
+name: Build
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Cache Bun dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('**/bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+        # After cache is warm, add --offline for faster, network-free installs
+```
+
+### Troubleshooting offline installs
+
+**Error: Package not found in cache**
+
+If you see an error like `error: PackageName is not available in offline mode`, the package isn't in your cache. Solutions:
+
+1. On a connected machine, run `bun install` without `--offline` to fetch the missing package
+2. Transfer the updated cache to your air-gapped system
+3. Ensure your `bun.lock` matches what's in the cache
+
+**Error: Cache directory not found**
+
+Ensure the cache directory exists and is readable:
+
+```bash terminal icon="terminal"
+ls -la ~/.bun/install/cache
+# Or your custom cache location
+ls -la $BUN_INSTALL_CACHE_DIR
+```
+
+**Lockfile mismatch**
+
+When using `--frozen-lockfile` with `--offline`, ensure the `bun.lock` file was created from the same cache:
+
+```bash terminal icon="terminal"
+# On connected machine: regenerate lockfile
+rm bun.lock
+bun install
+
+# Transfer both the cache AND the new bun.lock
 ```
 
 ---

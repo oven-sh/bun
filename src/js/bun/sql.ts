@@ -329,7 +329,7 @@ async function sendChunkedData(
  */
 function validateBinaryTypes(options: any, columns: string[] | undefined): string[] {
   const types = options?.binaryTypes as string[] | undefined;
-  if (!types || !Array.isArray(types)) {
+  if (!types || !$isArray(types)) {
     throw new Error(
       "Binary COPY format requires raw bytes or provide options.binaryTypes to enable automatic binary row encoding.",
     );
@@ -1374,7 +1374,7 @@ const SQL: typeof Bun.SQL = function SQL(
       throw $ERR_INVALID_ARG_VALUE("table", table, "must be a non-empty string");
     }
 
-    if (!Array.isArray(columns)) {
+    if (!$isArray(columns)) {
       throw $ERR_INVALID_ARG_VALUE("columns", columns, "must be an array of strings");
     }
     for (let i = 0; i < columns.length; i++) {
@@ -1783,7 +1783,7 @@ const SQL: typeof Bun.SQL = function SQL(
           // Column OID must be the base type OID when not array
           return base!;
         });
-        if (!Array.isArray(rows) || rows.length === 0) {
+        if (!$isArray(rows) || rows.length === 0) {
           throw new Error("Could not resolve column OIDs for validation.");
         }
         if ((colNames?.length ?? 0) > 0) {
@@ -2032,7 +2032,7 @@ const SQL: typeof Bun.SQL = function SQL(
           format: string | undefined,
         ): AsyncGenerator<string | ArrayBuffer, void, void> {
           if (isBinary) {
-            if (Array.isArray(accumulated)) {
+            if ($isArray(accumulated)) {
               const parts: Uint8Array[] = [];
               for (let i = 0; i < accumulated.length; i++) {
                 const u8 = toUint8Array(accumulated[i]);
@@ -2049,7 +2049,7 @@ const SQL: typeof Bun.SQL = function SQL(
               return;
             }
 
-            const value = Array.isArray(accumulated) ? accumulated[0] : (accumulated ?? null);
+            const value = $isArray(accumulated) ? accumulated[0] : (accumulated ?? null);
             const u8 = toUint8Array(value);
             if (!u8) {
               throw $ERR_INVALID_ARG_VALUE(
@@ -2062,12 +2062,12 @@ const SQL: typeof Bun.SQL = function SQL(
             return;
           }
 
-          if (Array.isArray(accumulated)) {
+          if ($isArray(accumulated)) {
             yield accumulated.map(x => String(x ?? "")).join("");
             return;
           }
 
-          yield String(Array.isArray(accumulated) ? (accumulated[0] ?? "") : (accumulated ?? ""));
+          yield String($isArray(accumulated) ? (accumulated[0] ?? "") : (accumulated ?? ""));
         };
 
         try {

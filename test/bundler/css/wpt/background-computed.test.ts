@@ -11,7 +11,7 @@ h1 {
 }
       `,
     },
-    outfile: "out.css",
+    outfile: "/out.css",
 
     onAfterBundle(api) {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`

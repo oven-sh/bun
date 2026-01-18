@@ -9,6 +9,7 @@ import { itBundled } from "../expectBundled";
 
 describe("bundler", () => {
   itBundled("css/CSSEntryPoint", {
+    // GENERATED
     files: {
       "/entry.css": /* css */ `
           body {
@@ -16,9 +17,9 @@ describe("bundler", () => {
             color: black }
         `,
     },
-    outfile: "/out.js",
+    outfile: "/out.css",
     onAfterBundle(api) {
-      api.expectFile("/out.js").toEqualIgnoringWhitespace(`
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
   /* entry.css */
   body {
           color: #000;
@@ -28,17 +29,19 @@ describe("bundler", () => {
   });
 
   itBundled("css/CSSEntryPointEmpty", {
+    // GENERATED
     files: {
       "/entry.css": /* css */ `\n`,
     },
-    outfile: "/out.js",
+    outfile: "/out.css",
     onAfterBundle(api) {
-      api.expectFile("/out.js").toEqualIgnoringWhitespace(`
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
   /* entry.css */`);
     },
   });
 
   itBundled("css/CSSNesting", {
+    // GENERATED
     target: "bun",
     files: {
       "/entry.css": /* css */ `
@@ -48,12 +51,12 @@ describe("bundler", () => {
   	}
   }`,
     },
-    outfile: "/out.js",
+    outfile: "/out.css",
     onAfterBundle(api) {
-      api.expectFile("/out.js").toEqualIgnoringWhitespace(`
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
   /* entry.css */
   body {
-  	&h1 {
+  	& h1 {
   		color: #fff;
   	}
   }
@@ -62,6 +65,7 @@ describe("bundler", () => {
   });
 
   itBundled("css/CSSAtImportMissing", {
+    // Cannot use virtual mode for error tests - Bun.build throws instead of returning { success: false }
     files: {
       "/entry.css": `@import "./missing.css";`,
     },
@@ -136,6 +140,7 @@ describe("bundler", () => {
   });
 
   itBundled("css/CSSAtImportCycle", {
+    // GENERATED
     files: {
       "/a.css": /* css */ `
           @import "./a.css";

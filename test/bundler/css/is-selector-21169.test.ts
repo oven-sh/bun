@@ -3,16 +3,15 @@ import { itBundled } from "../expectBundled";
 describe("css", () => {
   itBundled("css/is-selector", {
     files: {
-      "index.css": /* css */ `
+      "/index.css": /* css */ `
         .foo:is(input:checked) {
            color: red;
         }
       `,
     },
-    outdir: "/out",
-    entryPoints: ["/index.css"],
+    outfile: "/out.css",
     onAfterBundle(api) {
-      api.expectFile("/out/index.css").toMatchInlineSnapshot(`
+      api.expectFile("/out.css").toMatchInlineSnapshot(`
         "/* index.css */
         .foo:-webkit-any(input:checked) {
           color: red;

@@ -260,8 +260,9 @@ const FormDataContext = struct {
 
                             switch (res) {
                                 .err => |err| {
-                                    globalThis.throwValue(err.toJS(globalThis) catch return) catch {};
                                     this.failed = true;
+                                    const js_err = err.toJS(globalThis) catch return;
+                                    globalThis.throwValue(js_err) catch {};
                                 },
                                 .result => |result| {
                                     joiner.push(result.slice(), result.buffer.allocator);

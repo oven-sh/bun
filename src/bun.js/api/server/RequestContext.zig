@@ -918,7 +918,12 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 file.pathlike.fd
             else switch (bun.sys.open(file.pathlike.path.sliceZ(&file_buf), bun.O.RDONLY | bun.O.NONBLOCK | bun.O.CLOEXEC, 0)) {
                 .result => |_fd| _fd,
-                .err => |err| return this.runErrorHandler(err.withPath(file.pathlike.path.slice()).toJS(globalThis) catch return),
+                .err => |err| {
+                    const js_err = err.withPath(file.pathlike.path.slice()).toJS(globalThis) catch {
+                        return this.renderProductionError(500);
+                    };
+                    return this.runErrorHandler(js_err);
+                },
             };
 
             // stat only blocks if the target is a file descriptor
@@ -929,7 +934,10 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     if (auto_close) {
                         fd.close();
                     }
-                    this.runErrorHandler(err.withPathLike(file.pathlike).toJS(globalThis) catch return);
+                    const js_err = err.withPathLike(file.pathlike).toJS(globalThis) catch {
+                        return this.renderProductionError(500);
+                    };
+                    this.runErrorHandler(js_err);
                     return;
                 },
             };
@@ -946,9 +954,10 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     };
                     var sys = err.withPathLike(file.pathlike).toSystemError();
                     sys.message = bun.String.static("MacOS does not support sending non-regular files");
-                    this.runErrorHandler(sys.toErrorInstance(
-                        globalThis,
-                    ) catch return);
+                    const js_err = sys.toErrorInstance(globalThis) catch {
+                        return this.renderProductionError(500);
+                    };
+                    this.runErrorHandler(js_err);
                     return;
                 }
             }
@@ -965,7 +974,10 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     };
                     var sys = err.withPathLike(file.pathlike).toShellSystemError();
                     sys.message = bun.String.static("File must be regular or FIFO");
-                    this.runErrorHandler(sys.toErrorInstance(globalThis) catch return);
+                    const js_err = sys.toErrorInstance(globalThis) catch {
+                        return this.renderProductionError(500);
+                    };
+                    this.runErrorHandler(js_err);
                     return;
                 }
             }
@@ -1044,7 +1056,10 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
             if (result == .err) {
                 if (this.server) |server| {
-                    this.runErrorHandler(result.err.toErrorInstance(server.globalThis) catch return);
+                    const js_err = result.err.toErrorInstance(server.globalThis) catch {
+                        return this.renderProductionError(500);
+                    };
+                    this.runErrorHandler(js_err);
                 }
                 return;
             }
@@ -1854,7 +1869,10 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                                 .message = bun.String.static("Stream already used, please create a new one"),
                             };
                             stream.value.unprotect();
-                            this.runErrorHandler(err.toErrorInstance(globalThis) catch return);
+                            const js_err = err.toErrorInstance(globalThis) catch {
+                                return this.renderProductionError(500);
+                            };
+                            this.runErrorHandler(js_err);
                             return;
                         }
 

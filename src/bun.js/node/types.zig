@@ -762,7 +762,7 @@ pub const Valid = struct {
             else => {
                 var system_error = bun.sys.Error.fromCode(.NAMETOOLONG, .open).withPath(zig_str.slice()).toSystemError();
                 system_error.syscall = bun.String.dead;
-                return ctx.throwValue(system_error.toErrorInstance(ctx));
+                return ctx.throwValue(try system_error.toErrorInstance(ctx));
             },
         }
         comptime unreachable;
@@ -774,7 +774,7 @@ pub const Valid = struct {
             else => {
                 var system_error = bun.sys.Error.fromCode(.NAMETOOLONG, .open).toSystemError();
                 system_error.syscall = bun.String.dead;
-                return ctx.throwValue(system_error.toErrorInstance(ctx));
+                return ctx.throwValue(try system_error.toErrorInstance(ctx));
             },
         }
         comptime unreachable;
@@ -793,7 +793,7 @@ pub const Valid = struct {
             else => {
                 var system_error = bun.sys.Error.fromCode(.NAMETOOLONG, .open).toSystemError();
                 system_error.syscall = bun.String.dead;
-                return ctx.throwValue(system_error.toErrorInstance(ctx));
+                return ctx.throwValue(try system_error.toErrorInstance(ctx));
             },
             1...bun.MAX_PATH_BYTES => return,
         }

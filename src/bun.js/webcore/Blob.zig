@@ -260,7 +260,7 @@ const FormDataContext = struct {
 
                             switch (res) {
                                 .err => |err| {
-                                    globalThis.throwValue(err.toJS(globalThis)) catch {};
+                                    globalThis.throwValue(err.toJS(globalThis) catch return) catch {};
                                     this.failed = true;
                                 },
                                 .result => |result| {
@@ -1612,7 +1612,7 @@ fn writeStringToFileFast(
 
                 return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(
                     globalThis,
-                    err.withPath(pathlike.path.slice()).toJS(globalThis),
+                    err.withPath(pathlike.path.slice()).toJS(globalThis) catch return .zero,
                 );
             },
         }
@@ -1653,7 +1653,7 @@ fn writeStringToFileFast(
                         return .zero;
                     }
                     if (comptime !needs_open) {
-                        return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJS(globalThis));
+                        return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJS(globalThis) catch return .zero);
                     }
                     return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(
                         globalThis,
@@ -1699,7 +1699,7 @@ fn writeBytesToFileFast(
 
                 return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(
                     globalThis,
-                    err.withPath(pathlike.path.slice()).toJS(globalThis),
+                    err.withPath(pathlike.path.slice()).toJS(globalThis) catch return .zero,
                 );
             },
         }
@@ -1737,7 +1737,7 @@ fn writeBytesToFileFast(
                 }
                 return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(
                     globalThis,
-                    err.withPath(pathlike.path.slice()).toJS(globalThis),
+                    err.withPath(pathlike.path.slice()).toJS(globalThis) catch return .zero,
                 );
             },
         }
@@ -2504,7 +2504,7 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, re
                 switch (sink.writer.startSync(fd, false)) {
                     .err => |err| {
                         sink.deref();
-                        return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJS(globalThis));
+                        return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJS(globalThis) catch return .zero);
                     },
                     else => {},
                 }
@@ -2512,7 +2512,7 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, re
                 switch (sink.writer.start(fd, true)) {
                     .err => |err| {
                         sink.deref();
-                        return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJS(globalThis));
+                        return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJS(globalThis) catch return .zero);
                     },
                     else => {},
                 }
@@ -2546,7 +2546,7 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, re
         switch (sink.start(stream_start)) {
             .err => |err| {
                 sink.deref();
-                return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJS(globalThis));
+                return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJS(globalThis) catch return .zero);
             },
             else => {},
         }
@@ -2766,7 +2766,7 @@ pub fn getWriter(
             switch (sink.writer.startSync(fd, false)) {
                 .err => |err| {
                     sink.deref();
-                    return globalThis.throwValue(err.toJS(globalThis));
+                    return globalThis.throwValue(err.toJS(globalThis) catch return .zero);
                 },
                 else => {},
             }
@@ -2774,7 +2774,7 @@ pub fn getWriter(
             switch (sink.writer.start(fd, true)) {
                 .err => |err| {
                     sink.deref();
-                    return globalThis.throwValue(err.toJS(globalThis));
+                    return globalThis.throwValue(err.toJS(globalThis) catch return .zero);
                 },
                 else => {},
             }
@@ -2813,7 +2813,7 @@ pub fn getWriter(
     switch (sink.start(stream_start)) {
         .err => |err| {
             sink.deref();
-            return globalThis.throwValue(err.toJS(globalThis));
+            return globalThis.throwValue(err.toJS(globalThis) catch return .zero);
         },
         else => {},
     }

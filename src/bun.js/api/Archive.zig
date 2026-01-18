@@ -712,7 +712,7 @@ const WriteContext = struct {
         return switch (this.result) {
             .success => .{ .resolve = .js_undefined },
             .err => |e| .{ .reject = globalThis.createErrorInstance("{s}", .{@errorName(e)}) },
-            .sys_err => |sys_err| .{ .reject = sys_err.toJS(globalThis) },
+            .sys_err => |sys_err| .{ .reject = try sys_err.toJS(globalThis) },
         };
     }
 

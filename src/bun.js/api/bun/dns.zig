@@ -2381,7 +2381,7 @@ pub const Resolver = struct {
                     .message = bun.String.static(err.label()),
                 };
 
-                return globalThis.throwValue(system_error.toErrorInstance(globalThis));
+                return globalThis.throwValue(try system_error.toErrorInstance(globalThis));
             },
         }
     }
@@ -3089,7 +3089,7 @@ pub const Resolver = struct {
                     .syscall = syscall,
                 };
 
-                return globalThis.throwValue(system_error.toErrorInstance(globalThis));
+                return globalThis.throwValue(try system_error.toErrorInstance(globalThis));
             },
         };
 

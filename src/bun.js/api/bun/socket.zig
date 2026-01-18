@@ -338,7 +338,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             this.this_value = .zero;
             this.has_pending_activity.store(false, .release);
 
-            const err_value = err.toErrorInstance(globalObject);
+            const err_value = err.toErrorInstance(globalObject) catch return;
             const result = callback.call(globalObject, this_value, &[_]JSValue{ this_value, err_value }) catch |e| globalObject.takeException(e);
 
             if (result.toError()) |err_val| {
@@ -348,7 +348,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                 // They've defined a `connectError` callback
                 // The error is effectively handled, but we should still reject the promise.
                 var promise = val.asPromise().?;
-                const err_ = err.toErrorInstance(globalObject);
+                const err_ = err.toErrorInstance(globalObject) catch return;
                 promise.rejectAsHandled(globalObject, err_) catch {}; // TODO: properly propagate exception upwards
             }
         }
@@ -632,7 +632,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             var js_error: JSValue = .js_undefined;
             if (err != 0) {
                 // errors here are always a read error
-                js_error = bun.sys.Error.fromCodeInt(err, .read).toJS(globalObject);
+                js_error = bun.sys.Error.fromCodeInt(err, .read).toJS(globalObject) catch return;
             }
 
             _ = callback.call(globalObject, this_value, &[_]JSValue{
@@ -2036,7 +2036,7 @@ pub fn jsCreateSocketPair(global: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JS
     const rc = std.c.socketpair(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0, &fds_);
     if (rc != 0) {
         const err = bun.sys.Error.fromCode(bun.sys.getErrno(rc), .socketpair);
-        return global.throwValue(err.toJS(global));
+        return global.throwValue(try err.toJS(global));
     }
 
     _ = bun.FD.fromNative(fds_[0]).updateNonblocking(true);
@@ -2068,12 +2068,12 @@ pub fn jsSetSocketOptions(global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame
         if (is_for_send_buffer) {
             const result = bun.sys.setsockopt(file_descriptor, std.posix.SOL.SOCKET, std.posix.SO.SNDBUF, buffer_size);
             if (result.asErr()) |err| {
-                return global.throwValue(err.toJS(global));
+                return global.throwValue(try err.toJS(global));
             }
         } else if (is_for_recv_buffer) {
             const result = bun.sys.setsockopt(file_descriptor, std.posix.SOL.SOCKET, std.posix.SO.RCVBUF, buffer_size);
             if (result.asErr()) |err| {
-                return global.throwValue(err.toJS(global));
+                return global.throwValue(try err.toJS(global));
             }
         }
     }

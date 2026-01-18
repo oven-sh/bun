@@ -487,7 +487,7 @@ pub const FSWatcher = struct {
                 const globalObject = this.globalThis;
                 var args = [_]jsc.JSValue{
                     EventType.@"error".toJS(globalObject),
-                    err.toJS(globalObject),
+                    err.toJS(globalObject) catch return,
                 };
                 _ = listener.callWithGlobalThis(
                     globalObject,

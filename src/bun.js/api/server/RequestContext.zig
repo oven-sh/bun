@@ -918,14 +918,14 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 file.pathlike.fd
             else switch (bun.sys.open(file.pathlike.path.sliceZ(&file_buf), bun.O.RDONLY | bun.O.NONBLOCK | bun.O.CLOEXEC, 0)) {
                 .result => |_fd| _fd,
-                .err => |err| return this.runErrorHandler(err.withPath(file.pathlike.path.slice()).toJS(globalThis)),
+                .err => |err| return this.runErrorHandler(err.withPath(file.pathlike.path.slice()).toJS(globalThis) catch return),
             };
 
             // stat only blocks if the target is a file descriptor
             const stat: bun.Stat = switch (bun.sys.fstat(fd)) {
                 .result => |result| result,
                 .err => |err| {
-                    this.runErrorHandler(err.withPathLike(file.pathlike).toJS(globalThis));
+                    this.runErrorHandler(err.withPathLike(file.pathlike).toJS(globalThis) catch return);
                     if (auto_close) {
                         fd.close();
                     }
@@ -947,7 +947,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     sys.message = bun.String.static("MacOS does not support sending non-regular files");
                     this.runErrorHandler(sys.toErrorInstance(
                         globalThis,
-                    ));
+                    ) catch return);
                     return;
                 }
             }
@@ -1043,7 +1043,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
             if (result == .err) {
                 if (this.server) |server| {
-                    this.runErrorHandler(result.err.toErrorInstance(server.globalThis));
+                    this.runErrorHandler(result.err.toErrorInstance(server.globalThis) catch return);
                 }
                 return;
             }
@@ -1853,7 +1853,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                                 .message = bun.String.static("Stream already used, please create a new one"),
                             };
                             stream.value.unprotect();
-                            this.runErrorHandler(err.toErrorInstance(globalThis));
+                            this.runErrorHandler(err.toErrorInstance(globalThis) catch return);
                             return;
                         }
 

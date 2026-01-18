@@ -1694,7 +1694,7 @@ pub const Error = enum(i32) {
                 .hostname = this.hostname orelse bun.String.empty,
             };
 
-            const instance = system_error.toErrorInstance(globalThis);
+            const instance = try system_error.toErrorInstance(globalThis);
             instance.put(globalThis, "name", try bun.String.static("DNSException").toJS(globalThis));
 
             defer this.deinit();
@@ -1738,7 +1738,7 @@ pub const Error = enum(i32) {
     }
 
     pub fn toJSWithSyscall(this: Error, globalThis: *jsc.JSGlobalObject, comptime syscall: [:0]const u8) bun.JSError!jsc.JSValue {
-        const instance = (jsc.SystemError{
+        const instance = try (jsc.SystemError{
             .errno = @intFromEnum(this),
             .code = bun.String.static(this.code()[4..]),
             .syscall = bun.String.static(syscall),
@@ -1749,7 +1749,7 @@ pub const Error = enum(i32) {
     }
 
     pub fn toJSWithSyscallAndHostname(this: Error, globalThis: *jsc.JSGlobalObject, comptime syscall: [:0]const u8, hostname: []const u8) bun.JSError!jsc.JSValue {
-        const instance = (jsc.SystemError{
+        const instance = try (jsc.SystemError{
             .errno = @intFromEnum(this),
             .code = bun.String.static(this.code()[4..]),
             .message = bun.handleOom(bun.String.createFormat("{s} {s} {s}", .{ syscall, this.code()[4..], hostname })),

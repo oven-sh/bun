@@ -1761,7 +1761,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                                         .message = bun.String.init(std.fmt.bufPrint(&output_buf, "permission denied {s}:{d}", .{ tcp.hostname orelse "0.0.0.0", tcp.port }) catch "Failed to start server"),
                                         .code = bun.String.static("EACCES"),
                                         .syscall = bun.String.static("listen"),
-                                    }).toErrorInstance(globalThis);
+                                    }).toErrorInstance(globalThis) catch return;
                                     break :error_set;
                                 }
                             }
@@ -1769,7 +1769,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                                 .message = bun.String.init(std.fmt.bufPrint(&output_buf, "Failed to start server. Is port {d} in use?", .{tcp.port}) catch "Failed to start server"),
                                 .code = bun.String.static("EADDRINUSE"),
                                 .syscall = bun.String.static("listen"),
-                            }).toErrorInstance(globalThis);
+                            }).toErrorInstance(globalThis) catch return;
                         }
                     },
                     .unix => |unix| {
@@ -1779,12 +1779,12 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                                     .message = bun.String.init(std.fmt.bufPrint(&output_buf, "Failed to listen on unix socket {f}", .{bun.fmt.QuotedFormatter{ .text = unix }}) catch "Failed to start server"),
                                     .code = bun.String.static("EADDRINUSE"),
                                     .syscall = bun.String.static("listen"),
-                                }).toErrorInstance(globalThis);
+                                }).toErrorInstance(globalThis) catch return;
                             },
                             else => |e| {
                                 var sys_err = bun.sys.Error.fromCode(e, .listen);
                                 sys_err.path = unix;
-                                error_instance = sys_err.toJS(globalThis);
+                                error_instance = sys_err.toJS(globalThis) catch return;
                             },
                         }
                     },

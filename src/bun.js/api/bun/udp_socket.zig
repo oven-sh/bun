@@ -309,7 +309,7 @@ pub const UDPSocket = struct {
                     .code = bun.String.static(code),
                     .message = bun.handleOom(bun.String.createFormat("bind {s} {f}", .{ code, this.config.hostname })),
                 };
-                const error_value = sys_err.toErrorInstance(globalThis);
+                const error_value = try sys_err.toErrorInstance(globalThis);
                 error_value.put(globalThis, "address", try this.config.hostname.toJS(globalThis));
 
                 return globalThis.throwValue(error_value);
@@ -326,7 +326,7 @@ pub const UDPSocket = struct {
             const ret = this.socket.?.connect(address_z, connect.port);
             if (ret != 0) {
                 if (bun.sys.Maybe(void).errnoSys(ret, .connect)) |*sys_err| {
-                    return globalThis.throwValue(sys_err.err.toJS(globalThis));
+                    return globalThis.throwValue(try sys_err.err.toJS(globalThis));
                 }
 
                 if (bun.c_ares.Error.initEAI(ret)) |eai_err| {

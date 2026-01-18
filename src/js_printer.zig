@@ -1789,6 +1789,9 @@ fn NewPrinter(
 
             p.printSpaceBeforeIdentifier();
 
+            // Wrap with __toESM if importing a CommonJS module
+            const wrap_with_to_esm = record.flags.wrap_with_to_esm;
+
             // Allow it to fail at runtime, if it should
             if (module_type != .internal_bake_dev) {
                 p.print("import(");
@@ -1806,6 +1809,17 @@ fn NewPrinter(
             }
 
             p.print(")");
+
+            // For CJS modules, unwrap the default export and convert to ESM
+            if (wrap_with_to_esm) {
+                p.print(".then((m)=>");
+                p.printSymbol(p.options.to_esm_ref);
+                p.print("(m.default");
+                if (p.options.input_module_type == .esm) {
+                    p.print(",1");
+                }
+                p.print("))");
+            }
 
             // if (leading_interior_comments.len > 0) {
             //     p.printNewline();

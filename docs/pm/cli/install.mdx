@@ -202,6 +202,15 @@ bun install --dry-run
 
 ## Offline mode
 
+Bun provides two offline modes for controlling network behavior during installation:
+
+| Flag | Behavior |
+|------|----------|
+| `--offline` | Strict offline - fails if package not in cache |
+| `--prefer-offline` | Prefers cache, falls back to network if needed |
+
+### Strict offline mode (`--offline`)
+
 To install packages without making any network requests, use the `--offline` flag:
 
 ```bash terminal icon="terminal"
@@ -209,6 +218,16 @@ bun install --offline
 ```
 
 When offline mode is enabled, Bun will only use packages that are already in the local cache. If a required package is not cached, the installation will fail with an error message indicating that the package is not available in offline mode.
+
+### Prefer offline mode (`--prefer-offline`)
+
+To prefer cached packages but fall back to network when necessary:
+
+```bash terminal icon="terminal"
+bun install --prefer-offline
+```
+
+This mode uses cached packages whenever available, skipping network requests for packages that are already cached. If a package is not in the cache, Bun will fetch it from the registry normally. This provides faster installs when you have good cache coverage without the risk of failures when new dependencies are added.
 
 ### When to use offline mode
 
@@ -233,17 +252,20 @@ If you're using a custom cache directory, make sure it's configured in both the 
 cache = "/path/to/custom/cache"
 ```
 
-You can also enable offline mode using the `BUN_CONFIG_OFFLINE` environment variable:
+You can also enable these modes using environment variables:
 
 ```bash terminal icon="terminal"
-BUN_CONFIG_OFFLINE=1 bun install
+BUN_CONFIG_OFFLINE=1 bun install        # Strict offline
+BUN_CONFIG_PREFER_OFFLINE=1 bun install # Prefer offline
 ```
 
-Or configure it in `bunfig.toml`:
+Or configure them in `bunfig.toml`:
 
 ```toml bunfig.toml icon="settings"
 [install]
-offline = true
+offline = true       # Strict offline mode
+# or
+preferOffline = true # Prefer offline mode
 ```
 
 ### Air-gapped environment workflow

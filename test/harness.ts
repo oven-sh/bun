@@ -1283,8 +1283,8 @@ export async function runBunInstall(
   }
   if (!options?.allowWarnings) {
     // Check for warnings but exclude debug-level messages
-    const hasRealWarning = err.includes("warn:") && !err.split("\n").every(line =>
-      !line.includes("warn:") || line.includes("debug warn:")
+    const hasRealWarning = err.split("\n").some(line =>
+      line.includes("warn:") && !line.includes("debug warn:")
     );
     expect(hasRealWarning).toBe(false);
   }

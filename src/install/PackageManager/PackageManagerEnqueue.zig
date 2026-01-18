@@ -753,10 +753,27 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                                         }
 
                                         // Was it recent enough to just load it without the network call?
-                                        // Also skip network if prefer_offline is enabled and we have a cached manifest
-                                        if ((this.options.enable.manifest_cache_control and !expired) or this.options.enable.prefer_offline) {
+                                        if (this.options.enable.manifest_cache_control and !expired) {
                                             _ = this.network_dedupe_map.remove(task_id);
                                             continue :retry_from_manifests_ptr;
+                                        }
+
+                                        // For prefer_offline: try to resolve from cached manifest first
+                                        // Only skip network if cached manifest can satisfy the request
+                                        if (this.options.enable.prefer_offline) {
+                                            if (loaded_manifest) |*manifest| {
+                                                // Try to find a matching version in the cached manifest
+                                                const can_resolve = switch (version.tag) {
+                                                    .npm => manifest.findBestMatchingVersion(version.value.npm.version) != null,
+                                                    .dist_tag => manifest.findByDistTag(this.lockfile.str(&version.value.dist_tag.tag)) != null,
+                                                    else => true, // For folder and other types, proceed with cache
+                                                };
+                                                if (can_resolve) {
+                                                    _ = this.network_dedupe_map.remove(task_id);
+                                                    continue :retry_from_manifests_ptr;
+                                                }
+                                                // Cache miss - fall through to network fetch
+                                            }
                                         }
                                     }
                                 }

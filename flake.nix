@@ -158,7 +158,8 @@
             # ICU and sqlite include paths for WebKit headers and sqlite bindings
             export CXXFLAGS="''${CXXFLAGS:+$CXXFLAGS }-I${pkgs.icu.dev}/include -I${pkgs.sqlite.dev}/include"
             export CFLAGS="''${CFLAGS:+$CFLAGS }-I${pkgs.icu.dev}/include -I${pkgs.sqlite.dev}/include"
-            export CMAKE_CXX_FLAGS="-I${pkgs.icu.dev}/include -I${pkgs.sqlite.dev}/include"
+            export CMAKE_CXX_FLAGS="''${CMAKE_CXX_FLAGS:+$CMAKE_CXX_FLAGS }-I${pkgs.icu.dev}/include -I${pkgs.sqlite.dev}/include"
+            export CMAKE_C_FLAGS="''${CMAKE_C_FLAGS:+$CMAKE_C_FLAGS }-I${pkgs.icu.dev}/include -I${pkgs.sqlite.dev}/include"
           '' + pkgs.lib.optionalString pkgs.stdenv.isDarwin ''
             # Add darwin.ICU library path for libicucore (required by WebKit)
             export LIBRARY_PATH="${pkgs.darwin.ICU}/lib''${LIBRARY_PATH:+:$LIBRARY_PATH}"

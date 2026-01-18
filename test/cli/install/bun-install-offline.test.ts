@@ -1,6 +1,6 @@
 import { spawn } from "bun";
-import { afterAll, beforeAll, describe, expect, it, setDefaultTimeout } from "bun:test";
-import { writeFile } from "fs/promises";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { rm, writeFile } from "fs/promises";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
 
@@ -29,7 +29,6 @@ import {
 } from "./dummy.registry.js";
 
 beforeAll(() => {
-  setDefaultTimeout(1000 * 60 * 5);
   dummyBeforeAll();
 });
 
@@ -129,10 +128,7 @@ linker = "hoisted"
       expect(urlCountAfterFirstInstall).toBeGreaterThan(0);
 
       // Remove node_modules to force reinstall
-      await Bun.spawn({
-        cmd: ["rm", "-rf", "node_modules"],
-        cwd: ctx.package_dir,
-      }).exited;
+      await rm(join(ctx.package_dir, "node_modules"), { recursive: true, force: true });
 
       // Now install with --offline flag (should use cache)
       const { exited } = spawn({

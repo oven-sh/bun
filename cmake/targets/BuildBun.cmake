@@ -1063,9 +1063,10 @@ if(WIN32)
   endif()
 endif()
 
+option(BUN_USE_LD_NEW "Use ld_new linker on macOS (disable for Nix builds)" ON)
 if(APPLE)
   target_link_options(${bun} PUBLIC
-    # -Wl,-ld_new  # Disabled for Nix compatibility - uses default linker
+    $<$<BOOL:${BUN_USE_LD_NEW}>:-Wl,-ld_new>
     -Wl,-no_compact_unwind
     -Wl,-stack_size,0x1200000
     -fno-keep-static-consts

@@ -1,6 +1,6 @@
 import { spawn } from "bun";
-import { afterAll, beforeAll, describe, expect, it, setDefaultTimeout } from "bun:test";
-import { writeFile } from "fs/promises";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { rm, writeFile } from "fs/promises";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
 
@@ -27,7 +27,6 @@ import {
 } from "./dummy.registry.js";
 
 beforeAll(() => {
-  setDefaultTimeout(1000 * 60 * 5);
   dummyBeforeAll();
 });
 
@@ -90,10 +89,7 @@ linker = "hoisted"
       expect(urlCountAfterFirstInstall).toBeGreaterThan(0);
 
       // Remove node_modules to force reinstall
-      await Bun.spawn({
-        cmd: ["rm", "-rf", "node_modules"],
-        cwd: ctx.package_dir,
-      }).exited;
+      await rm(join(ctx.package_dir, "node_modules"), { recursive: true, force: true });
 
       // Install with --prefer-offline (should use cache, no network)
       const { exited } = spawn({
@@ -197,10 +193,7 @@ linker = "hoisted"
       const urlCountAfterFirstInstall = urls.length;
 
       // Remove node_modules
-      await Bun.spawn({
-        cmd: ["rm", "-rf", "node_modules"],
-        cwd: ctx.package_dir,
-      }).exited;
+      await rm(join(ctx.package_dir, "node_modules"), { recursive: true, force: true });
 
       // Install with BUN_CONFIG_PREFER_OFFLINE=1
       const { exited } = spawn({
@@ -263,10 +256,7 @@ linker = "hoisted"
       const urlCountAfterFirstInstall = urls.length;
 
       // Remove node_modules
-      await Bun.spawn({
-        cmd: ["rm", "-rf", "node_modules"],
-        cwd: ctx.package_dir,
-      }).exited;
+      await rm(join(ctx.package_dir, "node_modules"), { recursive: true, force: true });
 
       // Update bunfig.toml with preferOffline = true
       const bunfigContentWithPreferOffline = `

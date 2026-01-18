@@ -807,6 +807,10 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
     cli.no_cache = args.flag("--no-cache");
     cli.offline = args.flag("--offline");
     cli.prefer_offline = args.flag("--prefer-offline");
+    if (cli.offline and cli.prefer_offline) {
+        Output.errGeneric("`--offline` and `--prefer-offline` cannot be used together", .{});
+        Global.exit(1);
+    }
     cli.silent = args.flag("--silent");
     cli.quiet = args.flag("--quiet");
     cli.verbose = args.flag("--verbose") or Output.is_verbose;

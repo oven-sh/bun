@@ -62,7 +62,6 @@ pub const FFI = struct {
     pub const fromJSDirect = js.fromJSDirect;
 
     dylib: ?std.DynLib = null,
-    relocated_bytes_to_free: ?[]u8 = null,
     functions: bun.StringArrayHashMapUnmanaged(Function) = .{},
     closed: bool = false,
     shared_state: ?*TCC.State = null,
@@ -318,7 +317,7 @@ pub const FFI = struct {
             return cached_default_system_library_dir;
         }
 
-        pub fn compile(this: *CompileC, globalThis: *JSGlobalObject) !struct { *TCC.State, []u8 } {
+        pub fn compile(this: *CompileC, globalThis: *JSGlobalObject) !*TCC.State {
             const compile_options: [:0]const u8 = if (this.flags.len > 0)
                 this.flags
             else if (bun.env_var.BUN_TCC_OPTIONS.get()) |tcc_options|
@@ -464,15 +463,13 @@ pub const FFI = struct {
             }
             try this.errorCheck();
 
-            const relocation_size = state.relocate(null) catch {
-                bun.debugAssert(this.hasDeferredErrors());
+            // TinyCC now manages relocation memory internally
+            dangerouslyRunWithoutJitProtections(TCC.Error!void, TCC.State.relocate, .{state}) catch {
+                if (!this.hasDeferredErrors()) {
+                    bun.handleOom(this.deferred_errors.append(bun.default_allocator, "tcc_relocate returned a negative value"));
+                }
                 return error.DeferredErrors;
             };
-
-            const bytes: []u8 = try bun.default_allocator.alloc(u8, @as(usize, @intCast(relocation_size)));
-            // We cannot free these bytes, evidently.
-
-            _ = dangerouslyRunWithoutJitProtections(TCC.Error!usize, TCC.State.relocate, .{ state, bytes.ptr }) catch return error.DeferredErrors;
 
             // if errors got added, we would have returned in the relocation catch.
             bun.debugAssert(this.deferred_errors.items.len == 0);
@@ -489,7 +486,7 @@ pub const FFI = struct {
 
             try this.errorCheck();
 
-            return .{ state, bytes };
+            return state;
         }
 
         pub fn deinit(this: *CompileC) void {
@@ -723,7 +720,7 @@ pub const FFI = struct {
         }
 
         // Now we compile the code with tinycc.
-        var tcc_state: ?*TCC.State, var bytes_to_free_on_error = compile_c.compile(globalThis) catch |err| {
+        var tcc_state: ?*TCC.State = compile_c.compile(globalThis) catch |err| {
             switch (err) {
                 error.DeferredErrors => {
                     var combined = std.array_list.Managed(u8).init(bun.default_allocator);
@@ -744,9 +741,6 @@ pub const FFI = struct {
         };
         defer {
             if (tcc_state) |state| state.deinit();
-
-            // TODO: upgrade tinycc because they improved the way memory management works for this
-            // we are unable to free memory safely in certain cases here.
         }
 
         const napi_env = makeNapiEnvIfNeeded(compile_c.symbols.map.values(), globalThis);
@@ -795,10 +789,8 @@ pub const FFI = struct {
             .dylib = null,
             .shared_state = tcc_state,
             .functions = compile_c.symbols.map,
-            .relocated_bytes_to_free = bytes_to_free_on_error,
         };
         tcc_state = null;
-        bytes_to_free_on_error = "";
         compile_c.symbols = .{};
 
         const js_object = lib.toJS(globalThis);
@@ -888,14 +880,6 @@ pub const FFI = struct {
         }
         this.functions.deinit(allocator);
 
-        // NOTE: `relocated_bytes_to_free` points to a memory region that was
-        // relocated by tinycc. Attempts to free it will cause a bus error,
-        // even if jit protections are disabled.
-        // if (this.relocated_bytes_to_free) |relocated_bytes_to_free| {
-        //     this.relocated_bytes_to_free = null;
-        //     bun.default_allocator.free(relocated_bytes_to_free);
-        // }
-
         return .js_undefined;
     }
 
@@ -977,9 +961,6 @@ pub const FFI = struct {
         }
         for (symbols.values()) |*function_| {
             function_.arg_types.deinit(allocator);
-            if (function_.step == .compiled) {
-                allocator.free(function_.step.compiled.buf);
-            }
         }
         symbols.clearAndFree(allocator);
 
@@ -1455,7 +1436,6 @@ pub const FFI = struct {
             }
 
             if (val.step == .compiled) {
-                // val.allocator.free(val.step.compiled.buf);
                 if (val.step.compiled.js_function != .zero) {
                     _ = globalThis;
                     val.step.compiled.js_function = .zero;
@@ -1476,7 +1456,6 @@ pub const FFI = struct {
             pending: void,
             compiled: struct {
                 ptr: *anyopaque,
-                buf: []u8,
                 js_function: JSValue = JSValue.zero,
                 js_context: ?*anyopaque = null,
                 ffi_callback_function_wrapper: ?*anyopaque = null,
@@ -1559,17 +1538,8 @@ pub const FFI = struct {
                 return;
             };
 
-            const relocation_size = state.relocate(null) catch {
-                this.fail("tcc_relocate returned a negative value");
-                return;
-            };
-
-            const bytes: []u8 = try this.allocator.alloc(u8, relocation_size);
-            defer {
-                if (this.step == .failed) this.allocator.free(bytes);
-            }
-
-            _ = dangerouslyRunWithoutJitProtections(TCC.Error!usize, TCC.State.relocate, .{ state, bytes.ptr }) catch {
+            // TinyCC now manages relocation memory internally
+            dangerouslyRunWithoutJitProtections(TCC.Error!void, TCC.State.relocate, .{state}) catch {
                 this.fail("tcc_relocate returned a negative value");
                 return;
             };
@@ -1582,7 +1552,6 @@ pub const FFI = struct {
             this.step = .{
                 .compiled = .{
                     .ptr = symbol,
-                    .buf = bytes,
                 },
             };
             return;
@@ -1666,19 +1635,8 @@ pub const FFI = struct {
                 this.fail("Failed to add FFI callback symbol");
                 return;
             };
-            const relocation_size = state.relocate(null) catch {
-                this.fail("tcc_relocate returned a negative value");
-                return;
-            };
-
-            const bytes: []u8 = try this.allocator.alloc(u8, relocation_size);
-            defer {
-                if (this.step == .failed) {
-                    this.allocator.free(bytes);
-                }
-            }
-
-            _ = dangerouslyRunWithoutJitProtections(TCC.Error!usize, TCC.State.relocate, .{ state, bytes.ptr }) catch {
+            // TinyCC now manages relocation memory internally
+            dangerouslyRunWithoutJitProtections(TCC.Error!void, TCC.State.relocate, .{state}) catch {
                 this.fail("tcc_relocate returned a negative value");
                 return;
             };
@@ -1691,7 +1649,6 @@ pub const FFI = struct {
             this.step = .{
                 .compiled = .{
                     .ptr = symbol,
-                    .buf = bytes,
                     .js_function = js_function,
                     .js_context = js_context,
                     .ffi_callback_function_wrapper = ffi_wrapper,

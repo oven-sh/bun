@@ -4,7 +4,7 @@ register_repository(
   REPOSITORY
     oven-sh/tinycc
   COMMIT
-    29985a3b59898861442fa3b43f663fc1af2591d7
+    12882eee073cfe5c7621bcfadf679e1372d4537b
 )
 
 register_cmake_command(

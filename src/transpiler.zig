@@ -266,6 +266,7 @@ pub const PluginRunner = struct {
         // Our super slow way of cloning the string into memory owned by jsc
         const combined_string = std.fmt.allocPrint(this.allocator, "{f}:{f}", .{ user_namespace, file_path }) catch unreachable;
         var out_ = bun.String.init(combined_string);
+        defer out_.deref();
         const jsval = out_.toJS(this.global_object) catch |err| {
             this.allocator.free(combined_string);
             return jsc.ErrorableString.err(err, this.global_object.tryTakeException() orelse .js_undefined);

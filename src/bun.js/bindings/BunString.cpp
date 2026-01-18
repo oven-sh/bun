@@ -363,9 +363,12 @@ WTF::String toCrossThreadShareable(const WTF::String& string)
 
 }
 
-extern "C" JSC::EncodedJSValue BunString__toJS(JSC::JSGlobalObject* globalObject, const BunString* bunString)
+extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__toJS(JSC::JSGlobalObject* globalObject, const BunString* bunString)
 {
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* result = Bun::toJS(globalObject, *bunString);
+    RETURN_IF_EXCEPTION(scope, {});
     if (!result) [[unlikely]] {
         return {};
     }

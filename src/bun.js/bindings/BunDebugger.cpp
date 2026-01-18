@@ -588,7 +588,6 @@ extern "C" void Bun__startJSDebuggerThread(Zig::GlobalObject* debuggerGlobalObje
     arguments.append(jsNumber(static_cast<unsigned int>(scriptId)));
     auto* portOrPathJS = Bun::toJS(debuggerGlobalObject, *portOrPathString);
     if (!portOrPathJS) [[unlikely]] {
-        scope.clearException();
         return;
     }
     arguments.append(portOrPathJS);

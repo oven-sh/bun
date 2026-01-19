@@ -82,6 +82,12 @@ function parseArgs(): Partial<Bun.BuildConfig> {
 
     if (key.includes(".")) {
       const parts = key.split(".");
+      if (parts.length > 2) {
+        console.warn(
+          `Warning: Deeply nested option "${key}" is not supported. Only single-level nesting (e.g., --minify.whitespace) is allowed.`,
+        );
+        continue;
+      }
       const parentKey = parts[0]!;
       const childKey = parts[1]!;
       const existing = config[parentKey];

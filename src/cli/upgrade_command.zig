@@ -812,6 +812,29 @@ pub const UpgradeCommand = struct {
                     );
                     Global.exit(1);
                 };
+
+                // On Linux, restore SELinux context for the binary if SELinux is enabled.
+                // When moving files across filesystems (e.g., from temp directory to /usr/local/bin),
+                // the file retains the SELinux context from the source location.
+                // This causes permission denials for unprivileged users when bun is in a shared directory.
+                if (comptime Environment.isLinux) {
+                    var restorecon_path_buf: bun.PathBuffer = undefined;
+                    if (which(&restorecon_path_buf, env_loader.map.get("PATH") orelse "", filesystem.top_level_dir, "restorecon")) |restorecon_exe| {
+                        var restorecon_argv = [_]string{
+                            bun.asByteSlice(restorecon_exe),
+                            destination_executable,
+                        };
+
+                        var restorecon_process = std.process.Child.init(&restorecon_argv, ctx.allocator);
+                        restorecon_process.stdin_behavior = .Ignore;
+                        restorecon_process.stdout_behavior = .Ignore;
+                        restorecon_process.stderr_behavior = .Ignore;
+
+                        // Ignore errors - SELinux may not be enforcing, or restorecon may fail for other reasons.
+                        // The upgrade itself succeeded, so we don't want to fail here.
+                        _ = restorecon_process.spawnAndWait() catch {};
+                    }
+                }
             }
 
             // Ensure completions are up to date.

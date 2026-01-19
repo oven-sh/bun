@@ -292,6 +292,7 @@ pub fn ReplTransforms(comptime P: type) type {
         }
 
         /// Convert a binding pattern to an expression (for assignment targets)
+        /// Handles spread/rest patterns in arrays and objects to match Binding.toExpr behavior
         fn convertBindingToExpr(p: *P, binding: Binding, allocator: Allocator) Expr {
             switch (binding.data) {
                 .b_identifier => |ident| {
@@ -300,31 +301,40 @@ pub fn ReplTransforms(comptime P: type) type {
                 .b_array => |arr| {
                     var items = bun.handleOom(allocator.alloc(Expr, arr.items.len));
                     for (arr.items, 0..) |item, i| {
-                        if (item.default_value) |default_val| {
+                        const expr = convertBindingToExpr(p, item.binding, allocator);
+                        // Check for spread pattern: if has_spread and this is the last element
+                        if (arr.has_spread and i == arr.items.len - 1) {
+                            items[i] = p.newExpr(E.Spread{ .value = expr }, expr.loc);
+                        } else if (item.default_value) |default_val| {
                             items[i] = p.newExpr(E.Binary{
                                 .op = .bin_assign,
-                                .left = convertBindingToExpr(p, item.binding, allocator),
+                                .left = expr,
                                 .right = default_val,
                             }, item.binding.loc);
                         } else {
-                            items[i] = convertBindingToExpr(p, item.binding, allocator);
+                            items[i] = expr;
                         }
                     }
                     return p.newExpr(E.Array{
                         .items = ExprNodeList.fromOwnedSlice(items),
+                        .is_single_line = arr.is_single_line,
                     }, binding.loc);
                 },
                 .b_object => |obj| {
                     var properties = bun.handleOom(allocator.alloc(G.Property, obj.properties.len));
                     for (obj.properties, 0..) |prop, i| {
                         properties[i] = G.Property{
+                            .flags = prop.flags,
                             .key = prop.key,
+                            // Set kind to .spread if the property has spread flag
+                            .kind = if (prop.flags.contains(.is_spread)) .spread else .normal,
                             .value = convertBindingToExpr(p, prop.value, allocator),
                             .initializer = prop.default_value,
                         };
                     }
                     return p.newExpr(E.Object{
                         .properties = G.Property.List.fromOwnedSlice(properties),
+                        .is_single_line = obj.is_single_line,
                     }, binding.loc);
                 },
                 .b_missing => {

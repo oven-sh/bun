@@ -783,7 +783,7 @@ pub fn doRedirect(
         NewHTTPContext(is_ssl).closeSocket(socket);
     } else {
         // we need to clean the client reference before closing the socket because we are going to reuse the same ref in a another request
-        if (this.isKeepAlivePossible()) {
+        if (this.isKeepAlivePossible() and !socket.isClosedOrHasError()) {
             log("Keep-Alive release in redirect", .{});
             assert(this.connected_url.hostname.len > 0);
             ctx.releaseSocket(

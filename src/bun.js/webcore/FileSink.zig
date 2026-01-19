@@ -320,27 +320,12 @@ pub fn setup(this: *FileSink, options: *const FileSink.Options) bun.sys.Maybe(vo
         .result => |fd| fd,
     };
 
-    if (comptime Environment.isWindows) {
-        if (this.force_sync) {
-            switch (this.writer.startSync(
-                fd,
-                this.pollable,
-            )) {
-                .err => |err| {
-                    fd.close();
-                    return .{ .err = err };
-                },
-                .result => {
-                    this.writer.updateRef(this.eventLoop(), false);
-                },
-            }
-            return .success;
-        }
-    }
-
+    // When force_sync is true (e.g., for TTYs on macOS), don't register with kqueue.
+    // kqueue cannot monitor /dev/tty on macOS, which would cause EINVAL.
+    // See: https://github.com/oven-sh/bun/issues/24158
     switch (this.writer.start(
         fd,
-        this.pollable,
+        if (this.force_sync) false else this.pollable,
     )) {
         .err => |err| {
             fd.close();

@@ -263,7 +263,18 @@ class MockAgent {
 function mockErrors() {}
 
 class Dispatcher extends EventEmitter {}
-class Agent extends Dispatcher {}
+class Agent extends Dispatcher {
+  #options;
+
+  constructor(options = {}) {
+    super();
+    this.#options = options;
+  }
+
+  get options() {
+    return this.#options;
+  }
+}
 class Pool extends Dispatcher {
   request() {}
 }

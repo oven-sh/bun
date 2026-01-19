@@ -440,6 +440,58 @@ fn fetchImpl(
         return .zero;
     }
 
+    // "dispatcher: Dispatcher" - extract TLS options from undici-style dispatcher
+    // This allows compatibility with undici's Agent pattern:
+    //   const agent = new Agent({ connect: { rejectUnauthorized: false } });
+    //   fetch(url, { dispatcher: agent });
+    // NOTE: This is processed BEFORE the "tls" option so that explicit "tls"
+    // options take precedence over dispatcher settings.
+    extract_dispatcher: {
+        const objects_to_try = [_]JSValue{
+            options_object orelse .zero,
+            request_init_object orelse .zero,
+        };
+
+        inline for (0..2) |i| {
+            if (objects_to_try[i] != .zero) {
+                if (try objects_to_try[i].get(globalThis, "dispatcher")) |dispatcher| {
+                    if (dispatcher.isObject()) {
+                        // Get dispatcher.options (the Agent constructor options)
+                        if (try dispatcher.get(globalThis, "options")) |dispatcher_options| {
+                            if (dispatcher_options.isObject()) {
+                                // Get dispatcher.options.connect
+                                if (try dispatcher_options.get(globalThis, "connect")) |connect| {
+                                    if (connect.isObject()) {
+                                        // Get dispatcher.options.connect.rejectUnauthorized
+                                        if (try connect.get(globalThis, "rejectUnauthorized")) |reject| {
+                                            if (reject.isBoolean()) {
+                                                reject_unauthorized = reject.asBoolean();
+                                            } else if (reject.isNumber()) {
+                                                reject_unauthorized = reject.to(i32) != 0;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (globalThis.hasException()) {
+                    is_error = true;
+                    return .zero;
+                }
+            }
+        }
+
+        break :extract_dispatcher;
+    }
+
+    if (globalThis.hasException()) {
+        is_error = true;
+        return .zero;
+    }
+
     // "tls: TLSConfig"
     ssl_config = extract_ssl_config: {
         const objects_to_try = [_]JSValue{

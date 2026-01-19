@@ -959,7 +959,7 @@ static void exportBunObject(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC:
         JSValue value = object->get(globalObject, propertyName);
 
         if (catchScope.exception()) {
-            catchScope.clearException();
+            (void)catchScope.tryClearException();
             value = jsUndefined();
         }
         exportValues.append(value);

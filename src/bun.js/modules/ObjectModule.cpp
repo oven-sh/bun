@@ -27,7 +27,7 @@ generateObjectModuleSourceCode(JSC::JSGlobalObject* globalObject,
             auto scope = DECLARE_CATCH_SCOPE(vm);
             JSValue value = object->get(globalObject, entry);
             if (scope.exception()) [[unlikely]] {
-                scope.clearException();
+                (void)scope.tryClearException();
                 value = jsUndefined();
             }
             exportValues.append(value);

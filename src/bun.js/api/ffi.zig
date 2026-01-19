@@ -405,6 +405,35 @@ pub const FFI = struct {
                         debug("TinyCC failed to add library path", .{});
                     };
                 }
+
+                // Check standard C compiler environment variables for include paths.
+                // These are used by systems like NixOS where standard FHS paths don't exist.
+                if (bun.env_var.C_INCLUDE_PATH.get()) |c_include_path| {
+                    var include_iter = std.mem.splitScalar(u8, c_include_path, ':');
+                    while (include_iter.next()) |path| {
+                        if (path.len > 0) {
+                            const path_z = bun.default_allocator.dupeZ(u8, path) catch continue;
+                            defer bun.default_allocator.free(path_z);
+                            state.addSysIncludePath(path_z) catch {
+                                debug("TinyCC failed to add C_INCLUDE_PATH: {s}", .{path});
+                            };
+                        }
+                    }
+                }
+
+                // Check standard C compiler environment variable for library paths.
+                if (bun.env_var.LIBRARY_PATH.get()) |library_path| {
+                    var library_iter = std.mem.splitScalar(u8, library_path, ':');
+                    while (library_iter.next()) |path| {
+                        if (path.len > 0) {
+                            const path_z = bun.default_allocator.dupeZ(u8, path) catch continue;
+                            defer bun.default_allocator.free(path_z);
+                            state.addLibraryPath(path_z) catch {
+                                debug("TinyCC failed to add LIBRARY_PATH: {s}", .{path});
+                            };
+                        }
+                    }
+                }
             }
 
             try this.errorCheck();

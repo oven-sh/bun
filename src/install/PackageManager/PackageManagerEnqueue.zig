@@ -766,7 +766,9 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                                                 const can_resolve = switch (version.tag) {
                                                     .npm => manifest.findBestMatchingVersion(version.value.npm.version) != null,
                                                     .dist_tag => manifest.findByDistTag(this.lockfile.str(&version.value.dist_tag.tag)) != null,
-                                                    else => true, // For folder and other types, proceed with cache
+                                                    // For .folder, .workspace, .symlink, etc., these don't require network
+                                                    // fetches anyway, so we can safely proceed with cached data
+                                                    else => true,
                                                 };
                                                 if (can_resolve) {
                                                     _ = this.network_dedupe_map.remove(task_id);

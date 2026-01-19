@@ -4,6 +4,9 @@ import { rm, writeFile } from "fs/promises";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
 
+// Convert paths to forward slashes for TOML compatibility (Windows backslashes are escape chars)
+const tomlPath = (p: string) => p.replaceAll("\\", "/");
+
 // Create a clean environment without npm registry overrides
 // This ensures bunfig.toml settings are respected
 function createCleanEnv(): NodeJS.Dict<string> {
@@ -63,7 +66,7 @@ describe("bun install --offline", () => {
       const bunfigPath = join(ctx.package_dir, "bunfig.toml");
       const bunfigContent = `
 [install]
-cache = "${cacheDir}"
+cache = "${tomlPath(cacheDir)}"
 registry = "${ctx.registry_url}"
 saveTextLockfile = false
 linker = "hoisted"
@@ -110,7 +113,7 @@ linker = "hoisted"
       const bunfigPath = join(ctx.package_dir, "bunfig.toml");
       const bunfigContent = `
 [install]
-cache = "${cacheDir}"
+cache = "${tomlPath(cacheDir)}"
 registry = "${ctx.registry_url}"
 saveTextLockfile = false
 linker = "hoisted"
@@ -172,7 +175,7 @@ linker = "hoisted"
       const bunfigPath = join(ctx.package_dir, "bunfig.toml");
       const bunfigContent = `
 [install]
-cache = "${cacheDir}"
+cache = "${tomlPath(cacheDir)}"
 registry = "${ctx.registry_url}"
 saveTextLockfile = false
 linker = "hoisted"
@@ -224,7 +227,7 @@ linker = "hoisted"
       const bunfigPath = join(ctx.package_dir, "bunfig.toml");
       const bunfigContent = `
 [install]
-cache = "${cacheDir}"
+cache = "${tomlPath(cacheDir)}"
 registry = "${ctx.registry_url}"
 saveTextLockfile = false
 linker = "hoisted"

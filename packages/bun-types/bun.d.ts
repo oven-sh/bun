@@ -1745,6 +1745,17 @@ declare module "bun" {
      * @default "warn"
      */
     logLevel?: "verbose" | "debug" | "info" | "warn" | "error";
+
+    /**
+     * Enable REPL mode transforms:
+     * - Wraps object literals in parentheses
+     * - Hoists declarations for REPL persistence
+     * - Wraps last expression in { value: expr } for result capture
+     * - Wraps code with await in async IIFE
+     *
+     * @default false
+     */
+    replMode?: boolean;
   }
 
   /**

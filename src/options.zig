@@ -1802,6 +1802,7 @@ pub const BundleOptions = struct {
     minify_identifiers: bool = false,
     keep_names: bool = false,
     dead_code_elimination: bool = true,
+    repl_mode: bool = false,
     css_chunking: bool,
 
     ignore_dce_annotations: bool = false,

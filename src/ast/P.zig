@@ -6467,6 +6467,11 @@ pub fn NewParser_(
                 parts.items[0].stmts = top_level_stmts;
             }
 
+            // REPL mode transforms
+            if (p.options.repl_mode) {
+                try repl_transforms.ReplTransforms(P).apply(p, parts, allocator);
+            }
+
             var top_level_symbols_to_parts = js_ast.Ast.TopLevelSymbolToParts{};
             var top_level = &top_level_symbols_to_parts;
 
@@ -6762,6 +6767,7 @@ const string = []const u8;
 
 const Define = @import("../defines.zig").Define;
 const DefineData = @import("../defines.zig").DefineData;
+const repl_transforms = @import("repl_transforms.zig");
 
 const bun = @import("bun");
 const Environment = bun.Environment;

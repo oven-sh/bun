@@ -995,6 +995,12 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                             Output.errGeneric("Unsupported compile target: {f}\n", .{ctx.bundler_options.compile_target});
                             Global.exit(1);
                         }
+                        // Bytecode is not portable across different platforms/architectures/libcs
+                        // because JSC bytecode format depends on the specific build configuration.
+                        if (ctx.bundler_options.bytecode and !ctx.bundler_options.compile_target.isDefault()) {
+                            Output.errGeneric("--bytecode is not supported with cross-compilation. The target platform ({f}) differs from the host platform.", .{ctx.bundler_options.compile_target});
+                            Global.exit(1);
+                        }
                         opts.target = .bun;
                         break :brk;
                     }

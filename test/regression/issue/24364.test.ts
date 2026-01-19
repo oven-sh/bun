@@ -27,9 +27,9 @@ test("react-tailwind template passes tsc --noEmit", async () => {
   const [, , installExitCode] = await Promise.all([install.stdout.text(), install.stderr.text(), install.exited]);
   expect(installExitCode).toBe(0);
 
-  // Run tsc --noEmit
+  // Run tsc --noEmit (use bunExe() x for cross-platform compatibility)
   await using tsc = Bun.spawn({
-    cmd: [join(String(dir), "node_modules", ".bin", "tsc"), "--noEmit"],
+    cmd: [bunExe(), "x", "tsc", "--noEmit"],
     cwd: String(dir),
     env: bunEnv,
     stdout: "pipe",

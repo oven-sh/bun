@@ -84,7 +84,10 @@ function parseArgs(): Partial<Bun.BuildConfig> {
       const parts = key.split(".");
       const parentKey = parts[0]!;
       const childKey = parts[1]!;
-      config[parentKey] = (config[parentKey] as Record<string, unknown>) || {};
+      const existing = config[parentKey];
+      if (typeof existing !== "object" || existing === null || Array.isArray(existing)) {
+        config[parentKey] = {};
+      }
       (config[parentKey] as Record<string, unknown>)[childKey] = parseValue(value);
     } else {
       config[key] = parseValue(value);

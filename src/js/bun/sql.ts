@@ -1550,11 +1550,7 @@ const SQL: typeof Bun.SQL = function SQL(
             throw new Error("copyFrom: maxBytes exceeded");
           }
 
-          reserved.copySendData(batch);
-          counters.bytesSent += bLen;
-          counters.chunksSent += 1;
-          notifyProgress();
-          await awaitWritableWithFallback(reserved, pool);
+          await sendChunkedData(batch, reserved, pool, resolvedLimits, counters, notifyProgress);
           batch = "";
         }
       };
@@ -1568,6 +1564,11 @@ const SQL: typeof Bun.SQL = function SQL(
 
       // Send data depending on type
       if (typeof data === "string") {
+        if (fmt === "binary") {
+          throw new Error(
+            'copyFrom: string payloads are not allowed when format is "binary". Provide row arrays with options.binaryTypes for automatic encoding, or provide raw byte chunks (Uint8Array/ArrayBuffer) that already include the COPY BINARY envelope.',
+          );
+        }
         if (aborted) throw new Error("AbortError");
         const payload = sanitizeString(data);
         await sendChunkedData(payload, reserved, pool, resolvedLimits, counters, notifyProgress);
@@ -1961,6 +1962,10 @@ const SQL: typeof Bun.SQL = function SQL(
         const signal = typeof queryOrOptions === "string" ? undefined : queryOrOptions.signal;
         const onAbort = () => {
           aborted = true;
+          if (chunkResolve) {
+            chunkResolve();
+            chunkResolve = null;
+          }
         };
         if (signal) {
           if (signal.aborted) onAbort();

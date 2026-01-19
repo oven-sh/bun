@@ -1601,6 +1601,13 @@ const SQL: typeof Bun.SQL = function SQL(
               await addToBatch(serializeRow(item));
             }
           } else if (typeof item === "string") {
+            if (fmt === "binary") {
+              throw $ERR_INVALID_ARG_VALUE(
+                "data",
+                item,
+                'must be an array row or a byte source when format is "binary"',
+              );
+            }
             // raw string chunk
             await addToBatch(sanitizeString(item));
           } else if (hasByteLength(item)) {
@@ -1614,6 +1621,13 @@ const SQL: typeof Bun.SQL = function SQL(
             const src = fmt === "binary" ? view : sanitizeBytes(view);
             await sendChunkedData(src, reserved, pool, resolvedLimits, counters, notifyProgress);
           } else {
+            if (fmt === "binary") {
+              throw $ERR_INVALID_ARG_VALUE(
+                "data",
+                item,
+                'must be an array row or a byte source when format is "binary"',
+              );
+            }
             // fallback: attempt to serialize as a row
             await addToBatch(serializeRow(item));
           }
@@ -1658,6 +1672,13 @@ const SQL: typeof Bun.SQL = function SQL(
             }
           } else if (typeof item === "string") {
             if (aborted) throw new Error("AbortError");
+            if (fmt === "binary") {
+              throw $ERR_INVALID_ARG_VALUE(
+                "data",
+                item,
+                'must be an array row or a byte source when format is "binary"',
+              );
+            }
             await addToBatch(sanitizeString(item));
           } else if (hasByteLength(item)) {
             // raw bytes (Uint8Array or ArrayBuffer) - flush and send directly
@@ -1672,6 +1693,13 @@ const SQL: typeof Bun.SQL = function SQL(
             await sendChunkedData(src, reserved, pool, resolvedLimits, counters, notifyProgress);
           } else {
             if (aborted) throw new Error("AbortError");
+            if (fmt === "binary") {
+              throw $ERR_INVALID_ARG_VALUE(
+                "data",
+                item,
+                'must be an array row or a byte source when format is "binary"',
+              );
+            }
             await addToBatch(serializeRow(item));
           }
         }
@@ -2218,7 +2246,14 @@ const SQL: typeof Bun.SQL = function SQL(
                 await waitForChunk();
                 continue;
               }
-              yield chunks.shift();
+              const next = chunks.shift();
+              if (next instanceof Uint8Array) {
+                // Normalize Uint8Array view to an ArrayBuffer containing only the view's bytes
+                const buffer = next.buffer.slice(next.byteOffset, next.byteOffset + next.byteLength);
+                yield buffer;
+              } else {
+                yield next;
+              }
             }
           }
         } catch (e) {

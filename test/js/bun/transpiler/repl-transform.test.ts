@@ -5,13 +5,13 @@ describe("Bun.Transpiler replMode", () => {
   describe("basic transform output", () => {
     const transpiler = new Bun.Transpiler({ loader: "tsx", replMode: true });
 
-    test("simple expression wrapped in value object", async () => {
+    test("simple expression wrapped in value object", () => {
       const result = transpiler.transformSync("42");
       // Should contain value wrapper
       expect(result).toContain("value:");
     });
 
-    test("variable declaration with await", async () => {
+    test("variable declaration with await", () => {
       const result = transpiler.transformSync("var x = await 1");
       // Should hoist var declaration
       expect(result).toContain("var x");
@@ -19,14 +19,14 @@ describe("Bun.Transpiler replMode", () => {
       expect(result).toContain("async");
     });
 
-    test("const becomes var with await", async () => {
+    test("const becomes var with await", () => {
       const result = transpiler.transformSync("const x = await 1");
       // const should become var for REPL persistence (becomes context property)
       expect(result).toContain("var x");
       expect(result).not.toContain("const x");
     });
 
-    test("let becomes var with await", async () => {
+    test("let becomes var with await", () => {
       const result = transpiler.transformSync("let x = await 1");
       // let should become var for REPL persistence (becomes context property)
       expect(result).toContain("var x");
@@ -34,7 +34,7 @@ describe("Bun.Transpiler replMode", () => {
       expect(result).toContain("async");
     });
 
-    test("no async wrapper when no await", async () => {
+    test("no async wrapper when no await", () => {
       const result = transpiler.transformSync("var x = 1; x + 5");
       // Should still have value wrapper for the last expression
       expect(result).toContain("value:");
@@ -42,14 +42,14 @@ describe("Bun.Transpiler replMode", () => {
       expect(result).not.toMatch(/\(\s*async\s*\(\s*\)\s*=>/);
     });
 
-    test("function declaration with await", async () => {
+    test("function declaration with await", () => {
       const result = transpiler.transformSync("await 1; function foo() { return 42; }");
       // Should hoist function declaration
       expect(result).toContain("var foo");
       expect(result).toContain("async");
     });
 
-    test("class declaration with await", async () => {
+    test("class declaration with await", () => {
       const result = transpiler.transformSync("await 1; class Bar { }");
       // Should hoist class declaration with var (not let) for vm context persistence
       expect(result).toContain("var Bar");

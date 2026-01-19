@@ -1748,10 +1748,10 @@ declare module "bun" {
 
     /**
      * Enable REPL mode transforms:
-     * - Wraps object literals in parentheses
-     * - Hoists declarations for REPL persistence
-     * - Wraps last expression in { value: expr } for result capture
-     * - Wraps code with await in async IIFE
+     * - Wraps top-level inputs that appear to be object literals (inputs starting with '{' without trailing ';') in parentheses
+     * - Hoists all declarations as var for REPL persistence across vm.runInContext calls
+     * - Wraps last expression in { __proto__: null, value: expr } for result capture
+     * - Wraps code in sync/async IIFE to avoid parentheses around object literals
      *
      * @default false
      */

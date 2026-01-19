@@ -41,21 +41,19 @@ pub fn ReplTransforms(comptime P: type) type {
                 }
             }
 
-            if (has_top_level_await) {
-                // With top-level await, we need to:
-                // 1. Hoist var/let/const declarations outside the async wrapper
-                // 2. Wrap the code in (async () => { ... })()
-                // 3. Wrap the last expression in return { value: expr }
-                try applyAsyncTransform(p, parts, all_stmts, allocator);
-            } else {
-                // Without top-level await, wrap in sync IIFE
-                try applySyncTransform(p, parts, all_stmts, allocator);
-            }
+            // Apply transform with is_async based on presence of top-level await
+            try transformWithHoisting(p, parts, all_stmts, allocator, has_top_level_await);
         }
 
-        /// Wrap code in sync IIFE with value wrapper for REPL result capture
-        /// Uses the same hoisting approach as async transform to avoid parentheses around objects
-        fn applySyncTransform(p: *P, parts: *ListManaged(js_ast.Part), all_stmts: []Stmt, allocator: Allocator) !void {
+        /// Transform code with hoisting and IIFE wrapper
+        /// @param is_async: true for async IIFE (when top-level await present), false for sync IIFE
+        fn transformWithHoisting(
+            p: *P,
+            parts: *ListManaged(js_ast.Part),
+            all_stmts: []Stmt,
+            allocator: Allocator,
+            is_async: bool,
+        ) !void {
             if (all_stmts.len == 0) return;
 
             // Lists for hoisted declarations and inner statements
@@ -170,161 +168,25 @@ pub fn ReplTransforms(comptime P: type) type {
             // Wrap the last expression in return { value: expr }
             wrapLastExpressionWithReturn(p, &inner_stmts, allocator);
 
-            // Create the sync IIFE: (() => { ...inner_stmts... })()
-            // Using sync (not async) IIFE avoids extra parentheses around the object
-            const sync_arrow = p.newExpr(E.Arrow{
+            // Create the IIFE: (() => { ...inner_stmts... })() or (async () => { ... })()
+            const arrow = p.newExpr(E.Arrow{
                 .args = &.{},
                 .body = .{ .loc = logger.Loc.Empty, .stmts = inner_stmts.items },
-                .is_async = false,
+                .is_async = is_async,
             }, logger.Loc.Empty);
 
-            const sync_iife = p.newExpr(E.Call{
-                .target = sync_arrow,
+            const iife = p.newExpr(E.Call{
+                .target = arrow,
                 .args = ExprNodeList{},
             }, logger.Loc.Empty);
 
-            // Final output: hoisted declarations + sync IIFE call
+            // Final output: hoisted declarations + IIFE call
             const final_stmts_count = hoisted_stmts.items.len + 1;
             var final_stmts = bun.handleOom(allocator.alloc(Stmt, final_stmts_count));
             for (hoisted_stmts.items, 0..) |stmt, j| {
                 final_stmts[j] = stmt;
             }
-            final_stmts[hoisted_stmts.items.len] = p.s(S.SExpr{ .value = sync_iife }, logger.Loc.Empty);
-
-            // Update parts
-            if (parts.items.len > 0) {
-                parts.items[0].stmts = final_stmts;
-                parts.items.len = 1;
-            }
-        }
-
-        /// Transform code with top-level await into async IIFE with variable hoisting
-        fn applyAsyncTransform(p: *P, parts: *ListManaged(js_ast.Part), all_stmts: []Stmt, allocator: Allocator) !void {
-            // Lists for hoisted declarations and inner statements
-            var hoisted_stmts = ListManaged(Stmt).init(allocator);
-            var inner_stmts = ListManaged(Stmt).init(allocator);
-            try hoisted_stmts.ensureTotalCapacity(all_stmts.len);
-            try inner_stmts.ensureTotalCapacity(all_stmts.len);
-
-            // Process each statement
-            for (all_stmts) |stmt| {
-                switch (stmt.data) {
-                    .s_local => |local| {
-                        // Hoist all declarations as var so they become context properties
-                        // In sloppy mode, var at top level becomes a property of the global/context object
-                        const kind: S.Local.Kind = .k_var;
-
-                        // Extract individual identifiers from binding patterns for hoisting
-                        var hoisted_decl_list = ListManaged(G.Decl).init(allocator);
-                        for (local.decls.slice()) |decl| {
-                            try extractIdentifiersFromBinding(p, decl.binding, &hoisted_decl_list);
-                        }
-
-                        if (hoisted_decl_list.items.len > 0) {
-                            try hoisted_stmts.append(p.s(S.Local{
-                                .kind = kind,
-                                .decls = Decl.List.fromOwnedSlice(hoisted_decl_list.items),
-                            }, stmt.loc));
-                        }
-
-                        // Create assignment expressions for the inner statements
-                        for (local.decls.slice()) |decl| {
-                            if (decl.value) |value| {
-                                // Create assignment expression: binding = value
-                                const assign_expr = createBindingAssignment(p, decl.binding, value, allocator);
-                                try inner_stmts.append(p.s(S.SExpr{ .value = assign_expr }, stmt.loc));
-                            }
-                        }
-                    },
-                    .s_function => |func| {
-                        // For function declarations with await context:
-                        // Hoist as: var funcName;
-                        // Inner: this.funcName = funcName; function funcName() {}
-                        if (func.func.name) |name_loc| {
-                            try hoisted_stmts.append(p.s(S.Local{
-                                .kind = .k_var,
-                                .decls = Decl.List.fromOwnedSlice(bun.handleOom(allocator.dupe(G.Decl, &.{
-                                    G.Decl{
-                                        .binding = p.b(B.Identifier{ .ref = name_loc.ref.? }, name_loc.loc),
-                                        .value = null,
-                                    },
-                                }))),
-                            }, stmt.loc));
-
-                            // Add this.funcName = funcName assignment
-                            const this_expr = p.newExpr(E.This{}, stmt.loc);
-                            const this_dot = p.newExpr(E.Dot{
-                                .target = this_expr,
-                                .name = p.symbols.items[name_loc.ref.?.innerIndex()].original_name,
-                                .name_loc = name_loc.loc,
-                            }, stmt.loc);
-                            const func_id = p.newExpr(E.Identifier{ .ref = name_loc.ref.? }, name_loc.loc);
-                            const assign = p.newExpr(E.Binary{
-                                .op = .bin_assign,
-                                .left = this_dot,
-                                .right = func_id,
-                            }, stmt.loc);
-                            try inner_stmts.append(p.s(S.SExpr{ .value = assign }, stmt.loc));
-                        }
-                        // Add the function declaration itself
-                        try inner_stmts.append(stmt);
-                    },
-                    .s_class => |class| {
-                        // For class declarations:
-                        // Hoist as: var ClassName; (use var so it persists to vm context)
-                        // Inner: ClassName = class ClassName {}
-                        if (class.class.class_name) |name_loc| {
-                            try hoisted_stmts.append(p.s(S.Local{
-                                .kind = .k_var,
-                                .decls = Decl.List.fromOwnedSlice(bun.handleOom(allocator.dupe(G.Decl, &.{
-                                    G.Decl{
-                                        .binding = p.b(B.Identifier{ .ref = name_loc.ref.? }, name_loc.loc),
-                                        .value = null,
-                                    },
-                                }))),
-                            }, stmt.loc));
-
-                            // Convert class declaration to assignment: ClassName = class ClassName {}
-                            const class_expr = p.newExpr(class.class, stmt.loc);
-                            const class_id = p.newExpr(E.Identifier{ .ref = name_loc.ref.? }, name_loc.loc);
-                            const assign = p.newExpr(E.Binary{
-                                .op = .bin_assign,
-                                .left = class_id,
-                                .right = class_expr,
-                            }, stmt.loc);
-                            try inner_stmts.append(p.s(S.SExpr{ .value = assign }, stmt.loc));
-                        } else {
-                            try inner_stmts.append(stmt);
-                        }
-                    },
-                    else => {
-                        try inner_stmts.append(stmt);
-                    },
-                }
-            }
-
-            // Wrap the last expression in return { value: expr }
-            wrapLastExpressionWithReturn(p, &inner_stmts, allocator);
-
-            // Create the async IIFE: (async () => { ...inner_stmts... })()
-            const async_arrow = p.newExpr(E.Arrow{
-                .args = &.{},
-                .body = .{ .loc = logger.Loc.Empty, .stmts = inner_stmts.items },
-                .is_async = true,
-            }, logger.Loc.Empty);
-
-            const async_iife = p.newExpr(E.Call{
-                .target = async_arrow,
-                .args = ExprNodeList{},
-            }, logger.Loc.Empty);
-
-            // Final output: hoisted declarations + async IIFE call
-            const final_stmts_count = hoisted_stmts.items.len + 1;
-            var final_stmts = bun.handleOom(allocator.alloc(Stmt, final_stmts_count));
-            for (hoisted_stmts.items, 0..) |stmt, j| {
-                final_stmts[j] = stmt;
-            }
-            final_stmts[hoisted_stmts.items.len] = p.s(S.SExpr{ .value = async_iife }, logger.Loc.Empty);
+            final_stmts[hoisted_stmts.items.len] = p.s(S.SExpr{ .value = iife }, logger.Loc.Empty);
 
             // Update parts
             if (parts.items.len > 0) {
@@ -423,8 +285,8 @@ pub fn ReplTransforms(comptime P: type) type {
                     }, binding.loc);
                 },
                 .b_missing => {
-                    // No assignment needed
-                    return value;
+                    // Return Missing expression to match convertBindingToExpr
+                    return p.newExpr(E.Missing{}, binding.loc);
                 },
             }
         }

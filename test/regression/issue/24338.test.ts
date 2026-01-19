@@ -101,3 +101,15 @@ test("partialDeepStrictEqual with Map - non-string keys", () => {
     new Map([[1, "one"]]),
   );
 });
+
+test("partialDeepStrictEqual with Map - circular reference", () => {
+  const actualMap = new Map<string, unknown>();
+  actualMap.set("self", actualMap);
+  actualMap.set("other", "value");
+
+  const expectedMap = new Map<string, unknown>();
+  expectedMap.set("self", expectedMap);
+
+  // Should not hang due to circular reference
+  assert.partialDeepStrictEqual(actualMap, expectedMap);
+});

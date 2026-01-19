@@ -377,6 +377,9 @@ function isSpecial(obj) {
 
 const typesToCallDeepStrictEqualWith = [isKeyObject, isWeakSet, isWeakMap, Buffer.isBuffer];
 const SafeSetPrototypeIterator = SafeSet.prototype[SymbolIterator];
+const SafeMapPrototypeIterator = SafeMap.prototype[SymbolIterator];
+const SafeMapPrototypeHas = SafeMap.prototype.has;
+const SafeMapPrototypeGet = SafeMap.prototype.get;
 
 /**
  * Compares two objects or values recursively to check if they are equal.
@@ -387,8 +390,6 @@ const SafeSetPrototypeIterator = SafeSet.prototype[SymbolIterator];
  * @example
  * compareBranch({a: 1, b: 2, c: 3}, {a: 1, b: 2}); // true
  */
-const SafeMapPrototypeIterator = SafeMap.prototype[SymbolIterator];
-
 function compareBranch(actual, expected, comparedObjects?) {
   // Check for Map object equality (subset check for partialDeepStrictEqual)
   if (isMap(actual) && isMap(expected)) {
@@ -396,13 +397,21 @@ function compareBranch(actual, expected, comparedObjects?) {
       return false; // `expected` can't be a subset if it has more elements
     }
 
+    comparedObjects ??= new SafeWeakSet();
+
+    // Handle circular references
+    if (comparedObjects.has(actual)) {
+      return true;
+    }
+    comparedObjects.add(actual);
+
     const expectedIterator = SafeMapPrototypeIterator.$call(expected);
 
     for (const { 0: key, 1: expectedValue } of expectedIterator) {
-      if (!actual.has(key)) {
+      if (!SafeMapPrototypeHas.$call(actual, key)) {
         return false;
       }
-      const actualValue = actual.get(key);
+      const actualValue = SafeMapPrototypeGet.$call(actual, key);
       if (!compareBranch(actualValue, expectedValue, comparedObjects)) {
         return false;
       }

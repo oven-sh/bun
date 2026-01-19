@@ -650,12 +650,29 @@ pub const IniTestingAPIs = struct {
             default_registry_email.deref();
         }
 
+        // Build scoped registries object
+        const scoped_registries_obj = brk: {
+            const scoped = install.scoped orelse break :brk jsc.JSValue.jsNull();
+            const obj = jsc.JSValue.createEmptyObject(globalThis, scoped.scopes.keys().len);
+            for (scoped.scopes.keys(), scoped.scopes.values()) |scope, registry| {
+                const scope_obj = jsc.JSValue.createEmptyObject(globalThis, 5);
+                scope_obj.put(globalThis, "url", bun.String.fromBytes(registry.url).toJS(globalThis));
+                scope_obj.put(globalThis, "token", bun.String.fromBytes(registry.token).toJS(globalThis));
+                scope_obj.put(globalThis, "username", bun.String.fromBytes(registry.username).toJS(globalThis));
+                scope_obj.put(globalThis, "password", bun.String.fromBytes(registry.password).toJS(globalThis));
+                scope_obj.put(globalThis, "email", bun.String.fromBytes(registry.email).toJS(globalThis));
+                obj.put(globalThis, scope, scope_obj);
+            }
+            break :brk obj;
+        };
+
         return (try jsc.JSObject.create(.{
             .default_registry_url = default_registry_url,
             .default_registry_token = default_registry_token,
             .default_registry_username = default_registry_username,
             .default_registry_password = default_registry_password,
             .default_registry_email = default_registry_email,
+            .scoped_registries = scoped_registries_obj,
         }, globalThis)).toJS();
     }
 
@@ -1346,6 +1363,16 @@ pub fn loadNpmrc(
                 if (std.mem.eql(u8, bun.strings.withoutTrailingSlash(url.host), bun.strings.withoutTrailingSlash(conf_item_url.host))) {
                     if (conf_item_url.hostname.len > 0) {
                         if (!std.mem.eql(u8, bun.strings.withoutTrailingSlash(url.hostname), bun.strings.withoutTrailingSlash(conf_item_url.hostname))) {
+                            continue;
+                        }
+                    }
+                    // If the config item has a non-trivial path, require that the scope's URL path
+                    // starts with the config item's path. This is needed for registries like GitLab
+                    // that use project-specific paths (e.g., /api/v4/projects/123/packages/npm/).
+                    if (conf_item_url.path.len > 1) {
+                        const conf_path = bun.strings.withoutTrailingSlash(conf_item_url.path);
+                        const url_path = bun.strings.withoutTrailingSlash(url.path);
+                        if (!std.mem.startsWith(u8, url_path, conf_path)) {
                             continue;
                         }
                     }

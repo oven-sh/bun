@@ -1,5 +1,5 @@
-import { expect, test } from "bun:test";
 import assert from "node:assert";
+import { test } from "node:test";
 
 // https://github.com/oven-sh/bun/issues/24338
 // assert.partialDeepStrictEqual should support Map subset checking
@@ -48,25 +48,29 @@ test("partialDeepStrictEqual with Map - nested objects as values", () => {
 });
 
 test("partialDeepStrictEqual with Map - should fail when expected has more keys", () => {
-  expect(() =>
-    assert.partialDeepStrictEqual(
-      new Map([["key1", "value1"]]),
-      new Map([
-        ["key1", "value1"],
-        ["key2", "value2"],
-      ]),
-    ),
-  ).toThrow(assert.AssertionError);
+  assert.throws(
+    () =>
+      assert.partialDeepStrictEqual(
+        new Map([["key1", "value1"]]),
+        new Map([
+          ["key1", "value1"],
+          ["key2", "value2"],
+        ]),
+      ),
+    assert.AssertionError,
+  );
 });
 
 test("partialDeepStrictEqual with Map - should fail when key missing in actual", () => {
-  expect(() => assert.partialDeepStrictEqual(new Map([["key1", "value1"]]), new Map([["key2", "value2"]]))).toThrow(
+  assert.throws(
+    () => assert.partialDeepStrictEqual(new Map([["key1", "value1"]]), new Map([["key2", "value2"]])),
     assert.AssertionError,
   );
 });
 
 test("partialDeepStrictEqual with Map - should fail when value differs", () => {
-  expect(() => assert.partialDeepStrictEqual(new Map([["key1", "value1"]]), new Map([["key1", "different"]]))).toThrow(
+  assert.throws(
+    () => assert.partialDeepStrictEqual(new Map([["key1", "value1"]]), new Map([["key1", "different"]])),
     assert.AssertionError,
   );
 });

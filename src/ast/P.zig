@@ -6765,9 +6765,10 @@ var falseValueExpr = Expr.Data{ .e_boolean = E.Boolean{ .value = false } };
 
 const string = []const u8;
 
+const repl_transforms = @import("./repl_transforms.zig");
+
 const Define = @import("../defines.zig").Define;
 const DefineData = @import("../defines.zig").DefineData;
-const repl_transforms = @import("repl_transforms.zig");
 
 const bun = @import("bun");
 const Environment = bun.Environment;

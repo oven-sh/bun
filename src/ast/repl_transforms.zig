@@ -1,21 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const logger = bun.logger;
-const js_ast = bun.ast;
-const Allocator = std.mem.Allocator;
-
-const G = js_ast.G;
-const B = js_ast.B;
-const E = js_ast.E;
-const S = js_ast.S;
-const Expr = js_ast.Expr;
-const Stmt = js_ast.Stmt;
-const Binding = js_ast.Binding;
-const Decl = G.Decl;
-const ExprNodeList = js_ast.ExprNodeList;
-
-const ListManaged = std.array_list.Managed;
-
 /// REPL Transform module - transforms code for interactive REPL evaluation
 ///
 /// This module provides transformations for REPL mode:
@@ -493,3 +475,22 @@ pub fn ReplTransforms(comptime P: type) type {
         }
     };
 }
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+const ListManaged = std.array_list.Managed;
+
+const bun = @import("bun");
+const logger = bun.logger;
+
+const js_ast = bun.ast;
+const B = js_ast.B;
+const Binding = js_ast.Binding;
+const E = js_ast.E;
+const Expr = js_ast.Expr;
+const ExprNodeList = js_ast.ExprNodeList;
+const S = js_ast.S;
+const Stmt = js_ast.Stmt;
+
+const G = js_ast.G;
+const Decl = G.Decl;

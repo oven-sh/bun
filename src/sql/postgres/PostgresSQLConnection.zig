@@ -1331,7 +1331,6 @@ fn startCopy(this: *PostgresSQLConnection, overall_format: u8, column_format_cod
     const new_column_formats = bun.default_allocator.dupe(u16, column_format_codes) catch |err| {
         return err;
     };
-    errdefer bun.default_allocator.free(new_column_formats);
 
     // Update state
     this.copy_state = if (is_out) .copy_out_progress else .copy_in_progress;

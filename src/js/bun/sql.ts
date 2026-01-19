@@ -1625,7 +1625,9 @@ const SQL: typeof Bun.SQL = function SQL(
 
       // Raw byte buffers (Uint8Array/Buffer/ArrayBuffer) are iterable, so handle them before the generic iterable branch.
       if (hasByteLength(maybeIter)) {
+        if (aborted) throw new Error("AbortError");
         await flushBatch();
+        if (aborted) throw new Error("AbortError");
         const view = toUint8ArrayView(maybeIter);
         if (!view) {
           throw $ERR_INVALID_ARG_VALUE("data", maybeIter, "must be a string, an array row, or a byte source");
@@ -1640,20 +1642,27 @@ const SQL: typeof Bun.SQL = function SQL(
       // Sync iterable (rows or raw string/Uint8Array chunks)
       if (isIterable(maybeIter)) {
         for (const item of maybeIter as Iterable<unknown>) {
+          if (aborted) throw new Error("AbortError");
           if ($isArray(item)) {
             if (fmt === "binary") {
               const types = getBinaryTypes();
+              if (aborted) throw new Error("AbortError");
               await flushBatch();
+              if (aborted) throw new Error("AbortError");
               const payload = encodeBinaryRow(item, types);
               await sendChunkedData(payload, reserved, pool, resolvedLimits, counters, notifyProgress);
             } else {
+              if (aborted) throw new Error("AbortError");
               await addToBatch(serializeRow(item));
             }
           } else if (typeof item === "string") {
+            if (aborted) throw new Error("AbortError");
             await addToBatch(sanitizeString(item));
           } else if (hasByteLength(item)) {
             // raw bytes (Uint8Array or ArrayBuffer) - flush and send directly
+            if (aborted) throw new Error("AbortError");
             await flushBatch();
+            if (aborted) throw new Error("AbortError");
             const view = toUint8ArrayView(item);
             if (!view) {
               throw $ERR_INVALID_ARG_VALUE("data", item, "must be a string, an array row, or a byte source");
@@ -1661,6 +1670,7 @@ const SQL: typeof Bun.SQL = function SQL(
             const src = fmt === "binary" ? view : sanitizeBytes(view);
             await sendChunkedData(src, reserved, pool, resolvedLimits, counters, notifyProgress);
           } else {
+            if (aborted) throw new Error("AbortError");
             await addToBatch(serializeRow(item));
           }
         }
@@ -2109,7 +2119,17 @@ const SQL: typeof Bun.SQL = function SQL(
             typeof queryOrOptions === "string"
               ? (__toDefaults__.timeout ?? 0)
               : queryOrOptions.timeout !== undefined
-                ? Math.max(0, Math.trunc(queryOrOptions.timeout))
+                ? (() => {
+                    const value = queryOrOptions.timeout;
+                    if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+                      throw $ERR_INVALID_ARG_VALUE(
+                        "queryOrOptions.timeout",
+                        value,
+                        "must be a finite non-negative number",
+                      );
+                    }
+                    return Math.trunc(value);
+                  })()
                 : (__toDefaults__.timeout ?? 0);
 
           // Tightened semantics:

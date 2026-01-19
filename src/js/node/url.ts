@@ -520,7 +520,7 @@ function formatWhatwgUrl(urlObject: URL, options?: UrlFormatOptions): string {
 
   let result = urlObject.protocol;
 
-  if (urlObject.host !== null && urlObject.host !== "") {
+  if (urlObject.host) {
     result += "//";
 
     if (auth && (urlObject.username || urlObject.password)) {

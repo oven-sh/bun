@@ -6,6 +6,9 @@ import { bunEnv, bunExe, tempDir } from "harness";
 // This test verifies that a clear error is thrown explaining the limitation
 // and suggests using the exclusive option.
 
+// Note: Cluster tests require tempDir because cluster.fork() needs a real file path
+// (process.argv[1]) to fork, which is not available when using -e eval mode.
+
 test("dgram.bind in cluster worker without exclusive throws clear error", async () => {
   using dir = tempDir("dgram-cluster", {
     "main.mjs": `
@@ -14,19 +17,9 @@ import dgram from 'node:dgram';
 
 if (cluster.isPrimary) {
   const worker = cluster.fork();
-
-  worker.on('exit', (code) => {
-    process.exit(code);
-  });
-
-  setTimeout(() => {
-    console.log('ERROR: Timeout');
-    worker.kill();
-    process.exit(2);
-  }, 5000);
+  worker.on('exit', (code) => process.exit(code));
 } else {
   const s = dgram.createSocket('udp4');
-
   s.on('error', (err) => {
     if (err.message.includes('UDP socket sharing in cluster mode is not yet supported')) {
       console.log('SUCCESS: Got expected error about unsupported feature');
@@ -36,15 +29,12 @@ if (cluster.isPrimary) {
       process.exit(1);
     }
   });
-
   s.on('listening', () => {
     console.log('ERROR: Socket bound unexpectedly');
     s.close();
     process.exit(1);
   });
-
-  // Try to bind without exclusive - should fail with clear error
-  s.bind(1234);
+  s.bind(0);
 }
 `,
   });
@@ -76,31 +66,18 @@ import dgram from 'node:dgram';
 
 if (cluster.isPrimary) {
   const worker = cluster.fork();
-
-  worker.on('exit', (code) => {
-    process.exit(code);
-  });
-
-  setTimeout(() => {
-    console.log('ERROR: Timeout');
-    worker.kill();
-    process.exit(2);
-  }, 5000);
+  worker.on('exit', (code) => process.exit(code));
 } else {
   const s = dgram.createSocket('udp4');
-
   s.on('error', (err) => {
     console.log('ERROR:', err.message);
     process.exit(1);
   });
-
   s.on('listening', () => {
     console.log('SUCCESS: Socket bound with exclusive option');
     s.close();
     process.exit(0);
   });
-
-  // Bind with exclusive: true - should work
   s.bind({ port: 0, exclusive: true });
 }
 `,
@@ -133,31 +110,18 @@ import dgram from 'node:dgram';
 
 if (cluster.isPrimary) {
   const worker = cluster.fork();
-
-  worker.on('exit', (code) => {
-    process.exit(code);
-  });
-
-  setTimeout(() => {
-    console.log('ERROR: Timeout');
-    worker.kill();
-    process.exit(2);
-  }, 5000);
+  worker.on('exit', (code) => process.exit(code));
 } else {
-  // reusePort: true automatically sets exclusive to true
   const s = dgram.createSocket({ type: 'udp4', reusePort: true });
-
   s.on('error', (err) => {
     console.log('ERROR:', err.message);
     process.exit(1);
   });
-
   s.on('listening', () => {
     console.log('SUCCESS: Socket bound with reusePort option');
     s.close();
     process.exit(0);
   });
-
   s.bind(0);
 }
 `,
@@ -182,11 +146,8 @@ if (cluster.isPrimary) {
   expect(exitCode).toBe(0);
 });
 
-test("addMembership on same socket twice throws EADDRINUSE", async () => {
-  // This tests that the basic addMembership error propagation works
-  // when a single socket tries to join the same multicast group twice
-  using dir = tempDir("dgram-membership-same-socket", {
-    "main.mjs": `
+// This non-cluster test can use -e since it doesn't need cluster.fork()
+const addMembershipTwiceScript = `
 import dgram from 'node:dgram';
 
 const s = dgram.createSocket('udp4');
@@ -217,12 +178,11 @@ s.bind(0, () => {
     }
   }
 });
-`,
-  });
+`;
 
+test("addMembership on same socket twice throws EADDRINUSE", async () => {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "main.mjs"],
-    cwd: String(dir),
+    cmd: [bunExe(), "-e", addMembershipTwiceScript],
     env: bunEnv,
     stderr: "pipe",
     stdout: "pipe",

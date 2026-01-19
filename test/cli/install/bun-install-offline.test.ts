@@ -15,6 +15,9 @@ function createCleanEnv(): NodeJS.Dict<string> {
   // Also delete any global cache settings that could interfere
   delete cleanEnv.BUN_INSTALL_CACHE_DIR;
   delete cleanEnv.npm_config_cache;
+  // Clear offline env overrides to keep tests deterministic
+  delete cleanEnv.BUN_CONFIG_OFFLINE;
+  delete cleanEnv.BUN_CONFIG_PREFER_OFFLINE;
   return cleanEnv;
 }
 const env = createCleanEnv();
@@ -216,6 +219,18 @@ linker = "hoisted"
         return new Response("Not found", { status: 404 });
       });
 
+      // Configure bunfig.toml to point to mock registry
+      const cacheDir = join(ctx.package_dir, ".bun-cache-no-network");
+      const bunfigPath = join(ctx.package_dir, "bunfig.toml");
+      const bunfigContent = `
+[install]
+cache = "${cacheDir}"
+registry = "${ctx.registry_url}"
+saveTextLockfile = false
+linker = "hoisted"
+`;
+      await writeFile(bunfigPath, bunfigContent);
+
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -227,9 +242,9 @@ linker = "hoisted"
         }),
       );
 
-      // Install with --offline flag
+      // Install with --offline flag (bound to mock registry via bunfig)
       const proc = spawn({
-        cmd: [bunExe(), "install", "--offline"],
+        cmd: [bunExe(), "install", "--offline", `--config=${bunfigPath}`],
         cwd: ctx.package_dir,
         stdout: "pipe",
         stdin: "inherit",
@@ -238,7 +253,7 @@ linker = "hoisted"
       });
 
       await proc.exited;
-      // Verify no network requests were made
+      // Verify no network requests were made to the mock registry
       expect(networkRequestCount).toBe(0);
     });
   });

@@ -12,6 +12,9 @@ function createCleanEnv(): NodeJS.Dict<string> {
   delete cleanEnv.BUN_CONFIG_REGISTRY;
   delete cleanEnv.BUN_INSTALL_CACHE_DIR;
   delete cleanEnv.npm_config_cache;
+  // Clear offline env overrides to keep tests deterministic
+  delete cleanEnv.BUN_CONFIG_OFFLINE;
+  delete cleanEnv.BUN_CONFIG_PREFER_OFFLINE;
   return cleanEnv;
 }
 const env = createCleanEnv();

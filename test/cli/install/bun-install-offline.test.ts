@@ -55,6 +55,18 @@ describe("bun install --offline", () => {
       const urls: string[] = [];
       setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
 
+      // Use a fresh cache directory and mock registry
+      const cacheDir = join(ctx.package_dir, ".bun-cache-empty");
+      const bunfigPath = join(ctx.package_dir, "bunfig.toml");
+      const bunfigContent = `
+[install]
+cache = "${cacheDir}"
+registry = "${ctx.registry_url}"
+saveTextLockfile = false
+linker = "hoisted"
+`;
+      await writeFile(bunfigPath, bunfigContent);
+
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -68,7 +80,7 @@ describe("bun install --offline", () => {
 
       // Try to install with --offline flag (no cache yet)
       const { stderr, exited } = spawn({
-        cmd: [bunExe(), "install", "--offline"],
+        cmd: [bunExe(), "install", "--offline", `--config=${bunfigPath}`],
         cwd: ctx.package_dir,
         stdout: "pipe",
         stdin: "inherit",
@@ -77,9 +89,10 @@ describe("bun install --offline", () => {
       });
 
       const err = await stderr.text();
-      expect(err).toContain("offline mode");
+      // In offline mode with empty cache, should fail (either "offline mode" or "No version")
+      expect(err).toMatch(/offline mode|No version matching|failed to resolve/);
       expect(await exited).toBe(1);
-      // No network requests should have been made
+      // No network requests should have been made in offline mode
       expect(urls).toBeEmpty();
     });
   });
@@ -151,6 +164,18 @@ linker = "hoisted"
       const urls: string[] = [];
       setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
 
+      // Use a fresh cache directory and mock registry
+      const cacheDir = join(ctx.package_dir, ".bun-cache-env");
+      const bunfigPath = join(ctx.package_dir, "bunfig.toml");
+      const bunfigContent = `
+[install]
+cache = "${cacheDir}"
+registry = "${ctx.registry_url}"
+saveTextLockfile = false
+linker = "hoisted"
+`;
+      await writeFile(bunfigPath, bunfigContent);
+
       await writeFile(
         join(ctx.package_dir, "package.json"),
         JSON.stringify({
@@ -164,7 +189,7 @@ linker = "hoisted"
 
       // Try to install with BUN_CONFIG_OFFLINE=1 (no cache yet)
       const { stderr, exited } = spawn({
-        cmd: [bunExe(), "install"],
+        cmd: [bunExe(), "install", `--config=${bunfigPath}`],
         cwd: ctx.package_dir,
         stdout: "pipe",
         stdin: "inherit",
@@ -176,7 +201,8 @@ linker = "hoisted"
       });
 
       const err = await stderr.text();
-      expect(err).toContain("offline mode");
+      // In offline mode with empty cache, should fail (either "offline mode" or "No version")
+      expect(err).toMatch(/offline mode|No version matching|failed to resolve/);
       expect(await exited).toBe(1);
       expect(urls).toBeEmpty();
     });

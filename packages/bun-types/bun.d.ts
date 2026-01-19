@@ -2433,11 +2433,11 @@ declare module "bun" {
     type SIMD = "baseline" | "modern";
     type CompileTarget =
       | `bun-darwin-${Architecture}`
-      | `bun-darwin-x64-${SIMD}`
+      | `bun-darwin-${Architecture}-${SIMD}`
       | `bun-linux-${Architecture}`
       | `bun-linux-${Architecture}-${Libc}`
-      | `bun-linux-x64-${SIMD}`
-      | `bun-linux-x64-${SIMD}-${Libc}`
+      | `bun-linux-${Architecture}-${SIMD}`
+      | `bun-linux-${Architecture}-${SIMD}-${Libc}`
       | "bun-windows-x64"
       | `bun-windows-x64-${SIMD}`;
   }

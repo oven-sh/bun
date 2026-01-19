@@ -67,9 +67,9 @@ pub fn VisitExpr(
                 const is_delete_target = p.delete_target == .e_import_meta;
 
                 if (p.define.dots.get("meta")) |meta| {
-                    for (meta) |define| {
+                    for (meta) |*define| {
                         // TODO: clean up how we do define matches
-                        if (p.isDotDefineMatch(expr, define.parts)) {
+                        if (p.isDotDefineMatch(expr, define.parts, &define.data)) {
                             // Substitute user-specified defines
                             return p.valueForDefine(expr.loc, in.assign_target, is_delete_target, &define.data);
                         }
@@ -832,7 +832,7 @@ pub fn VisitExpr(
 
                 if (p.define.dots.get(e_.name)) |parts| {
                     for (parts) |*define| {
-                        if (p.isDotDefineMatch(expr, define.parts)) {
+                        if (p.isDotDefineMatch(expr, define.parts, &define.data)) {
                             if (in.assign_target == .none) {
                                 // Substitute user-specified defines
                                 if (!define.data.valueless()) {

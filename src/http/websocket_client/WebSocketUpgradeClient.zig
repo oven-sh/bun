@@ -103,17 +103,15 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             header_names: ?[*]const jsc.ZigString,
             header_values: ?[*]const jsc.ZigString,
             header_count: usize,
-            // Proxy parameters
             proxy_host: ?*const jsc.ZigString,
             proxy_port: u16,
             proxy_authorization: ?*const jsc.ZigString,
             proxy_header_names: ?[*]const jsc.ZigString,
             proxy_header_values: ?[*]const jsc.ZigString,
             proxy_header_count: usize,
-            // TLS options (full SSLConfig for complete TLS customization)
             ssl_config: ?*SSLConfig,
-            // Whether the target URL is wss:// (separate from ssl template parameter)
             target_is_secure: bool,
+            is_unix: bool,
         ) callconv(.c) ?*HTTPClient {
             const vm = global.bunVM();
 
@@ -139,6 +137,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 port,
                 client_protocol,
                 extra_headers,
+                is_unix,
             ) catch return null;
 
             // Build proxy state if using proxy
@@ -231,14 +230,9 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             else
                 display_host_;
 
-            // For TLS connections with custom SSLConfig (e.g., custom CA), create a per-connection
-            // SSL context instead of using the shared context from C++. This is needed because:
-            // - The shared context is created once with default settings (no custom CA)
-            // - Custom CA certificates must be loaded at context creation time
-            // - This applies to both direct wss:// and HTTPS proxy connections
             var connect_ctx: *uws.SocketContext = socket_ctx;
 
-            log("connect: ssl={}, has_ssl_config={}, using_proxy={}", .{ ssl, ssl_config != null, using_proxy });
+            log("connect: ssl={}, has_ssl_config={}, using_proxy={}, is_unix={}", .{ ssl, ssl_config != null, using_proxy, is_unix });
 
             if (comptime ssl) {
                 if (ssl_config) |config| {
@@ -252,7 +246,6 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                             ctx_opts,
                             &err,
                         )) |custom_ctx| {
-                            // Configure the custom context with the same callbacks as the shared context
                             Socket.configure(
                                 custom_ctx,
                                 true,
@@ -273,45 +266,54 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                             connect_ctx = custom_ctx;
                             log("Created custom SSL context for TLS connection with custom CA", .{});
                         } else {
-                            // Failed to create custom context, fall back to shared context
-                            // The connection may still work if the CA isn't needed
                             log("Failed to create custom SSL context: {s}", .{@tagName(err)});
                         }
                     }
                 }
             }
 
-            if (Socket.connectPtr(
-                display_host,
-                connect_port,
-                connect_ctx,
-                HTTPClient,
-                client,
-                "tcp",
-                false,
-            )) |out| {
-                // I don't think this case gets reached.
-                if (out.state == .failed) {
+            if (!is_unix) {
+                if (Socket.connectPtr(
+                    display_host,
+                    connect_port,
+                    connect_ctx,
+                    HTTPClient,
+                    client,
+                    "tcp",
+                    false,
+                )) |out| {
+                    if (out.state == .failed) {
+                        client.deref();
+                        return null;
+                    }
+                    bun.analytics.Features.WebSocket += 1;
+
+                    if (comptime ssl) {
+                        if (!strings.isIPAddress(host_.slice())) {
+                            out.hostname = bun.default_allocator.dupeZ(u8, host_.slice()) catch "";
+                        }
+                    }
+
+                    out.tcp.timeout(120);
+                    out.state = .reading;
+                    out.ref();
+                    return out;
+                } else |_| {
                     client.deref();
                     return null;
                 }
-                bun.analytics.Features.WebSocket += 1;
+            } else {
+                if (Socket.connectUnixPtr(display_host, connect_ctx, HTTPClient, client, "tcp", false) catch null) |out| {
+                    bun.analytics.Features.WebSocket += 1;
 
-                if (comptime ssl) {
-                    if (!strings.isIPAddress(host_.slice())) {
-                        out.hostname = bun.default_allocator.dupeZ(u8, host_.slice()) catch "";
-                    }
+                    out.tcp.timeout(120);
+                    out.state = .reading;
+                    out.ref();
+                    return out;
                 }
-
-                out.tcp.timeout(120);
-                out.state = .reading;
-                // +1 for cpp_websocket
-                out.ref();
-                return out;
-            } else |_| {
-                client.deref();
             }
 
+            client.deref();
             return null;
         }
 
@@ -1170,6 +1172,7 @@ fn buildRequestBody(
     port: u16,
     client_protocol: *const jsc.ZigString,
     extra_headers: NonUTF8Headers,
+    is_unix: bool,
 ) std.mem.Allocator.Error![]u8 {
     const allocator = vm.allocator;
 
@@ -1225,7 +1228,8 @@ fn buildRequestBody(
 
     const host_fmt = bun.fmt.HostFormatter{
         .is_https = is_https,
-        .host = host_.slice(),
+        // For Unix sockets, use "localhost" as the Host header instead of the socket path
+        .host = if (is_unix) "localhost" else host_.slice(),
         .port = port,
     };
 

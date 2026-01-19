@@ -39,7 +39,7 @@ async function withContext(
   opts: { linker?: "hoisted" | "isolated" } | undefined,
   fn: (ctx: TestContext) => Promise<void>,
 ): Promise<void> {
-  const ctx = await createTestContext(opts ? { linker: opts.linker! } : undefined);
+  const ctx = await createTestContext(opts?.linker ? { linker: opts.linker } : undefined);
   try {
     await fn(ctx);
   } finally {

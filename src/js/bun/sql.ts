@@ -227,8 +227,8 @@ function resolveCopyFromLimits(options: any, pool: any): { maxBytes: number; max
 
   const maxChunkSize =
     options && typeof options.maxChunkSize === "number" && options.maxChunkSize > 0
-      ? Number(options.maxChunkSize)
-      : Math.max(0, Math.trunc(Number(__fromDefaults__.maxChunkSize) || 0));
+      ? Math.max(1, Math.trunc(Number(options.maxChunkSize)))
+      : Math.max(1, Math.trunc(Number(__fromDefaults__.maxChunkSize) || DEFAULT_COPY_MAX_CHUNK_SIZE));
 
   return { maxBytes, maxChunkSize };
 }

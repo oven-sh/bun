@@ -68,11 +68,10 @@ pub fn ReplTransforms(comptime P: type) type {
             for (all_stmts) |stmt| {
                 switch (stmt.data) {
                     .s_local => |local| {
-                        // Hoist the declaration, convert const to let for REPL mutability
-                        const kind: S.Local.Kind = switch (local.kind) {
-                            .k_const => .k_let,
-                            else => local.kind,
-                        };
+                        // Hoist all declarations as var so they become context properties
+                        // In sloppy mode, var at top level becomes a property of the global/context object
+                        // This is essential for REPL variable persistence across vm.runInContext calls
+                        const kind: S.Local.Kind = .k_var;
 
                         // Extract individual identifiers from binding patterns for hoisting
                         var hoisted_decl_list = ListManaged(G.Decl).init(allocator);
@@ -211,11 +210,9 @@ pub fn ReplTransforms(comptime P: type) type {
             for (all_stmts) |stmt| {
                 switch (stmt.data) {
                     .s_local => |local| {
-                        // Hoist the declaration, convert const to let
-                        const kind: S.Local.Kind = switch (local.kind) {
-                            .k_const => .k_let,
-                            else => local.kind,
-                        };
+                        // Hoist all declarations as var so they become context properties
+                        // In sloppy mode, var at top level becomes a property of the global/context object
+                        const kind: S.Local.Kind = .k_var;
 
                         // Extract individual identifiers from binding patterns for hoisting
                         var hoisted_decl_list = ListManaged(G.Decl).init(allocator);

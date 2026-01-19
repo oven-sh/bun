@@ -19,16 +19,18 @@ describe("Bun.Transpiler replMode", () => {
       expect(result).toContain("async");
     });
 
-    test("const becomes let with await", async () => {
+    test("const becomes var with await", async () => {
       const result = transpiler.transformSync("const x = await 1");
-      // const should become let for REPL persistence
-      expect(result).toContain("let x");
+      // const should become var for REPL persistence (becomes context property)
+      expect(result).toContain("var x");
       expect(result).not.toContain("const x");
     });
 
-    test("let declaration hoisted with await", async () => {
+    test("let becomes var with await", async () => {
       const result = transpiler.transformSync("let x = await 1");
-      expect(result).toContain("let x");
+      // let should become var for REPL persistence (becomes context property)
+      expect(result).toContain("var x");
+      expect(result).not.toContain("let x");
       expect(result).toContain("async");
     });
 

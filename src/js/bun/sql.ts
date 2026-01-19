@@ -1357,6 +1357,7 @@ const SQL: typeof Bun.SQL = function SQL(
   // })
   // - data can be: string, any[][], generator/iterator, AsyncIterable<row[]>, or AsyncIterable<string|Uint8Array>
   sql.copyFrom = async function (
+    this: Bun.SQL,
     table: string,
     columns: string[],
     data:
@@ -1462,7 +1463,11 @@ const SQL: typeof Bun.SQL = function SQL(
       }
       // Fallback stringify
       try {
-        return sanitizeString(JSON.stringify(v));
+        const json = JSON.stringify(v);
+        if (json === undefined) {
+          return sanitizeString(String(v));
+        }
+        return sanitizeString(json);
       } catch {
         return sanitizeString(String(v));
       }
@@ -1613,6 +1618,20 @@ const SQL: typeof Bun.SQL = function SQL(
           }
         }
         await flushBatch();
+        sendBinaryTrailer();
+        reserved.copyDone();
+        return;
+      }
+
+      // Raw byte buffers (Uint8Array/Buffer/ArrayBuffer) are iterable, so handle them before the generic iterable branch.
+      if (hasByteLength(maybeIter)) {
+        await flushBatch();
+        const view = toUint8ArrayView(maybeIter);
+        if (!view) {
+          throw $ERR_INVALID_ARG_VALUE("data", maybeIter, "must be a string, an array row, or a byte source");
+        }
+        const src = fmt === "binary" ? view : sanitizeBytes(view);
+        await sendChunkedData(src, reserved, pool, resolvedLimits, counters, notifyProgress);
         sendBinaryTrailer();
         reserved.copyDone();
         return;
@@ -1866,7 +1885,7 @@ const SQL: typeof Bun.SQL = function SQL(
   //     signal?: AbortSignal,
   //     onProgress?: (info: { bytesReceived: number; chunksReceived: number }) => void,
   //   })) { ... }
-  sql.copyTo = function (queryOrOptions: string | CopyToOptions): AsyncIterable<string | ArrayBuffer> {
+  sql.copyTo = function (this: Bun.SQL, queryOrOptions: string | CopyToOptions): AsyncIterable<string | ArrayBuffer> {
     ensurePostgresAdapter(connectionInfo.adapter, "COPY");
 
     const self = this;
@@ -2205,6 +2224,7 @@ const SQL: typeof Bun.SQL = function SQL(
   //   await sql.copyToPipeTo({ table: "t", format: "binary" }, writable)
   // Where writable is a Web WritableStream or an object with write(), close()/end()
   sql.copyToPipeTo = async function (
+    this: Bun.SQL,
     queryOrOptions: string | CopyToOptions,
     writable:
       | WritableStream<Uint8Array | string>
@@ -2364,15 +2384,17 @@ const SQL: typeof Bun.SQL = function SQL(
   sql.transaction = sql.begin;
   sql.distributed = sql.beginDistributed;
   sql.end = sql.close;
-  // Expose adapter-level COPY defaults on SQL instance
-  sql.getCopyDefaults = () => pool.getCopyDefaults();
-  sql.setCopyDefaults = (defaults: {
-    from?: { maxChunkSize?: number; maxBytes?: number; timeout?: number };
-    to?: { stream?: boolean; maxBytes?: number; timeout?: number };
-  }) => {
-    pool.setCopyDefaults(defaults);
-    return sql;
-  };
+  // Expose adapter-level COPY defaults on SQL instance (only when supported by adapter)
+  if (pool && typeof pool.getCopyDefaults === "function" && typeof pool.setCopyDefaults === "function") {
+    sql.getCopyDefaults = () => pool.getCopyDefaults();
+    sql.setCopyDefaults = (defaults: {
+      from?: { maxChunkSize?: number; maxBytes?: number; timeout?: number };
+      to?: { stream?: boolean; maxBytes?: number; timeout?: number };
+    }) => {
+      pool.setCopyDefaults(defaults);
+      return sql;
+    };
+  }
 
   return sql;
 };

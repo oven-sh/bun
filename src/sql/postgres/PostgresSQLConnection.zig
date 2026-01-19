@@ -1102,38 +1102,60 @@ pub fn copySendDataFromJSValue(this: *PostgresSQLConnection, globalObject: *jsc.
         }
     }
 
-    // Extract payload as bytes (ArrayBuffer/TypedArray) or UTF-8 from string
-    var slice: []const u8 = "";
+    const max_copy_buffer_size = this.effectiveMaxCopyBufferSize();
+
+    // Extract payload as bytes (ArrayBuffer/TypedArray) or UTF-8 from string.
+    // IMPORTANT: When converting a string to UTF-8, the resulting slice is only valid
+    // while the UTF-8 buffer is alive. Write CopyData inside the same scope.
     if (data_value.asArrayBuffer(globalObject)) |buf| {
-        slice = buf.byteSlice();
+        const slice = buf.byteSlice();
+
+        // Guard against excessively large chunks (0 disables limit)
+        if (slice.len > max_copy_buffer_size) {
+            return globalObject.throw("COPY data chunk too large: {d} bytes exceeds maximum of {d} bytes. Consider sending smaller chunks.", .{ slice.len, max_copy_buffer_size });
+        }
+
+        // Write CopyData
+        var copy_data = protocol.CopyData{
+            .data = .{ .temporary = slice },
+        };
+        copy_data.writeInternal(PostgresSQLConnection.Writer, this.writer()) catch |err| {
+            this.abortCopyAndFailConnection(error.CopyWriteFailed, "COPY aborted: write failed");
+            return globalObject.throw("Failed to send COPY data ({d} bytes): {s}. The connection may have been closed or the socket buffer may be full.", .{ slice.len, @errorName(err) });
+        };
+        this.flushData();
+
+        // Progress tracking (saturating add)
+        this.copy_bytes_transferred = this.copy_bytes_transferred +| @as(u64, @intCast(slice.len));
+        this.copy_chunks_processed = this.copy_chunks_processed +| 1;
     } else {
         const data_str = try data_value.toBunString(globalObject);
         defer data_str.deref();
-        const data_utf8 = data_str.toUTF8(bun.default_allocator);
+
+        var data_utf8 = data_str.toUTF8(bun.default_allocator);
         defer data_utf8.deinit();
-        slice = data_utf8.slice();
+
+        const slice = data_utf8.slice();
+
+        // Guard against excessively large chunks (0 disables limit)
+        if (slice.len > max_copy_buffer_size) {
+            return globalObject.throw("COPY data chunk too large: {d} bytes exceeds maximum of {d} bytes. Consider sending smaller chunks.", .{ slice.len, max_copy_buffer_size });
+        }
+
+        // Write CopyData while `data_utf8` is still alive.
+        var copy_data = protocol.CopyData{
+            .data = .{ .temporary = slice },
+        };
+        copy_data.writeInternal(PostgresSQLConnection.Writer, this.writer()) catch |err| {
+            this.abortCopyAndFailConnection(error.CopyWriteFailed, "COPY aborted: write failed");
+            return globalObject.throw("Failed to send COPY data ({d} bytes): {s}. The connection may have been closed or the socket buffer may be full.", .{ slice.len, @errorName(err) });
+        };
+        this.flushData();
+
+        // Progress tracking (saturating add)
+        this.copy_bytes_transferred = this.copy_bytes_transferred +| @as(u64, @intCast(slice.len));
+        this.copy_chunks_processed = this.copy_chunks_processed +| 1;
     }
-
-    const max_copy_buffer_size = this.effectiveMaxCopyBufferSize();
-
-    // Guard against excessively large chunks (0 disables limit)
-    if (slice.len > max_copy_buffer_size) {
-        return globalObject.throw("COPY data chunk too large: {d} bytes exceeds maximum of {d} bytes. Consider sending smaller chunks.", .{ slice.len, max_copy_buffer_size });
-    }
-
-    // Write CopyData
-    var copy_data = protocol.CopyData{
-        .data = .{ .temporary = slice },
-    };
-    copy_data.writeInternal(PostgresSQLConnection.Writer, this.writer()) catch |err| {
-        this.abortCopyAndFailConnection(error.CopyWriteFailed, "COPY aborted: write failed");
-        return globalObject.throw("Failed to send COPY data ({d} bytes): {s}. The connection may have been closed or the socket buffer may be full.", .{ slice.len, @errorName(err) });
-    };
-    this.flushData();
-
-    // Progress tracking (saturating add)
-    this.copy_bytes_transferred = this.copy_bytes_transferred +| @as(u64, @intCast(slice.len));
-    this.copy_chunks_processed = this.copy_chunks_processed +| 1;
 }
 
 /// Helper: send COPY done (validates state)
@@ -1163,22 +1185,31 @@ pub fn copySendFailFromJSValue(this: *PostgresSQLConnection, globalObject: *jsc.
         return globalObject.throw("Cannot send COPY fail: not in COPY FROM STDIN mode (current state: {s}). You must be in an active COPY FROM STDIN operation to abort it.", .{@tagName(this.copy_state)});
     }
 
-    const msg_slice: []const u8 = if (!message_value.isEmptyOrUndefinedOrNull()) blk: {
-        const msg_str = try message_value.toBunString(globalObject);
-        defer msg_str.deref();
-        const msg = msg_str.toUTF8(bun.default_allocator);
-        defer msg.deinit();
-        break :blk msg.slice();
-    } else "";
+    if (!message_value.isEmptyOrUndefinedOrNull()) {
+        const message_string = try message_value.toBunString(globalObject);
+        defer message_string.deref();
 
-    var fail_msg = protocol.CopyFail{
-        .message = .{ .temporary = msg_slice },
-    };
-    fail_msg.writeInternal(PostgresSQLConnection.Writer, this.writer()) catch |err| {
-        this.abortCopyAndFailConnection(error.CopyWriteFailed, "COPY aborted: write failed");
-        return globalObject.throw("Failed to send COPY fail message to server: {s}. The COPY operation may have already ended or the connection may be closed.", .{@errorName(err)});
-    };
-    this.flushData();
+        var message = message_string.toUTF8(bun.default_allocator);
+        defer message.deinit();
+
+        var fail_message = protocol.CopyFail{
+            .message = .{ .temporary = message.slice() },
+        };
+        fail_message.writeInternal(PostgresSQLConnection.Writer, this.writer()) catch |err| {
+            this.abortCopyAndFailConnection(error.CopyWriteFailed, "COPY aborted: write failed");
+            return globalObject.throw("Failed to send COPY fail message to server: {s}. The COPY operation may have already ended or the connection may be closed.", .{@errorName(err)});
+        };
+        this.flushData();
+    } else {
+        var fail_message = protocol.CopyFail{
+            .message = .{ .temporary = "" },
+        };
+        fail_message.writeInternal(PostgresSQLConnection.Writer, this.writer()) catch |err| {
+            this.abortCopyAndFailConnection(error.CopyWriteFailed, "COPY aborted: write failed");
+            return globalObject.throw("Failed to send COPY fail message to server: {s}. The COPY operation may have already ended or the connection may be closed.", .{@errorName(err)});
+        };
+        this.flushData();
+    }
 
     // Clean up all COPY state
     this.cleanupCopyState();

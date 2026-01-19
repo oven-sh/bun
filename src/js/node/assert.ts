@@ -387,10 +387,28 @@ const SafeSetPrototypeIterator = SafeSet.prototype[SymbolIterator];
  * @example
  * compareBranch({a: 1, b: 2, c: 3}, {a: 1, b: 2}); // true
  */
+const SafeMapPrototypeIterator = SafeMap.prototype[SymbolIterator];
+
 function compareBranch(actual, expected, comparedObjects?) {
-  // Check for Map object equality
+  // Check for Map object equality (subset check for partialDeepStrictEqual)
   if (isMap(actual) && isMap(expected)) {
-    return Bun.deepEquals(actual, expected, true);
+    if (expected.size > actual.size) {
+      return false; // `expected` can't be a subset if it has more elements
+    }
+
+    const expectedIterator = SafeMapPrototypeIterator.$call(expected);
+
+    for (const { 0: key, 1: expectedValue } of expectedIterator) {
+      if (!actual.has(key)) {
+        return false;
+      }
+      const actualValue = actual.get(key);
+      if (!compareBranch(actualValue, expectedValue, comparedObjects)) {
+        return false;
+      }
+    }
+
+    return true;
   }
 
   // Check for ArrayBuffer object equality

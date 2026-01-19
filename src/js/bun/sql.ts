@@ -2095,7 +2095,7 @@ const SQL: typeof Bun.SQL = function SQL(
             return;
           }
 
-          yield String($isArray(accumulated) ? (accumulated[0] ?? "") : (accumulated ?? ""));
+          yield String(accumulated ?? "");
         };
 
         try {

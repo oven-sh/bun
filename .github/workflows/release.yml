@@ -61,7 +61,7 @@ jobs:
         working-directory: packages/bun-release
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Setup GPG
         uses: crazy-max/ghaction-import-gpg@v5
         with:
@@ -91,7 +91,7 @@ jobs:
         working-directory: packages/bun-release
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           # To workaround issue
           ref: main
@@ -118,9 +118,9 @@ jobs:
         working-directory: packages/bun-types
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Setup Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v6
         with:
           node-version: latest
       - name: Setup Bun
@@ -168,11 +168,11 @@ jobs:
       contents: read
     steps:
       - name: Checkout (DefinitelyTyped)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: DefinitelyTyped/DefinitelyTyped
       - name: Checkout (bun)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           path: bun
       - name: Setup Bun
@@ -192,7 +192,7 @@ jobs:
           await file.write(JSON.stringify(json, null, 4) + "\n");
           '
       - name: Create Pull Request
-        uses: peter-evans/create-pull-request@v7
+        uses: peter-evans/create-pull-request@v8
         if: ${{ env.BUN_LATEST == 'true' && env.BUN_VERSION != 'canary'}}
         with:
           token: ${{ secrets.ROBOBUN_TOKEN }}
@@ -229,7 +229,7 @@ jobs:
             suffix: -distroless
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Setup Docker emulator
         uses: docker/setup-qemu-action@v3
       - id: buildx
@@ -275,7 +275,7 @@ jobs:
     if: ${{ github.event_name == 'release' || github.event.inputs.use-homebrew == 'true' }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: oven-sh/homebrew-bun
           token: ${{ secrets.ROBOBUN_TOKEN }}
@@ -292,7 +292,7 @@ jobs:
       - name: Update Tap
         run: ruby scripts/release.rb "${{ env.BUN_VERSION }}"
       - name: Commit Tap
-        uses: stefanzweifel/git-auto-commit-action@v4
+        uses: stefanzweifel/git-auto-commit-action@v7
         with:
           commit_options: --gpg-sign=${{ steps.gpg.outputs.keyid }}
           commit_message: Release ${{ env.BUN_VERSION }}
@@ -311,7 +311,7 @@ jobs:
         working-directory: packages/bun-release
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
@@ -353,7 +353,7 @@ jobs:
       contents: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         if: ${{ env.BUN_LATEST == 'true' }}
       - name: Setup Bun
         uses: ./.github/actions/setup-bun

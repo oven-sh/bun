@@ -22,7 +22,7 @@ jobs:
       cancel-in-progress: true
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Configure Git
         run: |
           git config --global core.autocrlf true

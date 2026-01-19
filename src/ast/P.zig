@@ -4710,6 +4710,7 @@ pub fn NewParser_(
             arg_ref: Ref,
             stmts_inside_closure: []Stmt,
             all_values_are_pure: bool,
+            is_enum: bool,
         ) anyerror!void {
             var name_ref = original_name_ref;
 
@@ -4752,13 +4753,31 @@ pub fn NewParser_(
                 }
             }
 
+            // For enums, use Object.create(null) to prevent prototype pollution.
+            // For namespaces, use {} as before.
+            const default_object_expr: Expr = if (is_enum) default_object_expr: {
+                // Object.create(null)
+                const object_ref = (p.findSymbol(name_loc, "Object") catch unreachable).ref;
+                const null_args = bun.handleOom(allocator.alloc(Expr, 1));
+                null_args[0] = p.newExpr(E.Null{}, name_loc);
+                break :default_object_expr p.newExpr(E.Call{
+                    .target = p.newExpr(E.Dot{
+                        .target = Expr.initIdentifier(object_ref, name_loc),
+                        .name = "create",
+                        .name_loc = name_loc,
+                    }, name_loc),
+                    .args = ExprNodeList.fromOwnedSlice(null_args),
+                }, name_loc);
+            } else p.newExpr(E.Object{}, name_loc);
+
             const arg_expr: Expr = arg_expr: {
                 // TODO: unsupportedJSFeatures.has(.logical_assignment)
                 // If the "||=" operator is supported, our minified output can be slightly smaller
                 if (is_export) if (p.enclosing_namespace_arg_ref) |namespace| {
                     const name = p.symbols.items[name_ref.innerIndex()].original_name;
 
-                    // "name = (enclosing.name ||= {})"
+                    // "name = (enclosing.name ||= Object.create(null))" for enums
+                    // "name = (enclosing.name ||= {})" for namespaces
                     p.recordUsage(namespace);
                     p.recordUsage(name_ref);
                     break :arg_expr Expr.assign(
@@ -4773,17 +4792,18 @@ pub fn NewParser_(
                                 },
                                 name_loc,
                             ),
-                            .right = p.newExpr(E.Object{}, name_loc),
+                            .right = default_object_expr,
                         }, name_loc),
                     );
                 };
 
-                // "name ||= {}"
+                // "name ||= Object.create(null)" for enums
+                // "name ||= {}" for namespaces
                 p.recordUsage(name_ref);
                 break :arg_expr p.newExpr(E.Binary{
                     .op = .bin_logical_or_assign,
                     .left = Expr.initIdentifier(name_ref, name_loc),
-                    .right = p.newExpr(E.Object{}, name_loc),
+                    .right = default_object_expr,
                 }, name_loc);
             };
 

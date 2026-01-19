@@ -1490,6 +1490,7 @@ pub fn VisitStmt(
                     data.arg,
                     value_stmts.items,
                     all_values_are_pure,
+                    true, // is_enum
                 );
                 return;
             }
@@ -1531,6 +1532,7 @@ pub fn VisitStmt(
                     data.arg,
                     prepend_list.items,
                     false,
+                    false, // is_enum (this is a namespace)
                 );
                 return;
             }

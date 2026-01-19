@@ -94,7 +94,8 @@ test("empty shell script exits with code 0 (demonstrating why the fix is needed)
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   // Empty shell script exits with code 0 silently - this is similar to the bug behavior
-  expect(exitCode).toBe(0);
+  // Assert stdout/stderr before exitCode to get more useful error messages on failure
   expect(stdout).toBe("");
   expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
 });

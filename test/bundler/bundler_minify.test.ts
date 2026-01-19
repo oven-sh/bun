@@ -1135,4 +1135,36 @@ describe("bundler", () => {
       );
     },
   });
+  // Regression test for: https://github.com/oxc-project/oxc/pull/18183
+  // When symbols have zero use count, we skip them during renaming.
+  // This tests that when nested scopes are tree-shaken, their pre-allocated
+  // symbol slots (which have count=0) are skipped during name assignment.
+  itBundled("minify/SkipUnusedSymbolSlots", {
+    files: {
+      "/entry.js": /* js */ `
+        // Create nested scopes with many symbols that will be tree-shaken
+        function unused() {
+          var a = 1, b = 2, c = 3;
+          function inner() {
+            var x = 1, y = 2, z = 3, w = 4, v = 5;
+            return x + y + z + w + v;
+          }
+          return a + b + c + inner();
+        }
+        // This function is used and should get short minified names
+        function used() { return 42; }
+        console.log(used());
+      `,
+    },
+    minifyIdentifiers: true,
+    minifyWhitespace: true,
+    minifySyntax: true,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js").trim();
+      // The unused function and its nested scopes are tree-shaken.
+      // The optimization ensures we don't waste time generating names for
+      // the pre-allocated slots that were never used.
+      expect(code).toMatchInlineSnapshot(`"function j(){return 42}console.log(j());"`);
+    },
+  });
 });

@@ -272,13 +272,14 @@ pub const MinifyRenamer = struct {
             var slots = this.slots.getPtr(ns);
             sorted.clearRetainingCapacity();
             try sorted.ensureUnusedCapacity(slots.items.len);
-            sorted.items.len = slots.items.len;
 
-            for (sorted.items, slots.items, 0..) |*elem, slot, i| {
-                elem.* = SlotAndCount{
+            for (slots.items, 0..) |slot, i| {
+                // Skip symbols with zero use count - they're never used and don't need a minified name
+                if (slot.count == 0) continue;
+                sorted.appendAssumeCapacity(SlotAndCount{
                     .slot = @as(u32, @intCast(i)),
                     .count = slot.count,
-                };
+                });
             }
             std.sort.pdq(SlotAndCount, sorted.items, {}, SlotAndCount.lessThan);
 

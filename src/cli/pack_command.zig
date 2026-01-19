@@ -1172,7 +1172,7 @@ pub const PackCommand = struct {
     ) PackError(for_publish)!if (for_publish) Publish.Context(true) else void {
         const manager = ctx.manager;
         const log_level = manager.options.log_level;
-        const json = switch (manager.workspace_package_json_cache.getWithPath(manager.allocator, manager.log, abs_package_json_path, .{
+        var json = switch (manager.workspace_package_json_cache.getWithPath(manager.allocator, manager.log, abs_package_json_path, .{
             .guess_indentation = true,
         })) {
             .read_err => |err| {
@@ -1235,8 +1235,6 @@ pub const PackCommand = struct {
             }
         }
 
-        const edited_package_json = try editRootPackageJSON(ctx.allocator, ctx.lockfile, json);
-
         var this_transpiler: bun.transpiler.Transpiler = undefined;
 
         _ = RunCommand.configureEnvForRun(
@@ -1258,16 +1256,20 @@ pub const PackCommand = struct {
         const abs_workspace_path: string = strings.withoutTrailingSlash(strings.withoutSuffixComptime(abs_package_json_path, "package.json"));
         try manager.env.map.put("npm_command", "pack");
 
-        const postpack_script, const publish_script: ?[]const u8, const postpublish_script: ?[]const u8 = post_scripts: {
+        const postpack_script, const publish_script: ?[]const u8, const postpublish_script: ?[]const u8, const ran_scripts: bool = post_scripts: {
             // --ignore-scripts
-            if (!manager.options.do.run_scripts) break :post_scripts .{ null, null, null };
+            if (!manager.options.do.run_scripts) break :post_scripts .{ null, null, null, false };
 
-            const scripts = json.root.asProperty("scripts") orelse break :post_scripts .{ null, null, null };
-            if (scripts.expr.data != .e_object) break :post_scripts .{ null, null, null };
+            const scripts = json.root.asProperty("scripts") orelse break :post_scripts .{ null, null, null, false };
+            if (scripts.expr.data != .e_object) break :post_scripts .{ null, null, null, false };
+
+            // Track whether any scripts ran that could modify package.json
+            var did_run_scripts = false;
 
             if (comptime for_publish) {
                 if (scripts.expr.get("prepublishOnly")) |prepublish_only_script_str| {
                     if (prepublish_only_script_str.asString(ctx.allocator)) |prepublish_only| {
+                        did_run_scripts = true;
                         _ = RunCommand.runPackageScriptForeground(
                             ctx.command_ctx,
                             ctx.allocator,
@@ -1293,6 +1295,7 @@ pub const PackCommand = struct {
 
             if (scripts.expr.get("prepack")) |prepack_script| {
                 if (prepack_script.asString(ctx.allocator)) |prepack_script_str| {
+                    did_run_scripts = true;
                     _ = RunCommand.runPackageScriptForeground(
                         ctx.command_ctx,
                         ctx.allocator,
@@ -1317,6 +1320,7 @@ pub const PackCommand = struct {
 
             if (scripts.expr.get("prepare")) |prepare_script| {
                 if (prepare_script.asString(ctx.allocator)) |prepare_script_str| {
+                    did_run_scripts = true;
                     _ = RunCommand.runPackageScriptForeground(
                         ctx.command_ctx,
                         ctx.allocator,
@@ -1354,11 +1358,37 @@ pub const PackCommand = struct {
                     postpublish_script = try postpublish.asStringCloned(ctx.allocator);
                 }
 
-                break :post_scripts .{ postpack_script, publish_script, postpublish_script };
+                break :post_scripts .{ postpack_script, publish_script, postpublish_script, did_run_scripts };
             }
 
-            break :post_scripts .{ postpack_script, null, null };
+            break :post_scripts .{ postpack_script, null, null, did_run_scripts };
         };
+
+        // If any lifecycle scripts ran, they may have modified package.json,
+        // so we need to re-read it from disk to pick up any changes.
+        if (ran_scripts) {
+            // Invalidate the cached entry by removing it
+            _ = manager.workspace_package_json_cache.map.remove(abs_package_json_path);
+
+            // Re-read package.json from disk
+            json = switch (manager.workspace_package_json_cache.getWithPath(manager.allocator, manager.log, abs_package_json_path, .{
+                .guess_indentation = true,
+            })) {
+                .read_err => |err| {
+                    Output.err(err, "failed to read package.json: {s}", .{abs_package_json_path});
+                    Global.crash();
+                },
+                .parse_err => |err| {
+                    Output.err(err, "failed to parse package.json: {s}", .{abs_package_json_path});
+                    manager.log.print(Output.errorWriter()) catch {};
+                    Global.crash();
+                },
+                .entry => |entry| entry,
+            };
+        }
+
+        // Create the edited package.json content after lifecycle scripts have run
+        const edited_package_json = try editRootPackageJSON(ctx.allocator, ctx.lockfile, json);
 
         var root_dir = root_dir: {
             var path_buf: PathBuffer = undefined;

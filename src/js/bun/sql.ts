@@ -2067,7 +2067,7 @@ const SQL: typeof Bun.SQL = function SQL(
               return;
             }
 
-            const value = $isArray(accumulated) ? accumulated[0] : (accumulated ?? null);
+            const value = accumulated ?? null;
             const u8 = toUint8Array(value);
             if (!u8) {
               throw $ERR_INVALID_ARG_VALUE(
@@ -2158,7 +2158,7 @@ const SQL: typeof Bun.SQL = function SQL(
             const format = typeof queryOrOptions === "string" ? undefined : queryOrOptions.format;
             const isBinary = format === "binary";
 
-            for await (const part of yieldAccumulated(accumulated, isBinary)) {
+            for await (const part of yieldAccumulated(accumulated, isBinary, format)) {
               yield part;
             }
 

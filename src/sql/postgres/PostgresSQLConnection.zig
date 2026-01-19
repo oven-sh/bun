@@ -1419,6 +1419,14 @@ fn finishCopy(this: *PostgresSQLConnection, request: *PostgresSQLQuery, command_
 
     // For COPY TO (copy_out_progress), emit any pending buffered data (streaming mode) and onCopyEnd callback.
     if (this.copy_state == .copy_out_progress) {
+        // Streaming-mode binary guard: ensure header was validated before any flush/callback/early-return.
+        if (this.copy_streaming_mode and this.copy_format == 1 and !this.copy_binary_header_validated) {
+            debug("finishCopy: streaming binary COPY completed without validated header", .{});
+            this.cleanupCopyState();
+            this.fail("Binary COPY operation completed without valid header signature", error.InvalidBinaryData);
+            return error.InvalidBinaryData;
+        }
+
         // Late flush of any pending buffered data (streaming mode)
         if (this.copy_streaming_mode and this.copy_data_buffer.items.len > 0) {
             try this.flushBufferedChunkToJS();

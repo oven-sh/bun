@@ -1302,10 +1302,22 @@ pub const ExportsMap = struct {
 pub const ESModule = struct {
     pub const ConditionsMap = bun.StringArrayHashMap(void);
 
+    /// Callback structure for checking if a resolved path exists.
+    /// Used to fall back to other conditions when a file doesn't exist.
+    pub const FileExistsCheck = struct {
+        context: *anyopaque,
+        call: *const fn (ctx: *anyopaque, resolved_path: string) bool,
+
+        pub fn check(self: @This(), resolved_path: string) bool {
+            return self.call(self.context, resolved_path);
+        }
+    };
+
     debug_logs: ?*resolver.DebugLogs = null,
     conditions: ConditionsMap,
     allocator: std.mem.Allocator,
     module_type: *options.ModuleType = undefined,
+    file_exists_check: ?FileExistsCheck = null,
 
     pub const Resolution = struct {
         status: Status = Status.Undefined,
@@ -1840,6 +1852,26 @@ pub const ESModule = struct {
                             last_map_entry_i = i;
                             r.module_type.* = prev_module_type;
                             continue;
+                        }
+
+                        // If a file existence check is provided and the result is a concrete path,
+                        // verify the file exists. If it doesn't, continue to the next condition.
+                        // This handles cases like Next.js standalone builds where the "bun" condition
+                        // points to a file that wasn't copied, but the "node" fallback exists.
+                        if (r.file_exists_check) |checker| {
+                            if (result.status == .Exact or result.status == .ExactEndsWithStar or result.status == .Inexact) {
+                                if (result.path.len > 0 and result.path[0] == '/') {
+                                    if (!checker.check(result.path)) {
+                                        if (r.debug_logs) |log| {
+                                            log.addNoteFmt("The resolved path \"{s}\" does not exist, trying next condition", .{result.path});
+                                        }
+                                        did_find_map_entry = true;
+                                        last_map_entry_i = i;
+                                        r.module_type.* = prev_module_type;
+                                        continue;
+                                    }
+                                }
+                            }
                         }
 
                         if (strings.eqlComptime(key, "import")) {

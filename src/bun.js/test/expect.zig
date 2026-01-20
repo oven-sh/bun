@@ -560,7 +560,7 @@ pub const Expect = struct {
         var return_value: JSValue = .zero;
 
         // Drain existing unhandled rejections
-        vm.global.handleRejectedPromises();
+        vm.global.handleRejectedPromises() catch {};
 
         var scope = vm.unhandledRejectionScope();
         const prev_unhandled_pending_rejection_to_capture = vm.unhandled_pending_rejection_to_capture;
@@ -569,7 +569,7 @@ pub const Expect = struct {
         return_value_from_function = value.call(globalThis, .js_undefined, &.{}) catch |err| globalThis.takeException(err);
         vm.unhandled_pending_rejection_to_capture = prev_unhandled_pending_rejection_to_capture;
 
-        vm.global.handleRejectedPromises();
+        vm.global.handleRejectedPromises() catch {};
 
         if (return_value == .zero) {
             return_value = return_value_from_function;

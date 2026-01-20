@@ -1960,7 +1960,7 @@ pub const TestCommand = struct {
                     vm.eventLoop().tick();
 
                     while (prev_unhandled_count < vm.unhandled_error_counter) {
-                        vm.global.handleRejectedPromises();
+                        vm.global.handleRejectedPromises() catch break;
                         prev_unhandled_count = vm.unhandled_error_counter;
                     }
                 }
@@ -1968,7 +1968,7 @@ pub const TestCommand = struct {
                 vm.eventLoop().tickImmediateTasks(vm);
             }
 
-            vm.global.handleRejectedPromises();
+            vm.global.handleRejectedPromises() catch {};
 
             if (Output.is_github_action) {
                 Output.prettyErrorln("<r>\n::endgroup::\n", .{});

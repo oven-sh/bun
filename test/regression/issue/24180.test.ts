@@ -7,10 +7,7 @@ import path from "path";
 // When building fullstack apps with --compile, asset paths in HTML should be
 // absolute (starting with `/`) not relative (starting with `./`). Relative paths
 // cause 404 errors when navigating to routes other than `/`.
-test.skipIf(isDebug)("fullstack compile uses absolute asset paths in generated HTML", { timeout: 60_000 }, async () => {
-  // Use a fixed port for testing - the compiled app will use this
-  const port = 49842;
-
+test.skipIf(isDebug)("fullstack compile uses absolute asset paths in generated HTML", async () => {
   const dir = tempDirWithFiles("24180", {
     "index.html": `
 <!DOCTYPE html>
@@ -36,7 +33,7 @@ console.log("loaded");
 import html from "./index.html";
 
 export default {
-  port: ${port},
+  port: 0,
   static: {
     "/": html,
     "/about": html,
@@ -74,24 +71,34 @@ export default {
     cmd: [outfile],
     cwd: dir,
     env: bunEnv,
-    stdout: "inherit",
-    stderr: "inherit",
+    stdout: "pipe",
+    stderr: "pipe",
   });
 
-  // Wait for server to be ready by polling the HTTP endpoint
-  let res: Response | undefined;
+  // Read stderr to get the dynamically assigned port
+  // The server outputs something like "Started development server: http://localhost:PORT"
+  const reader = serverProc.stderr.getReader();
+  let stderrOutput = "";
+  let port: number | null = null;
+
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
-    try {
-      res = await fetch(`http://localhost:${port}/`);
+    const { done, value } = await reader.read();
+    if (done) break;
+    stderrOutput += new TextDecoder().decode(value);
+    // Match various host formats: localhost:PORT, 127.0.0.1:PORT, [::1]:PORT, http://host:PORT
+    const match = stderrOutput.match(/(?:https?:\/\/)?(?:\[[^\]]+\]|[\w.-]+):(\d+)/);
+    if (match) {
+      port = parseInt(match[1], 10);
       break;
-    } catch {
-      await Bun.sleep(100);
     }
   }
-  if (!res) {
-    throw new Error("Server did not start within timeout");
-  }
+  reader.releaseLock();
+
+  expect(port).not.toBeNull();
+
+  // Fetch the HTML from the root route
+  const res = await fetch(`http://localhost:${port}/`);
   const html = await res.text();
 
   // Check that the CSS and JS paths are absolute, not relative

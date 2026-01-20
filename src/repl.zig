@@ -190,10 +190,14 @@ const History = struct {
     }
 
     pub fn load(self: *History) !void {
-        const home = std.posix.getenv("HOME") orelse return;
-        if (home.len == 0) return;
+        const home = if (Environment.isPosix)
+            std.posix.getenv("HOME")
+        else
+            bun.getenvZ("USERPROFILE") orelse bun.getenvZ("HOME");
+        if (home == null or home.?.len == 0) return;
+        const home_path = home.?;
 
-        const path = try std.fs.path.join(self.allocator, &.{ home, HISTORY_FILENAME });
+        const path = try std.fs.path.join(self.allocator, &.{ home_path, HISTORY_FILENAME });
         self.file_path = path;
 
         const file = std.fs.openFileAbsolute(path, .{}) catch return;
@@ -660,8 +664,8 @@ global: ?*jsc.JSGlobalObject = null,
 last_result: jsc.JSValue = .js_undefined,
 last_error: jsc.JSValue = .js_undefined,
 
-// Original termios for restoration
-original_termios: ?std.posix.termios = null,
+// Original termios for restoration (POSIX only)
+original_termios: if (Environment.isPosix) ?std.posix.termios else void = if (Environment.isPosix) null else {},
 
 pub fn init(allocator: Allocator) Repl {
     return .{
@@ -695,7 +699,10 @@ fn setupTerminal(self: *Repl) !void {
     }
 
     // Check for NO_COLOR
-    self.use_colors = std.posix.getenv("NO_COLOR") == null;
+    self.use_colors = if (Environment.isPosix)
+        std.posix.getenv("NO_COLOR") == null
+    else
+        bun.getenvZ("NO_COLOR") == null;
 
     // Get terminal size
     if (Output.terminal_size.col > 0) {
@@ -740,9 +747,11 @@ fn setupTerminal(self: *Repl) !void {
 }
 
 fn restoreTerminal(self: *Repl) void {
-    if (self.original_termios) |orig| {
-        std.posix.tcsetattr(std.posix.STDIN_FILENO, .FLUSH, orig) catch {};
-        self.original_termios = null;
+    if (Environment.isPosix) {
+        if (self.original_termios) |orig| {
+            std.posix.tcsetattr(std.posix.STDIN_FILENO, .FLUSH, orig) catch {};
+            self.original_termios = null;
+        }
     }
 }
 
@@ -764,9 +773,17 @@ fn printError(self: *Repl, comptime format: []const u8, args: anytype) void {
 
 fn readByte(_: *Repl) ?u8 {
     var buf: [1]u8 = undefined;
-    const n = std.posix.read(std.posix.STDIN_FILENO, &buf) catch return null;
-    if (n == 0) return null;
-    return buf[0];
+    if (Environment.isPosix) {
+        const n = std.posix.read(std.posix.STDIN_FILENO, &buf) catch return null;
+        if (n == 0) return null;
+        return buf[0];
+    } else {
+        // Windows: use standard input via bun.sys
+        const stdin_fd = bun.FileDescriptor.fromUV(0);
+        const result = bun.sys.read(stdin_fd, &buf);
+        if (result == .err or result.result == 0) return null;
+        return buf[0];
+    }
 }
 
 fn readKey(self: *Repl) ?Key {

@@ -64,11 +64,14 @@ export default {
 
   expect(buildStderr).not.toContain("error");
   expect(buildExitCode).toBe(0);
-  expect(fs.existsSync(outfile)).toBe(true);
+
+  // On Windows, the compiler may append ".exe" to the output file
+  const exePath = fs.existsSync(outfile) ? outfile : outfile + ".exe";
+  expect(fs.existsSync(exePath)).toBe(true);
 
   // Run the compiled executable with await using for automatic cleanup
   await using serverProc = Bun.spawn({
-    cmd: [outfile],
+    cmd: [exePath],
     cwd: dir,
     env: bunEnv,
     stdout: "pipe",

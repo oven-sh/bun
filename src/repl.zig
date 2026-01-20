@@ -13,18 +13,6 @@
 
 const Repl = @This();
 
-const std = @import("std");
-const bun = @import("bun");
-const jsc = bun.jsc;
-const Output = bun.Output;
-const strings = bun.strings;
-const fmt = bun.fmt;
-const logger = bun.logger;
-const Environment = bun.Environment;
-
-const Allocator = std.mem.Allocator;
-const ArrayList = std.array_list.Managed;
-
 // ============================================================================
 // C++ Bindings
 // ============================================================================
@@ -56,7 +44,6 @@ extern fn Bun__REPL__formatValue(
 // Constants
 // ============================================================================
 
-const VERSION = Environment.version_string;
 const MAX_HISTORY_SIZE: usize = 1000;
 const MAX_LINE_LENGTH: usize = 16384;
 const HISTORY_FILENAME = ".bun_repl_history";
@@ -1468,3 +1455,16 @@ pub fn exec(ctx: bun.cli.Command.Context) !void {
 
     try repl.run();
 }
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+const ArrayList = std.array_list.Managed;
+
+const bun = @import("bun");
+const Output = bun.Output;
+const fmt = bun.fmt;
+const jsc = bun.jsc;
+const strings = bun.strings;
+
+const Environment = bun.Environment;
+const VERSION = Environment.version_string;

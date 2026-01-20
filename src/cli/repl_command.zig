@@ -149,12 +149,11 @@ const ReplRunner = struct {
 
 const Repl = @import("../repl.zig");
 
-const std = @import("std");
 const bun = @import("bun");
-const jsc = bun.jsc;
-const js_ast = bun.ast;
 const Global = bun.Global;
 const Output = bun.Output;
-const Command = bun.cli.Command;
+const js_ast = bun.ast;
+const jsc = bun.jsc;
 const Arena = bun.allocators.MimallocArena;
+const Command = bun.cli.Command;
 const DNSResolver = bun.api.dns.Resolver;

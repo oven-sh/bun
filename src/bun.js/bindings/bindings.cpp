@@ -3781,6 +3781,12 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__putMayBeIndex(JSC::Enco
     RETURN_IF_EXCEPTION(scope, );
 }
 
+extern "C" bool JSC__JSValue__deleteProperty(JSC::EncodedJSValue target, JSC::JSGlobalObject* globalObject, const ZigString* key)
+{
+    JSC::JSObject* object = JSC::JSValue::decode(target).asCell()->getObject();
+    return object->deleteProperty(globalObject, Zig::toIdentifier(*key, globalObject));
+}
+
 bool JSC__JSValue__isClass(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1)
 {
     JSValue value = JSValue::decode(JSValue0);

@@ -6141,23 +6141,24 @@ extern "C" JSC::EncodedJSValue Bun__REPL__evaluate(
 
     if (evalException) {
         *exception = JSC::JSValue::encode(evalException->value());
-        // Set _error to the exception
-        globalObject->globalThis()->putDirect(vm, JSC::Identifier::fromString(vm, "_error"_s), evalException->value());
+        // Set _error on the globalObject directly (not globalThis proxy)
+        globalObject->putDirect(vm, JSC::Identifier::fromString(vm, "_error"_s), evalException->value());
         scope.clearException();
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
     if (scope.exception()) {
         *exception = JSC::JSValue::encode(scope.exception()->value());
-        // Set _error to the exception
-        globalObject->globalThis()->putDirect(vm, JSC::Identifier::fromString(vm, "_error"_s), scope.exception()->value());
+        // Set _error on the globalObject directly (not globalThis proxy)
+        globalObject->putDirect(vm, JSC::Identifier::fromString(vm, "_error"_s), scope.exception()->value());
         scope.clearException();
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
     // Set _ to the last result (only if it's not undefined)
+    // Put directly on globalObject, which is the target of the globalThis proxy
     if (!result.isUndefined()) {
-        globalObject->globalThis()->putDirect(vm, JSC::Identifier::fromString(vm, "_"_s), result);
+        globalObject->putDirect(vm, JSC::Identifier::fromString(vm, "_"_s), result);
     }
 
     return JSC::JSValue::encode(result);

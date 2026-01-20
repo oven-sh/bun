@@ -572,8 +572,9 @@ pub fn write(fd: FileDescriptor, buf: []const u8) Maybe(usize) {
 
 pub const Tag = @import("./sys.zig").Tag;
 
-const bun = @import("bun");
 const std = @import("std");
+
+const bun = @import("bun");
 const Environment = bun.Environment;
 const FileDescriptor = bun.FileDescriptor;
 const Maybe = bun.sys.Maybe;

@@ -1267,28 +1267,42 @@ pub const FileSystem = struct {
                 } else initial_buf[0..0];
 
                 // Skip the extra file.stat() call when possible
-                const size = size_hint orelse (file.getEndPos().unwrap() catch |err| {
+                const stat_size = size_hint orelse (file.getEndPos().unwrap() catch |err| {
                     fs.readFileError(path, err);
                     return err;
                 });
-                debug("stat({f}) = {d}", .{ file.handle, size });
+                debug("stat({f}) = {d}", .{ file.handle, stat_size });
 
-                var buf = try allocator.alloc(u8, size + 1);
-                @memcpy(buf[0..initial_read.len], initial_read);
+                // Use the larger of stat_size and initial_read.len to handle cases where
+                // the file was truncated between the initial read and the stat call.
+                // Add extra 16KB buffer since stat can sometimes lie about file size.
+                const size = @max(stat_size, initial_read.len + 16384);
 
                 if (size == 0) {
                     return PathContentsPair{ .path = Path.init(path), .contents = "" };
                 }
 
+                var buf = try allocator.alloc(u8, size + 1);
+                errdefer allocator.free(buf);
+                @memcpy(buf[0..initial_read.len], initial_read);
+
                 // stick a zero at the end
                 buf[size] = 0;
 
-                const read_count = file.readAll(buf[initial_read.len..]).unwrap() catch |err| {
+                const read_count = (file.readAll(buf[initial_read.len..]).unwrap() catch |err| {
                     fs.readFileError(path, err);
                     return err;
-                };
+                });
                 file_contents = buf[0 .. read_count + initial_read.len];
                 debug("read({f}, {d}) = {d}", .{ file.handle, size, read_count });
+
+                // Shrink allocation if we read less than allocated
+                if (file_contents.len + 1 < buf.len) {
+                    if (allocator.resize(buf, file_contents.len + 1)) {
+                        buf = buf[0 .. file_contents.len + 1];
+                    }
+                    buf[file_contents.len] = 0;
+                }
 
                 if (strings.BOM.detect(file_contents)) |bom| {
                     debug("Convert {s} BOM", .{@tagName(bom)});

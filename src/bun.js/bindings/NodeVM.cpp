@@ -945,10 +945,12 @@ bool NodeVMGlobalObject::getOwnPropertySlot(JSObject* cell, JSGlobalObject* glob
         if (slot.internalMethodType() == JSC::PropertySlot::InternalMethodType::Get && contextifiedObject->type() == JSC::ProxyObjectType) {
             JSC::ProxyObject* proxyObject = jsCast<JSC::ProxyObject*>(contextifiedObject);
 
-            JSValue handlerValue = proxyObject->handler();
-            if (handlerValue.isNull())
+            if (proxyObject->isRevoked())
                 return throwTypeError(globalObject, scope, s_proxyAlreadyRevokedErrorMessage);
 
+            JSValue handlerValue = proxyObject->handler();
+            if (!handlerValue.isObject())
+                return throwTypeError(globalObject, scope, s_proxyAlreadyRevokedErrorMessage);
             JSObject* handler = jsCast<JSObject*>(handlerValue);
             CallData callData;
             JSObject* getHandler = proxyObject->getHandlerTrap(globalObject, handler, callData, vm.propertyNames->get, ProxyObject::HandlerTrap::Get);

@@ -158,7 +158,7 @@ void DeferredPromise::reject(Exception exception, RejectAsHandled rejectAsHandle
         EXCEPTION_ASSERT(scope.exception());
         auto error = scope.exception()->value();
         bool isTerminating = handleTerminationExceptionIfNeeded(scope, lexicalGlobalObject);
-        scope.clearException();
+        (void)scope.tryClearException();
 
         if (!isTerminating)
             reject<IDLAny>(error, rejectAsHandled);
@@ -193,7 +193,7 @@ void DeferredPromise::reject(ExceptionCode ec, const String& message, RejectAsHa
         EXCEPTION_ASSERT(scope.exception());
         auto error = scope.exception()->value();
         bool isTerminating = handleTerminationExceptionIfNeeded(scope, lexicalGlobalObject);
-        scope.clearException();
+        (void)scope.tryClearException();
 
         if (!isTerminating)
             reject<IDLAny>(error, rejectAsHandled);
@@ -230,7 +230,7 @@ void rejectPromiseWithExceptionIfAny(JSC::JSGlobalObject& lexicalGlobalObject, J
         return;
 
     JSValue error = catchScope.exception()->value();
-    catchScope.clearException();
+    (void)catchScope.tryClearException();
 
     DeferredPromise::create(globalObject, promise)->reject<IDLAny>(error);
 }

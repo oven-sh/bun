@@ -18,6 +18,7 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "string-width": "7.1.0",
+    "wrap-ansi": "^9.0.0",
     "strip-ansi": "^7.1.0",
     "tar": "^7.4.3",
     "tinycolor2": "^1.6.0",

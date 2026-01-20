@@ -1,9 +1,9 @@
 import assert from "assert";
+import { which } from "bun";
 import { copyFileSync } from "fs";
 import { join } from "path";
 import type { ConsoleMessage, Page } from "puppeteer";
 import { launch } from "puppeteer";
-import { which } from "bun";
 const root = join(import.meta.dir, "../");
 
 copyFileSync(join(root, "src/Counter1.txt"), join(root, "src/Counter.tsx"));
@@ -63,22 +63,37 @@ async function main() {
   const p = await b.newPage();
   console.error("Loaded puppeteer");
 
-  function waitForConsoleMessage(page: Page, regex: RegExp) {
-    const { resolve, promise } = Promise.withResolvers<void>();
+  // Track console messages to avoid race conditions.
+  // Messages are collected as they arrive, and waitForConsoleMessage
+  // checks both existing messages and listens for new ones.
+  const consoleMessages: string[] = [];
+  p.on("console", (msg: ConsoleMessage) => {
+    consoleMessages.push(msg.text());
+  });
+
+  function waitForConsoleMessage(page: Page, regex: RegExp, startIndex = 0) {
+    // First check if we already have a matching message
+    for (let i = startIndex; i < consoleMessages.length; i++) {
+      if (regex.test(consoleMessages[i])) {
+        return Promise.resolve(i + 1); // Return next index to search from
+      }
+    }
+
+    // Otherwise wait for new messages
+    const { resolve, promise } = Promise.withResolvers<number>();
     function onMessage(msg: ConsoleMessage) {
       const text = msg.text();
       if (regex.test(text)) {
         page.off("console", onMessage);
-        resolve();
+        resolve(consoleMessages.length); // Return next index to search from
       }
     }
-    p.on("console", onMessage);
+    page.on("console", onMessage);
     return promise;
   }
 
-  const console_promise = waitForConsoleMessage(p, /counter a/);
-  p.goto(url);
-  await console_promise;
+  await p.goto(url, { waitUntil: "load" });
+  const afterInitialLoad = await waitForConsoleMessage(p, /counter a/);
 
   console.error("Loaded page");
   assert.strictEqual(await p.$eval("code.font-bold", x => x.innerText), Bun.version);
@@ -107,8 +122,8 @@ async function main() {
   await counter_root.$eval(".dec", x => (x as HTMLElement).click());
   assert.strictEqual(await getCount(), "Count A: 1");
 
-  p.reload({});
-  await waitForConsoleMessage(p, /counter a/);
+  await p.reload({ waitUntil: "load" });
+  const afterReload = await waitForConsoleMessage(p, /counter a/, afterInitialLoad);
 
   assert.strictEqual(await p.$eval("code.font-bold", x => x.innerText), Bun.version);
 
@@ -123,7 +138,7 @@ async function main() {
   assert.strictEqual(await getCount(), "Count A: 1");
 
   copyFileSync(join(root, "src/Counter2.txt"), join(root, "src/Counter.tsx"));
-  await waitForConsoleMessage(p, /counter b loaded/);
+  await waitForConsoleMessage(p, /counter b loaded/, afterReload);
   assert.strictEqual(await getCount(), "Count B: 1");
   await counter_root.$eval(".inc", x => (x as HTMLElement).click());
   assert.strictEqual(await getCount(), "Count B: 3");

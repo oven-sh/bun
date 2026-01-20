@@ -1025,7 +1025,6 @@ pub const FFI = struct {
                     .wasm => @compileError("TODO"),
                 },
             )) |resolved| {
-                @memcpy(filepath_buf[0..resolved.len], resolved);
                 filepath_buf[resolved.len] = 0;
                 break :brk filepath_buf[0..resolved.len];
             }

@@ -1679,11 +1679,11 @@ const ArrayList = std.array_list.Managed;
 const bun = @import("bun");
 const Output = bun.Output;
 const fmt = bun.fmt;
-const jsc = bun.jsc;
-const strings = bun.strings;
-const logger = bun.logger;
 const js_parser = bun.js_parser;
 const js_printer = bun.js_printer;
+const jsc = bun.jsc;
+const logger = bun.logger;
+const strings = bun.strings;
 const MimallocArena = bun.allocators.MimallocArena;
 
 const Environment = bun.Environment;

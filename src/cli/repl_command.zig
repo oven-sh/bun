@@ -1,87 +1,160 @@
+//! Bun REPL Command - Native Zig REPL with full TUI support
+//!
+//! This is the entry point for `bun repl` which provides an interactive
+//! JavaScript REPL with:
+//! - Syntax highlighting using QuickAndDirtySyntaxHighlighter
+//! - Full line editing with Emacs-style keybindings
+//! - Persistent history
+//! - Tab completion
+//! - Multi-line input support
+//! - REPL commands (.help, .exit, .clear, .load, .save, .editor)
+
 pub const ReplCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
         @branchHint(.cold);
 
-        // Embed the REPL script
-        const repl_script = @embedFile("../js/eval/repl.ts");
+        // Initialize the Zig REPL
+        var repl = Repl.init(ctx.allocator);
+        defer repl.deinit();
 
-        // Get platform-specific temp directory
-        const temp_dir = bun.fs.FileSystem.RealFS.platformTempDir();
+        // Boot the JavaScript VM for the REPL
+        try bootReplVM(ctx, &repl);
+    }
 
-        // Create unique temp file name with PID to avoid collisions
-        const pid = if (bun.Environment.isWindows)
-            std.os.windows.GetCurrentProcessId()
-        else
-            std.c.getpid();
+    fn bootReplVM(ctx: Command.Context, repl: *Repl) !void {
+        // Load bunfig if not already loaded
+        if (!ctx.debug.loaded_bunfig) {
+            try bun.cli.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand);
+        }
 
-        // Format the filename with PID (null-terminated for syscalls)
-        var filename_buf: [64:0]u8 = undefined;
-        const filename = std.fmt.bufPrintZ(&filename_buf, "bun-repl-{d}.ts", .{pid}) catch {
-            Output.prettyErrorln("<r><red>error<r>: Could not create temp file name", .{});
+        // Initialize JSC
+        bun.jsc.initialize(true); // true for eval mode
+
+        js_ast.Expr.Data.Store.create();
+        js_ast.Stmt.Data.Store.create();
+        const arena = Arena.init();
+
+        // Create a virtual path for REPL evaluation
+        const repl_path = "[repl]";
+
+        // Initialize the VM
+        const vm = try jsc.VirtualMachine.init(.{
+            .allocator = arena.allocator(),
+            .log = ctx.log,
+            .args = ctx.args,
+            .store_fd = false,
+            .smol = ctx.runtime_options.smol,
+            .eval = true,
+            .debugger = ctx.runtime_options.debugger,
+            .dns_result_order = DNSResolver.Order.fromStringOrDie(ctx.runtime_options.dns_result_order),
+            .is_main_thread = true,
+        });
+
+        var b = &vm.transpiler;
+        vm.preload = ctx.preloads;
+        vm.argv = ctx.passthrough;
+        vm.arena = @constCast(&arena);
+        vm.allocator = vm.arena.allocator();
+
+        // Configure bundler options
+        b.options.install = ctx.install;
+        b.resolver.opts.install = ctx.install;
+        b.resolver.opts.global_cache = ctx.debug.global_cache;
+        b.resolver.opts.prefer_offline_install = (ctx.debug.offline_mode_setting orelse .online) == .offline;
+        b.resolver.opts.prefer_latest_install = (ctx.debug.offline_mode_setting orelse .online) == .latest;
+        b.options.global_cache = b.resolver.opts.global_cache;
+        b.options.prefer_offline_install = b.resolver.opts.prefer_offline_install;
+        b.options.prefer_latest_install = b.resolver.opts.prefer_latest_install;
+        b.resolver.env_loader = b.env;
+        b.options.env.behavior = .load_all_without_inlining;
+        b.options.dead_code_elimination = false; // REPL needs all code
+
+        b.configureDefines() catch {
+            dumpBuildError(vm);
             Global.exit(1);
         };
 
-        // Join temp_dir and filename using platform-aware path joining
-        var temp_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-        const temp_path = bun.path.joinAbsStringBufZ(temp_dir, &temp_path_buf, &.{filename}, .auto);
+        bun.http.AsyncHTTP.loadEnv(vm.allocator, vm.log, b.env);
+        vm.loadExtraEnvAndSourceCodePrinter();
 
-        // Open temp directory for openat/unlinkat operations
-        const temp_dir_z = std.posix.toPosixPath(temp_dir) catch {
-            Output.prettyErrorln("<r><red>error<r>: Temp directory path too long", .{});
-            Global.exit(1);
-        };
-        const temp_dir_fd = switch (bun.sys.open(&temp_dir_z, bun.O.DIRECTORY | bun.O.RDONLY, 0)) {
-            .result => |fd| fd,
-            .err => {
-                Output.prettyErrorln("<r><red>error<r>: Could not access temp directory", .{});
-                Global.exit(1);
-            },
-        };
-        defer temp_dir_fd.close();
+        vm.is_main_thread = true;
+        jsc.VirtualMachine.is_main_thread_vm = true;
 
-        const temp_file_fd = switch (bun.sys.openat(temp_dir_fd, filename, bun.O.CREAT | bun.O.WRONLY | bun.O.TRUNC, 0o644)) {
-            .result => |fd| fd,
-            .err => {
-                Output.prettyErrorln("<r><red>error<r>: Could not create temp file", .{});
-                Global.exit(1);
-            },
+        // Store VM reference in REPL (safe - no JS allocation)
+        repl.vm = vm;
+        repl.global = vm.global;
+
+        // Create the ReplRunner and execute within the API lock
+        // NOTE: JS-allocating operations like ExposeNodeModuleGlobals must
+        // be done inside the API lock callback, not before
+        var runner = ReplRunner{
+            .repl = repl,
+            .vm = vm,
+            .arena = arena,
+            .entry_path = repl_path,
         };
 
-        // Write the script to the temp file, handling partial writes
-        var offset: usize = 0;
-        while (offset < repl_script.len) {
-            switch (bun.sys.write(temp_file_fd, repl_script[offset..])) {
-                .err => {
-                    Output.prettyErrorln("<r><red>error<r>: Could not write temp file", .{});
-                    temp_file_fd.close();
-                    Global.exit(1);
-                },
-                .result => |written| {
-                    if (written == 0) {
-                        Output.prettyErrorln("<r><red>error<r>: Could not write temp file: write returned 0 bytes", .{});
-                        temp_file_fd.close();
-                        Global.exit(1);
-                    }
-                    offset += written;
-                },
-            }
-        }
-        temp_file_fd.close();
+        const callback = jsc.OpaqueWrap(ReplRunner, ReplRunner.start);
+        vm.global.vm().holdAPILock(&runner, callback);
+    }
 
-        // Ensure cleanup on exit - unlink temp file after Run.boot returns
-        defer {
-            _ = bun.sys.unlinkat(temp_dir_fd, filename);
-        }
-
-        // Run the temp file
-        try Run.boot(ctx, temp_path, null);
+    fn dumpBuildError(vm: *jsc.VirtualMachine) void {
+        Output.flush();
+        const writer = Output.errorWriterBuffered();
+        defer Output.flush();
+        vm.log.print(writer) catch {};
     }
 };
 
-const std = @import("std");
+/// Runs the REPL within the VM's API lock
+const ReplRunner = struct {
+    repl: *Repl,
+    vm: *jsc.VirtualMachine,
+    arena: bun.allocators.MimallocArena,
+    entry_path: []const u8,
 
+    pub fn start(this: *ReplRunner) void {
+        const vm = this.vm;
+
+        // Set up the REPL environment (now inside API lock)
+        this.setupReplEnvironment();
+
+        // Run the REPL loop
+        this.repl.runWithVM(vm) catch |err| {
+            Output.prettyErrorln("<r><red>REPL error: {s}<r>", .{@errorName(err)});
+        };
+
+        // Clean up
+        vm.onExit();
+        Global.exit(vm.exit_handler.exit_code);
+    }
+
+    fn setupReplEnvironment(this: *ReplRunner) void {
+        const vm = this.vm;
+
+        // Expose Node.js module globals (__dirname, __filename, require, etc.)
+        // This must be done inside the API lock as it allocates JS objects
+        bun.cpp.Bun__ExposeNodeModuleGlobals(vm.global);
+
+        // Set timezone if specified
+        if (vm.transpiler.env.get("TZ")) |tz| {
+            if (tz.len > 0) {
+                _ = vm.global.setTimeZone(&jsc.ZigString.init(tz));
+            }
+        }
+
+        vm.transpiler.env.loadTracy();
+    }
+};
+
+const Repl = @import("../repl.zig");
+
+const std = @import("std");
 const bun = @import("bun");
+const jsc = bun.jsc;
+const js_ast = bun.ast;
 const Global = bun.Global;
 const Output = bun.Output;
 const Command = bun.cli.Command;
-const Run = bun.bun_js.Run;
+const Arena = bun.allocators.MimallocArena;
+const DNSResolver = bun.api.dns.Resolver;

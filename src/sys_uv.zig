@@ -292,6 +292,15 @@ const max_iovec_count: usize = std.math.maxInt(c_uint);
 /// libuv uses ULONG (u32) for the buffer length on Windows.
 const max_buf_len: usize = std.math.maxInt(u32);
 
+/// Returns the total byte capacity of a slice of iovec buffers.
+fn sumBufsLen(bufs: []const bun.PlatformIOVec) usize {
+    var total: usize = 0;
+    for (bufs) |buf| {
+        total += buf.len;
+    }
+    return total;
+}
+
 pub fn preadv(fd: FileDescriptor, bufs: []const bun.PlatformIOVec, position: i64) Maybe(usize) {
     const uv_fd = fd.uv();
     comptime bun.assert(bun.PlatformIOVec == uv.uv_buf_t);
@@ -319,12 +328,10 @@ pub fn preadv(fd: FileDescriptor, bufs: []const bun.PlatformIOVec, position: i64
             null,
         );
 
+        const chunk_capacity = sumBufsLen(chunk_bufs);
+
         if (Environment.isDebug) {
-            var chunk_bytes: usize = 0;
-            for (chunk_bufs) |buf| {
-                chunk_bytes += buf.len;
-            }
-            log("uv read({}, {d} total bytes) = {d} ({f})", .{ uv_fd, chunk_bytes, rc.int(), debug_timer });
+            log("uv read({}, {d} total bytes) = {d} ({f})", .{ uv_fd, chunk_capacity, rc.int(), debug_timer });
         }
 
         if (rc.errno()) |errno| {
@@ -335,16 +342,7 @@ pub fn preadv(fd: FileDescriptor, bufs: []const bun.PlatformIOVec, position: i64
         total_read += bytes_read;
 
         // If we read less than requested, we're done (EOF or partial read)
-        if (bytes_read == 0) {
-            break;
-        }
-
-        // Check if this chunk was fully read by comparing bytes read to chunk capacity
-        var chunk_capacity: usize = 0;
-        for (chunk_bufs) |buf| {
-            chunk_capacity += buf.len;
-        }
-        if (bytes_read < chunk_capacity) {
+        if (bytes_read == 0 or bytes_read < chunk_capacity) {
             break;
         }
 
@@ -386,12 +384,10 @@ pub fn pwritev(fd: FileDescriptor, bufs: []const bun.PlatformIOVecConst, positio
             null,
         );
 
+        const chunk_capacity = sumBufsLen(chunk_bufs);
+
         if (Environment.isDebug) {
-            var chunk_bytes: usize = 0;
-            for (chunk_bufs) |buf| {
-                chunk_bytes += buf.len;
-            }
-            log("uv write({}, {d} total bytes) = {d} ({f})", .{ uv_fd, chunk_bytes, rc.int(), debug_timer });
+            log("uv write({}, {d} total bytes) = {d} ({f})", .{ uv_fd, chunk_capacity, rc.int(), debug_timer });
         }
 
         if (rc.errno()) |errno| {
@@ -402,16 +398,7 @@ pub fn pwritev(fd: FileDescriptor, bufs: []const bun.PlatformIOVecConst, positio
         total_written += bytes_written;
 
         // If we wrote less than requested, we're done (partial write)
-        if (bytes_written == 0) {
-            break;
-        }
-
-        // Check if this chunk was fully written by comparing bytes written to chunk capacity
-        var chunk_capacity: usize = 0;
-        for (chunk_bufs) |buf| {
-            chunk_capacity += buf.len;
-        }
-        if (bytes_written < chunk_capacity) {
+        if (bytes_written == 0 or bytes_written < chunk_capacity) {
             break;
         }
 

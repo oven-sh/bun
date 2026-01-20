@@ -477,6 +477,10 @@ pub const Repl = struct {
                 }
                 if (c == self.bracket_depth.string_char) {
                     self.bracket_depth.in_string = false;
+                    // Decrement template depth when closing a template literal
+                    if (c == '`') {
+                        self.bracket_depth.template = @max(0, self.bracket_depth.template - 1);
+                    }
                 }
                 continue;
             }
@@ -515,6 +519,7 @@ pub const Repl = struct {
         if (self.bracket_depth.parens > 0) return true;
         if (self.bracket_depth.brackets > 0) return true;
         if (self.bracket_depth.braces > 0) return true;
+        if (self.bracket_depth.template > 0) return true;
 
         // Check for trailing operators that expect continuation
         const line = strings.trim(self.line_buffer.items, " \t");
@@ -556,7 +561,7 @@ pub const Repl = struct {
 
     fn reverseSearch(_: *Self) !void {
         // TODO: Implement incremental reverse search (Ctrl-R)
-        Output.pretty("\n<d>(reverse-i-search): <r>", .{});
+        Output.pretty("\n<d>reverse-i-search is not yet implemented<r>\n", .{});
         Output.flush();
     }
 
@@ -1179,24 +1184,33 @@ pub const Repl = struct {
             return;
         };
 
-        const end_time = std.time.nanoTimestamp();
-        const elapsed_ms = @as(f64, @floatFromInt(end_time - start_time)) / 1_000_000.0;
-
         // The REPL transforms wrap the last expression in { value: expr }
-        // Extract the actual result value from the wrapper object
-        const result = if (wrapper_result.isObject()) blk: {
-            const val = wrapper_result.get(self.global, "value") catch break :blk wrapper_result;
-            break :blk val orelse wrapper_result;
-        } else wrapper_result;
+        // For async code (top-level await), this is a Promise<{ value: result }>
+        // We need to handle both sync and async cases
 
-        // Print result
-        if (!result.isUndefined()) {
-            self.printResult(result);
-        }
+        // Check if result is a Promise using asPromise()
+        if (wrapper_result.asPromise()) |_| {
+            // Await the promise by running the event loop until it resolves
+            self.awaitAndPrintResult(wrapper_result, start_time);
+        } else {
+            const end_time = std.time.nanoTimestamp();
+            const elapsed_ms = @as(f64, @floatFromInt(end_time - start_time)) / 1_000_000.0;
 
-        // Print timing if enabled
-        if (self.show_timing) {
-            Output.pretty("<d>({d:.2}ms)<r>\n", .{elapsed_ms});
+            // Extract the actual result value from the wrapper object
+            const result = if (wrapper_result.isObject()) blk: {
+                const val = wrapper_result.get(self.global, "value") catch break :blk wrapper_result;
+                break :blk val orelse wrapper_result;
+            } else wrapper_result;
+
+            // Print result
+            if (!result.isUndefined()) {
+                self.printResult(result);
+            }
+
+            // Print timing if enabled
+            if (self.show_timing) {
+                Output.pretty("<d>({d:.2}ms)<r>\n", .{elapsed_ms});
+            }
         }
 
         self.line_number += 1;
@@ -1338,8 +1352,8 @@ pub const History = struct {
         // Try to get home directory from environment
         const home = bun.getenvZ("HOME") orelse bun.getenvZ("USERPROFILE") orelse return null;
 
-        // Build path: $HOME/.bun_repl_history
-        const path = std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ home, HISTORY_FILE_NAME }) catch return null;
+        // Build path: $HOME/.bun_repl_history using proper path joining for cross-platform support
+        const path = std.fs.path.join(self.allocator, &.{ home, HISTORY_FILE_NAME }) catch return null;
         return path;
     }
 

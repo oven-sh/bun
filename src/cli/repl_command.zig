@@ -1205,15 +1205,19 @@ pub const History = struct {
     entries: ArrayList([]const u8),
     position: usize = 0,
     allocator: Allocator,
-    file_path: ?[]const u8 = null,
+    history_path: ?[]const u8 = null,
 
     const MAX_ENTRIES = 10000;
+    const HISTORY_FILE_NAME = ".bun_repl_history";
 
     pub fn init(allocator: Allocator) !History {
         var history = History{
             .entries = .{},
             .allocator = allocator,
         };
+
+        // Determine history file path
+        history.history_path = history.getHistoryPath();
 
         // Try to load history from file
         history.loadFromFile() catch {};
@@ -1223,12 +1227,27 @@ pub const History = struct {
 
     pub fn deinit(self: *History) void {
         // Save history before exit
-        self.saveToFile(self.getDefaultPath()) catch {};
+        if (self.history_path) |path| {
+            self.saveToFile(path) catch {};
+        }
 
         for (self.entries.items) |entry| {
             self.allocator.free(entry);
         }
         self.entries.deinit(self.allocator);
+
+        if (self.history_path) |path| {
+            self.allocator.free(path);
+        }
+    }
+
+    fn getHistoryPath(self: *History) ?[]const u8 {
+        // Try to get home directory from environment
+        const home = bun.getenvZ("HOME") orelse bun.getenvZ("USERPROFILE") orelse return null;
+
+        // Build path: $HOME/.bun_repl_history
+        const path = std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ home, HISTORY_FILE_NAME }) catch return null;
+        return path;
     }
 
     pub fn add(self: *History, entry: []const u8) void {
@@ -1272,15 +1291,14 @@ pub const History = struct {
         return self.entries.items[self.position];
     }
 
-    fn getDefaultPath(self: *History) []const u8 {
-        _ = self;
-        // TODO: Use proper home directory detection
-        return ".bun_repl_history";
-    }
-
     fn loadFromFile(self: *History) !void {
-        const path = self.getDefaultPath();
-        const content = std.fs.cwd().readFileAlloc(self.allocator, path, 1024 * 1024) catch return;
+        const path = self.history_path orelse return;
+
+        // Use absolute path for reading from home directory
+        const file = std.fs.openFileAbsolute(path, .{}) catch return;
+        defer file.close();
+
+        const content = file.readToEndAlloc(self.allocator, 1024 * 1024) catch return;
         defer self.allocator.free(content);
 
         var it = std.mem.splitScalar(u8, content, '\n');
@@ -1295,7 +1313,17 @@ pub const History = struct {
     }
 
     pub fn saveToFile(self: *History, path: []const u8) !void {
-        const file = try std.fs.cwd().createFile(path, .{});
+        // Use absolute path for writing to home directory
+        const file = std.fs.createFileAbsolute(path, .{}) catch |err| {
+            // Fall back to current directory if home directory fails
+            const fallback = std.fs.cwd().createFile(HISTORY_FILE_NAME, .{}) catch return err;
+            defer fallback.close();
+            for (self.entries.items) |entry| {
+                _ = try fallback.write(entry);
+                _ = try fallback.write("\n");
+            }
+            return;
+        };
         defer file.close();
 
         for (self.entries.items) |entry| {

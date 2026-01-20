@@ -3786,8 +3786,14 @@ extern "C" bool JSC__JSValue__deleteProperty(JSC::EncodedJSValue target, JSC::JS
     JSC::JSValue targetValue = JSC::JSValue::decode(target);
     if (!targetValue.isObject())
         return false;
+
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
     JSC::JSObject* object = targetValue.getObject();
-    return object->deleteProperty(globalObject, Zig::toIdentifier(*key, globalObject));
+    bool result = object->deleteProperty(globalObject, Zig::toIdentifier(*key, globalObject));
+    RETURN_IF_EXCEPTION(scope, false);
+    return result;
 }
 
 bool JSC__JSValue__isClass(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1)

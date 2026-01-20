@@ -797,23 +797,62 @@ pub const Repl = struct {
     }
 
     fn transformCode(self: *Self, code: []const u8) ![]const u8 {
-        // Use Bun's transpiler with replMode enabled
-        // This wraps expressions for value capture, hoists declarations, etc.
+        // Simple REPL transform: Convert let/const at top level to var
+        // This allows variables to persist across REPL lines since var
+        // declarations become properties of the global object.
+        //
+        // TODO: Use Bun's full transpiler with replMode for proper AST-based
+        // transformation including destructuring, async IIFE wrapping, etc.
 
-        const transpiler = &self.vm.transpiler;
+        // For simple cases, do a quick string-based transform
+        // This handles: "let x = 5" -> "var x = 5" at the start of a line
+        var result = ArrayList(u8){};
+        try result.ensureTotalCapacity(self.allocator, code.len + 16);
 
-        // Configure for REPL mode
-        var opts = transpiler.options;
-        opts.repl_mode = true;
+        var i: usize = 0;
+        var at_line_start = true;
 
-        // Parse and transform
-        const source = logger.Source.initPathString("/[repl]", code);
-        _ = source;
+        while (i < code.len) {
+            // Check for let/const at line start
+            if (at_line_start) {
+                // Skip leading whitespace
+                const ws_start = i;
+                while (i < code.len and (code[i] == ' ' or code[i] == '\t')) {
+                    i += 1;
+                }
 
-        // For now, return the code as-is
-        // The actual transformation will be done by the transpiler
-        // TODO: Call transpiler.parse with repl_mode = true
-        return try self.allocator.dupe(u8, code);
+                // Check for let or const keyword followed by space
+                if (i + 4 <= code.len and strings.eqlComptime(code[i .. i + 4], "let ")) {
+                    try result.appendSlice(self.allocator, code[ws_start..i]);
+                    try result.appendSlice(self.allocator, "var ");
+                    i += 4;
+                    at_line_start = false;
+                    continue;
+                } else if (i + 6 <= code.len and strings.eqlComptime(code[i .. i + 6], "const ")) {
+                    try result.appendSlice(self.allocator, code[ws_start..i]);
+                    try result.appendSlice(self.allocator, "var ");
+                    i += 6;
+                    at_line_start = false;
+                    continue;
+                }
+                // Restore position if no match
+                i = ws_start;
+            }
+
+            // Copy character
+            try result.append(self.allocator, code[i]);
+
+            // Track line starts
+            if (code[i] == '\n') {
+                at_line_start = true;
+            } else if (code[i] != ' ' and code[i] != '\t') {
+                at_line_start = false;
+            }
+
+            i += 1;
+        }
+
+        return try result.toOwnedSlice(self.allocator);
     }
 
     fn executeCode(self: *Self, code: []const u8) bun.JSError!JSValue {

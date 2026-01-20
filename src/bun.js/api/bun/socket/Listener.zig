@@ -644,9 +644,25 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
                     bun.assert(prev.this_value != .zero);
                     prev.handlers = handlers_ptr;
                     bun.assert(prev.socket.socket == .detached);
+                    // Free old resources before reassignment to prevent memory leaks
+                    // when sockets are reused for reconnection (common with MongoDB driver)
+                    if (prev.connection) |old_connection| {
+                        old_connection.deinit();
+                    }
                     prev.connection = connection;
+                    if (prev.flags.owned_protos) {
+                        if (prev.protos) |old_protos| {
+                            bun.default_allocator.free(old_protos);
+                        }
+                    }
                     prev.protos = if (ssl) |s| s.takeProtos() else null;
+                    if (prev.server_name) |old_server_name| {
+                        bun.default_allocator.free(old_server_name);
+                    }
                     prev.server_name = if (ssl) |s| s.takeServerName() else null;
+                    if (prev.socket_context) |old_socket_context| {
+                        old_socket_context.deinit(true); // TLS socket context
+                    }
                     prev.socket_context = null;
                     break :blk prev;
                 } else TLSSocket.new(.{
@@ -779,9 +795,25 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
                 }
                 prev.handlers = handlers_ptr;
                 bun.assert(prev.socket.socket == .detached);
+                // Free old resources before reassignment to prevent memory leaks
+                // when sockets are reused for reconnection (common with MongoDB driver)
+                if (prev.connection) |old_connection| {
+                    old_connection.deinit();
+                }
                 prev.connection = connection;
+                if (prev.flags.owned_protos) {
+                    if (prev.protos) |old_protos| {
+                        bun.default_allocator.free(old_protos);
+                    }
+                }
                 prev.protos = if (ssl) |s| s.takeProtos() else null;
+                if (prev.server_name) |old_server_name| {
+                    bun.default_allocator.free(old_server_name);
+                }
                 prev.server_name = if (ssl) |s| s.takeServerName() else null;
+                if (prev.socket_context) |old_socket_context| {
+                    old_socket_context.deinit(is_ssl_enabled);
+                }
                 prev.socket_context = socket_context;
                 break :blk prev;
             } else bun.new(SocketType, .{

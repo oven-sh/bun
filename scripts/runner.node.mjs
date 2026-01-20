@@ -1618,6 +1618,9 @@ function isNodeTest(path) {
   if (isCI && isMacOS && isX64) {
     return false;
   }
+  if (!isJavaScript(path)) {
+    return false;
+  }
   const unixPath = path.replaceAll(sep, "/");
   return (
     unixPath.includes("js/node/test/parallel/") ||

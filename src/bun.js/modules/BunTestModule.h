@@ -20,7 +20,7 @@ void generateNativeModule_BunTest(
     JSC::PropertyNameArrayBuilder properties(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
     object->methodTable()->getOwnPropertyNames(object, lexicalGlobalObject, properties, JSC::DontEnumPropertiesMode::Exclude);
     if (catchScope.exception()) [[unlikely]] {
-        catchScope.clearException();
+        (void)catchScope.tryClearException();
         return;
     }
 
@@ -28,7 +28,7 @@ void generateNativeModule_BunTest(
         JSC::PropertySlot slot(object, JSC::PropertySlot::InternalMethodType::Get);
         auto ownPropertySlot = object->methodTable()->getOwnPropertySlot(object, lexicalGlobalObject, property, slot);
         if (catchScope.exception()) [[unlikely]] {
-            catchScope.clearException();
+            (void)catchScope.tryClearException();
         }
         if (ownPropertySlot) {
             exportNames.append(property);

@@ -445,6 +445,46 @@ for (let credentials of allCredentials) {
               }
             });
 
+            it("should be able to set content-encoding", async () => {
+              await using tmpfile = await tmp();
+              {
+                const s3file = bucket.file(tmpfile.name, options!);
+                await s3file.write("Hello Bun!", { contentEncoding: "gzip" });
+                // Use decompress: false since content isn't actually gzip-compressed
+                const response = await fetch(s3file.presign(), { decompress: false });
+                expect(response.headers.get("content-encoding")).toBe("gzip");
+              }
+              {
+                const s3file = bucket.file(tmpfile.name, options!);
+                await s3file.write("Hello Bun!", { contentEncoding: "br" });
+                // Use decompress: false since content isn't actually br-compressed
+                const response = await fetch(s3file.presign(), { decompress: false });
+                expect(response.headers.get("content-encoding")).toBe("br");
+              }
+              {
+                await bucket.write(tmpfile.name, "Hello Bun!", {
+                  ...options,
+                  contentEncoding: "identity",
+                });
+                const response = await fetch(bucket.file(tmpfile.name, options!).presign(), { decompress: false });
+                expect(response.headers.get("content-encoding")).toBe("identity");
+              }
+            });
+            it("should be able to set content-encoding in writer", async () => {
+              await using tmpfile = await tmp();
+              {
+                const s3file = bucket.file(tmpfile.name, options!);
+                const writer = s3file.writer({
+                  contentEncoding: "gzip",
+                });
+                writer.write("Hello Bun!!");
+                await writer.end();
+                // Use decompress: false since content isn't actually gzip-compressed
+                const response = await fetch(s3file.presign(), { decompress: false });
+                expect(response.headers.get("content-encoding")).toBe("gzip");
+              }
+            });
+
             it("should be able to upload large files using bucket.write + readable Request", async () => {
               await using tmpfile = await tmp();
               {

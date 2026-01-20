@@ -1708,8 +1708,14 @@ pub fn parseIntoBinaryLockfile(
                 };
 
                 if (registry_str.len == 0) {
+                    // Use scope-specific registry if available, otherwise fall back to default
+                    const registry_url = if (manager) |mgr|
+                        mgr.scopeForPackageName(name_str).url.href
+                    else
+                        Npm.Registry.default_url;
+
                     const url = try ExtractTarball.buildURL(
-                        Npm.Registry.default_url,
+                        registry_url,
                         strings.StringOrTinyString.init(name.slice(string_buf.bytes.items)),
                         res.value.npm.version,
                         string_buf.bytes.items,

@@ -152,9 +152,24 @@ async function fetch(
   // eslint-disable-next-line no-unused-vars
   init?: RequestInit & { body?: any },
 ) {
-  // Since `body` accepts async iterables
-  // We don't need to convert the Readable body into a ReadableStream.
-  const response = await nativeFetch.$apply(undefined, arguments);
+  // Convert Node.js streams to Web ReadableStream if they don't have Symbol.asyncIterator.
+  // This is needed for libraries like `form-data` that use CombinedStream which extends
+  // Node.js Stream but doesn't implement Symbol.asyncIterator.
+  if (init?.body && typeof init.body === "object" && !init.body[Symbol.asyncIterator]) {
+    const { Readable, Stream, PassThrough } = require("node:stream");
+    if (init.body instanceof Stream || init.body instanceof Readable) {
+      // For old-style streams that don't have asyncIterator (like CombinedStream used by form-data),
+      // pipe through a PassThrough stream to convert to a Readable that can be converted to a web stream.
+      let readable = init.body;
+      if (!(readable instanceof Readable)) {
+        const passthrough = new PassThrough();
+        readable.pipe(passthrough);
+        readable = passthrough;
+      }
+      init = { ...init, body: Readable.toWeb(readable) };
+    }
+  }
+  const response = await nativeFetch.$call(undefined, url, init);
   Object.setPrototypeOf(response, ResponsePrototype);
   return response;
 }

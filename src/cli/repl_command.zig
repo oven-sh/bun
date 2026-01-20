@@ -13,30 +13,6 @@
 //! - Top-level await support
 //! - Error formatting with source context
 
-const ReplCommand = @This();
-
-const std = @import("std");
-const bun = @import("bun");
-const Output = bun.Output;
-const Global = bun.Global;
-const strings = bun.strings;
-const logger = bun.logger;
-const js_ast = bun.ast;
-const Allocator = std.mem.Allocator;
-const ArrayList = std.ArrayListUnmanaged;
-
-const jsc = bun.jsc;
-const JSValue = jsc.JSValue;
-const JSGlobalObject = jsc.JSGlobalObject;
-const VirtualMachine = jsc.VirtualMachine;
-const ZigString = jsc.ZigString;
-
-const Command = @import("../cli.zig").Command;
-const fmt = @import("../fmt.zig");
-const Transpiler = bun.transpiler.Transpiler;
-const options = bun.options;
-const js_printer = bun.js_printer;
-
 // ============================================================================
 // REPL State
 // ============================================================================
@@ -1376,9 +1352,6 @@ pub const History = struct {
 // Command Entry Point
 // ============================================================================
 
-const Arena = bun.allocators.MimallocArena;
-const AsyncHTTP = bun.http.AsyncHTTP;
-
 pub fn exec(ctx: Command.Context) !void {
     // Print welcome banner
     printBanner();
@@ -1473,3 +1446,28 @@ fn printBanner() void {
     , .{Global.package_json_version});
     Output.flush();
 }
+
+const fmt = @import("../fmt.zig");
+const Command = @import("../cli.zig").Command;
+
+const bun = @import("bun");
+const Global = bun.Global;
+const Output = bun.Output;
+const js_ast = bun.ast;
+const js_printer = bun.js_printer;
+const logger = bun.logger;
+const options = bun.options;
+const strings = bun.strings;
+const Arena = bun.allocators.MimallocArena;
+const AsyncHTTP = bun.http.AsyncHTTP;
+const Transpiler = bun.transpiler.Transpiler;
+
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;
+const VirtualMachine = jsc.VirtualMachine;
+const ZigString = jsc.ZigString;
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;
+const Allocator = std.mem.Allocator;

@@ -674,14 +674,34 @@ pub const Repl = struct {
 
         // Check if this is a property access
         if (strings.lastIndexOfChar(word, '.')) |dot_pos| {
-            // Property completion
+            // Property completion - get object properties from JSC
             const obj_name = word[0..dot_pos];
             const prop_prefix = word[dot_pos + 1 ..];
 
-            // Get object from global
-            _ = obj_name;
-            _ = prop_prefix;
-            // TODO: Get object properties from JSC
+            // Try to get the object by evaluating the path
+            const obj_value = self.getObjectForPath(obj_name) orelse return completions.toOwnedSlice(self.allocator);
+
+            // Get property names from JSC
+            if (obj_value.isObject()) {
+                if (obj_value.getObject()) |js_obj| {
+                    var prop_iter = jsc.JSPropertyIterator(.{
+                        .skip_empty_name = true,
+                        .include_value = false,
+                        .own_properties_only = false, // Include prototype properties
+                    }).init(self.global, js_obj) catch return completions.toOwnedSlice(self.allocator);
+                    defer prop_iter.deinit();
+
+                    while (prop_iter.next() catch null) |name| {
+                        const name_str = name.toOwnedSlice(self.allocator) catch continue;
+                        // Filter by prefix
+                        if (prop_prefix.len == 0 or strings.startsWith(name_str, prop_prefix)) {
+                            try completions.append(self.allocator, name_str);
+                        } else {
+                            self.allocator.free(name_str);
+                        }
+                    }
+                }
+            }
         } else {
             // Global completion
             // Add JavaScript globals
@@ -748,6 +768,25 @@ pub const Repl = struct {
             (c >= 'A' and c <= 'Z') or
             (c >= '0' and c <= '9') or
             c == '_' or c == '$';
+    }
+
+    /// Resolve an object path like "Bun.file" or "console" to a JSValue
+    fn getObjectForPath(self: *Self, path: []const u8) ?JSValue {
+        if (path.len == 0) return null;
+
+        // Split path by dots and navigate
+        var current = self.global.toJSValue();
+        var it = std.mem.splitScalar(u8, path, '.');
+
+        while (it.next()) |segment| {
+            if (segment.len == 0) continue;
+
+            // Get property from current object
+            const prop = current.get(self.global, segment) catch return null;
+            current = prop orelse return null;
+        }
+
+        return current;
     }
 
     // ========================================================================

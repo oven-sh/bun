@@ -266,4 +266,42 @@ describe("bun repl", () => {
     expect(stdout).toContain("42");
     expect(exitCode).toBe(0);
   });
+
+  test("class declarations persist", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "repl"],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    proc.stdin.write("class Calculator { add(a, b) { return a + b } }\n");
+    proc.stdin.write("new Calculator().add(3, 7)\n");
+    proc.stdin.end();
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toContain("10");
+    expect(exitCode).toBe(0);
+  });
+
+  test("destructuring works", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "repl"],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    proc.stdin.write("const { a, b } = { a: 1, b: 2 }\n");
+    proc.stdin.write("a + b\n");
+    proc.stdin.end();
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toContain("3");
+    expect(exitCode).toBe(0);
+  });
 });

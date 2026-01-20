@@ -1,6 +1,6 @@
 // https://github.com/oven-sh/bun/issues/26284
 // After useRealTimers(), hasOwnProperty('clock') should return false
-import { expect, jest, test } from "bun:test";
+import { afterEach, expect, jest, test } from "bun:test";
 
 // Simulates testing-library/react's jestFakeTimersAreEnabled() function
 function jestFakeTimersAreEnabled(): boolean {
@@ -15,6 +15,11 @@ function jestFakeTimersAreEnabled(): boolean {
   return false;
 }
 
+// Ensure fake timers are always cleaned up after each test
+afterEach(() => {
+  jest.useRealTimers();
+});
+
 test("hasOwnProperty('clock') returns false before useFakeTimers", () => {
   expect(Object.prototype.hasOwnProperty.call(globalThis.setTimeout, "clock")).toBe(false);
   expect(jestFakeTimersAreEnabled()).toBe(false);
@@ -22,13 +27,9 @@ test("hasOwnProperty('clock') returns false before useFakeTimers", () => {
 
 test("hasOwnProperty('clock') returns true after useFakeTimers", () => {
   jest.useFakeTimers();
-  try {
-    expect(Object.prototype.hasOwnProperty.call(globalThis.setTimeout, "clock")).toBe(true);
-    expect((globalThis.setTimeout as any).clock).toBe(true);
-    expect(jestFakeTimersAreEnabled()).toBe(true);
-  } finally {
-    jest.useRealTimers();
-  }
+  expect(Object.prototype.hasOwnProperty.call(globalThis.setTimeout, "clock")).toBe(true);
+  expect((globalThis.setTimeout as any).clock).toBe(true);
+  expect(jestFakeTimersAreEnabled()).toBe(true);
 });
 
 test("hasOwnProperty('clock') returns false after useRealTimers", () => {

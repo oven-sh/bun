@@ -586,18 +586,31 @@ pub const Repl = struct {
         const completions = result.items;
         if (completions.len == 0) return;
 
+        // For property completions (e.g., "Bun.ver"), completions contain just the property
+        // name (e.g., "version"), not the full path. Compute the prefix length to match.
+        const prefix_len = if (strings.lastIndexOfChar(word, '.')) |dot_pos|
+            word.len - dot_pos - 1 // Length of part after the dot
+        else
+            word.len; // Global completion - use full word length
+
         if (completions.len == 1) {
             // Single completion - insert it
             const completion = completions[0];
-            const suffix = completion[word.len..];
-            try self.line_buffer.appendSlice(self.allocator, suffix);
-            self.cursor_pos += suffix.len;
-            self.refreshLine();
+            // Safe bounds check for suffix
+            const suffix = if (prefix_len < completion.len)
+                completion[prefix_len..]
+            else
+                ""; // Completion is shorter or equal to prefix
+            if (suffix.len > 0) {
+                try self.line_buffer.appendSlice(self.allocator, suffix);
+                self.cursor_pos += suffix.len;
+                self.refreshLine();
+            }
         } else {
             // Multiple completions - show them
             Output.print("\n", .{});
 
-            // Find common prefix
+            // Find common prefix among completions
             var common_len = completions[0].len;
             for (completions[1..]) |c| {
                 var i: usize = 0;
@@ -605,9 +618,9 @@ pub const Repl = struct {
                 common_len = i;
             }
 
-            // Insert common prefix if longer than current word
-            if (common_len > word.len) {
-                const prefix = completions[0][word.len..common_len];
+            // Insert common prefix if longer than current typed prefix
+            if (common_len > prefix_len) {
+                const prefix = completions[0][prefix_len..common_len];
                 try self.line_buffer.appendSlice(self.allocator, prefix);
                 self.cursor_pos += prefix.len;
             }
@@ -1190,8 +1203,27 @@ pub const Repl = struct {
     }
 
     fn saveHistory(self: *Self, path: []const u8) !void {
-        try self.history.saveToFile(path);
-        Output.pretty("<d>History saved to {s}<r>\n", .{path});
+        // Resolve to absolute path if relative
+        const abs_path = if (std.fs.path.isAbsolute(path))
+            path
+        else blk: {
+            break :blk std.fs.cwd().realpathAlloc(self.allocator, path) catch |err| {
+                // If the file doesn't exist yet, construct an absolute path
+                const cwd = std.fs.cwd().realpathAlloc(self.allocator, ".") catch {
+                    Output.pretty("<red>Error resolving current directory<r>\n", .{});
+                    return err;
+                };
+                defer self.allocator.free(cwd);
+                break :blk std.fs.path.join(self.allocator, &.{ cwd, path }) catch {
+                    Output.pretty("<red>Error constructing path<r>\n", .{});
+                    return err;
+                };
+            };
+        };
+        defer if (!std.fs.path.isAbsolute(path)) self.allocator.free(abs_path);
+
+        try self.history.saveToFile(abs_path);
+        Output.pretty("<d>History saved to {s}<r>\n", .{abs_path});
     }
 
     fn enterEditorMode(self: *Self) !void {
@@ -1344,6 +1376,11 @@ pub const History = struct {
     }
 
     pub fn next(self: *History) ?[]const u8 {
+        // Guard against empty history to avoid underflow
+        if (self.entries.items.len == 0) {
+            self.position = 0;
+            return null;
+        }
         if (self.position >= self.entries.items.len - 1) {
             self.position = self.entries.items.len;
             return null;

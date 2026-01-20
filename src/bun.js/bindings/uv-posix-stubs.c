@@ -1089,8 +1089,9 @@ UV_EXTERN void uv_os_free_group(uv_group_t* grp)
 
 UV_EXTERN void uv_os_free_passwd(uv_passwd_t* pwd)
 {
-    __bun_throw_not_implemented("uv_os_free_passwd");
-    __builtin_unreachable();
+    if (pwd->username) free((void*)pwd->username);
+    if (pwd->shell) free((void*)pwd->shell);
+    if (pwd->homedir) free((void*)pwd->homedir);
 }
 
 UV_EXTERN int uv_os_get_group(uv_group_t* grp, uv_uid_t gid)
@@ -1101,8 +1102,81 @@ UV_EXTERN int uv_os_get_group(uv_group_t* grp, uv_uid_t gid)
 
 UV_EXTERN int uv_os_get_passwd(uv_passwd_t* pwd)
 {
-    __bun_throw_not_implemented("uv_os_get_passwd");
-    __builtin_unreachable();
+    // Use getpwuid_r to get passwd entry for current user
+    uid_t uid = geteuid();
+    struct passwd pw;
+    struct passwd *result = NULL;
+    size_t buf_size = 4096;
+    char *buf = NULL;
+    int ret;
+
+    // Retry with increasing buffer size on ERANGE
+    for (;;) {
+        buf = (char*)malloc(buf_size);
+        if (!buf) {
+            return UV_ENOMEM;
+        }
+
+        ret = getpwuid_r(uid, &pw, buf, buf_size, &result);
+        if (ret == 0) {
+            break; // Success
+        } else if (ret == ERANGE) {
+            // Buffer too small, try again with larger buffer
+            free(buf);
+            buf_size *= 2;
+            if (buf_size > 65536) { // Cap at 64KB to prevent infinite loop
+                return UV_ENOENT;
+            }
+        } else {
+            // Other error from getpwuid_r
+            free(buf);
+            return UV_ENOENT;
+        }
+    }
+
+    if (result == NULL) {
+        free(buf);
+        return UV_ENOENT;
+    }
+
+    // Initialize pwd fields to NULL
+    pwd->username = NULL;
+    pwd->shell = NULL;
+    pwd->homedir = NULL;
+
+    // Copy data to uv_passwd_t structure, checking for allocation failures
+    if (result->pw_name) {
+        pwd->username = strdup(result->pw_name);
+        if (!pwd->username) {
+            free(buf);
+            return UV_ENOMEM;
+        }
+    }
+
+    pwd->uid = result->pw_uid;
+    pwd->gid = result->pw_gid;
+
+    if (result->pw_shell) {
+        pwd->shell = strdup(result->pw_shell);
+        if (!pwd->shell) {
+            if (pwd->username) free((void*)pwd->username);
+            free(buf);
+            return UV_ENOMEM;
+        }
+    }
+
+    if (result->pw_dir) {
+        pwd->homedir = strdup(result->pw_dir);
+        if (!pwd->homedir) {
+            if (pwd->username) free((void*)pwd->username);
+            if (pwd->shell) free((void*)pwd->shell);
+            free(buf);
+            return UV_ENOMEM;
+        }
+    }
+
+    free(buf);
+    return 0;
 }
 
 UV_EXTERN int uv_os_get_passwd2(uv_passwd_t* pwd, uv_uid_t uid)

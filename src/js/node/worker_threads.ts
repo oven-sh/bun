@@ -1,6 +1,5 @@
 // import type { Readable, Writable } from "node:stream";
 // import type { WorkerOptions } from "node:worker_threads";
-declare const self: typeof globalThis;
 type WebWorker = InstanceType<typeof globalThis.Worker>;
 
 const EventEmitter = require("node:events");

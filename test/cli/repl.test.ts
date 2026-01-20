@@ -304,4 +304,59 @@ describe("bun repl", () => {
     expect(stdout).toContain("3");
     expect(exitCode).toBe(0);
   });
+
+  test("shell command syntax works", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "repl"],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    proc.stdin.write("$`echo hello from shell`\n");
+    proc.stdin.end();
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toContain("hello from shell");
+    expect(exitCode).toBe(0);
+  });
+
+  test("Bun.$ template literal works", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "repl"],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    proc.stdin.write("await Bun.$`echo test output`\n");
+    proc.stdin.end();
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toContain("test output");
+    expect(exitCode).toBe(0);
+  });
+
+  test("Bun.sleep works", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "repl"],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    proc.stdin.write("await Bun.sleep(10)\n");
+    proc.stdin.write("'slept'\n");
+    proc.stdin.end();
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toContain("slept");
+    expect(exitCode).toBe(0);
+  });
 });

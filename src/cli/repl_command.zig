@@ -1296,11 +1296,70 @@ pub const Repl = struct {
     }
 
     fn runShellCommand(self: *Self, code: []const u8) !void {
-        _ = code;
-        _ = self;
-        // Execute shell command using Bun's shell
-        // TODO: Integrate with shell interpreter
-        Output.pretty("<yellow>Shell mode not yet implemented<r>\n", .{});
+        // Transform $`command` into await Bun.$`command` and execute it
+        // The shell template tag returns a ShellPromise which gets awaited
+
+        const start_time = std.time.nanoTimestamp();
+
+        // Parse the shell command from the input
+        // Formats: $`command` or $ `command`
+        var cmd_start: usize = 0;
+        if (strings.startsWith(code, "$`")) {
+            cmd_start = 1; // Skip the $, keep the backtick
+        } else if (strings.startsWith(code, "$ `")) {
+            cmd_start = 2; // Skip "$ ", keep the backtick
+        } else {
+            Output.pretty("<red>Invalid shell command syntax. Use $`command`<r>\n", .{});
+            return;
+        }
+
+        // Build the JavaScript code to execute the shell command
+        // Using Bun.$ template literal with await for automatic promise handling
+        const shell_code = code[cmd_start..];
+
+        // Wrap in await Bun.$ - use the same transformation as normal code
+        const js_code = try std.fmt.allocPrint(self.allocator, "await Bun.${s}", .{shell_code});
+        defer self.allocator.free(js_code);
+
+        // Transform code using the transpiler with replMode (for top-level await support)
+        const transformed = self.transformCode(js_code) catch |err| {
+            Output.pretty("<red>Shell command transformation failed: {s}<r>\n", .{@errorName(err)});
+            return;
+        };
+        defer self.allocator.free(transformed);
+
+        if (transformed.len == 0) {
+            return;
+        }
+
+        // Execute the transformed code
+        const wrapper_result = self.executeCode(transformed) catch |err| {
+            Output.pretty("<red>Shell command failed: {s}<r>\n", .{@errorName(err)});
+            return;
+        };
+
+        // Handle async result (the shell command returns a promise)
+        if (wrapper_result.asPromise()) |_| {
+            self.awaitAndPrintResult(wrapper_result, start_time);
+        } else {
+            const end_time = std.time.nanoTimestamp();
+            const elapsed_ms = @as(f64, @floatFromInt(end_time - start_time)) / 1_000_000.0;
+
+            // Extract the actual result value from the wrapper object
+            const result = if (wrapper_result.isObject()) blk: {
+                const val = wrapper_result.get(self.global, "value") catch break :blk wrapper_result;
+                break :blk val orelse wrapper_result;
+            } else wrapper_result;
+
+            // Print result
+            if (!result.isUndefined()) {
+                self.printResult(result);
+            }
+
+            if (self.show_timing) {
+                Output.pretty("<d>({d:.2}ms)<r>\n", .{elapsed_ms});
+            }
+        }
     }
 };
 

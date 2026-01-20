@@ -33,6 +33,9 @@ const ZigString = jsc.ZigString;
 
 const Command = @import("../cli.zig").Command;
 const fmt = @import("../fmt.zig");
+const Transpiler = bun.transpiler.Transpiler;
+const options = bun.options;
+const js_printer = bun.js_printer;
 
 // ============================================================================
 // REPL State
@@ -778,81 +781,138 @@ pub const Repl = struct {
         }
 
         // Execute the transformed code
-        const result = try self.executeCode(transformed);
+        const wrapper_result = try self.executeCode(transformed);
 
-        const end_time = std.time.nanoTimestamp();
-        const elapsed_ms = @as(f64, @floatFromInt(end_time - start_time)) / 1_000_000.0;
+        // The REPL transforms wrap the last expression in { value: expr }
+        // For async code (top-level await), this is a Promise<{ value: result }>
+        // We need to handle both sync and async cases
 
-        // Print result
-        if (!result.isUndefined()) {
-            self.printResult(result);
-        }
+        // Check if result is a Promise using asPromise()
+        if (wrapper_result.asPromise()) |_| {
+            // Await the promise by running the event loop until it resolves
+            self.awaitAndPrintResult(wrapper_result, start_time);
+        } else {
+            const end_time = std.time.nanoTimestamp();
+            const elapsed_ms = @as(f64, @floatFromInt(end_time - start_time)) / 1_000_000.0;
 
-        // Print timing if enabled
-        if (self.show_timing) {
-            Output.pretty("<d>({d:.2}ms)<r>\n", .{elapsed_ms});
+            // Extract the actual result value from the wrapper object
+            const result = if (wrapper_result.isObject()) blk: {
+                const val = wrapper_result.get(self.global, "value") catch break :blk wrapper_result;
+                break :blk val orelse wrapper_result;
+            } else wrapper_result;
+
+            // Print result (skip undefined for cleaner output)
+            if (!result.isUndefined()) {
+                self.printResult(result);
+            }
+
+            // Print timing if enabled
+            if (self.show_timing) {
+                Output.pretty("<d>({d:.2}ms)<r>\n", .{elapsed_ms});
+            }
         }
 
         self.line_number += 1;
     }
 
     fn transformCode(self: *Self, code: []const u8) ![]const u8 {
-        // Simple REPL transform: Convert let/const at top level to var
-        // This allows variables to persist across REPL lines since var
-        // declarations become properties of the global object.
-        //
-        // TODO: Use Bun's full transpiler with replMode for proper AST-based
-        // transformation including destructuring, async IIFE wrapping, etc.
+        // Use Bun's transpiler with replMode for full AST-based transformation:
+        // - Hoists let/const/var/function/class declarations as var for persistence
+        // - Wraps code in IIFE to create proper scope
+        // - Wraps top-level await in async IIFE
+        // - Captures last expression result in { value: expr } object
 
-        // For simple cases, do a quick string-based transform
-        // This handles: "let x = 5" -> "var x = 5" at the start of a line
-        var result = ArrayList(u8){};
-        try result.ensureTotalCapacity(self.allocator, code.len + 16);
+        const vm = self.vm;
+        const transpiler = &vm.transpiler;
 
-        var i: usize = 0;
-        var at_line_start = true;
-
-        while (i < code.len) {
-            // Check for let/const at line start
-            if (at_line_start) {
-                // Skip leading whitespace
-                const ws_start = i;
-                while (i < code.len and (code[i] == ' ' or code[i] == '\t')) {
-                    i += 1;
-                }
-
-                // Check for let or const keyword followed by space
-                if (i + 4 <= code.len and strings.eqlComptime(code[i .. i + 4], "let ")) {
-                    try result.appendSlice(self.allocator, code[ws_start..i]);
-                    try result.appendSlice(self.allocator, "var ");
-                    i += 4;
-                    at_line_start = false;
-                    continue;
-                } else if (i + 6 <= code.len and strings.eqlComptime(code[i .. i + 6], "const ")) {
-                    try result.appendSlice(self.allocator, code[ws_start..i]);
-                    try result.appendSlice(self.allocator, "var ");
-                    i += 6;
-                    at_line_start = false;
-                    continue;
-                }
-                // Restore position if no match
-                i = ws_start;
-            }
-
-            // Copy character
-            try result.append(self.allocator, code[i]);
-
-            // Track line starts
-            if (code[i] == '\n') {
-                at_line_start = true;
-            } else if (code[i] != ' ' and code[i] != '\t') {
-                at_line_start = false;
-            }
-
-            i += 1;
+        // Enable REPL mode for this parse
+        const prev_repl_mode = transpiler.options.repl_mode;
+        const prev_dce = transpiler.options.dead_code_elimination;
+        transpiler.options.repl_mode = true;
+        transpiler.options.dead_code_elimination = false; // DCE would remove pure expressions like `42`
+        defer {
+            transpiler.options.repl_mode = prev_repl_mode;
+            transpiler.options.dead_code_elimination = prev_dce;
         }
 
-        return try result.toOwnedSlice(self.allocator);
+        // Pre-process: wrap potential object literals in parentheses
+        // If code starts with { and doesn't end with ; it might be an object literal
+        const processed_code = if (isLikelyObjectLiteral(code))
+            std.fmt.allocPrint(self.allocator, "({s})", .{code}) catch code
+        else
+            code;
+        defer if (processed_code.ptr != code.ptr) self.allocator.free(processed_code);
+
+        // Create source for parsing
+        const source = logger.Source.initPathString("<repl>", processed_code);
+
+        // Parse options
+        const parse_opts = Transpiler.ParseOptions{
+            .allocator = self.allocator,
+            .dirname_fd = .invalid,
+            .path = source.path,
+            .loader = .js,
+            .jsx = transpiler.options.jsx,
+            .macro_remappings = .{},
+            .virtual_source = &source,
+        };
+
+        // Parse the code with REPL transforms
+        const parse_result = transpiler.parse(parse_opts, null) orelse {
+            // Check for parse errors
+            if (transpiler.log.errors > 0) {
+                // Print errors
+                for (transpiler.log.msgs.items) |msg| {
+                    if (msg.kind == .err) {
+                        Output.pretty("<red>Parse error: {s}<r>\n", .{msg.data.text});
+                    }
+                }
+                transpiler.log.msgs.clearRetainingCapacity();
+            }
+            return error.ParseError;
+        };
+
+        // Print the transformed AST back to code
+        var buffer_writer = js_printer.BufferWriter.init(self.allocator);
+        var printer = js_printer.BufferPrinter.init(buffer_writer);
+
+        _ = transpiler.print(parse_result, @TypeOf(&printer), &printer, .esm_ascii) catch |err| {
+            Output.pretty("<red>Print error: {s}<r>\n", .{@errorName(err)});
+            return error.PrintError;
+        };
+
+        buffer_writer = printer.ctx;
+        const result = buffer_writer.written;
+
+        // Copy to owned slice since buffer_writer may be reused
+        return try self.allocator.dupe(u8, result);
+    }
+
+    /// Check if code looks like an object literal (starts with { and doesn't end with ;)
+    fn isLikelyObjectLiteral(code: []const u8) bool {
+        // Skip leading whitespace
+        var start: usize = 0;
+        while (start < code.len and (code[start] == ' ' or code[start] == '\t' or code[start] == '\n' or code[start] == '\r')) {
+            start += 1;
+        }
+
+        // Check if starts with {
+        if (start >= code.len or code[start] != '{') {
+            return false;
+        }
+
+        // Skip trailing whitespace
+        var end: usize = code.len;
+        while (end > 0 and (code[end - 1] == ' ' or code[end - 1] == '\t' or code[end - 1] == '\n' or code[end - 1] == '\r')) {
+            end -= 1;
+        }
+
+        // Check if ends with semicolon - if so, it's likely a block statement
+        if (end > 0 and code[end - 1] == ';') {
+            return false;
+        }
+
+        return true;
     }
 
     fn executeCode(self: *Self, code: []const u8) bun.JSError!JSValue {
@@ -888,6 +948,48 @@ pub const Repl = struct {
     fn printResult(self: *Self, value: JSValue) void {
         // Pretty-print the result using JSValue's print method
         value.print(self.global, .Log, .Log);
+    }
+
+    fn awaitAndPrintResult(self: *Self, promise_value: JSValue, start_time: i128) void {
+        // Get the Promise object
+        const promise = promise_value.asPromise() orelse {
+            // Not a JSPromise, might be a thenable - just print the raw value
+            self.printResult(promise_value);
+            return;
+        };
+
+        // Run the event loop until the promise resolves or rejects
+        const event_loop = self.vm.eventLoop();
+        while (promise.status() == .pending) {
+            event_loop.tick();
+        }
+
+        const end_time = std.time.nanoTimestamp();
+        const elapsed_ms = @as(f64, @floatFromInt(end_time - start_time)) / 1_000_000.0;
+
+        // Get the result based on promise status
+        const resolved_value = promise.result(self.vm.jsc_vm);
+
+        if (promise.status() == .rejected) {
+            // Print rejection reason as error
+            self.printException(resolved_value);
+        } else {
+            // Extract the actual result value from the wrapper object { value: result }
+            const result = if (resolved_value.isObject()) blk: {
+                const val = resolved_value.get(self.global, "value") catch break :blk resolved_value;
+                break :blk val orelse resolved_value;
+            } else resolved_value;
+
+            // Print result (skip undefined for cleaner output)
+            if (!result.isUndefined()) {
+                self.printResult(result);
+            }
+        }
+
+        // Print timing if enabled
+        if (self.show_timing) {
+            Output.pretty("<d>({d:.2}ms)<r>\n", .{elapsed_ms});
+        }
     }
 
     // ========================================================================
@@ -998,13 +1100,20 @@ pub const Repl = struct {
         }
 
         // Execute the transformed code
-        const result = self.executeCode(transformed) catch |err| {
+        const wrapper_result = self.executeCode(transformed) catch |err| {
             Output.pretty("<red>Execution error: {s}<r>\n", .{@errorName(err)});
             return;
         };
 
         const end_time = std.time.nanoTimestamp();
         const elapsed_ms = @as(f64, @floatFromInt(end_time - start_time)) / 1_000_000.0;
+
+        // The REPL transforms wrap the last expression in { value: expr }
+        // Extract the actual result value from the wrapper object
+        const result = if (wrapper_result.isObject()) blk: {
+            const val = wrapper_result.get(self.global, "value") catch break :blk wrapper_result;
+            break :blk val orelse wrapper_result;
+        } else wrapper_result;
 
         // Print result
         if (!result.isUndefined()) {

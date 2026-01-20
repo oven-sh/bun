@@ -249,10 +249,7 @@ describe("bun repl", () => {
     expect(exitCode).toBe(0);
   });
 
-  // TODO: Enable this test once top-level await is implemented in the REPL.
-  // Currently, top-level await requires wrapping in an async IIFE, which
-  // the full REPL transforms (repl_transforms.zig) will handle.
-  test.skip("async/await works", async () => {
+  test("async/await works", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "repl"],
       env: bunEnv,

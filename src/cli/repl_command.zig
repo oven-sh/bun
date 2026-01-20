@@ -131,10 +131,11 @@ pub const Repl = struct {
     /// Simple line reading for non-TTY input (piped)
     fn readLineSimple(self: *Self, stdin_fd: bun.FileDescriptor) !?[]const u8 {
         var buf: [1]u8 = undefined;
+        var saw_eof = false;
 
         while (true) {
-            const result = bun.sys.read(stdin_fd, &buf);
-            const bytes_read = switch (result) {
+            const read_result = bun.sys.read(stdin_fd, &buf);
+            const bytes_read = switch (read_result) {
                 .result => |n| n,
                 .err => |e| {
                     if (e.getErrno() == .AGAIN) continue;
@@ -143,24 +144,25 @@ pub const Repl = struct {
             };
 
             if (bytes_read == 0) {
-                // EOF
-                if (self.line_buffer.items.len == 0) {
-                    return null;
-                }
+                // EOF - only return null if we have no data and this is a true EOF
+                saw_eof = true;
                 break;
             }
 
             if (buf[0] == '\n' or buf[0] == '\r') {
+                // End of line - return what we have (even if empty, to allow blank lines)
                 break;
             }
 
             try self.line_buffer.append(self.allocator, buf[0]);
         }
 
-        if (self.line_buffer.items.len == 0) {
+        // Only return null on true EOF with no pending data
+        if (saw_eof and self.line_buffer.items.len == 0) {
             return null;
         }
 
+        // Return the line (may be empty for blank lines, which is valid input)
         return try self.allocator.dupe(u8, self.line_buffer.items);
     }
 
@@ -1255,7 +1257,10 @@ pub const Repl = struct {
                     return err;
                 };
                 defer self.allocator.free(cwd);
-                break :blk std.fs.path.join(self.allocator, &.{ cwd, path }) catch {
+                // Use bun.path.join for cross-platform path construction
+                const parts = [_][]const u8{ cwd, path };
+                const joined = bun.path.join(&parts, .auto);
+                break :blk self.allocator.dupe(u8, joined) catch {
                     Output.pretty("<red>Error constructing path<r>\n", .{});
                     return err;
                 };
@@ -1273,7 +1278,8 @@ pub const Repl = struct {
         var editor_buffer: ArrayList(u8) = .{};
         defer editor_buffer.deinit(self.allocator);
 
-        const stdin_fd = std.posix.STDIN_FILENO;
+        // Use cross-platform stdin file descriptor
+        const stdin_fd = bun.FileDescriptor.stdin();
         var line_buf: [4096]u8 = undefined;
         var line_pos: usize = 0;
 
@@ -1281,12 +1287,23 @@ pub const Repl = struct {
             Output.print("  ", .{});
             Output.flush();
 
-            // Read line manually
+            // Read line manually using cross-platform bun.sys.read
             line_pos = 0;
+            var saw_eof = false;
             while (true) {
                 var char_buf: [1]u8 = undefined;
-                const n = std.posix.read(stdin_fd, &char_buf) catch break;
-                if (n == 0) break; // EOF
+                const read_result = bun.sys.read(stdin_fd, &char_buf);
+                const n = switch (read_result) {
+                    .result => |bytes| bytes,
+                    .err => |e| {
+                        if (e.getErrno() == .AGAIN) continue;
+                        break; // Error reading, treat as EOF
+                    },
+                };
+                if (n == 0) {
+                    saw_eof = true;
+                    break; // EOF
+                }
 
                 if (char_buf[0] == '\n') break;
                 if (line_pos < line_buf.len) {
@@ -1295,10 +1312,13 @@ pub const Repl = struct {
                 }
             }
 
-            if (line_pos == 0) break; // EOF with no data
+            if (saw_eof and line_pos == 0) break; // EOF with no data on this line
 
             try editor_buffer.appendSlice(self.allocator, line_buf[0..line_pos]);
             try editor_buffer.append(self.allocator, '\n');
+
+            // If we saw EOF, stop reading more lines
+            if (saw_eof) break;
         }
 
         Output.print("\n", .{});

@@ -156,11 +156,6 @@ const CrossChunkDependencies = struct {
                         break :brk ref_to_use;
                     };
 
-                    // Skip Ref.None - can occur when import resolution fails
-                    // (e.g., re-export from a module that doesn't have that export)
-                    if (ref_to_use.eql(Ref.None))
-                        continue;
-
                     if (comptime Environment.allow_assert)
                         debug("Cross-chunk import: {s} {f}", .{ deps.symbols.get(ref_to_use).?.original_name, ref_to_use });
 
@@ -197,11 +192,6 @@ const CrossChunkDependencies = struct {
                         if (deps.symbols.getConst(target_ref).?.namespace_alias) |namespace_alias| {
                             target_ref = namespace_alias.namespace_ref;
                         }
-
-                        // Skip Ref.None - can occur when export resolution fails
-                        // (e.g., export { foo } from './bar' where bar doesn't export foo)
-                        if (target_ref.eql(Ref.None))
-                            continue;
 
                         if (comptime Environment.allow_assert)
                             debug("Cross-chunk export: {s}", .{deps.symbols.get(target_ref).?.original_name});

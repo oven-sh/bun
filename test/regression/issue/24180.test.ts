@@ -98,7 +98,9 @@ export default {
   }
   reader.releaseLock();
 
-  expect(port).not.toBeNull();
+  if (port === null) {
+    throw new Error(`Failed to detect server port from stderr output:\n${stderrOutput}`);
+  }
 
   // Fetch the HTML from the root route
   const rootUrl = `http://localhost:${port}/`;

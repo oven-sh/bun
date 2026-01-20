@@ -1393,6 +1393,19 @@ pub const PackCommand = struct {
                 },
                 .entry => |entry| entry,
             };
+
+            // Re-validate private flag after scripts may have modified it.
+            // Note: The tarball filename uses the original name/version (matching npm behavior),
+            // but we re-check private to prevent accidentally publishing a now-private package.
+            if (comptime for_publish) {
+                if (json.root.get("private")) |private| {
+                    if (private.asBool()) |is_private| {
+                        if (is_private) {
+                            return error.PrivatePackage;
+                        }
+                    }
+                }
+            }
         }
 
         // Create the edited package.json content after lifecycle scripts have run

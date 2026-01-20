@@ -13,7 +13,13 @@ fn PathBufferPoolT(comptime T: type) type {
 
         pub fn put(buffer: *const T) void {
             // there's no deinit function on T so @constCast is fine
-            var node: *Pool.Node = @alignCast(@fieldParentPtr("data", @constCast(buffer)));
+            const node: *Pool.Node = @alignCast(@fieldParentPtr("data", @constCast(buffer)));
+            // Validate the allocator pointer to catch use-after-free or invalid buffer pointers.
+            // A valid allocator should have non-null ptr and vtable fields.
+            if (comptime Environment.isDebug) {
+                bun.debugAssert(@intFromPtr(node.allocator.ptr) != 0);
+                bun.debugAssert(@intFromPtr(node.allocator.vtable) != 0);
+            }
             node.release();
         }
 

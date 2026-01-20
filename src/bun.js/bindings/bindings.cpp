@@ -6155,11 +6155,8 @@ extern "C" JSC::EncodedJSValue Bun__REPL__evaluate(
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
-    // Set _ to the last result (only if it's not undefined)
-    // Put directly on globalObject, which is the target of the globalThis proxy
-    if (!result.isUndefined()) {
-        globalObject->putDirect(vm, JSC::Identifier::fromString(vm, "_"_s), result);
-    }
+    // Note: _ is now set in Zig code (repl.zig) after extracting the value from
+    // the REPL transform wrapper. We don't set it here anymore.
 
     return JSC::JSValue::encode(result);
 }

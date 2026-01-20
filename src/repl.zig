@@ -994,16 +994,22 @@ fn isIncompleteCode(code: []const u8) bool {
 
 fn evaluateAndPrint(self: *Repl, code: []const u8) void {
     const global = self.global orelse return;
+    const vm = self.vm orelse return;
 
-    // Set up special REPL variables
-    self.setReplVariables();
+    // Transform the code using REPL mode (hoists declarations, wraps result in { value: expr })
+    const transformed_code = self.transformForRepl(code) orelse {
+        // Transform failed, try evaluating raw code (for syntax errors, etc.)
+        self.evaluateRaw(code);
+        return;
+    };
+    defer self.allocator.free(transformed_code);
 
-    // Evaluate the code
+    // Evaluate the transformed code
     var exception: jsc.JSValue = .js_undefined;
     const result = Bun__REPL__evaluate(
         global,
-        code.ptr,
-        code.len,
+        transformed_code.ptr,
+        transformed_code.len,
         "[repl]".ptr,
         "[repl]".len,
         &exception,
@@ -1016,10 +1022,55 @@ fn evaluateAndPrint(self: *Repl, code: []const u8) void {
         return;
     }
 
-    // Store and print result
-    self.last_result = result;
+    // Handle async IIFE results - wait for promise to resolve
+    var resolved_result = result;
+    if (result.asPromise()) |promise| {
+        // Wait for the promise to settle
+        vm.waitForPromise(.{ .normal = promise });
 
-    if (result.isUndefined()) {
+        // Check promise status after waiting
+        switch (promise.status()) {
+            .fulfilled => {
+                resolved_result = promise.result(vm.jsc_vm);
+            },
+            .rejected => {
+                const rejection = promise.result(vm.jsc_vm);
+                promise.setHandled();
+                self.last_error = rejection;
+                // Set _error on the global object
+                const global_this = global.toJSValue();
+                global_this.put(global, "_error", rejection);
+                self.printJSError(rejection);
+                return;
+            },
+            .pending => {
+                // Should not happen after waitForPromise
+                self.print("[Promise still pending]\n", .{});
+                return;
+            },
+        }
+    }
+
+    // Extract the value from the result wrapper { value: expr }
+    // The REPL transform wraps the last expression in { value: expr }
+    var actual_result = resolved_result;
+    if (resolved_result.isObject()) {
+        if (resolved_result.getOwn(global, "value") catch null) |value| {
+            actual_result = value;
+        }
+    }
+
+    // Store and print result
+    self.last_result = actual_result;
+
+    // Set _ to the last result (only if not undefined)
+    // Use the global object as JSValue and put the property on it
+    if (!actual_result.isUndefined()) {
+        const global_this = global.toJSValue();
+        global_this.put(global, "_", actual_result);
+    }
+
+    if (actual_result.isUndefined()) {
         if (self.use_colors) {
             self.print("{s}undefined{s}\n", .{ Color.dim, Color.reset });
         } else {
@@ -1027,7 +1078,7 @@ fn evaluateAndPrint(self: *Repl, code: []const u8) void {
         }
     } else {
         // Format and print the result using util.inspect
-        const formatted = Bun__REPL__formatValue(global, result, 4, self.use_colors);
+        const formatted = Bun__REPL__formatValue(global, actual_result, 4, self.use_colors);
         if (!formatted.isUndefined() and formatted.isString()) {
             const slice = formatted.toSlice(global, self.allocator) catch {
                 self.print("[Error formatting value]\n", .{});
@@ -1039,7 +1090,7 @@ fn evaluateAndPrint(self: *Repl, code: []const u8) void {
             }
         } else {
             // Fallback to simple toString
-            const slice = result.toSlice(global, self.allocator) catch {
+            const slice = actual_result.toSlice(global, self.allocator) catch {
                 self.print("[object]\n", .{});
                 return;
             };
@@ -1049,9 +1100,157 @@ fn evaluateAndPrint(self: *Repl, code: []const u8) void {
     }
 
     // Tick the event loop to handle any pending work
+    vm.tick();
+}
+
+/// Evaluate code without REPL transforms (fallback for errors)
+/// Evaluate code without REPL transforms (fallback for errors)
+/// The C++ Bun__REPL__evaluate handles setting _ and _error
+fn evaluateRaw(self: *Repl, code: []const u8) void {
+    const global = self.global orelse return;
+
+    var exception: jsc.JSValue = .js_undefined;
+    const result = Bun__REPL__evaluate(
+        global,
+        code.ptr,
+        code.len,
+        "[repl]".ptr,
+        "[repl]".len,
+        &exception,
+    );
+
+    if (!exception.isUndefined() and !exception.isNull()) {
+        self.last_error = exception;
+        self.printJSError(exception);
+        return;
+    }
+
+    self.last_result = result;
+
+    if (!result.isUndefined()) {
+        const formatted = Bun__REPL__formatValue(global, result, 4, self.use_colors);
+        if (!formatted.isUndefined() and formatted.isString()) {
+            const slice = formatted.toSlice(global, self.allocator) catch return;
+            defer slice.deinit();
+            if (slice.len > 0) {
+                self.print("{s}\n", .{slice.slice()});
+            }
+        }
+    } else {
+        if (self.use_colors) {
+            self.print("{s}undefined{s}\n", .{ Color.dim, Color.reset });
+        } else {
+            self.print("undefined\n", .{});
+        }
+    }
+
     if (self.vm) |vm| {
         vm.tick();
     }
+}
+
+/// Transform code using the REPL parser (hoists declarations, wraps expressions)
+fn transformForRepl(self: *Repl, code: []const u8) ?[]const u8 {
+    const vm = self.vm orelse return null;
+
+    // Skip empty code
+    if (code.len == 0 or std.mem.trim(u8, code, " \t\n\r").len == 0) {
+        return null;
+    }
+
+    // Check if code looks like an object literal that would be misinterpreted as a block
+    // If code starts with { (after whitespace) and doesn't end with ;
+    const is_object_literal = isLikelyObjectLiteral(code);
+    const processed_code = if (is_object_literal)
+        std.fmt.allocPrint(self.allocator, "({s})", .{code}) catch return null
+    else
+        code;
+    defer if (is_object_literal) self.allocator.free(processed_code);
+
+    // Create arena for parsing
+    var arena = MimallocArena.init();
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    // Set up parser options with repl_mode enabled
+    var opts = js_parser.Parser.Options.init(vm.transpiler.options.jsx, .js);
+    opts.repl_mode = true;
+    opts.features.dead_code_elimination = false; // REPL needs all code
+    opts.features.top_level_await = true; // Enable top-level await in REPL
+
+    // Create log for errors
+    var log = logger.Log.init(arena.backingAllocator());
+    defer log.deinit();
+
+    // Create source
+    const source = logger.Source.initPathString("[repl]", processed_code);
+
+    // Parse with REPL transforms
+    var parser = js_parser.Parser.init(
+        opts,
+        &log,
+        &source,
+        vm.transpiler.options.define,
+        allocator,
+    ) catch return null;
+
+    const parse_result = parser.parse() catch return null;
+    if (parse_result != .ast) return null;
+    const ast = parse_result.ast;
+    // Don't call ast.deinit() - the arena handles cleanup
+
+    // Check for parse errors
+    if (log.errors > 0) return null;
+
+    // Print the transformed AST back to JavaScript
+    const buffer_writer = js_printer.BufferWriter.init(self.allocator);
+    var buffer_printer = js_printer.BufferPrinter.init(buffer_writer);
+
+    // Create symbol map from ast.symbols
+    const symbols_nested = bun.ast.Symbol.NestedList.fromBorrowedSliceDangerous(&.{ast.symbols});
+    const symbols_map = bun.ast.Symbol.Map.initList(symbols_nested);
+
+    _ = js_printer.printAst(
+        @TypeOf(&buffer_printer),
+        &buffer_printer,
+        ast,
+        symbols_map,
+        &source,
+        true, // ascii_only
+        .{ .mangled_props = null },
+        false, // generate_source_map
+    ) catch return null;
+
+    // Get the written buffer
+    const written = buffer_printer.ctx.getWritten();
+    return self.allocator.dupe(u8, written) catch null;
+}
+
+/// Check if code looks like an object literal that would be misinterpreted as a block
+fn isLikelyObjectLiteral(code: []const u8) bool {
+    // Skip leading whitespace
+    var start: usize = 0;
+    while (start < code.len and (code[start] == ' ' or code[start] == '\t' or code[start] == '\n' or code[start] == '\r')) {
+        start += 1;
+    }
+
+    // Check if starts with {
+    if (start >= code.len or code[start] != '{') {
+        return false;
+    }
+
+    // Skip trailing whitespace
+    var end: usize = code.len;
+    while (end > 0 and (code[end - 1] == ' ' or code[end - 1] == '\t' or code[end - 1] == '\n' or code[end - 1] == '\r')) {
+        end -= 1;
+    }
+
+    // Check if ends with semicolon - if so, it's likely a block statement
+    if (end > 0 and code[end - 1] == ';') {
+        return false;
+    }
+
+    return true;
 }
 
 fn setReplVariables(self: *Repl) void {
@@ -1482,6 +1681,10 @@ const Output = bun.Output;
 const fmt = bun.fmt;
 const jsc = bun.jsc;
 const strings = bun.strings;
+const logger = bun.logger;
+const js_parser = bun.js_parser;
+const js_printer = bun.js_printer;
+const MimallocArena = bun.allocators.MimallocArena;
 
 const Environment = bun.Environment;
 const VERSION = Environment.version_string;

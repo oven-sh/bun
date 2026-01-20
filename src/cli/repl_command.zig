@@ -580,9 +580,10 @@ pub const Repl = struct {
         if (word.len == 0) return;
 
         // Get completions
-        const completions = try self.getCompletions(word);
-        defer self.allocator.free(completions);
+        const result = try self.getCompletions(word);
+        defer self.freeCompletions(result);
 
+        const completions = result.items;
         if (completions.len == 0) return;
 
         if (completions.len == 1) {
@@ -645,7 +646,14 @@ pub const Repl = struct {
         }
     }
 
-    fn getCompletions(self: *Self, word: []const u8) ![][]const u8 {
+    /// Result of getCompletions - tracks whether strings need freeing
+    const CompletionsResult = struct {
+        items: []const []const u8,
+        /// If true, caller must free each string in items
+        owns_strings: bool,
+    };
+
+    fn getCompletions(self: *Self, word: []const u8) !CompletionsResult {
         var completions: ArrayList([]const u8) = .{};
 
         // Check if this is a property access
@@ -655,7 +663,10 @@ pub const Repl = struct {
             const prop_prefix = word[dot_pos + 1 ..];
 
             // Try to get the object by evaluating the path
-            const obj_value = self.getObjectForPath(obj_name) orelse return completions.toOwnedSlice(self.allocator);
+            const obj_value = self.getObjectForPath(obj_name) orelse return .{
+                .items = try completions.toOwnedSlice(self.allocator),
+                .owns_strings = true,
+            };
 
             // Get property names from JSC
             if (obj_value.isObject()) {
@@ -664,20 +675,35 @@ pub const Repl = struct {
                         .skip_empty_name = true,
                         .include_value = false,
                         .own_properties_only = false, // Include prototype properties
-                    }).init(self.global, js_obj) catch return completions.toOwnedSlice(self.allocator);
+                    }).init(self.global, js_obj) catch return .{
+                        .items = try completions.toOwnedSlice(self.allocator),
+                        .owns_strings = true,
+                    };
                     defer prop_iter.deinit();
 
                     while (prop_iter.next() catch null) |name| {
                         const name_str = name.toOwnedSlice(self.allocator) catch continue;
                         // Filter by prefix
                         if (prop_prefix.len == 0 or strings.startsWith(name_str, prop_prefix)) {
-                            try completions.append(self.allocator, name_str);
+                            completions.append(self.allocator, name_str) catch |err| {
+                                self.allocator.free(name_str);
+                                // Free all previously added strings on error
+                                for (completions.items) |s| {
+                                    self.allocator.free(s);
+                                }
+                                completions.deinit(self.allocator);
+                                return err;
+                            };
                         } else {
                             self.allocator.free(name_str);
                         }
                     }
                 }
             }
+            return .{
+                .items = try completions.toOwnedSlice(self.allocator),
+                .owns_strings = true,
+            };
         } else {
             // Global completion
             // Add JavaScript globals
@@ -736,7 +762,19 @@ pub const Repl = struct {
             }
         }
 
-        return try completions.toOwnedSlice(self.allocator);
+        return .{
+            .items = try completions.toOwnedSlice(self.allocator),
+            .owns_strings = false, // Static strings don't need freeing
+        };
+    }
+
+    fn freeCompletions(self: *Self, result: CompletionsResult) void {
+        if (result.owns_strings) {
+            for (result.items) |s| {
+                self.allocator.free(s);
+            }
+        }
+        self.allocator.free(result.items);
     }
 
     fn isIdentifierChar(c: u8) bool {
@@ -973,11 +1011,9 @@ pub const Repl = struct {
             return;
         };
 
-        // Run the event loop until the promise resolves or rejects
-        const event_loop = self.vm.eventLoop();
-        while (promise.status() == .pending) {
-            event_loop.tick();
-        }
+        // Wait for the promise using the VM's event loop handling
+        // This properly handles edge cases like execution being forbidden
+        self.vm.waitForPromise(.{ .normal = promise });
 
         const end_time = std.time.nanoTimestamp();
         const elapsed_ms = @as(f64, @floatFromInt(end_time - start_time)) / 1_000_000.0;
@@ -1363,10 +1399,10 @@ pub fn exec(ctx: Command.Context) !void {
     js_ast.Stmt.Data.Store.create();
 
     var arena = Arena.init();
-    // Don't defer arena.deinit() - we need it to stay alive for the REPL session
+    errdefer arena.deinit();
 
     // Initialize VirtualMachine
-    const vm = try VirtualMachine.init(.{
+    const vm = VirtualMachine.init(.{
         .allocator = arena.allocator(),
         .log = ctx.log,
         .args = ctx.args,
@@ -1374,7 +1410,11 @@ pub fn exec(ctx: Command.Context) !void {
         .smol = ctx.runtime_options.smol,
         .debugger = ctx.runtime_options.debugger,
         .eval = true, // REPL evaluates code
-    });
+    }) catch |err| {
+        js_ast.Expr.Data.Store.reset();
+        js_ast.Stmt.Data.Store.reset();
+        return err;
+    };
 
     // Configure event loop and global
     vm.regular_event_loop.global = vm.global;

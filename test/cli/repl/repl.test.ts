@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
 
 // Helper to run REPL with piped input and capture output
-async function runRepl(input: string, timeout = 5000): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+async function runRepl(input: string): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   await using proc = Bun.spawn([bunExe(), "repl"], {
     env: bunEnv,
     stdin: "pipe",
@@ -14,14 +14,7 @@ async function runRepl(input: string, timeout = 5000): Promise<{ stdout: string;
   proc.stdin.write(input);
   proc.stdin.end();
 
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    setTimeout(() => reject(new Error("REPL timed out")), timeout);
-  });
-
-  const [stdout, stderr, exitCode] = await Promise.race([
-    Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]),
-    timeoutPromise,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   return { stdout, stderr, exitCode };
 }

@@ -5,6 +5,7 @@
 .envrc
 .eslintcache
 .gdb_history
+.bun_repl_history
 .idea
 .next
 .ninja_deps

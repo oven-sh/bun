@@ -34,6 +34,10 @@ struct WorkerOptions {
     Vector<String> argv;
     // If nullopt, inherit execArgv from the parent thread
     std::optional<Vector<String>> execArgv;
+
+    // For Node workers: the transferred parentPort
+    // This is disentangled from the parent and entangled in the worker
+    std::optional<TransferredMessagePort> parentPortTransferred;
 };
 
 } // namespace WebCore

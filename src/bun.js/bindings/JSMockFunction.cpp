@@ -315,7 +315,7 @@ public:
         this->setName(nameToUse);
 
         if (catcher.exception()) {
-            catcher.clearException();
+            (void)catcher.tryClearException();
         }
     }
 
@@ -939,7 +939,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionCall, (JSGlobalObject * lexicalGlobalObje
                 if (auto* returnValuesArray = fn->returnValues.get()) {
                     returnValuesArray->putDirectIndex(globalObject, returnValueIndex, createMockResult(vm, globalObject, "throw"_s, exc->value()));
                     fn->returnValues.set(vm, fn, returnValuesArray);
-                    catchScope.clearException();
+                    (void)catchScope.tryClearException();
                     JSC::throwException(globalObject, scope, exc);
                     return {};
                 }

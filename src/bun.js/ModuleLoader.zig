@@ -40,8 +40,9 @@ pub fn resolveEmbeddedFile(vm: *VirtualMachine, path_buf: *bun.PathBuffer, input
     }
 
     // atomically write to a tmpfile and then move it to the final destination
-    var tmpname_buf: bun.PathBuffer = undefined;
-    const tmpfilename = bun.fs.FileSystem.tmpname(extname, &tmpname_buf, bun.hash(file.name)) catch return null;
+    const tmpname_buf = bun.path_buffer_pool.get();
+    defer bun.path_buffer_pool.put(tmpname_buf);
+    const tmpfilename = bun.fs.FileSystem.tmpname(extname, tmpname_buf, bun.hash(file.name)) catch return null;
 
     const tmpdir: bun.FD = .fromStdDir(bun.fs.FileSystem.instance.tmpdir() catch return null);
 
@@ -50,7 +51,7 @@ pub fn resolveEmbeddedFile(vm: *VirtualMachine, path_buf: *bun.PathBuffer, input
     defer tmpfile.fd.close();
 
     switch (bun.api.node.fs.NodeFS.writeFileWithPathBuffer(
-        &tmpname_buf, // not used
+        tmpname_buf, // not used
 
         .{
             .data = .{

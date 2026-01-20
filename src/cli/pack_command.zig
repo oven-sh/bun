@@ -1367,8 +1367,16 @@ pub const PackCommand = struct {
         // If any lifecycle scripts ran, they may have modified package.json,
         // so we need to re-read it from disk to pick up any changes.
         if (ran_scripts) {
-            // Invalidate the cached entry by removing it
-            _ = manager.workspace_package_json_cache.map.remove(abs_package_json_path);
+            // Invalidate the cached entry by removing it.
+            // On Windows, the cache key is stored with POSIX path separators,
+            // so we need to convert the path before removing.
+            var cache_key_buf: if (Environment.isWindows) PathBuffer else void = undefined;
+            const cache_key = if (comptime Environment.isWindows) blk: {
+                @memcpy(cache_key_buf[0..abs_package_json_path.len], abs_package_json_path);
+                bun.path.dangerouslyConvertPathToPosixInPlace(u8, cache_key_buf[0..abs_package_json_path.len]);
+                break :blk cache_key_buf[0..abs_package_json_path.len];
+            } else abs_package_json_path;
+            _ = manager.workspace_package_json_cache.map.remove(cache_key);
 
             // Re-read package.json from disk
             json = switch (manager.workspace_package_json_cache.getWithPath(manager.allocator, manager.log, abs_package_json_path, .{

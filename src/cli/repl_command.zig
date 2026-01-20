@@ -932,10 +932,23 @@ pub const Repl = struct {
         const parse_result = transpiler.parse(parse_opts, null) orelse {
             // Check for parse errors
             if (transpiler.log.errors > 0) {
-                // Print errors
+                // Print errors with source location context if available
                 for (transpiler.log.msgs.items) |msg| {
                     if (msg.kind == .err) {
-                        Output.pretty("<red>Parse error: {s}<r>\n", .{msg.data.text});
+                        if (msg.data.location) |loc| {
+                            if (loc.line > 0) {
+                                // Include line and column information
+                                Output.pretty("<red>Parse error<r> <d>[{d}:{d}]<r><red>: {s}<r>\n", .{
+                                    loc.line,
+                                    loc.column + 1, // Convert 0-based to 1-based
+                                    msg.data.text,
+                                });
+                            } else {
+                                Output.pretty("<red>Parse error: {s}<r>\n", .{msg.data.text});
+                            }
+                        } else {
+                            Output.pretty("<red>Parse error: {s}<r>\n", .{msg.data.text});
+                        }
                     }
                 }
                 transpiler.log.msgs.clearRetainingCapacity();

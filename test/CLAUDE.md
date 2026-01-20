@@ -215,6 +215,30 @@ test("handles errors", async () => {
 });
 ```
 
+### Avoid dynamic import & require
+
+**Only** use dynamic import or require when the test is specifically testing something relataed to dynamic import or require. Otherwise, **always use module-scope import statements**.
+
+**BAD, do not do this**:
+
+```ts
+test("foo", async () => {
+  // BAD: Unnecessary usage of dynamic import.
+  const { readFile } = await import("node:fs");
+
+  expect(await readFile("ok.txt")).toBe("");
+});
+```
+
+**GOOD, do this:**
+
+```ts
+import { readFile } from "node:fs";
+test("foo", async () => {
+  expect(await readFile("ok.txt")).toBe("");
+});
+```
+
 ### Test Utilities
 
 - Use `describe.each()` for parameterized tests

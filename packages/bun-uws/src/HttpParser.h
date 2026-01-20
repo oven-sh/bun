@@ -18,7 +18,7 @@
 #pragma once
 
 #ifndef UWS_HTTP_MAX_HEADERS_COUNT
-#define UWS_HTTP_MAX_HEADERS_COUNT 100
+#define UWS_HTTP_MAX_HEADERS_COUNT 200
 #endif
 
 // todo: HttpParser is in need of a few clean-ups and refactorings

@@ -602,6 +602,16 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
         }
     }
 
+    // Compute Basic auth from target URL credentials (for WebSocket upgrade request)
+    String targetAuthorization;
+    if (!m_url.user().isEmpty()) {
+        auto credentials = makeString(m_url.user(), ':', m_url.password());
+        auto utf8 = credentials.utf8();
+        auto encoded = base64EncodeToString(std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(utf8.data()), utf8.length()));
+        targetAuthorization = makeString("Basic "_s, encoded);
+    }
+    ZigString targetAuth = Zig::toZigString(targetAuthorization);
+
     // Pass SSLConfig pointer to Zig (ownership transferred - Zig will deinit when connection closes)
     // After this call, m_sslConfig should not be used by C++ anymore
     void* sslConfig = m_sslConfig;
@@ -622,7 +632,8 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
             hasProxy ? &proxyHost : nullptr, proxyPort,
             (hasProxy && !proxyConfig->authorization.isEmpty()) ? &proxyAuth : nullptr,
             proxyHeaderNames.begin(), proxyHeaderValues.begin(), proxyHeaderNames.size(),
-            sslConfig, is_secure);
+            sslConfig, is_secure,
+            targetAuthorization.isEmpty() ? nullptr : &targetAuth);
     } else {
         us_socket_context_t* ctx = scriptExecutionContext()->webSocketContext<false>();
         RELEASE_ASSERT(ctx);
@@ -633,7 +644,8 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
             hasProxy ? &proxyHost : nullptr, proxyPort,
             (hasProxy && !proxyConfig->authorization.isEmpty()) ? &proxyAuth : nullptr,
             proxyHeaderNames.begin(), proxyHeaderValues.begin(), proxyHeaderNames.size(),
-            sslConfig, is_secure);
+            sslConfig, is_secure,
+            targetAuthorization.isEmpty() ? nullptr : &targetAuth);
     }
 
     proxyHeaderValues.clear();

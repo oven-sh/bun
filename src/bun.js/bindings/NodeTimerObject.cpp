@@ -61,7 +61,7 @@ static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue call
 
     if (scope.exception()) [[unlikely]] {
         auto* exception = scope.exception();
-        scope.clearException();
+        (void)scope.tryClearException();
         Bun__reportUnhandledError(globalObject, JSValue::encode(exception));
         hadException = true;
     }

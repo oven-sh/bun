@@ -1,12 +1,13 @@
 import { cc, CString, ptr, type FFIFunction, type Library } from "bun:ffi";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { promises as fs } from "fs";
-import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, tempDirWithFiles } from "harness";
 import path from "path";
 
 // TODO: we need to install build-essential and Apple SDK in CI.
 // It can't find includes. It can on machines with that enabled.
-it.todoIf(isWindows)("can run a .c file", () => {
+// TinyCC's setjmp/longjmp error handling conflicts with ASan.
+it.todoIf(isWindows || isASAN)("can run a .c file", () => {
   const result = Bun.spawnSync({
     cmd: [bunExe(), path.join(__dirname, "cc-fixture.js")],
     cwd: __dirname,
@@ -17,7 +18,8 @@ it.todoIf(isWindows)("can run a .c file", () => {
   expect(result.exitCode).toBe(0);
 });
 
-describe("given an add(a, b) function", () => {
+// TinyCC's setjmp/longjmp error handling conflicts with ASan.
+describe.skipIf(isASAN)("given an add(a, b) function", () => {
   const source = /* c */ `
       int add(int a, int b) {
         return a + b;

@@ -1155,7 +1155,7 @@ void generateNativeModule_NodeModule(JSC::JSGlobalObject* lexicalGlobalObject,
     if (constructor->hasNonReifiedStaticProperties()) {
         constructor->reifyAllStaticProperties(globalObject);
         if (catchScope.exception()) {
-            catchScope.clearException();
+            (void)catchScope.tryClearException();
         }
     }
 
@@ -1172,7 +1172,7 @@ void generateNativeModule_NodeModule(JSC::JSGlobalObject* lexicalGlobalObject,
 
         if (catchScope.exception()) [[unlikely]] {
             value = {};
-            catchScope.clearException();
+            (void)catchScope.tryClearException();
         }
 
         exportNames.append(property);

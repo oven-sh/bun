@@ -783,7 +783,7 @@ pub fn doRedirect(
         NewHTTPContext(is_ssl).closeSocket(socket);
     } else {
         // we need to clean the client reference before closing the socket because we are going to reuse the same ref in a another request
-        if (this.isKeepAlivePossible()) {
+        if (this.isKeepAlivePossible() and !socket.isClosedOrHasError()) {
             log("Keep-Alive release in redirect", .{});
             assert(this.connected_url.hostname.len > 0);
             ctx.releaseSocket(
@@ -2623,6 +2623,8 @@ pub const AsyncHTTP = @import("./http/AsyncHTTP.zig");
 pub const InternalState = @import("./http/InternalState.zig");
 pub const CertificateInfo = @import("./http/CertificateInfo.zig");
 pub const FetchRedirect = @import("./http/FetchRedirect.zig").FetchRedirect;
+pub const FetchCacheMode = @import("./http/FetchCacheMode.zig").FetchCacheMode;
+pub const FetchRequestMode = @import("./http/FetchRequestMode.zig").FetchRequestMode;
 pub const InitError = @import("./http/InitError.zig").InitError;
 pub const HTTPRequestBody = @import("./http/HTTPRequestBody.zig").HTTPRequestBody;
 pub const SendFile = @import("./http/SendFile.zig");

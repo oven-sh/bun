@@ -22,6 +22,11 @@ pub fn parse(
     var arena = bun.ArenaAllocator.init(globalThis.allocator());
     const allocator = arena.allocator();
     defer arena.deinit();
+
+    var ast_memory_allocator = bun.handleOom(allocator.create(ast.ASTMemoryAllocator));
+    var ast_scope = ast_memory_allocator.enter(allocator);
+    defer ast_scope.exit();
+
     var log = logger.Log.init(default_allocator);
     defer log.deinit();
     const input_value = callframe.argument(0);
@@ -32,7 +37,10 @@ pub fn parse(
     var input_slice = try input_value.toSlice(globalThis, bun.default_allocator);
     defer input_slice.deinit();
     const source = &logger.Source.initPathString("input.jsonc", input_slice.slice());
-    const parse_result = json.parseTSConfig(source, &log, allocator, true) catch {
+    const parse_result = json.parseTSConfig(source, &log, allocator, true) catch |err| {
+        if (err == error.StackOverflow) {
+            return globalThis.throwStackOverflow();
+        }
         return globalThis.throwValue(try log.toJS(globalThis, default_allocator, "Failed to parse JSONC"));
     };
 
@@ -46,6 +54,7 @@ pub fn parse(
 }
 
 const bun = @import("bun");
+const ast = bun.ast;
 const default_allocator = bun.default_allocator;
 const logger = bun.logger;
 const json = bun.interchange.json;

@@ -117,6 +117,7 @@ pub const MultiPartUpload = struct {
     proxy: []const u8,
     content_type: ?[]const u8 = null,
     content_disposition: ?[]const u8 = null,
+    content_encoding: ?[]const u8 = null,
     upload_id: []const u8 = "",
     uploadid_buffer: bun.MutableString = .{ .allocator = bun.default_allocator, .list = .{} },
 
@@ -284,6 +285,11 @@ pub const MultiPartUpload = struct {
                 bun.default_allocator.free(cd);
             }
         }
+        if (this.content_encoding) |ce| {
+            if (ce.len > 0) {
+                bun.default_allocator.free(ce);
+            }
+        }
         this.credentials.deref();
         this.uploadid_buffer.deinit();
         for (this.multipart_etags.items) |tag| {
@@ -310,6 +316,7 @@ pub const MultiPartUpload = struct {
                         .body = this.buffered.slice(),
                         .content_type = this.content_type,
                         .content_disposition = this.content_disposition,
+                        .content_encoding = this.content_encoding,
                         .acl = this.acl,
                         .storage_class = this.storage_class,
                         .request_payer = this.request_payer,
@@ -602,6 +609,7 @@ pub const MultiPartUpload = struct {
                 .search_params = "?uploads=",
                 .content_type = this.content_type,
                 .content_disposition = this.content_disposition,
+                .content_encoding = this.content_encoding,
                 .acl = this.acl,
                 .storage_class = this.storage_class,
                 .request_payer = this.request_payer,
@@ -680,6 +688,7 @@ pub const MultiPartUpload = struct {
                 .body = this.buffered.slice(),
                 .content_type = this.content_type,
                 .content_disposition = this.content_disposition,
+                .content_encoding = this.content_encoding,
                 .acl = this.acl,
                 .storage_class = this.storage_class,
                 .request_payer = this.request_payer,

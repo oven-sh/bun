@@ -2845,7 +2845,7 @@ pub fn finalizeBundle(
 
     if (dev.bundling_failures.count() == 0) {
         if (current_bundle.had_reload_event) {
-            const clear_terminal = !debug.isVisible();
+            const clear_terminal = !debug.isVisible() and !dev.vm.transpiler.env.hasSetNoClearTerminalOnReload(false);
             if (clear_terminal) {
                 Output.disableBuffering();
                 Output.resetTerminalAll();

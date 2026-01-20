@@ -131,6 +131,7 @@
           stdenv = pkgs.clangStdenv;
         }) {
           inherit packages;
+          hardeningDisable = [ "fortify" ];
 
           shellHook = ''
             # Set up build environment

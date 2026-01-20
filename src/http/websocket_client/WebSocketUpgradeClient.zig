@@ -114,6 +114,8 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             ssl_config: ?*SSLConfig,
             // Whether the target URL is wss:// (separate from ssl template parameter)
             target_is_secure: bool,
+            // Target URL authorization (Basic auth from ws://user:pass@host)
+            target_authorization: ?*const jsc.ZigString,
         ) callconv(.c) ?*HTTPClient {
             const vm = global.bunVM();
 
@@ -139,6 +141,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 port,
                 client_protocol,
                 extra_headers,
+                if (target_authorization) |auth| auth.slice() else null,
             ) catch return null;
 
             // Build proxy state if using proxy
@@ -1170,6 +1173,7 @@ fn buildRequestBody(
     port: u16,
     client_protocol: *const jsc.ZigString,
     extra_headers: NonUTF8Headers,
+    target_authorization: ?[]const u8,
 ) std.mem.Allocator.Error![]u8 {
     const allocator = vm.allocator;
 
@@ -1177,6 +1181,7 @@ fn buildRequestBody(
     var user_host: ?jsc.ZigString = null;
     var user_key: ?jsc.ZigString = null;
     var user_protocol: ?jsc.ZigString = null;
+    var user_authorization: bool = false;
 
     for (extra_headers.names, extra_headers.values) |name, value| {
         const name_slice = name.slice();
@@ -1186,6 +1191,8 @@ fn buildRequestBody(
             user_key = value;
         } else if (user_protocol == null and strings.eqlCaseInsensitiveASCII(name_slice, "sec-websocket-protocol", true)) {
             user_protocol = value;
+        } else if (!user_authorization and strings.eqlCaseInsensitiveASCII(name_slice, "authorization", true)) {
+            user_authorization = true;
         }
     }
 
@@ -1241,6 +1248,13 @@ fn buildRequestBody(
     var extra_headers_buf = std.array_list.Managed(u8).init(allocator);
     defer extra_headers_buf.deinit();
     const writer = extra_headers_buf.writer();
+
+    // Add Authorization header from URL credentials if user didn't provide one
+    if (!user_authorization) {
+        if (target_authorization) |auth| {
+            try writer.print("Authorization: {s}\r\n", .{auth});
+        }
+    }
 
     for (extra_headers.names, extra_headers.values) |name, value| {
         const name_slice = name.slice();

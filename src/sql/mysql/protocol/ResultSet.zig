@@ -140,7 +140,11 @@ pub const Row = struct {
                 }
             },
             else => {
-                if (column.flags.BINARY) {
+                // Only treat as binary if character_set indicates the binary pseudo-charset.
+                // The BINARY flag alone is insufficient because VARCHAR/CHAR columns
+                // with _bin collations (e.g., utf8mb4_bin) also have the BINARY flag set,
+                // but should return strings, not buffers.
+                if (column.flags.BINARY and column.character_set == DecodeBinaryValue.binary_charset) {
                     cell.* = SQLDataCell.raw(value);
                 } else {
                     const slice = value.slice();
@@ -230,7 +234,7 @@ pub const Row = struct {
             }
 
             const column = this.columns[i];
-            value.* = try decodeBinaryValue(this.globalObject, column.column_type, column.column_length, this.raw, this.bigint, column.flags.UNSIGNED, column.flags.BINARY, Context, reader);
+            value.* = try decodeBinaryValue(this.globalObject, column.column_type, column.column_length, this.raw, this.bigint, column.flags.UNSIGNED, column.flags.BINARY, column.character_set, Context, reader);
             value.index = switch (column.name_or_index) {
                 // The indexed columns can be out of order.
                 .index => |idx| idx,
@@ -260,8 +264,10 @@ const std = @import("std");
 const Data = @import("../../shared/Data.zig").Data;
 const SQLDataCell = @import("../../shared/SQLDataCell.zig").SQLDataCell;
 const SQLQueryResultMode = @import("../../shared/SQLQueryResultMode.zig").SQLQueryResultMode;
-const decodeBinaryValue = @import("./DecodeBinaryValue.zig").decodeBinaryValue;
 const decodeLengthInt = @import("./EncodeInt.zig").decodeLengthInt;
+
+const DecodeBinaryValue = @import("./DecodeBinaryValue.zig");
+const decodeBinaryValue = DecodeBinaryValue.decodeBinaryValue;
 
 const NewReader = @import("./NewReader.zig").NewReader;
 const decoderWrap = @import("./NewReader.zig").decoderWrap;

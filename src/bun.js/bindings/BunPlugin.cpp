@@ -546,7 +546,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
             auto catchScope = DECLARE_CATCH_SCOPE(vm);
             auto result = JSValue::decode(Bun__resolveSyncWithSource(globalObject, JSValue::encode(specifierString), &from, true, false));
             if (catchScope.exception()) {
-                catchScope.clearException();
+                (void)catchScope.tryClearException();
             }
 
             if (result && result.isString()) {
@@ -649,7 +649,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
                                 auto catchScope = DECLARE_CATCH_SCOPE(vm);
                                 JSValue value = object->get(globalObject, name);
                                 if (scope.exception()) [[unlikely]] {
-                                    scope.clearException();
+                                    (void)scope.tryClearException();
                                     value = jsUndefined();
                                 }
                                 moduleNamespaceObject->overrideExportValue(globalObject, name, value);

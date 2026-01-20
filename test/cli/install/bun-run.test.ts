@@ -716,19 +716,19 @@ describe.concurrent("bun run", () => {
       {
         command: ["no_run_json"],
         stdout: "",
-        stderr: /error: Script not found "no_run_json"|EACCES/,
+        stderr: /error: Cannot run ".*no_run_json\.json"|EACCES/,
         exitCode: 1,
       },
       {
         command: ["no_run_json.json"],
         stdout: "",
-        stderr: /error: Module not found "no_run_json\.json"|EACCES/,
+        stderr: /error: Cannot run ".*no_run_json\.json"|EACCES/,
         exitCode: 1,
       },
       {
         command: ["./no_run_json"],
         stdout: "",
-        stderr: /error: Module not found "\.(\/|\\|\\\\)no_run_json"|EACCES/,
+        stderr: /error: Cannot run ".*no_run_json\.json"|EACCES/,
         exitCode: 1,
       },
 

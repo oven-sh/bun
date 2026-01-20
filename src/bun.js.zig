@@ -13,21 +13,18 @@ pub const Run = struct {
 
     var run: Run = undefined;
 
-    pub fn bootStandalone(ctx: Command.Context, entry_path: string, graph: bun.StandaloneModuleGraph) !void {
+    pub fn bootStandalone(ctx: Command.Context, entry_path: string, graph_ptr: *bun.StandaloneModuleGraph) !void {
         jsc.markBinding(@src());
         bun.jsc.initialize(false);
         bun.analytics.Features.standalone_executable += 1;
-
-        const graph_ptr = try bun.default_allocator.create(bun.StandaloneModuleGraph);
-        graph_ptr.* = graph;
-        graph_ptr.set();
 
         js_ast.Expr.Data.Store.create();
         js_ast.Stmt.Data.Store.create();
         const arena = Arena.init();
 
         // Load bunfig.toml unless disabled by compile flags
-        if (!ctx.debug.loaded_bunfig and !graph.flags.disable_autoload_bunfig) {
+        // Note: config loading with execArgv is handled earlier in cli.zig via loadConfig
+        if (!ctx.debug.loaded_bunfig and !graph_ptr.flags.disable_autoload_bunfig) {
             try bun.cli.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand);
         }
 
@@ -87,7 +84,7 @@ pub const Run = struct {
 
         // If .env loading is disabled, only load process env vars
         // Otherwise, load all .env files
-        if (graph.flags.disable_default_env_files) {
+        if (graph_ptr.flags.disable_default_env_files) {
             b.options.env.behavior = .disable;
         } else {
             b.options.env.behavior = .load_all_without_inlining;
@@ -95,8 +92,8 @@ pub const Run = struct {
 
         // Control loading of tsconfig.json and package.json at runtime
         // By default, these are disabled for standalone executables
-        b.resolver.opts.load_tsconfig_json = !graph.flags.disable_autoload_tsconfig;
-        b.resolver.opts.load_package_json = !graph.flags.disable_autoload_package_json;
+        b.resolver.opts.load_tsconfig_json = !graph_ptr.flags.disable_autoload_tsconfig;
+        b.resolver.opts.load_package_json = !graph_ptr.flags.disable_autoload_package_json;
 
         b.configureDefines() catch {
             failWithBuildError(vm);

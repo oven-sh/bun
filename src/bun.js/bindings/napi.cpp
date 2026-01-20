@@ -1336,7 +1336,7 @@ extern "C" napi_status napi_get_and_clear_last_exception(napi_env env,
     } else {
         *result = toNapi(JSC::jsUndefined(), globalObject);
     }
-    scope.clearException();
+    (void)scope.tryClearException();
 
     return napi_set_last_error(env, napi_ok);
 }

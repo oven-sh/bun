@@ -534,7 +534,7 @@ extern "C" void JSBundlerPlugin__matchOnLoad(Bun::JSBundlerPlugin* plugin, const
 
     if (scope.exception()) [[unlikely]] {
         auto exception = scope.exception();
-        scope.clearException();
+        (void)scope.tryClearException();
         if (!plugin->plugin.tombstoned) {
             plugin->plugin.addError(
                 context,
@@ -577,7 +577,7 @@ extern "C" void JSBundlerPlugin__matchOnResolve(Bun::JSBundlerPlugin* plugin, co
 
     if (scope.exception()) [[unlikely]] {
         auto exception = JSValue(scope.exception());
-        scope.clearException();
+        (void)scope.tryClearException();
         if (!plugin->plugin.tombstoned) {
             JSBundlerPlugin__addError(
                 context,

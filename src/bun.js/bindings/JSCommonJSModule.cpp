@@ -230,7 +230,7 @@ bool JSCommonJSModule::load(JSC::VM& vm, Zig::GlobalObject* globalObject)
         this->m_filename.get());
 
     if (auto exception = scope.exception()) {
-        scope.clearException();
+        (void)scope.tryClearException();
 
         // On error, remove the module from the require map/
         // so that it can be re-evaluated on the next require.
@@ -1023,7 +1023,7 @@ void populateESMExports(
                 JSC::PropertyNameArrayBuilder properties(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
                 exports->methodTable()->getOwnPropertyNames(exports, globalObject, properties, DontEnumPropertiesMode::Exclude);
                 if (scope.exception()) [[unlikely]] {
-                    if (!vm.hasPendingTerminationException()) scope.clearException();
+                    if (!vm.hasPendingTerminationException()) (void)scope.tryClearException();
                     return;
                 }
 
@@ -1055,7 +1055,7 @@ void populateESMExports(
                     // If it throws, we keep them in the exports list, but mark it as undefined
                     // This is consistent with what Node.js does.
                     if (scope.exception()) [[unlikely]] {
-                        scope.clearException();
+                        (void)scope.tryClearException();
                         getterResult = jsUndefined();
                     }
 
@@ -1081,7 +1081,7 @@ void populateESMExports(
             JSC::PropertyNameArrayBuilder properties(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
             exports->methodTable()->getOwnPropertyNames(exports, globalObject, properties, DontEnumPropertiesMode::Include);
             if (scope.exception()) [[unlikely]] {
-                if (!vm.hasPendingTerminationException()) scope.clearException();
+                if (!vm.hasPendingTerminationException()) (void)scope.tryClearException();
                 return;
             }
 
@@ -1113,7 +1113,7 @@ void populateESMExports(
                 // If it throws, we keep them in the exports list, but mark it as undefined
                 // This is consistent with what Node.js does.
                 if (scope.exception()) [[unlikely]] {
-                    scope.clearException();
+                    (void)scope.tryClearException();
                     getterResult = jsUndefined();
                 }
 
@@ -1221,7 +1221,7 @@ ALWAYS_INLINE EncodedJSValue finishRequireWithError(Zig::GlobalObject* globalObj
 {
     JSC::JSValue exception = throwScope.exception();
     ASSERT(exception);
-    throwScope.clearException();
+    (void)throwScope.tryClearException();
 
     // On error, remove the module from the require map/
     // so that it can be re-evaluated on the next require.
@@ -1504,7 +1504,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
                                 moduleObject->m_dirname.get(),
                                 moduleObject->m_filename.get());
                             if (auto exception = scope.exception()) {
-                                scope.clearException();
+                                (void)scope.tryClearException();
 
                                 // On error, remove the module from the require map
                                 // so that it can be re-evaluated on the next require.

@@ -2,7 +2,7 @@ option(WEBKIT_VERSION "The version of WebKit to use")
 option(WEBKIT_LOCAL "If a local version of WebKit should be used instead of downloading")
 
 if(NOT WEBKIT_VERSION)
-  set(WEBKIT_VERSION 1d0216219a3c52cb85195f48f19ba7d5db747ff7)
+  set(WEBKIT_VERSION 5ae5f07f29059c183a8db2eef2c9aabd474ec73c)
 endif()
 
 string(SUBSTRING ${WEBKIT_VERSION} 0 16 WEBKIT_VERSION_PREFIX)
@@ -33,8 +33,8 @@ if(WEBKIT_LOCAL)
       ${WEBKIT_PATH}/JavaScriptCore/PrivateHeaders
       ${WEBKIT_PATH}/bmalloc/Headers
       ${WEBKIT_PATH}/WTF/Headers
-      ${WEBKIT_PATH}/JavaScriptCore/DerivedSources/inspector
       ${WEBKIT_PATH}/JavaScriptCore/PrivateHeaders/JavaScriptCore
+      ${WEBKIT_PATH}/JavaScriptCore/DerivedSources/inspector
     )
   endif()
 

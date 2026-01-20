@@ -1344,6 +1344,7 @@ class WebSocketServer extends EventEmitter {
     if (
       server.upgrade(req, {
         data: ws[kBunInternals],
+        headers: protocol ? { "sec-websocket-protocol": protocol } : undefined,
       })
     ) {
       if (this.clients) {

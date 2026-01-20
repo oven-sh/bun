@@ -138,7 +138,7 @@ static OnLoadResult handleOnLoadObjectResult(Zig::GlobalObject* globalObject, JS
     auto exportsValue = object->getIfPropertyExists(globalObject, builtinNames.exportsPublicName());
     if (scope.exception()) [[unlikely]] {
         result.value.error = scope.exception();
-        scope.clearException();
+        (void)scope.tryClearException();
         return result;
     }
     if (exportsValue) {
@@ -151,7 +151,7 @@ static OnLoadResult handleOnLoadObjectResult(Zig::GlobalObject* globalObject, JS
     scope.throwException(globalObject, createTypeError(globalObject, "\"object\" loader must return an \"exports\" object"_s));
     result.type = OnLoadResultTypeError;
     result.value.error = scope.exception();
-    scope.clearException();
+    (void)scope.tryClearException();
     return result;
 }
 
@@ -228,7 +228,7 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
     if (!object) [[unlikely]] {
         scope.throwException(globalObject, JSC::createError(globalObject, "Expected module mock to return an object"_s));
         result.value.error = scope.exception();
-        scope.clearException();
+        (void)scope.tryClearException();
         result.type = OnLoadResultTypeError;
         return result;
     }
@@ -236,7 +236,7 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
     auto loaderValue = object->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "loader"_s));
     if (scope.exception()) [[unlikely]] {
         result.value.error = scope.exception();
-        scope.clearException();
+        (void)scope.tryClearException();
         return result;
     }
     if (loaderValue) {
@@ -247,7 +247,7 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
             JSC::JSString* loaderJSString = loaderValue.toStringOrNull(globalObject);
             if (auto ex = scope.exception()) [[unlikely]] {
                 result.value.error = ex;
-                scope.clearException();
+                (void)scope.tryClearException();
                 return result;
             }
             if (loaderJSString) {
@@ -276,7 +276,7 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
     if (loader == BunLoaderTypeNone) [[unlikely]] {
         throwException(globalObject, scope, createError(globalObject, "Expected loader to be one of \"js\", \"jsx\", \"object\", \"ts\", \"tsx\", \"toml\", \"yaml\", or \"json\""_s));
         result.value.error = scope.exception();
-        scope.clearException();
+        (void)scope.tryClearException();
         return result;
     }
 
@@ -287,7 +287,7 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
     auto contentsValue = object->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "contents"_s));
     if (scope.exception()) [[unlikely]] {
         result.value.error = scope.exception();
-        scope.clearException();
+        (void)scope.tryClearException();
         return result;
     }
     if (contentsValue) {
@@ -305,7 +305,7 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
     if (result.value.sourceText.value.isEmpty()) [[unlikely]] {
         throwException(globalObject, scope, createError(globalObject, "Expected \"contents\" to be a string or an ArrayBufferView"_s));
         result.value.error = scope.exception();
-        scope.clearException();
+        (void)scope.tryClearException();
         return result;
     }
 
@@ -364,7 +364,7 @@ static JSValue handleVirtualModuleResult(
     const auto rejectOrResolve = [&](JSValue code) -> JSValue {
         if (auto* exception = scope.exception()) {
             if constexpr (allowPromise) {
-                scope.clearException();
+                (void)scope.tryClearException();
                 RELEASE_AND_RETURN(scope, rejectedInternalPromise(globalObject, exception));
             } else {
                 return exception;
@@ -501,7 +501,7 @@ extern "C" void Bun__onFulfillAsyncModule(
             } else {
                 auto* exception = scope.exception();
                 if (!vm.isTerminationException(exception)) {
-                    scope.clearException();
+                    (void)scope.tryClearException();
                     promise->reject(vm, globalObject, exception);
                     scope.assertNoExceptionExceptTermination();
                 }
@@ -915,7 +915,7 @@ static JSValue fetchESMSourceCode(
                 return {};
             }
 
-            scope.clearException();
+            (void)scope.tryClearException();
             RELEASE_AND_RETURN(scope, rejectedInternalPromise(globalObject, exception));
         }
 
@@ -944,7 +944,7 @@ static JSValue fetchESMSourceCode(
         if (!res->success) {
             throwException(scope, res->result.err, globalObject);
             auto* exception = scope.exception();
-            scope.clearException();
+            (void)scope.tryClearException();
             RELEASE_AND_RETURN(scope, reject(exception));
         }
 
@@ -958,7 +958,7 @@ static JSValue fetchESMSourceCode(
 
             if constexpr (allowPromise) {
                 auto* exception = scope.exception();
-                scope.clearException();
+                (void)scope.tryClearException();
                 RELEASE_AND_RETURN(scope, rejectedInternalPromise(globalObject, exception));
             } else {
                 scope.release();
@@ -1024,7 +1024,7 @@ static JSValue fetchESMSourceCode(
 
         if constexpr (allowPromise) {
             auto* exception = scope.exception();
-            scope.clearException();
+            (void)scope.tryClearException();
             RELEASE_AND_RETURN(scope, rejectedInternalPromise(globalObject, exception));
         } else {
             scope.release();
@@ -1035,7 +1035,7 @@ static JSValue fetchESMSourceCode(
     if (!res->success) {
         throwException(scope, res->result.err, globalObject);
         auto* exception = scope.exception();
-        scope.clearException();
+        (void)scope.tryClearException();
         RELEASE_AND_RETURN(scope, reject(exception));
     }
 
@@ -1055,7 +1055,7 @@ static JSValue fetchESMSourceCode(
         JSC::JSValue value = JSC::JSONParseWithException(globalObject, jsonSource);
         if (scope.exception()) [[unlikely]] {
             auto* exception = scope.exception();
-            scope.clearException();
+            (void)scope.tryClearException();
             RELEASE_AND_RETURN(scope, reject(exception));
         }
 

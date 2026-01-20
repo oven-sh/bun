@@ -65,6 +65,7 @@ pub const HardcodedModule = enum {
     @"node:trace_events",
     @"node:repl",
     @"node:inspector",
+    @"node:inspector/promises",
     @"node:http2",
     @"node:diagnostics_channel",
     @"node:dgram",
@@ -121,6 +122,7 @@ pub const HardcodedModule = enum {
         .{ "node:http2", .@"node:http2" },
         .{ "node:https", .@"node:https" },
         .{ "node:inspector", .@"node:inspector" },
+        .{ "node:inspector/promises", .@"node:inspector/promises" },
         .{ "node:module", .@"node:module" },
         .{ "node:net", .@"node:net" },
         .{ "node:readline", .@"node:readline" },
@@ -230,6 +232,7 @@ pub const HardcodedModule = enum {
             nodeEntry("node:http2"),
             nodeEntry("node:https"),
             nodeEntry("node:inspector"),
+            nodeEntry("node:inspector/promises"),
             nodeEntry("node:module"),
             nodeEntry("node:net"),
             nodeEntry("node:os"),
@@ -285,6 +288,7 @@ pub const HardcodedModule = enum {
             nodeEntry("http2"),
             nodeEntry("https"),
             nodeEntry("inspector"),
+            nodeEntry("inspector/promises"),
             nodeEntry("module"),
             nodeEntry("net"),
             nodeEntry("os"),
@@ -366,10 +370,6 @@ pub const HardcodedModule = enum {
             .{ "bun:internal-for-testing", .{ .path = "bun:internal-for-testing" } },
             .{ "ffi", .{ .path = "bun:ffi" } },
 
-            // inspector/promises is not implemented, it is an alias of inspector
-            .{ "node:inspector/promises", .{ .path = "node:inspector", .node_builtin = true } },
-            .{ "inspector/promises", .{ .path = "node:inspector", .node_builtin = true } },
-
             // Thirdparty packages we override
             .{ "@vercel/fetch", .{ .path = "@vercel/fetch" } },
             .{ "isomorphic-fetch", .{ .path = "isomorphic-fetch" } },
@@ -394,12 +394,7 @@ pub const HardcodedModule = enum {
             .{ "vitest", .{ .path = "bun:test" } },
         };
 
-        const node_extra_alias_kvs = [_]struct { string, Alias }{
-            nodeEntry("node:inspector/promises"),
-            nodeEntry("inspector/promises"),
-        };
-
-        const node_aliases = bun.ComptimeStringMap(Alias, common_alias_kvs ++ node_extra_alias_kvs);
+        const node_aliases = bun.ComptimeStringMap(Alias, common_alias_kvs);
         pub const bun_aliases = bun.ComptimeStringMap(Alias, common_alias_kvs ++ bun_extra_alias_kvs);
         const bun_test_aliases = bun.ComptimeStringMap(Alias, common_alias_kvs ++ bun_extra_alias_kvs ++ bun_test_extra_alias_kvs);
 

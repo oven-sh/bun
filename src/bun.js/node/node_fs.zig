@@ -5499,7 +5499,9 @@ pub const NodeFS = struct {
             // O_PATH is faster
             bun.O.PATH
         else
-            bun.O.RDONLY;
+            // O_NONBLOCK prevents blocking on a FIFO.
+            // O_NOCTTY prevents acquiring a controlling terminal.
+            bun.O.RDONLY | bun.O.NONBLOCK | bun.O.NOCTTY;
 
         const fd = switch (bun.sys.open(path, flags, 0)) {
             .err => |err| return .{ .err = err.withPath(path) },

@@ -929,6 +929,11 @@ pub fn parse(
 ) bun.JSError!jsc.JSValue {
     var arena: bun.ArenaAllocator = .init(bun.default_allocator);
     defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var ast_memory_allocator = bun.handleOom(allocator.create(ast.ASTMemoryAllocator));
+    var ast_scope = ast_memory_allocator.enter(allocator);
+    defer ast_scope.exit();
 
     const input_value = callFrame.argumentsAsArray(1)[0];
 

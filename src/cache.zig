@@ -120,8 +120,9 @@ pub const Fs = struct {
             opened_file = true;
         }
 
+        const will_close = rfs.needToCloseFiles() and opened_file;
         defer {
-            if (rfs.needToCloseFiles() and opened_file) {
+            if (will_close) {
                 file_handle.close();
             }
         }
@@ -143,7 +144,7 @@ pub const Fs = struct {
 
         return Entry{
             .contents = file.contents,
-            .fd = if (FeatureFlags.store_file_descriptors) file_handle.handle else 0,
+            .fd = if (FeatureFlags.store_file_descriptors and !will_close) file_handle.handle else bun.invalid_fd,
         };
     }
 

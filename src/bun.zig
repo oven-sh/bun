@@ -489,40 +489,37 @@ pub fn hash(content: []const u8) u64 {
 
 /// Get a random-ish value
 pub fn fastRandom() u64 {
-    const pcrng = struct {
-        const random_seed = struct {
-            var seed_value: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
-            pub fn get() u64 {
-                // This is slightly racy but its fine because this memoization is done as a performance optimization
-                // and we only need to do it once per process
-                var value = seed_value.load(.monotonic);
-                while (value == 0) : (value = seed_value.load(.monotonic)) {
-                    if (comptime Environment.isDebug or Environment.is_canary) {
-                        if (bun.env_var.BUN_DEBUG_HASH_RANDOM_SEED.get()) |v| {
-                            seed_value.store(v, .monotonic);
-                            return v;
-                        }
-                    }
-                    csprng(std.mem.asBytes(&value));
-                    seed_value.store(value, .monotonic);
+    const static = struct {
+        /// Global seed initialized once, used to seed thread-local PRNGs
+        var seedOnce = once(getSeed);
+
+        fn getSeed() u64 {
+            if (comptime Environment.isDebug or Environment.is_canary) {
+                if (bun.env_var.BUN_DEBUG_HASH_RANDOM_SEED.get()) |v| {
+                    return v;
                 }
-
-                return value;
             }
-        };
+            var seed_value: u64 = undefined;
+            csprng(std.mem.asBytes(&seed_value));
+            return seed_value;
+        }
 
-        var prng_: ?std.Random.DefaultPrng = null;
+        /// Thread-local PRNG - each thread gets its own instance
+        threadlocal var tls_prng: ?std.Random.DefaultPrng = null;
 
-        pub fn get() u64 {
-            if (prng_ == null) {
-                prng_ = std.Random.DefaultPrng.init(random_seed.get());
+        fn get() *std.Random.DefaultPrng {
+            if (tls_prng == null) {
+                // Seed the thread-local PRNG using the global seed XORed with thread ID
+                // to ensure different threads get different sequences
+                const global_seed = seedOnce.call(.{});
+                const thread_id = std.Thread.getCurrentId();
+                tls_prng = std.Random.DefaultPrng.init(global_seed ^ thread_id);
             }
-
-            return prng_.?.random().uintAtMost(u64, std.math.maxInt(u64));
+            return &tls_prng.?;
         }
     };
 
-    return pcrng.get();
+    return static.get().random().uintAtMost(u64, std.math.maxInt(u64));
 }
 
 pub fn hashWithSeed(seed: u64, content: []const u8) u64 {

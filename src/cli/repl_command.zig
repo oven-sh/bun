@@ -1411,8 +1411,11 @@ pub const History = struct {
         // Try to get home directory from environment
         const home = bun.getenvZ("HOME") orelse bun.getenvZ("USERPROFILE") orelse return null;
 
-        // Build path: $HOME/.bun_repl_history using proper path joining for cross-platform support
-        const path = std.fs.path.join(self.allocator, &.{ home, HISTORY_FILE_NAME }) catch return null;
+        // Build path: $HOME/.bun_repl_history using Bun's path helper for cross-platform support
+        // bun.path.join returns a slice into a thread-local buffer, so we need to dupe it
+        const parts = [_][]const u8{ home, HISTORY_FILE_NAME };
+        const joined = bun.path.join(&parts, .auto);
+        const path = self.allocator.dupe(u8, joined) catch return null;
         return path;
     }
 

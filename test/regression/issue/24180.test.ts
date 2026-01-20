@@ -81,6 +81,7 @@ export default {
   // Read stderr to get the dynamically assigned port
   // The server outputs something like "Started development server: http://localhost:PORT"
   const reader = serverProc.stderr.getReader();
+  const decoder = new TextDecoder();
   let stderrOutput = "";
   let port: number | null = null;
 
@@ -88,7 +89,7 @@ export default {
   while (Date.now() < deadline) {
     const { done, value } = await reader.read();
     if (done) break;
-    stderrOutput += new TextDecoder().decode(value);
+    stderrOutput += decoder.decode(value, { stream: true });
     // Match various host formats: localhost:PORT, 127.0.0.1:PORT, [::1]:PORT, http://host:PORT
     const match = stderrOutput.match(/(?:https?:\/\/)?(?:\[[^\]]+\]|[\w.-]+):(\d+)/);
     if (match) {

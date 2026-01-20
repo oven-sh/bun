@@ -109,9 +109,15 @@ pub const Repl = struct {
         // Print prompt
         self.printPrompt();
 
-        // Try to enter raw mode for character-by-character input
-        const stdin_fd = std.posix.STDIN_FILENO;
-        const maybe_termios = std.posix.tcgetattr(stdin_fd);
+        const stdin_fd = bun.FileDescriptor.stdin();
+
+        // On Windows or when TTY mode unavailable, use simple line reading
+        if (bun.Environment.isWindows) {
+            return self.readLineSimple(stdin_fd);
+        }
+
+        // Try to enter raw mode for character-by-character input (POSIX only)
+        const maybe_termios = std.posix.tcgetattr(stdin_fd.cast());
 
         if (maybe_termios) |original_termios| {
             // TTY mode - use interactive line editing
@@ -123,13 +129,17 @@ pub const Repl = struct {
     }
 
     /// Simple line reading for non-TTY input (piped)
-    fn readLineSimple(self: *Self, stdin_fd: std.posix.fd_t) !?[]const u8 {
+    fn readLineSimple(self: *Self, stdin_fd: bun.FileDescriptor) !?[]const u8 {
         var buf: [1]u8 = undefined;
 
         while (true) {
-            const bytes_read = std.posix.read(stdin_fd, &buf) catch |err| {
-                if (err == error.WouldBlock) continue;
-                return err;
+            const result = bun.sys.read(stdin_fd, &buf);
+            const bytes_read = switch (result) {
+                .result => |n| n,
+                .err => |e| {
+                    if (e.getErrno() == .AGAIN) continue;
+                    return e.toZigErr();
+                },
             };
 
             if (bytes_read == 0) {
@@ -154,8 +164,8 @@ pub const Repl = struct {
         return try self.allocator.dupe(u8, self.line_buffer.items);
     }
 
-    /// Interactive line reading with TTY support
-    fn readLineTTY(self: *Self, stdin_fd: std.posix.fd_t, original_termios: std.posix.termios) !?[]const u8 {
+    /// Interactive line reading with TTY support (POSIX only)
+    fn readLineTTY(self: *Self, stdin_fd: bun.FileDescriptor, original_termios: std.posix.termios) !?[]const u8 {
         var raw = original_termios;
 
         // Disable canonical mode and echo
@@ -167,15 +177,19 @@ pub const Repl = struct {
         raw.cc[@intFromEnum(std.posix.V.MIN)] = 1;
         raw.cc[@intFromEnum(std.posix.V.TIME)] = 0;
 
-        try std.posix.tcsetattr(stdin_fd, .NOW, raw);
-        defer std.posix.tcsetattr(stdin_fd, .NOW, original_termios) catch {};
+        try std.posix.tcsetattr(stdin_fd.cast(), .NOW, raw);
+        defer std.posix.tcsetattr(stdin_fd.cast(), .NOW, original_termios) catch {};
 
         var buf: [32]u8 = undefined;
 
         while (true) {
-            const bytes_read = std.posix.read(stdin_fd, &buf) catch |err| {
-                if (err == error.WouldBlock) continue;
-                return err;
+            const read_result = bun.sys.read(stdin_fd, &buf);
+            const bytes_read = switch (read_result) {
+                .result => |n| n,
+                .err => |e| {
+                    if (e.getErrno() == .AGAIN) continue;
+                    return e.toZigErr();
+                },
             };
 
             if (bytes_read == 0) {

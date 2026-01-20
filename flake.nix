@@ -40,7 +40,7 @@
           pkgs.cmake # Expected: 3.30+ on nixos-unstable as of 2025-10
           pkgs.ninja
           pkgs.pkg-config
-          pkgs.sccache
+          pkgs.ccache
 
           # Compilers and toolchain - version pinned to LLVM 19
           clang
@@ -131,6 +131,7 @@
           stdenv = pkgs.clangStdenv;
         }) {
           inherit packages;
+          hardeningDisable = [ "fortify" ];
 
           shellHook = ''
             # Set up build environment

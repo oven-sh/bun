@@ -1629,11 +1629,11 @@ pub const Formatter = struct {
                         },
 
                         .j => {
-                            // JSON.stringify the value
+                            // JSON.stringify the value using FastStringifier for SIMD optimization
                             var str = bun.String.empty;
                             defer str.deref();
 
-                            try next_value.jsonStringify(global, 0, &str);
+                            try next_value.jsonStringifyFast(global, &str);
                             this.addForNewLine(str.length());
                             writer.print("{f}", .{str});
                         },
@@ -2596,6 +2596,9 @@ pub const Formatter = struct {
                 } else if (value.as(jsc.WebCore.S3Client)) |s3client| {
                     s3client.writeFormat(ConsoleObject.Formatter, this, writer_, enable_ansi_colors) catch {};
                     return;
+                } else if (value.as(jsc.API.Archive)) |archive| {
+                    archive.writeFormat(ConsoleObject.Formatter, this, writer_, enable_ansi_colors) catch {};
+                    return;
                 } else if (value.as(bun.webcore.FetchHeaders) != null) {
                     if (try value.get(this.globalThis, "toJSON")) |toJSONFunction| {
                         this.addForNewLine("Headers ".len);
@@ -2703,7 +2706,7 @@ pub const Formatter = struct {
 
                 writer.writeAll("Promise { " ++ comptime Output.prettyFmt("<r><cyan>", enable_ansi_colors));
 
-                switch (JSPromise.status(@as(*JSPromise, @ptrCast(value.asObjectRef().?)), this.globalThis.vm())) {
+                switch (JSPromise.status(@as(*JSPromise, @ptrCast(value.asObjectRef().?)))) {
                     .pending => writer.writeAll("<pending>"),
                     .fulfilled => writer.writeAll("<resolved>"),
                     .rejected => writer.writeAll("<rejected>"),

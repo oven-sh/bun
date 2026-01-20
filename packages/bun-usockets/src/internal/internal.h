@@ -176,6 +176,8 @@ struct us_socket_flags {
     bool adopted: 1;
     /* If true, the socket is a TLS socket */
     bool is_tls: 1;
+    /* If true, the last write to this socket failed (would block) */
+    bool last_write_failed: 1;
 
 } __attribute__((packed));
 
@@ -437,6 +439,8 @@ void *us_internal_ssl_socket_ext(us_internal_ssl_socket_r s);
 void *us_internal_connecting_ssl_socket_ext(struct us_connecting_socket_t *c);
 int us_internal_ssl_socket_is_shut_down(us_internal_ssl_socket_r s);
 int us_internal_ssl_socket_is_closed(us_internal_ssl_socket_r s);
+int us_internal_ssl_socket_is_handshake_finished(us_internal_ssl_socket_r s);
+int us_internal_ssl_socket_handshake_callback_has_fired(us_internal_ssl_socket_r s);
 void us_internal_ssl_socket_shutdown(us_internal_ssl_socket_r s);
 
 struct us_internal_ssl_socket_t *us_internal_ssl_socket_context_adopt_socket(

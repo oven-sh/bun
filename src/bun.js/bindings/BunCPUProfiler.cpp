@@ -23,6 +23,19 @@ namespace Bun {
 
 // Store the profiling start time in microseconds since Unix epoch
 static double s_profilingStartTime = 0.0;
+// Set sampling interval to 1ms (1000 microseconds) to match Node.js
+static int s_samplingInterval = 1000;
+static bool s_isProfilerRunning = false;
+
+void setSamplingInterval(int intervalMicroseconds)
+{
+    s_samplingInterval = intervalMicroseconds;
+}
+
+bool isCPUProfilerRunning()
+{
+    return s_isProfilerRunning;
+}
 
 void startCPUProfiler(JSC::VM& vm)
 {
@@ -34,13 +47,11 @@ void startCPUProfiler(JSC::VM& vm)
     auto stopwatch = WTF::Stopwatch::create();
     stopwatch->start();
 
-    JSC::SamplingProfiler& samplingProfiler = vm.ensureSamplingProfiler(WTFMove(stopwatch));
-
-    // Set sampling interval to 1ms (1000 microseconds) to match Node.js
-    samplingProfiler.setTimingInterval(WTF::Seconds::fromMicroseconds(1000));
-
+    JSC::SamplingProfiler& samplingProfiler = vm.ensureSamplingProfiler(WTF::move(stopwatch));
+    samplingProfiler.setTimingInterval(WTF::Seconds::fromMicroseconds(s_samplingInterval));
     samplingProfiler.noticeCurrentThreadAsJSCExecutionThread();
     samplingProfiler.start();
+    s_isProfilerRunning = true;
 }
 
 struct ProfileNode {
@@ -56,27 +67,29 @@ struct ProfileNode {
 
 WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
 {
+    s_isProfilerRunning = false;
+
     JSC::SamplingProfiler* profiler = vm.samplingProfiler();
     if (!profiler)
         return WTF::String();
 
-    // Shut down the profiler thread first - this is critical!
-    profiler->shutdown();
-
-    // Need to hold the VM lock to safely access stack traces
+    // JSLock is re-entrant, so always acquiring it handles both JS and shutdown contexts
     JSC::JSLockHolder locker(vm);
 
     // Defer GC while we're working with stack traces
     JSC::DeferGC deferGC(vm);
 
+    // Pause the profiler while holding the lock - this is critical for thread safety.
+    // The sampling thread holds this lock while modifying traces, so holding it here
+    // ensures no concurrent modifications. We use pause() instead of shutdown() to
+    // allow the profiler to be restarted for the inspector API.
     auto& lock = profiler->getLock();
     WTF::Locker profilerLocker { lock };
+    profiler->pause();
 
     // releaseStackTraces() calls processUnverifiedStackTraces() internally
     auto stackTraces = profiler->releaseStackTraces();
-
-    if (stackTraces.isEmpty())
-        return WTF::String();
+    profiler->clearData();
 
     // Build Chrome CPU Profiler format
     // Map from stack frame signature to node ID
@@ -92,7 +105,7 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
     rootNode.lineNumber = -1;
     rootNode.columnNumber = -1;
     rootNode.hitCount = 0;
-    nodes.append(WTFMove(rootNode));
+    nodes.append(WTF::move(rootNode));
 
     int nextNodeId = 2;
     WTF::Vector<int> samples;
@@ -229,7 +242,7 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
                 node.columnNumber = columnNumber;
                 node.hitCount = 0;
 
-                nodes.append(WTFMove(node));
+                nodes.append(WTF::move(node));
 
                 // Add this node as child of parent
                 if (currentParentId > 0) {

@@ -811,6 +811,16 @@ export async function toBeWorkspaceLink(actual: string, expectedLinkPath: string
   return { pass, message };
 }
 
+export function getFDCount(): number {
+  if (isMacOS || isLinux) {
+    return fs.readdirSync(isMacOS ? "/dev/fd" : "/proc/self/fd").length;
+  }
+
+  const maxFD = openSync("/dev/null", "r");
+  closeSync(maxFD);
+  return maxFD;
+}
+
 export function getMaxFD(): number {
   if (isMacOS || isLinux) {
     let max = -1;

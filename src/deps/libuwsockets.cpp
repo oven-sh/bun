@@ -1701,7 +1701,7 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
   {
     us_socket_r s = (us_socket_t *)res;
     if(us_socket_is_closed(s->flags.is_tls, s)) return;
-    s->context->loop->data.last_write_failed = 1;
+    s->flags.last_write_failed = 1;
     us_poll_change(&s->p, s->context->loop,
                    LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
   }
@@ -1866,7 +1866,7 @@ __attribute__((callback (corker, ctx)))
 
   void us_socket_sendfile_needs_more(us_socket_r s) {
     if(us_socket_is_closed(s->flags.is_tls, s)) return;
-    s->context->loop->data.last_write_failed = 1;
+    s->flags.last_write_failed = 1;
     us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
   }
 

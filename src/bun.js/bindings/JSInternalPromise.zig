@@ -1,34 +1,37 @@
 pub const JSInternalPromise = opaque {
     extern fn JSC__JSInternalPromise__create(arg0: *JSGlobalObject) *JSInternalPromise;
-    extern fn JSC__JSInternalPromise__isHandled(arg0: *const JSInternalPromise, arg1: *VM) bool;
+    extern fn JSC__JSInternalPromise__isHandled(arg0: *const JSInternalPromise) bool;
     extern fn JSC__JSInternalPromise__rejectAsHandled(arg0: *JSInternalPromise, arg1: *JSGlobalObject, JSValue2: JSValue) void;
     extern fn JSC__JSInternalPromise__rejectAsHandledException(arg0: *JSInternalPromise, arg1: *JSGlobalObject, arg2: *jsc.Exception) void;
     extern fn JSC__JSInternalPromise__rejectedPromise(arg0: *JSGlobalObject, JSValue1: JSValue) *JSInternalPromise;
     extern fn JSC__JSInternalPromise__resolvedPromise(arg0: *JSGlobalObject, JSValue1: JSValue) *JSInternalPromise;
-    extern fn JSC__JSInternalPromise__result(arg0: *const JSInternalPromise, arg1: *VM) JSValue;
+    extern fn JSC__JSInternalPromise__result(arg0: *const JSInternalPromise) JSValue;
     extern fn JSC__JSInternalPromise__setHandled(arg0: *JSInternalPromise, arg1: *VM) void;
-    extern fn JSC__JSInternalPromise__status(arg0: *const JSInternalPromise, arg1: *VM) JSPromise.Status;
+    extern fn JSC__JSInternalPromise__status(arg0: *const JSInternalPromise) JSPromise.Status;
 
-    pub fn status(this: *const JSInternalPromise, vm: *VM) JSPromise.Status {
-        return JSC__JSInternalPromise__status(this, vm);
+    pub fn status(this: *const JSInternalPromise) JSPromise.Status {
+        return JSC__JSInternalPromise__status(this);
     }
-    pub fn result(this: *const JSInternalPromise, vm: *VM) JSValue {
-        return JSC__JSInternalPromise__result(this, vm);
+
+    pub fn result(this: *const JSInternalPromise) JSValue {
+        return JSC__JSInternalPromise__result(this);
     }
-    pub fn isHandled(this: *const JSInternalPromise, vm: *VM) bool {
-        return JSC__JSInternalPromise__isHandled(this, vm);
+
+    pub fn isHandled(this: *const JSInternalPromise) bool {
+        return JSC__JSInternalPromise__isHandled(this);
     }
+
     pub fn setHandled(this: *JSInternalPromise, vm: *VM) void {
         JSC__JSInternalPromise__setHandled(this, vm);
     }
 
     pub fn unwrap(promise: *JSInternalPromise, vm: *VM, mode: JSPromise.UnwrapMode) JSPromise.Unwrapped {
-        return switch (promise.status(vm)) {
+        return switch (promise.status()) {
             .pending => .pending,
-            .fulfilled => .{ .fulfilled = promise.result(vm) },
+            .fulfilled => .{ .fulfilled = promise.result() },
             .rejected => {
                 if (mode == .mark_handled) promise.setHandled(vm);
-                return .{ .rejected = promise.result(vm) };
+                return .{ .rejected = promise.result() };
             },
         };
     }

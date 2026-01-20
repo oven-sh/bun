@@ -304,6 +304,18 @@ pub fn generateChunksInParallel(
         }
     }
 
+    // Generate metafile JSON fragments for each chunk (after paths are resolved)
+    if (c.options.metafile) {
+        for (chunks) |*chunk| {
+            chunk.metafile_chunk_json = LinkerContext.MetafileBuilder.generateChunkJson(
+                bun.default_allocator,
+                c,
+                chunk,
+                chunks,
+            ) catch "";
+        }
+    }
+
     var output_files = try OutputFileListBuilder.init(bun.default_allocator, c, chunks, c.parse_graph.additional_output_files.items.len);
 
     const root_path = c.resolver.opts.output_dir;
@@ -327,7 +339,7 @@ pub fn generateChunksInParallel(
         for (chunks, 0..) |*chunk, chunk_index_in_chunks_list| {
             var display_size: usize = 0;
 
-            const public_path = if (chunk.is_browser_chunk_from_server_build)
+            const public_path = if (chunk.flags.is_browser_chunk_from_server_build)
                 bundler.transpilerForTarget(.browser).options.public_path
             else
                 c.options.public_path;
@@ -340,7 +352,7 @@ pub fn generateChunksInParallel(
                 chunk,
                 chunks,
                 &display_size,
-                c.resolver.opts.compile and !chunk.is_browser_chunk_from_server_build,
+                c.resolver.opts.compile and !chunk.flags.is_browser_chunk_from_server_build,
                 chunk.content.sourcemap(c.options.source_maps) != .none,
             );
             var code_result = _code_result catch @panic("Failed to allocate memory for output file");
@@ -490,7 +502,7 @@ pub fn generateChunksInParallel(
             else
                 .chunk;
 
-            const side: bun.bake.Side = if (chunk.content == .css or chunk.is_browser_chunk_from_server_build)
+            const side: bun.bake.Side = if (chunk.content == .css or chunk.flags.is_browser_chunk_from_server_build)
                 .client
             else switch (c.graph.ast.items(.target)[chunk.entry_point.source_index]) {
                 .browser => .client,
@@ -510,7 +522,7 @@ pub fn generateChunksInParallel(
                 .output_kind = output_kind,
                 .input_loader = if (chunk.entry_point.is_entry_point) c.parse_graph.input_files.items(.loader)[chunk.entry_point.source_index] else .js,
                 .output_path = try bun.default_allocator.dupe(u8, chunk.final_rel_path),
-                .is_executable = chunk.is_executable,
+                .is_executable = chunk.flags.is_executable,
                 .source_map_index = source_map_index,
                 .bytecode_index = bytecode_index,
                 .side = side,

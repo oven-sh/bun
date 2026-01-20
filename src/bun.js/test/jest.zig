@@ -430,7 +430,8 @@ pub fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []
                 'j', 'o' => {
                     var str = bun.String.empty;
                     defer str.deref();
-                    try current_arg.jsonStringify(globalThis, 0, &str);
+                    // Use jsonStringifyFast for SIMD-optimized serialization
+                    try current_arg.jsonStringifyFast(globalThis, &str);
                     const owned_slice = bun.handleOom(str.toOwnedSlice(allocator));
                     defer allocator.free(owned_slice);
                     bun.handleOom(list.appendSlice(owned_slice));

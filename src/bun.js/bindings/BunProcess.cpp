@@ -296,7 +296,7 @@ JSC_DEFINE_CUSTOM_SETTER(Process_defaultSetter, (JSC::JSGlobalObject * globalObj
     return true;
 }
 
-extern "C" bool Bun__resolveEmbeddedNodeFile(void*, BunString*);
+extern "C" bool Bun__resolveEmbeddedNodeFile(void*, BunString*, int32_t*);
 #if OS(WINDOWS)
 extern "C" HMODULE Bun__LoadLibraryBunString(BunString*);
 #endif
@@ -434,6 +434,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
     }
 
     CString utf8;
+    int32_t linuxMemfdToClose = -1;
 
     // Support embedded .node files
     // See StandaloneModuleGraph.zig for what this "$bunfs" thing is
@@ -445,8 +446,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
     bool deleteAfter = false;
     if (filename.startsWith(StandaloneModuleGraph__base_path)) {
         BunString bunStr = Bun::toString(filename);
-        if (Bun__resolveEmbeddedNodeFile(globalObject->bunVM(), &bunStr)) {
-            filename = bunStr.toWTFString(BunString::ZeroCopy);
+        if (Bun__resolveEmbeddedNodeFile(globalObject->bunVM(), &bunStr, &linuxMemfdToClose)) {
+            filename = bunStr.transferToWTFString();
             deleteAfter = !filename.startsWith("/proc/"_s);
         }
     }
@@ -481,11 +482,20 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
                 delete[] dupeZ;
             }
         }
+        ASSERT(linuxMemfdToClose == -1);
 #else
         if (deleteAfter) {
             deleteAfter = false;
             Bun__unlink(utf8.data(), utf8.length());
         }
+#if OS(LINUX)
+        if (linuxMemfdToClose != -1) {
+            close(linuxMemfdToClose);
+            linuxMemfdToClose = -1;
+        }
+#else
+        ASSERT(linuxMemfdToClose == -1);
+#endif
 #endif
     };
 
@@ -1193,7 +1203,7 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
         auto scope = DECLARE_CATCH_SCOPE(vm);
         (void)call(lexicalGlobalObject, capture, args, "uncaughtExceptionCaptureCallback"_s);
         if (auto ex = scope.exception()) {
-            scope.clearException();
+            (void)scope.tryClearException();
             // if an exception is thrown in the uncaughtException handler, we abort
             Bun__logUnhandledException(JSValue::encode(JSValue(ex)));
             Bun__Process__exit(lexicalGlobalObject, 1);
@@ -2345,7 +2355,7 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC:
     auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getStdioWriteStream, callData, globalObject->globalThis(), args);
     if (auto* exception = scope.exception()) {
         Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
-        scope.clearException();
+        (void)scope.tryClearException();
         return jsUndefined();
     }
 
@@ -2406,7 +2416,7 @@ static JSValue constructStdin(VM& vm, JSObject* processObject)
     auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getStdinStream, callData, globalObject, args);
     if (auto* exception = scope.exception()) {
         Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
-        scope.clearException();
+        (void)scope.tryClearException();
         return jsUndefined();
     }
     return result;
@@ -3730,7 +3740,7 @@ JSC_DEFINE_CUSTOM_GETTER(processTitle, (JSC::JSGlobalObject * globalObject, JSC:
     BunString str;
     Bun__Process__getTitle(globalObject, &str);
     auto value = str.transferToWTFString();
-    auto* result = jsString(globalObject->vm(), WTFMove(value));
+    auto* result = jsString(globalObject->vm(), WTF::move(value));
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, JSValue::encode(result));
 #else

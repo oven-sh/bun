@@ -32,7 +32,7 @@
 #include "KeyObject.h"
 
 namespace WTF {
-template<> class StringTypeAdapter<GCOwnedDataScope<StringView>, void> {
+template<> class StringTypeAdapter<GCOwnedDataScope<StringView>> {
 public:
     StringTypeAdapter(GCOwnedDataScope<StringView> string)
         : m_string { string }
@@ -208,7 +208,7 @@ JSObject* ErrorCodeCache::createError(VM& vm, Zig::GlobalObject* globalObject, E
     auto* structure = jsCast<Structure*>(cache->internalField(static_cast<unsigned>(code)).get());
     auto* created_error = JSC::ErrorInstance::create(globalObject, structure, message, options, nullptr, JSC::RuntimeType::TypeNothing, data.type, true);
     if (auto* thrown_exception = scope.exception()) [[unlikely]] {
-        scope.clearException();
+        (void)scope.tryClearException();
         // TODO investigate what can throw here and whether it will throw non-objects
         // (this is better than before where we would have returned nullptr from createError if any
         // exception were thrown by ErrorInstance::create)

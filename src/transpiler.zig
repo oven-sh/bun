@@ -594,7 +594,7 @@ pub const Transpiler = struct {
     ) !?options.OutputFile {
         _ = outstream;
 
-        if (resolve_result.is_external) {
+        if (resolve_result.flags.is_external) {
             return null;
         }
 
@@ -630,7 +630,7 @@ pub const Transpiler = struct {
                         .file_hash = null,
                         .macro_remappings = transpiler.options.macro_remap,
                         .jsx = resolve_result.jsx,
-                        .emit_decorator_metadata = resolve_result.emit_decorator_metadata,
+                        .emit_decorator_metadata = resolve_result.flags.emit_decorator_metadata,
                     },
                     client_entry_point_,
                 ) orelse {

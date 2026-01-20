@@ -531,7 +531,7 @@ WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& sta
     if (scope.exception()) {
         // TODO: is this correct? vm.setOnComputeErrorInfo doesnt appear to properly handle a function that can throw
         // test/js/node/test/parallel/test-stream-writable-write-writev-finish.js is the one that trips the exception checker
-        scope.clearException();
+        (void)scope.tryClearException();
         result = WTF::emptyString();
     }
 
@@ -687,7 +687,7 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
     JSCStackTrace::getFramesForCaller(vm, callFrame, errorObject, caller, stackTrace, stackTraceLimit);
 
     if (auto* instance = jsDynamicCast<JSC::ErrorInstance*>(errorObject)) {
-        instance->setStackFrames(vm, WTFMove(stackTrace));
+        instance->setStackFrames(vm, WTF::move(stackTrace));
         if (instance->hasMaterializedErrorInfo()) {
             const auto& propertyName = vm.propertyNames->stack;
             VM::DeletePropertyModeScope scope(vm, VM::DeletePropertyMode::IgnoreConfigurable);

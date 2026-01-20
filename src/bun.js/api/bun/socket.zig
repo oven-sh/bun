@@ -929,7 +929,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             const buffer: jsc.Node.StringOrBuffer = if (data_value.isUndefined())
                 jsc.Node.StringOrBuffer.empty
             else
-                jsc.Node.StringOrBuffer.fromJSWithEncodingValueMaybeAsync(globalObject, stack_fallback.get(), data_value, encoding_value, false, allow_string_object) catch {
+                jsc.Node.StringOrBuffer.fromJSWithEncodingValueAllowStringObject(globalObject, stack_fallback.get(), data_value, encoding_value, allow_string_object) catch {
                     return .fail;
                 } orelse {
                     if (!globalObject.hasException()) {
@@ -1071,7 +1071,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             const buffer: jsc.Node.BlobOrStringOrBuffer = if (args[0].isUndefined())
                 jsc.Node.BlobOrStringOrBuffer{ .string_or_buffer = jsc.Node.StringOrBuffer.empty }
             else
-                jsc.Node.BlobOrStringOrBuffer.fromJSWithEncodingValueMaybeAsyncAllowRequestResponse(globalObject, stack_fallback.get(), args[0], encoding_value, false, true) catch {
+                jsc.Node.BlobOrStringOrBuffer.fromJSWithEncodingValueAllowRequestResponse(globalObject, stack_fallback.get(), args[0], encoding_value, true) catch {
                     return .fail;
                 } orelse {
                     if (!globalObject.hasException()) {

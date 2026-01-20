@@ -150,7 +150,7 @@ void JSMessagePortPrototype::finishCreation(VM& vm)
 const ClassInfo JSMessagePort::s_info = { "MessagePort"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSMessagePort) };
 
 JSMessagePort::JSMessagePort(Structure* structure, JSDOMGlobalObject& globalObject, Ref<MessagePort>&& impl)
-    : JSEventTarget(structure, globalObject, WTFMove(impl))
+    : JSEventTarget(structure, globalObject, WTF::move(impl))
 {
 }
 
@@ -254,7 +254,7 @@ static inline JSC::EncodedJSValue jsMessagePortPrototypeFunction_postMessage1Bod
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
     auto transfer = convert<IDLSequence<IDLObject>>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.postMessage(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), WTFMove(message), WTFMove(transfer)); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.postMessage(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), WTF::move(message), WTF::move(transfer)); })));
 }
 
 static inline JSC::EncodedJSValue jsMessagePortPrototypeFunction_postMessage2Body(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSMessagePort>::ClassParameter castedThis)
@@ -270,7 +270,7 @@ static inline JSC::EncodedJSValue jsMessagePortPrototypeFunction_postMessage2Bod
     EnsureStillAliveScope argument1 = callFrame->argument(1);
     auto options = convert<IDLDictionary<StructuredSerializeOptions>>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.postMessage(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), WTFMove(message), WTFMove(options)); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.postMessage(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), WTF::move(message), WTF::move(options)); })));
 }
 
 static inline JSC::EncodedJSValue jsMessagePortPrototypeFunction_postMessageOverloadDispatcher(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSMessagePort>::ClassParameter castedThis)
@@ -478,7 +478,7 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
         // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
 #endif
     }
-    return createWrapper<MessagePort>(globalObject, WTFMove(impl));
+    return createWrapper<MessagePort>(globalObject, WTF::move(impl));
 }
 
 JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, MessagePort& impl)

@@ -610,6 +610,97 @@ declare module "bun" {
    */
   function stripANSI(input: string): string;
 
+  interface WrapAnsiOptions {
+    /**
+     * If `true`, break words in the middle if they don't fit on a line.
+     * If `false`, only break at word boundaries.
+     *
+     * @default false
+     */
+    hard?: boolean;
+
+    /**
+     * If `true`, wrap at word boundaries when possible.
+     * If `false`, don't perform word wrapping (only wrap at explicit newlines).
+     *
+     * @default true
+     */
+    wordWrap?: boolean;
+
+    /**
+     * If `true`, trim leading and trailing whitespace from each line.
+     * If `false`, preserve whitespace.
+     *
+     * @default true
+     */
+    trim?: boolean;
+
+    /**
+     * When it's ambiguous and `true`, count ambiguous width characters as 1 character wide.
+     * If `false`, count them as 2 characters wide.
+     *
+     * @default true
+     */
+    ambiguousIsNarrow?: boolean;
+  }
+
+  /**
+   * Wrap a string to fit within the specified column width, preserving ANSI escape codes.
+   *
+   * This function is designed to be compatible with the popular "wrap-ansi" NPM package.
+   *
+   * Features:
+   * - Preserves ANSI escape codes (colors, styles) across line breaks
+   * - Supports SGR codes (colors, bold, italic, etc.) and OSC 8 hyperlinks
+   * - Respects Unicode display widths (full-width characters, emoji)
+   * - Word wrapping at word boundaries (configurable)
+   *
+   * @category Utilities
+   *
+   * @param input The string to wrap
+   * @param columns The maximum column width
+   * @param options Wrapping options
+   * @returns The wrapped string
+   *
+   * @example
+   * ```ts
+   * import { wrapAnsi } from "bun";
+   *
+   * console.log(wrapAnsi("hello world", 5));
+   * // Output:
+   * // hello
+   * // world
+   *
+   * // Preserves ANSI colors across line breaks
+   * console.log(wrapAnsi("\u001b[31mhello world\u001b[0m", 5));
+   * // Output:
+   * // \u001b[31mhello\u001b[0m
+   * // \u001b[31mworld\u001b[0m
+   *
+   * // Hard wrap long words
+   * console.log(wrapAnsi("abcdefghij", 3, { hard: true }));
+   * // Output:
+   * // abc
+   * // def
+   * // ghi
+   * // j
+   * ```
+   */
+  function wrapAnsi(
+    /**
+     * The string to wrap
+     */
+    input: string,
+    /**
+     * The maximum column width
+     */
+    columns: number,
+    /**
+     * Wrapping options
+     */
+    options?: WrapAnsiOptions,
+  ): string;
+
   /**
    * TOML related APIs
    */
@@ -623,6 +714,33 @@ declare module "bun" {
      * @returns A JavaScript object
      */
     export function parse(input: string): object;
+  }
+
+  /**
+   * JSONC related APIs
+   */
+  namespace JSONC {
+    /**
+     * Parse a JSONC (JSON with Comments) string into a JavaScript value.
+     *
+     * Supports both single-line (`//`) and block comments (`/* ... *\/`), as well as
+     * trailing commas in objects and arrays.
+     *
+     * @category Utilities
+     *
+     * @param input The JSONC string to parse
+     * @returns A JavaScript value
+     *
+     * @example
+     * ```js
+     * const result = Bun.JSONC.parse(`{
+     *   // This is a comment
+     *   "name": "my-app",
+     *   "version": "1.0.0", // trailing comma is allowed
+     * }`);
+     * ```
+     */
+    export function parse(input: string): unknown;
   }
 
   /**
@@ -723,7 +841,7 @@ declare module "bun" {
    */
   function write(
     destination: BunFile | S3File | PathLike,
-    input: Blob | NodeJS.TypedArray | ArrayBufferLike | string | BlobPart[],
+    input: Blob | NodeJS.TypedArray | ArrayBufferLike | string | BlobPart[] | Archive,
     options?: {
       /**
        * If writing to a PathLike, set the permissions of the file.
@@ -816,6 +934,20 @@ declare module "bun" {
     input: BunFile,
     options?: {
       /**
+       * Set the file permissions of the destination when it is created or overwritten.
+       *
+       * Must be a valid Unix permission mode (0 to 0o777 / 511 in decimal).
+       * If omitted, defaults to the system default based on umask (typically 0o644).
+       *
+       * @throws {RangeError} If the mode is outside the valid range (0 to 0o777).
+       *
+       * @example
+       * ```ts
+       * await Bun.write(Bun.file("./secret.txt"), Bun.file("./source.txt"), { mode: 0o600 });
+       * ```
+       */
+      mode?: number;
+      /**
        * If `true`, create the parent directory if it doesn't exist. By default, this is `true`.
        *
        * If `false`, this will throw an error if the directory doesn't exist.
@@ -848,6 +980,20 @@ declare module "bun" {
     destinationPath: PathLike,
     input: BunFile,
     options?: {
+      /**
+       * Set the file permissions of the destination when it is created or overwritten.
+       *
+       * Must be a valid Unix permission mode (0 to 0o777 / 511 in decimal).
+       * If omitted, defaults to the system default based on umask (typically 0o644).
+       *
+       * @throws {RangeError} If the mode is outside the valid range (0 to 0o777).
+       *
+       * @example
+       * ```ts
+       * await Bun.write("./secret.txt", Bun.file("./source.txt"), { mode: 0o600 });
+       * ```
+       */
+      mode?: number;
       /**
        * If `true`, create the parent directory if it doesn't exist. By default, this is `true`.
        *
@@ -1942,6 +2088,107 @@ declare module "bun" {
       development?: boolean;
     };
 
+    /**
+     * Enable React Fast Refresh transform.
+     *
+     * This adds the necessary code transformations for React Fast Refresh (hot module
+     * replacement for React components), but does not emit hot-module code itself.
+     *
+     * @default false
+     */
+    reactFastRefresh?: boolean;
+
+    /**
+     * A map of file paths to their contents for in-memory bundling.
+     *
+     * This allows you to bundle virtual files that don't exist on disk, or override
+     * the contents of files that do exist on disk. The keys are file paths (which should
+     * match how they're imported) and the values are the file contents.
+     *
+     * File contents can be provided as:
+     * - `string` - The source code as a string
+     * - `Blob` - A Blob containing the source code
+     * - `NodeJS.TypedArray` - A typed array (e.g., `Uint8Array`) containing the source code
+     * - `ArrayBufferLike` - An ArrayBuffer containing the source code
+     *
+     * @example
+     * ```ts
+     * // Bundle entirely from memory (no files on disk needed)
+     * await Bun.build({
+     *   entrypoints: ["/app/index.ts"],
+     *   files: {
+     *     "/app/index.ts": `
+     *       import { helper } from "./helper.ts";
+     *       console.log(helper());
+     *     `,
+     *     "/app/helper.ts": `
+     *       export function helper() {
+     *         return "Hello from memory!";
+     *       }
+     *     `,
+     *   },
+     * });
+     * ```
+     *
+     * @example
+     * ```ts
+     * // Override a file on disk with in-memory contents
+     * await Bun.build({
+     *   entrypoints: ["./src/index.ts"],
+     *   files: {
+     *     // This will be used instead of the actual ./src/config.ts file
+     *     "./src/config.ts": `export const API_URL = "https://production.api.com";`,
+     *   },
+     * });
+     * ```
+     *
+     * @example
+     * ```ts
+     * // Mix disk files with in-memory files
+     * // Entry point is on disk, but imports a virtual file
+     * await Bun.build({
+     *   entrypoints: ["./src/index.ts"], // Real file on disk
+     *   files: {
+     *     // Virtual file that ./src/index.ts can import via "./generated.ts"
+     *     "./src/generated.ts": `export const BUILD_TIME = ${Date.now()};`,
+     *   },
+     * });
+     * ```
+     */
+    files?: Record<string, string | Blob | NodeJS.TypedArray | ArrayBufferLike>;
+
+    /**
+     * Generate a JSON file containing metadata about the build.
+     *
+     * The metafile contains information about inputs, outputs, imports, and exports
+     * which can be used for bundle analysis, visualization, or integration with
+     * other tools.
+     *
+     * When `true`, the metafile JSON string is included in the {@link BuildOutput.metafile} property.
+     *
+     * @default false
+     *
+     * @example
+     * ```ts
+     * const result = await Bun.build({
+     *   entrypoints: ['./src/index.ts'],
+     *   outdir: './dist',
+     *   metafile: true,
+     * });
+     *
+     * // Write metafile to disk for analysis
+     * if (result.metafile) {
+     *   await Bun.write('./dist/meta.json', result.metafile);
+     * }
+     *
+     * // Parse and analyze the metafile
+     * const meta = JSON.parse(result.metafile!);
+     * console.log('Input files:', Object.keys(meta.inputs));
+     * console.log('Output files:', Object.keys(meta.outputs));
+     * ```
+     */
+    metafile?: boolean;
+
     outdir?: string;
   }
 
@@ -1970,6 +2217,26 @@ declare module "bun" {
      * @default true
      */
     autoloadBunfig?: boolean;
+    /**
+     * Whether to autoload tsconfig.json when the standalone executable runs
+     *
+     * Standalone-only: applies only when building/running the standalone executable.
+     *
+     * Equivalent CLI flags: `--compile-autoload-tsconfig`, `--no-compile-autoload-tsconfig`
+     *
+     * @default false
+     */
+    autoloadTsconfig?: boolean;
+    /**
+     * Whether to autoload package.json when the standalone executable runs
+     *
+     * Standalone-only: applies only when building/running the standalone executable.
+     *
+     * Equivalent CLI flags: `--compile-autoload-package-json`, `--no-compile-autoload-package-json`
+     *
+     * @default false
+     */
+    autoloadPackageJson?: boolean;
     windows?: {
       hideConsole?: boolean;
       icon?: string;
@@ -2573,6 +2840,106 @@ declare module "bun" {
     outputs: BuildArtifact[];
     success: boolean;
     logs: Array<BuildMessage | ResolveMessage>;
+    /**
+     * Metadata about the build including inputs, outputs, and their relationships.
+     *
+     * Only present when {@link BuildConfig.metafile} is `true`.
+     *
+     * The metafile contains detailed information about:
+     * - **inputs**: All source files that were bundled, their byte sizes, imports, and format
+     * - **outputs**: All generated output files, their byte sizes, which inputs contributed to each output, imports between chunks, and exports
+     *
+     * This can be used for:
+     * - Bundle size analysis and visualization
+     * - Detecting unused code or dependencies
+     * - Understanding the dependency graph
+     * - Integration with bundle analyzer tools
+     *
+     * @example
+     * ```ts
+     * const result = await Bun.build({
+     *   entrypoints: ['./src/index.ts'],
+     *   outdir: './dist',
+     *   metafile: true,
+     * });
+     *
+     * if (result.metafile) {
+     *   // Analyze input files
+     *   for (const [path, input] of Object.entries(result.metafile.inputs)) {
+     *     console.log(`${path}: ${input.bytes} bytes, ${input.imports.length} imports`);
+     *   }
+     *
+     *   // Analyze output files
+     *   for (const [path, output] of Object.entries(result.metafile.outputs)) {
+     *     console.log(`${path}: ${output.bytes} bytes`);
+     *     for (const [inputPath, info] of Object.entries(output.inputs)) {
+     *       console.log(`  - ${inputPath}: ${info.bytesInOutput} bytes`);
+     *     }
+     *   }
+     *
+     *   // Write to disk for external analysis tools
+     *   await Bun.write('./dist/meta.json', JSON.stringify(result.metafile));
+     * }
+     * ```
+     */
+    metafile?: BuildMetafile;
+  }
+
+  /**
+   * Metafile structure containing build metadata for analysis.
+   *
+   * @category Bundler
+   */
+  interface BuildMetafile {
+    /** Information about all input source files */
+    inputs: {
+      [path: string]: {
+        /** Size of the input file in bytes */
+        bytes: number;
+        /** List of imports from this file */
+        imports: Array<{
+          /** Resolved path of the imported file */
+          path: string;
+          /** Type of import statement */
+          kind: ImportKind;
+          /** Original import specifier before resolution (if different from path) */
+          original?: string;
+          /** Whether this import is external to the bundle */
+          external?: boolean;
+          /** Import attributes (e.g., `{ type: "json" }`) */
+          with?: Record<string, string>;
+        }>;
+        /** Module format of the input file */
+        format?: "esm" | "cjs" | "json" | "css";
+      };
+    };
+    /** Information about all output files */
+    outputs: {
+      [path: string]: {
+        /** Size of the output file in bytes */
+        bytes: number;
+        /** Map of input files to their contribution in this output */
+        inputs: {
+          [path: string]: {
+            /** Number of bytes this input contributed to the output */
+            bytesInOutput: number;
+          };
+        };
+        /** List of imports to other chunks */
+        imports: Array<{
+          /** Path to the imported chunk */
+          path: string;
+          /** Type of import */
+          kind: ImportKind;
+        }>;
+        /** List of exported names from this output */
+        exports: string[];
+        /** Entry point path if this output is an entry point */
+        entryPoint?: string;
+        /** Path to the associated CSS bundle (for JS entry points with CSS) */
+        cssBundle?: string;
+      };
+    };
   }
 
   /**
@@ -3042,16 +3409,29 @@ declare module "bun" {
 
   type WebSocketOptionsTLS = {
     /**
-     * Options for the TLS connection
+     * Options for the TLS connection.
+     *
+     * Supports full TLS configuration including custom CA certificates,
+     * client certificates, and other TLS settings (same as fetch).
+     *
+     * @example
+     * ```ts
+     * // Using BunFile for certificates
+     * const ws = new WebSocket("wss://example.com", {
+     *   tls: {
+     *     ca: Bun.file("./ca.pem")
+     *   }
+     * });
+     *
+     * // Using Buffer
+     * const ws = new WebSocket("wss://example.com", {
+     *   tls: {
+     *     ca: fs.readFileSync("./ca.pem")
+     *   }
+     * });
+     * ```
      */
-    tls?: {
-      /**
-       * Whether to reject the connection if the certificate is not valid
-       *
-       * @default true
-       */
-      rejectUnauthorized?: boolean;
-    };
+    tls?: TLSOptions;
   };
 
   type WebSocketOptionsHeaders = {
@@ -3061,10 +3441,57 @@ declare module "bun" {
     headers?: import("node:http").OutgoingHttpHeaders;
   };
 
+  type WebSocketOptionsProxy = {
+    /**
+     * HTTP proxy to use for the WebSocket connection.
+     *
+     * Can be a string URL or an object with `url` and optional `headers`.
+     *
+     * @example
+     * ```ts
+     * // String format
+     * const ws = new WebSocket("wss://example.com", {
+     *   proxy: "http://proxy.example.com:8080"
+     * });
+     *
+     * // With credentials
+     * const ws = new WebSocket("wss://example.com", {
+     *   proxy: "http://user:pass@proxy.example.com:8080"
+     * });
+     *
+     * // Object format with custom headers
+     * const ws = new WebSocket("wss://example.com", {
+     *   proxy: {
+     *     url: "http://proxy.example.com:8080",
+     *     headers: {
+     *       "Proxy-Authorization": "Bearer token"
+     *     }
+     *   }
+     * });
+     * ```
+     */
+    proxy?:
+      | string
+      | {
+          /**
+           * The proxy URL (http:// or https://)
+           */
+          url: string;
+          /**
+           * Custom headers to send to the proxy server.
+           * Supports plain objects or Headers class instances.
+           */
+          headers?: import("node:http").OutgoingHttpHeaders | Headers;
+        };
+  };
+
   /**
    * Constructor options for the `Bun.WebSocket` client
    */
-  type WebSocketOptions = WebSocketOptionsProtocolsOrProtocol & WebSocketOptionsTLS & WebSocketOptionsHeaders;
+  type WebSocketOptions = WebSocketOptionsProtocolsOrProtocol &
+    WebSocketOptionsTLS &
+    WebSocketOptionsHeaders &
+    WebSocketOptionsProxy;
 
   interface WebSocketEventMap {
     close: CloseEvent;
@@ -5308,6 +5735,67 @@ declare module "bun" {
       ref(): void;
       unref(): void;
       close(): void;
+      /**
+       * Enable or disable SO_BROADCAST socket option.
+       * @param enabled Whether to enable broadcast
+       * @returns The enabled value
+       */
+      setBroadcast(enabled: boolean): boolean;
+      /**
+       * Set the IP_TTL socket option.
+       * @param ttl Time to live value
+       * @returns The TTL value
+       */
+      setTTL(ttl: number): number;
+      /**
+       * Set the IP_MULTICAST_TTL socket option.
+       * @param ttl Time to live value for multicast packets
+       * @returns The TTL value
+       */
+      setMulticastTTL(ttl: number): number;
+      /**
+       * Enable or disable IP_MULTICAST_LOOP socket option.
+       * @param enabled Whether to enable multicast loopback
+       * @returns The enabled value
+       */
+      setMulticastLoopback(enabled: boolean): boolean;
+      /**
+       * Set the IP_MULTICAST_IF socket option to specify the outgoing interface
+       * for multicast packets.
+       * @param interfaceAddress The address of the interface to use
+       * @returns true on success
+       */
+      setMulticastInterface(interfaceAddress: string): boolean;
+      /**
+       * Join a multicast group.
+       * @param multicastAddress The multicast group address
+       * @param interfaceAddress Optional interface address to use
+       * @returns true on success
+       */
+      addMembership(multicastAddress: string, interfaceAddress?: string): boolean;
+      /**
+       * Leave a multicast group.
+       * @param multicastAddress The multicast group address
+       * @param interfaceAddress Optional interface address to use
+       * @returns true on success
+       */
+      dropMembership(multicastAddress: string, interfaceAddress?: string): boolean;
+      /**
+       * Join a source-specific multicast group.
+       * @param sourceAddress The source address
+       * @param groupAddress The multicast group address
+       * @param interfaceAddress Optional interface address to use
+       * @returns true on success
+       */
+      addSourceSpecificMembership(sourceAddress: string, groupAddress: string, interfaceAddress?: string): boolean;
+      /**
+       * Leave a source-specific multicast group.
+       * @param sourceAddress The source address
+       * @param groupAddress The multicast group address
+       * @param interfaceAddress Optional interface address to use
+       * @returns true on success
+       */
+      dropSourceSpecificMembership(sourceAddress: string, groupAddress: string, interfaceAddress?: string): boolean;
     }
 
     export interface ConnectedSocket<DataBinaryType extends BinaryType> extends BaseUDPSocket {
@@ -6566,6 +7054,356 @@ declare module "bun" {
      * ```
      */
     match(str: string): boolean;
+  }
+
+  /**
+   * Input data for creating an archive. Can be:
+   * - An object mapping paths to file contents (string, Blob, TypedArray, or ArrayBuffer)
+   * - A Blob containing existing archive data
+   * - A TypedArray or ArrayBuffer containing existing archive data
+   */
+  type ArchiveInput = Record<string, BlobPart> | Blob | ArrayBufferView | ArrayBufferLike;
+
+  /**
+   * Compression format for archive output.
+   * Currently only `"gzip"` is supported.
+   */
+  type ArchiveCompression = "gzip";
+
+  /**
+   * Options for creating an Archive instance.
+   *
+   * By default, archives are not compressed. Use `{ compress: "gzip" }` to enable compression.
+   *
+   * @example
+   * ```ts
+   * // No compression (default)
+   * new Bun.Archive(data);
+   *
+   * // Enable gzip with default level (6)
+   * new Bun.Archive(data, { compress: "gzip" });
+   *
+   * // Specify compression level
+   * new Bun.Archive(data, { compress: "gzip", level: 9 });
+   * ```
+   */
+  interface ArchiveOptions {
+    /**
+     * Compression algorithm to use.
+     * Currently only "gzip" is supported.
+     * If not specified, no compression is applied.
+     */
+    compress?: ArchiveCompression;
+    /**
+     * Compression level (1-12). Only applies when `compress` is set.
+     * - 1: Fastest compression, lowest ratio
+     * - 6: Default balance of speed and ratio
+     * - 12: Best compression ratio, slowest
+     *
+     * @default 6
+     */
+    level?: number;
+  }
+
+  /**
+   * Options for extracting archive contents.
+   */
+  interface ArchiveExtractOptions {
+    /**
+     * Glob pattern(s) to filter which entries are extracted.
+     * Uses the same syntax as {@link Bun.Glob}, including support for wildcards (`*`, `**`),
+     * character classes (`[abc]`), alternation (`{a,b}`), and negation (`!pattern`).
+     *
+     * Patterns are matched against archive entry paths normalized to use forward slashes (`/`),
+     * regardless of the host operating system. Always write patterns using `/` as the separator.
+     *
+     * - Positive patterns: Only entries matching at least one pattern will be extracted.
+     * - Negative patterns (prefixed with `!`): Entries matching these patterns will be excluded.
+     *   Negative patterns are applied after positive patterns.
+     *
+     * If not specified, all entries are extracted.
+     *
+     * @example
+     * ```ts
+     * // Extract only TypeScript files
+     * await archive.extract("./out", { glob: "**" + "/*.ts" });
+     *
+     * // Extract files from multiple directories
+     * await archive.extract("./out", { glob: ["src/**", "lib/**"] });
+     *
+     * // Exclude node_modules using negative pattern
+     * await archive.extract("./out", { glob: ["**", "!node_modules/**"] });
+     *
+     * // Extract source files but exclude tests
+     * await archive.extract("./out", { glob: ["src/**", "!**" + "/*.test.ts"] });
+     * ```
+     */
+    glob?: string | readonly string[];
+  }
+
+  /**
+   * A class for creating and extracting tar archives with optional gzip compression.
+   *
+   * `Bun.Archive` provides a fast, native implementation for working with tar archives.
+   * It supports creating archives from in-memory data or extracting existing archives
+   * to disk or memory.
+   *
+   * @example
+   * **Create an archive from an object:**
+   * ```ts
+   * const archive = new Bun.Archive({
+   *   "hello.txt": "Hello, World!",
+   *   "data.json": JSON.stringify({ foo: "bar" }),
+   *   "binary.bin": new Uint8Array([1, 2, 3, 4]),
+   * });
+   * ```
+   *
+   * @example
+   * **Create a gzipped archive:**
+   * ```ts
+   * const archive = new Bun.Archive({
+   *   "hello.txt": "Hello, World!",
+   * }, { compress: "gzip" });
+   *
+   * // Or with a specific compression level (1-12)
+   * const archive = new Bun.Archive(data, { compress: "gzip", level: 9 });
+   * ```
+   *
+   * @example
+   * **Extract an archive to disk:**
+   * ```ts
+   * const archive = new Bun.Archive(tarballBytes);
+   * const entryCount = await archive.extract("./output");
+   * console.log(`Extracted ${entryCount} entries`);
+   * ```
+   *
+   * @example
+   * **Get archive contents as a Map of File objects:**
+   * ```ts
+   * const archive = new Bun.Archive(tarballBytes);
+   * const entries = await archive.files();
+   * for (const [path, file] of entries) {
+   *   console.log(path, await file.text());
+   * }
+   * ```
+   *
+   * @example
+   * **Write a gzipped archive directly to disk:**
+   * ```ts
+   * await Bun.Archive.write("bundle.tar.gz", {
+   *   "src/index.ts": sourceCode,
+   *   "package.json": packageJson,
+   * }, { compress: "gzip" });
+   * ```
+   */
+  export class Archive {
+    /**
+     * Create an `Archive` instance from input data.
+     *
+     * By default, archives are not compressed. Use `{ compress: "gzip" }` to enable compression.
+     *
+     * @param data - The input data for the archive:
+     *   - **Object**: Creates a new tarball with the object's keys as file paths and values as file contents
+     *   - **Blob/TypedArray/ArrayBuffer**: Wraps existing archive data (tar or tar.gz)
+     * @param options - Optional archive options including compression settings.
+     *   Defaults to no compression if omitted.
+     *
+     * @example
+     * **From an object (creates uncompressed tarball):**
+     * ```ts
+     * const archive = new Bun.Archive({
+     *   "hello.txt": "Hello, World!",
+     *   "nested/file.txt": "Nested content",
+     * });
+     * ```
+     *
+     * @example
+     * **With gzip compression:**
+     * ```ts
+     * const archive = new Bun.Archive(data, { compress: "gzip" });
+     * ```
+     *
+     * @example
+     * **With explicit gzip compression level:**
+     * ```ts
+     * const archive = new Bun.Archive(data, { compress: "gzip", level: 12 });
+     * ```
+     *
+     * @example
+     * **From existing archive data:**
+     * ```ts
+     * const response = await fetch("https://example.com/package.tar.gz");
+     * const archive = new Bun.Archive(await response.blob());
+     * ```
+     */
+    constructor(data: ArchiveInput, options?: ArchiveOptions);
+
+    /**
+     * Create and write an archive directly to disk in one operation.
+     *
+     * This is more efficient than creating an archive and then writing it separately,
+     * as it streams the data directly to disk.
+     *
+     * @param path - The file path to write the archive to
+     * @param data - The input data for the archive (same as `new Archive()`)
+     * @param options - Optional archive options including compression settings
+     *
+     * @returns A promise that resolves when the write is complete
+     *
+     * @example
+     * **Write uncompressed tarball:**
+     * ```ts
+     * await Bun.Archive.write("output.tar", {
+     *   "file1.txt": "content1",
+     *   "file2.txt": "content2",
+     * });
+     * ```
+     *
+     * @example
+     * **Write gzipped tarball:**
+     * ```ts
+     * await Bun.Archive.write("output.tar.gz", files, { compress: "gzip" });
+     * ```
+     */
+    static write(path: string, data: ArchiveInput | Archive, options?: ArchiveOptions): Promise<void>;
+
+    /**
+     * Extract the archive contents to a directory on disk.
+     *
+     * Creates the target directory and any necessary parent directories if they don't exist.
+     * Existing files will be overwritten.
+     *
+     * @param path - The directory path to extract to
+     * @param options - Optional extraction options
+     * @param options.glob - Glob pattern(s) to filter entries (positive patterns include, negative patterns starting with `!` exclude)
+     * @returns A promise that resolves with the number of entries extracted (files, directories, and symlinks)
+     *
+     * @example
+     * **Extract all entries:**
+     * ```ts
+     * const archive = new Bun.Archive(tarballBytes);
+     * const count = await archive.extract("./extracted");
+     * console.log(`Extracted ${count} entries`);
+     * ```
+     *
+     * @example
+     * **Extract only TypeScript files:**
+     * ```ts
+     * const count = await archive.extract("./src", { glob: "**" + "/*.ts" });
+     * ```
+     *
+     * @example
+     * **Extract everything except tests:**
+     * ```ts
+     * const count = await archive.extract("./dist", { glob: ["**", "!**" + "/*.test.*"] });
+     * ```
+     *
+     * @example
+     * **Extract source files but exclude tests:**
+     * ```ts
+     * const count = await archive.extract("./output", {
+     *   glob: ["src/**", "lib/**", "!**" + "/*.test.ts", "!**" + "/__tests__/**"]
+     * });
+     * ```
+     */
+    extract(path: string, options?: ArchiveExtractOptions): Promise<number>;
+
+    /**
+     * Get the archive contents as a `Blob`.
+     *
+     * Uses the compression settings specified when the Archive was created.
+     *
+     * @returns A promise that resolves with the archive data as a Blob
+     *
+     * @example
+     * **Get tarball as Blob:**
+     * ```ts
+     * const archive = new Bun.Archive(data);
+     * const blob = await archive.blob();
+     * ```
+     *
+     * @example
+     * **Get gzipped tarball as Blob:**
+     * ```ts
+     * const archive = new Bun.Archive(data, { compress: "gzip" });
+     * const gzippedBlob = await archive.blob();
+     * ```
+     */
+    blob(): Promise<Blob>;
+
+    /**
+     * Get the archive contents as a `Uint8Array`.
+     *
+     * Uses the compression settings specified when the Archive was created.
+     *
+     * @returns A promise that resolves with the archive data as a Uint8Array
+     *
+     * @example
+     * **Get tarball bytes:**
+     * ```ts
+     * const archive = new Bun.Archive(data);
+     * const bytes = await archive.bytes();
+     * ```
+     *
+     * @example
+     * **Get gzipped tarball bytes:**
+     * ```ts
+     * const archive = new Bun.Archive(data, { compress: "gzip" });
+     * const gzippedBytes = await archive.bytes();
+     * ```
+     */
+    bytes(): Promise<Uint8Array<ArrayBuffer>>;
+
+    /**
+     * Get the archive contents as a `Map` of `File` objects.
+     *
+     * Each file in the archive is returned as a `File` object with:
+     * - `name`: The file path within the archive
+     * - `lastModified`: The file's modification time from the archive
+     * - Standard Blob methods (`text()`, `arrayBuffer()`, `stream()`, etc.)
+     *
+     * Only regular files are included; directories are not returned.
+     * File contents are loaded into memory, so for large archives consider using `extract()` instead.
+     *
+     * @param glob - Optional glob pattern(s) to filter files. Supports the same syntax as {@link Bun.Glob},
+     *   including negation patterns (prefixed with `!`). Patterns are matched against paths normalized
+     *   to use forward slashes (`/`).
+     * @returns A promise that resolves with a Map where keys are file paths (always using forward slashes `/` as separators) and values are File objects
+     *
+     * @example
+     * **Get all files:**
+     * ```ts
+     * const entries = await archive.files();
+     * for (const [path, file] of entries) {
+     *   console.log(`${path}: ${file.size} bytes`);
+     * }
+     * ```
+     *
+     * @example
+     * **Filter by glob pattern:**
+     * ```ts
+     * const tsFiles = await archive.files("**" + "/*.ts");
+     * const srcFiles = await archive.files(["src/**", "lib/**"]);
+     * ```
+     *
+     * @example
+     * **Exclude files with negative patterns:**
+     * ```ts
+     * // Get all source files except tests
+     * const srcFiles = await archive.files(["src/**", "!**" + "/*.test.ts"]);
+     * ```
+     *
+     * @example
+     * **Read file contents:**
+     * ```ts
+     * const entries = await archive.files();
+     * const readme = entries.get("README.md");
+     * if (readme) {
+     *   console.log(await readme.text());
+     * }
+     * ```
+     */
+    files(glob?: string | readonly string[]): Promise<Map<string, File>>;
   }
 
   /**

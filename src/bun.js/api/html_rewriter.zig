@@ -960,7 +960,7 @@ fn HandlerCallback(
 
                 if (result.asAnyPromise()) |promise| {
                     this.global.bunVM().waitForPromise(promise);
-                    const fail = promise.status(this.global.vm()) == .rejected;
+                    const fail = promise.status() == .rejected;
                     if (fail) {
                         this.global.bunVM().unhandledRejection(this.global, promise.result(this.global.vm()), promise.asValue());
                     }

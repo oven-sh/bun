@@ -134,17 +134,17 @@ pub const Parser = struct {
                 // - import 'foo';
                 // - import("foo")
                 // - require("foo")
-                import_record.is_unused = import_record.is_unused or
+                import_record.flags.is_unused = import_record.flags.is_unused or
                     (import_record.kind == .stmt and
-                        !import_record.was_originally_bare_import and
-                        !import_record.calls_runtime_re_export_fn);
+                        !import_record.flags.was_originally_bare_import and
+                        !import_record.flags.calls_runtime_re_export_fn);
             }
 
             var iter = scan_pass.used_symbols.iterator();
             while (iter.next()) |entry| {
                 const val = entry.value_ptr;
                 if (val.used) {
-                    scan_pass.import_records.items[val.import_record_index].is_unused = false;
+                    scan_pass.import_records.items[val.import_record_index].flags.is_unused = false;
                 }
             }
         }
@@ -783,9 +783,39 @@ pub const Parser = struct {
             //     else
             //         module.exports = require('./foo.dev.js')
             //
-            if (parts.items.len == 1 and parts.items[0].stmts.len == 1) {
-                var part = &parts.items[0];
-                const stmt: Stmt = part.stmts[0];
+            // Find the part containing the actual module.exports = require() statement,
+            // skipping over parts that only contain comments, directives, and empty statements.
+            // This handles files like:
+            //
+            //    /*!
+            //     * express
+            //     * MIT Licensed
+            //     */
+            //    'use strict';
+            //    module.exports = require('./lib/express');
+            //
+            // When tree-shaking is enabled, each statement becomes its own part, so we need
+            // to look across all parts to find the single meaningful statement.
+            const StmtAndPart = struct { stmt: Stmt, part_idx: usize };
+            const stmt_and_part: ?StmtAndPart = brk: {
+                var found: ?StmtAndPart = null;
+                for (parts.items, 0..) |part, part_idx| {
+                    for (part.stmts) |s| {
+                        switch (s.data) {
+                            .s_comment, .s_directive, .s_empty => continue,
+                            else => {
+                                // If we already found a non-trivial statement, there's more than one
+                                if (found != null) break :brk null;
+                                found = .{ .stmt = s, .part_idx = part_idx };
+                            },
+                        }
+                    }
+                }
+                break :brk found;
+            };
+            if (stmt_and_part) |found| {
+                const stmt = found.stmt;
+                var part = &parts.items[found.part_idx];
                 if (p.symbols.items[p.module_ref.innerIndex()].use_count_estimate == 1) {
                     if (stmt.data == .s_expr) {
                         const value: Expr = stmt.data.s_expr.value;
@@ -800,13 +830,13 @@ pub const Parser = struct {
                                 left.data.e_dot.target.data == .e_identifier and
                                 left.data.e_dot.target.data.e_identifier.ref.eql(p.module_ref))
                             {
-                                const redirect_import_record_index: ?u32 = brk: {
+                                const redirect_import_record_index: ?u32 = inner_brk: {
                                     // general case:
                                     //
                                     //      module.exports = require("foo");
                                     //
                                     if (right.data == .e_require_string) {
-                                        break :brk right.data.e_require_string.import_record_index;
+                                        break :inner_brk right.data.e_require_string.import_record_index;
                                     }
 
                                     // special case: a module for us to unwrap
@@ -825,10 +855,10 @@ pub const Parser = struct {
                                     {
                                         // We know it's 0 because there is only one import in the whole file
                                         // so that one import must be the one we're looking for
-                                        break :brk 0;
+                                        break :inner_brk 0;
                                     }
 
-                                    break :brk null;
+                                    break :inner_brk null;
                                 };
                                 if (redirect_import_record_index) |id| {
                                     part.symbol_uses = .{};
@@ -1023,7 +1053,7 @@ pub const Parser = struct {
 
                 const import_record: ?*const ImportRecord = brk: {
                     for (p.import_records.items) |*import_record| {
-                        if (import_record.is_internal or import_record.is_unused) continue;
+                        if (import_record.flags.is_internal or import_record.flags.is_unused) continue;
                         if (import_record.kind == .stmt) break :brk import_record;
                     }
 
@@ -1094,7 +1124,7 @@ pub const Parser = struct {
                     // If they use an import statement, we say it's ESM because that's not allowed in CommonJS files.
                     const uses_any_import_statements = brk: {
                         for (p.import_records.items) |*import_record| {
-                            if (import_record.is_internal or import_record.is_unused) continue;
+                            if (import_record.flags.is_internal or import_record.flags.is_unused) continue;
                             if (import_record.kind == .stmt) break :brk true;
                         }
 
@@ -1494,7 +1524,7 @@ pub const Parser = struct {
 
         var state: PragmaState = .{};
 
-        while (cursor < self.lexer.end) : (cursor += 1) {
+        while (cursor < end) : (cursor += 1) {
             switch (contents[cursor]) {
                 '\n' => break,
                 '@' => {

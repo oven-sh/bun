@@ -55,7 +55,7 @@ void reportException(JSGlobalObject* lexicalGlobalObject, JSC::Exception* except
     ErrorHandlingScope errorScope(lexicalGlobalObject->vm());
 
     // auto callStack = Inspector::createScriptCallStackFromException(lexicalGlobalObject, exception);
-    scope.clearException();
+    (void)scope.tryClearException();
     vm.clearLastException();
 
     auto* globalObject = jsCast<JSDOMGlobalObject*>(lexicalGlobalObject);
@@ -92,7 +92,7 @@ void reportException(JSGlobalObject* lexicalGlobalObject, JSValue exceptionValue
     if (!exception) {
         exception = vm.lastException();
         if (!exception)
-            exception = JSC::Exception::create(lexicalGlobalObject->vm(), exceptionValue, JSC::Exception::DoNotCaptureStack);
+            exception = JSC::Exception::create(lexicalGlobalObject->vm(), exceptionValue, JSC::Exception::StackCaptureAction::DoNotCaptureStack);
     }
 
     reportException(lexicalGlobalObject, exception, cachedScript, fromModule);
@@ -112,7 +112,7 @@ String retrieveErrorMessageWithoutName(JSGlobalObject& lexicalGlobalObject, VM& 
 
     // We need to clear any new exception that may be thrown in the toString() call above.
     // reportException() is not supposed to be making new exceptions.
-    catchScope.clearException();
+    (void)catchScope.tryClearException();
     vm.clearLastException();
     return errorMessage;
 }
@@ -129,7 +129,7 @@ String retrieveErrorMessage(JSGlobalObject& lexicalGlobalObject, VM& vm, JSValue
 
     // We need to clear any new exception that may be thrown in the toString() call above.
     // reportException() is not supposed to be making new exceptions.
-    catchScope.clearException();
+    (void)catchScope.tryClearException();
     vm.clearLastException();
     return errorMessage;
 }
@@ -139,7 +139,7 @@ void reportCurrentException(JSGlobalObject* lexicalGlobalObject)
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_CATCH_SCOPE(vm);
     auto* exception = scope.exception();
-    scope.clearException();
+    (void)scope.tryClearException();
     reportException(lexicalGlobalObject, exception);
 }
 
@@ -212,7 +212,7 @@ JSValue createDOMException(JSGlobalObject& lexicalGlobalObject, Exception&& exce
 void propagateExceptionSlowPath(JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& throwScope, Exception&& exception)
 {
     throwScope.assertNoExceptionExceptTermination();
-    auto jsException = createDOMException(lexicalGlobalObject, WTFMove(exception));
+    auto jsException = createDOMException(lexicalGlobalObject, WTF::move(exception));
     RETURN_IF_EXCEPTION(throwScope, );
     throwException(&lexicalGlobalObject, throwScope, jsException);
 }

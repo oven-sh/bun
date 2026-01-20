@@ -1296,7 +1296,8 @@ JSC_DEFINE_HOST_FUNCTION(${symbolName(typeName, name)}Callback, (JSGlobalObject 
     /** View the file name of the JS file that called this function
      * from a debugger */
     SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
-    const char* fileName = sourceOrigin.string().utf8().data();
+    auto fileNameUTF8 = sourceOrigin.string().utf8();
+    const char* fileName = fileNameUTF8.data();
     static const char* lastFileName = nullptr;
     if (lastFileName != fileName) {
       lastFileName = fileName;
@@ -1501,7 +1502,7 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
         void* m_ctx { nullptr };
 
         ${name}(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr${obj.valuesArray ? ", WTF::FixedVector<JSC::WriteBarrier<JSC::Unknown>>&& jsvalueArray_" : ""})
-            : Base(vm, structure)${obj.valuesArray ? ", jsvalueArray(WTFMove(jsvalueArray_))" : ""}
+            : Base(vm, structure)${obj.valuesArray ? ", jsvalueArray(WTF::move(jsvalueArray_))" : ""}
         {
             m_ctx = sinkPtr;
             ${weakInit.trim()}
@@ -1521,7 +1522,7 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
         ${
           obj.valuesArray && obj.values && obj.values.length > 0
             ? `${name}(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr, WTF::FixedVector<JSC::WriteBarrier<JSC::Unknown>>&& jsvalueArray_${obj.values.map(v => `, JSC::JSValue ${v}`).join("")})
-            : Base(vm, structure), jsvalueArray(WTFMove(jsvalueArray_))${obj.values.map(v => `\n            , m_${v}(${v}, JSC::WriteBarrierEarlyInit)`).join("")}
+            : Base(vm, structure), jsvalueArray(WTF::move(jsvalueArray_))${obj.values.map(v => `\n            , m_${v}(${v}, JSC::WriteBarrierEarlyInit)`).join("")}
         {
             m_ctx = sinkPtr;
             ${weakInit.trim()}
@@ -1779,7 +1780,7 @@ ${name}* ${name}::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::St
 ${
   obj.valuesArray
     ? `${name}* ${name}::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx, WTF::FixedVector<JSC::WriteBarrier<JSC::Unknown>>&& jsvalueArray) {
-  ${name}* ptr = new (NotNull, JSC::allocateCell<${name}>(vm)) ${name}(vm, structure, ctx, WTFMove(jsvalueArray));
+  ${name}* ptr = new (NotNull, JSC::allocateCell<${name}>(vm)) ${name}(vm, structure, ctx, WTF::move(jsvalueArray));
   ptr->finishCreation(vm);
   return ptr;
 }`
@@ -1799,7 +1800,7 @@ ${
 ${
   obj.valuesArray && obj.values && obj.values.length > 0
     ? `${name}* ${name}::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx, WTF::FixedVector<JSC::WriteBarrier<JSC::Unknown>>&& jsvalueArray${obj.values.map(v => `, JSC::JSValue ${v}`).join("")}) {
-  ${name}* ptr = new (NotNull, JSC::allocateCell<${name}>(vm)) ${name}(vm, structure, ctx, WTFMove(jsvalueArray)${obj.values.map(v => `, ${v}`).join("")});
+  ${name}* ptr = new (NotNull, JSC::allocateCell<${name}>(vm)) ${name}(vm, structure, ctx, WTF::move(jsvalueArray)${obj.values.map(v => `, ${v}`).join("")});
   ptr->finishCreation(vm);
   return ptr;
 }`
@@ -1915,7 +1916,7 @@ ${
   for (size_t i = 0; i < args->size(); ++i) {
     jsvalueArray[i].setWithoutWriteBarrier(args->at(i));
   }
-  ${className(typeName)}* instance = ${className(typeName)}::create(vm, globalObject, structure, ptr, WTFMove(jsvalueArray));
+  ${className(typeName)}* instance = ${className(typeName)}::create(vm, globalObject, structure, ptr, WTF::move(jsvalueArray));
   ${
     obj.estimatedSize
       ? `
@@ -1956,7 +1957,7 @@ ${
   for (size_t i = 0; i < args->size(); ++i) {
     jsvalueArray[i].setWithoutWriteBarrier(args->at(i));
   }
-  ${className(typeName)}* instance = ${className(typeName)}::create(vm, globalObject, structure, ptr, WTFMove(jsvalueArray)${obj.values.map(v => `, JSC::JSValue::decode(${v})`).join("")});
+  ${className(typeName)}* instance = ${className(typeName)}::create(vm, globalObject, structure, ptr, WTF::move(jsvalueArray)${obj.values.map(v => `, JSC::JSValue::decode(${v})`).join("")});
   ${
     obj.estimatedSize
       ? `

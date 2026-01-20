@@ -1687,8 +1687,9 @@ pub const UpdateInteractiveCommand = struct {
                             }
                         }
                     } else {
-                        // Individual selection mode, just toggle current cursor package
+                        // Individual selection mode, just toggle current cursor package and select it
                         state.packages[state.cursor].use_latest = !state.packages[state.cursor].use_latest;
+                        state.selected[state.cursor] = true;
                     }
                 },
                 'j' => {

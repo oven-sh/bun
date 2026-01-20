@@ -144,3 +144,31 @@ for (const repo of ["https://github.com/dylan-conway/create-test", "github.com/d
     expect(await exited).toBe(0);
   }, 20_000);
 }
+
+it("should not crash with --no-install and bun-create.postinstall starting with 'bun '", async () => {
+  const bunCreateDir = join(x_dir, "bun-create");
+  const testTemplate = "postinstall-test";
+
+  await Bun.write(
+    join(bunCreateDir, testTemplate, "package.json"),
+    JSON.stringify({
+      name: "test",
+      "bun-create": {
+        postinstall: "bun install",
+      },
+    }),
+  );
+
+  const { exited, stderr, stdout } = spawn({
+    cmd: [bunExe(), "create", testTemplate, join(x_dir, "dest"), "--no-install"],
+    cwd: x_dir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env: { ...env, BUN_CREATE_DIR: bunCreateDir },
+  });
+
+  const [err, _out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+  expect(err).not.toContain("error:");
+  expect(exitCode).toBe(0);
+});

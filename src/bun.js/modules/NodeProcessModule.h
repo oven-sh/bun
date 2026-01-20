@@ -37,7 +37,7 @@ DEFINE_NATIVE_MODULE(NodeProcess)
         JSValue result = process->get(globalObject, entry);
         if (catchScope.exception()) {
             result = jsUndefined();
-            catchScope.clearException();
+            (void)catchScope.tryClearException();
         }
 
         exportValues.append(result);

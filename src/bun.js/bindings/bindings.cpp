@@ -3363,7 +3363,7 @@ void JSC__AnyPromise__wrap(JSC::JSGlobalObject* globalObject, EncodedJSValue enc
     JSValue result = JSC::JSValue::decode(func(ctx, globalObject));
     if (scope.exception()) [[unlikely]] {
         auto* exception = scope.exception();
-        scope.clearException();
+        (void)scope.tryClearException();
 
         if (auto* promise = jsDynamicCast<JSC::JSPromise*>(promiseValue)) {
             promise->reject(vm, globalObject, exception->value());
@@ -3418,7 +3418,7 @@ JSC::EncodedJSValue JSC__JSPromise__wrap(JSC::JSGlobalObject* globalObject, void
     JSValue result = JSC::JSValue::decode(func(ctx, globalObject));
     if (scope.exception()) [[unlikely]] {
         auto* exception = scope.exception();
-        scope.clearException();
+        (void)scope.tryClearException();
         RELEASE_AND_RETURN(scope, JSValue::encode(JSC::JSPromise::rejectedPromise(globalObject, exception->value())));
     }
 
@@ -3433,7 +3433,7 @@ JSC::EncodedJSValue JSC__JSPromise__wrap(JSC::JSGlobalObject* globalObject, void
     JSValue resolved = JSC::JSPromise::resolvedPromise(globalObject, result);
     if (scope.exception()) [[unlikely]] {
         auto* exception = scope.exception();
-        scope.clearException();
+        (void)scope.tryClearException();
         RELEASE_AND_RETURN(scope, JSValue::encode(JSC::JSPromise::rejectedPromise(globalObject, exception->value())));
     }
 
@@ -3540,7 +3540,7 @@ void JSC__JSPromise__rejectOnNextTickWithHandled(JSC::JSPromise* promise, JSC::J
             value = jsUndefined();
         }
 
-        JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::BunPerformMicrotaskJob, globalObject, microtaskFunction, rejectPromiseFunction, globalObject->m_asyncContextData.get()->getInternalField(0), promise, value };
+        JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::BunPerformMicrotaskJob, 0, globalObject, microtaskFunction, rejectPromiseFunction, globalObject->m_asyncContextData.get()->getInternalField(0), promise, value };
         globalObject->vm().queueMicrotask(WTF::move(task));
         RETURN_IF_EXCEPTION(scope, );
     }
@@ -3779,6 +3779,21 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__putMayBeIndex(JSC::Enco
     JSC::JSObject* object = JSC::JSValue::decode(target).asCell()->getObject();
     object->putDirectMayBeIndex(globalObject, JSC::PropertyName(identifier), JSC::JSValue::decode(value));
     RETURN_IF_EXCEPTION(scope, );
+}
+
+extern "C" bool JSC__JSValue__deleteProperty(JSC::EncodedJSValue target, JSC::JSGlobalObject* globalObject, const ZigString* key)
+{
+    JSC::JSValue targetValue = JSC::JSValue::decode(target);
+    if (!targetValue.isObject())
+        return false;
+
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSC::JSObject* object = targetValue.getObject();
+    bool result = object->deleteProperty(globalObject, Zig::toIdentifier(*key, globalObject));
+    RETURN_IF_EXCEPTION(scope, false);
+    return result;
 }
 
 bool JSC__JSValue__isClass(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1)
@@ -5042,7 +5057,7 @@ restart:
             if (objectToUse == object) {
                 propertyValue = objectToUse->getDirect(entry.offset());
                 if (!propertyValue) {
-                    scope.clearException();
+                    (void)scope.tryClearException();
                     return true;
                 }
             }
@@ -5174,7 +5189,7 @@ restart:
 
                 // Ignore exceptions from getters.
                 if (scope.exception()) [[unlikely]] {
-                    scope.clearException();
+                    (void)scope.tryClearException();
                     propertyValue = jsUndefined();
                 }
 
@@ -5207,7 +5222,7 @@ restart:
     properties.releaseData();
 
     if (scope.exception()) [[unlikely]] {
-        scope.clearException();
+        (void)scope.tryClearException();
         return;
     }
 }
@@ -5268,7 +5283,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
 
         JSC::JSObject::getOwnPropertyNames(object, globalObject, properties, DontEnumPropertiesMode::Include);
         if (scope.exception()) [[unlikely]] {
-            scope.clearException();
+            (void)scope.tryClearException();
             return;
         }
     }
@@ -5291,7 +5306,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
 
         JSC::PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
         bool hasProperty = object->getPropertySlot(globalObject, property, slot);
-        scope.clearException();
+        (void)scope.tryClearException();
         if (!hasProperty) {
             continue;
         }
@@ -5322,7 +5337,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
         }
 
         if (scope.exception()) [[unlikely]] {
-            scope.clearException();
+            (void)scope.tryClearException();
             propertyValue = jsUndefined();
         }
 
@@ -5428,7 +5443,7 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskJob(JSC::JSGlobalObject* arg0
 
 #endif
 
-    JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::BunPerformMicrotaskJob, globalObject, microTaskFunction, WTF::move(microtaskArgs[0]), WTF::move(microtaskArgs[1]), WTF::move(microtaskArgs[2]), WTF::move(microtaskArgs[3]) };
+    JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::BunPerformMicrotaskJob, 0, globalObject, microTaskFunction, WTF::move(microtaskArgs[0]), WTF::move(microtaskArgs[1]), WTF::move(microtaskArgs[2]), WTF::move(microtaskArgs[3]) };
     globalObject->vm().queueMicrotask(WTF::move(task));
 }
 
@@ -5870,7 +5885,7 @@ extern "C" bool JSGlobalObject__hasException(JSC::JSGlobalObject* globalObject)
 
 extern "C" void JSGlobalObject__clearException(JSC::JSGlobalObject* globalObject)
 {
-    DECLARE_CATCH_SCOPE(globalObject->vm()).clearException();
+    (void)DECLARE_CATCH_SCOPE(globalObject->vm()).tryClearException();
 }
 
 extern "C" bool JSGlobalObject__clearExceptionExceptTermination(JSC::JSGlobalObject* globalObject)
@@ -5883,7 +5898,7 @@ extern "C" JSC::EncodedJSValue JSGlobalObject__tryTakeException(JSC::JSGlobalObj
     auto scope = DECLARE_CATCH_SCOPE(globalObject->vm());
 
     if (auto exception = scope.exception()) {
-        scope.clearException();
+        (void)scope.tryClearException();
         return JSC::JSValue::encode(exception);
     }
 

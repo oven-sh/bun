@@ -30,45 +30,19 @@ pub fn resetArena(this: *ModuleLoader, jsc_vm: *VirtualMachine) void {
     }
 }
 
-fn resolveEmbeddedNodeFileViaMemfd(file: *bun.StandaloneModuleGraph.File, path_buffer: *bun.PathBuffer, fd: *i32) ![]const u8 {
-    var label_buf: [128]u8 = undefined;
-    const count = struct {
-        pub var counter = std.atomic.Value(u32).init(0);
-        pub fn get() u32 {
-            return counter.fetchAdd(1, .seq_cst);
-        }
-    }.get();
-    const label = std.fmt.bufPrintZ(&label_buf, "node-addon-{d}", .{count}) catch "";
-    const memfd = try bun.sys.memfd_create(label, .executable).unwrap();
-    errdefer memfd.close();
-
-    fd.* = @intCast(memfd.cast());
-    errdefer fd.* = -1;
-
-    try bun.sys.ftruncate(memfd, @intCast(file.contents.len)).unwrap();
-    try bun.sys.File.writeAll(.{ .handle = memfd }, file.contents).unwrap();
-
-    return try std.fmt.bufPrint(path_buffer, "/proc/self/fd/{d}", .{memfd.cast()});
-}
-
-pub fn resolveEmbeddedFile(vm: *VirtualMachine, path_buf: *bun.PathBuffer, linux_memfd: *i32, input_path: []const u8, extname: []const u8) ?[]const u8 {
+pub fn resolveEmbeddedFile(vm: *VirtualMachine, path_buf: *bun.PathBuffer, input_path: []const u8, extname: []const u8) ?[]const u8 {
     if (input_path.len == 0) return null;
     var graph = vm.standalone_module_graph orelse return null;
     const file = graph.find(input_path) orelse return null;
 
     if (comptime Environment.isLinux) {
-        // Best-effort: use memfd to avoid hitting the disk
-        if (resolveEmbeddedNodeFileViaMemfd(file, path_buf, linux_memfd)) |path| {
-            return path;
-        } else |_| {
-            // fall back to temp file
-        }
+        // TODO: use /proc/fd/12346 instead! Avoid the copy!
     }
 
     // atomically write to a tmpfile and then move it to the final destination
-    const tmpname_buf = bun.path_buffer_pool.get();
-    defer bun.path_buffer_pool.put(tmpname_buf);
-    const tmpfilename = bun.fs.FileSystem.tmpname(extname, tmpname_buf, bun.hash(file.name)) catch return null;
+    var tmpname_buf: bun.PathBuffer = undefined;
+    const tmpfilename = bun.fs.FileSystem.tmpname(extname, &tmpname_buf, bun.hash(file.name)) catch return null;
+
     const tmpdir: bun.FD = .fromStdDir(bun.fs.FileSystem.instance.tmpdir() catch return null);
 
     // First we open the tmpfile, to avoid any other work in the event of failure.
@@ -76,7 +50,7 @@ pub fn resolveEmbeddedFile(vm: *VirtualMachine, path_buf: *bun.PathBuffer, linux
     defer tmpfile.fd.close();
 
     switch (bun.api.node.fs.NodeFS.writeFileWithPathBuffer(
-        tmpname_buf, // not used
+        &tmpname_buf, // not used
 
         .{
             .data = .{
@@ -1326,14 +1300,14 @@ pub const FetchFlags = enum {
 };
 
 /// Support embedded .node files
-export fn Bun__resolveEmbeddedNodeFile(vm: *VirtualMachine, in_out_str: *bun.String, linux_memfd_fd_to_close: *i32) bool {
+export fn Bun__resolveEmbeddedNodeFile(vm: *VirtualMachine, in_out_str: *bun.String) bool {
     if (vm.standalone_module_graph == null) return false;
 
     const input_path = in_out_str.toUTF8(bun.default_allocator);
     defer input_path.deinit();
-    const path_buffer = bun.path_buffer_pool.get();
-    defer bun.path_buffer_pool.put(path_buffer);
-    const result = ModuleLoader.resolveEmbeddedFile(vm, path_buffer, linux_memfd_fd_to_close, input_path.slice(), "node") orelse return false;
+    const path_buf = bun.path_buffer_pool.get();
+    defer bun.path_buffer_pool.put(path_buf);
+    const result = ModuleLoader.resolveEmbeddedFile(vm, path_buf, input_path.slice(), "node") orelse return false;
     in_out_str.* = bun.String.cloneUTF8(result);
     return true;
 }

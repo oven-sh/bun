@@ -100,7 +100,7 @@ pub const Stdio = union(enum) {
             else => "spawn_stdio_memory_file",
         };
 
-        const fd = bun.sys.memfd_create(label, 0).unwrap() catch return false;
+        const fd = bun.sys.memfd_create(label, .cross_process).unwrap() catch return false;
 
         var remain = this.byteSlice();
 

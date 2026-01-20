@@ -446,7 +446,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
     if (filename.startsWith(StandaloneModuleGraph__base_path)) {
         BunString bunStr = Bun::toString(filename);
         if (Bun__resolveEmbeddedNodeFile(globalObject->bunVM(), &bunStr)) {
-            filename = bunStr.toWTFString(BunString::ZeroCopy);
+            filename = bunStr.transferToWTFString();
             deleteAfter = !filename.startsWith("/proc/"_s);
         }
     }

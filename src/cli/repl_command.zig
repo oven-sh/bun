@@ -1068,8 +1068,11 @@ pub const Repl = struct {
         } else if (strings.eqlComptime(trimmed, ".timing")) {
             self.show_timing = !self.show_timing;
             Output.pretty("<d>Timing {s}<r>\n", .{if (self.show_timing) "enabled" else "disabled"});
-        } else if (strings.startsWith(trimmed, ".install ") or strings.startsWith(trimmed, ".i ")) {
-            const pkg = strings.trim(trimmed[@min(trimmed.len, 9)..], " \t");
+        } else if (strings.startsWith(trimmed, ".install ")) {
+            const pkg = strings.trim(trimmed[9..], " \t");
+            try self.installPackage(pkg);
+        } else if (strings.startsWith(trimmed, ".i ")) {
+            const pkg = strings.trim(trimmed[3..], " \t");
             try self.installPackage(pkg);
         } else {
             Output.pretty("<red>Unknown REPL command: {s}<r>\n", .{trimmed});
@@ -1116,8 +1119,15 @@ pub const Repl = struct {
     }
 
     fn loadFile(self: *Self, path: []const u8) void {
-        const file = std.fs.cwd().openFile(path, .{}) catch |err| {
-            Output.pretty("<red>Error loading file: {s}<r>\n", .{@errorName(err)});
+        // Resolve to absolute path first
+        const abs_path = std.fs.cwd().realpathAlloc(self.allocator, path) catch |err| {
+            Output.pretty("<red>Error resolving path '{s}': {s}<r>\n", .{ path, @errorName(err) });
+            return;
+        };
+        defer self.allocator.free(abs_path);
+
+        const file = std.fs.openFileAbsolute(abs_path, .{}) catch |err| {
+            Output.pretty("<red>Error loading file '{s}': {s}<r>\n", .{ abs_path, @errorName(err) });
             return;
         };
         defer file.close();
@@ -1128,7 +1138,7 @@ pub const Repl = struct {
         };
         defer self.allocator.free(content);
 
-        Output.pretty("<d>Loading {s}...<r>\n", .{path});
+        Output.pretty("<d>Loading {s}...<r>\n", .{abs_path});
         // Execute the file content
         self.evalDirect(content);
     }
@@ -1366,14 +1376,9 @@ pub const History = struct {
     pub fn saveToFile(self: *History, path: []const u8) !void {
         // Use absolute path for writing to home directory
         const file = std.fs.createFileAbsolute(path, .{}) catch |err| {
-            // Fall back to current directory if home directory fails
-            const fallback = std.fs.cwd().createFile(HISTORY_FILE_NAME, .{}) catch return err;
-            defer fallback.close();
-            for (self.entries.items) |entry| {
-                _ = try fallback.write(entry);
-                _ = try fallback.write("\n");
-            }
-            return;
+            // Warn about fallback and skip saving to avoid writing to unexpected location
+            Output.pretty("<d>Warning: could not save history to '{s}': {s}<r>\n", .{ path, @errorName(err) });
+            return err;
         };
         defer file.close();
 

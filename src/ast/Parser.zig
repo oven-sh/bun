@@ -19,6 +19,7 @@ pub const Parser = struct {
 
         tree_shaking: bool = false,
         bundle: bool = false,
+        code_splitting: bool = false,
         package_version: string = "",
 
         macro_context: *MacroContextType() = undefined,

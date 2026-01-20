@@ -98,7 +98,9 @@ export default {
   expect(port).not.toBeNull();
 
   // Fetch the HTML from the root route
-  const res = await fetch(`http://localhost:${port}/`);
+  const rootUrl = `http://localhost:${port}/`;
+  const res = await fetch(rootUrl);
+  expect(res.status).toBe(200);
   const html = await res.text();
 
   // Check that the CSS and JS paths are absolute, not relative

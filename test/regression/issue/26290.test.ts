@@ -9,6 +9,8 @@ describe("Issue #26290: Socket.reload() type definition", () => {
     // This test verifies that the types compile correctly
     // The actual runtime behavior is tested elsewhere
 
+    const { promise: serverSocketOpened, resolve: resolveServerSocketOpened } = Promise.withResolvers<void>();
+
     const server = Bun.listen({
       port: 0,
       hostname: "127.0.0.1",
@@ -26,6 +28,7 @@ describe("Issue #26290: Socket.reload() type definition", () => {
           };
           // Don't actually call reload() as there's a separate runtime bug
           expect(reloadOptions.socket).toBeDefined();
+          resolveServerSocketOpened();
           socket.end();
         },
         data() {},
@@ -44,7 +47,7 @@ describe("Issue #26290: Socket.reload() type definition", () => {
         },
       });
 
-      await Bun.sleep(50);
+      await serverSocketOpened;
       client.end();
     } finally {
       server.stop(true);

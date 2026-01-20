@@ -5098,7 +5098,7 @@ declare module "bun" {
      *
      * This will apply to all sockets from the same {@link Listener}. it is per socket only for {@link Bun.connect}.
      */
-    reload(options: Pick<Partial<SocketOptions<Data>>, "socket">): void;
+    reload(options: Pick<SocketOptions<Data>, "socket">): void;
 
     /**
      * Get the server that created this socket
@@ -5441,7 +5441,7 @@ declare module "bun" {
     stop(closeActiveConnections?: boolean): void;
     ref(): void;
     unref(): void;
-    reload(options: Pick<Partial<SocketOptions<Data>>, "socket">): void;
+    reload(options: Pick<SocketOptions<Data>, "socket">): void;
     data: Data;
   }
   interface TCPSocketListener<Data = unknown> extends SocketListener<Data> {

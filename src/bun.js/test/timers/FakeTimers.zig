@@ -183,7 +183,7 @@ fn setFakeTimerMarker(globalObject: *jsc.JSGlobalObject, enabled: bool) void {
     // to detect if fake timers are enabled.
     if (enabled) {
         // Set setTimeout.clock = true when enabling fake timers.
-        setTimeout_fn.put(globalObject, "clock", jsc.JSValue.jsBoolean(true));
+        setTimeout_fn.put(globalObject, "clock", .true);
     } else {
         // Delete the clock property when disabling fake timers.
         // This ensures hasOwnProperty returns false, matching Jest/Sinon behavior.

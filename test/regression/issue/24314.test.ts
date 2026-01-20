@@ -3,6 +3,11 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import path from "node:path";
 
+// Helper to normalize path separators for cross-platform tarball entry lookup
+function normalizePath(p: string): string {
+  return p.replace(/\\/g, "/");
+}
+
 test("bun pm pack respects changes to package.json from prepack scripts", async () => {
   using dir = tempDir("pack-prepack", {
     "package.json": JSON.stringify(
@@ -35,14 +40,19 @@ fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  // Check stdout/stderr first to provide context on failure
+  expect(stderr).not.toContain("error");
+  expect(stdout).toContain("test-prepack-1.0.0.tgz");
   expect(exitCode).toBe(0);
 
   // Read the tarball and check the package.json inside
   const tarballPath = path.join(String(dir), "test-prepack-1.0.0.tgz");
   const tarball = readTarball(tarballPath);
 
-  // Find the package.json entry
-  const pkgJsonEntry = tarball.entries.find((e: { pathname: string }) => e.pathname === "package/package.json");
+  // Find the package.json entry (normalize path separators for Windows)
+  const pkgJsonEntry = tarball.entries.find(
+    (e: { pathname: string }) => normalizePath(e.pathname) === "package/package.json",
+  );
   expect(pkgJsonEntry).toBeDefined();
 
   const extractedPkg = JSON.parse(pkgJsonEntry.contents);
@@ -83,14 +93,19 @@ fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  // Check stdout/stderr first to provide context on failure
+  expect(stderr).not.toContain("error");
+  expect(stdout).toContain("test-prepare-1.0.0.tgz");
   expect(exitCode).toBe(0);
 
   // Read the tarball and check the package.json inside
   const tarballPath = path.join(String(dir), "test-prepare-1.0.0.tgz");
   const tarball = readTarball(tarballPath);
 
-  // Find the package.json entry
-  const pkgJsonEntry = tarball.entries.find((e: { pathname: string }) => e.pathname === "package/package.json");
+  // Find the package.json entry (normalize path separators for Windows)
+  const pkgJsonEntry = tarball.entries.find(
+    (e: { pathname: string }) => normalizePath(e.pathname) === "package/package.json",
+  );
   expect(pkgJsonEntry).toBeDefined();
 
   const extractedPkg = JSON.parse(pkgJsonEntry.contents);

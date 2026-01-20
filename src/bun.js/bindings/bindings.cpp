@@ -46,6 +46,7 @@
 #include "JavaScriptCore/JSArray.h"
 #include "JavaScriptCore/JSArrayBuffer.h"
 #include "JavaScriptCore/JSArrayInlines.h"
+#include "JavaScriptCore/JSGlobalObjectInlines.h"
 #include "JavaScriptCore/JSFunction.h"
 #include "JavaScriptCore/ErrorInstanceInlines.h"
 #include "JavaScriptCore/BigIntObject.h"
@@ -6107,6 +6108,45 @@ CPP_DECL [[ZIG_EXPORT(nothrow)]] unsigned int Bun__CallFrame__getLineNumber(JSC:
     }
 
     return lineColumn.line;
+}
+
+extern "C" const JSC::EncodedJSValue* Bun__JSArray__getContiguousVector(
+    JSC::EncodedJSValue encodedValue,
+    JSC::JSGlobalObject* globalObject,
+    uint32_t* outLength)
+{
+    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
+    if (!value.isCell())
+        return nullptr;
+
+    JSC::JSCell* cell = value.asCell();
+
+    if (!isJSArray(cell))
+        return nullptr;
+
+    JSC::JSArray* array = jsCast<JSC::JSArray*>(cell);
+    JSC::IndexingType indexing = array->indexingType();
+
+    // Only support Int32 and Contiguous shapes (not Double, ArrayStorage, etc.)
+    if (!hasInt32(indexing) && !hasContiguous(indexing))
+        return nullptr;
+
+    // Verify prototype chain is healthy and no indexed accessors are installed
+    if (!array->canDoFastIndexedAccess())
+        return nullptr;
+
+    ASSERT(!globalObject->isHavingABadTime());
+
+    JSC::Butterfly* butterfly = array->butterfly();
+    uint32_t length = butterfly->publicLength();
+
+    ASSERT(length <= butterfly->vectorLength());
+
+    if (length == 0)
+        return nullptr;
+
+    *outLength = length;
+    return reinterpret_cast<const JSC::EncodedJSValue*>(butterfly->contiguous().data());
 }
 
 extern "C" void JSC__ArrayBuffer__ref(JSC::ArrayBuffer* self) { self->ref(); }

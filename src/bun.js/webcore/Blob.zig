@@ -3967,74 +3967,138 @@ fn fromJSWithoutDeferGC(
             },
 
             .Array, .DerivedArray => {
-                var iter = try jsc.JSArrayIterator.init(current, global);
-                try stack.ensureUnusedCapacity(iter.len);
-                var any_arrays = false;
-                while (try iter.next()) |item| {
-                    if (item.isUndefinedOrNull()) continue;
+                if (jsc.ContiguousArrayView.init(current, global)) |view_init| {
+                    // Fast path: direct butterfly memory access
+                    var fast_view = view_init;
+                    try stack.ensureUnusedCapacity(fast_view.len);
+                    var any_arrays = false;
+                    while (fast_view.next()) |item| {
+                        if (item.isUndefinedOrNull()) continue;
 
-                    // When it's a string or ArrayBuffer inside an array, we can avoid the extra push/pop
-                    // we only really want this for nested arrays
-                    // However, we must preserve the order
-                    // That means if there are any arrays
-                    // we have to restart the loop
-                    if (!any_arrays) {
-                        switch (item.jsTypeLoose()) {
-                            .NumberObject,
-                            .Cell,
-                            .String,
-                            .StringObject,
-                            .DerivedStringObject,
-                            => {
-                                var sliced = try item.toSlice(global, bun.default_allocator);
-                                const allocator = sliced.allocator.get();
-                                could_have_non_ascii = could_have_non_ascii or !sliced.allocator.isWTFAllocator();
-                                joiner.push(sliced.slice(), allocator);
-                                continue;
-                            },
-                            .ArrayBuffer,
-                            .Int8Array,
-                            .Uint8Array,
-                            .Uint8ClampedArray,
-                            .Int16Array,
-                            .Uint16Array,
-                            .Int32Array,
-                            .Uint32Array,
-                            .Float16Array,
-                            .Float32Array,
-                            .Float64Array,
-                            .BigInt64Array,
-                            .BigUint64Array,
-                            .DataView,
-                            => {
-                                could_have_non_ascii = true;
-                                var buf = item.asArrayBuffer(global).?;
-                                joiner.pushStatic(buf.byteSlice());
-                                continue;
-                            },
-                            .Array, .DerivedArray => {
-                                any_arrays = true;
-                                could_have_non_ascii = true;
-                                break;
-                            },
-
-                            .DOMWrapper => {
-                                if (item.as(Blob)) |blob| {
-                                    could_have_non_ascii = could_have_non_ascii or blob.charset != .all_ascii;
-                                    joiner.pushStatic(blob.sharedView());
-                                    continue;
-                                } else {
-                                    const sliced = try current.toSliceClone(global);
+                        if (!any_arrays) {
+                            switch (item.jsTypeLoose()) {
+                                .NumberObject,
+                                .Cell,
+                                .String,
+                                .StringObject,
+                                .DerivedStringObject,
+                                => {
+                                    var sliced = try item.toSlice(global, bun.default_allocator);
                                     const allocator = sliced.allocator.get();
-                                    could_have_non_ascii = could_have_non_ascii or allocator != null;
+                                    could_have_non_ascii = could_have_non_ascii or !sliced.allocator.isWTFAllocator();
                                     joiner.push(sliced.slice(), allocator);
-                                }
-                            },
-                            else => {},
-                        }
-                    }
+                                    continue;
+                                },
+                                .ArrayBuffer,
+                                .Int8Array,
+                                .Uint8Array,
+                                .Uint8ClampedArray,
+                                .Int16Array,
+                                .Uint16Array,
+                                .Int32Array,
+                                .Uint32Array,
+                                .Float16Array,
+                                .Float32Array,
+                                .Float64Array,
+                                .BigInt64Array,
+                                .BigUint64Array,
+                                .DataView,
+                                => {
+                                    could_have_non_ascii = true;
+                                    var buf = item.asArrayBuffer(global).?;
+                                    joiner.pushStatic(buf.byteSlice());
+                                    continue;
+                                },
+                                .Array, .DerivedArray => {
+                                    any_arrays = true;
+                                    could_have_non_ascii = true;
+                                    break;
+                                },
 
-                    stack.appendAssumeCapacity(item);
+                                .DOMWrapper => {
+                                    if (item.as(Blob)) |blob| {
+                                        could_have_non_ascii = could_have_non_ascii or blob.charset != .all_ascii;
+                                        joiner.pushStatic(blob.sharedView());
+                                        continue;
+                                    } else {
+                                        const sliced = try current.toSliceClone(global);
+                                        const allocator = sliced.allocator.get();
+                                        could_have_non_ascii = could_have_non_ascii or allocator != null;
+                                        joiner.push(sliced.slice(), allocator);
+                                    }
+                                },
+                                else => {},
+                            }
+                        }
+
+                        stack.appendAssumeCapacity(item);
+                    }
+                } else {
+                    // Slow path fallback: use indexed access
+                    var iter = try jsc.JSArrayIterator.init(current, global);
+                    try stack.ensureUnusedCapacity(iter.len);
+                    var any_arrays = false;
+                    while (try iter.next()) |item| {
+                        if (item.isUndefinedOrNull()) continue;
+
+                        if (!any_arrays) {
+                            switch (item.jsTypeLoose()) {
+                                .NumberObject,
+                                .Cell,
+                                .String,
+                                .StringObject,
+                                .DerivedStringObject,
+                                => {
+                                    var sliced = try item.toSlice(global, bun.default_allocator);
+                                    const allocator = sliced.allocator.get();
+                                    could_have_non_ascii = could_have_non_ascii or !sliced.allocator.isWTFAllocator();
+                                    joiner.push(sliced.slice(), allocator);
+                                    continue;
+                                },
+                                .ArrayBuffer,
+                                .Int8Array,
+                                .Uint8Array,
+                                .Uint8ClampedArray,
+                                .Int16Array,
+                                .Uint16Array,
+                                .Int32Array,
+                                .Uint32Array,
+                                .Float16Array,
+                                .Float32Array,
+                                .Float64Array,
+                                .BigInt64Array,
+                                .BigUint64Array,
+                                .DataView,
+                                => {
+                                    could_have_non_ascii = true;
+                                    var buf = item.asArrayBuffer(global).?;
+                                    joiner.pushStatic(buf.byteSlice());
+                                    continue;
+                                },
+                                .Array, .DerivedArray => {
+                                    any_arrays = true;
+                                    could_have_non_ascii = true;
+                                    break;
+                                },
+
+                                .DOMWrapper => {
+                                    if (item.as(Blob)) |blob| {
+                                        could_have_non_ascii = could_have_non_ascii or blob.charset != .all_ascii;
+                                        joiner.pushStatic(blob.sharedView());
+                                        continue;
+                                    } else {
+                                        const sliced = try current.toSliceClone(global);
+                                        const allocator = sliced.allocator.get();
+                                        could_have_non_ascii = could_have_non_ascii or allocator != null;
+                                        joiner.push(sliced.slice(), allocator);
+                                    }
+                                },
+                                else => {},
+                            }
+                        }
+
+                        stack.appendAssumeCapacity(item);
+                    }
                 }
             },
 

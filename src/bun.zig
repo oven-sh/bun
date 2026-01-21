@@ -1924,6 +1924,9 @@ pub const StatFS = switch (Environment.os) {
 };
 
 pub var argv: [][:0]const u8 = &[_][:0]const u8{};
+/// Number of arguments injected by BUN_OPTIONS environment variable.
+/// Used by standalone executables to include these in the parsed options window.
+pub var bun_options_argc: usize = 0;
 
 pub fn appendOptionsEnv(env: []const u8, args: *std.array_list.Managed([:0]const u8), allocator: std.mem.Allocator) !void {
     var i: usize = 0;
@@ -2096,9 +2099,11 @@ pub fn initArgv(allocator: std.mem.Allocator) !void {
     }
 
     if (bun.env_var.BUN_OPTIONS.get()) |opts| {
+        const original_len = argv.len;
         var argv_list = std.array_list.Managed([:0]const u8).fromOwnedSlice(allocator, argv);
         try appendOptionsEnv(opts, &argv_list, allocator);
         argv = argv_list.items;
+        bun_options_argc = argv.len - original_len;
     }
 }
 

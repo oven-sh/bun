@@ -65,17 +65,27 @@ fn createExecArgv(globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
         }
     }
 
-    // For compiled/standalone executables, execArgv should contain compile_exec_argv
+    // For compiled/standalone executables, execArgv should contain compile_exec_argv and BUN_OPTIONS
     if (vm.standalone_module_graph) |graph| {
-        if (graph.compile_exec_argv.len > 0) {
-            // Use tokenize to split the compile_exec_argv string by whitespace
+        if (graph.compile_exec_argv.len > 0 or bun.bun_options_argc > 0) {
             var args = std.array_list.Managed(bun.String).init(temp_alloc);
             defer args.deinit();
             defer for (args.items) |*arg| arg.deref();
 
-            var tokenizer = std.mem.tokenizeAny(u8, graph.compile_exec_argv, " \t\n\r");
-            while (tokenizer.next()) |token| {
-                try args.append(bun.String.cloneUTF8(token));
+            if (graph.compile_exec_argv.len > 0) {
+                var tokenizer = std.mem.tokenizeAny(u8, graph.compile_exec_argv, " \t\n\r");
+                while (tokenizer.next()) |token| {
+                    try args.append(bun.String.cloneUTF8(token));
+                }
+            }
+
+            if (bun.bun_options_argc > 0) {
+                if (bun.env_var.BUN_OPTIONS.get()) |opts| {
+                    var tokenizer = std.mem.tokenizeAny(u8, opts, " \t\n\r");
+                    while (tokenizer.next()) |token| {
+                        try args.append(bun.String.cloneUTF8(token));
+                    }
+                }
             }
 
             const array = try jsc.JSValue.createEmptyArray(globalObject, args.items.len);

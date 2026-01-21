@@ -32,7 +32,12 @@ describe("issue #26337 - missing file: dependency error should show dependency n
       stderr: "pipe",
     });
 
-    const installExitCode = await installProc.exited;
+    // Consume streams to prevent buffer filling
+    const [, , installExitCode] = await Promise.all([
+      installProc.stdout.text(),
+      installProc.stderr.text(),
+      installProc.exited,
+    ]);
     expect(installExitCode).toBe(0);
 
     // Now update the package.json to point to a non-existent path

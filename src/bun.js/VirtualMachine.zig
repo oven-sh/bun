@@ -517,7 +517,10 @@ pub fn loadExtraEnvAndSourceCodePrinter(this: *VirtualMachine) void {
         if (map.get("BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT")) |value| {
             if (std.fmt.parseInt(usize, value, 10)) |limit| {
                 synthetic_allocation_limit = limit;
-                string_allocation_limit = limit;
+                // Clamp string_allocation_limit to WebKit's String::MaxLength (2^31-1)
+                // to prevent reintroducing the crash with large string allocations
+                const webkit_max: usize = std.math.maxInt(i32);
+                string_allocation_limit = @min(limit, webkit_max);
             } else |_| {
                 Output.panic("BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT must be a positive integer", .{});
             }

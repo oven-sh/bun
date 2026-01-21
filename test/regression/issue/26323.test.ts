@@ -159,10 +159,9 @@ try {
     expect(exitCode).toBe(0);
   });
 
-  test("should allow reading files as buffer even when larger than string limit", async () => {
+  test("should allow reading files as buffer within the limit", async () => {
     // When reading as buffer (no encoding), the synthetic_allocation_limit is used
-    // which is the same as string_allocation_limit when set via env var
-    // But buffer reading is checked against synthetic_allocation_limit
+    // This test verifies that buffers within the limit can still be read
     using dir = tempDir("readfile-buffer-limit", {
       "data.bin": "x".repeat(500),
     });

@@ -4830,8 +4830,8 @@ pub const NodeFS = struct {
             .utf8 => .{ size, jsc.VirtualMachine.string_allocation_limit },
             // Hex: Each byte produces 2 hex characters
             .hex => .{ size *| 2, jsc.VirtualMachine.string_allocation_limit },
-            // Base64: ~4 characters per 3 bytes
-            .base64, .base64url => .{ (size *| 4) / 3 +| 1, jsc.VirtualMachine.string_allocation_limit },
+            // Base64: ceil(size / 3) * 4 characters (every 3 bytes produce 4 chars, with padding)
+            .base64, .base64url => .{ ((size +| 2) / 3) *| 4, jsc.VirtualMachine.string_allocation_limit },
             // ASCII/Latin1: 1 byte = 1 character
             .ascii, .latin1 => .{ size, jsc.VirtualMachine.string_allocation_limit },
             // Buffer: Returns a typed array, not a string - check against typed array limit

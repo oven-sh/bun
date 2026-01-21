@@ -623,8 +623,8 @@ WTF::String stopCPUProfilerAndGetText(JSC::VM& vm)
     output.append(" |\n| Samples | "_s);
     output.append(totalSamples);
     output.append(" |\n| Interval | "_s);
-    output.append(s_samplingInterval / 1000);
-    output.append("ms |\n| Functions | "_s);
+    output.append(formatTime(s_samplingInterval));
+    output.append(" |\n| Functions | "_s);
     output.append(numFunctions);
     output.append(" |\n\n"_s);
 
@@ -1223,8 +1223,8 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
         output.append(" | "_s);
         output.append(totalSamples);
         output.append(" | "_s);
-        output.append(s_samplingInterval / 1000);
-        output.append("ms | "_s);
+        output.append(formatTime(s_samplingInterval));
+        output.append(" | "_s);
         output.append(numFunctions);
         output.append(" |\n\n"_s);
 

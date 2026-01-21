@@ -122,11 +122,13 @@ async function main() {
   await counter_root.$eval(".dec", x => (x as HTMLElement).click());
   assert.strictEqual(await getCount(), "Count A: 1");
 
-  await p.reload({ waitUntil: "load" });
+  await p.reload({ waitUntil: "networkidle0" });
   const afterReload = await waitForConsoleMessage(p, /counter a/, afterInitialLoad);
 
   assert.strictEqual(await p.$eval("code.font-bold", x => x.innerText), Bun.version);
 
+  // Wait for counter fixture to be available and visible after reload
+  await p.waitForSelector("#counter-fixture", { visible: true });
   counter_root = (await p.$("#counter-fixture"))!;
 
   assert.strictEqual(await getCount(), "Count A: 0");

@@ -568,7 +568,6 @@ WTF::String generateHeapProfile(JSC::VM& vm)
     output.append(WTF::String::number(gcRootIds.size()));
     output.append(" |\n\n"_s);
 
-
     // ==================== TOP TYPES ====================
     output.append("## Top 50 Types by Retained Size\n\n"_s);
     output.append("| Rank | Type | Count | Self Size | Retained Size | Largest Instance |\n"_s);

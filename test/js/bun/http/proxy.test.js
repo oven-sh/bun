@@ -15,9 +15,16 @@ beforeAll(() => {
 
       // simple http proxy
       if (request.url.startsWith("http://")) {
-        return await fetch(request.url, {
+        const response = await fetch(request.url, {
           method: request.method,
           body: await request.text(),
+        });
+        // Add marker header to indicate request went through proxy
+        const headers = new Headers(response.headers);
+        headers.set("x-proxy-used", "1");
+        return new Response(response.body, {
+          status: response.status,
+          headers,
         });
       }
 
@@ -270,7 +277,7 @@ describe.concurrent(() => {
         cmd: [
           bunExe(),
           "-e",
-          `const resp = await fetch("http://localhost:${server.port}/test"); console.log(await resp.text());`,
+          `const resp = await fetch("http://localhost:${server.port}/test"); console.log(resp.headers.get("x-proxy-used") || "no-proxy");`,
         ],
         env: {
           ...bunEnv,
@@ -285,7 +292,8 @@ describe.concurrent(() => {
       if (exitCode !== 0) {
         console.error("stderr:", stderr);
       }
-      expect(out.trim()).toBe("Hello, World"); // Should connect directly, not through proxy
+      // Should connect directly, not through proxy (no x-proxy-used header)
+      expect(out.trim()).toBe("no-proxy");
       expect(exitCode).toBe(0);
     });
 
@@ -300,7 +308,7 @@ describe.concurrent(() => {
         cmd: [
           bunExe(),
           "-e",
-          `const resp = await fetch("http://localhost:${server.port}/test"); console.log(await resp.text());`,
+          `const resp = await fetch("http://localhost:${server.port}/test"); console.log(resp.headers.get("x-proxy-used") || "no-proxy");`,
         ],
         env: {
           ...bunEnv,
@@ -315,8 +323,8 @@ describe.concurrent(() => {
       if (exitCode !== 0) {
         console.error("stderr:", stderr);
       }
-      // The proxy forwards to the server, which returns "Hello, World"
-      expect(out.trim()).toBe("Hello, World");
+      // The proxy adds x-proxy-used header, verify it was used
+      expect(out.trim()).toBe("1");
       expect(exitCode).toBe(0);
     });
 
@@ -330,7 +338,7 @@ describe.concurrent(() => {
         cmd: [
           bunExe(),
           "-e",
-          `const resp = await fetch("http://localhost:${server.port}/test"); console.log(await resp.text());`,
+          `const resp = await fetch("http://localhost:${server.port}/test"); console.log(resp.headers.get("x-proxy-used") || "no-proxy");`,
         ],
         env: {
           ...bunEnv,
@@ -345,7 +353,8 @@ describe.concurrent(() => {
       if (exitCode !== 0) {
         console.error("stderr:", stderr);
       }
-      expect(out.trim()).toBe("Hello, World"); // Should connect directly
+      // Should connect directly, not through proxy (no x-proxy-used header)
+      expect(out.trim()).toBe("no-proxy");
       expect(exitCode).toBe(0);
     });
 
@@ -360,7 +369,7 @@ describe.concurrent(() => {
         cmd: [
           bunExe(),
           "-e",
-          `const resp = await fetch("http://localhost:${server.port}/test"); console.log(await resp.text());`,
+          `const resp = await fetch("http://localhost:${server.port}/test"); console.log(resp.headers.get("x-proxy-used") || "no-proxy");`,
         ],
         env: {
           ...bunEnv,
@@ -375,7 +384,8 @@ describe.concurrent(() => {
       if (exitCode !== 0) {
         console.error("stderr:", stderr);
       }
-      expect(out.trim()).toBe("Hello, World"); // Should connect directly
+      // Should connect directly, not through proxy (no x-proxy-used header)
+      expect(out.trim()).toBe("no-proxy");
       expect(exitCode).toBe(0);
     });
   });

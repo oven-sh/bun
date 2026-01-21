@@ -209,8 +209,28 @@ pub const Loader = struct {
                         }
                     }
 
-                    // Check if NO_PROXY entry contains a port (e.g., "localhost:8080")
-                    if (std.mem.indexOfScalar(u8, no_proxy_entry, ':')) |_| {
+                    // Determine if entry contains a port or is an IPv6 address
+                    // IPv6 addresses contain multiple colons (e.g., "::1", "2001:db8::1")
+                    // Bracketed IPv6 with port: "[::1]:8080"
+                    // Host with port: "localhost:8080" (single colon)
+                    const colon_count = std.mem.count(u8, no_proxy_entry, ":");
+                    const is_bracketed_ipv6 = strings.startsWithChar(no_proxy_entry, '[');
+                    const has_port = blk: {
+                        if (is_bracketed_ipv6) {
+                            // Bracketed IPv6: check for "]:port" pattern
+                            if (std.mem.indexOf(u8, no_proxy_entry, "]:")) |_| {
+                                break :blk true;
+                            }
+                            break :blk false;
+                        } else if (colon_count == 1) {
+                            // Single colon means host:port (not IPv6)
+                            break :blk true;
+                        }
+                        // Multiple colons without brackets = bare IPv6 literal (no port)
+                        break :blk false;
+                    };
+
+                    if (has_port) {
                         // Entry has a port, do exact match against host:port
                         if (host) |h| {
                             if (strings.eqlCaseInsensitiveASCII(h, no_proxy_entry, true)) {
@@ -218,7 +238,7 @@ pub const Loader = struct {
                             }
                         }
                     } else {
-                        // Entry is hostname only, match against hostname (suffix match)
+                        // Entry is hostname/IPv6 only, match against hostname (suffix match)
                         if (strings.endsWith(hostname.?, no_proxy_entry)) {
                             return null;
                         }

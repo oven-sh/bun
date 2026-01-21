@@ -81,20 +81,22 @@ test("--heap-prof-text generates markdown heap profile on exit", async () => {
   // Check for markdown headers
   expect(content).toContain("# Bun Heap Profile");
   expect(content).toContain("## Summary");
-  expect(content).toContain("## Top Types by Size");
+  expect(content).toContain("## Top Types by Retained Size");
+  expect(content).toContain("## Largest Objects");
   expect(content).toContain("## All Types");
-  expect(content).toContain("## Categories");
 
-  // Check for table structure
-  expect(content).toContain("| Metric | Value |");
-  expect(content).toContain("| Total Heap Size |");
-  expect(content).toContain("| Total Objects |");
-  expect(content).toContain("| Unique Types |");
+  // Check for summary bullet list
+  expect(content).toContain("**Total Heap Size:**");
+  expect(content).toContain("**Total Objects:**");
+  expect(content).toContain("**Unique Types:**");
+
+  // Check for table structure in types section
+  expect(content).toContain("| # | Type | Count |");
 
   // Check for code block with type details
   expect(content).toContain("```");
   expect(content).toMatch(/count=\d+/);
-  expect(content).toMatch(/size=\d+/);
+  expect(content).toMatch(/retained=\d+/);
 });
 
 test("--heap-prof-dir specifies output directory for V8 format", async () => {

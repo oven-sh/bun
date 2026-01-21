@@ -72,23 +72,31 @@ async function main() {
   });
 
   function waitForConsoleMessage(page: Page, regex: RegExp, startIndex = 0) {
-    // First check if we already have a matching message
-    for (let i = startIndex; i < consoleMessages.length; i++) {
-      if (regex.test(consoleMessages[i])) {
-        return Promise.resolve(i + 1); // Return next index to search from
-      }
-    }
-
-    // Otherwise wait for new messages
     const { resolve, promise } = Promise.withResolvers<number>();
+    let resolved = false;
+
+    // Attach listener FIRST to avoid race condition
     function onMessage(msg: ConsoleMessage) {
+      if (resolved) return;
       const text = msg.text();
       if (regex.test(text)) {
+        resolved = true;
         page.off("console", onMessage);
-        resolve(consoleMessages.length); // Return next index to search from
+        resolve(consoleMessages.length);
       }
     }
     page.on("console", onMessage);
+
+    // Then check if we already have a matching message in the buffer
+    for (let i = startIndex; i < consoleMessages.length; i++) {
+      if (regex.test(consoleMessages[i])) {
+        resolved = true;
+        page.off("console", onMessage);
+        resolve(i + 1);
+        break;
+      }
+    }
+
     return promise;
   }
 

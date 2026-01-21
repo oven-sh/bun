@@ -83,20 +83,28 @@ test("--heap-prof-text generates markdown heap profile on exit", async () => {
   expect(content).toContain("## Summary");
   expect(content).toContain("## Top Types by Retained Size");
   expect(content).toContain("## Largest Objects");
-  expect(content).toContain("## All Types");
+  expect(content).toContain("## All Nodes");
+  expect(content).toContain("## All Edges");
+  expect(content).toContain("## GC Roots");
+  expect(content).toContain("## Type Summary");
 
   // Check for summary bullet list
   expect(content).toContain("**Total Heap Size:**");
   expect(content).toContain("**Total Objects:**");
   expect(content).toContain("**Unique Types:**");
+  expect(content).toContain("**GC Roots:**");
 
   // Check for table structure in types section
   expect(content).toContain("| # | Type | Count |");
 
-  // Check for code block with type details
-  expect(content).toContain("```");
-  expect(content).toMatch(/count=\d+/);
-  expect(content).toMatch(/retained=\d+/);
+  // Check for grep-friendly NODE format
+  expect(content).toMatch(/NODE id=\d+ type=\S+ size=\d+ retained=\d+/);
+
+  // Check for grep-friendly EDGE format
+  expect(content).toMatch(/EDGE from=\d+ to=\d+ type=\S+/);
+
+  // Check for grep-friendly TYPE format
+  expect(content).toMatch(/TYPE name=".+" count=\d+ self=\d+ retained=\d+/);
 });
 
 test("--heap-prof-dir specifies output directory for V8 format", async () => {

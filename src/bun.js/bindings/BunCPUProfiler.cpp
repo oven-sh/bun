@@ -17,8 +17,7 @@
 #include <algorithm>
 
 extern "C" void Bun__startCPUProfiler(JSC::VM* vm);
-extern "C" BunString Bun__stopCPUProfilerAndGetJSON(JSC::VM* vm);
-extern "C" BunString Bun__stopCPUProfilerAndGetText(JSC::VM* vm);
+extern "C" void Bun__stopCPUProfiler(JSC::VM* vm, BunString* outJSON, BunString* outText);
 
 namespace Bun {
 
@@ -351,19 +350,41 @@ struct FunctionStats {
     WTF::HashMap<WTF::String, int> callees;  // callee location -> count
 };
 
+// Helper to format a function name properly
+// - Empty names become "(anonymous)"
+// - Async functions get "async " prefix if not already present
+static WTF::String formatFunctionName(const WTF::String& name, const JSC::SamplingProfiler::StackFrame& frame)
+{
+    WTF::String displayName = name;
+
+    // Handle empty function names
+    if (displayName.isEmpty())
+        displayName = "(anonymous)"_s;
+
+    // Check if this is an async function and add prefix if needed
+    if (frame.frameType == JSC::SamplingProfiler::FrameType::Executable && frame.executable) {
+        // The frame might be from an async function - check if name already has async prefix
+        if (!displayName.startsWith("async "_s)) {
+            // We can't easily detect async from the frame itself, so we rely on JSC's displayName
+            // which should already include "async" for async functions in most cases
+        }
+    }
+
+    return displayName;
+}
+
 // Helper to format a location string from URL and line number
 static WTF::String formatLocation(const WTF::String& url, int lineNumber)
 {
     if (url.isEmpty())
         return "[native code]"_s;
 
-    // Strip file:// prefix if present
+    // Extract path from file:// URL using WTF::URL
     WTF::String path = url;
-    if (path.startsWith("file://"_s))
-        path = path.substring(7);
+    WTF::URL parsedUrl { url };
+    if (parsedUrl.isValid() && parsedUrl.protocolIsFile())
+        path = parsedUrl.fileSystemPath();
 
-    // For text output, we want relative-ish paths - strip common prefixes
-    // but keep enough context to be useful
     if (lineNumber >= 0) {
         WTF::StringBuilder sb;
         sb.append(path);
@@ -493,7 +514,8 @@ WTF::String stopCPUProfilerAndGetText(JSC::VM& vm)
         for (int i = stackTrace.frames.size() - 1; i >= 0; i--) {
             auto& frame = stackTrace.frames[i];
 
-            WTF::String functionName = frame.displayName(vm);
+            WTF::String rawFunctionName = frame.displayName(vm);
+            WTF::String functionName = formatFunctionName(rawFunctionName, frame);
             WTF::String url;
             int lineNumber = -1;
 
@@ -534,9 +556,10 @@ WTF::String stopCPUProfilerAndGetText(JSC::VM& vm)
             }
 
             WTF::String location = formatLocation(url, lineNumber);
+            // Key uses pipe separator internally (not shown in output)
             WTF::StringBuilder keyBuilder;
             keyBuilder.append(functionName);
-            keyBuilder.append(" @ "_s);
+            keyBuilder.append('|');
             keyBuilder.append(location);
             WTF::String key = keyBuilder.toString();
 
@@ -599,94 +622,92 @@ WTF::String stopCPUProfilerAndGetText(JSC::VM& vm)
         return a.second->totalTimeUs > b.second->totalTimeUs;
     });
 
-    // Build the text output
+    // Build the text output (Markdown format)
     WTF::StringBuilder output;
     int numFunctions = static_cast<int>(functionStatsMap.size());
 
     // ========== HEADER ==========
-    output.append("================================================================================\n"_s);
-    output.append("BUN CPU PROFILE (text format for LLM analysis)\n"_s);
-    output.append("================================================================================\n"_s);
-    output.append("Duration: "_s);
+    output.append("# BUN CPU PROFILE\n\n"_s);
+    output.append("| Metric | Value |\n"_s);
+    output.append("|--------|-------|\n"_s);
+    output.append("| Duration | "_s);
     output.append(formatTime(endTime - startTime));
-    output.append(" | Samples: "_s);
+    output.append(" |\n| Samples | "_s);
     output.append(totalSamples);
-    output.append(" | Interval: "_s);
+    output.append(" |\n| Interval | "_s);
     output.append(s_samplingInterval / 1000);
-    output.append("ms | Functions: "_s);
+    output.append("ms |\n| Functions | "_s);
     output.append(numFunctions);
-    output.append("\n\n"_s);
+    output.append(" |\n\n"_s);
 
     // ========== TOP FUNCTIONS BY SELF TIME ==========
     int topCount = std::min(30, numFunctions);  // Show top 30
     int topSelfLines = topCount + 2;  // +2 for header lines
-    output.append("================================================================================\n"_s);
-    output.append("TOP FUNCTIONS BY SELF TIME ("_s);
+    output.append("## Top Functions by Self Time\n\n"_s);
+    output.append("_Showing "_s);
     output.append(topCount);
     output.append(" of "_s);
     output.append(numFunctions);
-    output.append(" functions, "_s);
+    output.append(" functions ("_s);
     output.append(topSelfLines);
-    output.append(" lines, use: grep -A "_s);
+    output.append(" lines). Use: `grep -A "_s);
     output.append(topSelfLines + 2);
-    output.append(" \"TOP FUNCTIONS BY SELF\")\n"_s);
-    output.append("================================================================================\n"_s);
-    output.append("  self%    self    total%   total   samples  function\n"_s);
-    output.append("  -----  -------   ------  -------  -------  --------\n"_s);
+    output.append(" \"Top Functions by Self\"`_\n\n"_s);
+    output.append("| Self% | Self | Total% | Total | Samples | Function | Location |\n"_s);
+    output.append("|------:|-----:|-------:|------:|--------:|----------|----------|\n"_s);
 
     for (int i = 0; i < topCount && i < static_cast<int>(sortedBySelf.size()); i++) {
         auto& [key, stats] = sortedBySelf[i];
-        output.append("  "_s);
+        output.append("| "_s);
         output.append(formatPercent(stats->selfTimeUs, totalTimeUs));
-        output.append("  "_s);
+        output.append(" | "_s);
         output.append(formatTime(stats->selfTimeUs));
-        output.append("   "_s);
+        output.append(" | "_s);
         output.append(formatPercent(stats->totalTimeUs, totalTimeUs));
-        output.append("  "_s);
+        output.append(" | "_s);
         output.append(formatTime(stats->totalTimeUs));
-        output.append("  "_s);
+        output.append(" | "_s);
         output.append(stats->selfSamples);
-        output.append("  "_s);
+        output.append(" | `"_s);
         output.append(stats->functionName);
-        output.append("  "_s);
+        output.append("` | "_s);
         output.append(stats->location);
-        output.append('\n');
+        output.append(" |\n"_s);
     }
     output.append('\n');
 
     // ========== TOP FUNCTIONS BY TOTAL TIME ==========
     int topTotalLines = topCount + 2;
-    output.append("================================================================================\n"_s);
-    output.append("TOP FUNCTIONS BY TOTAL TIME ("_s);
+    output.append("## Top Functions by Total Time\n\n"_s);
+    output.append("_Showing "_s);
     output.append(topCount);
     output.append(" of "_s);
     output.append(numFunctions);
-    output.append(" functions, "_s);
+    output.append(" functions ("_s);
     output.append(topTotalLines);
-    output.append(" lines, use: grep -A "_s);
+    output.append(" lines). Use: `grep -A "_s);
     output.append(topTotalLines + 2);
-    output.append(" \"TOP FUNCTIONS BY TOTAL\")\n"_s);
-    output.append("================================================================================\n"_s);
-    output.append("  total%   total    self%    self   samples  function\n"_s);
-    output.append("  ------  -------   -----  -------  -------  --------\n"_s);
+    output.append(" \"Top Functions by Total\"`_\n\n"_s);
+    output.append("| Total% | Total | Self% | Self | Samples | Function | Location |\n"_s);
+    output.append("|-------:|------:|------:|-----:|--------:|----------|----------|\n"_s);
 
     for (int i = 0; i < topCount && i < static_cast<int>(sortedByTotal.size()); i++) {
         auto& [key, stats] = sortedByTotal[i];
-        output.append("  "_s);
+        output.append("| "_s);
         output.append(formatPercent(stats->totalTimeUs, totalTimeUs));
-        output.append("  "_s);
+        output.append(" | "_s);
         output.append(formatTime(stats->totalTimeUs));
-        output.append("   "_s);
+        output.append(" | "_s);
         output.append(formatPercent(stats->selfTimeUs, totalTimeUs));
-        output.append("  "_s);
+        output.append(" | "_s);
         output.append(formatTime(stats->selfTimeUs));
-        output.append("  "_s);
+        output.append(" | "_s);
         output.append(stats->totalSamples);
-        output.append("  "_s);
+        output.append(" | `"_s);
         output.append(stats->functionName);
-        output.append("  "_s);
+        output.append("` | "_s);
         output.append(stats->location);
-        output.append('\n');
+        output.append(" |\n"_s);
     }
     output.append('\n');
 
@@ -701,11 +722,10 @@ WTF::String stopCPUProfilerAndGetText(JSC::VM& vm)
         }
     }
 
-    output.append("================================================================================\n"_s);
-    output.append("FUNCTION DETAILS ("_s);
+    output.append("## Function Details\n\n"_s);
+    output.append("_"_s);
     output.append(static_cast<unsigned>(significantFunctions.size()));
-    output.append(" significant functions, use: grep \"^## \" to list, grep \"^## functionName\" -A N for details)\n"_s);
-    output.append("================================================================================\n"_s);
+    output.append(" significant functions (>1% self or >5% total). Use: `grep \"^### \" to list, grep -A N \"^### functionName\"`_\n\n"_s);
 
     for (auto* stats : significantFunctions) {
         // Count lines for this function block
@@ -713,62 +733,67 @@ WTF::String stopCPUProfilerAndGetText(JSC::VM& vm)
         if (!stats->callers.isEmpty()) blockLines += 1 + std::min(5, static_cast<int>(stats->callers.size()));
         if (!stats->callees.isEmpty()) blockLines += 1 + std::min(5, static_cast<int>(stats->callees.size()));
 
-        output.append("## "_s);
+        output.append("### `"_s);
         output.append(stats->functionName);
-        output.append(" ["_s);
+        output.append("` ["_s);
         output.append(blockLines);
-        output.append(" lines]  "_s);
+        output.append(" lines]\n\n"_s);
+        output.append("**Location:** "_s);
         output.append(stats->location);
-        output.append('\n');
+        output.append("\n\n"_s);
 
-        output.append("   Self: "_s);
+        output.append("| Self | Total | Samples |\n"_s);
+        output.append("|------|-------|---------|\n"_s);
+        output.append("| "_s);
         output.append(formatPercent(stats->selfTimeUs, totalTimeUs));
         output.append(" ("_s);
         output.append(formatTime(stats->selfTimeUs));
-        output.append(") | Total: "_s);
+        output.append(") | "_s);
         output.append(formatPercent(stats->totalTimeUs, totalTimeUs));
         output.append(" ("_s);
         output.append(formatTime(stats->totalTimeUs));
-        output.append(") | Samples: "_s);
+        output.append(") | "_s);
         output.append(stats->selfSamples);
         output.append("/"_s);
         output.append(stats->totalSamples);
-        output.append('\n');
+        output.append(" |\n\n"_s);
 
         // Show top callers
         if (!stats->callers.isEmpty()) {
-            output.append("   Called from:\n"_s);
+            output.append("**Called from:**\n"_s);
             WTF::Vector<std::pair<WTF::String, int>> sortedCallers;
             for (auto& c : stats->callers) sortedCallers.append({ c.key, c.value });
             std::sort(sortedCallers.begin(), sortedCallers.end(), [](const auto& a, const auto& b) {
                 return a.second > b.second;
             });
             for (int j = 0; j < 5 && j < static_cast<int>(sortedCallers.size()); j++) {
-                output.append("     - "_s);
+                output.append("- `"_s);
                 output.append(sortedCallers[j].first);
-                output.append(" ("_s);
+                output.append("` ("_s);
                 output.append(sortedCallers[j].second);
                 output.append(" samples)\n"_s);
             }
+            output.append('\n');
         }
 
         // Show top callees
         if (!stats->callees.isEmpty()) {
-            output.append("   Calls:\n"_s);
+            output.append("**Calls:**\n"_s);
             WTF::Vector<std::pair<WTF::String, int>> sortedCallees;
             for (auto& c : stats->callees) sortedCallees.append({ c.key, c.value });
             std::sort(sortedCallees.begin(), sortedCallees.end(), [](const auto& a, const auto& b) {
                 return a.second > b.second;
             });
             for (int j = 0; j < 5 && j < static_cast<int>(sortedCallees.size()); j++) {
-                output.append("     - "_s);
+                output.append("- `"_s);
                 output.append(sortedCallees[j].first);
-                output.append(" ("_s);
+                output.append("` ("_s);
                 output.append(sortedCallees[j].second);
                 output.append(" samples)\n"_s);
             }
+            output.append('\n');
         }
-        output.append('\n');
+        output.append("---\n\n"_s);
     }
 
     // ========== SOURCE FILE SUMMARY ==========
@@ -776,10 +801,22 @@ WTF::String stopCPUProfilerAndGetText(JSC::VM& vm)
     WTF::HashMap<WTF::String, long long> fileTimesUs;
     for (auto& [key, stats] : functionStatsMap) {
         WTF::String file = stats.location;
-        // Extract just the file part (before the colon)
+        // Extract just the file part (before the trailing :lineNumber)
+        // Be careful not to strip Windows drive letters (e.g., C:)
         size_t colonPos = file.reverseFind(':');
-        if (colonPos != WTF::notFound)
-            file = file.left(colonPos);
+        if (colonPos != WTF::notFound && colonPos > 0) {
+            // Check if this is a line number (digits after colon) vs Windows drive letter
+            // A line number colon will have digits after it, drive letter will have path chars
+            bool isLineNumber = true;
+            for (size_t i = colonPos + 1; i < file.length(); i++) {
+                if (file[i] < '0' || file[i] > '9') {
+                    isLineNumber = false;
+                    break;
+                }
+            }
+            if (isLineNumber)
+                file = file.left(colonPos);
+        }
         fileTimesUs.add(file, 0).iterator->value += stats.selfTimeUs;
     }
 
@@ -790,44 +827,603 @@ WTF::String stopCPUProfilerAndGetText(JSC::VM& vm)
     });
 
     int fileCount = std::min(20, static_cast<int>(sortedFiles.size()));
-    output.append("================================================================================\n"_s);
-    output.append("SOURCE FILES BY SELF TIME ("_s);
+    output.append("## Source Files by Self Time\n\n"_s);
+    output.append("_Showing "_s);
     output.append(fileCount);
     output.append(" of "_s);
     output.append(static_cast<unsigned>(sortedFiles.size()));
-    output.append(" files, "_s);
-    output.append(fileCount + 2);
-    output.append(" lines, use: grep -A "_s);
+    output.append(" files. Use: `grep -A "_s);
     output.append(fileCount + 4);
-    output.append(" \"SOURCE FILES\")\n"_s);
-    output.append("================================================================================\n"_s);
-    output.append("  self%    self    file\n"_s);
-    output.append("  -----  -------   ----\n"_s);
+    output.append(" \"Source Files\"`_\n\n"_s);
+    output.append("| Self% | Self | File |\n"_s);
+    output.append("|------:|-----:|------|\n"_s);
 
     for (int i = 0; i < fileCount; i++) {
         auto& [file, timeUs] = sortedFiles[i];
-        output.append("  "_s);
+        output.append("| "_s);
         output.append(formatPercent(timeUs, totalTimeUs));
-        output.append("  "_s);
+        output.append(" | "_s);
         output.append(formatTime(timeUs));
-        output.append("   "_s);
+        output.append(" | "_s);
         output.append(file);
-        output.append('\n');
+        output.append(" |\n"_s);
     }
     output.append('\n');
 
     // ========== GREP HINTS ==========
-    output.append("================================================================================\n"_s);
-    output.append("GREP HINTS (quick reference for exploring this profile)\n"_s);
-    output.append("================================================================================\n"_s);
-    output.append("  grep \"^## \"                    # List all function detail headers\n"_s);
-    output.append("  grep \"^## functionName\" -A 10  # Get details for specific function\n"_s);
-    output.append("  grep \"filename.ts\"             # Find all mentions of a file\n"_s);
-    output.append("  grep \"self%\" -A 32             # Get top functions table\n"_s);
-    output.append("  grep \"Called from:\" -A 5       # See caller relationships\n"_s);
-    output.append("  grep \"Calls:\" -A 5             # See callee relationships\n"_s);
+    output.append("## Quick Reference\n\n"_s);
+    output.append("```bash\n"_s);
+    output.append("# List all function detail headers\n"_s);
+    output.append("grep \"^### \"\n\n"_s);
+    output.append("# Get details for specific function\n"_s);
+    output.append("grep -A 15 \"^### functionName\"\n\n"_s);
+    output.append("# Find all mentions of a file\n"_s);
+    output.append("grep \"filename.ts\"\n\n"_s);
+    output.append("# See caller relationships\n"_s);
+    output.append("grep -A 5 \"Called from:\"\n\n"_s);
+    output.append("# See callee relationships\n"_s);
+    output.append("grep -A 5 \"Calls:\"\n"_s);
+    output.append("```\n"_s);
 
     return output.toString();
+}
+
+// Unified function that stops the profiler and generates requested output formats
+void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
+{
+    s_isProfilerRunning = false;
+
+    JSC::SamplingProfiler* profiler = vm.samplingProfiler();
+    if (!profiler) {
+        if (outJSON) *outJSON = WTF::String();
+        if (outText) *outText = WTF::String();
+        return;
+    }
+
+    // JSLock is re-entrant, so always acquiring it handles both JS and shutdown contexts
+    JSC::JSLockHolder locker(vm);
+
+    // Defer GC while we're working with stack traces
+    JSC::DeferGC deferGC(vm);
+
+    // Pause the profiler while holding the lock
+    auto& lock = profiler->getLock();
+    WTF::Locker profilerLocker { lock };
+    profiler->pause();
+
+    // releaseStackTraces() calls processUnverifiedStackTraces() internally
+    auto stackTraces = profiler->releaseStackTraces();
+    profiler->clearData();
+
+    // If neither output is requested, we're done
+    if (!outJSON && !outText)
+        return;
+
+    if (stackTraces.isEmpty()) {
+        if (outJSON) *outJSON = WTF::String();
+        if (outText) *outText = "No samples collected.\n"_s;
+        return;
+    }
+
+    // Sort traces by timestamp once for both formats
+    WTF::Vector<size_t> sortedIndices;
+    sortedIndices.reserveInitialCapacity(stackTraces.size());
+    for (size_t i = 0; i < stackTraces.size(); i++) {
+        sortedIndices.append(i);
+    }
+    std::sort(sortedIndices.begin(), sortedIndices.end(), [&stackTraces](size_t a, size_t b) {
+        return stackTraces[a].timestamp < stackTraces[b].timestamp;
+    });
+
+    // Generate JSON format if requested
+    if (outJSON) {
+        // Map from stack frame signature to node ID
+        WTF::HashMap<WTF::String, int> nodeMap;
+        WTF::Vector<ProfileNode> nodes;
+
+        // Create root node
+        ProfileNode rootNode;
+        rootNode.id = 1;
+        rootNode.functionName = "(root)"_s;
+        rootNode.url = ""_s;
+        rootNode.scriptId = 0;
+        rootNode.lineNumber = -1;
+        rootNode.columnNumber = -1;
+        rootNode.hitCount = 0;
+        nodes.append(WTF::move(rootNode));
+
+        int nextNodeId = 2;
+        WTF::Vector<int> samples;
+        WTF::Vector<long long> timeDeltas;
+
+        double startTime = s_profilingStartTime;
+        double lastTime = s_profilingStartTime;
+
+        for (size_t idx : sortedIndices) {
+            auto& stackTrace = stackTraces[idx];
+            if (stackTrace.frames.isEmpty()) {
+                samples.append(1);
+                double currentTime = stackTrace.timestamp.approximateWallTime().secondsSinceEpoch().value() * 1000000.0;
+                double delta = std::max(0.0, currentTime - lastTime);
+                timeDeltas.append(static_cast<long long>(delta));
+                lastTime = currentTime;
+                continue;
+            }
+
+            int currentParentId = 1;
+
+            for (int i = stackTrace.frames.size() - 1; i >= 0; i--) {
+                auto& frame = stackTrace.frames[i];
+
+                WTF::String functionName = frame.displayName(vm);
+                WTF::String url;
+                int scriptId = 0;
+                int lineNumber = -1;
+                int columnNumber = -1;
+
+                if (frame.frameType == JSC::SamplingProfiler::FrameType::Executable && frame.executable) {
+                    auto sourceProviderAndID = frame.sourceProviderAndID();
+                    auto* provider = std::get<0>(sourceProviderAndID);
+                    if (provider) {
+                        url = provider->sourceURL();
+                        scriptId = static_cast<int>(provider->asID());
+
+                        bool isAbsolutePath = false;
+                        if (!url.isEmpty()) {
+                            if (url[0] == '/')
+                                isAbsolutePath = true;
+                            else if (url.length() >= 2 && url[1] == ':') {
+                                char firstChar = url[0];
+                                if ((firstChar >= 'A' && firstChar <= 'Z') || (firstChar >= 'a' && firstChar <= 'z'))
+                                    isAbsolutePath = true;
+                            } else if (url.length() >= 2 && url[0] == '\\' && url[1] == '\\')
+                                isAbsolutePath = true;
+                        }
+
+                        if (isAbsolutePath)
+                            url = WTF::URL::fileURLWithFileSystemPath(url).string();
+                    }
+
+                    if (frame.hasExpressionInfo()) {
+                        JSC::LineColumn sourceMappedLineColumn = frame.semanticLocation.lineColumn;
+                        if (provider) {
+#if USE(BUN_JSC_ADDITIONS)
+                            auto& fn = vm.computeLineColumnWithSourcemap();
+                            if (fn)
+                                fn(vm, provider, sourceMappedLineColumn);
+#endif
+                        }
+                        lineNumber = static_cast<int>(sourceMappedLineColumn.line);
+                        columnNumber = static_cast<int>(sourceMappedLineColumn.column);
+                    }
+                }
+
+                WTF::StringBuilder keyBuilder;
+                keyBuilder.append(currentParentId);
+                keyBuilder.append(':');
+                keyBuilder.append(functionName);
+                keyBuilder.append(':');
+                keyBuilder.append(url);
+                keyBuilder.append(':');
+                keyBuilder.append(scriptId);
+                keyBuilder.append(':');
+                keyBuilder.append(lineNumber);
+                keyBuilder.append(':');
+                keyBuilder.append(columnNumber);
+
+                WTF::String key = keyBuilder.toString();
+
+                int nodeId;
+                auto it = nodeMap.find(key);
+                if (it == nodeMap.end()) {
+                    nodeId = nextNodeId++;
+                    nodeMap.add(key, nodeId);
+
+                    ProfileNode node;
+                    node.id = nodeId;
+                    node.functionName = functionName;
+                    node.url = url;
+                    node.scriptId = scriptId;
+                    node.lineNumber = lineNumber;
+                    node.columnNumber = columnNumber;
+                    node.hitCount = 0;
+
+                    nodes.append(WTF::move(node));
+
+                    if (currentParentId > 0)
+                        nodes[currentParentId - 1].children.append(nodeId);
+                } else {
+                    nodeId = it->value;
+                }
+
+                currentParentId = nodeId;
+
+                if (i == 0)
+                    nodes[nodeId - 1].hitCount++;
+            }
+
+            samples.append(currentParentId);
+
+            double currentTime = stackTrace.timestamp.approximateWallTime().secondsSinceEpoch().value() * 1000000.0;
+            double delta = std::max(0.0, currentTime - lastTime);
+            timeDeltas.append(static_cast<long long>(delta));
+            lastTime = currentTime;
+        }
+
+        double endTime = lastTime;
+
+        // Build JSON
+        using namespace WTF;
+        auto json = JSON::Object::create();
+
+        auto nodesArray = JSON::Array::create();
+        for (const auto& node : nodes) {
+            auto nodeObj = JSON::Object::create();
+            nodeObj->setInteger("id"_s, node.id);
+
+            auto callFrame = JSON::Object::create();
+            callFrame->setString("functionName"_s, node.functionName);
+            callFrame->setString("scriptId"_s, WTF::String::number(node.scriptId));
+            callFrame->setString("url"_s, node.url);
+            callFrame->setInteger("lineNumber"_s, node.lineNumber);
+            callFrame->setInteger("columnNumber"_s, node.columnNumber);
+
+            nodeObj->setValue("callFrame"_s, callFrame);
+            nodeObj->setInteger("hitCount"_s, node.hitCount);
+
+            if (!node.children.isEmpty()) {
+                auto childrenArray = JSON::Array::create();
+                WTF::HashSet<int> seenChildren;
+                for (int childId : node.children) {
+                    if (seenChildren.add(childId).isNewEntry)
+                        childrenArray->pushInteger(childId);
+                }
+                nodeObj->setValue("children"_s, childrenArray);
+            }
+
+            nodesArray->pushValue(nodeObj);
+        }
+        json->setValue("nodes"_s, nodesArray);
+
+        json->setDouble("startTime"_s, startTime);
+        json->setDouble("endTime"_s, endTime);
+
+        auto samplesArray = JSON::Array::create();
+        for (int sample : samples)
+            samplesArray->pushInteger(sample);
+        json->setValue("samples"_s, samplesArray);
+
+        auto timeDeltasArray = JSON::Array::create();
+        for (long long delta : timeDeltas)
+            timeDeltasArray->pushInteger(delta);
+        json->setValue("timeDeltas"_s, timeDeltasArray);
+
+        *outJSON = json->toJSONString();
+    }
+
+    // Generate text format if requested
+    if (outText) {
+        double startTime = s_profilingStartTime;
+        double lastTime = s_profilingStartTime;
+        double endTime = startTime;
+
+        WTF::HashMap<WTF::String, FunctionStats> functionStatsMap;
+        WTF::HashMap<WTF::String, int> callEdges;
+
+        long long totalTimeUs = 0;
+        int totalSamples = static_cast<int>(stackTraces.size());
+
+        for (size_t idx : sortedIndices) {
+            auto& stackTrace = stackTraces[idx];
+
+            double currentTime = stackTrace.timestamp.approximateWallTime().secondsSinceEpoch().value() * 1000000.0;
+            long long deltaUs = static_cast<long long>(std::max(0.0, currentTime - lastTime));
+            totalTimeUs += deltaUs;
+            lastTime = currentTime;
+            endTime = currentTime;
+
+            if (stackTrace.frames.isEmpty())
+                continue;
+
+            WTF::String previousKey;
+
+            for (int i = stackTrace.frames.size() - 1; i >= 0; i--) {
+                auto& frame = stackTrace.frames[i];
+
+                WTF::String rawFunctionName = frame.displayName(vm);
+                WTF::String functionName = formatFunctionName(rawFunctionName, frame);
+                WTF::String url;
+                int lineNumber = -1;
+
+                if (frame.frameType == JSC::SamplingProfiler::FrameType::Executable && frame.executable) {
+                    auto sourceProviderAndID = frame.sourceProviderAndID();
+                    auto* provider = std::get<0>(sourceProviderAndID);
+                    if (provider) {
+                        url = provider->sourceURL();
+
+                        bool isAbsolutePath = false;
+                        if (!url.isEmpty()) {
+                            if (url[0] == '/')
+                                isAbsolutePath = true;
+                            else if (url.length() >= 2 && url[1] == ':') {
+                                char firstChar = url[0];
+                                if ((firstChar >= 'A' && firstChar <= 'Z') || (firstChar >= 'a' && firstChar <= 'z'))
+                                    isAbsolutePath = true;
+                            } else if (url.length() >= 2 && url[0] == '\\' && url[1] == '\\')
+                                isAbsolutePath = true;
+                        }
+                        if (isAbsolutePath)
+                            url = WTF::URL::fileURLWithFileSystemPath(url).string();
+                    }
+
+                    if (frame.hasExpressionInfo()) {
+                        JSC::LineColumn sourceMappedLineColumn = frame.semanticLocation.lineColumn;
+                        if (provider) {
+#if USE(BUN_JSC_ADDITIONS)
+                            auto& fn = vm.computeLineColumnWithSourcemap();
+                            if (fn)
+                                fn(vm, provider, sourceMappedLineColumn);
+#endif
+                        }
+                        lineNumber = static_cast<int>(sourceMappedLineColumn.line);
+                    }
+                }
+
+                WTF::String location = formatLocation(url, lineNumber);
+                // Key uses pipe separator internally (not shown in output)
+                WTF::StringBuilder keyBuilder;
+                keyBuilder.append(functionName);
+                keyBuilder.append('|');
+                keyBuilder.append(location);
+                WTF::String key = keyBuilder.toString();
+
+                auto result = functionStatsMap.add(key, FunctionStats());
+                FunctionStats& stats = result.iterator->value;
+                if (result.isNewEntry) {
+                    stats.functionName = functionName;
+                    stats.location = location;
+                }
+
+                stats.totalSamples++;
+                stats.totalTimeUs += deltaUs;
+
+                if (i == 0) {
+                    stats.selfSamples++;
+                    stats.selfTimeUs += deltaUs;
+                }
+
+                if (!previousKey.isEmpty()) {
+                    stats.callers.add(previousKey, 0).iterator->value++;
+
+                    auto prevIt = functionStatsMap.find(previousKey);
+                    if (prevIt != functionStatsMap.end())
+                        prevIt->value.callees.add(key, 0).iterator->value++;
+
+                    WTF::StringBuilder edgeKeyBuilder;
+                    edgeKeyBuilder.append(previousKey);
+                    edgeKeyBuilder.append(" -> "_s);
+                    edgeKeyBuilder.append(key);
+                    callEdges.add(edgeKeyBuilder.toString(), 0).iterator->value++;
+                }
+
+                previousKey = key;
+            }
+        }
+
+        // Sort functions by self time
+        WTF::Vector<std::pair<WTF::String, FunctionStats*>> sortedBySelf;
+        for (auto& entry : functionStatsMap)
+            sortedBySelf.append({ entry.key, &entry.value });
+        std::sort(sortedBySelf.begin(), sortedBySelf.end(), [](const auto& a, const auto& b) {
+            return a.second->selfTimeUs > b.second->selfTimeUs;
+        });
+
+        // Sort functions by total time
+        WTF::Vector<std::pair<WTF::String, FunctionStats*>> sortedByTotal;
+        for (auto& entry : functionStatsMap)
+            sortedByTotal.append({ entry.key, &entry.value });
+        std::sort(sortedByTotal.begin(), sortedByTotal.end(), [](const auto& a, const auto& b) {
+            return a.second->totalTimeUs > b.second->totalTimeUs;
+        });
+
+        // Build the text output (Markdown format optimized for GitHub rendering + LLM analysis)
+        WTF::StringBuilder output;
+        int numFunctions = static_cast<int>(functionStatsMap.size());
+
+        // Header with key metrics
+        output.append("# CPU Profile\n\n"_s);
+        output.append("| Duration | Samples | Interval | Functions |\n"_s);
+        output.append("|----------|---------|----------|----------|\n"_s);
+        output.append("| "_s);
+        output.append(formatTime(endTime - startTime));
+        output.append(" | "_s);
+        output.append(totalSamples);
+        output.append(" | "_s);
+        output.append(s_samplingInterval / 1000);
+        output.append("ms | "_s);
+        output.append(numFunctions);
+        output.append(" |\n\n"_s);
+
+        // Top 10 summary for quick orientation
+        output.append("**Top 10:** "_s);
+        int topCount = 0;
+        for (auto& [key, stats] : sortedBySelf) {
+            if (stats->selfTimeUs == 0 || topCount >= 10)
+                break;
+            if (topCount > 0) output.append(", "_s);
+            output.append('`');
+            output.append(stats->functionName);
+            output.append("` "_s);
+            output.append(formatPercent(stats->selfTimeUs, totalTimeUs));
+            topCount++;
+        }
+        output.append("\n\n"_s);
+
+        // Hot functions by self time (where time is actually spent)
+        output.append("## Hot Functions (Self Time)\n\n"_s);
+        output.append("| Self% | Self | Total% | Total | Function | Location |\n"_s);
+        output.append("|------:|-----:|-------:|------:|----------|----------|\n"_s);
+
+        for (auto& [key, stats] : sortedBySelf) {
+            // Skip functions with 0 self time
+            if (stats->selfTimeUs == 0)
+                continue;
+            output.append("| "_s);
+            output.append(formatPercent(stats->selfTimeUs, totalTimeUs));
+            output.append(" | "_s);
+            output.append(formatTime(stats->selfTimeUs));
+            output.append(" | "_s);
+            output.append(formatPercent(stats->totalTimeUs, totalTimeUs));
+            output.append(" | "_s);
+            output.append(formatTime(stats->totalTimeUs));
+            output.append(" | `"_s);
+            output.append(stats->functionName);
+            output.append("` | "_s);
+            output.append(stats->location);
+            output.append(" |\n"_s);
+        }
+        output.append('\n');
+
+        // Call tree (total time) - shows the call hierarchy
+        output.append("## Call Tree (Total Time)\n\n"_s);
+        output.append("| Total% | Total | Self% | Self | Function | Location |\n"_s);
+        output.append("|-------:|------:|------:|-----:|----------|----------|\n"_s);
+
+        for (auto& [key, stats] : sortedByTotal) {
+            output.append("| "_s);
+            output.append(formatPercent(stats->totalTimeUs, totalTimeUs));
+            output.append(" | "_s);
+            output.append(formatTime(stats->totalTimeUs));
+            output.append(" | "_s);
+            output.append(formatPercent(stats->selfTimeUs, totalTimeUs));
+            output.append(" | "_s);
+            output.append(formatTime(stats->selfTimeUs));
+            output.append(" | `"_s);
+            output.append(stats->functionName);
+            output.append("` | "_s);
+            output.append(stats->location);
+            output.append(" |\n"_s);
+        }
+        output.append('\n');
+
+        // Function details with call relationships
+        output.append("## Function Details\n\n"_s);
+
+        for (auto& [key, stats] : sortedBySelf) {
+            // Skip functions with no self time and no interesting relationships
+            if (stats->selfTimeUs == 0 && stats->callers.isEmpty() && stats->callees.isEmpty())
+                continue;
+
+            output.append("### `"_s);
+            output.append(stats->functionName);
+            output.append("`\n\n"_s);
+            output.append("- **Location:** `"_s);
+            output.append(stats->location);
+            output.append("`\n"_s);
+            output.append("- **Self:** "_s);
+            output.append(formatPercent(stats->selfTimeUs, totalTimeUs));
+            output.append(" ("_s);
+            output.append(formatTime(stats->selfTimeUs));
+            output.append(") | **Total:** "_s);
+            output.append(formatPercent(stats->totalTimeUs, totalTimeUs));
+            output.append(" ("_s);
+            output.append(formatTime(stats->totalTimeUs));
+            output.append(")\n"_s);
+
+            if (!stats->callers.isEmpty()) {
+                output.append("- **Called by:** "_s);
+                WTF::Vector<std::pair<WTF::String, int>> sortedCallers;
+                for (auto& c : stats->callers) sortedCallers.append({ c.key, c.value });
+                std::sort(sortedCallers.begin(), sortedCallers.end(), [](const auto& a, const auto& b) {
+                    return a.second > b.second;
+                });
+                for (size_t j = 0; j < sortedCallers.size(); j++) {
+                    if (j > 0) output.append(", "_s);
+                    output.append('`');
+                    // Extract just the function name from "funcName|location"
+                    auto& callerKey = sortedCallers[j].first;
+                    size_t pipePos = callerKey.find('|');
+                    if (pipePos != WTF::notFound)
+                        output.append(callerKey.left(pipePos));
+                    else
+                        output.append(callerKey);
+                    output.append("` ("_s);
+                    output.append(sortedCallers[j].second);
+                    output.append(')');
+                }
+                output.append('\n');
+            }
+
+            if (!stats->callees.isEmpty()) {
+                output.append("- **Calls:** "_s);
+                WTF::Vector<std::pair<WTF::String, int>> sortedCallees;
+                for (auto& c : stats->callees) sortedCallees.append({ c.key, c.value });
+                std::sort(sortedCallees.begin(), sortedCallees.end(), [](const auto& a, const auto& b) {
+                    return a.second > b.second;
+                });
+                for (size_t j = 0; j < sortedCallees.size(); j++) {
+                    if (j > 0) output.append(", "_s);
+                    output.append('`');
+                    // Extract just the function name from "funcName|location"
+                    auto& calleeKey = sortedCallees[j].first;
+                    size_t pipePos = calleeKey.find('|');
+                    if (pipePos != WTF::notFound)
+                        output.append(calleeKey.left(pipePos));
+                    else
+                        output.append(calleeKey);
+                    output.append("` ("_s);
+                    output.append(sortedCallees[j].second);
+                    output.append(')');
+                }
+                output.append('\n');
+            }
+
+            output.append('\n');
+        }
+
+        // Source files breakdown
+        WTF::HashMap<WTF::String, long long> fileTimesUs;
+        for (auto& [key, stats] : functionStatsMap) {
+            WTF::String file = stats.location;
+            size_t colonPos = file.reverseFind(':');
+            if (colonPos != WTF::notFound && colonPos > 0) {
+                bool isLineNumber = true;
+                for (size_t i = colonPos + 1; i < file.length(); i++) {
+                    if (file[i] < '0' || file[i] > '9') {
+                        isLineNumber = false;
+                        break;
+                    }
+                }
+                if (isLineNumber)
+                    file = file.left(colonPos);
+            }
+            fileTimesUs.add(file, 0).iterator->value += stats.selfTimeUs;
+        }
+
+        WTF::Vector<std::pair<WTF::String, long long>> sortedFiles;
+        for (auto& f : fileTimesUs) sortedFiles.append({ f.key, f.value });
+        std::sort(sortedFiles.begin(), sortedFiles.end(), [](const auto& a, const auto& b) {
+            return a.second > b.second;
+        });
+
+        output.append("## Files\n\n"_s);
+        output.append("| Self% | Self | File |\n"_s);
+        output.append("|------:|-----:|------|\n"_s);
+
+        for (auto& [file, timeUs] : sortedFiles) {
+            if (timeUs == 0)
+                continue;
+            output.append("| "_s);
+            output.append(formatPercent(timeUs, totalTimeUs));
+            output.append(" | "_s);
+            output.append(formatTime(timeUs));
+            output.append(" | `"_s);
+            output.append(file);
+            output.append("` |\n"_s);
+        }
+
+        *outText = output.toString();
+    }
 }
 
 } // namespace Bun
@@ -837,14 +1433,13 @@ extern "C" void Bun__startCPUProfiler(JSC::VM* vm)
     Bun::startCPUProfiler(*vm);
 }
 
-extern "C" BunString Bun__stopCPUProfilerAndGetJSON(JSC::VM* vm)
+extern "C" void Bun__stopCPUProfiler(JSC::VM* vm, BunString* outJSON, BunString* outText)
 {
-    WTF::String result = Bun::stopCPUProfilerAndGetJSON(*vm);
-    return Bun::toStringRef(result);
-}
-
-extern "C" BunString Bun__stopCPUProfilerAndGetText(JSC::VM* vm)
-{
-    WTF::String result = Bun::stopCPUProfilerAndGetText(*vm);
-    return Bun::toStringRef(result);
+    WTF::String jsonResult;
+    WTF::String textResult;
+    Bun::stopCPUProfiler(*vm, outJSON ? &jsonResult : nullptr, outText ? &textResult : nullptr);
+    if (outJSON)
+        *outJSON = Bun::toStringRef(jsonResult);
+    if (outText)
+        *outText = Bun::toStringRef(textResult);
 }

@@ -188,8 +188,8 @@ describe.concurrent("--cpu-prof", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("--cpu-prof-text generates text format profile", async () => {
-    using dir = tempDir("cpu-prof-text", {
+  test("--cpu-prof-md generates markdown format profile", async () => {
+    using dir = tempDir("cpu-prof-md", {
       "test.js": `
         // CPU-intensive task for text profile
         function fibonacci(n) {
@@ -209,7 +209,7 @@ describe.concurrent("--cpu-prof", () => {
     });
 
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "--cpu-prof", "--cpu-prof-text", "test.js"],
+      cmd: [bunExe(), "--cpu-prof", "--cpu-prof-md", "test.js"],
       cwd: String(dir),
       env: bunEnv,
       stdout: "inherit",
@@ -218,39 +218,34 @@ describe.concurrent("--cpu-prof", () => {
 
     const exitCode = await proc.exited;
 
-    // Check that a .txt file was created (not .cpuprofile)
+    // Check that a .md file was created (not .cpuprofile)
     const files = readdirSync(String(dir));
-    const textFiles = files.filter(f => f.endsWith(".txt") && f.startsWith("CPU."));
+    const mdFiles = files.filter(f => f.endsWith(".md") && f.startsWith("CPU."));
 
-    expect(textFiles.length).toBeGreaterThan(0);
+    expect(mdFiles.length).toBeGreaterThan(0);
     expect(exitCode).toBe(0);
 
-    // Read and validate the text profile format
-    const profilePath = join(String(dir), textFiles[0]);
+    // Read and validate the markdown profile format
+    const profilePath = join(String(dir), mdFiles[0]);
     const profileContent = readFileSync(profilePath, "utf-8");
 
-    // Validate the text format has expected sections
-    expect(profileContent).toContain("BUN CPU PROFILE");
-    expect(profileContent).toContain("TOP FUNCTIONS BY SELF TIME");
-    expect(profileContent).toContain("TOP FUNCTIONS BY TOTAL TIME");
-    expect(profileContent).toContain("FUNCTION DETAILS");
-    expect(profileContent).toContain("SOURCE FILES BY SELF TIME");
-    expect(profileContent).toContain("GREP HINTS");
+    // Validate the markdown format has expected sections
+    expect(profileContent).toContain("# CPU Profile");
+    expect(profileContent).toContain("## Hot Functions (Self Time)");
+    expect(profileContent).toContain("## Call Tree (Total Time)");
+    expect(profileContent).toContain("## Function Details");
+    expect(profileContent).toContain("## Files");
 
-    // Validate header contains summary info
-    expect(profileContent).toMatch(/Duration:/);
-    expect(profileContent).toMatch(/Samples:/);
-    expect(profileContent).toMatch(/Interval:/);
-    expect(profileContent).toMatch(/Functions:/);
+    // Validate header contains summary info in markdown table
+    expect(profileContent).toMatch(/\| Duration \| Samples \| Interval \| Functions \|/);
 
-    // Validate grep hints section
-    expect(profileContent).toContain('grep "^## "');
-    expect(profileContent).toContain("Called from:");
-    expect(profileContent).toContain("Calls:");
+    // Validate function details have caller/callee info
+    expect(profileContent).toContain("**Called by:**");
+    expect(profileContent).toContain("**Calls:**");
   });
 
-  test("--cpu-prof-text with custom name", async () => {
-    using dir = tempDir("cpu-prof-text-name", {
+  test("--cpu-prof-md with custom name", async () => {
+    using dir = tempDir("cpu-prof-md-name", {
       "test.js": `
         function loop() {
           const end = Date.now() + 32;
@@ -260,10 +255,11 @@ describe.concurrent("--cpu-prof", () => {
       `,
     });
 
-    const customName = "my-profile.txt";
+    const customName = "my-profile.md";
 
+    // --cpu-prof-md works standalone, no need for --cpu-prof
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "--cpu-prof", "--cpu-prof-text", "--cpu-prof-name", customName, "test.js"],
+      cmd: [bunExe(), "--cpu-prof-md", "--cpu-prof-name", customName, "test.js"],
       cwd: String(dir),
       env: bunEnv,
       stdout: "inherit",
@@ -276,13 +272,13 @@ describe.concurrent("--cpu-prof", () => {
     expect(files).toContain(customName);
     expect(exitCode).toBe(0);
 
-    // Validate it's text format
+    // Validate it's markdown format
     const profileContent = readFileSync(join(String(dir), customName), "utf-8");
-    expect(profileContent).toContain("BUN CPU PROFILE");
+    expect(profileContent).toContain("# CPU Profile");
   });
 
-  test("--cpu-prof-text shows line counts in sections", async () => {
-    using dir = tempDir("cpu-prof-text-lines", {
+  test("--cpu-prof-md shows function details with relationships", async () => {
+    using dir = tempDir("cpu-prof-md-details", {
       "test.js": `
         function workA() {
           let sum = 0;
@@ -305,8 +301,9 @@ describe.concurrent("--cpu-prof", () => {
       `,
     });
 
+    // --cpu-prof-md works standalone
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "--cpu-prof", "--cpu-prof-text", "test.js"],
+      cmd: [bunExe(), "--cpu-prof-md", "test.js"],
       cwd: String(dir),
       env: bunEnv,
       stdout: "inherit",
@@ -317,17 +314,94 @@ describe.concurrent("--cpu-prof", () => {
     expect(exitCode).toBe(0);
 
     const files = readdirSync(String(dir));
-    const textFiles = files.filter(f => f.endsWith(".txt") && f.startsWith("CPU."));
-    expect(textFiles.length).toBeGreaterThan(0);
+    const mdFiles = files.filter(f => f.endsWith(".md") && f.startsWith("CPU."));
+    expect(mdFiles.length).toBeGreaterThan(0);
 
-    const profileContent = readFileSync(join(String(dir), textFiles[0]), "utf-8");
+    const profileContent = readFileSync(join(String(dir), mdFiles[0]), "utf-8");
 
-    // Check that section headers contain line counts and grep hints
-    expect(profileContent).toMatch(/TOP FUNCTIONS BY SELF TIME \(\d+ of \d+ functions, \d+ lines, use: grep -A \d+/);
-    expect(profileContent).toMatch(/TOP FUNCTIONS BY TOTAL TIME \(\d+ of \d+ functions, \d+ lines, use: grep -A \d+/);
-    expect(profileContent).toMatch(/SOURCE FILES BY SELF TIME \(\d+ of \d+ files, \d+ lines, use: grep -A \d+/);
+    // Check markdown sections
+    expect(profileContent).toMatch(/## Hot Functions \(Self Time\)/);
+    expect(profileContent).toMatch(/## Call Tree \(Total Time\)/);
+    expect(profileContent).toMatch(/## Function Details/);
+    expect(profileContent).toMatch(/## Files/);
 
-    // Check that function detail blocks have line counts
-    expect(profileContent).toMatch(/^## .+ \[\d+ lines\]/m);
+    // Check function detail headers (### `functionName`)
+    expect(profileContent).toMatch(/^### `/m);
+  });
+
+  test("--cpu-prof-md works standalone without --cpu-prof", async () => {
+    using dir = tempDir("cpu-prof-md-standalone", {
+      "test.js": `
+        function loop() {
+          const end = Date.now() + 32;
+          while (Date.now() < end) {}
+        }
+        loop();
+      `,
+    });
+
+    // Use ONLY --cpu-prof-md without --cpu-prof
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--cpu-prof-md", "test.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+
+    const exitCode = await proc.exited;
+
+    // Check that a .md file was created
+    const files = readdirSync(String(dir));
+    const mdFiles = files.filter(f => f.endsWith(".md") && f.startsWith("CPU."));
+
+    expect(mdFiles.length).toBeGreaterThan(0);
+    expect(exitCode).toBe(0);
+
+    // Validate it's the markdown format
+    const profileContent = readFileSync(join(String(dir), mdFiles[0]), "utf-8");
+    expect(profileContent).toContain("# CPU Profile");
+  });
+
+  test("--cpu-prof and --cpu-prof-md together creates both files", async () => {
+    using dir = tempDir("cpu-prof-both-formats", {
+      "test.js": `
+        function loop() {
+          const end = Date.now() + 32;
+          while (Date.now() < end) {}
+        }
+        loop();
+      `,
+    });
+
+    // Use both flags together
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--cpu-prof", "--cpu-prof-md", "test.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+
+    const exitCode = await proc.exited;
+
+    // Check that both .cpuprofile and .md files were created
+    const files = readdirSync(String(dir));
+    const jsonFiles = files.filter(f => f.endsWith(".cpuprofile"));
+    const mdFiles = files.filter(f => f.endsWith(".md") && f.startsWith("CPU."));
+
+    expect(jsonFiles.length).toBeGreaterThan(0);
+    expect(mdFiles.length).toBeGreaterThan(0);
+    expect(exitCode).toBe(0);
+
+    // Validate JSON file
+    const jsonContent = readFileSync(join(String(dir), jsonFiles[0]), "utf-8");
+    const profile = JSON.parse(jsonContent);
+    expect(profile).toHaveProperty("nodes");
+    expect(profile).toHaveProperty("samples");
+
+    // Validate markdown file
+    const mdContent = readFileSync(join(String(dir), mdFiles[0]), "utf-8");
+    expect(mdContent).toContain("# CPU Profile");
   });
 });

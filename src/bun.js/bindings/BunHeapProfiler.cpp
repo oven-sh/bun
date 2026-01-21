@@ -257,16 +257,11 @@ WTF::String generateHeapProfile(JSC::VM& vm)
             totalStringSize += stats.totalSize;
             stringCount += stats.count;
         }
-        if (stats.name.containsIgnoringASCIICase("Array"_s) ||
-            stats.name.containsIgnoringASCIICase("Map"_s) ||
-            stats.name.containsIgnoringASCIICase("Set"_s) ||
-            stats.name.containsIgnoringASCIICase("Vector"_s)) {
+        if (stats.name.containsIgnoringASCIICase("Array"_s) || stats.name.containsIgnoringASCIICase("Map"_s) || stats.name.containsIgnoringASCIICase("Set"_s) || stats.name.containsIgnoringASCIICase("Vector"_s)) {
             totalArraySize += stats.totalSize;
             arrayCount += stats.count;
         }
-        if (stats.name.containsIgnoringASCIICase("Function"_s) ||
-            stats.name.containsIgnoringASCIICase("Closure"_s) ||
-            stats.name.containsIgnoringASCIICase("Executable"_s)) {
+        if (stats.name.containsIgnoringASCIICase("Function"_s) || stats.name.containsIgnoringASCIICase("Closure"_s) || stats.name.containsIgnoringASCIICase("Executable"_s)) {
             totalFuncSize += stats.totalSize;
             funcCount += stats.count;
         }

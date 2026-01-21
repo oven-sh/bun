@@ -103,5 +103,5 @@ fn generateDefaultFilename(buf: *bun.PathBuffer, text_format: bool) ![]const u8 
 const std = @import("std");
 
 const bun = @import("bun");
-const jsc = bun.jsc;
 const Output = bun.Output;
+const jsc = bun.jsc;

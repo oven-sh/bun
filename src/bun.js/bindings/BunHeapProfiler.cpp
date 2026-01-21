@@ -15,9 +15,6 @@
 #include <unordered_map>
 #include <unordered_set>
 
-extern "C" BunString Bun__generateHeapProfile(JSC::VM* vm);
-extern "C" BunString Bun__generateHeapSnapshotV8(JSC::VM* vm);
-
 namespace Bun {
 
 BunString toStringRef(const WTF::String& wtfString);

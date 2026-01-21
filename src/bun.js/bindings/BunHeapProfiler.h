@@ -4,7 +4,6 @@
 #include <wtf/text/WTFString.h>
 
 namespace JSC {
-class JSGlobalObject;
 class VM;
 }
 

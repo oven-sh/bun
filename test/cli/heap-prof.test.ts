@@ -2,19 +2,13 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
+const testScript = `const arr = []; for (let i = 0; i < 100; i++) arr.push({ x: i, y: "hello" + i }); console.log("done");`;
+
 test("--heap-prof generates V8 heap snapshot on exit", async () => {
-  using dir = tempDir("heap-prof-v8-test", {
-    "index.js": `
-      const arr = [];
-      for (let i = 0; i < 100; i++) {
-        arr.push({ x: i, y: "hello" + i });
-      }
-      console.log("done");
-    `,
-  });
+  using dir = tempDir("heap-prof-v8-test", {});
 
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "--heap-prof", "index.js"],
+    cmd: [bunExe(), "--heap-prof", "-e", testScript],
     cwd: String(dir),
     env: bunEnv,
     stdout: "pipe",
@@ -45,18 +39,10 @@ test("--heap-prof generates V8 heap snapshot on exit", async () => {
 });
 
 test("--heap-prof-md generates markdown heap profile on exit", async () => {
-  using dir = tempDir("heap-prof-md-test", {
-    "index.js": `
-      const arr = [];
-      for (let i = 0; i < 100; i++) {
-        arr.push({ x: i, y: "hello" + i });
-      }
-      console.log("done");
-    `,
-  });
+  using dir = tempDir("heap-prof-md-test", {});
 
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "--heap-prof-md", "index.js"],
+    cmd: [bunExe(), "--heap-prof-md", "-e", testScript],
     cwd: String(dir),
     env: bunEnv,
     stdout: "pipe",
@@ -115,12 +101,11 @@ test("--heap-prof-md generates markdown heap profile on exit", async () => {
 
 test("--heap-prof-dir specifies output directory for V8 format", async () => {
   using dir = tempDir("heap-prof-dir-test", {
-    "index.js": `console.log("hello");`,
     "profiles": {},
   });
 
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "--heap-prof", "--heap-prof-dir", "profiles", "index.js"],
+    cmd: [bunExe(), "--heap-prof", "--heap-prof-dir", "profiles", "-e", `console.log("hello");`],
     cwd: String(dir),
     env: bunEnv,
     stdout: "pipe",
@@ -131,7 +116,8 @@ test("--heap-prof-dir specifies output directory for V8 format", async () => {
 
   expect(stdout.trim()).toBe("hello");
   expect(stderr).toContain("Heap profile written to:");
-  expect(stderr).toContain("profiles/");
+  // Check for "profiles" directory in path (handles both / and \ separators)
+  expect(stderr).toMatch(/profiles[/\\]/);
   expect(exitCode).toBe(0);
 
   // Check the profile is in the specified directory
@@ -142,12 +128,11 @@ test("--heap-prof-dir specifies output directory for V8 format", async () => {
 
 test("--heap-prof-dir specifies output directory for markdown format", async () => {
   using dir = tempDir("heap-prof-md-dir-test", {
-    "index.js": `console.log("hello");`,
     "profiles": {},
   });
 
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "--heap-prof-md", "--heap-prof-dir", "profiles", "index.js"],
+    cmd: [bunExe(), "--heap-prof-md", "--heap-prof-dir", "profiles", "-e", `console.log("hello");`],
     cwd: String(dir),
     env: bunEnv,
     stdout: "pipe",
@@ -158,7 +143,8 @@ test("--heap-prof-dir specifies output directory for markdown format", async () 
 
   expect(stdout.trim()).toBe("hello");
   expect(stderr).toContain("Heap profile written to:");
-  expect(stderr).toContain("profiles/");
+  // Check for "profiles" directory in path (handles both / and \ separators)
+  expect(stderr).toMatch(/profiles[/\\]/);
   expect(exitCode).toBe(0);
 
   // Check the profile is in the specified directory
@@ -168,12 +154,10 @@ test("--heap-prof-dir specifies output directory for markdown format", async () 
 });
 
 test("--heap-prof-name specifies output filename", async () => {
-  using dir = tempDir("heap-prof-name-test", {
-    "index.js": `console.log("hello");`,
-  });
+  using dir = tempDir("heap-prof-name-test", {});
 
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "--heap-prof", "--heap-prof-name", "my-profile.heapsnapshot", "index.js"],
+    cmd: [bunExe(), "--heap-prof", "--heap-prof-name", "my-profile.heapsnapshot", "-e", `console.log("hello");`],
     cwd: String(dir),
     env: bunEnv,
     stdout: "pipe",
@@ -194,12 +178,20 @@ test("--heap-prof-name specifies output filename", async () => {
 
 test("--heap-prof-name and --heap-prof-dir work together", async () => {
   using dir = tempDir("heap-prof-both-test", {
-    "index.js": `console.log("hello");`,
     "output": {},
   });
 
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "--heap-prof", "--heap-prof-dir", "output", "--heap-prof-name", "custom.heapsnapshot", "index.js"],
+    cmd: [
+      bunExe(),
+      "--heap-prof",
+      "--heap-prof-dir",
+      "output",
+      "--heap-prof-name",
+      "custom.heapsnapshot",
+      "-e",
+      `console.log("hello");`,
+    ],
     cwd: String(dir),
     env: bunEnv,
     stdout: "pipe",
@@ -218,12 +210,10 @@ test("--heap-prof-name and --heap-prof-dir work together", async () => {
 });
 
 test("--heap-prof-name without --heap-prof or --heap-prof-md shows warning", async () => {
-  using dir = tempDir("heap-prof-warn-test", {
-    "index.js": `console.log("hello");`,
-  });
+  using dir = tempDir("heap-prof-warn-test", {});
 
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "--heap-prof-name", "test.heapsnapshot", "index.js"],
+    cmd: [bunExe(), "--heap-prof-name", "test.heapsnapshot", "-e", `console.log("hello");`],
     cwd: String(dir),
     env: bunEnv,
     stdout: "pipe",

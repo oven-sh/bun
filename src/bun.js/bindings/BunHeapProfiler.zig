@@ -42,8 +42,10 @@ pub fn generateAndWriteProfile(vm: *jsc.VM, config: HeapProfilerConfig) !void {
         // If we got ENOENT, PERM, or ACCES, try creating the directory and retry
         const errno = err.getErrno();
         if (errno == .NOENT or errno == .PERM or errno == .ACCES) {
-            if (config.dir.len > 0) {
-                bun.makePath(bun.FD.cwd().stdDir(), config.dir) catch {};
+            // Derive directory from the absolute output path
+            const abs_path = path_buf.slice();
+            if (std.fs.path.dirname(abs_path)) |dir_path| {
+                bun.makePath(bun.FD.cwd().stdDir(), dir_path) catch {};
                 // Retry write
                 const retry_result = bun.sys.File.writeFile(bun.FD.cwd(), output_path_os, profile_slice.slice());
                 if (retry_result.asErr()) |_| {

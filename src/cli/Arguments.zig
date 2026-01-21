@@ -870,7 +870,18 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         const heap_prof_v8 = args.flag("--heap-prof");
         const heap_prof_md = args.flag("--heap-prof-md");
 
-        if (heap_prof_v8 or heap_prof_md) {
+        if (heap_prof_v8 and heap_prof_md) {
+            // Both flags specified - warn and use markdown format
+            Output.warn("Both --heap-prof and --heap-prof-md specified; using --heap-prof-md (markdown format)", .{});
+            ctx.runtime_options.heap_prof.enabled = true;
+            ctx.runtime_options.heap_prof.text_format = true;
+            if (args.option("--heap-prof-name")) |name| {
+                ctx.runtime_options.heap_prof.name = name;
+            }
+            if (args.option("--heap-prof-dir")) |dir| {
+                ctx.runtime_options.heap_prof.dir = dir;
+            }
+        } else if (heap_prof_v8 or heap_prof_md) {
             ctx.runtime_options.heap_prof.enabled = true;
             ctx.runtime_options.heap_prof.text_format = heap_prof_md;
             if (args.option("--heap-prof-name")) |name| {

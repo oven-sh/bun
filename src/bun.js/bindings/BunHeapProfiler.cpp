@@ -233,7 +233,7 @@ WTF::String generateHeapProfile(JSC::VM& vm)
         }
     }
 
-    // Build edge maps
+    // Build edge maps for efficient traversal
     std::unordered_map<uint64_t, WTF::Vector<size_t>> outgoingEdges;
     std::unordered_map<uint64_t, WTF::Vector<size_t>> incomingEdges;
     for (size_t i = 0; i < edges.size(); i++) {
@@ -241,21 +241,225 @@ WTF::String generateHeapProfile(JSC::VM& vm)
         incomingEdges[edges[i].toId].append(i);
     }
 
-    // Calculate retained sizes (approximation)
-    // NOTE: This is a shallow approximation that only sums direct children's sizes.
-    // True retained size requires dominator tree analysis which is more expensive.
-    // For accurate retained sizes, use Chrome DevTools with the V8 .heapsnapshot format.
-    for (auto& node : nodes) {
-        node.retainedSize = node.size;
-        auto it = outgoingEdges.find(node.id);
-        if (it != outgoingEdges.end()) {
-            for (size_t edgeIdx : it->second) {
-                auto childIt = idToIndex.find(edges[edgeIdx].toId);
-                if (childIt != idToIndex.end()) {
-                    node.retainedSize += nodes[childIt->second].size;
+    // ============================================================
+    // DOMINATOR TREE CALCULATION
+    // Based on: K. Cooper, T. Harvey and K. Kennedy
+    // "A Simple, Fast Dominance Algorithm"
+    // ============================================================
+
+    size_t nodeCount = nodes.size();
+    if (nodeCount == 0) {
+        return ""_s;
+    }
+
+    // Build nodeOrdinal (index) to nodeId mapping
+    WTF::Vector<uint64_t> ordinalToId(nodeCount);
+    for (size_t i = 0; i < nodeCount; i++) {
+        ordinalToId[i] = nodes[i].id;
+    }
+
+    // Step 1: Build post-order indexes via DFS from root (node 0)
+    WTF::Vector<uint32_t> nodeOrdinalToPostOrderIndex(nodeCount);
+    WTF::Vector<uint32_t> postOrderIndexToNodeOrdinal(nodeCount);
+
+    // DFS using explicit stack
+    WTF::Vector<uint32_t> stackNodes(nodeCount);
+    WTF::Vector<size_t> stackEdgeIdx(nodeCount);
+    WTF::Vector<uint8_t> visited(nodeCount, 0);
+
+    uint32_t postOrderIndex = 0;
+    int stackTop = 0;
+
+    // Start from root node (ordinal 0)
+    stackNodes[0] = 0;
+    stackEdgeIdx[0] = 0;
+    visited[0] = 1;
+
+    while (stackTop >= 0) {
+        uint32_t nodeOrdinal = stackNodes[stackTop];
+        uint64_t nodeId = ordinalToId[nodeOrdinal];
+
+        auto outIt = outgoingEdges.find(nodeId);
+        size_t& edgeIdx = stackEdgeIdx[stackTop];
+
+        bool foundChild = false;
+        if (outIt != outgoingEdges.end()) {
+            while (edgeIdx < outIt->second.size()) {
+                size_t currentEdgeIdx = outIt->second[edgeIdx];
+                edgeIdx++;
+
+                uint64_t toId = edges[currentEdgeIdx].toId;
+                auto toIt = idToIndex.find(toId);
+                if (toIt == idToIndex.end())
+                    continue;
+
+                uint32_t toOrdinal = toIt->second;
+                if (visited[toOrdinal])
+                    continue;
+
+                // Push child onto stack
+                visited[toOrdinal] = 1;
+                stackTop++;
+                stackNodes[stackTop] = toOrdinal;
+                stackEdgeIdx[stackTop] = 0;
+                foundChild = true;
+                break;
+            }
+        }
+
+        if (!foundChild) {
+            // No more children, assign post-order index
+            nodeOrdinalToPostOrderIndex[nodeOrdinal] = postOrderIndex;
+            postOrderIndexToNodeOrdinal[postOrderIndex] = nodeOrdinal;
+            postOrderIndex++;
+            stackTop--;
+        }
+    }
+
+    // Handle unvisited nodes (can happen with unreachable nodes)
+    if (postOrderIndex != nodeCount) {
+        // Root was last visited, revert
+        if (postOrderIndex > 0 && postOrderIndexToNodeOrdinal[postOrderIndex - 1] == 0) {
+            postOrderIndex--;
+        }
+
+        // Visit unvisited nodes
+        for (uint32_t nodeOrdinal = 1; nodeOrdinal < nodeCount; ++nodeOrdinal) {
+            if (!visited[nodeOrdinal]) {
+                nodeOrdinalToPostOrderIndex[nodeOrdinal] = postOrderIndex;
+                postOrderIndexToNodeOrdinal[postOrderIndex] = nodeOrdinal;
+                postOrderIndex++;
+            }
+        }
+
+        // Make sure root is last
+        if (!visited[0] || nodeOrdinalToPostOrderIndex[0] != nodeCount - 1) {
+            nodeOrdinalToPostOrderIndex[0] = postOrderIndex;
+            postOrderIndexToNodeOrdinal[postOrderIndex] = 0;
+            postOrderIndex++;
+        }
+    }
+
+    // Step 2: Build dominator tree using Cooper-Harvey-Kennedy algorithm
+    uint32_t rootPostOrderIndex = nodeCount - 1;
+    uint32_t noEntry = nodeCount;
+
+    WTF::Vector<uint8_t> affected(nodeCount, 0);
+    WTF::Vector<uint32_t> dominators(nodeCount, noEntry);
+    WTF::Vector<uint32_t> nodeOrdinalToDominator(nodeCount, 0);
+
+    // Root dominates itself
+    dominators[rootPostOrderIndex] = rootPostOrderIndex;
+
+    // Mark root's children as affected and as GC roots
+    uint64_t rootId = ordinalToId[0];
+    auto rootOutEdges = outgoingEdges.find(rootId);
+    if (rootOutEdges != outgoingEdges.end()) {
+        for (size_t edgeIdx : rootOutEdges->second) {
+            uint64_t toId = edges[edgeIdx].toId;
+            auto toIt = idToIndex.find(toId);
+            if (toIt != idToIndex.end()) {
+                uint32_t toOrdinal = toIt->second;
+                uint32_t toPostOrder = nodeOrdinalToPostOrderIndex[toOrdinal];
+                affected[toPostOrder] = 1;
+                nodes[toOrdinal].isGCRoot = true;
+            }
+        }
+    }
+
+    // Iteratively compute dominators
+    bool changed = true;
+    while (changed) {
+        changed = false;
+
+        for (int32_t postOrder = static_cast<int32_t>(rootPostOrderIndex) - 1; postOrder >= 0; --postOrder) {
+            if (!affected[postOrder])
+                continue;
+            affected[postOrder] = 0;
+
+            // Already dominated by root
+            if (dominators[postOrder] == rootPostOrderIndex)
+                continue;
+
+            uint32_t newDominator = noEntry;
+            uint32_t nodeOrdinal = postOrderIndexToNodeOrdinal[postOrder];
+            uint64_t nodeId = ordinalToId[nodeOrdinal];
+
+            // Check all incoming edges
+            auto inIt = incomingEdges.find(nodeId);
+            if (inIt != incomingEdges.end()) {
+                for (size_t edgeIdx : inIt->second) {
+                    uint64_t fromId = edges[edgeIdx].fromId;
+                    auto fromIt = idToIndex.find(fromId);
+                    if (fromIt == idToIndex.end())
+                        continue;
+
+                    uint32_t fromOrdinal = fromIt->second;
+                    uint32_t fromPostOrder = nodeOrdinalToPostOrderIndex[fromOrdinal];
+
+                    if (dominators[fromPostOrder] == noEntry)
+                        continue;
+
+                    if (newDominator == noEntry) {
+                        newDominator = fromPostOrder;
+                    } else {
+                        // Find common dominator (intersect)
+                        uint32_t finger1 = fromPostOrder;
+                        uint32_t finger2 = newDominator;
+                        while (finger1 != finger2) {
+                            while (finger1 < finger2)
+                                finger1 = dominators[finger1];
+                            while (finger2 < finger1)
+                                finger2 = dominators[finger2];
+                        }
+                        newDominator = finger1;
+                    }
+
+                    if (newDominator == rootPostOrderIndex)
+                        break;
+                }
+            }
+
+            // Update if changed
+            if (newDominator != noEntry && dominators[postOrder] != newDominator) {
+                dominators[postOrder] = newDominator;
+                changed = true;
+
+                // Mark children as affected
+                auto outIt = outgoingEdges.find(nodeId);
+                if (outIt != outgoingEdges.end()) {
+                    for (size_t edgeIdx : outIt->second) {
+                        uint64_t toId = edges[edgeIdx].toId;
+                        auto toIt = idToIndex.find(toId);
+                        if (toIt != idToIndex.end()) {
+                            uint32_t toPostOrder = nodeOrdinalToPostOrderIndex[toIt->second];
+                            affected[toPostOrder] = 1;
+                        }
+                    }
                 }
             }
         }
+    }
+
+    // Convert post-order dominators to node ordinals
+    for (uint32_t postOrder = 0; postOrder < nodeCount; ++postOrder) {
+        uint32_t nodeOrdinal = postOrderIndexToNodeOrdinal[postOrder];
+        uint32_t domPostOrder = dominators[postOrder];
+        uint32_t domOrdinal = (domPostOrder < nodeCount) ? postOrderIndexToNodeOrdinal[domPostOrder] : 0;
+        nodeOrdinalToDominator[nodeOrdinal] = domOrdinal;
+    }
+
+    // Step 3: Calculate retained sizes by attributing size up the dominator tree
+    // First, set self size
+    for (size_t i = 0; i < nodeCount; i++) {
+        nodes[i].retainedSize = nodes[i].size;
+    }
+
+    // Walk in post-order (children before parents) and add to dominator
+    for (uint32_t postOrder = 0; postOrder < nodeCount - 1; ++postOrder) {
+        uint32_t nodeOrdinal = postOrderIndexToNodeOrdinal[postOrder];
+        uint32_t domOrdinal = nodeOrdinalToDominator[nodeOrdinal];
+        nodes[domOrdinal].retainedSize += nodes[nodeOrdinal].retainedSize;
     }
 
     // Build type statistics
@@ -364,8 +568,6 @@ WTF::String generateHeapProfile(JSC::VM& vm)
     output.append(WTF::String::number(gcRootIds.size()));
     output.append(" |\n\n"_s);
 
-    output.append("> **Note:** Retained sizes shown are approximations (self + direct children only). "_s);
-    output.append("For accurate dominator-based retained sizes, use `--heap-prof` and open in Chrome DevTools.\n\n"_s);
 
     // ==================== TOP TYPES ====================
     output.append("## Top 50 Types by Retained Size\n\n"_s);

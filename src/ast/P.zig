@@ -6527,7 +6527,9 @@ pub fn NewParser_(
                     break :brk p.hmr_api_ref;
                 }
 
-                if (p.options.bundle and p.needsWrapperRef(parts.items)) {
+                // When code splitting is enabled, always create wrapper_ref to match esbuild behavior.
+                // Otherwise, use needsWrapperRef() to optimize away unnecessary wrappers.
+                if (p.options.bundle and (p.options.code_splitting or p.needsWrapperRef(parts.items))) {
                     break :brk p.newSymbol(
                         .other,
                         std.fmt.allocPrint(

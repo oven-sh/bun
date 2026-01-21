@@ -98,22 +98,10 @@ pub fn callback(task: *ThreadPool.Task) void {
             const body = &manifest.network.response_buffer;
             defer body.deinit();
 
-            const metadata = manifest.network.response.metadata orelse {
-                // Handle the case when metadata is null (e.g., network failure before receiving headers)
-                const err = manifest.network.response.fail orelse error.HTTPError;
-                this.log.addErrorFmt(null, logger.Loc.Empty, allocator, "{s} downloading package manifest {s}", .{
-                    @errorName(err), manifest.name.slice(),
-                }) catch unreachable;
-                this.err = err;
-                this.status = Status.fail;
-                this.data = .{ .package_manifest = .{} };
-                return;
-            };
-
             const package_manifest = Npm.Registry.getPackageMetadata(
                 allocator,
                 manager.scopeForPackageName(manifest.name.slice()),
-                metadata.response,
+                (manifest.network.response.metadata orelse @panic("Assertion failure: Expected metadata to be set")).response,
                 body.slice(),
                 &this.log,
                 manifest.name.slice(),

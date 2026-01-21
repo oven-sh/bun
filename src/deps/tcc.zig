@@ -22,7 +22,7 @@ extern fn tcc_add_library(s: *TCCState, libraryname: [*:0]const u8) c_int;
 extern fn tcc_add_symbol(s: *TCCState, name: [*:0]const u8, val: *const anyopaque) c_int;
 extern fn tcc_output_file(s: *TCCState, filename: [*:0]const u8) c_int;
 extern fn tcc_run(s: *TCCState, argc: c_int, argv: [*c][*c]u8) c_int;
-extern fn tcc_relocate(s1: *TCCState) c_int;
+extern fn tcc_relocate(s1: *TCCState, ptr: ?*anyopaque) c_int;
 extern fn tcc_get_symbol(s: *TCCState, name: [*:0]const u8) ?*anyopaque;
 extern fn tcc_list_symbols(s: *TCCState, ctx: ?*anyopaque, symbol_cb: ?*const fn (?*anyopaque, [*:0]const u8, ?*const anyopaque) callconv(.c) void) void;
 const TCC_OUTPUT_MEMORY = @as(c_int, 1);
@@ -30,6 +30,7 @@ const TCC_OUTPUT_EXE = @as(c_int, 2);
 const TCC_OUTPUT_DLL = @as(c_int, 3);
 const TCC_OUTPUT_OBJ = @as(c_int, 4);
 const TCC_OUTPUT_PREPROCESS = @as(c_int, 5);
+const TCC_RELOCATE_AUTO: ?*anyopaque = @ptrCast(&1);
 
 pub const Error = error{
     InvalidOptions,
@@ -298,14 +299,18 @@ pub const State = opaque {
     }
 
     /// Do all relocations (needed before using `getSymbol`)
-    /// Memory is allocated and managed internally by TinyCC.
-    /// Returns 0 on success, error on failure.
-    pub fn relocate(s: *State) Error!void {
-        const ret = tcc_relocate(s);
-        if (ret < 0) {
+    ///
+    /// Possible values for `ptr`:
+    /// - `TCC_RELOCATE_AUTO`: Allocate and manage memory internally
+    /// - `NULL`: return required memory size for the step below
+    /// - memory address: copy code to memory passed by the caller
+    pub fn relocate(s: *State, ptr: ?*anyopaque) Error!usize {
+        const size = tcc_relocate(s, ptr);
+        if (size < 0) {
             @branchHint(.unlikely);
             return error.RelocationError;
         }
+        return @intCast(size);
     }
 
     /// Return symbol value or NULL if not found

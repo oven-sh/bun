@@ -404,7 +404,7 @@ pub fn getEphemeralKeyInfo(this: *This, globalObject: *jsc.JSGlobalObject, _: *j
 
     switch (kid) {
         BoringSSL.EVP_PKEY_DH => {
-            result.put(globalObject, ZigString.static("type"), bun.String.static("DH").toJS(globalObject));
+            result.put(globalObject, ZigString.static("type"), try bun.String.static("DH").toJS(globalObject));
             result.put(globalObject, ZigString.static("size"), JSValue.jsNumber(bits));
         },
 
@@ -427,7 +427,7 @@ pub fn getEphemeralKeyInfo(this: *This, globalObject: *jsc.JSGlobalObject, _: *j
                     curve_name = "";
                 }
             }
-            result.put(globalObject, ZigString.static("type"), bun.String.static("ECDH").toJS(globalObject));
+            result.put(globalObject, ZigString.static("type"), try bun.String.static("ECDH").toJS(globalObject));
             result.put(globalObject, ZigString.static("name"), ZigString.fromUTF8(curve_name).toJS(globalObject));
             result.put(globalObject, ZigString.static("size"), JSValue.jsNumber(bits));
         },
@@ -556,7 +556,7 @@ pub fn setVerifyMode(this: *This, globalObject: *jsc.JSGlobalObject, callframe: 
     }
 
     const request_cert = request_cert_js.toBoolean();
-    const reject_unauthorized = reject_unauthorized_js.toBoolean();
+    const reject_unauthorized = request_cert_js.toBoolean();
     var verify_mode: c_int = BoringSSL.SSL_VERIFY_NONE;
     if (this.isServer()) {
         if (request_cert) {

@@ -598,7 +598,7 @@ pub fn spawnMaybeSync(
                 "";
             var systemerror = bun.sys.Error.fromCode(if (err == error.EMFILE) .MFILE else .NFILE, .posix_spawn).withPath(display_path).toSystemError();
             systemerror.errno = if (err == error.EMFILE) -bun.sys.UV_E.MFILE else -bun.sys.UV_E.NFILE;
-            return globalThis.throwValue(systemerror.toErrorInstance(globalThis));
+            return globalThis.throwValue(try systemerror.toErrorInstance(globalThis));
         },
         else => {
             spawn_options.deinit();
@@ -616,13 +616,13 @@ pub fn spawnMaybeSync(
                     if (display_path.len > 0) {
                         var systemerror = err.withPath(display_path).toSystemError();
                         if (errno == .NOENT) systemerror.errno = -bun.sys.UV_E.NOENT;
-                        return globalThis.throwValue(systemerror.toErrorInstance(globalThis));
+                        return globalThis.throwValue(try systemerror.toErrorInstance(globalThis));
                     }
                 },
                 else => {},
             }
 
-            return globalThis.throwValue(err.toJS(globalThis));
+            return globalThis.throwValue(try err.toJS(globalThis));
         },
         .result => |result| result,
     };
@@ -767,7 +767,7 @@ pub fn spawnMaybeSync(
                 subprocess.stdio_pipes.items[@intCast(ipc_channel)].buffer,
             ).asErr()) |err| {
                 subprocess.deref();
-                return globalThis.throwValue(err.toJS(globalThis));
+                return globalThis.throwValue(try err.toJS(globalThis));
             }
             subprocess.stdio_pipes.items[@intCast(ipc_channel)] = .unavailable;
         }
@@ -845,7 +845,7 @@ pub fn spawnMaybeSync(
     if (subprocess.stdin == .buffer) {
         if (subprocess.stdin.buffer.start().asErr()) |err| {
             _ = subprocess.tryKill(subprocess.killSignal);
-            _ = globalThis.throwValue(err.toJS(globalThis)) catch {};
+            _ = globalThis.throwValue(err.toJS(globalThis) catch return error.JSError) catch {};
             return error.JSError;
         }
     }
@@ -853,7 +853,7 @@ pub fn spawnMaybeSync(
     if (subprocess.stdout == .pipe) {
         if (subprocess.stdout.pipe.start(subprocess, event_loop).asErr()) |err| {
             _ = subprocess.tryKill(subprocess.killSignal);
-            _ = globalThis.throwValue(err.toJS(globalThis)) catch {};
+            _ = globalThis.throwValue(err.toJS(globalThis) catch return error.JSError) catch {};
             return error.JSError;
         }
         if ((is_sync or !lazy) and subprocess.stdout == .pipe) {
@@ -864,7 +864,7 @@ pub fn spawnMaybeSync(
     if (subprocess.stderr == .pipe) {
         if (subprocess.stderr.pipe.start(subprocess, event_loop).asErr()) |err| {
             _ = subprocess.tryKill(subprocess.killSignal);
-            _ = globalThis.throwValue(err.toJS(globalThis)) catch {};
+            _ = globalThis.throwValue(err.toJS(globalThis) catch return error.JSError) catch {};
             return error.JSError;
         }
 
@@ -1060,7 +1060,7 @@ fn throwCommandNotFound(globalThis: *jsc.JSGlobalObject, command: []const u8) bu
         .errno = -bun.sys.UV_E.NOENT,
         .path = bun.String.cloneUTF8(command),
     };
-    return globalThis.throwValue(err.toErrorInstance(globalThis));
+    return globalThis.throwValue(try err.toErrorInstance(globalThis));
 }
 
 pub fn appendEnvpFromJS(globalThis: *jsc.JSGlobalObject, object: *jsc.JSObject, envp: *std.array_list.Managed(?[*:0]const u8), PATH: *[]const u8) bun.JSError!void {

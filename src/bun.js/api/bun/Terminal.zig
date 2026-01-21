@@ -236,16 +236,20 @@ fn initTerminal(
     terminal.ref();
 
     // Store callbacks via generated gc setters (prevents GC of callbacks while terminal is alive)
-    // Note: callbacks were already validated in parseFromJS() and may be wrapped in AsyncContextFrame
-    // by withAsyncContextIfNeeded(), so we don't re-check isCallable() here
     if (options.data_callback) |cb| {
-        js.gc.set(.data, this_value, globalObject, cb);
+        if (cb.isCell() and cb.isCallable()) {
+            js.gc.set(.data, this_value, globalObject, cb);
+        }
     }
     if (options.exit_callback) |cb| {
-        js.gc.set(.exit, this_value, globalObject, cb);
+        if (cb.isCell() and cb.isCallable()) {
+            js.gc.set(.exit, this_value, globalObject, cb);
+        }
     }
     if (options.drain_callback) |cb| {
-        js.gc.set(.drain, this_value, globalObject, cb);
+        if (cb.isCell() and cb.isCallable()) {
+            js.gc.set(.drain, this_value, globalObject, cb);
+        }
     }
 
     return .{ .terminal = terminal, .js_value = this_value };
@@ -618,7 +622,7 @@ pub fn write(
         .done => |amt| JSValue.jsNumber(@as(i32, @intCast(amt))),
         .wrote => |amt| JSValue.jsNumber(@as(i32, @intCast(amt))),
         .pending => |amt| JSValue.jsNumber(@as(i32, @intCast(amt))),
-        .err => |err| globalObject.throwValue(err.toJS(globalObject)),
+        .err => |err| globalObject.throwValue(try err.toJS(globalObject)),
     };
 }
 

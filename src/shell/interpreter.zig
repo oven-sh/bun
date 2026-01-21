@@ -748,8 +748,7 @@ pub const Interpreter = struct {
             jsobjs.deinit();
             if (export_env) |*ee| ee.deinit();
             if (cwd) |*cc| cc.deref();
-            // Note: Don't call shargs.deinit() here - interpreter.finalize() will do it
-            // since interpreter.args points to shargs after init() succeeds.
+            shargs.deinit();
             interpreter.finalize();
             return error.JSError;
         }

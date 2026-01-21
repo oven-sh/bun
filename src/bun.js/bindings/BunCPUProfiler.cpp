@@ -443,14 +443,16 @@ static WTF::String formatPercent(double value, double total)
     return sb.toString();
 }
 
-// Helper to escape markdown special characters (backticks and pipes) for safe table rendering
-static WTF::String escapeMarkdown(const WTF::String& str)
+// Key separator for building composite keys (function name + location)
+// Using ASCII control character SOH (0x01) which won't appear in function names or URLs
+static constexpr auto kKeySeparator = "\x01"_s;
+
+// Helper to escape pipe characters for markdown table cells (non-code cells)
+static WTF::String escapeMarkdownTableCell(const WTF::String& str)
 {
-    // Check if escaping is needed
     bool needsEscape = false;
     for (unsigned i = 0; i < str.length(); i++) {
-        UChar c = str[i];
-        if (c == '`' || c == '|') {
+        if (str[i] == '|') {
             needsEscape = true;
             break;
         }
@@ -461,9 +463,7 @@ static WTF::String escapeMarkdown(const WTF::String& str)
     WTF::StringBuilder sb;
     for (unsigned i = 0; i < str.length(); i++) {
         UChar c = str[i];
-        if (c == '`')
-            sb.append("\\`"_s);
-        else if (c == '|')
+        if (c == '|')
             sb.append("\\|"_s);
         else
             sb.append(c);
@@ -471,11 +471,68 @@ static WTF::String escapeMarkdown(const WTF::String& str)
     return sb.toString();
 }
 
+// Helper to format a string as an inline code span that handles backticks properly
+// Uses the CommonMark spec: use N+1 backticks as delimiter where N is the longest run of backticks in the string
+static WTF::String formatCodeSpan(const WTF::String& str)
+{
+    // Also escape pipes since this will be used in table cells
+    WTF::String escaped = escapeMarkdownTableCell(str);
+
+    // Find the longest run of backticks in the string
+    int maxBackticks = 0;
+    int currentRun = 0;
+    for (unsigned i = 0; i < escaped.length(); i++) {
+        if (escaped[i] == '`') {
+            currentRun++;
+            if (currentRun > maxBackticks)
+                maxBackticks = currentRun;
+        } else {
+            currentRun = 0;
+        }
+    }
+
+    // If no backticks, use simple single backtick delimiters
+    if (maxBackticks == 0) {
+        WTF::StringBuilder sb;
+        sb.append('`');
+        sb.append(escaped);
+        sb.append('`');
+        return sb.toString();
+    }
+
+    // Use N+1 backticks as delimiter
+    int delimiterLength = maxBackticks + 1;
+    WTF::StringBuilder sb;
+    for (int i = 0; i < delimiterLength; i++)
+        sb.append('`');
+
+    // Add space padding if content starts or ends with backtick (CommonMark requirement)
+    bool startsWithBacktick = !escaped.isEmpty() && escaped[0] == '`';
+    bool endsWithBacktick = !escaped.isEmpty() && escaped[escaped.length() - 1] == '`';
+
+    if (startsWithBacktick || endsWithBacktick)
+        sb.append(' ');
+    sb.append(escaped);
+    if (startsWithBacktick || endsWithBacktick)
+        sb.append(' ');
+
+    for (int i = 0; i < delimiterLength; i++)
+        sb.append('`');
+
+    return sb.toString();
+}
+
 // Helper to generate a minimal valid cpuprofile JSON with no samples
 static WTF::String generateEmptyProfileJSON()
 {
     // Return a minimal valid Chrome DevTools CPU profile format
-    long long timestamp = static_cast<long long>(WTF::WallTime::now().secondsSinceEpoch().value() * 1000000.0);
+    // Use s_profilingStartTime if available, otherwise fall back to current time
+    long long timestamp;
+    if (s_profilingStartTime > 0)
+        timestamp = static_cast<long long>(s_profilingStartTime);
+    else
+        timestamp = static_cast<long long>(WTF::WallTime::now().secondsSinceEpoch().value() * 1000000.0);
+
     WTF::StringBuilder sb;
     sb.append("{\"nodes\":[{\"id\":1,\"callFrame\":{\"functionName\":\"(root)\",\"scriptId\":\"0\",\"url\":\"\",\"lineNumber\":-1,\"columnNumber\":-1},\"hitCount\":0,\"children\":[]}],\"startTime\":"_s);
     sb.append(timestamp);
@@ -786,10 +843,10 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                 }
 
                 WTF::String location = formatLocation(url, lineNumber);
-                // Key uses pipe separator internally (not shown in output)
+                // Key uses zero-width space separator internally (not shown in output)
                 WTF::StringBuilder keyBuilder;
                 keyBuilder.append(functionName);
-                keyBuilder.append('|');
+                keyBuilder.append(kKeySeparator);
                 keyBuilder.append(location);
                 WTF::String key = keyBuilder.toString();
 
@@ -861,9 +918,8 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
             if (stats->selfTimeUs == 0 || topCount >= 10)
                 break;
             if (topCount > 0) output.append(", "_s);
-            output.append('`');
-            output.append(escapeMarkdown(stats->functionName));
-            output.append("` "_s);
+            output.append(formatCodeSpan(stats->functionName));
+            output.append(' ');
             output.append(formatPercent(stats->selfTimeUs, totalTimeUs));
             topCount++;
         }
@@ -886,10 +942,10 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
             output.append(formatPercent(stats->totalTimeUs, totalTimeUs));
             output.append(" | "_s);
             output.append(formatTime(stats->totalTimeUs));
-            output.append(" | `"_s);
-            output.append(escapeMarkdown(stats->functionName));
-            output.append("` | "_s);
-            output.append(escapeMarkdown(stats->location));
+            output.append(" | "_s);
+            output.append(formatCodeSpan(stats->functionName));
+            output.append(" | "_s);
+            output.append(formatCodeSpan(stats->location));
             output.append(" |\n"_s);
         }
         output.append('\n');
@@ -908,10 +964,10 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
             output.append(formatPercent(stats->selfTimeUs, totalTimeUs));
             output.append(" | "_s);
             output.append(formatTime(stats->selfTimeUs));
-            output.append(" | `"_s);
-            output.append(escapeMarkdown(stats->functionName));
-            output.append("` | "_s);
-            output.append(escapeMarkdown(stats->location));
+            output.append(" | "_s);
+            output.append(formatCodeSpan(stats->functionName));
+            output.append(" | "_s);
+            output.append(formatCodeSpan(stats->location));
             output.append(" |\n"_s);
         }
         output.append('\n');
@@ -925,14 +981,13 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                 continue;
 
             // Header: ### `functionName`
-            output.append("### `"_s);
-            output.append(escapeMarkdown(stats->functionName));
-            output.append("`\n"_s);
+            output.append("### "_s);
+            output.append(formatCodeSpan(stats->functionName));
+            output.append("\n"_s);
 
             // Location and stats on one line for density
-            output.append('`');
-            output.append(escapeMarkdown(stats->location));
-            output.append("` | Self: "_s);
+            output.append(formatCodeSpan(stats->location));
+            output.append(" | Self: "_s);
             output.append(formatPercent(stats->selfTimeUs, totalTimeUs));
             output.append(" ("_s);
             output.append(formatTime(stats->selfTimeUs));
@@ -953,12 +1008,12 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                     return a.second > b.second;
                 });
                 for (auto& [callerKey, count] : sortedCallers) {
-                    output.append("- `"_s);
-                    // Extract just the function name from "funcName|location"
-                    size_t pipePos = callerKey.find('|');
-                    WTF::String callerName = (pipePos != WTF::notFound) ? callerKey.left(pipePos) : callerKey;
-                    output.append(escapeMarkdown(callerName));
-                    output.append("` ("_s);
+                    output.append("- "_s);
+                    // Extract just the function name from "funcName<separator>location"
+                    size_t sepPos = callerKey.find(kKeySeparator);
+                    WTF::String callerName = (sepPos != WTF::notFound) ? callerKey.left(sepPos) : callerKey;
+                    output.append(formatCodeSpan(callerName));
+                    output.append(" ("_s);
                     output.append(count);
                     output.append(")\n"_s);
                 }
@@ -973,12 +1028,12 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                     return a.second > b.second;
                 });
                 for (auto& [calleeKey, count] : sortedCallees) {
-                    output.append("- `"_s);
-                    // Extract just the function name from "funcName|location"
-                    size_t pipePos = calleeKey.find('|');
-                    WTF::String calleeName = (pipePos != WTF::notFound) ? calleeKey.left(pipePos) : calleeKey;
-                    output.append(escapeMarkdown(calleeName));
-                    output.append("` ("_s);
+                    output.append("- "_s);
+                    // Extract just the function name from "funcName<separator>location"
+                    size_t sepPos = calleeKey.find(kKeySeparator);
+                    WTF::String calleeName = (sepPos != WTF::notFound) ? calleeKey.left(sepPos) : calleeKey;
+                    output.append(formatCodeSpan(calleeName));
+                    output.append(" ("_s);
                     output.append(count);
                     output.append(")\n"_s);
                 }
@@ -1024,9 +1079,9 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
             output.append(formatPercent(timeUs, totalTimeUs));
             output.append(" | "_s);
             output.append(formatTime(timeUs));
-            output.append(" | `"_s);
-            output.append(escapeMarkdown(file));
-            output.append("` |\n"_s);
+            output.append(" | "_s);
+            output.append(formatCodeSpan(file));
+            output.append(" |\n"_s);
         }
 
         *outText = output.toString();

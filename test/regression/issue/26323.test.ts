@@ -7,7 +7,7 @@ describe("fs.readFileSync", () => {
     // We set BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT to 1000 bytes
     // and create a 2000 byte file, which should exceed the limit
     using dir = tempDir("readfile-string-limit", {
-      "large.txt": "x".repeat(2000),
+      "large.txt": Buffer.alloc(2000, "x").toString(),
     });
 
     await using proc = Bun.spawn({
@@ -46,7 +46,7 @@ try {
 
   test("should throw catchable error for files exceeding string length limit with ascii encoding", async () => {
     using dir = tempDir("readfile-string-limit-ascii", {
-      "large.txt": "x".repeat(2000),
+      "large.txt": Buffer.alloc(2000, "x").toString(),
     });
 
     await using proc = Bun.spawn({
@@ -85,7 +85,7 @@ try {
   test("should throw catchable error for hex encoding when output exceeds limit", async () => {
     // Hex encoding doubles the size: 600 bytes -> 1200 chars > 1000 limit
     using dir = tempDir("readfile-string-limit-hex", {
-      "data.bin": "x".repeat(600),
+      "data.bin": Buffer.alloc(600, "x").toString(),
     });
 
     await using proc = Bun.spawn({
@@ -123,7 +123,7 @@ try {
 
   test("should allow reading files within the limit", async () => {
     using dir = tempDir("readfile-within-limit", {
-      "small.txt": "x".repeat(500),
+      "small.txt": Buffer.alloc(500, "x").toString(),
     });
 
     await using proc = Bun.spawn({
@@ -163,7 +163,7 @@ try {
     // When reading as buffer (no encoding), the synthetic_allocation_limit is used
     // This test verifies that buffers within the limit can still be read
     using dir = tempDir("readfile-buffer-limit", {
-      "data.bin": "x".repeat(500),
+      "data.bin": Buffer.alloc(500, "x").toString(),
     });
 
     await using proc = Bun.spawn({

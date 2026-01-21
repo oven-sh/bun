@@ -69,18 +69,16 @@ static WTF::String escapeString(const WTF::String& str)
             sb.append("\\t"_s);
         else if (c == '\\')
             sb.append("\\\\"_s);
+        else if (c == '"')
+            sb.append("\\\""_s);
+        else if (c == '|')
+            sb.append("\\|"_s);
         else if (c < 32 || c == 127)
-            sb.append("\\x"_s, static_cast<unsigned>(c));
+            continue; // skip control characters
         else
             sb.append(c);
     }
     return sb.toString();
-}
-
-// Format bytes as plain number for grep-friendly output
-static WTF::String formatBytesPlain(size_t bytes)
-{
-    return WTF::String::number(bytes);
 }
 
 // Format bytes nicely for human-readable sections
@@ -158,7 +156,7 @@ WTF::String generateHeapProfile(JSC::VM& vm)
 
     // Parse nodes
     WTF::Vector<NodeData> nodes;
-    std::unordered_map<uint64_t, size_t> idToIndex; // node id -> index in nodes vector
+    std::unordered_map<uint64_t, size_t> idToIndex;
     size_t totalHeapSize = 0;
 
     auto nodesArray = jsonObject->getArray("nodes"_s);
@@ -184,7 +182,6 @@ WTF::String generateHeapProfile(JSC::VM& vm)
             node.flags = intVal;
             node.isInternal = (node.flags & 1) != 0;
 
-            // GCDebugging format has additional fields
             if (isGCDebugging && nodeStride >= 7) {
                 nodesArray->get(offset + 4)->asInteger(intVal);
                 node.labelIndex = intVal;
@@ -224,7 +221,7 @@ WTF::String generateHeapProfile(JSC::VM& vm)
         }
     }
 
-    // Parse roots to identify GC roots
+    // Parse roots
     std::unordered_set<uint64_t> gcRootIds;
     auto rootsArray = jsonObject->getArray("roots"_s);
     if (rootsArray) {
@@ -239,19 +236,15 @@ WTF::String generateHeapProfile(JSC::VM& vm)
         }
     }
 
-    // Build outgoing edges map
-    std::unordered_map<uint64_t, WTF::Vector<size_t>> outgoingEdges; // node id -> edge indices
+    // Build edge maps
+    std::unordered_map<uint64_t, WTF::Vector<size_t>> outgoingEdges;
+    std::unordered_map<uint64_t, WTF::Vector<size_t>> incomingEdges;
     for (size_t i = 0; i < edges.size(); i++) {
         outgoingEdges[edges[i].fromId].append(i);
-    }
-
-    // Build incoming edges map for retainer analysis
-    std::unordered_map<uint64_t, WTF::Vector<size_t>> incomingEdges; // node id -> edge indices
-    for (size_t i = 0; i < edges.size(); i++) {
         incomingEdges[edges[i].toId].append(i);
     }
 
-    // Calculate retained sizes (self + direct children)
+    // Calculate retained sizes
     for (auto& node : nodes) {
         node.retainedSize = node.size;
         auto it = outgoingEdges.find(node.id);
@@ -274,9 +267,8 @@ WTF::String generateHeapProfile(JSC::VM& vm)
 
         auto result = typeStatsMap.add(className, TypeStats());
         auto& stats = result.iterator->value;
-        if (result.isNewEntry) {
+        if (result.isNewEntry)
             stats.name = className;
-        }
         stats.totalSize += node.size;
         stats.totalRetainedSize += node.retainedSize;
         stats.count++;
@@ -288,37 +280,33 @@ WTF::String generateHeapProfile(JSC::VM& vm)
 
     // Sort types by retained size
     WTF::Vector<TypeStats> sortedTypes;
-    for (auto& pair : typeStatsMap) {
+    for (auto& pair : typeStatsMap)
         sortedTypes.append(pair.value);
-    }
     std::sort(sortedTypes.begin(), sortedTypes.end(), [](const TypeStats& a, const TypeStats& b) {
         return a.totalRetainedSize > b.totalRetainedSize;
     });
 
-    // Find largest individual objects
+    // Find largest objects
     WTF::Vector<size_t> largestObjects;
-    for (size_t i = 0; i < nodes.size(); i++) {
+    for (size_t i = 0; i < nodes.size(); i++)
         largestObjects.append(i);
-    }
     std::sort(largestObjects.begin(), largestObjects.end(), [&nodes](size_t a, size_t b) {
         return nodes[a].retainedSize > nodes[b].retainedSize;
     });
 
-    // Helper to get class name
+    // Helpers
     auto getClassName = [&classNames](const NodeData& node) -> WTF::String {
         if (node.classNameIndex >= 0 && static_cast<size_t>(node.classNameIndex) < classNames.size())
             return classNames[node.classNameIndex];
         return "(unknown)"_s;
     };
 
-    // Helper to get edge type name
     auto getEdgeType = [&edgeTypes](const EdgeData& edge) -> WTF::String {
         if (edge.typeIndex >= 0 && static_cast<size_t>(edge.typeIndex) < edgeTypes.size())
             return edgeTypes[edge.typeIndex];
         return "?"_s;
     };
 
-    // Helper to get edge name
     auto getEdgeName = [&edgeNames, &edgeTypes](const EdgeData& edge) -> WTF::String {
         WTF::String edgeType;
         if (edge.typeIndex >= 0 && static_cast<size_t>(edge.typeIndex) < edgeTypes.size())
@@ -333,7 +321,6 @@ WTF::String generateHeapProfile(JSC::VM& vm)
         return ""_s;
     };
 
-    // Helper to get node label
     auto getNodeLabel = [&labels](const NodeData& node) -> WTF::String {
         if (node.labelIndex >= 0 && static_cast<size_t>(node.labelIndex) < labels.size())
             return labels[node.labelIndex];
@@ -343,55 +330,54 @@ WTF::String generateHeapProfile(JSC::VM& vm)
     // Build output
     WTF::StringBuilder output;
 
-    // ========================================
-    // HEADER
-    // ========================================
+    // ==================== HEADER ====================
     output.append("# Bun Heap Profile\n\n"_s);
-    output.append("> Generated by `bun --heap-prof-text`\n"_s);
-    output.append("> Use grep, awk, sed to analyze. All data sections use consistent, parseable formats.\n\n"_s);
+    output.append("Generated by `bun --heap-prof-md`. This profile contains complete heap data in markdown format.\n\n"_s);
+    output.append("**Quick Search Commands:**\n"_s);
+    output.append("```bash\n"_s);
+    output.append("grep 'type=Function' file.md          # Find all Function objects\n"_s);
+    output.append("grep 'size=[0-9]\\{5,\\}' file.md       # Find objects >= 10KB\n"_s);
+    output.append("grep 'EDGE.*to=12345' file.md         # Find references to object #12345\n"_s);
+    output.append("grep 'gcroot=1' file.md               # Find all GC roots\n"_s);
+    output.append("```\n\n"_s);
+    output.append("---\n\n"_s);
 
-    // ========================================
-    // SUMMARY
-    // ========================================
+    // ==================== SUMMARY ====================
     output.append("## Summary\n\n"_s);
-    output.append("- **Total Heap Size:** "_s);
+    output.append("| Metric | Value |\n"_s);
+    output.append("|--------|------:|\n"_s);
+    output.append("| Total Heap Size | "_s);
     output.append(formatBytes(totalHeapSize));
     output.append(" ("_s);
     output.append(WTF::String::number(totalHeapSize));
-    output.append(" bytes)\n"_s);
-    output.append("- **Total Objects:** "_s);
+    output.append(" bytes) |\n"_s);
+    output.append("| Total Objects | "_s);
     output.append(WTF::String::number(nodes.size()));
-    output.append("\n"_s);
-    output.append("- **Total Edges:** "_s);
+    output.append(" |\n"_s);
+    output.append("| Total Edges | "_s);
     output.append(WTF::String::number(edges.size()));
-    output.append("\n"_s);
-    output.append("- **Unique Types:** "_s);
+    output.append(" |\n"_s);
+    output.append("| Unique Types | "_s);
     output.append(WTF::String::number(sortedTypes.size()));
-    output.append("\n"_s);
-    output.append("- **GC Roots:** "_s);
+    output.append(" |\n"_s);
+    output.append("| GC Roots | "_s);
     output.append(WTF::String::number(gcRootIds.size()));
-    output.append("\n\n"_s);
+    output.append(" |\n\n"_s);
 
-    // ========================================
-    // TOP TYPES BY RETAINED SIZE (human-readable table)
-    // ========================================
-    output.append("## Top Types by Retained Size\n\n"_s);
-    output.append("| # | Type | Count | Self Size | Retained | Largest |\n"_s);
-    output.append("|--:|------|------:|----------:|---------:|--------:|\n"_s);
+    // ==================== TOP TYPES ====================
+    output.append("## Top 50 Types by Retained Size\n\n"_s);
+    output.append("| Rank | Type | Count | Self Size | Retained Size | Largest Instance |\n"_s);
+    output.append("|-----:|------|------:|----------:|--------------:|-----------------:|\n"_s);
 
     size_t rank = 1;
     for (const auto& stats : sortedTypes) {
         if (rank > 50)
             break;
 
-        WTF::String typeName = stats.name;
-        if (typeName.length() > 35)
-            typeName = makeString(typeName.left(32), "..."_s);
-
         output.append("| "_s);
         output.append(WTF::String::number(rank));
         output.append(" | `"_s);
-        output.append(typeName);
+        output.append(escapeString(stats.name));
         output.append("` | "_s);
         output.append(WTF::String::number(stats.count));
         output.append(" | "_s);
@@ -405,26 +391,18 @@ WTF::String generateHeapProfile(JSC::VM& vm)
     }
     output.append("\n"_s);
 
-    // ========================================
-    // LARGEST OBJECTS (human-readable table)
-    // ========================================
-    output.append("## Largest Objects\n\n"_s);
-    output.append("Objects retaining the most memory (potential leak sources):\n\n"_s);
-    output.append("| # | ID | Type | Self | Retained | Out-Edges | In-Edges |\n"_s);
-    output.append("|--:|---:|------|-----:|---------:|----------:|---------:|\n"_s);
+    // ==================== LARGEST OBJECTS ====================
+    output.append("## Top 50 Largest Objects\n\n"_s);
+    output.append("Objects that retain the most memory (potential memory leak sources):\n\n"_s);
+    output.append("| Rank | ID | Type | Self Size | Retained Size | Out-Edges | In-Edges |\n"_s);
+    output.append("|-----:|---:|------|----------:|--------------:|----------:|---------:|\n"_s);
 
     for (size_t i = 0; i < 50 && i < largestObjects.size(); i++) {
         const auto& node = nodes[largestObjects[i]];
-        WTF::String className = getClassName(node);
-        if (className.length() > 25)
-            className = makeString(className.left(22), "..."_s);
-
-        size_t outCount = 0;
+        size_t outCount = 0, inCount = 0;
         auto outIt = outgoingEdges.find(node.id);
         if (outIt != outgoingEdges.end())
             outCount = outIt->second.size();
-
-        size_t inCount = 0;
         auto inIt = incomingEdges.find(node.id);
         if (inIt != incomingEdges.end())
             inCount = inIt->second.size();
@@ -434,7 +412,7 @@ WTF::String generateHeapProfile(JSC::VM& vm)
         output.append(" | "_s);
         output.append(WTF::String::number(node.id));
         output.append(" | `"_s);
-        output.append(className);
+        output.append(escapeString(getClassName(node)));
         output.append("` | "_s);
         output.append(formatBytes(node.size));
         output.append(" | "_s);
@@ -447,43 +425,37 @@ WTF::String generateHeapProfile(JSC::VM& vm)
     }
     output.append("\n"_s);
 
-    // ========================================
-    // RETAINER CHAINS for top objects
-    // ========================================
+    // ==================== RETAINER CHAINS ====================
     output.append("## Retainer Chains\n\n"_s);
-    output.append("How the largest objects are kept alive (path from GC root):\n\n"_s);
+    output.append("How the top 20 largest objects are kept alive (path from GC root to object):\n\n"_s);
 
     for (size_t i = 0; i < 20 && i < largestObjects.size(); i++) {
         const auto& node = nodes[largestObjects[i]];
-        output.append("### Object #"_s);
+        output.append("### "_s);
+        output.append(WTF::String::number(i + 1));
+        output.append(". Object #"_s);
         output.append(WTF::String::number(node.id));
-        output.append(" (`"_s);
-        output.append(getClassName(node));
-        output.append("`, "_s);
+        output.append(" - `"_s);
+        output.append(escapeString(getClassName(node)));
+        output.append("` ("_s);
         output.append(formatBytes(node.retainedSize));
         output.append(" retained)\n\n"_s);
 
-        // Build retainer chain (BFS to find path to GC root)
-        output.append("```\n"_s);
-
-        std::unordered_map<uint64_t, uint64_t> parent; // child -> parent
-        std::unordered_map<uint64_t, size_t> parentEdge; // child -> edge index
+        // BFS to find path to GC root
+        std::unordered_map<uint64_t, uint64_t> parent;
+        std::unordered_map<uint64_t, size_t> parentEdge;
         WTF::Vector<uint64_t> queue;
         size_t queueIdx = 0;
         queue.append(node.id);
-        parent[node.id] = node.id; // mark as visited
+        parent[node.id] = node.id;
 
         uint64_t foundRoot = 0;
         while (queueIdx < queue.size() && foundRoot == 0) {
             uint64_t current = queue[queueIdx++];
-
-            // Check if this is a GC root
             if (gcRootIds.contains(current) && current != node.id) {
                 foundRoot = current;
                 break;
             }
-
-            // Find retainers (incoming edges)
             auto it = incomingEdges.find(current);
             if (it != incomingEdges.end()) {
                 for (size_t edgeIdx : it->second) {
@@ -497,26 +469,20 @@ WTF::String generateHeapProfile(JSC::VM& vm)
             }
         }
 
+        output.append("```\n"_s);
         if (foundRoot != 0) {
-            // Reconstruct path
             WTF::Vector<uint64_t> path;
             uint64_t current = node.id;
             while (current != foundRoot) {
                 path.append(current);
-                auto nextIt = parent.find(current);
-                if (nextIt == parent.end() || nextIt->second == current)
-                    break;
-                // Find the parent of current
                 auto edgeIt = parentEdge.find(current);
-                if (edgeIt != parentEdge.end()) {
+                if (edgeIt != parentEdge.end())
                     current = edges[edgeIt->second].fromId;
-                } else {
+                else
                     break;
-                }
             }
             path.append(foundRoot);
 
-            // Print path in reverse (from root to object)
             for (size_t j = path.size(); j > 0; j--) {
                 uint64_t nodeId = path[j - 1];
                 auto nodeIt = idToIndex.find(nodeId);
@@ -525,30 +491,26 @@ WTF::String generateHeapProfile(JSC::VM& vm)
                 const auto& pathNode = nodes[nodeIt->second];
 
                 for (size_t indent = 0; indent < path.size() - j; indent++)
-                    output.append("  "_s);
+                    output.append("    "_s);
 
                 output.append(getClassName(pathNode));
                 output.append("#"_s);
                 output.append(WTF::String::number(nodeId));
                 if (pathNode.isGCRoot)
-                    output.append(" [GC ROOT]"_s);
+                    output.append(" [ROOT]"_s);
                 output.append(" ("_s);
                 output.append(formatBytes(pathNode.size));
                 output.append(")"_s);
 
-                // Show edge name if not the last node
                 if (j > 1) {
                     auto edgeIt = parentEdge.find(path[j - 2]);
                     if (edgeIt != parentEdge.end()) {
                         WTF::String edgeName = getEdgeName(edges[edgeIt->second]);
-                        WTF::String edgeType = getEdgeType(edges[edgeIt->second]);
                         if (!edgeName.isEmpty()) {
                             output.append(" ."_s);
                             output.append(edgeName);
                         }
-                        output.append(" -["_s);
-                        output.append(edgeType);
-                        output.append("]->"_s);
+                        output.append(" -> "_s);
                     }
                 }
                 output.append("\n"_s);
@@ -557,188 +519,172 @@ WTF::String generateHeapProfile(JSC::VM& vm)
             output.append(getClassName(node));
             output.append("#"_s);
             output.append(WTF::String::number(node.id));
-            output.append(" [GC ROOT] (this object is itself a GC root)\n"_s);
+            output.append(" [ROOT] (this object is a GC root)\n"_s);
         } else {
-            output.append("(no path to GC root found - object may be garbage)\n"_s);
+            output.append("(no path to GC root found)\n"_s);
         }
         output.append("```\n\n"_s);
     }
 
-    // ========================================
-    // ALL NODES (grep-friendly format)
-    // ========================================
-    output.append("## All Nodes\n\n"_s);
-    output.append("Complete list of all heap objects. Format: `NODE id=<id> type=<type> size=<bytes> retained=<bytes> flags=<flags> label=<label>`\n\n"_s);
-    output.append("```\n"_s);
-
-    for (const auto& node : nodes) {
-        output.append("NODE id="_s);
-        output.append(WTF::String::number(node.id));
-        output.append(" type="_s);
-        output.append(escapeString(getClassName(node)));
-        output.append(" size="_s);
-        output.append(formatBytesPlain(node.size));
-        output.append(" retained="_s);
-        output.append(formatBytesPlain(node.retainedSize));
-        output.append(" flags="_s);
-        output.append(WTF::String::number(node.flags));
-        if (node.isGCRoot)
-            output.append(" gcroot=1"_s);
-        if (node.isInternal)
-            output.append(" internal=1"_s);
-        WTF::String label = getNodeLabel(node);
-        if (!label.isEmpty()) {
-            output.append(" label=\""_s);
-            output.append(escapeString(label));
-            output.append("\""_s);
-        }
-        output.append("\n"_s);
-    }
-    output.append("```\n\n"_s);
-
-    // ========================================
-    // ALL EDGES (grep-friendly format)
-    // ========================================
-    output.append("## All Edges\n\n"_s);
-    output.append("Complete object reference graph. Format: `EDGE from=<id> to=<id> type=<type> name=<name>`\n\n"_s);
-    output.append("```\n"_s);
-
-    for (const auto& edge : edges) {
-        output.append("EDGE from="_s);
-        output.append(WTF::String::number(edge.fromId));
-        output.append(" to="_s);
-        output.append(WTF::String::number(edge.toId));
-        output.append(" type="_s);
-        output.append(getEdgeType(edge));
-        WTF::String edgeName = getEdgeName(edge);
-        if (!edgeName.isEmpty()) {
-            output.append(" name=\""_s);
-            output.append(escapeString(edgeName));
-            output.append("\""_s);
-        }
-        output.append("\n"_s);
-    }
-    output.append("```\n\n"_s);
-
-    // ========================================
-    // GC ROOTS
-    // ========================================
+    // ==================== GC ROOTS ====================
     output.append("## GC Roots\n\n"_s);
     output.append("Objects directly held by the runtime (prevent garbage collection):\n\n"_s);
-    output.append("```\n"_s);
+    output.append("| ID | Type | Size | Retained | Label |\n"_s);
+    output.append("|---:|------|-----:|---------:|-------|\n"_s);
 
+    size_t rootCount = 0;
     for (const auto& node : nodes) {
-        if (node.isGCRoot) {
-            output.append("ROOT id="_s);
+        if (node.isGCRoot && rootCount < 100) {
+            output.append("| "_s);
             output.append(WTF::String::number(node.id));
-            output.append(" type="_s);
+            output.append(" | `"_s);
             output.append(escapeString(getClassName(node)));
-            output.append(" size="_s);
-            output.append(formatBytesPlain(node.size));
-            output.append(" retained="_s);
-            output.append(formatBytesPlain(node.retainedSize));
+            output.append("` | "_s);
+            output.append(formatBytes(node.size));
+            output.append(" | "_s);
+            output.append(formatBytes(node.retainedSize));
+            output.append(" | "_s);
             WTF::String label = getNodeLabel(node);
-            if (!label.isEmpty()) {
-                output.append(" label=\""_s);
-                output.append(escapeString(label));
-                output.append("\""_s);
-            }
-            output.append("\n"_s);
+            if (!label.isEmpty())
+                output.append(escapeString(label.left(50)));
+            output.append(" |\n"_s);
+            rootCount++;
         }
     }
-    output.append("```\n\n"_s);
+    if (gcRootIds.size() > 100) {
+        output.append("\n*... and "_s);
+        output.append(WTF::String::number(gcRootIds.size() - 100));
+        output.append(" more GC roots*\n"_s);
+    }
+    output.append("\n"_s);
 
-    // ========================================
-    // STRINGS (for identifying leak sources)
-    // ========================================
+    // ==================== ALL NODES ====================
+    output.append("## All Objects\n\n"_s);
+    output.append("<details>\n<summary>Click to expand "_s);
+    output.append(WTF::String::number(nodes.size()));
+    output.append(" objects (searchable with grep)</summary>\n\n"_s);
+    output.append("| ID | Type | Size | Retained | Flags | Label |\n"_s);
+    output.append("|---:|------|-----:|---------:|-------|-------|\n"_s);
+
+    for (const auto& node : nodes) {
+        output.append("| "_s);
+        output.append(WTF::String::number(node.id));
+        output.append(" | `"_s);
+        output.append(escapeString(getClassName(node)));
+        output.append("` | "_s);
+        output.append(WTF::String::number(node.size));
+        output.append(" | "_s);
+        output.append(WTF::String::number(node.retainedSize));
+        output.append(" | "_s);
+        if (node.isGCRoot)
+            output.append("gcroot=1 "_s);
+        if (node.isInternal)
+            output.append("internal=1"_s);
+        output.append(" | "_s);
+        WTF::String label = getNodeLabel(node);
+        if (!label.isEmpty()) {
+            WTF::String displayLabel = label.length() > 40 ? makeString(label.left(37), "..."_s) : label;
+            output.append(escapeString(displayLabel));
+        }
+        output.append(" |\n"_s);
+    }
+    output.append("\n</details>\n\n"_s);
+
+    // ==================== ALL EDGES ====================
+    output.append("## All Edges\n\n"_s);
+    output.append("<details>\n<summary>Click to expand "_s);
+    output.append(WTF::String::number(edges.size()));
+    output.append(" edges (object reference graph)</summary>\n\n"_s);
+    output.append("| From | To | Type | Name |\n"_s);
+    output.append("|-----:|---:|------|------|\n"_s);
+
+    for (const auto& edge : edges) {
+        output.append("| "_s);
+        output.append(WTF::String::number(edge.fromId));
+        output.append(" | "_s);
+        output.append(WTF::String::number(edge.toId));
+        output.append(" | "_s);
+        output.append(getEdgeType(edge));
+        output.append(" | "_s);
+        WTF::String edgeName = getEdgeName(edge);
+        if (!edgeName.isEmpty())
+            output.append(escapeString(edgeName));
+        output.append(" |\n"_s);
+    }
+    output.append("\n</details>\n\n"_s);
+
+    // ==================== STRING VALUES ====================
     output.append("## String Values\n\n"_s);
-    output.append("String objects in the heap (useful for identifying leak sources):\n\n"_s);
-    output.append("```\n"_s);
+    output.append("String objects (useful for identifying leak sources by content):\n\n"_s);
+    output.append("<details>\n<summary>Click to expand string values</summary>\n\n"_s);
+    output.append("| ID | Size | Value |\n"_s);
+    output.append("|---:|-----:|-------|\n"_s);
 
     for (const auto& node : nodes) {
         WTF::String className = getClassName(node);
         if (className == "string"_s || className == "String"_s) {
             WTF::String label = getNodeLabel(node);
-            output.append("STRING id="_s);
+            output.append("| "_s);
             output.append(WTF::String::number(node.id));
-            output.append(" size="_s);
-            output.append(formatBytesPlain(node.size));
+            output.append(" | "_s);
+            output.append(WTF::String::number(node.size));
+            output.append(" | "_s);
             if (!label.isEmpty()) {
-                // Truncate very long strings
-                WTF::String displayLabel = label;
-                if (displayLabel.length() > 200)
-                    displayLabel = makeString(displayLabel.left(197), "..."_s);
-                output.append(" value=\""_s);
+                WTF::String displayLabel = label.length() > 100 ? makeString(label.left(97), "..."_s) : label;
+                output.append("`"_s);
                 output.append(escapeString(displayLabel));
-                output.append("\""_s);
+                output.append("`"_s);
             }
-            output.append("\n"_s);
+            output.append(" |\n"_s);
         }
     }
-    output.append("```\n\n"_s);
+    output.append("\n</details>\n\n"_s);
 
-    // ========================================
-    // TYPE SUMMARY (grep-friendly)
-    // ========================================
-    output.append("## Type Summary\n\n"_s);
-    output.append("Aggregate statistics by type. Format: `TYPE name=<type> count=<n> self=<bytes> retained=<bytes> largest_id=<id>`\n\n"_s);
-    output.append("```\n"_s);
+    // ==================== TYPE STATISTICS ====================
+    output.append("## Complete Type Statistics\n\n"_s);
+    output.append("<details>\n<summary>Click to expand all "_s);
+    output.append(WTF::String::number(sortedTypes.size()));
+    output.append(" types</summary>\n\n"_s);
+    output.append("| Type | Count | Self Size | Retained Size | Largest ID |\n"_s);
+    output.append("|------|------:|----------:|--------------:|-----------:|\n"_s);
 
     for (const auto& stats : sortedTypes) {
-        output.append("TYPE name=\""_s);
+        output.append("| `"_s);
         output.append(escapeString(stats.name));
-        output.append("\" count="_s);
+        output.append("` | "_s);
         output.append(WTF::String::number(stats.count));
-        output.append(" self="_s);
-        output.append(formatBytesPlain(stats.totalSize));
-        output.append(" retained="_s);
-        output.append(formatBytesPlain(stats.totalRetainedSize));
-        output.append(" largest_id="_s);
+        output.append(" | "_s);
+        output.append(WTF::String::number(stats.totalSize));
+        output.append(" | "_s);
+        output.append(WTF::String::number(stats.totalRetainedSize));
+        output.append(" | "_s);
         output.append(WTF::String::number(stats.largestInstanceId));
-        output.append("\n"_s);
+        output.append(" |\n"_s);
     }
-    output.append("```\n\n"_s);
+    output.append("\n</details>\n\n"_s);
 
-    // ========================================
-    // EDGE NAMES (for finding property references)
-    // ========================================
-    output.append("## Edge Names\n\n"_s);
-    output.append("All unique property/variable names used in edges:\n\n"_s);
-    output.append("```\n"_s);
+    // ==================== EDGE NAMES ====================
+    output.append("## Property Names\n\n"_s);
+    output.append("<details>\n<summary>Click to expand all "_s);
+    output.append(WTF::String::number(edgeNames.size()));
+    output.append(" property/variable names</summary>\n\n"_s);
+    output.append("| Index | Name |\n"_s);
+    output.append("|------:|------|\n"_s);
 
     for (size_t i = 0; i < edgeNames.size(); i++) {
         if (!edgeNames[i].isEmpty()) {
-            output.append("EDGENAME index="_s);
+            output.append("| "_s);
             output.append(WTF::String::number(i));
-            output.append(" name=\""_s);
+            output.append(" | `"_s);
             output.append(escapeString(edgeNames[i]));
-            output.append("\"\n"_s);
+            output.append("` |\n"_s);
         }
     }
-    output.append("```\n\n"_s);
+    output.append("\n</details>\n\n"_s);
 
-    // ========================================
-    // USAGE EXAMPLES
-    // ========================================
-    output.append("## Analysis Examples\n\n"_s);
-    output.append("```bash\n"_s);
-    output.append("# Find all objects of a specific type\n"_s);
-    output.append("grep 'NODE.*type=Function' heap.heapprof\n\n"_s);
-    output.append("# Find objects larger than 10KB\n"_s);
-    output.append("awk '/^NODE/ && $4 > 10240 {print}' heap.heapprof\n\n"_s);
-    output.append("# Find all edges pointing to a specific object\n"_s);
-    output.append("grep 'EDGE.*to=12345' heap.heapprof\n\n"_s);
-    output.append("# Find all edges from a specific object\n"_s);
-    output.append("grep 'EDGE.*from=12345' heap.heapprof\n\n"_s);
-    output.append("# Find strings containing a keyword\n"_s);
-    output.append("grep 'STRING.*keyword' heap.heapprof\n\n"_s);
-    output.append("# Count objects by type\n"_s);
-    output.append("grep '^TYPE' heap.heapprof | sort -t= -k3 -rn | head -20\n\n"_s);
-    output.append("# Find GC roots\n"_s);
-    output.append("grep '^ROOT' heap.heapprof\n\n"_s);
-    output.append("# Find objects with a specific property\n"_s);
-    output.append("grep 'EDGE.*name=\"myProperty\"' heap.heapprof\n"_s);
-    output.append("```\n"_s);
+    // ==================== FOOTER ====================
+    output.append("---\n\n"_s);
+    output.append("*End of heap profile*\n"_s);
 
     return output.toString();
 }

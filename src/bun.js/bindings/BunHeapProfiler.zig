@@ -81,7 +81,7 @@ fn buildOutputPath(path: *bun.AutoAbsPath, config: HeapProfilerConfig) !void {
 
 fn generateDefaultFilename(buf: *bun.PathBuffer, text_format: bool) ![]const u8 {
     // Generate filename like:
-    // - Text format: Heap.{timestamp}.{pid}.heapprof
+    // - Markdown format: Heap.{timestamp}.{pid}.md
     // - V8 format: Heap.{timestamp}.{pid}.heapsnapshot
     const timespec = bun.timespec.now(.force_real_time);
     const pid = if (bun.Environment.isWindows)
@@ -91,7 +91,7 @@ fn generateDefaultFilename(buf: *bun.PathBuffer, text_format: bool) ![]const u8 
 
     const epoch_microseconds: u64 = @intCast(timespec.sec *% 1_000_000 +% @divTrunc(timespec.nsec, 1000));
 
-    const extension = if (text_format) "heapprof" else "heapsnapshot";
+    const extension = if (text_format) "md" else "heapsnapshot";
 
     return try std.fmt.bufPrint(buf, "Heap.{d}.{d}.{s}", .{
         epoch_microseconds,

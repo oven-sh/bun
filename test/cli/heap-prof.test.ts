@@ -44,8 +44,8 @@ test("--heap-prof generates V8 heap snapshot on exit", async () => {
   expect(snapshot).toHaveProperty("strings");
 });
 
-test("--heap-prof-text generates markdown heap profile on exit", async () => {
-  using dir = tempDir("heap-prof-text-test", {
+test("--heap-prof-md generates markdown heap profile on exit", async () => {
+  using dir = tempDir("heap-prof-md-test", {
     "index.js": `
       const arr = [];
       for (let i = 0; i < 100; i++) {
@@ -56,7 +56,7 @@ test("--heap-prof-text generates markdown heap profile on exit", async () => {
   });
 
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "--heap-prof-text", "index.js"],
+    cmd: [bunExe(), "--heap-prof-md", "index.js"],
     cwd: String(dir),
     env: bunEnv,
     stdout: "pipe",
@@ -69,8 +69,8 @@ test("--heap-prof-text generates markdown heap profile on exit", async () => {
   expect(stderr).toContain("Heap profile written to:");
   expect(exitCode).toBe(0);
 
-  // Find the heap profile file (text format)
-  const glob = new Bun.Glob("Heap.*.heapprof");
+  // Find the heap profile file (markdown format)
+  const glob = new Bun.Glob("Heap.*.md");
   const files = Array.from(glob.scanSync({ cwd: String(dir) }));
   expect(files.length).toBeGreaterThan(0);
 
@@ -81,30 +81,36 @@ test("--heap-prof-text generates markdown heap profile on exit", async () => {
   // Check for markdown headers
   expect(content).toContain("# Bun Heap Profile");
   expect(content).toContain("## Summary");
-  expect(content).toContain("## Top Types by Retained Size");
-  expect(content).toContain("## Largest Objects");
-  expect(content).toContain("## All Nodes");
-  expect(content).toContain("## All Edges");
+  expect(content).toContain("## Top 50 Types by Retained Size");
+  expect(content).toContain("## Top 50 Largest Objects");
+  expect(content).toContain("## Retainer Chains");
   expect(content).toContain("## GC Roots");
-  expect(content).toContain("## Type Summary");
 
-  // Check for summary bullet list
-  expect(content).toContain("**Total Heap Size:**");
-  expect(content).toContain("**Total Objects:**");
-  expect(content).toContain("**Unique Types:**");
-  expect(content).toContain("**GC Roots:**");
+  // Check for summary table structure
+  expect(content).toContain("| Metric | Value |");
+  expect(content).toContain("| Total Heap Size |");
+  expect(content).toContain("| Total Objects |");
+  expect(content).toContain("| Unique Types |");
+  expect(content).toContain("| GC Roots |");
 
   // Check for table structure in types section
-  expect(content).toContain("| # | Type | Count |");
+  expect(content).toContain("| Rank | Type | Count | Self Size | Retained Size |");
 
-  // Check for grep-friendly NODE format
-  expect(content).toMatch(/NODE id=\d+ type=\S+ size=\d+ retained=\d+/);
+  // Check for collapsible sections
+  expect(content).toContain("<details>");
+  expect(content).toContain("<summary>");
 
-  // Check for grep-friendly EDGE format
-  expect(content).toMatch(/EDGE from=\d+ to=\d+ type=\S+/);
+  // Check for All Objects table format
+  expect(content).toContain("## All Objects");
+  expect(content).toContain("| ID | Type | Size | Retained | Flags | Label |");
 
-  // Check for grep-friendly TYPE format
-  expect(content).toMatch(/TYPE name=".+" count=\d+ self=\d+ retained=\d+/);
+  // Check for All Edges table format
+  expect(content).toContain("## All Edges");
+  expect(content).toContain("| From | To | Type | Name |");
+
+  // Check for Type Statistics table format
+  expect(content).toContain("## Complete Type Statistics");
+  expect(content).toContain("| Type | Count | Self Size | Retained Size | Largest ID |");
 });
 
 test("--heap-prof-dir specifies output directory for V8 format", async () => {
@@ -134,14 +140,14 @@ test("--heap-prof-dir specifies output directory for V8 format", async () => {
   expect(files.length).toBeGreaterThan(0);
 });
 
-test("--heap-prof-dir specifies output directory for text format", async () => {
-  using dir = tempDir("heap-prof-text-dir-test", {
+test("--heap-prof-dir specifies output directory for markdown format", async () => {
+  using dir = tempDir("heap-prof-md-dir-test", {
     "index.js": `console.log("hello");`,
     "profiles": {},
   });
 
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "--heap-prof-text", "--heap-prof-dir", "profiles", "index.js"],
+    cmd: [bunExe(), "--heap-prof-md", "--heap-prof-dir", "profiles", "index.js"],
     cwd: String(dir),
     env: bunEnv,
     stdout: "pipe",
@@ -156,7 +162,7 @@ test("--heap-prof-dir specifies output directory for text format", async () => {
   expect(exitCode).toBe(0);
 
   // Check the profile is in the specified directory
-  const glob = new Bun.Glob("Heap.*.heapprof");
+  const glob = new Bun.Glob("Heap.*.md");
   const files = Array.from(glob.scanSync({ cwd: join(String(dir), "profiles") }));
   expect(files.length).toBeGreaterThan(0);
 });
@@ -211,7 +217,7 @@ test("--heap-prof-name and --heap-prof-dir work together", async () => {
   expect(Bun.file(profilePath).size).toBeGreaterThan(0);
 });
 
-test("--heap-prof-name without --heap-prof or --heap-prof-text shows warning", async () => {
+test("--heap-prof-name without --heap-prof or --heap-prof-md shows warning", async () => {
   using dir = tempDir("heap-prof-warn-test", {
     "index.js": `console.log("hello");`,
   });
@@ -227,7 +233,7 @@ test("--heap-prof-name without --heap-prof or --heap-prof-text shows warning", a
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout.trim()).toBe("hello");
-  expect(stderr).toContain("--heap-prof-name requires --heap-prof or --heap-prof-text to be enabled");
+  expect(stderr).toContain("--heap-prof-name requires --heap-prof or --heap-prof-md to be enabled");
   expect(exitCode).toBe(0);
 
   // No profile should be generated

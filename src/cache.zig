@@ -107,7 +107,7 @@ pub const Fs = struct {
         const should_use_cached_fd = !rfs.needToCloseFiles();
 
         if (cached_file_descriptor != null and should_use_cached_fd) {
-            file_handle = std.fs.File{ .handle = cached_file_descriptor.? };
+            file_handle = cached_file_descriptor.?.stdFile();
             // The cached file descriptor may still be stale in edge cases.
             // If seek fails, fallback to reopening the file.
             file_handle.seekTo(0) catch {

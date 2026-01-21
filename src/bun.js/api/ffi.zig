@@ -404,6 +404,35 @@ pub const FFI = struct {
                         debug("TinyCC failed to add library path", .{});
                     };
                 }
+
+                // Check standard C compiler environment variables for include paths.
+                // These are used by systems like NixOS where standard FHS paths don't exist.
+                if (bun.env_var.C_INCLUDE_PATH.get()) |c_include_path| {
+                    var include_iter = std.mem.splitScalar(u8, c_include_path, ':');
+                    while (include_iter.next()) |path| {
+                        if (path.len > 0) {
+                            const path_z = bun.default_allocator.dupeZ(u8, path) catch continue;
+                            defer bun.default_allocator.free(path_z);
+                            state.addSysIncludePath(path_z) catch {
+                                debug("TinyCC failed to add C_INCLUDE_PATH: {s}", .{path});
+                            };
+                        }
+                    }
+                }
+
+                // Check standard C compiler environment variable for library paths.
+                if (bun.env_var.LIBRARY_PATH.get()) |library_path| {
+                    var library_iter = std.mem.splitScalar(u8, library_path, ':');
+                    while (library_iter.next()) |path| {
+                        if (path.len > 0) {
+                            const path_z = bun.default_allocator.dupeZ(u8, path) catch continue;
+                            defer bun.default_allocator.free(path_z);
+                            state.addLibraryPath(path_z) catch {
+                                debug("TinyCC failed to add LIBRARY_PATH: {s}", .{path});
+                            };
+                        }
+                    }
+                }
             }
 
             try this.errorCheck();
@@ -984,21 +1013,10 @@ pub const FFI = struct {
 
         var filepath_buf = bun.path_buffer_pool.get();
         defer bun.path_buffer_pool.put(filepath_buf);
-        var linux_memfd_to_close: i32 = -1;
-        defer {
-            if (Environment.isLinux) {
-                if (linux_memfd_to_close != -1) {
-                    _ = bun.FD.fromSystem(linux_memfd_to_close).close();
-                }
-            } else {
-                bun.debugAssert(linux_memfd_to_close == -1);
-            }
-        }
         const name = brk: {
             if (jsc.ModuleLoader.resolveEmbeddedFile(
                 vm,
                 filepath_buf,
-                &linux_memfd_to_close,
                 name_slice.slice(),
                 switch (Environment.os) {
                     .linux => "so",

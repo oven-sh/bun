@@ -269,7 +269,7 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
                     .syscall = .static("listen"),
                     .fd = fd.uv(),
                 };
-                return globalObject.throwValue(try err.toErrorInstance(globalObject));
+                return globalObject.throwValue(err.toErrorInstance(globalObject));
             },
         }
     } orelse {
@@ -644,9 +644,25 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
                     bun.assert(prev.this_value != .zero);
                     prev.handlers = handlers_ptr;
                     bun.assert(prev.socket.socket == .detached);
+                    // Free old resources before reassignment to prevent memory leaks
+                    // when sockets are reused for reconnection (common with MongoDB driver)
+                    if (prev.connection) |old_connection| {
+                        old_connection.deinit();
+                    }
                     prev.connection = connection;
+                    if (prev.flags.owned_protos) {
+                        if (prev.protos) |old_protos| {
+                            bun.default_allocator.free(old_protos);
+                        }
+                    }
                     prev.protos = if (ssl) |s| s.takeProtos() else null;
+                    if (prev.server_name) |old_server_name| {
+                        bun.default_allocator.free(old_server_name);
+                    }
                     prev.server_name = if (ssl) |s| s.takeServerName() else null;
+                    if (prev.socket_context) |old_socket_context| {
+                        old_socket_context.deinit(true); // TLS socket context
+                    }
                     prev.socket_context = null;
                     break :blk prev;
                 } else TLSSocket.new(.{
@@ -744,7 +760,7 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
             .syscall = bun.String.static("connect"),
             .code = if (port == null) bun.String.static("ENOENT") else bun.String.static("ECONNREFUSED"),
         };
-        return globalObject.throwValue(try err.toErrorInstance(globalObject));
+        return globalObject.throwValue(err.toErrorInstance(globalObject));
     };
 
     if (ssl_enabled) {
@@ -779,9 +795,25 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
                 }
                 prev.handlers = handlers_ptr;
                 bun.assert(prev.socket.socket == .detached);
+                // Free old resources before reassignment to prevent memory leaks
+                // when sockets are reused for reconnection (common with MongoDB driver)
+                if (prev.connection) |old_connection| {
+                    old_connection.deinit();
+                }
                 prev.connection = connection;
+                if (prev.flags.owned_protos) {
+                    if (prev.protos) |old_protos| {
+                        bun.default_allocator.free(old_protos);
+                    }
+                }
                 prev.protos = if (ssl) |s| s.takeProtos() else null;
+                if (prev.server_name) |old_server_name| {
+                    bun.default_allocator.free(old_server_name);
+                }
                 prev.server_name = if (ssl) |s| s.takeServerName() else null;
+                if (prev.socket_context) |old_socket_context| {
+                    old_socket_context.deinit(is_ssl_enabled);
+                }
                 prev.socket_context = socket_context;
                 break :blk prev;
             } else bun.new(SocketType, .{
@@ -798,7 +830,7 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
             SocketType.js.dataSetCached(socket.getThisValue(globalObject), globalObject, default_data);
             socket.flags.allow_half_open = socket_config.allowHalfOpen;
             socket.doConnect(connection) catch {
-                socket.handleConnectError(@intFromEnum(if (port == null) bun.sys.SystemErrno.ENOENT else bun.sys.SystemErrno.ECONNREFUSED)) catch {};
+                socket.handleConnectError(@intFromEnum(if (port == null) bun.sys.SystemErrno.ENOENT else bun.sys.SystemErrno.ECONNREFUSED));
                 if (maybe_previous == null) socket.deref();
                 return promise_value;
             };
@@ -830,8 +862,8 @@ pub fn getsockname(this: *Listener, globalThis: *jsc.JSGlobalObject, callFrame: 
         else => return .js_undefined,
     };
     const family_js = switch (address_bytes.len) {
-        4 => try bun.String.static("IPv4").toJS(globalThis),
-        16 => try bun.String.static("IPv6").toJS(globalThis),
+        4 => bun.String.static("IPv4").toJS(globalThis),
+        16 => bun.String.static("IPv6").toJS(globalThis),
         else => return .js_undefined,
     };
     const address_js = ZigString.init(bun.fmt.formatIp(address_zig, &text_buf) catch unreachable).toJS(globalThis);

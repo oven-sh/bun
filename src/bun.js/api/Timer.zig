@@ -351,15 +351,13 @@ pub const All = struct {
             },
         };
         var warning_type_string = bun.String.createAtomIfPossible(@tagName(warning_type));
-        // Ignore errors from transferToJS since this is just a warning and shouldn't interrupt execution
-        const warning_js = warning_string.transferToJS(globalThis) catch return;
-        const warning_type_js = warning_type_string.transferToJS(globalThis) catch return;
+        // these arguments are valid so emitWarning won't throw
         globalThis.emitWarning(
-            warning_js,
-            warning_type_js,
+            warning_string.transferToJS(globalThis),
+            warning_type_string.transferToJS(globalThis),
             .js_undefined,
             .js_undefined,
-        ) catch {};
+        ) catch unreachable;
     }
 
     const CountdownOverflowBehavior = enum(u8) {

@@ -46,7 +46,7 @@ pub fn cpus(global: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
             .message = bun.String.static("Failed to get CPU information"),
             .code = bun.String.static(@tagName(jsc.Node.ErrorCode.ERR_SYSTEM_ERROR)),
         };
-        return global.throwValue(try err.toErrorInstance(global));
+        return global.throwValue(err.toErrorInstance(global));
     };
 }
 
@@ -296,7 +296,7 @@ pub fn getPriority(global: *jsc.JSGlobalObject, pid: i32) bun.JSError!i32 {
             },
             .syscall = bun.String.static("uv_os_getpriority"),
         };
-        return global.throwValue(try err.toErrorInstanceWithInfoObject(global));
+        return global.throwValue(err.toErrorInstanceWithInfoObject(global));
     }
     return result;
 }
@@ -307,7 +307,7 @@ pub fn homedir(global: *jsc.JSGlobalObject) !bun.String {
         var out: bun.PathBuffer = undefined;
         var size: usize = out.len;
         if (libuv.uv_os_homedir(&out, &size).toError(.uv_os_homedir)) |err| {
-            return global.throwValue(try err.toJS(global));
+            return global.throwValue(err.toJS(global));
         }
         return bun.String.cloneUTF8(out[0..size]);
     } else {
@@ -358,7 +358,7 @@ pub fn homedir(global: *jsc.JSGlobalObject) !bun.String {
         };
 
         if (ret != 0) {
-            return global.throwValue(try bun.sys.Error.fromCode(
+            return global.throwValue(bun.sys.Error.fromCode(
                 @enumFromInt(ret),
                 .uv_os_homedir,
             ).toJS(global));
@@ -366,7 +366,7 @@ pub fn homedir(global: *jsc.JSGlobalObject) !bun.String {
 
         if (result == null) {
             // in uv__getpwuid_r, null result throws UV_ENOENT.
-            return global.throwValue(try bun.sys.Error.fromCode(
+            return global.throwValue(bun.sys.Error.fromCode(
                 .NOENT,
                 .uv_os_homedir,
             ).toJS(global));
@@ -467,7 +467,7 @@ fn networkInterfacesPosix(globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSVal
             .syscall = bun.String.static("getifaddrs"),
         };
 
-        return globalThis.throwValue(try err.toErrorInstance(globalThis));
+        return globalThis.throwValue(err.toErrorInstance(globalThis));
     }
     defer c.freeifaddrs(interface_start);
 
@@ -649,7 +649,7 @@ fn networkInterfacesWindows(globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSV
             .errno = err,
             .syscall = bun.String.static("uv_interface_addresses"),
         };
-        return globalThis.throwValue(try sys_err.toErrorInstance(globalThis));
+        return globalThis.throwValue(sys_err.toErrorInstance(globalThis));
     }
     defer libuv.uv_free_interface_addresses(ifaces, count);
 
@@ -819,7 +819,7 @@ pub fn setPriority1(global: *jsc.JSGlobalObject, pid: i32, priority: i32) !void 
                 },
                 .syscall = bun.String.static("uv_os_getpriority"),
             };
-            return global.throwValue(try err.toErrorInstanceWithInfoObject(global));
+            return global.throwValue(err.toErrorInstanceWithInfoObject(global));
         },
         .ACCES => {
             const err = jsc.SystemError{
@@ -831,7 +831,7 @@ pub fn setPriority1(global: *jsc.JSGlobalObject, pid: i32, priority: i32) !void 
                 },
                 .syscall = bun.String.static("uv_os_getpriority"),
             };
-            return global.throwValue(try err.toErrorInstanceWithInfoObject(global));
+            return global.throwValue(err.toErrorInstanceWithInfoObject(global));
         },
         .PERM => {
             const err = jsc.SystemError{
@@ -843,7 +843,7 @@ pub fn setPriority1(global: *jsc.JSGlobalObject, pid: i32, priority: i32) !void 
                 },
                 .syscall = bun.String.static("uv_os_getpriority"),
             };
-            return global.throwValue(try err.toErrorInstanceWithInfoObject(global));
+            return global.throwValue(err.toErrorInstanceWithInfoObject(global));
         },
         else => {
             // no other error codes can be emitted
@@ -897,7 +897,7 @@ pub fn uptime(global: *jsc.JSGlobalObject) bun.JSError!f64 {
                     .errno = err,
                     .syscall = bun.String.static("uv_uptime"),
                 };
-                return global.throwValue(try sys_err.toErrorInstance(global));
+                return global.throwValue(sys_err.toErrorInstance(global));
             }
             return uptime_value;
         },
@@ -935,7 +935,7 @@ pub fn userInfo(globalThis: *jsc.JSGlobalObject, options: gen.UserInfoOptions) b
     const home = try homedir(globalThis);
     defer home.deref();
 
-    result.put(globalThis, jsc.ZigString.static("homedir"), try home.toJS(globalThis));
+    result.put(globalThis, jsc.ZigString.static("homedir"), home.toJS(globalThis));
 
     if (comptime Environment.isWindows) {
         result.put(globalThis, jsc.ZigString.static("username"), jsc.ZigString.init(bun.env_var.USER.get() orelse "unknown").withEncoding().toJS(globalThis));

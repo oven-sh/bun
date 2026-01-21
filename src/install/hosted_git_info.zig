@@ -168,40 +168,40 @@ pub const HostedGitInfo = struct {
     }
 
     /// Convert this HostedGitInfo to a JavaScript object
-    pub fn toJS(self: *const Self, go: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
+    pub fn toJS(self: *const Self, go: *jsc.JSGlobalObject) jsc.JSValue {
         const obj = jsc.JSValue.createEmptyObject(go, 6);
         obj.put(
             go,
             jsc.ZigString.static("type"),
-            try bun.String.fromBytes(self.host_provider.typeStr()).toJS(go),
+            bun.String.fromBytes(self.host_provider.typeStr()).toJS(go),
         );
         obj.put(
             go,
             jsc.ZigString.static("domain"),
-            try bun.String.fromBytes(self.host_provider.domain()).toJS(go),
+            bun.String.fromBytes(self.host_provider.domain()).toJS(go),
         );
         obj.put(
             go,
             jsc.ZigString.static("project"),
-            try bun.String.fromBytes(self.project).toJS(go),
+            bun.String.fromBytes(self.project).toJS(go),
         );
         obj.put(
             go,
             jsc.ZigString.static("user"),
-            if (self.user) |user| try bun.String.fromBytes(user).toJS(go) else .null,
+            if (self.user) |user| bun.String.fromBytes(user).toJS(go) else .null,
         );
         obj.put(
             go,
             jsc.ZigString.static("committish"),
             if (self.committish) |committish|
-                try bun.String.fromBytes(committish).toJS(go)
+                bun.String.fromBytes(committish).toJS(go)
             else
                 .null,
         );
         obj.put(
             go,
             jsc.ZigString.static("default"),
-            try bun.String.fromBytes(@tagName(self.default_representation)).toJS(go),
+            bun.String.fromBytes(@tagName(self.default_representation)).toJS(go),
         );
 
         return obj;

@@ -295,9 +295,9 @@ pub const Async = struct {
                 var promise_value = this.promise.value();
                 var promise = this.promise.get();
                 const result = switch (this.result) {
-                    .err => |err| err.toJS(globalObject) catch |e| return promise.reject(globalObject, globalObject.takeException(e)),
+                    .err => |err| err.toJS(globalObject),
                     .result => |*res| brk: {
-                        break :brk globalObject.toJS(res) catch |e| return promise.reject(globalObject, globalObject.takeException(e));
+                        break :brk globalObject.toJS(res) catch return promise.reject(globalObject, error.JSError);
                     },
                 };
                 promise_value.ensureStillAlive();
@@ -399,9 +399,9 @@ pub const Async = struct {
                 var promise_value = this.promise.value();
                 var promise = this.promise.get();
                 const result = switch (this.result) {
-                    .err => |err| err.toJS(globalObject) catch |e| return promise.reject(globalObject, globalObject.takeException(e)),
+                    .err => |err| err.toJS(globalObject),
                     .result => |*res| brk: {
-                        break :brk globalObject.toJS(res) catch |e| return promise.reject(globalObject, globalObject.takeException(e));
+                        break :brk globalObject.toJS(res) catch return promise.reject(globalObject, error.JSError);
                     },
                 };
                 promise_value.ensureStillAlive();
@@ -667,9 +667,9 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             var promise_value = this.promise.value();
             var promise = this.promise.get();
             const result = switch (this.result) {
-                .err => |err| err.toJS(globalObject) catch |e| return promise.reject(globalObject, globalObject.takeException(e)),
+                .err => |err| err.toJS(globalObject),
                 .result => |*res| brk: {
-                    break :brk globalObject.toJS(res) catch |e| return promise.reject(globalObject, globalObject.takeException(e));
+                    break :brk globalObject.toJS(res) catch return promise.reject(globalObject, error.JSError);
                 },
             };
             promise_value.ensureStillAlive();
@@ -1217,13 +1217,13 @@ pub const AsyncReaddirRecursiveTask = struct {
         const success = this.pending_err == null;
         var promise_value = this.promise.value();
         var promise = this.promise.get();
-        const result = if (this.pending_err) |*err| (err.toJS(globalObject) catch |e| return promise.reject(globalObject, globalObject.takeException(e))) else brk: {
+        const result = if (this.pending_err) |*err| err.toJS(globalObject) else brk: {
             const res = switch (this.result_list) {
                 .with_file_types => |*res| Return.Readdir{ .with_file_types = res.moveToUnmanaged().items },
                 .buffers => |*res| Return.Readdir{ .buffers = res.moveToUnmanaged().items },
                 .files => |*res| Return.Readdir{ .files = res.moveToUnmanaged().items },
             };
-            break :brk res.toJS(globalObject) catch |e| return promise.reject(globalObject, globalObject.takeException(e));
+            break :brk res.toJS(globalObject) catch return promise.reject(globalObject, error.JSError);
         };
         promise_value.ensureStillAlive();
 
@@ -3159,9 +3159,9 @@ pub const StringOrUndefined = union(enum) {
     string: bun.String,
     none: void,
 
-    pub fn toJS(this: *StringOrUndefined, globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
+    pub fn toJS(this: *StringOrUndefined, globalObject: *jsc.JSGlobalObject) jsc.JSValue {
         return switch (this.*) {
-            .string => try this.string.transferToJS(globalObject),
+            .string => this.string.transferToJS(globalObject),
             .none => .js_undefined,
         };
     }
@@ -5907,7 +5907,7 @@ pub const NodeFS = struct {
                 .message = bun.String.init(buf),
                 .code = bun.String.init(@errorName(err)),
                 .path = bun.String.init(args.path.slice()),
-            }).toErrorInstance(args.global_this) catch return Maybe(Return.Watch){ .result = .js_undefined }) catch {};
+            }).toErrorInstance(args.global_this)) catch {};
             return Maybe(Return.Watch){ .result = .js_undefined };
         };
         return Maybe(Return.Watch){ .result = watcher };

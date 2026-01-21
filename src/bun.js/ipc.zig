@@ -663,14 +663,17 @@ pub const SendQueue = struct {
                 log("IPC call continueSend() from onAckNack retry", .{});
                 return this.continueSend(global, .new_message_appended);
             }
-            // too many retries; give up - emit warning if possible
+            // too many retries; give up
             var warning = bun.String.static("Handle did not reach the receiving process correctly");
             var warning_name = bun.String.static("SentHandleNotReceivedWarning");
-            if (warning.transferToJS(global)) |warning_js| {
-                if (warning_name.transferToJS(global)) |warning_name_js| {
-                    global.emitWarning(warning_js, warning_name_js, .js_undefined, .js_undefined) catch {};
-                } else |_| {}
-            } else |_| {}
+            global.emitWarning(
+                warning.transferToJS(global),
+                warning_name.transferToJS(global),
+                .js_undefined,
+                .js_undefined,
+            ) catch |e| {
+                _ = global.takeException(e);
+            };
             // (fall through to success code in order to consume the message and continue sending)
         }
         // consume the message and continue sending
@@ -1034,7 +1037,7 @@ pub fn doSend(ipc: ?*SendQueue, globalObject: *jsc.JSGlobalObject, callFrame: *j
 
     if (status == .failure) {
         const ex = globalObject.createTypeErrorInstance("process.send() failed", .{});
-        ex.put(globalObject, jsc.ZigString.static("syscall"), try bun.String.static("write").toJS(globalObject));
+        ex.put(globalObject, jsc.ZigString.static("syscall"), bun.String.static("write").toJS(globalObject));
         return doSendErr(globalObject, callback, ex, from);
     }
 

@@ -351,11 +351,10 @@ pub const FD = packed struct(backing_int) {
         }
         const uv_owned_fd = any_fd.makeLibUVOwned() catch {
             any_fd.close();
-            const err_instance = (jsc.SystemError{
+            return global.throwValue((jsc.SystemError{
                 .message = bun.String.static("EMFILE, too many open files"),
                 .code = bun.String.static("EMFILE"),
-            }).toErrorInstance(global) catch return .zero;
-            return global.throwValue(err_instance) catch .zero;
+            }).toErrorInstance(global)) catch .zero;
         };
         return JSValue.jsNumberFromInt32(uv_owned_fd.uv());
     }

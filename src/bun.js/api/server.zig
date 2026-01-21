@@ -1330,7 +1330,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             return jsc.JSValue.jsNumber(@as(i32, @intCast(@as(u31, @truncate(this.activeSocketsCount())))));
         }
 
-        pub fn getAddress(this: *ThisServer, globalThis: *JSGlobalObject) bun.JSError!jsc.JSValue {
+        pub fn getAddress(this: *ThisServer, globalThis: *JSGlobalObject) jsc.JSValue {
             switch (this.config.address) {
                 .unix => |unix| {
                     var value = bun.String.cloneUTF8(unix);
@@ -1429,7 +1429,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             @panic("unreachable");
         }
 
-        pub fn getProtocol(this: *ThisServer, globalThis: *JSGlobalObject) bun.JSError!jsc.JSValue {
+        pub fn getProtocol(this: *ThisServer, globalThis: *JSGlobalObject) jsc.JSValue {
             _ = this;
             return bun.String.static(if (ssl_enabled) "https" else "http").toJS(globalThis);
         }
@@ -1761,7 +1761,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                                         .message = bun.String.init(std.fmt.bufPrint(&output_buf, "permission denied {s}:{d}", .{ tcp.hostname orelse "0.0.0.0", tcp.port }) catch "Failed to start server"),
                                         .code = bun.String.static("EACCES"),
                                         .syscall = bun.String.static("listen"),
-                                    }).toErrorInstance(globalThis) catch return;
+                                    }).toErrorInstance(globalThis);
                                     break :error_set;
                                 }
                             }
@@ -1769,7 +1769,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                                 .message = bun.String.init(std.fmt.bufPrint(&output_buf, "Failed to start server. Is port {d} in use?", .{tcp.port}) catch "Failed to start server"),
                                 .code = bun.String.static("EADDRINUSE"),
                                 .syscall = bun.String.static("listen"),
-                            }).toErrorInstance(globalThis) catch return;
+                            }).toErrorInstance(globalThis);
                         }
                     },
                     .unix => |unix| {
@@ -1779,12 +1779,12 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                                     .message = bun.String.init(std.fmt.bufPrint(&output_buf, "Failed to listen on unix socket {f}", .{bun.fmt.QuotedFormatter{ .text = unix }}) catch "Failed to start server"),
                                     .code = bun.String.static("EADDRINUSE"),
                                     .syscall = bun.String.static("listen"),
-                                }).toErrorInstance(globalThis) catch return;
+                                }).toErrorInstance(globalThis);
                             },
                             else => |e| {
                                 var sys_err = bun.sys.Error.fromCode(e, .listen);
                                 sys_err.path = unix;
-                                error_instance = sys_err.toJS(globalThis) catch return;
+                                error_instance = sys_err.toJS(globalThis);
                             },
                         }
                     },

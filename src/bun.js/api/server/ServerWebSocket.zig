@@ -1113,7 +1113,7 @@ pub fn terminate(
 pub fn getBinaryType(
     this: *ServerWebSocket,
     globalThis: *jsc.JSGlobalObject,
-) bun.JSError!JSValue {
+) JSValue {
     log("getBinaryType()", .{});
 
     return switch (this.#flags.binary_type) {

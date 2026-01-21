@@ -103,7 +103,7 @@ fn buildOutputPath(path: *bun.AutoAbsPath, config: CPUProfilerConfig, is_md_form
 }
 
 fn generateDefaultFilename(buf: *bun.PathBuffer, md_format: bool) ![]const u8 {
-    // Generate filename like: CPU.{timestamp}.{pid}.cpuprofile (or .txt for text format)
+    // Generate filename like: CPU.{timestamp}.{pid}.cpuprofile (or .md for markdown format)
     // Use microsecond timestamp for uniqueness
     const timespec = bun.timespec.now(.force_real_time);
     const pid = if (bun.Environment.isWindows)

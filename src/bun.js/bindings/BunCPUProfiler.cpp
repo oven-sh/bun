@@ -352,25 +352,12 @@ struct FunctionStats {
 
 // Helper to format a function name properly
 // - Empty names become "(anonymous)"
-// - Async functions get "async " prefix if not already present
-static WTF::String formatFunctionName(const WTF::String& name, const JSC::SamplingProfiler::StackFrame& frame)
+// Note: JSC's displayName already includes "async" prefix for async functions
+static WTF::String formatFunctionName(const WTF::String& name)
 {
-    WTF::String displayName = name;
-
-    // Handle empty function names
-    if (displayName.isEmpty())
-        displayName = "(anonymous)"_s;
-
-    // Check if this is an async function and add prefix if needed
-    if (frame.frameType == JSC::SamplingProfiler::FrameType::Executable && frame.executable) {
-        // The frame might be from an async function - check if name already has async prefix
-        if (!displayName.startsWith("async "_s)) {
-            // We can't easily detect async from the frame itself, so we rely on JSC's displayName
-            // which should already include "async" for async functions in most cases
-        }
-    }
-
-    return displayName;
+    if (name.isEmpty())
+        return "(anonymous)"_s;
+    return name;
 }
 
 // Helper to format a location string from URL and line number
@@ -488,10 +475,6 @@ WTF::String stopCPUProfilerAndGetText(JSC::VM& vm)
     // Aggregate statistics by function (using functionName:location as key)
     WTF::HashMap<WTF::String, FunctionStats> functionStatsMap;
 
-    // Track call tree for building the tree view
-    // Key: "parentKey -> childKey", Value: sample count
-    WTF::HashMap<WTF::String, int> callEdges;
-
     // Process each stack trace
     long long totalTimeUs = 0;
     int totalSamples = static_cast<int>(stackTraces.size());
@@ -515,7 +498,7 @@ WTF::String stopCPUProfilerAndGetText(JSC::VM& vm)
             auto& frame = stackTrace.frames[i];
 
             WTF::String rawFunctionName = frame.displayName(vm);
-            WTF::String functionName = formatFunctionName(rawFunctionName, frame);
+            WTF::String functionName = formatFunctionName(rawFunctionName);
             WTF::String url;
             int lineNumber = -1;
 
@@ -591,13 +574,6 @@ WTF::String stopCPUProfilerAndGetText(JSC::VM& vm)
                 if (prevIt != functionStatsMap.end()) {
                     prevIt->value.callees.add(key, 0).iterator->value++;
                 }
-
-                // Track edge for call tree
-                WTF::StringBuilder edgeKeyBuilder;
-                edgeKeyBuilder.append(previousKey);
-                edgeKeyBuilder.append(" -> "_s);
-                edgeKeyBuilder.append(key);
-                callEdges.add(edgeKeyBuilder.toString(), 0).iterator->value++;
             }
 
             previousKey = key;
@@ -1108,7 +1084,6 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
         double endTime = startTime;
 
         WTF::HashMap<WTF::String, FunctionStats> functionStatsMap;
-        WTF::HashMap<WTF::String, int> callEdges;
 
         long long totalTimeUs = 0;
         int totalSamples = static_cast<int>(stackTraces.size());
@@ -1131,7 +1106,7 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                 auto& frame = stackTrace.frames[i];
 
                 WTF::String rawFunctionName = frame.displayName(vm);
-                WTF::String functionName = formatFunctionName(rawFunctionName, frame);
+                WTF::String functionName = formatFunctionName(rawFunctionName);
                 WTF::String url;
                 int lineNumber = -1;
 
@@ -1198,12 +1173,6 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                     auto prevIt = functionStatsMap.find(previousKey);
                     if (prevIt != functionStatsMap.end())
                         prevIt->value.callees.add(key, 0).iterator->value++;
-
-                    WTF::StringBuilder edgeKeyBuilder;
-                    edgeKeyBuilder.append(previousKey);
-                    edgeKeyBuilder.append(" -> "_s);
-                    edgeKeyBuilder.append(key);
-                    callEdges.add(edgeKeyBuilder.toString(), 0).iterator->value++;
                 }
 
                 previousKey = key;

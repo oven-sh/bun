@@ -187,4 +187,147 @@ describe.concurrent("--cpu-prof", () => {
     expect(functionNames.some((name: string) => name !== "(root)" && name !== "(program)")).toBe(true);
     expect(exitCode).toBe(0);
   });
+
+  test("--cpu-prof-text generates text format profile", async () => {
+    using dir = tempDir("cpu-prof-text", {
+      "test.js": `
+        // CPU-intensive task for text profile
+        function fibonacci(n) {
+          if (n <= 1) return n;
+          return fibonacci(n - 1) + fibonacci(n - 2);
+        }
+
+        function main() {
+          const now = performance.now();
+          while (now + 50 > performance.now()) {
+            Bun.inspect(fibonacci(20));
+          }
+        }
+
+        main();
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--cpu-prof", "--cpu-prof-text", "test.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+
+    const exitCode = await proc.exited;
+
+    // Check that a .txt file was created (not .cpuprofile)
+    const files = readdirSync(String(dir));
+    const textFiles = files.filter(f => f.endsWith(".txt") && f.startsWith("CPU."));
+
+    expect(textFiles.length).toBeGreaterThan(0);
+    expect(exitCode).toBe(0);
+
+    // Read and validate the text profile format
+    const profilePath = join(String(dir), textFiles[0]);
+    const profileContent = readFileSync(profilePath, "utf-8");
+
+    // Validate the text format has expected sections
+    expect(profileContent).toContain("BUN CPU PROFILE");
+    expect(profileContent).toContain("TOP FUNCTIONS BY SELF TIME");
+    expect(profileContent).toContain("TOP FUNCTIONS BY TOTAL TIME");
+    expect(profileContent).toContain("FUNCTION DETAILS");
+    expect(profileContent).toContain("SOURCE FILES BY SELF TIME");
+    expect(profileContent).toContain("GREP HINTS");
+
+    // Validate header contains summary info
+    expect(profileContent).toMatch(/Duration:/);
+    expect(profileContent).toMatch(/Samples:/);
+    expect(profileContent).toMatch(/Interval:/);
+    expect(profileContent).toMatch(/Functions:/);
+
+    // Validate grep hints section
+    expect(profileContent).toContain('grep "^## "');
+    expect(profileContent).toContain("Called from:");
+    expect(profileContent).toContain("Calls:");
+  });
+
+  test("--cpu-prof-text with custom name", async () => {
+    using dir = tempDir("cpu-prof-text-name", {
+      "test.js": `
+        function loop() {
+          const end = Date.now() + 32;
+          while (Date.now() < end) {}
+        }
+        loop();
+      `,
+    });
+
+    const customName = "my-profile.txt";
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--cpu-prof", "--cpu-prof-text", "--cpu-prof-name", customName, "test.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+
+    const exitCode = await proc.exited;
+
+    const files = readdirSync(String(dir));
+    expect(files).toContain(customName);
+    expect(exitCode).toBe(0);
+
+    // Validate it's text format
+    const profileContent = readFileSync(join(String(dir), customName), "utf-8");
+    expect(profileContent).toContain("BUN CPU PROFILE");
+  });
+
+  test("--cpu-prof-text shows line counts in sections", async () => {
+    using dir = tempDir("cpu-prof-text-lines", {
+      "test.js": `
+        function workA() {
+          let sum = 0;
+          for (let i = 0; i < 500000; i++) sum += i;
+          return sum;
+        }
+        function workB() {
+          let sum = 0;
+          for (let i = 0; i < 500000; i++) sum += i;
+          return sum;
+        }
+        function main() {
+          const now = performance.now();
+          while (now + 50 > performance.now()) {
+            workA();
+            workB();
+          }
+        }
+        main();
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--cpu-prof", "--cpu-prof-text", "test.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+
+    const exitCode = await proc.exited;
+    expect(exitCode).toBe(0);
+
+    const files = readdirSync(String(dir));
+    const textFiles = files.filter(f => f.endsWith(".txt") && f.startsWith("CPU."));
+    expect(textFiles.length).toBeGreaterThan(0);
+
+    const profileContent = readFileSync(join(String(dir), textFiles[0]), "utf-8");
+
+    // Check that section headers contain line counts and grep hints
+    expect(profileContent).toMatch(/TOP FUNCTIONS BY SELF TIME \(\d+ of \d+ functions, \d+ lines, use: grep -A \d+/);
+    expect(profileContent).toMatch(/TOP FUNCTIONS BY TOTAL TIME \(\d+ of \d+ functions, \d+ lines, use: grep -A \d+/);
+    expect(profileContent).toMatch(/SOURCE FILES BY SELF TIME \(\d+ of \d+ files, \d+ lines, use: grep -A \d+/);
+
+    // Check that function detail blocks have line counts
+    expect(profileContent).toMatch(/^## .+ \[\d+ lines\]/m);
+  });
 });

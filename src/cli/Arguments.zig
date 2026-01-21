@@ -90,6 +90,7 @@ pub const runtime_params_ = [_]ParamType{
     clap.parseParam("--cpu-prof                        Start CPU profiler and write profile to disk on exit") catch unreachable,
     clap.parseParam("--cpu-prof-name <STR>             Specify the name of the CPU profile file") catch unreachable,
     clap.parseParam("--cpu-prof-dir <STR>              Specify the directory where the CPU profile will be saved") catch unreachable,
+    clap.parseParam("--cpu-prof-text                   Output CPU profile in text format (grep-friendly, designed for LLM analysis)") catch unreachable,
     clap.parseParam("--if-present                      Exit without an error if the entrypoint does not exist") catch unreachable,
     clap.parseParam("--no-install                      Disable auto install in the Bun runtime") catch unreachable,
     clap.parseParam("--install <STR>                   Configure auto-install behavior. One of \"auto\" (default, auto-installs when no node_modules), \"fallback\" (missing packages only), \"force\" (always).") catch unreachable,
@@ -842,6 +843,9 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             if (args.option("--cpu-prof-dir")) |dir| {
                 ctx.runtime_options.cpu_prof.dir = dir;
             }
+            if (args.flag("--cpu-prof-text")) {
+                ctx.runtime_options.cpu_prof.text_format = true;
+            }
         } else {
             // Warn if --cpu-prof-name or --cpu-prof-dir is used without --cpu-prof
             if (args.option("--cpu-prof-name")) |_| {
@@ -849,6 +853,9 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             }
             if (args.option("--cpu-prof-dir")) |_| {
                 Output.warn("--cpu-prof-dir requires --cpu-prof to be enabled", .{});
+            }
+            if (args.flag("--cpu-prof-text")) {
+                Output.warn("--cpu-prof-text requires --cpu-prof to be enabled", .{});
             }
         }
 

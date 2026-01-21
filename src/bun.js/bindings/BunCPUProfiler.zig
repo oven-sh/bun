@@ -1,27 +1,33 @@
 pub const CPUProfilerConfig = struct {
     name: []const u8,
     dir: []const u8,
+    text_format: bool = false,
 };
 
 // C++ function declarations
 extern fn Bun__startCPUProfiler(vm: *jsc.VM) void;
 extern fn Bun__stopCPUProfilerAndGetJSON(vm: *jsc.VM) bun.String;
+extern fn Bun__stopCPUProfilerAndGetText(vm: *jsc.VM) bun.String;
 
 pub fn startCPUProfiler(vm: *jsc.VM) void {
     Bun__startCPUProfiler(vm);
 }
 
 pub fn stopAndWriteProfile(vm: *jsc.VM, config: CPUProfilerConfig) !void {
-    const json_string = Bun__stopCPUProfilerAndGetJSON(vm);
-    defer json_string.deref();
+    // Get profile data in the appropriate format
+    const profile_string = if (config.text_format)
+        Bun__stopCPUProfilerAndGetText(vm)
+    else
+        Bun__stopCPUProfilerAndGetJSON(vm);
+    defer profile_string.deref();
 
-    if (json_string.isEmpty()) {
+    if (profile_string.isEmpty()) {
         // No profile data or profiler wasn't started
         return;
     }
 
-    const json_slice = json_string.toUTF8(bun.default_allocator);
-    defer json_slice.deinit();
+    const profile_slice = profile_string.toUTF8(bun.default_allocator);
+    defer profile_slice.deinit();
 
     // Determine the output path using AutoAbsPath
     var path_buf: bun.AutoAbsPath = .initTopLevelDir();
@@ -37,7 +43,7 @@ pub fn stopAndWriteProfile(vm: *jsc.VM, config: CPUProfilerConfig) !void {
         path_buf.sliceZ();
 
     // Write the profile to disk using bun.sys.File.writeFile
-    const result = bun.sys.File.writeFile(bun.FD.cwd(), output_path_os, json_slice.slice());
+    const result = bun.sys.File.writeFile(bun.FD.cwd(), output_path_os, profile_slice.slice());
     if (result.asErr()) |err| {
         // If we got ENOENT, PERM, or ACCES, try creating the directory and retry
         const errno = err.getErrno();
@@ -45,7 +51,7 @@ pub fn stopAndWriteProfile(vm: *jsc.VM, config: CPUProfilerConfig) !void {
             if (config.dir.len > 0) {
                 bun.makePath(bun.FD.cwd().stdDir(), config.dir) catch {};
                 // Retry write
-                const retry_result = bun.sys.File.writeFile(bun.FD.cwd(), output_path_os, json_slice.slice());
+                const retry_result = bun.sys.File.writeFile(bun.FD.cwd(), output_path_os, profile_slice.slice());
                 if (retry_result.asErr()) |_| {
                     return error.WriteFailed;
                 }
@@ -64,7 +70,7 @@ fn buildOutputPath(path: *bun.AutoAbsPath, config: CPUProfilerConfig) !void {
     const filename = if (config.name.len > 0)
         config.name
     else
-        try generateDefaultFilename(&filename_buf);
+        try generateDefaultFilename(&filename_buf, config.text_format);
 
     // Append directory if specified
     if (config.dir.len > 0) {
@@ -75,8 +81,8 @@ fn buildOutputPath(path: *bun.AutoAbsPath, config: CPUProfilerConfig) !void {
     path.append(filename);
 }
 
-fn generateDefaultFilename(buf: *bun.PathBuffer) ![]const u8 {
-    // Generate filename like: CPU.{timestamp}.{pid}.cpuprofile
+fn generateDefaultFilename(buf: *bun.PathBuffer, text_format: bool) ![]const u8 {
+    // Generate filename like: CPU.{timestamp}.{pid}.cpuprofile (or .txt for text format)
     // Use microsecond timestamp for uniqueness
     const timespec = bun.timespec.now(.force_real_time);
     const pid = if (bun.Environment.isWindows)
@@ -86,9 +92,12 @@ fn generateDefaultFilename(buf: *bun.PathBuffer) ![]const u8 {
 
     const epoch_microseconds: u64 = @intCast(timespec.sec *% 1_000_000 +% @divTrunc(timespec.nsec, 1000));
 
-    return try std.fmt.bufPrint(buf, "CPU.{d}.{d}.cpuprofile", .{
+    const extension = if (text_format) ".txt" else ".cpuprofile";
+
+    return try std.fmt.bufPrint(buf, "CPU.{d}.{d}{s}", .{
         epoch_microseconds,
         pid,
+        extension,
     });
 }
 

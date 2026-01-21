@@ -20,8 +20,8 @@
  * On Linux:
  *   c++ -std=c++17 -o lldb-inline lldb-inline-tool.cpp \
  *       -llldb \
- *       -L/usr/lib/llvm-14/lib \
- *       -I/usr/lib/llvm-14/include
+ *       -L/usr/lib/llvm-21/lib \
+ *       -I/usr/lib/llvm-21/include
  * 
  * USAGE:
  * ------

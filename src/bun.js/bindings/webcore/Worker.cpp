@@ -97,19 +97,16 @@ public:
 
         // Get the data value from the event's cache
         JSC::JSValue dataValue = messageEvent.cachedData().getValue(JSC::jsNull());
-        auto& vm = context.vm();
 
-        // Queue a task to dispatch the message to the Worker after the current event finishes
-        // This avoids the "event is already being dispatched" assertion
-        // We're already on the parent context (where m_parentPort lives), so use postTask
-        context.postTask([protectedWorker = Ref { *m_worker }, ports = messageEvent.ports(), strongData = JSC::Strong<JSC::Unknown>(vm, dataValue)](ScriptExecutionContext& ctx) mutable {
-            // Create a new event with the data
-            MessageEvent::Init init;
-            init.data = strongData.get();
-            init.ports = WTF::move(ports);
-            auto newEvent = MessageEvent::create(eventNames().messageEvent, WTF::move(init), EventIsTrusted::Yes);
-            protectedWorker->dispatchEvent(newEvent);
-        });
+        // Create and dispatch the message event to the Worker object synchronously.
+        // This is safe because Worker is a different EventTarget from the MessagePort,
+        // so we won't trigger "event is already being dispatched" assertions.
+        // Dispatching synchronously ensures message events are processed before exit events.
+        MessageEvent::Init init;
+        init.data = dataValue;
+        init.ports = messageEvent.ports();
+        auto newEvent = MessageEvent::create(eventNames().messageEvent, WTF::move(init), EventIsTrusted::Yes);
+        m_worker->dispatchEvent(newEvent);
     }
 
 private:

@@ -542,23 +542,12 @@ fn onGlobWalkDone(this: *Expansion, task: *ShellGlobTask) Yield {
     }
 
     if (task.result.items.len == 0) {
-        // In variable assignments, a glob that fails to match should not produce an error, but instead expand to just the pattern
-        if (this.parent.ptr.is(Assigns) or (this.parent.ptr.is(Cmd) and this.parent.ptr.as(Cmd).state == .expanding_assigns)) {
-            this.pushCurrentOut();
-            this.child_state.glob.walker.deinit(true);
-            this.child_state = .idle;
-            this.state = .done;
-            return .{ .expansion = this };
-        }
-
-        const msg = bun.handleOom(std.fmt.allocPrint(this.base.allocator(), "no matches found: {s}", .{this.child_state.glob.walker.pattern}));
-        this.state = .{
-            .err = bun.shell.ShellErr{
-                .custom = msg,
-            },
-        };
+        // When a glob pattern matches no files, pass the literal pattern to the command
+        // (bash-like behavior, unlike zsh's failglob)
+        this.pushCurrentOut();
         this.child_state.glob.walker.deinit(true);
         this.child_state = .idle;
+        this.state = .done;
         return .{ .expansion = this };
     }
 

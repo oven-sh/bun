@@ -1862,7 +1862,7 @@ declare module "bun" {
     type Architecture = "x64" | "arm64";
     type Libc = "glibc" | "musl";
     type SIMD = "baseline" | "modern";
-    type Target =
+    type CompileTarget =
       | `bun-darwin-${Architecture}`
       | `bun-darwin-x64-${SIMD}`
       | `bun-linux-${Architecture}`
@@ -2204,7 +2204,7 @@ declare module "bun" {
   }
 
   interface CompileBuildOptions {
-    target?: Bun.Build.Target;
+    target?: Bun.Build.CompileTarget;
     execArgv?: string[];
     executablePath?: string;
     outfile?: string;
@@ -2286,7 +2286,7 @@ declare module "bun" {
      * });
      * ```
      */
-    compile: boolean | Bun.Build.Target | CompileBuildOptions;
+    compile: boolean | Bun.Build.CompileTarget | CompileBuildOptions;
 
     /**
      * Splitting is not currently supported with `.compile`

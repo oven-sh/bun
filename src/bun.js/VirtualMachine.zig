@@ -10,7 +10,8 @@ pub export var isBunTest: bool = false;
 
 // TODO: evaluate if this has any measurable performance impact.
 pub var synthetic_allocation_limit: usize = std.math.maxInt(u32);
-pub var string_allocation_limit: usize = std.math.maxInt(u32);
+/// WebKit's String::MaxLength is std::numeric_limits<int32_t>::max() = 2^31-1
+pub var string_allocation_limit: usize = std.math.maxInt(i32);
 
 comptime {
     _ = Bun__remapStackFramePositions;

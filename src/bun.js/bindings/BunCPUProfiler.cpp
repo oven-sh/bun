@@ -443,6 +443,48 @@ static WTF::String formatPercent(double value, double total)
     return sb.toString();
 }
 
+// Helper to escape markdown special characters (backticks and pipes) for safe table rendering
+static WTF::String escapeMarkdown(const WTF::String& str)
+{
+    // Check if escaping is needed
+    bool needsEscape = false;
+    for (unsigned i = 0; i < str.length(); i++) {
+        UChar c = str[i];
+        if (c == '`' || c == '|') {
+            needsEscape = true;
+            break;
+        }
+    }
+    if (!needsEscape)
+        return str;
+
+    WTF::StringBuilder sb;
+    for (unsigned i = 0; i < str.length(); i++) {
+        UChar c = str[i];
+        if (c == '`')
+            sb.append("\\`"_s);
+        else if (c == '|')
+            sb.append("\\|"_s);
+        else
+            sb.append(c);
+    }
+    return sb.toString();
+}
+
+// Helper to generate a minimal valid cpuprofile JSON with no samples
+static WTF::String generateEmptyProfileJSON()
+{
+    // Return a minimal valid Chrome DevTools CPU profile format
+    long long timestamp = static_cast<long long>(WTF::WallTime::now().secondsSinceEpoch().value() * 1000000.0);
+    WTF::StringBuilder sb;
+    sb.append("{\"nodes\":[{\"id\":1,\"callFrame\":{\"functionName\":\"(root)\",\"scriptId\":\"0\",\"url\":\"\",\"lineNumber\":-1,\"columnNumber\":-1},\"hitCount\":0,\"children\":[]}],\"startTime\":"_s);
+    sb.append(timestamp);
+    sb.append(",\"endTime\":"_s);
+    sb.append(timestamp);
+    sb.append(",\"samples\":[],\"timeDeltas\":[]}"_s);
+    return sb.toString();
+}
+
 // Unified function that stops the profiler and generates requested output formats
 void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
 {
@@ -475,7 +517,7 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
         return;
 
     if (stackTraces.isEmpty()) {
-        if (outJSON) *outJSON = WTF::String();
+        if (outJSON) *outJSON = generateEmptyProfileJSON();
         if (outText) *outText = "No samples collected.\n"_s;
         return;
     }
@@ -820,7 +862,7 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                 break;
             if (topCount > 0) output.append(", "_s);
             output.append('`');
-            output.append(stats->functionName);
+            output.append(escapeMarkdown(stats->functionName));
             output.append("` "_s);
             output.append(formatPercent(stats->selfTimeUs, totalTimeUs));
             topCount++;
@@ -845,9 +887,9 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
             output.append(" | "_s);
             output.append(formatTime(stats->totalTimeUs));
             output.append(" | `"_s);
-            output.append(stats->functionName);
+            output.append(escapeMarkdown(stats->functionName));
             output.append("` | "_s);
-            output.append(stats->location);
+            output.append(escapeMarkdown(stats->location));
             output.append(" |\n"_s);
         }
         output.append('\n');
@@ -867,9 +909,9 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
             output.append(" | "_s);
             output.append(formatTime(stats->selfTimeUs));
             output.append(" | `"_s);
-            output.append(stats->functionName);
+            output.append(escapeMarkdown(stats->functionName));
             output.append("` | "_s);
-            output.append(stats->location);
+            output.append(escapeMarkdown(stats->location));
             output.append(" |\n"_s);
         }
         output.append('\n');
@@ -884,12 +926,12 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
 
             // Header: ### `functionName`
             output.append("### `"_s);
-            output.append(stats->functionName);
+            output.append(escapeMarkdown(stats->functionName));
             output.append("`\n"_s);
 
             // Location and stats on one line for density
             output.append('`');
-            output.append(stats->location);
+            output.append(escapeMarkdown(stats->location));
             output.append("` | Self: "_s);
             output.append(formatPercent(stats->selfTimeUs, totalTimeUs));
             output.append(" ("_s);
@@ -914,10 +956,8 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                     output.append("- `"_s);
                     // Extract just the function name from "funcName|location"
                     size_t pipePos = callerKey.find('|');
-                    if (pipePos != WTF::notFound)
-                        output.append(callerKey.left(pipePos));
-                    else
-                        output.append(callerKey);
+                    WTF::String callerName = (pipePos != WTF::notFound) ? callerKey.left(pipePos) : callerKey;
+                    output.append(escapeMarkdown(callerName));
                     output.append("` ("_s);
                     output.append(count);
                     output.append(")\n"_s);
@@ -936,10 +976,8 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                     output.append("- `"_s);
                     // Extract just the function name from "funcName|location"
                     size_t pipePos = calleeKey.find('|');
-                    if (pipePos != WTF::notFound)
-                        output.append(calleeKey.left(pipePos));
-                    else
-                        output.append(calleeKey);
+                    WTF::String calleeName = (pipePos != WTF::notFound) ? calleeKey.left(pipePos) : calleeKey;
+                    output.append(escapeMarkdown(calleeName));
                     output.append("` ("_s);
                     output.append(count);
                     output.append(")\n"_s);
@@ -987,7 +1025,7 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
             output.append(" | "_s);
             output.append(formatTime(timeUs));
             output.append(" | `"_s);
-            output.append(file);
+            output.append(escapeMarkdown(file));
             output.append("` |\n"_s);
         }
 

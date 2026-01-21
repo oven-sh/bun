@@ -26,7 +26,6 @@ SYSV_ABI JSC::EncodedJSValue S3Error__toErrorInstance(const S3Error* arg0,
     S3Error err = *arg0;
 
     auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
 
     WTF::String message;
     if (err.message.tag != BunStringTag::Empty) {
@@ -39,23 +38,15 @@ SYSV_ABI JSC::EncodedJSValue S3Error__toErrorInstance(const S3Error* arg0,
     JSC::JSObject* result = JSC::ErrorInstance::create(vm, prototype, message, {});
     result->putDirect(vm, vm.propertyNames->name, defaultGlobalObject(globalObject)->commonStrings().s3ErrorString(globalObject), JSC::PropertyAttribute::DontEnum | 0);
     if (err.code.tag != BunStringTag::Empty) {
-        auto* code = Bun::toJS(globalObject, err.code);
-        RETURN_IF_EXCEPTION(scope, {});
+        JSC::JSValue code = Bun::toJS(globalObject, err.code);
         result->putDirect(vm, names.codePublicName(), code,
             JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::DontEnum | 0);
     }
 
     if (err.path.tag != BunStringTag::Empty) {
-        auto catchScope = DECLARE_CATCH_SCOPE(vm);
-        auto* path = Bun::toJS(globalObject, err.path);
-        // If the path is too long to convert to JS, just skip setting it.
-        // The error code/message is more important than the path.
-        if (catchScope.exception()) {
-            (void)catchScope.tryClearException();
-        } else {
-            result->putDirect(vm, names.pathPublicName(), path,
-                JSC::PropertyAttribute::DontDelete | 0);
-        }
+        JSC::JSValue path = Bun::toJS(globalObject, err.path);
+        result->putDirect(vm, names.pathPublicName(), path,
+            JSC::PropertyAttribute::DontDelete | 0);
     }
 
     return JSC::JSValue::encode(result);

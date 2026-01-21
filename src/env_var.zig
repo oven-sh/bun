@@ -37,6 +37,9 @@ pub const BUN_CONFIG_DISABLE_ioctl_ficlonerange = New(kind.boolean, "BUN_CONFIG_
 ///
 /// It's unclear why this was done.
 pub const BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS = New(kind.unsigned, "BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS", .{ .default = 30 });
+pub const BUN_CPU_PROFILE = New(kind.boolean, "BUN_CPU_PROFILE", .{ .default = false });
+pub const BUN_CPU_PROFILE_DIR = New(kind.string, "BUN_CPU_PROFILE_DIR", .{});
+pub const BUN_CPU_PROFILE_NAME = New(kind.string, "BUN_CPU_PROFILE_NAME", .{});
 pub const BUN_CRASH_REPORT_URL = New(kind.string, "BUN_CRASH_REPORT_URL", .{});
 pub const BUN_DEBUG = New(kind.string, "BUN_DEBUG", .{});
 pub const BUN_DEBUG_ALL = New(kind.boolean, "BUN_DEBUG_ALL", .{});

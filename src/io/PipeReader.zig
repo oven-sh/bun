@@ -239,7 +239,13 @@ const PosixBufferedReader = struct {
 
         bun.assert(!this.flags.is_done);
         this.flags.is_done = true;
-        this._buffer.shrinkAndFree(this._buffer.items.len);
+        // Use clearAndFree when buffer is empty to ensure memory is released.
+        // shrinkAndFree(0) may not free memory if reallocation fails.
+        if (this._buffer.items.len == 0) {
+            this._buffer.clearAndFree();
+        } else {
+            this._buffer.shrinkAndFree(this._buffer.items.len);
+        }
     }
 
     fn closeHandle(this: *PosixBufferedReader) void {
@@ -760,7 +766,7 @@ pub const WindowsBufferedReader = struct {
                 return Type.onReaderError(@as(*Type, @ptrCast(@alignCast(this))), err);
             }
             fn loop(this: *anyopaque) *Async.Loop {
-                return Type.loop(@as(*Type, @alignCast(@ptrCast(this))));
+                return Type.loop(@as(*Type, @ptrCast(@alignCast(this))));
             }
         };
         return .{
@@ -877,7 +883,13 @@ pub const WindowsBufferedReader = struct {
     fn finish(this: *WindowsBufferedReader) void {
         this.flags.has_inflight_read = false;
         this.flags.is_done = true;
-        this._buffer.shrinkAndFree(this._buffer.items.len);
+        // Use clearAndFree when buffer is empty to ensure memory is released.
+        // shrinkAndFree(0) may not free memory if reallocation fails.
+        if (this._buffer.items.len == 0) {
+            this._buffer.clearAndFree();
+        } else {
+            this._buffer.shrinkAndFree(this._buffer.items.len);
+        }
     }
 
     pub fn done(this: *WindowsBufferedReader) void {

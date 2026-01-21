@@ -7,6 +7,7 @@
 #include <JavaScriptCore/VM.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/ScriptExecutable.h>
+#include <JavaScriptCore/FunctionExecutable.h>
 #include <JavaScriptCore/SourceProvider.h>
 #include <wtf/Stopwatch.h>
 #include <wtf/text/StringBuilder.h>
@@ -352,12 +353,23 @@ struct FunctionStats {
 
 // Helper to format a function name properly
 // - Empty names become "(anonymous)"
-// Note: JSC's displayName already includes "async" prefix for async functions
-static WTF::String formatFunctionName(const WTF::String& name)
+// - Async functions get "async " prefix
+static WTF::String formatFunctionName(const WTF::String& name, const JSC::SamplingProfiler::StackFrame& frame)
 {
-    if (name.isEmpty())
-        return "(anonymous)"_s;
-    return name;
+    WTF::String displayName = name.isEmpty() ? "(anonymous)"_s : name;
+
+    // Check if this is an async function and add prefix if needed
+    if (frame.frameType == JSC::SamplingProfiler::FrameType::Executable && frame.executable) {
+        if (auto* functionExecutable = jsDynamicCast<JSC::FunctionExecutable*>(frame.executable)) {
+            if (JSC::isAsyncFunctionParseMode(functionExecutable->parseMode())) {
+                if (!displayName.startsWith("async "_s)) {
+                    return makeString("async "_s, displayName);
+                }
+            }
+        }
+    }
+
+    return displayName;
 }
 
 // Helper to format a location string from URL and line number
@@ -498,7 +510,7 @@ WTF::String stopCPUProfilerAndGetText(JSC::VM& vm)
             auto& frame = stackTrace.frames[i];
 
             WTF::String rawFunctionName = frame.displayName(vm);
-            WTF::String functionName = formatFunctionName(rawFunctionName);
+            WTF::String functionName = formatFunctionName(rawFunctionName, frame);
             WTF::String url;
             int lineNumber = -1;
 
@@ -1106,7 +1118,7 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                 auto& frame = stackTrace.frames[i];
 
                 WTF::String rawFunctionName = frame.displayName(vm);
-                WTF::String functionName = formatFunctionName(rawFunctionName);
+                WTF::String functionName = formatFunctionName(rawFunctionName, frame);
                 WTF::String url;
                 int lineNumber = -1;
 

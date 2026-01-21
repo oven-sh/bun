@@ -1314,68 +1314,66 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
             if (stats->selfTimeUs == 0 && stats->callers.isEmpty() && stats->callees.isEmpty())
                 continue;
 
+            // Header: ### `functionName`
             output.append("### `"_s);
             output.append(stats->functionName);
-            output.append("`\n\n"_s);
-            output.append("- **Location:** `"_s);
-            output.append(stats->location);
             output.append("`\n"_s);
-            output.append("- **Self:** "_s);
+
+            // Location and stats on one line for density
+            output.append('`');
+            output.append(stats->location);
+            output.append("` | Self: "_s);
             output.append(formatPercent(stats->selfTimeUs, totalTimeUs));
             output.append(" ("_s);
             output.append(formatTime(stats->selfTimeUs));
-            output.append(") | **Total:** "_s);
+            output.append(") | Total: "_s);
             output.append(formatPercent(stats->totalTimeUs, totalTimeUs));
             output.append(" ("_s);
             output.append(formatTime(stats->totalTimeUs));
-            output.append(")\n"_s);
+            output.append(") | Samples: "_s);
+            output.append(stats->selfSamples);
+            output.append('\n');
 
             if (!stats->callers.isEmpty()) {
-                output.append("- **Called by:** "_s);
+                output.append("\n**Called by:**\n"_s);
                 WTF::Vector<std::pair<WTF::String, int>> sortedCallers;
                 for (auto& c : stats->callers) sortedCallers.append({ c.key, c.value });
                 std::sort(sortedCallers.begin(), sortedCallers.end(), [](const auto& a, const auto& b) {
                     return a.second > b.second;
                 });
-                for (size_t j = 0; j < sortedCallers.size(); j++) {
-                    if (j > 0) output.append(", "_s);
-                    output.append('`');
+                for (auto& [callerKey, count] : sortedCallers) {
+                    output.append("- `"_s);
                     // Extract just the function name from "funcName|location"
-                    auto& callerKey = sortedCallers[j].first;
                     size_t pipePos = callerKey.find('|');
                     if (pipePos != WTF::notFound)
                         output.append(callerKey.left(pipePos));
                     else
                         output.append(callerKey);
                     output.append("` ("_s);
-                    output.append(sortedCallers[j].second);
-                    output.append(')');
+                    output.append(count);
+                    output.append(")\n"_s);
                 }
-                output.append('\n');
             }
 
             if (!stats->callees.isEmpty()) {
-                output.append("- **Calls:** "_s);
+                output.append("\n**Calls:**\n"_s);
                 WTF::Vector<std::pair<WTF::String, int>> sortedCallees;
                 for (auto& c : stats->callees) sortedCallees.append({ c.key, c.value });
                 std::sort(sortedCallees.begin(), sortedCallees.end(), [](const auto& a, const auto& b) {
                     return a.second > b.second;
                 });
-                for (size_t j = 0; j < sortedCallees.size(); j++) {
-                    if (j > 0) output.append(", "_s);
-                    output.append('`');
+                for (auto& [calleeKey, count] : sortedCallees) {
+                    output.append("- `"_s);
                     // Extract just the function name from "funcName|location"
-                    auto& calleeKey = sortedCallees[j].first;
                     size_t pipePos = calleeKey.find('|');
                     if (pipePos != WTF::notFound)
                         output.append(calleeKey.left(pipePos));
                     else
                         output.append(calleeKey);
                     output.append("` ("_s);
-                    output.append(sortedCallees[j].second);
-                    output.append(')');
+                    output.append(count);
+                    output.append(")\n"_s);
                 }
-                output.append('\n');
             }
 
             output.append('\n');

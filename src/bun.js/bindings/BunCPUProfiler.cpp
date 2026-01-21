@@ -342,13 +342,13 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
 // Structure to hold aggregated function statistics for text output
 struct FunctionStats {
     WTF::String functionName;
-    WTF::String location;  // file:line format
-    long long selfTimeUs = 0;      // microseconds where this function was at top of stack
-    long long totalTimeUs = 0;     // microseconds including children
-    int selfSamples = 0;           // samples where this function was at top
-    int totalSamples = 0;          // samples where this function appeared anywhere
-    WTF::HashMap<WTF::String, int> callers;  // caller location -> count
-    WTF::HashMap<WTF::String, int> callees;  // callee location -> count
+    WTF::String location; // file:line format
+    long long selfTimeUs = 0; // microseconds where this function was at top of stack
+    long long totalTimeUs = 0; // microseconds including children
+    int selfSamples = 0; // samples where this function was at top
+    int totalSamples = 0; // samples where this function appeared anywhere
+    WTF::HashMap<WTF::String, int> callers; // caller location -> count
+    WTF::HashMap<WTF::String, int> callees; // callee location -> count
 };
 
 // Helper to format a function name properly
@@ -629,8 +629,8 @@ WTF::String stopCPUProfilerAndGetText(JSC::VM& vm)
     output.append(" |\n\n"_s);
 
     // ========== TOP FUNCTIONS BY SELF TIME ==========
-    int topCount = std::min(30, numFunctions);  // Show top 30
-    int topSelfLines = topCount + 2;  // +2 for header lines
+    int topCount = std::min(30, numFunctions); // Show top 30
+    int topSelfLines = topCount + 2; // +2 for header lines
     output.append("## Top Functions by Self Time\n\n"_s);
     output.append("_Showing "_s);
     output.append(topCount);
@@ -717,7 +717,7 @@ WTF::String stopCPUProfilerAndGetText(JSC::VM& vm)
 
     for (auto* stats : significantFunctions) {
         // Count lines for this function block
-        int blockLines = 2;  // Header + stats line
+        int blockLines = 2; // Header + stats line
         if (!stats->callers.isEmpty()) blockLines += 1 + std::min(5, static_cast<int>(stats->callers.size()));
         if (!stats->callees.isEmpty()) blockLines += 1 + std::min(5, static_cast<int>(stats->callees.size()));
 
@@ -750,7 +750,8 @@ WTF::String stopCPUProfilerAndGetText(JSC::VM& vm)
         if (!stats->callers.isEmpty()) {
             output.append("**Called from:**\n"_s);
             WTF::Vector<std::pair<WTF::String, int>> sortedCallers;
-            for (auto& c : stats->callers) sortedCallers.append({ c.key, c.value });
+            for (auto& c : stats->callers)
+                sortedCallers.append({ c.key, c.value });
             std::sort(sortedCallers.begin(), sortedCallers.end(), [](const auto& a, const auto& b) {
                 return a.second > b.second;
             });
@@ -768,7 +769,8 @@ WTF::String stopCPUProfilerAndGetText(JSC::VM& vm)
         if (!stats->callees.isEmpty()) {
             output.append("**Calls:**\n"_s);
             WTF::Vector<std::pair<WTF::String, int>> sortedCallees;
-            for (auto& c : stats->callees) sortedCallees.append({ c.key, c.value });
+            for (auto& c : stats->callees)
+                sortedCallees.append({ c.key, c.value });
             std::sort(sortedCallees.begin(), sortedCallees.end(), [](const auto& a, const auto& b) {
                 return a.second > b.second;
             });
@@ -809,7 +811,8 @@ WTF::String stopCPUProfilerAndGetText(JSC::VM& vm)
     }
 
     WTF::Vector<std::pair<WTF::String, long long>> sortedFiles;
-    for (auto& f : fileTimesUs) sortedFiles.append({ f.key, f.value });
+    for (auto& f : fileTimesUs)
+        sortedFiles.append({ f.key, f.value });
     std::sort(sortedFiles.begin(), sortedFiles.end(), [](const auto& a, const auto& b) {
         return a.second > b.second;
     });
@@ -1318,7 +1321,8 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
             if (!stats->callers.isEmpty()) {
                 output.append("\n**Called by:**\n"_s);
                 WTF::Vector<std::pair<WTF::String, int>> sortedCallers;
-                for (auto& c : stats->callers) sortedCallers.append({ c.key, c.value });
+                for (auto& c : stats->callers)
+                    sortedCallers.append({ c.key, c.value });
                 std::sort(sortedCallers.begin(), sortedCallers.end(), [](const auto& a, const auto& b) {
                     return a.second > b.second;
                 });
@@ -1339,7 +1343,8 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
             if (!stats->callees.isEmpty()) {
                 output.append("\n**Calls:**\n"_s);
                 WTF::Vector<std::pair<WTF::String, int>> sortedCallees;
-                for (auto& c : stats->callees) sortedCallees.append({ c.key, c.value });
+                for (auto& c : stats->callees)
+                    sortedCallees.append({ c.key, c.value });
                 std::sort(sortedCallees.begin(), sortedCallees.end(), [](const auto& a, const auto& b) {
                     return a.second > b.second;
                 });
@@ -1380,7 +1385,8 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
         }
 
         WTF::Vector<std::pair<WTF::String, long long>> sortedFiles;
-        for (auto& f : fileTimesUs) sortedFiles.append({ f.key, f.value });
+        for (auto& f : fileTimesUs)
+            sortedFiles.append({ f.key, f.value });
         std::sort(sortedFiles.begin(), sortedFiles.end(), [](const auto& a, const auto& b) {
             return a.second > b.second;
         });

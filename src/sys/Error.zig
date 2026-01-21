@@ -322,7 +322,7 @@ pub inline fn todo() Error {
     return Error{ .errno = todo_errno, .syscall = .TODO };
 }
 
-pub fn toJS(this: Error, ptr: *jsc.JSGlobalObject) jsc.JSValue {
+pub fn toJS(this: Error, ptr: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
     return this.toSystemError().toErrorInstance(ptr);
 }
 

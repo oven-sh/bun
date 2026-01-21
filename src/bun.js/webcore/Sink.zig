@@ -500,7 +500,7 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
                 const maybe_value: bun.sys.Maybe(JSValue) = this.sink.flushFromJS(globalThis, wait);
                 return switch (maybe_value) {
                     .result => |value| value,
-                    .err => |err| return globalThis.throwValue(err.toJS(globalThis)),
+                    .err => |err| return globalThis.throwValue(try err.toJS(globalThis)),
                 };
             }
 

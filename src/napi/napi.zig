@@ -411,7 +411,7 @@ pub export fn napi_create_string_latin1(env_: napi_env, str: ?[*]const u8, lengt
     log("napi_create_string_latin1: {s}", .{slice});
 
     if (slice.len == 0) {
-        result.set(env, bun.String.empty.toJS(env.toJS()));
+        result.set(env, bun.String.empty.toJS(env.toJS()) catch return env.setLastError(.generic_failure));
         return env.ok();
     }
 
@@ -420,7 +420,7 @@ pub export fn napi_create_string_latin1(env_: napi_env, str: ?[*]const u8, lengt
 
     @memcpy(bytes, slice);
 
-    result.set(env, string.toJS(env.toJS()));
+    result.set(env, string.toJS(env.toJS()) catch return env.setLastError(.generic_failure));
     return env.ok();
 }
 pub export fn napi_create_string_utf8(env_: napi_env, str: ?[*]const u8, length: usize, result_: ?*napi_value) napi_status {
@@ -486,14 +486,14 @@ pub export fn napi_create_string_utf16(env_: napi_env, str: ?[*]const char16_t, 
         log("napi_create_string_utf16: {d} {f}", .{ slice.len, bun.fmt.FormatUTF16{ .buf = slice[0..@min(slice.len, 512)] } });
 
     if (slice.len == 0) {
-        result.set(env, bun.String.empty.toJS(env.toJS()));
+        result.set(env, bun.String.empty.toJS(env.toJS()) catch return env.setLastError(.generic_failure));
         return env.ok();
     }
 
     var string, const chars = bun.String.createUninitialized(.utf16, slice.len);
     @memcpy(chars, slice);
 
-    result.set(env, string.transferToJS(env.toJS()));
+    result.set(env, string.transferToJS(env.toJS()) catch return env.setLastError(.generic_failure));
     return env.ok();
 }
 

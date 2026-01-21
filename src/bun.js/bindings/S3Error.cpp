@@ -3,6 +3,7 @@
 
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/ErrorInstanceInlines.h>
+#include <wtf/Compiler.h>
 #include "ZigGeneratedClasses.h"
 #include "S3Error.h"
 
@@ -26,6 +27,7 @@ SYSV_ABI JSC::EncodedJSValue S3Error__toErrorInstance(const S3Error* arg0,
     S3Error err = *arg0;
 
     auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_CATCH_SCOPE(vm);
 
     WTF::String message;
     if (err.message.tag != BunStringTag::Empty) {
@@ -39,14 +41,22 @@ SYSV_ABI JSC::EncodedJSValue S3Error__toErrorInstance(const S3Error* arg0,
     result->putDirect(vm, vm.propertyNames->name, defaultGlobalObject(globalObject)->commonStrings().s3ErrorString(globalObject), JSC::PropertyAttribute::DontEnum | 0);
     if (err.code.tag != BunStringTag::Empty) {
         JSC::JSValue code = Bun::toJS(globalObject, err.code);
-        result->putDirect(vm, names.codePublicName(), code,
-            JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::DontEnum | 0);
+        if (scope.exception()) {
+            scope.clearException();
+        } else {
+            result->putDirect(vm, names.codePublicName(), code,
+                JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::DontEnum | 0);
+        }
     }
 
     if (err.path.tag != BunStringTag::Empty) {
         JSC::JSValue path = Bun::toJS(globalObject, err.path);
-        result->putDirect(vm, names.pathPublicName(), path,
-            JSC::PropertyAttribute::DontDelete | 0);
+        if (scope.exception()) {
+            scope.clearException();
+        } else {
+            result->putDirect(vm, names.pathPublicName(), path,
+                JSC::PropertyAttribute::DontDelete | 0);
+        }
     }
 
     return JSC::JSValue::encode(result);

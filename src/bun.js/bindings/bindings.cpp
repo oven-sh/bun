@@ -2231,7 +2231,7 @@ JSC::EncodedJSValue SystemError__toErrorInstance(const SystemError* arg0, JSC::J
 
     if (err.code.tag != BunStringTag::Empty) {
         JSC::JSValue code = Bun::toJS(globalObject, err.code);
-        if (UNLIKELY(scope.exception())) {
+        if (scope.exception()) {
             scope.clearException();
         } else {
             result->putDirect(vm, clientData->builtinNames().codePublicName(), code, JSC::PropertyAttribute::DontDelete | 0);
@@ -2240,7 +2240,7 @@ JSC::EncodedJSValue SystemError__toErrorInstance(const SystemError* arg0, JSC::J
 
     if (err.path.tag != BunStringTag::Empty) {
         JSC::JSValue path = Bun::toJS(globalObject, err.path);
-        if (UNLIKELY(scope.exception())) {
+        if (scope.exception()) {
             scope.clearException();
         } else {
             result->putDirect(vm, clientData->builtinNames().pathPublicName(), path, JSC::PropertyAttribute::DontDelete | 0);
@@ -2249,7 +2249,7 @@ JSC::EncodedJSValue SystemError__toErrorInstance(const SystemError* arg0, JSC::J
 
     if (err.dest.tag != BunStringTag::Empty) {
         JSC::JSValue dest = Bun::toJS(globalObject, err.dest);
-        if (UNLIKELY(scope.exception())) {
+        if (scope.exception()) {
             scope.clearException();
         } else {
             result->putDirect(vm, clientData->builtinNames().destPublicName(), dest, JSC::PropertyAttribute::DontDelete | 0);
@@ -2263,7 +2263,7 @@ JSC::EncodedJSValue SystemError__toErrorInstance(const SystemError* arg0, JSC::J
 
     if (err.syscall.tag != BunStringTag::Empty) {
         JSC::JSValue syscall = Bun::toJS(globalObject, err.syscall);
-        if (UNLIKELY(scope.exception())) {
+        if (scope.exception()) {
             scope.clearException();
         } else {
             result->putDirect(vm, names.syscallPublicName(), syscall, JSC::PropertyAttribute::DontDelete | 0);
@@ -2272,7 +2272,7 @@ JSC::EncodedJSValue SystemError__toErrorInstance(const SystemError* arg0, JSC::J
 
     if (err.hostname.tag != BunStringTag::Empty) {
         JSC::JSValue hostname = Bun::toJS(globalObject, err.hostname);
-        if (UNLIKELY(scope.exception())) {
+        if (scope.exception()) {
             scope.clearException();
         } else {
             result->putDirect(vm, names.hostnamePublicName(), hostname, JSC::PropertyAttribute::DontDelete | 0);

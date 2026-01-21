@@ -354,8 +354,8 @@ pub const FD = packed struct(backing_int) {
             const err_instance = (jsc.SystemError{
                 .message = bun.String.static("EMFILE, too many open files"),
                 .code = bun.String.static("EMFILE"),
-            }).toErrorInstance(global) catch return .zero;
-            return global.throwValue(err_instance) catch .zero;
+            }).toErrorInstance(global);
+            return global.vm().throwError(global, err_instance) catch .zero;
         };
         return JSValue.jsNumberFromInt32(uv_owned_fd.uv());
     }

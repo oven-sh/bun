@@ -241,7 +241,10 @@ WTF::String generateHeapProfile(JSC::VM& vm)
         incomingEdges[edges[i].toId].append(i);
     }
 
-    // Calculate retained sizes
+    // Calculate retained sizes (approximation)
+    // NOTE: This is a shallow approximation that only sums direct children's sizes.
+    // True retained size requires dominator tree analysis which is more expensive.
+    // For accurate retained sizes, use Chrome DevTools with the V8 .heapsnapshot format.
     for (auto& node : nodes) {
         node.retainedSize = node.size;
         auto it = outgoingEdges.find(node.id);
@@ -360,6 +363,9 @@ WTF::String generateHeapProfile(JSC::VM& vm)
     output.append("| GC Roots | "_s);
     output.append(WTF::String::number(gcRootIds.size()));
     output.append(" |\n\n"_s);
+
+    output.append("> **Note:** Retained sizes shown are approximations (self + direct children only). "_s);
+    output.append("For accurate dominator-based retained sizes, use `--heap-prof` and open in Chrome DevTools.\n\n"_s);
 
     // ==================== TOP TYPES ====================
     output.append("## Top 50 Types by Retained Size\n\n"_s);

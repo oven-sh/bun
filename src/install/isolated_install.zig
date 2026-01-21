@@ -1132,7 +1132,7 @@ pub fn installIsolatedPackages(
                         .onExtract = Store.Installer.onPackageExtracted,
                         .onResolve = {},
                         .onPackageManifestError = {},
-                        .onPackageDownloadError = {},
+                        .onPackageDownloadError = Store.Installer.onPackageDownloadError,
                     },
                     true,
                     pkg_manager.options.log_level,

@@ -183,6 +183,7 @@ pub const AsyncModule = struct {
 
         pub fn onPackageDownloadError(
             this: *Queue,
+            _: Install.Task.Id,
             package_id: Install.PackageID,
             name: []const u8,
             resolution: *const Install.Resolution,

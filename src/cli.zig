@@ -690,7 +690,7 @@ pub const Command = struct {
                         const original_argv_len = bun.argv.len;
                         var argv_list = std.array_list.Managed([:0]const u8).fromOwnedSlice(bun.default_allocator, bun.argv);
                         if (graph.compile_exec_argv.len > 0) {
-                            try bun.appendOptionsEnv(graph.compile_exec_argv, &argv_list, bun.default_allocator);
+                            try bun.appendOptionsEnv(graph.compile_exec_argv, [:0]const u8, &argv_list);
                         }
 
                         // Store the full argv including user arguments

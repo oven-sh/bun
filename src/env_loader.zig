@@ -156,14 +156,17 @@ pub const Loader = struct {
     }
 
     pub fn getHttpProxyFor(this: *Loader, url: URL) ?URL {
-        return this.getHttpProxy(url.isHTTP(), url.hostname);
+        return this.getHttpProxy(url.isHTTP(), url.hostname, url.host);
     }
 
     pub fn hasHTTPProxy(this: *const Loader) bool {
         return this.has("http_proxy") or this.has("HTTP_PROXY") or this.has("https_proxy") or this.has("HTTPS_PROXY");
     }
 
-    pub fn getHttpProxy(this: *Loader, is_http: bool, hostname: ?[]const u8) ?URL {
+    /// Get proxy URL for HTTP/HTTPS requests, respecting NO_PROXY.
+    /// `hostname` is the host without port (e.g., "localhost")
+    /// `host` is the host with port if present (e.g., "localhost:3000")
+    pub fn getHttpProxy(this: *Loader, is_http: bool, hostname: ?[]const u8, host: ?[]const u8) ?URL {
         // TODO: When Web Worker support is added, make sure to intern these strings
         var http_proxy: ?URL = null;
 
@@ -191,23 +194,34 @@ pub const Loader = struct {
 
                 var no_proxy_iter = std.mem.splitScalar(u8, no_proxy_text, ',');
                 while (no_proxy_iter.next()) |no_proxy_item| {
-                    var host = strings.trim(no_proxy_item, &strings.whitespace_chars);
-                    if (host.len == 0) {
+                    var no_proxy_entry = strings.trim(no_proxy_item, &strings.whitespace_chars);
+                    if (no_proxy_entry.len == 0) {
                         continue;
                     }
-                    if (strings.eql(host, "*")) {
+                    if (strings.eql(no_proxy_entry, "*")) {
                         return null;
                     }
                     //strips .
-                    if (strings.startsWithChar(host, '.')) {
-                        host = host[1..];
-                        if (host.len == 0) {
+                    if (strings.startsWithChar(no_proxy_entry, '.')) {
+                        no_proxy_entry = no_proxy_entry[1..];
+                        if (no_proxy_entry.len == 0) {
                             continue;
                         }
                     }
-                    //hostname ends with suffix
-                    if (strings.endsWith(hostname.?, host)) {
-                        return null;
+
+                    // Check if NO_PROXY entry contains a port (e.g., "localhost:8080")
+                    if (std.mem.indexOfScalar(u8, no_proxy_entry, ':')) |_| {
+                        // Entry has a port, do exact match against host:port
+                        if (host) |h| {
+                            if (strings.eqlCaseInsensitiveASCII(h, no_proxy_entry, true)) {
+                                return null;
+                            }
+                        }
+                    } else {
+                        // Entry is hostname only, match against hostname (suffix match)
+                        if (strings.endsWith(hostname.?, no_proxy_entry)) {
+                            return null;
+                        }
                     }
                 }
             }

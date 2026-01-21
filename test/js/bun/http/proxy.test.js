@@ -257,4 +257,126 @@ describe.concurrent(() => {
     }
     expect(exitCode).toBe(0);
   });
+
+  // Test that NO_PROXY respects port numbers like Node.js and curl do
+  describe("NO_PROXY port handling", () => {
+    it("should bypass proxy when NO_PROXY matches host:port exactly", async () => {
+      // NO_PROXY includes the exact host:port, should bypass proxy
+      const {
+        exited,
+        stdout,
+        stderr: stderrStream,
+      } = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const resp = await fetch("http://localhost:${server.port}/test"); console.log(await resp.text());`,
+        ],
+        env: {
+          ...bunEnv,
+          http_proxy: `http://localhost:${proxy.port}`,
+          NO_PROXY: `localhost:${server.port}`,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [exitCode, out, stderr] = await Promise.all([exited, stdout.text(), stderrStream.text()]);
+      if (exitCode !== 0) {
+        console.error("stderr:", stderr);
+      }
+      expect(out.trim()).toBe("Hello, World"); // Should connect directly, not through proxy
+      expect(exitCode).toBe(0);
+    });
+
+    it("should use proxy when NO_PROXY has different port", async () => {
+      const differentPort = server.port + 1000;
+      // NO_PROXY includes a different port, should NOT bypass proxy
+      const {
+        exited,
+        stdout,
+        stderr: stderrStream,
+      } = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const resp = await fetch("http://localhost:${server.port}/test"); console.log(await resp.text());`,
+        ],
+        env: {
+          ...bunEnv,
+          http_proxy: `http://localhost:${proxy.port}`,
+          NO_PROXY: `localhost:${differentPort}`,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [exitCode, out, stderr] = await Promise.all([exited, stdout.text(), stderrStream.text()]);
+      if (exitCode !== 0) {
+        console.error("stderr:", stderr);
+      }
+      // The proxy forwards to the server, which returns "Hello, World"
+      expect(out.trim()).toBe("Hello, World");
+      expect(exitCode).toBe(0);
+    });
+
+    it("should bypass proxy when NO_PROXY has host only (no port)", async () => {
+      // NO_PROXY includes just the host (no port), should bypass proxy for all ports
+      const {
+        exited,
+        stdout,
+        stderr: stderrStream,
+      } = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const resp = await fetch("http://localhost:${server.port}/test"); console.log(await resp.text());`,
+        ],
+        env: {
+          ...bunEnv,
+          http_proxy: `http://localhost:${proxy.port}`,
+          NO_PROXY: `localhost`,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [exitCode, out, stderr] = await Promise.all([exited, stdout.text(), stderrStream.text()]);
+      if (exitCode !== 0) {
+        console.error("stderr:", stderr);
+      }
+      expect(out.trim()).toBe("Hello, World"); // Should connect directly
+      expect(exitCode).toBe(0);
+    });
+
+    it("should handle NO_PROXY with multiple entries including port", async () => {
+      const differentPort = server.port + 1000;
+      // NO_PROXY includes multiple entries, one of which matches exactly
+      const {
+        exited,
+        stdout,
+        stderr: stderrStream,
+      } = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const resp = await fetch("http://localhost:${server.port}/test"); console.log(await resp.text());`,
+        ],
+        env: {
+          ...bunEnv,
+          http_proxy: `http://localhost:${proxy.port}`,
+          NO_PROXY: `example.com, localhost:${differentPort}, localhost:${server.port}`,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [exitCode, out, stderr] = await Promise.all([exited, stdout.text(), stderrStream.text()]);
+      if (exitCode !== 0) {
+        console.error("stderr:", stderr);
+      }
+      expect(out.trim()).toBe("Hello, World"); // Should connect directly
+      expect(exitCode).toBe(0);
+    });
+  });
 });

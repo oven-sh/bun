@@ -332,7 +332,7 @@ pub fn fromBlobCopyRef(globalThis: *JSGlobalObject, blob: *const Blob, recommend
         .s3 => |*s3| {
             const credentials = s3.getCredentials();
             const path = s3.path();
-            const proxy = globalThis.bunVM().transpiler.env.getHttpProxy(true, null);
+            const proxy = globalThis.bunVM().transpiler.env.getHttpProxy(true, null, null);
             const proxy_url = if (proxy) |p| p.href else null;
 
             return bun.S3.readableStream(credentials, path, blob.offset, if (blob.size != Blob.max_size) blob.size else null, proxy_url, s3.request_payer, globalThis);

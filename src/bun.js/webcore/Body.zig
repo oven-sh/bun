@@ -301,7 +301,7 @@ pub const Value = union(Tag) {
         pub fn toJS(this: *@This(), globalObject: *jsc.JSGlobalObject) jsc.JSValue {
             const js_value = switch (this.*) {
                 .AbortReason => |reason| reason.toJS(globalObject),
-                .SystemError => |system_error| system_error.toErrorInstance(globalObject) catch return .js_undefined,
+                .SystemError => |system_error| system_error.toErrorInstance(globalObject),
                 .Message => |message| message.toErrorInstance(globalObject),
                 // do a early return in this case we don't need to create a new Strong
                 .JSValue => |js_value| return js_value.get() orelse .js_undefined,

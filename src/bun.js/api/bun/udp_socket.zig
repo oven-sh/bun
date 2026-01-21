@@ -309,7 +309,7 @@ pub const UDPSocket = struct {
                     .code = bun.String.static(code),
                     .message = bun.handleOom(bun.String.createFormat("bind {s} {f}", .{ code, this.config.hostname })),
                 };
-                const error_value = try sys_err.toErrorInstance(globalThis);
+                const error_value = sys_err.toErrorInstance(globalThis);
                 error_value.put(globalThis, "address", try this.config.hostname.toJS(globalThis));
 
                 return globalThis.throwValue(error_value);

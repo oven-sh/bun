@@ -954,9 +954,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     };
                     var sys = err.withPathLike(file.pathlike).toSystemError();
                     sys.message = bun.String.static("MacOS does not support sending non-regular files");
-                    const js_err = sys.toErrorInstance(globalThis) catch {
-                        return this.renderProductionError(500);
-                    };
+                    const js_err = sys.toErrorInstance(globalThis);
                     this.runErrorHandler(js_err);
                     return;
                 }
@@ -974,9 +972,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     };
                     var sys = err.withPathLike(file.pathlike).toShellSystemError();
                     sys.message = bun.String.static("File must be regular or FIFO");
-                    const js_err = sys.toErrorInstance(globalThis) catch {
-                        return this.renderProductionError(500);
-                    };
+                    const js_err = sys.toErrorInstance(globalThis);
                     this.runErrorHandler(js_err);
                     return;
                 }
@@ -1056,9 +1052,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
             if (result == .err) {
                 if (this.server) |server| {
-                    const js_err = result.err.toErrorInstance(server.globalThis) catch {
-                        return this.renderProductionError(500);
-                    };
+                    const js_err = result.err.toErrorInstance(server.globalThis);
                     this.runErrorHandler(js_err);
                 }
                 return;
@@ -1869,9 +1863,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                                 .message = bun.String.static("Stream already used, please create a new one"),
                             };
                             stream.value.unprotect();
-                            const js_err = err.toErrorInstance(globalThis) catch {
-                                return this.renderProductionError(500);
-                            };
+                            const js_err = err.toErrorInstance(globalThis);
                             this.runErrorHandler(js_err);
                             return;
                         }

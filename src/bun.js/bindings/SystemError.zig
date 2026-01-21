@@ -43,11 +43,9 @@ pub const SystemError = extern struct {
         this.dest.ref();
     }
 
-    pub fn toErrorInstance(this: *const SystemError, global: *JSGlobalObject) bun.JSError!JSValue {
+    pub fn toErrorInstance(this: *const SystemError, global: *JSGlobalObject) JSValue {
         defer this.deref();
-        const result = SystemError__toErrorInstance(this, global);
-        if (global.hasException()) return error.JSError;
-        return result;
+        return SystemError__toErrorInstance(this, global);
     }
 
     /// This constructs the ERR_SYSTEM_ERROR error object, which has an `info`
@@ -69,11 +67,9 @@ pub const SystemError = extern struct {
     /// Before using this function, consider if the Node.js API it is
     /// implementing follows this convention. It is exclusively used
     /// to match the error code that `node:os` throws.
-    pub fn toErrorInstanceWithInfoObject(this: *const SystemError, global: *JSGlobalObject) bun.JSError!JSValue {
+    pub fn toErrorInstanceWithInfoObject(this: *const SystemError, global: *JSGlobalObject) JSValue {
         defer this.deref();
-        const result = SystemError__toErrorInstanceWithInfoObject(this, global);
-        if (global.hasException()) return error.JSError;
-        return result;
+        return SystemError__toErrorInstanceWithInfoObject(this, global);
     }
 
     pub fn format(self: SystemError, writer: *std.Io.Writer) !void {

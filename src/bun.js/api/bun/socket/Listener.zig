@@ -269,7 +269,7 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
                     .syscall = .static("listen"),
                     .fd = fd.uv(),
                 };
-                return globalObject.throwValue(try err.toErrorInstance(globalObject));
+                return globalObject.throwValue(err.toErrorInstance(globalObject));
             },
         }
     } orelse {
@@ -744,7 +744,7 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
             .syscall = bun.String.static("connect"),
             .code = if (port == null) bun.String.static("ENOENT") else bun.String.static("ECONNREFUSED"),
         };
-        return globalObject.throwValue(try err.toErrorInstance(globalObject));
+        return globalObject.throwValue(err.toErrorInstance(globalObject));
     };
 
     if (ssl_enabled) {

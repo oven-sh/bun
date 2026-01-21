@@ -395,6 +395,12 @@ pub const Command = struct {
             md_format: bool = false,
             json_format: bool = false,
         } = .{},
+        heap_prof: struct {
+            enabled: bool = false,
+            text_format: bool = false,
+            name: []const u8 = "",
+            dir: []const u8 = "",
+        } = .{},
     };
 
     var global_cli_ctx: Context = undefined;

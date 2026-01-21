@@ -91,6 +91,10 @@ pub const runtime_params_ = [_]ParamType{
     clap.parseParam("--cpu-prof-name <STR>             Specify the name of the CPU profile file") catch unreachable,
     clap.parseParam("--cpu-prof-dir <STR>              Specify the directory where the CPU profile will be saved") catch unreachable,
     clap.parseParam("--cpu-prof-md                     Output CPU profile in markdown format (grep-friendly, designed for LLM analysis)") catch unreachable,
+    clap.parseParam("--heap-prof                       Generate V8 heap snapshot on exit (.heapsnapshot)") catch unreachable,
+    clap.parseParam("--heap-prof-name <STR>            Specify the name of the heap profile file") catch unreachable,
+    clap.parseParam("--heap-prof-dir <STR>             Specify the directory where the heap profile will be saved") catch unreachable,
+    clap.parseParam("--heap-prof-md                    Generate markdown heap profile on exit (for CLI analysis)") catch unreachable,
     clap.parseParam("--if-present                      Exit without an error if the entrypoint does not exist") catch unreachable,
     clap.parseParam("--no-install                      Disable auto install in the Bun runtime") catch unreachable,
     clap.parseParam("--install <STR>                   Configure auto-install behavior. One of \"auto\" (default, auto-installs when no node_modules), \"fallback\" (missing packages only), \"force\" (always).") catch unreachable,
@@ -860,6 +864,28 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             }
             if (args.option("--cpu-prof-dir")) |_| {
                 Output.warn("--cpu-prof-dir requires --cpu-prof or --cpu-prof-md to be enabled", .{});
+            }
+        }
+
+        const heap_prof_v8 = args.flag("--heap-prof");
+        const heap_prof_md = args.flag("--heap-prof-md");
+
+        if (heap_prof_v8 or heap_prof_md) {
+            ctx.runtime_options.heap_prof.enabled = true;
+            ctx.runtime_options.heap_prof.text_format = heap_prof_md;
+            if (args.option("--heap-prof-name")) |name| {
+                ctx.runtime_options.heap_prof.name = name;
+            }
+            if (args.option("--heap-prof-dir")) |dir| {
+                ctx.runtime_options.heap_prof.dir = dir;
+            }
+        } else {
+            // Warn if --heap-prof-name or --heap-prof-dir is used without --heap-prof or --heap-prof-md
+            if (args.option("--heap-prof-name")) |_| {
+                Output.warn("--heap-prof-name requires --heap-prof or --heap-prof-md to be enabled", .{});
+            }
+            if (args.option("--heap-prof-dir")) |_| {
+                Output.warn("--heap-prof-dir requires --heap-prof or --heap-prof-md to be enabled", .{});
             }
         }
 

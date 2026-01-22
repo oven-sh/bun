@@ -25,9 +25,7 @@ const IS_MAC = OS_NAME === "darwin";
 const IS_LINUX = OS_NAME === "linux";
 const IS_WINDOWS = OS_NAME === "win32";
 // On Windows, use PROCESSOR_ARCHITECTURE env var to get native arch (Bun may run under x64 emulation)
-const NATIVE_ARCH = IS_WINDOWS
-  ? (process.env.PROCESSOR_ARCHITECTURE || ARCH_NAME_RAW).toUpperCase()
-  : ARCH_NAME_RAW;
+const NATIVE_ARCH = IS_WINDOWS ? (process.env.PROCESSOR_ARCHITECTURE || ARCH_NAME_RAW).toUpperCase() : ARCH_NAME_RAW;
 const IS_ARM64 = NATIVE_ARCH === "ARM64" || NATIVE_ARCH === "AARCH64" || ARCH_NAME_RAW === "arm64";
 
 // Paths
@@ -119,13 +117,10 @@ const getCommonFlags = (config: BuildConfig) => {
       `-DCMAKE_C_COMPILER_LAUNCHER=${CCACHE}`,
       `-DCMAKE_CXX_COMPILER_LAUNCHER=${CCACHE}`,
       `-DCMAKE_C_COMPILER=${CC_BASE}`,
-      `-DCMAKE_CXX_COMPILER=${CXX_BASE}`
+      `-DCMAKE_CXX_COMPILER=${CXX_BASE}`,
     );
   } else {
-    flags.push(
-      `-DCMAKE_C_COMPILER=${CC}`,
-      `-DCMAKE_CXX_COMPILER=${CXX}`
-    );
+    flags.push(`-DCMAKE_C_COMPILER=${CC}`, `-DCMAKE_CXX_COMPILER=${CXX}`);
   }
 
   if (IS_MAC) {
@@ -133,13 +128,13 @@ const getCommonFlags = (config: BuildConfig) => {
       "-DENABLE_SINGLE_THREADED_VM_ENTRY_SCOPE=ON",
       "-DBUN_FAST_TLS=ON",
       "-DPTHREAD_JIT_PERMISSIONS_API=1",
-      "-DUSE_PTHREAD_JIT_PERMISSIONS_API=ON"
+      "-DUSE_PTHREAD_JIT_PERMISSIONS_API=ON",
     );
   } else if (IS_LINUX) {
     flags.push(
       "-DJSEXPORT_PRIVATE=WTF_EXPORT_DECLARATION",
       "-DUSE_VISIBILITY_ATTRIBUTE=1",
-      "-DENABLE_REMOTE_INSPECTOR=ON"
+      "-DENABLE_REMOTE_INSPECTOR=ON",
     );
   } else if (IS_WINDOWS) {
     // Find lld-link for Windows builds
@@ -160,7 +155,7 @@ const getCommonFlags = (config: BuildConfig) => {
       `-DICU_I18N_LIBRARY_RELEASE=${icuPaths.ICU_I18N_LIBRARY}`,
       `-DICU_UC_LIBRARY_RELEASE=${icuPaths.ICU_UC_LIBRARY}`,
       "-DCMAKE_C_FLAGS=/DU_STATIC_IMPLEMENTATION",
-      "-DCMAKE_CXX_FLAGS=/DU_STATIC_IMPLEMENTATION /clang:-fno-c++-static-destructors"
+      "-DCMAKE_CXX_FLAGS=/DU_STATIC_IMPLEMENTATION /clang:-fno-c++-static-destructors",
     );
   }
 
@@ -178,7 +173,7 @@ const getBuildFlags = (config: BuildConfig) => {
         "-DENABLE_BUN_SKIP_FAILING_ASSERTIONS=ON",
         "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
         "-DENABLE_REMOTE_INSPECTOR=ON",
-        "-DUSE_VISIBILITY_ATTRIBUTE=1"
+        "-DUSE_VISIBILITY_ATTRIBUTE=1",
       );
 
       if (IS_MAC || IS_LINUX) {
@@ -200,13 +195,10 @@ const getBuildFlags = (config: BuildConfig) => {
         flags.push(
           "-DCMAKE_C_FLAGS=/DU_STATIC_IMPLEMENTATION -flto=full",
           "-DCMAKE_CXX_FLAGS=/DU_STATIC_IMPLEMENTATION /clang:-fno-c++-static-destructors -flto=full",
-          "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded"
+          "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded",
         );
       } else {
-        flags.push(
-          "-DCMAKE_C_FLAGS=-flto=full",
-          "-DCMAKE_CXX_FLAGS=-flto=full"
-        );
+        flags.push("-DCMAKE_C_FLAGS=-flto=full", "-DCMAKE_CXX_FLAGS=-flto=full");
       }
       break;
 
@@ -281,21 +273,12 @@ function buildJSC() {
 
   // Build with CMake
   console.log("\n🔨 Building JSC...");
-  const buildType =
-    buildConfig === "debug"
-      ? "Debug"
-      : buildConfig === "lto"
-      ? "Release"
-      : "RelWithDebInfo";
+  const buildType = buildConfig === "debug" ? "Debug" : buildConfig === "lto" ? "Release" : "RelWithDebInfo";
 
-  runCommand(
-    "cmake",
-    ["--build", buildDir, "--config", buildType, "--target", "jsc"],
-    {
-      cwd: buildDir,
-      env,
-    }
-  );
+  runCommand("cmake", ["--build", buildDir, "--config", buildType, "--target", "jsc"], {
+    cwd: buildDir,
+    env,
+  });
 
   console.log(`\n✅ JSC build completed successfully!`);
   console.log(`Build output: ${buildDir}`);

@@ -15,13 +15,13 @@ import {
 } from "./utils.mjs";
 
 // Detect Windows ARM64 - bun may run under x64 emulation (WoW64), so check multiple indicators
-const isWindowsARM64 = isWindows && (
-  process.env.PROCESSOR_ARCHITECTURE === "ARM64" ||
-  process.env.VSCMD_ARG_HOST_ARCH === "arm64" ||
-  process.env.MSYSTEM_CARCH === "aarch64" ||
-  (process.env.PROCESSOR_IDENTIFIER || "").includes("ARMv8") ||
-  process.arch === "arm64"
-);
+const isWindowsARM64 =
+  isWindows &&
+  (process.env.PROCESSOR_ARCHITECTURE === "ARM64" ||
+    process.env.VSCMD_ARG_HOST_ARCH === "arm64" ||
+    process.env.MSYSTEM_CARCH === "aarch64" ||
+    (process.env.PROCESSOR_IDENTIFIER || "").includes("ARMv8") ||
+    process.arch === "arm64");
 
 if (globalThis.Bun) {
   await import("./glob-sources.mjs");

@@ -9,13 +9,18 @@
 #include <JavaScriptCore/JSONObject.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/HashMap.h>
+#include <wtf/HashSet.h>
 #include <wtf/Vector.h>
 #include <wtf/JSONValues.h>
 #include <algorithm>
-#include <unordered_map>
-#include <unordered_set>
 
 namespace Bun {
+
+// Type aliases for hash containers that allow 0 as a valid key
+// (heap node IDs can be 0 for the root node)
+template<typename V>
+using NodeIdHashMap = WTF::HashMap<uint64_t, V, WTF::DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
+using NodeIdHashSet = WTF::HashSet<uint64_t, WTF::DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
 
 BunString toStringRef(const WTF::String& wtfString);
 
@@ -155,7 +160,7 @@ WTF::String generateHeapProfile(JSC::VM& vm)
 
     // Parse nodes
     WTF::Vector<NodeData> nodes;
-    std::unordered_map<uint64_t, size_t> idToIndex;
+    NodeIdHashMap<size_t> idToIndex;
     size_t totalHeapSize = 0;
 
     auto nodesArray = jsonObject->getArray("nodes"_s);
@@ -193,7 +198,7 @@ WTF::String generateHeapProfile(JSC::VM& vm)
             }
 
             totalHeapSize += node.size;
-            idToIndex[node.id] = nodes.size();
+            idToIndex.set(node.id, nodes.size());
             nodes.append(node);
         }
     }
@@ -233,27 +238,27 @@ WTF::String generateHeapProfile(JSC::VM& vm)
 
     // Parse roots
     // Note: JSON::Array::get() returns Ref<Value> which is always valid
-    std::unordered_set<uint64_t> gcRootIds;
+    NodeIdHashSet gcRootIds;
     auto rootsArray = jsonObject->getArray("roots"_s);
     if (rootsArray) {
         for (size_t i = 0; i < rootsArray->length(); i += 3) {
             double dblVal = 0;
             rootsArray->get(i)->asDouble(dblVal);
             uint64_t nodeId = static_cast<uint64_t>(dblVal);
-            gcRootIds.insert(nodeId);
+            gcRootIds.add(nodeId);
             auto it = idToIndex.find(nodeId);
             if (it != idToIndex.end()) {
-                nodes[it->second].isGCRoot = true;
+                nodes[it->value].isGCRoot = true;
             }
         }
     }
 
     // Build edge maps for efficient traversal
-    std::unordered_map<uint64_t, WTF::Vector<size_t>> outgoingEdges;
-    std::unordered_map<uint64_t, WTF::Vector<size_t>> incomingEdges;
+    NodeIdHashMap<WTF::Vector<size_t>> outgoingEdges;
+    NodeIdHashMap<WTF::Vector<size_t>> incomingEdges;
     for (size_t i = 0; i < edges.size(); i++) {
-        outgoingEdges[edges[i].fromId].append(i);
-        incomingEdges[edges[i].toId].append(i);
+        outgoingEdges.ensure(edges[i].fromId, [] { return WTF::Vector<size_t>(); }).iterator->value.append(i);
+        incomingEdges.ensure(edges[i].toId, [] { return WTF::Vector<size_t>(); }).iterator->value.append(i);
     }
 
     // ============================================================
@@ -299,8 +304,8 @@ WTF::String generateHeapProfile(JSC::VM& vm)
 
         bool foundChild = false;
         if (outIt != outgoingEdges.end()) {
-            while (edgeIdx < outIt->second.size()) {
-                size_t currentEdgeIdx = outIt->second[edgeIdx];
+            while (edgeIdx < outIt->value.size()) {
+                size_t currentEdgeIdx = outIt->value[edgeIdx];
                 edgeIdx++;
 
                 uint64_t toId = edges[currentEdgeIdx].toId;
@@ -308,7 +313,7 @@ WTF::String generateHeapProfile(JSC::VM& vm)
                 if (toIt == idToIndex.end())
                     continue;
 
-                uint32_t toOrdinal = toIt->second;
+                uint32_t toOrdinal = toIt->value;
                 if (visited[toOrdinal])
                     continue;
 
@@ -370,16 +375,16 @@ WTF::String generateHeapProfile(JSC::VM& vm)
     uint64_t rootId = ordinalToId[0];
     auto rootOutEdges = outgoingEdges.find(rootId);
     if (rootOutEdges != outgoingEdges.end()) {
-        for (size_t edgeIdx : rootOutEdges->second) {
+        for (size_t edgeIdx : rootOutEdges->value) {
             uint64_t toId = edges[edgeIdx].toId;
             auto toIt = idToIndex.find(toId);
             if (toIt != idToIndex.end()) {
-                uint32_t toOrdinal = toIt->second;
+                uint32_t toOrdinal = toIt->value;
                 uint32_t toPostOrder = nodeOrdinalToPostOrderIndex[toOrdinal];
                 affected[toPostOrder] = 1;
                 nodes[toOrdinal].isGCRoot = true;
                 // Also add to gcRootIds to keep it in sync with isGCRoot flag
-                gcRootIds.insert(toId);
+                gcRootIds.add(toId);
             }
         }
     }
@@ -405,13 +410,13 @@ WTF::String generateHeapProfile(JSC::VM& vm)
             // Check all incoming edges
             auto inIt = incomingEdges.find(nodeId);
             if (inIt != incomingEdges.end()) {
-                for (size_t edgeIdx : inIt->second) {
+                for (size_t edgeIdx : inIt->value) {
                     uint64_t fromId = edges[edgeIdx].fromId;
                     auto fromIt = idToIndex.find(fromId);
                     if (fromIt == idToIndex.end())
                         continue;
 
-                    uint32_t fromOrdinal = fromIt->second;
+                    uint32_t fromOrdinal = fromIt->value;
                     uint32_t fromPostOrder = nodeOrdinalToPostOrderIndex[fromOrdinal];
 
                     if (dominators[fromPostOrder] == noEntry)
@@ -452,11 +457,11 @@ WTF::String generateHeapProfile(JSC::VM& vm)
                 // Mark children as affected
                 auto outIt = outgoingEdges.find(nodeId);
                 if (outIt != outgoingEdges.end()) {
-                    for (size_t edgeIdx : outIt->second) {
+                    for (size_t edgeIdx : outIt->value) {
                         uint64_t toId = edges[edgeIdx].toId;
                         auto toIt = idToIndex.find(toId);
                         if (toIt != idToIndex.end()) {
-                            uint32_t toPostOrder = nodeOrdinalToPostOrderIndex[toIt->second];
+                            uint32_t toPostOrder = nodeOrdinalToPostOrderIndex[toIt->value];
                             affected[toPostOrder] = 1;
                         }
                     }
@@ -629,10 +634,10 @@ WTF::String generateHeapProfile(JSC::VM& vm)
         size_t outCount = 0, inCount = 0;
         auto outIt = outgoingEdges.find(node.id);
         if (outIt != outgoingEdges.end())
-            outCount = outIt->second.size();
+            outCount = outIt->value.size();
         auto inIt = incomingEdges.find(node.id);
         if (inIt != incomingEdges.end())
-            inCount = inIt->second.size();
+            inCount = inIt->value.size();
 
         output.append("| "_s);
         output.append(WTF::String::number(i + 1));
@@ -672,12 +677,12 @@ WTF::String generateHeapProfile(JSC::VM& vm)
         // We traverse from node.id upward through retainers (incoming edges)
         // parent[X] = Y means "X is retained by Y" (Y is X's retainer)
         // retainerEdge[X] = edgeIdx means "edges[edgeIdx] is the edge FROM parent[X] TO X"
-        std::unordered_map<uint64_t, uint64_t> retainer;
-        std::unordered_map<uint64_t, size_t> retainerEdge;
+        NodeIdHashMap<uint64_t> retainer;
+        NodeIdHashMap<size_t> retainerEdge;
         WTF::Vector<uint64_t> queue;
         size_t queueIdx = 0;
         queue.append(node.id);
-        retainer[node.id] = node.id; // sentinel
+        retainer.set(node.id, node.id); // sentinel
 
         uint64_t foundRoot = 0;
         while (queueIdx < queue.size() && foundRoot == 0) {
@@ -689,18 +694,18 @@ WTF::String generateHeapProfile(JSC::VM& vm)
             auto it = incomingEdges.find(current);
             if (it != incomingEdges.end()) {
                 // Only set retainer for current once (first valid retainer wins)
-                bool currentHasRetainer = (retainer[current] != current);
-                for (size_t edgeIdx : it->second) {
+                bool currentHasRetainer = (retainer.get(current) != current);
+                for (size_t edgeIdx : it->value) {
                     uint64_t retainerId = edges[edgeIdx].fromId;
-                    if (retainer.find(retainerId) == retainer.end()) {
+                    if (!retainer.contains(retainerId)) {
                         // Only set current's retainer if not already set
                         if (!currentHasRetainer) {
-                            retainer[current] = retainerId;
-                            retainerEdge[current] = edgeIdx;
+                            retainer.set(current, retainerId);
+                            retainerEdge.set(current, edgeIdx);
                             currentHasRetainer = true;
                         }
                         // Mark retainerId as visited and add to queue
-                        retainer[retainerId] = retainerId; // sentinel, will be updated when we find its retainer
+                        retainer.set(retainerId, retainerId); // sentinel, will be updated when we find its retainer
                         queue.append(retainerId);
                     }
                 }
@@ -712,9 +717,9 @@ WTF::String generateHeapProfile(JSC::VM& vm)
             // Build path from node.id to foundRoot
             WTF::Vector<uint64_t> path;
             uint64_t current = node.id;
-            while (current != foundRoot && retainer.find(current) != retainer.end()) {
+            while (current != foundRoot && retainer.contains(current)) {
                 path.append(current);
-                uint64_t next = retainer[current];
+                uint64_t next = retainer.get(current);
                 if (next == current) break; // sentinel or no retainer
                 current = next;
             }
@@ -726,7 +731,7 @@ WTF::String generateHeapProfile(JSC::VM& vm)
                 auto nodeIt = idToIndex.find(nodeId);
                 if (nodeIt == idToIndex.end())
                     continue;
-                const auto& pathNode = nodes[nodeIt->second];
+                const auto& pathNode = nodes[nodeIt->value];
 
                 for (size_t indent = 0; indent < path.size() - j; indent++)
                     output.append("    "_s);
@@ -745,7 +750,7 @@ WTF::String generateHeapProfile(JSC::VM& vm)
                     uint64_t childId = path[j - 2];
                     auto edgeIt = retainerEdge.find(childId);
                     if (edgeIt != retainerEdge.end()) {
-                        WTF::String edgeName = getEdgeName(edges[edgeIt->second]);
+                        WTF::String edgeName = getEdgeName(edges[edgeIt->value]);
                         if (!edgeName.isEmpty()) {
                             output.append(" ."_s);
                             output.append(edgeName);

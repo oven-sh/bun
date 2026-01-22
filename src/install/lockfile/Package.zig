@@ -531,6 +531,9 @@ pub fn Package(comptime SemverIntType: type) type {
                 update: u32 = 0,
                 overrides_changed: bool = false,
                 catalogs_changed: bool = false,
+                /// Set when workspace package lifecycle scripts changed (doesn't trigger re-resolution,
+                /// but does require saving the lockfile).
+                workspace_scripts_changed: bool = false,
 
                 // bool for if this dependency should be added to lockfile trusted dependencies.
                 // it is false when the new trusted dependency is coming from the default list.
@@ -543,6 +546,7 @@ pub fn Package(comptime SemverIntType: type) type {
                     this.add += that.add;
                     this.remove += that.remove;
                     this.update += that.update;
+                    this.workspace_scripts_changed = this.workspace_scripts_changed or that.workspace_scripts_changed;
                 }
 
                 pub inline fn hasDiffs(this: Summary) bool {
@@ -550,6 +554,11 @@ pub fn Package(comptime SemverIntType: type) type {
                         this.added_trusted_dependencies.count() > 0 or
                         this.removed_trusted_dependencies.count() > 0 or
                         this.patched_dependencies_changed;
+                }
+
+                /// Returns true if the lockfile needs to be saved (either due to diffs or workspace script changes).
+                pub inline fn needsSaveLockfile(this: Summary) bool {
+                    return this.hasDiffs() or this.workspace_scripts_changed;
                 }
             };
 
@@ -904,6 +913,9 @@ pub fn Package(comptime SemverIntType: type) type {
                                     });
                                 }
 
+                                // Propagate workspace_scripts_changed flag from the recursive diff
+                                summary.workspace_scripts_changed = summary.workspace_scripts_changed or diff.workspace_scripts_changed;
+
                                 break :update_mapping !diff.hasDiffs();
                             };
 
@@ -925,6 +937,9 @@ pub fn Package(comptime SemverIntType: type) type {
                 // number of from_deps could be greater than to_deps.
                 summary.add = @truncate((to_deps.len) -| (from_deps.len -| summary.remove));
 
+                // Compare lifecycle scripts (skip for root package).
+                // For workspace packages, script changes don't trigger re-resolution but
+                // do require saving the lockfile (fixes #26070).
                 if (from.resolution.tag != .root) {
                     inline for (Lockfile.Scripts.names) |hook| {
                         if (!@field(to.scripts, hook).eql(
@@ -933,7 +948,13 @@ pub fn Package(comptime SemverIntType: type) type {
                             from_lockfile.buffers.string_bytes.items,
                         )) {
                             // We found a changed life-cycle script
-                            summary.update += 1;
+                            if (from.resolution.tag == .workspace) {
+                                // Workspace script changes don't affect dependency resolution,
+                                // but we need to save the lockfile
+                                summary.workspace_scripts_changed = true;
+                            } else {
+                                summary.update += 1;
+                            }
                         }
                     }
                 }

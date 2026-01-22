@@ -1,9 +1,6 @@
 //! This file defines the low(er)-level `get` method, returning `Data`.
 //! (It also must be separate from `root.zig` so that `types.zig` can use it to
 //! allow for a better API on `Slice` fields.)
-const std = @import("std");
-const tables = @import("tables").tables;
-const types = @import("types.zig");
 
 fn TableData(comptime Table: anytype) type {
     const DataSlice = if (@hasField(Table, "stage3"))
@@ -158,3 +155,7 @@ pub fn get(comptime field: FieldEnum, cp: u21) TypeOf(field) {
 pub fn TypeOf(comptime field: FieldEnum) type {
     return FieldValue(@tagName(field));
 }
+
+const std = @import("std");
+const types = @import("./types.zig");
+const tables = @import("tables").tables;

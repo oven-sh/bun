@@ -4,7 +4,7 @@ A fast and flexible unicode library, fully configurable at build time.
 
 ## Basic usage
 
-``` zig
+```zig
 const uucode = @import("uucode");
 
 var cp: u21 = undefined;
@@ -122,7 +122,7 @@ See [src/config.zig](./src/config.zig) for the names of all fields.
 
 Only include the Unicode fields you actually use:
 
-``` zig
+```zig
 // In `build.zig`:
 if (b.lazyDependency("uucode", .{
     .target = target,
@@ -143,8 +143,7 @@ if (b.lazyDependency("uucode", .{
 
 Fields can be split into multiple tables using `field_0` through `fields_9`, to optimize how fields are stored and accessed (with no code changes needed).
 
-
-``` zig
+```zig
 // In `build.zig`:
 if (b.lazyDependency("uucode", .{
     .target = target,
@@ -170,7 +169,7 @@ if (b.lazyDependency("uucode", .{
 
 `uucode` includes builtin extensions that add derived properties. Use `extensions` or `extensions_0` through `extensions_9` to include them:
 
-``` zig
+```zig
 // In `build.zig`:
 if (b.lazyDependency("uucode", .{
     .target = target,
@@ -197,7 +196,7 @@ See [src/x/config.x.zig](src/x/config.x.zig) for the full list of builtin extens
 
 ### Advanced configuration
 
-``` zig
+```zig
 ///////////////////////////////////////////////////////////
 // In `build.zig`:
 
@@ -324,9 +323,9 @@ uucode.get(.emoji_odd_or_even, 0x1F34B) // 🍋 == .odd_emoji
 
 The architecture works in a few layers:
 
-* Layer 1 (`src/build/Ucd.zig`): Parses the Unicode Character Database (UCD).
-* Layer 2 (`src/build/tables.zig`): Generates table data written to a zig file.
-* Layer 3 (`src/root.zig`): Exposes methods to fetch information from the built tables.
+- Layer 1 (`src/build/Ucd.zig`): Parses the Unicode Character Database (UCD).
+- Layer 2 (`src/build/tables.zig`): Generates table data written to a zig file.
+- Layer 3 (`src/root.zig`): Exposes methods to fetch information from the built tables.
 
 ## History and acknowledgments
 

@@ -1,7 +1,3 @@
-const std = @import("std");
-const config = @import("config.zig");
-const types_x = @import("types.x.zig");
-
 fn compute(
     allocator: std.mem.Allocator,
     cp: u21,
@@ -32,3 +28,7 @@ pub const grapheme_break_no_control = config.Extension{
         .{ .name = "grapheme_break_no_control", .type = types_x.GraphemeBreakNoControl },
     },
 };
+
+const config = @import("./config.zig");
+const std = @import("std");
+const types_x = @import("./types.x.zig");

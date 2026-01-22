@@ -144,9 +144,6 @@
 //!   base emoji which contributes the width.
 //!
 
-const std = @import("std");
-const config = @import("config.zig");
-
 fn compute(
     allocator: std.mem.Allocator,
     cp: u21,
@@ -220,3 +217,6 @@ pub const wcwidth = config.Extension{
         .{ .name = "wcwidth_zero_in_grapheme", .type = bool },
     },
 };
+
+const config = @import("./config.zig");
+const std = @import("std");

@@ -1,7 +1,3 @@
-const config = @import("config.zig");
-const config_x = @import("config.x.zig");
-const grapheme_break_no_control = config_x.grapheme_break_no_control;
-
 pub const tables = [_]config.Table{
     .{
         .name = "buildtime",
@@ -13,3 +9,8 @@ pub const tables = [_]config.Table{
         },
     },
 };
+
+const config = @import("./config.zig");
+
+const config_x = @import("./config.x.zig");
+const grapheme_break_no_control = config_x.grapheme_break_no_control;

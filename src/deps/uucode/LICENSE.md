@@ -26,5 +26,5 @@ SOFTWARE.
 
 See [./licenses](./licenses) for licenses of code being used in the repo:
 
-* [LICENSE_Bjoern_Hoehrmann](./licenses/LICENSE_Bjoern_Hoehrmann)
-* [LICENSE_unicode](./licenses/LICENSE_unicode)
+- [LICENSE_Bjoern_Hoehrmann](./licenses/LICENSE_Bjoern_Hoehrmann)
+- [LICENSE_unicode](./licenses/LICENSE_unicode)

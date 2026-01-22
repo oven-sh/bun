@@ -1,7 +1,3 @@
-const std = @import("std");
-const assert = std.debug.assert;
-const Allocator = std.mem.Allocator;
-
 // Based on the algorithm described here:
 // https://here-be-braces.com/fast-lookup-of-unicode-properties/
 
@@ -125,3 +121,7 @@ pub fn Tables(comptime Elem: type) type {
         }
     };
 }
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+const assert = std.debug.assert;

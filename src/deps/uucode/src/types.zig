@@ -1,8 +1,3 @@
-const std = @import("std");
-const config = @import("config.zig");
-
-const Allocator = std.mem.Allocator;
-
 pub const GeneralCategory = enum(u5) {
     letter_uppercase, // Lu
     letter_lowercase, // Ll
@@ -857,7 +852,7 @@ pub fn Slice(
 
         // Note: while it would be better for modularity to pass `backing`
         // in, this makes for a nicer API without having to wrap Slice.
-        const hardcoded_backing = @import("get.zig").backingFor(c.name);
+        const hardcoded_backing = @import("./get.zig").backingFor(c.name);
 
         fn _value(self: *const Self) []const T {
             return self._slice(hardcoded_backing);
@@ -1526,3 +1521,7 @@ pub fn sliceFieldInit(
         );
     }
 }
+
+const config = @import("./config.zig");
+const std = @import("std");
+const Allocator = std.mem.Allocator;

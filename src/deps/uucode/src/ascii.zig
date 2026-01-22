@@ -1,5 +1,3 @@
-const std = @import("std");
-
 /// Returns whether the code point is alphanumeric: A-Z, a-z, or 0-9.
 pub fn isAlphanumeric(c: u21) bool {
     return switch (c) {
@@ -85,3 +83,5 @@ pub fn toLower(c: u21) u21 {
     const mask = @as(u21, @intFromBool(isUpper(c))) << 5;
     return c | mask;
 }
+
+const std = @import("std");

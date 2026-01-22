@@ -1,5 +1,3 @@
-const std = @import("std");
-
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -285,8 +283,8 @@ fn buildBuildConfig(
     }
 
     writer.writeAll(
-        \\const config = @import("config.zig");
-        \\const config_x = @import("config.x.zig");
+        \\const config = @import("./config.zig");
+        \\const config_x = @import("./config.x.zig");
         \\const d = config.default;
         \\
         \\
@@ -592,8 +590,8 @@ test "simple build config with just fields/fields_0" {
     errdefer std.debug.print("build_config: {s}", .{build_config});
 
     const expected =
-        \\const config = @import("config.zig");
-        \\const config_x = @import("config.x.zig");
+        \\const config = @import("./config.zig");
+        \\const config_x = @import("./config.x.zig");
         \\const d = config.default;
         \\
         \\pub const log_level = .debug;
@@ -729,3 +727,5 @@ test "complex build config with all fields_0 through fields_9 and extensions_0 t
         i = foundI.?;
     }
 }
+
+const std = @import("std");

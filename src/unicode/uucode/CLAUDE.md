@@ -42,6 +42,7 @@ The break algorithm (including GB9c Indic, GB11 Emoji ZWJ, GB12/13 Regional Indi
 ### Table Generation (build-time only)
 
 `grapheme_gen.zig` is compiled as a standalone binary that:
+
 1. Initializes uucode (which parses the UCD data in `src/deps/uucode/ucd/`)
 2. Iterates all 2^21 codepoints
 3. Queries `uucode.get(.width, cp)`, `.grapheme_break_no_control`, `.is_emoji_vs_base`
@@ -78,6 +79,7 @@ Use the update script:
 The script handles everything: copies the source, regenerates tables, and prints next steps.
 
 Manual steps if needed:
+
 1. Update `src/deps/uucode/` with the new uucode release (which includes new UCD data)
 2. Run `vendor/zig/zig build generate-grapheme-tables`
 3. Verify: `bun bd test test/js/bun/util/stringWidth.test.ts`
@@ -87,13 +89,13 @@ Manual steps if needed:
 
 This implementation mirrors [Ghostty's approach](https://github.com/ghostty-org/ghostty/tree/main/src/unicode) (same author as uucode). Key correspondences:
 
-| Ghostty | Bun |
-|---------|-----|
-| `src/unicode/grapheme.zig` | `src/string/immutable/grapheme.zig` |
-| `src/unicode/lut.zig` | `src/unicode/uucode/lut.zig` |
-| `src/unicode/props_uucode.zig` | `src/unicode/uucode/grapheme_gen.zig` |
-| `src/unicode/props_table.zig` | `src/string/immutable/grapheme_tables.zig` |
-| `src/build/uucode_config.zig` | `src/unicode/uucode/uucode_config.zig` |
+| Ghostty                        | Bun                                        |
+| ------------------------------ | ------------------------------------------ |
+| `src/unicode/grapheme.zig`     | `src/string/immutable/grapheme.zig`        |
+| `src/unicode/lut.zig`          | `src/unicode/uucode/lut.zig`               |
+| `src/unicode/props_uucode.zig` | `src/unicode/uucode/grapheme_gen.zig`      |
+| `src/unicode/props_table.zig`  | `src/string/immutable/grapheme_tables.zig` |
+| `src/build/uucode_config.zig`  | `src/unicode/uucode/uucode_config.zig`     |
 
 Differences: Ghostty generates tables every build; Bun pre-generates and commits them. Bun's `grapheme.zig` is fully self-contained with no runtime uucode import.
 

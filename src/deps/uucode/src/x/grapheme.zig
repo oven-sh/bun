@@ -50,10 +50,6 @@
 //!   `src/x/config_x/wcwidth.zig` for more info.
 //!
 
-const std = @import("std");
-const uucode = @import("../root.zig");
-const types_x = @import("types.x.zig");
-
 // This calculates the width of just a single grapheme, advancing the iterator.
 // See `wcwidth` for a version that doesn't advance the iterator (accepting a
 // constant iterator), `wcwidthRemaining` for a version that calculates the
@@ -784,3 +780,7 @@ pub fn isBreakNoControl(
 test "GraphemeBreakTest.txt - x.isBreakNoControl" {
     try testGraphemeBreakNoControl(isBreakNoControl);
 }
+
+const std = @import("std");
+const types_x = @import("./types.x.zig");
+const uucode = @import("../root.zig");

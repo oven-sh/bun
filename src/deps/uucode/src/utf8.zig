@@ -1,5 +1,3 @@
-const std = @import("std");
-
 // See https://bjoern.hoehrmann.de/utf-8/decoder/dfa/
 // and licenses/LICENSE_Bjoern_Hoehrmann
 
@@ -117,3 +115,5 @@ test "Iterator overlong utf8" {
     try std.testing.expectEqual(null, it.next());
     try std.testing.expectEqual(null, it.next());
 }
+
+const std = @import("std");

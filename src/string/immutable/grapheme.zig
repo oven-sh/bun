@@ -3,9 +3,6 @@
 // Types and algorithm are self-contained; no runtime dependency on uucode.
 // Tables are pre-generated and committed as grapheme_tables.zig.
 
-const std = @import("std");
-const grapheme_tables = @import("grapheme_tables.zig");
-
 /// Grapheme break property for codepoints, excluding control/CR/LF
 /// which are assumed to be handled externally.
 pub const GraphemeBreakNoControl = enum(u5) {
@@ -328,3 +325,6 @@ fn isExtend(gb: GraphemeBreakNoControl) bool {
 fn isExtendedPictographic(gb: GraphemeBreakNoControl) bool {
     return gb == .extended_pictographic or gb == .emoji_modifier_base;
 }
+
+const grapheme_tables = @import("./grapheme_tables.zig");
+const std = @import("std");

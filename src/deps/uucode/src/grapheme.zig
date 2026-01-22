@@ -1,11 +1,3 @@
-const std = @import("std");
-
-const types = @import("types.zig");
-const getpkg = @import("get.zig");
-const utf8 = @import("utf8.zig");
-const get = getpkg.get;
-const FieldEnum = getpkg.FieldEnum;
-
 pub const IteratorResult = struct {
     code_point: u21,
     is_break: bool,
@@ -443,7 +435,7 @@ fn isExtendedPictographic(gb: types.GraphemeBreak) bool {
 }
 
 fn testGraphemeBreak(getActualIsBreak: fn (cp1: u21, cp2: u21, state: *BreakState) bool) !void {
-    const Ucd = @import("build/Ucd.zig");
+    const Ucd = @import("./build/Ucd.zig");
 
     const trim = Ucd.trim;
     const parseCp = Ucd.parseCp;
@@ -745,3 +737,11 @@ test "sequence of regional indicators" {
     try std.testing.expect(result.?.code_point == '_');
     try std.testing.expect(result.?.is_break); // break
 }
+
+const std = @import("std");
+const types = @import("./types.zig");
+const utf8 = @import("./utf8.zig");
+
+const getpkg = @import("./get.zig");
+const FieldEnum = getpkg.FieldEnum;
+const get = getpkg.get;

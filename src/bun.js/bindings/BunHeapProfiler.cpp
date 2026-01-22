@@ -140,9 +140,9 @@ WTF::String generateHeapProfile(JSC::VM& vm)
     auto parseStringArray = [](RefPtr<JSON::Array> arr, WTF::Vector<WTF::String>& out) {
         if (!arr)
             return;
+        // Note: JSON::Array::get() returns Ref<Value> which is always valid
         for (size_t i = 0; i < arr->length(); i++) {
-            auto val = arr->get(i);
-            out.append(val->asString());
+            out.append(arr->get(i)->asString());
         }
     };
 
@@ -166,10 +166,12 @@ WTF::String generateHeapProfile(JSC::VM& vm)
             size_t offset = i * nodeStride;
 
             // Use asDouble() to get full integer range for id and size (which can exceed int range)
+            // Note: JSON::Array::get() returns Ref<Value> which is always valid
             double dblVal = 0;
             nodesArray->get(offset + 0)->asDouble(dblVal);
             node.id = static_cast<uint64_t>(dblVal);
 
+            dblVal = 0;
             nodesArray->get(offset + 1)->asDouble(dblVal);
             node.size = static_cast<size_t>(dblVal);
 
@@ -177,11 +179,13 @@ WTF::String generateHeapProfile(JSC::VM& vm)
             nodesArray->get(offset + 2)->asInteger(intVal);
             node.classNameIndex = intVal;
 
+            intVal = 0;
             nodesArray->get(offset + 3)->asInteger(intVal);
             node.flags = intVal;
             node.isInternal = (node.flags & 1) != 0;
 
             if (isGCDebugging && nodeStride >= 7) {
+                intVal = 0;
                 nodesArray->get(offset + 4)->asInteger(intVal);
                 node.labelIndex = intVal;
             }
@@ -204,10 +208,12 @@ WTF::String generateHeapProfile(JSC::VM& vm)
             size_t offset = i * 4;
 
             // Use asDouble() to get full integer range for IDs
+            // Note: JSON::Array::get() returns Ref<Value> which is always valid
             double dblVal = 0;
             edgesArray->get(offset + 0)->asDouble(dblVal);
             edge.fromId = static_cast<uint64_t>(dblVal);
 
+            dblVal = 0;
             edgesArray->get(offset + 1)->asDouble(dblVal);
             edge.toId = static_cast<uint64_t>(dblVal);
 
@@ -215,6 +221,7 @@ WTF::String generateHeapProfile(JSC::VM& vm)
             edgesArray->get(offset + 2)->asInteger(intVal);
             edge.typeIndex = intVal;
 
+            intVal = 0;
             edgesArray->get(offset + 3)->asInteger(intVal);
             edge.dataIndex = intVal;
 
@@ -223,6 +230,7 @@ WTF::String generateHeapProfile(JSC::VM& vm)
     }
 
     // Parse roots
+    // Note: JSON::Array::get() returns Ref<Value> which is always valid
     std::unordered_set<uint64_t> gcRootIds;
     auto rootsArray = jsonObject->getArray("roots"_s);
     if (rootsArray) {
@@ -254,7 +262,7 @@ WTF::String generateHeapProfile(JSC::VM& vm)
 
     size_t nodeCount = nodes.size();
     if (nodeCount == 0) {
-        return ""_s;
+        return "# Bun Heap Profile\n\nError: No heap profile nodes found. The heap snapshot may be empty or malformed.\n"_s;
     }
 
     // Build nodeOrdinal (index) to nodeId mapping
@@ -411,11 +419,18 @@ WTF::String generateHeapProfile(JSC::VM& vm)
                         // Find common dominator (intersect)
                         uint32_t finger1 = fromPostOrder;
                         uint32_t finger2 = newDominator;
-                        while (finger1 != finger2) {
-                            while (finger1 < finger2)
+                        // Guard against infinite loops with iteration limit
+                        size_t maxIterations = nodeCount * 2;
+                        size_t iterations = 0;
+                        while (finger1 != finger2 && iterations < maxIterations) {
+                            while (finger1 < finger2) {
                                 finger1 = dominators[finger1];
-                            while (finger2 < finger1)
+                                iterations++;
+                            }
+                            while (finger2 < finger1) {
                                 finger2 = dominators[finger2];
+                                iterations++;
+                            }
                         }
                         newDominator = finger1;
                     }
@@ -669,15 +684,19 @@ WTF::String generateHeapProfile(JSC::VM& vm)
             }
             auto it = incomingEdges.find(current);
             if (it != incomingEdges.end()) {
+                // Only set retainer for current once (first valid retainer wins)
+                bool currentHasRetainer = (retainer[current] != current);
                 for (size_t edgeIdx : it->second) {
                     uint64_t retainerId = edges[edgeIdx].fromId;
                     if (retainer.find(retainerId) == retainer.end()) {
-                        // retainerId retains current via this edge
-                        // Store: current's retainer is retainerId
-                        retainer[current] = retainerId;
-                        retainerEdge[current] = edgeIdx;
-                        // Add retainerId to queue to continue searching upward
-                        retainer[retainerId] = retainerId; // mark as visited (will be updated if we find its retainer)
+                        // Only set current's retainer if not already set
+                        if (!currentHasRetainer) {
+                            retainer[current] = retainerId;
+                            retainerEdge[current] = edgeIdx;
+                            currentHasRetainer = true;
+                        }
+                        // Mark retainerId as visited and add to queue
+                        retainer[retainerId] = retainerId; // sentinel, will be updated when we find its retainer
                         queue.append(retainerId);
                     }
                 }

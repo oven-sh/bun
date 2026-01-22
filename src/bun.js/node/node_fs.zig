@@ -4658,7 +4658,7 @@ pub const NodeFS = struct {
                         const stat_result = bun.sys.lstatat(fd, current.name.sliceAssumeZ());
                         switch (stat_result) {
                             .result => |st| {
-                                const real_kind = bun.sys.kindFromMode(st.mode);
+                                const real_kind = bun.sys.kindFromMode(@intCast(st.mode));
                                 effective_kind = real_kind;
                                 if (real_kind == .directory or real_kind == .sym_link) {
                                     async_task.enqueue(name_to_copy);
@@ -4819,7 +4819,7 @@ pub const NodeFS = struct {
                             const stat_result = bun.sys.lstatat(fd, current.name.sliceAssumeZ());
                             switch (stat_result) {
                                 .result => |st| {
-                                    const real_kind = bun.sys.kindFromMode(st.mode);
+                                    const real_kind = bun.sys.kindFromMode(@intCast(st.mode));
                                     effective_kind = real_kind;
                                     if (real_kind == .directory or real_kind == .sym_link) {
                                         stack.writeItem(basename_allocator.dupeZ(u8, name_to_copy) catch break :enqueue) catch break :enqueue;

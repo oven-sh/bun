@@ -937,7 +937,7 @@ pub fn GlobWalker_(
                                     const name_z = stfb.get().dupeZ(u8, entry_name) catch bun.outOfMemory();
                                     const stat_result = Accessor.lstatat(dir.fd, name_z);
                                     const real_kind: std.fs.File.Kind = switch (stat_result) {
-                                        .result => |st| bun.sys.kindFromMode(st.mode),
+                                        .result => |st| bun.sys.kindFromMode(@intCast(st.mode)),
                                         .err => continue, // Skip entries we can't stat
                                     };
 

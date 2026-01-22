@@ -90,6 +90,7 @@ pub const runtime_params_ = [_]ParamType{
     clap.parseParam("--cpu-prof                        Start CPU profiler and write profile to disk on exit") catch unreachable,
     clap.parseParam("--cpu-prof-name <STR>             Specify the name of the CPU profile file") catch unreachable,
     clap.parseParam("--cpu-prof-dir <STR>              Specify the directory where the CPU profile will be saved") catch unreachable,
+    clap.parseParam("--cpu-prof-md                     Output CPU profile in markdown format (grep-friendly, designed for LLM analysis)") catch unreachable,
     clap.parseParam("--if-present                      Exit without an error if the entrypoint does not exist") catch unreachable,
     clap.parseParam("--no-install                      Disable auto install in the Bun runtime") catch unreachable,
     clap.parseParam("--install <STR>                   Configure auto-install behavior. One of \"auto\" (default, auto-installs when no node_modules), \"fallback\" (missing packages only), \"force\" (always).") catch unreachable,
@@ -834,7 +835,13 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             bun.jsc.RuntimeTranspilerCache.is_disabled = true;
         }
 
-        if (args.flag("--cpu-prof")) {
+        const cpu_prof_flag = args.flag("--cpu-prof");
+        const cpu_prof_md_flag = args.flag("--cpu-prof-md");
+
+        // --cpu-prof-md alone enables profiling with markdown format
+        // --cpu-prof alone enables profiling with JSON format
+        // Both flags together enable profiling with both formats
+        if (cpu_prof_flag or cpu_prof_md_flag) {
             ctx.runtime_options.cpu_prof.enabled = true;
             if (args.option("--cpu-prof-name")) |name| {
                 ctx.runtime_options.cpu_prof.name = name;
@@ -842,13 +849,17 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             if (args.option("--cpu-prof-dir")) |dir| {
                 ctx.runtime_options.cpu_prof.dir = dir;
             }
+            // md_format is true if --cpu-prof-md is passed (regardless of --cpu-prof)
+            ctx.runtime_options.cpu_prof.md_format = cpu_prof_md_flag;
+            // json_format is true if --cpu-prof is passed (regardless of --cpu-prof-md)
+            ctx.runtime_options.cpu_prof.json_format = cpu_prof_flag;
         } else {
-            // Warn if --cpu-prof-name or --cpu-prof-dir is used without --cpu-prof
+            // Warn if --cpu-prof-name or --cpu-prof-dir is used without a profiler flag
             if (args.option("--cpu-prof-name")) |_| {
-                Output.warn("--cpu-prof-name requires --cpu-prof to be enabled", .{});
+                Output.warn("--cpu-prof-name requires --cpu-prof or --cpu-prof-md to be enabled", .{});
             }
             if (args.option("--cpu-prof-dir")) |_| {
-                Output.warn("--cpu-prof-dir requires --cpu-prof to be enabled", .{});
+                Output.warn("--cpu-prof-dir requires --cpu-prof or --cpu-prof-md to be enabled", .{});
             }
         }
 

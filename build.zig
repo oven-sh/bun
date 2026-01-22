@@ -34,6 +34,7 @@ const BunBuildOptions = struct {
     enable_asan: bool,
     enable_fuzzilli: bool,
     enable_valgrind: bool,
+    enable_tinycc: bool,
     use_mimalloc: bool,
     tracy_callstack_depth: u16,
     reported_nodejs_version: Version,
@@ -84,6 +85,7 @@ const BunBuildOptions = struct {
         opts.addOption(bool, "enable_asan", this.enable_asan);
         opts.addOption(bool, "enable_fuzzilli", this.enable_fuzzilli);
         opts.addOption(bool, "enable_valgrind", this.enable_valgrind);
+        opts.addOption(bool, "enable_tinycc", this.enable_tinycc);
         opts.addOption(bool, "use_mimalloc", this.use_mimalloc);
         opts.addOption([]const u8, "reported_nodejs_version", b.fmt("{f}", .{this.reported_nodejs_version}));
         opts.addOption(bool, "zig_self_hosted_backend", this.no_llvm);
@@ -259,6 +261,7 @@ pub fn build(b: *Build) !void {
         .enable_asan = b.option(bool, "enable_asan", "Enable asan") orelse false,
         .enable_fuzzilli = b.option(bool, "enable_fuzzilli", "Enable fuzzilli instrumentation") orelse false,
         .enable_valgrind = b.option(bool, "enable_valgrind", "Enable valgrind") orelse false,
+        .enable_tinycc = b.option(bool, "enable_tinycc", "Enable TinyCC for FFI JIT compilation") orelse true,
         .use_mimalloc = b.option(bool, "use_mimalloc", "Use mimalloc as default allocator") orelse false,
         .llvm_codegen_threads = b.option(u32, "llvm_codegen_threads", "Number of threads to use for LLVM codegen") orelse 1,
     };
@@ -342,6 +345,7 @@ pub fn build(b: *Build) !void {
         const step = b.step("check-debug", "Check for semantic analysis errors on some platforms");
         addMultiCheck(b, step, build_options, &.{
             .{ .os = .windows, .arch = .x86_64 },
+            .{ .os = .windows, .arch = .aarch64 },
             .{ .os = .mac, .arch = .aarch64 },
             .{ .os = .linux, .arch = .x86_64 },
         }, &.{.Debug});
@@ -352,6 +356,7 @@ pub fn build(b: *Build) !void {
         const step = b.step("check-all", "Check for semantic analysis errors on all supported platforms");
         addMultiCheck(b, step, build_options, &.{
             .{ .os = .windows, .arch = .x86_64 },
+            .{ .os = .windows, .arch = .aarch64 },
             .{ .os = .mac, .arch = .x86_64 },
             .{ .os = .mac, .arch = .aarch64 },
             .{ .os = .linux, .arch = .x86_64 },
@@ -366,6 +371,7 @@ pub fn build(b: *Build) !void {
         const step = b.step("check-all-debug", "Check for semantic analysis errors on all supported platforms in debug mode");
         addMultiCheck(b, step, build_options, &.{
             .{ .os = .windows, .arch = .x86_64 },
+            .{ .os = .windows, .arch = .aarch64 },
             .{ .os = .mac, .arch = .x86_64 },
             .{ .os = .mac, .arch = .aarch64 },
             .{ .os = .linux, .arch = .x86_64 },
@@ -380,12 +386,14 @@ pub fn build(b: *Build) !void {
         const step = b.step("check-windows", "Check for semantic analysis errors on Windows");
         addMultiCheck(b, step, build_options, &.{
             .{ .os = .windows, .arch = .x86_64 },
+            .{ .os = .windows, .arch = .aarch64 },
         }, &.{ .Debug, .ReleaseFast });
     }
     {
         const step = b.step("check-windows-debug", "Check for semantic analysis errors on Windows");
         addMultiCheck(b, step, build_options, &.{
             .{ .os = .windows, .arch = .x86_64 },
+            .{ .os = .windows, .arch = .aarch64 },
         }, &.{.Debug});
     }
     {
@@ -422,6 +430,7 @@ pub fn build(b: *Build) !void {
         const step = b.step("translate-c", "Copy generated translated-c-headers.zig to zig-out");
         for ([_]TargetDescription{
             .{ .os = .windows, .arch = .x86_64 },
+            .{ .os = .windows, .arch = .aarch64 },
             .{ .os = .mac, .arch = .x86_64 },
             .{ .os = .mac, .arch = .aarch64 },
             .{ .os = .linux, .arch = .x86_64 },
@@ -493,6 +502,7 @@ fn addMultiCheck(
                 .no_llvm = root_build_options.no_llvm,
                 .enable_asan = root_build_options.enable_asan,
                 .enable_valgrind = root_build_options.enable_valgrind,
+                .enable_tinycc = root_build_options.enable_tinycc,
                 .enable_fuzzilli = root_build_options.enable_fuzzilli,
                 .use_mimalloc = root_build_options.use_mimalloc,
                 .override_no_export_cpp_apis = root_build_options.override_no_export_cpp_apis,

@@ -100,7 +100,7 @@ pub const us_bun_verify_error_t = extern struct {
     code: [*c]const u8 = null,
     reason: [*c]const u8 = null,
 
-    pub fn toJS(this: *const us_bun_verify_error_t, globalObject: *jsc.JSGlobalObject) jsc.JSValue {
+    pub fn toJS(this: *const us_bun_verify_error_t, globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
         const code = if (this.code == null) "" else this.code[0..bun.len(this.code)];
         const reason = if (this.reason == null) "" else this.reason[0..bun.len(this.reason)];
 

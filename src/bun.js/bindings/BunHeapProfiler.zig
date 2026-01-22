@@ -1,6 +1,6 @@
 pub const HeapProfilerConfig = struct {
-    name: ?[]const u8,
-    dir: ?[]const u8,
+    name: []const u8,
+    dir: []const u8,
     text_format: bool,
 };
 
@@ -68,14 +68,14 @@ pub fn generateAndWriteProfile(vm: *jsc.VM, config: HeapProfilerConfig) !void {
 fn buildOutputPath(path: *bun.AutoAbsPath, config: HeapProfilerConfig) !void {
     // Generate filename
     var filename_buf: bun.PathBuffer = undefined;
-    const filename = if (config.name) |name|
-        name
+    const filename = if (config.name.len > 0)
+        config.name
     else
         try generateDefaultFilename(&filename_buf, config.text_format);
 
     // Append directory if specified
-    if (config.dir) |dir| {
-        path.append(dir);
+    if (config.dir.len > 0) {
+        path.append(config.dir);
     }
 
     // Append filename

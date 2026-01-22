@@ -281,8 +281,8 @@ pub const Run = struct {
             const cpu_prof_opts = this.ctx.runtime_options.cpu_prof;
 
             vm.cpu_profiler_config = CPUProfiler.CPUProfilerConfig{
-                .name = cpu_prof_opts.name orelse bun.env_var.BUN_CPU_PROFILE_NAME.get() orelse "",
-                .dir = cpu_prof_opts.dir orelse bun.env_var.BUN_CPU_PROFILE_DIR.get() orelse "",
+                .name = if (cpu_prof_opts.name.len > 0) cpu_prof_opts.name else bun.env_var.BUN_CPU_PROFILE_NAME.get() orelse "",
+                .dir = if (cpu_prof_opts.dir.len > 0) cpu_prof_opts.dir else bun.env_var.BUN_CPU_PROFILE_DIR.get() orelse "",
                 .md_format = cpu_prof_opts.md_format,
                 .json_format = cpu_prof_opts.json_format,
             };

@@ -765,4 +765,885 @@ describe("bundler", () => {
       { file: "/out/b.js", stdout: "[Function: f]" },
     ],
   });
+
+  // ============================================================================
+  // Tests adapted from webpack's test suite
+  // https://github.com/webpack/webpack
+  // ============================================================================
+
+  // Basic dynamic import test (webpack: test/cases/chunks/import)
+  itBundled("splitting/DynamicImportBasic", {
+    files: {
+      "/index.js": /* js */ `
+        import("./two.js").then(function(two) {
+          console.log("loaded:", two.default);
+        });
+      `,
+      "/two.js": `export default 2;`,
+    },
+    splitting: true,
+    outdir: "/out",
+    run: {
+      file: "/out/index.js",
+      stdout: "loaded: 2",
+    },
+  });
+
+  // CJS dynamic import (webpack pattern)
+  itBundled("splitting/DynamicImportCJSModule", {
+    files: {
+      "/index.js": /* js */ `
+        import("./cjs.js").then(function(m) {
+          console.log("cjs:", m.default);
+        });
+      `,
+      "/cjs.js": `module.exports = 42;`,
+    },
+    splitting: true,
+    outdir: "/out",
+    run: {
+      file: "/out/index.js",
+      stdout: "cjs: 42",
+    },
+  });
+
+  // Multiple dynamic imports to same module (webpack: test/cases/chunks/runtime)
+  itBundled("splitting/DuplicateDynamicImports", {
+    files: {
+      "/index.js": /* js */ `
+        let first = false, second = false;
+        import("./shared.js").then(() => {
+          first = true;
+          if (second) console.log("both loaded");
+        });
+        import("./shared.js").then(() => {
+          second = true;
+          if (first) console.log("both loaded");
+        });
+      `,
+      "/shared.js": `export const value = 123;`,
+    },
+    splitting: true,
+    outdir: "/out",
+    run: {
+      file: "/out/index.js",
+      stdout: "both loaded",
+    },
+  });
+
+  // Circular dynamic imports (adapted from webpack: test/cases/chunks/import-circle)
+  itBundled("splitting/CircularDynamicImports", {
+    files: {
+      "/index.js": /* js */ `
+        import { runLeft } from "./left.js";
+        import { runRight } from "./right.js";
+        Promise.all([runLeft(), runRight()]).then(() => {
+          console.log("circular imports resolved");
+        });
+      `,
+      "/left.js": /* js */ `
+        import { rightValue } from "./right.js";
+        export function runLeft() {
+          return import("./leftChunk.js");
+        }
+        export const leftValue = "left";
+      `,
+      "/right.js": /* js */ `
+        import { leftValue } from "./left.js";
+        export function runRight() {
+          return import("./rightChunk.js");
+        }
+        export const rightValue = "right";
+      `,
+      "/leftChunk.js": `export default "leftChunk";`,
+      "/rightChunk.js": `export default "rightChunk";`,
+    },
+    entryPoints: ["/index.js", "/leftChunk.js", "/rightChunk.js"],
+    splitting: true,
+    outdir: "/out",
+    run: {
+      file: "/out/index.js",
+      stdout: "circular imports resolved",
+    },
+  });
+
+  // CJS circular dynamic imports
+  itBundled("splitting/CircularDynamicImportsCJS", {
+    files: {
+      "/index.js": /* js */ `
+        import { runLeft } from "./left.js";
+        import { runRight } from "./right.js";
+        Promise.all([runLeft(), runRight()]).then(() => {
+          console.log("circular imports resolved");
+        });
+      `,
+      "/left.js": /* js */ `
+        import { rightValue } from "./right.js";
+        export function runLeft() {
+          return import("./leftChunk.js");
+        }
+        export const leftValue = "left";
+      `,
+      "/right.js": /* js */ `
+        import { leftValue } from "./left.js";
+        export function runRight() {
+          return import("./rightChunk.js");
+        }
+        export const rightValue = "right";
+      `,
+      "/leftChunk.js": `export default "leftChunk";`,
+      "/rightChunk.js": `export default "rightChunk";`,
+    },
+    entryPoints: ["/index.js", "/leftChunk.js", "/rightChunk.js"],
+    splitting: true,
+    format: "cjs",
+    outdir: "/out",
+    run: {
+      file: "/out/index.js",
+      stdout: "circular imports resolved",
+    },
+  });
+
+  // Shared vendor chunk pattern (webpack: split-chunks-common/simple)
+  itBundled("splitting/SharedVendorChunk", {
+    files: {
+      "/vendor.js": /* js */ `
+        export const vendorLib = "vendor-lib";
+      `,
+      "/main.js": /* js */ `
+        import { vendorLib } from "./vendor.js";
+        console.log("main:", vendorLib);
+      `,
+    },
+    entryPoints: ["/vendor.js", "/main.js"],
+    splitting: true,
+    outdir: "/out",
+    run: {
+      file: "/out/main.js",
+      stdout: "main: vendor-lib",
+    },
+  });
+
+  // Shared vendor chunk with CJS output
+  itBundled("splitting/SharedVendorChunkCJS", {
+    files: {
+      "/vendor.js": /* js */ `
+        export const vendorLib = "vendor-lib";
+      `,
+      "/main.js": /* js */ `
+        import { vendorLib } from "./vendor.js";
+        console.log("main:", vendorLib);
+      `,
+    },
+    entryPoints: ["/vendor.js", "/main.js"],
+    splitting: true,
+    format: "cjs",
+    outdir: "/out",
+    run: {
+      file: "/out/main.js",
+      stdout: "main: vendor-lib",
+    },
+  });
+
+  // Multiple shared dependencies (webpack: split-chunks-common/correct-order)
+  itBundled("splitting/MultipleSharedDependencies", {
+    files: {
+      "/a.js": /* js */ `
+        import { shared1 } from "./shared1.js";
+        import { shared2 } from "./shared2.js";
+        console.log("a:", shared1, shared2);
+      `,
+      "/b.js": /* js */ `
+        import { shared1 } from "./shared1.js";
+        import { shared3 } from "./shared3.js";
+        console.log("b:", shared1, shared3);
+      `,
+      "/c.js": /* js */ `
+        import { shared2 } from "./shared2.js";
+        import { shared3 } from "./shared3.js";
+        console.log("c:", shared2, shared3);
+      `,
+      "/shared1.js": `export const shared1 = "s1";`,
+      "/shared2.js": `export const shared2 = "s2";`,
+      "/shared3.js": `export const shared3 = "s3";`,
+    },
+    entryPoints: ["/a.js", "/b.js", "/c.js"],
+    splitting: true,
+    outdir: "/out",
+    run: [
+      { file: "/out/a.js", stdout: "a: s1 s2" },
+      { file: "/out/b.js", stdout: "b: s1 s3" },
+      { file: "/out/c.js", stdout: "c: s2 s3" },
+    ],
+  });
+
+  // Multiple shared dependencies with CJS
+  itBundled("splitting/MultipleSharedDependenciesCJS", {
+    files: {
+      "/a.js": /* js */ `
+        import { shared1 } from "./shared1.js";
+        import { shared2 } from "./shared2.js";
+        console.log("a:", shared1, shared2);
+      `,
+      "/b.js": /* js */ `
+        import { shared1 } from "./shared1.js";
+        import { shared3 } from "./shared3.js";
+        console.log("b:", shared1, shared3);
+      `,
+      "/c.js": /* js */ `
+        import { shared2 } from "./shared2.js";
+        import { shared3 } from "./shared3.js";
+        console.log("c:", shared2, shared3);
+      `,
+      "/shared1.js": `export const shared1 = "s1";`,
+      "/shared2.js": `export const shared2 = "s2";`,
+      "/shared3.js": `export const shared3 = "s3";`,
+    },
+    entryPoints: ["/a.js", "/b.js", "/c.js"],
+    splitting: true,
+    format: "cjs",
+    outdir: "/out",
+    run: [
+      { file: "/out/a.js", stdout: "a: s1 s2" },
+      { file: "/out/b.js", stdout: "b: s1 s3" },
+      { file: "/out/c.js", stdout: "c: s2 s3" },
+    ],
+  });
+
+  // Deep dependency chain (webpack pattern)
+  itBundled("splitting/DeepDependencyChain", {
+    files: {
+      "/a.js": /* js */ `
+        import { level1 } from "./level1.js";
+        console.log("a:", level1);
+      `,
+      "/b.js": /* js */ `
+        import { level1 } from "./level1.js";
+        console.log("b:", level1);
+      `,
+      "/level1.js": /* js */ `
+        import { level2 } from "./level2.js";
+        export const level1 = "L1-" + level2;
+      `,
+      "/level2.js": /* js */ `
+        import { level3 } from "./level3.js";
+        export const level2 = "L2-" + level3;
+      `,
+      "/level3.js": `export const level3 = "L3";`,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    outdir: "/out",
+    run: [
+      { file: "/out/a.js", stdout: "a: L1-L2-L3" },
+      { file: "/out/b.js", stdout: "b: L1-L2-L3" },
+    ],
+  });
+
+  // Deep dependency chain with CJS
+  itBundled("splitting/DeepDependencyChainCJS", {
+    files: {
+      "/a.js": /* js */ `
+        import { level1 } from "./level1.js";
+        console.log("a:", level1);
+      `,
+      "/b.js": /* js */ `
+        import { level1 } from "./level1.js";
+        console.log("b:", level1);
+      `,
+      "/level1.js": /* js */ `
+        import { level2 } from "./level2.js";
+        export const level1 = "L1-" + level2;
+      `,
+      "/level2.js": /* js */ `
+        import { level3 } from "./level3.js";
+        export const level2 = "L2-" + level3;
+      `,
+      "/level3.js": `export const level3 = "L3";`,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    format: "cjs",
+    outdir: "/out",
+    run: [
+      { file: "/out/a.js", stdout: "a: L1-L2-L3" },
+      { file: "/out/b.js", stdout: "b: L1-L2-L3" },
+    ],
+  });
+
+  // Mixed ESM and CJS sources with ESM output (webpack: splitting/HybridESMAndCJSESBuildIssue617)
+  itBundled("splitting/MixedESMAndCJSSources", {
+    files: {
+      "/esm.js": `export const esmValue = "esm";`,
+      "/cjs.js": `module.exports.cjsValue = "cjs";`,
+      "/main.js": /* js */ `
+        import { esmValue } from "./esm.js";
+        import { cjsValue } from "./cjs.js";
+        console.log(esmValue, cjsValue);
+      `,
+      "/other.js": /* js */ `
+        import { esmValue } from "./esm.js";
+        console.log("other:", esmValue);
+      `,
+    },
+    entryPoints: ["/main.js", "/other.js"],
+    splitting: true,
+    outdir: "/out",
+    run: [
+      { file: "/out/main.js", stdout: "esm cjs" },
+      { file: "/out/other.js", stdout: "other: esm" },
+    ],
+  });
+
+  // Mixed ESM and CJS sources with CJS output
+  itBundled("splitting/MixedESMAndCJSSourcesIntoCJS", {
+    files: {
+      "/esm.js": `export const esmValue = "esm";`,
+      "/cjs.js": `module.exports.cjsValue = "cjs";`,
+      "/main.js": /* js */ `
+        import { esmValue } from "./esm.js";
+        import { cjsValue } from "./cjs.js";
+        console.log(esmValue, cjsValue);
+      `,
+      "/other.js": /* js */ `
+        import { esmValue } from "./esm.js";
+        console.log("other:", esmValue);
+      `,
+    },
+    entryPoints: ["/main.js", "/other.js"],
+    splitting: true,
+    format: "cjs",
+    outdir: "/out",
+    run: [
+      { file: "/out/main.js", stdout: "esm cjs" },
+      { file: "/out/other.js", stdout: "other: esm" },
+    ],
+  });
+
+  // Re-exports (webpack: splitting/ReExportESBuildIssue273)
+  itBundled("splitting/ReExports", {
+    files: {
+      "/original.js": `export const value = { num: 1 };`,
+      "/reexport.js": `export { value } from "./original.js";`,
+      "/a.js": /* js */ `
+        import { value } from "./original.js";
+        globalThis.aValue = value;
+      `,
+      "/b.js": /* js */ `
+        import { value } from "./reexport.js";
+        globalThis.bValue = value;
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    outdir: "/out",
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        import "./out/a.js";
+        import "./out/b.js";
+        console.log(globalThis.aValue === globalThis.bValue, globalThis.aValue.num);
+      `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: "true 1",
+    },
+  });
+
+  // Re-exports with CJS output
+  itBundled("splitting/ReExportsCJS", {
+    files: {
+      "/original.js": `export const value = { num: 1 };`,
+      "/reexport.js": `export { value } from "./original.js";`,
+      "/a.js": /* js */ `
+        import { value } from "./original.js";
+        globalThis.aValue = value;
+      `,
+      "/b.js": /* js */ `
+        import { value } from "./reexport.js";
+        globalThis.bValue = value;
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    format: "cjs",
+    outdir: "/out",
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        require("./out/a.js");
+        require("./out/b.js");
+        console.log(globalThis.aValue === globalThis.bValue, globalThis.aValue.num);
+      `,
+    },
+    run: {
+      file: "/test.js",
+      stdout: "true 1",
+    },
+  });
+
+  // Star exports (namespace re-export)
+  itBundled("splitting/StarExports", {
+    files: {
+      "/utils.js": /* js */ `
+        export const add = (a, b) => a + b;
+        export const sub = (a, b) => a - b;
+        export const mul = (a, b) => a * b;
+      `,
+      "/mathLib.js": `export * from "./utils.js";`,
+      "/a.js": /* js */ `
+        import { add, sub } from "./mathLib.js";
+        console.log("a:", add(5, 3), sub(5, 3));
+      `,
+      "/b.js": /* js */ `
+        import { mul } from "./mathLib.js";
+        console.log("b:", mul(5, 3));
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    outdir: "/out",
+    run: [
+      { file: "/out/a.js", stdout: "a: 8 2" },
+      { file: "/out/b.js", stdout: "b: 15" },
+    ],
+  });
+
+  // Star exports with CJS output
+  itBundled("splitting/StarExportsCJS", {
+    files: {
+      "/utils.js": /* js */ `
+        export const add = (a, b) => a + b;
+        export const sub = (a, b) => a - b;
+        export const mul = (a, b) => a * b;
+      `,
+      "/mathLib.js": `export * from "./utils.js";`,
+      "/a.js": /* js */ `
+        import { add, sub } from "./mathLib.js";
+        console.log("a:", add(5, 3), sub(5, 3));
+      `,
+      "/b.js": /* js */ `
+        import { mul } from "./mathLib.js";
+        console.log("b:", mul(5, 3));
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    format: "cjs",
+    outdir: "/out",
+    run: [
+      { file: "/out/a.js", stdout: "a: 8 2" },
+      { file: "/out/b.js", stdout: "b: 15" },
+    ],
+  });
+
+  // Default export sharing
+  itBundled("splitting/SharedDefaultExport", {
+    files: {
+      "/shared.js": /* js */ `
+        export default function sharedFunc() {
+          return "shared-default";
+        }
+      `,
+      "/a.js": /* js */ `
+        import shared from "./shared.js";
+        console.log("a:", shared());
+      `,
+      "/b.js": /* js */ `
+        import shared from "./shared.js";
+        console.log("b:", shared());
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    outdir: "/out",
+    run: [
+      { file: "/out/a.js", stdout: "a: shared-default" },
+      { file: "/out/b.js", stdout: "b: shared-default" },
+    ],
+  });
+
+  // Default export sharing with CJS output
+  itBundled("splitting/SharedDefaultExportCJS", {
+    files: {
+      "/shared.js": /* js */ `
+        export default function sharedFunc() {
+          return "shared-default";
+        }
+      `,
+      "/a.js": /* js */ `
+        import shared from "./shared.js";
+        console.log("a:", shared());
+      `,
+      "/b.js": /* js */ `
+        import shared from "./shared.js";
+        console.log("b:", shared());
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    format: "cjs",
+    outdir: "/out",
+    run: [
+      { file: "/out/a.js", stdout: "a: shared-default" },
+      { file: "/out/b.js", stdout: "b: shared-default" },
+    ],
+  });
+
+  // Class export sharing
+  itBundled("splitting/SharedClassExport", {
+    files: {
+      "/shared.js": /* js */ `
+        export class SharedClass {
+          constructor(name) {
+            this.name = name;
+          }
+          greet() {
+            return "Hello, " + this.name;
+          }
+        }
+      `,
+      "/a.js": /* js */ `
+        import { SharedClass } from "./shared.js";
+        const obj = new SharedClass("A");
+        console.log("a:", obj.greet());
+      `,
+      "/b.js": /* js */ `
+        import { SharedClass } from "./shared.js";
+        const obj = new SharedClass("B");
+        console.log("b:", obj.greet());
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    outdir: "/out",
+    run: [
+      { file: "/out/a.js", stdout: "a: Hello, A" },
+      { file: "/out/b.js", stdout: "b: Hello, B" },
+    ],
+  });
+
+  // Class export sharing with CJS output
+  itBundled("splitting/SharedClassExportCJS", {
+    files: {
+      "/shared.js": /* js */ `
+        export class SharedClass {
+          constructor(name) {
+            this.name = name;
+          }
+          greet() {
+            return "Hello, " + this.name;
+          }
+        }
+      `,
+      "/a.js": /* js */ `
+        import { SharedClass } from "./shared.js";
+        const obj = new SharedClass("A");
+        console.log("a:", obj.greet());
+      `,
+      "/b.js": /* js */ `
+        import { SharedClass } from "./shared.js";
+        const obj = new SharedClass("B");
+        console.log("b:", obj.greet());
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    format: "cjs",
+    outdir: "/out",
+    run: [
+      { file: "/out/a.js", stdout: "a: Hello, A" },
+      { file: "/out/b.js", stdout: "b: Hello, B" },
+    ],
+  });
+
+  // JSON imports (webpack pattern)
+  itBundled("splitting/SharedJSONImport", {
+    files: {
+      "/config.json": `{"name": "test", "version": "1.0.0"}`,
+      "/a.js": /* js */ `
+        import config from "./config.json";
+        console.log("a:", config.name);
+      `,
+      "/b.js": /* js */ `
+        import config from "./config.json";
+        console.log("b:", config.version);
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    outdir: "/out",
+    run: [
+      { file: "/out/a.js", stdout: "a: test" },
+      { file: "/out/b.js", stdout: "b: 1.0.0" },
+    ],
+  });
+
+  // JSON imports with CJS output
+  itBundled("splitting/SharedJSONImportCJS", {
+    files: {
+      "/config.json": `{"name": "test", "version": "1.0.0"}`,
+      "/a.js": /* js */ `
+        import config from "./config.json";
+        console.log("a:", config.name);
+      `,
+      "/b.js": /* js */ `
+        import config from "./config.json";
+        console.log("b:", config.version);
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    format: "cjs",
+    outdir: "/out",
+    run: [
+      { file: "/out/a.js", stdout: "a: test" },
+      { file: "/out/b.js", stdout: "b: 1.0.0" },
+    ],
+  });
+
+  // Async/await with dynamic imports
+  itBundled("splitting/AsyncAwaitDynamicImport", {
+    files: {
+      "/index.js": /* js */ `
+        async function main() {
+          const { value } = await import("./async.js");
+          console.log("loaded:", value);
+        }
+        main();
+      `,
+      "/async.js": `export const value = "async-value";`,
+    },
+    entryPoints: ["/index.js", "/async.js"],
+    splitting: true,
+    outdir: "/out",
+    run: {
+      file: "/out/index.js",
+      stdout: "loaded: async-value",
+    },
+  });
+
+  // Async/await with dynamic imports CJS
+  itBundled("splitting/AsyncAwaitDynamicImportCJS", {
+    files: {
+      "/index.js": /* js */ `
+        async function main() {
+          const { value } = await import("./async.js");
+          console.log("loaded:", value);
+        }
+        main();
+      `,
+      "/async.js": `export const value = "async-value";`,
+    },
+    entryPoints: ["/index.js", "/async.js"],
+    splitting: true,
+    format: "cjs",
+    outdir: "/out",
+    run: {
+      file: "/out/index.js",
+      stdout: "loaded: async-value",
+    },
+  });
+
+  // Many entry points sharing common code
+  itBundled("splitting/ManyEntryPointsSharedCode", {
+    files: {
+      "/common.js": `export const COMMON = "common-value";`,
+      "/e1.js": /* js */ `
+        import { COMMON } from "./common.js";
+        console.log("e1:", COMMON);
+      `,
+      "/e2.js": /* js */ `
+        import { COMMON } from "./common.js";
+        console.log("e2:", COMMON);
+      `,
+      "/e3.js": /* js */ `
+        import { COMMON } from "./common.js";
+        console.log("e3:", COMMON);
+      `,
+      "/e4.js": /* js */ `
+        import { COMMON } from "./common.js";
+        console.log("e4:", COMMON);
+      `,
+      "/e5.js": /* js */ `
+        import { COMMON } from "./common.js";
+        console.log("e5:", COMMON);
+      `,
+    },
+    entryPoints: ["/e1.js", "/e2.js", "/e3.js", "/e4.js", "/e5.js"],
+    splitting: true,
+    outdir: "/out",
+    run: [
+      { file: "/out/e1.js", stdout: "e1: common-value" },
+      { file: "/out/e2.js", stdout: "e2: common-value" },
+      { file: "/out/e3.js", stdout: "e3: common-value" },
+      { file: "/out/e4.js", stdout: "e4: common-value" },
+      { file: "/out/e5.js", stdout: "e5: common-value" },
+    ],
+    assertNotPresent: {
+      "/out/e1.js": "common-value",
+      "/out/e2.js": "common-value",
+      "/out/e3.js": "common-value",
+      "/out/e4.js": "common-value",
+      "/out/e5.js": "common-value",
+    },
+  });
+
+  // Many entry points sharing common code with CJS
+  itBundled("splitting/ManyEntryPointsSharedCodeCJS", {
+    files: {
+      "/common.js": `export const COMMON = "common-value";`,
+      "/e1.js": /* js */ `
+        import { COMMON } from "./common.js";
+        console.log("e1:", COMMON);
+      `,
+      "/e2.js": /* js */ `
+        import { COMMON } from "./common.js";
+        console.log("e2:", COMMON);
+      `,
+      "/e3.js": /* js */ `
+        import { COMMON } from "./common.js";
+        console.log("e3:", COMMON);
+      `,
+      "/e4.js": /* js */ `
+        import { COMMON } from "./common.js";
+        console.log("e4:", COMMON);
+      `,
+      "/e5.js": /* js */ `
+        import { COMMON } from "./common.js";
+        console.log("e5:", COMMON);
+      `,
+    },
+    entryPoints: ["/e1.js", "/e2.js", "/e3.js", "/e4.js", "/e5.js"],
+    splitting: true,
+    format: "cjs",
+    outdir: "/out",
+    run: [
+      { file: "/out/e1.js", stdout: "e1: common-value" },
+      { file: "/out/e2.js", stdout: "e2: common-value" },
+      { file: "/out/e3.js", stdout: "e3: common-value" },
+      { file: "/out/e4.js", stdout: "e4: common-value" },
+      { file: "/out/e5.js", stdout: "e5: common-value" },
+    ],
+    assertNotPresent: {
+      "/out/e1.js": "common-value",
+      "/out/e2.js": "common-value",
+      "/out/e3.js": "common-value",
+      "/out/e4.js": "common-value",
+      "/out/e5.js": "common-value",
+    },
+  });
+
+  // Partial shared dependencies (some entries share, some don't)
+  itBundled("splitting/PartiallySharedDependencies", {
+    files: {
+      "/shared-ab.js": `export const AB = "ab";`,
+      "/shared-bc.js": `export const BC = "bc";`,
+      "/a.js": /* js */ `
+        import { AB } from "./shared-ab.js";
+        console.log("a:", AB);
+      `,
+      "/b.js": /* js */ `
+        import { AB } from "./shared-ab.js";
+        import { BC } from "./shared-bc.js";
+        console.log("b:", AB, BC);
+      `,
+      "/c.js": /* js */ `
+        import { BC } from "./shared-bc.js";
+        console.log("c:", BC);
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js", "/c.js"],
+    splitting: true,
+    outdir: "/out",
+    run: [
+      { file: "/out/a.js", stdout: "a: ab" },
+      { file: "/out/b.js", stdout: "b: ab bc" },
+      { file: "/out/c.js", stdout: "c: bc" },
+    ],
+  });
+
+  // Partial shared dependencies with CJS
+  itBundled("splitting/PartiallySharedDependenciesCJS", {
+    files: {
+      "/shared-ab.js": `export const AB = "ab";`,
+      "/shared-bc.js": `export const BC = "bc";`,
+      "/a.js": /* js */ `
+        import { AB } from "./shared-ab.js";
+        console.log("a:", AB);
+      `,
+      "/b.js": /* js */ `
+        import { AB } from "./shared-ab.js";
+        import { BC } from "./shared-bc.js";
+        console.log("b:", AB, BC);
+      `,
+      "/c.js": /* js */ `
+        import { BC } from "./shared-bc.js";
+        console.log("c:", BC);
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js", "/c.js"],
+    splitting: true,
+    format: "cjs",
+    outdir: "/out",
+    run: [
+      { file: "/out/a.js", stdout: "a: ab" },
+      { file: "/out/b.js", stdout: "b: ab bc" },
+      { file: "/out/c.js", stdout: "c: bc" },
+    ],
+  });
+
+  // Node modules style imports
+  itBundled("splitting/NodeModulesStyleImports", {
+    files: {
+      "/node_modules/lib-a/index.js": `export const libA = "lib-a-value";`,
+      "/node_modules/lib-b/index.js": /* js */ `
+        import { libA } from "lib-a";
+        export const libB = "lib-b:" + libA;
+      `,
+      "/entry1.js": /* js */ `
+        import { libA } from "lib-a";
+        import { libB } from "lib-b";
+        console.log("e1:", libA, libB);
+      `,
+      "/entry2.js": /* js */ `
+        import { libA } from "lib-a";
+        console.log("e2:", libA);
+      `,
+    },
+    entryPoints: ["/entry1.js", "/entry2.js"],
+    splitting: true,
+    outdir: "/out",
+    run: [
+      { file: "/out/entry1.js", stdout: "e1: lib-a-value lib-b:lib-a-value" },
+      { file: "/out/entry2.js", stdout: "e2: lib-a-value" },
+    ],
+  });
+
+  // Node modules style imports with CJS
+  itBundled("splitting/NodeModulesStyleImportsCJS", {
+    files: {
+      "/node_modules/lib-a/index.js": `export const libA = "lib-a-value";`,
+      "/node_modules/lib-b/index.js": /* js */ `
+        import { libA } from "lib-a";
+        export const libB = "lib-b:" + libA;
+      `,
+      "/entry1.js": /* js */ `
+        import { libA } from "lib-a";
+        import { libB } from "lib-b";
+        console.log("e1:", libA, libB);
+      `,
+      "/entry2.js": /* js */ `
+        import { libA } from "lib-a";
+        console.log("e2:", libA);
+      `,
+    },
+    entryPoints: ["/entry1.js", "/entry2.js"],
+    splitting: true,
+    format: "cjs",
+    outdir: "/out",
+    run: [
+      { file: "/out/entry1.js", stdout: "e1: lib-a-value lib-b:lib-a-value" },
+      { file: "/out/entry2.js", stdout: "e2: lib-a-value" },
+    ],
+  });
 });

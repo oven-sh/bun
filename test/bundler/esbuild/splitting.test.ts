@@ -632,4 +632,137 @@ describe("bundler", () => {
       stdout: "success",
     },
   });
+
+  // Test code splitting with CommonJS output format
+  itBundled("splitting/SharedES6IntoCJS", {
+    files: {
+      "/a.js": /* js */ `
+        import {foo} from "./shared.js"
+        console.log(foo)
+      `,
+      "/b.js": /* js */ `
+        import {foo} from "./shared.js"
+        console.log(foo)
+      `,
+      "/shared.js": `export let foo = 123`,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    format: "cjs",
+    run: [
+      { file: "/out/a.js", stdout: "123" },
+      { file: "/out/b.js", stdout: "123" },
+    ],
+    assertNotPresent: {
+      "/out/a.js": "123",
+      "/out/b.js": "123",
+    },
+  });
+
+  // Test code splitting with CJS format and multiple exports
+  itBundled("splitting/MultipleExportsIntoCJS", {
+    files: {
+      "/a.js": /* js */ `
+        import {foo, bar} from "./shared.js"
+        console.log("a:", foo, bar)
+      `,
+      "/b.js": /* js */ `
+        import {foo, baz} from "./shared.js"
+        console.log("b:", foo, baz)
+      `,
+      "/shared.js": /* js */ `
+        export let foo = "foo"
+        export let bar = "bar"
+        export let baz = "baz"
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    format: "cjs",
+    run: [
+      { file: "/out/a.js", stdout: "a: foo bar" },
+      { file: "/out/b.js", stdout: "b: foo baz" },
+    ],
+  });
+
+  // Test that CJS code splitting correctly shares modules between entry points
+  itBundled("splitting/CJSSharedModuleSideEffects", {
+    files: {
+      "/a.js": /* js */ `
+        import {foo} from "./shared.js"
+        console.log("a:", foo)
+      `,
+      "/b.js": /* js */ `
+        import {bar} from "./shared.js"
+        console.log("b:", bar)
+      `,
+      "/shared.js": /* js */ `
+        console.log("shared loaded")
+        export let foo = 1
+        export let bar = 2
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    format: "cjs",
+    run: [
+      { file: "/out/a.js", stdout: "shared loaded\na: 1" },
+      { file: "/out/b.js", stdout: "shared loaded\nb: 2" },
+    ],
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        require('./out/a.js')
+        require('./out/b.js')
+      `,
+    },
+  });
+
+  // Test CJS code splitting with CommonJS source files
+  itBundled("splitting/SharedCommonJSIntoCJS", {
+    files: {
+      "/a.js": /* js */ `
+        const {foo} = require("./shared.js")
+        console.log(foo)
+      `,
+      "/b.js": /* js */ `
+        const {foo} = require("./shared.js")
+        console.log(foo)
+      `,
+      "/shared.js": `exports.foo = 456`,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    format: "cjs",
+    run: [
+      { file: "/out/a.js", stdout: "456" },
+      { file: "/out/b.js", stdout: "456" },
+    ],
+    assertNotPresent: {
+      "/out/a.js": "456",
+      "/out/b.js": "456",
+    },
+  });
+
+  // Test CJS code splitting with minified identifiers
+  itBundled("splitting/CJSMinifiedIdentifiers", {
+    files: {
+      "/a.js": /* js */ `
+        import {foo} from "./shared.js"
+        console.log(foo)
+      `,
+      "/b.js": /* js */ `
+        import {foo} from "./shared.js"
+        console.log(foo)
+      `,
+      "/shared.js": `export function foo(bar) {}`,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    format: "cjs",
+    minifyIdentifiers: true,
+    run: [
+      { file: "/out/a.js", stdout: "[Function: f]" },
+      { file: "/out/b.js", stdout: "[Function: f]" },
+    ],
+  });
 });

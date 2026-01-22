@@ -2,10 +2,14 @@ option(WEBKIT_VERSION "The version of WebKit to use")
 option(WEBKIT_LOCAL "If a local version of WebKit should be used instead of downloading")
 
 if(NOT WEBKIT_VERSION)
-  set(WEBKIT_VERSION c4efd9c71de62913423911c0a18ff788828daa8c)
+  set(WEBKIT_VERSION b51f85932e7bcd433e1b920ce2bd73f6c2d8aee5)
 endif()
 
+# Use preview build URL for Windows ARM64 until the fix is merged to main
+set(WEBKIT_PREVIEW_PR 140)
+
 string(SUBSTRING ${WEBKIT_VERSION} 0 16 WEBKIT_VERSION_PREFIX)
+string(SUBSTRING ${WEBKIT_VERSION} 0 8 WEBKIT_VERSION_SHORT)
 
 if(WEBKIT_LOCAL)
   set(DEFAULT_WEBKIT_PATH ${VENDOR_PATH}/WebKit/WebKitBuild/${CMAKE_BUILD_TYPE})
@@ -36,6 +40,22 @@ if(WEBKIT_LOCAL)
       ${WEBKIT_PATH}/JavaScriptCore/PrivateHeaders/JavaScriptCore
       ${WEBKIT_PATH}/JavaScriptCore/DerivedSources/inspector
     )
+
+    # On Windows, add ICU include path from vcpkg
+    if(WIN32)
+      # Auto-detect vcpkg triplet
+      set(VCPKG_ARM64_PATH ${VENDOR_PATH}/WebKit/vcpkg_installed/arm64-windows-static)
+      set(VCPKG_X64_PATH ${VENDOR_PATH}/WebKit/vcpkg_installed/x64-windows-static)
+      if(EXISTS ${VCPKG_ARM64_PATH})
+        set(VCPKG_ICU_PATH ${VCPKG_ARM64_PATH})
+      else()
+        set(VCPKG_ICU_PATH ${VCPKG_X64_PATH})
+      endif()
+      if(EXISTS ${VCPKG_ICU_PATH}/include)
+        include_directories(${VCPKG_ICU_PATH}/include)
+        message(STATUS "Using ICU from vcpkg: ${VCPKG_ICU_PATH}/include")
+      endif()
+    endif()
   endif()
 
   # After this point, only prebuilt WebKit is supported
@@ -81,7 +101,11 @@ endif()
 
 setx(WEBKIT_NAME bun-webkit-${WEBKIT_OS}-${WEBKIT_ARCH}${WEBKIT_SUFFIX})
 set(WEBKIT_FILENAME ${WEBKIT_NAME}.tar.gz)
-setx(WEBKIT_DOWNLOAD_URL https://github.com/oven-sh/WebKit/releases/download/autobuild-${WEBKIT_VERSION}/${WEBKIT_FILENAME})
+if(WEBKIT_PREVIEW_PR)
+  setx(WEBKIT_DOWNLOAD_URL https://github.com/oven-sh/WebKit/releases/download/autobuild-preview-pr-${WEBKIT_PREVIEW_PR}-${WEBKIT_VERSION_SHORT}/${WEBKIT_FILENAME})
+else()
+  setx(WEBKIT_DOWNLOAD_URL https://github.com/oven-sh/WebKit/releases/download/autobuild-${WEBKIT_VERSION}/${WEBKIT_FILENAME})
+endif()
 
 if(EXISTS ${WEBKIT_PATH}/package.json)
   file(READ ${WEBKIT_PATH}/package.json WEBKIT_PACKAGE_JSON)

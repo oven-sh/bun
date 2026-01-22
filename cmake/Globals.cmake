@@ -433,6 +433,33 @@ function(register_command)
     list(APPEND CMD_EFFECTIVE_DEPENDS ${CMD_EXECUTABLE})
   endif()
 
+  # SKIP_CODEGEN: Skip commands that use BUN_EXECUTABLE if all outputs exist
+  # This is used for Windows ARM64 builds where x64 bun crashes under emulation
+  if(SKIP_CODEGEN AND CMD_EXECUTABLE STREQUAL "${BUN_EXECUTABLE}")
+    set(ALL_OUTPUTS_EXIST TRUE)
+    foreach(output ${CMD_OUTPUTS})
+      if(NOT EXISTS ${output})
+        set(ALL_OUTPUTS_EXIST FALSE)
+        break()
+      endif()
+    endforeach()
+    if(ALL_OUTPUTS_EXIST AND CMD_OUTPUTS)
+      message(STATUS "SKIP_CODEGEN: Skipping ${CMD_TARGET} (outputs exist)")
+      if(CMD_TARGET)
+        add_custom_target(${CMD_TARGET})
+      endif()
+      return()
+    elseif(NOT CMD_OUTPUTS)
+      message(STATUS "SKIP_CODEGEN: Skipping ${CMD_TARGET} (no outputs)")
+      if(CMD_TARGET)
+        add_custom_target(${CMD_TARGET})
+      endif()
+      return()
+    else()
+      message(FATAL_ERROR "SKIP_CODEGEN: Cannot skip ${CMD_TARGET} - missing outputs. Run codegen on x64 first.")
+    endif()
+  endif()
+
   foreach(target ${CMD_TARGETS})
     if(target MATCHES "/|\\\\")
       message(FATAL_ERROR "register_command: TARGETS contains \"${target}\", if it's a path add it to SOURCES instead")
@@ -650,6 +677,7 @@ function(register_bun_install)
       ${NPM_CWD}
     COMMAND
       ${BUN_EXECUTABLE}
+        ${BUN_FLAGS}
         install
         --frozen-lockfile
     SOURCES

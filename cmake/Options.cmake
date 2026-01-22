@@ -4,6 +4,7 @@ endif()
 
 optionx(BUN_LINK_ONLY BOOL "If only the linking step should be built" DEFAULT OFF)
 optionx(BUN_CPP_ONLY BOOL "If only the C++ part of Bun should be built" DEFAULT OFF)
+optionx(SKIP_CODEGEN BOOL "Skip JavaScript codegen (for Windows ARM64 debug)" DEFAULT OFF)
 
 optionx(BUILDKITE BOOL "If Buildkite is enabled" DEFAULT OFF)
 optionx(GITHUB_ACTIONS BOOL "If GitHub Actions is enabled" DEFAULT OFF)

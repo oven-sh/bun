@@ -189,7 +189,7 @@ register_command(
   CWD
     ${BUN_NODE_FALLBACKS_SOURCE}
   COMMAND
-    ${BUN_EXECUTABLE} run build-fallbacks
+    ${BUN_EXECUTABLE} ${BUN_FLAGS} run build-fallbacks
       ${BUN_NODE_FALLBACKS_OUTPUT}
       ${BUN_NODE_FALLBACKS_SOURCES}
   SOURCES
@@ -210,7 +210,7 @@ register_command(
   CWD
     ${BUN_NODE_FALLBACKS_SOURCE}
   COMMAND
-    ${BUN_EXECUTABLE} build
+    ${BUN_EXECUTABLE} ${BUN_FLAGS} build
       ${BUN_NODE_FALLBACKS_SOURCE}/node_modules/react-refresh/cjs/react-refresh-runtime.development.js
       --outfile=${BUN_REACT_REFRESH_OUTPUT}
       --target=browser
@@ -247,6 +247,7 @@ register_command(
     "Generating ErrorCode.{zig,h}"
   COMMAND
     ${BUN_EXECUTABLE}
+      ${BUN_FLAGS}
       run
       ${BUN_ERROR_CODE_SCRIPT}
       ${CODEGEN_PATH}
@@ -282,6 +283,7 @@ register_command(
     "Generating ZigGeneratedClasses.{zig,cpp,h}"
   COMMAND
     ${BUN_EXECUTABLE}
+      ${BUN_FLAGS}
       run
       ${BUN_ZIG_GENERATED_CLASSES_SCRIPT}
       ${BUN_ZIG_GENERATED_CLASSES_SOURCES}
@@ -332,6 +334,7 @@ register_command(
     "Generating C++ --> Zig bindings"
   COMMAND
     ${BUN_EXECUTABLE}
+      ${BUN_FLAGS}
       ${CWD}/src/codegen/cppbind.ts
       ${CWD}/src
       ${CODEGEN_PATH}
@@ -349,6 +352,7 @@ register_command(
     "Generating CI info"
   COMMAND
     ${BUN_EXECUTABLE}
+      ${BUN_FLAGS}
       ${CWD}/src/codegen/ci_info.ts
       ${CODEGEN_PATH}/ci_info.zig
   SOURCES
@@ -357,24 +361,35 @@ register_command(
     ${BUN_CI_INFO_OUTPUTS}
 )
 
-register_command(
-  TARGET
-    bun-js-modules
-  COMMENT
-    "Generating JavaScript modules"
-  COMMAND
-    ${BUN_EXECUTABLE}
-      run
+if(SKIP_CODEGEN)
+  # Skip JavaScript codegen - useful for Windows ARM64 debug builds where bun crashes
+  message(STATUS "SKIP_CODEGEN is ON - skipping bun-js-modules codegen")
+  foreach(output ${BUN_JAVASCRIPT_OUTPUTS})
+    if(NOT EXISTS ${output})
+      message(FATAL_ERROR "SKIP_CODEGEN is ON but ${output} does not exist. Run codegen manually first.")
+    endif()
+  endforeach()
+else()
+  register_command(
+    TARGET
+      bun-js-modules
+    COMMENT
+      "Generating JavaScript modules"
+    COMMAND
+      ${BUN_EXECUTABLE}
+        ${BUN_FLAGS}
+        run
+        ${BUN_JAVASCRIPT_CODEGEN_SCRIPT}
+          --debug=${DEBUG}
+          ${BUILD_PATH}
+    SOURCES
+      ${BUN_JAVASCRIPT_SOURCES}
+      ${BUN_JAVASCRIPT_CODEGEN_SOURCES}
       ${BUN_JAVASCRIPT_CODEGEN_SCRIPT}
-        --debug=${DEBUG}
-        ${BUILD_PATH}
-  SOURCES
-    ${BUN_JAVASCRIPT_SOURCES}
-    ${BUN_JAVASCRIPT_CODEGEN_SOURCES}
-    ${BUN_JAVASCRIPT_CODEGEN_SCRIPT}
-  OUTPUTS
-    ${BUN_JAVASCRIPT_OUTPUTS}
-)
+    OUTPUTS
+      ${BUN_JAVASCRIPT_OUTPUTS}
+  )
+endif()
 
 set(BUN_BAKE_RUNTIME_CODEGEN_SCRIPT ${CWD}/src/codegen/bake-codegen.ts)
 
@@ -396,6 +411,7 @@ register_command(
     "Bundling Bake Runtime"
   COMMAND
     ${BUN_EXECUTABLE}
+      ${BUN_FLAGS}
       run
       ${BUN_BAKE_RUNTIME_CODEGEN_SCRIPT}
         --debug=${DEBUG}
@@ -419,7 +435,7 @@ string(REPLACE ";" "," BUN_BINDGENV2_SOURCES_COMMA_SEPARATED
   "${BUN_BINDGENV2_SOURCES}")
 
 execute_process(
-  COMMAND ${BUN_EXECUTABLE} run ${BUN_BINDGENV2_SCRIPT}
+  COMMAND ${BUN_EXECUTABLE} ${BUN_FLAGS} run ${BUN_BINDGENV2_SCRIPT}
     --command=list-outputs
     --sources=${BUN_BINDGENV2_SOURCES_COMMA_SEPARATED}
     --codegen-path=${CODEGEN_PATH}
@@ -442,7 +458,7 @@ register_command(
   COMMENT
     "Generating bindings (v2)"
   COMMAND
-    ${BUN_EXECUTABLE} run ${BUN_BINDGENV2_SCRIPT}
+    ${BUN_EXECUTABLE} ${BUN_FLAGS} run ${BUN_BINDGENV2_SCRIPT}
       --command=generate
       --codegen-path=${CODEGEN_PATH}
       --sources=${BUN_BINDGENV2_SOURCES_COMMA_SEPARATED}
@@ -473,6 +489,7 @@ register_command(
     "Processing \".bind.ts\" files"
   COMMAND
     ${BUN_EXECUTABLE}
+      ${BUN_FLAGS}
       run
       ${BUN_BINDGEN_SCRIPT}
         --debug=${DEBUG}
@@ -505,6 +522,7 @@ register_command(
     "Generating JSSink.{cpp,h}"
   COMMAND
     ${BUN_EXECUTABLE}
+      ${BUN_FLAGS}
       run
       ${BUN_JS_SINK_SCRIPT}
       ${CODEGEN_PATH}
@@ -577,6 +595,7 @@ foreach(i RANGE 0 ${BUN_OBJECT_LUT_SOURCES_MAX_INDEX})
       ${BUN_OBJECT_LUT_SOURCE}
     COMMAND
       ${BUN_EXECUTABLE}
+        ${BUN_FLAGS}
         run
         ${BUN_OBJECT_LUT_SCRIPT}
         ${BUN_OBJECT_LUT_SOURCE}
@@ -1220,7 +1239,7 @@ if(BUN_LINK_ONLY)
         WEBKIT_DOWNLOAD_URL=${WEBKIT_DOWNLOAD_URL}
         WEBKIT_VERSION=${WEBKIT_VERSION}
         ZIG_COMMIT=${ZIG_COMMIT}
-        ${BUN_EXECUTABLE} ${CWD}/scripts/create-link-metadata.mjs ${BUILD_PATH} ${bun}
+        ${BUN_EXECUTABLE} ${BUN_FLAGS} ${CWD}/scripts/create-link-metadata.mjs ${BUILD_PATH} ${bun}
     SOURCES
       ${BUN_ZIG_OUTPUT}
       ${BUN_CPP_OUTPUT}

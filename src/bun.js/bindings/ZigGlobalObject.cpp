@@ -286,21 +286,12 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         }
 #endif
 
-        // Use JSC::initialize with a callback to set critical Options BEFORE
-        // IPInt::initialize() is called. On Windows ARM64, we must disable WASM
-        // before IPInt runs because of alignment validation issues.
+        // Use JSC::initialize with a callback to set Options during initialization.
+        // The callback runs BEFORE IPInt::initialize() so we can configure WASM options early.
         JSC::initialize([&] {
-#if OS(WINDOWS) && CPU(ARM64)
-            // Windows ARM64: Disable WASM/JIT due to IPInt alignment validation issues
-            // in WebKit COFF format. Enable once WebKit is built with the fix.
-            JSC::Options::useWasm() = false;
-            JSC::Options::useJIT() = false;
-            JSC::Options::useBBQJIT() = false;
-#else
             JSC::Options::useWasm() = true;
             JSC::Options::useJIT() = true;
             JSC::Options::useBBQJIT() = true;
-#endif
             JSC::Options::useConcurrentJIT() = true;
             // JSC::Options::useSigillCrashAnalyzer() = true;
             JSC::Options::useSourceProviderCache() = true;

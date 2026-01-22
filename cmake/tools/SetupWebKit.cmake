@@ -2,7 +2,7 @@ option(WEBKIT_VERSION "The version of WebKit to use")
 option(WEBKIT_LOCAL "If a local version of WebKit should be used instead of downloading")
 
 if(NOT WEBKIT_VERSION)
-  set(WEBKIT_VERSION 5ae5f07f29059c183a8db2eef2c9aabd474ec73c)
+  set(WEBKIT_VERSION 5b194ac887f29e2a222e2b3fd97e1378ba4f0298)
 endif()
 
 string(SUBSTRING ${WEBKIT_VERSION} 0 16 WEBKIT_VERSION_PREFIX)
@@ -34,7 +34,9 @@ if(WEBKIT_LOCAL)
       ${WEBKIT_PATH}/bmalloc/Headers
       ${WEBKIT_PATH}/WTF/Headers
       ${WEBKIT_PATH}/JavaScriptCore/PrivateHeaders/JavaScriptCore
-      ${WEBKIT_PATH}/JavaScriptCore/DerivedSources/inspector
+      # Note: DerivedSources/inspector is NOT included here because all inspector
+      # headers are already in PrivateHeaders/JavaScriptCore. Including both paths
+      # causes "redefinition" errors since the same headers exist in both locations.
     )
   endif()
 

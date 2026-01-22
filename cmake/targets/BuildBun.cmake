@@ -911,7 +911,12 @@ if(WIN32)
 endif()
 
 if(USE_MIMALLOC_AS_DEFAULT_ALLOCATOR)
-  target_compile_definitions(${bun} PRIVATE USE_MIMALLOC=1)
+  # When building with WEBKIT_LOCAL, don't define USE_MIMALLOC here since it's
+  # already defined in WebKit's cmakeconfig.h (as either 0 or 1 depending on
+  # how WebKit was built). This avoids macro redefinition errors.
+  if(NOT WEBKIT_LOCAL)
+    target_compile_definitions(${bun} PRIVATE USE_MIMALLOC=1)
+  endif()
 endif()
 
 target_compile_definitions(${bun} PRIVATE

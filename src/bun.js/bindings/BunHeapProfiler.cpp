@@ -684,11 +684,13 @@ WTF::String generateHeapProfile(JSC::VM& vm)
         queue.append(node.id);
         retainer.set(node.id, node.id); // sentinel
 
-        uint64_t foundRoot = 0;
-        while (queueIdx < queue.size() && foundRoot == 0) {
+        bool foundRootFound = false;
+        uint64_t foundRootId = 0;
+        while (queueIdx < queue.size() && !foundRootFound) {
             uint64_t current = queue[queueIdx++];
             if (gcRootIds.contains(current) && current != node.id) {
-                foundRoot = current;
+                foundRootFound = true;
+                foundRootId = current;
                 break;
             }
             auto it = incomingEdges.find(current);
@@ -713,17 +715,17 @@ WTF::String generateHeapProfile(JSC::VM& vm)
         }
 
         output.append("```\n"_s);
-        if (foundRoot != 0) {
-            // Build path from node.id to foundRoot
+        if (foundRootFound) {
+            // Build path from node.id to foundRootId
             WTF::Vector<uint64_t> path;
             uint64_t current = node.id;
-            while (current != foundRoot && retainer.contains(current)) {
+            while (current != foundRootId && retainer.contains(current)) {
                 path.append(current);
                 uint64_t next = retainer.get(current);
                 if (next == current) break; // sentinel or no retainer
                 current = next;
             }
-            path.append(foundRoot);
+            path.append(foundRootId);
 
             // Print path from root to node (reverse order)
             for (size_t j = path.size(); j > 0; j--) {

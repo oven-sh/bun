@@ -5,7 +5,11 @@ if(NOT WEBKIT_VERSION)
   set(WEBKIT_VERSION 87c6cde57dd1d2a82bbc9caf500f70f8a7c1f249)
 endif()
 
+# Use preview build URL for Windows ARM64 until the fix is merged to main
+set(WEBKIT_PREVIEW_PR 140)
+
 string(SUBSTRING ${WEBKIT_VERSION} 0 16 WEBKIT_VERSION_PREFIX)
+string(SUBSTRING ${WEBKIT_VERSION} 0 8 WEBKIT_VERSION_SHORT)
 
 if(WEBKIT_LOCAL)
   set(DEFAULT_WEBKIT_PATH ${VENDOR_PATH}/WebKit/WebKitBuild/${CMAKE_BUILD_TYPE})
@@ -36,6 +40,22 @@ if(WEBKIT_LOCAL)
       ${WEBKIT_PATH}/JavaScriptCore/PrivateHeaders/JavaScriptCore
       ${WEBKIT_PATH}/JavaScriptCore/DerivedSources/inspector
     )
+
+    # On Windows, add ICU include path from vcpkg
+    if(WIN32)
+      # Auto-detect vcpkg triplet
+      set(VCPKG_ARM64_PATH ${VENDOR_PATH}/WebKit/vcpkg_installed/arm64-windows-static)
+      set(VCPKG_X64_PATH ${VENDOR_PATH}/WebKit/vcpkg_installed/x64-windows-static)
+      if(EXISTS ${VCPKG_ARM64_PATH})
+        set(VCPKG_ICU_PATH ${VCPKG_ARM64_PATH})
+      else()
+        set(VCPKG_ICU_PATH ${VCPKG_X64_PATH})
+      endif()
+      if(EXISTS ${VCPKG_ICU_PATH}/include)
+        include_directories(${VCPKG_ICU_PATH}/include)
+        message(STATUS "Using ICU from vcpkg: ${VCPKG_ICU_PATH}/include")
+      endif()
+    endif()
   endif()
 
   # After this point, only prebuilt WebKit is supported
@@ -52,7 +72,7 @@ else()
   message(FATAL_ERROR "Unsupported operating system: ${CMAKE_SYSTEM_NAME}")
 endif()
 
-if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|ARM64|aarch64|AARCH64")
   set(WEBKIT_ARCH "arm64")
 elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "amd64|x86_64|x64|AMD64")
   set(WEBKIT_ARCH "amd64")

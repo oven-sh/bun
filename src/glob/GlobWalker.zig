@@ -257,6 +257,10 @@ pub const DirEntryAccessor = struct {
     pub fn lstatat(handle: Handle, path_: [:0]const u8) Maybe(bun.Stat) {
         var path: [:0]const u8 = path_;
         var buf: bun.PathBuffer = undefined;
+        if (handle.value) |entry| {
+            return Syscall.lstatat(entry.fd, path);
+        }
+
         if (!bun.path.Platform.auto.isAbsolute(path)) {
             if (handle.value) |entry| {
                 const slice = bun.path.joinStringBuf(&buf, [_][]const u8{ entry.dir, path }, .auto);

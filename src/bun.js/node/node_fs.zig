@@ -4499,10 +4499,19 @@ pub const NodeFS = struct {
                 switch (ExpectedType) {
                     jsc.Node.Dirent => {
                         dirent_path.ref();
+                        // On filesystems that return DT_UNKNOWN (e.g. FUSE, bind mounts),
+                        // fall back to lstat to determine the real file kind.
+                        const kind = if (current.kind == .unknown)
+                            switch (Syscall.lstatat(fd, current.name.sliceAssumeZ())) {
+                                .result => |st| bun.sys.kindFromMode(@intCast(st.mode)),
+                                .err => current.kind,
+                            }
+                        else
+                            current.kind;
                         entries.append(.{
                             .name = jsc.WebCore.encoding.toBunString(utf8_name, args.encoding),
                             .path = dirent_path,
-                            .kind = current.kind,
+                            .kind = kind,
                         }) catch |err| bun.handleOom(err);
                     },
                     Buffer => {

@@ -439,8 +439,7 @@ static JSValue constructDNSObject(VM& vm, JSObject* bunObject)
 JSC_DECLARE_HOST_FUNCTION(jsFunctionJSONLParse);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionJSONLParseChunk);
 
-
-JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParse, (JSGlobalObject* globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParse, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -503,7 +502,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParse, (JSGlobalObject* globalObject, Ca
     RELEASE_AND_RETURN(scope, JSValue::encode(constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), values)));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParseChunk, (JSGlobalObject* globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParseChunk, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -579,11 +578,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParseChunk, (JSGlobalObject* globalObjec
             result = JSC::streamingJSONParse(globalObject, str, values);
             // Convert character offset back to UTF-8 byte offset
             if (str.is8Bit()) {
-                readBytes = start + bomOffset + simdutf::utf8_length_from_latin1(
-                    reinterpret_cast<const char*>(str.span8().data()), result.charactersConsumed);
+                readBytes = start + bomOffset + simdutf::utf8_length_from_latin1(reinterpret_cast<const char*>(str.span8().data()), result.charactersConsumed);
             } else {
-                readBytes = start + bomOffset + simdutf::utf8_length_from_utf16le(
-                    reinterpret_cast<const char16_t*>(str.span16().data()), result.charactersConsumed);
+                readBytes = start + bomOffset + simdutf::utf8_length_from_utf16le(reinterpret_cast<const char16_t*>(str.span16().data()), result.charactersConsumed);
             }
         }
     } else {

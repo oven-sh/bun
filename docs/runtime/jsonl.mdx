@@ -62,21 +62,21 @@ const chunk = '{"id":1}\n{"id":2}\n{"id":3';
 
 const result = Bun.JSONL.parseChunk(chunk);
 console.log(result.values); // [{ id: 1 }, { id: 2 }]
-console.log(result.read);   // 17 — bytes consumed
-console.log(result.done);   // false — incomplete value remains
-console.log(result.error);  // null — no parse error
+console.log(result.read); // 17 — bytes consumed
+console.log(result.done); // false — incomplete value remains
+console.log(result.error); // null — no parse error
 ```
 
 ### Return value
 
 `parseChunk` returns an object with four properties:
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `values` | `any[]` | Array of successfully parsed JSON values |
-| `read` | `number` | Number of bytes (for `Uint8Array`) or characters (for strings) consumed |
-| `done` | `boolean` | `true` if the entire input was consumed with no remaining data |
-| `error` | `SyntaxError \| null` | Parse error, or `null` if no error occurred |
+| Property | Type                  | Description                                                             |
+| -------- | --------------------- | ----------------------------------------------------------------------- |
+| `values` | `any[]`               | Array of successfully parsed JSON values                                |
+| `read`   | `number`              | Number of bytes (for `Uint8Array`) or characters (for strings) consumed |
+| `done`   | `boolean`             | `true` if the entire input was consumed with no remaining data          |
+| `error`  | `SyntaxError \| null` | Parse error, or `null` if no error occurred                             |
 
 ### Streaming example
 
@@ -121,7 +121,7 @@ const buf = new TextEncoder().encode('{"a":1}\n{"b":2}\n{"c":3}\n');
 // Parse starting from byte 8
 const result = Bun.JSONL.parseChunk(buf, 8);
 console.log(result.values); // [{ b: 2 }, { c: 3 }]
-console.log(result.read);   // 24
+console.log(result.read); // 24
 
 // Parse a specific range
 const partial = Bun.JSONL.parseChunk(buf, 0, 8);
@@ -162,8 +162,8 @@ const input = '{"a":1}\n{invalid}\n{"b":2}\n';
 const result = Bun.JSONL.parseChunk(input);
 
 console.log(result.values); // [{ a: 1 }] — values parsed before the error
-console.log(result.error);  // SyntaxError
-console.log(result.read);   // 7 — position up to last successful parse
+console.log(result.error); // SyntaxError
+console.log(result.read); // 7 — position up to last successful parse
 ```
 
 ---

@@ -563,7 +563,7 @@ public:
     V(public, LazyClassStructure, m_JSConnectionsListClassStructure)                                         \
     V(public, LazyClassStructure, m_JSHTTPParserClassStructure)                                              \
                                                                                                              \
-    V(private, LazyPropertyOfGlobalObject<Structure>, m_jsonlParseResultStructure)                            \
+    V(private, LazyPropertyOfGlobalObject<Structure>, m_jsonlParseResultStructure)                           \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_pendingVirtualModuleResultStructure)                 \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_performMicrotaskFunction)                           \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_nativeMicrotaskTrampoline)                          \

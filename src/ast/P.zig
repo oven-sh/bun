@@ -3796,7 +3796,6 @@ pub fn NewParser_(
         ///   - `{ enumerable: true, get: function() { return expr; } }`
         ///
         /// Skipped cases:
-        ///   - Export name is `"__esModule"`
         ///   - Descriptor contains a `set` property
         ///   - Descriptor has `enumerable: false` explicitly
         pub fn tryExtractDefinePropertyExport(p: *P, e_: *E.Call, call_loc: logger.Loc) ?Expr {

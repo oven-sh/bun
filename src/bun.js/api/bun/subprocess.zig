@@ -328,7 +328,7 @@ pub fn asyncDispose(this: *Subprocess, global: *JSGlobalObject, callframe: *jsc.
         .result => {},
         .err => |err| {
             // Signal 9 should always be fine, but just in case that somehow fails.
-            return global.throwValue(err.toJS(global));
+            return global.throwValue(try err.toJS(global));
         },
     }
 
@@ -381,7 +381,7 @@ pub fn kill(
         .result => {},
         .err => |err| {
             // EINVAL or ENOSYS means the signal is not supported in the current platform (most likely unsupported on windows)
-            return globalThis.throwValue(err.toJS(globalThis));
+            return globalThis.throwValue(try err.toJS(globalThis));
         },
     }
 
@@ -659,7 +659,7 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
 
                 switch (status) {
                     .exited => |exited| promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(exited.code)) catch {}, // TODO: properly propagate exception upwards
-                    .err => |err| promise.asAnyPromise().?.reject(globalThis, err.toJS(globalThis)) catch {}, // TODO: properly propagate exception upwards
+                    .err => |err| promise.asAnyPromise().?.reject(globalThis, err.toJS(globalThis) catch return) catch {}, // TODO: properly propagate exception upwards
                     .signaled => promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(128 +% @intFromEnum(status.signaled))) catch {}, // TODO: properly propagate exception upwards
                     else => {
                         // crash in debug mode
@@ -672,7 +672,7 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
             if (consumeOnExitCallback(this_jsvalue, globalThis)) |callback| {
                 const waitpid_value: JSValue =
                     if (status == .err)
-                        status.err.toJS(globalThis)
+                        (status.err.toJS(globalThis) catch return)
                     else
                         .js_undefined;
 
@@ -814,7 +814,8 @@ pub fn getExited(
             return jsc.JSPromise.resolvedPromiseValue(globalThis, JSValue.jsNumber(signal.toExitCode() orelse 254));
         },
         .err => |err| {
-            return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJS(globalThis));
+            const js_err = err.toJS(globalThis) catch return .zero;
+            return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, js_err);
         },
         else => {
             const promise = jsc.JSPromise.create(globalThis).toJS();

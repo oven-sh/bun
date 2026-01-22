@@ -48,7 +48,7 @@ fn readFromBlob(
     );
     const result = switch (maybe) {
         .result => |result| result,
-        .err => |err| return global.throwValue(err.toJS(global)),
+        .err => |err| return global.throwValue(try err.toJS(global)),
     };
     if (result.null_terminated.len == 0) return error.EmptyFile;
     return bun.default_allocator.dupeZ(u8, result.null_terminated);

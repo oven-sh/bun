@@ -266,8 +266,15 @@ pub const PluginRunner = struct {
         // Our super slow way of cloning the string into memory owned by jsc
         const combined_string = std.fmt.allocPrint(this.allocator, "{f}:{f}", .{ user_namespace, file_path }) catch unreachable;
         var out_ = bun.String.init(combined_string);
-        const jsval = out_.toJS(this.global_object);
-        const out = jsval.toBunString(this.global_object) catch @panic("unreachable");
+        defer out_.deref();
+        const jsval = out_.toJS(this.global_object) catch |err| {
+            this.allocator.free(combined_string);
+            return jsc.ErrorableString.err(err, this.global_object.tryTakeException() orelse .js_undefined);
+        };
+        const out = jsval.toBunString(this.global_object) catch |err| {
+            this.allocator.free(combined_string);
+            return jsc.ErrorableString.err(err, this.global_object.tryTakeException() orelse .js_undefined);
+        };
         this.allocator.free(combined_string);
         return jsc.ErrorableString.ok(out);
     }
@@ -1115,6 +1122,8 @@ pub const Transpiler = struct {
                 opts.features.dead_code_elimination = transpiler.options.dead_code_elimination;
                 opts.features.remove_cjs_module_wrapper = this_parse.remove_cjs_module_wrapper;
                 opts.features.bundler_feature_flags = transpiler.options.bundler_feature_flags;
+                opts.features.repl_mode = transpiler.options.repl_mode;
+                opts.repl_mode = transpiler.options.repl_mode;
 
                 if (transpiler.macro_context == null) {
                     transpiler.macro_context = js_ast.Macro.MacroContext.init(transpiler);

@@ -646,12 +646,15 @@ WTF::String generateHeapProfile(JSC::VM& vm)
         output.append(" retained)\n\n"_s);
 
         // BFS to find path to GC root
-        std::unordered_map<uint64_t, uint64_t> parent;
-        std::unordered_map<uint64_t, size_t> parentEdge;
+        // We traverse from node.id upward through retainers (incoming edges)
+        // parent[X] = Y means "X is retained by Y" (Y is X's retainer)
+        // retainerEdge[X] = edgeIdx means "edges[edgeIdx] is the edge FROM parent[X] TO X"
+        std::unordered_map<uint64_t, uint64_t> retainer;
+        std::unordered_map<uint64_t, size_t> retainerEdge;
         WTF::Vector<uint64_t> queue;
         size_t queueIdx = 0;
         queue.append(node.id);
-        parent[node.id] = node.id;
+        retainer[node.id] = node.id; // sentinel
 
         uint64_t foundRoot = 0;
         while (queueIdx < queue.size() && foundRoot == 0) {
@@ -664,9 +667,13 @@ WTF::String generateHeapProfile(JSC::VM& vm)
             if (it != incomingEdges.end()) {
                 for (size_t edgeIdx : it->second) {
                     uint64_t retainerId = edges[edgeIdx].fromId;
-                    if (parent.find(retainerId) == parent.end()) {
-                        parent[retainerId] = current;
-                        parentEdge[current] = edgeIdx;
+                    if (retainer.find(retainerId) == retainer.end()) {
+                        // retainerId retains current via this edge
+                        // Store: current's retainer is retainerId
+                        retainer[current] = retainerId;
+                        retainerEdge[current] = edgeIdx;
+                        // Add retainerId to queue to continue searching upward
+                        retainer[retainerId] = retainerId; // mark as visited (will be updated if we find its retainer)
                         queue.append(retainerId);
                     }
                 }
@@ -675,18 +682,18 @@ WTF::String generateHeapProfile(JSC::VM& vm)
 
         output.append("```\n"_s);
         if (foundRoot != 0) {
+            // Build path from node.id to foundRoot
             WTF::Vector<uint64_t> path;
             uint64_t current = node.id;
-            while (current != foundRoot) {
+            while (current != foundRoot && retainer.find(current) != retainer.end()) {
                 path.append(current);
-                auto edgeIt = parentEdge.find(current);
-                if (edgeIt != parentEdge.end())
-                    current = edges[edgeIt->second].fromId;
-                else
-                    break;
+                uint64_t next = retainer[current];
+                if (next == current) break; // sentinel or no retainer
+                current = next;
             }
             path.append(foundRoot);
 
+            // Print path from root to node (reverse order)
             for (size_t j = path.size(); j > 0; j--) {
                 uint64_t nodeId = path[j - 1];
                 auto nodeIt = idToIndex.find(nodeId);
@@ -706,9 +713,11 @@ WTF::String generateHeapProfile(JSC::VM& vm)
                 output.append(formatBytes(pathNode.size));
                 output.append(")"_s);
 
+                // Show edge to child (path[j-2])
                 if (j > 1) {
-                    auto edgeIt = parentEdge.find(path[j - 2]);
-                    if (edgeIt != parentEdge.end()) {
+                    uint64_t childId = path[j - 2];
+                    auto edgeIt = retainerEdge.find(childId);
+                    if (edgeIt != retainerEdge.end()) {
                         WTF::String edgeName = getEdgeName(edges[edgeIt->second]);
                         if (!edgeName.isEmpty()) {
                             output.append(" ."_s);

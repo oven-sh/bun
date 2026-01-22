@@ -44,7 +44,8 @@ pub fn generateAndWriteProfile(vm: *jsc.VM, config: HeapProfilerConfig) !void {
         if (errno == .NOENT or errno == .PERM or errno == .ACCES) {
             // Derive directory from the absolute output path
             const abs_path = path_buf.slice();
-            if (std.fs.path.dirname(abs_path)) |dir_path| {
+            const dir_path = bun.path.dirname(abs_path, .auto);
+            if (dir_path.len > 0) {
                 bun.FD.cwd().makePath(u8, dir_path) catch {};
                 // Retry write
                 const retry_result = bun.sys.File.writeFile(bun.FD.cwd(), output_path_os, profile_slice.slice());

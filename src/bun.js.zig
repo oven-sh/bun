@@ -283,6 +283,8 @@ pub const Run = struct {
             vm.cpu_profiler_config = CPUProfiler.CPUProfilerConfig{
                 .name = cpu_prof_opts.name,
                 .dir = cpu_prof_opts.dir,
+                .md_format = cpu_prof_opts.md_format,
+                .json_format = cpu_prof_opts.json_format,
             };
             CPUProfiler.startCPUProfiler(vm.jsc_vm);
             bun.analytics.Features.cpu_profile += 1;

@@ -70,23 +70,23 @@ export fn Bun__encoding__constructFromUTF16(globalObject: *JSGlobalObject, input
 
 // for SQL statement
 export fn Bun__encoding__toStringUTF8(input: [*]const u8, len: usize, globalObject: *jsc.JSGlobalObject) JSValue {
-    return toStringComptime(input[0..len], globalObject, .utf8);
+    return toStringComptime(input[0..len], globalObject, .utf8) catch return .zero;
 }
 
 export fn Bun__encoding__toString(input: [*]const u8, len: usize, globalObject: *jsc.JSGlobalObject, encoding: u8) JSValue {
-    return toString(input[0..len], globalObject, @enumFromInt(encoding));
+    return toString(input[0..len], globalObject, @enumFromInt(encoding)) catch return .zero;
 }
 
 // pub fn writeUTF16AsUTF8(utf16: [*]const u16, len: usize, to: [*]u8, to_len: usize) callconv(.c) i32 {
 //     return @intCast(i32, strings.copyUTF16IntoUTF8(to[0..to_len], []const u16, utf16[0..len]).written);
 // }
-pub fn toString(input: []const u8, globalObject: *JSGlobalObject, encoding: Encoding) JSValue {
+pub fn toString(input: []const u8, globalObject: *JSGlobalObject, encoding: Encoding) bun.JSError!JSValue {
     return switch (encoding) {
         // treat buffer as utf8
         // callers are expected to check that before constructing `Buffer` objects
-        .buffer, .utf8 => toStringComptime(input, globalObject, .utf8),
+        .buffer, .utf8 => try toStringComptime(input, globalObject, .utf8),
 
-        inline else => |enc| toStringComptime(input, globalObject, enc),
+        inline else => |enc| try toStringComptime(input, globalObject, enc),
     };
 }
 
@@ -179,9 +179,9 @@ pub fn toBunStringFromOwnedSlice(input: []u8, encoding: Encoding) bun.String {
     }
 }
 
-pub fn toStringComptime(input: []const u8, global: *JSGlobalObject, comptime encoding: Encoding) JSValue {
+pub fn toStringComptime(input: []const u8, global: *JSGlobalObject, comptime encoding: Encoding) bun.JSError!JSValue {
     var bun_string = toBunStringComptime(input, encoding);
-    return bun_string.transferToJS(global);
+    return try bun_string.transferToJS(global);
 }
 
 pub fn toBunString(input: []const u8, encoding: Encoding) bun.String {

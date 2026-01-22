@@ -307,7 +307,7 @@ pub fn homedir(global: *jsc.JSGlobalObject) !bun.String {
         var out: bun.PathBuffer = undefined;
         var size: usize = out.len;
         if (libuv.uv_os_homedir(&out, &size).toError(.uv_os_homedir)) |err| {
-            return global.throwValue(err.toJS(global));
+            return global.throwValue(try err.toJS(global));
         }
         return bun.String.cloneUTF8(out[0..size]);
     } else {
@@ -358,7 +358,7 @@ pub fn homedir(global: *jsc.JSGlobalObject) !bun.String {
         };
 
         if (ret != 0) {
-            return global.throwValue(bun.sys.Error.fromCode(
+            return global.throwValue(try bun.sys.Error.fromCode(
                 @enumFromInt(ret),
                 .uv_os_homedir,
             ).toJS(global));
@@ -366,7 +366,7 @@ pub fn homedir(global: *jsc.JSGlobalObject) !bun.String {
 
         if (result == null) {
             // in uv__getpwuid_r, null result throws UV_ENOENT.
-            return global.throwValue(bun.sys.Error.fromCode(
+            return global.throwValue(try bun.sys.Error.fromCode(
                 .NOENT,
                 .uv_os_homedir,
             ).toJS(global));
@@ -935,7 +935,7 @@ pub fn userInfo(globalThis: *jsc.JSGlobalObject, options: gen.UserInfoOptions) b
     const home = try homedir(globalThis);
     defer home.deref();
 
-    result.put(globalThis, jsc.ZigString.static("homedir"), home.toJS(globalThis));
+    result.put(globalThis, jsc.ZigString.static("homedir"), try home.toJS(globalThis));
 
     if (comptime Environment.isWindows) {
         result.put(globalThis, jsc.ZigString.static("username"), jsc.ZigString.init(bun.env_var.USER.get() orelse "unknown").withEncoding().toJS(globalThis));

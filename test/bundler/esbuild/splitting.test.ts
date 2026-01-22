@@ -705,16 +705,18 @@ describe("bundler", () => {
     entryPoints: ["/a.js", "/b.js"],
     splitting: true,
     format: "cjs",
-    run: [
-      { file: "/out/a.js", stdout: "shared loaded\na: 1" },
-      { file: "/out/b.js", stdout: "shared loaded\nb: 2" },
-    ],
     runtimeFiles: {
       "/test.js": /* js */ `
         require('./out/a.js')
         require('./out/b.js')
       `,
     },
+    run: [
+      { file: "/out/a.js", stdout: "shared loaded\na: 1" },
+      { file: "/out/b.js", stdout: "shared loaded\nb: 2" },
+      // When both entry points are required, the shared module should only load once
+      { file: "/test.js", stdout: "shared loaded\na: 1\nb: 2" },
+    ],
   });
 
   // Test CJS code splitting with CommonJS source files
@@ -2858,17 +2860,21 @@ describe("bundler", () => {
     entryPoints: ["/a.js", "/b.js"],
     splitting: true,
     outdir: "/out",
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        // Import both entry points - they share the same underlying shared module
+        await import("./out/a.js");
+        await import("./out/b.js");
+      `,
+    },
     run: [
       { file: "/out/a.js", stdout: "a before: 0 0\na after: 1 1" },
       { file: "/out/b.js", stdout: "b before: 0 0\nb after: 1 1" },
+      // When both entry points share the same module, they share state
+      // a.js runs first: counter goes 0 -> 1
+      // b.js runs second: counter starts at 1, goes to 2
+      { file: "/test.js", stdout: "a before: 0 0\na after: 1 1\nb before: 1 1\nb after: 2 2" },
     ],
-    runtimeFiles: {
-      "/test.js": /* js */ `
-        import { counter as c1, increment as inc1 } from "./out/a.js";
-        import { counter as c2, increment as inc2 } from "./out/b.js";
-        console.log("shared state:", c1, c2);
-      `,
-    },
   });
 
   // Live binding with setters - CJS output

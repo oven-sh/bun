@@ -922,6 +922,10 @@ describe("bundler", () => {
       file: "/out/main.js",
       stdout: "main: vendor-lib",
     },
+    // Verify vendor code was extracted - main.js should not contain the string literal
+    assertNotPresent: {
+      "/out/main.js": "vendor-lib",
+    },
   });
 
   // Shared vendor chunk with CJS output
@@ -942,6 +946,10 @@ describe("bundler", () => {
     run: {
       file: "/out/main.js",
       stdout: "main: vendor-lib",
+    },
+    // Verify vendor code was extracted - main.js should not contain the string literal
+    assertNotPresent: {
+      "/out/main.js": "vendor-lib",
     },
   });
 
@@ -1260,6 +1268,11 @@ describe("bundler", () => {
       { file: "/out/a.js", stdout: "a: shared-default" },
       { file: "/out/b.js", stdout: "b: shared-default" },
     ],
+    // Verify shared function was extracted to chunk
+    assertNotPresent: {
+      "/out/a.js": "shared-default",
+      "/out/b.js": "shared-default",
+    },
   });
 
   // Default export sharing with CJS output
@@ -1287,6 +1300,11 @@ describe("bundler", () => {
       { file: "/out/a.js", stdout: "a: shared-default" },
       { file: "/out/b.js", stdout: "b: shared-default" },
     ],
+    // Verify shared function was extracted to chunk
+    assertNotPresent: {
+      "/out/a.js": "shared-default",
+      "/out/b.js": "shared-default",
+    },
   });
 
   // Class export sharing
@@ -1376,6 +1394,11 @@ describe("bundler", () => {
       { file: "/out/a.js", stdout: "a: test" },
       { file: "/out/b.js", stdout: "b: 1.0.0" },
     ],
+    // Verify JSON was extracted - entry files shouldn't contain the JSON content
+    assertNotPresent: {
+      "/out/a.js": "1.0.0",
+      "/out/b.js": '"name"',
+    },
   });
 
   // JSON imports with CJS output
@@ -1399,6 +1422,11 @@ describe("bundler", () => {
       { file: "/out/a.js", stdout: "a: test" },
       { file: "/out/b.js", stdout: "b: 1.0.0" },
     ],
+    // Verify JSON was extracted - entry files shouldn't contain the JSON content
+    assertNotPresent: {
+      "/out/a.js": "1.0.0",
+      "/out/b.js": '"name"',
+    },
   });
 
   // Async/await with dynamic imports
@@ -1419,6 +1447,10 @@ describe("bundler", () => {
     run: {
       file: "/out/index.js",
       stdout: "loaded: async-value",
+    },
+    // Verify the async module content is not in the main entry
+    assertNotPresent: {
+      "/out/index.js": "async-value",
     },
   });
 
@@ -1441,6 +1473,10 @@ describe("bundler", () => {
     run: {
       file: "/out/index.js",
       stdout: "loaded: async-value",
+    },
+    // Verify the async module content is not in the main entry
+    assertNotPresent: {
+      "/out/index.js": "async-value",
     },
   });
 

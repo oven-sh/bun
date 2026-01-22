@@ -390,8 +390,10 @@ pub const Command = struct {
         console_depth: ?u16 = null,
         cpu_prof: struct {
             enabled: bool = false,
-            name: []const u8 = "",
-            dir: []const u8 = "",
+            name: ?[]const u8 = null,
+            dir: ?[]const u8 = null,
+            md_format: bool = false,
+            json_format: bool = false,
         } = .{},
     };
 

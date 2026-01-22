@@ -2,7 +2,7 @@ option(WEBKIT_VERSION "The version of WebKit to use")
 option(WEBKIT_LOCAL "If a local version of WebKit should be used instead of downloading")
 
 if(NOT WEBKIT_VERSION)
-  set(WEBKIT_VERSION b51f85932e7bcd433e1b920ce2bd73f6c2d8aee5)
+  set(WEBKIT_VERSION 87c6cde57dd1d2a82bbc9caf500f70f8a7c1f249)
 endif()
 
 # Use preview build URL for Windows ARM64 until the fix is merged to main
@@ -101,11 +101,14 @@ endif()
 
 setx(WEBKIT_NAME bun-webkit-${WEBKIT_OS}-${WEBKIT_ARCH}${WEBKIT_SUFFIX})
 set(WEBKIT_FILENAME ${WEBKIT_NAME}.tar.gz)
-if(WEBKIT_PREVIEW_PR)
-  setx(WEBKIT_DOWNLOAD_URL https://github.com/oven-sh/WebKit/releases/download/autobuild-preview-pr-${WEBKIT_PREVIEW_PR}-${WEBKIT_VERSION_SHORT}/${WEBKIT_FILENAME})
+
+if(WEBKIT_VERSION MATCHES "^autobuild-")
+  set(WEBKIT_TAG ${WEBKIT_VERSION})
 else()
-  setx(WEBKIT_DOWNLOAD_URL https://github.com/oven-sh/WebKit/releases/download/autobuild-${WEBKIT_VERSION}/${WEBKIT_FILENAME})
+  set(WEBKIT_TAG autobuild-${WEBKIT_VERSION})
 endif()
+
+setx(WEBKIT_DOWNLOAD_URL https://github.com/oven-sh/WebKit/releases/download/${WEBKIT_TAG}/${WEBKIT_FILENAME})
 
 if(EXISTS ${WEBKIT_PATH}/package.json)
   file(READ ${WEBKIT_PATH}/package.json WEBKIT_PACKAGE_JSON)

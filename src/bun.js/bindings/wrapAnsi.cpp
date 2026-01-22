@@ -518,25 +518,32 @@ static void processLine(const Char* lineStart, const Char* lineEnd, size_t colum
             return;
     }
 
-    // Calculate word lengths
+    // Calculate word lengths using WTF::find for space detection
     Vector<size_t> wordLengths;
-    const Char* wordStart = lineStart;
-    for (const Char* it = lineStart; it <= lineEnd; ++it) {
-        if (it == lineEnd || *it == ' ') {
-            if (wordStart < it) {
-                wordLengths.append(stringWidth(wordStart, it, options.ambiguousIsNarrow));
-            } else {
-                wordLengths.append(0);
-            }
-            wordStart = it + 1;
+    auto lineSpan = std::span<const Char>(lineStart, lineEnd);
+    size_t wordStartIdx = 0;
+    while (wordStartIdx <= lineSpan.size()) {
+        size_t spacePos = WTF::find(lineSpan, static_cast<Char>(' '), wordStartIdx);
+        size_t wordEndIdx = (spacePos == WTF::notFound) ? lineSpan.size() : spacePos;
+
+        if (wordStartIdx < wordEndIdx) {
+            wordLengths.append(stringWidth(lineSpan.data() + wordStartIdx,
+                lineSpan.data() + wordEndIdx,
+                options.ambiguousIsNarrow));
+        } else {
+            wordLengths.append(0);
         }
+
+        if (spacePos == WTF::notFound)
+            break;
+        wordStartIdx = wordEndIdx + 1;
     }
 
     // Start with empty first row
     rows.append(Row<Char>());
 
     // Process each word
-    wordStart = lineStart;
+    const Char* wordStart = lineStart;
     size_t wordIndex = 0;
 
     for (const Char* it = lineStart; it <= lineEnd; ++it) {
@@ -625,17 +632,24 @@ static WTF::String wrapAnsiImpl(std::span<const Char> input, size_t columns, con
         return result.toString();
     }
 
-    // Normalize \r\n to \n
+    // Normalize \r\n to \n using WTF::findNextNewline
     Vector<Char> normalized;
     normalized.reserveCapacity(input.size());
 
-    for (size_t i = 0; i < input.size(); ++i) {
-        if (i + 1 < input.size() && input[i] == '\r' && input[i + 1] == '\n') {
-            normalized.append(static_cast<Char>('\n'));
-            i++; // Skip next char
-        } else {
-            normalized.append(input[i]);
+    size_t pos = 0;
+    while (pos < input.size()) {
+        auto newline = WTF::findNextNewline(input, pos);
+        if (newline.position == WTF::notFound) {
+            // Append remaining content
+            normalized.append(std::span { input.data() + pos, input.size() - pos });
+            break;
         }
+        // Append content before newline
+        if (newline.position > pos)
+            normalized.append(std::span { input.data() + pos, newline.position - pos });
+        // Always append \n regardless of original (\r, \n, or \r\n)
+        normalized.append(static_cast<Char>('\n'));
+        pos = newline.position + newline.length;
     }
 
     // Process each line separately

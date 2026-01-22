@@ -1,11 +1,12 @@
 import { PGlite } from "@electric-sql/pglite";
-import { isCI, isLinux } from "harness";
 
 describe("pglite", () => {
-  // TODO(@190n) linux-x64 sometimes fails due to JavaScriptCore bug
-  // https://github.com/oven-sh/bun/issues/17841#issuecomment-2695792567
+  // This test previously failed on linux-x64 due to a JavaScriptCore Wasm OSR bug.
+  // Fixed by disabling useWasmOSR on linux-x64 in ZigGlobalObject.cpp.
+  // https://github.com/oven-sh/bun/issues/17841
+  // https://github.com/oven-sh/bun/issues/26366
   // https://bugs.webkit.org/show_bug.cgi?id=289009
-  it.todoIf(isCI && isLinux && process.arch == "x64")("can initialize successfully", async () => {
+  it("can initialize successfully", async () => {
     const db = new PGlite();
     expect(await db.query("SELECT version()")).toEqual({
       rows: [

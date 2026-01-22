@@ -2722,11 +2722,11 @@ pub const bindings = struct {
 
         for (entries_info.items, 0..) |entry, i| {
             const obj = JSValue.createEmptyObject(global, 0);
-            obj.put(global, "pathname", entry.pathname.toJS(global));
-            obj.put(global, "kind", entry.kind.toJS(global));
+            obj.put(global, "pathname", try entry.pathname.toJS(global));
+            obj.put(global, "kind", try entry.kind.toJS(global));
             obj.put(global, "perm", JSValue.jsNumber(entry.perm));
             if (entry.contents) |contents| {
-                obj.put(global, "contents", contents.toJS(global));
+                obj.put(global, "contents", try contents.toJS(global));
             }
             try entries.putIndex(global, @intCast(i), obj);
         }
@@ -2734,7 +2734,7 @@ pub const bindings = struct {
         const result = JSValue.createEmptyObject(global, 4);
         result.put(global, "entries", entries);
         result.put(global, "size", JSValue.jsNumber(tarball.len));
-        result.put(global, "shasum", shasum_str.toJS(global));
+        result.put(global, "shasum", try shasum_str.toJS(global));
         result.put(global, "integrity", integrity_value);
 
         return result;

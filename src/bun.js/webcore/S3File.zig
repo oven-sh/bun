@@ -503,6 +503,8 @@ pub fn getPresignUrlFrom(this: *Blob, globalThis: *jsc.JSGlobalObject, extra_opt
         .acl = credentialsWithOptions.acl,
         .storage_class = credentialsWithOptions.storage_class,
         .request_payer = credentialsWithOptions.request_payer,
+        .content_disposition = credentialsWithOptions.content_disposition,
+        .content_type = credentialsWithOptions.content_type,
     }, false, .{ .expires = expires }) catch |sign_err| {
         return S3.throwSignError(sign_err, globalThis);
     };

@@ -3012,6 +3012,7 @@ pub const MemfdFlags = enum(u32) {
     const MFD_CLOEXEC: u32 = std.os.linux.MFD.CLOEXEC;
     const MFD_ALLOW_SEALING: u32 = std.os.linux.MFD.ALLOW_SEALING;
 };
+
 pub fn memfd_create(name: [:0]const u8, flags_: MemfdFlags) Maybe(bun.FileDescriptor) {
     if (comptime !Environment.isLinux) @compileError("linux only!");
     var flags: u32 = @intFromEnum(flags_);

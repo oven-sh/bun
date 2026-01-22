@@ -9,13 +9,19 @@ signal: ?*AbortSignal = null,
 #body: *Body.Value.HiveRef,
 #js_ref: jsc.JSRef = .empty(),
 method: Method = Method.GET,
-redirect: FetchRedirect = .follow,
+flags: Flags = .{},
 request_context: jsc.API.AnyRequestContext = jsc.API.AnyRequestContext.Null,
-https: bool = false,
 weak_ptr_data: WeakRef.Data = .empty,
 // We must report a consistent value for this
 reported_estimated_size: usize = 0,
 internal_event_callback: InternalJSEventCallback = .{},
+
+pub const Flags = packed struct(u8) {
+    redirect: FetchRedirect = .follow,
+    cache: FetchCacheMode = .default,
+    mode: FetchRequestMode = .cors,
+    https: bool = false,
+};
 
 pub const js = jsc.Codegen.JSRequest;
 // NOTE: toJS is overridden
@@ -120,7 +126,7 @@ pub fn init(
     return Request{
         .request_context = request_context,
         .method = method,
-        .https = https,
+        .flags = .{ .https = https },
         .signal = signal,
         .#body = body,
     };
@@ -329,10 +335,12 @@ pub fn mimeType(this: *const Request) string {
 }
 
 pub fn getCache(
-    _: *Request,
+    this: *Request,
     globalThis: *jsc.JSGlobalObject,
 ) jsc.JSValue {
-    return ZigString.init("default").toJS(globalThis);
+    return switch (this.flags.cache) {
+        inline else => |tag| ZigString.static(@tagName(tag)).toJS(globalThis),
+    };
 }
 pub fn getCredentials(
     _: *Request,
@@ -377,10 +385,12 @@ pub fn getMethod(
 }
 
 pub fn getMode(
-    _: *Request,
+    this: *Request,
     globalThis: *jsc.JSGlobalObject,
 ) jsc.JSValue {
-    return ZigString.init("navigate").toJS(globalThis);
+    return switch (this.flags.mode) {
+        inline else => |tag| ZigString.static(@tagName(tag)).toJS(globalThis),
+    };
 }
 
 pub fn finalizeWithoutDeinit(this: *Request) void {
@@ -412,7 +422,7 @@ pub fn getRedirect(
     this: *Request,
     globalThis: *jsc.JSGlobalObject,
 ) jsc.JSValue {
-    return switch (this.redirect) {
+    return switch (this.flags.redirect) {
         inline else => |tag| ZigString.static(@tagName(tag)).toJS(globalThis),
     };
 }
@@ -448,7 +458,7 @@ pub fn sizeOfURL(this: *const Request) usize {
         if (req_url.len > 0 and req_url[0] == '/') {
             if (req.header("host")) |host| {
                 const fmt = bun.fmt.HostFormatter{
-                    .is_https = this.https,
+                    .is_https = this.flags.https,
                     .host = host,
                 };
                 return this.getProtocol().len + req_url.len + std.fmt.count("{f}", .{fmt});
@@ -461,7 +471,7 @@ pub fn sizeOfURL(this: *const Request) usize {
 }
 
 pub fn getProtocol(this: *const Request) []const u8 {
-    if (this.https)
+    if (this.flags.https)
         return "https://";
 
     return "http://";
@@ -475,7 +485,7 @@ pub fn ensureURL(this: *Request) bun.OOM!void {
         if (req_url.len > 0 and req_url[0] == '/') {
             if (req.header("host")) |host| {
                 const fmt = bun.fmt.HostFormatter{
-                    .is_https = this.https,
+                    .is_https = this.flags.https,
                     .host = host,
                 };
                 const url_bytelength = std.fmt.count("{s}{f}{s}", .{
@@ -560,9 +570,10 @@ const Fields = enum {
     body,
     // referrer,
     // referrerPolicy,
-    // mode,
+    mode,
     // credentials,
     redirect,
+    cache,
     // integrity,
     // keepalive,
     signal,
@@ -657,8 +668,18 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
                 }
 
                 if (!fields.contains(.redirect)) {
-                    req.redirect = request.redirect;
+                    req.flags.redirect = request.flags.redirect;
                     fields.insert(.redirect);
+                }
+
+                if (!fields.contains(.cache)) {
+                    req.flags.cache = request.flags.cache;
+                    fields.insert(.cache);
+                }
+
+                if (!fields.contains(.mode)) {
+                    req.flags.mode = request.flags.mode;
+                    fields.insert(.mode);
                 }
 
                 if (!fields.contains(.headers)) {
@@ -794,8 +815,24 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
         // Extract redirect option
         if (!fields.contains(.redirect)) {
             if (try value.getOptionalEnum(globalThis, "redirect", FetchRedirect)) |redirect_value| {
-                req.redirect = redirect_value;
+                req.flags.redirect = redirect_value;
                 fields.insert(.redirect);
+            }
+        }
+
+        // Extract cache option
+        if (!fields.contains(.cache)) {
+            if (try value.getOptionalEnum(globalThis, "cache", FetchCacheMode)) |cache_value| {
+                req.flags.cache = cache_value;
+                fields.insert(.cache);
+            }
+        }
+
+        // Extract mode option
+        if (!fields.contains(.mode)) {
+            if (try value.getOptionalEnum(globalThis, "mode", FetchRequestMode)) |mode_value| {
+                req.flags.mode = mode_value;
+                fields.insert(.mode);
             }
         }
     }
@@ -1025,7 +1062,7 @@ pub fn cloneInto(
         .#body = body,
         .url = url,
         .method = this.method,
-        .redirect = this.redirect,
+        .flags = this.flags,
         .#headers = headers,
     };
 
@@ -1052,7 +1089,9 @@ const string = []const u8;
 
 const Environment = @import("../../env.zig");
 const std = @import("std");
+const FetchCacheMode = @import("../../http/FetchCacheMode.zig").FetchCacheMode;
 const FetchRedirect = @import("../../http/FetchRedirect.zig").FetchRedirect;
+const FetchRequestMode = @import("../../http/FetchRequestMode.zig").FetchRequestMode;
 const Method = @import("../../http/Method.zig").Method;
 
 const bun = @import("bun");

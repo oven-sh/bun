@@ -71,8 +71,23 @@ async function buildRootModule(dryRun?: boolean) {
       js: "// Source code: https://github.com/oven-sh/bun/blob/main/packages/bun-release/scripts/npm-postinstall.ts",
     },
   });
-  write(join(cwd, "bin", "bun.exe"), "");
-  write(join(cwd, "bin", "bunx.exe"), "");
+  // Create placeholder scripts that print an error message if postinstall hasn't run.
+  // On Unix, these are executed as shell scripts despite the .exe extension.
+  // On Windows, npm creates .cmd wrappers that would fail anyway if the binary isn't valid.
+  const placeholderScript = `#!/bin/sh
+echo "Error: Bun's postinstall script was not run." >&2
+echo "" >&2
+echo "This occurs when using --ignore-scripts during installation, or when using a" >&2
+echo "package manager like pnpm that does not run postinstall scripts by default." >&2
+echo "" >&2
+echo "To fix this, run the postinstall script manually:" >&2
+echo "  cd node_modules/bun && node install.js" >&2
+echo "" >&2
+echo "Or reinstall bun without the --ignore-scripts flag." >&2
+exit 1
+`;
+  write(join(cwd, "bin", "bun.exe"), placeholderScript);
+  write(join(cwd, "bin", "bunx.exe"), placeholderScript);
   write(
     join(cwd, "bin", "README.txt"),
     `The 'bun.exe' file is a placeholder for the binary file, which

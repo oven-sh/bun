@@ -610,6 +610,97 @@ declare module "bun" {
    */
   function stripANSI(input: string): string;
 
+  interface WrapAnsiOptions {
+    /**
+     * If `true`, break words in the middle if they don't fit on a line.
+     * If `false`, only break at word boundaries.
+     *
+     * @default false
+     */
+    hard?: boolean;
+
+    /**
+     * If `true`, wrap at word boundaries when possible.
+     * If `false`, don't perform word wrapping (only wrap at explicit newlines).
+     *
+     * @default true
+     */
+    wordWrap?: boolean;
+
+    /**
+     * If `true`, trim leading and trailing whitespace from each line.
+     * If `false`, preserve whitespace.
+     *
+     * @default true
+     */
+    trim?: boolean;
+
+    /**
+     * When it's ambiguous and `true`, count ambiguous width characters as 1 character wide.
+     * If `false`, count them as 2 characters wide.
+     *
+     * @default true
+     */
+    ambiguousIsNarrow?: boolean;
+  }
+
+  /**
+   * Wrap a string to fit within the specified column width, preserving ANSI escape codes.
+   *
+   * This function is designed to be compatible with the popular "wrap-ansi" NPM package.
+   *
+   * Features:
+   * - Preserves ANSI escape codes (colors, styles) across line breaks
+   * - Supports SGR codes (colors, bold, italic, etc.) and OSC 8 hyperlinks
+   * - Respects Unicode display widths (full-width characters, emoji)
+   * - Word wrapping at word boundaries (configurable)
+   *
+   * @category Utilities
+   *
+   * @param input The string to wrap
+   * @param columns The maximum column width
+   * @param options Wrapping options
+   * @returns The wrapped string
+   *
+   * @example
+   * ```ts
+   * import { wrapAnsi } from "bun";
+   *
+   * console.log(wrapAnsi("hello world", 5));
+   * // Output:
+   * // hello
+   * // world
+   *
+   * // Preserves ANSI colors across line breaks
+   * console.log(wrapAnsi("\u001b[31mhello world\u001b[0m", 5));
+   * // Output:
+   * // \u001b[31mhello\u001b[0m
+   * // \u001b[31mworld\u001b[0m
+   *
+   * // Hard wrap long words
+   * console.log(wrapAnsi("abcdefghij", 3, { hard: true }));
+   * // Output:
+   * // abc
+   * // def
+   * // ghi
+   * // j
+   * ```
+   */
+  function wrapAnsi(
+    /**
+     * The string to wrap
+     */
+    input: string,
+    /**
+     * The maximum column width
+     */
+    columns: number,
+    /**
+     * Wrapping options
+     */
+    options?: WrapAnsiOptions,
+  ): string;
+
   /**
    * TOML related APIs
    */
@@ -1654,6 +1745,17 @@ declare module "bun" {
      * @default "warn"
      */
     logLevel?: "verbose" | "debug" | "info" | "warn" | "error";
+
+    /**
+     * Enable REPL mode transforms:
+     * - Wraps top-level inputs that appear to be object literals (inputs starting with '{' without trailing ';') in parentheses
+     * - Hoists all declarations as var for REPL persistence across vm.runInContext calls
+     * - Wraps last expression in { __proto__: null, value: expr } for result capture
+     * - Wraps code in sync/async IIFE to avoid parentheses around object literals
+     *
+     * @default false
+     */
+    replMode?: boolean;
   }
 
   /**
@@ -1760,7 +1862,7 @@ declare module "bun" {
     type Architecture = "x64" | "arm64";
     type Libc = "glibc" | "musl";
     type SIMD = "baseline" | "modern";
-    type Target =
+    type CompileTarget =
       | `bun-darwin-${Architecture}`
       | `bun-darwin-x64-${SIMD}`
       | `bun-linux-${Architecture}`
@@ -2102,7 +2204,7 @@ declare module "bun" {
   }
 
   interface CompileBuildOptions {
-    target?: Bun.Build.Target;
+    target?: Bun.Build.CompileTarget;
     execArgv?: string[];
     executablePath?: string;
     outfile?: string;
@@ -2184,7 +2286,7 @@ declare module "bun" {
      * });
      * ```
      */
-    compile: boolean | Bun.Build.Target | CompileBuildOptions;
+    compile: boolean | Bun.Build.CompileTarget | CompileBuildOptions;
 
     /**
      * Splitting is not currently supported with `.compile`

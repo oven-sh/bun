@@ -798,7 +798,7 @@ declare module "bun" {
      * Bun.JSONL.parse('{bad}\n'); // throws SyntaxError
      * ```
      */
-    export function parse(input: string | TypedArray | DataView | ArrayBufferLike): unknown[];
+    export function parse(input: string | NodeJS.TypedArray | DataView | ArrayBufferLike): unknown[];
 
     /**
      * Parse a JSONL chunk, designed for streaming use.
@@ -831,7 +831,7 @@ declare module "bun" {
      * ```
      */
     export function parseChunk(
-      input: string | TypedArray | DataView | ArrayBufferLike,
+      input: string | NodeJS.TypedArray | DataView | ArrayBufferLike,
       start?: number,
       end?: number,
     ): JSONLParseChunkResult;

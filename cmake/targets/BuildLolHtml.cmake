@@ -30,7 +30,7 @@ endif()
 if (NOT WIN32)
   # The encoded escape sequences are intentional. They're how you delimit multiple arguments in a single environment variable.
   # Also add rust optimization flag for smaller binary size, but not huge speed penalty.
-  set(RUSTFLAGS "-Cpanic=abort\x1f-Cdebuginfo=0\x1f-Cforce-unwind-tables=no\x1f-Copt-level=s")
+  set(RUSTFLAGS "-Cpanic=abort-Cdebuginfo=0-Cforce-unwind-tables=no-Copt-level=s")
 endif()
 
 # On Windows, ensure MSVC link.exe is used instead of Git's link.exe

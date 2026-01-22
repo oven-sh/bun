@@ -76,65 +76,46 @@ describe.skipIf(!isLinux)("glob on a FUSE mount", () => {
 
   // Set a long timeout so the test can clean up the filesystem mount itself
   // rather than getting interrupted by timeout (matches run-file-on-fuse.test.ts)
-  test(
-    "Bun.Glob.scanSync finds files on FUSE mount",
-    async () => {
-      await withFuseMount(async (mountpoint) => {
-        const glob = new Bun.Glob("*.js");
-        const results = Array.from(glob.scanSync({ cwd: mountpoint }));
+  test("Bun.Glob.scanSync finds files on FUSE mount", async () => {
+    await withFuseMount(async mountpoint => {
+      const glob = new Bun.Glob("*.js");
+      const results = Array.from(glob.scanSync({ cwd: mountpoint }));
 
-        // fuse-fs.py provides main.js and main-symlink.js
-        expect(results).toContain("main.js");
-        expect(results.length).toBeGreaterThanOrEqual(1);
-      });
-    },
-    10000
-  );
+      // fuse-fs.py provides main.js and main-symlink.js
+      expect(results).toContain("main.js");
+      expect(results.length).toBeGreaterThanOrEqual(1);
+    });
+  }, 10000);
 
-  test(
-    "fs.globSync finds files on FUSE mount",
-    async () => {
-      await withFuseMount(async (mountpoint) => {
-        const results = fs.globSync("*.js", { cwd: mountpoint });
+  test("fs.globSync finds files on FUSE mount", async () => {
+    await withFuseMount(async mountpoint => {
+      const results = fs.globSync("*.js", { cwd: mountpoint });
 
-        expect(results).toContain("main.js");
-        expect(results.length).toBeGreaterThanOrEqual(1);
-      });
-    },
-    10000
-  );
+      expect(results).toContain("main.js");
+      expect(results.length).toBeGreaterThanOrEqual(1);
+    });
+  }, 10000);
 
-  test(
-    "fs.readdirSync works on FUSE mount",
-    async () => {
-      await withFuseMount(async (mountpoint) => {
-        const results = fs.readdirSync(mountpoint);
+  test("fs.readdirSync works on FUSE mount", async () => {
+    await withFuseMount(async mountpoint => {
+      const results = fs.readdirSync(mountpoint);
 
-        expect(results).toContain("main.js");
-        expect(results).toContain("main-symlink.js");
-      });
-    },
-    10000
-  );
+      expect(results).toContain("main.js");
+      expect(results).toContain("main-symlink.js");
+    });
+  }, 10000);
 
-  test(
-    "fs.readdirSync with withFileTypes returns correct types on FUSE mount",
-    async () => {
-      await withFuseMount(async (mountpoint) => {
-        const results = fs.readdirSync(mountpoint, { withFileTypes: true });
+  test("fs.readdirSync with withFileTypes returns correct types on FUSE mount", async () => {
+    await withFuseMount(async mountpoint => {
+      const results = fs.readdirSync(mountpoint, { withFileTypes: true });
 
-        const mainJs = results.find((d) => d.name === "main.js");
-        expect(mainJs).toBeDefined();
-        expect(mainJs!.isFile()).toBe(true);
+      const mainJs = results.find(d => d.name === "main.js");
+      expect(mainJs).toBeDefined();
+      expect(mainJs!.isFile()).toBe(true);
 
-        const symlink = results.find((d) => d.name === "main-symlink.js");
-        expect(symlink).toBeDefined();
-        expect(symlink!.isSymbolicLink()).toBe(true);
-      });
-    },
-    10000
-  );
+      const symlink = results.find(d => d.name === "main-symlink.js");
+      expect(symlink).toBeDefined();
+      expect(symlink!.isSymbolicLink()).toBe(true);
+    });
+  }, 10000);
 });
-
-
-

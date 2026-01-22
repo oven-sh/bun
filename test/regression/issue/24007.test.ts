@@ -11,7 +11,7 @@
  *
  * See also: test/cli/run/glob-on-fuse.test.ts for FUSE filesystem testing.
  */
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { tempDir } from "harness";
 import fs from "node:fs";
 import path from "node:path";
@@ -116,16 +116,13 @@ describe.concurrent("issue #24007 - glob with recursive patterns", () => {
 
     // Find the nested file in dir/subdir/
     const expectedParent = path.join(cwd, "dir", "subdir");
-    const nestedFile = results.find(
-      (d) => d.name === "file.txt" && d.parentPath === expectedParent
-    );
+    const nestedFile = results.find(d => d.name === "file.txt" && d.parentPath === expectedParent);
     expect(nestedFile).toBeDefined();
     expect(nestedFile!.isFile()).toBe(true);
 
     // Find a directory entry
-    const dirEntry = results.find((d) => d.name === "subdir");
+    const dirEntry = results.find(d => d.name === "subdir");
     expect(dirEntry).toBeDefined();
     expect(dirEntry!.isDirectory()).toBe(true);
   });
 });
-

@@ -1103,6 +1103,7 @@ const Platform = enum(u8) {
 
     windows_x86_64 = 'w',
     windows_x86_64_baseline = 'e',
+    windows_aarch64 = 'W',
 
     const current = @field(Platform, @tagName(bun.Environment.os) ++
         "_" ++ @tagName(builtin.target.cpu.arch) ++

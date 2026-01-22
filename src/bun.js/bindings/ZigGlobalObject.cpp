@@ -286,20 +286,18 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         }
 #endif
 
-        JSC::initialize();
-        {
-
-            JSC::Options::AllowUnfinalizedAccessScope scope;
-
+        // Use JSC::initialize with a callback to set Options during initialization.
+        // The callback runs BEFORE IPInt::initialize() so we can configure WASM options early.
+        JSC::initialize([&] {
+            JSC::Options::useWasm() = true;
+            JSC::Options::useJIT() = true;
+            JSC::Options::useBBQJIT() = true;
             JSC::Options::useConcurrentJIT() = true;
             // JSC::Options::useSigillCrashAnalyzer() = true;
-            JSC::Options::useWasm() = true;
             JSC::Options::useSourceProviderCache() = true;
             // JSC::Options::useUnlinkedCodeBlockJettisoning() = false;
             JSC::Options::exposeInternalModuleLoader() = true;
             JSC::Options::useSharedArrayBuffer() = true;
-            JSC::Options::useJIT() = true;
-            JSC::Options::useBBQJIT() = true;
             JSC::Options::useJITCage() = false;
             JSC::Options::useShadowRealm() = true;
             JSC::Options::useV8DateParser() = true;
@@ -331,7 +329,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
                 }
             }
             JSC::Options::assertOptionsAreCoherent();
-        }
+        }); // end JSC::initialize lambda
     }); // end std::call_once lambda
 
     // NOLINTEND

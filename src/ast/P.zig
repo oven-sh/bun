@@ -3787,6 +3787,169 @@ pub fn NewParser_(
             p.commonjs_named_exports_deoptimized = true;
         }
 
+        /// Attempts to recognize an `Object.defineProperty(exports, 'name', descriptor)` call
+        /// and convert it into an equivalent `exports.name = value` assignment expression.
+        /// Returns the rewritten expression if successful, or null if the pattern doesn't match.
+        ///
+        /// Recognized descriptor patterns:
+        ///   - `{ value: expr }` or `{ value: expr, enumerable: true, ... }`
+        ///   - `{ enumerable: true, get: function() { return expr; } }`
+        ///
+        /// Skipped cases:
+        ///   - Export name is `"__esModule"`
+        ///   - Descriptor contains a `set` property
+        ///   - Descriptor has `enumerable: false` explicitly
+        pub fn tryExtractDefinePropertyExport(p: *P, e_: *E.Call, call_loc: logger.Loc) ?Expr {
+            // Must have exactly 3 arguments
+            if (e_.args.len != 3) return null;
+
+            const args = e_.args.slice();
+
+            // Target must be Object.defineProperty
+            const dot = e_.target.data.as(.e_dot) orelse return null;
+            if (!strings.eqlComptime(dot.name, "defineProperty")) return null;
+            const dot_target_id = dot.target.data.as(.e_identifier) orelse return null;
+            const sym = p.symbols.items[dot_target_id.ref.innerIndex()];
+            if (sym.kind != .unbound or !strings.eqlComptime(sym.original_name, "Object")) return null;
+
+            // First arg must be `exports` ref or `module.exports`
+            // After visiting, `module.exports` may be rewritten to E.Special.module_exports
+            const first_arg = args[0];
+            const is_module_exports = brk: {
+                if (first_arg.data == .e_identifier) {
+                    if (first_arg.data.e_identifier.ref.eql(p.exports_ref)) break :brk false;
+                }
+                if (first_arg.data == .e_special and first_arg.data.e_special == .module_exports) {
+                    break :brk true;
+                }
+                if (first_arg.data.as(.e_dot)) |fa_dot| {
+                    if (fa_dot.target.data == .e_identifier and
+                        fa_dot.target.data.e_identifier.ref.eql(p.module_ref) and
+                        strings.eqlComptime(fa_dot.name, "exports"))
+                    {
+                        break :brk true;
+                    }
+                }
+                return null;
+            };
+
+            // Second arg must be a string literal (the export name)
+            const name_str = args[1].data.as(.e_string) orelse return null;
+            if (!name_str.isUTF8()) return null;
+            const name = name_str.data;
+
+            // Third arg must be an object literal (the descriptor)
+            const descriptor = args[2].data.as(.e_object) orelse return null;
+
+            // Check for `set` property - if present, skip (not safe to convert)
+            // Also check for explicit `enumerable: false`
+            var has_enumerable_false = false;
+            for (descriptor.properties.slice()) |prop| {
+                const key = prop.key orelse continue;
+                const key_str = key.data.as(.e_string) orelse continue;
+                if (key_str.eqlComptime("set")) return null;
+                if (key_str.eqlComptime("enumerable")) {
+                    if (prop.value) |val| {
+                        if (val.data == .e_boolean and !val.data.e_boolean.value) {
+                            has_enumerable_false = true;
+                        }
+                    }
+                }
+            }
+            if (has_enumerable_false) return null;
+
+            // Try to extract the value from the descriptor
+            const export_value = p.extractDefinePropertyValue(descriptor) orelse return null;
+
+            // Register the named export (same logic as maybe.zig for exports.X)
+            const named_export_entry = p.commonjs_named_exports.getOrPut(p.allocator, name) catch unreachable;
+            if (!named_export_entry.found_existing) {
+                const new_ref = p.newSymbol(
+                    .other,
+                    std.fmt.allocPrint(p.allocator, "${f}", .{bun.fmt.fmtIdentifier(name)}) catch unreachable,
+                ) catch unreachable;
+                bun.handleOom(p.module_scope.generated.append(p.allocator, new_ref));
+                named_export_entry.value_ptr.* = .{
+                    .loc_ref = LocRef{
+                        .loc = args[1].loc,
+                        .ref = new_ref,
+                    },
+                    .needs_decl = true,
+                };
+                if (p.commonjs_named_exports_needs_conversion == std.math.maxInt(u32))
+                    p.commonjs_named_exports_needs_conversion = @as(u32, @truncate(p.commonjs_named_exports.count() - 1));
+            }
+
+            const ref = named_export_entry.value_ptr.*.loc_ref.ref.?;
+            if (is_module_exports) {
+                p.recordUsage(ref);
+            } else {
+                p.ignoreUsage(p.exports_ref);
+                p.recordUsage(ref);
+            }
+
+            // Rewrite as: exports.name = value (using E.Binary with E.CommonJSExportIdentifier)
+            const cjs_id = p.newExpr(
+                E.CommonJSExportIdentifier{
+                    .ref = ref,
+                    .base = if (is_module_exports) .module_dot_exports else .exports,
+                },
+                args[1].loc,
+            );
+
+            return p.newExpr(
+                E.Binary{
+                    .op = .bin_assign,
+                    .left = cjs_id,
+                    .right = export_value,
+                },
+                call_loc,
+            );
+        }
+
+        /// Extracts the export value from a property descriptor object.
+        /// Handles two patterns:
+        ///   - `{ value: expr }` -> returns expr
+        ///   - `{ get: function() { return expr; } }` -> returns expr
+        fn extractDefinePropertyValue(p: *P, descriptor: *const E.Object) ?Expr {
+            _ = p;
+            var value_expr: ?Expr = null;
+            var get_expr: ?Expr = null;
+
+            for (descriptor.properties.slice()) |prop| {
+                const key = prop.key orelse continue;
+                const key_str = key.data.as(.e_string) orelse continue;
+
+                if (key_str.eqlComptime("value")) {
+                    value_expr = prop.value;
+                } else if (key_str.eqlComptime("get")) {
+                    get_expr = prop.value;
+                }
+            }
+
+            // Prefer `value` pattern
+            if (value_expr) |val| {
+                return val;
+            }
+
+            // Try `get` pattern: get: function() { return expr; }
+            if (get_expr) |get_val| {
+                const func = switch (get_val.data) {
+                    .e_function => |f| f,
+                    else => return null,
+                };
+                // Must have no parameters
+                if (func.func.args.len != 0) return null;
+                // Body must be a single return statement
+                if (func.func.body.stmts.len != 1) return null;
+                const ret_stmt = func.func.body.stmts[0];
+                if (ret_stmt.data != .s_return) return null;
+                return ret_stmt.data.s_return.value;
+            }
+
+            return null;
+        }
+
         pub fn maybeKeepExprSymbolName(p: *P, expr: Expr, original_name: string, was_anonymous_named_expr: bool) Expr {
             return if (was_anonymous_named_expr) p.keepExprSymbolName(expr, original_name) else expr;
         }

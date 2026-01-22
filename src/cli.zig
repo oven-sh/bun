@@ -398,8 +398,8 @@ pub const Command = struct {
         heap_prof: struct {
             enabled: bool = false,
             text_format: bool = false,
-            name: []const u8 = "",
-            dir: []const u8 = "",
+            name: ?[]const u8 = null,
+            dir: ?[]const u8 = null,
         } = .{},
     };
 

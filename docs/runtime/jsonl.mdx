@@ -62,7 +62,7 @@ const chunk = '{"id":1}\n{"id":2}\n{"id":3';
 
 const result = Bun.JSONL.parseChunk(chunk);
 console.log(result.values); // [{ id: 1 }, { id: 2 }]
-console.log(result.read); // 17 — bytes consumed
+console.log(result.read); // 17 — characters consumed
 console.log(result.done); // false — incomplete value remains
 console.log(result.error); // null — no parse error
 ```

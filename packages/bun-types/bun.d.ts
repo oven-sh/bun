@@ -744,25 +744,25 @@ declare module "bun" {
   }
 
   /**
-   * The result of `Bun.JSONL.parseChunk`.
-   */
-  interface JSONLParseChunkResult {
-    /** The successfully parsed JSON values. */
-    values: unknown[];
-    /** How far into the input was consumed. When the input is a string, this is a character offset. When the input is a `TypedArray`, this is a byte offset. Use `input.slice(read)` or `input.subarray(read)` to get the unconsumed remainder. */
-    read: number;
-    /** `true` if all input was consumed successfully. `false` if the input ends with an incomplete value or a parse error occurred. */
-    done: boolean;
-    /** A `SyntaxError` if a parse error occurred, otherwise `null`. Values parsed before the error are still available in `values`. */
-    error: SyntaxError | null;
-  }
-
-  /**
    * JSONL (JSON Lines) related APIs.
    *
    * Each line in the input is expected to be a valid JSON value separated by newlines.
    */
   namespace JSONL {
+    /**
+     * The result of `Bun.JSONL.parseChunk`.
+     */
+    interface ParseChunkResult {
+      /** The successfully parsed JSON values. */
+      values: unknown[];
+      /** How far into the input was consumed. When the input is a string, this is a character offset. When the input is a `TypedArray`, this is a byte offset. Use `input.slice(read)` or `input.subarray(read)` to get the unconsumed remainder. */
+      read: number;
+      /** `true` if all input was consumed successfully. `false` if the input ends with an incomplete value or a parse error occurred. */
+      done: boolean;
+      /** A `SyntaxError` if a parse error occurred, otherwise `null`. Values parsed before the error are still available in `values`. */
+      error: SyntaxError | null;
+    }
+
     /**
      * Parse a JSONL (JSON Lines) string into an array of JavaScript values.
      *
@@ -798,7 +798,7 @@ declare module "bun" {
      * Bun.JSONL.parse('{bad}\n'); // throws SyntaxError
      * ```
      */
-    export function parse(input: string | NodeJS.TypedArray | DataView | ArrayBufferLike): unknown[];
+    export function parse(input: string | NodeJS.TypedArray | DataView<ArrayBuffer> | ArrayBufferLike): unknown[];
 
     /**
      * Parse a JSONL chunk, designed for streaming use.
@@ -830,11 +830,12 @@ declare module "bun" {
      * }
      * ```
      */
+    export function parseChunk(input: string): ParseChunkResult;
     export function parseChunk(
-      input: string | NodeJS.TypedArray | DataView | ArrayBufferLike,
+      input: NodeJS.TypedArray | DataView<ArrayBuffer> | ArrayBufferLike,
       start?: number,
       end?: number,
-    ): JSONLParseChunkResult;
+    ): ParseChunkResult;
   }
 
   /**

@@ -165,13 +165,15 @@ WTF::String generateHeapProfile(JSC::VM& vm)
             NodeData node;
             size_t offset = i * nodeStride;
 
+            // Use asDouble() to get full integer range for id and size (which can exceed int range)
+            double dblVal = 0;
+            nodesArray->get(offset + 0)->asDouble(dblVal);
+            node.id = static_cast<uint64_t>(dblVal);
+
+            nodesArray->get(offset + 1)->asDouble(dblVal);
+            node.size = static_cast<size_t>(dblVal);
+
             int intVal = 0;
-            nodesArray->get(offset + 0)->asInteger(intVal);
-            node.id = intVal;
-
-            nodesArray->get(offset + 1)->asInteger(intVal);
-            node.size = intVal;
-
             nodesArray->get(offset + 2)->asInteger(intVal);
             node.classNameIndex = intVal;
 
@@ -201,13 +203,15 @@ WTF::String generateHeapProfile(JSC::VM& vm)
             EdgeData edge;
             size_t offset = i * 4;
 
+            // Use asDouble() to get full integer range for IDs
+            double dblVal = 0;
+            edgesArray->get(offset + 0)->asDouble(dblVal);
+            edge.fromId = static_cast<uint64_t>(dblVal);
+
+            edgesArray->get(offset + 1)->asDouble(dblVal);
+            edge.toId = static_cast<uint64_t>(dblVal);
+
             int intVal = 0;
-            edgesArray->get(offset + 0)->asInteger(intVal);
-            edge.fromId = intVal;
-
-            edgesArray->get(offset + 1)->asInteger(intVal);
-            edge.toId = intVal;
-
             edgesArray->get(offset + 2)->asInteger(intVal);
             edge.typeIndex = intVal;
 
@@ -223,8 +227,9 @@ WTF::String generateHeapProfile(JSC::VM& vm)
     auto rootsArray = jsonObject->getArray("roots"_s);
     if (rootsArray) {
         for (size_t i = 0; i < rootsArray->length(); i += 3) {
-            int nodeId = 0;
-            rootsArray->get(i)->asInteger(nodeId);
+            double dblVal = 0;
+            rootsArray->get(i)->asDouble(dblVal);
+            uint64_t nodeId = static_cast<uint64_t>(dblVal);
             gcRootIds.insert(nodeId);
             auto it = idToIndex.find(nodeId);
             if (it != idToIndex.end()) {

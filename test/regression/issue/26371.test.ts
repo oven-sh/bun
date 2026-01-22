@@ -28,6 +28,7 @@ console.log(typeof bun.argv)
     buildProc.exited,
   ]);
 
+  expect(buildStdout).toContain("index.js");
   expect(buildStderr).not.toContain("error");
   expect(buildExitCode).toBe(0);
 
@@ -75,6 +76,7 @@ console.log(typeof bun.argv)
     buildProc.exited,
   ]);
 
+  expect(buildStdout).toContain("index.js");
   expect(buildStderr).not.toContain("error");
   expect(buildExitCode).toBe(0);
 
@@ -123,6 +125,7 @@ console.log(typeof bunNs.argv)
     buildProc.exited,
   ]);
 
+  expect(buildStdout).toContain("index.js");
   expect(buildStderr).not.toContain("error");
   expect(buildExitCode).toBe(0);
 

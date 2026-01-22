@@ -938,9 +938,9 @@ pub fn GlobWalker_(
                                     // Use stack fallback for short names (typical case) to avoid arena allocation
                                     const stackbuf_size = 256;
                                     var stfb = std.heap.stackFallback(stackbuf_size, this.walker.arena.allocator());
-                                    const name_z = stfb.get().dupeZ(u8, entry_name) catch bun.outOfMemory();
+                                    const name_z = bun.handleOom(stfb.get().dupeZ(u8, entry_name));
                                     const stat_result = Accessor.lstatat(dir.fd, name_z);
-                                    const real_kind: std.fs.File.Kind = switch (stat_result) {
+                                    const real_kind = switch (stat_result) {
                                         .result => |st| bun.sys.kindFromMode(@intCast(st.mode)),
                                         .err => continue, // Skip entries we can't stat
                                     };

@@ -82,9 +82,9 @@ describe.concurrent("issue #24007 - glob with recursive patterns", () => {
     const glob = new Bun.Glob("**/*.ts");
     const results = Array.from(glob.scanSync({ cwd }));
 
-    expect(results).toContain("api/health.get.ts");
-    expect(results).toContain("api/users/index.ts");
-    expect(results).toContain("routes/home.ts");
+    expect(results).toContain(path.join("api", "health.get.ts"));
+    expect(results).toContain(path.join("api", "users", "index.ts"));
+    expect(results).toContain(path.join("routes", "home.ts"));
     expect(results.length).toBe(3);
   });
 

@@ -1,0 +1,16 @@
+version: v2
+managed:
+  enabled: true
+plugins:
+  # Python proto generation
+  - remote: buf.build/protocolbuffers/python
+    out: .
+  - remote: buf.build/protocolbuffers/pyi
+    out: .
+  # Generate Connect RPC service definitions for Python
+  - remote: buf.build/connectrpc/python
+    out: .
+  # TypeScript proto generation (local plugin)
+  - local: node_modules/.bin/protoc-gen-es
+    out: .
+    opt: target=ts

@@ -18,6 +18,12 @@ public:
     /* --- bun --- */
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBunClassConstructor;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBufferList;
+
+    /* --- git --- */
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSGitRepository;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSGitCommit;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSGitBranch;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSGitSignature;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForFFIFunction;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWrappingFunction;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNapiClass;

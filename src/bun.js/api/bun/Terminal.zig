@@ -618,7 +618,7 @@ pub fn write(
         .done => |amt| JSValue.jsNumber(@as(i32, @intCast(amt))),
         .wrote => |amt| JSValue.jsNumber(@as(i32, @intCast(amt))),
         .pending => |amt| JSValue.jsNumber(@as(i32, @intCast(amt))),
-        .err => |err| globalObject.throwValue(err.toJS(globalObject)),
+        .err => |err| globalObject.throwValue(try err.toJS(globalObject)),
     };
 }
 

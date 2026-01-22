@@ -712,7 +712,7 @@ const WriteContext = struct {
         return switch (this.result) {
             .success => .{ .resolve = .js_undefined },
             .err => |e| .{ .reject = globalThis.createErrorInstance("{s}", .{@errorName(e)}) },
-            .sys_err => |sys_err| .{ .reject = sys_err.toJS(globalThis) },
+            .sys_err => |sys_err| .{ .reject = try sys_err.toJS(globalThis) },
         };
     }
 
@@ -866,7 +866,7 @@ const FilesContext = struct {
                     blob_ptr.name = bun.String.cloneUTF8(entry.path);
                     blob_ptr.last_modified = @floatFromInt(entry.mtime * 1000);
 
-                    try map_ptr.set(globalThis, blob_ptr.name.toJS(globalThis), blob_ptr.toJS(globalThis));
+                    try map_ptr.set(globalThis, try blob_ptr.name.toJS(globalThis), blob_ptr.toJS(globalThis));
                 }
 
                 return .{ .resolve = map };

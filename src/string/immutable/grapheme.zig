@@ -6,21 +6,166 @@ pub fn graphemeBreak(cp1: u21, cp2: u21, state: *BreakState) bool {
         (Precompute.Key{
             .gbc1 = table.get(cp1).grapheme_boundary_class,
             .gbc2 = table.get(cp2).grapheme_boundary_class,
-            .state = state.*,
+            .state = state.precomputed,
         }).index()
     ];
-    state.* = value.state;
+    state.precomputed = value.state;
+
+    // GB9c: \p{InCB=Consonant} [\p{InCB=Extend}\p{InCB=Linker}]* \p{InCB=Linker} [\p{InCB=Extend}\p{InCB=Linker}]* × \p{InCB=Consonant}
+    // If the precomputed rules say "break", check if GB9c prevents it.
+    const incb2 = indicConjunctBreakProperty(cp2);
+    if (value.result) {
+        if (state.incb == .after_linker and incb2 == .consonant) {
+            // GB9c applies: don't break between the linker sequence and the consonant
+            state.incb = .after_consonant;
+            return false;
+        }
+    }
+
+    // Update InCB state for next iteration.
+    // The state tracks the InCB sequence ending at cp2.
+    // We also check cp1's InCB property for the case where cp1 is the first consonant
+    // in a new sequence (state.incb was .none from initialization or a previous break).
+    const incb1 = indicConjunctBreakProperty(cp1);
+    switch (incb2) {
+        .consonant => state.incb = .after_consonant,
+        .linker => {
+            // A linker extends the sequence if preceded by a consonant (directly or via state)
+            if (state.incb == .after_consonant or state.incb == .after_linker or incb1 == .consonant) {
+                state.incb = .after_linker;
+            } else {
+                state.incb = .none;
+            }
+        },
+        .extend => {
+            // Extend characters maintain InCB state.
+            // If state was .none but cp1 is a consonant, start tracking.
+            if (state.incb == .none and incb1 == .consonant) {
+                state.incb = .after_consonant;
+            }
+        },
+        .none => state.incb = .none,
+    }
+
     return value.result;
 }
 
-pub const BreakState = packed struct(u2) {
+pub const BreakState = struct {
+    precomputed: PrecomputedState = .{},
+    incb: InCBState = .none,
+};
+
+const PrecomputedState = packed struct(u2) {
     extended_pictographic: bool = false,
     regional_indicator: bool = false,
 };
 
+/// Indic Conjunct Break state for GB9c
+const InCBState = enum(u2) {
+    none = 0,
+    after_consonant = 1, // Seen Consonant + [Extend|Linker]*
+    after_linker = 2, // Seen Consonant + [Extend|Linker]* + Linker + [Extend|Linker]*
+    _unused = 3,
+};
+
+/// Indic Conjunct Break property (Unicode 15.1, UAX #29)
+const InCBProperty = enum(u2) {
+    none = 0,
+    consonant = 1,
+    linker = 2,
+    extend = 3,
+};
+
+/// Returns the Indic_Conjunct_Break property for a codepoint.
+/// Based on Unicode 15.1 IndicConjunctBreak.txt
+fn indicConjunctBreakProperty(cp: u21) InCBProperty {
+    // InCB=Linker: Virama/Halant characters
+    if (isInCBLinker(cp)) return .linker;
+    // InCB=Consonant: Indic script consonants
+    if (isInCBConsonant(cp)) return .consonant;
+    // InCB=Extend: Characters with GBC=Extend or GBC=ZWJ
+    const gbc = table.get(cp).grapheme_boundary_class;
+    if (gbc == .extend or gbc == .zwj) return .extend;
+    return .none;
+}
+
+/// InCB=Linker: Virama/Halant characters from various Indic scripts
+pub fn isInCBLinker(cp: u21) bool {
+    return switch (cp) {
+        0x094D, // DEVANAGARI SIGN VIRAMA
+        0x09CD, // BENGALI SIGN VIRAMA
+        0x0A4D, // GURMUKHI SIGN VIRAMA
+        0x0ACD, // GUJARATI SIGN VIRAMA
+        0x0B4D, // ORIYA SIGN VIRAMA
+        0x0BCD, // TAMIL SIGN VIRAMA
+        0x0C4D, // TELUGU SIGN VIRAMA
+        0x0CCD, // KANNADA SIGN VIRAMA
+        0x0D4D, // MALAYALAM SIGN VIRAMA
+        0x0DCA, // SINHALA SIGN AL-LAKUNA
+        0x1B44, // BALINESE ADEG ADEG
+        0xA806, // SYLOTI NAGRI SIGN HASANTA
+        0xA8C4, // SAURASHTRA SIGN VIRAMA
+        0xA953, // REJANG VIRAMA
+        0xA9C0, // JAVANESE PANGKON
+        0x11046, // BRAHMI VIRAMA
+        0x1107F, // BRAHMI NUMBER JOINER
+        0x110B9, // KAITHI SIGN VIRAMA
+        0x11133, 0x11134, // CHAKMA VIRAMA..CHAKMA MAAYYAA
+        0x111C0, // SHARADA SIGN VIRAMA
+        0x11235, // KHOJKI SIGN VIRAMA
+        0x112EA, // KHUDAWADI SIGN VIRAMA
+        0x1134D, // GRANTHA SIGN VIRAMA
+        0x11442, // NEWA SIGN VIRAMA
+        0x114C2, // TIRHUTA SIGN VIRAMA
+        0x115BF, // SIDDHAM SIGN VIRAMA
+        0x1163F, // MODI SIGN VIRAMA
+        0x116B6, // TAKRI SIGN VIRAMA
+        0x1172B, // AHOM SIGN KILLER
+        0x11839, // DOGRA SIGN VIRAMA
+        0x1193D, 0x1193E, // DIVES AKURU SIGN HALANTA..VIRAMA
+        0x119E0, // NANDINAGARI SIGN VIRAMA
+        0x11A34, // ZANABAZAR SQUARE SIGN VIRAMA
+        0x11A47, // ZANABAZAR SQUARE SUBJOINER
+        0x11A99, // SOYOMBO SUBJOINER
+        0x11C3F, // BHAIKSUKI SIGN VIRAMA
+        0x11D44, 0x11D45, // MASARAM GONDI SIGN HALANTA..VIRAMA
+        0x11D97, // GUNJALA GONDI VIRAMA
+        => true,
+        else => false,
+    };
+}
+
+/// InCB=Consonant: Indic script consonants (base letters that form conjuncts)
+fn isInCBConsonant(cp: u21) bool {
+    return switch (cp) {
+        // Devanagari consonants
+        0x0915...0x0939, 0x0958...0x095F, 0x0979...0x097F,
+        // Bengali consonants
+        0x0995...0x09A8, 0x09AA...0x09B0, 0x09B2, 0x09B6...0x09B9, 0x09DC...0x09DD, 0x09DF,
+        // Gurmukhi consonants
+        0x0A15...0x0A28, 0x0A2A...0x0A30, 0x0A32...0x0A33, 0x0A35...0x0A36, 0x0A38...0x0A39, 0x0A59...0x0A5C, 0x0A5E,
+        // Gujarati consonants
+        0x0A95...0x0AA8, 0x0AAA...0x0AB0, 0x0AB2...0x0AB3, 0x0AB5...0x0AB9,
+        // Oriya consonants
+        0x0B15...0x0B28, 0x0B2A...0x0B30, 0x0B32...0x0B33, 0x0B35...0x0B39, 0x0B5C...0x0B5D, 0x0B5F,
+        // Tamil consonants
+        0x0B95, 0x0B99...0x0B9A, 0x0B9C, 0x0B9E...0x0B9F, 0x0BA3...0x0BA4, 0x0BA8...0x0BAA, 0x0BAE...0x0BB9,
+        // Telugu consonants
+        0x0C15...0x0C28, 0x0C2A...0x0C39, 0x0C58...0x0C5A,
+        // Kannada consonants
+        0x0C95...0x0CA8, 0x0CAA...0x0CB3, 0x0CB5...0x0CB9, 0x0CDE,
+        // Malayalam consonants
+        0x0D15...0x0D3A, 0x0D4E,
+        // Sinhala consonants
+        0x0D9A...0x0DC6,
+        => true,
+        else => false,
+    };
+}
+
 const Precompute = struct {
     const Key = packed struct(u10) {
-        state: BreakState,
+        state: PrecomputedState,
 
         gbc1: GraphemeBoundaryClass,
         gbc2: GraphemeBoundaryClass,
@@ -32,7 +177,7 @@ const Precompute = struct {
 
     const Value = packed struct(u3) {
         result: bool,
-        state: BreakState,
+        state: PrecomputedState,
     };
 
     const data = precompute: {
@@ -43,7 +188,7 @@ const Precompute = struct {
         for (0..std.math.maxInt(u2) + 1) |state_init| {
             for (info.fields) |field1| {
                 for (info.fields) |field2| {
-                    var state: BreakState = @bitCast(@as(u2, @intCast(state_init)));
+                    var state: PrecomputedState = @bitCast(@as(u2, @intCast(state_init)));
                     const key: Key = .{
                         .gbc1 = @field(GraphemeBoundaryClass, field1.name),
                         .gbc2 = @field(GraphemeBoundaryClass, field2.name),
@@ -62,7 +207,7 @@ const Precompute = struct {
 fn graphemeBreakClass(
     gbc1: GraphemeBoundaryClass,
     gbc2: GraphemeBoundaryClass,
-    state: *BreakState,
+    state: *PrecomputedState,
 ) bool {
     // GB11: Emoji Extend* ZWJ x Emoji
     if (!state.extended_pictographic and gbc1 == .extended_pictographic) {

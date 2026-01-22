@@ -480,6 +480,17 @@ describe("stringWidth extended", () => {
       expect(Bun.stringWidth("कि")).toBe(1); // Ka + vowel sign i (combining)
     });
 
+    test("Devanagari conjuncts (GB9c)", () => {
+      // Conjuncts formed with virama+ZWJ should render as a single glyph (width 1)
+      // क्‍ष = Ka + Virama + ZWJ + Ssa (kṣa conjunct)
+      expect(Bun.stringWidth("क्\u200Dष")).toBe(1);
+      // Conjuncts without ZWJ (virama alone joins consonants)
+      // क्ष = Ka + Virama + Ssa
+      expect(Bun.stringWidth("क्ष")).toBe(1);
+      // Multiple conjuncts
+      expect(Bun.stringWidth("क्\u200Dष क्\u200Dष")).toBe(3); // conjunct + space + conjunct
+    });
+
     test("Thai with combining marks", () => {
       expect(Bun.stringWidth("ก")).toBe(1); // Ko kai
       expect(Bun.stringWidth("ก็")).toBe(1); // With maitaikhu

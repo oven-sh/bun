@@ -792,7 +792,8 @@ pub const visible = struct {
         zwj: bool = false,
         vs15: bool = false,
         vs16: bool = false,
-        _pad: u5 = 0,
+        has_incb_linker: bool = false, // Indic conjunct with virama
+        _pad: u4 = 0,
     };
 
     const GraphemeState = struct {
@@ -825,6 +826,7 @@ pub const visible = struct {
                 .regional_indicator = isRegionalIndicator(cp),
                 .skin_tone = isSkinToneModifier(cp),
                 .zwj = cp == 0x200D,
+                .has_incb_linker = grapheme.isInCBLinker(@truncate(cp)),
             };
         }
 
@@ -837,6 +839,7 @@ pub const visible = struct {
             self.s.zwj = self.s.zwj or (cp == 0x200D);
             self.s.vs15 = self.s.vs15 or (cp == 0xFE0E);
             self.s.vs16 = self.s.vs16 or (cp == 0xFE0F);
+            self.s.has_incb_linker = self.s.has_incb_linker or grapheme.isInCBLinker(@truncate(cp));
 
             if (!isZeroWidthCodepointType(u32, cp)) {
                 self.s.non_emoji_width +|= visibleCodepointWidthType(u32, cp, ambiguousAsWide);
@@ -867,6 +870,10 @@ pub const visible = struct {
                 }
                 return 1;
             }
+
+            // Indic conjuncts (virama+consonant sequences) render as a single glyph
+            // Use the width of the first base character only
+            if (s.has_incb_linker) return s.base_width;
 
             return s.non_emoji_width;
         }

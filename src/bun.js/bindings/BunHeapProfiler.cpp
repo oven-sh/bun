@@ -70,6 +70,8 @@ static WTF::String escapeString(const WTF::String& str)
             sb.append("\\\""_s);
         else if (c == '|')
             sb.append("\\|"_s);
+        else if (c == '`')
+            sb.append("\\`"_s); // escape backticks to avoid breaking markdown code spans
         else if (c < 32 || c == 127)
             continue; // skip control characters
         else
@@ -376,6 +378,8 @@ WTF::String generateHeapProfile(JSC::VM& vm)
                 uint32_t toPostOrder = nodeOrdinalToPostOrderIndex[toOrdinal];
                 affected[toPostOrder] = 1;
                 nodes[toOrdinal].isGCRoot = true;
+                // Also add to gcRootIds to keep it in sync with isGCRoot flag
+                gcRootIds.insert(toId);
             }
         }
     }

@@ -1,6 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-
 pub const RecordKind = enum(u8) {
     /// var_name
     declared_variable,
@@ -500,3 +497,6 @@ const JSModuleRecord = opaque {
 export fn zig_log(msg: [*:0]const u8) void {
     bun.Output.errorWriter().print("{s}\n", .{std.mem.span(msg)}) catch {};
 }
+
+const std = @import("std");
+const bun = @import("bun");

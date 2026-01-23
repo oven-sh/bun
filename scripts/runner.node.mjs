@@ -142,10 +142,6 @@ const { values: options, positionals: filters } = parseArgs({
       type: "string",
       default: undefined,
     },
-    ["retries"]: {
-      type: "string",
-      default: isCI ? "3" : "0", // N retries = N+1 attempts
-    },
     ["junit"]: {
       type: "boolean",
       default: false, // Disabled for now, because it's too much $
@@ -384,6 +380,49 @@ function getTestModifiers(testPath) {
   return modifiers.map(value => value.toUpperCase());
 }
 
+const testRetriesJson = readFileSync(join(cwd, "test/test-retries.json"), "utf-8");
+
+/** @typedef {number | Partial<ResolvedRetryOption>} RetryOption */
+/** @type {Record<string, {"*"?: RetryOption, "linux"?: RetryOption, "windows"?: RetryOption, "darwin"?: RetryOption, "note"?: string, "asan"?: RetryOption}>} */
+const testRetries = JSON.parse(testRetriesJson);
+
+/** @typedef {{retries: number, warnInsteadOfFail: boolean, knownCrash: boolean}} ResolvedRetryOption */
+/**
+ * @param {string} testPath
+ * @param {string} execPath
+ * @returns {RetryOption}
+ */
+function getTestOptionRaw(testPath, execPath) {
+  if (!isCI) return null; // disabled locally
+  const record = testRetries[testPath] ?? {};
+
+  const isAsan = basename(execPath).includes("asan");
+  if (isAsan && record.asan) return record.asan;
+
+  const os = getOs();
+  if (record[os]) return record[os];
+
+  if (record["*"]) return record["*"];
+  return null; // not found
+}
+
+/**
+ * @param {string} testPath
+ * @param {string} execPath
+ * @returns {ResolvedRetryOption}
+ */
+function getTestOption(testPath, execPath) {
+  const testOption = getTestOptionRaw(testPath, execPath);
+  const result = {
+    retries: isCI ? 1 : 0,
+    warnInsteadOfFail: false,
+    knownCrash: false,
+  };
+  if (testOption == null) return result;
+  if (typeof testOption === "number") return { ...result, retries: testOption };
+  return { ...result, ...testOption };
+}
+
 /**
  * @returns {Promise<TestResult[]>}
  */
@@ -425,7 +464,6 @@ async function runTests() {
   const flakyResultsTitles = [];
   const failedResults = [];
   const failedResultsTitles = [];
-  const maxAttempts = 1 + (parseInt(options["retries"]) || 0);
 
   const parallelism = options["parallel"] ? availableParallelism() : 1;
   console.log("parallelism", parallelism);
@@ -439,6 +477,8 @@ async function runTests() {
   const runTest = async (title, fn) => {
     const index = ++i;
 
+    const testOption = getTestOption(title, execPath);
+    const maxAttempts = 1 + testOption.retries;
     let result, failure, flaky;
     let attempt = 1;
     for (; attempt <= maxAttempts; attempt++) {
@@ -478,7 +518,9 @@ async function runTests() {
       failure ||= result;
       flaky ||= true;
 
-      if (attempt >= maxAttempts || isAlwaysFailure(error)) {
+      const alwaysFailure = isAlwaysFailure(error) && !testOption.knownCrash;
+      if (attempt >= maxAttempts || alwaysFailure) {
+        if (testOption.warnInsteadOfFail && !alwaysFailure) break;
         flaky = false;
         failedResults.push(failure);
         failedResultsTitles.push(title);

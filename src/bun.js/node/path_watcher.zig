@@ -477,7 +477,7 @@ pub const PathWatcherManager = struct {
                         options.Loader.file,
                         .invalid,
                         null,
-                        false,
+                        true,
                     )) {
                         .err => |err| return .{ .err = err },
                         .result => {},
@@ -525,7 +525,7 @@ pub const PathWatcherManager = struct {
     // this should only be called if thread pool is not null
     fn _addDirectory(this: *PathWatcherManager, watcher: *PathWatcher, path: PathInfo) bun.sys.Maybe(void) {
         const fd = path.fd;
-        switch (this.main_watcher.addDirectory(fd, path.path, path.hash, false)) {
+        switch (this.main_watcher.addDirectory(fd, path.path, path.hash, true)) {
             .err => |err| return .{ .err = err.withPath(path.path) },
             .result => {},
         }
@@ -568,7 +568,7 @@ pub const PathWatcherManager = struct {
 
         const path = watcher.path;
         if (path.is_file) {
-            try this.main_watcher.addFile(path.fd, path.path, path.hash, .file, .invalid, null, false).unwrap();
+            try this.main_watcher.addFile(path.fd, path.path, path.hash, .file, .invalid, null, true).unwrap();
         } else {
             if (comptime Environment.isMac) {
                 if (watcher.fsevents_watcher != null) {
@@ -591,11 +591,12 @@ pub const PathWatcherManager = struct {
     }
 
     /// Decrements the ref count for the given path. If the ref count reaches zero,
-    /// removes the path from the file_paths map and returns its hash so the caller
-    /// can call `main_watcher.remove(hash)` **after** releasing the manager mutex.
-    /// This avoids a lock ordering inversion: the watcher thread holds Watcher.mutex
-    /// then acquires PathWatcherManager.mutex, so we must not acquire Watcher.mutex
-    /// while holding PathWatcherManager.mutex.
+    /// removes the path from the file_paths map, frees the path string, and returns
+    /// the hash. The caller must call `main_watcher.remove(hash)` **after** releasing
+    /// the manager mutex to avoid lock ordering inversion.
+    ///
+    /// The path string can be freed immediately because the Watcher now owns its own
+    /// cloned copy (clone_file_path=true), so it does not reference this allocation.
     fn _decrementPathRefNoLock(this: *PathWatcherManager, file_path: [:0]const u8) ?Watcher.HashType {
         if (this.file_paths.getEntry(file_path)) |entry| {
             var path = entry.value_ptr;
@@ -626,10 +627,12 @@ pub const PathWatcherManager = struct {
 
     // unregister is always called from main thread
     fn unregisterWatcher(this: *PathWatcherManager, watcher: *PathWatcher) void {
-        // Collect hashes that need to be removed from the Watcher. We must not
-        // call main_watcher.remove() while holding PathWatcherManager.mutex
-        // because that acquires Watcher.mutex, and the watcher thread acquires
-        // these locks in the opposite order (Watcher.mutex -> PathWatcherManager.mutex).
+        // Collect hashes that need to be removed from the Watcher after releasing
+        // the manager mutex. We must not call main_watcher.remove() while holding
+        // PathWatcherManager.mutex because that acquires Watcher.mutex, and the
+        // watcher thread acquires these locks in the opposite order.
+        // Path strings can be freed immediately in _decrementPathRefNoLock because
+        // the Watcher now owns its own cloned copies (clone_file_path=true).
         var sfb = std.heap.stackFallback(32 * @sizeOf(Watcher.HashType), bun.default_allocator);
         const sfb_alloc = sfb.get();
         var hashes: std.ArrayListUnmanaged(Watcher.HashType) = .{};

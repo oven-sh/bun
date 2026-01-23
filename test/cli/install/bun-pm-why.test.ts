@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDirWithFiles } from "harness";
 import { existsSync, mkdtempSync, realpathSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -463,6 +463,143 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
     } else {
       expect(true).toBe(true);
     }
+  });
+
+  it("should support JSON output with basic dependencies", async () => {
+    const testDir = tempDirWithFiles("why-json-basic", {
+      "package.json": JSON.stringify({
+        name: "json-test",
+        version: "1.0.0",
+        dependencies: {
+          lodash: "^4.17.21",
+        },
+      }),
+    });
+
+    spawnSync({
+      cmd: [bunExe(), "install", "--lockfile-only"],
+      cwd: testDir,
+      env: bunEnv,
+    });
+
+    const { stdout, exitCode } = spawnSync({
+      cmd: [bunExe(), ...cmd.split(" "), "lodash", "--json"],
+      cwd: testDir,
+      env: bunEnv,
+      stdout: "pipe",
+    });
+
+    expect(exitCode).toBe(0);
+    const output = stdout.toString();
+
+    // Normalize the JSON output for snapshot testing
+    const normalizedOutput = normalizeBunSnapshot(output, testDir);
+
+    // Parse to ensure it's valid JSON
+    const json = JSON.parse(normalizedOutput);
+    expect(Array.isArray(json)).toBe(true);
+    expect(json[0].name).toBe("json-test");
+
+    // Use normalized output for snapshot (different for each cmd)
+    if (cmd === "why") {
+      expect(normalizedOutput).toMatchInlineSnapshot(`
+"[
+  {
+    "name": "json-test",
+    "version": "0.0.1",
+    "path": "<dir>",
+    "private": false,
+    "dependencies": {
+      "lodash": {
+        "from": "^4.17.21",
+        "version": "4.17.21",
+        "resolved": "https://registry.npmjs.org/lodash/-/lodash-4.17.21.tgz",
+        "path": "<dir>/node_modules/lodash"
+      }
+    }
+  }
+]"
+`);
+    } else {
+      expect(normalizedOutput).toMatchInlineSnapshot(`
+"[
+  {
+    "name": "json-test",
+    "version": "0.0.1",
+    "path": "<dir>",
+    "private": false,
+    "dependencies": {
+      "lodash": {
+        "from": "^4.17.21",
+        "version": "4.17.21",
+        "resolved": "https://registry.npmjs.org/lodash/-/lodash-4.17.21.tgz",
+        "path": "<dir>/node_modules/lodash"
+      }
+    }
+  }
+]"
+`);
+    }
+  });
+
+  it("should handle JSON output with special characters", async () => {
+    const testDir = tempDirWithFiles("why-json-special", {
+      "package.json": JSON.stringify({
+        name: `test-"quotes"-and-'apostrophes'`,
+        version: "1.0.0",
+        dependencies: {
+          lodash: "^4.17.21",
+        },
+      }),
+    });
+
+    spawnSync({
+      cmd: [bunExe(), "install", "--lockfile-only"],
+      cwd: testDir,
+      env: bunEnv,
+    });
+
+    const { stdout, exitCode } = spawnSync({
+      cmd: [bunExe(), ...cmd.split(" "), "lodash", "--json"],
+      cwd: testDir,
+      env: bunEnv,
+      stdout: "pipe",
+    });
+
+    expect(exitCode).toBe(0);
+    // Should be valid JSON even with special characters
+    const json = JSON.parse(stdout.toString());
+    expect(json[0].name).toBe(`test-"quotes"-and-'apostrophes'`);
+  });
+
+  it("should handle JSON output for non-existent packages", async () => {
+    const testDir = tempDirWithFiles("why-json-missing", {
+      "package.json": JSON.stringify({
+        name: "test-missing",
+        version: "1.0.0",
+        dependencies: {
+          lodash: "^4.17.21",
+        },
+      }),
+    });
+
+    spawnSync({
+      cmd: [bunExe(), "install", "--lockfile-only"],
+      cwd: testDir,
+      env: bunEnv,
+    });
+
+    const { stdout, exitCode } = spawnSync({
+      cmd: [bunExe(), ...cmd.split(" "), "non-existent-pkg", "--json"],
+      cwd: testDir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    expect(exitCode).toBe(1);
+    const output = stdout.toString();
+    expect(output.trim()).toBe("[]");
   });
 
   it("should handle nested workspaces", async () => {

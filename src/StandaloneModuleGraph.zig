@@ -386,7 +386,12 @@ pub const StandaloneModuleGraph = struct {
                     if (entry_point_id == null) {
                         if (output_file.side == null or output_file.side.? == .server) {
                             if (output_file.output_kind == .@"entry-point") {
-                                entry_point_id = module_count;
+                                // When there are multiple entry points passed to the bundler (e.g., `bun build --compile app.js assets/*`),
+                                // we need to find the *main* entry point (entry_point_index == 0), not just any entry-point.
+                                // If entry_point_index is not set, we fall back to the first server-side entry-point found.
+                                if (output_file.entry_point_index == null or output_file.entry_point_index.? == 0) {
+                                    entry_point_id = module_count;
+                                }
                             }
                         }
                     }

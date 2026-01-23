@@ -2,8 +2,10 @@
 
 const Self = @This();
 
+const safety_checks = bun.Environment.isDebug or bun.Environment.enable_asan;
+
 #heap: *mimalloc.Heap,
-thread_id: std.Thread.Id,
+thread_id: if (safety_checks) std.Thread.Id else void,
 
 /// Uses the default thread-local heap. This type is zero-sized.
 ///
@@ -127,7 +129,7 @@ pub fn deinit(self: *Self) void {
 pub fn init() Self {
     return .{
         .#heap = mimalloc.mi_heap_new() orelse bun.outOfMemory(),
-        .thread_id = std.Thread.getCurrentId(),
+        .thread_id = if (safety_checks) std.Thread.getCurrentId() else {},
     };
 }
 
@@ -140,7 +142,7 @@ pub fn helpCatchMemoryIssues(self: Self) void {
 }
 
 fn assertThreadOwnership(self: Self) void {
-    if (bun.Environment.isDebug) {
+    if (comptime safety_checks) {
         const current_thread = std.Thread.getCurrentId();
         if (current_thread != self.thread_id) {
             std.debug.panic(

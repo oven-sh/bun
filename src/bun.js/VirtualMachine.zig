@@ -49,6 +49,7 @@ standalone_module_graph: ?*bun.StandaloneModuleGraph = null,
 smol: bool = false,
 dns_result_order: DNSResolver.Order = .verbatim,
 cpu_profiler_config: ?CPUProfilerConfig = null,
+heap_profiler_config: ?HeapProfilerConfig = null,
 counters: Counters = .{},
 
 hot_reload: bun.cli.Command.HotReload = .none,
@@ -840,6 +841,15 @@ pub fn onExit(this: *VirtualMachine) void {
         this.cpu_profiler_config = null;
         CPUProfiler.stopAndWriteProfile(this.jsc_vm, config) catch |err| {
             Output.err(err, "Failed to write CPU profile", .{});
+        };
+    }
+
+    // Write heap profile if profiling was enabled - do this after CPU profile but before shutdown
+    // Grab the config and null it out to make this idempotent
+    if (this.heap_profiler_config) |config| {
+        this.heap_profiler_config = null;
+        HeapProfiler.generateAndWriteProfile(this.jsc_vm, config) catch |err| {
+            Output.err(err, "Failed to write heap profile", .{});
         };
     }
 
@@ -3714,6 +3724,9 @@ const Allocator = std.mem.Allocator;
 
 const CPUProfiler = @import("./bindings/BunCPUProfiler.zig");
 const CPUProfilerConfig = CPUProfiler.CPUProfilerConfig;
+
+const HeapProfiler = @import("./bindings/BunHeapProfiler.zig");
+const HeapProfilerConfig = HeapProfiler.HeapProfilerConfig;
 
 const bun = @import("bun");
 const Async = bun.Async;

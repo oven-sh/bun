@@ -19,7 +19,8 @@ JSC_DECLARE_HOST_FUNCTION(jsFunction_stopCPUProfiler);
 JSC_DEFINE_HOST_FUNCTION(jsFunction_stopCPUProfiler, (JSGlobalObject * globalObject, CallFrame*))
 {
     auto& vm = globalObject->vm();
-    auto result = Bun::stopCPUProfilerAndGetJSON(vm);
+    WTF::String result;
+    Bun::stopCPUProfiler(vm, &result, nullptr);
     return JSValue::encode(jsString(vm, result));
 }
 

@@ -260,8 +260,9 @@ const FormDataContext = struct {
 
                             switch (res) {
                                 .err => |err| {
-                                    globalThis.throwValue(err.toJS(globalThis)) catch {};
                                     this.failed = true;
+                                    const js_err = err.toJS(globalThis) catch return;
+                                    globalThis.throwValue(js_err) catch {};
                                 },
                                 .result => |result| {
                                     joiner.push(result.slice(), result.buffer.allocator);
@@ -1612,7 +1613,7 @@ fn writeStringToFileFast(
 
                 return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(
                     globalThis,
-                    err.withPath(pathlike.path.slice()).toJS(globalThis),
+                    err.withPath(pathlike.path.slice()).toJS(globalThis) catch return .zero,
                 );
             },
         }
@@ -1653,11 +1654,11 @@ fn writeStringToFileFast(
                         return .zero;
                     }
                     if (comptime !needs_open) {
-                        return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJS(globalThis));
+                        return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJS(globalThis) catch return .zero);
                     }
                     return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(
                         globalThis,
-                        err.withPath(pathlike.path.slice()).toJS(globalThis),
+                        err.withPath(pathlike.path.slice()).toJS(globalThis) catch return .zero,
                     );
                 },
             }
@@ -1699,7 +1700,7 @@ fn writeBytesToFileFast(
 
                 return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(
                     globalThis,
-                    err.withPath(pathlike.path.slice()).toJS(globalThis),
+                    err.withPath(pathlike.path.slice()).toJS(globalThis) catch return .zero,
                 );
             },
         }
@@ -1732,12 +1733,12 @@ fn writeBytesToFileFast(
                 if (comptime !needs_open) {
                     return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(
                         globalThis,
-                        err.toJS(globalThis),
+                        err.toJS(globalThis) catch return .zero,
                     );
                 }
                 return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(
                     globalThis,
-                    err.withPath(pathlike.path.slice()).toJS(globalThis),
+                    err.withPath(pathlike.path.slice()).toJS(globalThis) catch return .zero,
                 );
             },
         }
@@ -2471,7 +2472,7 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, re
                         break :brk result;
                     },
                     .err => |err| {
-                        return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.withPath(path).toJS(globalThis));
+                        return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, try err.withPath(path).toJS(globalThis));
                     },
                 }
                 unreachable;
@@ -2504,7 +2505,7 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, re
                 switch (sink.writer.startSync(fd, false)) {
                     .err => |err| {
                         sink.deref();
-                        return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJS(globalThis));
+                        return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, try err.toJS(globalThis));
                     },
                     else => {},
                 }
@@ -2512,7 +2513,7 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, re
                 switch (sink.writer.start(fd, true)) {
                     .err => |err| {
                         sink.deref();
-                        return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJS(globalThis));
+                        return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, try err.toJS(globalThis));
                     },
                     else => {},
                 }
@@ -2546,7 +2547,7 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, re
         switch (sink.start(stream_start)) {
             .err => |err| {
                 sink.deref();
-                return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJS(globalThis));
+                return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, try err.toJS(globalThis));
             },
             else => {},
         }
@@ -2733,7 +2734,7 @@ pub fn getWriter(
                     break :brk result;
                 },
                 .err => |err| {
-                    return globalThis.throwValue(err.withPath(pathlike.path.slice()).toJS(globalThis));
+                    return globalThis.throwValue(try err.withPath(pathlike.path.slice()).toJS(globalThis));
                 },
             }
             @compileError("unreachable");
@@ -2766,7 +2767,7 @@ pub fn getWriter(
             switch (sink.writer.startSync(fd, false)) {
                 .err => |err| {
                     sink.deref();
-                    return globalThis.throwValue(err.toJS(globalThis));
+                    return globalThis.throwValue(try err.toJS(globalThis));
                 },
                 else => {},
             }
@@ -2774,7 +2775,7 @@ pub fn getWriter(
             switch (sink.writer.start(fd, true)) {
                 .err => |err| {
                     sink.deref();
-                    return globalThis.throwValue(err.toJS(globalThis));
+                    return globalThis.throwValue(try err.toJS(globalThis));
                 },
                 else => {},
             }
@@ -2813,7 +2814,7 @@ pub fn getWriter(
     switch (sink.start(stream_start)) {
         .err => |err| {
             sink.deref();
-            return globalThis.throwValue(err.toJS(globalThis));
+            return globalThis.throwValue(try err.toJS(globalThis));
         },
         else => {},
     }
@@ -2991,7 +2992,7 @@ pub fn getName(
     this: *Blob,
     _: jsc.JSValue,
     globalThis: *jsc.JSGlobalObject,
-) JSValue {
+) bun.JSError!JSValue {
     return if (this.getNameString()) |name| name.toJS(globalThis) else .js_undefined;
 }
 
@@ -4304,7 +4305,7 @@ pub const Any = union(enum) {
                     return ZigString.Empty.toJS(global);
                 }
 
-                const owned = this.InternalBlob.toStringOwned(global);
+                const owned = try this.InternalBlob.toStringOwned(global);
                 this.* = .{ .Blob = .{} };
                 return owned;
             },
@@ -4313,7 +4314,7 @@ pub const Any = union(enum) {
                 defer str.deref();
                 this.* = .{ .Blob = .{} };
 
-                return str.toJS(global);
+                return try str.toJS(global);
             },
         }
     }
@@ -4460,7 +4461,7 @@ pub const Internal = struct {
         return this.bytes.capacity;
     }
 
-    pub fn toStringOwned(this: *@This(), globalThis: *jsc.JSGlobalObject) JSValue {
+    pub fn toStringOwned(this: *@This(), globalThis: *jsc.JSGlobalObject) bun.JSError!JSValue {
         const bytes_without_bom = strings.withoutUTF8BOM(this.bytes.items);
         if (strings.toUTF16Alloc(bun.default_allocator, bytes_without_bom, false, false) catch &[_]u16{}) |out| {
             const return_value = ZigString.toExternalU16(out.ptr, out.len, globalThis);

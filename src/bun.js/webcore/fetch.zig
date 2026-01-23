@@ -1117,7 +1117,7 @@ fn fetchImpl(
 
             const opened_fd = switch (opened_fd_res) {
                 .err => |err| {
-                    const rejected_value = JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJS(globalThis));
+                    const rejected_value = JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJS(globalThis) catch return .zero);
                     is_error = true;
                     return rejected_value;
                 },
@@ -1189,7 +1189,7 @@ fn fetchImpl(
             switch (res) {
                 .err => |err| {
                     is_error = true;
-                    const rejected_value = JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJS(globalThis));
+                    const rejected_value = JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJS(globalThis) catch return .zero);
                     body.detach();
 
                     return rejected_value;

@@ -215,6 +215,13 @@ pub const Runtime = struct {
         /// When `feature("FLAG_NAME")` is called, it returns true if FLAG_NAME is in this set.
         bundler_feature_flags: *const bun.StringSet = &empty_bundler_feature_flags,
 
+        /// REPL mode: transforms code for interactive evaluation
+        /// - Wraps lone object literals `{...}` in parentheses
+        /// - Hoists variable declarations for REPL persistence
+        /// - Wraps last expression in { value: expr } for result capture
+        /// - Assigns functions to context for persistence
+        repl_mode: bool = false,
+
         pub const empty_bundler_feature_flags: bun.StringSet = bun.StringSet.initComptime();
 
         /// Initialize bundler feature flags for dead-code elimination via `import { feature } from "bun:bundle"`.

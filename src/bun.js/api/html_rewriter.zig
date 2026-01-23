@@ -1106,8 +1106,8 @@ fn createLOLHTMLStringError() bun.String {
     return bun.String.cloneUTF8(err.slice());
 }
 
-fn htmlStringValue(input: LOLHTML.HTMLString, globalObject: *JSGlobalObject) JSValue {
-    return input.toJS(globalObject);
+fn htmlStringValue(input: LOLHTML.HTMLString, globalObject: *JSGlobalObject) bun.JSError!JSValue {
+    return try input.toJS(globalObject);
 }
 
 pub const TextChunk = struct {
@@ -1446,10 +1446,10 @@ pub const Comment = struct {
     pub fn getText(
         this: *Comment,
         globalObject: *JSGlobalObject,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         if (this.comment == null)
             return JSValue.jsNull();
-        return this.comment.?.getText().toJS(globalObject);
+        return try this.comment.?.getText().toJS(globalObject);
     }
 
     pub fn setText(
@@ -1594,11 +1594,11 @@ pub const EndTag = struct {
     pub fn getName(
         this: *EndTag,
         globalObject: *JSGlobalObject,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         if (this.end_tag == null)
             return .js_undefined;
 
-        return this.end_tag.?.getName().toJS(globalObject);
+        return try this.end_tag.?.getName().toJS(globalObject);
     }
 
     pub fn setName(
@@ -1740,7 +1740,7 @@ pub const Element = struct {
     //     // fn wrap(comptime name: string)
 
     ///  Returns the value for a given attribute name: ZigString on the element, or null if it is not found.
-    pub fn getAttribute_(this: *Element, globalObject: *JSGlobalObject, name: ZigString) JSValue {
+    pub fn getAttribute_(this: *Element, globalObject: *JSGlobalObject, name: ZigString) bun.JSError!JSValue {
         if (this.element == null)
             return JSValue.jsNull();
 
@@ -1751,7 +1751,7 @@ pub const Element = struct {
         if (attr.len == 0)
             return JSValue.jsNull();
 
-        return attr.toJS(globalObject);
+        return try attr.toJS(globalObject);
     }
 
     /// Returns a boolean indicating whether an attribute exists on the element.
@@ -1911,11 +1911,11 @@ pub const Element = struct {
         return callFrame.this();
     }
 
-    pub fn getTagName(this: *Element, globalObject: *JSGlobalObject) JSValue {
+    pub fn getTagName(this: *Element, globalObject: *JSGlobalObject) bun.JSError!JSValue {
         if (this.element == null)
             return .js_undefined;
 
-        return htmlStringValue(this.element.?.tagName(), globalObject);
+        return try htmlStringValue(this.element.?.tagName(), globalObject);
     }
 
     pub fn setTagName(this: *Element, global: *JSGlobalObject, value: JSValue) JSError!void {

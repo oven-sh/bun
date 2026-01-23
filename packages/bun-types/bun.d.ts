@@ -1745,6 +1745,17 @@ declare module "bun" {
      * @default "warn"
      */
     logLevel?: "verbose" | "debug" | "info" | "warn" | "error";
+
+    /**
+     * Enable REPL mode transforms:
+     * - Wraps top-level inputs that appear to be object literals (inputs starting with '{' without trailing ';') in parentheses
+     * - Hoists all declarations as var for REPL persistence across vm.runInContext calls
+     * - Wraps last expression in { __proto__: null, value: expr } for result capture
+     * - Wraps code in sync/async IIFE to avoid parentheses around object literals
+     *
+     * @default false
+     */
+    replMode?: boolean;
   }
 
   /**
@@ -1851,7 +1862,7 @@ declare module "bun" {
     type Architecture = "x64" | "arm64";
     type Libc = "glibc" | "musl";
     type SIMD = "baseline" | "modern";
-    type Target =
+    type CompileTarget =
       | `bun-darwin-${Architecture}`
       | `bun-darwin-x64-${SIMD}`
       | `bun-linux-${Architecture}`
@@ -2193,7 +2204,7 @@ declare module "bun" {
   }
 
   interface CompileBuildOptions {
-    target?: Bun.Build.Target;
+    target?: Bun.Build.CompileTarget;
     execArgv?: string[];
     executablePath?: string;
     outfile?: string;
@@ -2275,7 +2286,7 @@ declare module "bun" {
      * });
      * ```
      */
-    compile: boolean | Bun.Build.Target | CompileBuildOptions;
+    compile: boolean | Bun.Build.CompileTarget | CompileBuildOptions;
 
     /**
      * Splitting is not currently supported with `.compile`

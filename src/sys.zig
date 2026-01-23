@@ -744,10 +744,11 @@ pub fn fstatat(fd: bun.FileDescriptor, path: [:0]const u8) Maybe(bun.Stat) {
     return Maybe(bun.Stat){ .result = stat_buf };
 }
 
-/// Like fstatat but does not follow symlinks (uses AT_SYMLINK_NOFOLLOW)
+/// Like fstatat but does not follow symlinks (uses AT.SYMLINK_NOFOLLOW).
+/// This is the "at" equivalent of lstat.
 pub fn lstatat(fd: bun.FileDescriptor, path: [:0]const u8) Maybe(bun.Stat) {
     if (Environment.isWindows) {
-        // On Windows, use O.NOFOLLOW to get lstat behavior (prevents following symlinks)
+        // Use O.NOFOLLOW to not follow symlinks (FILE_OPEN_REPARSE_POINT on Windows)
         return switch (openatWindowsA(fd, path, O.NOFOLLOW, 0)) {
             .result => |file| {
                 defer file.close();

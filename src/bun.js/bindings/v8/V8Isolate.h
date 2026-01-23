@@ -17,12 +17,12 @@ class GlobalInternals;
 // they need to have the correct layout.
 class Isolate final {
 public:
-    // v8-internal.h:775
-    static constexpr int kUndefinedValueRootIndex = 4;
-    static constexpr int kTheHoleValueRootIndex = 5;
-    static constexpr int kNullValueRootIndex = 6;
-    static constexpr int kTrueValueRootIndex = 7;
-    static constexpr int kFalseValueRootIndex = 8;
+    // v8-internal.h:1057
+    static constexpr int kUndefinedValueRootIndex = 0;
+    static constexpr int kTheHoleValueRootIndex = 1;
+    static constexpr int kNullValueRootIndex = 2;
+    static constexpr int kTrueValueRootIndex = 3;
+    static constexpr int kFalseValueRootIndex = 4;
 
     Isolate(shim::GlobalInternals* globalInternals);
 
@@ -50,9 +50,9 @@ public:
     shim::GlobalInternals* m_globalInternals;
     Zig::GlobalObject* m_globalObject;
 
-    uintptr_t m_padding[78];
+    uintptr_t m_padding[79];
 
-    std::array<TaggedPointer, 9> m_roots;
+    std::array<TaggedPointer, 6> m_roots;
 };
 
 } // namespace v8

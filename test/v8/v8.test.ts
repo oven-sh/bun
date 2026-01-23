@@ -21,7 +21,7 @@ enum BuildMode {
 delete bunEnv.CC;
 delete bunEnv.CXX;
 
-// Node.js 24.3.0 requires C++20
+// Node.js 25.3.0 requires C++20
 bunEnv.CXXFLAGS ??= "";
 if (process.platform == "darwin") {
   bunEnv.CXXFLAGS += " -std=gnu++20";

@@ -1,7 +1,7 @@
 // Hardcoded module "sqlite"
 import type * as SqliteTypes from "bun:sqlite";
 
-type SQLBindable = number | string | bigint | null | boolean | Uint8Array | object | any[];
+type SQLBindable = number | string | bigint | null | boolean | Uint8Array<ArrayBuffer> | object | any[];
 
 const kSafeIntegersFlag = 1 << 1;
 const kStrictFlag = 1 << 2;

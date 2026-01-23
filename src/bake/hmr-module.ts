@@ -269,8 +269,35 @@ HMRModule.prototype.indirectHot = new Proxy({}, {
   },
 });
 
+// Deferred callback execution for handling circular dependencies.
+// When loading modules recursively, we defer callback execution until all modules
+// in the import tree are created. This ensures that when a module's callback runs,
+// all its dependencies (including circular ones) have at least been initialized.
+let loadDepth = 0;
+const pendingCallbacks: Array<() => void> = [];
+
+function runPendingCallbacks() {
+  // Execute callbacks in FIFO order (which means dependencies first due to DFS)
+  while (pendingCallbacks.length > 0) {
+    const callback = pendingCallbacks.shift()!;
+    callback();
+  }
+}
+
 // TODO: This function is currently recursive.
 export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModule | null): HMRModule {
+  loadDepth++;
+  try {
+    return loadModuleSyncInner(id, isUserDynamic, importer);
+  } finally {
+    loadDepth--;
+    if (loadDepth === 0) {
+      runPendingCallbacks();
+    }
+  }
+}
+
+function loadModuleSyncInner(id: Id, isUserDynamic: boolean, importer: HMRModule | null): HMRModule {
   // First, try and re-use an existing module.
   let mod = registry.get(id);
   if (mod) {
@@ -305,15 +332,19 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
     if (importer) {
       mod.importers.add(importer);
     }
-    try {
-      const cjs = mod.cjs;
-      loadOrEsmModule(mod, cjs, cjs.exports);
-    } catch (e) {
-      mod.state = State.Stale;
-      mod.cjs.exports = {};
-      throw e;
-    }
-    mod.state = State.Loaded;
+    // Defer CJS callback execution to handle circular dependencies
+    const cjs = mod.cjs;
+    const cjsMod = mod;
+    pendingCallbacks.push(() => {
+      try {
+        loadOrEsmModule(cjsMod, cjs, cjs.exports);
+        cjsMod.state = State.Loaded;
+      } catch (e) {
+        cjsMod.state = State.Error;
+        cjsMod.failure = e;
+        cjsMod.cjs.exports = {};
+      }
+    });
   } else {
     // ESM
     if (IS_BUN_DEVELOPMENT) {
@@ -334,24 +365,34 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
     }
     if (!mod) {
       mod = new HMRModule(id, false);
+      mod.exports = {}; // Pre-create namespace object for circular dependency support
       registry.set(id, mod);
     } else if (!mod.esm) {
       mod.esm = true;
       mod.cjs = null;
-      mod.exports = null;
+      mod.exports = {}; // Pre-create namespace object for circular dependency support
     }
     if (importer) {
       mod.importers.add(importer);
     }
 
-    const { list: depsList } = parseEsmDependencies(mod, deps, loadModuleSync);
+    const { list: depsList } = parseEsmDependencies(mod, deps, loadModuleSyncInner);
+    // Defer ESM callback execution to handle circular dependencies
+    const esmMod = mod;
     const exportsBefore = mod.exports;
-    mod.imports = depsList.map(getEsmExports);
-    load(mod);
-    mod.imports = depsList;
-    if (mod.exports === exportsBefore) mod.exports = {};
-    mod.cjs = null;
-    mod.state = State.Loaded;
+    pendingCallbacks.push(() => {
+      try {
+        esmMod.imports = depsList.map(getEsmExports);
+        load(esmMod);
+        esmMod.imports = depsList;
+        if (esmMod.exports === exportsBefore) esmMod.exports = {};
+        esmMod.cjs = null;
+        esmMod.state = State.Loaded;
+      } catch (e) {
+        esmMod.state = State.Error;
+        esmMod.failure = e;
+      }
+    });
   }
 
   return mod;
@@ -363,6 +404,22 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
 // can use the `import` keyword instead.
 // TODO: This function is currently recursive.
 export function loadModuleAsync<IsUserDynamic extends boolean>(
+  id: Id,
+  isUserDynamic: IsUserDynamic,
+  importer: HMRModule | null,
+): (IsUserDynamic extends true ? null : never) | Promise<HMRModule> | HMRModule {
+  loadDepth++;
+  try {
+    return loadModuleAsyncInner(id, isUserDynamic, importer);
+  } finally {
+    loadDepth--;
+    if (loadDepth === 0) {
+      runPendingCallbacks();
+    }
+  }
+}
+
+function loadModuleAsyncInner<IsUserDynamic extends boolean>(
   id: Id,
   isUserDynamic: IsUserDynamic,
   importer: HMRModule | null,
@@ -405,15 +462,19 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
     if (importer) {
       mod.importers.add(importer);
     }
-    try {
-      const cjs = mod.cjs;
-      loadOrEsmModule(mod, cjs, cjs.exports);
-    } catch (e) {
-      mod.state = State.Stale;
-      mod.cjs.exports = {};
-      throw e;
-    }
-    mod.state = State.Loaded;
+    // Defer CJS callback execution
+    const cjs = mod.cjs;
+    const cjsMod = mod;
+    pendingCallbacks.push(() => {
+      try {
+        loadOrEsmModule(cjsMod, cjs, cjs.exports);
+        cjsMod.state = State.Loaded;
+      } catch (e) {
+        cjsMod.state = State.Error;
+        cjsMod.failure = e;
+        cjsMod.cjs.exports = {};
+      }
+    });
     return mod;
   } else {
     // ESM
@@ -433,67 +494,100 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
 
     if (!mod) {
       mod = new HMRModule(id, false);
+      mod.exports = {}; // Pre-create namespace object for circular dependency support
       registry.set(id, mod);
     } else if (!mod.esm) {
       mod.esm = true;
-      mod.exports = null;
+      mod.exports = {}; // Pre-create namespace object for circular dependency support
       mod.cjs = null;
     }
     if (importer) {
       mod.importers.add(importer);
     }
 
-    const { list, isAsync } = parseEsmDependencies(mod, deps, loadModuleAsync<false>);
+    const { list, isAsync } = parseEsmDependencies(mod, deps, loadModuleAsyncInner<false>);
     DEBUG.ASSERT(
       isAsync //
         ? list.some(x => x instanceof Promise)
         : list.every(x => x instanceof HMRModule),
     );
 
-    // Running finishLoadModuleAsync synchronously when there are no promises is
-    // not a performance optimization but a behavioral correctness issue.
-    return isAsync
-      ? Promise.all(list).then(
-          list => finishLoadModuleAsync(mod, load, list),
-          e => {
-            mod.state = State.Error;
-            mod.failure = e;
-            throw e;
-          },
-        )
-      : finishLoadModuleAsync(
-          mod,
-          load,
-          list as HMRModule[], // no promises as by assert above
-        );
-  }
-}
-
-function finishLoadModuleAsync(mod: HMRModule, load: UnloadedESM[3], modules: HMRModule[]) {
-  try {
-    const exportsBefore = mod.exports;
-    mod.imports = modules.map(getEsmExports);
-    const shouldPatchImporters = !mod.selfAccept || mod.selfAccept === implicitAcceptFunction;
-    const p = load(mod);
-    mod.imports = modules;
-    if (p) {
-      return p.then(() => {
-        mod.state = State.Loaded;
-        if (mod.exports === exportsBefore) mod.exports = {};
-        mod.cjs = null;
-        if (shouldPatchImporters) patchImporters(mod);
-        return mod;
-      });
+    // For async dependencies, we need to wait for them before deferring the callback
+    if (isAsync) {
+      return Promise.all(list).then(
+        modules => {
+          // Defer callback execution
+          const esmMod = mod;
+          const exportsBefore = mod.exports;
+          pendingCallbacks.push(() => {
+            try {
+              esmMod.imports = modules.map(getEsmExports);
+              const shouldPatchImporters = !esmMod.selfAccept || esmMod.selfAccept === implicitAcceptFunction;
+              const p = load(esmMod);
+              esmMod.imports = modules;
+              if (p) {
+                // If the load returns a promise, we can't defer further
+                // This is an edge case that shouldn't happen often
+                return p.then(() => {
+                  esmMod.state = State.Loaded;
+                  if (esmMod.exports === exportsBefore) esmMod.exports = {};
+                  esmMod.cjs = null;
+                  if (shouldPatchImporters) patchImporters(esmMod);
+                  return esmMod;
+                });
+              }
+              if (esmMod.exports === exportsBefore) esmMod.exports = {};
+              esmMod.cjs = null;
+              if (shouldPatchImporters) patchImporters(esmMod);
+              esmMod.state = State.Loaded;
+            } catch (e) {
+              esmMod.state = State.Error;
+              esmMod.failure = e;
+            }
+          });
+          return mod;
+        },
+        e => {
+          mod.state = State.Error;
+          mod.failure = e;
+          throw e;
+        },
+      );
     }
-    if (mod.exports === exportsBefore) mod.exports = {};
-    mod.cjs = null;
-    if (shouldPatchImporters) patchImporters(mod);
-    mod.state = State.Loaded;
+
+    // For sync dependencies, defer callback execution
+    const esmMod = mod;
+    const exportsBefore = mod.exports;
+    const modules = list as HMRModule[];
+    pendingCallbacks.push(() => {
+      try {
+        esmMod.imports = modules.map(getEsmExports);
+        const shouldPatchImporters = !esmMod.selfAccept || esmMod.selfAccept === implicitAcceptFunction;
+        const p = load(esmMod);
+        esmMod.imports = modules;
+        if (p) {
+          // Handle async load
+          p.then(() => {
+            esmMod.state = State.Loaded;
+            if (esmMod.exports === exportsBefore) esmMod.exports = {};
+            esmMod.cjs = null;
+            if (shouldPatchImporters) patchImporters(esmMod);
+          }).catch(e => {
+            esmMod.state = State.Error;
+            esmMod.failure = e;
+          });
+          return;
+        }
+        if (esmMod.exports === exportsBefore) esmMod.exports = {};
+        esmMod.cjs = null;
+        if (shouldPatchImporters) patchImporters(esmMod);
+        esmMod.state = State.Loaded;
+      } catch (e) {
+        esmMod.state = State.Error;
+        esmMod.failure = e;
+      }
+    });
     return mod;
-  } catch (e) {
-    mod.state = State.Error;
-    mod.failure = e;
-    throw e;
   }
 }
 

@@ -2,7 +2,7 @@
 // These globals are used by JSC stress tests but are not available in Bun.
 
 // noInline: hints JSC to not inline the function. No-op in Bun.
-globalThis.noInline = function (fn) {};
+globalThis.noInline = require("bun:jsc").noInline;
 
 // testLoopCount: iteration count to trigger JIT tier-up (Baseline -> DFG -> FTL).
 globalThis.testLoopCount = 10000;

@@ -161,16 +161,16 @@ static void us_internal_init_root_certs(
       root_extra_cert_instances = us_ssl_ctx_load_all_certs_from_file(extra_certs);
     }
 
-    // load system certificates if NODE_USE_SYSTEM_CA=1
-    if (us_should_use_system_ca()) {
+    // Always load system certificates so getCACertificates('system') works
+    // regardless of NODE_USE_SYSTEM_CA flag. The flag only controls whether
+    // system certs are included in the 'default' certificate list.
 #ifdef __APPLE__
-      us_load_system_certificates_macos(&root_system_cert_instances);
+    us_load_system_certificates_macos(&root_system_cert_instances);
 #elif defined(_WIN32)
-      us_load_system_certificates_windows(&root_system_cert_instances);
+    us_load_system_certificates_windows(&root_system_cert_instances);
 #else
-      us_load_system_certificates_linux(&root_system_cert_instances);
+    us_load_system_certificates_linux(&root_system_cert_instances);
 #endif
-    }
   }
 
   atomic_flag_clear_explicit(&root_cert_instances_lock,

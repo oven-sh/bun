@@ -33,15 +33,18 @@ describe("HTTP/2 premature close bug", () => {
       });
 
       // Send data rapidly
+      const chunk = Buffer.alloc(messageSize, 0x41);
       for (let i = 0; i < messageCount; i++) {
-        stream.write(Buffer.alloc(messageSize, 0x41));
+        stream.write(chunk);
       }
 
       // Close immediately
       stream.end();
     });
 
-    await new Promise<void>(resolve => server.listen(0, resolve));
+    const { promise: listenPromise, resolve: listenResolve } = Promise.withResolvers<void>();
+    server.listen(0, listenResolve);
+    await listenPromise;
     const port = (server.address() as any).port;
 
     const client = http2.connect(`http://localhost:${port}`);
@@ -67,7 +70,9 @@ describe("HTTP/2 premature close bug", () => {
     });
 
     client.close();
-    await new Promise<void>(res => server.close(() => res()));
+    const { promise: closePromise, resolve: closeResolve } = Promise.withResolvers<void>();
+    server.close(() => closeResolve());
+    await closePromise;
 
     // Should receive all data without errors
     expect(error).toBeNull();

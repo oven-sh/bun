@@ -277,12 +277,12 @@ pub const Run = struct {
         vm.onUnhandledRejection = &onUnhandledRejectionBeforeClose;
 
         // Start CPU profiler if enabled
-        if (this.ctx.runtime_options.cpu_prof.enabled or bun.env_var.BUN_CPU_PROFILE.get()) {
+        if (this.ctx.runtime_options.cpu_prof.enabled) {
             const cpu_prof_opts = this.ctx.runtime_options.cpu_prof;
 
             vm.cpu_profiler_config = CPUProfiler.CPUProfilerConfig{
-                .name = if (cpu_prof_opts.name.len > 0) cpu_prof_opts.name else bun.env_var.BUN_CPU_PROFILE_NAME.get() orelse "",
-                .dir = if (cpu_prof_opts.dir.len > 0) cpu_prof_opts.dir else bun.env_var.BUN_CPU_PROFILE_DIR.get() orelse "",
+                .name = cpu_prof_opts.name,
+                .dir = cpu_prof_opts.dir,
                 .md_format = cpu_prof_opts.md_format,
                 .json_format = cpu_prof_opts.json_format,
             };

@@ -694,22 +694,25 @@ pub const Command = struct {
                 var offset_for_passthrough: usize = 0;
 
                 const ctx: *ContextData = brk: {
-                    if (graph.compile_exec_argv.len > 0) {
+                    if (graph.compile_exec_argv.len > 0 or bun.bun_options_argc > 0) {
                         const original_argv_len = bun.argv.len;
                         var argv_list = std.array_list.Managed([:0]const u8).fromOwnedSlice(bun.default_allocator, bun.argv);
-                        try bun.appendOptionsEnv(graph.compile_exec_argv, &argv_list, bun.default_allocator);
+                        if (graph.compile_exec_argv.len > 0) {
+                            try bun.appendOptionsEnv(graph.compile_exec_argv, [:0]const u8, &argv_list);
+                        }
 
                         // Store the full argv including user arguments
                         const full_argv = argv_list.items;
                         const num_exec_argv_options = full_argv.len -| original_argv_len;
 
-                        // Calculate offset: skip executable name + all exec argv options
-                        offset_for_passthrough = if (full_argv.len > 1) 1 + num_exec_argv_options else 0;
+                        // Calculate offset: skip executable name + all exec argv options + BUN_OPTIONS args
+                        const num_parsed_options = num_exec_argv_options + bun.bun_options_argc;
+                        offset_for_passthrough = if (full_argv.len > 1) 1 + num_parsed_options else 0;
 
-                        // Temporarily set bun.argv to only include executable name + exec_argv options.
+                        // Temporarily set bun.argv to only include executable name + exec_argv options + BUN_OPTIONS args.
                         // This prevents user arguments like --version/--help from being intercepted
                         // by Bun's argument parser (they should be passed through to user code).
-                        bun.argv = full_argv[0..@min(1 + num_exec_argv_options, full_argv.len)];
+                        bun.argv = full_argv[0..@min(1 + num_parsed_options, full_argv.len)];
 
                         // Handle actual options to parse.
                         const result = try Command.init(allocator, log, .AutoCommand);

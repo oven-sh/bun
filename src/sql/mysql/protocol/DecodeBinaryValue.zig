@@ -1,4 +1,9 @@
-pub fn decodeBinaryValue(globalObject: *jsc.JSGlobalObject, field_type: types.FieldType, column_length: u32, raw: bool, bigint: bool, unsigned: bool, comptime Context: type, reader: NewReader(Context)) !SQLDataCell {
+/// MySQL's "binary" pseudo-charset ID. Columns with this character_set value
+/// are true binary types (BINARY, VARBINARY, BLOB), as opposed to string columns
+/// with binary collations (e.g., utf8mb4_bin) which have different character_set values.
+pub const binary_charset: u16 = 63;
+
+pub fn decodeBinaryValue(globalObject: *jsc.JSGlobalObject, field_type: types.FieldType, column_length: u32, raw: bool, bigint: bool, unsigned: bool, binary: bool, character_set: u16, comptime Context: type, reader: NewReader(Context)) !SQLDataCell {
     debug("decodeBinaryValue: {s}", .{@tagName(field_type)});
     return switch (field_type) {
         .MYSQL_TYPE_TINY => {
@@ -131,6 +136,7 @@ pub fn decodeBinaryValue(globalObject: *jsc.JSGlobalObject, field_type: types.Fi
             else => error.InvalidBinaryValue,
         },
 
+        // When the column contains a binary string we return a Buffer otherwise a string
         .MYSQL_TYPE_ENUM,
         .MYSQL_TYPE_SET,
         .MYSQL_TYPE_GEOMETRY,
@@ -138,7 +144,6 @@ pub fn decodeBinaryValue(globalObject: *jsc.JSGlobalObject, field_type: types.Fi
         .MYSQL_TYPE_STRING,
         .MYSQL_TYPE_VARCHAR,
         .MYSQL_TYPE_VAR_STRING,
-        // We could return Buffer here BUT TEXT, LONGTEXT, MEDIUMTEXT, TINYTEXT, etc. are BLOB and the user expects a string
         .MYSQL_TYPE_TINY_BLOB,
         .MYSQL_TYPE_MEDIUM_BLOB,
         .MYSQL_TYPE_LONG_BLOB,
@@ -151,7 +156,13 @@ pub fn decodeBinaryValue(globalObject: *jsc.JSGlobalObject, field_type: types.Fi
             }
             var string_data = try reader.encodeLenString();
             defer string_data.deinit();
-
+            // Only treat as binary if character_set indicates the binary pseudo-charset.
+            // The BINARY flag alone is insufficient because VARCHAR/CHAR columns
+            // with _bin collations (e.g., utf8mb4_bin) also have the BINARY flag set,
+            // but should return strings, not buffers.
+            if (binary and character_set == binary_charset) {
+                return SQLDataCell.raw(&string_data);
+            }
             const slice = string_data.slice();
             return SQLDataCell{ .tag = .string, .value = .{ .string = if (slice.len > 0) bun.String.cloneUTF8(slice).value.WTFStringImpl else null }, .free_value = 1 };
         },

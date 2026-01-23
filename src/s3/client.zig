@@ -26,12 +26,14 @@ pub fn stat(
     callback: *const fn (S3StatResult, *anyopaque) bun.JSTerminated!void,
     callback_context: *anyopaque,
     proxy_url: ?[]const u8,
+    request_payer: bool,
 ) bun.JSTerminated!void {
     try S3SimpleRequest.executeSimpleS3Request(this, .{
         .path = path,
         .method = .HEAD,
         .proxy_url = proxy_url,
         .body = "",
+        .request_payer = request_payer,
     }, .{ .stat = callback }, callback_context);
 }
 
@@ -41,12 +43,14 @@ pub fn download(
     callback: *const fn (S3DownloadResult, *anyopaque) bun.JSTerminated!void,
     callback_context: *anyopaque,
     proxy_url: ?[]const u8,
+    request_payer: bool,
 ) bun.JSTerminated!void {
     try S3SimpleRequest.executeSimpleS3Request(this, .{
         .path = path,
         .method = .GET,
         .proxy_url = proxy_url,
         .body = "",
+        .request_payer = request_payer,
     }, .{ .download = callback }, callback_context);
 }
 
@@ -58,6 +62,7 @@ pub fn downloadSlice(
     callback: *const fn (S3DownloadResult, *anyopaque) bun.JSTerminated!void,
     callback_context: *anyopaque,
     proxy_url: ?[]const u8,
+    request_payer: bool,
 ) bun.JSTerminated!void {
     const range = brk: {
         if (size) |size_| {
@@ -77,6 +82,7 @@ pub fn downloadSlice(
         .proxy_url = proxy_url,
         .body = "",
         .range = range,
+        .request_payer = request_payer,
     }, .{ .download = callback }, callback_context);
 }
 
@@ -86,12 +92,14 @@ pub fn delete(
     callback: *const fn (S3DeleteResult, *anyopaque) bun.JSTerminated!void,
     callback_context: *anyopaque,
     proxy_url: ?[]const u8,
+    request_payer: bool,
 ) bun.JSTerminated!void {
     try S3SimpleRequest.executeSimpleS3Request(this, .{
         .path = path,
         .method = .DELETE,
         .proxy_url = proxy_url,
         .body = "",
+        .request_payer = request_payer,
     }, .{ .delete = callback }, callback_context);
 }
 
@@ -229,9 +237,12 @@ pub fn upload(
     path: []const u8,
     content: []const u8,
     content_type: ?[]const u8,
+    content_disposition: ?[]const u8,
+    content_encoding: ?[]const u8,
     acl: ?ACL,
     proxy_url: ?[]const u8,
     storage_class: ?StorageClass,
+    request_payer: bool,
     callback: *const fn (S3UploadResult, *anyopaque) bun.JSTerminated!void,
     callback_context: *anyopaque,
 ) bun.JSTerminated!void {
@@ -241,8 +252,11 @@ pub fn upload(
         .proxy_url = proxy_url,
         .body = content,
         .content_type = content_type,
+        .content_disposition = content_disposition,
+        .content_encoding = content_encoding,
         .acl = acl,
         .storage_class = storage_class,
+        .request_payer = request_payer,
     }, .{ .upload = callback }, callback_context);
 }
 /// returns a writable stream that writes to the s3 path
@@ -252,8 +266,11 @@ pub fn writableStream(
     globalThis: *jsc.JSGlobalObject,
     options: MultiPartUploadOptions,
     content_type: ?[]const u8,
+    content_disposition: ?[]const u8,
+    content_encoding: ?[]const u8,
     proxy: ?[]const u8,
     storage_class: ?StorageClass,
+    request_payer: bool,
 ) bun.JSError!jsc.JSValue {
     const Wrapper = struct {
         pub fn callback(result: S3UploadResult, sink: *jsc.WebCore.NetworkSink) bun.JSTerminated!void {
@@ -295,7 +312,10 @@ pub fn writableStream(
         .path = bun.handleOom(bun.default_allocator.dupe(u8, path)),
         .proxy = if (proxy_url.len > 0) bun.handleOom(bun.default_allocator.dupe(u8, proxy_url)) else "",
         .content_type = if (content_type) |ct| bun.handleOom(bun.default_allocator.dupe(u8, ct)) else null,
+        .content_disposition = if (content_disposition) |cd| bun.handleOom(bun.default_allocator.dupe(u8, cd)) else null,
+        .content_encoding = if (content_encoding) |ce| bun.handleOom(bun.default_allocator.dupe(u8, ce)) else null,
         .storage_class = storage_class,
+        .request_payer = request_payer,
 
         .callback = @ptrCast(&Wrapper.callback),
         .callback_context = undefined,
@@ -434,7 +454,10 @@ pub fn uploadStream(
     acl: ?ACL,
     storage_class: ?StorageClass,
     content_type: ?[]const u8,
+    content_disposition: ?[]const u8,
+    content_encoding: ?[]const u8,
     proxy: ?[]const u8,
+    request_payer: bool,
     callback: ?*const fn (S3UploadResult, *anyopaque) void,
     callback_context: *anyopaque,
 ) bun.JSError!jsc.JSValue {
@@ -470,6 +493,8 @@ pub fn uploadStream(
         .path = bun.handleOom(bun.default_allocator.dupe(u8, path)),
         .proxy = if (proxy_url.len > 0) bun.handleOom(bun.default_allocator.dupe(u8, proxy_url)) else "",
         .content_type = if (content_type) |ct| bun.handleOom(bun.default_allocator.dupe(u8, ct)) else null,
+        .content_disposition = if (content_disposition) |cd| bun.handleOom(bun.default_allocator.dupe(u8, cd)) else null,
+        .content_encoding = if (content_encoding) |ce| bun.handleOom(bun.default_allocator.dupe(u8, ce)) else null,
         .callback = @ptrCast(&S3UploadStreamWrapper.resolve),
         .callback_context = undefined,
         .globalThis = globalThis,
@@ -477,6 +502,7 @@ pub fn uploadStream(
         .options = options,
         .acl = acl,
         .storage_class = storage_class,
+        .request_payer = request_payer,
         .vm = jsc.VirtualMachine.get(),
     });
 
@@ -507,6 +533,7 @@ pub fn downloadStream(
     offset: usize,
     size: ?usize,
     proxy_url: ?[]const u8,
+    request_payer: bool,
     callback: *const fn (chunk: bun.MutableString, has_more: bool, err: ?Error.S3Error, *anyopaque) void,
     callback_context: *anyopaque,
 ) void {
@@ -527,6 +554,7 @@ pub fn downloadStream(
     var result = this.signRequest(.{
         .path = path,
         .method = .GET,
+        .request_payer = request_payer,
     }, false, null) catch |sign_err| {
         if (range) |range_| bun.default_allocator.free(range_);
         const error_code_and_message = Error.getSignErrorCodeAndMessage(sign_err);
@@ -537,7 +565,7 @@ pub fn downloadStream(
         return;
     };
 
-    var header_buffer: [10]picohttp.Header = undefined;
+    var header_buffer: [S3Credentials.SignResult.MAX_HEADERS + 1]picohttp.Header = undefined;
     const headers = brk: {
         if (range) |range_| {
             const _headers = result.mixWithHeader(&header_buffer, .{ .name = "range", .value = range_ });
@@ -600,6 +628,7 @@ pub fn readableStream(
     offset: usize,
     size: ?usize,
     proxy_url: ?[]const u8,
+    request_payer: bool,
     globalThis: *jsc.JSGlobalObject,
 ) bun.JSError!jsc.JSValue {
     var reader = jsc.WebCore.ByteStream.Source.new(.{
@@ -664,6 +693,7 @@ pub fn readableStream(
         offset,
         size,
         proxy_url,
+        request_payer,
         S3DownloadStreamWrapper.opaqueCallback,
         S3DownloadStreamWrapper.new(.{
             .readable_stream_ref = jsc.WebCore.ReadableStream.Strong.init(.{

@@ -54,7 +54,7 @@ Bun supports Linux (x64 & arm64), macOS (x64 & Apple Silicon) and Windows (x64).
 curl -fsSL https://bun.com/install | bash
 
 # on windows
-powershell -c "irm bun.com/install.ps1 | iex"
+powershell -c "irm bun.sh/install.ps1 | iex"
 
 # with npm
 npm install -g bun
@@ -104,13 +104,13 @@ bun upgrade --canary
   - [File types (Loaders)](https://bun.com/docs/runtime/loaders)
   - [TypeScript](https://bun.com/docs/runtime/typescript)
   - [JSX](https://bun.com/docs/runtime/jsx)
-  - [Environment variables](https://bun.com/docs/runtime/env)
+  - [Environment variables](https://bun.com/docs/runtime/environment-variables)
   - [Bun APIs](https://bun.com/docs/runtime/bun-apis)
   - [Web APIs](https://bun.com/docs/runtime/web-apis)
-  - [Node.js compatibility](https://bun.com/docs/runtime/nodejs-apis)
+  - [Node.js compatibility](https://bun.com/docs/runtime/nodejs-compat)
   - [Single-file executable](https://bun.com/docs/bundler/executables)
   - [Plugins](https://bun.com/docs/runtime/plugins)
-  - [Watch mode / Hot Reloading](https://bun.com/docs/runtime/hot)
+  - [Watch mode / Hot Reloading](https://bun.com/docs/runtime/watch-mode)
   - [Module resolution](https://bun.com/docs/runtime/modules)
   - [Auto-install](https://bun.com/docs/runtime/autoimport)
   - [bunfig.toml](https://bun.com/docs/runtime/bunfig)
@@ -230,7 +230,7 @@ bun upgrade --canary
 
 - Ecosystem
   - [Use React and JSX](https://bun.com/guides/ecosystem/react)
-  - [Use EdgeDB with Bun](https://bun.com/guides/ecosystem/edgedb)
+  - [Use Gel with Bun](https://bun.com/guides/ecosystem/gel)
   - [Use Prisma with Bun](https://bun.com/guides/ecosystem/prisma)
   - [Add Sentry to a Bun app](https://bun.com/guides/ecosystem/sentry)
   - [Create a Discord bot](https://bun.com/guides/ecosystem/discordjs)

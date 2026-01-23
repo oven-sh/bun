@@ -89,7 +89,7 @@ pub fn Package(comptime SemverIntType: type) type {
             const old_extern_string_buf = old.buffers.extern_strings.items;
             var builder_ = new.stringBuilder();
             var builder = &builder_;
-            debug("Clone: {s}@{any} ({s}, {d} dependencies)", .{
+            debug("Clone: {s}@{f} ({s}, {d} dependencies)", .{
                 this.name.slice(old_string_buf),
                 this.resolution.fmt(old_string_buf, .auto),
                 @tagName(this.resolution.tag),
@@ -1583,6 +1583,8 @@ pub fn Package(comptime SemverIntType: type) type {
                 // Count catalog strings in top-level package.json as well, since parseAppend
                 // might process them later if no catalogs were found in workspaces
                 lockfile.catalogs.parseCount(lockfile, json, &string_builder);
+
+                try install.PostinstallOptimizer.fromPackageJSON(&pm.postinstall_optimizer, &json, allocator);
             }
 
             try string_builder.allocate();

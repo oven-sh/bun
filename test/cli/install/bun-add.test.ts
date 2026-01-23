@@ -34,7 +34,7 @@ beforeAll(() => {
 
 beforeEach(async () => {
   add_dir = tmpdirSync();
-  await dummyBeforeEach();
+  await dummyBeforeEach({ linker: "hoisted" });
 });
 afterEach(async () => {
   await dummyAfterEach();
@@ -1078,7 +1078,7 @@ it("should add dependency alongside workspaces", async () => {
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "add", "baz"],
+    cmd: [bunExe(), "add", "baz", "--linker=isolated"],
     cwd: package_dir,
     stdout: "pipe",
     stdin: "pipe",
@@ -2105,7 +2105,7 @@ it("should add dependencies to workspaces directly", async () => {
   const add_path = relative(join(package_dir, "moo"), add_dir);
   const dep = `file:${add_path}`.replace(/\\/g, "/");
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "add", dep],
+    cmd: [bunExe(), "add", dep, "--linker=isolated"],
     cwd: join(package_dir, "moo"),
     stdout: "pipe",
     stdin: "pipe",
@@ -2409,7 +2409,7 @@ it("should install tarball with tarball dependencies", async () => {
   setHandler(dummyRegistry(urls));
 
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "add", `${server_url}/parent.tgz`],
+    cmd: [bunExe(), "add", `${server_url}/parent.tgz`, "--linker=hoisted"],
     cwd: add_dir,
     stdout: "pipe",
     stdin: "pipe",

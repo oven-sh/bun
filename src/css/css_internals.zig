@@ -147,7 +147,7 @@ pub fn testingImpl(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, c
             if (log.hasErrors()) {
                 return log.toJS(globalThis, bun.default_allocator, "parsing failed:");
             }
-            return globalThis.throw("parsing failed: {}", .{err.kind});
+            return globalThis.throw("parsing failed: {f}", .{err.kind});
         },
     }
 }
@@ -327,7 +327,7 @@ pub fn attrTest(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.
             if (log.hasAny()) {
                 return log.toJS(globalThis, bun.default_allocator, "parsing failed:");
             }
-            return globalThis.throw("parsing failed: {}", .{err.kind});
+            return globalThis.throw("parsing failed: {f}", .{err.kind});
         },
     }
 }

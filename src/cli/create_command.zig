@@ -80,7 +80,7 @@ fn execTask(allocator: std.mem.Allocator, task_: string, cwd: string, _: string,
         }
     }
 
-    if (strings.startsWith(task, "bun ")) {
+    if (npm_client != null and strings.startsWith(task, "bun ")) {
         argv = argv[2..];
     }
 
@@ -493,11 +493,11 @@ pub const CreateCommand = struct {
                                             }
 
                                             if (bun.windows.Win32Error.get().toSystemErrno()) |err| {
-                                                Output.err(err, "failed to copy file {}", .{
+                                                Output.err(err, "failed to copy file {f}", .{
                                                     bun.fmt.fmtOSPath(entry.path, .{}),
                                                 });
                                             } else {
-                                                Output.errGeneric("failed to copy file {}", .{
+                                                Output.errGeneric("failed to copy file {f}", .{
                                                     bun.fmt.fmtOSPath(entry.path, .{}),
                                                 });
                                             }
@@ -520,7 +520,7 @@ pub const CreateCommand = struct {
                                 break :brk destination_dir_.createFile(entry.path, .{}) catch |err| {
                                     node_.end();
                                     progress_.refresh();
-                                    Output.err(err, "failed to copy file {}", .{bun.fmt.fmtOSPath(entry.path, .{})});
+                                    Output.err(err, "failed to copy file {f}", .{bun.fmt.fmtOSPath(entry.path, .{})});
                                     Global.crash();
                                 };
                             });
@@ -541,7 +541,7 @@ pub const CreateCommand = struct {
                             CopyFile.copyFile(infile, outfile).unwrap() catch |err| {
                                 node_.end();
                                 progress_.refresh();
-                                Output.err(err, "failed to copy file {}", .{bun.fmt.fmtOSPath(entry.path, .{})});
+                                Output.err(err, "failed to copy file {f}", .{bun.fmt.fmtOSPath(entry.path, .{})});
                                 Global.crash();
                             };
                         }
@@ -666,7 +666,7 @@ pub const CreateCommand = struct {
                     break :process_package_json;
                 }
 
-                var properties_list = std.ArrayList(js_ast.G.Property).fromOwnedSlice(default_allocator, package_json_expr.data.e_object.properties.slice());
+                var properties_list = std.array_list.Managed(js_ast.G.Property).fromOwnedSlice(default_allocator, package_json_expr.data.e_object.properties.slice());
 
                 if (ctx.log.errors > 0) {
                     try ctx.log.print(Output.errorWriter());
@@ -1109,7 +1109,7 @@ pub const CreateCommand = struct {
                 // "bun.macros"
                 // if (needs_bun_macros_prop and !needs_bun_prop) {
                 //     var obj = bun_prop.?.data.e_object;
-                //     var properties = try std.ArrayList(js_ast.G.Property).initCapacity(
+                //     var properties = try std.array_list.Managed(js_ast.G.Property).initCapacity(
                 //         ctx.allocator,
                 //         obj.properties.len + InjectionPrefill.bun_macros_relay_object.properties.len,
                 //     );
@@ -1137,7 +1137,7 @@ pub const CreateCommand = struct {
                 // if (needs_to_inject_dependency) {
                 //     defer needs_to_inject_dependency = false;
                 //     var obj = dependencies.?.data.e_object;
-                //     var properties = try std.ArrayList(js_ast.G.Property).initCapacity(
+                //     var properties = try std.array_list.Managed(js_ast.G.Property).initCapacity(
                 //         ctx.allocator,
                 //         obj.properties.len + dependencies_to_inject_count,
                 //     );
@@ -1152,7 +1152,7 @@ pub const CreateCommand = struct {
                 // if (needs_to_inject_dev_dependency) {
                 //     defer needs_to_inject_dev_dependency = false;
                 //     var obj = dev_dependencies.?.data.e_object;
-                //     var properties = try std.ArrayList(js_ast.G.Property).initCapacity(
+                //     var properties = try std.array_list.Managed(js_ast.G.Property).initCapacity(
                 //         ctx.allocator,
                 //         obj.properties.len + dev_dependencies_to_inject_count,
                 //     );
@@ -1185,7 +1185,7 @@ pub const CreateCommand = struct {
                 //         var public_index_html_parts = [_]string{ destination, "public/index.html" };
                 //         var public_index_html_path = filesystem.absBuf(&public_index_html_parts, &bun_path_buf);
 
-                //         const public_index_html_file = std.fs.openFileAbsolute(public_index_html_path, .{ .mode = .read_write }) catch break :bail;
+                //         const public_index_html_file = std.fs.cwd().openFile(public_index_html_path, .{ .mode = .read_write }) catch break :bail;
                 //         defer public_index_html_file.close();
 
                 //         const file_extensions_to_try = [_]string{ ".tsx", ".ts", ".jsx", ".js", ".mts", ".mcjs" };
@@ -1212,7 +1212,7 @@ pub const CreateCommand = struct {
 
                 //         var body_closing_tag: usize = std.mem.lastIndexOf(u8, public_index_file_contents, "</body>") orelse break :bail;
 
-                //         var public_index_file_out = std.ArrayList(u8).initCapacity(ctx.allocator, public_index_file_contents.len) catch break :bail;
+                //         var public_index_file_out = std.array_list.Managed(u8).initCapacity(ctx.allocator, public_index_file_contents.len) catch break :bail;
                 //         var html_writer = public_index_file_out.writer();
 
                 //         _ = html_writer.writeAll(public_index_file_contents[0..body_closing_tag]) catch break :bail;
@@ -1251,7 +1251,7 @@ pub const CreateCommand = struct {
                 //         //     bun.copy(u8, bun_path_buf[destination.len + "/src/index".len ..], ".css");
                 //         //     var index_css_file_path = bun_path_buf[0 .. destination.len + "/src/index.css".len];
                 //         //     std.fs.accessAbsolute(index_css_file_path, .{}) catch break :inject_css;
-                //         //     var list = std.ArrayList(u8).fromOwnedSlice(ctx.allocator, outfile);
+                //         //     var list = std.array_list.Managed(u8).fromOwnedSlice(ctx.allocator, outfile);
                 //         //     list.insertSlice(head_i + "<head>".len, "<link rel=\"stylesheet\" href=\"/src/index.css\">\n") catch break :inject_css;
                 //         //     outfile =try list.toOwnedSlice();
                 //         // }
@@ -1862,11 +1862,11 @@ pub const Example = struct {
         }
     }
 
-    pub fn fetchAllLocalAndRemote(ctx: Command.Context, node: ?*Progress.Node, env_loader: *DotEnv.Loader, filesystem: *fs.FileSystem) !std.ArrayList(Example) {
+    pub fn fetchAllLocalAndRemote(ctx: Command.Context, node: ?*Progress.Node, env_loader: *DotEnv.Loader, filesystem: *fs.FileSystem) !std.array_list.Managed(Example) {
         const remote_examples = try Example.fetchAll(ctx, env_loader, node);
         if (node) |node_| node_.end();
 
-        var examples = std.ArrayList(Example).fromOwnedSlice(ctx.allocator, remote_examples);
+        var examples = std.array_list.Managed(Example).fromOwnedSlice(ctx.allocator, remote_examples);
         {
             var folders = [3]std.fs.Dir{
                 bun.invalid_fd.stdDir(),

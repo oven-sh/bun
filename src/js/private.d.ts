@@ -253,7 +253,7 @@ declare function $bindgenFn<T = (...args: any) => any>(filename: string, symbol:
 // NOTE: $debug, $assert, and $isPromiseFulfilled omitted
 
 declare module "node:net" {
-  export function _normalizeArgs(args: any[]): unknown[];
+  function _normalizeArgs(options: any[]): [Record<PropertyKey, any>, Function | null];
 
   interface Socket {
     _handle: Bun.Socket<{ self: Socket; req?: object }> | null;

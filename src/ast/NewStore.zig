@@ -56,7 +56,7 @@ pub fn NewStore(comptime types: []const type, comptime count: usize) type {
                     _ = block.buffer[block.bytes_used..][0..@sizeOf(T)];
                 }
 
-                return @alignCast(@ptrCast(&block.buffer[start]));
+                return @ptrCast(@alignCast(&block.buffer[start]));
             }
         };
 

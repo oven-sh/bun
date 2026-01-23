@@ -24,7 +24,6 @@ if(CMAKE_HOST_APPLE)
   include(SetupMacSDK)
 endif()
 include(SetupLLVM)
-include(SetupCcache)
 
 # --- Project ---
 
@@ -47,6 +46,8 @@ include(SetupBun)
 include(SetupEsbuild)
 include(SetupZig)
 include(SetupRust)
+
+include(SetupCcache)
 
 # Generate dependency versions header
 include(GenerateDependencyVersions)

@@ -2,7 +2,7 @@ import type * as BunSQLiteModule from "bun:sqlite";
 import type { BaseQueryHandle, Query, SQLQueryResultMode } from "./query";
 import type { ArrayType, DatabaseAdapter, OnConnected, SQLArrayParameter, SQLHelper, SQLResultArray } from "./shared";
 
-const { SQLHelper, SQLResultArray } = require("internal/sql/shared");
+const { SQLHelper, SQLResultArray, buildDefinedColumnsAndQuery } = require("internal/sql/shared");
 const {
   Query,
   SQLQueryResultMode,
@@ -433,30 +433,33 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
               // insert into users ${sql(users)} or insert into users ${sql(user)}
               //
 
-              query += "(";
-              for (let j = 0; j < columnCount; j++) {
-                query += this.escapeIdentifier(columns[j]);
-                if (j < lastColumnIndex) {
-                  query += ", ";
-                }
+              // Build column list while determining which columns have at least one defined value
+              const { definedColumns, columnsSql } = buildDefinedColumnsAndQuery(
+                columns,
+                items,
+                this.escapeIdentifier.bind(this),
+              );
+
+              const definedColumnCount = definedColumns.length;
+              if (definedColumnCount === 0) {
+                throw new SyntaxError("Insert needs to have at least one column with a defined value");
               }
-              query += ") VALUES";
+              const lastDefinedColumnIndex = definedColumnCount - 1;
+
+              query += columnsSql;
               if ($isArray(items)) {
                 const itemsCount = items.length;
                 const lastItemIndex = itemsCount - 1;
                 for (let j = 0; j < itemsCount; j++) {
                   query += "(";
                   const item = items[j];
-                  for (let k = 0; k < columnCount; k++) {
-                    const column = columns[k];
+                  for (let k = 0; k < definedColumnCount; k++) {
+                    const column = definedColumns[k];
                     const columnValue = item[column];
                     // SQLite uses ? for placeholders, not $1, $2, etc.
-                    query += `?${k < lastColumnIndex ? ", " : ""}`;
-                    if (typeof columnValue === "undefined") {
-                      binding_values.push(null);
-                    } else {
-                      binding_values.push(columnValue);
-                    }
+                    query += `?${k < lastDefinedColumnIndex ? ", " : ""}`;
+                    // If this item has undefined for a column that other items defined, use null
+                    binding_values.push(typeof columnValue === "undefined" ? null : columnValue);
                   }
                   if (j < lastItemIndex) {
                     query += "),";
@@ -467,16 +470,12 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
               } else {
                 query += "(";
                 const item = items;
-                for (let j = 0; j < columnCount; j++) {
-                  const column = columns[j];
+                for (let j = 0; j < definedColumnCount; j++) {
+                  const column = definedColumns[j];
                   const columnValue = item[column];
                   // SQLite uses ? for placeholders
-                  query += `?${j < lastColumnIndex ? ", " : ""}`;
-                  if (typeof columnValue === "undefined") {
-                    binding_values.push(null);
-                  } else {
-                    binding_values.push(columnValue);
-                  }
+                  query += `?${j < lastDefinedColumnIndex ? ", " : ""}`;
+                  binding_values.push(columnValue);
                 }
                 query += ") "; // the user can add RETURNING * or RETURNING id
               }

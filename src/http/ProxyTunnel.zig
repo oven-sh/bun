@@ -19,6 +19,7 @@ const ProxyTunnelWrapper = SSLWrapper(*HTTPClient);
 
 fn onOpen(this: *HTTPClient) void {
     log("ProxyTunnel onOpen", .{});
+    bun.analytics.Features.http_client_proxy += 1;
     this.state.response_stage = .proxy_handshake;
     this.state.request_stage = .proxy_handshake;
     if (this.proxy_tunnel) |proxy| {
@@ -191,7 +192,7 @@ fn onHandshake(this: *HTTPClient, handshake_success: bool, ssl_error: uws.us_bun
     }
 }
 
-pub fn write(this: *HTTPClient, encoded_data: []const u8) void {
+pub fn writeEncrypted(this: *HTTPClient, encoded_data: []const u8) void {
     if (this.proxy_tunnel) |proxy| {
         // Preserve TLS record ordering: if any encrypted bytes are buffered,
         // enqueue new bytes and flush them in FIFO via onWritable.
@@ -271,16 +272,14 @@ pub fn start(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is
         .ref_count = .init(),
     });
 
-    var custom_options = ssl_options;
-    // we always request the cert so we can verify it and also we manually abort the connection if the hostname doesn't match
-    custom_options.reject_unauthorized = 0;
-    custom_options.request_cert = 1;
+    // We always request the cert so we can verify it and also we manually abort the connection if the hostname doesn't match
+    const custom_options = ssl_options.forClientVerification();
     proxy_tunnel.wrapper = SSLWrapper(*HTTPClient).init(custom_options, true, .{
         .onOpen = ProxyTunnel.onOpen,
         .onData = ProxyTunnel.onData,
         .onHandshake = ProxyTunnel.onHandshake,
         .onClose = ProxyTunnel.onClose,
-        .write = ProxyTunnel.write,
+        .write = ProxyTunnel.writeEncrypted,
         .ctx = this,
     }) catch |err| {
         if (err == error.OutOfMemory) {
@@ -340,7 +339,7 @@ pub fn onWritable(this: *ProxyTunnel, comptime is_ssl: bool, socket: NewHTTPCont
     }
 }
 
-pub fn receiveData(this: *ProxyTunnel, buf: []const u8) void {
+pub fn receive(this: *ProxyTunnel, buf: []const u8) void {
     this.ref();
     defer this.deref();
     if (this.wrapper) |*wrapper| {
@@ -348,7 +347,7 @@ pub fn receiveData(this: *ProxyTunnel, buf: []const u8) void {
     }
 }
 
-pub fn writeData(this: *ProxyTunnel, buf: []const u8) !usize {
+pub fn write(this: *ProxyTunnel, buf: []const u8) !usize {
     if (this.wrapper) |*wrapper| {
         return try wrapper.writeData(buf);
     }

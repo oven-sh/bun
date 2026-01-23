@@ -18,14 +18,14 @@ DEFINE_NATIVE_MODULE(NodeProcess)
         RETURN_IF_EXCEPTION(scope, );
     }
 
-    PropertyNameArray properties(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+    PropertyNameArrayBuilder properties(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
     process->getPropertyNames(globalObject, properties, DontEnumPropertiesMode::Exclude);
     RETURN_IF_EXCEPTION(scope, );
 
     exportNames.append(vm.propertyNames->defaultKeyword);
     exportValues.append(process);
 
-    for (auto& entry : properties) {
+    for (auto& entry : properties.releaseData()->propertyNameVector()) {
         if (entry == vm.propertyNames->defaultKeyword) {
             // skip because it's already on the default
             // export (the Process object itself)
@@ -37,7 +37,7 @@ DEFINE_NATIVE_MODULE(NodeProcess)
         JSValue result = process->get(globalObject, entry);
         if (catchScope.exception()) {
             result = jsUndefined();
-            catchScope.clearException();
+            (void)catchScope.tryClearException();
         }
 
         exportValues.append(result);

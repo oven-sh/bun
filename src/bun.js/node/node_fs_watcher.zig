@@ -206,9 +206,9 @@ pub const FSWatcher = struct {
                 }
             }
 
-            pub fn format(this: *const StringOrBytesToDecode, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            pub fn format(this: *const StringOrBytesToDecode, writer: *std.Io.Writer) !void {
                 switch (this.*) {
-                    .string => |str| try writer.print("{}", .{str}),
+                    .string => |str| try writer.print("{f}", .{str}),
                     .bytes_to_free => |utf8| try writer.print("{s}", .{utf8}),
                 }
             }
@@ -231,7 +231,7 @@ pub const FSWatcher = struct {
             switch (this.event) {
                 inline .rename, .change => |*path, event_type| {
                     if (ctx.encoding == .utf8) {
-                        ctx.emitWithFilename(path.string.transferToJS(ctx.globalThis), event_type);
+                        ctx.emitWithFilename(path.string.transferToJS(ctx.globalThis) catch return, event_type);
                     } else {
                         const bytes = path.bytes_to_free;
                         path.bytes_to_free = "";
@@ -286,9 +286,9 @@ pub const FSWatcher = struct {
             switch (event) {
                 .rename, .change => |value| {
                     if (is_file) {
-                        Output.prettyErrorln("<r> <d>File changed: {}<r>", .{value});
+                        Output.prettyErrorln("<r> <d>File changed: {f}<r>", .{value});
                     } else {
-                        Output.prettyErrorln("<r> <d>Dir changed: {}<r>", .{value});
+                        Output.prettyErrorln("<r> <d>Dir changed: {f}<r>", .{value});
                     }
                 },
                 else => {},
@@ -487,7 +487,7 @@ pub const FSWatcher = struct {
                 const globalObject = this.globalThis;
                 var args = [_]jsc.JSValue{
                     EventType.@"error".toJS(globalObject),
-                    err.toJS(globalObject),
+                    err.toJS(globalObject) catch return,
                 };
                 _ = listener.callWithGlobalThis(
                     globalObject,
@@ -518,7 +518,7 @@ pub const FSWatcher = struct {
                 filename = jsc.ZigString.fromUTF8(file_name).toJS(globalObject);
             } else {
                 // convert to desired encoding
-                filename = Encoder.toString(file_name, globalObject, this.encoding);
+                filename = Encoder.toString(file_name, globalObject, this.encoding) catch return;
             }
         }
 

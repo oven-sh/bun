@@ -31,11 +31,15 @@ pub fn installWithManager(
 
     try manager.updateLockfileIfNeeded(load_result);
 
+    const config_version, const changed_config_version = load_result.chooseConfigVersion();
+    manager.options.config_version = config_version;
+
     var root = Lockfile.Package{};
     var needs_new_lockfile = load_result != .ok or
         (load_result.ok.lockfile.buffers.dependencies.items.len == 0 and manager.update_requests.len > 0);
 
     manager.options.enable.force_save_lockfile = manager.options.enable.force_save_lockfile or
+        changed_config_version or
         (load_result == .ok and
             // if migrated always save a new lockfile
             (load_result.ok.migrated != .none or
@@ -360,12 +364,14 @@ pub fn installWithManager(
                         for (manager.lockfile.buffers.dependencies.items, 0..) |*dependency, dependency_i| {
                             if (std.mem.indexOfScalar(PackageNameHash, all_name_hashes, dependency.name_hash)) |_| {
                                 manager.lockfile.buffers.resolutions.items[dependency_i] = invalid_package_id;
-                                try manager.enqueueDependencyWithMain(
+                                manager.enqueueDependencyWithMain(
                                     @truncate(dependency_i),
                                     dependency,
                                     invalid_package_id,
                                     false,
-                                );
+                                ) catch |err| {
+                                    addDependencyError(manager, dependency, err);
+                                };
                             }
                         }
                     }
@@ -376,12 +382,14 @@ pub fn installWithManager(
                             if (dep.version.tag != .catalog) continue;
 
                             manager.lockfile.buffers.resolutions.items[dep_id] = invalid_package_id;
-                            try manager.enqueueDependencyWithMain(
+                            manager.enqueueDependencyWithMain(
                                 dep_id,
                                 dep,
                                 invalid_package_id,
                                 false,
-                            );
+                            ) catch |err| {
+                                addDependencyError(manager, dep, err);
+                            };
                         }
                     }
 
@@ -397,12 +405,14 @@ pub fn installWithManager(
                             if (mapping[counter_i] == invalid_package_id) {
                                 const dependency_i = counter_i + off;
                                 const dependency = manager.lockfile.buffers.dependencies.items[dependency_i];
-                                try manager.enqueueDependencyWithMain(
+                                manager.enqueueDependencyWithMain(
                                     dependency_i,
                                     &dependency,
                                     manager.lockfile.buffers.resolutions.items[dependency_i],
                                     false,
-                                );
+                                ) catch |err| {
+                                    addDependencyError(manager, &dependency, err);
+                                };
                             }
                         }
                     }
@@ -782,27 +792,17 @@ pub fn installWithManager(
             break :install_summary .{};
         }
 
-        switch (manager.options.node_linker) {
+        linker: switch (manager.options.node_linker) {
             .auto => {
-                if (manager.lockfile.workspace_paths.count() > 0 and
-                    !load_result.migratedFromNpm())
-                {
-                    break :install_summary bun.handleOom(installIsolatedPackages(
-                        manager,
-                        ctx,
-                        install_root_dependencies,
-                        workspace_filters,
-                        null,
-                    ));
+                switch (config_version) {
+                    .v0 => continue :linker .hoisted,
+                    .v1 => {
+                        if (!load_result.migratedFromNpm() and manager.lockfile.workspace_paths.count() > 0) {
+                            continue :linker .isolated;
+                        }
+                        continue :linker .hoisted;
+                    },
                 }
-                break :install_summary try installHoistedPackages(
-                    manager,
-                    ctx,
-                    workspace_filters,
-                    install_root_dependencies,
-                    log_level,
-                    null,
-                );
             },
 
             .hoisted,
@@ -1105,6 +1105,28 @@ pub fn getWorkspaceFilters(manager: *PackageManager, original_cwd: []const u8) !
     }
 
     return .{ workspace_filters.items, install_root_dependencies };
+}
+
+/// Adds a contextual error for a dependency resolution failure.
+/// This provides better error messages than just propagating the raw error.
+/// The error is logged to manager.log, and the install will fail later when
+/// manager.log.hasErrors() is checked.
+fn addDependencyError(manager: *PackageManager, dependency: *const Dependency, err: anyerror) void {
+    const lockfile = manager.lockfile;
+    const note = .{
+        .fmt = "error occurred while resolving {f}",
+        .args = .{bun.fmt.fmtPath(u8, lockfile.str(&dependency.realname()), .{
+            .path_sep = switch (dependency.version.tag) {
+                .folder => .auto,
+                else => .any,
+            },
+        })},
+    };
+
+    if (dependency.behavior.isOptional() or dependency.behavior.isPeer())
+        manager.log.addWarningWithNote(null, .{}, manager.allocator, @errorName(err), note.fmt, note.args) catch unreachable
+    else
+        manager.log.addZigErrorWithNote(manager.allocator, err, note.fmt, note.args) catch unreachable;
 }
 
 const security_scanner = @import("./security_scanner.zig");

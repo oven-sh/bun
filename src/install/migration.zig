@@ -30,7 +30,7 @@ pub fn detectAndLoadOtherLockfile(
                 .step = .migrating,
                 .value = err,
                 .lockfile_path = "package-lock.json",
-                .format = .binary,
+                .format = .text,
             } };
         };
 
@@ -54,7 +54,7 @@ pub fn detectAndLoadOtherLockfile(
                 .step = .migrating,
                 .value = err,
                 .lockfile_path = "yarn.lock",
-                .format = .binary,
+                .format = .text,
             } };
         };
 
@@ -126,7 +126,7 @@ pub fn detectAndLoadOtherLockfile(
                 .step = .migrating,
                 .value = err,
                 .lockfile_path = "pnpm-lock.yaml",
-                .format = .binary,
+                .format = .text,
             } };
         };
 
@@ -956,7 +956,7 @@ pub fn migrateNPMLockfile(
                                         },
                                     };
                                 };
-                                debug("-> {}", .{res.fmtForDebug(string_buf.bytes.items)});
+                                debug("-> {f}", .{res.fmtForDebug(string_buf.bytes.items)});
 
                                 resolutions[id] = res;
                                 metas[id].origin = switch (res.tag) {

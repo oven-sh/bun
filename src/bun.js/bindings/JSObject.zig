@@ -120,11 +120,11 @@ pub const JSObject = opaque {
         return JSC__createStructure(global, owner.asCell(), length, names);
     }
 
-    const InitializeCallback = *const fn (ctx: *anyopaque, obj: *JSObject, global: *JSGlobalObject) callconv(.C) void;
+    const InitializeCallback = *const fn (ctx: *anyopaque, obj: *JSObject, global: *JSGlobalObject) callconv(.c) void;
 
     pub fn Initializer(comptime Ctx: type, comptime func: fn (*Ctx, obj: *JSObject, global: *JSGlobalObject) bun.JSError!void) type {
         return struct {
-            pub fn call(this: *anyopaque, obj: *JSObject, global: *JSGlobalObject) callconv(.C) void {
+            pub fn call(this: *anyopaque, obj: *JSObject, global: *JSGlobalObject) callconv(.c) void {
                 func(@ptrCast(@alignCast(this)), obj, global) catch |err| bun.jsc.host_fn.voidFromJSError(err, global);
             }
         };

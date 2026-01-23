@@ -25,11 +25,11 @@ pub fn toStrictEqual(this: *Expect, globalThis: *JSGlobalObject, callFrame: *Cal
 
     if (not) {
         const signature = comptime getSignature("toStrictEqual", "<green>expected<r>", true);
-        return this.throw(globalThis, signature, "\n\n{any}\n", .{diff_formatter});
+        return this.throw(globalThis, signature, "\n\n{f}\n", .{diff_formatter});
     }
 
     const signature = comptime getSignature("toStrictEqual", "<green>expected<r>", false);
-    return this.throw(globalThis, signature, "\n\n{any}\n", .{diff_formatter});
+    return this.throw(globalThis, signature, "\n\n{f}\n", .{diff_formatter});
 }
 
 const bun = @import("bun");

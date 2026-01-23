@@ -128,7 +128,7 @@ pub const Store = struct {
             store: *const Store,
             lockfile: *const Lockfile,
 
-            pub fn format(this: @This(), comptime _: string, _: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
+            pub fn format(this: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
                 const store = this.store;
                 const entries = store.entries.slice();
                 const entry_peer_hashes = entries.items(.peer_hash);
@@ -152,19 +152,19 @@ pub const Store = struct {
                         if (pkg_name.isEmpty()) {
                             try writer.writeAll(std.fs.path.basename(bun.fs.FileSystem.instance.top_level_dir));
                         } else {
-                            try writer.print("{}@root", .{
+                            try writer.print("{f}@root", .{
                                 pkg_name.fmtStorePath(string_buf),
                             });
                         }
                     },
                     .folder => {
-                        try writer.print("{}@file+{}", .{
+                        try writer.print("{f}@file+{f}", .{
                             pkg_name.fmtStorePath(string_buf),
                             pkg_res.value.folder.fmtStorePath(string_buf),
                         });
                     },
                     else => {
-                        try writer.print("{}@{}", .{
+                        try writer.print("{f}@{f}", .{
                             pkg_name.fmtStorePath(string_buf),
                             pkg_res.fmtStorePath(string_buf),
                         });
@@ -172,7 +172,7 @@ pub const Store = struct {
                 }
 
                 if (peer_hash != .none) {
-                    try writer.print("+{}", .{
+                    try writer.print("+{f}", .{
                         bun.fmt.hexIntLower(peer_hash.cast()),
                     });
                 }

@@ -286,7 +286,7 @@ pub fn jsFunctionColor(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFram
                                     return object;
                                 },
                                 .@"{rgb}" => {
-                                    const object = jsc.JSValue.createEmptyObject(globalThis, 4);
+                                    const object = jsc.JSValue.createEmptyObject(globalThis, 3);
                                     object.put(globalThis, "r", jsc.JSValue.jsNumber(rgba.red));
                                     object.put(globalThis, "g", jsc.JSValue.jsNumber(rgba.green));
                                     object.put(globalThis, "b", jsc.JSValue.jsNumber(rgba.blue));
@@ -315,10 +315,10 @@ pub fn jsFunctionColor(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFram
                                     return jsc.JSValue.jsNumber(int);
                                 },
                                 .hex => {
-                                    break :color bun.String.createFormat("#{}{}{}", .{ bun.fmt.hexIntLower(rgba.red), bun.fmt.hexIntLower(rgba.green), bun.fmt.hexIntLower(rgba.blue) });
+                                    break :color bun.String.createFormat("#{f}{f}{f}", .{ bun.fmt.hexIntLower(rgba.red), bun.fmt.hexIntLower(rgba.green), bun.fmt.hexIntLower(rgba.blue) });
                                 },
                                 .HEX => {
-                                    break :color bun.String.createFormat("#{}{}{}", .{ bun.fmt.hexIntUpper(rgba.red), bun.fmt.hexIntUpper(rgba.green), bun.fmt.hexIntUpper(rgba.blue) });
+                                    break :color bun.String.createFormat("#{f}{f}{f}", .{ bun.fmt.hexIntUpper(rgba.red), bun.fmt.hexIntUpper(rgba.green), bun.fmt.hexIntUpper(rgba.blue) });
                                 },
                                 .rgb => {
                                     break :color bun.String.createFormat("rgb({d}, {d}, {d})", .{ rgba.red, rgba.green, rgba.blue });
@@ -405,14 +405,13 @@ pub fn jsFunctionColor(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFram
             }
 
             // Fallback to CSS string output
-            var dest = std.ArrayListUnmanaged(u8){};
-            defer dest.deinit(allocator);
-            const writer = dest.writer(allocator);
+            var dest = std.Io.Writer.Allocating.init(allocator);
+            const writer = &dest.writer;
 
             const symbols = bun.ast.Symbol.Map{};
-            var printer = css.Printer(@TypeOf(writer)).new(
+            var printer = css.Printer.new(
                 allocator,
-                std.ArrayList(u8).init(allocator),
+                std.array_list.Managed(u8).init(allocator),
                 writer,
                 css.PrinterOptions.default(),
                 null,
@@ -420,11 +419,11 @@ pub fn jsFunctionColor(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFram
                 &symbols,
             );
 
-            result.toCss(@TypeOf(writer), &printer) catch |err| {
+            result.toCss(&printer) catch |err| {
                 return globalThis.throw("color() internal error: {s}", .{@errorName(err)});
             };
 
-            return bun.String.createUTF8ForJS(globalThis, dest.items);
+            return bun.String.createUTF8ForJS(globalThis, dest.written());
         },
     }
 }

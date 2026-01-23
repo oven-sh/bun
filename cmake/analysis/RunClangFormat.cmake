@@ -34,26 +34,6 @@ register_command(
   ALWAYS_RUN
 )
 
-if(GIT_CHANGED_SOURCES)
-  set(CLANG_FORMAT_CHANGED_SOURCES)
-  foreach(source ${CLANG_FORMAT_SOURCES})
-    list(FIND GIT_CHANGED_SOURCES ${source} index)
-    if(NOT ${index} EQUAL -1)
-      list(APPEND CLANG_FORMAT_CHANGED_SOURCES ${source})
-    endif()
-  endforeach()
-endif()
-
-if(CLANG_FORMAT_CHANGED_SOURCES)
-  set(CLANG_FORMAT_DIFF_COMMAND ${CLANG_FORMAT_PROGRAM}
-    -i # edits files in-place
-    --verbose
-    ${CLANG_FORMAT_CHANGED_SOURCES}
-  )
-else()
-  set(CLANG_FORMAT_DIFF_COMMAND ${CMAKE_COMMAND} -E echo "No changed files for clang-format")
-endif()
-
 register_command(
   TARGET
     clang-format-diff

@@ -33,18 +33,18 @@ pub fn Size2D(comptime T: type) type {
             } };
         }
 
-        pub fn toCss(this: *const Size2D(T), comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
-            try valToCss(&this.a, W, dest);
+        pub fn toCss(this: *const Size2D(T), dest: *css.Printer) css.PrintErr!void {
+            try valToCss(&this.a, dest);
             if (!valEql(&this.b, &this.a)) {
                 try dest.writeStr(" ");
-                try valToCss(&this.b, W, dest);
+                try valToCss(&this.b, dest);
             }
         }
 
-        pub fn valToCss(val: *const T, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+        pub fn valToCss(val: *const T, dest: *css.Printer) css.PrintErr!void {
             return switch (T) {
-                f32 => CSSNumberFns.toCss(val, W, dest),
-                else => val.toCss(W, dest),
+                f32 => CSSNumberFns.toCss(val, dest),
+                else => val.toCss(dest),
             };
         }
 

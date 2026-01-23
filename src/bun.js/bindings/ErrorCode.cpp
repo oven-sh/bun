@@ -32,7 +32,7 @@
 #include "KeyObject.h"
 
 namespace WTF {
-template<> class StringTypeAdapter<GCOwnedDataScope<StringView>, void> {
+template<> class StringTypeAdapter<GCOwnedDataScope<StringView>> {
 public:
     StringTypeAdapter(GCOwnedDataScope<StringView> string)
         : m_string { string }
@@ -208,7 +208,7 @@ JSObject* ErrorCodeCache::createError(VM& vm, Zig::GlobalObject* globalObject, E
     auto* structure = jsCast<Structure*>(cache->internalField(static_cast<unsigned>(code)).get());
     auto* created_error = JSC::ErrorInstance::create(globalObject, structure, message, options, nullptr, JSC::RuntimeType::TypeNothing, data.type, true);
     if (auto* thrown_exception = scope.exception()) [[unlikely]] {
-        scope.clearException();
+        (void)scope.tryClearException();
         // TODO investigate what can throw here and whether it will throw non-objects
         // (this is better than before where we would have returned nullptr from createError if any
         // exception were thrown by ErrorInstance::create)
@@ -2375,6 +2375,13 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_ZSTD_INVALID_PARAM, message));
     }
 
+    case ErrorCode::ERR_SSL_NO_CIPHER_MATCH: {
+        auto err = createError(globalObject, ErrorCode::ERR_SSL_NO_CIPHER_MATCH, "No cipher match"_s);
+        err->putDirect(vm, Identifier::fromString(vm, "reason"_s), jsString(vm, WTF::String("no cipher match"_s)));
+        err->putDirect(vm, Identifier::fromString(vm, "library"_s), jsString(vm, WTF::String("SSL routines"_s)));
+        return JSC::JSValue::encode(err);
+    }
+
     case ErrorCode::ERR_IPC_DISCONNECTED:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_IPC_DISCONNECTED, "IPC channel is already disconnected"_s));
     case ErrorCode::ERR_SERVER_NOT_RUNNING:
@@ -2435,17 +2442,6 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_TLS_CERT_ALTNAME_FORMAT, "Invalid subject alternative name string"_s));
     case ErrorCode::ERR_TLS_SNI_FROM_SERVER:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_TLS_SNI_FROM_SERVER, "Cannot issue SNI from a TLS server-side socket"_s));
-    case ErrorCode::ERR_SSL_NO_CIPHER_MATCH: {
-        auto err = createError(globalObject, ErrorCode::ERR_SSL_NO_CIPHER_MATCH, "No cipher match"_s);
-
-        auto reason = JSC::jsString(vm, WTF::String("no cipher match"_s));
-        err->putDirect(vm, Identifier::fromString(vm, "reason"_s), reason);
-
-        auto library = JSC::jsString(vm, WTF::String("SSL routines"_s));
-        err->putDirect(vm, Identifier::fromString(vm, "library"_s), library);
-
-        return JSC::JSValue::encode(err);
-    }
     case ErrorCode::ERR_INVALID_URI:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_URI, "URI malformed"_s));
     case ErrorCode::ERR_HTTP2_PSEUDOHEADER_NOT_ALLOWED:

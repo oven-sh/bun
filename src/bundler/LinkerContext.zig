@@ -4,13 +4,14 @@ pub const LinkerContext = struct {
 
     pub const OutputFileListBuilder = @import("./linker_context/OutputFileListBuilder.zig");
     pub const StaticRouteVisitor = @import("./linker_context/StaticRouteVisitor.zig");
+    pub const MetafileBuilder = @import("./linker_context/MetafileBuilder.zig");
 
     parse_graph: *Graph = undefined,
     graph: LinkerGraph = undefined,
     log: *Logger.Log = undefined,
 
     resolver: *Resolver = undefined,
-    cycle_detector: std.ArrayList(ImportTracker) = undefined,
+    cycle_detector: std.array_list.Managed(ImportTracker) = undefined,
 
     /// We may need to refer to the "__esm" and/or "__commonJS" runtime symbols
     cjs_runtime_ref: Ref = Ref.None,
@@ -69,6 +70,7 @@ pub const LinkerContext = struct {
         css_chunking: bool = false,
         source_maps: options.SourceMapOption = .none,
         target: options.Target = .browser,
+        metafile: bool = false,
 
         mode: Mode = .bundle,
 
@@ -207,7 +209,7 @@ pub const LinkerContext = struct {
         this.log = bundle.transpiler.log;
 
         this.resolver = &bundle.transpiler.resolver;
-        this.cycle_detector = std.ArrayList(ImportTracker).init(this.allocator());
+        this.cycle_detector = std.array_list.Managed(ImportTracker).init(this.allocator());
 
         this.graph.reachable_files = reachable;
 
@@ -810,7 +812,7 @@ pub const LinkerContext = struct {
         if (comptime FeatureFlags.source_map_debug_id) {
             j.pushStatic("\",\n  \"debugId\": \"");
             j.push(
-                try std.fmt.allocPrint(worker.allocator, "{}", .{bun.SourceMap.DebugIDFormatter{ .id = isolated_hash }}),
+                try std.fmt.allocPrint(worker.allocator, "{f}", .{bun.SourceMap.DebugIDFormatter{ .id = isolated_hash }}),
                 worker.allocator,
             );
             j.pushStatic("\",\n  \"names\": []\n}");
@@ -885,7 +887,7 @@ pub const LinkerContext = struct {
         // any import to be considered different if the import's output path has changed.
         hasher.write(chunk.template.data);
 
-        const public_path = if (chunk.is_browser_chunk_from_server_build)
+        const public_path = if (chunk.flags.is_browser_chunk_from_server_build)
             @as(*bundler.BundleV2, @fieldParentPtr("linker", c)).transpilerForTarget(.browser).options.public_path
         else
             c.options.public_path;
@@ -979,7 +981,7 @@ pub const LinkerContext = struct {
 
                     // Require of a top-level await chain is forbidden
                     if (record.kind == .require) {
-                        var notes = std.ArrayList(Logger.Data).init(c.allocator());
+                        var notes = std.array_list.Managed(Logger.Data).init(c.allocator());
 
                         var tla_pretty_path: string = "";
                         var other_source_index = record.source_index.get();
@@ -1526,7 +1528,7 @@ pub const LinkerContext = struct {
     pub fn sortedCrossChunkExportItems(
         c: *LinkerContext,
         export_refs: ChunkMeta.Map,
-        list: *std.ArrayList(StableRef),
+        list: *std.array_list.Managed(StableRef),
     ) void {
         var result = list.*;
         defer list.* = result;
@@ -1723,7 +1725,7 @@ pub const LinkerContext = struct {
                         entry_point_kinds,
                         css_reprs,
                     );
-                } else if (record.is_external_without_side_effects) {
+                } else if (record.flags.is_external_without_side_effects) {
                     // This can be removed if it's unused
                     continue;
                 }
@@ -1824,13 +1826,13 @@ pub const LinkerContext = struct {
     pub fn matchImportWithExport(
         c: *LinkerContext,
         init_tracker: ImportTracker,
-        re_exports: *std.ArrayList(js_ast.Dependency),
+        re_exports: *std.array_list.Managed(js_ast.Dependency),
     ) MatchImport {
         const cycle_detector_top = c.cycle_detector.items.len;
         defer c.cycle_detector.shrinkRetainingCapacity(cycle_detector_top);
 
         var tracker = init_tracker;
-        var ambiguous_results = std.ArrayList(MatchImport).init(c.allocator());
+        var ambiguous_results = std.array_list.Managed(MatchImport).init(c.allocator());
         defer ambiguous_results.clearAndFree();
 
         var result: MatchImport = MatchImport{};
@@ -2448,7 +2450,7 @@ pub const LinkerContext = struct {
 
             const import_ref = ref;
 
-            var re_exports = std.ArrayList(js_ast.Dependency).init(c.allocator());
+            var re_exports = std.array_list.Managed(js_ast.Dependency).init(c.allocator());
             const result = c.matchImportWithExport(.{
                 .source_index = Index.source(source_index),
                 .import_ref = import_ref,
@@ -2569,7 +2571,7 @@ pub const LinkerContext = struct {
 
         var pieces = brk: {
             errdefer j.deinit();
-            break :brk try std.ArrayList(OutputPiece).initCapacity(alloc, count);
+            break :brk try std.array_list.Managed(OutputPiece).initCapacity(alloc, count);
         };
         errdefer pieces.deinit();
         const complete_output = try j.done(alloc);

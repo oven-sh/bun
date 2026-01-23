@@ -5,18 +5,12 @@ if(NOT ENABLE_CCACHE OR CACHE_STRATEGY STREQUAL "none")
   return()
 endif()
 
-if (CI AND NOT APPLE)
-  setenv(CCACHE_DISABLE 1)
-  return()
-endif()
 
 find_command(
   VARIABLE
     CCACHE_PROGRAM
   COMMAND
     ccache
-  REQUIRED
-    ${CI}
 )
 
 if(NOT CCACHE_PROGRAM)
@@ -49,3 +43,6 @@ else()
   setenv(CCACHE_MAXSIZE 100G)
   setenv(CCACHE_SLOPPINESS "pch_defines,time_macros,locale,random_seed,clang_index_store,gcno_cwd")
 endif()
+
+
+

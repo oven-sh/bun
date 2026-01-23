@@ -168,40 +168,40 @@ pub const HostedGitInfo = struct {
     }
 
     /// Convert this HostedGitInfo to a JavaScript object
-    pub fn toJS(self: *const Self, go: *jsc.JSGlobalObject) jsc.JSValue {
+    pub fn toJS(self: *const Self, go: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
         const obj = jsc.JSValue.createEmptyObject(go, 6);
         obj.put(
             go,
             jsc.ZigString.static("type"),
-            bun.String.fromBytes(self.host_provider.typeStr()).toJS(go),
+            try bun.String.fromBytes(self.host_provider.typeStr()).toJS(go),
         );
         obj.put(
             go,
             jsc.ZigString.static("domain"),
-            bun.String.fromBytes(self.host_provider.domain()).toJS(go),
+            try bun.String.fromBytes(self.host_provider.domain()).toJS(go),
         );
         obj.put(
             go,
             jsc.ZigString.static("project"),
-            bun.String.fromBytes(self.project).toJS(go),
+            try bun.String.fromBytes(self.project).toJS(go),
         );
         obj.put(
             go,
             jsc.ZigString.static("user"),
-            if (self.user) |user| bun.String.fromBytes(user).toJS(go) else .null,
+            if (self.user) |user| try bun.String.fromBytes(user).toJS(go) else .null,
         );
         obj.put(
             go,
             jsc.ZigString.static("committish"),
             if (self.committish) |committish|
-                bun.String.fromBytes(committish).toJS(go)
+                try bun.String.fromBytes(committish).toJS(go)
             else
                 .null,
         );
         obj.put(
             go,
             jsc.ZigString.static("default"),
-            bun.String.fromBytes(@tagName(self.default_representation)).toJS(go),
+            try bun.String.fromBytes(@tagName(self.default_representation)).toJS(go),
         );
 
         return obj;
@@ -518,7 +518,7 @@ pub fn isGitHubShorthand(npa_str: []const u8) bool {
     // Implements doesNotEndWithSlash
     const does_not_end_with_slash =
         if (pound_idx) |pi|
-            npa_str[pi - 1] != '/'
+            pi == 0 or npa_str[pi - 1] != '/'
         else
             npa_str.len >= 1 and npa_str[npa_str.len - 1] != '/';
 
@@ -526,7 +526,7 @@ pub fn isGitHubShorthand(npa_str: []const u8) bool {
     return seen_slash and does_not_end_with_slash;
 }
 
-const UrlProtocol = union(enum) {
+pub const UrlProtocol = union(enum) {
     well_formed: WellDefinedProtocol,
 
     // A protocol which is not known by the library. Includes the : character, but not the
@@ -545,7 +545,7 @@ const UrlProtocol = union(enum) {
     }
 };
 
-const UrlProtocolPair = struct {
+pub const UrlProtocolPair = struct {
     const Self = @This();
 
     url: union(enum) {
@@ -723,11 +723,10 @@ fn normalizeProtocol(npa_str: []const u8) UrlProtocolPair {
     return .{ .url = .{ .unmanaged = npa_str }, .protocol = .unknown };
 }
 
-/// Attempt to correct an scp-style URL into a proper URL, parsable with jsc.URL. Potentially
-/// mutates the original input.
+/// Attempt to correct an scp-style URL into a proper URL, parsable with jsc.URL.
 ///
 /// This function assumes that the input is an scp-style URL.
-fn correctUrl(
+pub fn correctUrl(
     url_proto_pair: *const UrlProtocolPair,
     allocator: std.mem.Allocator,
 ) error{OutOfMemory}!UrlProtocolPair {

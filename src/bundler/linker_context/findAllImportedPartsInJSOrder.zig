@@ -2,8 +2,8 @@ pub fn findAllImportedPartsInJSOrder(this: *LinkerContext, temp_allocator: std.m
     const trace = bun.perf.trace("Bundler.findAllImportedPartsInJSOrder");
     defer trace.end();
 
-    var part_ranges_shared = std.ArrayList(PartRange).init(temp_allocator);
-    var parts_prefix_shared = std.ArrayList(PartRange).init(temp_allocator);
+    var part_ranges_shared = std.array_list.Managed(PartRange).init(temp_allocator);
+    var parts_prefix_shared = std.array_list.Managed(PartRange).init(temp_allocator);
     defer part_ranges_shared.deinit();
     defer parts_prefix_shared.deinit();
     for (chunks, 0..) |*chunk, index| {
@@ -25,11 +25,11 @@ pub fn findAllImportedPartsInJSOrder(this: *LinkerContext, temp_allocator: std.m
 pub fn findImportedPartsInJSOrder(
     this: *LinkerContext,
     chunk: *Chunk,
-    part_ranges_shared: *std.ArrayList(PartRange),
-    parts_prefix_shared: *std.ArrayList(PartRange),
+    part_ranges_shared: *std.array_list.Managed(PartRange),
+    parts_prefix_shared: *std.array_list.Managed(PartRange),
     chunk_index: u32,
 ) !void {
-    var chunk_order_array = try std.ArrayList(Chunk.Order).initCapacity(this.allocator(), chunk.files_with_parts_in_chunk.count());
+    var chunk_order_array = try std.array_list.Managed(Chunk.Order).initCapacity(this.allocator(), chunk.files_with_parts_in_chunk.count());
     defer chunk_order_array.deinit();
     const distances = this.graph.files.items(.distance_from_entry_point);
     for (chunk.files_with_parts_in_chunk.keys()) |source_index| {
@@ -49,16 +49,16 @@ pub fn findImportedPartsInJSOrder(
         flags: []const JSMeta.Flags,
         parts: []BabyList(Part),
         import_records: []BabyList(ImportRecord),
-        files: std.ArrayList(Index.Int),
-        part_ranges: std.ArrayList(PartRange),
+        files: std.array_list.Managed(Index.Int),
+        part_ranges: std.array_list.Managed(PartRange),
         visited: std.AutoHashMap(Index.Int, void),
-        parts_prefix: std.ArrayList(PartRange),
+        parts_prefix: std.array_list.Managed(PartRange),
         c: *LinkerContext,
         entry_point: Chunk.EntryPoint,
         chunk_index: u32,
 
         fn appendOrExtendRange(
-            ranges: *std.ArrayList(PartRange),
+            ranges: *std.array_list.Managed(PartRange),
             source_index: Index.Int,
             part_index: Index.Int,
         ) void {
@@ -164,7 +164,7 @@ pub fn findImportedPartsInJSOrder(
     parts_prefix_shared.clearRetainingCapacity();
 
     var visitor = FindImportedPartsVisitor{
-        .files = std.ArrayList(Index.Int).init(this.allocator()),
+        .files = std.array_list.Managed(Index.Int).init(this.allocator()),
         .part_ranges = part_ranges_shared.*,
         .parts_prefix = parts_prefix_shared.*,
         .visited = std.AutoHashMap(Index.Int, void).init(this.allocator()),

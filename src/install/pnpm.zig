@@ -78,7 +78,7 @@ pub fn migratePnpmLockfile(
     data: []const u8,
     dir: bun.FD,
 ) MigratePnpmLockfileError!LoadResult {
-    var buf: std.ArrayList(u8) = .init(allocator);
+    var buf: std.array_list.Managed(u8) = .init(allocator);
     defer buf.deinit();
 
     lockfile.initEmpty(allocator);
@@ -190,7 +190,7 @@ pub fn migratePnpmLockfile(
         };
         var patches: bun.StringArrayHashMap(Patch) = .init(allocator);
         defer patches.deinit();
-        var patch_join_buf: std.ArrayList(u8) = .init(allocator);
+        var patch_join_buf: std.array_list.Managed(u8) = .init(allocator);
         defer patch_join_buf.deinit();
 
         if (root.getObject("patchedDependencies")) |patched_dependencies_expr| {
@@ -661,7 +661,7 @@ pub fn migratePnpmLockfile(
 
     const string_buf = lockfile.buffers.string_bytes.items;
 
-    var res_buf: std.ArrayList(u8) = .init(allocator);
+    var res_buf: std.array_list.Managed(u8) = .init(allocator);
     defer res_buf.deinit();
 
     try lockfile.buffers.resolutions.ensureTotalCapacityPrecise(allocator, lockfile.buffers.dependencies.items.len);
@@ -858,7 +858,7 @@ fn parseAppendPackageDependencies(
     string_buf: *String.Buf,
     log: *logger.Log,
 ) ParseAppendDependenciesError!struct { u32, u32 } {
-    var version_buf: std.ArrayList(u8) = .init(allocator);
+    var version_buf: std.array_list.Managed(u8) = .init(allocator);
     defer version_buf.deinit();
 
     const off = lockfile.buffers.dependencies.items.len;
@@ -1340,7 +1340,7 @@ fn updatePackageJsonAfterMigration(allocator: Allocator, manager: *PackageManage
         }
     }
 
-    var workspace_paths: ?std.ArrayList([]const u8) = null;
+    var workspace_paths: ?std.array_list.Managed([]const u8) = null;
     var catalog_obj: ?Expr = null;
     var catalogs_obj: ?Expr = null;
     var workspace_overrides_obj: ?Expr = null;
@@ -1356,7 +1356,7 @@ fn updatePackageJsonAfterMigration(allocator: Allocator, manager: *PackageManage
             if (root.get("packages")) |packages_expr| {
                 if (packages_expr.asArray()) |_packages| {
                     var packages = _packages;
-                    var paths: std.ArrayList([]const u8) = .init(allocator);
+                    var paths: std.array_list.Managed([]const u8) = .init(allocator);
                     while (packages.next()) |package_path| {
                         if (package_path.asString(allocator)) |package_path_str| {
                             try paths.append(package_path_str);
@@ -1482,7 +1482,7 @@ fn updatePackageJsonAfterMigration(allocator: Allocator, manager: *PackageManage
 
     // Handle patchedDependencies from pnpm-workspace.yaml
     if (workspace_patched_deps_obj) |ws_patched| {
-        var join_buf: std.ArrayList(u8) = .init(allocator);
+        var join_buf: std.array_list.Managed(u8) = .init(allocator);
         defer join_buf.deinit();
 
         if (ws_patched.data == .e_object) {

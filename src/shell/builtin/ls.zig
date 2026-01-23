@@ -221,10 +221,13 @@ pub const ShellLsTask = struct {
 
     cwd: bun.FileDescriptor,
     path: [:0]const u8 = &[0:0]u8{},
-    output: std.ArrayList(u8),
+    output: std.array_list.Managed(u8),
     is_absolute: bool = false,
     err: ?Syscall.Error = null,
     result_kind: enum { file, dir, idk } = .idk,
+    /// Cached current time (seconds since epoch) for formatting timestamps.
+    /// Cached once per task to avoid repeated syscalls.
+    #now_secs: u64 = 0,
 
     event_loop: jsc.EventLoopHandle,
     concurrent_task: jsc.EventLoopTask,
@@ -256,7 +259,7 @@ pub const ShellLsTask = struct {
             .event_loop = event_loop,
             .task_count = task_count,
             .path = path,
-            .output = std.ArrayList(u8).init(ls.alloc_scope.allocator()),
+            .output = std.array_list.Managed(u8).init(ls.alloc_scope.allocator()),
             .owned_string = owned_string,
         };
 
@@ -293,6 +296,11 @@ pub const ShellLsTask = struct {
     }
 
     pub fn run(this: *@This()) void {
+        // Cache current time once per task for timestamp formatting
+        if (this.opts.long_listing) {
+            this.#now_secs = @intCast(std.time.timestamp());
+        }
+
         const fd = switch (ShellSyscall.openat(this.cwd, this.path, bun.O.RDONLY | bun.O.DIRECTORY, 0)) {
             .err => |e| {
                 switch (e.getErrno()) {
@@ -301,7 +309,7 @@ pub const ShellLsTask = struct {
                     },
                     .NOTDIR => {
                         this.result_kind = .file;
-                        this.addEntry(this.path);
+                        this.addEntry(this.path, this.cwd);
                     },
                     else => {
                         this.err = this.errorWithPath(e, this.path);
@@ -320,7 +328,7 @@ pub const ShellLsTask = struct {
         if (!this.opts.list_directories) {
             if (this.print_directory) {
                 const writer = this.output.writer();
-                bun.handleOom(std.fmt.format(writer, "{s}:\n", .{this.path}));
+                bun.handleOom(writer.print("{s}:\n", .{this.path}));
             }
 
             var iterator = DirIterator.iterate(fd, .u8);
@@ -329,7 +337,7 @@ pub const ShellLsTask = struct {
             // If `-a` is used, "." and ".." should show up as results. However,
             // our `DirIterator` abstraction skips them, so let's just add them
             // now.
-            this.addDotEntriesIfNeeded();
+            this.addDotEntriesIfNeeded(fd);
 
             while (switch (entry) {
                 .err => |e| {
@@ -338,7 +346,7 @@ pub const ShellLsTask = struct {
                 },
                 .result => |ent| ent,
             }) |current| : (entry = iterator.next()) {
-                this.addEntry(current.name.sliceAssumeZ());
+                this.addEntry(current.name.sliceAssumeZ(), fd);
                 if (current.kind == .directory and this.opts.recursive) {
                     this.enqueue(current.name.sliceAssumeZ());
                 }
@@ -348,7 +356,7 @@ pub const ShellLsTask = struct {
         }
 
         const writer = this.output.writer();
-        bun.handleOom(std.fmt.format(writer, "{s}\n", .{this.path}));
+        bun.handleOom(writer.print("{s}\n", .{this.path}));
         return;
     }
 
@@ -367,20 +375,167 @@ pub const ShellLsTask = struct {
     }
 
     // TODO more complex output like multi-column
-    fn addEntry(this: *@This(), name: [:0]const u8) void {
+    fn addEntry(this: *@This(), name: [:0]const u8, dir_fd: bun.FileDescriptor) void {
         const skip = this.shouldSkipEntry(name);
         debug("Entry: (skip={}) {s} :: {s}", .{ skip, this.path, name });
         if (skip) return;
-        bun.handleOom(this.output.ensureUnusedCapacity(name.len + 1));
-        bun.handleOom(this.output.appendSlice(name));
-        bun.handleOom(this.output.append('\n'));
+
+        if (this.opts.long_listing) {
+            this.addEntryLong(name, dir_fd);
+        } else {
+            bun.handleOom(this.output.ensureUnusedCapacity(name.len + 1));
+            bun.handleOom(this.output.appendSlice(name));
+            bun.handleOom(this.output.append('\n'));
+        }
     }
 
-    fn addDotEntriesIfNeeded(this: *@This()) void {
+    fn addEntryLong(this: *@This(), name: [:0]const u8, dir_fd: bun.FileDescriptor) void {
+        // Use lstatat to not follow symlinks (so symlinks show as 'l' type)
+        const stat_result = Syscall.lstatat(dir_fd, name);
+        const stat = switch (stat_result) {
+            .err => {
+                // If stat fails, just output the name with placeholders
+                const writer = this.output.writer();
+                bun.handleOom(writer.print("?????????? ? ? ? ?            ? {s}\n", .{name}));
+                return;
+            },
+            .result => |s| s,
+        };
+
+        const writer = this.output.writer();
+
+        // File type and permissions
+        const mode: u32 = @intCast(stat.mode);
+        const file_type = getFileTypeChar(mode);
+        const perms = formatPermissions(mode);
+
+        // Number of hard links
+        const nlink: u64 = @intCast(stat.nlink);
+
+        // Owner and group (numeric)
+        const uid: u64 = @intCast(stat.uid);
+        const gid: u64 = @intCast(stat.gid);
+
+        // File size
+        const size: i64 = @intCast(stat.size);
+
+        // Modification time
+        const mtime = stat.mtime();
+        const time_str = formatTime(@intCast(mtime.sec), this.#now_secs);
+
+        bun.handleOom(writer.print("{c}{s} {d: >3} {d: >5} {d: >5} {d: >8} {s} {s}\n", .{
+            file_type,
+            &perms,
+            nlink,
+            uid,
+            gid,
+            size,
+            &time_str,
+            name,
+        }));
+    }
+
+    fn getFileTypeChar(mode: u32) u8 {
+        const file_type = mode & bun.S.IFMT;
+        return switch (file_type) {
+            bun.S.IFDIR => 'd',
+            bun.S.IFLNK => 'l',
+            bun.S.IFBLK => 'b',
+            bun.S.IFCHR => 'c',
+            bun.S.IFIFO => 'p',
+            bun.S.IFSOCK => 's',
+            else => '-', // IFREG or unknown
+        };
+    }
+
+    fn formatPermissions(mode: u32) [9]u8 {
+        var perms: [9]u8 = undefined;
+        // Owner permissions
+        perms[0] = if (mode & bun.S.IRUSR != 0) 'r' else '-';
+        perms[1] = if (mode & bun.S.IWUSR != 0) 'w' else '-';
+        // Owner execute with setuid handling
+        const owner_exec = mode & bun.S.IXUSR != 0;
+        const setuid = mode & bun.S.ISUID != 0;
+        perms[2] = if (setuid)
+            (if (owner_exec) 's' else 'S')
+        else
+            (if (owner_exec) 'x' else '-');
+
+        // Group permissions
+        perms[3] = if (mode & bun.S.IRGRP != 0) 'r' else '-';
+        perms[4] = if (mode & bun.S.IWGRP != 0) 'w' else '-';
+        // Group execute with setgid handling
+        const group_exec = mode & bun.S.IXGRP != 0;
+        const setgid = mode & bun.S.ISGID != 0;
+        perms[5] = if (setgid)
+            (if (group_exec) 's' else 'S')
+        else
+            (if (group_exec) 'x' else '-');
+
+        // Other permissions
+        perms[6] = if (mode & bun.S.IROTH != 0) 'r' else '-';
+        perms[7] = if (mode & bun.S.IWOTH != 0) 'w' else '-';
+        // Other execute with sticky bit handling
+        const other_exec = mode & bun.S.IXOTH != 0;
+        const sticky = mode & bun.S.ISVTX != 0;
+        perms[8] = if (sticky)
+            (if (other_exec) 't' else 'T')
+        else
+            (if (other_exec) 'x' else '-');
+
+        return perms;
+    }
+
+    fn formatTime(timestamp: i64, now_secs: u64) [12]u8 {
+        var buf: [12]u8 = undefined;
+        // Format as "Mon DD HH:MM" for recent files (within 6 months)
+        // or "Mon DD  YYYY" for older files
+        const epoch_secs: u64 = if (timestamp < 0) 0 else @intCast(timestamp);
+        const epoch = std.time.epoch.EpochSeconds{ .secs = epoch_secs };
+        const day_seconds = epoch.getDaySeconds();
+        const year_day = epoch.getEpochDay().calculateYearDay();
+
+        const month_names = [_][]const u8{ "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
+        const month_day = year_day.calculateMonthDay();
+        const month_name = month_names[month_day.month.numeric() - 1];
+
+        // Check if file is older than 6 months (approximately 180 days)
+        const six_months_secs: u64 = 180 * 24 * 60 * 60;
+        const is_recent = epoch_secs > now_secs -| six_months_secs and epoch_secs <= now_secs + six_months_secs;
+
+        if (is_recent) {
+            const hours = day_seconds.getHoursIntoDay();
+            const minutes = day_seconds.getMinutesIntoHour();
+
+            _ = std.fmt.bufPrint(&buf, "{s} {d:0>2} {d:0>2}:{d:0>2}", .{
+                month_name,
+                month_day.day_index + 1,
+                hours,
+                minutes,
+            }) catch {
+                @memcpy(&buf, "??? ?? ??:??");
+            };
+        } else {
+            // Show year for old files
+            const year = year_day.year;
+
+            _ = std.fmt.bufPrint(&buf, "{s} {d:0>2}  {d:4}", .{
+                month_name,
+                month_day.day_index + 1,
+                year,
+            }) catch {
+                @memcpy(&buf, "??? ??  ????");
+            };
+        }
+
+        return buf;
+    }
+
+    fn addDotEntriesIfNeeded(this: *@This(), dir_fd: bun.FileDescriptor) void {
         // `.addEntry()` already checks will check if we can add "." and ".." to
         // the result
-        this.addEntry(".");
-        this.addEntry("..");
+        this.addEntry(".", dir_fd);
+        this.addEntry("..", dir_fd);
     }
 
     fn errorWithPath(this: *@This(), err: Syscall.Error, path: [:0]const u8) Syscall.Error {
@@ -403,9 +558,9 @@ pub const ShellLsTask = struct {
         }
     }
 
-    pub fn takeOutput(this: *@This()) std.ArrayList(u8) {
+    pub fn takeOutput(this: *@This()) std.array_list.Managed(u8) {
         const ret = this.output;
-        this.output = std.ArrayList(u8).init(this.ls.alloc_scope.allocator());
+        this.output = std.array_list.Managed(u8).init(this.ls.alloc_scope.allocator());
         return ret;
     }
 

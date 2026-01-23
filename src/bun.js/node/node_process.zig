@@ -14,7 +14,7 @@ comptime {
 
 var title_mutex = bun.Mutex{};
 
-pub fn getTitle(_: *JSGlobalObject, title: *bun.String) callconv(.C) void {
+pub fn getTitle(_: *JSGlobalObject, title: *bun.String) callconv(.c) void {
     title_mutex.lock();
     defer title_mutex.unlock();
     const str = bun.cli.Bun__Node__ProcessTitle;
@@ -22,7 +22,7 @@ pub fn getTitle(_: *JSGlobalObject, title: *bun.String) callconv(.C) void {
 }
 
 // TODO: https://github.com/nodejs/node/blob/master/deps/uv/src/unix/darwin-proctitle.c
-pub fn setTitle(globalObject: *JSGlobalObject, newvalue: *bun.String) callconv(.C) void {
+pub fn setTitle(globalObject: *JSGlobalObject, newvalue: *bun.String) callconv(.c) void {
     defer newvalue.deref();
     title_mutex.lock();
     defer title_mutex.unlock();
@@ -36,11 +36,11 @@ pub fn setTitle(globalObject: *JSGlobalObject, newvalue: *bun.String) callconv(.
     bun.cli.Bun__Node__ProcessTitle = new_title;
 }
 
-pub fn createArgv0(globalObject: *jsc.JSGlobalObject) callconv(.C) jsc.JSValue {
+pub fn createArgv0(globalObject: *jsc.JSGlobalObject) callconv(.c) jsc.JSValue {
     return jsc.ZigString.fromUTF8(bun.argv[0]).toJS(globalObject);
 }
 
-pub fn getExecPath(globalObject: *jsc.JSGlobalObject) callconv(.C) jsc.JSValue {
+pub fn getExecPath(globalObject: *jsc.JSGlobalObject) callconv(.c) jsc.JSValue {
     const out = bun.selfExePath() catch {
         // if for any reason we are unable to get the executable path, we just return argv[0]
         return createArgv0(globalObject);
@@ -59,35 +59,47 @@ fn createExecArgv(globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
         if (worker.execArgv) |execArgv| {
             const array = try jsc.JSValue.createEmptyArray(globalObject, execArgv.len);
             for (0..execArgv.len) |i| {
-                try array.putIndex(globalObject, @intCast(i), bun.String.init(execArgv[i]).toJS(globalObject));
+                try array.putIndex(globalObject, @intCast(i), try bun.String.init(execArgv[i]).toJS(globalObject));
             }
             return array;
         }
     }
 
-    // For compiled/standalone executables, execArgv should contain compile_exec_argv
+    // For compiled/standalone executables, execArgv should contain compile_exec_argv and BUN_OPTIONS.
+    // Use appendOptionsEnv for BUN_OPTIONS to correctly handle quoted values.
     if (vm.standalone_module_graph) |graph| {
-        if (graph.compile_exec_argv.len > 0) {
-            // Use tokenize to split the compile_exec_argv string by whitespace
-            var args = std.ArrayList(bun.String).init(temp_alloc);
+        if (graph.compile_exec_argv.len > 0 or bun.bun_options_argc > 0) {
+            var args = std.array_list.Managed(bun.String).init(temp_alloc);
             defer args.deinit();
             defer for (args.items) |*arg| arg.deref();
 
-            var tokenizer = std.mem.tokenizeAny(u8, graph.compile_exec_argv, " \t\n\r");
-            while (tokenizer.next()) |token| {
-                try args.append(bun.String.cloneUTF8(token));
+            // Process BUN_OPTIONS first using appendOptionsEnv for proper quote handling.
+            // appendOptionsEnv inserts starting at index 1, so we need a placeholder.
+            if (bun.bun_options_argc > 0) {
+                if (bun.env_var.BUN_OPTIONS.get()) |opts| {
+                    try args.append(bun.String.empty); // placeholder for insert-at-1
+                    try bun.appendOptionsEnv(opts, bun.String, &args);
+                    _ = args.orderedRemove(0); // remove placeholder
+                }
+            }
+
+            if (graph.compile_exec_argv.len > 0) {
+                var tokenizer = std.mem.tokenizeAny(u8, graph.compile_exec_argv, " \t\n\r");
+                while (tokenizer.next()) |token| {
+                    try args.append(bun.String.cloneUTF8(token));
+                }
             }
 
             const array = try jsc.JSValue.createEmptyArray(globalObject, args.items.len);
             for (0..args.items.len) |idx| {
-                try array.putIndex(globalObject, @intCast(idx), args.items[idx].toJS(globalObject));
+                try array.putIndex(globalObject, @intCast(idx), try args.items[idx].toJS(globalObject));
             }
             return array;
         }
         return try jsc.JSValue.createEmptyArray(globalObject, 0);
     }
 
-    var args = try std.ArrayList(bun.String).initCapacity(temp_alloc, bun.argv.len - 1);
+    var args = try std.array_list.Managed(bun.String).initCapacity(temp_alloc, bun.argv.len - 1);
     defer args.deinit();
     defer for (args.items) |*arg| arg.deref();
 
@@ -146,7 +158,7 @@ fn createExecArgv(globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
     return bun.String.toJSArray(globalObject, args.items);
 }
 
-fn createArgv(globalObject: *jsc.JSGlobalObject) callconv(.C) jsc.JSValue {
+fn createArgv(globalObject: *jsc.JSGlobalObject) callconv(.c) jsc.JSValue {
     const vm = globalObject.bunVM();
 
     // Allocate up to 32 strings in stack
@@ -220,7 +232,7 @@ pub fn getExecArgv(global: *JSGlobalObject) callconv(.c) JSValue {
     return Bun__Process__getExecArgv(global);
 }
 
-pub fn getEval(globalObject: *jsc.JSGlobalObject) callconv(.C) jsc.JSValue {
+pub fn getEval(globalObject: *jsc.JSGlobalObject) callconv(.c) jsc.JSValue {
     const vm = globalObject.bunVM();
     if (vm.module_loader.eval_source) |source| {
         return jsc.ZigString.init(source.contents).toJS(globalObject);
@@ -234,7 +246,7 @@ fn getCwd_(globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
     switch (bun.api.node.path.getCwd(&buf)) {
         .result => |r| return jsc.ZigString.init(r).withEncoding().toJS(globalObject),
         .err => |e| {
-            return globalObject.throwValue(e.toJS(globalObject));
+            return globalObject.throwValue(try e.toJS(globalObject));
         },
     }
 }
@@ -259,7 +271,7 @@ fn setCwd_(globalObject: *jsc.JSGlobalObject, to: *jsc.ZigString) bun.JSError!js
                 .result => |r| r,
                 .err => |err| {
                     _ = Syscall.chdir(fs.top_level_dir, fs.top_level_dir);
-                    return globalObject.throwValue(err.toJS(globalObject));
+                    return globalObject.throwValue(try err.toJS(globalObject));
                 },
             };
             @memcpy(fs.top_level_dir_buf[0..into_cwd_buf.len], into_cwd_buf);
@@ -278,7 +290,7 @@ fn setCwd_(globalObject: *jsc.JSGlobalObject, to: *jsc.ZigString) bun.JSError!js
             return str.transferToJS(globalObject);
         },
         .err => |e| {
-            return globalObject.throwValue(e.toJS(globalObject));
+            return globalObject.throwValue(try e.toJS(globalObject));
         },
     }
 }
@@ -298,7 +310,7 @@ pub fn exit(globalObject: *jsc.JSGlobalObject, code: u8) callconv(.c) void {
 }
 
 // TODO: switch this to using *bun.wtf.String when it is added
-pub fn Bun__Process__editWindowsEnvVar(k: bun.String, v: bun.String) callconv(.C) void {
+pub fn Bun__Process__editWindowsEnvVar(k: bun.String, v: bun.String) callconv(.c) void {
     comptime bun.assert(bun.Environment.isWindows);
     if (k.tag == .Empty) return;
     const wtf1 = k.value.WTFStringImpl;

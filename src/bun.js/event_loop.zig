@@ -110,7 +110,7 @@ pub fn pipeReadBuffer(this: *const EventLoop) []u8 {
     return this.virtual_machine.rareData().pipeReadBuffer();
 }
 
-pub const Queue = std.fifo.LinearFifo(Task, .Dynamic);
+pub const Queue = bun.LinearFifo(Task, .Dynamic);
 const log = bun.Output.scoped(.EventLoop, .hidden);
 
 pub fn tickWhilePaused(this: *EventLoop, done: *bool) void {
@@ -321,7 +321,7 @@ pub fn tickConcurrentWithCount(this: *EventLoop) usize {
             dest.deinit();
         }
 
-        if (task.auto_delete) {
+        if (task.autoDelete()) {
             to_destroy = task;
         }
 
@@ -383,7 +383,7 @@ pub fn autoTick(this: *EventLoop) void {
         loop.tickWithTimeout(if (ctx.timer.getTimeout(&timespec, ctx)) &timespec else null);
 
         if (comptime Environment.isDebug) {
-            log("tick {}, timeout: {}", .{ std.fmt.fmtDuration(event_loop_sleep_timer.read()), std.fmt.fmtDuration(timespec.ns()) });
+            log("tick {D}, timeout: {D}", .{ event_loop_sleep_timer.read(), timespec.ns() });
         }
     } else {
         loop.tickWithoutIdle();
@@ -429,7 +429,7 @@ pub fn tickPossiblyForever(this: *EventLoop) void {
     this.tick();
 }
 
-fn noopForeverTimer(_: *uws.Timer) callconv(.C) void {
+fn noopForeverTimer(_: *uws.Timer) callconv(.c) void {
     // do nothing
 }
 
@@ -512,14 +512,28 @@ pub fn tick(this: *EventLoop) void {
     this.global.handleRejectedPromises();
 }
 
+pub fn tickWithoutJS(this: *EventLoop) void {
+    const ctx = this.virtual_machine;
+    this.tickConcurrent();
+
+    while (this.tickWithCount(ctx) > 0) {
+        this.tickConcurrent();
+    }
+}
+
 pub fn waitForPromise(this: *EventLoop, promise: jsc.AnyPromise) void {
     const jsc_vm = this.virtual_machine.jsc_vm;
-    switch (promise.status(jsc_vm)) {
+    switch (promise.status()) {
         .pending => {
-            while (promise.status(jsc_vm) == .pending) {
+            while (promise.status() == .pending) {
+                // If execution is forbidden (e.g. due to a timeout in vm.SourceTextModule.evaluate),
+                // the Promise callbacks can never run, so we must exit to avoid an infinite loop.
+                if (jsc_vm.executionForbidden()) {
+                    break;
+                }
                 this.tick();
 
-                if (promise.status(jsc_vm) == .pending) {
+                if (promise.status() == .pending) {
                     this.autoTick();
                 }
             }
@@ -530,13 +544,12 @@ pub fn waitForPromise(this: *EventLoop, promise: jsc.AnyPromise) void {
 
 pub fn waitForPromiseWithTermination(this: *EventLoop, promise: jsc.AnyPromise) void {
     const worker = this.virtual_machine.worker orelse @panic("EventLoop.waitForPromiseWithTermination: worker is not initialized");
-    const jsc_vm = this.virtual_machine.jsc_vm;
-    switch (promise.status(jsc_vm)) {
+    switch (promise.status()) {
         .pending => {
-            while (!worker.hasRequestedTerminate() and promise.status(jsc_vm) == .pending) {
+            while (!worker.hasRequestedTerminate() and promise.status() == .pending) {
                 this.tick();
 
-                if (!worker.hasRequestedTerminate() and promise.status(jsc_vm) == .pending) {
+                if (!worker.hasRequestedTerminate() and promise.status() == .pending) {
                     this.autoTick();
                 }
             }
@@ -631,6 +644,31 @@ pub fn unrefConcurrently(this: *EventLoop) void {
     // TODO maybe this should be AcquireRelease
     _ = this.concurrent_ref.fetchSub(1, .seq_cst);
     this.wakeup();
+}
+
+/// Testing API to expose event loop state
+pub fn getActiveTasks(globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    const vm = globalObject.bunVM();
+    const event_loop = vm.event_loop;
+
+    const result = jsc.JSValue.createEmptyObject(globalObject, 3);
+    result.put(globalObject, jsc.ZigString.static("activeTasks"), jsc.JSValue.jsNumber(vm.active_tasks));
+    result.put(globalObject, jsc.ZigString.static("concurrentRef"), jsc.JSValue.jsNumber(event_loop.concurrent_ref.load(.seq_cst)));
+
+    // Get num_polls from uws loop (POSIX) or active_handles from libuv (Windows)
+    const num_polls: i32 = if (Environment.isWindows)
+        @intCast(bun.windows.libuv.Loop.get().active_handles)
+    else
+        uws.Loop.get().num_polls;
+    result.put(globalObject, jsc.ZigString.static("numPolls"), jsc.JSValue.jsNumber(num_polls));
+
+    return result;
+}
+
+pub fn deinit(this: *EventLoop) void {
+    this.tasks.deinit();
+    this.immediate_tasks.clearAndFree(bun.default_allocator);
+    this.next_immediate_tasks.clearAndFree(bun.default_allocator);
 }
 
 pub const AnyEventLoop = @import("./event_loop/AnyEventLoop.zig").AnyEventLoop;

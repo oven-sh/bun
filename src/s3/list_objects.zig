@@ -59,8 +59,8 @@ pub const S3ListObjectsV2Result = struct {
     continuation_token: ?[]const u8,
     next_continuation_token: ?[]const u8,
     start_after: ?[]const u8,
-    common_prefixes: ?std.ArrayList([]const u8),
-    contents: ?std.ArrayList(S3ListObjectsContents),
+    common_prefixes: ?std.array_list.Managed([]const u8),
+    contents: ?std.array_list.Managed(S3ListObjectsContents),
 
     pub fn deinit(this: *const @This()) void {
         if (this.contents) |contents| {
@@ -73,7 +73,7 @@ pub const S3ListObjectsV2Result = struct {
     }
 
     pub fn toJS(this: *const @This(), globalObject: *JSGlobalObject) bun.JSError!JSValue {
-        const jsResult = JSValue.createEmptyObject(globalObject, 12);
+        const jsResult = JSValue.createEmptyObject(globalObject, 0);
 
         if (this.name) |name| {
             jsResult.put(globalObject, jsc.ZigString.static("name"), try bun.String.createUTF8ForJS(globalObject, name));
@@ -118,7 +118,7 @@ pub const S3ListObjectsV2Result = struct {
             const jsContents = try JSValue.createEmptyArray(globalObject, contents.items.len);
 
             for (contents.items, 0..) |item, i| {
-                const objectInfo = JSValue.createEmptyObject(globalObject, 1);
+                const objectInfo = JSValue.createEmptyObject(globalObject, 0);
                 objectInfo.put(globalObject, jsc.ZigString.static("key"), try bun.String.createUTF8ForJS(globalObject, item.key));
 
                 if (item.etag) |etag| {
@@ -146,7 +146,7 @@ pub const S3ListObjectsV2Result = struct {
                 }
 
                 if (item.owner) |owner| {
-                    const jsOwner = JSValue.createEmptyObject(globalObject, 2);
+                    const jsOwner = JSValue.createEmptyObject(globalObject, 0);
                     if (owner.id) |id| {
                         jsOwner.put(globalObject, jsc.ZigString.static("id"), try bun.String.createUTF8ForJS(globalObject, id));
                     }
@@ -168,7 +168,7 @@ pub const S3ListObjectsV2Result = struct {
             const jsCommonPrefixes = try JSValue.createEmptyArray(globalObject, common_prefixes.items.len);
 
             for (common_prefixes.items, 0..) |prefix, i| {
-                const jsPrefix = JSValue.createEmptyObject(globalObject, 1);
+                const jsPrefix = JSValue.createEmptyObject(globalObject, 0);
                 jsPrefix.put(globalObject, jsc.ZigString.static("prefix"), try bun.String.createUTF8ForJS(globalObject, prefix));
                 try jsCommonPrefixes.putIndex(globalObject, @intCast(i), jsPrefix);
             }
@@ -196,8 +196,8 @@ pub fn parseS3ListObjectsResult(xml: []const u8) !S3ListObjectsV2Result {
         .start_after = null,
     };
 
-    var contents = std.ArrayList(S3ListObjectsContents).init(bun.default_allocator);
-    var common_prefixes = std.ArrayList([]const u8).init(bun.default_allocator);
+    var contents = std.array_list.Managed(S3ListObjectsContents).init(bun.default_allocator);
+    var common_prefixes = std.array_list.Managed([]const u8).init(bun.default_allocator);
 
     // we dont use trailing ">" as it may finish with xmlns=...
     if (strings.indexOf(xml, "<ListBucketResult")) |delete_result_pos| {

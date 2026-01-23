@@ -457,6 +457,10 @@ pub fn isTLS(this: *WindowsNamedPipe) bool {
     return this.flags.is_ssl;
 }
 
+pub fn loop(this: *WindowsNamedPipe) *bun.Async.Loop {
+    return this.vm.uvLoop();
+}
+
 pub fn encodeAndWrite(this: *WindowsNamedPipe, data: []const u8) i32 {
     log("encodeAndWrite (len: {})", .{data.len});
     if (this.wrapper) |*wrapper| {
@@ -544,7 +548,7 @@ pub fn setTimeoutInMilliseconds(this: *WindowsNamedPipe, ms: c_uint) void {
     }
 
     // reschedule the timer
-    this.event_loop_timer.next = bun.timespec.msFromNow(ms);
+    this.event_loop_timer.next = bun.timespec.msFromNow(.allow_mocked_time, ms);
     this.vm.timer.insert(&this.event_loop_timer);
 }
 pub fn setTimeout(this: *WindowsNamedPipe, seconds: c_uint) void {

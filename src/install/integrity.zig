@@ -159,7 +159,7 @@ pub const Integrity = extern struct {
         return this.value[0..this.tag.digestLen()];
     }
 
-    pub fn format(this: *const Integrity, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(this: *const Integrity, writer: *std.Io.Writer) !void {
         switch (this.tag) {
             .sha1 => try writer.writeAll("sha1-"),
             .sha256 => try writer.writeAll("sha256-"),

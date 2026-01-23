@@ -5,8 +5,8 @@ stdin: InKind,
 stdout: OutKind,
 stderr: OutKind,
 
-pub fn format(this: IO, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-    try writer.print("stdin: {}\nstdout: {}\nstderr: {}", .{ this.stdin, this.stdout, this.stderr });
+pub fn format(this: IO, writer: *std.Io.Writer) !void {
+    try writer.print("stdin: {f}\nstdout: {f}\nstderr: {f}", .{ this.stdin, this.stdout, this.stderr });
 }
 
 pub fn memoryCost(this: *const IO) usize {
@@ -45,9 +45,9 @@ pub const InKind = union(enum) {
     fd: *Interpreter.IOReader,
     ignore,
 
-    pub fn format(this: InKind, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(this: InKind, writer: *std.Io.Writer) !void {
         switch (this) {
-            .fd => try writer.print("fd: {}", .{this.fd.fd}),
+            .fd => try writer.print("fd: {f}", .{this.fd.fd}),
             .ignore => try writer.print("ignore", .{}),
         }
     }
@@ -125,9 +125,9 @@ pub const OutKind = union(enum) {
     }
 
     // fn dupeForSubshell(this: *ShellExecEnv,
-    pub fn format(this: OutKind, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(this: OutKind, writer: *std.Io.Writer) !void {
         switch (this) {
-            .fd => try writer.print("fd: {}", .{this.fd.writer.fd}),
+            .fd => try writer.print("fd: {f}", .{this.fd.writer.fd}),
             .pipe => try writer.print("pipe", .{}),
             .ignore => try writer.print("ignore", .{}),
         }
@@ -170,7 +170,7 @@ pub const OutKind = union(enum) {
     fn to_subproc_stdio(this: OutKind, shellio: *?*shell.IOWriter) bun.shell.subproc.Stdio {
         return switch (this) {
             .fd => |val| brk: {
-                shellio.* = val.writer.refSelf();
+                shellio.* = val.writer.dupeRef();
                 break :brk if (val.captured) |cap| .{
                     .capture = .{
                         .buf = cap,

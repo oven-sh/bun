@@ -83,7 +83,7 @@ pub fn processExtractedTarballPackage(
                     ) catch |err| {
                         if (log_level != .silent) {
                             const string_buf = manager.lockfile.buffers.string_bytes.items;
-                            Output.err(err, "failed to parse package.json for <b>{}<r>", .{
+                            Output.err(err, "failed to parse package.json for <b>{f}<r>", .{
                                 resolution.fmtURL(string_buf),
                             });
                         }
@@ -167,7 +167,7 @@ pub fn processExtractedTarballPackage(
             ) catch |err| {
                 if (log_level != .silent) {
                     const string_buf = manager.lockfile.buffers.string_bytes.items;
-                    Output.prettyErrorln("<r><red>error:<r> expected package.json in <b>{any}<r> to be a JSON file: {s}\n", .{
+                    Output.prettyErrorln("<r><red>error:<r> expected package.json in <b>{f}<r> to be a JSON file: {s}\n", .{
                         resolution.fmtURL(string_buf),
                         @errorName(err),
                     });
@@ -211,7 +211,7 @@ pub fn processExtractedTarballPackage(
             ) catch |err| {
                 if (log_level != .silent) {
                     const string_buf = manager.lockfile.buffers.string_bytes.items;
-                    Output.prettyErrorln("<r><red>error:<r> expected package.json in <b>{any}<r> to be a JSON file: {s}\n", .{
+                    Output.prettyErrorln("<r><red>error:<r> expected package.json in <b>{f}<r> to be a JSON file: {s}\n", .{
                         resolution.fmtURL(string_buf),
                         @errorName(err),
                     });

@@ -138,14 +138,14 @@ pub const ZigString = extern struct {
         return strings.isAllASCII(this.slice());
     }
 
-    extern fn ZigString__toJSONObject(this: *const ZigString, *jsc.JSGlobalObject) callconv(.C) jsc.JSValue;
+    extern fn ZigString__toJSONObject(this: *const ZigString, *jsc.JSGlobalObject) callconv(.c) jsc.JSValue;
 
     pub fn toJSONObject(this: ZigString, globalThis: *jsc.JSGlobalObject) JSValue {
         jsc.markBinding(@src());
         return ZigString__toJSONObject(&this, globalThis);
     }
 
-    extern fn BunString__toURL(this: *const ZigString, *jsc.JSGlobalObject) callconv(.C) jsc.JSValue;
+    extern fn BunString__toURL(this: *const ZigString, *jsc.JSGlobalObject) callconv(.c) jsc.JSValue;
 
     pub fn toURL(this: ZigString, globalThis: *jsc.JSGlobalObject) JSValue {
         jsc.markBinding(@src());
@@ -234,7 +234,7 @@ pub const ZigString = extern struct {
         if (this.isUTF8())
             return try allocator.dupeZ(u8, this.slice());
 
-        var list = std.ArrayList(u8).init(allocator);
+        var list = std.array_list.Managed(u8).init(allocator);
         list = if (this.is16Bit())
             try strings.toUTF8ListWithType(list, this.utf16SliceAligned())
         else
@@ -256,7 +256,7 @@ pub const ZigString = extern struct {
         if (this.isUTF8())
             return allocator.dupeZ(u8, this.slice());
 
-        var list = std.ArrayList(u8).init(allocator);
+        var list = std.array_list.Managed(u8).init(allocator);
         list = if (this.is16Bit())
             try strings.toUTF8ListWithType(list, this.utf16SliceAligned())
         else
@@ -508,7 +508,7 @@ pub const ZigString = extern struct {
     pub const GithubActionFormatter = struct {
         text: ZigString,
 
-        pub fn format(this: GithubActionFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(this: GithubActionFormatter, writer: *std.Io.Writer) !void {
             var bytes = this.text.toSlice(bun.default_allocator);
             defer bytes.deinit();
             try bun.fmt.githubActionWriter(writer, bytes.slice());
@@ -535,7 +535,7 @@ pub const ZigString = extern struct {
     }
 
     fn from16SliceMaybeGlobal(slice_: []const u16, global: bool) ZigString {
-        var str = init(@as([*]const u8, @alignCast(@ptrCast(slice_.ptr)))[0..slice_.len]);
+        var str = init(@as([*]const u8, @ptrCast(@alignCast(slice_.ptr)))[0..slice_.len]);
         str.markUTF16();
         if (global) {
             str.markGlobal();
@@ -606,7 +606,7 @@ pub const ZigString = extern struct {
         this._unsafe_ptr_do_not_use = @as([*]const u8, @ptrFromInt(@intFromPtr(this._unsafe_ptr_do_not_use) | (1 << 62)));
     }
 
-    pub fn format(self: ZigString, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(self: ZigString, writer: *std.Io.Writer) !void {
         if (self.isUTF8()) {
             try writer.writeAll(self.slice());
             return;
@@ -702,7 +702,7 @@ pub const ZigString = extern struct {
     }
 
     pub fn sliceZBuf(this: ZigString, buf: *bun.PathBuffer) ![:0]const u8 {
-        return try std.fmt.bufPrintZ(buf, "{}", .{this});
+        return try std.fmt.bufPrintZ(buf, "{f}", .{this});
     }
 
     pub inline fn full(this: *const ZigString) []const u8 {
@@ -742,12 +742,12 @@ pub const ZigString = extern struct {
     extern fn ZigString__toExternalValueWithCallback(
         this: *const ZigString,
         global: *JSGlobalObject,
-        callback: *const fn (ctx: ?*anyopaque, ptr: ?*anyopaque, len: usize) callconv(.C) void,
+        callback: *const fn (ctx: ?*anyopaque, ptr: ?*anyopaque, len: usize) callconv(.c) void,
     ) JSValue;
     pub fn toExternalValueWithCallback(
         this: *const ZigString,
         global: *JSGlobalObject,
-        callback: *const fn (ctx: ?*anyopaque, ptr: ?*anyopaque, len: usize) callconv(.C) void,
+        callback: *const fn (ctx: ?*anyopaque, ptr: ?*anyopaque, len: usize) callconv(.c) void,
     ) JSValue {
         return ZigString__toExternalValueWithCallback(this, global, callback);
     }
@@ -756,16 +756,16 @@ pub const ZigString = extern struct {
         this: *const ZigString,
         global: *JSGlobalObject,
         ctx: ?*anyopaque,
-        callback: *const fn (ctx: ?*anyopaque, ptr: ?*anyopaque, len: usize) callconv(.C) void,
+        callback: *const fn (ctx: ?*anyopaque, ptr: ?*anyopaque, len: usize) callconv(.c) void,
     ) JSValue;
     pub fn external(
         this: *const ZigString,
         global: *JSGlobalObject,
         ctx: ?*anyopaque,
-        callback: *const fn (ctx: ?*anyopaque, ptr: ?*anyopaque, len: usize) callconv(.C) void,
+        callback: *const fn (ctx: ?*anyopaque, ptr: ?*anyopaque, len: usize) callconv(.c) void,
     ) JSValue {
         if (this.len > String.max_length()) {
-            callback(ctx, @constCast(@ptrCast(this.byteSlice().ptr)), this.len);
+            callback(ctx, @ptrCast(@constCast(this.byteSlice().ptr)), this.len);
             global.ERR(.STRING_TOO_LONG, "Cannot create a string longer than 2^32-1 characters", .{}).throw() catch {}; // TODO: propagate?
             return .zero;
         }

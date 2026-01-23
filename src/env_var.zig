@@ -64,6 +64,12 @@ pub const BUN_POSTGRES_SOCKET_MONITOR_READER = New(kind.string, "BUN_POSTGRES_SO
 pub const BUN_RUNTIME_TRANSPILER_CACHE_PATH = New(kind.string, "BUN_RUNTIME_TRANSPILER_CACHE_PATH", .{});
 pub const BUN_SSG_DISABLE_STATIC_ROUTE_VISITOR = New(kind.boolean, "BUN_SSG_DISABLE_STATIC_ROUTE_VISITOR", .{ .default = false });
 pub const BUN_TCC_OPTIONS = New(kind.string, "BUN_TCC_OPTIONS", .{});
+/// Standard C compiler environment variable for include paths (colon-separated).
+/// Used by bun:ffi's TinyCC integration for systems like NixOS.
+pub const C_INCLUDE_PATH = PlatformSpecificNew(kind.string, "C_INCLUDE_PATH", null, .{});
+/// Standard C compiler environment variable for library paths (colon-separated).
+/// Used by bun:ffi's TinyCC integration for systems like NixOS.
+pub const LIBRARY_PATH = PlatformSpecificNew(kind.string, "LIBRARY_PATH", null, .{});
 pub const BUN_TMPDIR = New(kind.string, "BUN_TMPDIR", .{});
 pub const BUN_TRACK_LAST_FN_NAME = New(kind.boolean, "BUN_TRACK_LAST_FN_NAME", .{ .default = false });
 pub const BUN_TRACY_PATH = New(kind.string, "BUN_TRACY_PATH", .{});
@@ -97,7 +103,6 @@ pub const JENKINS_URL = New(kind.string, "JENKINS_URL", .{});
 /// `MIMALLOC_VERBOSE`, documented here: https://microsoft.github.io/mimalloc/environment.html
 pub const MI_VERBOSE = New(kind.boolean, "MI_VERBOSE", .{ .default = false });
 pub const NO_COLOR = New(kind.boolean, "NO_COLOR", .{ .default = false });
-pub const NODE = New(kind.string, "NODE", .{});
 pub const NODE_CHANNEL_FD = New(kind.string, "NODE_CHANNEL_FD", .{});
 pub const NODE_PRESERVE_SYMLINKS_MAIN = New(kind.boolean, "NODE_PRESERVE_SYMLINKS_MAIN", .{ .default = false });
 pub const NODE_USE_SYSTEM_CA = New(kind.boolean, "NODE_USE_SYSTEM_CA", .{ .default = false });
@@ -110,11 +115,11 @@ pub const SHELL = PlatformSpecificNew(kind.string, "SHELL", null, .{});
 /// C:\Windows, for example.
 /// Note: Do not use this variable directly -- use os.zig's implementation instead.
 pub const SYSTEMROOT = PlatformSpecificNew(kind.string, null, "SYSTEMROOT", .{});
-pub const TEMP = PlatformSpecificNew(kind.string, null, "TEMP", .{});
+pub const TEMP = PlatformSpecificNew(kind.string, "TEMP", "TEMP", .{});
 pub const TERM = New(kind.string, "TERM", .{});
 pub const TERM_PROGRAM = New(kind.string, "TERM_PROGRAM", .{});
-pub const TMP = PlatformSpecificNew(kind.string, null, "TMP", .{});
-pub const TMPDIR = PlatformSpecificNew(kind.string, "TMPDIR", null, .{});
+pub const TMP = PlatformSpecificNew(kind.string, "TMP", "TMP", .{});
+pub const TMPDIR = PlatformSpecificNew(kind.string, "TMPDIR", "TMPDIR", .{});
 pub const TMUX = New(kind.string, "TMUX", .{});
 pub const TODIUM = New(kind.string, "TODIUM", .{});
 pub const USER = PlatformSpecificNew(kind.string, "USER", "USERNAME", .{});
@@ -137,6 +142,13 @@ pub const feature_flag = struct {
     pub const BUN_BE_BUN = newFeatureFlag("BUN_BE_BUN", .{});
     pub const BUN_DEBUG_NO_DUMP = newFeatureFlag("BUN_DEBUG_NO_DUMP", .{});
     pub const BUN_DESTRUCT_VM_ON_EXIT = newFeatureFlag("BUN_DESTRUCT_VM_ON_EXIT", .{});
+
+    /// Disable "nativeDependencies"
+    pub const BUN_FEATURE_FLAG_DISABLE_NATIVE_DEPENDENCY_LINKER = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_NATIVE_DEPENDENCY_LINKER", .{});
+
+    /// Disable "ignoreScripts" in package.json
+    pub const BUN_FEATURE_FLAG_DISABLE_IGNORE_SCRIPTS = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_IGNORE_SCRIPTS", .{});
+
     pub const BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG", .{});
     pub const BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER", .{});
     pub const BUN_FEATURE_FLAG_DISABLE_DNS_CACHE = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_DNS_CACHE", .{});
@@ -593,6 +605,16 @@ fn PlatformSpecificNew(
                 return windows_key;
             }
 
+            return null;
+        }
+
+        pub fn getNotEmpty() ReturnType {
+            if (Self.get()) |v| {
+                if (v.len == 0) {
+                    return null;
+                }
+                return v;
+            }
             return null;
         }
 

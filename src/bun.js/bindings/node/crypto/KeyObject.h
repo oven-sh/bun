@@ -16,7 +16,7 @@ class KeyObject {
     WTF_MAKE_TZONE_ALLOCATED(KeyObject);
 
     KeyObject(WebCore::CryptoKeyType type, RefPtr<KeyObjectData>&& data)
-        : m_data(WTFMove(data))
+        : m_data(WTF::move(data))
         , m_type(type)
     {
     }

@@ -61,7 +61,7 @@ pub fn writeBind(
     // must match the number of parameters needed by the query.
     try writer.short(len);
 
-    debug("Bind: {} ({d} args)", .{ bun.fmt.quote(name), len });
+    debug("Bind: {f} ({d} args)", .{ bun.fmt.quote(name), len });
     iter.to(0);
     var i: usize = 0;
     while (try iter.next()) |value| : (i += 1) {
@@ -101,7 +101,8 @@ pub fn writeBind(
             .jsonb, .json => {
                 var str = bun.String.empty;
                 defer str.deref();
-                try value.jsonStringify(globalObject, 0, &str);
+                // Use jsonStringifyFast for SIMD-optimized serialization
+                try value.jsonStringifyFast(globalObject, &str);
                 const slice = str.toUTF8WithoutRef(bun.default_allocator);
                 defer slice.deinit();
                 const l = try writer.length();
@@ -194,7 +195,7 @@ pub fn writeQuery(
             .query = query,
         };
         try q.writeInternal(Context, writer);
-        debug("Parse: {}", .{bun.fmt.quote(query)});
+        debug("Parse: {f}", .{bun.fmt.quote(query)});
     }
 
     {
@@ -204,7 +205,7 @@ pub fn writeQuery(
             },
         };
         try d.writeInternal(Context, writer);
-        debug("Describe: {}", .{bun.fmt.quote(name)});
+        debug("Describe: {f}", .{bun.fmt.quote(name)});
     }
 }
 
@@ -322,7 +323,7 @@ pub fn onData(
     }
 }
 
-pub const Queue = std.fifo.LinearFifo(*PostgresSQLQuery, .Dynamic);
+pub const Queue = bun.LinearFifo(*PostgresSQLQuery, .Dynamic);
 
 const debug = bun.Output.scoped(.Postgres, .visible);
 

@@ -87,15 +87,17 @@ function getBody() {
   return body;
 }
 
+async function iterate() {
+  const promises = [];
+  for (let j = 0; j < batch; j++) {
+    promises.push(fetch(server, { method: "POST", body: getBody() }));
+  }
+  await Promise.all(promises);
+}
+
 try {
   for (let i = 0; i < iterations; i++) {
-    {
-      const promises = [];
-      for (let j = 0; j < batch; j++) {
-        promises.push(fetch(server, { method: "POST", body: getBody() }));
-      }
-      await Promise.all(promises);
-    }
+    await iterate();
 
     {
       Bun.gc(true);

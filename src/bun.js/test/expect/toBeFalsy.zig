@@ -21,12 +21,12 @@ pub fn toBeFalsy(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFra
     defer formatter.deinit();
     const value_fmt = value.toFmt(&formatter);
     if (not) {
-        const received_line = "Received: <red>{any}<r>\n";
+        const received_line = "Received: <red>{f}<r>\n";
         const signature = comptime getSignature("toBeFalsy", "", true);
         return this.throw(globalThis, signature, "\n\n" ++ received_line, .{value_fmt});
     }
 
-    const received_line = "Received: <red>{any}<r>\n";
+    const received_line = "Received: <red>{f}<r>\n";
     const signature = comptime getSignature("toBeFalsy", "", false);
     return this.throw(globalThis, signature, "\n\n" ++ received_line, .{value_fmt});
 }

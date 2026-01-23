@@ -30,7 +30,7 @@ pub fn resetArena(this: *ModuleLoader, jsc_vm: *VirtualMachine) void {
     }
 }
 
-pub fn resolveEmbeddedFile(vm: *VirtualMachine, input_path: []const u8, extname: []const u8) ?[]const u8 {
+pub fn resolveEmbeddedFile(vm: *VirtualMachine, path_buf: *bun.PathBuffer, input_path: []const u8, extname: []const u8) ?[]const u8 {
     if (input_path.len == 0) return null;
     var graph = vm.standalone_module_graph orelse return null;
     const file = graph.find(input_path) orelse return null;
@@ -40,8 +40,9 @@ pub fn resolveEmbeddedFile(vm: *VirtualMachine, input_path: []const u8, extname:
     }
 
     // atomically write to a tmpfile and then move it to the final destination
-    var tmpname_buf: bun.PathBuffer = undefined;
-    const tmpfilename = bun.fs.FileSystem.tmpname(extname, &tmpname_buf, bun.hash(file.name)) catch return null;
+    const tmpname_buf = bun.path_buffer_pool.get();
+    defer bun.path_buffer_pool.put(tmpname_buf);
+    const tmpfilename = bun.fs.FileSystem.tmpname(extname, tmpname_buf, bun.hash(file.name)) catch return null;
 
     const tmpdir: bun.FD = .fromStdDir(bun.fs.FileSystem.instance.tmpdir() catch return null);
 
@@ -50,7 +51,7 @@ pub fn resolveEmbeddedFile(vm: *VirtualMachine, input_path: []const u8, extname:
     defer tmpfile.fd.close();
 
     switch (bun.api.node.fs.NodeFS.writeFileWithPathBuffer(
-        &tmpname_buf, // not used
+        tmpname_buf, // not used
 
         .{
             .data = .{
@@ -66,7 +67,7 @@ pub fn resolveEmbeddedFile(vm: *VirtualMachine, input_path: []const u8, extname:
         },
         else => {},
     }
-    return bun.path.joinAbs(bun.fs.FileSystem.instance.fs.tmpdirPath(), .auto, tmpfilename);
+    return bun.path.joinAbsStringBuf(bun.fs.FileSystem.RealFS.tmpdirPath(), path_buf, &[_]string{tmpfilename}, .auto);
 }
 
 pub export fn Bun__getDefaultLoader(global: *JSGlobalObject, str: *const bun.String) api.Loader {
@@ -1305,7 +1306,9 @@ export fn Bun__resolveEmbeddedNodeFile(vm: *VirtualMachine, in_out_str: *bun.Str
 
     const input_path = in_out_str.toUTF8(bun.default_allocator);
     defer input_path.deinit();
-    const result = ModuleLoader.resolveEmbeddedFile(vm, input_path.slice(), "node") orelse return false;
+    const path_buf = bun.path_buffer_pool.get();
+    defer bun.path_buffer_pool.put(path_buf);
+    const result = ModuleLoader.resolveEmbeddedFile(vm, path_buf, input_path.slice(), "node") orelse return false;
     in_out_str.* = bun.String.cloneUTF8(result);
     return true;
 }

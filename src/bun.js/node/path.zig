@@ -151,20 +151,6 @@ inline fn posixCwdT(comptime T: type, buf: []T) MaybeBuf(T) {
     return MaybeBuf(T){ .result = cwd };
 }
 
-pub fn getCwdWindowsU8(buf: []u8) MaybeBuf(u8) {
-    const u16Buf: bun.WPathBuffer = undefined;
-    switch (getCwdWindowsU16(&u16Buf)) {
-        .result => |r| {
-            // Handles conversion from UTF-16 to UTF-8 including surrogates ;)
-            const result = strings.convertUTF16ToUTF8InBuffer(&buf, r) catch {
-                return MaybeBuf(u8).errnoSys(0, Syscall.Tag.getcwd).?;
-            };
-            return MaybeBuf(u8){ .result = result };
-        },
-        .err => |e| return MaybeBuf(u8){ .err = e },
-    }
-}
-
 const withoutTrailingSlash = if (Environment.isWindows) strings.withoutTrailingSlashWindowsPath else strings.withoutTrailingSlash;
 
 pub fn getCwdWindowsU16(buf: []u16) MaybeBuf(u16) {

@@ -361,23 +361,6 @@ export function initializeNextTickQueue(
   return nextTick;
 }
 
-$getter;
-export function mainModule() {
-  var existing = $getByIdDirectPrivate(this, "main");
-  // note: this doesn't handle "process.mainModule = undefined"
-  if (typeof existing !== "undefined") {
-    return existing;
-  }
-
-  return $requireMap.$get(Bun.main);
-}
-
-$overriddenName = "set mainModule";
-export function setMainModule(value) {
-  $putByIdDirectPrivate(this, "main", value);
-  return true;
-}
-
 type InternalEnvMap = Record<string, string>;
 type EditWindowsEnvVarCb = (key: string, value: null | string) => void;
 

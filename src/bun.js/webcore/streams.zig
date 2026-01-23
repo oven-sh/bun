@@ -38,7 +38,7 @@ pub const Start = union(Tag) {
                 return jsc.JSValue.jsNumber(@as(Blob.SizeType, @intCast(chunk)));
             },
             .err => |err| {
-                return globalThis.throwValue(err.toJS(globalThis));
+                return globalThis.throwValue(try err.toJS(globalThis));
             },
             .owned_and_done => |list| {
                 return jsc.ArrayBuffer.fromBytes(list.slice(), .Uint8Array).toJS(globalThis);
@@ -234,7 +234,7 @@ pub const Result = union(Tag) {
         pub fn toJSWeak(this: *const @This(), globalObject: *jsc.JSGlobalObject) struct { jsc.JSValue, WasStrong } {
             return switch (this.*) {
                 .Error => |err| {
-                    return .{ err.toJS(globalObject), WasStrong.Weak };
+                    return .{ err.toJS(globalObject) catch return .{ .zero, WasStrong.Weak }, WasStrong.Weak };
                 },
                 .JSValue => .{ this.JSValue, WasStrong.Strong },
                 .WeakJSValue => .{ this.WeakJSValue, WasStrong.Weak },
@@ -350,8 +350,11 @@ pub const Result = union(Tag) {
             };
 
             pub fn run(this: *Writable.Pending) void {
-                if (this.state != .pending) return;
+                if (this.state != .pending) {
+                    return;
+                }
                 this.state = .used;
+
                 switch (this.future) {
                     .promise => {
                         var p = this.future.promise;
@@ -390,7 +393,7 @@ pub const Result = union(Tag) {
 
         pub fn toJS(this: Writable, globalThis: *JSGlobalObject) JSValue {
             return switch (this) {
-                .err => |err| jsc.JSPromise.rejectedPromise(globalThis, err.toJS(globalThis)).toJS(),
+                .err => |err| jsc.JSPromise.rejectedPromise(globalThis, err.toJS(globalThis) catch return .zero).toJS(),
 
                 .owned => |len| jsc.JSValue.jsNumber(len),
                 .owned_and_done => |len| jsc.JSValue.jsNumber(len),
@@ -768,7 +771,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
         }
         fn sendWithoutAutoFlusher(this: *@This(), buf: []const u8) bool {
             bun.assert(!this.done);
-            defer log("send: {d} bytes (backpressure: {any})", .{ buf.len, this.has_backpressure });
+            defer log("send: {d} bytes (backpressure: {})", .{ buf.len, this.has_backpressure });
 
             const res = this.res orelse {
                 return false;
@@ -941,7 +944,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
         }
 
         pub fn flushFromJS(this: *@This(), globalThis: *JSGlobalObject, wait: bool) bun.sys.Maybe(JSValue) {
-            log("flushFromJS({any})", .{wait});
+            log("flushFromJS({})", .{wait});
             this.unregisterAutoFlusher();
 
             if (!wait) {
@@ -1128,7 +1131,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
         // In this case, it's always an error
         pub fn end(this: *@This(), err: ?Syscall.Error) bun.sys.Maybe(void) {
-            log("end({any})", .{err});
+            log("end({?f})", .{err});
 
             if (this.requested_end) {
                 return .success;

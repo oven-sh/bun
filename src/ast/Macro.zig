@@ -480,7 +480,7 @@ pub const Runner = struct {
                     this.macro.vm.waitForPromise(promise);
 
                     const promise_result = promise.result(this.macro.vm.jsc_vm);
-                    const rejected = promise.status(this.macro.vm.jsc_vm) == .rejected;
+                    const rejected = promise.status() == .rejected;
 
                     if (promise_result.isUndefined() and this.is_top_level) {
                         this.is_top_level = false;
@@ -584,7 +584,7 @@ pub const Runner = struct {
                 return result;
             }
 
-            pub fn call() callconv(.C) void {
+            pub fn call() callconv(.c) void {
                 const call_args_copy = call_args;
                 const local_result = @call(.auto, Run.runAsync, call_args_copy);
                 result = local_result;

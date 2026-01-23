@@ -214,26 +214,26 @@ pub const Bin = extern struct {
         indent: if (style == .multi_line) *u32 else void,
         buf: string,
         extern_strings: []const ExternalString,
-        writer: anytype,
-        writeIndent: *const fn (anytype, *u32) @TypeOf(writer).Error!void,
-    ) @TypeOf(writer).Error!void {
+        writer: *std.Io.Writer,
+        writeIndent: *const fn (*std.Io.Writer, *u32) std.Io.Writer.Error!void,
+    ) std.Io.Writer.Error!void {
         bun.debugAssert(this.tag != .none);
         if (comptime style == .single_line) {
             switch (this.tag) {
                 .none => {},
                 .file => {
-                    try writer.print("{}", .{this.value.file.fmtJson(buf, .{})});
+                    try writer.print("{f}", .{this.value.file.fmtJson(buf, .{})});
                 },
                 .named_file => {
                     try writer.writeByte('{');
-                    try writer.print(" {}: {} ", .{
+                    try writer.print(" {f}: {f} ", .{
                         this.value.named_file[0].fmtJson(buf, .{}),
                         this.value.named_file[1].fmtJson(buf, .{}),
                     });
                     try writer.writeByte('}');
                 },
                 .dir => {
-                    try writer.print("{}", .{this.value.dir.fmtJson(buf, .{})});
+                    try writer.print("{f}", .{this.value.dir.fmtJson(buf, .{})});
                 },
                 .map => {
                     try writer.writeByte('{');
@@ -245,7 +245,7 @@ pub const Bin = extern struct {
                             try writer.writeByte(',');
                         }
                         first = false;
-                        try writer.print(" {}: {}", .{
+                        try writer.print(" {f}: {f}", .{
                             list[i].value.fmtJson(buf, .{}),
                             list[i + 1].value.fmtJson(buf, .{}),
                         });
@@ -260,13 +260,13 @@ pub const Bin = extern struct {
         switch (this.tag) {
             .none => {},
             .file => {
-                try writer.print("{}", .{this.value.file.fmtJson(buf, .{})});
+                try writer.print("{f}", .{this.value.file.fmtJson(buf, .{})});
             },
             .named_file => {
                 try writer.writeAll("{\n");
                 indent.* += 1;
                 try writeIndent(writer, indent);
-                try writer.print("{}: {},\n", .{
+                try writer.print("{f}: {f},\n", .{
                     this.value.named_file[0].fmtJson(buf, .{}),
                     this.value.named_file[1].fmtJson(buf, .{}),
                 });
@@ -275,7 +275,7 @@ pub const Bin = extern struct {
                 try writer.writeByte('}');
             },
             .dir => {
-                try writer.print("{}", .{this.value.dir.fmtJson(buf, .{})});
+                try writer.print("{f}", .{this.value.dir.fmtJson(buf, .{})});
             },
             .map => {
                 try writer.writeByte('{');
@@ -290,7 +290,7 @@ pub const Bin = extern struct {
                         try writer.writeByte('\n');
                     }
                     try writeIndent(writer, indent);
-                    try writer.print("{}: {},\n", .{
+                    try writer.print("{f}: {f},\n", .{
                         list[i].value.fmtJson(buf, .{}),
                         list[i + 1].value.fmtJson(buf, .{}),
                     });
@@ -504,6 +504,14 @@ pub const Bin = extern struct {
     pub const Linker = struct {
         bin: Bin,
 
+        /// Usually will be the same as `node_modules_path`.
+        /// Used to support native bin linking.
+        target_node_modules_path: *bun.AbsPath(.{}),
+
+        /// Usually will be the same as `package_name`.
+        /// Used to support native bin linking.
+        target_package_name: strings.StringOrTinyString,
+
         // Hash map of seen destination paths for this `node_modules/.bin` folder. PackageInstaller will reset it before
         // linking each tree.
         seen: ?*bun.StringHashMap(void),
@@ -523,6 +531,7 @@ pub const Bin = extern struct {
         rel_buf: []u8,
 
         err: ?anyerror = null,
+        skipped_due_to_missing_bin: bool = false,
 
         pub var umask: bun.Mode = 0;
 
@@ -570,6 +579,7 @@ pub const Bin = extern struct {
             // Skip if the target does not exist. This is important because placing a dangling
             // shim in path might break a postinstall
             if (!bun.sys.exists(abs_target)) {
+                this.skipped_due_to_missing_bin = true;
                 return;
             }
 
@@ -726,8 +736,9 @@ pub const Bin = extern struct {
 
             const shebang = shebang: {
                 const first_content_chunk = contents: {
-                    const reader = target.stdFile().reader();
-                    const read = reader.read(&read_in_buf) catch break :contents null;
+                    var reader = target.stdFile().readerStreaming(&.{});
+                    var readvec_buf: []u8 = &read_in_buf;
+                    const read = reader.interface.readVec((&readvec_buf)[0..1]) catch break :contents null;
                     if (read == 0) break :contents null;
                     break :contents read_in_buf[0..read];
                 };
@@ -838,7 +849,7 @@ pub const Bin = extern struct {
 
         /// uses `this.abs_target_buf`
         pub fn buildTargetPackageDir(this: *const Linker) []const u8 {
-            const dest_dir_without_trailing_slash = strings.withoutTrailingSlash(this.node_modules_path.slice());
+            const dest_dir_without_trailing_slash = strings.withoutTrailingSlash(this.target_node_modules_path.slice());
 
             var remain = this.abs_target_buf;
 
@@ -847,7 +858,7 @@ pub const Bin = extern struct {
             remain[0] = std.fs.path.sep;
             remain = remain[1..];
 
-            const package_name = this.package_name.slice();
+            const package_name = this.target_package_name.slice();
             @memcpy(remain[0..package_name.len], package_name);
             remain = remain[package_name.len..];
             remain[0] = std.fs.path.sep;

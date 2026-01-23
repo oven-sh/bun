@@ -17,7 +17,7 @@ afterAll(() => {
 describe("publicHoistPattern", () => {
   test("bunfig string", async () => {
     const { packageDir } = await registry.createTestDir({
-      bunfigOpts: { isolated: true, publicHoistPattern: "*typ*" },
+      bunfigOpts: { linker: "isolated", publicHoistPattern: "*typ*" },
       files: {
         "package.json": JSON.stringify({
           name: "include-patterns",
@@ -35,7 +35,7 @@ describe("publicHoistPattern", () => {
 
   test("bunfig array", async () => {
     const { packageDir } = await registry.createTestDir({
-      bunfigOpts: { isolated: true, publicHoistPattern: ["*types*", "no-deps"] },
+      bunfigOpts: { linker: "isolated", publicHoistPattern: ["*types*", "no-deps"] },
       files: {
         "package.json": JSON.stringify({
           name: "array-patterns",
@@ -61,7 +61,7 @@ describe("publicHoistPattern", () => {
 
   test("all exclude pattern", async () => {
     const { packageDir } = await registry.createTestDir({
-      bunfigOpts: { isolated: true, publicHoistPattern: "!*" },
+      bunfigOpts: { linker: "isolated", publicHoistPattern: "!*" },
       files: {
         "package.json": JSON.stringify({
           name: "exclude-all",
@@ -88,7 +88,7 @@ describe("publicHoistPattern", () => {
 
   test("all include pattern", async () => {
     const { packageDir } = await registry.createTestDir({
-      bunfigOpts: { isolated: true, publicHoistPattern: "*" },
+      bunfigOpts: { linker: "isolated", publicHoistPattern: "*" },
       files: {
         "package.json": JSON.stringify({
           name: "include-all",
@@ -112,7 +112,7 @@ describe("publicHoistPattern", () => {
 
   test("mixed include and exclude patterns", async () => {
     const { packageDir } = await registry.createTestDir({
-      bunfigOpts: { isolated: true, publicHoistPattern: ["*", "!@types*", "!no-deps"] },
+      bunfigOpts: { linker: "isolated", publicHoistPattern: ["*", "!@types*", "!no-deps"] },
       files: {
         "package.json": JSON.stringify({
           name: "mixed-patterns",
@@ -140,7 +140,7 @@ describe("publicHoistPattern", () => {
 
   test("npmrc string configuration", async () => {
     const { packageDir } = await registry.createTestDir({
-      bunfigOpts: { isolated: true },
+      bunfigOpts: { linker: "isolated" },
       files: {
         "package.json": JSON.stringify({
           name: "npmrc-string",
@@ -159,7 +159,7 @@ describe("publicHoistPattern", () => {
 
   test("npmrc array configuration", async () => {
     const { packageDir } = await registry.createTestDir({
-      bunfigOpts: { isolated: true },
+      bunfigOpts: { linker: "isolated" },
       files: {
         "package.json": JSON.stringify({
           name: "npmrc-array",
@@ -187,7 +187,7 @@ public-hoist-pattern[]=no-deps`,
 
   test("npmrc mixed patterns", async () => {
     const { packageDir } = await registry.createTestDir({
-      bunfigOpts: { isolated: true },
+      bunfigOpts: { linker: "isolated" },
       files: {
         "package.json": JSON.stringify({
           name: "npmrc-mixed",
@@ -218,7 +218,7 @@ public-hoist-pattern[]=!no-deps`,
 
   test("exclude specific packages", async () => {
     const { packageDir } = await registry.createTestDir({
-      bunfigOpts: { isolated: true, publicHoistPattern: ["*", "!two-range-deps"] },
+      bunfigOpts: { linker: "isolated", publicHoistPattern: ["*", "!two-range-deps"] },
       files: {
         "package.json": JSON.stringify({
           name: "exclude-specific",
@@ -247,7 +247,7 @@ public-hoist-pattern[]=!no-deps`,
 
   test("scoped package patterns", async () => {
     const { packageDir } = await registry.createTestDir({
-      bunfigOpts: { isolated: true, publicHoistPattern: "@types/*" },
+      bunfigOpts: { linker: "isolated", publicHoistPattern: "@types/*" },
       files: {
         "package.json": JSON.stringify({
           name: "scoped-patterns",
@@ -276,7 +276,7 @@ public-hoist-pattern[]=!no-deps`,
   test("complex pattern combinations", async () => {
     const { packageDir } = await registry.createTestDir({
       bunfigOpts: {
-        isolated: true,
+        linker: "isolated",
         publicHoistPattern: ["@types/*", "no-*", "!no-deps", "a-*"],
       },
       files: {
@@ -306,7 +306,7 @@ public-hoist-pattern[]=!no-deps`,
 
   test("workspaces with publicHoistPattern", async () => {
     const { packageDir } = await registry.createTestDir({
-      bunfigOpts: { isolated: true, publicHoistPattern: ["*types*", "no-deps"] },
+      bunfigOpts: { linker: "isolated", publicHoistPattern: ["*types*", "no-deps"] },
       files: {
         "package.json": JSON.stringify({
           name: "workspace-root",
@@ -344,7 +344,7 @@ public-hoist-pattern[]=!no-deps`,
   describe("error cases", () => {
     test("invalid publicHoistPattern type in bunfig", async () => {
       const { packageDir } = await registry.createTestDir({
-        bunfigOpts: { isolated: true },
+        bunfigOpts: { linker: "isolated" },
         files: {
           "package.json": JSON.stringify({
             name: "invalid-pattern-type",
@@ -380,7 +380,7 @@ publicHoistPattern = 123`,
 
     test("malformed bunfig with array syntax", async () => {
       const { packageDir } = await registry.createTestDir({
-        bunfigOpts: { isolated: true },
+        bunfigOpts: { linker: "isolated" },
         files: {
           "package.json": JSON.stringify({
             name: "malformed-array",

@@ -6,7 +6,7 @@ pub const DiffFormatter = struct {
     globalThis: *JSGlobalObject,
     not: bool = false,
 
-    pub fn format(this: DiffFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(this: DiffFormatter, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         var scope = bun.AllocationScope.init(default_allocator);
         // defer scope.deinit(); // TODO: fix leaks
         const allocator = scope.allocator();
@@ -24,20 +24,12 @@ pub const DiffFormatter = struct {
         if (this.received == null or this.expected == null) return;
 
         const received = this.received.?;
-        var received_buf = MutableString.init(allocator, 0) catch unreachable;
-        var expected_buf = MutableString.init(allocator, 0) catch unreachable;
-        defer {
-            received_buf.deinit();
-            expected_buf.deinit();
-        }
+        var received_buf = std.Io.Writer.Allocating.init(allocator);
+        defer received_buf.deinit();
+        var expected_buf = std.Io.Writer.Allocating.init(allocator);
+        defer expected_buf.deinit();
 
         {
-            var buffered_writer_ = MutableString.BufferedWriter{ .context = &received_buf };
-            var buffered_writer = &buffered_writer_;
-
-            const buf_writer = buffered_writer.writer();
-            const Writer = @TypeOf(buf_writer);
-
             const fmt_options = JestPrettyFormat.FormatOptions{
                 .enable_colors = false,
                 .add_newline = false,
@@ -49,30 +41,22 @@ pub const DiffFormatter = struct {
                 this.globalThis,
                 @as([*]const JSValue, @ptrCast(&received)),
                 1,
-                Writer,
-                Writer,
-                buf_writer,
+                &received_buf.writer,
                 fmt_options,
             ) catch {}; // TODO:
-            buffered_writer.flush() catch unreachable;
-
-            buffered_writer_.context = &expected_buf;
 
             JestPrettyFormat.format(
                 .Debug,
                 this.globalThis,
                 @as([*]const JSValue, @ptrCast(&this.expected)),
                 1,
-                Writer,
-                Writer,
-                buf_writer,
+                &expected_buf.writer,
                 fmt_options,
             ) catch {}; // TODO:
-            buffered_writer.flush() catch unreachable;
         }
 
-        var received_slice = received_buf.slice();
-        var expected_slice = expected_buf.slice();
+        var received_slice = received_buf.written();
+        var expected_slice = expected_buf.written();
         if (std.mem.startsWith(u8, received_slice, "\n")) received_slice = received_slice[1..];
         if (std.mem.startsWith(u8, expected_slice, "\n")) expected_slice = expected_slice[1..];
         if (std.mem.endsWith(u8, received_slice, "\n")) received_slice = received_slice[0 .. received_slice.len - 1];
@@ -92,7 +76,6 @@ const DiffConfig = printDiffFile.DiffConfig;
 const printDiffMain = printDiffFile.printDiffMain;
 
 const bun = @import("bun");
-const MutableString = bun.MutableString;
 const Output = bun.Output;
 const default_allocator = bun.default_allocator;
 

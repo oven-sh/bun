@@ -1,6 +1,6 @@
 import { CodeStyle, Type } from "./base";
 
-export const RawAny: Type = new (class extends Type {
+export const RawAny = new (class extends Type {
   get idlType() {
     return "::Bun::IDLRawAny";
   }
@@ -15,7 +15,7 @@ export const RawAny: Type = new (class extends Type {
   }
 })();
 
-export const StrongAny: Type = new (class extends Type {
+export const StrongAny = new (class extends Type {
   get idlType() {
     return "::Bun::Bindgen::IDLStrongAny";
   }

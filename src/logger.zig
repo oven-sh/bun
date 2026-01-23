@@ -71,8 +71,22 @@ pub const Loc = struct {
 };
 
 pub const Location = struct {
+    // Field ordering optimized to reduce padding:
+    // - 16-byte fields first: string (ptr+len), ?string (ptr+len+null flag)
+    // - 8-byte fields next: usize
+    // - 4-byte fields last: i32
+    // This eliminates padding between differently-sized fields.
+
     file: string,
     namespace: string = "file",
+    /// Text on the line, avoiding the need to refetch the source code
+    line_text: ?string = null,
+    /// Number of bytes this location should highlight.
+    /// 0 to just point at a single character
+    length: usize = 0,
+    // TODO: document or remove
+    offset: usize = 0,
+
     /// 1-based line number.
     /// Line <= 0 means there is no line and column information.
     // TODO: move to `bun.Ordinal`
@@ -81,13 +95,6 @@ pub const Location = struct {
     // original docs: 0-based, in bytes.
     // but there is a place where this is emitted in output, implying one based character offset
     column: i32,
-    /// Number of bytes this location should highlight.
-    /// 0 to just point at a single character
-    length: usize = 0,
-    /// Text on the line, avoiding the need to refetch the source code
-    line_text: ?string = null,
-    // TODO: document or remove
-    offset: usize = 0,
 
     pub fn memoryCost(this: *const Location) usize {
         var cost: usize = 0;
@@ -248,7 +255,7 @@ pub const Data = struct {
 
     pub fn writeFormat(
         this: *const Data,
-        to: anytype,
+        to: *std.Io.Writer,
         kind: Kind,
         redact_sensitive_information: bool,
         comptime enable_ansi_colors: bool,
@@ -291,12 +298,12 @@ pub const Data = struct {
                         line_offset_for_second_line += std.fmt.count("{d} | ", .{location.line});
                     }
 
-                    try to.print("{}\n", .{bun.fmt.fmtJavaScript(line_text, .{
+                    try to.print("{f}\n", .{bun.fmt.fmtJavaScript(line_text, .{
                         .enable_colors = enable_ansi_colors,
                         .redact_sensitive_information = redact_sensitive_information,
                     })});
 
-                    try to.writeByteNTimes(' ', line_offset_for_second_line);
+                    try to.splatByteAll(' ', line_offset_for_second_line);
                     if ((comptime enable_ansi_colors) and message_color.len > 0) {
                         try to.writeAll(message_color);
                         try to.writeAll(color_name);
@@ -330,7 +337,7 @@ pub const Data = struct {
         if (this.location) |*location| {
             if (location.file.len > 0) {
                 try to.writeAll("\n");
-                try to.writeByteNTimes(' ', (kind.string().len + ": ".len) - "at ".len);
+                try to.splatByteAll(' ', (kind.string().len + ": ".len) - "at ".len);
 
                 try to.print(comptime Output.prettyFmt("<d>at <r><cyan>{s}<r>", enable_ansi_colors), .{
                     location.file,
@@ -505,7 +512,7 @@ pub const Msg = struct {
 
     pub fn writeFormat(
         msg: *const Msg,
-        to: anytype,
+        to: *std.Io.Writer,
         comptime enable_ansi_colors: bool,
     ) !void {
         try msg.data.writeFormat(to, msg.kind, msg.redact_sensitive_information, enable_ansi_colors);
@@ -597,7 +604,7 @@ pub const Range = struct {
 pub const Log = struct {
     warnings: u32 = 0,
     errors: u32 = 0,
-    msgs: std.ArrayList(Msg),
+    msgs: std.array_list.Managed(Msg),
     level: Level = if (Environment.isDebug) Level.info else Level.warn,
 
     clone_line_text: bool = false,
@@ -684,14 +691,14 @@ pub const Log = struct {
 
     pub fn init(allocator: std.mem.Allocator) Log {
         return Log{
-            .msgs = std.ArrayList(Msg).init(allocator),
+            .msgs = std.array_list.Managed(Msg).init(allocator),
             .level = default_log_level,
         };
     }
 
     pub fn initComptime(allocator: std.mem.Allocator) Log {
         return Log{
-            .msgs = std.ArrayList(Msg).init(allocator),
+            .msgs = std.array_list.Managed(Msg).init(allocator),
         };
     }
 
@@ -1282,13 +1289,13 @@ pub const Log = struct {
         );
     }
 
-    pub fn print(self: *const Log, to: anytype) !void {
+    pub fn print(self: *const Log, to: *std.Io.Writer) !void {
         return switch (Output.enable_ansi_colors_stderr) {
             inline else => |enable_ansi_colors| self.printWithEnableAnsiColors(to, enable_ansi_colors),
         };
     }
 
-    pub fn printWithEnableAnsiColors(self: *const Log, to: anytype, comptime enable_ansi_colors: bool) !void {
+    pub fn printWithEnableAnsiColors(self: *const Log, to: *std.Io.Writer, comptime enable_ansi_colors: bool) !void {
         var needs_newline = false;
         if (self.warnings > 0 and self.errors > 0) {
             // Print warnings at the top

@@ -1,9 +1,9 @@
-import { spawnSync, write } from "bun";
+import { write } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tmpdirSync } from "harness";
 import { join } from "path";
 
-describe("redact", async () => {
+describe.concurrent("redact", async () => {
   const tests = [
     {
       title: "url password",
@@ -71,7 +71,7 @@ describe("redact", async () => {
       ]);
 
       // once without color
-      let proc = spawnSync({
+      await using proc1 = Bun.spawn({
         cmd: [bunExe(), "install"],
         cwd: testDir,
         env: { ...bunEnv, NO_COLOR: "1" },
@@ -79,13 +79,13 @@ describe("redact", async () => {
         stderr: "pipe",
       });
 
-      let out = proc.stdout.toString();
-      let err = proc.stderr.toString();
-      expect(proc.exitCode).toBe(+!!bunfig);
-      expect(err).toContain(expected || "*");
+      const [out1, err1, exitCode1] = await Promise.all([proc1.stdout.text(), proc1.stderr.text(), proc1.exited]);
+
+      expect(exitCode1).toBe(+!!bunfig);
+      expect(err1).toContain(expected || "*");
 
       // once with color
-      proc = spawnSync({
+      await using proc2 = Bun.spawn({
         cmd: [bunExe(), "install"],
         cwd: testDir,
         env: { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: "1" },
@@ -93,10 +93,10 @@ describe("redact", async () => {
         stderr: "pipe",
       });
 
-      out = proc.stdout.toString();
-      err = proc.stderr.toString();
-      expect(proc.exitCode).toBe(+!!bunfig);
-      expect(err).toContain(expected || "*");
+      const [out2, err2, exitCode2] = await Promise.all([proc2.stdout.text(), proc2.stderr.text(), proc2.exited]);
+
+      expect(exitCode2).toBe(+!!bunfig);
+      expect(err2).toContain(expected || "*");
     });
   }
 });

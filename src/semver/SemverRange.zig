@@ -12,15 +12,15 @@ pub const Op = enum(u8) {
 left: Comparator = .{},
 right: Comparator = .{},
 
-pub fn format(this: Range, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+pub fn format(this: Range, writer: *std.Io.Writer) !void {
     if (this.left.op == .unset and this.right.op == .unset) {
         return;
     }
 
     if (this.right.op == .unset) {
-        try std.fmt.format(writer, "{}", .{this.left});
+        try writer.print("{}", .{this.left});
     } else {
-        try std.fmt.format(writer, "{} {}", .{ this.left, this.right });
+        try writer.print("{} {}", .{ this.left, this.right });
     }
 }
 
@@ -118,15 +118,15 @@ pub const Formatter = struct {
     buffer: []const u8,
     range: *const Range,
 
-    pub fn format(this: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(this: @This(), writer: *std.Io.Writer) !void {
         if (this.range.left.op == Op.unset and this.range.right.op == Op.unset) {
             return;
         }
 
         if (this.range.right.op == .unset) {
-            try std.fmt.format(writer, "{}", .{this.range.left.fmt(this.buffer)});
+            try writer.print("{f}", .{this.range.left.fmt(this.buffer)});
         } else {
-            try std.fmt.format(writer, "{} {}", .{ this.range.left.fmt(this.buffer), this.range.right.fmt(this.buffer) });
+            try writer.print("{f} {f}", .{ this.range.left.fmt(this.buffer), this.range.right.fmt(this.buffer) });
         }
     }
 };
@@ -147,7 +147,7 @@ pub const Comparator = struct {
         buffer: []const u8,
         comparator: *const Comparator,
 
-        pub fn format(this: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(this: @This(), writer: *std.Io.Writer) !void {
             if (this.comparator.op == Op.unset) {
                 return;
             }
@@ -161,7 +161,7 @@ pub const Comparator = struct {
                 .gte => try writer.writeAll(">="),
             }
 
-            try std.fmt.format(writer, "{}", .{this.comparator.version.fmt(this.buffer)});
+            try writer.print("{f}", .{this.comparator.version.fmt(this.buffer)});
         }
     };
 

@@ -101,7 +101,7 @@ pub const Pipe = struct {
 
 pub const DrainResult = union(enum) {
     owned: struct {
-        list: std.ArrayList(u8),
+        list: std.array_list.Managed(u8),
         size_hint: usize,
     },
     estimated_size: usize,

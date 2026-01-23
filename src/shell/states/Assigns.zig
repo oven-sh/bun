@@ -9,7 +9,7 @@ state: union(enum) {
     idle,
     expanding: struct {
         idx: u32 = 0,
-        current_expansion_result: std.ArrayList([:0]const u8),
+        current_expansion_result: std.array_list.Managed([:0]const u8),
         expansion: Expansion,
     },
     err: bun.shell.ShellErr,
@@ -89,7 +89,7 @@ pub fn next(this: *Assigns) Yield {
         switch (this.state) {
             .idle => {
                 this.state = .{ .expanding = .{
-                    .current_expansion_result = std.ArrayList([:0]const u8).init(this.base.allocator()),
+                    .current_expansion_result = std.array_list.Managed([:0]const u8).init(this.base.allocator()),
                     .expansion = undefined,
                 } };
                 continue;

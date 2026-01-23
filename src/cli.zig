@@ -91,6 +91,7 @@ pub const PackCommand = @import("./cli/pack_command.zig").PackCommand;
 pub const AuditCommand = @import("./cli/audit_command.zig").AuditCommand;
 pub const InitCommand = @import("./cli/init_command.zig").InitCommand;
 pub const WhyCommand = @import("./cli/why_command.zig").WhyCommand;
+pub const FuzzilliCommand = @import("./cli/fuzzilli_command.zig").FuzzilliCommand;
 
 pub const Arguments = @import("./cli/Arguments.zig");
 
@@ -391,6 +392,14 @@ pub const Command = struct {
             enabled: bool = false,
             name: []const u8 = "",
             dir: []const u8 = "",
+            md_format: bool = false,
+            json_format: bool = false,
+        } = .{},
+        heap_prof: struct {
+            enabled: bool = false,
+            text_format: bool = false,
+            name: []const u8 = "",
+            dir: []const u8 = "",
         } = .{},
     };
 
@@ -423,6 +432,7 @@ pub const Command = struct {
         pub const BundlerOptions = struct {
             outdir: []const u8 = "",
             outfile: []const u8 = "",
+            metafile: [:0]const u8 = "",
             root_dir: []const u8 = "",
             public_path: []const u8 = "",
             entry_naming: []const u8 = "[dir]/[name].[ext]",
@@ -458,6 +468,11 @@ pub const Command = struct {
             compile: bool = false,
             compile_target: Cli.CompileTarget = .{},
             compile_exec_argv: ?[]const u8 = null,
+            compile_autoload_dotenv: bool = true,
+            compile_autoload_bunfig: bool = true,
+            compile_autoload_tsconfig: bool = false,
+            compile_autoload_package_json: bool = false,
+            compile_executable_path: ?[]const u8 = null,
             windows: options.WindowsOptions = .{},
         };
 
@@ -624,6 +639,10 @@ pub const Command = struct {
             RootCommandMatcher.case("prune") => .ReservedCommand,
             RootCommandMatcher.case("list") => .PackageManagerCommand,
             RootCommandMatcher.case("why") => .WhyCommand,
+            RootCommandMatcher.case("fuzzilli") => if (bun.Environment.enable_fuzzilli)
+                .FuzzilliCommand
+            else
+                .AutoCommand,
 
             RootCommandMatcher.case("-e") => .AutoCommand,
 
@@ -675,17 +694,33 @@ pub const Command = struct {
                 var offset_for_passthrough: usize = 0;
 
                 const ctx: *ContextData = brk: {
-                    if (graph.compile_exec_argv.len > 0) {
+                    if (graph.compile_exec_argv.len > 0 or bun.bun_options_argc > 0) {
                         const original_argv_len = bun.argv.len;
-                        var argv_list = std.ArrayList([:0]const u8).fromOwnedSlice(bun.default_allocator, bun.argv);
-                        try bun.appendOptionsEnv(graph.compile_exec_argv, &argv_list, bun.default_allocator);
-                        bun.argv = argv_list.items;
+                        var argv_list = std.array_list.Managed([:0]const u8).fromOwnedSlice(bun.default_allocator, bun.argv);
+                        if (graph.compile_exec_argv.len > 0) {
+                            try bun.appendOptionsEnv(graph.compile_exec_argv, [:0]const u8, &argv_list);
+                        }
 
-                        // Calculate offset: skip executable name + all exec argv options
-                        offset_for_passthrough = if (bun.argv.len > 1) 1 + (bun.argv.len -| original_argv_len) else 0;
+                        // Store the full argv including user arguments
+                        const full_argv = argv_list.items;
+                        const num_exec_argv_options = full_argv.len -| original_argv_len;
+
+                        // Calculate offset: skip executable name + all exec argv options + BUN_OPTIONS args
+                        const num_parsed_options = num_exec_argv_options + bun.bun_options_argc;
+                        offset_for_passthrough = if (full_argv.len > 1) 1 + num_parsed_options else 0;
+
+                        // Temporarily set bun.argv to only include executable name + exec_argv options + BUN_OPTIONS args.
+                        // This prevents user arguments like --version/--help from being intercepted
+                        // by Bun's argument parser (they should be passed through to user code).
+                        bun.argv = full_argv[0..@min(1 + num_parsed_options, full_argv.len)];
 
                         // Handle actual options to parse.
-                        break :brk try Command.init(allocator, log, .AutoCommand);
+                        const result = try Command.init(allocator, log, .AutoCommand);
+
+                        // Restore full argv so passthrough calculation works correctly
+                        bun.argv = full_argv;
+
+                        break :brk result;
                     }
 
                     context_data = .{
@@ -717,7 +752,7 @@ pub const Command = struct {
             }
         }
 
-        debug("argv: [{s}]", .{bun.fmt.fmtSlice(bun.argv, ", ")});
+        debug("argv: [{f}]", .{bun.fmt.fmtSlice(bun.argv, ", ")});
 
         const tag = which();
 
@@ -933,6 +968,15 @@ pub const Command = struct {
                     try ExecCommand.exec(ctx);
                 } else Tag.printHelp(.ExecCommand, true);
             },
+            .FuzzilliCommand => {
+                if (bun.Environment.enable_fuzzilli) {
+                    const ctx = try Command.init(allocator, log, .FuzzilliCommand);
+                    try FuzzilliCommand.exec(ctx);
+                    return;
+                } else {
+                    return error.UnrecognizedCommand;
+                }
+            },
         }
     }
 
@@ -968,6 +1012,7 @@ pub const Command = struct {
         PublishCommand,
         AuditCommand,
         WhyCommand,
+        FuzzilliCommand,
 
         /// Used by crash reports.
         ///
@@ -1005,6 +1050,7 @@ pub const Command = struct {
                 .PublishCommand => 'k',
                 .AuditCommand => 'A',
                 .WhyCommand => 'W',
+                .FuzzilliCommand => 'F',
             };
         }
 
@@ -1310,7 +1356,7 @@ pub const Command = struct {
                         \\  <d>$<r> <b><green>bun why<r> <blue>"@types/*"<r> <cyan>--depth<r> <blue>2<r>
                         \\  <d>$<r> <b><green>bun why<r> <blue>"*-lodash"<r> <cyan>--top<r>
                         \\
-                        \\Full documentation is available at <magenta>https://bun.sh/docs/cli/why<r>
+                        \\Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>
                         \\
                     ;
 
@@ -1318,7 +1364,7 @@ pub const Command = struct {
                     Output.flush();
                 },
                 else => {
-                    HelpCommand.printWithReason(.explicit);
+                    HelpCommand.printWithReason(.explicit, false);
                 },
             }
         }

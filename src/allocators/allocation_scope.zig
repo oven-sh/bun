@@ -129,7 +129,7 @@ const LockedState = struct {
 
     fn trackFree(self: Self, buf: []const u8, ret_addr: usize) FreeError!void {
         const entry = self.history.allocations.fetchRemove(buf.ptr) orelse {
-            Output.errGeneric("Invalid free, pointer {any}, len {d}", .{ buf.ptr, buf.len });
+            Output.errGeneric("Invalid free, pointer {*}, len {d}", .{ buf.ptr, buf.len });
 
             if (self.history.frees.getPtr(buf.ptr)) |free_entry| {
                 Output.printErrorln("Pointer allocated here:", .{});
@@ -193,7 +193,7 @@ const State = struct {
 
         const count = history.allocations.count();
         if (count == 0) return;
-        Output.errGeneric("Allocation scope leaked {d} allocations ({})", .{
+        Output.errGeneric("Allocation scope leaked {d} allocations ({f})", .{
             count,
             bun.fmt.size(history.total_memory_allocated, .{}),
         });
@@ -206,7 +206,7 @@ const State = struct {
                 break;
             }
             Output.prettyErrorln(
-                "- {any}, len {d}, at:",
+                "- {*}, len {d}, at:",
                 .{ entry.key_ptr.*, entry.value_ptr.len },
             );
             bun.crash_handler.dumpStackTrace(
@@ -223,7 +223,7 @@ const State = struct {
         }
 
         Output.panic(
-            "Allocation scope leaked {}",
+            "Allocation scope leaked {f}",
             .{bun.fmt.size(history.total_memory_allocated, .{})},
         );
     }

@@ -295,7 +295,7 @@ pub const Route = struct {
             vm.eventLoop(),
             bun.default_allocator,
         );
-        completion_task.started_at_ns = bun.getRoughTickCount().ns();
+        completion_task.started_at_ns = bun.getRoughTickCount(.allow_mocked_time).ns();
         completion_task.html_build_task = this;
         this.state = .{ .building = completion_task };
 
@@ -324,9 +324,9 @@ pub const Route = struct {
                     if (server.config().isDevelopment()) {
                         switch (bun.Output.enable_ansi_colors_stderr) {
                             inline else => |enable_ansi_colors| {
-                                var writer = bun.Output.errorWriterBuffered();
-                                this.state.err.printWithEnableAnsiColors(&writer, enable_ansi_colors) catch {};
-                                writer.context.flush() catch {};
+                                const writer = bun.Output.errorWriterBuffered();
+                                this.state.err.printWithEnableAnsiColors(writer, enable_ansi_colors) catch {};
+                                writer.flush() catch {};
                             },
                         }
                     }
@@ -341,7 +341,7 @@ pub const Route = struct {
                 const output_files = bundle.output_files.items;
 
                 if (server.config().isDevelopment()) {
-                    const now = bun.getRoughTickCount().ns();
+                    const now = bun.getRoughTickCount(.allow_mocked_time).ns();
                     const duration = now - completion_task.started_at_ns;
                     var duration_f64: f64 = @floatFromInt(duration);
                     duration_f64 /= std.time.ns_per_s;
@@ -372,7 +372,7 @@ pub const Route = struct {
                         var hashbuf: [64]u8 = undefined;
                         const etag_str = std.fmt.bufPrint(
                             &hashbuf,
-                            "{}",
+                            "{f}",
                             .{bun.fmt.hexIntLower(output_file.hash)},
                         ) catch |err| switch (err) {
                             error.NoSpaceLeft => unreachable,

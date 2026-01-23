@@ -171,7 +171,7 @@ pub const RESPValue = union(RESPType) {
         }
     }
 
-    pub fn format(self: @This(), comptime _: []const u8, options: anytype, writer: anytype) !void {
+    pub fn format(self: @This(), writer: *std.Io.Writer) !void {
         switch (self) {
             .SimpleString => |str| try writer.writeAll(str),
             .Error => |str| try writer.writeAll(str),
@@ -187,7 +187,7 @@ pub const RESPValue = union(RESPType) {
                 try writer.writeAll("[");
                 for (array, 0..) |value, i| {
                     if (i > 0) try writer.writeAll(", ");
-                    try value.format("", options, writer);
+                    try value.format(writer);
                 }
                 try writer.writeAll("]");
             },
@@ -200,9 +200,9 @@ pub const RESPValue = union(RESPType) {
                 try writer.writeAll("{");
                 for (entries, 0..) |entry, i| {
                     if (i > 0) try writer.writeAll(", ");
-                    try entry.key.format("", options, writer);
+                    try entry.key.format(writer);
                     try writer.writeAll(": ");
-                    try entry.value.format("", options, writer);
+                    try entry.value.format(writer);
                 }
                 try writer.writeAll("}");
             },
@@ -210,7 +210,7 @@ pub const RESPValue = union(RESPType) {
                 try writer.writeAll("Set{");
                 for (set, 0..) |value, i| {
                     if (i > 0) try writer.writeAll(", ");
-                    try value.format("", options, writer);
+                    try value.format(writer);
                 }
                 try writer.writeAll("}");
             },
@@ -219,19 +219,19 @@ pub const RESPValue = union(RESPType) {
                 try writer.writeAll("{");
                 for (attribute.attributes, 0..) |entry, i| {
                     if (i > 0) try writer.writeAll(", ");
-                    try entry.key.format("", options, writer);
+                    try entry.key.format(writer);
                     try writer.writeAll(": ");
-                    try entry.value.format("", options, writer);
+                    try entry.value.format(writer);
                 }
                 try writer.writeAll("} => ");
-                try attribute.value.format("", options, writer);
+                try attribute.value.format(writer);
                 try writer.writeAll(")");
             },
             .Push => |push| {
                 try writer.print("Push({s}: [", .{push.kind});
                 for (push.data, 0..) |value, i| {
                     if (i > 0) try writer.writeAll(", ");
-                    try value.format("", options, writer);
+                    try value.format(writer);
                 }
                 try writer.writeAll("])");
             },

@@ -661,7 +661,7 @@ pub const ValkeyClient = struct {
         const globalThis = this.globalObject();
         const loop = this.vm.eventLoop();
 
-        debug("Handling a subscribe response: {any}", .{value.*});
+        debug("Handling a subscribe response: {f}", .{value.*});
         loop.enter();
         defer loop.exit();
 
@@ -1153,7 +1153,7 @@ pub const ValkeyClient = struct {
     }
 
     /// Get a writer for the connected socket
-    pub fn writer(this: *ValkeyClient) std.io.Writer(*ValkeyClient, protocol.RedisError, write) {
+    pub fn writer(this: *ValkeyClient) std.Io.GenericWriter(*ValkeyClient, protocol.RedisError, write) {
         return .{ .context = this };
     }
 

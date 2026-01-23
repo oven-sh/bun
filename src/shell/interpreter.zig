@@ -123,7 +123,7 @@ pub const StateKind = enum(u8) {
     expansion,
     if_clause,
     condexpr,
-    @"async",
+    async,
     subshell,
 };
 
@@ -147,7 +147,7 @@ pub const CowFd = struct {
         this.* = .{
             .__fd = fd,
         };
-        debug("init(0x{x}, fd={})", .{ @intFromPtr(this), fd });
+        debug("init(0x{x}, fd={f})", .{ @intFromPtr(this), fd });
         return this;
     }
 
@@ -156,7 +156,7 @@ pub const CowFd = struct {
             .fd = bun.sys.dup(this.fd),
             .writercount = 1,
         });
-        debug("dup(0x{x}, fd={}) = (0x{x}, fd={})", .{ @intFromPtr(this), this.fd, new, new.fd });
+        debug("dup(0x{x}, fd={f}) = (0x{x}, fd={f})", .{ @intFromPtr(this), this.fd, new, new.fd });
         return new;
     }
 
@@ -177,7 +177,7 @@ pub const CowFd = struct {
         this.refcount += 1;
     }
 
-    pub fn refSelf(this: *CowFd) *CowFd {
+    pub fn dupeRef(this: *CowFd) *CowFd {
         this.ref();
         return this;
     }
@@ -267,7 +267,7 @@ pub const Interpreter = struct {
     // Necessary for builtin commands.
     keep_alive: bun.Async.KeepAlive = .{},
 
-    vm_args_utf8: std.ArrayList(jsc.ZigString.Slice),
+    vm_args_utf8: std.array_list.Managed(jsc.ZigString.Slice),
     async_commands_executing: u32 = 0,
 
     globalThis: *jsc.JSGlobalObject,
@@ -350,8 +350,8 @@ pub const Interpreter = struct {
         /// The current working directory of the shell.
         /// Use an array list so we don't have to keep reallocating
         /// Always has zero-sentinel
-        __prev_cwd: std.ArrayList(u8),
-        __cwd: std.ArrayList(u8),
+        __prev_cwd: std.array_list.Managed(u8),
+        __cwd: std.array_list.Managed(u8),
         cwd_fd: bun.FileDescriptor,
 
         async_pids: SmolList(pid_t, 4) = SmolList(pid_t, 4).zeroes,
@@ -444,10 +444,10 @@ pub const Interpreter = struct {
 
             if (comptime free_buffered_io) {
                 if (this._buffered_stdout == .owned) {
-                    this._buffered_stdout.owned.deinit(bun.default_allocator);
+                    this._buffered_stdout.owned.clearAndFree(bun.default_allocator);
                 }
                 if (this._buffered_stderr == .owned) {
-                    this._buffered_stderr.owned.deinit(bun.default_allocator);
+                    this._buffered_stderr.owned.clearAndFree(bun.default_allocator);
                 }
             }
 
@@ -704,7 +704,7 @@ pub const Interpreter = struct {
         const parsed_shell_script = parsed_shell_script_js.as(ParsedShellScript) orelse return globalThis.throw("shell: expected a ParsedShellScript", .{});
 
         var shargs: *ShellArgs = undefined;
-        var jsobjs: std.ArrayList(JSValue) = std.ArrayList(JSValue).init(allocator);
+        var jsobjs: std.array_list.Managed(JSValue) = std.array_list.Managed(JSValue).init(allocator);
         var quiet: bool = false;
         var cwd: ?bun.String = null;
         var export_env: ?EnvMap = null;
@@ -748,7 +748,8 @@ pub const Interpreter = struct {
             jsobjs.deinit();
             if (export_env) |*ee| ee.deinit();
             if (cwd) |*cc| cc.deref();
-            shargs.deinit();
+            // Note: Don't call shargs.deinit() here - interpreter.finalize() will do it
+            // since interpreter.args points to shargs after init() succeeds.
             interpreter.finalize();
             return error.JSError;
         }
@@ -798,14 +799,14 @@ pub const Interpreter = struct {
 
         if (comptime bun.Environment.isDebug) {
             const debug = bun.Output.scoped(.ShellTokens, .hidden);
-            var test_tokens = std.ArrayList(shell.Test.TestToken).initCapacity(arena_allocator, lex_result.tokens.len) catch @panic("OOPS");
+            var test_tokens = std.array_list.Managed(shell.Test.TestToken).initCapacity(arena_allocator, lex_result.tokens.len) catch @panic("OOPS");
             defer test_tokens.deinit();
             for (lex_result.tokens) |tok| {
                 const test_tok = shell.Test.TestToken.from_real(tok, lex_result.strpool);
                 test_tokens.append(test_tok) catch @panic("OOPS");
             }
 
-            const str = std.json.stringifyAlloc(bun.default_allocator, test_tokens.items[0..], .{}) catch @panic("OOPS");
+            const str = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{f}", .{std.json.fmt(test_tokens.items[0..], .{})}));
             defer bun.default_allocator.free(str);
             debug("Tokens: {s}", .{str});
         }
@@ -869,7 +870,7 @@ pub const Interpreter = struct {
             },
         };
 
-        var cwd_arr = bun.handleOom(std.ArrayList(u8).initCapacity(bun.default_allocator, cwd.len + 1));
+        var cwd_arr = bun.handleOom(std.array_list.Managed(u8).initCapacity(bun.default_allocator, cwd.len + 1));
         bun.handleOom(cwd_arr.appendSlice(cwd[0 .. cwd.len + 1]));
 
         if (comptime bun.Environment.isDebug) {
@@ -917,7 +918,7 @@ pub const Interpreter = struct {
                 .stderr = .pipe,
             },
 
-            .vm_args_utf8 = std.ArrayList(jsc.ZigString.Slice).init(bun.default_allocator),
+            .vm_args_utf8 = std.array_list.Managed(jsc.ZigString.Slice).init(bun.default_allocator),
             .__alloc_scope = if (bun.Environment.enableAllocScopes) bun.AllocationScope.init(allocator) else {},
             .globalThis = undefined,
         };
@@ -933,11 +934,7 @@ pub const Interpreter = struct {
 
     pub fn initAndRunFromFile(ctx: bun.cli.Command.Context, mini: *jsc.MiniEventLoop, path: []const u8) !bun.shell.ExitCode {
         var shargs = ShellArgs.init();
-        const src = src: {
-            var file = try std.fs.cwd().openFile(path, .{});
-            defer file.close();
-            break :src try file.reader().readAllAlloc(shargs.arena_allocator(), std.math.maxInt(u32));
-        };
+        const src = try std.fs.cwd().readFileAlloc(shargs.arena_allocator(), path, std.math.maxInt(u32));
         defer shargs.deinit();
 
         const jsobjs: []JSValue = &[_]JSValue{};
@@ -998,7 +995,7 @@ pub const Interpreter = struct {
         interp.exit_code = exit_code;
         switch (try interp.run()) {
             .err => |e| {
-                interp.deinitEverything();
+                interp.#deinitFromExec();
                 bun.Output.err(e, "Failed to run script <b>{s}<r>", .{std.fs.path.basename(path)});
                 bun.Global.exit(1);
                 return 1;
@@ -1007,7 +1004,7 @@ pub const Interpreter = struct {
         }
         mini.tick(&is_done, @as(fn (*anyopaque) bool, IsDone.isDone));
         const code = interp.exit_code.?;
-        interp.deinitEverything();
+        interp.#deinitFromExec();
         return code;
     }
 
@@ -1065,7 +1062,7 @@ pub const Interpreter = struct {
         interp.exit_code = exit_code;
         switch (try interp.run()) {
             .err => |e| {
-                interp.deinitEverything();
+                interp.#deinitFromExec();
                 bun.Output.err(e, "Failed to run script <b>{s}<r>", .{path_for_errors});
                 bun.Global.exit(1);
                 return 1;
@@ -1074,7 +1071,7 @@ pub const Interpreter = struct {
         }
         mini.tick(&is_done, @as(fn (*anyopaque) bool, IsDone.isDone));
         const code = interp.exit_code.?;
-        interp.deinitEverything();
+        interp.#deinitFromExec();
         return code;
     }
 
@@ -1146,7 +1143,7 @@ pub const Interpreter = struct {
         _ = callframe; // autofix
 
         if (this.setupIOBeforeRun().asErr()) |e| {
-            defer this.deinitEverything();
+            defer this.#deinitFromExec();
             const shellerr = bun.shell.ShellErr.newSys(e);
             return try throwShellErr(&shellerr, .{ .js = globalThis.bunVM().event_loop });
         }
@@ -1170,9 +1167,9 @@ pub const Interpreter = struct {
         return buffer.toNodeBuffer(globalThis);
     }
 
-    pub fn asyncCmdDone(this: *ThisInterpreter, @"async": *Async) void {
-        log("asyncCommandDone {}", .{@"async"});
-        @"async".actuallyDeinit();
+    pub fn asyncCmdDone(this: *ThisInterpreter, async: *Async) void {
+        log("asyncCommandDone {f}", .{async});
+        async.actuallyDeinit();
         this.async_commands_executing -= 1;
         if (this.async_commands_executing == 0 and this.exit_code != null) {
             this.finish(this.exit_code.?).run();
@@ -1195,20 +1192,21 @@ pub const Interpreter = struct {
         defer decrPendingActivityFlag(&this.has_pending_activity);
 
         if (this.event_loop == .js) {
-            defer this.deinitAfterJSRun();
             this.exit_code = exit_code;
             const this_jsvalue = this.this_jsvalue;
             if (this_jsvalue != .zero) {
                 if (jsc.Codegen.JSShellInterpreter.resolveGetCached(this_jsvalue)) |resolve| {
                     const loop = this.event_loop.js;
                     const globalThis = this.globalThis;
-                    this.this_jsvalue = .zero;
+                    const buffered_stdout = this.getBufferedStdout(globalThis);
+                    const buffered_stderr = this.getBufferedStderr(globalThis);
                     this.keep_alive.disable();
+                    this.#derefRootShellAndIOIfNeeded(true);
                     loop.enter();
                     _ = resolve.call(globalThis, .js_undefined, &.{
                         JSValue.jsNumberFromU16(exit_code),
-                        this.getBufferedStdout(globalThis),
-                        this.getBufferedStderr(globalThis),
+                        buffered_stdout,
+                        buffered_stderr,
                     }) catch |err| globalThis.reportActiveExceptionAsUnhandled(err);
                     jsc.Codegen.JSShellInterpreter.resolveSetCached(this_jsvalue, globalThis, .js_undefined);
                     jsc.Codegen.JSShellInterpreter.rejectSetCached(this_jsvalue, globalThis, .js_undefined);
@@ -1223,35 +1221,45 @@ pub const Interpreter = struct {
         return .done;
     }
 
-    fn deinitAfterJSRun(this: *ThisInterpreter) void {
-        log("Interpreter(0x{x}) deinitAfterJSRun", .{@intFromPtr(this)});
-        this.root_io.deref();
-        this.keep_alive.disable();
-        this.root_shell.deinitImpl(false, false);
+    fn #derefRootShellAndIOIfNeeded(this: *ThisInterpreter, free_buffered_io: bool) void {
+        if (free_buffered_io) {
+            // Can safely be called multiple times.
+            if (this.root_shell._buffered_stderr == .owned) {
+                this.root_shell._buffered_stderr.owned.clearAndFree(bun.default_allocator);
+            }
+            if (this.root_shell._buffered_stdout == .owned) {
+                this.root_shell._buffered_stdout.owned.clearAndFree(bun.default_allocator);
+            }
+        }
+
+        // Has this already been finalized?
+        if (this.this_jsvalue != .zero) {
+            // Cannot be safely called multiple times.
+            this.root_io.deref();
+            this.root_shell.deinitImpl(false, false);
+        }
+
         this.this_jsvalue = .zero;
     }
 
     fn deinitFromFinalizer(this: *ThisInterpreter) void {
-        if (this.root_shell._buffered_stderr == .owned) {
-            this.root_shell._buffered_stderr.owned.deinit(bun.default_allocator);
-        }
-        if (this.root_shell._buffered_stdout == .owned) {
-            this.root_shell._buffered_stdout.owned.deinit(bun.default_allocator);
-        }
-        this.this_jsvalue = .zero;
+        this.#derefRootShellAndIOIfNeeded(true);
+        this.keep_alive.disable();
         this.args.deinit();
         this.allocator.destroy(this);
     }
 
-    fn deinitEverything(this: *ThisInterpreter) void {
+    fn #deinitFromExec(this: *ThisInterpreter) void {
         log("deinit interpreter", .{});
+
+        this.this_jsvalue = .zero;
         this.root_io.deref();
         this.root_shell.deinitImpl(false, true);
+
         for (this.vm_args_utf8.items[0..]) |str| {
             str.deinit();
         }
         this.vm_args_utf8.deinit();
-        this.this_jsvalue = .zero;
         this.allocator.destroy(this);
     }
 
@@ -1546,7 +1554,7 @@ pub fn MaybeChild(comptime T: type) type {
 
 pub fn closefd(fd: bun.FileDescriptor) void {
     if (fd.closeAllowingBadFileDescriptor(null)) |err| {
-        log("ERR closefd: {}\n", .{err});
+        log("ERR closefd: {f}\n", .{err});
     }
 }
 
@@ -1562,7 +1570,7 @@ const CmdEnvIter = struct {
     const Value = struct {
         val: [:0]const u8,
 
-        pub fn format(self: Value, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(self: Value, writer: *std.Io.Writer) !void {
             try writer.writeAll(self.val);
         }
     };
@@ -1570,7 +1578,7 @@ const CmdEnvIter = struct {
     const Key = struct {
         val: []const u8,
 
-        pub fn format(self: Key, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(self: Key, writer: *std.Io.Writer) !void {
             try writer.writeAll(self.val);
         }
 
@@ -2029,6 +2037,5 @@ const windows = bun.windows;
 const uv = windows.libuv;
 
 const std = @import("std");
-const ArrayList = std.ArrayList;
 const posix = std.posix;
 const Allocator = std.mem.Allocator;

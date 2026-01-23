@@ -76,12 +76,12 @@ pub const PropertyRule = struct {
 
     const This = @This();
 
-    pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const This, dest: *Printer) PrintErr!void {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
 
         try dest.writeStr("@property ");
-        try css.css_values.ident.DashedIdentFns.toCss(&this.name, W, dest);
+        try css.css_values.ident.DashedIdentFns.toCss(&this.name, dest);
         try dest.whitespace();
         try dest.writeChar('{');
         dest.indent();
@@ -89,7 +89,7 @@ pub const PropertyRule = struct {
 
         try dest.writeStr("syntax:");
         try dest.whitespace();
-        try this.syntax.toCss(W, dest);
+        try this.syntax.toCss(dest);
         try dest.writeChar(';');
         try dest.newline();
 
@@ -107,7 +107,7 @@ pub const PropertyRule = struct {
 
             try dest.writeStr("initial-value:");
             try dest.whitespace();
-            try initial_value.toCss(W, dest);
+            try initial_value.toCss(dest);
 
             if (!dest.minify) {
                 try dest.writeChar(';');

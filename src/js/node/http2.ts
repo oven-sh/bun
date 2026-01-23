@@ -64,6 +64,7 @@ const StringPrototypeTrim = String.prototype.trim;
 const ArrayPrototypePush = Array.prototype.push;
 const StringPrototypeToLowerCase = String.prototype.toLowerCase;
 const StringPrototypeIncludes = String.prototype.includes;
+const StringPrototypeStartsWith = String.prototype.startsWith;
 const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 const DatePrototypeToUTCString = Date.prototype.toUTCString;
 const DatePrototypeGetMilliseconds = Date.prototype.getMilliseconds;
@@ -2966,7 +2967,10 @@ class ServerHttp2Session extends Http2Session {
     return this.#parser?.setLocalWindowSize?.(windowSize);
   }
 
-  settings(settings: Settings, callback) {
+  settings(settings: Settings, callback?) {
+    if (callback !== undefined && typeof callback !== "function") {
+      throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
+    }
     this.#pendingSettingsAck = true;
     this.#parser?.settings(settings);
     if (typeof callback === "function") {
@@ -3038,6 +3042,7 @@ class ClientHttp2Session extends Http2Session {
   #socket_proxy: Proxy<TLSSocket | Socket>;
   #parser: typeof H2FrameParser | null;
   #url: URL;
+  #authority: string;
   #alpnProtocol: string | undefined = undefined;
   #localSettings: Settings | null = {
     headerTableSize: 4096,
@@ -3404,7 +3409,10 @@ class ClientHttp2Session extends Http2Session {
     return this.#parser?.getCurrentState();
   }
 
-  settings(settings: Settings, callback) {
+  settings(settings: Settings, callback?) {
+    if (callback !== undefined && typeof callback !== "function") {
+      throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
+    }
     this.#pendingSettingsAck = true;
     this.#parser?.settings(settings);
     if (typeof callback === "function") {
@@ -3454,6 +3462,19 @@ class ClientHttp2Session extends Http2Session {
       if (host[0] === "[") host = host.slice(1, -1);
     } else if (url.host) {
       host = url.host;
+    }
+
+    // Store computed authority like Node.js does (session[kAuthority] = `${host}:${port}`)
+    // Only include port if non-default (RFC 7540: omit default ports 443 for https, 80 for http)
+    const isDefaultPort = (protocol === "https:" && port === 443) || (protocol === "http:" && port === 80);
+    if (isDefaultPort) {
+      // IPv6 literals need brackets even without port (e.g., [::1])
+      const needsBrackets = StringPrototypeIncludes.$call(host, ":") && !StringPrototypeStartsWith.$call(host, "[");
+      this.#authority = needsBrackets ? `[${host}]` : host;
+    } else {
+      // IPv6 literals need brackets when appending port (e.g., [::1]:8080)
+      const needsBrackets = StringPrototypeIncludes.$call(host, ":") && !StringPrototypeStartsWith.$call(host, "[");
+      this.#authority = needsBrackets ? `[${host}]:${port}` : `${host}:${port}`;
     }
 
     function onConnect() {
@@ -3583,7 +3604,8 @@ class ClientHttp2Session extends Http2Session {
 
       let authority = headers[":authority"];
       if (!authority) {
-        authority = url.host;
+        // Use precomputed authority (like Node.js's session[kAuthority])
+        authority = this.#authority;
         if (!headers["host"]) {
           headers[":authority"] = authority;
         }
@@ -3807,6 +3829,7 @@ class Http2Server extends net.Server {
     if (typeof callback === "function") {
       this.on("timeout", callback);
     }
+    return this;
   }
   updateSettings(settings) {
     assertSettings(settings);
@@ -3900,6 +3923,7 @@ class Http2SecureServer extends tls.Server {
     if (typeof callback === "function") {
       this.on("timeout", callback);
     }
+    return this;
   }
   updateSettings(settings) {
     assertSettings(settings);

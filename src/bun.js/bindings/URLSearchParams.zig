@@ -14,7 +14,7 @@ pub const URLSearchParams = opaque {
     extern fn URLSearchParams__toString(
         self: *URLSearchParams,
         ctx: *anyopaque,
-        callback: *const fn (ctx: *anyopaque, str: *const ZigString) callconv(.C) void,
+        callback: *const fn (ctx: *anyopaque, str: *const ZigString) callconv(.c) void,
     ) void;
 
     pub fn toString(
@@ -26,7 +26,7 @@ pub const URLSearchParams = opaque {
         jsc.markBinding(@src());
         const Wrap = struct {
             const cb_ = callback;
-            pub fn cb(c: *anyopaque, str: *const ZigString) callconv(.C) void {
+            pub fn cb(c: *anyopaque, str: *const ZigString) callconv(.c) void {
                 cb_(
                     bun.cast(*Ctx, c),
                     str.*,

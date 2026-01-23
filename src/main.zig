@@ -20,7 +20,7 @@ pub fn main() void {
     if (Environment.isPosix) {
         var act: std.posix.Sigaction = .{
             .handler = .{ .handler = std.posix.SIG.IGN },
-            .mask = std.posix.empty_sigset,
+            .mask = std.posix.sigemptyset(),
             .flags = 0,
         };
         std.posix.sigaction(std.posix.SIG.PIPE, &act, null);
@@ -46,7 +46,7 @@ pub fn main() void {
     }
 
     _bun.start_time = std.time.nanoTimestamp();
-    _bun.initArgv(_bun.default_allocator) catch |err| {
+    _bun.initArgv() catch |err| {
         Output.panic("Failed to initialize argv: {s}\n", .{@errorName(err)});
     };
 

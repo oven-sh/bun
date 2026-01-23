@@ -126,7 +126,7 @@ pub fn writeVLQs(map: *const ParsedSourceMap, writer: anytype) !void {
         if (current_line != gen.lines.zeroBased()) {
             assert(gen.lines.zeroBased() > current_line);
             const inc = gen.lines.zeroBased() - current_line;
-            try writer.writeByteNTimes(';', @intCast(inc));
+            try writer.splatByteAll(';', @intCast(inc));
             current_line = gen.lines.zeroBased();
             last_col = 0;
         } else if (i != 0) {
@@ -143,11 +143,11 @@ pub fn writeVLQs(map: *const ParsedSourceMap, writer: anytype) !void {
     }
 }
 
-pub fn formatVLQs(map: *const ParsedSourceMap) std.fmt.Formatter(formatVLQsImpl) {
+pub fn formatVLQs(map: *const ParsedSourceMap) std.fmt.Alt(*const ParsedSourceMap, formatVLQsImpl) {
     return .{ .data = map };
 }
 
-fn formatVLQsImpl(map: *const ParsedSourceMap, comptime _: []const u8, _: std.fmt.FormatOptions, w: anytype) !void {
+fn formatVLQsImpl(map: *const ParsedSourceMap, w: *std.Io.Writer) !void {
     try map.writeVLQs(w);
 }
 

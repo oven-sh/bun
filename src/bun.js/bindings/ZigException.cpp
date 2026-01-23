@@ -63,13 +63,14 @@ enum PopulateStackTraceFlags {
 
 #define SYNTAX_ERROR_CODE 4
 
-static void populateStackFrameMetadata(JSC::VM& vm, JSC::JSGlobalObject* globalObject, const JSC::StackFrame& stackFrame, ZigStackFrame& frame)
-{
+using Zig::FinalizerSafety;
 
+static void populateStackFrameMetadata(JSC::VM& vm, JSC::JSGlobalObject* globalObject, const JSC::StackFrame& stackFrame, ZigStackFrame& frame, FinalizerSafety finalizerSafety)
+{
     if (stackFrame.isWasmFrame()) {
         frame.code_type = ZigStackFrameCodeWasm;
 
-        auto name = Zig::functionName(vm, globalObject, stackFrame, false, nullptr);
+        auto name = Zig::functionName(vm, globalObject, stackFrame, finalizerSafety, nullptr);
         if (!name.isEmpty()) {
             frame.function_name = Bun::toStringRef(name);
         }
@@ -109,18 +110,19 @@ static void populateStackFrameMetadata(JSC::VM& vm, JSC::JSGlobalObject* globalO
         }
     }
 
-    auto calleeCell = stackFrame.callee();
-    if (!calleeCell)
-        return;
-
-    JSC::JSObject* callee = calleeCell->getObject();
-    if (!callee)
-        return;
-
-    WTF::String functionName = Zig::functionName(vm, globalObject, callee);
-    if (!functionName.isEmpty()) {
-        frame.function_name = Bun::toStringRef(functionName);
+    WTF::String functionName;
+    if (finalizerSafety == FinalizerSafety::MustNotTriggerGC) {
+        // Use the safe overload that avoids property access
+        functionName = Zig::functionName(vm, globalObject, stackFrame, finalizerSafety, nullptr);
+    } else {
+        // Use the richer callee-based path
+        if (auto calleeCell = stackFrame.callee()) {
+            if (auto* callee = calleeCell->getObject())
+                functionName = Zig::functionName(vm, globalObject, callee);
+        }
     }
+    if (!functionName.isEmpty())
+        frame.function_name = Bun::toStringRef(functionName);
 
     frame.is_async = stackFrame.isAsyncFrame();
 }
@@ -223,10 +225,10 @@ static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunStr
 }
 
 static void populateStackFrame(JSC::VM& vm, ZigStackTrace& trace, const JSC::StackFrame& stackFrame,
-    ZigStackFrame& frame, bool is_top, JSC::SourceProvider** referenced_source_provider, JSC::JSGlobalObject* globalObject, PopulateStackTraceFlags flags)
+    ZigStackFrame& frame, bool is_top, JSC::SourceProvider** referenced_source_provider, JSC::JSGlobalObject* globalObject, PopulateStackTraceFlags flags, FinalizerSafety finalizerSafety)
 {
     if (flags == PopulateStackTraceFlags::OnlyPosition) {
-        populateStackFrameMetadata(vm, globalObject, stackFrame, frame);
+        populateStackFrameMetadata(vm, globalObject, stackFrame, frame, finalizerSafety);
         populateStackFramePosition(stackFrame, nullptr,
             nullptr,
             0, frame.position, referenced_source_provider, flags);
@@ -419,7 +421,7 @@ public:
     }
 };
 
-static void populateStackTrace(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& frames, ZigStackTrace& trace, JSC::JSGlobalObject* globalObject, PopulateStackTraceFlags flags)
+static void populateStackTrace(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& frames, ZigStackTrace& trace, JSC::JSGlobalObject* globalObject, PopulateStackTraceFlags flags, FinalizerSafety finalizerSafety = FinalizerSafety::NotInFinalizer)
 {
     if (flags == PopulateStackTraceFlags::OnlyPosition) {
         uint8_t frame_i = 0;
@@ -437,7 +439,7 @@ static void populateStackTrace(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& 
 
             ZigStackFrame& frame = trace.frames_ptr[frame_i];
             frame.jsc_stack_frame_index = static_cast<int32_t>(stack_frame_i);
-            populateStackFrame(vm, trace, frames[stack_frame_i], frame, frame_i == 0, &trace.referenced_source_provider, globalObject, flags);
+            populateStackFrame(vm, trace, frames[stack_frame_i], frame, frame_i == 0, &trace.referenced_source_provider, globalObject, flags, finalizerSafety);
             stack_frame_i++;
             frame_i++;
         }
@@ -449,7 +451,7 @@ static void populateStackTrace(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& 
             // so jsc_stack_frame_index is always a valid value here.
             ASSERT(frame.jsc_stack_frame_index >= 0);
             ASSERT(static_cast<size_t>(frame.jsc_stack_frame_index) < frames.size());
-            populateStackFrame(vm, trace, frames[frame.jsc_stack_frame_index], frame, i == 0, &trace.referenced_source_provider, globalObject, flags);
+            populateStackFrame(vm, trace, frames[frame.jsc_stack_frame_index], frame, i == 0, &trace.referenced_source_provider, globalObject, flags, finalizerSafety);
         }
     }
 }
@@ -484,7 +486,7 @@ static void fromErrorInstance(ZigException& except, JSC::JSGlobalObject* global,
         populateStackTrace(vm, *stackTrace, except.stack, global, flags);
 
     } else if (err->stackTrace() != nullptr && err->stackTrace()->size() > 0) {
-        populateStackTrace(vm, *err->stackTrace(), except.stack, global, flags);
+        populateStackTrace(vm, *err->stackTrace(), except.stack, global, flags, FinalizerSafety::MustNotTriggerGC);
 
     } else {
         getFromSourceURL = true;
@@ -886,7 +888,7 @@ extern "C" void ZigException__collectSourceLines(JSC::EncodedJSValue jsException
 
     if (JSC::ErrorInstance* error = JSC::jsDynamicCast<JSC::ErrorInstance*>(value)) {
         if (error->stackTrace() != nullptr && error->stackTrace()->size() > 0) {
-            populateStackTrace(global->vm(), *error->stackTrace(), exception->stack, global, PopulateStackTraceFlags::OnlySourceLines);
+            populateStackTrace(global->vm(), *error->stackTrace(), exception->stack, global, PopulateStackTraceFlags::OnlySourceLines, FinalizerSafety::MustNotTriggerGC);
         }
         return;
     }

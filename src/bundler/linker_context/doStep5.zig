@@ -7,7 +7,7 @@ pub fn doStep5(c: *LinkerContext, source_index_: Index, _: usize) void {
     defer trace.end();
 
     const id = source_index;
-    if (id > c.graph.meta.len) return;
+    if (id >= c.graph.meta.len) return;
 
     const worker: *ThreadPool.Worker = ThreadPool.Worker.get(@fieldParentPtr("linker", c));
     defer worker.unget();
@@ -19,7 +19,7 @@ pub fn doStep5(c: *LinkerContext, source_index_: Index, _: usize) void {
 
     // Now that all exports have been resolved, sort and filter them to create
     // something we can iterate over later.
-    var aliases = std.ArrayList(string).initCapacity(allocator, resolved_exports.count()) catch unreachable;
+    var aliases = std.array_list.Managed(string).initCapacity(allocator, resolved_exports.count()) catch unreachable;
     var alias_iter = resolved_exports.iterator();
     const imports_to_bind = c.graph.meta.items(.imports_to_bind);
     const probably_typescript_type = c.graph.meta.items(.probably_typescript_type);
@@ -230,7 +230,7 @@ pub fn createExportsForFile(
     defer Expr.Disabler.enable();
 
     // 1 property per export
-    var properties = bun.handleOom(std.ArrayList(js_ast.G.Property)
+    var properties = bun.handleOom(std.array_list.Managed(js_ast.G.Property)
         .initCapacity(allocator, export_aliases.len));
 
     var ns_export_symbol_uses = Part.SymbolUseMap{};
@@ -254,7 +254,7 @@ pub fn createExportsForFile(
     defer stmts.done();
     const loc = Logger.Loc.Empty;
     // todo: investigate if preallocating this array is faster
-    var ns_export_dependencies = bun.handleOom(std.ArrayList(js_ast.Dependency).initCapacity(allocator, re_exports_count));
+    var ns_export_dependencies = bun.handleOom(std.array_list.Managed(js_ast.Dependency).initCapacity(allocator, re_exports_count));
     for (export_aliases) |alias| {
         var exp = resolved_exports.getPtr(alias).?.*;
 

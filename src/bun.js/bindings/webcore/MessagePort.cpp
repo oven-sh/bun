@@ -95,7 +95,7 @@ void MessagePort::notifyMessageAvailable(const MessagePortIdentifier& identifier
     if (!scriptExecutionContextIdentifier)
         return;
 
-    ScriptExecutionContext::ensureOnContextThread(*scriptExecutionContextIdentifier, [weakPort = WTFMove(weakPort)](auto&) {
+    ScriptExecutionContext::ensureOnContextThread(*scriptExecutionContextIdentifier, [weakPort = WTF::move(weakPort)](auto&) {
         if (RefPtr port = weakPort.get())
             port->messageAvailable();
     });
@@ -159,7 +159,7 @@ ExceptionOr<void> MessagePort::postMessage(JSC::JSGlobalObject& state, JSC::JSVa
     // LOG(MessagePorts, "Attempting to post message to port %s (to be received by port %s)", m_identifier.logString().utf8().data(), m_remoteIdentifier.logString().utf8().data());
 
     Vector<RefPtr<MessagePort>> ports;
-    auto messageData = SerializedScriptValue::create(state, messageValue, WTFMove(options.transfer), ports, SerializationForStorage::No, SerializationContext::WorkerPostMessage);
+    auto messageData = SerializedScriptValue::create(state, messageValue, WTF::move(options.transfer), ports, SerializationForStorage::No, SerializationContext::WorkerPostMessage);
     if (messageData.hasException())
         return messageData.releaseException();
 
@@ -175,15 +175,15 @@ ExceptionOr<void> MessagePort::postMessage(JSC::JSGlobalObject& state, JSC::JSVa
                 return Exception { ExceptionCode::DataCloneError };
         }
 
-        auto disentangleResult = MessagePort::disentanglePorts(WTFMove(ports));
+        auto disentangleResult = MessagePort::disentanglePorts(WTF::move(ports));
         if (disentangleResult.hasException())
             return disentangleResult.releaseException();
         transferredPorts = disentangleResult.releaseReturnValue();
     }
 
-    MessageWithMessagePorts message { messageData.releaseReturnValue(), WTFMove(transferredPorts) };
+    MessageWithMessagePorts message { messageData.releaseReturnValue(), WTF::move(transferredPorts) };
 
-    MessagePortChannelProvider::fromContext(*protectedScriptExecutionContext()).postMessageToRemote(WTFMove(message), m_remoteIdentifier);
+    MessagePortChannelProvider::fromContext(*protectedScriptExecutionContext()).postMessageToRemote(WTF::move(message), m_remoteIdentifier);
     return {};
 }
 
@@ -254,7 +254,7 @@ void MessagePort::dispatchMessages()
         return;
 
     auto messagesTakenHandler = [this, protectedThis = Ref { *this }](Vector<MessageWithMessagePorts>&& messages, CompletionHandler<void()>&& completionCallback) mutable {
-        auto scopeExit = makeScopeExit(WTFMove(completionCallback));
+        auto scopeExit = makeScopeExit(WTF::move(completionCallback));
 
         // LOG(MessagePorts, "MessagePort %s (%p) dispatching %zu messages", m_identifier.logString().utf8().data(), this, messages.size());
 
@@ -272,7 +272,7 @@ void MessagePort::dispatchMessages()
             if (Zig::GlobalObject::scriptExecutionStatus(globalObject, globalObject) != ScriptExecutionStatus::Running)
                 return;
 
-            auto ports = MessagePort::entanglePorts(*context, WTFMove(message.transferredPorts));
+            auto ports = MessagePort::entanglePorts(*context, WTF::move(message.transferredPorts));
             if (scope.exception()) [[unlikely]] {
                 // Currently, we assume that the only way we can get here is if we have a termination.
                 RELEASE_ASSERT(vm->hasPendingTerminationException());
@@ -280,18 +280,18 @@ void MessagePort::dispatchMessages()
             }
 
             // Per specification, each MessagePort object has a task source called the port message queue.
-            // queueTaskKeepingObjectAlive(context, *this, TaskSource::PostedMessageQueue, [this, event = WTFMove(event)] {
+            // queueTaskKeepingObjectAlive(context, *this, TaskSource::PostedMessageQueue, [this, event = WTF::move(event)] {
             //     dispatchEvent(event.event);
             // });
 
-            ScriptExecutionContext::postTaskTo(context->identifier(), [protectedThis = Ref { *this }, ports = WTFMove(ports), message = WTFMove(message)](ScriptExecutionContext& context) mutable {
-                auto event = MessageEvent::create(*context.jsGlobalObject(), message.message.releaseNonNull(), {}, {}, {}, WTFMove(ports));
+            ScriptExecutionContext::postTaskTo(context->identifier(), [protectedThis = Ref { *this }, ports = WTF::move(ports), message = WTF::move(message)](ScriptExecutionContext& context) mutable {
+                auto event = MessageEvent::create(*context.jsGlobalObject(), message.message.releaseNonNull(), {}, {}, {}, WTF::move(ports));
                 protectedThis->dispatchEvent(event.event);
             });
         }
     };
 
-    MessagePortChannelProvider::fromContext(*context).takeAllMessagesForPort(m_identifier, WTFMove(messagesTakenHandler));
+    MessagePortChannelProvider::fromContext(*context).takeAllMessagesForPort(m_identifier, WTF::move(messagesTakenHandler));
 }
 
 JSValue MessagePort::tryTakeMessage(JSGlobalObject* lexicalGlobalObject)
@@ -305,9 +305,9 @@ JSValue MessagePort::tryTakeMessage(JSGlobalObject* lexicalGlobalObject)
     if (!messageWithPorts)
         return jsUndefined();
 
-    auto ports = MessagePort::entanglePorts(*context, WTFMove(messageWithPorts->transferredPorts));
+    auto ports = MessagePort::entanglePorts(*context, WTF::move(messageWithPorts->transferredPorts));
     auto message = messageWithPorts->message.releaseNonNull();
-    return message->deserialize(*lexicalGlobalObject, lexicalGlobalObject, WTFMove(ports), SerializationErrorMode::NonThrowing);
+    return message->deserialize(*lexicalGlobalObject, lexicalGlobalObject, WTF::move(ports), SerializationErrorMode::NonThrowing);
 }
 
 void MessagePort::dispatchEvent(Event& event)
@@ -371,7 +371,7 @@ Vector<RefPtr<MessagePort>> MessagePort::entanglePorts(ScriptExecutionContext& c
         return {};
 
     return WTF::map(transferredPorts, [&](auto& port) -> RefPtr<MessagePort> {
-        return MessagePort::entangle(context, WTFMove(port));
+        return MessagePort::entangle(context, WTF::move(port));
     });
 }
 
@@ -430,7 +430,7 @@ bool MessagePort::addEventListener(const AtomString& eventType, Ref<EventListene
         start();
         m_hasMessageEventListener = true;
     }
-    return EventTarget::addEventListener(eventType, WTFMove(listener), options);
+    return EventTarget::addEventListener(eventType, WTF::move(listener), options);
 }
 
 bool MessagePort::removeEventListener(const AtomString& eventType, EventListener& listener, const EventListenerOptions& options)

@@ -486,7 +486,8 @@ pub const Value = union(enum) {
 
             .MYSQL_TYPE_JSON => {
                 var str: bun.String = bun.String.empty;
-                try value.jsonStringify(globalObject, 0, &str);
+                // Use jsonStringifyFast for SIMD-optimized serialization
+                try value.jsonStringifyFast(globalObject, &str);
                 defer str.deref();
                 return Value{ .string = str.toUTF8(bun.default_allocator) };
             },
@@ -782,7 +783,7 @@ pub const Value = union(enum) {
 
         pub fn toJS(this: Decimal, globalObject: *JSC.JSGlobalObject) JSValue {
             var stack = std.heap.stackFallback(64, bun.default_allocator);
-            var str = std.ArrayList(u8).init(stack.get());
+            var str = std.array_list.Managed(u8).init(stack.get());
             defer str.deinit();
 
             if (this.negative) {

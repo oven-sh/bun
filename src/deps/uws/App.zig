@@ -82,10 +82,10 @@ pub fn NewApp(comptime ssl: bool) type {
 
         fn RouteHandler(comptime UserDataType: type, comptime handler: fn (UserDataType, *Request, *Response) void) type {
             return struct {
-                pub fn handle(res: *uws.uws_res, req: *Request, user_data: ?*anyopaque) callconv(.C) void {
+                pub fn handle(res: *uws.uws_res, req: *Request, user_data: ?*anyopaque) callconv(.c) void {
                     if (comptime UserDataType == void) {
                         return @call(
-                            .always_inline,
+                            bun.callmod_inline,
                             handler,
                             .{
                                 {},
@@ -95,7 +95,7 @@ pub fn NewApp(comptime ssl: bool) type {
                         );
                     } else {
                         return @call(
-                            .always_inline,
+                            bun.callmod_inline,
                             handler,
                             .{
                                 @as(UserDataType, @ptrCast(@alignCast(user_data.?))),
@@ -246,7 +246,7 @@ pub fn NewApp(comptime ssl: bool) type {
             comptime handler: fn (UserData, ?*ThisApp.ListenSocket, c.uws_app_listen_config_t) void,
         ) void {
             const Wrapper = struct {
-                pub fn handle(socket: ?*uws.ListenSocket, conf: c.uws_app_listen_config_t, data: ?*anyopaque) callconv(.C) void {
+                pub fn handle(socket: ?*uws.ListenSocket, conf: c.uws_app_listen_config_t, data: ?*anyopaque) callconv(.c) void {
                     if (comptime UserData == void) {
                         @call(bun.callmod_inline, handler, .{ {}, @as(?*ThisApp.ListenSocket, @ptrCast(socket)), conf });
                     } else {
@@ -268,7 +268,7 @@ pub fn NewApp(comptime ssl: bool) type {
             comptime handler: fn (data: UserData, socket: *us_socket_t, error_code: u8, rawPacket: []const u8) void,
         ) void {
             const Wrapper = struct {
-                pub fn handle(data: *anyopaque, _: c_int, socket: *us_socket_t, error_code: u8, raw_packet: ?[*]u8, raw_packet_length: c_int) callconv(.C) void {
+                pub fn handle(data: *anyopaque, _: c_int, socket: *us_socket_t, error_code: u8, raw_packet: ?[*]u8, raw_packet_length: c_int) callconv(.c) void {
                     @call(bun.callmod_inline, handler, .{
                         @as(UserData, @ptrCast(@alignCast(data))),
                         socket,
@@ -288,7 +288,7 @@ pub fn NewApp(comptime ssl: bool) type {
             config: c.uws_app_listen_config_t,
         ) void {
             const Wrapper = struct {
-                pub fn handle(socket: ?*uws.ListenSocket, data: ?*anyopaque) callconv(.C) void {
+                pub fn handle(socket: ?*uws.ListenSocket, data: ?*anyopaque) callconv(.c) void {
                     if (comptime UserData == void) {
                         @call(bun.callmod_inline, handler, .{ {}, @as(?*ThisApp.ListenSocket, @ptrCast(socket)) });
                     } else {
@@ -311,7 +311,7 @@ pub fn NewApp(comptime ssl: bool) type {
             flags: i32,
         ) void {
             const Wrapper = struct {
-                pub fn handle(socket: ?*uws.ListenSocket, _: [*:0]const u8, _: i32, data: *anyopaque) callconv(.C) void {
+                pub fn handle(socket: ?*uws.ListenSocket, _: [*:0]const u8, _: i32, data: *anyopaque) callconv(.c) void {
                     if (comptime UserData == void) {
                         @call(bun.callmod_inline, handler, .{ {}, @as(?*ThisApp.ListenSocket, @ptrCast(socket)) });
                     } else {
@@ -392,14 +392,14 @@ pub const uws_app_s = opaque {};
 pub const uws_app_t = uws_app_s;
 
 pub const c = struct {
-    pub const uws_listen_handler = ?*const fn (?*uws.ListenSocket, ?*anyopaque) callconv(.C) void;
-    pub const uws_method_handler = ?*const fn (*uws.uws_res, *Request, ?*anyopaque) callconv(.C) void;
-    pub const uws_filter_handler = ?*const fn (*uws.uws_res, i32, ?*anyopaque) callconv(.C) void;
-    pub const uws_missing_server_handler = ?*const fn ([*c]const u8, ?*anyopaque) callconv(.C) void;
+    pub const uws_listen_handler = ?*const fn (?*uws.ListenSocket, ?*anyopaque) callconv(.c) void;
+    pub const uws_method_handler = ?*const fn (*uws.uws_res, *Request, ?*anyopaque) callconv(.c) void;
+    pub const uws_filter_handler = ?*const fn (*uws.uws_res, i32, ?*anyopaque) callconv(.c) void;
+    pub const uws_missing_server_handler = ?*const fn ([*c]const u8, ?*anyopaque) callconv(.c) void;
 
     pub extern fn uws_app_close(ssl: i32, app: *uws_app_s) void;
     pub extern fn uws_app_close_idle(ssl: i32, app: *uws_app_s) void;
-    pub extern fn uws_app_set_on_clienterror(ssl: c_int, app: *uws_app_s, handler: *const fn (*anyopaque, c_int, *us_socket_t, u8, ?[*]u8, c_int) callconv(.C) void, user_data: *anyopaque) void;
+    pub extern fn uws_app_set_on_clienterror(ssl: c_int, app: *uws_app_s, handler: *const fn (*anyopaque, c_int, *us_socket_t, u8, ?[*]u8, c_int) callconv(.c) void, user_data: *anyopaque) void;
     pub extern fn uws_create_app(ssl: i32, options: BunSocketContextOptions) ?*uws_app_t;
     pub extern fn uws_app_destroy(ssl: i32, app: *uws_app_t) void;
     pub extern fn uws_app_set_flags(ssl: i32, app: *uws_app_t, require_host_header: bool, use_strict_method_validation: bool) void;
@@ -448,7 +448,7 @@ pub const c = struct {
         domain: [*:0]const u8,
         pathlen: usize,
         i32,
-        *const (fn (*ListenSocket, domain: [*:0]const u8, i32, *anyopaque) callconv(.C) void),
+        *const (fn (*ListenSocket, domain: [*:0]const u8, i32, *anyopaque) callconv(.c) void),
         ?*anyopaque,
     ) void;
 

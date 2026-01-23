@@ -167,7 +167,7 @@ pub fn onMessage(
     }
 
     if (result.asAnyPromise()) |promise| {
-        switch (promise.status(globalObject.vm())) {
+        switch (promise.status()) {
             .rejected => {
                 _ = promise.result(globalObject.vm());
                 return;
@@ -1113,7 +1113,7 @@ pub fn terminate(
 pub fn getBinaryType(
     this: *ServerWebSocket,
     globalThis: *jsc.JSGlobalObject,
-) JSValue {
+) bun.JSError!JSValue {
     log("getBinaryType()", .{});
 
     return switch (this.#flags.binary_type) {
@@ -1230,6 +1230,18 @@ pub fn isSubscribed(
     }
 
     return JSValue.jsBoolean(this.websocket().isSubscribed(topic.slice()));
+}
+
+pub fn getSubscriptions(
+    this: *ServerWebSocket,
+    globalThis: *jsc.JSGlobalObject,
+) bun.JSError!JSValue {
+    if (this.isClosed()) {
+        return try JSValue.createEmptyArray(globalThis, 0);
+    }
+
+    // Get the JSValue directly from C++
+    return this.websocket().getTopicsAsJSArray(globalThis);
 }
 
 pub fn getRemoteAddress(

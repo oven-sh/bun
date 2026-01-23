@@ -58,7 +58,7 @@ pub const ColorScheme = packed struct(u8) {
         return .{ .result = res };
     }
 
-    pub fn toCss(this: *const ColorScheme, comptime W: type, dest: *Printer(W)) css.PrintErr!void {
+    pub fn toCss(this: *const ColorScheme, dest: *Printer) css.PrintErr!void {
         if (this.* == ColorScheme{}) {
             return dest.writeStr("normal");
         }

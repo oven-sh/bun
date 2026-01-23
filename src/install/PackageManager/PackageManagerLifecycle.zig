@@ -37,7 +37,7 @@ pub const LifecycleScriptTimeLog = struct {
             };
 
             // extra \n will print a blank line after this one
-            Output.warn("{s}'s {s} script took {}\n\n", .{
+            Output.warn("{s}'s {s} script took {f}\n\n", .{
                 longest.package_name,
                 Lockfile.Scripts.names[longest.script_id],
                 bun.fmt.fmtDurationOneDecimal(longest.duration),
@@ -93,7 +93,7 @@ pub fn determinePreinstallState(
                 var sfb = std.heap.stackFallback(1024, manager.lockfile.allocator);
                 const name_and_version = std.fmt.allocPrint(
                     sfb.get(),
-                    "{s}@{}",
+                    "{s}@{f}",
                     .{
                         pkg.name.slice(manager.lockfile.buffers.string_bytes.items),
                         pkg.resolution.fmt(manager.lockfile.buffers.string_bytes.items, .posix),
@@ -185,7 +185,7 @@ pub fn reportSlowLifecycleScripts(this: *PackageManager) void {
             return;
         }
         this.cached_tick_for_slow_lifecycle_script_logging = this.event_loop.iterationNumber();
-        const current_time = bun.timespec.now().ns();
+        const current_time = bun.timespec.now(.allow_mocked_time).ns();
         const time_running = current_time -| active_lifecycle_script_running_for_the_longest_amount_of_time.started_at;
         const interval: u64 = if (log_level.isVerbose()) std.time.ns_per_s * 5 else std.time.ns_per_s * 30;
         if (time_running > interval and current_time -| this.last_reported_slow_lifecycle_script_at > interval) {
@@ -193,12 +193,12 @@ pub fn reportSlowLifecycleScripts(this: *PackageManager) void {
             const package_name = active_lifecycle_script_running_for_the_longest_amount_of_time.package_name;
 
             if (!(package_name.len > 1 and package_name[package_name.len - 1] == 's')) {
-                Output.warn("{s}'s postinstall cost you {}\n", .{
+                Output.warn("{s}'s postinstall cost you {f}\n", .{
                     package_name,
                     bun.fmt.fmtDurationOneDecimal(time_running),
                 });
             } else {
-                Output.warn("{s}' postinstall cost you {}\n", .{
+                Output.warn("{s}' postinstall cost you {f}\n", .{
                     package_name,
                     bun.fmt.fmtDurationOneDecimal(time_running),
                 });

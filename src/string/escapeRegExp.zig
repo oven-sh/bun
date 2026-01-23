@@ -1,6 +1,6 @@
 const special_characters = "|\\{}()[]^$+*?.-";
 
-pub fn escapeRegExp(input: []const u8, writer: anytype) @TypeOf(writer).Error!void {
+pub fn escapeRegExp(input: []const u8, writer: *std.Io.Writer) std.Io.Writer.Error!void {
     var remain = input;
 
     while (strings.indexOfAny(remain, special_characters)) |i| {
@@ -36,7 +36,7 @@ pub fn escapeRegExp(input: []const u8, writer: anytype) @TypeOf(writer).Error!vo
 }
 
 /// '*' becomes '.*' instead of '\\*'
-pub fn escapeRegExpForPackageNameMatching(input: []const u8, writer: anytype) @TypeOf(writer).Error!void {
+pub fn escapeRegExpForPackageNameMatching(input: []const u8, writer: *std.Io.Writer) std.Io.Writer.Error!void {
     var remain = input;
 
     while (strings.indexOfAny(remain, special_characters)) |i| {
@@ -81,12 +81,14 @@ pub fn jsEscapeRegExp(global: *JSGlobalObject, call_frame: *jsc.CallFrame) JSErr
     var input = try input_value.toSlice(global, bun.default_allocator);
     defer input.deinit();
 
-    var buf: bun.collections.ArrayListDefault(u8) = .init();
+    var buf = std.Io.Writer.Allocating.init(bun.default_allocator);
     defer buf.deinit();
 
-    try escapeRegExp(input.slice(), buf.writer());
+    escapeRegExp(input.slice(), &buf.writer) catch |e| switch (e) {
+        error.WriteFailed => return error.OutOfMemory, // Writer.Allocating can only fail with OutOfMemory
+    };
 
-    var output = String.cloneUTF8(buf.items());
+    var output = String.cloneUTF8(buf.written());
 
     return output.toJS(global);
 }
@@ -101,15 +103,19 @@ pub fn jsEscapeRegExpForPackageNameMatching(global: *JSGlobalObject, call_frame:
     var input = try input_value.toSlice(global, bun.default_allocator);
     defer input.deinit();
 
-    var buf: bun.collections.ArrayListDefault(u8) = .init();
+    var buf = std.Io.Writer.Allocating.init(bun.default_allocator);
     defer buf.deinit();
 
-    try escapeRegExpForPackageNameMatching(input.slice(), buf.writer());
+    escapeRegExpForPackageNameMatching(input.slice(), &buf.writer) catch |e| switch (e) {
+        error.WriteFailed => return error.OutOfMemory, // Writer.Allocating can only fail with OutOfMemory
+    };
 
-    var output = String.cloneUTF8(buf.items());
+    var output = String.cloneUTF8(buf.written());
 
     return output.toJS(global);
 }
+
+const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;

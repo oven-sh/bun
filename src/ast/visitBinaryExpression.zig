@@ -353,7 +353,7 @@ pub fn CreateBinaryExpressionVisitor(
                     .bin_rem => {
                         if (p.should_fold_typescript_constant_expressions) {
                             if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
-                                const fmod = @extern(*const fn (f64, f64) callconv(.C) f64, .{ .name = "fmod" });
+                                const fmod = @extern(*const fn (f64, f64) callconv(.c) f64, .{ .name = "fmod" });
                                 return p.newExpr(
                                     // Use libc fmod here to be consistent with what JavaScriptCore does
                                     // https://github.com/oven-sh/WebKit/blob/7a0b13626e5db69aa5a32d037431d381df5dfb61/Source/JavaScriptCore/runtime/MathCommon.cpp#L574-L597

@@ -25,7 +25,7 @@ state: union(enum) {
     done,
 } = .idle,
 
-pub fn format(this: *const Cp, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+pub fn format(this: *const Cp, writer: *std.Io.Writer) !void {
     try writer.print("Cp(0x{x})", .{@intFromPtr(this)});
 }
 
@@ -137,7 +137,8 @@ pub fn next(this: *Cp) Yield {
                         }
                         if (comptime bun.Environment.isWindows) {
                             if (exec.ebusy.tasks.items.len > 0) {
-                                this.state = .{ .ebusy = .{ .state = this.state.exec.ebusy, .main_exit_code = exit_code } };
+                                const ebusy = this.state.exec.ebusy;
+                                this.state = .{ .ebusy = .{ .state = ebusy, .main_exit_code = exit_code } };
                                 continue;
                             }
                             exec.ebusy.deinit();
@@ -218,7 +219,7 @@ pub fn onShellCpTaskDone(this: *Cp, task: *ShellCpTask) void {
                 (task.src_absolute != null and
                     err.sys.path.eqlUTF8(task.src_absolute.?)))
             {
-                log("{} got ebusy {d} {d}", .{ this, this.state.exec.ebusy.tasks.items.len, this.state.exec.paths_to_copy.len });
+                log("{f} got ebusy {d} {d}", .{ this, this.state.exec.ebusy.tasks.items.len, this.state.exec.paths_to_copy.len });
                 bun.handleOom(this.state.exec.ebusy.tasks.append(bun.default_allocator, task));
                 this.next().run();
                 return;
@@ -731,6 +732,9 @@ const Opts = packed struct(u16) {
 // --
 const log = bun.Output.scoped(.cp, .hidden);
 
+const std = @import("std");
+const ArrayList = std.array_list.Managed;
+
 const interpreter = @import("../interpreter.zig");
 const FlagParser = interpreter.FlagParser;
 const Interpreter = interpreter.Interpreter;
@@ -757,6 +761,3 @@ const Yield = shell.Yield;
 
 const Syscall = bun.sys;
 const Maybe = bun.sys.Maybe;
-
-const std = @import("std");
-const ArrayList = std.ArrayList;

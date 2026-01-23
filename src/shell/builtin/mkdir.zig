@@ -189,9 +189,7 @@ pub const ShellMkdirTask = struct {
         return out;
     }
 
-    pub fn format(this: *const ShellMkdirTask, comptime fmt_: []const u8, options_: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = fmt_; // autofix
-        _ = options_; // autofix
+    pub fn format(this: *const ShellMkdirTask, writer: *std.Io.Writer) !void {
         try writer.print("ShellMkdirTask(0x{x}, filepath={s})", .{ @intFromPtr(this), this.filepath });
     }
 
@@ -216,12 +214,12 @@ pub const ShellMkdirTask = struct {
     }
 
     pub fn schedule(this: *@This()) void {
-        debug("{} schedule", .{this});
+        debug("{f} schedule", .{this});
         WorkPool.schedule(&this.task);
     }
 
     pub fn runFromMainThread(this: *@This()) void {
-        debug("{} runFromJS", .{this});
+        debug("{f} runFromJS", .{this});
         this.mkdir.onShellMkdirTaskDone(this);
     }
 
@@ -231,7 +229,7 @@ pub const ShellMkdirTask = struct {
 
     fn runFromThreadPool(task: *jsc.WorkPoolTask) void {
         var this: *ShellMkdirTask = @fieldParentPtr("task", task);
-        debug("{} runFromThreadPool", .{this});
+        debug("{f} runFromThreadPool", .{this});
 
         // We have to give an absolute path to our mkdir
         // implementation for it to work with cwd
@@ -376,6 +374,9 @@ const debug = bun.Output.scoped(.ShellMkdir, .hidden);
 
 const log = debug;
 
+const std = @import("std");
+const ArrayList = std.array_list.Managed;
+
 const interpreter = @import("../interpreter.zig");
 const FlagParser = interpreter.FlagParser;
 const Interpreter = interpreter.Interpreter;
@@ -396,6 +397,3 @@ const WorkPool = bun.jsc.WorkPool;
 const shell = bun.shell;
 const ExitCode = shell.ExitCode;
 const Yield = bun.shell.Yield;
-
-const std = @import("std");
-const ArrayList = std.ArrayList;

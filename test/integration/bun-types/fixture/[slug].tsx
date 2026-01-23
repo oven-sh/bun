@@ -1,38 +1,42 @@
-import { join } from "path";
-import { expectType } from "./utilities";
+// This page test can return once we implement ssg/ssr/rsc again
 
-// we're just checking types here really
-declare function markdownToJSX(markdown: string): React.ReactNode;
+// import { join } from "path";
+// import { expectType } from "./utilities";
 
-type Params = {
-  slug: string;
-};
+// // we're just checking types here really
+// declare function markdownToJSX(markdown: string): React.ReactNode;
 
-const Index: Bun.__experimental.SSGPage<Params> = async ({ params }) => {
-  expectType(params.slug).is<string>();
+// type Params = {
+//   slug: string;
+// };
 
-  const content = await Bun.file(join(process.cwd(), "posts", params.slug + ".md")).text();
-  const node = markdownToJSX(content);
+// const Index: Bun.__experimental.SSGPage<Params> = async ({ params }) => {
+//   expectType(params.slug).is<string>();
 
-  return <div>{node}</div>;
-};
+//   const content = await Bun.file(join(process.cwd(), "posts", params.slug + ".md")).text();
+//   const node = markdownToJSX(content);
 
-expectType(Index.displayName).is<string | undefined>();
+//   return <div>{node}</div>;
+// };
 
-export default Index;
+// expectType(Index.displayName).is<string | undefined>();
 
-export const getStaticPaths: Bun.__experimental.GetStaticPaths<Params> = async () => {
-  const glob = new Bun.Glob("**/*.md");
-  const postsDir = join(process.cwd(), "posts");
-  const paths: Bun.__experimental.SSGPaths<Params> = [];
+// export default Index;
 
-  for (const file of glob.scanSync({ cwd: postsDir })) {
-    const slug = file.replace(/\.md$/, "");
+// export const getStaticPaths: Bun.__experimental.GetStaticPaths<Params> = async () => {
+//   const glob = new Bun.Glob("**/*.md");
+//   const postsDir = join(process.cwd(), "posts");
+//   const paths: Bun.__experimental.SSGPaths<Params> = [];
 
-    paths.push({
-      params: { slug },
-    });
-  }
+//   for (const file of glob.scanSync({ cwd: postsDir })) {
+//     const slug = file.replace(/\.md$/, "");
 
-  return { paths };
-};
+//     paths.push({
+//       params: { slug },
+//     });
+//   }
+
+//   return { paths };
+// };
+
+export {};

@@ -30,11 +30,11 @@ pub fn toEqual(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame
 
     if (not) {
         const signature = comptime getSignature("toEqual", "<green>expected<r>", true);
-        return this.throw(globalThis, signature, "\n\n{any}\n", .{diff_formatter});
+        return this.throw(globalThis, signature, "\n\n{f}\n", .{diff_formatter});
     }
 
     const signature = comptime getSignature("toEqual", "<green>expected<r>", false);
-    return this.throw(globalThis, signature, "\n\n{any}\n", .{diff_formatter});
+    return this.throw(globalThis, signature, "\n\n{f}\n", .{diff_formatter});
 }
 
 const bun = @import("bun");

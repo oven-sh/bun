@@ -345,42 +345,42 @@ pub const Mask = struct {
         } };
     }
 
-    pub fn toCss(this: *const Mask, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
-        try this.image.toCss(W, dest);
+    pub fn toCss(this: *const Mask, dest: *css.Printer) css.PrintErr!void {
+        try this.image.toCss(dest);
 
         if (!this.position.eql(&Position.default()) or !this.size.eql(&BackgroundSize.default())) {
             try dest.writeChar(' ');
-            try this.position.toCss(W, dest);
+            try this.position.toCss(dest);
 
             if (!this.size.eql(&BackgroundSize.default())) {
                 try dest.delim('/', true);
-                try this.size.toCss(W, dest);
+                try this.size.toCss(dest);
             }
         }
 
         if (!this.repeat.eql(&BackgroundRepeat.default())) {
             try dest.writeChar(' ');
-            try this.repeat.toCss(W, dest);
+            try this.repeat.toCss(dest);
         }
 
         if (!this.origin.eql(&GeometryBox.@"border-box") or !this.clip.eql(&GeometryBox.@"border-box".intoMaskClip())) {
             try dest.writeChar(' ');
-            try this.origin.toCss(W, dest);
+            try this.origin.toCss(dest);
 
             if (!this.clip.eql(&this.origin.intoMaskClip())) {
                 try dest.writeChar(' ');
-                try this.clip.toCss(W, dest);
+                try this.clip.toCss(dest);
             }
         }
 
         if (!this.composite.eql(&MaskComposite.default())) {
             try dest.writeChar(' ');
-            try this.composite.toCss(W, dest);
+            try this.composite.toCss(dest);
         }
 
         if (!this.mode.eql(&MaskMode.default())) {
             try dest.writeChar(' ');
-            try this.mode.toCss(W, dest);
+            try this.mode.toCss(dest);
         }
 
         return;
@@ -472,19 +472,18 @@ pub const MaskBorder = struct {
         }
     }
 
-    pub fn toCss(this: *const MaskBorder, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+    pub fn toCss(this: *const MaskBorder, dest: *css.Printer) css.PrintErr!void {
         try BorderImage.toCssInternal(
             &this.source,
             &this.slice,
             &this.width,
             &this.outset,
             &this.repeat,
-            W,
             dest,
         );
         if (!this.mode.eql(&MaskBorderMode.default())) {
             try dest.writeChar(' ');
-            try this.mode.toCss(W, dest);
+            try this.mode.toCss(dest);
         }
     }
 

@@ -38,6 +38,14 @@ class JSDOMWindow;
 enum class RejectAsHandled : uint8_t { No,
     Yes };
 
+#define DEFERRED_PROMISE_HANDLE_AND_RETURN_IF_EXCEPTION(scope, globalObject)           \
+    do {                                                                               \
+        if (scope.exception()) [[unlikely]] {                                          \
+            handleUncaughtException(scope, *jsCast<JSDOMGlobalObject*>(globalObject)); \
+            return;                                                                    \
+        }                                                                              \
+    } while (false)
+
 class DeferredPromise : public DOMGuarded<JSC::JSPromise> {
 public:
     enum class Mode {
@@ -67,13 +75,13 @@ public:
         ASSERT(deferred());
         ASSERT(globalObject());
         JSC::JSGlobalObject* lexicalGlobalObject = globalObject();
-        JSC::JSLockHolder locker(lexicalGlobalObject);
-        auto& vm = JSC::getVM(lexicalGlobalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
+        auto& vm = lexicalGlobalObject->vm();
+        JSC::JSLockHolder locker(vm);
+        auto scope = DECLARE_CATCH_SCOPE(vm);
         auto value_js = toJS<IDLType>(*lexicalGlobalObject, *globalObject(), std::forward<typename IDLType::ParameterType>(value));
-        RETURN_IF_EXCEPTION(scope, );
+        DEFERRED_PROMISE_HANDLE_AND_RETURN_IF_EXCEPTION(scope, lexicalGlobalObject);
         resolve(*lexicalGlobalObject, value_js);
-        RETURN_IF_EXCEPTION(scope, );
+        DEFERRED_PROMISE_HANDLE_AND_RETURN_IF_EXCEPTION(scope, lexicalGlobalObject);
     }
 
     void resolveWithJSValue(JSC::JSValue resolution)
@@ -109,8 +117,12 @@ public:
         ASSERT(deferred());
         ASSERT(globalObject());
         JSC::JSGlobalObject* lexicalGlobalObject = globalObject();
-        JSC::JSLockHolder locker(lexicalGlobalObject);
-        resolve(*lexicalGlobalObject, toJSNewlyCreated<IDLType>(*lexicalGlobalObject, *globalObject(), std::forward<typename IDLType::ParameterType>(value)));
+        auto& vm = lexicalGlobalObject->vm();
+        JSC::JSLockHolder locker(vm);
+        auto scope = DECLARE_CATCH_SCOPE(vm);
+        auto value_js = toJSNewlyCreated<IDLType>(*lexicalGlobalObject, *globalObject(), std::forward<typename IDLType::ParameterType>(value));
+        DEFERRED_PROMISE_HANDLE_AND_RETURN_IF_EXCEPTION(scope, lexicalGlobalObject);
+        resolve(*lexicalGlobalObject, value_js);
     }
 
     template<class IDLType>
@@ -122,8 +134,12 @@ public:
         ASSERT(deferred());
         ASSERT(globalObject());
         auto* lexicalGlobalObject = globalObject();
-        JSC::JSLockHolder locker(lexicalGlobalObject);
-        resolve(*lexicalGlobalObject, toJSNewlyCreated<IDLType>(*lexicalGlobalObject, *globalObject(), createValue(*globalObject()->scriptExecutionContext())));
+        auto& vm = lexicalGlobalObject->vm();
+        JSC::JSLockHolder locker(vm);
+        auto scope = DECLARE_CATCH_SCOPE(vm);
+        auto value_js = toJSNewlyCreated<IDLType>(*lexicalGlobalObject, *globalObject(), createValue(*globalObject()->scriptExecutionContext()));
+        DEFERRED_PROMISE_HANDLE_AND_RETURN_IF_EXCEPTION(scope, lexicalGlobalObject);
+        resolve(*lexicalGlobalObject, value_js);
     }
 
     template<class IDLType>
@@ -135,8 +151,12 @@ public:
         ASSERT(deferred());
         ASSERT(globalObject());
         JSC::JSGlobalObject* lexicalGlobalObject = globalObject();
-        JSC::JSLockHolder locker(lexicalGlobalObject);
-        reject(*lexicalGlobalObject, toJS<IDLType>(*lexicalGlobalObject, *globalObject(), std::forward<typename IDLType::ParameterType>(value)), rejectAsHandled);
+        auto& vm = lexicalGlobalObject->vm();
+        JSC::JSLockHolder locker(vm);
+        auto scope = DECLARE_CATCH_SCOPE(vm);
+        auto value_js = toJS<IDLType>(*lexicalGlobalObject, *globalObject(), std::forward<typename IDLType::ParameterType>(value));
+        DEFERRED_PROMISE_HANDLE_AND_RETURN_IF_EXCEPTION(scope, lexicalGlobalObject);
+        reject(*lexicalGlobalObject, value_js, rejectAsHandled);
     }
 
     void reject(RejectAsHandled = RejectAsHandled::No);
@@ -155,12 +175,12 @@ public:
         ASSERT(deferred());
         ASSERT(globalObject());
         auto* lexicalGlobalObject = globalObject();
-        auto& vm = JSC::getVM(lexicalGlobalObject);
+        auto& vm = lexicalGlobalObject->vm();
         JSC::JSLockHolder locker(vm);
         auto scope = DECLARE_CATCH_SCOPE(vm);
-        resolve(*lexicalGlobalObject, callback(*globalObject()));
-        if (scope.exception()) [[unlikely]]
-            handleUncaughtException(scope, *lexicalGlobalObject);
+        auto value_js = callback(*globalObject());
+        DEFERRED_PROMISE_HANDLE_AND_RETURN_IF_EXCEPTION(scope, lexicalGlobalObject);
+        resolve(*lexicalGlobalObject, value_js);
     }
 
     template<typename Callback>
@@ -172,12 +192,12 @@ public:
         ASSERT(deferred());
         ASSERT(globalObject());
         auto* lexicalGlobalObject = globalObject();
-        auto& vm = JSC::getVM(lexicalGlobalObject);
+        auto& vm = lexicalGlobalObject->vm();
         JSC::JSLockHolder locker(vm);
         auto scope = DECLARE_CATCH_SCOPE(vm);
-        reject(*lexicalGlobalObject, callback(*globalObject()), rejectAsHandled);
-        if (scope.exception()) [[unlikely]]
-            handleUncaughtException(scope, *lexicalGlobalObject);
+        auto value_js = callback(*globalObject());
+        DEFERRED_PROMISE_HANDLE_AND_RETURN_IF_EXCEPTION(scope, lexicalGlobalObject);
+        reject(*lexicalGlobalObject, value_js, rejectAsHandled);
     }
 
     JSC::JSValue promise() const;
@@ -217,12 +237,12 @@ class DOMPromiseDeferredBase {
 
 public:
     DOMPromiseDeferredBase(Ref<DeferredPromise>&& genericPromise)
-        : m_promise(WTFMove(genericPromise))
+        : m_promise(WTF::move(genericPromise))
     {
     }
 
     DOMPromiseDeferredBase(DOMPromiseDeferredBase&& promise)
-        : m_promise(WTFMove(promise.m_promise))
+        : m_promise(WTF::move(promise.m_promise))
     {
     }
 
@@ -239,7 +259,7 @@ public:
 
     DOMPromiseDeferredBase& operator=(DOMPromiseDeferredBase&& other)
     {
-        m_promise = WTFMove(other.m_promise);
+        m_promise = WTF::move(other.m_promise);
         return *this;
     }
 
@@ -264,7 +284,7 @@ public:
 
     void whenSettled(Function<void()>&& function)
     {
-        m_promise->whenSettled(WTFMove(function));
+        m_promise->whenSettled(WTF::move(function));
     }
 
 protected:
@@ -370,7 +390,7 @@ using BindingPromiseFunction = JSC::EncodedJSValue(JSC::JSGlobalObject*, JSC::Ca
 template<BindingPromiseFunction bindingFunction>
 inline void bindingPromiseFunctionAdapter(JSC::JSGlobalObject& lexicalGlobalObject, JSC::CallFrame& callFrame, Ref<DeferredPromise>&& promise)
 {
-    bindingFunction(&lexicalGlobalObject, &callFrame, WTFMove(promise));
+    bindingFunction(&lexicalGlobalObject, &callFrame, WTF::move(promise));
 }
 
 template<BindingPromiseFunction bindingPromiseFunction>

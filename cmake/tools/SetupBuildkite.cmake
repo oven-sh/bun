@@ -48,6 +48,17 @@ if(NOT BUILDKITE_BUILD_STATUS EQUAL 0)
 endif()
 
 file(READ ${BUILDKITE_BUILD_PATH}/build.json BUILDKITE_BUILD)
+# CMake's string(JSON ...) interprets escape sequences like \n, \r, \t.
+# We need to escape these specific sequences while preserving valid JSON escapes like \" and \\.
+# Strategy: Use a unique placeholder to protect \\ sequences, escape \n/\r/\t, then restore \\.
+# This prevents \\n (literal backslash + n) from being corrupted to \\\n.
+set(BKSLASH_PLACEHOLDER "___BKSLASH_PLACEHOLDER_7f3a9b2c___")
+string(REPLACE "\\\\" "${BKSLASH_PLACEHOLDER}" BUILDKITE_BUILD "${BUILDKITE_BUILD}")
+string(REPLACE "\\n" "\\\\n" BUILDKITE_BUILD "${BUILDKITE_BUILD}")
+string(REPLACE "\\r" "\\\\r" BUILDKITE_BUILD "${BUILDKITE_BUILD}")
+string(REPLACE "\\t" "\\\\t" BUILDKITE_BUILD "${BUILDKITE_BUILD}")
+string(REPLACE "${BKSLASH_PLACEHOLDER}" "\\\\" BUILDKITE_BUILD "${BUILDKITE_BUILD}")
+
 string(JSON BUILDKITE_BUILD_UUID GET ${BUILDKITE_BUILD} id)
 string(JSON BUILDKITE_JOBS GET ${BUILDKITE_BUILD} jobs)
 string(JSON BUILDKITE_JOBS_COUNT LENGTH ${BUILDKITE_JOBS})

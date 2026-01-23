@@ -103,20 +103,20 @@ pub const Size = union(enum) {
         return .{ .result = Size{ .length_percentage = lp } };
     }
 
-    pub fn toCss(this: *const Size, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+    pub fn toCss(this: *const Size, dest: *css.Printer) css.PrintErr!void {
         return switch (this.*) {
             .auto => dest.writeStr("auto"),
             .contain => dest.writeStr("contain"),
             .min_content => |vp| {
-                try vp.toCss(W, dest);
+                try vp.toCss(dest);
                 try dest.writeStr("min-content");
             },
             .max_content => |vp| {
-                try vp.toCss(W, dest);
+                try vp.toCss(dest);
                 try dest.writeStr("max-content");
             },
             .fit_content => |vp| {
-                try vp.toCss(W, dest);
+                try vp.toCss(dest);
                 try dest.writeStr("fit-content");
             },
             .stretch => |vp| {
@@ -132,10 +132,10 @@ pub const Size = union(enum) {
             },
             .fit_content_function => |l| {
                 try dest.writeStr("fit-content(");
-                try l.toCss(W, dest);
+                try l.toCss(dest);
                 try dest.writeChar(')');
             },
-            .length_percentage => |l| return l.toCss(W, dest),
+            .length_percentage => |l| return l.toCss(dest),
         };
     }
 
@@ -263,20 +263,20 @@ pub const MaxSize = union(enum) {
         };
     }
 
-    pub fn toCss(this: *const MaxSize, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+    pub fn toCss(this: *const MaxSize, dest: *css.Printer) css.PrintErr!void {
         switch (this.*) {
             .none => try dest.writeStr("none"),
             .contain => try dest.writeStr("contain"),
             .min_content => |vp| {
-                try vp.toCss(W, dest);
+                try vp.toCss(dest);
                 try dest.writeStr("min-content");
             },
             .max_content => |vp| {
-                try vp.toCss(W, dest);
+                try vp.toCss(dest);
                 try dest.writeStr("max-content");
             },
             .fit_content => |vp| {
-                try vp.toCss(W, dest);
+                try vp.toCss(dest);
                 try dest.writeStr("fit-content");
             },
             .stretch => |vp| {
@@ -292,10 +292,10 @@ pub const MaxSize = union(enum) {
             },
             .fit_content_function => |l| {
                 try dest.writeStr("fit-content(");
-                try l.toCss(W, dest);
+                try l.toCss(dest);
                 try dest.writeChar(')');
             },
-            .length_percentage => |l| try l.toCss(W, dest),
+            .length_percentage => |l| try l.toCss(dest),
         }
     }
 
@@ -357,14 +357,14 @@ pub const AspectRatio = struct {
         };
     }
 
-    pub fn toCss(this: *const AspectRatio, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+    pub fn toCss(this: *const AspectRatio, dest: *css.Printer) css.PrintErr!void {
         if (this.auto) {
             try dest.writeStr("auto");
         }
 
         if (this.ratio) |*ratio| {
             if (this.auto) try dest.writeChar(' ');
-            try ratio.toCss(W, dest);
+            try ratio.toCss(dest);
         }
     }
 

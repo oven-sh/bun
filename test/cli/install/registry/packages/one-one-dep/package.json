@@ -1,0 +1,44 @@
+{
+	"name": "one-one-dep",
+	"versions": {
+		"1.0.0": {
+			"name": "one-one-dep",
+			"version": "1.0.0",
+			"dependencies": {
+				"one-dep": "1.0.0"
+			},
+			"_id": "one-one-dep@1.0.0",
+			"_integrity": "sha512-S6Bn6e9/9cZITQE2DiS8P3gd+Zwb6DF8LyLPcNemmE0nLh5kfjnxnGypmjzaRnSRnfqjEfqRFhjJPomjyNphuQ==",
+			"_nodeVersion": "24.3.0",
+			"_npmVersion": "10.8.3",
+			"integrity": "sha512-S6Bn6e9/9cZITQE2DiS8P3gd+Zwb6DF8LyLPcNemmE0nLh5kfjnxnGypmjzaRnSRnfqjEfqRFhjJPomjyNphuQ==",
+			"shasum": "52fab2c318e3e5b13fc6a4fb52da3791d79bba84",
+			"dist": {
+				"integrity": "sha512-S6Bn6e9/9cZITQE2DiS8P3gd+Zwb6DF8LyLPcNemmE0nLh5kfjnxnGypmjzaRnSRnfqjEfqRFhjJPomjyNphuQ==",
+				"shasum": "52fab2c318e3e5b13fc6a4fb52da3791d79bba84",
+				"tarball": "http://http://localhost:4873/one-one-dep/-/one-one-dep-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2025-11-01T03:49:53.670Z",
+		"created": "2025-11-01T03:49:53.670Z",
+		"1.0.0": "2025-11-01T03:49:53.670Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"one-one-dep-1.0.0.tgz": {
+			"shasum": "52fab2c318e3e5b13fc6a4fb52da3791d79bba84",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "",
+	"_id": "one-one-dep",
+	"readme": ""
+}

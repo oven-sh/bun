@@ -70,7 +70,7 @@ pub fn constructRedirect(
 }
 
 pub export fn BakeResponseClass__constructRender(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) callconv(jsc.conv) jsc.JSValue {
-    return @call(.always_inline, jsc.toJSHostFn(constructRender), .{ globalObject, callFrame });
+    return @call(bun.callmod_inline, jsc.toJSHostFn(constructRender), .{ globalObject, callFrame });
 }
 
 /// This function is only available on JSBakeResponse

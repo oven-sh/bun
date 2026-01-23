@@ -25,11 +25,11 @@ parent: ParentPtr,
 spawn_arena: bun.ArenaAllocator,
 spawn_arena_freed: bool = false,
 
-args: std.ArrayList(?[*:0]const u8),
+args: std.array_list.Managed(?[*:0]const u8),
 
 /// If the cmd redirects to a file we have to expand that string.
 /// Allocated in `spawn_arena`
-redirection_file: std.ArrayList(u8),
+redirection_file: std.array_list.Managed(u8),
 redirection_fd: ?*CowFd = null,
 
 /// The underlying state to manage the command (builtin or subprocess)
@@ -61,14 +61,12 @@ pub const ShellAsyncSubprocessDone = struct {
     cmd: *Cmd,
     concurrent_task: jsc.EventLoopTask,
 
-    pub fn format(this: *const ShellAsyncSubprocessDone, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = fmt; // autofix
-        _ = opts; // autofix
+    pub fn format(this: *const ShellAsyncSubprocessDone, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         try writer.print("ShellAsyncSubprocessDone(0x{x}, cmd=0{x})", .{ @intFromPtr(this), @intFromPtr(this.cmd) });
     }
 
     pub fn enqueue(this: *ShellAsyncSubprocessDone) void {
-        log("{} enqueue", .{this});
+        log("{f} enqueue", .{this});
         const ctx = this;
         const evtloop = this.cmd.base.eventLoop();
 
@@ -84,13 +82,13 @@ pub const ShellAsyncSubprocessDone = struct {
     }
 
     pub fn runFromMainThread(this: *ShellAsyncSubprocessDone) void {
-        log("{} runFromMainThread", .{this});
+        log("{f} runFromMainThread", .{this});
         defer this.deinit();
         this.cmd.parent.childDone(this.cmd, this.cmd.exit_code orelse 0).run();
     }
 
     pub fn deinit(this: *ShellAsyncSubprocessDone) void {
-        log("{} deinit", .{this});
+        log("{f} deinit", .{this});
         bun.destroy(this);
     }
 };
@@ -141,7 +139,7 @@ const BufferedIoClosed = struct {
         const ret = (if (this.stdin) |stdin| stdin else true) and
             (if (this.stdout) |*stdout| stdout.closed() else true) and
             (if (this.stderr) |*stderr| stderr.closed() else true);
-        log("BufferedIOClosed(0x{x}) all_closed={any} stdin={any} stdout={any} stderr={any}", .{ @intFromPtr(this), ret, if (this.stdin) |stdin| stdin else true, if (this.stdout) |*stdout| stdout.closed() else true, if (this.stderr) |*stderr| stderr.closed() else true });
+        log("BufferedIOClosed(0x{x}) all_closed={} stdin={} stdout={} stderr={}", .{ @intFromPtr(this), ret, if (this.stdin) |stdin| stdin else true, if (this.stdout) |*stdout| stdout.closed() else true, if (this.stderr) |*stderr| stderr.closed() else true });
         return ret;
     }
 
@@ -246,8 +244,8 @@ pub fn init(
         .state = .idle,
     };
     cmd.spawn_arena = bun.ArenaAllocator.init(cmd.base.allocator());
-    cmd.args = bun.handleOom(std.ArrayList(?[*:0]const u8).initCapacity(cmd.base.allocator(), node.name_and_args.len));
-    cmd.redirection_file = std.ArrayList(u8).init(cmd.spawn_arena.allocator());
+    cmd.args = bun.handleOom(std.array_list.Managed(?[*:0]const u8).initCapacity(cmd.base.allocator(), node.name_and_args.len));
+    cmd.redirection_file = std.array_list.Managed(u8).init(cmd.spawn_arena.allocator());
 
     return cmd;
 }
@@ -266,7 +264,9 @@ pub fn next(this: *Cmd) Yield {
             .expanding_redirect => {
                 if (this.state.expanding_redirect.idx >= 1) {
                     this.state = .{
-                        .expanding_args = undefined,
+                        .expanding_args = .{
+                            .expansion = undefined, // initialized in the next iteration
+                        },
                     };
                     continue;
                 }
@@ -278,13 +278,13 @@ pub fn next(this: *Cmd) Yield {
                     if (this.node.redirect_file != null and this.node.redirect_file.? == .atom) break :brk &this.node.redirect_file.?.atom;
                     this.state = .{
                         .expanding_args = .{
-                            .expansion = undefined,
+                            .expansion = undefined, // initialized in the next iteration
                         },
                     };
                     continue;
                 };
 
-                this.redirection_file = std.ArrayList(u8).init(this.spawn_arena.allocator());
+                this.redirection_file = std.array_list.Managed(u8).init(this.spawn_arena.allocator());
 
                 Expansion.init(
                     this.base.interpreter,
@@ -368,7 +368,7 @@ pub fn childDone(this: *Cmd, child: ChildPtr, exit_code: ExitCode) Yield {
             defer err.deinit(bun.default_allocator);
 
             this.state.expanding_assigns.deinit();
-            return this.writeFailingError("{}\n", .{err});
+            return this.writeFailingError("{f}\n", .{err});
         }
 
         this.state.expanding_assigns.deinit();
@@ -389,7 +389,7 @@ pub fn childDone(this: *Cmd, child: ChildPtr, exit_code: ExitCode) Yield {
                 else => @panic("Invalid state"),
             };
             defer err.deinit(this.base.allocator());
-            return this.writeFailingError("{}\n", .{err});
+            return this.writeFailingError("{f}\n", .{err});
         }
         // Handling this case from the shell spec:
         // "If there is no command name, but the command contained a
@@ -425,7 +425,7 @@ fn initSubproc(this: *Cmd) Yield {
     {
         bun.handleOom(this.args.append(null));
 
-        log("Cmd(0x{x}, {s}) IO: {}", .{ @intFromPtr(this), if (this.args.items.len > 0) this.args.items[0] orelse "<no args>" else "<no args>", this.io });
+        log("Cmd(0x{x}, {s}) IO: {f}", .{ @intFromPtr(this), if (this.args.items.len > 0) this.args.items[0] orelse "<no args>" else "<no args>", this.io });
         if (bun.Environment.isDebug) {
             for (this.args.items) |maybe_arg| {
                 if (maybe_arg) |arg| {
@@ -512,7 +512,7 @@ fn initSubproc(this: *Cmd) Yield {
     if (this.initRedirections(&spawn_args) catch .failed) |yield| return yield;
 
     const buffered_closed = BufferedIoClosed.fromStdio(&spawn_args.stdio);
-    log("cmd ({x}) set buffered closed => {any}", .{ @intFromPtr(this), buffered_closed });
+    log("cmd ({x}) set buffered closed", .{@intFromPtr(this)});
 
     this.exec = .{ .subproc = .{
         .child = undefined,
@@ -523,7 +523,7 @@ fn initSubproc(this: *Cmd) Yield {
         .result => this.exec.subproc.child,
         .err => |*e| {
             this.exec = .none;
-            return this.writeFailingError("{}\n", .{e});
+            return this.writeFailingError("{f}\n", .{e});
         },
     };
     subproc.ref();
@@ -588,7 +588,7 @@ fn initRedirections(this: *Cmd, spawn_args: *Subprocess.SpawnArgs) bun.JSError!?
                     }
                 } else {
                     const jsval = this.base.interpreter.jsobjs[val.idx];
-                    return global.throw("Unknown JS value used in shell: {}", .{jsval.fmtString(global)});
+                    return global.throw("Unknown JS value used in shell: {f}", .{jsval.fmtString(global)});
                 }
             },
             .atom => {
@@ -601,7 +601,7 @@ fn initRedirections(this: *Cmd, spawn_args: *Subprocess.SpawnArgs) bun.JSError!?
                 const flags = this.node.redirect.toFlags();
                 const redirfd = switch (ShellSyscall.openat(this.base.shell.cwd_fd, path, flags, perm)) {
                     .err => |e| {
-                        return this.writeFailingError("bun: {s}: {s}", .{ e.toShellSystemError().message, path });
+                        return this.writeFailingError("bun: {f}: {s}", .{ e.toShellSystemError().message, path });
                     },
                     .result => |f| f,
                 };
@@ -663,7 +663,7 @@ pub fn stdoutSlice(this: *Cmd) ?[]const u8 {
 }
 
 pub fn hasFinished(this: *Cmd) bool {
-    log("Cmd(0x{x}) exit_code={any}", .{ @intFromPtr(this), this.exit_code });
+    log("Cmd(0x{x}) exit_code={?d}", .{ @intFromPtr(this), this.exit_code });
     if (this.exit_code == null) return false;
     if (this.exec != .none) {
         if (this.exec == .subproc) {
@@ -679,7 +679,7 @@ pub fn onExit(this: *Cmd, exit_code: ExitCode) void {
     this.exit_code = exit_code;
 
     const has_finished = this.hasFinished();
-    log("cmd exit code={d} has_finished={any} ({x})", .{ exit_code, has_finished, @intFromPtr(this) });
+    log("cmd exit code={d} has_finished={} ({x})", .{ exit_code, has_finished, @intFromPtr(this) });
     if (has_finished) {
         this.state = .done;
         this.next().run();

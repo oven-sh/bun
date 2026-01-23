@@ -422,7 +422,7 @@ function generateZigType(type: CppType, parent: CppType | null) {
     return `${optionalChar}${ptrChar}${constChar}${generateZigType(type.child, type)}`;
   }
   if (type.type === "fn") {
-    return `fn(${type.parameters.map(p => formatZigName(p.name) + ": " + generateZigType(p.type, null)).join(", ")}) callconv(.C) ${generateZigType(type.returnType, null)}`;
+    return `fn(${type.parameters.map(p => formatZigName(p.name) + ": " + generateZigType(p.type, null)).join(", ")}) callconv(.c) ${generateZigType(type.returnType, null)}`;
   }
   if (type.type === "named" && type.name === "void") {
     if (parent?.type === "pointer") return "anyopaque";

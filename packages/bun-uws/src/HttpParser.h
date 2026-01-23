@@ -18,7 +18,7 @@
 #pragma once
 
 #ifndef UWS_HTTP_MAX_HEADERS_COUNT
-#define UWS_HTTP_MAX_HEADERS_COUNT 100
+#define UWS_HTTP_MAX_HEADERS_COUNT 200
 #endif
 
 // todo: HttpParser is in need of a few clean-ups and refactorings
@@ -30,6 +30,7 @@
 #include <algorithm>
 #include <climits>
 #include <string_view>
+#include <span>
 #include <map>
 #include "MoveOnlyFunction.h"
 #include "ChunkedEncoding.h"
@@ -38,6 +39,11 @@
 #include "ProxyParser.h"
 #include "QueryParser.h"
 #include "HttpErrors.h"
+
+#if defined(_WIN32)
+#define strncasecmp _strnicmp
+#endif
+
 extern "C" size_t BUN_DEFAULT_MAX_HTTP_HEADER_SIZE;
 extern "C" int16_t Bun__HTTPMethod__from(const char *str, size_t len);
 
@@ -155,6 +161,13 @@ namespace uWS
         std::map<std::string, unsigned short, std::less<>> *currentParameterOffsets = nullptr;
 
     public:
+        /* Any data pipelined after the HTTP headers (before response).
+         * Used for Node.js compatibility: 'connect' and 'upgrade' events
+         * pass this as the 'head' Buffer parameter.
+         * WARNING: This points to data in the receive buffer and may be stack-allocated.
+         * Must be cloned before the request handler returns. */
+        std::span<const char> head;
+
         bool isAncient()
         {
             return ancientHttp;
@@ -232,11 +245,11 @@ namespace uWS
         TransferEncoding getTransferEncoding()
         {
             TransferEncoding te;
-            
+
             if (!bf.mightHave("transfer-encoding")) {
                 return te;
             }
-            
+
             for (Header *h = headers; (++h)->key.length();) {
                 if (h->key.length() == 17 && !strncmp(h->key.data(), "transfer-encoding", 17)) {
                     // Parse comma-separated values, ensuring "chunked" is last if present
@@ -244,33 +257,33 @@ namespace uWS
                     size_t pos = 0;
                     size_t lastTokenStart = 0;
                     size_t lastTokenLen = 0;
-        
+
                     while (pos < value.length()) {
                         // Skip leading whitespace
                         while (pos < value.length() && (value[pos] == ' ' || value[pos] == '\t')) {
                             pos++;
                         }
-                        
+
                         // Remember start of this token
                         size_t tokenStart = pos;
-                        
+
                         // Find end of token (until comma or end)
                         while (pos < value.length() && value[pos] != ',') {
                             pos++;
                         }
-                        
+
                         // Trim trailing whitespace from token
                         size_t tokenEnd = pos;
                         while (tokenEnd > tokenStart && (value[tokenEnd - 1] == ' ' || value[tokenEnd - 1] == '\t')) {
                             tokenEnd--;
                         }
-                        
+
                         size_t tokenLen = tokenEnd - tokenStart;
                         if (tokenLen > 0) {
                             lastTokenStart = tokenStart;
                             lastTokenLen = tokenLen;
                         }
-                        
+
                         // Move past comma if present
                         if (pos < value.length() && value[pos] == ',') {
                             pos++;
@@ -283,12 +296,11 @@ namespace uWS
                     }
 
                     te.has = lastTokenLen > 0;
-                    
+
                     // Check if the last token is "chunked"
-                    if (lastTokenLen == 7 && !strncmp(value.data() + lastTokenStart, "chunked", 7)) [[likely]] {
+                    if (lastTokenLen == 7 && strncasecmp(value.data() + lastTokenStart, "chunked", 7) == 0) [[likely]] {
                         te.chunked = true;
                     }
-                    
                 }
             }
 
@@ -852,7 +864,7 @@ namespace uWS
             * ought to be handled as an error. */
             const std::string_view contentLengthString = req->getHeader("content-length");
             const auto contentLengthStringLen = contentLengthString.length();
-            
+
             /* Check Transfer-Encoding header validity and conflicts */
             HttpRequest::TransferEncoding transferEncoding = req->getTransferEncoding();
 
@@ -879,6 +891,8 @@ namespace uWS
             /* If returned socket is not what we put in we need
              * to break here as we either have upgraded to
              * WebSockets or otherwise closed the socket. */
+            /* Store any remaining data as head for Node.js compat (connect/upgrade events) */
+            req->head = std::span<const char>(data, length);
             void *returnedUser = requestHandler(user, req);
             if (returnedUser != user) {
                 /* We are upgraded to WebSocket or otherwise broken */
@@ -924,9 +938,13 @@ namespace uWS
                     consumedTotal += emittable;
                 }
             } else if(isConnectRequest) {
-                // This only server to mark that the connect request read all headers
-                // and can starting emitting data
+                // This only serves to mark that the connect request read all headers
+                // and can start emitting data. Don't try to parse remaining data as HTTP -
+                // it's pipelined data that we've already captured in req->head.
                 remainingStreamingBytes = STATE_IS_CHUNKED;
+                // Mark remaining data as consumed and break - it's not HTTP
+                consumedTotal += length;
+                break;
             } else {
                 /* If we came here without a body; emit an empty data chunk to signal no data */
                 dataHandler(user, {}, true);
@@ -962,7 +980,7 @@ public:
                 data = (char *) dataToConsume.data();
                 length = (unsigned int) dataToConsume.length();
             } else {
-                
+
                 // this is exactly the same as below!
                 // todo: refactor this
                 if (remainingStreamingBytes >= length) {

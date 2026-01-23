@@ -855,3 +855,20 @@ describe("codeGeneration options", () => {
     expect(evalResult).toBe(10);
   });
 });
+
+test("Loader is not defined in vm context", () => {
+  // Test with empty context - internal Loader should not leak through
+  const emptyContext = createContext({});
+  expect(runInContext("typeof Loader;", emptyContext)).toBe("undefined");
+  expect(runInContext("Object.hasOwn(globalThis, 'Loader');", emptyContext)).toBe(false);
+
+  // Test with context that has a user-provided Loader - should be preserved
+  const customLoader = { custom: true, load: () => "loaded" };
+  const customContext = createContext({ Loader: customLoader });
+  expect(runInContext("typeof Loader;", customContext)).toBe("object");
+  expect(runInContext("Loader.custom;", customContext)).toBe(true);
+  expect(runInContext("Loader.load();", customContext)).toBe("loaded");
+  expect(runInContext("Object.hasOwn(globalThis, 'Loader');", customContext)).toBe(true);
+  // Ensure internal JSC Loader properties are not leaking through
+  expect(runInContext("typeof Loader.registry;", customContext)).toBe("undefined");
+});

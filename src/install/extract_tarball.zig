@@ -169,7 +169,7 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
 
         var esimated_output_size: usize = 0;
 
-        const time_started_for_verbose_logs: u64 = if (PackageManager.verbose_install) bun.getRoughTickCount().ns() else 0;
+        const time_started_for_verbose_logs: u64 = if (PackageManager.verbose_install) bun.getRoughTickCount(.allow_mocked_time).ns() else 0;
 
         {
             // Last 4 bytes of a gzip-compressed file are the uncompressed size.
@@ -212,7 +212,7 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
                     null,
                     logger.Loc.Empty,
                     bun.default_allocator,
-                    "{s} decompressing \"{s}\" to \"{}\"",
+                    "{s} decompressing \"{s}\" to \"{f}\"",
                     .{ @errorName(err), name, bun.fmt.fmtPath(u8, tmpname, .{}) },
                 ) catch unreachable;
                 return error.InstallFailed;
@@ -220,9 +220,9 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
         }
 
         if (PackageManager.verbose_install) {
-            const decompressing_ended_at: u64 = bun.getRoughTickCount().ns();
+            const decompressing_ended_at: u64 = bun.getRoughTickCount(.allow_mocked_time).ns();
             const elapsed = decompressing_ended_at - time_started_for_verbose_logs;
-            Output.prettyErrorln("[{s}] Extract {s}<r> (decompressed {} tgz file in {})", .{ name, tmpname, bun.fmt.size(tgz_bytes.len, .{}), std.fmt.fmtDuration(elapsed) });
+            Output.prettyErrorln("[{s}] Extract {s}<r> (decompressed {f} tgz file in {D})", .{ name, tmpname, bun.fmt.size(tgz_bytes.len, .{}), elapsed });
         }
 
         switch (this.resolution.tag) {
@@ -283,8 +283,8 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
         }
 
         if (PackageManager.verbose_install) {
-            const elapsed = bun.getRoughTickCount().ns() - time_started_for_verbose_logs;
-            Output.prettyErrorln("[{s}] Extracted to {s} ({})<r>", .{ name, tmpname, std.fmt.fmtDuration(elapsed) });
+            const elapsed = bun.getRoughTickCount(.allow_mocked_time).ns() - time_started_for_verbose_logs;
+            Output.prettyErrorln("[{s}] Extracted to {s} ({D})<r>", .{ name, tmpname, elapsed });
             Output.flush();
         }
     }
@@ -374,7 +374,7 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
                         null,
                         logger.Loc.Empty,
                         bun.default_allocator,
-                        "moving \"{s}\" to cache dir failed\n{}\n  From: {s}\n    To: {s}",
+                        "moving \"{s}\" to cache dir failed\n{f}\n  From: {s}\n    To: {s}",
                         .{ name, err, tmpname, folder_name },
                     ) catch unreachable;
                     return error.InstallFailed;
@@ -413,7 +413,7 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
                 null,
                 logger.Loc.Empty,
                 bun.default_allocator,
-                "moving \"{s}\" to cache dir failed: {}\n  From: {s}\n    To: {s}",
+                "moving \"{s}\" to cache dir failed: {f}\n  From: {s}\n    To: {s}",
                 .{ name, err, tmpname, folder_name },
             ) catch unreachable;
             return error.InstallFailed;

@@ -55,7 +55,7 @@ fn debugExceptionAssertion(globalThis: *JSGlobalObject, value: JSValue, comptime
                     \\Native function returned a non-zero JSValue while an exception is pending
                     \\
                     \\    fn: {s}
-                    \\ value: {}
+                    \\ value: {f}
                     \\
                 , .{
                     &func, // use `(lldb) image lookup --address 0x1ec4` to discover what function failed
@@ -271,72 +271,32 @@ const private = struct {
         ?*const ZigString,
         argCount: u32,
         function: *const JSHostFn,
-        strong: bool,
         data: *anyopaque,
     ) JSValue;
-    pub extern fn Bun__CreateFFIFunction(
-        globalObject: *JSGlobalObject,
-        symbolName: ?*const ZigString,
-        argCount: u32,
-        function: *const JSHostFn,
-        strong: bool,
-    ) *anyopaque;
 
     pub extern fn Bun__CreateFFIFunctionValue(
         globalObject: *JSGlobalObject,
         symbolName: ?*const ZigString,
         argCount: u32,
         function: *const JSHostFn,
-        strong: bool,
         add_ptr_field: bool,
         inputFunctionPtr: ?*anyopaque,
     ) JSValue;
 
-    pub extern fn Bun__untrackFFIFunction(
-        globalObject: *JSGlobalObject,
-        function: JSValue,
-    ) bool;
-
     pub extern fn Bun__FFIFunction_getDataPtr(JSValue) ?*anyopaque;
     pub extern fn Bun__FFIFunction_setDataPtr(JSValue, ?*anyopaque) void;
 };
-
-pub fn NewFunction(
-    globalObject: *JSGlobalObject,
-    symbolName: ?*const ZigString,
-    argCount: u32,
-    comptime function: anytype,
-    strong: bool,
-) JSValue {
-    if (@TypeOf(function) == JSHostFn) {
-        return NewRuntimeFunction(globalObject, symbolName, argCount, function, strong, false, null);
-    }
-    return NewRuntimeFunction(globalObject, symbolName, argCount, toJSHostFn(function), strong, false, null);
-}
-
-pub fn createCallback(
-    globalObject: *JSGlobalObject,
-    symbolName: ?*const ZigString,
-    argCount: u32,
-    comptime function: anytype,
-) JSValue {
-    if (@TypeOf(function) == JSHostFn) {
-        return NewRuntimeFunction(globalObject, symbolName, argCount, function, false, false, null);
-    }
-    return NewRuntimeFunction(globalObject, symbolName, argCount, toJSHostFn(function), false, false, null);
-}
 
 pub fn NewRuntimeFunction(
     globalObject: *JSGlobalObject,
     symbolName: ?*const ZigString,
     argCount: u32,
     functionPointer: *const JSHostFn,
-    strong: bool,
     add_ptr_property: bool,
     inputFunctionPtr: ?*anyopaque,
 ) JSValue {
     jsc.markBinding(@src());
-    return private.Bun__CreateFFIFunctionValue(globalObject, symbolName, argCount, functionPointer, strong, add_ptr_property, inputFunctionPtr);
+    return private.Bun__CreateFFIFunctionValue(globalObject, symbolName, argCount, functionPointer, add_ptr_property, inputFunctionPtr);
 }
 
 pub fn getFunctionData(function: JSValue) ?*anyopaque {
@@ -354,7 +314,6 @@ pub fn NewFunctionWithData(
     symbolName: ?*const ZigString,
     argCount: u32,
     comptime function: JSHostFnZig,
-    strong: bool,
     data: *anyopaque,
 ) JSValue {
     jsc.markBinding(@src());
@@ -363,17 +322,8 @@ pub fn NewFunctionWithData(
         symbolName,
         argCount,
         toJSHostFn(function),
-        strong,
         data,
     );
-}
-
-pub fn untrackFunction(
-    globalObject: *JSGlobalObject,
-    value: JSValue,
-) bool {
-    jsc.markBinding(@src());
-    return private.Bun__untrackFFIFunction(globalObject, value);
 }
 
 pub const DOMEffect = struct {
@@ -696,7 +646,7 @@ pub fn wrapInstanceMethod(
                 }
             }
 
-            return @call(.always_inline, @field(Container, name), args);
+            return @call(bun.callmod_inline, @field(Container, name), args);
         }
     }.method;
 }
@@ -838,7 +788,7 @@ pub fn wrapStaticMethod(
 
             defer iter.deinit();
 
-            return @call(.always_inline, @field(Container, name), args);
+            return @call(bun.callmod_inline, @field(Container, name), args);
         }
     }.method;
 }

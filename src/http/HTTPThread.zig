@@ -74,8 +74,8 @@ pub const RequestBodyBuffer = union(enum) {
         };
     }
 
-    pub fn toArrayList(this: *@This()) std.ArrayList(u8) {
-        var arraylist = std.ArrayList(u8).fromOwnedSlice(this.allocator(), this.allocatedSlice());
+    pub fn toArrayList(this: *@This()) std.array_list.Managed(u8) {
+        var arraylist = std.array_list.Managed(u8).fromOwnedSlice(this.allocator(), this.allocatedSlice());
         arraylist.items.len = 0;
         return arraylist;
     }
@@ -103,6 +103,11 @@ pub const LibdeflateState = struct {
     shared_buffer: [512 * 1024]u8 = undefined,
 
     pub const new = bun.TrivialNew(@This());
+
+    pub fn deinit(this: *@This()) void {
+        this.decompressor.deinit();
+        bun.TrivialDeinit(@This())(this);
+    }
 };
 
 const request_body_send_stack_buffer_size = 32 * 1024;
@@ -426,6 +431,12 @@ fn drainEvents(this: *@This()) void {
             .async_http = http.*,
         });
         cloned.async_http.real = http;
+        // Clear stale queue pointers - the clone inherited http.next and http.task.node.next
+        // which may point to other AsyncHTTP structs that could be freed before the callback
+        // copies data back to the original. If not cleared, retrying a failed request would
+        // re-queue with stale pointers causing use-after-free.
+        cloned.async_http.next = null;
+        cloned.async_http.task.node.next = null;
         cloned.async_http.onStart();
         if (comptime Environment.allow_assert) {
             count += 1;
@@ -478,7 +489,7 @@ fn processEvents(this: *@This()) noreturn {
         // this.loop.run();
         if (comptime Environment.isDebug) {
             const end = std.time.nanoTimestamp();
-            threadlog("Waited {any}\n", .{std.fmt.fmtDurationSigned(@as(i64, @truncate(end - start_time)))});
+            threadlog("Waited {D}\n", .{@as(i64, @truncate(end - start_time))});
             Output.flush();
         }
     }

@@ -356,7 +356,6 @@ pub const StringID = enum(u32) {
 };
 
 export fn zig__renderDiff(expected_ptr: [*:0]const u8, expected_len: usize, received_ptr: [*:0]const u8, received_len: usize, globalThis: *bun.jsc.JSGlobalObject) void {
-    const DiffFormatter = @import("./bun.js/test/diff_format.zig").DiffFormatter;
     const formatter = DiffFormatter{
         .received_string = received_ptr[0..received_len],
         .expected_string = expected_ptr[0..expected_len],
@@ -498,5 +497,6 @@ export fn zig_log(msg: [*:0]const u8) void {
     bun.Output.errorWriter().print("{s}\n", .{std.mem.span(msg)}) catch {};
 }
 
+const DiffFormatter = @import("./bun.js/test/diff_format.zig").DiffFormatter;
 const std = @import("std");
 const bun = @import("bun");

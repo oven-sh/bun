@@ -3,7 +3,7 @@ pub const FetchHeaders = opaque {
     extern fn WebCore__FetchHeaders__cast_(JSValue0: JSValue, arg1: *VM) ?*FetchHeaders;
     extern fn WebCore__FetchHeaders__clone(arg0: *FetchHeaders, arg1: *JSGlobalObject) JSValue;
     extern fn WebCore__FetchHeaders__cloneThis(arg0: *FetchHeaders, arg1: *JSGlobalObject) *FetchHeaders;
-    extern fn WebCore__FetchHeaders__copyTo(arg0: *FetchHeaders, arg1: [*]StringPointer, arg2: [*]StringPointer, arg3: [*]u8) void;
+    extern fn WebCore__FetchHeaders__copyTo(arg0: *FetchHeaders, arg1: [*]StringPointer, arg2: [*]StringPointer, arg3: [*]u8, arg4: usize, arg5: usize) void;
     extern fn WebCore__FetchHeaders__count(arg0: *FetchHeaders, arg1: *u32, arg2: *u32) void;
     extern fn WebCore__FetchHeaders__createEmpty() *FetchHeaders;
     extern fn WebCore__FetchHeaders__createFromPicoHeaders_(arg0: ?*const anyopaque) *FetchHeaders;
@@ -422,15 +422,17 @@ pub const FetchHeaders = opaque {
 
     pub fn copyTo(
         this: *FetchHeaders,
-        names: [*]api.StringPointer,
-        values: [*]api.StringPointer,
-        buf: [*]u8,
+        names: []api.StringPointer,
+        values: []api.StringPointer,
+        buf: []u8,
     ) void {
         return WebCore__FetchHeaders__copyTo(
             this,
-            names,
-            values,
-            buf,
+            names.ptr,
+            values.ptr,
+            buf.ptr,
+            buf.len,
+            names.len,
         );
     }
 };

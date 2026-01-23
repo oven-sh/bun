@@ -119,11 +119,12 @@ pub const TestRunner = struct {
         skip: u32 = 0,
         todo: u32 = 0,
         fail: u32 = 0,
+        failing: u32 = 0,
         files: u32 = 0,
         skipped_because_label: u32 = 0,
 
         pub fn didLabelFilterOutAllTests(this: *const Summary) bool {
-            return this.skipped_because_label > 0 and (this.pass + this.skip + this.todo + this.fail + this.expectations) == 0;
+            return this.skipped_because_label > 0 and (this.pass + this.skip + this.todo + this.failing + this.fail + this.expectations) == 0;
         }
     };
 

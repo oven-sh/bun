@@ -573,7 +573,8 @@ pub const RuntimeTranspilerStore = struct {
 
             if (module_info) |mi| {
                 if (!mi.finalized) {
-                    mi.finalize() catch {
+                    mi.finalize() catch |err| {
+                        this.parse_error = err;
                         mi.destroy();
                         return;
                     };

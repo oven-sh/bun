@@ -94,10 +94,7 @@ pub fn calculateOutputFileListCapacity(c: *const bun.bundle_v2.LinkerContext, ch
         break :bytecode_count bytecode_count;
     } else 0;
 
-    // module_info is generated for ESM bytecode in --compile builds
-    const module_info_count = if (c.options.generate_bytecode_cache and c.options.output_format == .esm and c.resolver.opts.compile) bytecode_count else 0;
-
-    return .{ @intCast(chunks.len + source_map_count + bytecode_count + module_info_count + c.parse_graph.additional_output_files.items.len), @intCast(source_map_count + bytecode_count + module_info_count) };
+    return .{ @intCast(chunks.len + source_map_count + bytecode_count + c.parse_graph.additional_output_files.items.len), @intCast(source_map_count + bytecode_count) };
 }
 
 pub fn insertForChunk(this: *OutputFileList, output_file: options.OutputFile) u32 {

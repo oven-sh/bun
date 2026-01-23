@@ -783,7 +783,6 @@ pub const Transpiler = struct {
         comptime enable_source_map: bool,
         source_map_context: ?js_printer.SourceMapHandler,
         runtime_transpiler_cache: ?*bun.jsc.RuntimeTranspilerCache,
-        module_info: ?*analyze_transpiled_module.ModuleInfo,
     ) !usize {
         const tracer = if (enable_source_map)
             bun.perf.trace("JSPrinter.printWithSourceMap")
@@ -873,7 +872,6 @@ pub const Transpiler = struct {
                         .inline_require_and_import_errors = false,
                         .import_meta_ref = ast.import_meta_ref,
                         .runtime_transpiler_cache = runtime_transpiler_cache,
-                        .module_info = module_info,
                         .target = transpiler.options.target,
                         .print_dce_annotations = transpiler.options.emit_dce_annotations,
                         .hmr_ref = ast.wrapper_ref,
@@ -902,7 +900,6 @@ pub const Transpiler = struct {
             false,
             null,
             null,
-            null,
         );
     }
 
@@ -913,7 +910,6 @@ pub const Transpiler = struct {
         writer: Writer,
         comptime format: js_printer.Format,
         handler: js_printer.SourceMapHandler,
-        module_info: ?*analyze_transpiled_module.ModuleInfo,
     ) !usize {
         if (bun.feature_flag.BUN_FEATURE_FLAG_DISABLE_SOURCE_MAPS.get()) {
             return transpiler.printWithSourceMapMaybe(
@@ -925,7 +921,6 @@ pub const Transpiler = struct {
                 false,
                 handler,
                 result.runtime_transpiler_cache,
-                module_info,
             );
         }
         return transpiler.printWithSourceMapMaybe(
@@ -937,7 +932,6 @@ pub const Transpiler = struct {
             true,
             handler,
             result.runtime_transpiler_cache,
-            module_info,
         );
     }
 
@@ -1587,7 +1581,6 @@ pub const ResolveQueue = bun.LinearFifo(
 
 const string = []const u8;
 
-const analyze_transpiled_module = @import("./analyze_transpiled_module.zig");
 const DotEnv = @import("./env_loader.zig");
 const Fs = @import("./fs.zig");
 const MimeType = @import("./http/MimeType.zig");

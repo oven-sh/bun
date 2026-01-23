@@ -1957,7 +1957,6 @@ pub const BundleV2 = struct {
             transpiler.options.output_format = config.format;
             transpiler.options.bytecode = config.bytecode;
             transpiler.options.compile = config.compile != null;
-            transpiler.resolver.opts.compile = config.compile != null;
 
             // For compile mode, set the public_path to the target-specific base path
             // This ensures embedded resources like yoga.wasm are correctly found

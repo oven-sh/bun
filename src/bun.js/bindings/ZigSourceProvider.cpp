@@ -75,11 +75,6 @@ Ref<SourceProvider> SourceProvider::create(
     JSC::SourceProviderSourceType sourceType,
     bool isBuiltin)
 {
-    if (resolvedSource.module_info != nullptr) {
-        ASSERT(!resolvedSource.isCommonJSModule);
-        sourceType = JSC::SourceProviderSourceType::BunTranspiledModule;
-    }
-
     auto string = resolvedSource.source_code.toWTFString(BunString::ZeroCopy);
     auto sourceURLString = resolvedSource.source_url.toWTFString(BunString::ZeroCopy);
 

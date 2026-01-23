@@ -694,7 +694,6 @@ pub const AsyncModule = struct {
                 &printer,
                 .esm_ascii,
                 mapper.get(),
-                null,
             );
         }
 

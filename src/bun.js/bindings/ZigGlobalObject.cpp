@@ -2045,6 +2045,22 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(obj);
         });
 
+    this->m_jsonlParseResultStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            // { values, read, done, error } — 4 properties at fixed offsets for fast allocation
+            Structure* structure = init.owner->structureCache().emptyObjectStructureForPrototype(init.owner, init.owner->objectPrototype(), 4);
+            PropertyOffset offset;
+            structure = Structure::addPropertyTransition(init.vm, structure, Identifier::fromString(init.vm, "values"_s), 0, offset);
+            RELEASE_ASSERT(offset == 0);
+            structure = Structure::addPropertyTransition(init.vm, structure, Identifier::fromString(init.vm, "read"_s), 0, offset);
+            RELEASE_ASSERT(offset == 1);
+            structure = Structure::addPropertyTransition(init.vm, structure, Identifier::fromString(init.vm, "done"_s), 0, offset);
+            RELEASE_ASSERT(offset == 2);
+            structure = Structure::addPropertyTransition(init.vm, structure, Identifier::fromString(init.vm, "error"_s), 0, offset);
+            RELEASE_ASSERT(offset == 3);
+            init.set(structure);
+        });
+
     this->m_pendingVirtualModuleResultStructure.initLater(
         [](const Initializer<Structure>& init) {
             init.set(Bun::PendingVirtualModuleResult::createStructure(init.vm, init.owner, init.owner->objectPrototype()));

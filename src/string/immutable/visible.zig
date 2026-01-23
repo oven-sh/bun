@@ -927,7 +927,7 @@ pub const visible = struct {
         var input = input_;
         var len: usize = 0;
         var prev: ?u32 = null;
-        var break_state = grapheme.BreakState{};
+        var break_state: grapheme.BreakState = .default;
         var grapheme_state = GraphemeState{};
         var saw_1b = false;
         var saw_csi = false; // CSI: ESC [
@@ -964,7 +964,7 @@ pub const visible = struct {
                         const last_cp: u32 = input[bulk_end - 1];
                         grapheme_state.reset(last_cp, ambiguousAsWide);
                         prev = last_cp;
-                        break_state = grapheme.BreakState{};
+                        break_state = .default;
 
                         // If we consumed everything, advance and continue
                         if (bulk_end == idx) {

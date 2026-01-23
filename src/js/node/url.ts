@@ -461,8 +461,8 @@ function getHostname(self, rest, hostname: string, url) {
 }
 
 // format a parsed object into a url string
-declare function urlFormat(urlObject: string | URL | Url): string;
-function urlFormat(urlObject: unknown) {
+declare function urlFormat(urlObject: string | URL | Url, options?: any): string;
+function urlFormat(urlObject: unknown, options?: any) {
   /*
    * ensure it's an object, and not a string url.
    * If it's an obj, this is a no-op.
@@ -476,10 +476,86 @@ function urlFormat(urlObject: unknown) {
     throw $ERR_INVALID_ARG_TYPE("urlObject", ["Object", "string"], urlObject);
   }
 
+  // Handle WHATWG URL objects with options
+  if (urlObject instanceof URL) {
+    return formatWhatwgUrl(urlObject, options);
+  }
+
   if (!(urlObject instanceof Url)) {
     return Url.prototype.format.$call(urlObject);
   }
   return urlObject.format();
+}
+
+function formatWhatwgUrl(url: URL, options?: any) {
+  if (options !== undefined && options !== null && typeof options !== "object") {
+    throw $ERR_INVALID_ARG_TYPE("options", "object", options);
+  }
+
+  let fragment = true;
+  let unicode = false;
+  let search = true;
+  let auth = true;
+
+  if (options) {
+    if (options.fragment != null) {
+      fragment = Boolean(options.fragment);
+    }
+
+    if (options.unicode != null) {
+      unicode = Boolean(options.unicode);
+    }
+
+    if (options.search != null) {
+      search = Boolean(options.search);
+    }
+
+    if (options.auth != null) {
+      auth = Boolean(options.auth);
+    }
+  }
+
+  let result = url.protocol;
+
+  // Only add // for URLs with host
+  const hasHost = url.host !== "";
+  if (hasHost) {
+    result += "//";
+
+    if (auth && (url.username || url.password)) {
+      result += url.username;
+      if (url.password) {
+        result += ":" + url.password;
+      }
+      result += "@";
+    }
+
+    let hostname = url.hostname;
+    if (unicode && hostname) {
+      try {
+        hostname = domainToUnicode(hostname);
+      } catch (e) {
+        // If domainToUnicode fails, use the original hostname
+      }
+    }
+    result += hostname;
+
+    if (url.port) {
+      result += ":" + url.port;
+    }
+  }
+
+  result += url.pathname;
+
+  if (search && url.search) {
+    result += url.search;
+  }
+
+  if (fragment && url.hash) {
+    result += url.hash;
+  }
+
+  return result;
 }
 
 Url.prototype.format = function format() {
@@ -499,7 +575,9 @@ Url.prototype.format = function format() {
   if (this.host) {
     host = auth + this.host;
   } else if (this.hostname) {
-    host = auth + (this.hostname.indexOf(":") === -1 ? this.hostname : "[" + this.hostname + "]");
+    // Check if hostname contains ':' (IPv6) and doesn't already have brackets
+    const needsBrackets = this.hostname.indexOf(":") !== -1 && !isIpv6Hostname(this.hostname);
+    host = auth + (needsBrackets ? "[" + this.hostname + "]" : this.hostname);
     if (this.port) {
       host += ":" + this.port;
     }
@@ -519,13 +597,21 @@ Url.prototype.format = function format() {
    * only the slashedProtocols get the //.  Not mailto:, xmpp:, etc.
    * unless they had them to begin with.
    */
-  if (this.slashes || ((!protocol || slashedProtocol[protocol]) && host.length > 0)) {
-    host = "//" + (host || "");
-    if (pathname && pathname.charAt(0) !== "/") {
-      pathname = "/" + pathname;
+  if (this.slashes || slashedProtocol[protocol]) {
+    if (this.slashes || host) {
+      if (pathname && pathname.charAt(0) !== "/") {
+        pathname = "/" + pathname;
+      }
+      host = "//" + host;
+    } else if (
+      protocol.length >= 4 &&
+      protocol.$charCodeAt(0) === 102 /* f */ &&
+      protocol.$charCodeAt(1) === 105 /* i */ &&
+      protocol.$charCodeAt(2) === 108 /* l */ &&
+      protocol.$charCodeAt(3) === 101 /* e */
+    ) {
+      host = "//";
     }
-  } else if (!host) {
-    host = "";
   }
 
   if (hash && hash.charAt(0) !== "#") {
@@ -538,7 +624,7 @@ Url.prototype.format = function format() {
   pathname = pathname.replace(/[?#]/g, function (match) {
     return encodeURIComponent(match);
   });
-  search = search.replace("#", "%23");
+  search = search.replace(/#/g, "%23");
 
   return protocol + host + pathname + search + hash;
 };

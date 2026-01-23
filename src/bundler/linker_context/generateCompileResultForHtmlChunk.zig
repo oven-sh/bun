@@ -113,6 +113,98 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
             }
         }
 
+        /// Handle URLs found inside noscript elements (parsed from raw text content).
+        /// This is called during the rewrite phase - we don't need to do anything here
+        /// since rewriteNoscriptContent handles the actual replacement.
+        pub fn onNoscriptUrl(_: *@This(), _: []const u8, _: ImportKind) void {
+            // The actual URL replacement is handled by rewriteNoscriptContent
+        }
+
+        /// Rewrite noscript content by replacing URLs with their resolved paths.
+        /// This is called during the HTML rewrite phase to update URLs found in noscript raw text.
+        pub fn rewriteNoscriptContent(
+            this: *@This(),
+            content: []const u8,
+            url_locations: anytype,
+            text_chunk: *lol.TextChunk,
+        ) bool {
+            if (url_locations.len == 0) return false;
+
+            // Build new content with replaced URLs
+            var new_content = std.array_list.Managed(u8).init(this.allocator);
+            defer new_content.deinit();
+
+            var last_end: usize = 0;
+            for (url_locations) |url_loc| {
+                if (this.current_import_record_index >= this.import_records.len) {
+                    Output.panic("Assertion failure in HTMLLoader.rewriteNoscriptContent: current_import_record_index ({d}) >= import_records.len ({d})", .{ this.current_import_record_index, this.import_records.len });
+                }
+
+                const import_record: *const ImportRecord = &this.import_records[this.current_import_record_index];
+                this.current_import_record_index += 1;
+
+                // Get the replacement URL
+                const unique_key_for_additional_files = if (import_record.source_index.isValid())
+                    this.linker.parse_graph.input_files.items(.unique_key_for_additional_file)[import_record.source_index.get()]
+                else
+                    "";
+                const loader: Loader = if (import_record.source_index.isValid())
+                    this.linker.parse_graph.input_files.items(.loader)[import_record.source_index.get()]
+                else
+                    .file;
+
+                // Append content before this URL
+                new_content.appendSlice(content[last_end..url_loc.start]) catch return false;
+
+                // Determine what to replace with
+                if (import_record.flags.is_external_without_side_effects) {
+                    // Keep external imports as-is
+                    new_content.appendSlice(content[url_loc.start..url_loc.end]) catch return false;
+                } else if (this.linker.dev_server != null) {
+                    if (unique_key_for_additional_files.len > 0) {
+                        new_content.appendSlice(unique_key_for_additional_files) catch return false;
+                    } else if (import_record.path.is_disabled or loader.isJavaScriptLike() or loader.isCSS()) {
+                        // For dev server, keep the original path for CSS/JS that will be handled separately
+                        new_content.appendSlice(content[url_loc.start..url_loc.end]) catch return false;
+                    } else {
+                        new_content.appendSlice(import_record.path.pretty) catch return false;
+                    }
+                } else if (import_record.source_index.isInvalid()) {
+                    // Keep as-is if source index is invalid
+                    new_content.appendSlice(content[url_loc.start..url_loc.end]) catch return false;
+                } else if (loader.isJavaScriptLike() or loader.isCSS()) {
+                    // For CSS/JS in noscript, point to the bundled chunk's unique key
+                    // The bundler creates a combined CSS/JS chunk for all files of that type
+                    if (loader.isCSS()) {
+                        if (this.chunk.getCSSChunkForHTML(this.chunks)) |css_chunk| {
+                            new_content.appendSlice(css_chunk.unique_key) catch return false;
+                        } else {
+                            new_content.appendSlice(content[url_loc.start..url_loc.end]) catch return false;
+                        }
+                    } else {
+                        // For JS, keep as-is for now (noscript with JS is unusual)
+                        new_content.appendSlice(content[url_loc.start..url_loc.end]) catch return false;
+                    }
+                } else if (unique_key_for_additional_files.len > 0) {
+                    // Replace with the unique key for assets (images, etc.)
+                    new_content.appendSlice(unique_key_for_additional_files) catch return false;
+                } else {
+                    // Keep as-is for other cases
+                    new_content.appendSlice(content[url_loc.start..url_loc.end]) catch return false;
+                }
+
+                last_end = url_loc.end;
+            }
+
+            // Append remaining content after last URL
+            new_content.appendSlice(content[last_end..]) catch return false;
+
+            // Replace the text chunk with new content (true = treat as HTML to avoid escaping)
+            text_chunk.replace(new_content.items, true) catch return false;
+
+            return true;
+        }
+
         pub fn onHeadTag(this: *@This(), element: *lol.Element) bool {
             element.onEndTag(endHeadTagHandler, this) catch return true;
             return false;

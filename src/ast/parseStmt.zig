@@ -1185,6 +1185,17 @@ pub fn ParseStmt(
                 switch (expr.data) {
                     .e_identifier => |ident| {
                         if (p.lexer.token == .t_colon and !opts.hasDecorators()) {
+                            // In TypeScript declare contexts, "identifier: Type" is a type annotation, not a label
+                            if (comptime is_typescript_enabled) {
+                                if (opts.is_typescript_declare) {
+                                    // Skip the colon and type annotation
+                                    try p.lexer.next();
+                                    try p.skipTypeScriptType(.lowest);
+                                    try p.lexer.expectOrInsertSemicolon();
+                                    return p.s(S.TypeScript{}, loc);
+                                }
+                            }
+
                             _ = try p.pushScopeForParsePass(.label, loc);
                             defer p.popScope();
 

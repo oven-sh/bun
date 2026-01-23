@@ -946,13 +946,14 @@ pub fn generateEntryPointTailJS(
         for (stmts.items) |stmt| {
             switch (stmt.data) {
                 .s_local => |s| {
+                    const var_kind: analyze_transpiled_module.ModuleInfo.VarKind = if (s.kind == .k_var) .declared else .lexical;
                     for (s.decls.slice()) |decl| {
                         switch (decl.binding.data) {
                             .b_identifier => |b| {
                                 const name = r.nameForSymbol(c.graph.symbols.follow(b.ref));
                                 if (name.len > 0) {
                                     const str_id = mi.str(name) catch continue;
-                                    mi.addVar(str_id, .declared) catch {};
+                                    mi.addVar(str_id, var_kind) catch {};
                                 }
                             },
                             else => {},

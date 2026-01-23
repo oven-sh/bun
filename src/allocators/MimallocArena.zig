@@ -167,8 +167,10 @@ fn vtable_free(
     }
 }
 
-fn vtable_remap(_: *anyopaque, buf: []u8, _: Alignment, new_len: usize, _: usize) ?[*]u8 {
-    return if (mimalloc.mi_expand(buf.ptr, new_len) != null) buf.ptr else null;
+fn vtable_remap(ptr: *anyopaque, buf: []u8, alignment: Alignment, new_len: usize, _: usize) ?[*]u8 {
+    const self: Borrowed = .fromOpaque(ptr);
+    const value = mimalloc.mi_heap_realloc_aligned(self.#heap, buf.ptr, new_len, alignment.toByteUnits());
+    return @ptrCast(value);
 }
 
 pub fn isInstance(alloc: std.mem.Allocator) bool {

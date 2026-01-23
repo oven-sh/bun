@@ -16,9 +16,9 @@ describe("bundler", () => {
             color: black }
         `,
     },
-    outfile: "/out.js",
+    outfile: "/out.css",
     onAfterBundle(api) {
-      api.expectFile("/out.js").toEqualIgnoringWhitespace(`
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
   /* entry.css */
   body {
           color: #000;
@@ -31,9 +31,9 @@ describe("bundler", () => {
     files: {
       "/entry.css": /* css */ `\n`,
     },
-    outfile: "/out.js",
+    outfile: "/out.css",
     onAfterBundle(api) {
-      api.expectFile("/out.js").toEqualIgnoringWhitespace(`
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
   /* entry.css */`);
     },
   });
@@ -48,12 +48,12 @@ describe("bundler", () => {
   	}
   }`,
     },
-    outfile: "/out.js",
+    outfile: "/out.css",
     onAfterBundle(api) {
-      api.expectFile("/out.js").toEqualIgnoringWhitespace(`
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
   /* entry.css */
   body {
-  	&h1 {
+  	& h1 {
   		color: #fff;
   	}
   }

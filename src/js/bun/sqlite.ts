@@ -447,6 +447,59 @@ class Database implements SqliteTypes.Database {
     return SQL.loadExtension(this.#handle, name, entryPoint);
   }
 
+  function(name: string, optionsOrCallback: any, callback?: any) {
+    // Handle both overloads:
+    // function(name, fn)
+    // function(name, options, fn)
+    let options;
+    let fn;
+
+    if (typeof optionsOrCallback === "function") {
+      // Second argument is the callback
+      fn = optionsOrCallback;
+      options = {};
+    } else if (typeof optionsOrCallback === "object" && optionsOrCallback !== null) {
+      // Second argument is options
+      options = optionsOrCallback;
+      fn = callback;
+    } else {
+      throw new TypeError("Second argument must be a function or options object");
+    }
+
+    if (typeof fn !== "function") {
+      throw new TypeError("Expected last argument to be a function");
+    }
+
+    if (typeof name !== "string") {
+      throw new TypeError("Expected first argument to be a string");
+    }
+
+    if (!name) {
+      throw new TypeError("User-defined function name cannot be an empty string");
+    }
+
+    // Interpret options (matching Node.js API)
+    const deterministic = getBooleanOption(options, "deterministic");
+    const directOnly = getBooleanOption(options, "directOnly");
+    const varargs = getBooleanOption(options, "varargs");
+    const useBigIntArguments = getBooleanOption(options, "useBigIntArguments");
+
+    // Determine argument count
+    let argCount = -1;
+    if (!varargs) {
+      argCount = fn.length;
+      if (!Number.isInteger(argCount) || argCount < 0) {
+        throw new TypeError("Expected function.length to be a positive integer");
+      }
+      if (argCount > 100) {
+        throw new RangeError("User-defined functions cannot have more than 100 arguments");
+      }
+    }
+
+    // Call native implementation
+    return SQL.createFunction(this.#handle, name, argCount, deterministic, directOnly, useBigIntArguments, fn);
+  }
+
   serialize(optionalName?: string) {
     return SQL.serialize(this.#handle, optionalName || "main");
   }
@@ -612,6 +665,15 @@ class Database implements SqliteTypes.Database {
 
 // @ts-expect-error
 Database.prototype.exec = Database.prototype.run;
+
+// Helper to validate boolean options
+const getBooleanOption = (options, key) => {
+  let value = false;
+  if (key in options && typeof (value = options[key]) !== "boolean") {
+    throw new TypeError(`Expected the "${key}" option to be a boolean`);
+  }
+  return value;
+};
 
 // Return the database's cached transaction controller, or create a new one
 const getController = (db, _self) => {

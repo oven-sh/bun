@@ -1,6 +1,6 @@
 pub const opener = switch (@import("builtin").target.os.tag) {
     .macos => "/usr/bin/open",
-    .windows => "start",
+    .windows => "cmd.exe",
     else => "xdg-open",
 };
 
@@ -12,11 +12,31 @@ fn fallback(url: string) void {
 pub fn openURL(url: stringZ) void {
     if (comptime Environment.isWasi) return fallback(url);
 
-    var args_buf = [_]stringZ{ opener, url };
+    // On Windows, "start" is a cmd.exe built-in command, not an executable.
+    // We must invoke it via: cmd.exe /c start "" "<url>"
+    // The empty string is the window title. The URL must be quoted to prevent
+    // cmd.exe metacharacter injection (e.g., & | < > ^ in URLs).
+    const quoted_url: [:0]const u8 = if (Environment.isWindows) blk: {
+        const unquoted: []const u8 = bun.sliceTo(url, 0);
+        // Allocate space for quotes + content + null terminator
+        const buf = default_allocator.allocSentinel(u8, unquoted.len + 2, 0) catch return fallback(url);
+        buf[0] = '"';
+        @memcpy(buf[1..][0..unquoted.len], unquoted);
+        buf[unquoted.len + 1] = '"';
+        break :blk buf;
+    } else undefined;
+    defer if (Environment.isWindows) default_allocator.free(@as([]const u8, quoted_url));
+
+    var args_buf = if (Environment.isWindows)
+        [_]stringZ{ opener, "/c", "start", "", quoted_url }
+    else
+        [_]stringZ{ opener, url, undefined, undefined, undefined };
+
+    const argv_len: usize = if (Environment.isWindows) 5 else 2;
 
     maybe_fallback: {
         switch (bun.spawnSync(&.{
-            .argv = &args_buf,
+            .argv = args_buf[0..argv_len],
 
             .envp = null,
 

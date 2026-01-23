@@ -391,17 +391,24 @@ pub const PathWatcherManager = struct {
         }
 
         fn getNext(this: *DirectoryRegisterTask) ?*PathWatcher {
-            this.manager.mutex.lock();
-            defer this.manager.mutex.unlock();
+            const maybe_hash = blk: {
+                this.manager.mutex.lock();
+                defer this.manager.mutex.unlock();
 
-            const watcher = this.watcher_list.pop();
-            if (watcher == null) {
-                // no more work todo, release the fd and path
-                _ = this.manager.current_fd_task.remove(this.path.fd);
-                this.manager._decrementPathRefNoLock(this.path.path);
-                return null;
+                const watcher = this.watcher_list.pop();
+                if (watcher == null) {
+                    // no more work todo, release the fd and path
+                    _ = this.manager.current_fd_task.remove(this.path.fd);
+                    break :blk this.manager._decrementPathRefNoLock(this.path.path);
+                }
+                return watcher;
+            };
+            // Remove from the watcher after releasing the manager mutex to
+            // avoid lock ordering inversion.
+            if (maybe_hash) |hash| {
+                this.manager.main_watcher.remove(hash);
             }
-            return watcher;
+            return null;
         }
 
         fn processWatcher(
@@ -583,66 +590,101 @@ pub const PathWatcherManager = struct {
         }
     }
 
-    fn _decrementPathRefNoLock(this: *PathWatcherManager, file_path: [:0]const u8) void {
+    /// Decrements the ref count for the given path. If the ref count reaches zero,
+    /// removes the path from the file_paths map and returns its hash so the caller
+    /// can call `main_watcher.remove(hash)` **after** releasing the manager mutex.
+    /// This avoids a lock ordering inversion: the watcher thread holds Watcher.mutex
+    /// then acquires PathWatcherManager.mutex, so we must not acquire Watcher.mutex
+    /// while holding PathWatcherManager.mutex.
+    fn _decrementPathRefNoLock(this: *PathWatcherManager, file_path: [:0]const u8) ?Watcher.HashType {
         if (this.file_paths.getEntry(file_path)) |entry| {
             var path = entry.value_ptr;
             if (path.refs > 0) {
                 path.refs -= 1;
                 if (path.refs == 0) {
+                    const hash = path.hash;
                     const path_ = path.path;
-                    this.main_watcher.remove(path.hash);
                     _ = this.file_paths.remove(path_);
                     bun.default_allocator.free(path_);
+                    return hash;
                 }
             }
         }
+        return null;
     }
 
     fn _decrementPathRef(this: *PathWatcherManager, file_path: [:0]const u8) void {
-        this.mutex.lock();
-        defer this.mutex.unlock();
-        this._decrementPathRefNoLock(file_path);
+        const maybe_hash = blk: {
+            this.mutex.lock();
+            defer this.mutex.unlock();
+            break :blk this._decrementPathRefNoLock(file_path);
+        };
+        if (maybe_hash) |hash| {
+            this.main_watcher.remove(hash);
+        }
     }
 
-    // unregister is always called form main thread
+    // unregister is always called from main thread
     fn unregisterWatcher(this: *PathWatcherManager, watcher: *PathWatcher) void {
-        this.mutex.lock();
-        defer this.mutex.unlock();
+        // Collect hashes that need to be removed from the Watcher. We must not
+        // call main_watcher.remove() while holding PathWatcherManager.mutex
+        // because that acquires Watcher.mutex, and the watcher thread acquires
+        // these locks in the opposite order (Watcher.mutex -> PathWatcherManager.mutex).
+        var sfb = std.heap.stackFallback(32 * @sizeOf(Watcher.HashType), bun.default_allocator);
+        var hashes: std.ArrayListUnmanaged(Watcher.HashType) = .{};
+        defer hashes.deinit(sfb.get());
 
-        var watchers = this.watchers.slice();
-        defer {
-            if (this.deinit_on_last_watcher and this.watcher_count == 0) {
-                this.deinit();
-            }
-        }
+        var should_deinit = false;
 
-        for (watchers, 0..) |w, i| {
-            if (w) |item| {
-                if (item == watcher) {
-                    watchers[i] = null;
-                    // if is the last one just pop
-                    if (i == watchers.len - 1) {
-                        this.watchers.len -= 1;
-                    }
-                    this.watcher_count -= 1;
+        {
+            this.mutex.lock();
+            defer this.mutex.unlock();
 
-                    this._decrementPathRefNoLock(watcher.path.path);
-                    if (comptime Environment.isMac) {
-                        if (watcher.fsevents_watcher != null) {
-                            break;
+            var watchers = this.watchers.slice();
+
+            for (watchers, 0..) |w, i| {
+                if (w) |item| {
+                    if (item == watcher) {
+                        watchers[i] = null;
+                        // if is the last one just pop
+                        if (i == watchers.len - 1) {
+                            this.watchers.len -= 1;
                         }
-                    }
+                        this.watcher_count -= 1;
 
-                    {
-                        watcher.mutex.lock();
-                        defer watcher.mutex.unlock();
-                        while (watcher.file_paths.pop()) |file_path| {
-                            this._decrementPathRefNoLock(file_path);
+                        if (this._decrementPathRefNoLock(watcher.path.path)) |hash| {
+                            hashes.append(sfb.get(), hash) catch bun.outOfMemory();
                         }
+                        if (comptime Environment.isMac) {
+                            if (watcher.fsevents_watcher != null) {
+                                break;
+                            }
+                        }
+
+                        {
+                            watcher.mutex.lock();
+                            defer watcher.mutex.unlock();
+                            while (watcher.file_paths.pop()) |file_path| {
+                                if (this._decrementPathRefNoLock(file_path)) |hash| {
+                                    hashes.append(sfb.get(), hash) catch bun.outOfMemory();
+                                }
+                            }
+                        }
+                        break;
                     }
-                    break;
                 }
             }
+
+            should_deinit = this.deinit_on_last_watcher and this.watcher_count == 0;
+        }
+
+        // Now remove from the watcher without holding the manager mutex.
+        for (hashes.items) |hash| {
+            this.main_watcher.remove(hash);
+        }
+
+        if (should_deinit) {
+            this.deinit();
         }
     }
 

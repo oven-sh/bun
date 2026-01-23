@@ -435,8 +435,7 @@ export fn zig__ModuleInfoDeserialized__toJSModuleRecord(
     return module_record;
 }
 export fn zig__ModuleInfo__destroy(info: *ModuleInfo) void {
-    info.deinit();
-    bun.default_allocator.destroy(info);
+    info.destroy();
 }
 
 const VariableEnvironment = opaque {

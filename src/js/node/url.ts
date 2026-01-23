@@ -30,6 +30,13 @@ const [domainToASCII, domainToUnicode] = $cpp("NodeURL.cpp", "Bun::createNodeURL
 const { urlToHttpOptions } = require("internal/url");
 const { validateString } = require("internal/validators");
 
+interface URLFormatOptions {
+  auth?: boolean | string | number | null;
+  unicode?: boolean | number | null;
+  search?: boolean | number | string | null;
+  fragment?: boolean | number | null;
+}
+
 function Url() {
   this.protocol = null;
   this.slashes = null;
@@ -460,9 +467,13 @@ function getHostname(self, rest, hostname: string, url) {
   return rest;
 }
 
+function isExplicitlyFalse(value){
+  return value != undefined && (!value || value === "");
+}
+
 // format a parsed object into a url string
-declare function urlFormat(urlObject: string | URL | Url): string;
-function urlFormat(urlObject: unknown) {
+declare function urlFormat(urlObject: string | URL | Url, options?: URLFormatOptions): string;
+function urlFormat(urlObject: unknown, options?: unknown) {
   /*
    * ensure it's an object, and not a string url.
    * If it's an obj, this is a no-op.
@@ -476,14 +487,36 @@ function urlFormat(urlObject: unknown) {
     throw $ERR_INVALID_ARG_TYPE("urlObject", ["Object", "string"], urlObject);
   }
 
-  if (!(urlObject instanceof Url)) {
-    return Url.prototype.format.$call(urlObject);
+  if (options !== undefined && typeof options !== "object") {
+    throw $ERR_INVALID_ARG_TYPE("options", ["Object"], options);
   }
-  return urlObject.format();
+
+  if (!(urlObject instanceof Url)) {
+    return Url.prototype.format.$call(urlObject, options);
+  }
+  return urlObject.format(options);
 }
 
-Url.prototype.format = function format() {
-  var auth: string = this.auth || "";
+Url.prototype.format = function format(options?: URLFormatOptions) {
+  options = options || {};
+
+  // Determine the auth string to use, reconstruct if necessary.
+  let authToUse = this.auth;
+  if ((authToUse === null || authToUse === undefined) && !isExplicitlyFalse(options.auth)) {
+    if (this.username || this.password) {
+      authToUse = this.username + (this.password ? ":" + this.password : "");
+    }
+  }
+
+  let auth: string = "";
+  if (typeof options.auth === "string") {
+    auth = options.auth;
+  } else if (isExplicitlyFalse(options.auth)) {
+    auth = "";
+  } else {
+    auth = authToUse || "";
+  }
+
   if (auth) {
     auth = encodeURIComponent(auth);
     auth = auth.replace(/%3A/i, ":");
@@ -496,13 +529,21 @@ Url.prototype.format = function format() {
     host = "",
     query = "";
 
-  if (this.host) {
-    host = auth + this.host;
-  } else if (this.hostname) {
-    host = auth + (this.hostname.indexOf(":") === -1 ? this.hostname : "[" + this.hostname + "]");
+  // Convert to unicode if options.unicode is truthy
+  let hostnameToUse = this.hostname;
+  if (options.unicode && this.hostname) {
+    try {
+      hostnameToUse = domainToUnicode(hostnameToUse);
+    } catch {}
+  }
+
+  if (this.hostname) {
+    host = auth + (hostnameToUse.indexOf(":") === -1 ? hostnameToUse : "[" + hostnameToUse + "]");
     if (this.port) {
       host += ":" + this.port;
     }
+  } else if (this.host) {
+    host = auth + this.host;
   }
 
   if (this.query && typeof this.query === "object" && Object.keys(this.query).length) {
@@ -510,6 +551,11 @@ Url.prototype.format = function format() {
   }
 
   var search = this.search || (query && "?" + query) || "";
+
+  // Apply options.search explicitly only if it's falsy
+  if (isExplicitlyFalse(options.search)) {
+    search = "";
+  }
 
   if (protocol && protocol.substr(-1) !== ":") {
     protocol += ":";
@@ -528,9 +574,15 @@ Url.prototype.format = function format() {
     host = "";
   }
 
-  if (hash && hash.charAt(0) !== "#") {
-    hash = "#" + hash;
+  // Apply options.fragment explicitly only if it is falsy
+  if (isExplicitlyFalse(options.fragment)) {
+    hash = "";
+  } else {
+    if (hash && hash.charAt(0) !== "#") {
+      hash = "#" + hash;
+    }
   }
+
   if (search && search.charAt(0) !== "?") {
     search = "?" + search;
   }
@@ -542,7 +594,6 @@ Url.prototype.format = function format() {
 
   return protocol + host + pathname + search + hash;
 };
-
 function urlResolve(source: string | URL | Url, relative: string | URL | Url) {
   return urlParse(source, false, true).resolve(relative);
 }

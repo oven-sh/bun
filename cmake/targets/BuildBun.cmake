@@ -939,7 +939,7 @@ if(WIN32)
 endif()
 
 if(USE_MIMALLOC_AS_DEFAULT_ALLOCATOR)
-  target_compile_definitions(${bun} PRIVATE BUN_USE_MIMALLOC=1)
+  target_compile_definitions(${bun} PRIVATE USE_BUN_MIMALLOC=1)
 endif()
 
 target_compile_definitions(${bun} PRIVATE

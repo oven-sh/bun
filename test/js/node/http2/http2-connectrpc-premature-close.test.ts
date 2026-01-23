@@ -9,9 +9,9 @@
  * (ended=true but endEmitted=false) and waits for the 'end' event before
  * destroying the stream, preventing data loss.
  *
- * NOTE: This test is a placeholder. The comprehensive reproduction requires
- * a Connect RPC server (see test/js/node/http2/connectrpc-repro/).
- * Maintainers: Please advise on preferred test approach for this timing-sensitive bug.
+ * NOTE: This test demonstrates the pattern but may not reliably trigger the bug
+ * without cross-process timing. For a comprehensive reproduction using Connect RPC,
+ * see: https://gist.github.com/tomsanbear/ff6d272d404d9d02f62a8f54d55550ea
  */
 
 import { describe, expect, test } from "bun:test";
@@ -61,7 +61,10 @@ describe("HTTP/2 premature close bug", () => {
       error = err;
     });
 
-    await new Promise(resolve => stream.on("end", resolve));
+    await new Promise(resolve => {
+      stream.once("end", resolve);
+      stream.once("error", resolve);
+    });
 
     client.close();
     await new Promise<void>(res => server.close(() => res()));

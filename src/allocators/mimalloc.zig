@@ -81,6 +81,7 @@ pub extern fn mi_theap_calloc(theap: *THeap, count: usize, size: usize) ?*anyopa
 pub extern fn mi_theap_malloc_small(theap: *THeap, size: usize) ?*anyopaque;
 pub extern fn mi_theap_malloc_aligned(theap: *THeap, size: usize, alignment: usize) ?*anyopaque;
 pub extern fn mi_theap_realloc(theap: *THeap, p: ?*anyopaque, newsize: usize) ?*anyopaque;
+pub extern fn mi_theap_destroy(theap: *THeap) void;
 pub extern fn mi_heap_theap(heap: *Heap) *THeap;
 pub extern fn mi_heap_malloc(heap: *Heap, size: usize) ?*anyopaque;
 pub extern fn mi_heap_zalloc(heap: *Heap, size: usize) ?*anyopaque;

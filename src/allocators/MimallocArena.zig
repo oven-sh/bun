@@ -3,6 +3,7 @@
 const Self = @This();
 
 #heap: *mimalloc.Heap,
+thread_id: std.Thread.Id,
 
 /// Uses the default thread-local heap. This type is zero-sized.
 ///
@@ -23,7 +24,7 @@ pub const Borrowed = struct {
     #heap: *mimalloc.Heap,
 
     pub fn allocator(self: Borrowed) std.mem.Allocator {
-        return .{ .ptr = self.#heap, .vtable = &c_allocator_vtable };
+        return .{ .ptr = self.#heap, .vtable = c_allocator_vtable };
     }
 
     pub fn getDefault() Borrowed {
@@ -79,6 +80,7 @@ pub const Borrowed = struct {
 const log = bun.Output.scoped(.mimalloc, .hidden);
 
 pub fn allocator(self: Self) std.mem.Allocator {
+    self.assertThreadOwnership();
     return self.borrow().allocator();
 }
 
@@ -123,7 +125,10 @@ pub fn deinit(self: *Self) void {
 }
 
 pub fn init() Self {
-    return .{ .#heap = mimalloc.mi_heap_new() orelse bun.outOfMemory() };
+    return .{
+        .#heap = mimalloc.mi_heap_new() orelse bun.outOfMemory(),
+        .thread_id = std.Thread.getCurrentId(),
+    };
 }
 
 pub fn gc(self: Self) void {
@@ -132,6 +137,18 @@ pub fn gc(self: Self) void {
 
 pub fn helpCatchMemoryIssues(self: Self) void {
     self.borrow().helpCatchMemoryIssues();
+}
+
+fn assertThreadOwnership(self: Self) void {
+    if (bun.Environment.isDebug) {
+        const current_thread = std.Thread.getCurrentId();
+        if (current_thread != self.thread_id) {
+            std.debug.panic(
+                "MimallocArena used from wrong thread: arena belongs to thread {d}, but current thread is {d}",
+                .{ self.thread_id, current_thread },
+            );
+        }
+    }
 }
 
 fn alignedAllocSize(ptr: [*]u8) usize {
@@ -174,10 +191,10 @@ fn vtable_remap(ptr: *anyopaque, buf: []u8, alignment: Alignment, new_len: usize
 }
 
 pub fn isInstance(alloc: std.mem.Allocator) bool {
-    return alloc.vtable == &c_allocator_vtable;
+    return alloc.vtable == c_allocator_vtable;
 }
 
-const c_allocator_vtable = std.mem.Allocator.VTable{
+const c_allocator_vtable = &std.mem.Allocator.VTable{
     .alloc = vtable_alloc,
     .resize = vtable_resize,
     .remap = vtable_remap,

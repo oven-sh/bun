@@ -1,3 +1,48 @@
+// Wrappers for console methods to handle zero-argument calls.
+// JSC's ConsoleClient skips calling messageWithTypeAndLevel when there are no arguments,
+// but Node.js prints an empty line in that case. These wrappers ensure we pass an empty
+// string when called with no arguments, so our messageWithTypeAndLevel is invoked.
+
+export function log(this: Console) {
+  const nativeLog = $getByIdDirectPrivate(this, "log");
+  if ($argumentCount() === 0) {
+    return nativeLog.$call(this, "");
+  }
+  return nativeLog.$apply(this, arguments);
+}
+
+export function warn(this: Console) {
+  const nativeWarn = $getByIdDirectPrivate(this, "warn");
+  if ($argumentCount() === 0) {
+    return nativeWarn.$call(this, "");
+  }
+  return nativeWarn.$apply(this, arguments);
+}
+
+export function error(this: Console) {
+  const nativeError = $getByIdDirectPrivate(this, "error");
+  if ($argumentCount() === 0) {
+    return nativeError.$call(this, "");
+  }
+  return nativeError.$apply(this, arguments);
+}
+
+export function info(this: Console) {
+  const nativeInfo = $getByIdDirectPrivate(this, "info");
+  if ($argumentCount() === 0) {
+    return nativeInfo.$call(this, "");
+  }
+  return nativeInfo.$apply(this, arguments);
+}
+
+export function debug(this: Console) {
+  const nativeDebug = $getByIdDirectPrivate(this, "debug");
+  if ($argumentCount() === 0) {
+    return nativeDebug.$call(this, "");
+  }
+  return nativeDebug.$apply(this, arguments);
+}
+
 $overriddenName = "[Symbol.asyncIterator]";
 export function asyncIterator(this: Console) {
   var stream = Bun.stdin.stream();

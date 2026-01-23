@@ -91,6 +91,7 @@ using namespace JSC;
     macro(cwd) \
     macro(data) \
     macro(dataView) \
+    macro(debug) \
     macro(decode) \
     macro(delimiter) \
     macro(dest) \
@@ -105,6 +106,7 @@ using namespace JSC;
     macro(encoding) \
     macro(end) \
     macro(errno) \
+    macro(error) \
     macro(errorSteps) \
     macro(evaluateCommonJSModule) \
     macro(evaluated) \
@@ -139,6 +141,7 @@ using namespace JSC;
     macro(httpOnly) \
     macro(ignoreBOM) \
     macro(importer) \
+    macro(info) \
     macro(inFlightCloseRequest) \
     macro(inFlightWriteRequest) \
     macro(inherits) \
@@ -159,6 +162,7 @@ using namespace JSC;
     macro(lineText) \
     macro(loadEsmIntoCjs) \
     macro(localStreams) \
+    macro(log) \
     macro(main) \
     macro(makeAbortError) \
     macro(makeDOMException) \
@@ -273,6 +277,7 @@ using namespace JSC;
     macro(version) \
     macro(versions) \
     macro(view) \
+    macro(warn) \
     macro(warning) \
     macro(writable) \
     macro(write) \

@@ -2806,6 +2806,24 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "Console"_s), CustomGetterSetter::create(vm, getConsoleConstructor, nullptr), PropertyAttribute::CustomValue | 0);
     consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "_stdout"_s), CustomGetterSetter::create(vm, getConsoleStdout, nullptr), PropertyAttribute::DontEnum | PropertyAttribute::CustomValue | 0);
     consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "_stderr"_s), CustomGetterSetter::create(vm, getConsoleStderr, nullptr), PropertyAttribute::DontEnum | PropertyAttribute::CustomValue | 0);
+
+    // Wrap console methods to handle zero-argument calls (fixes #26151).
+    // JSC's ConsoleClient skips calling messageWithTypeAndLevel when there are no arguments,
+    // but Node.js prints an empty line in that case. These wrappers ensure we pass an empty
+    // string when called with no arguments, so our messageWithTypeAndLevel is invoked.
+    auto wrapConsoleMethod = [&](const Identifier& publicName, const Identifier& privateName, JSC::FunctionExecutable* (*codeGenerator)(JSC::VM&)) {
+        JSValue nativeMethod = consoleObject->get(this, publicName);
+        if (nativeMethod.isCallable()) {
+            consoleObject->putDirect(vm, privateName, nativeMethod, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+            consoleObject->putDirectBuiltinFunction(vm, this, publicName, codeGenerator(vm), PropertyAttribute::Builtin | 0);
+        }
+    };
+
+    wrapConsoleMethod(clientData->builtinNames().logPublicName(), clientData->builtinNames().logPrivateName(), consoleObjectLogCodeGenerator);
+    wrapConsoleMethod(clientData->builtinNames().warnPublicName(), clientData->builtinNames().warnPrivateName(), consoleObjectWarnCodeGenerator);
+    wrapConsoleMethod(clientData->builtinNames().errorPublicName(), clientData->builtinNames().errorPrivateName(), consoleObjectErrorCodeGenerator);
+    wrapConsoleMethod(clientData->builtinNames().infoPublicName(), clientData->builtinNames().infoPrivateName(), consoleObjectInfoCodeGenerator);
+    wrapConsoleMethod(clientData->builtinNames().debugPublicName(), clientData->builtinNames().debugPrivateName(), consoleObjectDebugCodeGenerator);
 }
 
 // ===================== start conditional builtin globals =====================

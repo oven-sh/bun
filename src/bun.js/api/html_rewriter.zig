@@ -186,12 +186,14 @@ pub const HTMLRewriter = struct {
             return out;
         }
 
-        const ResponseKind = enum { string, array_buffer, other };
+        const ResponseKind = enum { string, array_buffer, blob, other };
         const kind: ResponseKind = brk: {
             if (response_value.isString())
                 break :brk .string
             else if (response_value.jsType().isTypedArrayOrArrayBuffer())
                 break :brk .array_buffer
+            else if (response_value.as(jsc.WebCore.Blob)) |_|
+                break :brk .blob
             else
                 break :brk .other;
         };
@@ -214,6 +216,12 @@ pub const HTMLRewriter = struct {
                     return global.throwValue(err);
                 }
                 out_response_value.ensureStillAlive();
+
+                // For blob input, return the Response directly
+                if (kind == .blob) {
+                    return out_response_value;
+                }
+
                 var out_response = out_response_value.as(Response) orelse return out_response_value;
                 var blob = out_response.getBodyValue().useAsAnyBlobAllowNonUTF8String();
 
@@ -230,6 +238,7 @@ pub const HTMLRewriter = struct {
                     .array_buffer => brk: {
                         break :brk blob.toArrayBuffer(global, .transfer);
                     },
+                    .blob => unreachable, // handled above
                     .other => unreachable,
                 };
             }

@@ -155,7 +155,7 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
                 .namedPipe = WindowsNamedPipeListeningContext.listen(
                     globalObject,
                     pipe_name,
-                    511,
+                    socket_config.backlog,
                     ssl,
                     this,
                 ) catch return globalObject.throwInvalidArguments(
@@ -249,7 +249,7 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
                 const host = bun.handleOom(bun.default_allocator.dupeZ(u8, c.host));
                 defer bun.default_allocator.free(host);
 
-                const socket = socket_context.listen(ssl_enabled, host.ptr, c.port, socket_flags, 8, &errno);
+                const socket = socket_context.listen(ssl_enabled, host.ptr, c.port, socket_flags, 8, socket_config.backlog, &errno);
                 // should return the assigned port
                 if (socket) |s| {
                     connection.host.port = @as(u16, @intCast(s.getLocalPort(ssl_enabled)));
@@ -259,7 +259,7 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
             .unix => |u| {
                 const host = bun.handleOom(bun.default_allocator.dupeZ(u8, u));
                 defer bun.default_allocator.free(host);
-                break :brk socket_context.listenUnix(ssl_enabled, host, host.len, socket_flags, 8, &errno);
+                break :brk socket_context.listenUnix(ssl_enabled, host, host.len, socket_flags, 8, socket_config.backlog, &errno);
             },
             .fd => |fd| {
                 const err: bun.jsc.SystemError = .{

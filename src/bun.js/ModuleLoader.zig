@@ -1330,6 +1330,7 @@ const string = []const u8;
 
 const Fs = @import("../fs.zig");
 const Runtime = @import("../runtime.zig");
+const analyze_transpiled_module = @import("../analyze_transpiled_module.zig");
 const ast = @import("../import_record.zig");
 const node_module_module = @import("./bindings/NodeModuleModule.zig");
 const std = @import("std");
@@ -1344,7 +1345,6 @@ const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
 const dumpSource = @import("./RuntimeTranspilerStore.zig").dumpSource;
 const dumpSourceString = @import("./RuntimeTranspilerStore.zig").dumpSourceString;
 const setBreakPointOnFirstLine = @import("./RuntimeTranspilerStore.zig").setBreakPointOnFirstLine;
-const analyze_transpiled_module = @import("../analyze_transpiled_module.zig");
 
 const bun = @import("bun");
 const Environment = bun.Environment;

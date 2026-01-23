@@ -1587,12 +1587,12 @@ pub const ResolveQueue = bun.LinearFifo(
 
 const string = []const u8;
 
-const analyze_transpiled_module = @import("./analyze_transpiled_module.zig");
 const DotEnv = @import("./env_loader.zig");
 const Fs = @import("./fs.zig");
 const MimeType = @import("./http/MimeType.zig");
 const NodeFallbackModules = @import("./node_fallbacks.zig");
 const Router = @import("./router.zig");
+const analyze_transpiled_module = @import("./analyze_transpiled_module.zig");
 const runtime = @import("./runtime.zig");
 const std = @import("std");
 const DataURL = @import("./resolver/data_url.zig").DataURL;

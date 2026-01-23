@@ -1128,8 +1128,6 @@ pub const Transpiler = struct {
                 opts.features.dead_code_elimination = transpiler.options.dead_code_elimination;
                 opts.features.remove_cjs_module_wrapper = this_parse.remove_cjs_module_wrapper;
                 opts.features.bundler_feature_flags = transpiler.options.bundler_feature_flags;
-                opts.features.repl_mode = transpiler.options.repl_mode;
-                opts.repl_mode = transpiler.options.repl_mode;
 
                 if (transpiler.macro_context == null) {
                     transpiler.macro_context = js_ast.Macro.MacroContext.init(transpiler);
@@ -1587,12 +1585,12 @@ pub const ResolveQueue = bun.LinearFifo(
 
 const string = []const u8;
 
+const analyze_transpiled_module = @import("./analyze_transpiled_module.zig");
 const DotEnv = @import("./env_loader.zig");
 const Fs = @import("./fs.zig");
 const MimeType = @import("./http/MimeType.zig");
 const NodeFallbackModules = @import("./node_fallbacks.zig");
 const Router = @import("./router.zig");
-const analyze_transpiled_module = @import("./analyze_transpiled_module.zig");
 const runtime = @import("./runtime.zig");
 const std = @import("std");
 const DataURL = @import("./resolver/data_url.zig").DataURL;

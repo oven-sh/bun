@@ -253,8 +253,8 @@ pub fn init(options: Options) OutputFile {
         .hash = options.hash orelse 0,
         .output_kind = options.output_kind,
         .bytecode_index = options.bytecode_index orelse std.math.maxInt(u32),
-        .source_map_index = options.source_map_index orelse std.math.maxInt(u32),
         .module_info_index = options.module_info_index orelse std.math.maxInt(u32),
+        .source_map_index = options.source_map_index orelse std.math.maxInt(u32),
         .is_executable = options.is_executable,
         .value = switch (options.data) {
             .buffer => |buffer| Value{ .buffer = .{ .allocator = buffer.allocator, .bytes = buffer.data } },

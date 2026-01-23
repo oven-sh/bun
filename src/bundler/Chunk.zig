@@ -505,6 +505,8 @@ pub const Chunk = struct {
 
         /// Serialized ModuleInfo for ESM bytecode (--compile --bytecode --format=esm)
         module_info_bytes: []const u8 = "",
+        /// Unserialized ModuleInfo for deferred serialization (after chunk paths are resolved)
+        module_info: ?*analyze_transpiled_module.ModuleInfo = null,
     };
 
     pub const CssChunk = struct {
@@ -661,6 +663,7 @@ const std = @import("std");
 
 const options = @import("../options.zig");
 const Loader = options.Loader;
+const analyze_transpiled_module = @import("../analyze_transpiled_module.zig");
 
 const bun = @import("bun");
 const FeatureFlags = bun.FeatureFlags;

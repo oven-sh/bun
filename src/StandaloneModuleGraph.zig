@@ -385,6 +385,8 @@ pub const StandaloneModuleGraph = struct {
                 } else if (output_file.output_kind == .bytecode) {
                     // Allocate up to 256 byte alignment for bytecode
                     string_builder.cap += (output_file.value.buffer.bytes.len + 255) / 256 * 256 + 256;
+                } else if (output_file.output_kind == .module_info) {
+                    string_builder.cap += output_file.value.buffer.bytes.len;
                 } else {
                     if (entry_point_id == null) {
                         if (output_file.side == null or output_file.side.? == .server) {

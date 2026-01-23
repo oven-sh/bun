@@ -25,6 +25,15 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
     const toESMRef = c.graph.symbols.follow(runtime_members.get("__toESM").?.ref);
     const runtimeRequireRef = if (c.options.output_format == .cjs) null else c.graph.symbols.follow(runtime_members.get("__require").?.ref);
 
+    // Create ModuleInfo for ESM bytecode in --compile builds
+    const generate_module_info = c.options.generate_bytecode_cache and c.options.output_format == .esm and c.resolver.opts.compile;
+    const loader = c.parse_graph.input_files.items(.loader)[chunk.entry_point.source_index];
+    const is_typescript = loader.isTypeScript();
+    const module_info: ?*analyze_transpiled_module.ModuleInfo = if (generate_module_info)
+        analyze_transpiled_module.ModuleInfo.create(bun.default_allocator, is_typescript) catch null
+    else
+        null;
+
     {
         const print_options = js_printer.Options{
             .bundling = true,
@@ -39,6 +48,7 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
             .target = c.options.target,
             .print_dce_annotations = c.options.emit_dce_annotations,
             .mangled_props = &c.mangled_props,
+            .module_info = module_info,
             // .const_values = c.graph.const_values,
         };
 
@@ -84,7 +94,102 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
         );
     }
 
-    // Generate the exports for the entry point, if there are any
+    // Populate ModuleInfo with declarations collected during parallel printing,
+    // external import records from the original AST, and wrapper refs.
+    if (module_info) |mi| {
+        // 1. Add declarations collected by DeclCollector during parallel part printing.
+        // These come from the CONVERTED statements (after convertStmtsForChunk transforms
+        // export default → var, strips exports, etc.), so they match what's actually printed.
+        for (chunk.compile_results_for_chunk) |cr| {
+            const decls = switch (cr) {
+                .javascript => |js| js.decls,
+                else => continue,
+            };
+            for (decls) |decl| {
+                const var_kind: analyze_transpiled_module.ModuleInfo.VarKind = switch (decl.kind) {
+                    .declared => .declared,
+                    .lexical => .lexical,
+                };
+                const string_id = mi.str(decl.name) catch continue;
+                mi.addVar(string_id, var_kind) catch continue;
+            }
+        }
+
+        // 2. Collect external imports from the original AST. These are NOT transformed by
+        // convertStmtsForChunk (s_import statements survive unchanged), so scanning the
+        // original AST is correct here.
+        const all_parts = c.graph.ast.items(.parts);
+        const all_flags = c.graph.meta.items(.flags);
+        const all_import_records = c.graph.ast.items(.import_records);
+        for (chunk.content.javascript.parts_in_chunk_in_order) |part_range| {
+            if (all_flags[part_range.source_index.get()].wrap == .cjs) continue;
+            const source_parts = all_parts[part_range.source_index.get()].slice();
+            const source_import_records = all_import_records[part_range.source_index.get()].slice();
+            var part_i = part_range.part_index_begin;
+            while (part_i < part_range.part_index_end) : (part_i += 1) {
+                for (source_parts[part_i].stmts) |stmt| {
+                    switch (stmt.data) {
+                        .s_import => |s| {
+                            const record = &source_import_records[s.import_record_index];
+                            if (record.path.is_disabled) continue;
+                            if (record.tag == .bun) continue;
+
+                            const import_path = record.path.text;
+                            const irp_id = mi.str(import_path) catch continue;
+                            mi.requestModule(irp_id, .none) catch continue;
+
+                            if (s.default_name) |name| {
+                                if (name.ref) |name_ref| {
+                                    const local_name = chunk.renamer.nameForSymbol(name_ref);
+                                    const local_name_id = mi.str(local_name) catch continue;
+                                    mi.addVar(local_name_id, .lexical) catch continue;
+                                    mi.addImportInfoSingle(irp_id, mi.str("default") catch continue, local_name_id, false) catch continue;
+                                }
+                            }
+
+                            for (s.items) |item| {
+                                if (item.name.ref) |name_ref| {
+                                    const local_name = chunk.renamer.nameForSymbol(name_ref);
+                                    const local_name_id = mi.str(local_name) catch continue;
+                                    mi.addVar(local_name_id, .lexical) catch continue;
+                                    mi.addImportInfoSingle(irp_id, mi.str(item.alias) catch continue, local_name_id, false) catch continue;
+                                }
+                            }
+
+                            if (record.flags.contains_import_star) {
+                                const local_name = chunk.renamer.nameForSymbol(s.namespace_ref);
+                                const local_name_id = mi.str(local_name) catch continue;
+                                mi.addVar(local_name_id, .lexical) catch continue;
+                                mi.addImportInfoNamespace(irp_id, local_name_id) catch continue;
+                            }
+                        },
+                        else => {},
+                    }
+                }
+            }
+        }
+
+        // 3. Add wrapper-generated declarations (init_xxx, require_xxx) that are
+        // not in any part statement.
+        const all_wrapper_refs = c.graph.ast.items(.wrapper_ref);
+        for (chunk.content.javascript.parts_in_chunk_in_order) |part_range| {
+            const source_index = part_range.source_index.get();
+            if (all_flags[source_index].wrap != .none) {
+                const wrapper_ref = all_wrapper_refs[source_index];
+                if (!wrapper_ref.isEmpty()) {
+                    const name = chunk.renamer.nameForSymbol(wrapper_ref);
+                    if (name.len > 0) {
+                        const string_id = mi.str(name) catch continue;
+                        mi.addVar(string_id, .declared) catch continue;
+                    }
+                }
+            }
+        }
+    }
+
+    // Generate the exports for the entry point, if there are any.
+    // This must happen before module_info serialization so the printer
+    // can populate export entries in module_info.
     const entry_point_tail = brk: {
         if (chunk.isEntryPoint()) {
             break :brk generateEntryPointTailJS(
@@ -95,11 +200,20 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
                 worker.allocator,
                 arena.allocator(),
                 chunk.renamer,
+                module_info,
             );
         }
 
         break :brk CompileResult.empty;
     };
+
+    // Store unserialized ModuleInfo on the chunk. Serialization is deferred to
+    // generateChunksInParallel after final chunk paths are computed, so that
+    // cross-chunk import specifiers (which use unique_key placeholders during
+    // printing) can be resolved to actual paths.
+    if (module_info) |mi| {
+        chunk.content.javascript.module_info = mi;
+    }
 
     var j = StringJoiner{
         .allocator = worker.allocator,
@@ -443,6 +557,7 @@ pub fn generateEntryPointTailJS(
     allocator: std.mem.Allocator,
     temp_allocator: std.mem.Allocator,
     r: renamer.Renamer,
+    module_info: ?*analyze_transpiled_module.ModuleInfo,
 ) CompileResult {
     const flags: JSMeta.Flags = c.graph.meta.items(.flags)[source_index];
     var stmts = std.array_list.Managed(Stmt).init(temp_allocator);
@@ -825,6 +940,30 @@ pub fn generateEntryPointTailJS(
         },
     }
 
+    // Add generated local declarations from entry point tail to module_info.
+    // This captures vars like `var export_foo = cjs.foo` for CJS export copies.
+    if (module_info) |mi| {
+        for (stmts.items) |stmt| {
+            switch (stmt.data) {
+                .s_local => |s| {
+                    for (s.decls.slice()) |decl| {
+                        switch (decl.binding.data) {
+                            .b_identifier => |b| {
+                                const name = r.nameForSymbol(c.graph.symbols.follow(b.ref));
+                                if (name.len > 0) {
+                                    const str_id = mi.str(name) catch continue;
+                                    mi.addVar(str_id, .declared) catch {};
+                                }
+                            },
+                            else => {},
+                        }
+                    }
+                },
+                else => {},
+            }
+        }
+    }
+
     if (stmts.items.len == 0) {
         return .{
             .javascript = .{
@@ -850,6 +989,7 @@ pub fn generateEntryPointTailJS(
         .print_dce_annotations = c.options.emit_dce_annotations,
         .minify_syntax = c.options.minify_syntax,
         .mangled_props = &c.mangled_props,
+        .module_info = module_info,
         // .const_values = c.graph.const_values,
     };
 
@@ -898,6 +1038,7 @@ const ResolvedExports = bun.bundle_v2.ResolvedExports;
 const ThreadPool = bun.bundle_v2.ThreadPool;
 const js_printer = bun.bundle_v2.js_printer;
 const renamer = bun.bundle_v2.renamer;
+const analyze_transpiled_module = @import("../../analyze_transpiled_module.zig");
 
 const LinkerContext = bun.bundle_v2.LinkerContext;
 const GenerateChunkCtx = bun.bundle_v2.LinkerContext.GenerateChunkCtx;

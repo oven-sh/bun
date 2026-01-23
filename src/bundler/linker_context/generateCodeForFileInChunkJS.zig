@@ -10,6 +10,7 @@ pub fn generateCodeForFileInChunkJS(
     stmts: *StmtList,
     allocator: std.mem.Allocator,
     temp_allocator: std.mem.Allocator,
+    decl_collector: ?*DeclCollector,
 ) js_printer.PrintResult {
     const parts: []Part = c.graph.ast.items(.parts)[part_range.source_index.get()].slice()[part_range.part_index_begin..part_range.part_index_end];
     const all_flags: []const JSMeta.Flags = c.graph.meta.items(.flags);
@@ -613,6 +614,15 @@ pub fn generateCodeForFileInChunkJS(
         };
     }
 
+    // Collect top-level declarations from the converted statements.
+    // This is done here (after convertStmtsForChunk) rather than in
+    // postProcessJSChunk, because convertStmtsForChunk transforms the AST
+    // (e.g. export default expr → var, export stripping) and the converted
+    // statements reflect what actually gets printed.
+    if (decl_collector) |dc| {
+        dc.collectFromStmts(out_stmts, r, c);
+    }
+
     return c.printCodeForFileInChunkJS(
         r,
         allocator,
@@ -627,6 +637,67 @@ pub fn generateCodeForFileInChunkJS(
         c.getSource(part_range.source_index.get()),
     );
 }
+
+pub const DeclCollector = struct {
+    decls: std.ArrayListUnmanaged(CompileResult.DeclInfo) = .{},
+    allocator: std.mem.Allocator,
+
+    const CompileResult = bun.bundle_v2.CompileResult;
+
+    pub fn collectFromStmts(self: *DeclCollector, stmts: []const Stmt, r: renamer.Renamer, c: *LinkerContext) void {
+        for (stmts) |stmt| {
+            switch (stmt.data) {
+                .s_local => |s| {
+                    const kind: CompileResult.DeclInfo.Kind = if (s.kind == .k_var) .declared else .lexical;
+                    for (s.decls.slice()) |decl| {
+                        self.collectFromBinding(decl.binding, kind, r, c);
+                    }
+                },
+                .s_function => |s| {
+                    if (s.func.name) |name_loc_ref| {
+                        if (name_loc_ref.ref) |name_ref| {
+                            self.addRef(name_ref, .lexical, r, c);
+                        }
+                    }
+                },
+                .s_class => |s| {
+                    if (s.class.class_name) |class_name| {
+                        if (class_name.ref) |name_ref| {
+                            self.addRef(name_ref, .lexical, r, c);
+                        }
+                    }
+                },
+                else => {},
+            }
+        }
+    }
+
+    fn collectFromBinding(self: *DeclCollector, binding: Binding, kind: CompileResult.DeclInfo.Kind, r: renamer.Renamer, c: *LinkerContext) void {
+        switch (binding.data) {
+            .b_identifier => |b| {
+                self.addRef(b.ref, kind, r, c);
+            },
+            .b_array => |b| {
+                for (b.items) |item| {
+                    self.collectFromBinding(item.binding, kind, r, c);
+                }
+            },
+            .b_object => |b| {
+                for (b.properties) |prop| {
+                    self.collectFromBinding(prop.value, kind, r, c);
+                }
+            },
+            .b_missing => {},
+        }
+    }
+
+    fn addRef(self: *DeclCollector, ref: Ref, kind: CompileResult.DeclInfo.Kind, r: renamer.Renamer, c: *LinkerContext) void {
+        const followed = c.graph.symbols.follow(ref);
+        const name = r.nameForSymbol(followed);
+        if (name.len == 0) return;
+        self.decls.append(self.allocator, .{ .name = name, .kind = kind }) catch return;
+    }
+};
 
 fn mergeAdjacentLocalStmts(stmts: *std.ArrayListUnmanaged(Stmt), allocator: std.mem.Allocator) void {
     if (stmts.items.len == 0)

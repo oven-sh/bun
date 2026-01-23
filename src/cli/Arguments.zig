@@ -1260,8 +1260,9 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             }
 
             ctx.bundler_options.output_format = format;
-            if (format != .cjs and ctx.bundler_options.bytecode) {
-                Output.errGeneric("format must be 'cjs' when bytecode is true. Eventually we'll add esm support as well.", .{});
+            // ESM bytecode is supported for --compile builds (module_info is embedded in binary)
+            if (format != .cjs and format != .esm and ctx.bundler_options.bytecode) {
+                Output.errGeneric("format must be 'cjs' or 'esm' when bytecode is true.", .{});
                 Global.exit(1);
             }
         }

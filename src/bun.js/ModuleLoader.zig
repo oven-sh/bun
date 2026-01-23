@@ -178,6 +178,7 @@ pub fn transpileSourceCode(
             var cache = jsc.RuntimeTranspilerCache{
                 .output_code_allocator = allocator,
                 .sourcemap_allocator = bun.default_allocator,
+                .esm_record_allocator = bun.default_allocator,
             };
 
             const old = jsc_vm.transpiler.log;
@@ -516,6 +517,7 @@ pub fn transpileSourceCode(
                     &printer,
                     .esm_ascii,
                     mapper.get(),
+                    null,
                 );
             };
 
@@ -1195,6 +1197,10 @@ pub fn fetchBuiltinModule(jsc_vm: *VirtualMachine, specifier: bun.String) !?Reso
                 .source_code_needs_deref = false,
                 .bytecode_cache = if (file.bytecode.len > 0) file.bytecode.ptr else null,
                 .bytecode_cache_size = file.bytecode.len,
+                .module_info = if (file.module_info.len > 0)
+                    analyze_transpiled_module.ModuleInfoDeserialized.create(file.module_info, bun.default_allocator) catch null
+                else
+                    null,
                 .is_commonjs_module = file.module_format == .cjs,
             };
         }
@@ -1338,6 +1344,7 @@ const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
 const dumpSource = @import("./RuntimeTranspilerStore.zig").dumpSource;
 const dumpSourceString = @import("./RuntimeTranspilerStore.zig").dumpSourceString;
 const setBreakPointOnFirstLine = @import("./RuntimeTranspilerStore.zig").setBreakPointOnFirstLine;
+const analyze_transpiled_module = @import("../analyze_transpiled_module.zig");
 
 const bun = @import("bun");
 const Environment = bun.Environment;

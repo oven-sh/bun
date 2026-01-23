@@ -502,6 +502,9 @@ pub const Chunk = struct {
         ///
         /// Mutated while sorting chunks in `computeChunks`
         css_chunks: []u32 = &.{},
+
+        /// Serialized ModuleInfo for ESM bytecode (--compile --bytecode --format=esm)
+        module_info_bytes: []const u8 = "",
     };
 
     pub const CssChunk = struct {

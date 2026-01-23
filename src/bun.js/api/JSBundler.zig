@@ -542,8 +542,6 @@ pub const JSBundler = struct {
                 this.bytecode = bytecode;
 
                 if (bytecode) {
-                    // Default to CJS for bytecode, since esm doesn't really work yet.
-                    this.format = .cjs;
                     if (did_set_target and this.target != .bun and this.bytecode) {
                         return globalThis.throwInvalidArguments("target must be 'bun' when bytecode is true", .{});
                     }
@@ -670,13 +668,13 @@ pub const JSBundler = struct {
             if (try config.getOptionalEnum(globalThis, "format", options.Format)) |format| {
                 this.format = format;
 
-                if (this.bytecode and format != .cjs) {
-                    return globalThis.throwInvalidArguments("format must be 'cjs' when bytecode is true. Eventually we'll add esm support as well.", .{});
+                if (this.bytecode and format != .cjs and format != .esm) {
+                    return globalThis.throwInvalidArguments("format must be 'cjs' or 'esm' when bytecode is true.", .{});
                 }
             }
 
-            if (try config.getBooleanLoose(globalThis, "splitting")) |hot| {
-                this.code_splitting = hot;
+            if (try config.getBooleanLoose(globalThis, "splitting")) |splitting| {
+                this.code_splitting = splitting;
             }
 
             if (try config.getTruthy(globalThis, "minify")) |minify| {
@@ -1666,9 +1664,10 @@ pub const BuildArtifact = struct {
         @"entry-point",
         sourcemap,
         bytecode,
+        module_info,
 
         pub fn isFileInStandaloneMode(this: OutputKind) bool {
-            return this != .sourcemap and this != .bytecode;
+            return this != .sourcemap and this != .bytecode and this != .module_info;
         }
     };
 

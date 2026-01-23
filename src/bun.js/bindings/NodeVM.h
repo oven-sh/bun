@@ -69,9 +69,15 @@ public:
 
 class NodeVMContextOptions final {
 public:
+    enum class MicrotaskMode : uint8_t {
+        Default,
+        AfterEvaluate,
+    };
+
     bool allowStrings = true;
     bool allowWasm = true;
     bool notContextified = false;
+    MicrotaskMode microtaskMode = MicrotaskMode::Default;
 };
 
 class NodeVMGlobalObject;
@@ -128,6 +134,7 @@ public:
     NodeVMSpecialSandbox* specialSandbox() const { return m_specialSandbox.get(); }
     void setSpecialSandbox(NodeVMSpecialSandbox* sandbox) { m_specialSandbox.set(vm(), this, sandbox); }
     JSValue dynamicImportCallback() const { return m_dynamicImportCallback.get(); }
+    NodeVMContextOptions::MicrotaskMode microtaskMode() const { return m_contextOptions.microtaskMode; }
 
     // Override property access to delegate to contextified object
     static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, JSC::PropertyName, JSC::PropertySlot&);

@@ -49,14 +49,12 @@ public:
 
 static CredentialFramework* credentialFramework()
 {
-    static LazyNeverDestroyed<CredentialFramework> framework;
-    static std::once_flag onceFlag;
-    std::call_once(onceFlag, [&] {
-        framework.construct();
-        if (!framework->load()) {
-            // Framework failed to load, but object is still constructed
-        }
-    });
+    static auto& framework = []() -> auto& {
+        static LazyNeverDestroyed<CredentialFramework> f;
+        f.construct();
+        f->load();
+        return f;
+    }();
     return framework->handle ? &framework.get() : nullptr;
 }
 

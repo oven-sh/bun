@@ -81,7 +81,7 @@ pub const ModuleInfoDeserialized = struct {
         errdefer gpa.free(duped);
         var rem: []const u8 = duped;
         var res = try gpa.create(ModuleInfoDeserialized);
-        errdefer res.deinit();
+        errdefer gpa.destroy(res);
 
         const record_kinds_len = std.mem.readInt(u32, try eatC(&rem, 4), .little);
         const record_kinds = std.mem.bytesAsSlice(RecordKind, try eat(&rem, record_kinds_len * @sizeOf(RecordKind)));

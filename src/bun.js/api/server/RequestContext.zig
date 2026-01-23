@@ -1871,6 +1871,9 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         switch (stream.ptr) {
                             .Invalid => {
                                 this.response_body_readable_stream_ref.deinit();
+                                // Stream is invalid, render empty body
+                                this.doRenderBlob();
+                                return;
                             },
                             // toBlobIfPossible will typically convert .Blob streams, or .File streams into a Blob object, but cannot always.
                             .Blob,

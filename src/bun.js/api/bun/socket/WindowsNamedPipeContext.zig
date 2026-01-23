@@ -57,11 +57,11 @@ fn onHandshake(this: *WindowsNamedPipeContext, success: bool, ssl_error: uws.us_
     switch (this.socket) {
         .tls => |tls| {
             const socket = TLSSocket.Socket.fromNamedPipe(&this.named_pipe);
-            tls.onHandshake(socket, @intFromBool(success), ssl_error);
+            tls.onHandshake(socket, @intFromBool(success), ssl_error) catch {};
         },
         .tcp => |tcp| {
             const socket = TCPSocket.Socket.fromNamedPipe(&this.named_pipe);
-            tcp.onHandshake(socket, @intFromBool(success), ssl_error);
+            tcp.onHandshake(socket, @intFromBool(success), ssl_error) catch {};
         },
         .none => {},
     }
@@ -99,20 +99,20 @@ fn onError(this: *WindowsNamedPipeContext, err: bun.sys.Error) void {
     if (this.is_open) {
         switch (this.socket) {
             .tls => |tls| {
-                tls.handleError(err.toJS(this.globalThis));
+                tls.handleError(err.toJS(this.globalThis) catch return);
             },
             .tcp => |tcp| {
-                tcp.handleError(err.toJS(this.globalThis));
+                tcp.handleError(err.toJS(this.globalThis) catch return);
             },
             else => {},
         }
     } else {
         switch (this.socket) {
             .tls => |tls| {
-                tls.handleConnectError(err.errno);
+                tls.handleConnectError(err.errno) catch {};
             },
             .tcp => |tcp| {
-                tcp.handleConnectError(err.errno);
+                tcp.handleConnectError(err.errno) catch {};
             },
             else => {},
         }
@@ -138,11 +138,11 @@ fn onClose(this: *WindowsNamedPipeContext) void {
     this.socket = .none;
     switch (socket) {
         .tls => |tls| {
-            tls.onClose(TLSSocket.Socket.fromNamedPipe(&this.named_pipe), 0, null);
+            tls.onClose(TLSSocket.Socket.fromNamedPipe(&this.named_pipe), 0, null) catch {};
             tls.deref();
         },
         .tcp => |tcp| {
-            tcp.onClose(TCPSocket.Socket.fromNamedPipe(&this.named_pipe), 0, null);
+            tcp.onClose(TCPSocket.Socket.fromNamedPipe(&this.named_pipe), 0, null) catch {};
             tcp.deref();
         },
         .none => {},
@@ -211,10 +211,10 @@ pub fn open(globalThis: *jsc.JSGlobalObject, fd: bun.FileDescriptor, ssl_config:
     errdefer {
         switch (socket) {
             .tls => |tls| {
-                tls.handleConnectError(@intFromEnum(bun.sys.SystemErrno.ENOENT));
+                tls.handleConnectError(@intFromEnum(bun.sys.SystemErrno.ENOENT)) catch {};
             },
             .tcp => |tcp| {
-                tcp.handleConnectError(@intFromEnum(bun.sys.SystemErrno.ENOENT));
+                tcp.handleConnectError(@intFromEnum(bun.sys.SystemErrno.ENOENT)) catch {};
             },
             .none => {},
         }
@@ -231,10 +231,10 @@ pub fn connect(globalThis: *jsc.JSGlobalObject, path: []const u8, ssl_config: ?j
     errdefer {
         switch (socket) {
             .tls => |tls| {
-                tls.handleConnectError(@intFromEnum(bun.sys.SystemErrno.ENOENT));
+                tls.handleConnectError(@intFromEnum(bun.sys.SystemErrno.ENOENT)) catch {};
             },
             .tcp => |tcp| {
-                tcp.handleConnectError(@intFromEnum(bun.sys.SystemErrno.ENOENT));
+                tcp.handleConnectError(@intFromEnum(bun.sys.SystemErrno.ENOENT)) catch {};
             },
             .none => {},
         }

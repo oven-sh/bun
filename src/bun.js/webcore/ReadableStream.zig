@@ -647,7 +647,7 @@ pub fn NewSource(
                     .ready => return JSValue.jsNumber(16384),
                     .chunk_size => |size| return JSValue.jsNumber(size),
                     .err => |err| {
-                        return globalThis.throwValue(err.toJS(globalThis));
+                        return globalThis.throwValue(try err.toJS(globalThis));
                     },
                     else => |rc| {
                         return rc.toJS(globalThis);
@@ -664,7 +664,7 @@ pub fn NewSource(
                 switch (result) {
                     .err => |err| {
                         if (err == .Error) {
-                            return globalThis.throwValue(err.Error.toJS(globalThis));
+                            return globalThis.throwValue(try err.Error.toJS(globalThis));
                         } else {
                             const js_err = err.JSValue;
                             js_err.ensureStillAlive();

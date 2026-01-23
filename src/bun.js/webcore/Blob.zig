@@ -1379,17 +1379,19 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                     return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err_ref.toJS(globalThis));
                 },
                 .Locked => {
-                    if (destination_blob.isS3()) {
-                        const s3 = &destination_blob.store.?.data.s3;
-                        var aws_options = try s3.getCredentialsWithOptions(options.extra_options, globalThis);
-                        defer aws_options.deinit();
-                        _ = try bodyValue.toReadableStream(globalThis);
+                    // Convert the locked body to a ReadableStream
+                    _ = try bodyValue.toReadableStream(globalThis);
 
-                        if (response.getBodyReadableStream(globalThis) orelse bodyValue.Locked.readable.get(globalThis)) |readable| {
-                            if (readable.isDisturbed(globalThis)) {
-                                destination_blob.detach();
-                                return globalThis.throwInvalidArguments("ReadableStream has already been used", .{});
-                            }
+                    if (response.getBodyReadableStream(globalThis) orelse bodyValue.Locked.readable.get(globalThis)) |readable| {
+                        if (readable.isDisturbed(globalThis)) {
+                            destination_blob.detach();
+                            return globalThis.throwInvalidArguments("ReadableStream has already been used", .{});
+                        }
+
+                        if (destination_blob.isS3()) {
+                            const s3 = &destination_blob.store.?.data.s3;
+                            var aws_options = try s3.getCredentialsWithOptions(options.extra_options, globalThis);
+                            defer aws_options.deinit();
                             const proxy = globalThis.bunVM().transpiler.env.getHttpProxy(true, null);
                             const proxy_url = if (proxy) |p| p.href else null;
 
@@ -1410,18 +1412,13 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                                 undefined,
                             );
                         }
-                        destination_blob.detach();
-                        return globalThis.throwInvalidArguments("ReadableStream has already been used", .{});
+
+                        // For regular file destinations, pipe the ReadableStream to the file
+                        return destination_blob.pipeReadableStreamToBlob(globalThis, readable, options.extra_options);
                     }
-                    var task = bun.new(WriteFileWaitFromLockedValueTask, .{
-                        .globalThis = globalThis,
-                        .file_blob = destination_blob,
-                        .promise = jsc.JSPromise.Strong.init(globalThis),
-                        .mkdirp_if_not_exists = options.mkdirp_if_not_exists orelse true,
-                    });
-                    bodyValue.Locked.task = task;
-                    bodyValue.Locked.onReceiveValue = WriteFileWaitFromLockedValueTask.thenWrap;
-                    return task.promise.value();
+
+                    destination_blob.detach();
+                    return globalThis.throwInvalidArguments("ReadableStream has already been used", .{});
                 },
             }
         }
@@ -1444,16 +1441,19 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                     return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err_ref.toJS(globalThis));
                 },
                 .Locked => |locked| {
-                    if (destination_blob.isS3()) {
-                        const s3 = &destination_blob.store.?.data.s3;
-                        var aws_options = try s3.getCredentialsWithOptions(options.extra_options, globalThis);
-                        defer aws_options.deinit();
-                        _ = try bodyValue.toReadableStream(globalThis);
-                        if (request.getBodyReadableStream(globalThis) orelse locked.readable.get(globalThis)) |readable| {
-                            if (readable.isDisturbed(globalThis)) {
-                                destination_blob.detach();
-                                return globalThis.throwInvalidArguments("ReadableStream has already been used", .{});
-                            }
+                    // Convert the locked body to a ReadableStream
+                    _ = try bodyValue.toReadableStream(globalThis);
+
+                    if (request.getBodyReadableStream(globalThis) orelse locked.readable.get(globalThis)) |readable| {
+                        if (readable.isDisturbed(globalThis)) {
+                            destination_blob.detach();
+                            return globalThis.throwInvalidArguments("ReadableStream has already been used", .{});
+                        }
+
+                        if (destination_blob.isS3()) {
+                            const s3 = &destination_blob.store.?.data.s3;
+                            var aws_options = try s3.getCredentialsWithOptions(options.extra_options, globalThis);
+                            defer aws_options.deinit();
                             const proxy = globalThis.bunVM().transpiler.env.getHttpProxy(true, null);
                             const proxy_url = if (proxy) |p| p.href else null;
                             return S3.uploadStream(
@@ -1473,20 +1473,13 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
                                 undefined,
                             );
                         }
-                        destination_blob.detach();
-                        return globalThis.throwInvalidArguments("ReadableStream has already been used", .{});
+
+                        // For regular file destinations, pipe the ReadableStream to the file
+                        return destination_blob.pipeReadableStreamToBlob(globalThis, readable, options.extra_options);
                     }
-                    var task = bun.new(WriteFileWaitFromLockedValueTask, .{
-                        .globalThis = globalThis,
-                        .file_blob = destination_blob,
-                        .promise = jsc.JSPromise.Strong.init(globalThis),
-                        .mkdirp_if_not_exists = options.mkdirp_if_not_exists orelse true,
-                    });
 
-                    bodyValue.Locked.task = task;
-                    bodyValue.Locked.onReceiveValue = WriteFileWaitFromLockedValueTask.thenWrap;
-
-                    return task.promise.value();
+                    destination_blob.detach();
+                    return globalThis.throwInvalidArguments("ReadableStream has already been used", .{});
                 },
             }
         }
@@ -2384,6 +2377,7 @@ pub const FileStreamWrapper = struct {
 pub fn onFileStreamResolveRequestStream(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     var args = callframe.arguments_old(2);
     var this = args.ptr[args.len - 1].asPromisePtr(FileStreamWrapper);
+    const written = this.sink.written;
     defer this.deinit();
     var strong = this.readable_stream_ref;
     defer strong.deinit();
@@ -2391,7 +2385,7 @@ pub fn onFileStreamResolveRequestStream(globalThis: *jsc.JSGlobalObject, callfra
     if (strong.get(globalThis)) |stream| {
         stream.done(globalThis);
     }
-    try this.promise.resolve(globalThis, jsc.JSValue.jsNumber(0));
+    try this.promise.resolve(globalThis, jsc.JSValue.jsNumberFromUint64(written));
     return .js_undefined;
 }
 
@@ -2603,9 +2597,10 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, re
                     return promise_value;
                 },
                 .fulfilled => {
+                    const written = file_sink.written;
                     file_sink.deref();
                     readable_stream.done(globalThis);
-                    return jsc.JSPromise.resolvedPromiseValue(globalThis, jsc.JSValue.jsNumber(0));
+                    return jsc.JSPromise.resolvedPromiseValue(globalThis, jsc.JSValue.jsNumberFromUint64(written));
                 },
                 .rejected => {
                     file_sink.deref();
@@ -2623,9 +2618,10 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, re
             return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, assignment_result);
         }
     }
+    const written = file_sink.written;
     file_sink.deref();
 
-    return jsc.JSPromise.resolvedPromiseValue(globalThis, jsc.JSValue.jsNumber(0));
+    return jsc.JSPromise.resolvedPromiseValue(globalThis, jsc.JSValue.jsNumberFromUint64(written));
 }
 
 pub fn getWriter(
@@ -4848,7 +4844,6 @@ export fn Blob__deref(self: *Blob) void {
 }
 
 const WriteFilePromise = write_file.WriteFilePromise;
-const WriteFileWaitFromLockedValueTask = write_file.WriteFileWaitFromLockedValueTask;
 const NewReadFileHandler = read_file.NewReadFileHandler;
 
 const string = []const u8;

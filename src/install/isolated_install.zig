@@ -344,6 +344,13 @@ pub fn installIsolatedPackages(
                     }
 
                     // choose the current best version
+                    // For optional peers, don't auto-install from global resolutions.
+                    // Optional peers should only be satisfied by dependencies explicitly
+                    // found in the parent chain, not from globally resolved packages
+                    // that may have come from filtered-out workspaces.
+                    if (peer_dep.behavior.isOptionalPeer()) {
+                        break :resolved_pkg_id .{ invalid_package_id, true };
+                    }
                     break :resolved_pkg_id .{ resolutions[peer_dep_id], true };
                 };
 

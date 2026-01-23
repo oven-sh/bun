@@ -26,6 +26,7 @@ pub const RedisError = error{
     UnsupportedProtocol,
     ConnectionTimeout,
     IdleTimeout,
+    RecursionLimitExceeded,
 };
 
 pub fn valkeyErrorToJS(globalObject: *jsc.JSGlobalObject, message: ?[]const u8, err: RedisError) jsc.JSValue {
@@ -55,6 +56,7 @@ pub fn valkeyErrorToJS(globalObject: *jsc.JSGlobalObject, message: ?[]const u8, 
         error.InvalidResponseType => .REDIS_INVALID_RESPONSE_TYPE,
         error.ConnectionTimeout => .REDIS_CONNECTION_TIMEOUT,
         error.IdleTimeout => .REDIS_IDLE_TIMEOUT,
+        error.RecursionLimitExceeded => .REDIS_RECURSION_LIMIT,
         error.JSError => return globalObject.takeException(error.JSError),
         error.OutOfMemory => globalObject.throwOutOfMemory() catch return globalObject.takeException(error.JSError),
         error.JSTerminated => return globalObject.takeException(error.JSTerminated),
@@ -339,10 +341,12 @@ pub const RESPValue = union(RESPType) {
 pub const ValkeyReader = struct {
     buffer: []const u8,
     pos: usize = 0,
+    stack_check: bun.StackCheck,
 
     pub fn init(buffer: []const u8) ValkeyReader {
         return .{
             .buffer = buffer,
+            .stack_check = .init(),
         };
     }
 
@@ -421,6 +425,10 @@ pub const ValkeyReader = struct {
     }
 
     pub fn readValue(self: *ValkeyReader, allocator: std.mem.Allocator) RedisError!RESPValue {
+        if (!self.stack_check.isSafeToRecurse()) {
+            return error.RecursionLimitExceeded;
+        }
+
         const type_byte = try self.readByte();
 
         return switch (RESPType.fromByte(type_byte) orelse return error.InvalidResponseType) {

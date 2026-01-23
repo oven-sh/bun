@@ -14,8 +14,8 @@ pub const Default = struct {
     }
 };
 
-/// Borrowed version of `MimallocArena`, returned by `MimallocArena.borrow`.
-/// Using this type makes it clear who actually owns the `MimallocArena`, and prevents
+/// Borrowed version of `ThreadlocalHeapArena`, returned by `ThreadlocalHeapArena.borrow`.
+/// Using this type makes it clear who actually owns the `ThreadlocalHeapArena`, and prevents
 /// `deinit` from being called twice.
 ///
 /// This type is a `GenericAllocator`; see `src/allocators.zig`.
@@ -31,7 +31,7 @@ pub const Borrowed = struct {
     }
 
     pub fn gc(self: Borrowed) void {
-        mimalloc.mi_heap_collect(self.getMimallocHeap(), false);
+        mimalloc.mi_theap_collect(self.getTHeap(), false);
     }
 
     pub fn helpCatchMemoryIssues(self: Borrowed) void {
@@ -41,15 +41,11 @@ pub const Borrowed = struct {
         }
     }
 
-    pub fn ownsPtr(self: Borrowed, ptr: *const anyopaque) bool {
-        return mimalloc.mi_heap_contains(self.getMimallocHeap(), ptr);
-    }
-
     fn fromOpaque(ptr: *anyopaque) Borrowed {
         return .{ .#heap = @ptrCast(@alignCast(ptr)) };
     }
 
-    fn getMimallocHeap(self: Borrowed) *mimalloc.Heap {
+    fn getTHeap(self: Borrowed) *mimalloc.THeap {
         return if (comptime safety_checks) self.#heap.inner else self.#heap;
     }
 
@@ -60,11 +56,11 @@ pub const Borrowed = struct {
     fn alignedAlloc(self: Borrowed, len: usize, alignment: Alignment) ?[*]u8 {
         log("Malloc: {d}\n", .{len});
 
-        const heap = self.getMimallocHeap();
+        const theap = self.getTHeap();
         const ptr: ?*anyopaque = if (mimalloc.mustUseAlignedAlloc(alignment))
-            mimalloc.mi_heap_malloc_aligned(heap, len, alignment.toByteUnits())
+            mimalloc.mi_theap_malloc_aligned(theap, len, alignment.toByteUnits())
         else
-            mimalloc.mi_heap_malloc(heap, len);
+            mimalloc.mi_theap_malloc(theap, len);
 
         if (comptime bun.Environment.isDebug) {
             const usable = mimalloc.mi_malloc_usable_size(ptr);
@@ -82,17 +78,18 @@ pub const Borrowed = struct {
     pub fn downcast(std_alloc: std.mem.Allocator) Borrowed {
         bun.assertf(
             isInstance(std_alloc),
-            "not a MimallocArena (vtable is {*})",
+            "not a ThreadlocalHeapArena (vtable is {*})",
             .{std_alloc.vtable},
         );
         return .fromOpaque(std_alloc.ptr);
     }
 };
 
-const BorrowedHeap = if (safety_checks) *DebugHeap else *mimalloc.Heap;
+const BorrowedHeap = if (safety_checks) *DebugHeap else *mimalloc.THeap;
 
 const DebugHeap = struct {
-    inner: *mimalloc.Heap,
+    inner: *mimalloc.THeap,
+    heap: *mimalloc.Heap,
     thread_lock: bun.safety.ThreadLock,
 
     pub const deinit = void;
@@ -101,10 +98,11 @@ const DebugHeap = struct {
 threadlocal var thread_heap: if (safety_checks) ?DebugHeap else void = if (safety_checks) null;
 
 fn getThreadHeap() BorrowedHeap {
-    if (comptime !safety_checks) return mimalloc.mi_heap_main();
+    if (comptime !safety_checks) return mimalloc.mi_theap_get_default();
     if (thread_heap == null) {
         thread_heap = .{
-            .inner = mimalloc.mi_heap_main(),
+            .inner = mimalloc.mi_theap_get_default(),
+            .heap = mimalloc.mi_heap_main(),
             .thread_lock = .initLocked(),
         };
     }
@@ -118,7 +116,7 @@ pub fn allocator(self: Self) std.mem.Allocator {
 }
 
 pub fn borrow(self: Self) Borrowed {
-    return .{ .#heap = if (comptime safety_checks) self.#heap.get() else self.#heap };
+    return .{ .#heap = if (comptime safety_checks) self.#heap.get() else mimalloc.mi_heap_theap(self.#heap) };
 }
 
 pub fn getThreadLocalDefault() std.mem.Allocator {
@@ -153,7 +151,7 @@ pub fn dumpStats(_: Self) void {
 }
 
 pub fn deinit(self: *Self) void {
-    const mimalloc_heap = self.borrow().getMimallocHeap();
+    const mimalloc_heap = if (comptime safety_checks) self.#heap.get().heap else self.#heap;
     if (comptime safety_checks) {
         self.#heap.deinit();
     }
@@ -165,7 +163,8 @@ pub fn init() Self {
     const mimalloc_heap = mimalloc.mi_heap_new() orelse bun.outOfMemory();
     if (comptime !safety_checks) return .{ .#heap = mimalloc_heap };
     const heap: Owned(*DebugHeap) = .new(.{
-        .inner = mimalloc_heap,
+        .inner = mimalloc.mi_heap_theap(mimalloc_heap),
+        .heap = mimalloc_heap,
         .thread_lock = .initLocked(),
     });
     return .{ .#heap = heap };
@@ -180,7 +179,8 @@ pub fn helpCatchMemoryIssues(self: Self) void {
 }
 
 pub fn ownsPtr(self: Self, ptr: *const anyopaque) bool {
-    return self.borrow().ownsPtr(ptr);
+    const heap: *const mimalloc.Heap = if (comptime safety_checks) self.#heap.get().heap else self.#heap;
+    return mimalloc.mi_heap_contains(heap, ptr);
 }
 
 fn alignedAllocSize(ptr: [*]u8) usize {
@@ -219,32 +219,18 @@ fn vtable_free(
     }
 }
 
-/// Attempt to expand or shrink memory, allowing relocation.
-///
-/// `memory.len` must equal the length requested from the most recent
-/// successful call to `alloc`, `resize`, or `remap`. `alignment` must
-/// equal the same value that was passed as the `alignment` parameter to
-/// the original `alloc` call.
-///
-/// A non-`null` return value indicates the resize was successful. The
-/// allocation may have same address, or may have been relocated. In either
-/// case, the allocation now has size of `new_len`. A `null` return value
-/// indicates that the resize would be equivalent to allocating new memory,
-/// copying the bytes from the old memory, and then freeing the old memory.
-/// In such case, it is more efficient for the caller to perform the copy.
-///
-/// `new_len` must be greater than zero.
-///
-/// `ret_addr` is optionally provided as the first return address of the
-/// allocation call stack. If the value is `0` it means no return address
-/// has been provided.
 fn vtable_remap(ptr: *anyopaque, buf: []u8, alignment: Alignment, new_len: usize, _: usize) ?[*]u8 {
     const self: Borrowed = .fromOpaque(ptr);
     self.assertThreadLock();
-    const heap = self.getMimallocHeap();
+    const theap = self.getTHeap();
     const aligned_size = alignment.toByteUnits();
-    const value = mimalloc.mi_heap_realloc_aligned(heap, buf.ptr, new_len, aligned_size);
-    return @ptrCast(value);
+    // Allocate new aligned block, copy, and free old
+    const new_ptr: ?*anyopaque = mimalloc.mi_theap_malloc_aligned(theap, new_len, aligned_size);
+    const dest = new_ptr orelse return null;
+    const copy_len = @min(buf.len, new_len);
+    @memcpy(@as([*]u8, @ptrCast(dest))[0..copy_len], buf[0..copy_len]);
+    mimalloc.mi_free(buf.ptr);
+    return @ptrCast(dest);
 }
 
 pub fn isInstance(alloc: std.mem.Allocator) bool {

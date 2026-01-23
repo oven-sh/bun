@@ -1198,7 +1198,12 @@ pub fn fetchBuiltinModule(jsc_vm: *VirtualMachine, specifier: bun.String) !?Reso
                 .bytecode_cache = if (file.bytecode.len > 0) file.bytecode.ptr else null,
                 .bytecode_cache_size = file.bytecode.len,
                 .module_info = if (file.module_info.len > 0)
-                    analyze_transpiled_module.ModuleInfoDeserialized.create(file.module_info, bun.default_allocator) catch null
+                    analyze_transpiled_module.ModuleInfoDeserialized.create(file.module_info, bun.default_allocator) catch |err| blk: {
+                        if (comptime bun.Environment.isDebug) {
+                            bun.Output.debugWarn("Failed to deserialize module_info: {s}\n", .{@errorName(err)});
+                        }
+                        break :blk null;
+                    }
                 else
                     null,
                 .is_commonjs_module = file.module_format == .cjs,

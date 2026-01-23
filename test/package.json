@@ -11,6 +11,9 @@
   "dependencies": {
     "@astrojs/node": "9.1.3",
     "@azure/service-bus": "7.9.4",
+    "@bufbuild/protobuf": "2.10.2",
+    "@connectrpc/connect": "2.1.1",
+    "@connectrpc/connect-node": "2.0.0",
     "@duckdb/node-api": "1.1.3-alpha.7",
     "@electric-sql/pglite": "0.2.17",
     "@fastify/websocket": "11.0.2",

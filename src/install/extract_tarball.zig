@@ -121,6 +121,12 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
     const basename = brk: {
         var tmp = name;
 
+        // Strip query parameters from the name (e.g., "?token=abc" from "package.tgz?token=abc")
+        // This is essential on Windows where '?' is an invalid path character
+        if (strings.indexOfChar(tmp, '?')) |query_index| {
+            tmp = tmp[0..query_index];
+        }
+
         // Handle URLs - extract just the filename from the URL
         if (strings.hasPrefixComptime(tmp, "https://") or strings.hasPrefixComptime(tmp, "http://")) {
             tmp = std.fs.path.basename(tmp);
@@ -130,15 +136,20 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
             } else if (strings.endsWithComptime(tmp, ".tar.gz")) {
                 tmp = tmp[0 .. tmp.len - 7];
             }
-        } else if (tmp[0] == '@') {
+        } else if (tmp.len > 0 and tmp[0] == '@') {
             if (strings.indexOfChar(tmp, '/')) |i| {
-                tmp = tmp[i + 1 ..];
+                if (tmp.len > i + 1) {
+                    tmp = tmp[i + 1 ..];
+                }
             }
         }
 
         if (comptime Environment.isWindows) {
+            // On Windows, colons are invalid in paths (except for drive letters)
+            // URLs like "https://example.com/package.tgz" would have a colon
             if (strings.lastIndexOfChar(tmp, ':')) |i| {
-                tmp = tmp[i + 1 ..];
+                if (i > "C:".len)
+                    tmp = tmp[i + 1 ..];
             }
         }
 

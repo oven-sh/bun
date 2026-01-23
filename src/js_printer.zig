@@ -6297,6 +6297,7 @@ pub fn serializeModuleInfo(module_info: ?*analyze_transpiled_module.ModuleInfo) 
     }
     const deserialized = mi.asDeserialized();
     var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(bun.default_allocator);
     deserialized.serialize(buf.writer(bun.default_allocator)) catch return "";
     return buf.toOwnedSlice(bun.default_allocator) catch "";
 }

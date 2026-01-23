@@ -115,9 +115,12 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
             }
         }
 
-        // 2. Collect external imports from the original AST. These are NOT transformed by
-        // convertStmtsForChunk (s_import statements survive unchanged), so scanning the
-        // original AST is correct here.
+        // 2. Collect truly-external imports from the original AST. Bundled imports
+        // (where source_index is valid) are removed by convertStmtsForChunk and
+        // re-created as cross-chunk imports — those are already captured by the
+        // printer when it prints cross_chunk_prefix_stmts above. Only truly-external
+        // imports (node built-ins, etc.) survive as s_import in per-file parts and
+        // need recording here.
         const all_parts = c.graph.ast.items(.parts);
         const all_flags = c.graph.meta.items(.flags);
         const all_import_records = c.graph.ast.items(.import_records);
@@ -133,6 +136,10 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
                             const record = &source_import_records[s.import_record_index];
                             if (record.path.is_disabled) continue;
                             if (record.tag == .bun) continue;
+                            // Skip bundled imports — these are converted to cross-chunk
+                            // imports by the linker. The printer already recorded them
+                            // when printing cross_chunk_prefix_stmts.
+                            if (record.source_index.isValid()) continue;
 
                             const import_path = record.path.text;
                             const irp_id = mi.str(import_path) catch continue;

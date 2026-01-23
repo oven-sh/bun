@@ -227,14 +227,28 @@ String dumpRecordInfo(JSModuleRecord* moduleRecord)
 {
     WTF::StringPrintStream stream;
 
-    stream.print("  varDeclarations:\n");
-    for (const auto& pair : moduleRecord->declaredVariables()) {
-        stream.print("  - ", pair.key, "\n");
+    {
+        Vector<String> sortedVars;
+        for (const auto& pair : moduleRecord->declaredVariables())
+            sortedVars.append(String(pair.key.get()));
+        std::sort(sortedVars.begin(), sortedVars.end(), [](const String& a, const String& b) {
+            return codePointCompare(a, b) < 0;
+        });
+        stream.print("  varDeclarations:\n");
+        for (const auto& name : sortedVars)
+            stream.print("  - ", name, "\n");
     }
 
-    stream.print("  lexicalVariables:\n");
-    for (const auto& pair : moduleRecord->lexicalVariables()) {
-        stream.print("  - ", pair.key, "\n");
+    {
+        Vector<String> sortedVars;
+        for (const auto& pair : moduleRecord->lexicalVariables())
+            sortedVars.append(String(pair.key.get()));
+        std::sort(sortedVars.begin(), sortedVars.end(), [](const String& a, const String& b) {
+            return codePointCompare(a, b) < 0;
+        });
+        stream.print("  lexicalVariables:\n");
+        for (const auto& name : sortedVars)
+            stream.print("  - ", name, "\n");
     }
 
     stream.print("  features: (not accessible)\n");
@@ -242,17 +256,37 @@ String dumpRecordInfo(JSModuleRecord* moduleRecord)
     stream.print("\nAnalyzing ModuleRecord key(", moduleRecord->moduleKey().impl(), ")\n");
 
     stream.print("    Dependencies: ", moduleRecord->requestedModules().size(), " modules\n");
-    for (const auto& request : moduleRecord->requestedModules())
-        if (request.m_attributes == nullptr) {
-            stream.print("      module(", request.m_specifier, ")\n");
-        } else {
-            stream.print("      module(", request.m_specifier, "),attributes(", (uint8_t)request.m_attributes->type(), ", ", request.m_attributes->hostDefinedImportType(), ")\n");
+    {
+        Vector<String> sortedDeps;
+        for (const auto& request : moduleRecord->requestedModules()) {
+            WTF::StringPrintStream line;
+            if (request.m_attributes == nullptr)
+                line.print("      module(", request.m_specifier, ")\n");
+            else
+                line.print("      module(", request.m_specifier, "),attributes(", (uint8_t)request.m_attributes->type(), ", ", request.m_attributes->hostDefinedImportType(), ")\n");
+            sortedDeps.append(line.toString());
         }
+        std::sort(sortedDeps.begin(), sortedDeps.end(), [](const String& a, const String& b) {
+            return codePointCompare(a, b) < 0;
+        });
+        for (const auto& dep : sortedDeps)
+            stream.print(dep);
+    }
 
     stream.print("    Import: ", moduleRecord->importEntries().size(), " entries\n");
-    for (const auto& pair : moduleRecord->importEntries()) {
-        auto& importEntry = pair.value;
-        stream.print("      import(", importEntry.importName, "), local(", importEntry.localName, "), module(", importEntry.moduleRequest, ")\n");
+    {
+        Vector<String> sortedImports;
+        for (const auto& pair : moduleRecord->importEntries()) {
+            WTF::StringPrintStream line;
+            auto& importEntry = pair.value;
+            line.print("      import(", importEntry.importName, "), local(", importEntry.localName, "), module(", importEntry.moduleRequest, ")\n");
+            sortedImports.append(line.toString());
+        }
+        std::sort(sortedImports.begin(), sortedImports.end(), [](const String& a, const String& b) {
+            return codePointCompare(a, b) < 0;
+        });
+        for (const auto& imp : sortedImports)
+            stream.print(imp);
     }
 
     stream.print("    Export: ", moduleRecord->exportEntries().size(), " entries\n");

@@ -64,12 +64,27 @@ pub fn StreamingClap(comptime Id: type, comptime ArgIterator: type) type {
                         if (!param.names.matchesLong(name))
                             continue;
 
-                        if (param.takes_value == .none or param.takes_value == .one_optional) {
-                            if (param.takes_value == .none and maybe_value != null) {
+                        if (param.takes_value == .none) {
+                            if (maybe_value != null) {
                                 return parser.err(arg, .{ .long = name }, error.DoesntTakeValue);
                             }
+                            return ArgType{ .param = param, .value = null };
+                        }
 
-                            return ArgType{ .param = param, .value = maybe_value };
+                        if (param.takes_value == .one_optional) {
+                            // For one_optional: if we have =value, use it; otherwise try to
+                            // consume the next argument if it doesn't look like a flag
+                            if (maybe_value) |v| {
+                                return ArgType{ .param = param, .value = v };
+                            }
+                            // Peek at next arg - if it doesn't start with '-', use it as value
+                            if (parser.iter.peek()) |next_arg| {
+                                if (next_arg.len > 0 and next_arg[0] != '-') {
+                                    _ = parser.iter.next();
+                                    return ArgType{ .param = param, .value = next_arg };
+                                }
+                            }
+                            return ArgType{ .param = param, .value = null };
                         }
 
                         const value = blk: {
@@ -149,10 +164,27 @@ pub fn StreamingClap(comptime Id: type, comptime ArgIterator: type) type {
                 }
 
                 const next_is_eql = if (next_index < arg.len) arg[next_index] == '=' else false;
-                if (param.takes_value == .none or param.takes_value == .one_optional) {
-                    if (next_is_eql and param.takes_value == .none)
+                if (param.takes_value == .none) {
+                    if (next_is_eql)
                         return parser.err(arg, .{ .short = short }, error.DoesntTakeValue);
                     return Arg(Id){ .param = param };
+                }
+
+                if (param.takes_value == .one_optional) {
+                    // For -c=value, use value after =
+                    if (next_is_eql)
+                        return Arg(Id){ .param = param, .value = arg[next_index + 1 ..] };
+                    // For -cvalue (attached), use the rest
+                    if (arg.len > next_index)
+                        return Arg(Id){ .param = param, .value = arg[next_index..] };
+                    // For -c value (space-separated), peek at next arg
+                    if (parser.iter.peek()) |next_arg| {
+                        if (next_arg.len > 0 and next_arg[0] != '-') {
+                            _ = parser.iter.next();
+                            return Arg(Id){ .param = param, .value = next_arg };
+                        }
+                    }
+                    return Arg(Id){ .param = param, .value = null };
                 }
 
                 if (arg.len <= next_index) {

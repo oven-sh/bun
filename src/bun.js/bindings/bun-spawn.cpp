@@ -173,6 +173,11 @@ extern "C" ssize_t posix_spawn_bun(
         // the error directly via a volatile variable. The parent will see this
         // value after we call _exit().
         child_errno = errno;
+        // Memory barrier to ensure the write to child_errno is visible to the
+        // parent before we exit. Without this, the CPU store buffer may not be
+        // flushed, causing the parent to read 0 (success) instead of the actual
+        // error. This fixes silent failures when exec fails (e.g., noexec mount).
+        __sync_synchronize();
         rawExit(127);
 
         // should never be reached

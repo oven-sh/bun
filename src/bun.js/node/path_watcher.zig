@@ -631,8 +631,9 @@ pub const PathWatcherManager = struct {
         // because that acquires Watcher.mutex, and the watcher thread acquires
         // these locks in the opposite order (Watcher.mutex -> PathWatcherManager.mutex).
         var sfb = std.heap.stackFallback(32 * @sizeOf(Watcher.HashType), bun.default_allocator);
+        const sfb_alloc = sfb.get();
         var hashes: std.ArrayListUnmanaged(Watcher.HashType) = .{};
-        defer hashes.deinit(sfb.get());
+        defer hashes.deinit(sfb_alloc);
 
         var should_deinit = false;
 
@@ -653,7 +654,7 @@ pub const PathWatcherManager = struct {
                         this.watcher_count -= 1;
 
                         if (this._decrementPathRefNoLock(watcher.path.path)) |hash| {
-                            hashes.append(sfb.get(), hash) catch bun.outOfMemory();
+                            hashes.append(sfb_alloc, hash) catch bun.outOfMemory();
                         }
                         if (comptime Environment.isMac) {
                             if (watcher.fsevents_watcher != null) {
@@ -666,7 +667,7 @@ pub const PathWatcherManager = struct {
                             defer watcher.mutex.unlock();
                             while (watcher.file_paths.pop()) |file_path| {
                                 if (this._decrementPathRefNoLock(file_path)) |hash| {
-                                    hashes.append(sfb.get(), hash) catch bun.outOfMemory();
+                                    hashes.append(sfb_alloc, hash) catch bun.outOfMemory();
                                 }
                             }
                         }

@@ -352,6 +352,12 @@ pub fn generateChunksInParallel(
 
             // Serialize the fixed-up module_info
             chunk.content.javascript.module_info_bytes = bun.js_printer.serializeModuleInfo(mi);
+
+            // Free the ModuleInfo now that it's been serialized to bytes.
+            // It was allocated with bun.default_allocator (not the arena),
+            // so it must be explicitly destroyed.
+            mi.destroy();
+            chunk.content.javascript.module_info = null;
         }
     }
 

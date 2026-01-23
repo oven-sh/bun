@@ -1,7 +1,8 @@
 import assert from "assert";
 import { afterEach, describe, expect, test } from "bun:test";
-import { readFileSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, tempDirWithFiles, tempDirWithFilesAnon } from "harness";
+import { execSync } from "child_process";
+import { existsSync, readFileSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles, tempDirWithFilesAnon } from "harness";
 import path, { join } from "path";
 import { buildNoThrow } from "./buildNoThrow";
 
@@ -1118,4 +1119,359 @@ export { greeting };`,
     // What matters is that callbacks fired before promise settled
     expect(result.success).toBeDefined();
   });
+});
+
+// Regression test for compile --outfile with subdirectories
+describe.if(isWindows)("compile --outfile with subdirectories", () => {
+  test("places executable in subdirectory with forward slash", async () => {
+    using dir = tempDir("compile-subdir-forward", {
+      "app.js": `console.log("Hello from subdirectory!");`,
+    });
+
+    // Use forward slash in outfile
+    const outfile = "subdir/nested/app.exe";
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", join(String(dir), "app.js"), "--outfile", outfile],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toBe("");
+
+    // Check that the file exists in the subdirectory
+    const expectedPath = join(String(dir), "subdir", "nested", "app.exe");
+    expect(existsSync(expectedPath)).toBe(true);
+
+    // Run the executable to verify it works
+    await using exe = Bun.spawn({
+      cmd: [expectedPath],
+      env: bunEnv,
+      stdout: "pipe",
+    });
+
+    const exeOutput = await exe.stdout.text();
+    expect(exeOutput.trim()).toBe("Hello from subdirectory!");
+  });
+
+  test("places executable in subdirectory with backslash", async () => {
+    using dir = tempDir("compile-subdir-backslash", {
+      "app.js": `console.log("Hello with backslash!");`,
+    });
+
+    // Use backslash in outfile
+    const outfile = "subdir\\nested\\app.exe";
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", join(String(dir), "app.js"), "--outfile", outfile],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toBe("");
+
+    // Check that the file exists in the subdirectory
+    const expectedPath = join(String(dir), "subdir", "nested", "app.exe");
+    expect(existsSync(expectedPath)).toBe(true);
+  });
+
+  test("creates parent directories if they don't exist", async () => {
+    using dir = tempDir("compile-create-dirs", {
+      "app.js": `console.log("Created directories!");`,
+    });
+
+    // Use a deep nested path that doesn't exist yet
+    const outfile = "a/b/c/d/e/app.exe";
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", join(String(dir), "app.js"), "--outfile", outfile],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const exitCode = await proc.exited;
+    expect(exitCode).toBe(0);
+
+    // Check that the file and all directories were created
+    const expectedPath = join(String(dir), "a", "b", "c", "d", "e", "app.exe");
+    expect(existsSync(expectedPath)).toBe(true);
+  });
+
+  test.if(isWindows)("Windows metadata works with subdirectories", async () => {
+    using dir = tempDir("compile-metadata-subdir", {
+      "app.js": `console.log("App with metadata!");`,
+    });
+
+    const outfile = "output/bin/app.exe";
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "--compile",
+        join(String(dir), "app.js"),
+        "--outfile",
+        outfile,
+        "--windows-title",
+        "Subdirectory App",
+        "--windows-version",
+        "1.2.3.4",
+        "--windows-description",
+        "App in a subdirectory",
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toBe("");
+
+    const expectedPath = join(String(dir), "output", "bin", "app.exe");
+    expect(existsSync(expectedPath)).toBe(true);
+
+    // Verify metadata was set correctly
+    const getMetadata = (field: string) => {
+      try {
+        return execSync(`powershell -Command "(Get-ItemProperty '${expectedPath}').VersionInfo.${field}"`, {
+          encoding: "utf8",
+        }).trim();
+      } catch {
+        return "";
+      }
+    };
+
+    expect(getMetadata("ProductName")).toBe("Subdirectory App");
+    expect(getMetadata("FileDescription")).toBe("App in a subdirectory");
+    expect(getMetadata("ProductVersion")).toBe("1.2.3.4");
+  });
+
+  test("fails gracefully when parent is a file", async () => {
+    using dir = tempDir("compile-parent-is-file", {
+      "app.js": `console.log("Won't compile!");`,
+      "blocked": "This is a file, not a directory",
+    });
+
+    // Try to use blocked/app.exe where blocked is a file
+    const outfile = "blocked/app.exe";
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", join(String(dir), "app.js"), "--outfile", outfile],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(exitCode).not.toBe(0);
+    // Should get an error about the path
+    expect(stderr.toLowerCase()).toContain("notdir");
+  });
+
+  test("works with . and .. in paths", async () => {
+    using dir = tempDir("compile-relative-paths", {
+      "src/app.js": `console.log("Relative paths work!");`,
+    });
+
+    // Use relative path with . and ..
+    const outfile = "./output/../output/./app.exe";
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", join(String(dir), "src", "app.js"), "--outfile", outfile],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const exitCode = await proc.exited;
+    expect(exitCode).toBe(0);
+
+    // Should normalize to output/app.exe
+    const expectedPath = join(String(dir), "output", "app.exe");
+    expect(existsSync(expectedPath)).toBe(true);
+  });
+});
+
+// Regression test for Bun.build() compile with subdirectories
+describe("Bun.build() compile with subdirectories", () => {
+  test.if(isWindows)("places executable in subdirectory via API", async () => {
+    using dir = tempDir("api-compile-subdir", {
+      "app.js": `console.log("API subdirectory test!");`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "app.js")],
+      compile: {
+        outfile: "dist/bin/app.exe",
+      },
+      outdir: String(dir),
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.outputs.length).toBe(1);
+
+    // The output path should include the subdirectories
+    expect(result.outputs[0].path).toContain("dist");
+    expect(result.outputs[0].path).toContain("bin");
+
+    // File should exist at the expected location
+    const expectedPath = join(String(dir), "dist", "bin", "app.exe");
+    expect(existsSync(expectedPath)).toBe(true);
+  });
+
+  test.if(isWindows)("API with Windows metadata and subdirectories", async () => {
+    using dir = tempDir("api-metadata-subdir", {
+      "app.js": `console.log("API with metadata!");`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "app.js")],
+      compile: {
+        outfile: "build/release/app.exe",
+        windows: {
+          title: "API Subdirectory App",
+          version: "2.0.0.0",
+          publisher: "Test Publisher",
+        },
+      },
+      outdir: String(dir),
+    });
+
+    expect(result.success).toBe(true);
+
+    const expectedPath = join(String(dir), "build", "release", "app.exe");
+    expect(existsSync(expectedPath)).toBe(true);
+
+    // Verify metadata
+    const getMetadata = (field: string) => {
+      try {
+        return execSync(`powershell -Command "(Get-ItemProperty '${expectedPath}').VersionInfo.${field}"`, {
+          encoding: "utf8",
+        }).trim();
+      } catch {
+        return "";
+      }
+    };
+
+    expect(getMetadata("ProductName")).toBe("API Subdirectory App");
+    expect(getMetadata("CompanyName")).toBe("Test Publisher");
+    expect(getMetadata("ProductVersion")).toBe("2.0.0.0");
+  });
+});
+
+// Regression test for https://github.com/oven-sh/bun/issues/22157
+// Compiled binaries were including executable name in process.argv
+test("issue 22157: compiled binary should not include executable name in process.argv", async () => {
+  const dir = tempDirWithFiles("22157-basic", {
+    "index.js": /* js */ `
+      import { parseArgs } from "node:util"
+
+      console.log(JSON.stringify(process.argv));
+
+      // This should work - no extra executable name should cause parseArgs to throw
+      parseArgs({
+        args: process.argv.slice(2),
+      });
+
+      console.log("SUCCESS");
+    `,
+  });
+
+  // Compile the binary
+  await using compileProc = Bun.spawn({
+    cmd: [bunExe(), "build", "--compile", "--outfile=test-binary", "./index.js"],
+    cwd: dir,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  await compileProc.exited;
+
+  // Run the compiled binary - should not throw
+  await using runProc = Bun.spawn({
+    cmd: ["./test-binary"],
+    cwd: dir,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, exitCode] = await Promise.all([runProc.stdout.text(), runProc.exited]);
+
+  expect(exitCode).toBe(0);
+  expect(stdout).toContain("SUCCESS");
+
+  // Verify process.argv structure
+  const argvMatch = stdout.match(/\[.*?\]/);
+  expect(argvMatch).toBeTruthy();
+
+  const processArgv = JSON.parse(argvMatch![0]);
+  expect(processArgv).toHaveLength(2);
+  expect(processArgv[0]).toBe("bun");
+  // Windows uses "B:/~BUN/root/", Unix uses "/$bunfs/root/"
+  expect(processArgv[1]).toMatch(/(\$bunfs|~BUN).*root/);
+});
+
+// Regression test for https://github.com/oven-sh/bun/issues/22157
+test("issue 22157: compiled binary with user args should pass them correctly", async () => {
+  const dir = tempDirWithFiles("22157-args", {
+    "index.js": /* js */ `
+      console.log(JSON.stringify(process.argv));
+
+      // Expect: ["bun", "/$bunfs/root/..." or "B:/~BUN/root/...", "arg1", "arg2"]
+      if (process.argv.length !== 4) {
+        console.error("Expected 4 argv items, got", process.argv.length);
+        process.exit(1);
+      }
+
+      if (process.argv[2] !== "arg1" || process.argv[3] !== "arg2") {
+        console.error("User args not correct");
+        process.exit(1);
+      }
+
+      console.log("SUCCESS");
+    `,
+  });
+
+  await using compileProc = Bun.spawn({
+    cmd: [bunExe(), "build", "--compile", "--outfile=test-binary", "./index.js"],
+    cwd: dir,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  await compileProc.exited;
+
+  await using runProc = Bun.spawn({
+    cmd: ["./test-binary", "arg1", "arg2"],
+    cwd: dir,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, exitCode] = await Promise.all([runProc.stdout.text(), runProc.exited]);
+
+  expect(exitCode).toBe(0);
+  expect(stdout).toContain("SUCCESS");
 });

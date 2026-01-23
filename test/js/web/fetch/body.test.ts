@@ -668,3 +668,87 @@ function arrayBuffer(buffer: BufferSource) {
   }
   return buffer.buffer;
 }
+
+// Regression test for #2367
+test("should not be able to parse json from empty body", () => {
+  expect(async () => await new Response().json()).toThrow(SyntaxError);
+  expect(async () => await new Request("http://example.com/").json()).toThrow(SyntaxError);
+});
+
+// Regression test for #2369
+test("can read json() from request", async () => {
+  for (let i = 0; i < 10; i++) {
+    const request = new Request("http://example.com/", {
+      method: "PUT",
+      body: '[1,2,"hello",{}]',
+    });
+    expect(await request.json()).toEqual([1, 2, "hello", {}]);
+  }
+});
+
+// Regression tests for #7001
+test("req.body.locked is true after body is consumed", async () => {
+  const req = new Request("https://example.com/", {
+    body: "test",
+    method: "POST",
+  });
+
+  await new Response(req.body).arrayBuffer();
+
+  expect(req.body.locked).toBe(true);
+});
+
+test("req.bodyUsed is true after body is consumed", async () => {
+  const req = new Request("https://example.com/", {
+    body: "test",
+    method: "POST",
+  });
+
+  await new Response(req.body).arrayBuffer();
+
+  expect(req.bodyUsed).toBe(true);
+});
+
+test("await fetch(req) throws if req.body is already consumed (arrayBuffer)", async () => {
+  const req = new Request("https://example.com/", {
+    body: "test",
+    method: "POST",
+  });
+
+  await new Response(req.body).arrayBuffer();
+  expect(() => fetch(req)).toThrow();
+  expect(req.bodyUsed).toBe(true);
+});
+
+test("await fetch(req) throws if req.body is already consumed (text)", async () => {
+  const req = new Request("https://example.com/", {
+    body: "test",
+    method: "POST",
+  });
+
+  await new Response(req.body).text();
+  expect(() => fetch(req)).toThrow();
+  expect(req.bodyUsed).toBe(true);
+});
+
+test("await fetch(req) throws if req.body is already consumed (stream that has been read)", async () => {
+  const req = new Request("https://example.com/", {
+    body: "test",
+    method: "POST",
+  });
+
+  await req.body.getReader().read();
+  expect(() => fetch(req)).toThrow();
+  expect(req.bodyUsed).toBe(true);
+});
+
+test("await fetch(req) throws if req.body is already consumed (stream)", async () => {
+  const req = new Request("https://example.com/", {
+    body: "test",
+    method: "POST",
+  });
+
+  req.body.getReader();
+  expect(() => fetch(req)).toThrow();
+  expect(req.bodyUsed).toBe(true);
+});

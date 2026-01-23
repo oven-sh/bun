@@ -2189,3 +2189,355 @@ it.concurrent("#20283", async () => {
   // there should be no cookies and the clone should have succeeded
   expect(json).toEqual({ cookies: {}, clonedCookies: {} });
 });
+
+// Regression test for #6443
+describe("Bun.serve() request.url with TLS", () => {
+  const tlsOptions = {
+    cert: file(new URL("./fixtures/cert.pem", import.meta.url)),
+    key: file(new URL("./fixtures/cert.key", import.meta.url)),
+  };
+
+  const servers = [
+    {
+      port: 0,
+      url: /^http:\/\/localhost:\d+\/$/,
+    },
+    {
+      tls: tlsOptions,
+      port: 0,
+      url: /^https:\/\/localhost:\d+\/$/,
+    },
+  ];
+
+  it.each(servers)("%j", async ({ url, ...options }) => {
+    const server = serve({
+      hostname: "localhost",
+      ...options,
+      fetch(request) {
+        return new Response(request.url);
+      },
+    });
+    try {
+      const proto = options.tls ? "https" : "http";
+      const target = `${proto}://localhost:${server.port}/`;
+      const response = await fetch(target, { tls: { rejectUnauthorized: false } });
+      expect(response.text()).resolves.toMatch(url);
+    } finally {
+      server.stop(true);
+    }
+  });
+});
+
+// Regression test for server assertion failure when stopping with pending requests
+it("server.stop() with pending requests should not cause assertion failure", async () => {
+  // Create initial server
+  let server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      return new Response("OK");
+    },
+  });
+
+  try {
+    // Make one awaited request
+    await fetch(server.url).catch(() => {});
+
+    // Make one non-awaited request
+    fetch(server.url).catch(() => {});
+
+    // Stop immediately - this should not cause an assertion failure
+    server.stop();
+
+    // If we get here without crashing, the fix worked
+    expect(true).toBe(true);
+  } finally {
+    // Ensure cleanup in case test fails
+    try {
+      server.stop();
+    } catch {}
+  }
+});
+
+// Additional test to ensure server still works normally after the fix
+it("server still works normally after jsref changes", async () => {
+  let server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      return new Response("Hello World");
+    },
+  });
+
+  try {
+    const response = await fetch(server.url);
+    const text = await response.text();
+    expect(text).toBe("Hello World");
+    expect(response.status).toBe(200);
+  } finally {
+    server.stop();
+  }
+});
+
+// Regression test for #22353
+it("issue #22353 - server should handle oversized request without crashing", async () => {
+  using server = Bun.serve({
+    port: 0,
+    maxRequestBodySize: 1024, // 1KB limit
+    async fetch(req) {
+      const body = await req.text();
+      return new Response(
+        JSON.stringify({
+          received: true,
+          size: body.length,
+        }),
+        {
+          headers: { "Content-Type": "application/json" },
+        },
+      );
+    },
+  });
+
+  const resp = await fetch(server.url, {
+    method: "POST",
+    body: "A".repeat(1025),
+  });
+  expect(resp.status).toBe(413);
+  expect(await resp.text()).toBeEmpty();
+  for (let i = 0; i < 100; i++) {
+    const resp2 = await fetch(server.url, {
+      method: "POST",
+    });
+    expect(resp2.status).toBe(200);
+    expect(await resp2.json()).toEqual({
+      received: true,
+      size: 0,
+    });
+  }
+}, 10000);
+
+// Regression test for #21677
+it("issue #21677 - should not add redundant Date headers", async () => {
+  const testDate1 = new Date("2025-08-07T17:01:47.000Z").toUTCString();
+  const testDate2 = new Date("2025-08-07T17:02:23.000Z").toUTCString();
+  const testDate3 = new Date("2025-08-07T17:03:06.000Z").toUTCString();
+
+  using server = Bun.serve({
+    port: 0,
+    routes: {
+      "/static": () =>
+        new Response(`date test`, {
+          headers: { date: testDate1 },
+        }),
+      "/proxy": async () => {
+        // Create a simple server response with a Date header to proxy
+        const simpleResponse = new Response("proxied content", {
+          headers: {
+            "Date": testDate3,
+            "Content-Type": "text/plain",
+          },
+        });
+        return simpleResponse;
+      },
+    },
+    fetch: () =>
+      new Response(`date test`, {
+        headers: { date: testDate2 },
+      }),
+  });
+
+  // Test dynamic route (default fetch handler)
+  {
+    const response = await fetch(server.url);
+
+    // Should only have one Date header, not multiple
+    const dateHeaders = [...response.headers.entries()].filter(([key]) => key.toLowerCase() === "date");
+    expect(dateHeaders).toHaveLength(1);
+    expect(dateHeaders[0][1]).toBe(testDate2);
+  }
+
+  // Test static route
+  {
+    const response = await fetch(new URL("/static", server.url));
+
+    // Should only have one Date header, not multiple
+    const dateHeaders = [...response.headers.entries()].filter(([key]) => key.toLowerCase() === "date");
+    expect(dateHeaders).toHaveLength(1);
+    expect(dateHeaders[0][1]).toBe(testDate1);
+  }
+
+  // Test proxy route
+  {
+    const response = await fetch(new URL("/proxy", server.url));
+
+    // Should only have one Date header, not multiple
+    const dateHeaders = [...response.headers.entries()].filter(([key]) => key.toLowerCase() === "date");
+    expect(dateHeaders).toHaveLength(1);
+    expect(dateHeaders[0][1]).toBe(testDate3);
+  }
+});
+
+// Regression test for #21677
+it("issue #21677 - reproduce with raw HTTP to verify duplicate headers", async () => {
+  const testDate = new Date("2025-08-07T17:02:23.000Z").toUTCString();
+
+  using server = Bun.serve({
+    port: 0,
+    fetch: () =>
+      new Response(`date test`, {
+        headers: { date: testDate },
+      }),
+  });
+
+  // Use TCP socket to get raw HTTP response and check for duplicate headers
+  await new Promise((resolve, reject) => {
+    const socket = Bun.connect({
+      hostname: "localhost",
+      port: server.port,
+      socket: {
+        data(socket, data) {
+          const response = data.toString();
+          // Should NOT contain multiple Date headers
+          const lines = response.split("\r\n");
+          const dateHeaderLines = lines.filter(line => line.toLowerCase().startsWith("date:"));
+
+          expect(dateHeaderLines).toHaveLength(1);
+          expect(dateHeaderLines[0]).toBe(`Date: ${testDate}`);
+          socket.end();
+          resolve(undefined);
+        },
+        error(socket, error) {
+          reject(error);
+        },
+        open(socket) {
+          socket.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+        },
+      },
+    });
+  });
+});
+
+// Regression test for #21792
+// This test verifies the fix for SNI TLS array handling - was incorrectly rejecting arrays with exactly 1 TLS config
+describe("SNI TLS array handling (issue #21792)", () => {
+  // Use existing test certificates from jsonwebtoken tests
+  const certDir = join(import.meta.dir, "../../third_party/jsonwebtoken");
+  const crtA = readFileSync(join(certDir, "pub.pem"), "utf8");
+  const keyA = readFileSync(join(certDir, "priv.pem"), "utf8");
+  const crtB = crtA; // Reuse same cert for second test server
+  const keyB = keyA;
+
+  it("should accept empty TLS array (no TLS)", () => {
+    // Empty array should be treated as no TLS
+    using server = Bun.serve({
+      port: 0,
+      tls: [],
+      fetch: () => new Response("Hello"),
+      development: true,
+    });
+    expect(server.url.toString()).toStartWith("http://"); // HTTP, not HTTPS
+  });
+
+  it("should accept single TLS config in array", () => {
+    // This was the bug: single TLS config in array was incorrectly rejected
+    using server = Bun.serve({
+      port: 0,
+      tls: [{ cert: crtA, key: keyA, serverName: "serverA.com" }],
+      fetch: () => new Response("Hello from serverA"),
+      development: true,
+    });
+    expect(server.url.toString()).toStartWith("https://");
+  });
+
+  it("should accept multiple TLS configs for SNI", () => {
+    using server = Bun.serve({
+      port: 0,
+      tls: [
+        { cert: crtA, key: keyA, serverName: "serverA.com" },
+        { cert: crtB, key: keyB, serverName: "serverB.com" },
+      ],
+      fetch: request => {
+        const host = request.headers.get("host") || "unknown";
+        return new Response(`Hello from ${host}`);
+      },
+      development: true,
+    });
+    expect(server.url.toString()).toStartWith("https://");
+  });
+
+  it("should reject TLS array with missing serverName for SNI configs", () => {
+    expect(() => {
+      Bun.serve({
+        port: 0,
+        tls: [
+          { cert: crtA, key: keyA, serverName: "serverA.com" },
+          { cert: crtB, key: keyB }, // Missing serverName
+        ],
+        fetch: () => new Response("Hello"),
+        development: true,
+      });
+    }).toThrow("SNI tls object must have a serverName");
+  });
+
+  it("should reject TLS array with empty serverName for SNI configs", () => {
+    expect(() => {
+      Bun.serve({
+        port: 0,
+        tls: [
+          { cert: crtA, key: keyA, serverName: "serverA.com" },
+          { cert: crtB, key: keyB, serverName: "" }, // Empty serverName
+        ],
+        fetch: () => new Response("Hello"),
+        development: true,
+      });
+    }).toThrow("SNI tls object must have a serverName");
+  });
+
+  it("should accept single TLS config without serverName when alone", () => {
+    // When there's only one TLS config in the array, serverName is optional
+    using server = Bun.serve({
+      port: 0,
+      tls: [{ cert: crtA, key: keyA }], // No serverName - should work for single config
+      fetch: () => new Response("Hello from default"),
+      development: true,
+    });
+    expect(server.url.toString()).toStartWith("https://");
+  });
+
+  it("should support traditional non-array TLS config", () => {
+    // Traditional single TLS config (not in array) should still work
+    using server = Bun.serve({
+      port: 0,
+      tls: { cert: crtA, key: keyA },
+      fetch: () => new Response("Hello traditional"),
+      development: true,
+    });
+    expect(server.url.toString()).toStartWith("https://");
+  });
+});
+
+// Regression test for #18547
+it("issue #18547 - cloned request should have same cookies and params", async () => {
+  using serve = Bun.serve({
+    port: 0,
+    routes: {
+      "/:foo": request => {
+        request.cookies.set("sessionToken", "123456");
+
+        // Ensure cloned requests have the same cookies and params of the original
+        const clone = request.clone();
+        expect(clone.cookies.get("sessionToken")).toEqual("123456");
+        expect(clone.params.foo).toEqual("foo");
+
+        // And that changes made to the clone don't affect the original
+        clone.cookies.set("sessionToken", "654321");
+        expect(request.cookies.get("sessionToken")).toEqual("123456");
+        expect(clone.cookies.get("sessionToken")).toEqual("654321");
+
+        return new Response("OK");
+      },
+    },
+  });
+
+  const response = await fetch(`${serve.url}/foo`);
+  // Or the context of the original request
+  expect(response.headers.get("set-cookie")).toEqual("sessionToken=123456; Path=/; SameSite=Lax");
+});

@@ -1551,6 +1551,228 @@ describe.concurrent("s3 missing credentials", () => {
   });
 });
 
+// Regression test for S3 presigned URL query parameter order
+it("S3 presigned URL should have correct query parameter order", () => {
+  const s3 = new S3Client({
+    accessKeyId: "test-key",
+    secretAccessKey: "test-secret",
+    endpoint: "https://s3.example.com",
+    bucket: "test-bucket",
+  });
+
+  const url = s3.presign("test-file.txt", {
+    method: "PUT",
+    acl: "public-read",
+    expiresIn: 300,
+  });
+
+  // Parse the URL to get query parameters
+  const urlObj = new URL(url);
+  const params = Array.from(urlObj.searchParams.keys());
+
+  console.log("Query parameters order:", params);
+
+  // Verify alphabetical order (after URL decoding)
+  const expected = params.slice().sort();
+  expect(params).toEqual(expected);
+
+  // Verify that required AWS SigV4 parameters are present
+  expect(params).toContain("X-Amz-Algorithm");
+  expect(params).toContain("X-Amz-Credential");
+  expect(params).toContain("X-Amz-Date");
+  expect(params).toContain("X-Amz-Expires");
+  expect(params).toContain("X-Amz-SignedHeaders");
+  expect(params).toContain("X-Amz-Signature");
+  expect(params).toContain("X-Amz-Acl");
+});
+
+// Regression test for S3 presigned URL performance with stack allocator
+it("S3 presigned URL performance test with stack allocator", () => {
+  const s3 = new S3Client({
+    accessKeyId: "test-key-123456789012345678901234567890",
+    secretAccessKey: "test-secret-123456789012345678901234567890123456789012345678901234567890",
+    endpoint: "https://s3.example.com",
+    bucket: "test-bucket-with-long-name-to-test-allocation",
+  });
+
+  // Test with various parameter combinations to stress the allocator
+  const testCases = [
+    {
+      name: "simple",
+      params: {},
+    },
+    {
+      name: "with-acl",
+      params: { acl: "public-read" },
+    },
+    {
+      name: "with-multiple-params",
+      params: {
+        method: "PUT",
+        acl: "public-read-write",
+        expiresIn: 3600,
+        storageClass: "STANDARD_IA",
+      },
+    },
+  ];
+
+  for (const testCase of testCases) {
+    const url = s3.presign(`test-file-${testCase.name}.txt`, testCase.params);
+
+    // Verify URL is generated correctly
+    expect(url).toContain("test-file-");
+    expect(url).toContain("X-Amz-Algorithm=AWS4-HMAC-SHA256");
+    expect(url).toContain("X-Amz-Credential=");
+    expect(url).toContain("X-Amz-Date=");
+    expect(url).toContain("X-Amz-Signature=");
+
+    // Parse URL to verify parameter order
+    const urlObj = new URL(url);
+    const params = Array.from(urlObj.searchParams.keys());
+    const sortedParams = params.slice().sort();
+    expect(params).toEqual(sortedParams);
+  }
+
+  // Performance test - should not throw or crash
+  for (let i = 0; i < 100; i++) {
+    const url = s3.presign(`perf-test-${i}.txt`, {
+      method: "PUT",
+      acl: "private",
+      expiresIn: 300,
+    });
+    expect(url).toContain("perf-test-");
+  }
+
+  expect(true).toBe(true);
+});
+
+// Regression test for GitHub issue #25750: S3 File.presign() ignores contentDisposition and type options
+describe("issue #25750 - S3 presign contentDisposition and type", () => {
+  const s3Client = new S3Client({
+    region: "us-east-1",
+    endpoint: "https://s3.us-east-1.amazonaws.com",
+    accessKeyId: "test-key",
+    secretAccessKey: "test-secret",
+    bucket: "test-bucket",
+  });
+
+  it("should include response-content-disposition in presigned URL", () => {
+    const file = s3Client.file("example.txt");
+
+    const url = file.presign({
+      method: "GET",
+      expiresIn: 900,
+      contentDisposition: 'attachment; filename="quarterly-report.txt"',
+    });
+
+    expect(url).toContain("response-content-disposition=");
+    expect(url).toContain("attachment");
+    expect(url).toContain("quarterly-report.txt");
+  });
+
+  it("should include response-content-type in presigned URL", () => {
+    const file = s3Client.file("example.txt");
+
+    const url = file.presign({
+      method: "GET",
+      expiresIn: 900,
+      type: "application/octet-stream",
+    });
+
+    expect(url).toContain("response-content-type=");
+    expect(url).toContain("application%2Foctet-stream");
+  });
+
+  it("should include both response-content-disposition and response-content-type in presigned URL", () => {
+    const file = s3Client.file("example.txt");
+
+    const url = file.presign({
+      method: "GET",
+      expiresIn: 900,
+      contentDisposition: 'attachment; filename="quarterly-report.txt"',
+      type: "application/octet-stream",
+    });
+
+    expect(url).toContain("response-content-disposition=");
+    expect(url).toContain("response-content-type=");
+    expect(url).toContain("attachment");
+    expect(url).toContain("application%2Foctet-stream");
+  });
+
+  it("should work with S3Client.presign static method", () => {
+    const url = S3Client.presign("example.txt", {
+      region: "us-east-1",
+      endpoint: "https://s3.us-east-1.amazonaws.com",
+      accessKeyId: "test-key",
+      secretAccessKey: "test-secret",
+      bucket: "test-bucket",
+      contentDisposition: 'attachment; filename="report.pdf"',
+      type: "application/pdf",
+      expiresIn: 3600,
+    });
+
+    expect(url).toContain("response-content-disposition=");
+    expect(url).toContain("response-content-type=");
+    expect(url).toContain("report.pdf");
+    expect(url).toContain("application%2Fpdf");
+  });
+
+  it("should properly URL-encode special characters in contentDisposition", () => {
+    const file = s3Client.file("test.txt");
+
+    const url = file.presign({
+      method: "GET",
+      contentDisposition: 'attachment; filename="file with spaces & symbols.txt"',
+    });
+
+    expect(url).toContain("response-content-disposition=");
+    // Special characters should be URL encoded
+    expect(url).toContain("%20"); // space
+    expect(url).toContain("%26"); // &
+  });
+
+  it("should not include response-content-disposition when empty string is provided", () => {
+    const file = s3Client.file("test.txt");
+
+    const url = file.presign({
+      method: "GET",
+      contentDisposition: "",
+    });
+
+    expect(url).not.toContain("response-content-disposition=");
+  });
+
+  it("should not include response-content-type when empty string is provided", () => {
+    const file = s3Client.file("test.txt");
+
+    const url = file.presign({
+      method: "GET",
+      type: "",
+    });
+
+    expect(url).not.toContain("response-content-type=");
+  });
+
+  it("query parameters should be in correct alphabetical order", () => {
+    const file = s3Client.file("test.txt");
+
+    const url = file.presign({
+      method: "GET",
+      contentDisposition: "inline",
+      type: "text/plain",
+    });
+
+    // Check that response-content-disposition comes before response-content-type
+    // and both come after X-Amz-SignedHeaders and before any x-amz-* lowercase params
+    const dispositionIndex = url.indexOf("response-content-disposition=");
+    const typeIndex = url.indexOf("response-content-type=");
+    const signedHeadersIndex = url.indexOf("X-Amz-SignedHeaders=");
+
+    expect(dispositionIndex).toBeGreaterThan(signedHeadersIndex);
+    expect(typeIndex).toBeGreaterThan(dispositionIndex);
+  });
+});
+
 // Archive + S3 integration tests
 describe.skipIf(!minioCredentials)("Archive with S3", () => {
   const credentials = minioCredentials!;

@@ -1,4 +1,4 @@
-import { parse } from "url";
+import { domainToASCII, domainToUnicode, parse } from "url";
 
 describe("Url.prototype.parse", () => {
   it("parses URL correctly", () => {
@@ -85,4 +85,25 @@ it("#16705", () => {
   expect(Bun.fileURLToPath("file://C:/firebase-gen-%7B%7B%20firebase.gen%20%7D%7D")).toEqual(
     process.platform === "win32" ? "C:\\firebase-gen-{{ firebase.gen }}" : "/C:/firebase-gen-{{ firebase.gen }}",
   );
+});
+
+// Regression test for #24191
+// url.domainToASCII should return empty string for invalid domains, not throw
+it("url.domainToASCII returns empty string for invalid domains", () => {
+  // Invalid punycode with non-ASCII characters should return empty string, not throw
+  expect(domainToASCII("xn--iñvalid.com")).toBe("");
+
+  // Valid domains should still work
+  expect(domainToASCII("example.com")).toBe("example.com");
+  expect(domainToASCII("münchen.de")).toBe("xn--mnchen-3ya.de");
+});
+
+// Regression test for #24191
+it("url.domainToUnicode returns empty string for invalid domains", () => {
+  // Invalid punycode with non-ASCII characters should return empty string, not throw
+  expect(domainToUnicode("xn--iñvalid.com")).toBe("");
+
+  // Valid domains should still work
+  expect(domainToUnicode("example.com")).toBe("example.com");
+  expect(domainToUnicode("xn--mnchen-3ya.de")).toBe("münchen.de");
 });

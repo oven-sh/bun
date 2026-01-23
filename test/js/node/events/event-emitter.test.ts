@@ -882,3 +882,104 @@ test("getEventListeners", () => {
 test("EventEmitter.name", () => {
   expect(EventEmitter.name).toBe("EventEmitter");
 });
+
+// Regression test for #14187
+test("issue-14187: abort signal cleans up listeners from EventEmitter.on()", async () => {
+  const { on } = require("events");
+  const ac = new AbortController();
+  const ee = new EventEmitter();
+
+  async function* gen() {
+    for await (const item of on(ee, "beep", { signal: ac.signal })) {
+      yield item;
+    }
+  }
+
+  const iterator = gen();
+
+  iterator.next().catch(() => {});
+
+  expect(ee.listenerCount("beep")).toBe(1);
+  expect(ee.listenerCount("error")).toBe(1);
+  ac.abort();
+
+  expect(ee.listenerCount("beep")).toBe(0);
+  expect(ee.listenerCount("error")).toBe(0);
+});
+
+// Regression test for #24147
+describe("removeAllListeners() from event handler with removeListener meta-listener", () => {
+  test("removeAllListeners() from event handler with removeListener meta-listener", () => {
+    const emitter = new EventEmitter();
+
+    emitter.on("test", () => {
+      // This should not crash even though there are no 'foo' listeners
+      emitter.removeAllListeners("foo");
+    });
+
+    // Register a removeListener meta-listener to trigger the bug
+    emitter.on("removeListener", () => {});
+
+    // This should not throw
+    expect(() => emitter.emit("test")).not.toThrow();
+  });
+
+  test("removeAllListeners() with actual listeners to remove", () => {
+    const emitter = new EventEmitter();
+    let fooCallCount = 0;
+    let removeListenerCallCount = 0;
+
+    emitter.on("foo", () => fooCallCount++);
+    emitter.on("foo", () => fooCallCount++);
+
+    emitter.on("test", () => {
+      // Remove all 'foo' listeners while inside an event handler
+      emitter.removeAllListeners("foo");
+    });
+
+    // Track removeListener calls
+    emitter.on("removeListener", () => {
+      removeListenerCallCount++;
+    });
+
+    // Emit test event which triggers removeAllListeners
+    emitter.emit("test");
+
+    // Verify listeners were removed
+    expect(emitter.listenerCount("foo")).toBe(0);
+
+    // Verify removeListener was called twice (once for each foo listener)
+    expect(removeListenerCallCount).toBe(2);
+
+    // Verify foo listeners were never called
+    expect(fooCallCount).toBe(0);
+  });
+
+  test("nested removeAllListeners() calls", () => {
+    const emitter = new EventEmitter();
+    const events: string[] = [];
+
+    emitter.on("outer", () => {
+      events.push("outer-start");
+      emitter.removeAllListeners("inner");
+      events.push("outer-end");
+    });
+
+    emitter.on("inner", () => {
+      events.push("inner");
+    });
+
+    emitter.on("removeListener", type => {
+      events.push(`removeListener:${String(type)}`);
+    });
+
+    // This should not crash
+    expect(() => emitter.emit("outer")).not.toThrow();
+
+    // Verify correct execution order
+    expect(events).toEqual(["outer-start", "removeListener:inner", "outer-end"]);
+
+    // Verify inner listeners were removed
+    expect(emitter.listenerCount("inner")).toBe(0);
+  });
+});

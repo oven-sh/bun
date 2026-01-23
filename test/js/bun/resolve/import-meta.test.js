@@ -1,8 +1,8 @@
 import { spawnSync } from "bun";
 import { isModuleResolveFilenameSlowPathEnabled } from "bun:internal-for-testing";
 import { expect, it, mock } from "bun:test";
-import { bunEnv, bunExe, ospath } from "harness";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { bunEnv, bunExe, bunRun, ospath, tmpdirSync } from "harness";
+import { mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import Module from "node:module";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
@@ -294,4 +294,35 @@ it("import.meta is correct in a module that was required with a query param", as
   expect(cjs.path).toBe(join(import.meta.dir, "./other-cjs.js"));
   expect(cjs.dir).toBe(import.meta.dir);
   expect(cjs.file).toBe("other-cjs.js");
+});
+
+// Regression test for #8757
+it("absolute path to a file that is symlinked has import.meta.main", () => {
+  const fixturePath = join(import.meta.dir, "symlink-main-fixture.js");
+  const fixtureDir = import.meta.dir;
+  const fixtureFile = "symlink-main-fixture.js";
+
+  const root = tmpdirSync();
+  try {
+    symlinkSync(fixturePath, root + "/main.js");
+  } catch (e) {
+    if (process.platform == "win32") {
+      console.log("symlinkSync failed on Windows, skipping test");
+      return;
+    }
+    throw e;
+  }
+
+  const result = bunRun(root + "/main.js");
+  expect(result.stdout.trim()).toBe(
+    [
+      //
+      fixturePath,
+      fixturePath,
+      "true",
+      fixtureDir,
+      fixtureFile,
+      fixturePath,
+    ].join("\n"),
+  );
 });

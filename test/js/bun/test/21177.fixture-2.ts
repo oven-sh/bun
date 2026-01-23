@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeAll } from "@jest/globals";
+import { beforeAll, describe, expect, test } from "@jest/globals";
 
 describe("Outer describe", () => {
   beforeAll(() => {

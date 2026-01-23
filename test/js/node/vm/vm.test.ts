@@ -56,6 +56,20 @@ describe("vm", () => {
       );
       expect(result).toBe(2);
     });
+
+    // Regression test for #9778
+    test("issue #9778", () => {
+      const code = `
+        process.on("poop", () => {
+          throw new Error("woopsie");
+        });
+        `;
+
+      runInNewContext(code, {
+        process,
+      });
+      expect(() => process.emit("poop")).toThrow("woopsie");
+    });
   });
 
   describe("runInThisContext()", () => {

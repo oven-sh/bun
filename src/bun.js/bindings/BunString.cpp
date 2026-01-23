@@ -40,6 +40,7 @@
 #include "wtf/StdLibExtras.h"
 #include "wtf/text/StringImpl.h"
 #include "wtf/text/StringToIntegerConversion.h"
+#include "ErrorCode.h"
 
 using namespace JSC;
 extern "C" BunString BunString__fromBytes(const char* bytes, size_t length);
@@ -105,12 +106,17 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__createUT
     return JSValue::encode(jsString(vm, WTF::move(str)));
 }
 
-extern "C" JSC::EncodedJSValue BunString__transferToJS(BunString* bunString, JSC::JSGlobalObject* globalObject)
+extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__transferToJS(BunString* bunString, JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
 
-    if (bunString->tag == BunStringTag::Empty || bunString->tag == BunStringTag::Dead) [[unlikely]] {
+    if (bunString->tag == BunStringTag::Empty) [[unlikely]] {
         return JSValue::encode(JSC::jsEmptyString(vm));
+    }
+
+    if (bunString->tag == BunStringTag::Dead) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        return Bun::ERR::STRING_TOO_LONG(scope, globalObject);
     }
 
     if (bunString->tag == BunStringTag::WTFStringImpl) [[likely]] {
@@ -153,9 +159,16 @@ namespace Bun {
 
 JSC::JSString* toJS(JSC::JSGlobalObject* globalObject, BunString bunString)
 {
-    if (bunString.tag == BunStringTag::Empty || bunString.tag == BunStringTag::Dead) {
+    if (bunString.tag == BunStringTag::Empty) {
         return JSC::jsEmptyString(globalObject->vm());
     }
+
+    if (bunString.tag == BunStringTag::Dead) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+        Bun::ERR::STRING_TOO_LONG(scope, globalObject);
+        return nullptr;
+    }
+
     if (bunString.tag == BunStringTag::WTFStringImpl) {
 #if ASSERT_ENABLED
         ASSERT(bunString.impl.wtf->hasAtLeastOneRef() && !bunString.impl.wtf->isEmpty());
@@ -350,9 +363,16 @@ WTF::String toCrossThreadShareable(const WTF::String& string)
 
 }
 
-extern "C" JSC::EncodedJSValue BunString__toJS(JSC::JSGlobalObject* globalObject, const BunString* bunString)
+extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__toJS(JSC::JSGlobalObject* globalObject, const BunString* bunString)
 {
-    return JSValue::encode(Bun::toJS(globalObject, *bunString));
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* result = Bun::toJS(globalObject, *bunString);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!result) [[unlikely]] {
+        return {};
+    }
+    return JSValue::encode(result);
 }
 
 extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromUTF16Unitialized(size_t length)
@@ -500,7 +520,9 @@ extern "C" JSC::EncodedJSValue BunString__createArray(
     RETURN_IF_EXCEPTION(throwScope, {});
 
     for (size_t i = 0; i < length; ++i) {
-        array->putDirectIndex(globalObject, i, Bun::toJS(globalObject, *ptr++));
+        auto* str = Bun::toJS(globalObject, *ptr++);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        array->putDirectIndex(globalObject, i, str);
         RETURN_IF_EXCEPTION(throwScope, {});
     }
 

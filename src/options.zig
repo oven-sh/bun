@@ -1802,6 +1802,10 @@ pub const BundleOptions = struct {
     minify_identifiers: bool = false,
     keep_names: bool = false,
     dead_code_elimination: bool = true,
+    /// REPL mode: transforms code for interactive evaluation with vm.runInContext.
+    /// Hoists declarations as var for persistence, wraps code in IIFE, and
+    /// captures the last expression in { value: expr } for result extraction.
+    repl_mode: bool = false,
     css_chunking: bool,
 
     ignore_dce_annotations: bool = false,

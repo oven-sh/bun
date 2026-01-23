@@ -1222,20 +1222,6 @@ pub const Parser = struct {
         if (p.options.features.inject_jest_globals) outer: {
             var jest: *Jest = &p.jest;
 
-            for (p.import_records.items) |*item| {
-                // skip if they did import it
-                if (strings.eqlComptime(item.path.text, "bun:test") or strings.eqlComptime(item.path.text, "@jest/globals") or strings.eqlComptime(item.path.text, "vitest")) {
-                    if (p.options.features.runtime_transpiler_cache) |cache| {
-                        // If we rewrote import paths, we need to disable the runtime transpiler cache
-                        if (!strings.eqlComptime(item.path.text, "bun:test")) {
-                            cache.input_hash = null;
-                        }
-                    }
-
-                    break :outer;
-                }
-            }
-
             // if they didn't use any of the jest globals, don't inject it, I guess.
             const items_count = brk: {
                 var count: usize = 0;

@@ -7,7 +7,7 @@
   ".arguments_old(": 263,
   ".jsBoolean(false)": 0,
   ".jsBoolean(true)": 0,
-  ".stdDir()": 42,
+  ".stdDir()": 41,
   ".stdFile()": 16,
   "// autofix": 148,
   ": [^=]+= undefined,$": 256,

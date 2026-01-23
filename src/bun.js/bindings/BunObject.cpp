@@ -953,13 +953,13 @@ static void exportBunObject(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC:
 
     for (const auto& propertyName : propertyNames) {
         exportNames.append(propertyName);
-        auto catchScope = DECLARE_CATCH_SCOPE(vm);
+        auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
         // Yes, we have to call getters :(
         JSValue value = object->get(globalObject, propertyName);
 
-        if (catchScope.exception()) {
-            (void)catchScope.tryClearException();
+        if (topExceptionScope.exception()) {
+            (void)topExceptionScope.tryClearException();
             value = jsUndefined();
         }
         exportValues.append(value);

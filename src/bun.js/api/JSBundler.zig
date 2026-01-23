@@ -1439,7 +1439,7 @@ pub const JSBundler = struct {
                 error.JSTerminated => return error.JSTerminated,
             };
 
-            var scope: jsc.CatchScope = undefined;
+            var scope: jsc.TopExceptionScope = undefined;
             scope.init(globalThis, @src());
             defer scope.deinit();
 

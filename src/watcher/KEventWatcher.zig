@@ -21,6 +21,10 @@ pub fn stop(this: *KEventWatcher) void {
     }
 }
 
+pub fn shutdown(this: *KEventWatcher) void {
+    this.stop();
+}
+
 pub fn watchEventFromKEvent(kevent: KEvent) Watcher.Event {
     return .{
         .op = .{

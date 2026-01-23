@@ -1270,6 +1270,25 @@ pub fn ParseStmt(
                                     return p.s(S.TypeScript{}, loc);
                                 }
 
+                                // Validate that "declare" is followed by a valid declaration
+                                // Valid: class, function, var, const, let, enum, namespace, module, interface, type, abstract
+                                const is_valid_declare_token = switch (p.lexer.token) {
+                                    .t_class, .t_function, .t_var, .t_const, .t_enum => true,
+                                    .t_identifier => p.lexer.isContextualKeyword("let") or
+                                        p.lexer.isContextualKeyword("namespace") or
+                                        p.lexer.isContextualKeyword("module") or
+                                        p.lexer.isContextualKeyword("interface") or
+                                        p.lexer.isContextualKeyword("type") or
+                                        p.lexer.isContextualKeyword("abstract") or
+                                        p.lexer.isContextualKeyword("async"),
+                                    else => false,
+                                };
+
+                                if (!is_valid_declare_token) {
+                                    try p.lexer.unexpected();
+                                    return error.SyntaxError;
+                                }
+
                                 // "declare const x: any"
                                 const stmt = try p.parseStmt(opts);
                                 if (opts.ts_decorators) |decs| {

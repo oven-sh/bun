@@ -19,6 +19,8 @@
 #include <JavaScriptCore/LazyClassStructureInlines.h>
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/DateInstance.h>
+#include <JavaScriptCore/JSONObject.h>
+#include "wtf/SIMDUTF.h"
 #include <JavaScriptCore/ObjectConstructor.h>
 #include "headers.h"
 #include "BunObject.h"
@@ -77,6 +79,7 @@ BUN_DECLARE_HOST_FUNCTION(Bun__randomUUIDv5);
 
 namespace Bun {
 JSC_DECLARE_HOST_FUNCTION(jsFunctionBunStripANSI);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionBunWrapAnsi);
 }
 
 using namespace JSC;
@@ -433,6 +436,195 @@ static JSValue constructDNSObject(VM& vm, JSObject* bunObject)
     return dnsObject;
 }
 
+JSC_DECLARE_HOST_FUNCTION(jsFunctionJSONLParse);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionJSONLParseChunk);
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParse, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue arg = callFrame->argument(0);
+    if (arg.isUndefinedOrNull()) {
+        throwTypeError(globalObject, scope, "JSONL.parse requires a string argument"_s);
+        return {};
+    }
+
+    MarkedArgumentBuffer values;
+    JSC::StreamingJSONParseResult result;
+
+    if (arg.isCell() && isTypedArrayType(arg.asCell()->type())) {
+        auto* view = jsCast<JSC::JSArrayBufferView*>(arg.asCell());
+        if (view->isDetached()) {
+            throwTypeError(globalObject, scope, "ArrayBuffer is detached"_s);
+            return {};
+        }
+        auto* data = static_cast<const uint8_t*>(view->vector());
+        size_t length = view->byteLength();
+
+        // Skip UTF-8 BOM if present
+        if (length >= 3 && data[0] == 0xEF && data[1] == 0xBB && data[2] == 0xBF) {
+            data += 3;
+            length -= 3;
+        }
+
+        if (length <= String::MaxLength && simdutf::validate_ascii(reinterpret_cast<const char*>(data), length)) {
+            auto chars = std::span { reinterpret_cast<const char8_t*>(data), length };
+            result = JSC::streamingJSONParse(globalObject, StringView(chars), values);
+        } else {
+            size_t u16Length = simdutf::utf16_length_from_utf8(reinterpret_cast<const char*>(data), length);
+            if (u16Length > String::MaxLength) {
+                throwOutOfMemoryError(globalObject, scope);
+                return {};
+            }
+            auto str = WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const char8_t*>(data), length });
+            if (str.isNull()) {
+                throwOutOfMemoryError(globalObject, scope);
+                return {};
+            }
+            result = JSC::streamingJSONParse(globalObject, str, values);
+        }
+    } else {
+        auto* inputString = arg.toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto view = inputString->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        result = JSC::streamingJSONParse(globalObject, view, values);
+    }
+
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (result.status == JSC::StreamingJSONParseResult::Status::Error && values.isEmpty()) {
+        throwSyntaxError(globalObject, scope, "Failed to parse JSONL"_s);
+        return {};
+    }
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), values)));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParseChunk, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue arg = callFrame->argument(0);
+    if (arg.isUndefinedOrNull()) {
+        throwTypeError(globalObject, scope, "JSONL.parseChunk requires a string argument"_s);
+        return {};
+    }
+
+    MarkedArgumentBuffer values;
+    JSC::StreamingJSONParseResult result;
+    size_t readBytes = 0;
+    bool isTypedArray = arg.isCell() && isTypedArrayType(arg.asCell()->type());
+
+    if (isTypedArray) {
+        auto* view = jsCast<JSC::JSArrayBufferView*>(arg.asCell());
+        if (view->isDetached()) {
+            throwTypeError(globalObject, scope, "ArrayBuffer is detached"_s);
+            return {};
+        }
+        auto* data = static_cast<const uint8_t*>(view->vector());
+        size_t length = view->byteLength();
+
+        // Apply optional start/end offsets (byte offsets for typed arrays)
+        size_t start = 0;
+        size_t end = length;
+
+        JSValue startArg = callFrame->argument(1);
+        if (startArg.isNumber()) {
+            double s = startArg.asNumber();
+            if (s > 0)
+                start = static_cast<size_t>(std::min(s, static_cast<double>(length)));
+        }
+
+        JSValue endArg = callFrame->argument(2);
+        if (endArg.isNumber()) {
+            double e = endArg.asNumber();
+            if (e >= 0)
+                end = static_cast<size_t>(std::min(e, static_cast<double>(length)));
+        }
+
+        if (start > end)
+            start = end;
+
+        const uint8_t* sliceData = data + start;
+        size_t sliceLen = end - start;
+
+        // Skip UTF-8 BOM if present at the start of the slice
+        size_t bomOffset = 0;
+        if (start == 0 && sliceLen >= 3 && sliceData[0] == 0xEF && sliceData[1] == 0xBB && sliceData[2] == 0xBF) {
+            sliceData += 3;
+            sliceLen -= 3;
+            bomOffset = 3;
+        }
+
+        if (sliceLen <= String::MaxLength && simdutf::validate_ascii(reinterpret_cast<const char*>(sliceData), sliceLen)) {
+            auto chars = std::span { reinterpret_cast<const char8_t*>(sliceData), sliceLen };
+            result = JSC::streamingJSONParse(globalObject, StringView(chars), values);
+            // For ASCII, byte offset = character offset
+            readBytes = start + bomOffset + result.charactersConsumed;
+        } else {
+            size_t u16Length = simdutf::utf16_length_from_utf8(reinterpret_cast<const char*>(sliceData), sliceLen);
+            if (u16Length > String::MaxLength) {
+                throwOutOfMemoryError(globalObject, scope);
+                return {};
+            }
+            auto str = WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const char8_t*>(sliceData), sliceLen });
+            if (str.isNull()) {
+                throwOutOfMemoryError(globalObject, scope);
+                return {};
+            }
+            result = JSC::streamingJSONParse(globalObject, str, values);
+            // Convert character offset back to UTF-8 byte offset
+            if (str.is8Bit()) {
+                readBytes = start + bomOffset + simdutf::utf8_length_from_latin1(reinterpret_cast<const char*>(str.span8().data()), result.charactersConsumed);
+            } else {
+                readBytes = start + bomOffset + simdutf::utf8_length_from_utf16le(reinterpret_cast<const char16_t*>(str.span16().data()), result.charactersConsumed);
+            }
+        }
+    } else {
+        auto* inputString = arg.toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto view = inputString->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        result = JSC::streamingJSONParse(globalObject, view, values);
+        readBytes = result.charactersConsumed;
+    }
+
+    RETURN_IF_EXCEPTION(scope, {});
+
+    JSArray* array = constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), values);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    JSValue errorValue = jsNull();
+    if (result.status == JSC::StreamingJSONParseResult::Status::Error) {
+        errorValue = createSyntaxError(globalObject, "Failed to parse JSONL"_s);
+    }
+
+    auto* zigGlobalObject = jsCast<Zig::GlobalObject*>(globalObject);
+    JSObject* resultObj = constructEmptyObject(vm, zigGlobalObject->jsonlParseResultStructure());
+    resultObj->putDirectOffset(vm, 0, array);
+    resultObj->putDirectOffset(vm, 1, jsNumber(readBytes));
+    resultObj->putDirectOffset(vm, 2, jsBoolean(result.status == JSC::StreamingJSONParseResult::Status::Complete));
+    resultObj->putDirectOffset(vm, 3, errorValue);
+
+    return JSValue::encode(resultObj);
+}
+
+static JSValue constructJSONLObject(VM& vm, JSObject* bunObject)
+{
+    JSGlobalObject* globalObject = bunObject->globalObject();
+    JSC::JSObject* jsonlObject = JSC::constructEmptyObject(globalObject);
+    jsonlObject->putDirectNativeFunction(vm, globalObject, vm.propertyNames->parse, 1, jsFunctionJSONLParse, ImplementationVisibility::Public, NoIntrinsic,
+        JSC::PropertyAttribute::DontDelete | 0);
+    jsonlObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "parseChunk"_s), 1, jsFunctionJSONLParseChunk, ImplementationVisibility::Public, NoIntrinsic,
+        JSC::PropertyAttribute::DontDelete | 0);
+    jsonlObject->putDirect(vm, vm.propertyNames->toStringTagSymbol, jsNontrivialString(vm, "JSONL"_s),
+        JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
+    return jsonlObject;
+}
+
 static JSValue constructBunPeekObject(VM& vm, JSObject* bunObject)
 {
     JSGlobalObject* globalObject = bunObject->globalObject();
@@ -727,6 +919,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     SHA512                                         BunObject_lazyPropCb_wrap_SHA512                                    DontDelete|PropertyCallback
     SHA512_256                                     BunObject_lazyPropCb_wrap_SHA512_256                                DontDelete|PropertyCallback
     JSONC                                          BunObject_lazyPropCb_wrap_JSONC                                     DontDelete|PropertyCallback
+    JSONL                                          constructJSONLObject                                                ReadOnly|DontDelete|PropertyCallback
     TOML                                           BunObject_lazyPropCb_wrap_TOML                                      DontDelete|PropertyCallback
     YAML                                           BunObject_lazyPropCb_wrap_YAML                                      DontDelete|PropertyCallback
     Transpiler                                     BunObject_lazyPropCb_wrap_Transpiler                                DontDelete|PropertyCallback
@@ -802,6 +995,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     stdout                                         BunObject_lazyPropCb_wrap_stdout                                    DontDelete|PropertyCallback
     stringWidth                                    Generated::BunObject::jsStringWidth                                 DontDelete|Function 2
     stripANSI                                      jsFunctionBunStripANSI                                              DontDelete|Function 1
+    wrapAnsi                                       jsFunctionBunWrapAnsi                                               DontDelete|Function 3
     Terminal                                       BunObject_lazyPropCb_wrap_Terminal                                  DontDelete|PropertyCallback
     unsafe                                         BunObject_lazyPropCb_wrap_unsafe                                    DontDelete|PropertyCallback
     version                                        constructBunVersion                                                 ReadOnly|DontDelete|PropertyCallback
@@ -957,7 +1151,7 @@ static void exportBunObject(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC:
         JSValue value = object->get(globalObject, propertyName);
 
         if (catchScope.exception()) {
-            catchScope.clearException();
+            (void)catchScope.tryClearException();
             value = jsUndefined();
         }
         exportValues.append(value);

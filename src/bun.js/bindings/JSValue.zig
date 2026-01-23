@@ -329,6 +329,26 @@ pub const JSValue = enum(i64) {
         JSC__JSValue__put(value, global, key, result);
     }
 
+    extern fn JSC__JSValue__deleteProperty(target: JSValue, global: *JSGlobalObject, key: *const ZigString) bool;
+    /// Delete a property from an object by key. Returns true if the property was deleted.
+    pub fn deleteProperty(target: JSValue, global: *JSGlobalObject, key: anytype) bool {
+        const Key = @TypeOf(key);
+        if (comptime @typeInfo(Key) == .pointer) {
+            const Elem = @typeInfo(Key).pointer.child;
+            if (Elem == ZigString) {
+                return JSC__JSValue__deleteProperty(target, global, key);
+            } else if (std.meta.Elem(Key) == u8) {
+                return JSC__JSValue__deleteProperty(target, global, &ZigString.init(key));
+            } else {
+                @compileError("Unsupported key type in deleteProperty(). Expected ZigString or string literal, got " ++ @typeName(Elem));
+            }
+        } else if (comptime Key == ZigString) {
+            return JSC__JSValue__deleteProperty(target, global, &key);
+        } else {
+            @compileError("Unsupported key type in deleteProperty(). Expected ZigString or string literal, got " ++ @typeName(Key));
+        }
+    }
+
     extern "c" fn JSC__JSValue__putBunString(value: JSValue, global: *JSGlobalObject, key: *const bun.String, result: jsc.JSValue) void;
     fn putBunString(value: JSValue, global: *JSGlobalObject, key: *const bun.String, result: jsc.JSValue) void {
         if (comptime bun.Environment.isDebug)

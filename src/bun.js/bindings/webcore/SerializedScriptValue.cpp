@@ -6154,7 +6154,7 @@ RefPtr<SerializedScriptValue> SerializedScriptValue::create(JSContextRef originC
     if (scope.exception()) [[unlikely]] {
         if (exception)
             *exception = toRef(lexicalGlobalObject, scope.exception()->value());
-        scope.clearException();
+        (void)scope.tryClearException();
         return nullptr;
     }
     ASSERT(serializedValue);
@@ -6385,7 +6385,7 @@ JSValueRef SerializedScriptValue::deserialize(JSContextRef destinationContext, J
     if (scope.exception()) [[unlikely]] {
         if (exception)
             *exception = toRef(lexicalGlobalObject, scope.exception()->value());
-        scope.clearException();
+        (void)scope.tryClearException();
         return nullptr;
     }
     ASSERT(value);

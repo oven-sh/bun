@@ -56,7 +56,6 @@ describe("bundler", () => {
     },
   });
   itBundled("splitting/DynamicES6IntoES6", {
-    todo: true,
     files: {
       "/entry.js": `import("./foo.js").then(({bar}) => console.log(bar))`,
       "/foo.js": `export let bar = 123`,
@@ -94,6 +93,32 @@ describe("bundler", () => {
     run: {
       file: "/out/entry.js",
       stdout: "123",
+    },
+  });
+  itBundled("splitting/DynamicES6WithDecorators", {
+    files: {
+      "/entry.js": `import("./decorated.ts").then(({TestClass}) => {
+        const instance = new TestClass();
+        console.log(instance.method());
+      })`,
+      "/decorated.ts": `
+        function MyDecorator(target: any, key: string) {
+          console.log("Decorating", key);
+        }
+        
+        export class TestClass {
+          @MyDecorator
+          method() {
+            return "decorated";
+          }
+        }
+      `,
+    },
+    splitting: true,
+    outdir: "/out",
+    run: {
+      file: "/out/entry.js",
+      stdout: "Decorating method\ndecorated",
     },
   });
   itBundled("splitting/DynamicAndNotDynamicES6IntoES6", {

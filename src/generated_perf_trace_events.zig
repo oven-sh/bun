@@ -15,6 +15,7 @@ pub const PerfEvent = enum(i32) {
     @"Bundler.breakOutputIntoPieces",
     @"Bundler.cloneAST",
     @"Bundler.computeChunks",
+    @"Bundler.deduplicateExternalImports",
     @"Bundler.findAllImportedPartsInJSOrder",
     @"Bundler.findReachableFiles",
     @"Bundler.generateChunksInParallel",

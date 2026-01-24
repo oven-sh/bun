@@ -502,6 +502,15 @@ pub const Chunk = struct {
         ///
         /// Mutated while sorting chunks in `computeChunks`
         css_chunks: []u32 = &.{},
+
+        /// When true, external imports have been deduplicated and merged into
+        /// cross_chunk_prefix_stmts. Individual external import statements in
+        /// per-file code should be skipped during code generation.
+        external_imports_deduplicated: bool = false,
+
+        /// Map from import record index to whether it's been deduplicated.
+        /// Used to skip individual external import statements.
+        deduplicated_external_import_records: std.AutoHashMapUnmanaged(u64, void) = .{},
     };
 
     pub const CssChunk = struct {

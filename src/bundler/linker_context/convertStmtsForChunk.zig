@@ -74,6 +74,24 @@ pub fn convertStmtsForChunk(
                 .s_import => |s| {
                     // "import * as ns from 'path'"
                     // "import {foo} from 'path'"
+
+                    // Check if this external import has been deduplicated
+                    if (chunk.content == .javascript) {
+                        const js_chunk = &chunk.content.javascript;
+                        if (js_chunk.external_imports_deduplicated) {
+                            // Bounds check before accessing import record
+                            if (s.import_record_index >= ast.import_records.len) continue;
+                            const record = ast.import_records.at(s.import_record_index);
+                            if (!record.source_index.isValid() and record.kind == .stmt and !record.path.is_disabled) {
+                                const record_key = (@as(u64, source_index) << 32) | @as(u64, s.import_record_index);
+                                if (js_chunk.deduplicated_external_import_records.contains(record_key)) {
+                                    // This external import has been deduplicated - skip it
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+
                     if (try c.shouldRemoveImportExportStmt(
                         stmts,
                         stmt.loc,

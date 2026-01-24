@@ -1860,7 +1860,7 @@ bool WebCore__FetchHeaders__fastHas_(WebCore::FetchHeaders* arg0, unsigned char 
 
 void WebCore__FetchHeaders__copyTo(WebCore::FetchHeaders* headers, StringPointer* names, StringPointer* values, unsigned char* buf)
 {
-    auto iter = headers->createIterator();
+    auto iter = headers->createIterator(false);
     unsigned int i = 0;
 
     for (auto pair = iter.next(); pair; pair = iter.next()) {

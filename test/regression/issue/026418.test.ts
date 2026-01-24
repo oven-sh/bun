@@ -1,14 +1,14 @@
-import { describe, expect, it } from "bun:test";
-import { connect, createServer, Socket } from "node:net";
+import { describe, it } from "bun:test";
+import { connect, createServer, Server, Socket } from "node:net";
 import { Duplex, Writable } from "node:stream";
 
 describe("issue/026418", () => {
   it("net.Socket data events fire when socket is piped to another stream", async () => {
-    let dataReceived = false;
+    const { promise: dataPromise, resolve: dataResolve } = Promise.withResolvers<void>();
 
     const server = createServer((socket: Socket) => {
       socket.on("data", () => {
-        dataReceived = true;
+        dataResolve();
       });
 
       const writable = new Writable({
@@ -19,51 +19,40 @@ describe("issue/026418", () => {
       socket.pipe(writable);
     });
 
-    const { promise: listenPromise, resolve: listenResolve } = Promise.withResolvers<number>();
+    try {
+      const port = await listenOnRandomPort(server);
+      const client = connect({ host: "127.0.0.1", port });
 
-    server.listen(0, "127.0.0.1", () => {
-      const addr = server.address();
-      if (addr && typeof addr === "object") {
-        listenResolve(addr.port);
+      try {
+        await waitForConnect(client);
+
+        // Send data
+        client.write("HELLO");
+
+        // Wait for data to be received with timeout
+        await Promise.race([dataPromise, rejectAfterTimeout(1000, "data event not received")]);
+      } finally {
+        client.destroy();
       }
-    });
-
-    const port = await listenPromise;
-
-    const client = connect({ host: "127.0.0.1", port });
-
-    const { promise: connectPromise, resolve: connectResolve } = Promise.withResolvers<void>();
-    client.on("connect", () => {
-      connectResolve();
-    });
-
-    await connectPromise;
-
-    // Send data
-    client.write("HELLO");
-
-    // Wait for data to be received
-    await Bun.sleep(100);
-
-    expect(dataReceived).toBe(true);
-
-    client.destroy();
-    server.close();
+    } finally {
+      await closeServer(server);
+    }
   });
 
   it("net.Socket bidirectional pipe works (SSH tunnel pattern)", async () => {
-    let dataReceived = false;
-    let responseReceived = false;
+    const { promise: dataPromise, resolve: dataResolve } = Promise.withResolvers<void>();
+    const { promise: responsePromise, resolve: responseResolve } = Promise.withResolvers<void>();
+    const { promise: pipeReadyPromise, resolve: pipeReadyResolve } = Promise.withResolvers<void>();
 
     // Create a fake "remote" stream that simulates what ssh2's forwardOut returns
     function createFakeForwardStream() {
       return new Duplex({
         read() {},
         write(chunk, _encoding, callback) {
-          // Simulate async response like SSH tunnel would do
-          setTimeout(() => {
+          // Use queueMicrotask instead of setTimeout to avoid timing issues
+          queueMicrotask(() => {
             this.push("RESPONSE:" + chunk.toString());
-          }, 10);
+          });
           callback();
         },
       });
@@ -71,54 +60,82 @@ describe("issue/026418", () => {
 
     const server = createServer((socket: Socket) => {
       socket.on("data", () => {
-        dataReceived = true;
+        dataResolve();
       });
 
-      // Simulate ssh2's forwardOut callback pattern
-      setTimeout(() => {
+      // Use queueMicrotask instead of setTimeout
+      queueMicrotask(() => {
         const forwardStream = createFakeForwardStream();
         // This is the pattern from the issue: socket.pipe(stream).pipe(socket)
         socket.pipe(forwardStream).pipe(socket);
-      }, 20);
+        pipeReadyResolve();
+      });
     });
 
-    const { promise: listenPromise, resolve: listenResolve } = Promise.withResolvers<number>();
+    try {
+      const port = await listenOnRandomPort(server);
+      const client = connect({ host: "127.0.0.1", port });
 
+      try {
+        await waitForConnect(client);
+
+        client.on("data", (chunk: Buffer) => {
+          if (chunk.toString().includes("RESPONSE:")) {
+            responseResolve();
+          }
+        });
+
+        // Wait for forward stream to be set up
+        await Promise.race([pipeReadyPromise, rejectAfterTimeout(1000, "pipe setup timeout")]);
+
+        // Send data
+        client.write("REQUEST");
+
+        // Wait for data and response with timeout
+        await Promise.race([
+          Promise.all([dataPromise, responsePromise]),
+          rejectAfterTimeout(1000, "data/response not received"),
+        ]);
+      } finally {
+        client.destroy();
+      }
+    } finally {
+      await closeServer(server);
+    }
+  });
+});
+
+// Helper functions
+
+function listenOnRandomPort(server: Server): Promise<number> {
+  return new Promise((resolve, reject) => {
+    server.on("error", reject);
     server.listen(0, "127.0.0.1", () => {
       const addr = server.address();
       if (addr && typeof addr === "object") {
-        listenResolve(addr.port);
+        resolve(addr.port);
+      } else {
+        reject(new Error("Failed to get server port"));
       }
     });
-
-    const port = await listenPromise;
-
-    const client = connect({ host: "127.0.0.1", port });
-
-    const { promise: connectPromise, resolve: connectResolve } = Promise.withResolvers<void>();
-    client.on("connect", () => {
-      connectResolve();
-    });
-
-    await connectPromise;
-
-    client.on("data", (chunk: Buffer) => {
-      if (chunk.toString().includes("RESPONSE:")) {
-        responseReceived = true;
-      }
-    });
-
-    // Send data after forward stream is set up
-    await Bun.sleep(100);
-    client.write("REQUEST");
-
-    // Wait for response
-    await Bun.sleep(100);
-
-    expect(dataReceived).toBe(true);
-    expect(responseReceived).toBe(true);
-
-    client.destroy();
-    server.close();
   });
-});
+}
+
+function waitForConnect(client: Socket): Promise<void> {
+  return new Promise((resolve, reject) => {
+    client.on("connect", resolve);
+    client.on("error", reject);
+  });
+}
+
+function closeServer(server: Server): Promise<void> {
+  return new Promise(resolve => {
+    server.close(() => resolve());
+  });
+}
+
+function rejectAfterTimeout(ms: number, message: string): Promise<never> {
+  return new Promise((_, reject) => {
+    setTimeout(() => reject(new Error(message)), ms);
+  });
+}

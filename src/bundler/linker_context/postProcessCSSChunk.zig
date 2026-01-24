@@ -105,7 +105,7 @@ pub fn postProcessCSSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, ch
             chunk.isolated_hash,
             worker,
             compile_results_for_source_map,
-            c.resolver.opts.output_dir,
+            c.resolver.opts.root_dir,
             can_have_shifts,
         );
     }
